@@ -1,0 +1,9 @@
+0:
+  params:
+  - model.base_model.model.score.weight
+  - model.base_model.model.model.norm.weight
+  - model.base_model.model.model.layers.{0,31}.self_attn.(q|v)_proj.lora_(A|B).default.weight
+1:
+  params:
+  - model.base_model.model.model.layers.{0,31}.(post_attention_layernorm|input_layernorm).weight
+  - model.base_model.model.model.embed_tokens.weight

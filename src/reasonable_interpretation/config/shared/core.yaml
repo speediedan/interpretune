@@ -1,0 +1,53 @@
+seed_everything: 42
+data.class_path: reasonable_interpretation.base.base_datamodule.RIDataModule
+model.class_path: reasonable_interpretation.base.base_module.RIModule
+ridm_cfg:
+  model_name_or_path: override in experiment config
+  data_collator_cfg: 
+    collator_class: transformers.DataCollatorWithPadding
+  prompt_cfg:
+    class_path: reasonable_interpretation.base.config_classes.PromptConfig
+ri_cfg:
+  use_model_cache: false
+  from_pretrained_cfg:
+    device_map: {"":0}
+    torch_dtype: bfloat16
+  bitsandbytesconfig:
+    load_in_4bit: true
+    bnb_4bit_use_double_quant: true
+    bnb_4bit_quant_type: nf4
+    bnb_4bit_compute_dtype: bfloat16
+  optimizer_init:
+    class_path: torch.optim.AdamW
+    init_args:
+      weight_decay: 1.0e-06
+      eps: 1.0e-07
+      lr: 3.0e-05
+  lr_scheduler_init:
+    class_path: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+    init_args:
+      T_0: 1
+      T_mult: 2
+      eta_min: 1.0e-06
+  pl_lrs_cfg:
+    interval: epoch
+    frequency: 1
+    name: CosineAnnealingWithWarmRestartsLR
+  # debug_lm_cfg:  # uncomment to enable lm debugging connector features
+  #   enabled: true
+  #   record_memory_history: false
+  #   raw_debug_sequences:
+  #     - What is the color of a banana?
+  #     - List the first 5 letters in the alphabet.
+  #     - How many days in a week?
+  #     - How old is Barack Obama?
+trainer:
+  accumulate_grad_batches: 4
+  accelerator: gpu
+  strategy: auto
+  precision: bf16-true
+  logger:
+    class_path: lightning.pytorch.loggers.TensorBoardLogger
+    init_args:
+      save_dir: lightning_logs
+      name: core_default

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reasonable_interpretation"
+authors = [
+    {name = "Dan Dale", email = "danny.dale@gmail.com"},
+]
+description = "A package to support LLM reasoning and interpretability experiments at a level of abstraction that is both powerfully flexible and convenient"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["llm", "reasoning", "interpretability", "fine-tuning", "finetuning"]
+license = {text = "BSD-3-Clause"}
+#[tool.setuptools]
+# package-dir = {"" = "src"}
+#project_urls={
+#    "Source Code": "https://github.com/speediedan/reasonable-interpretation",
+#},
+classifiers = [
+            "Environment :: Console",
+            "Natural Language :: English",
+            "Development Status :: 5 - Production/Stable",
+            "Intended Audience :: Developers",
+            "Topic :: Scientific/Engineering :: Artificial Intelligence",
+            "Topic :: Scientific/Engineering :: Image Recognition",
+            "Topic :: Scientific/Engineering :: Information Analysis",
+            "License :: OSI Approved :: Apache Software License",
+            "Operating System :: OS Independent",
+            "Programming Language :: Python :: 3",
+            "Programming Language :: Python :: 3.10",
+            "Programming Language :: Python :: 3.11",
+]
+
+dynamic = ["version"]
+
+[tool.setuptools.dynamic]
+version = {attr = "reasonable_interpretation.__about__.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+#"reasonable_interpretation.config.experiments" = ["*.yaml"]
+#"reasonable_interpretation.config.ft_schedules" = ["*.yaml"]
+#"reasonable_interpretation.config.shared" = ["*.yaml"]
+"*" = ["*.yaml"]
