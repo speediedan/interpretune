@@ -14,10 +14,6 @@
 
 from reasonable_interpretation.utils.cli import cli_main, env_setup
 
-# TODO: NEXT, 
-# rename repo and push
-# finishing FTS update
-# begin next set of LLM reasoning experiments!!!
 if __name__ == "__main__":
     env_setup()
     cli_main()
