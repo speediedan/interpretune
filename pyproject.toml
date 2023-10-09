@@ -12,6 +12,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 keywords = ["llm", "reasoning", "interpretability", "fine-tuning", "finetuning"]
 license = {text = "BSD-3-Clause"}
+dynamic = ["version"]
+
 #[tool.setuptools]
 # package-dir = {"" = "src"}
 #project_urls={
@@ -32,7 +34,50 @@ classifiers = [
             "Programming Language :: Python :: 3.11",
 ]
 
-dynamic = ["version"]
+dependencies = [
+    "lightning @ git+https://github.com/Lightning-AI/lightning.git@fdae213dd1e8289b35d4ab52f2052ab563c38074",
+    "finetuning-scheduler[examples, cli, extra]",
+    "torch >= 2.1.0",
+    "bitsandbytes",
+    "peft",
+]
+
+[project.optional-dependencies]
+examples = [
+"wandb",
+"torch-tb-profiler",
+"ipython[notebook]",
+"jupytext >= 1.10",  # converting notebook source .py to .ipynb
+"nbval >= 0.9.6",  # testing the notebook
+"python-dotenv",
+]
+
+docs = [
+"sphinx >=4.0,<5.0 ",
+"myst-parser == 0.18.1",
+"nbsphinx >= 0.8.5",
+"pandoc >= 1.0",
+"docutils >= 0.16",
+"sphinxcontrib-fulltoc >= 1.0",
+"sphinxcontrib-mockautodoc",
+"sphinx-autodoc-typehints >= 1.16",
+"sphinx-paramlinks >= 0.5.1",
+"sphinx-togglebutton >= 0.2",
+"sphinx-copybutton >= 0.3",
+"typing-extensions",  # already in `base.txt` but the docs CI job does not install it
+"jinja2 >= 3.0.0,<3.1.0",
+"pt_lightning_sphinx_theme @ git+https://github.com/speediedan/lightning_sphinx_theme.git@057f4c3e669948bc618eec1688b016f07140cc0d",
+]
+
+test = [
+"coverage >= 6.4",
+"pytest >= 6.0",
+"pytest-rerunfailures >= 10.2",
+"twine == 3.2",
+"mypy >= 0.920",
+"pre-commit >= 1.0",
+]
+
 
 [tool.setuptools.dynamic]
 version = {attr = "reasonable_interpretation.__about__.__version__"}
@@ -45,3 +90,97 @@ where = ["src"]
 #"reasonable_interpretation.config.ft_schedules" = ["*.yaml"]
 #"reasonable_interpretation.config.shared" = ["*.yaml"]
 "*" = ["*.yaml"]
+
+[tool.ruff]
+line-length = 120
+# Enable Pyflakes `E` and `F` codes by default.
+select = [
+    "E", "W",  # see: https://pypi.org/project/pycodestyle
+    "F",  # see: https://pypi.org/project/pyflakes
+]
+ignore = [
+    "E731", # Do not assign a lambda expression, use a def
+]
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".git",
+    "docs",
+    ".tox",
+    "*.egg",
+    "build",
+    "temp",
+]
+ignore-init-module-imports = true
+format = "pylint"
+
+[tool.ruff.per-file-ignores]
+#"src/fts_examples/stable/ipynb_src/fts_superglue_nb.py" = ["E501","F401","F821"]
+#"src/fts_examples/legacy/ipynb_src/fts_superglue_nb.py" = ["E501","F401","F821"]
+
+[tool.ruff.isort]
+known_first_party = [
+    "docs",
+    "reasonable_interpretation",
+    "tests",
+]
+force_sort_within_sections = "False"
+order_by_type = "False"
+
+[tool.ruff.mccabe]
+# Unlike Flake8, default to a complexity level of 10.
+max-complexity = 10
+
+[tool.mypy]
+files = ["src/reasonable_interpretation"]
+disallow_untyped_defs = "True"
+ignore_missing_imports = "True"
+show_error_codes = "True"
+warn_redundant_casts = "True"
+warn_unused_configs = "True"
+warn_unused_ignores = "False"
+allow_redefinition = "True"
+# disable this rule as the PL Trainer attributes are defined in the connectors, not in its __init__
+disable_error_code = "attr-defined"
+# style choices
+warn_no_return = "False"
+exclude = ['tests/.*']
+
+# Ignore mypy errors for these files
+# TODO: the goal is for this to be empty
+#[[tool.mypy.overrides]]
+# the list can be generated with:
+# mypy | tr ':' ' ' |  awk '{print $1}' | sort | uniq | sed 's/\.py//g' | sed 's|\/|\.|g' | xargs -I {} echo '"{}",'
+# module = []
+# ignore_errors = "True"
+
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "warnings",
+    "pass",
+    "rank_zero_warn",
+    "raise NotImplementedError",
+    "except Exception"
+]
+
+[tool.pytest.ini_options]
+pythonpath = "tests"
+norecursedirs = [
+    ".git",
+    ".github",
+    "dist",
+    "build",
+    "docs",
+]
+#addopts = "--strict-markers --doctest-modules --color=yes --disable-pytest-warnings --ignore-glob='src/fts_examples/*/ipynb_src/*.py' --ignore='.actions/assistant.py'"
+addopts = "--strict-markers --doctest-modules --color=yes --disable-pytest-warnings"
+junit_duration_report = "call"
+
+
+[tool.jupytext]
+notebook_metadata_filter = "-all"
+
+[tool.jupytext.formats]
+"notebooks/" = "ipynb"
+"scripts/" = "py"
