@@ -1,0 +1,7 @@
+wandb  # for wandb logging
+torch-tb-profiler  # for profiling
+# additional packages required for automated ipynb example tests
+ipython[notebook]
+jupytext>=1.10  # converting notebook source .py to .ipynb
+nbval>=0.9.6  # testing the notebook
+python-dotenv  # to load various private API keys from a .env file

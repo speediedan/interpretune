@@ -1,0 +1,8 @@
+# install all mandatory dependencies
+-r ./base.txt
+
+# extended list of dependencies for development and run lint and tests
+-r ./test.txt
+
+# install all extra dependencies for running examples
+-r ./examples.txt
