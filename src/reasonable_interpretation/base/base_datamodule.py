@@ -3,8 +3,9 @@ import inspect
 from typing import Optional, Callable
 from abc import ABC
 
+import torch
 import lightning.pytorch as pl
-from lightning.pytorch.utilities import rank_zero_info, rank_zero_warn
+from lightning.pytorch.utilities import rank_zero_info
 from torch.utils.data import DataLoader
 from fts_examples import _HF_AVAILABLE
 
@@ -13,37 +14,38 @@ from reasonable_interpretation.utils.cli import _import_class
 
 if _HF_AVAILABLE:
     import datasets
-    from transformers import AutoTokenizer, PreTrainedTokenizerFast
+    from datasets import Dataset
+    from transformers import AutoTokenizer, PreTrainedTokenizerFast, PreTrainedTokenizerBase
 
 
 class DataModuleInitMixin(ABC):
 
-    def setup(self, stage):
+    def setup(self, stage: str) -> None:
         """Setup our dataset splits for training/validation."""
 
         self.dataset = datasets.load_from_disk(self.ridm_cfg.dataset_path)
-    
-    def train_dataloader(self):
+
+    def train_dataloader(self) -> DataLoader:
         return DataLoader(self.dataset["train"], batch_size=self.hparams.ridm_cfg.train_batch_size,
                           collate_fn=self.data_collator, **self.ridm_cfg.dataloader_kwargs)
 
-    def val_dataloader(self):
-        return DataLoader(self.dataset["validation"], batch_size=self.hparams.ridm_cfg.eval_batch_size, 
+    def val_dataloader(self) -> DataLoader:
+        return DataLoader(self.dataset["validation"], batch_size=self.hparams.ridm_cfg.eval_batch_size,
                           collate_fn=self.data_collator, **self.ridm_cfg.dataloader_kwargs)
 
-    def test_dataloader(self):
-        return DataLoader(self.dataset["validation"], batch_size=self.hparams.ridm_cfg.eval_batch_size, 
+    def test_dataloader(self) -> DataLoader:
+        return DataLoader(self.dataset["validation"], batch_size=self.hparams.ridm_cfg.eval_batch_size,
                           collate_fn=self.data_collator, **self.ridm_cfg.dataloader_kwargs)
 
-    def predict_dataloader(self):
-        return DataLoader(self.dataset["validation"], batch_size=self.hparams.ridm_cfg.eval_batch_size, 
+    def predict_dataloader(self) -> DataLoader:
+        return DataLoader(self.dataset["validation"], batch_size=self.hparams.ridm_cfg.eval_batch_size,
                           collate_fn=self.data_collator, **self.ridm_cfg.dataloader_kwargs)
 
-    def configure_tokenizer(self):
+    def configure_tokenizer(self) -> PreTrainedTokenizerBase:
         access_token = os.environ[self.ridm_cfg.os_env_model_auth_key.upper()] if self.ridm_cfg.os_env_model_auth_key \
               else None
         if self.ridm_cfg.local_fast_tokenizer_path:
-            tokenizer = PreTrainedTokenizerFast.from_pretrained(self.ridm_cfg.local_fast_tokenizer_path, 
+            tokenizer = PreTrainedTokenizerFast.from_pretrained(self.ridm_cfg.local_fast_tokenizer_path,
                                                                 **self.ridm_cfg.tokenizer_kwargs)
         else:
             tokenizer = AutoTokenizer.from_pretrained(
@@ -56,14 +58,14 @@ class DataModuleInitMixin(ABC):
         return tokenizer
 
     # adapted from HF native trainer
-    def _set_signature_columns_if_needed(self, target_model):
+    def _set_signature_columns_if_needed(self, target_model: torch.nn.Module) -> None:
         if len(self.ridm_cfg.signature_columns) == 0:
             # Inspect model forward signature to keep only the arguments it accepts.
             signature = inspect.signature(target_model.forward)
             self.ridm_cfg.signature_columns = list(signature.parameters.keys())
 
     # adapted from HF native trainer
-    def _remove_unused_columns(self, dataset: "datasets.Dataset", description: Optional[str] = None):
+    def _remove_unused_columns(self, dataset: "datasets.Dataset", description: Optional[str] = None) -> Dataset:
             if not self.ridm_cfg.remove_unused_columns:
                 return dataset
             target_model = self.trainer.model.model if not self.ridm_cfg.defer_model_init else None
@@ -84,6 +86,8 @@ class RIDataModule(DataModuleInitMixin, pl.LightningDataModule):
     """A :class:`~pytorch_lighting.core.LightningDataModule` for using either the RTE or BoolQ `SuperGLUE Hugging
     Face datasets <https://huggingface.co/datasets/super_glue#data-instances>`_."""
 
+    tokenization_func: Callable
+
     def __init__(
         self,
         ridm_cfg: RIDataModuleConfig,
@@ -92,7 +96,7 @@ class RIDataModule(DataModuleInitMixin, pl.LightningDataModule):
         datasets.
 
         Args:
-            ridm_cfg (:class:`~RIDataModuleConfig`): Configuration for the datamodule. 
+            ridm_cfg (:class:`~RIDataModuleConfig`): Configuration for the datamodule.
         """
         super().__init__()
         self.ridm_cfg = ridm_cfg
@@ -106,9 +110,8 @@ class RIDataModule(DataModuleInitMixin, pl.LightningDataModule):
         collator_kwargs = self.ridm_cfg.data_collator_cfg.get('collator_kwargs', None) or {}
         collator_class = _import_class(self.ridm_cfg.data_collator_cfg["collator_class"])
         self.data_collator = collator_class(self.tokenizer, **collator_kwargs)
-        self.tokenization_func: Callable = None
 
-    def prepare_data(self):
+    def prepare_data(self) -> None:
         """Load the SuperGLUE dataset."""
         # N.B. PL calls prepare_data from a single process (rank 0) so do not use it to assign
         # state (e.g. self.x=y)

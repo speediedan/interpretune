@@ -13,7 +13,7 @@ if _HF_AVAILABLE:
 class Llama2PromptConfig:
     sys_prompt: str = ("You are a helpful, respectful and honest assistant. Always answer as helpfully as"
     " possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, toxic,"
-    " dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature." 
+    " dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature."
     " If a question does not make any sense, or is not factually coherent, explain why instead of answering something"
     " not correct. If you don't know the answer to a question, please don't share false information.")
     ctx_question_join: str = 'Does the previous passage imply that '
@@ -37,19 +37,23 @@ class Llama2RIDataModule(RIDataModule):
 
     def _tokenize_for_llama2(self, example_batch: LazyDict) -> BatchEncoding:
         example_batch['sequences'] = []
+        assert example_batch is not None
+        assert self.ridm_cfg.text_fields is not None
+        assert self.ridm_cfg.prompt_cfg is not None
         # TODO: use promptsource instead of this manual approach after tinkering
-        for field1, field2 in zip(example_batch[self.ridm_cfg.text_fields[0]], 
+        for field1, field2 in zip(example_batch[self.ridm_cfg.text_fields[0]],
                                   example_batch[self.ridm_cfg.text_fields[1]]):
             if self.ridm_cfg.prompt_cfg.cust_task_prompt:
                 task_prompt = (self.ridm_cfg.prompt_cfg.cust_task_prompt['context'] + "\n" +
                                field1 + "\n" +
-                               self.ridm_cfg.prompt_cfg.cust_task_prompt['question'] + "\n" + 
+                               self.ridm_cfg.prompt_cfg.cust_task_prompt['question'] + "\n" +
                                field2)
             else:
                 task_prompt = (field1 + self.ridm_cfg.prompt_cfg.ctx_question_join + field2 \
                                + self.ridm_cfg.prompt_cfg.question_suffix)
             if self.ridm_cfg.cust_tokenization_pattern == "llama2-chat":
-                sequence = self.ridm_cfg.prompt_cfg.SYS_PREFIX + f"{task_prompt.strip()} {self.ridm_cfg.prompt_cfg.E_INST}"
+                sequence = self.ridm_cfg.prompt_cfg.SYS_PREFIX + \
+                    f"{task_prompt.strip()} {self.ridm_cfg.prompt_cfg.E_INST}"
             else:
                 sequence = task_prompt.strip()
             example_batch['sequences'].append(sequence)

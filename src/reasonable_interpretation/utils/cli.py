@@ -3,22 +3,22 @@ import warnings
 from pathlib import Path
 
 import lightning.pytorch as pl
-from lightning.pytorch.cli import LightningCLI
-from fts_examples import _HF_AVAILABLE, _SP_AVAILABLE
+from lightning.pytorch.cli import LightningCLI, LightningArgumentParser
+from fts_examples import _HF_AVAILABLE, _SP_AVAILABLE, _DOTENV_AVAILABLE
 from fts_examples.stable.cli_experiment_utils import (
     _TORCH_GREATER_EQUAL_1_12_1,
 )
-from dotenv import load_dotenv
 
 from reasonable_interpretation.base.config_classes import RIConfig, RIDataModuleConfig
 
 if _HF_AVAILABLE:
     from transformers import logging as transformers_logging
 
-def env_setup():
-    # set WandB API Key if desired, load LLAMA2_AUTH_KEY if it exists
-    load_dotenv()
-    # sys.path.append(str(Path(__file__).parent.parent.parent))  # temporarily include this until this framework is installable
+def env_setup() -> None:
+    if _DOTENV_AVAILABLE:
+        from dotenv import load_dotenv
+        # set WandB API Key if desired, load LLAMA2_AUTH_KEY if it exists
+        load_dotenv()
     transformers_logging.set_verbosity_error()
     # ignore warnings related tokenizers_parallelism/DataLoader parallelism tradeoff and
     #  expected logging behavior
@@ -35,7 +35,7 @@ class RICLI(LightningCLI):
     :class:`~pytorch_lighting.core.LightningDataModule` and :class:`~lightning.pytorch.core.module.LightningModule`
     use the same Hugging Face model, SuperGLUE task and custom logging tag."""
 
-    def add_arguments_to_parser(self, parser):
+    def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
         parser.add_class_arguments(RIDataModuleConfig, "ridm_cfg")
         parser.add_class_arguments(RIConfig, "ri_cfg")
         parser.link_arguments("ridm_cfg", "data.init_args.ridm_cfg")
@@ -66,7 +66,7 @@ def cli_main() -> None:
     if not all([_TORCH_GREATER_EQUAL_1_12_1, _HF_AVAILABLE, _SP_AVAILABLE]):
         return
     # every configuration of this example depends upon a shared set of defaults.
-    # default_config_filenames = ["core_defaults.yaml", "prompt_defaults.yaml", "optimizer_defaults.yaml", 
+    # default_config_filenames = ["core_defaults.yaml", "prompt_defaults.yaml", "optimizer_defaults.yaml",
     #                             "lr_scheduler_defaults.yaml", "quantization_defaults.yaml", "tokenizer_defaults.yaml"]
     shared_config_path = Path(__file__).parent.parent / "config" / "shared"
     shared_config_files = enumerate_config_files(shared_config_path)

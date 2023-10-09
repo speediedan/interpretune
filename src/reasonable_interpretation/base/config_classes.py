@@ -21,8 +21,8 @@ class LMGenerationConfig:
     repetition_penalty: float = 1.0
     output_attentions: bool = False
     output_hidden_states: bool = False
-    length_penalty: float = 1.0 
-    output_scores: bool = True 
+    length_penalty: float = 1.0
+    output_scores: bool = True
     return_dict_in_generate: bool = True
 
 @dataclass
@@ -30,7 +30,7 @@ class RIZeroShotClassificationConfig:
     enabled: bool = False
     entailment_mapping: Tuple = ("Yes", "No")  # RTE style, invert mapping for BoolQ
     entailment_mapping_indices: Optional[torch.Tensor] = None
-    lm_generation_cfg: LMGenerationConfig = LMGenerationConfig()
+    lm_generation_cfg: LMGenerationConfig = field(default_factory=lambda: LMGenerationConfig())
 
 @dataclass
 class DebugLMConfig:
@@ -39,7 +39,7 @@ class DebugLMConfig:
     debug_raw_labels: np.ndarray = field(default_factory=lambda: np.array([]))
     debug_raw_sequences: Optional[List[str]] = None
     record_memory_history: bool = False  # only enable for debugging/memory analysis
-    raw_debug_sequences: Optional[List] = field(default_factory=list)
+    raw_debug_sequences: List = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if len(self.raw_debug_sequences) == 0 and self.enabled:
@@ -51,7 +51,7 @@ class PromptConfig:
     ctx_question_join: str = 'Does the previous passage imply that '
     question_suffix: str = '? Answer with only one word, either Yes or No.'
 
-# TODO: once 3.10 is the minimum, make kw_only to leverage dataclass inheritence for shared fields between LM/LDM 
+# TODO: once 3.10 is the minimum, make kw_only to leverage dataclass inheritence for shared fields between LM/LDM
 @dataclass
 class RIDataModuleConfig:
     model_name_or_path: str
@@ -69,7 +69,7 @@ class RIDataModuleConfig:
     dataset_path: Optional[str] = None
     cust_tokenization_pattern: Optional[str] = None
     prepare_validation_set_only: Optional[bool] = False
-    enable_datasets_cache: Optional[bool] = False  # disable caching unless explicitly set to improve reproducibility 
+    enable_datasets_cache: Optional[bool] = False  # disable caching unless explicitly set to improve reproducibility
     TASK_TEXT_FIELD_MAP = {"rte": ("premise", "hypothesis"), "boolq": ("passage", "question")}
     # note that for prompt_cfg, we:
     #   1. use (data)classes to minimize special character yaml parsing complications (can override w/ diff init_args)
@@ -112,30 +112,30 @@ class RIConfig:
     activation_checkpointing: Optional[bool] = True
     defer_model_init: Optional[bool] = False
     use_model_cache: Optional[bool] = False
-    zero_shot_cfg: RIZeroShotClassificationConfig = RIZeroShotClassificationConfig()
-    debug_lm_cfg: DebugLMConfig = DebugLMConfig()
+    zero_shot_cfg: RIZeroShotClassificationConfig = field(default_factory=lambda: RIZeroShotClassificationConfig())
+    debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
     optimizer_init: Dict[str, Any] = field(default_factory=dict)
     lr_scheduler_init: Dict[str, Any] = field(default_factory=dict)
-    pl_lrs_cfg: Optional[Dict[str, Any]] = field(default_factory=dict)
-    model_cfg: Optional[Dict[str, Any]] = field(default_factory=dict)
-    special_tokens_dict: Optional[Dict] = field(default_factory=dict)
-    auto_model_cfg: Optional[Dict[str, Any]] = field(default_factory=dict)
-    bitsandbytesconfig: Optional[Dict[str, Any]] = field(default_factory=dict)
-    lora_cfg: Optional[Dict[str, Any]] = field(default_factory=dict)
-    dynamic_module_cfg: Optional[Dict[str, Any]] = field(default_factory=dict)
-    from_pretrained_cfg: Optional[Dict[str, Any]] = field(default_factory=dict)
-    
-    def _torch_dtype_serde(self):
+    pl_lrs_cfg: Dict[str, Any] = field(default_factory=dict)
+    model_cfg: Dict[str, Any] = field(default_factory=dict)
+    special_tokens_dict: Dict = field(default_factory=dict)
+    auto_model_cfg: Dict[str, Any] = field(default_factory=dict)
+    bitsandbytesconfig: Dict[str, Any] = field(default_factory=dict)
+    lora_cfg: Dict[str, Any] = field(default_factory=dict)
+    dynamic_module_cfg: Dict[str, Any] = field(default_factory=dict)
+    from_pretrained_cfg: Dict[str, Any] = field(default_factory=dict)
+
+    def _torch_dtype_serde(self) -> Optional[torch.dtype]:
         if self.from_pretrained_cfg.get('torch_dtype', None):
             if hasattr(torch, self.from_pretrained_cfg['torch_dtype']):
                 return getattr(torch, self.from_pretrained_cfg.pop('torch_dtype'))
             elif hasattr(torch, self.from_pretrained_cfg['torch_dtype'].split(".")[-1]):
-                return getattr(torch, self.from_pretrained_cfg.pop('torch_dtype').split(".")[-1]) 
+                return getattr(torch, self.from_pretrained_cfg.pop('torch_dtype').split(".")[-1])
             else:
-                raise rank_zero_warn(f"The provided `torch_dtype` {self.from_pretrained_cfg.pop('torch_dtype')} could "
-                                     "not be resolved, attempting to proceed with `torch_dtype` unset.")
+                rank_zero_warn(f"The provided `torch_dtype` {self.from_pretrained_cfg.pop('torch_dtype')} could "
+                                "not be resolved, attempting to proceed with `torch_dtype` unset.")
         return None
-    
+
     def __post_init__(self) -> None:
         if self.task_name not in TASK_NUM_LABELS.keys():
             rank_zero_warn(f"Invalid task_name {self.task_name!r}. Proceeding with the default task: {DEFAULT_TASK!r}")
