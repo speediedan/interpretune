@@ -24,16 +24,16 @@ class DebugGenerationMixin(ABC):
     def connect_lmdebug(self, obj_ref: Any) -> None:
         self.phandle = obj_ref
 
-    def sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:
-        sequences = sequences or self.phandle.ri_cfg.debug_lm_cfg.raw_debug_sequences
-        return [self.phandle.trainer.datamodule.tokenizer.bos_token + \
-            self.phandle.trainer.datamodule.ridm_cfg.prompt_cfg.SYS_PREFIX + \
-                f"{ex.strip()} {self.phandle.trainer.datamodule.ridm_cfg.prompt_cfg.E_INST}" \
-                for ex in sequences]
+    # def sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:
+    #     sequences = sequences or self.phandle.ri_cfg.debug_lm_cfg.raw_debug_sequences
+    #     return [self.phandle.trainer.datamodule.tokenizer.bos_token + \
+    #         self.phandle.trainer.datamodule.ridm_cfg.prompt_cfg.SYS_PREFIX + \
+    #             f"{ex.strip()} {self.phandle.trainer.datamodule.ridm_cfg.prompt_cfg.E_INST}" \
+    #             for ex in sequences]
 
-    def no_sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:
-        sequences = sequences or self.phandle.ri_cfg.debug_lm_cfg.raw_debug_sequences
-        return [f"{ex.strip()}" for ex in sequences]
+    # def no_sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:
+    #     sequences = sequences or self.phandle.ri_cfg.debug_lm_cfg.raw_debug_sequences
+    #     return [f"{ex.strip()}" for ex in sequences]
 
     def _debug_generate(self, inputs: List|torch.Tensor, max_new_tokens_override: Optional[int] = None) -> Any:
         """_summary_
@@ -45,17 +45,12 @@ class DebugGenerationMixin(ABC):
         Usage:
 
         ```python
-        # when using a llama2 chat model, you'll want to have input tokenized with sys and inst metadata
-        # to do so with some reasonable default questions as a sanity check and in batch mode:
-        self.lm_debug.debug_generate_batch(self.lm_debug.sys_inst_debug_sequences())
-        # to  narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
-        self.lm_debug.debug_generate_serial(self.lm_debug.sys_inst_debug_sequences())
+        self.lm_debug.debug_generate_batch(['my sequence potentially with chat specific tags', 'another sequence'])
+        # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
+        self.lm_debug.debug_generate_serial(['my sequence potentially with chat specific tags', 'another sequence'])
         # to override the defaults (both questions and current `max_new_tokens` config)
         self.lm_debug.debug_generate_batch(self.lm_debug.sys_inst_debug_sequences([
             'What is the color of a cloudless sky?', 'How many days are in a year?']), max_new_tokens=25)
-        # similarly, one can use this method to probe non-chat fine-tuned LLAMA2 models (just the raw sequences, no SYS
-        # or INST metadata)
-        self.lm_debug.debug_generate_batch(self.lm_debug.no_sys_inst_debug_sequences(), max_new_tokens=25)
         ```
         """
         # note we're not using a context manager here, keeping our new override for subsequent debugging convenience

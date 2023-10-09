@@ -206,9 +206,6 @@ class RIModule(ModuleInitMixin, pl.LightningModule):
 
     def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
         Optional[STEP_OUTPUT]:
-        # uncomment for debug demo
-        # self.lm_debug.debug_generate_serial(self.lm_debug.sys_inst_debug_sequences())
-        # self.lm_debug.debug_generate_batch(self.lm_debug.sys_inst_debug_sequences())
         outputs = self.model.generate(input_ids=batch['input_ids'],
                                       pad_token_id=self.trainer.datamodule.tokenizer.pad_token_id,
                                       **self.ri_cfg.zero_shot_cfg.lm_generation_cfg.__dict__)
