@@ -94,9 +94,6 @@ class Llama2RIModule(RIModule):
         # to override the defaults (both questions and current `max_new_tokens` config)
         self.lm_debug.debug_generate_batch(self.sys_inst_debug_sequences([
             'What is the color of a cloudless sky?', 'How many days are in a year?']), max_new_tokens=25)
-        # similarly, one can use this method to probe non-chat fine-tuned LLAMA2 models (just the raw sequences, no SYS
-        # or INST metadata)
-        self.lm_debug.debug_generate_batch(self.no_sys_inst_debug_sequences(), max_new_tokens=25)
         ```
         """
         sequences = sequences or self.ri_cfg.debug_lm_cfg.raw_debug_sequences
@@ -106,5 +103,20 @@ class Llama2RIModule(RIModule):
                 for ex in sequences]
 
     def no_sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:
+        """_summary_
+
+        Args:
+            sequences (Optional[List], optional): _description_. Defaults to None.
+
+        Returns:
+            List: _description_
+
+        Usage:
+        ```python
+        # one can use this method to probe non-chat fine-tuned LLAMA2 models (just the raw sequences, no SYS
+        # or INST metadata)
+        self.lm_debug.debug_generate_batch(self.no_sys_inst_debug_sequences(), max_new_tokens=25)
+        ```
+        """
         sequences = sequences or self.ri_cfg.debug_lm_cfg.raw_debug_sequences
         return [f"{ex.strip()}" for ex in sequences]
