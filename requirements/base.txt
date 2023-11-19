@@ -1,6 +1,5 @@
-#lightning>=2.1.0,<2.1.1
-# the below is uncommented when master is targeting a specific pl dev master commit
-git+https://github.com/Lightning-AI/lightning.git@fdae213dd1e8289b35d4ab52f2052ab563c38074#egg=lightning
-torch>=2.1.0
+# the below is uncommented when main is targeting a specific fts dev master commit
+# git+https://github.com/speediedan/finetuning-scheduler.git@4fe135a132e75575d0271d7b4e095c8f8da985cb#egg=finetuning-scheduler
+finetuning-scheduler[examples, cli, extra]>=2.1.0
 bitsandbytes
 peft

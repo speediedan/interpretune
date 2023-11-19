@@ -4,10 +4,11 @@ from copy import deepcopy
 from typing import Any, Dict, Optional, List, Union
 from abc import ABC
 from functools import reduce
+from pathlib import Path
 
 import lightning.pytorch as pl
 import torch
-from lightning.pytorch.utilities import rank_zero_warn, rank_zero_info
+from lightning.pytorch.utilities import rank_zero_warn
 from lightning.pytorch.utilities.types import STEP_OUTPUT, OptimizerLRScheduler
 import finetuning_scheduler as fts
 from fts_examples import _HF_AVAILABLE
@@ -15,6 +16,7 @@ from fts_examples.stable.cli_experiment_utils import (
     collect_env_info,
     instantiate_class,
 )
+from transformer_lens import HookedTransformer
 
 from reasonable_interpretation.base.config_classes import RIConfig
 from reasonable_interpretation.utils.cli import _import_class
@@ -22,32 +24,39 @@ from reasonable_interpretation.utils.debug import DebugGenerationMixin
 
 if _HF_AVAILABLE:
     import evaluate
-    from transformers import AutoConfig, AutoModelForSequenceClassification, PretrainedConfig
+    from transformers import AutoConfig, PretrainedConfig
     from transformers.dynamic_module_utils import get_class_from_dynamic_module
     from transformers.tokenization_utils_base import BatchEncoding
 
 
-class ModuleInitMixin(ABC):
+class HookedModuleInitMixin(ABC):
 
+    # TODO: pull out shared methods with modulemixin and inherit from more abstract class
     @property
     def finetuningscheduler_callback(self) -> Optional[fts.FinetuningScheduler]:  # type: ignore
         fts_callback = [c for c in self.trainer.callbacks if isinstance(c, fts.FinetuningScheduler)]  # type: ignore
         return fts_callback[0] if fts_callback else None
 
-    def _model_init(self) -> None:
-        self.model = self._auto_model_init()
+    def _hooked_model_init(self) -> None:
+        self.model = self._hooked_auto_model_init()
         self.model.config.update(self.ri_cfg.model_cfg)  # apply model config overrides
         self.model.config.use_cache = self.ri_cfg.use_model_cache
-        if self.ri_cfg.activation_checkpointing:
-            self.model.gradient_checkpointing_enable()
-        if self.ri_cfg.bitsandbytesconfig and self.ri_cfg.lora_cfg: # use together for now, disentagle in the future
-            from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
-            self.model = prepare_model_for_kbit_training(self.model)
-            self.model = get_peft_model(self.model, LoraConfig(**self.ri_cfg.lora_cfg))
+        # TODO: test re-enabling activation checkpointing at some point in the future if useful
+        # if self.ri_cfg.activation_checkpointing:
+        #     self.model.gradient_checkpointing_enable()
+        # TODO: defer lora and quantization config loading until basic functionality vetted
+        # if self.ri_cfg.bitsandbytesconfig and self.ri_cfg.lora_cfg: # use together for now, disentagle in the future
+        #     from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
+        #     self.model = prepare_model_for_kbit_training(self.model)
+        #     self.model = get_peft_model(self.model, LoraConfig(**self.ri_cfg.lora_cfg))
+        self.ri_cfg.lora_cfg = None
+        self.ri_cfg.bitsandbytesconfig = None
         self.init_hparams = {
             "optimizer_init": self.ri_cfg.optimizer_init,
             "lr_scheduler_init": self.ri_cfg.lr_scheduler_init,
             "pl_lrs_cfg": self.ri_cfg.pl_lrs_cfg,
+            "tlens_from_pretrained_cfg": self._make_config_serializable(self.ri_cfg.tlens_from_pretrained_cfg,
+                                                                        ['device']),
             "dynamic_module_cfg": self.ri_cfg.dynamic_module_cfg,
             "quantization_cfg": self.ri_cfg.lora_cfg,
             "auto_model_cfg": self.ri_cfg.auto_model_cfg, # TODO: cleanup/consolidate saving configs/dedup
@@ -69,12 +78,14 @@ class ModuleInitMixin(ABC):
             for k, v in self.ri_cfg.tokenizer_id_overrides.items():
                 setattr(model.config, k, v)
 
-    def _auto_model_init(self) -> Any:
-        if self.ri_cfg.bitsandbytesconfig:
-            from transformers import BitsAndBytesConfig
-            quantization_config = BitsAndBytesConfig(**self.ri_cfg.bitsandbytesconfig)
-        else:
-            quantization_config = None
+    def _hooked_auto_model_init(self) -> Any:
+        # TODO: deferring support for quantized models
+        # if self.ri_cfg.bitsandbytesconfig:
+        #     from transformers import BitsAndBytesConfig
+        #     quantization_config = BitsAndBytesConfig(**self.ri_cfg.bitsandbytesconfig)
+        # else:
+        #     quantization_config = None
+        quantization_config = None  # TODO: hardcode for now until supportin quantized models
         additional_from_pretrained_kwargs = {"pretrained_model_name_or_path": self.ri_cfg.model_name_or_path,
                                              "quantization_config": quantization_config,
                                              "torch_dtype": self.ri_cfg.torch_dtype}
@@ -83,11 +94,18 @@ class ModuleInitMixin(ABC):
               else None
         cust_config = self._gen_cust_config(access_token)
         cust_config.num_labels = self.ri_cfg.num_labels
-        model = self._maybe_defer_model_init(cust_config, access_token)
+        #model = self._maybe_defer_model_init(cust_config, access_token)
+        model = self._load_hf_model(cust_config, access_token)
         self._cust_token_cfg(model)
-        vocab_size = getattr(model.base_model, 'vocab_size', None) or model.config.vocab_size
-        model.base_model.resize_token_embeddings(vocab_size + len(self.ri_cfg.tokenizer_id_overrides))
+        # TODO: enable resizing token embeddings is feasible & useful once initial functionality is added
+        #vocab_size = getattr(model.base_model, 'vocab_size', None) or model.config.vocab_size
+        #model.base_model.resize_token_embeddings(vocab_size + len(self.ri_cfg.tokenizer_id_overrides))
+        #model = self._convert_hf_to_hooked(model) - defer to setup hook
         return model
+
+    def _convert_hf_to_hooked(self) -> HookedTransformer:
+        self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=self.trainer.datamodule.tokenizer,
+                                                  **self.ri_cfg.tlens_from_pretrained_cfg.__dict__)
 
     def _gen_cust_config(self, access_token: Optional[str] = None) -> PretrainedConfig:
         if self.ri_cfg.auto_model_cfg:
@@ -107,18 +125,32 @@ class ModuleInitMixin(ABC):
                                                      local_files_only=False)
         return cust_config
 
-    def _maybe_defer_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
+    # def _maybe_defer_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
+    #     -> torch.nn.Module:
+    #     head_configured = self.ri_cfg.auto_model_cfg or self.ri_cfg.dynamic_module_cfg
+    #     if not self.ri_cfg.defer_model_init:
+    #         model = self.ri_cfg.model_class.from_pretrained(**self.ri_cfg.from_pretrained_cfg, config=cust_config,
+    #                                                         token=access_token) \
+    #             if head_configured else \
+    #                 AutoModelForSequenceClassification.from_pretrained(**self.ri_cfg.from_pretrained_cfg,
+    #                                                                    config=cust_config, token=access_token)
+    #     else: # defer model materialization (e.g., to `configure_model` hook)
+    #         with torch.device("meta"):
+    #             model = self.ri_cfg.model_class(config=cust_config, token=access_token)
+    #     return model
+
+    def _load_hf_model(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
         -> torch.nn.Module:
-        head_configured = self.ri_cfg.auto_model_cfg or self.ri_cfg.dynamic_module_cfg
-        if not self.ri_cfg.defer_model_init:
-            model = self.ri_cfg.model_class.from_pretrained(**self.ri_cfg.from_pretrained_cfg, config=cust_config,
-                                                            token=access_token) \
-                if head_configured else \
-                    AutoModelForSequenceClassification.from_pretrained(**self.ri_cfg.from_pretrained_cfg,
-                                                                       config=cust_config, token=access_token)
-        else: # defer model materialization (e.g., to `configure_model` hook)
-            with torch.device("meta"):
-                model = self.ri_cfg.model_class(config=cust_config, token=access_token)
+        # usually makes sense to init the hooketransfomer (empty) and pretrained HF model weights on cpu
+        # versus moving them both to GPU (may make sense to explore meta device usage for model definition
+        # in the future, only materlizing parameter by parameter during loading from pretrained weights
+        # to eliminate need for two copies in memory)
+        model = self.ri_cfg.model_class.from_pretrained(**self.ri_cfg.from_pretrained_cfg, config=cust_config,
+                                                        token=access_token)
+        # perhaps explore initializing on the meta device and then materializing as needed layer by layer during
+        # loading/processing into hookedtransformer
+        # with torch.device("meta"):
+        #     model = self.ri_cfg.model_class(config=cust_config)  # token=access_token)
         return model
 
     @staticmethod
@@ -136,7 +168,7 @@ class ModuleInitMixin(ABC):
         return serial_cfg
 
 
-class RIModule(ModuleInitMixin, pl.LightningModule):
+class RIHookedModule(HookedModuleInitMixin, pl.LightningModule):
     """A :class:`~lightning.pytorch.core.module.LightningModule` that can be used to fine-tune a foundation model
     on either the RTE or BoolQ `SuperGLUE <https://super.gluebenchmark.com/>`_ tasks using Hugging Face
     implementations of a given model and the `SuperGLUE Hugging Face dataset.
@@ -162,12 +194,17 @@ class RIModule(ModuleInitMixin, pl.LightningModule):
         if self.ri_cfg.debug_lm_cfg.enabled:  # conditionally load debugging extension
             self.lm_debug = DebugGenerationMixin()
             self.lm_debug.connect_lmdebug(self)
-        self._model_init()
+        self._hooked_model_init()
+        self.dump_base = None
+        self.probe_setup_only = True
 
     def setup(self, stage: str) -> None:
+        if self.ri_cfg.tlens_from_pretrained_cfg.enabled:
+            self._convert_hf_to_hooked()
         if self.ri_cfg.zero_shot_cfg.enabled:
             tokenizer, zs_cfg = self.trainer.datamodule.tokenizer, self.ri_cfg.zero_shot_cfg
             zs_cfg.entailment_mapping_indices = torch.tensor(tokenizer.convert_tokens_to_ids(zs_cfg.entailment_mapping))
+        self.dump_base = Path(self.trainer.model._trainer.log_dir)
 
     def forward(self, **inputs: Any) -> STEP_OUTPUT:
         return self.model(**inputs)
@@ -241,17 +278,18 @@ class RIModule(ModuleInitMixin, pl.LightningModule):
         self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
 
     def predict_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
+        pass
         # run predict on val dataset for now
         # TODO: clean this up and allow for passing arbitrary data
-        outputs = self(**batch)
-        _, logits = outputs[:2]
-        if self.ri_cfg.num_labels >= 1:
-            preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
-        elif self.ri_cfg.num_labels == 1:
-            preds = logits.squeeze()
-        labels = batch["labels"]
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        rank_zero_info(metric_dict)
+        # outputs = self(**batch)
+        # _, logits = outputs[:2]
+        # if self.ri_cfg.num_labels >= 1:
+        #     preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
+        # elif self.ri_cfg.num_labels == 1:
+        #     preds = logits.squeeze()
+        # labels = batch["labels"]
+        # metric_dict = self.metric.compute(predictions=preds, references=labels)
+        # rank_zero_info(metric_dict)
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         # With FTS >= 2.0, ``FinetuningScheduler`` simplifies initial optimizer configuration by ensuring the optimizer

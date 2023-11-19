@@ -30,7 +30,8 @@ timit_data/
 grid_generated*
 grid_ori*
 
-
+# PyTorch data files
+*.pt
 
 # C extensions
 *.so

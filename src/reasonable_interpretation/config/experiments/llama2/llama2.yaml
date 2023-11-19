@@ -1,5 +1,5 @@
 data.class_path: reasonable_interpretation.models.llama2.Llama2RIDataModule
-model.class_path: models.llama2.Llama2RIModule
+model.class_path: reasonable_interpretation.models.llama2.Llama2RIModule
 ridm_cfg:
   model_name_or_path: meta-llama/Llama-2-7b-chat-hf
   task_name: rte

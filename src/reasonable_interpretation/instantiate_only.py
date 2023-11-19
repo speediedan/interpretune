@@ -11,7 +11,14 @@
 # limitations under the License.
 """TODO, add transformerlens basic llama2 example to cli-driven config in ipynb for rapid experimentation."""
 
-from reasonable_interpretation.utils.cli import cli_main
+import sys
+from typing import List
+from reasonable_interpretation.utils.cli import cli_main, compose_config
+
+def run_direct(config_files: List[str]):
+    cli = cli_main(**compose_config(config_files))
+    cli.trainer.predict(cli.model, datamodule=cli.datamodule)
+    cli.trainer.predict(cli.model, datamodule=cli.datamodule)
 
 if __name__ == "__main__":
-    cli_main()
+    run_direct(sys.argv[1:])

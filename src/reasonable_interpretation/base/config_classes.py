@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Optional, Tuple, List, Union
+from typing import Any, Dict, Optional, Tuple, List, Union, Literal
 from dataclasses import dataclass, field
 
 import torch
@@ -32,6 +32,29 @@ class RIZeroShotClassificationConfig:
     entailment_mapping_indices: Optional[torch.Tensor] = None
     lm_generation_cfg: LMGenerationConfig = field(default_factory=lambda: LMGenerationConfig())
 
+
+@dataclass
+class RITLensFromPretrainedConfig:
+    # TODO: inherit shared values from riconfig and remove from here
+    # TODO: add logic to allow passing in existing tokenizer rather than letting tlens create it
+    enabled: bool = False
+    model_name: str = "gpt2-large"  # change back to small after testing
+    fold_ln: Optional[bool] = True
+    center_writing_weights: Optional[bool] = True
+    center_unembed: Optional[bool] = True
+    refactor_factored_attn_matrices: Optional[bool] = False
+    checkpoint_index: Optional[int] = None
+    checkpoint_value: Optional[int] = None
+    # only supporting str for device for now due to omegaconf container dumping limitations
+    device: Optional[str] = None
+    n_devices: Optional[int] = 1
+    move_to_device: Optional[bool] = True
+    fold_value_biases: Optional[bool] = True
+    default_prepend_bos: Optional[bool] = True
+    default_padding_side: Optional[Literal["left", "right"]] = "right"
+    dtype: Optional[str] = "float32"
+
+
 @dataclass
 class DebugLMConfig:
     enabled: bool = False
@@ -51,7 +74,7 @@ class PromptConfig:
     ctx_question_join: str = 'Does the previous passage imply that '
     question_suffix: str = '? Answer with only one word, either Yes or No.'
 
-# TODO: once 3.10 is the minimum, make kw_only to leverage dataclass inheritence for shared fields between LM/LDM
+# TODO: since 3.10 is now minimum, make kw_only to leverage dataclass inheritence for shared fields between LM/LDM
 @dataclass
 class RIDataModuleConfig:
     model_name_or_path: str
@@ -112,6 +135,10 @@ class RIConfig:
     activation_checkpointing: Optional[bool] = True
     defer_model_init: Optional[bool] = False
     use_model_cache: Optional[bool] = False
+    # TODO: support only creation of HookedTransformer with pretrained method for now, later support direct creation
+    #transformer_lens_cfg: HookedTransformerConfig = field(default_factory=lambda: HookedTransformerConfig())
+    tlens_from_pretrained_cfg: RITLensFromPretrainedConfig = \
+        field(default_factory=lambda: RITLensFromPretrainedConfig())
     zero_shot_cfg: RIZeroShotClassificationConfig = field(default_factory=lambda: RIZeroShotClassificationConfig())
     debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
     optimizer_init: Dict[str, Any] = field(default_factory=dict)

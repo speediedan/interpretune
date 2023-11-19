@@ -30,9 +30,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "lightning @ git+https://github.com/Lightning-AI/lightning.git@fdae213dd1e8289b35d4ab52f2052ab563c38074",
-    "finetuning-scheduler[examples, cli, extra]",
-    "torch >= 2.1.0",
+    #"finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@4fe135a132e75575d0271d7b4e095c8f8da985cb",
+    "finetuning-scheduler[examples, cli, extra] >= 2.1.0",
     "bitsandbytes",
     "peft",
 ]
@@ -45,6 +44,10 @@ examples = [
 "jupytext >= 1.10",  # converting notebook source .py to .ipynb
 "nbval >= 0.9.6",  # testing the notebook
 "python-dotenv",
+"transformer_lens", # for mech interp example/testing
+"plotly",
+"gdown",
+"circuitsvis @ git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python"
 ]
 
 docs = [
@@ -106,7 +109,8 @@ exclude = [
     "temp",
 ]
 ignore-init-module-imports = true
-format = "pylint"
+output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff release, using `output-format` instead.
+
 
 [tool.ruff.per-file-ignores]
 #"src/fts_examples/stable/ipynb_src/fts_superglue_nb.py" = ["E501","F401","F821"]
@@ -122,7 +126,8 @@ order-by-type = false
 max-complexity = 10
 
 [tool.mypy]
-files = ["src/reasonable_interpretation"]
+#files = ["src/reasonable_interpretation"]  # only include one file while doing major refactor to reduce noise
+files = ["src/reasonable_interpretation/run_experiment.py"]
 disallow_untyped_defs = "True"
 ignore_missing_imports = "True"
 show_error_codes = "True"

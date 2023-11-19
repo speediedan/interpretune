@@ -13,15 +13,23 @@ ridm_cfg:
         whether a given hypothesis is logically justified based upon a provided premise. You will be provided some text
         representing a premise followed by text representing a hypothesis. Decide whether the provided hypothesis
         text is logically justified considering only the logic and assertions of the premise text.
-      cust_task_prompt: 
+      cust_task_prompt:
         context: '<<<PREMISE>>>:'
         question: '<<<HYPOTHESIS>>>:'
 ri_cfg:
   activation_checkpointing: false
-  bitsandbytesconfig: null
-  lora_cfg: null
+  bitsandbytesconfig: {}
+  lora_cfg: {}
   auto_model_cfg:
     model_head: transformers.LlamaForSequenceClassification
+  debug_lm_cfg:  # enable lm debugging connector features
+    enabled: true
+    record_memory_history: true
+    raw_debug_sequences:
+      - What is the color of a banana?
+      - List the first 5 letters in the alphabet.
+      - How many days in a week?
+      - How old is Barack Obama?
 trainer:
   devices: 1
   limit_train_batches: 7
@@ -67,17 +75,15 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.TensorBoardLogger
     init_args:
-      name: llama2_chat_rte_7b_noquant_fsdp_cpu_offload_cust_sys_cust_prompt_ft_profile
+      name: llama2_chat_rte_7b_noquant_fsdp_cpu_offload_cust_sys_cust_prompt_ft_profile_wout_fix
   profiler:
     class_path: fts_examples.stable.extended_profiler.ExtendedPyTorchProfiler
     init_args:
-      filename: llama2_chat_rte_7b_noquant_fsdp_cpu_offload_cust_sys_cust_prompt_ft_profile
+      filename: llama2_chat_rte_7b_noquant_fsdp_cpu_offload_cust_sys_cust_prompt_ft_profile_wout_fix
       max_name_column_width: 100
       sort_by_key: cuda_time_total
       schedule_cfg:
-        # note, there is currently (as of 2023.04.15) an open issue regarding superfluous profiler messages
-        # https://github.com/pytorch/pytorch/issues/91886
-        skip_first: 20  # comment if you want to profile the first fine-tuning phase instead of the final one
+        #skip_first: 20  # comment if you want to profile the first fine-tuning phase instead of the final one
         wait: 1
         warmup: 1
         active: 3
@@ -86,4 +92,3 @@ trainer:
       profile_memory: true
       record_shapes: true
       row_limit: 50
-
