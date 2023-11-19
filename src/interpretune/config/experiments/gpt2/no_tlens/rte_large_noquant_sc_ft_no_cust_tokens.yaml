@@ -1,0 +1,42 @@
+itdm_cfg:
+  model_name_or_path: gpt2-large
+  task_name: rte
+  dataset_path: /home/speediedan/.cache/huggingface/datasets/rte
+  train_batch_size: 16
+  eval_batch_size: 16
+  prepare_validation_set_only: false
+  tokenizer_kwargs:
+    use_fast: true  # by default true
+    add_bos_token: false
+    local_files_only: false
+    padding_side: right
+  tokenizer_id_overrides:
+    pad_token_id: 50256
+it_cfg:
+  activation_checkpointing: false
+  auto_model_cfg:
+    model_head: transformers.GPT2ForSequenceClassification
+trainer:
+  accumulate_grad_batches: 1
+  devices: 1
+  callbacks:
+  - class_path: finetuning_scheduler.FinetuningScheduler
+    init_args:
+      ft_schedule: /home/speediedan/repos/interpretune/src/interpretune/config/ft_schedules/ITModule_ft_schedule_gpt2_large_sc_no_tlens.yaml
+      max_depth: 1
+  - class_path: finetuning_scheduler.FTSCheckpoint
+    init_args:
+      save_top_k: 1
+      monitor: val_loss
+      verbose: true
+  - class_path: finetuning_scheduler.FTSEarlyStopping
+    init_args:
+      monitor: val_loss
+      min_delta: 0.001
+      patience: 2 # limited patience for example
+      verbose: true
+      mode: min
+  logger:
+    class_path: lightning.pytorch.loggers.TensorBoardLogger
+    init_args:
+      name: gpt2_notlens_rte_large_noquant_sc_ft_no_cust_tokens

@@ -16,7 +16,7 @@
 import sys
 from pathlib import Path
 
-from reasonable_interpretation.utils.cli import env_setup
+from interpretune.utils.cli import env_setup
 
 # ensure test sub-packages are in the path
 tests_dir = Path(__file__).parent.parent

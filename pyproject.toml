@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "reasonable_interpretation"
+name = "interpretune"
 authors = [
     {name = "Dan Dale", email = "danny.dale@gmail.com"},
 ]
@@ -30,13 +30,21 @@ classifiers = [
 ]
 
 dependencies = [
+    "transformer_lens",
+    "torch >= 2.0.0",
+    # "finetuning-scheduler[possible_future_it_plugin] >= 2.1.0",
+
+]
+
+[project.optional-dependencies]
+
+lightning = [
     #"finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@4fe135a132e75575d0271d7b4e095c8f8da985cb",
     "finetuning-scheduler[examples, cli, extra] >= 2.1.0",
     "bitsandbytes",
     "peft",
 ]
 
-[project.optional-dependencies]
 examples = [
 "wandb",
 "torch-tb-profiler",
@@ -44,10 +52,12 @@ examples = [
 "jupytext >= 1.10",  # converting notebook source .py to .ipynb
 "nbval >= 0.9.6",  # testing the notebook
 "python-dotenv",
-"transformer_lens", # for mech interp example/testing
 "plotly",
 "gdown",
-"circuitsvis @ git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python"
+"evaluate",
+"scikit-learn",
+"circuitsvis",
+#"circuitsvis @ git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python"
 ]
 
 docs = [
@@ -78,15 +88,15 @@ test = [
 
 
 [tool.setuptools.dynamic]
-version = {attr = "reasonable_interpretation.__about__.__version__"}
+version = {attr = "interpretune.__about__.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-#"reasonable_interpretation.config.experiments" = ["*.yaml"]
-#"reasonable_interpretation.config.ft_schedules" = ["*.yaml"]
-#"reasonable_interpretation.config.shared" = ["*.yaml"]
+#"interpretune.config.experiments" = ["*.yaml"]
+#"interpretune.config.ft_schedules" = ["*.yaml"]
+#"interpretune.config.shared" = ["*.yaml"]
 "*" = ["*.yaml"]
 
 [tool.ruff]
@@ -117,7 +127,7 @@ output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff
 #"src/fts_examples/legacy/ipynb_src/fts_superglue_nb.py" = ["E501","F401","F821"]
 
 [tool.ruff.isort]
-known-first-party = ["docs", "reasonable_interpretation","tests"]
+known-first-party = ["docs", "interpretune","tests"]
 force-sort-within-sections = false
 order-by-type = false
 
@@ -126,8 +136,8 @@ order-by-type = false
 max-complexity = 10
 
 [tool.mypy]
-#files = ["src/reasonable_interpretation"]  # only include one file while doing major refactor to reduce noise
-files = ["src/reasonable_interpretation/run_experiment.py"]
+#files = ["src/interpretune"]  # only include one file while doing major refactor to reduce noise
+files = ["src/interpretune/run_experiment.py"]
 disallow_untyped_defs = "True"
 ignore_missing_imports = "True"
 show_error_codes = "True"
