@@ -4,46 +4,66 @@ from copy import deepcopy
 from typing import Any, Dict, Optional, List, Union
 from abc import ABC
 from functools import reduce
+from pathlib import Path
 
-import lightning.pytorch as pl
 import torch
-from lightning.pytorch.utilities import rank_zero_warn, rank_zero_info
-from lightning.pytorch.utilities.types import STEP_OUTPUT, OptimizerLRScheduler
-import finetuning_scheduler as fts
-from fts_examples import _HF_AVAILABLE
-from fts_examples.stable.cli_experiment_utils import (
-    collect_env_info,
-    instantiate_class,
-)
+import evaluate
+from transformers import AutoConfig, AutoModelForSequenceClassification, PretrainedConfig
+from transformers.dynamic_module_utils import get_class_from_dynamic_module
+from transformers.tokenization_utils_base import BatchEncoding
+from transformer_lens import HookedTransformer
 
+from interpretune.utils.import_utils import _import_class, instantiate_class, _BNB_AVAILABLE
 from interpretune.base.config_classes import ITConfig
-from interpretune.utils.cli import _import_class
+from interpretune.base.base_datamodule import ITDataModule
 from interpretune.utils.debug import DebugGenerationMixin
-
-if _HF_AVAILABLE:
-    import evaluate
-    from transformers import AutoConfig, AutoModelForSequenceClassification, PretrainedConfig
-    from transformers.dynamic_module_utils import get_class_from_dynamic_module
-    from transformers.tokenization_utils_base import BatchEncoding
+from interpretune.utils.logging import rank_zero_info, collect_env_info
+from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
 
 
-class ModuleInitMixin(ABC):
+class BaseITModule(ABC):
 
-    @property
-    def finetuningscheduler_callback(self) -> Optional[fts.FinetuningScheduler]:  # type: ignore
-        fts_callback = [c for c in self.trainer.callbacks if isinstance(c, fts.FinetuningScheduler)]  # type: ignore
-        return fts_callback[0] if fts_callback else None
+    #TODO: move fts callback property to this class once fts supports raw pytorch with plugin
+    # @property
+    # def finetuningscheduler_callback(self) -> Optional[fts.FinetuningScheduler]:  # type: ignore
+    #     fts_callback = [c for c in self.trainer.callbacks if isinstance(c, fts.FinetuningScheduler)]  # type: ignore
+    #     return fts_callback[0] if fts_callback else None
+
+    def __init__(
+        self,  # note we explicitly include args shared with our data module
+        it_cfg: ITConfig,
+    ):
+        """In this example, this :class:`~lightning.pytorch.core.module.LightningModule` is initialized by composing
+        the ./config/fts_defaults.yaml default configuration with various scheduled fine-tuning yaml configurations
+        via the :class:`~lightning.pytorch.cli.LightningCLI` but it can be used like any other
+        :class:`~lightning.pytorch.core.module.LightningModule` as well.
+
+        Args:
+            it_cfg (ITConfig): Configuration for this
+                :class:`~lightning.pytorch.core.module.LightningModule`.
+        """
+        super().__init__()
+        self.it_cfg = it_cfg
+        if self.it_cfg.debug_lm_cfg.enabled:  # conditionally load debugging extension
+            self.lm_debug = DebugGenerationMixin()
+            self.lm_debug.connect_lmdebug(self)
+        self._model_init()
 
     def _model_init(self) -> None:
         self.model = self._auto_model_init()
         self.model.config.update(self.it_cfg.model_cfg)  # apply model config overrides
         self.model.config.use_cache = self.it_cfg.use_model_cache
-        if self.it_cfg.activation_checkpointing:
-            self.model.gradient_checkpointing_enable()
-        if self.it_cfg.bitsandbytesconfig and self.it_cfg.lora_cfg: # use together for now, disentagle in the future
-            from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
-            self.model = prepare_model_for_kbit_training(self.model)
-            self.model = get_peft_model(self.model, LoraConfig(**self.it_cfg.lora_cfg))
+        self._configure_gradient_checkpointing()
+        # TODO: disentagle use of bnb and lora configs in the future, create single peft config perhaps
+        if all((_BNB_AVAILABLE, self.it_cfg.bitsandbytesconfig, self.it_cfg.lora_cfg)):
+            self._configure_peft()
+        self._log_hyperparameters()
+        self.metric = evaluate.load("super_glue", self.it_cfg.task_name,
+                                    experiment_id=self.init_hparams['experiment_id'])
+        if self.it_cfg.debug_lm_cfg.enabled and self.it_cfg.debug_lm_cfg.record_memory_history:
+            torch.cuda.memory._record_memory_history()
+
+    def _log_hyperparameters(self) -> None:
         self.init_hparams = {
             "optimizer_init": self.it_cfg.optimizer_init,
             "lr_scheduler_init": self.it_cfg.lr_scheduler_init,
@@ -59,10 +79,20 @@ class ModuleInitMixin(ABC):
             "experiment_id": f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.it_cfg.experiment_tag}",
             }
         self.init_hparams["env_info"] = collect_env_info() if self.it_cfg.log_env_details else None
-        self.save_hyperparameters(self.init_hparams)
-        self.metric = evaluate.load("super_glue", self.hparams.task_name, experiment_id=self.hparams.experiment_id)
-        if self.it_cfg.debug_lm_cfg.enabled and self.it_cfg.debug_lm_cfg.record_memory_history:
-            torch.cuda.memory._record_memory_history()
+        # TODO: add save_hyperparameters/basic logging func for raw pytorch
+        # (override w/ lightning version where appropriate)
+        #self.save_hyperparameters(self.init_hparams)
+
+    def _configure_gradient_checkpointing(self) -> None:
+        if self.it_cfg.activation_checkpointing:
+            self.model.gradient_checkpointing_enable()
+
+    def _configure_peft(self) -> None:
+        if self.it_cfg.activation_checkpointing:
+            self.model.gradient_checkpointing_enable()
+        from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
+        self.model = prepare_model_for_kbit_training(self.model)
+        self.model = get_peft_model(self.model, LoraConfig(**self.it_cfg.lora_cfg))
 
     def _cust_token_cfg(self, model: torch.nn.Module) -> Any:
         if self.it_cfg.tokenizer_id_overrides:
@@ -70,11 +100,7 @@ class ModuleInitMixin(ABC):
                 setattr(model.config, k, v)
 
     def _auto_model_init(self) -> Any:
-        if self.it_cfg.bitsandbytesconfig:
-            from transformers import BitsAndBytesConfig
-            quantization_config = BitsAndBytesConfig(**self.it_cfg.bitsandbytesconfig)
-        else:
-            quantization_config = None
+        quantization_config = self._configure_quantization()
         additional_from_pretrained_kwargs = {"pretrained_model_name_or_path": self.it_cfg.model_name_or_path,
                                              "quantization_config": quantization_config,
                                              "torch_dtype": self.it_cfg.torch_dtype}
@@ -83,11 +109,23 @@ class ModuleInitMixin(ABC):
               else None
         cust_config = self._gen_cust_config(access_token)
         cust_config.num_labels = self.it_cfg.num_labels
-        model = self._maybe_defer_model_init(cust_config, access_token)
+        model = self._configured_model_init(cust_config, access_token)
         self._cust_token_cfg(model)
+        model = self._maybe_resize_token_embeddings(model)
+        return model
+
+    def _maybe_resize_token_embeddings(self, model: torch.nn.Module) -> None:
         vocab_size = getattr(model.base_model, 'vocab_size', None) or model.config.vocab_size
         model.base_model.resize_token_embeddings(vocab_size + len(self.it_cfg.tokenizer_id_overrides))
         return model
+
+    def _configure_quantization(self) -> Optional[Any]:
+        if self.it_cfg.bitsandbytesconfig and _BNB_AVAILABLE:
+            from transformers import BitsAndBytesConfig
+            quantization_config = BitsAndBytesConfig(**self.it_cfg.bitsandbytesconfig)
+        else:
+            quantization_config = None
+        return quantization_config
 
     def _gen_cust_config(self, access_token: Optional[str] = None) -> PretrainedConfig:
         if self.it_cfg.auto_model_cfg:
@@ -101,13 +139,13 @@ class ModuleInitMixin(ABC):
             cust_config = config_class.from_pretrained(self.it_cfg.model_name_or_path)
         else:
             if self.it_cfg.defer_model_init:
-                rank_zero_warn("`defer_model_init` not currently supported without `auto_model_cfg` or "
+                rank_zero_info("`defer_model_init` not currently supported without `auto_model_cfg` or "
                                "`dynamic_module_cfg`. Proceeding with model init.")
             cust_config = AutoConfig.from_pretrained(**self.it_cfg.from_pretrained_cfg, token=access_token,
                                                      local_files_only=False)
         return cust_config
 
-    def _maybe_defer_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
+    def _configured_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
         -> torch.nn.Module:
         head_configured = self.it_cfg.auto_model_cfg or self.it_cfg.dynamic_module_cfg
         if not self.it_cfg.defer_model_init:
@@ -131,12 +169,11 @@ class ModuleInitMixin(ABC):
             try:
                 setattr(reduce(getattr, fqn_l[:-1], serial_cfg), fqn_l[-1], repr(reduce(getattr, fqn_l, serial_cfg)))
             except AttributeError as ae:
-                rank_zero_warn("Attempted to clean a key that was not present, continuing without cleaning that key: "
+                rank_zero_info("Attempted to clean a key that was not present, continuing without cleaning that key: "
                                f"{ae}")
         return serial_cfg
 
-
-class ITModule(ModuleInitMixin, pl.LightningModule):
+class ITModule(BaseITModule):
     """A :class:`~lightning.pytorch.core.module.LightningModule` that can be used to fine-tune a foundation model
     on either the RTE or BoolQ `SuperGLUE <https://super.gluebenchmark.com/>`_ tasks using Hugging Face
     implementations of a given model and the `SuperGLUE Hugging Face dataset.
@@ -174,14 +211,14 @@ class ITModule(ModuleInitMixin, pl.LightningModule):
 
     def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
         if self.it_cfg.debug_lm_cfg.enabled and self.it_cfg.debug_lm_cfg.record_memory_history:
-            torch.cuda.memory._dump_snapshot(f"/tmp/{self.hparams.experiment_id}_start_train_step_{self.global_step}.pickle")
+            torch.cuda.memory._dump_snapshot(f"/tmp/{self.init_hparams['experiment_id']}_start_train_step_{self.global_step}.pickle")
         loss = self(**batch)[0]
         self.log("train_loss", loss, sync_dist=True)
         return loss
 
     def on_train_epoch_start(self) -> None:
         if self.it_cfg.debug_lm_cfg.enabled and self.it_cfg.debug_lm_cfg.record_memory_history:
-            torch.cuda.memory._dump_snapshot(f"/tmp/{self.hparams.experiment_id}_start_train_epoch_{self.current_epoch}.pickle")
+            torch.cuda.memory._dump_snapshot(f"/tmp/{self.init_hparams['experiment_id']}_start_train_epoch_{self.current_epoch}.pickle")
         assert self.logger is not None
         if self.finetuningscheduler_callback:
             self.logger.log_metrics(
@@ -259,9 +296,93 @@ class ITModule(ModuleInitMixin, pl.LightningModule):
         # of the current fine-tuning schedule. This auto-configuration can be disabled if desired by setting
         # ``enforce_phase0_params`` to ``False``.
         self.model.enable_input_require_grads()
-        optimizer = instantiate_class(args=self.model.parameters(), init=self.hparams.optimizer_init)
+        optimizer = instantiate_class(args=self.model.parameters(), init=self.init_hparams['optimizer_init'])
         scheduler = {
-            "scheduler": instantiate_class(args=optimizer, init=self.hparams.lr_scheduler_init),
-            **self.hparams.pl_lrs_cfg,
+            "scheduler": instantiate_class(args=optimizer, init=self.init_hparams['lr_scheduler_init']),
+            **self.init_hparams['pl_lrs_cfg'],
         }
         return [optimizer], [scheduler]
+
+class ITHookedModule(BaseITModule):
+    def __init__(
+        self,  # note we explicitly include args shared with our data module
+        it_cfg: ITConfig,
+    ):
+        """In this example, this :class:`~lightning.pytorch.core.module.LightningModule` is initialized by composing
+        the ./config/fts_defaults.yaml default configuration with various scheduled fine-tuning yaml configurations
+        via the :class:`~lightning.pytorch.cli.LightningCLI` but it can be used like any other
+        :class:`~lightning.pytorch.core.module.LightningModule` as well.
+
+        Args:
+            it_cfg (ITConfig): Configuration for this
+                :class:`~lightning.pytorch.core.module.LightningModule`.
+        """
+        super().__init__(it_cfg=it_cfg)
+        self.datamodule = None
+        self.dump_base = None
+
+    def setup(self, datamodule: ITDataModule) -> None:
+        self.datamodule = datamodule
+        if self.it_cfg.tlens_from_pretrained_cfg.enabled:
+            self._convert_hf_to_hooked()
+        if self.it_cfg.zero_shot_cfg.enabled:
+            tokenizer, zs_cfg = self.datamodule.tokenizer, self.it_cfg.zero_shot_cfg
+            zs_cfg.entailment_mapping_indices = torch.tensor(tokenizer.convert_tokens_to_ids(zs_cfg.entailment_mapping))
+        self.dump_base = Path("/tmp/")
+        self.dump_path = self.dump_base / self.init_hparams['experiment_id']
+        self.dump_path.mkdir(exist_ok=True, parents=True)
+
+    def _configured_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
+        -> torch.nn.Module:
+        # usually makes sense to init the hooketransfomer (empty) and pretrained HF model weights on cpu
+        # versus moving them both to GPU (may make sense to explore meta device usage for model definition
+        # in the future, only materlizing parameter by parameter during loading from pretrained weights
+        # to eliminate need for two copies in memory)
+        model = self.it_cfg.model_class.from_pretrained(**self.it_cfg.from_pretrained_cfg, config=cust_config,
+                                                        token=access_token)
+        # perhaps explore initializing on the meta device and then materializing as needed layer by layer during
+        # loading/processing into hookedtransformer
+        # with torch.device("meta"):
+        #     model = self.it_cfg.model_class(config=cust_config)  # token=access_token)
+        return model
+
+    def _convert_hf_to_hooked(self) -> HookedTransformer:
+        self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=self.datamodule.tokenizer,
+                                                  **self.it_cfg.tlens_from_pretrained_cfg.__dict__)
+
+    def _log_hyperparameters(self) -> None:
+        self.it_cfg.lora_cfg = None
+        self.it_cfg.bitsandbytesconfig = None
+        # TODO: refactor the captured config here to only add tlens_from_pretrained, other added in superclass
+        self.init_hparams = {
+            "optimizer_init": self.it_cfg.optimizer_init,
+            "lr_scheduler_init": self.it_cfg.lr_scheduler_init,
+            "pl_lrs_cfg": self.it_cfg.pl_lrs_cfg,
+            "tlens_from_pretrained_cfg": self._make_config_serializable(self.it_cfg.tlens_from_pretrained_cfg,
+                                                                        ['device']),
+            "dynamic_module_cfg": self.it_cfg.dynamic_module_cfg,
+            "quantization_cfg": self.it_cfg.lora_cfg,
+            "auto_model_cfg": self.it_cfg.auto_model_cfg, # TODO: cleanup/consolidate saving configs/dedup
+            "model_config": self._make_config_serializable(self.model.config,
+                                                        ['quantization_config.bnb_4bit_compute_dtype',
+                                                            'torch_dtype', '_pre_quantization_dtype']),
+            "model_name_or_path": self.it_cfg.model_name_or_path,
+            "task_name": self.it_cfg.task_name,
+            "experiment_id": f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.it_cfg.experiment_tag}",
+            }
+        self.init_hparams["env_info"] = collect_env_info() if self.it_cfg.log_env_details else None
+        # TODO: add save_hyperparameters/basic logging func for raw pytorch
+        # (override w/ lightning version where appropriate)
+        #self.save_hyperparameters(self.init_hparams)
+
+    def _maybe_resize_token_embeddings(self, model: torch.nn.Module) -> None:
+        # embedding resizing not currently supported by ITHookedModule
+        return model
+
+    def _configure_gradient_checkpointing(self) -> None:
+        # gradient checkpointing not currently supported by ITHookedModule
+        pass
+
+    def _configure_peft(self) -> None:
+        # peft not currently supported by ITHookedModule
+        pass

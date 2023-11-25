@@ -1,0 +1,9 @@
+0:
+  params:
+  - model.score.weight
+1:
+  params:
+  - model.transformer.ln_f.*
+  #- model.transformer.h.(9|1[0-1]).(mlp|attn|ln_(1|2)).(c_proj|c_fc|c_attn|weight|bias).*
+  - model.transformer.h.[0-35].(mlp|attn|ln_(1|2)).(c_proj|c_fc|c_attn|weight|bias).*
+  - model.transformer.(wpe|wte).weight

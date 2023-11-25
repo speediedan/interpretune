@@ -1,0 +1,21 @@
+data.class_path: interpretune.models.lightning.gpt2.GPT2BoolRTELightningDataModule
+model.class_path: interpretune.models.lightning.gpt2_tlens.GPT2ITHookedLightningModule
+itdm_cfg:
+  model_name_or_path: gpt2
+  task_name: rte
+  prompt_cfg:
+    class_path: interpretune.models.core.gpt2.GPT2PromptConfig
+  tokenizers_parallelism: false
+  tokenizer_kwargs:
+    use_fast: true  # by default true
+    add_bos_token: true
+    local_files_only: false
+    padding_side: right
+    model_input_names: ['input_ids', 'attention_mask']
+it_cfg:
+  from_pretrained_cfg:
+    device_map: cpu
+trainer:
+  accumulate_grad_batches: 1
+  accelerator: gpu  # TODO: optimize hooked model device loading/movement
+  strategy: auto

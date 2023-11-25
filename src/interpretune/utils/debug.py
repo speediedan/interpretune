@@ -109,7 +109,6 @@ class DebugGenerationMixin(ABC):
         correct_tokens = self.phandle.trainer.datamodule.tokenizer.batch_decode(prediction[prediction == true_tokens])
         return num_correct/len(true_tokens), correct_tokens
 
-    # based on common basic implementation of perplexity (see https://huggingface.co/docs/transformers/perplexity)
     def naive_perplexity(self, encoded_corpus, stride: int = 512) -> float:
         max_length = self.phandle.trainer.model.model.config.n_positions
         stride = stride
@@ -126,6 +125,10 @@ class DebugGenerationMixin(ABC):
 
             with torch.no_grad():
                 outputs = self.phandle.trainer.model(input_ids=input_ids, labels=target_ids)
+
+                # loss is calculated using CrossEntropyLoss which averages over valid labels
+                # N.B. the model only calculates loss over trg_len - 1 labels, because it internally shifts the labels
+                # to the left by 1.
                 neg_log_likelihood = outputs.loss
 
             nlls.append(neg_log_likelihood)

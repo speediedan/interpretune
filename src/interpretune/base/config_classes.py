@@ -1,10 +1,19 @@
 import os
 from typing import Any, Dict, Optional, Tuple, List, Union, Literal
 from dataclasses import dataclass, field
+import logging
 
 import torch
-from lightning.pytorch.utilities import rank_zero_warn, rank_zero_info
 import numpy as np
+
+from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
+
+if _LIGHTNING_AVAILABLE:
+    from lightning.pytorch.utilities import rank_zero_warn, rank_zero_info  # type: ignore[no-redef]
+else:
+    from interpretune.utils.logging import rank_zero_warn, rank_zero_info  # type: ignore[no-redef]
+
+log = logging.getLogger(__name__)
 
 TASK_NUM_LABELS = {"boolq": 2, "rte": 2}
 DEFAULT_TASK = "rte"
@@ -48,12 +57,20 @@ class ITTLensFromPretrainedConfig:
     # only supporting str for device for now due to omegaconf container dumping limitations
     device: Optional[str] = None
     n_devices: Optional[int] = 1
+    #tokenizer: Optional[PreTrainedTokenizerBase] = None
     move_to_device: Optional[bool] = True
     fold_value_biases: Optional[bool] = True
     default_prepend_bos: Optional[bool] = True
     default_padding_side: Optional[Literal["left", "right"]] = "right"
     dtype: Optional[str] = "float32"
+    #
+    # def to_tlens(self):
+    #     return self.__dict__
 
+# @dataclass
+# class ITTransformerLensConfig:
+#     enabled: bool = False
+#     from_pretrained: ITTransformerLensPreTrained = field(default_factory=lambda: ITTransformerLensPreTrained())
 
 @dataclass
 class DebugLMConfig:
