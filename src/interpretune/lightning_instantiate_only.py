@@ -13,13 +13,13 @@
 
 import sys
 from typing import List
-#from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE, _FTS_AVAILABLE
+from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.utils.cli import compose_config
 from interpretune.utils.lightning_cli import cli_main
 
 
 def run_direct(config_files: List[str]):
-    #assert _LIGHTNING_AVAILABLE, "Lightning not installed."
+    assert _LIGHTNING_AVAILABLE, "Lightning not installed so cannot invoke Lightning CLI."
     cli = cli_main(**compose_config(config_files))
     cli.trainer.test(cli.model, datamodule=cli.datamodule)
     cli.trainer.predict(cli.model, datamodule=cli.datamodule)

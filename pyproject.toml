@@ -94,9 +94,12 @@ version = {attr = "interpretune.__about__.__version__"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-#"interpretune.config.experiments" = ["*.yaml"]
-#"interpretune.config.ft_schedules" = ["*.yaml"]
-#"interpretune.config.shared" = ["*.yaml"]
+#"it_examples.config.core.experiments" = ["*.yaml"]
+#"it_examples.config.core.ft_schedules" = ["*.yaml"]
+#"it_examples.config.core.shared" = ["*.yaml"]
+#"it_examples.config.lightning.experiments" = ["*.yaml"]
+#"it_examples.config.lightning.ft_schedules" = ["*.yaml"]
+#"it_examples.config.lightning.shared" = ["*.yaml"]
 "*" = ["*.yaml"]
 
 [tool.ruff]

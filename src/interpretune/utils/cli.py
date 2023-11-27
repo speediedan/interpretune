@@ -39,6 +39,11 @@ from jsonargparse import (
 max_seed_value = np.iinfo(np.uint32).max
 min_seed_value = np.iinfo(np.uint32).min
 
+IT_BASE = os.environ.get("IT_BASE", Path(__file__).parent.parent.parent / "it_examples")
+IT_CONFIG_BASE = os.environ.get("IT_BASE", IT_BASE / "config")
+IT_CORE_SHARED = os.environ.get("IT_CORE_SHARED", IT_CONFIG_BASE / "core" / "shared")
+IT_LIGHTING_SHARED = os.environ.get("IT_LIGHTING_SHARED", IT_CONFIG_BASE / "lightning" / "shared")
+
 log = logging.getLogger(__name__)
 
 def _select_seed_randomly(min_seed_value: int = min_seed_value, max_seed_value: int = max_seed_value) -> int:
@@ -62,7 +67,7 @@ def seed_everything(seed: Optional[int] = None, workers: bool = False) -> int:
 
     """
     if seed is None:
-        env_seed = os.environ.get("ITT_GLOBAL_SEED")
+        env_seed = os.environ.get("IT_GLOBAL_SEED")
         if env_seed is None:
             seed = _select_seed_randomly(min_seed_value, max_seed_value)
             rank_zero_info(f"No seed found, seed set to {seed}")
@@ -80,7 +85,7 @@ def seed_everything(seed: Optional[int] = None, workers: bool = False) -> int:
         seed = _select_seed_randomly(min_seed_value, max_seed_value)
 
     log.info(f"Seed set to {seed}")
-    os.environ["ITT_GLOBAL_SEED"] = str(seed)
+    os.environ["IT_GLOBAL_SEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -107,21 +112,16 @@ class ITCLI:
         """
         self.seed_everything_default = seed_everything_default
         self.parser_kwargs = parser_kwargs or {}  # type: ignore[var-annotated]  # github.com/python/mypy/issues/6463
-        #self.auto_configure_optimizers = auto_configure_optimizers
         self.model_class = model_class
         self.datamodule_class = datamodule_class
         self.setup_parser(parser_kwargs)
         self.parse_arguments(self.parser, args)
-
-        #self.subcommand = self.config["subcommand"] if run else None
 
         self._set_seed()
 
         self.before_instantiate_classes()
         self.instantiate_classes()
 
-        #if self.subcommand is not None:
-        #   self._run_subcommand(self.subcommand)
 
     def setup_parser(
         self, main_kwargs: Dict[str, Any]) -> None:
@@ -140,17 +140,8 @@ class ITCLI:
         return parser
 
     def _add_arguments(self, parser: ArgumentParser) -> None:
-        # default + core + custom arguments
         self.add_default_arguments_to_parser(parser)
-        #self.add_core_arguments_to_parser(parser)
         self.add_arguments_to_parser(parser)
-        # add default optimizer args if necessary
-        # if self.auto_configure_optimizers:
-        #     if not parser._optimizers:  # already added by the user in `add_arguments_to_parser`
-        #         parser.add_optimizer_args((Optimizer,))
-        #     if not parser._lr_schedulers:  # already added by the user in `add_arguments_to_parser`
-        #         parser.add_lr_scheduler_args(LRSchedulerTypeTuple)
-        #self.link_optimizers_and_lr_schedulers(parser)
 
     def add_default_arguments_to_parser(self, parser: ArgumentParser) -> None:
             """Adds default arguments to the parser."""
@@ -164,32 +155,14 @@ class ITCLI:
                 ),
             )
 
-    # def add_core_arguments_to_parser(self, parser: ArgumentParser) -> None:
-    #     """Adds arguments from the core classes to the parser."""
-    #     #parser.add_lightning_class_args(self.trainer_class, "trainer")
-    #     #trainer_defaults = {"trainer." + k: v for k, v in self.trainer_defaults.items() if k != "callbacks"}
-    #     #parser.set_defaults(trainer_defaults)
-
-    #     parser.add_lightning_class_args(self._model_class, "model", subclass_mode=self.subclass_mode_model)
-
-    #     if self.datamodule_class is not None:
-    #         parser.add_lightning_class_args(self._datamodule_class, "data", subclass_mode=self.subclass_mode_data)
-    #     else:
-    #         # this should not be required because the user might want to use the `LightningModule` dataloaders
-    #         parser.add_lightning_class_args(
-    #             self._datamodule_class, "data", subclass_mode=self.subclass_mode_data, required=False
-    #         )
 
     def add_arguments_to_parser(self, parser: ArgumentParser) -> None:
-        # parser.add_class_arguments(ITDataModule, "data")
-        # parser.add_class_arguments(ITHookedModule, "model")
         parser.add_subclass_arguments(ITDataModule, "data", fail_untyped=False, required=True)
         parser.add_subclass_arguments(ITHookedModule, "model", fail_untyped=False, required=True)
         parser.add_class_arguments(ITDataModuleConfig, "itdm_cfg")
         parser.add_class_arguments(ITConfig, "it_cfg")
         parser.link_arguments("itdm_cfg", "data.init_args.itdm_cfg")
         parser.link_arguments("it_cfg", "model.init_args.it_cfg")
-        #parser.link_arguments("trainer.logger.init_args.name", "it_cfg.experiment_tag")
         parser.link_arguments("itdm_cfg.model_name_or_path", "it_cfg.model_name_or_path")
         parser.link_arguments("itdm_cfg.tokenizer_id_overrides", "it_cfg.tokenizer_id_overrides")
         parser.link_arguments("itdm_cfg.os_env_model_auth_key", "it_cfg.os_env_model_auth_key")
@@ -218,9 +191,6 @@ class ITCLI:
             config_seed = seed_everything(workers=True)
         else:
             config_seed = seed_everything(config_seed, workers=True)
-        # if self.subcommand:
-        #     self.config[self.subcommand]["seed_everything"] = config_seed
-        # else:
         self.config["seed_everything"] = config_seed
 
     def before_instantiate_classes(self) -> None:
@@ -231,8 +201,6 @@ class ITCLI:
         self.config_init = self.parser.instantiate_classes(self.config)
         self.datamodule = self.config_init.get("data", None)
         self.model = self.config_init.get("model", None)
-        #self._add_configure_optimizers_method_to_model(self.subcommand)
-        #self.trainer = self.instantiate_trainer()
 
 
 def env_setup() -> None:
@@ -259,13 +227,12 @@ def enumerate_config_files(folder: Union[Path, str]) -> List:
 def compose_config(config_files: List[str]) -> Dict:
     args = []
     config_file_paths = []
-    # TODO: make the it_base config directory configurable
-    it_base = Path(__file__).parent.parent
-    config_base_path = it_base / "config"
+
 
     def raise_fnf(p: Path):
-        raise FileNotFoundError(f"Could not find configuration file path: {p}. Please provide file paths relative to "
-                                f"the ri config base directory {config_base_path} or provide a valid absolute path.")
+        raise FileNotFoundError(f"Could not find configuration file path: {p}. Please provide file paths relative to"
+                                f" the interpretune config base directory {IT_CONFIG_BASE} or provide a valid"
+                                " absolute path.")
 
     for p in config_files:
         p = Path(p)
@@ -275,14 +242,12 @@ def compose_config(config_files: List[str]) -> Dict:
             else:
                 raise_fnf(p)
         else:
-            if (p_cfg_base_found := config_base_path / p).exists():  # try explicit path in the config base
+            if (p_cfg_base_found := IT_CONFIG_BASE / p).exists():  # try explicit path in the config base
                 config_file_paths.append(p_cfg_base_found)
-            # TODO: add info or warn level log message if explicit path not found and searching using glob
-            # (could match unexpected files!)
-            elif (p_base_found := sorted(it_base.rglob(p.name))) and p_base_found[0].exists():  # more expansive search
+            elif (p_base_found := sorted(IT_BASE.rglob(p.name))) and p_base_found[0].exists():  # more expansive search
                 if p_base_found[0].exists():
-                    rank_zero_warn(f"Could not find explicit path for config file: `{config_base_path / p}`. Glob "
-                                   f" search within `{it_base}` found `{p_base_found[0]}` which will be used instead.")
+                    rank_zero_warn(f"Could not find explicit path for config file: `{IT_CONFIG_BASE / p}`. Glob "
+                                   f" search within `{IT_BASE}` found `{p_base_found[0]}` which will be used instead.")
                     config_file_paths.append(p_base_found[0])
             else:
                 raise_fnf(p)
@@ -293,8 +258,7 @@ def compose_config(config_files: List[str]) -> Dict:
 
 def cli_main(args: ArgsType = None, instantiate_only: bool = False) -> Optional[ITCLI]:
     env_setup()
-    shared_config_path = Path(__file__).parent.parent / "config" / "core" / "shared"
-    shared_config_files = enumerate_config_files(shared_config_path)
+    shared_config_files = enumerate_config_files(IT_CORE_SHARED)
     parser_kwargs = {"default_config_files": shared_config_files}
     cli = ITCLI(
         parser_kwargs=parser_kwargs,

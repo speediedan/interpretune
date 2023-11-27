@@ -1,11 +1,10 @@
 from typing import Optional
-from pathlib import Path
 
 import lightning.pytorch as pl
 from lightning.pytorch.cli import LightningCLI, LightningArgumentParser, ArgsType
 
 from interpretune.base.config_classes import ITConfig, ITDataModuleConfig
-from interpretune.utils.cli import enumerate_config_files, env_setup
+from interpretune.utils.cli import enumerate_config_files, env_setup, IT_LIGHTING_SHARED
 
 class ITCLI(LightningCLI):
     """Customize the :class:`~lightning.pytorch.cli.LightningCLI` to ensure the
@@ -26,8 +25,7 @@ class ITCLI(LightningCLI):
 
 def cli_main(args: ArgsType = None, instantiate_only: bool = False) -> Optional[ITCLI]:
     env_setup()
-    shared_config_path = Path(__file__).parent.parent / "config" / "lightning" / "shared"
-    shared_config_files = enumerate_config_files(shared_config_path)
+    shared_config_files = enumerate_config_files(IT_LIGHTING_SHARED)
     # currently, share config files for each subcommand but leave separate for future customization
     parser_kwargs = {"default_config_files": shared_config_files} if instantiate_only else \
         {"fit": {"default_config_files": shared_config_files},

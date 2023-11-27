@@ -7,7 +7,6 @@ from functools import reduce
 from pathlib import Path
 
 import torch
-import evaluate
 from transformers import AutoConfig, AutoModelForSequenceClassification, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
@@ -58,10 +57,12 @@ class BaseITModule(ABC):
         if all((_BNB_AVAILABLE, self.it_cfg.bitsandbytesconfig, self.it_cfg.lora_cfg)):
             self._configure_peft()
         self._log_hyperparameters()
-        self.metric = evaluate.load("super_glue", self.it_cfg.task_name,
-                                    experiment_id=self.init_hparams['experiment_id'])
+        self._load_metric()
         if self.it_cfg.debug_lm_cfg.enabled and self.it_cfg.debug_lm_cfg.record_memory_history:
             torch.cuda.memory._record_memory_history()
+
+    def _load_metric(self) -> None:
+        """Optionally load a metric at the end of model initialization."""
 
     def _log_hyperparameters(self) -> None:
         self.init_hparams = {
@@ -202,6 +203,7 @@ class ITModule(BaseITModule):
         self._model_init()
 
     def setup(self, stage: str) -> None:
+        # TODO: move this setup to relevant task/model-specific modules
         if self.it_cfg.zero_shot_cfg.enabled:
             tokenizer, zs_cfg = self.trainer.datamodule.tokenizer, self.it_cfg.zero_shot_cfg
             zs_cfg.entailment_mapping_indices = torch.tensor(tokenizer.convert_tokens_to_ids(zs_cfg.entailment_mapping))

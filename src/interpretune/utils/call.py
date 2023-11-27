@@ -37,7 +37,7 @@ class _hookNameContextManager:
         self.previous_fx_name = self._module_ref._current_fx_name
         self._module_ref._current_fx_name = self._hook_name
 
-    def __exit__(self) -> None:
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
         self._module_ref._current_fx_name = self.previous_fx_name
 
 def _call_itmodule_hook(

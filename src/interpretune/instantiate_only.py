@@ -13,12 +13,14 @@
 
 import sys
 from typing import List
+import logging
+
 from interpretune.utils.cli import cli_main, compose_config
 from interpretune.utils.call import _call_itmodule_hook
 from interpretune.utils.logging import rank_zero_info
-#import logging
 
-#log = logging.getLogger(__name__)
+
+log = logging.getLogger(__name__)
 
 def run_direct(config_files: List[str]):
     cli = cli_main(**compose_config(config_files))

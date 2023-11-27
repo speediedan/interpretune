@@ -1,0 +1,74 @@
+itdm_cfg:
+  model_name_or_path: gpt2
+  #model_name_or_path: gpt2-large
+  task_name: rte
+  dataset_path: /home/speediedan/.cache/huggingface/datasets/rte
+  train_batch_size: 32
+  eval_batch_size: 32
+  prepare_validation_set_only: true
+  #cust_tokenization_pattern: llama2-nochat
+  tokenizer_id_overrides:
+    pad_token_id: 50256
+  prompt_cfg:
+    class_path: it_examples.models.core.gpt2.GPT2PromptConfig
+    init_args:
+      cust_task_prompt:
+        context: '<|PREMISE|>:'
+        question: '<|HYPOTHESIS|>:'
+it_cfg:
+  # zero_shot_cfg:
+  #   enabled: true
+  #   lm_generation_cfg:
+  #     max_new_tokens: 5
+  auto_model_cfg:
+    model_head: transformers.GPT2LMHeadModel
+  tlens_from_pretrained_cfg:
+    enabled: true
+    model_name: gpt2-small
+    fold_ln: true
+    center_writing_weights: true
+    center_unembed: true
+    refactor_factored_attn_matrices: false
+    checkpoint_index: null
+    checkpoint_value: null
+    # hf_model: transformers.GPT2LMHeadModel
+    device: cuda
+    n_devices: 1
+    #tokenizer: null # pass tokenizer during setup
+    move_to_device: true
+    fold_value_biases: true
+    default_prepend_bos: true
+    default_padding_side: right
+    dtype: bfloat16
+  activation_checkpointing: false
+  #bitsandbytesconfig: null
+  #lora_cfg: null
+  # auto_model_cfg:
+  #   model_head: transformers.GPT2ForSequenceClassification
+trainer:
+  #max_epochs: 600
+  accumulate_grad_batches: 1
+  devices: 1
+  # callbacks:
+  # - class_path: finetuning_scheduler.FinetuningScheduler
+  #   init_args:
+  #     ft_schedule: /home/speediedan/repos/interpretune/src/it_examples/config/core/ft_schedules/ITModule_ft_schedule_gpt2_small_sc_no_tlens_max_trans_warmup.yaml
+  #     max_depth: 1
+  #     epoch_transitions_only: true
+  #     logging_level: 10  # enable DEBUG logging to trace all reinitializations
+  # - class_path: finetuning_scheduler.FTSCheckpoint
+  #   init_args:
+  #     save_top_k: 1
+  #     monitor: val_loss
+  #     verbose: true
+  # - class_path: finetuning_scheduler.FTSEarlyStopping
+  #   init_args:
+  #     monitor: val_loss
+  #     min_delta: 0.001
+  #     patience: 2 # limited patience for example
+  #     verbose: true
+  #     mode: min
+  logger:
+    class_path: lightning.pytorch.loggers.TensorBoardLogger
+    init_args:
+      name: gpt2_tlens_rte_small_noquant_test

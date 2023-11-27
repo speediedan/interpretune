@@ -34,17 +34,16 @@ class LMGenerationConfig:
     output_scores: bool = True
     return_dict_in_generate: bool = True
 
-@dataclass
+@dataclass(kw_only=True)
 class ITZeroShotClassificationConfig:
     enabled: bool = False
+    lm_generation_cfg: LMGenerationConfig = field(default_factory=lambda: LMGenerationConfig())
     entailment_mapping: Tuple = ("Yes", "No")  # RTE style, invert mapping for BoolQ
     entailment_mapping_indices: Optional[torch.Tensor] = None
-    lm_generation_cfg: LMGenerationConfig = field(default_factory=lambda: LMGenerationConfig())
-
 
 @dataclass
 class ITTLensFromPretrainedConfig:
-    # TODO: inherit shared values from riconfig and remove from here
+    # TODO: inherit shared values from it_cfg and remove from here
     # TODO: add logic to allow passing in existing tokenizer rather than letting tlens create it
     enabled: bool = False
     model_name: str = "gpt2-large"  # change back to small after testing
@@ -57,20 +56,12 @@ class ITTLensFromPretrainedConfig:
     # only supporting str for device for now due to omegaconf container dumping limitations
     device: Optional[str] = None
     n_devices: Optional[int] = 1
-    #tokenizer: Optional[PreTrainedTokenizerBase] = None
     move_to_device: Optional[bool] = True
     fold_value_biases: Optional[bool] = True
     default_prepend_bos: Optional[bool] = True
     default_padding_side: Optional[Literal["left", "right"]] = "right"
     dtype: Optional[str] = "float32"
-    #
-    # def to_tlens(self):
-    #     return self.__dict__
 
-# @dataclass
-# class ITTransformerLensConfig:
-#     enabled: bool = False
-#     from_pretrained: ITTransformerLensPreTrained = field(default_factory=lambda: ITTransformerLensPreTrained())
 
 @dataclass
 class DebugLMConfig:
@@ -85,6 +76,7 @@ class DebugLMConfig:
         if len(self.raw_debug_sequences) == 0 and self.enabled:
             self.raw_debug_sequences = ['What is the color of a banana?', 'List the first 5 letters in the alphabet.',
                                         'How many days in a week?', 'How old is Barack Obama?']
+
 
 @dataclass
 class PromptConfig:
