@@ -1,0 +1,47 @@
+itdm_cfg:
+  model_name_or_path: gpt2
+  #model_name_or_path: gpt2-large
+  task_name: rte
+  dataset_path: /home/speediedan/.cache/huggingface/datasets/rte
+  train_batch_size: 32
+  eval_batch_size: 32
+  prepare_validation_set_only: false
+  tokenizer_id_overrides:
+    pad_token_id: 50256
+    question_token_id: 50257
+    context_token_id: 50258
+  special_tokens_dict: {"additional_special_tokens": ["<|PREMISE|>","<|HYPOTHESIS|>"]}  # TODO: inspect sorting of this list to determine id
+  #cust_tokenization_pattern: llama2-nochat
+it_cfg:
+  # zero_shot_cfg:
+  #   enabled: true
+  #   lm_generation_cfg:
+  #     max_new_tokens: 5
+  activation_checkpointing: false
+  #bitsandbytesconfig: null
+  #lora_cfg: null
+  auto_model_cfg:
+    model_head: transformers.GPT2ForSequenceClassification
+trainer:
+  devices: 1
+  callbacks:
+  - class_path: finetuning_scheduler.FinetuningScheduler
+    init_args:
+      ft_schedule: /home/speediedan/repos/interpretune/src/it_examples/config/ft_schedules/ITModule_ft_schedule_gpt2_small_sc_no_tlens.yaml
+      max_depth: 1
+  - class_path: finetuning_scheduler.FTSCheckpoint
+    init_args:
+      save_top_k: 1
+      monitor: val_loss
+      verbose: true
+  - class_path: finetuning_scheduler.FTSEarlyStopping
+    init_args:
+      monitor: val_loss
+      min_delta: 0.001
+      patience: 3 # limited patience for example
+      verbose: true
+      mode: min
+  logger:
+    class_path: lightning.pytorch.loggers.TensorBoardLogger
+    init_args:
+      name: gpt2_notlens_rte_small_noquant_sc_ft_no_cust_tokens

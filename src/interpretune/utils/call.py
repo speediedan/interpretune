@@ -14,8 +14,8 @@
 import logging
 from typing import Any, Union
 
-from interpretune.base.base_datamodule import ITDataModule
-from interpretune.base.base_module import ITHookedModule
+from interpretune.base.it_datamodule import ITDataModule
+from interpretune.base.it_module import ITHookedModule
 
 log = logging.getLogger(__name__)
 

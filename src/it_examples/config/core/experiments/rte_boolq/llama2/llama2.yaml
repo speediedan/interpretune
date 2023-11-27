@@ -1,0 +1,27 @@
+data.class_path: it_examples.experiments.rte_boolq.core.Llama2RTEBoolqDataModule
+model.class_path: it_examples.experiments.rte_boolq.core.Llama2ITModule
+itdm_cfg:
+  model_name_or_path: meta-llama/Llama-2-7b-chat-hf
+  task_name: rte
+  os_env_model_auth_key: LLAMA2_AUTH_KEY
+  tokenizer_id_overrides:
+    pad_token_id: 32000
+  special_tokens_dict: {"pad_token": "<PAD>"}
+  prompt_cfg:
+    class_path: it_examples.experiments.rte_boolq.core.Llama2PromptConfig
+  tokenizers_parallelism: false
+  tokenizer_kwargs:
+    use_fast: true  # by default true
+    local_files_only: false
+    padding_side: left
+    model_input_names: ['input_ids', 'attention_mask']
+  # signature_columns: ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds', 'labels',
+  #                     'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+it_cfg:
+  lora_cfg:
+    r: 8
+    lora_alpha: 32
+    target_modules: ["q_proj", "v_proj"]
+    lora_dropout: 0.05
+    bias: none
+    task_type: "CAUSAL_LM"

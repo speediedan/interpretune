@@ -25,8 +25,8 @@ from transformers import logging as transformers_logging
 
 from interpretune.utils.types import ArgsType
 from interpretune.base.config_classes import ITConfig, ITDataModuleConfig
-from interpretune.base.base_datamodule import ITDataModule
-from interpretune.base.base_module import ITHookedModule
+from interpretune.base.it_datamodule import ITDataModule
+from interpretune.base.it_module import ITHookedModule
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.import_utils import _DOTENV_AVAILABLE
 
