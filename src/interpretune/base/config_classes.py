@@ -27,7 +27,7 @@ def it_cfg_mapping_representer(dumper, data):
 
 
 @dataclass
-class LMGenerationConfig:
+class LMGenerationConfig(ITSerializableCfg):
     max_new_tokens: int = 5  # nb maxing logits over multiple tokens (n<=5) will yield a very slight perf gain versus 1
     do_sample: bool = True
     top_p: float = 1.0
