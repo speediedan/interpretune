@@ -12,6 +12,7 @@ class ITCLI(LightningCLI):
     use the same Hugging Face model, SuperGLUE task and custom logging tag."""
 
     def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
+        # See NOTE [Interpretune Dataclass-Oriented Configuration]
         parser.add_class_arguments(ITDataModuleConfig, "itdm_cfg")
         parser.add_class_arguments(ITConfig, "it_cfg")
         parser.link_arguments("itdm_cfg", "data.init_args.itdm_cfg")

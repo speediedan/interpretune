@@ -26,7 +26,7 @@ from transformers import logging as transformers_logging
 from interpretune.utils.types import ArgsType
 from interpretune.base.config_classes import ITConfig, ITDataModuleConfig
 from interpretune.base.it_datamodule import ITDataModule
-from interpretune.base.it_module import ITHookedModule
+from interpretune.base.it_module import ITModule, BaseITModule
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.import_utils import _DOTENV_AVAILABLE
 
@@ -97,7 +97,7 @@ class ITCLI:
     use the same Hugging Face model, SuperGLUE task and custom logging tag."""
     def __init__(
         self,
-        model_class: ITHookedModule = None,
+        model_class: ITModule = None,
         datamodule_class: ITDataModule = None,
         parser_kwargs: Optional[Union[Dict[str, Any], Dict[str, Dict[str, Any]]]] = None,
         args: ArgsType = None,
@@ -158,7 +158,12 @@ class ITCLI:
 
     def add_arguments_to_parser(self, parser: ArgumentParser) -> None:
         parser.add_subclass_arguments(ITDataModule, "data", fail_untyped=False, required=True)
-        parser.add_subclass_arguments(ITHookedModule, "model", fail_untyped=False, required=True)
+        parser.add_subclass_arguments(BaseITModule, "model", fail_untyped=False, required=True)
+        # NOTE [Interpretune Dataclass-Oriented Configuration]
+        # For base Interpretune classes, we use configuration dataclasses (e.g. `ITConfig`, `ITDataModuleConfig`) rather
+        # than passing numerous arguments to the relevant constructors. Aggregate feedback from other ML framework
+        # usage arguably suggests this approach makes instantiation both more flexible and intuitive. (e.g. nested
+        # configuration, configuration inheritance, modular `post_init` methods etc.)
         parser.add_class_arguments(ITDataModuleConfig, "itdm_cfg")
         parser.add_class_arguments(ITConfig, "it_cfg")
         parser.link_arguments("itdm_cfg", "data.init_args.itdm_cfg")
@@ -210,8 +215,9 @@ def env_setup() -> None:
         load_dotenv()
     transformers_logging.set_verbosity_error()
     # ignore warnings related tokenizers_parallelism/DataLoader parallelism tradeoff and
-    #  expected logging behavior
-    for warnf in [".*does not have many workers*", ".*The number of training samples.*"]:
+    #  expected logging behavior (e.g. we don't depend on jsonargparse config serialization)
+    for warnf in [".*does not have many workers*", ".*The number of training samples.*",
+                  r"\n.*Unable to serialize.*\n"]:
         warnings.filterwarnings("ignore", warnf)
 
 
@@ -255,6 +261,7 @@ def compose_config(config_files: List[str]) -> Dict:
         args.extend(["--config", str(config)])
     instantiate_only = True
     return {"args": args, "instantiate_only": instantiate_only}
+
 
 def cli_main(args: ArgsType = None, instantiate_only: bool = False) -> Optional[ITCLI]:
     env_setup()

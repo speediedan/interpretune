@@ -2,6 +2,7 @@ seed_everything: 42
 data.class_path: interpretune.base.it_datamodule.ITDataModule
 model.class_path: interpretune.base.it_module.ITHookedModule
 itdm_cfg:
+  task_name: override in experiment config
   model_name_or_path: override in experiment config
   data_collator_cfg:
     collator_class: transformers.DataCollatorWithPadding

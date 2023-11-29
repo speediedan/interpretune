@@ -3,10 +3,11 @@ import sys
 import logging
 import warnings
 from collections import namedtuple
-from typing import Optional, Callable, Any, TypeVar, Union, Dict
+from typing import Optional, Callable, Any, TypeVar, Union, Dict, Type
 from typing_extensions import ParamSpec, overload
 from functools import wraps
 from platform import python_version
+from pathlib import Path
 
 import torch
 from torch.utils import collect_env
@@ -21,13 +22,31 @@ if _LIGHTNING_AVAILABLE:
 else:
     _get_rank = lambda: None
 
-# mostly from lightning_utilities.core.rank_zero
+_default_format_warning = warnings.formatwarning
+
+# mostly adapted from lightning_utilities.core.rank_zero
 
 log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 P = ParamSpec("P")
 
+
+# adapted from lightning.fabric.utilities.warnings
+def _custom_format_warning(
+    message: Union[Warning, str], category: Type[Warning], filename: str, lineno: int, line: Optional[str] = None
+) -> str:
+    """Custom formatting that avoids an extra line in case warnings are emitted from the `rank_zero`-functions."""
+    if _is_path_in_interpretune(Path(filename)):
+        # The warning originates from the Interpretune package
+        return f"{filename}:{lineno}: {message}\n"
+    return _default_format_warning(message, category, filename, lineno, line)
+
+def _is_path_in_interpretune(path: Path) -> bool:
+    """Naive check whether the path looks like a path from the Interpretune package."""
+    return "interpretune" in str(path.absolute())
+
+warnings.formatwarning = _custom_format_warning
 
 @overload
 def rank_zero_only(fn: Callable[P, T]) -> Callable[P, Optional[T]]:

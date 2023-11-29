@@ -29,7 +29,7 @@ class BaseITModule(ABC):
     #     return fts_callback[0] if fts_callback else None
 
     def __init__(
-        self,  # note we explicitly include args shared with our data module
+        self,
         it_cfg: ITConfig,
     ):
         """In this example, this :class:`~lightning.pytorch.core.module.LightningModule` is initialized by composing
@@ -41,12 +41,18 @@ class BaseITModule(ABC):
             it_cfg (ITConfig): Configuration for this
                 :class:`~lightning.pytorch.core.module.LightningModule`.
         """
+        # See NOTE [Interpretune Dataclass-Oriented Configuration]
+        ## TODO: consider making this more extensible by passing args/kwargs in addition to it_cfg
         super().__init__()
-        self.it_cfg = it_cfg
+        self.it_cfg = self._before_it_cfg_init(it_cfg=it_cfg)
         if self.it_cfg.debug_lm_cfg.enabled:  # conditionally load debugging extension
             self.lm_debug = DebugGenerationMixin()
             self.lm_debug.connect_lmdebug(self)
         self._model_init()
+
+    def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
+        """Optionally modify configuration before it_cfg is initialized."""
+        return it_cfg
 
     def _model_init(self) -> None:
         self.model = self._auto_model_init()
@@ -182,7 +188,8 @@ class ITModule(BaseITModule):
     <https://huggingface.co/datasets/super_glue#data-instances>`_.
     """
 
-    def __init__(
+
+    def __init__(  # TODO: remove this duplicate constructor, should only need superclass constructor
         self,  # note we explicitly include args shared with our data module
         it_cfg: ITConfig,
     ):
@@ -307,7 +314,7 @@ class ITModule(BaseITModule):
 
 class ITHookedModule(BaseITModule):
     def __init__(
-        self,  # note we explicitly include args shared with our data module
+        self,
         it_cfg: ITConfig,
     ):
         """In this example, this :class:`~lightning.pytorch.core.module.LightningModule` is initialized by composing
@@ -319,6 +326,7 @@ class ITHookedModule(BaseITModule):
             it_cfg (ITConfig): Configuration for this
                 :class:`~lightning.pytorch.core.module.LightningModule`.
         """
+        # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__(it_cfg=it_cfg)
         self.datamodule = None
         self.dump_base = None

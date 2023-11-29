@@ -1,5 +1,5 @@
 data.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqDataModule
-model.class_path: it_examples.experiments.rte_boolq.core.GPT2ITHookedModule
+model.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqITHookedModule
 itdm_cfg:
   model_name_or_path: gpt2
   task_name: rte

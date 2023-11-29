@@ -7,10 +7,21 @@ itdm_cfg:
   prepare_validation_set_only: true
   cust_tokenization_pattern: llama2-chat
 it_cfg:
+  # defining the config class with custom dataclass overrides
+  # zero_shot_cfg:
+  #   class_path: it_examples.experiments.rte_boolq.core.RTEBoolqZeroShotClassificationConfig
+  #   init_args:
+  #     enabled: true
+  #     lm_generation_cfg:
+  #       class_path: interpretune.base.config_classes.LMGenerationConfig
+  #       init_args:
+  #         max_new_tokens: 5
   zero_shot_cfg:
-    enabled: true
-    lm_generation_cfg:
-      max_new_tokens: 5
+    class_path: it_examples.experiments.rte_boolq.core.RTEBoolqZeroShotClassificationConfig
+    init_args:
+      enabled: true
+      lm_generation_cfg:
+        max_new_tokens: 5
   activation_checkpointing: false
   use_model_cache: true
   auto_model_cfg:

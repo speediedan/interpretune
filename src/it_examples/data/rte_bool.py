@@ -5,12 +5,25 @@ import torch
 from torch.utils.data import DataLoader
 import datasets
 
+from interpretune.base.config_classes import ITDataModuleConfig
 from interpretune.base.it_datamodule import ITDataModule
+from interpretune.utils.logging import rank_zero_warn
 
 log = logging.getLogger(__name__)
 
 
+TASK_TEXT_FIELD_MAP = {"rte": ("premise", "hypothesis"), "boolq": ("passage", "question")}
+TASK_NUM_LABELS = {"boolq": 2, "rte": 2}
+DEFAULT_TASK = "rte"
+INVALID_TASK_MSG = f" is an invalid task_name. Proceeding with the default task: {DEFAULT_TASK!r}"
+
 class RTEBoolqDataModule(ITDataModule):
+    def __init__(self, itdm_cfg: ITDataModuleConfig) -> None:
+        if itdm_cfg.task_name not in TASK_NUM_LABELS.keys():
+            rank_zero_warn(itdm_cfg.task_name + INVALID_TASK_MSG)
+            itdm_cfg.task_name = DEFAULT_TASK
+        itdm_cfg.text_fields = TASK_TEXT_FIELD_MAP[itdm_cfg.task_name]
+        super().__init__(itdm_cfg=itdm_cfg)
 
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""

@@ -3,8 +3,10 @@ from typing import Any, Dict, Optional, Tuple, List, Union, Literal
 from dataclasses import dataclass, field
 import logging
 
+import yaml
 import torch
 import numpy as np
+
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 
@@ -13,10 +15,15 @@ if _LIGHTNING_AVAILABLE:
 else:
     from interpretune.utils.logging import rank_zero_warn, rank_zero_info  # type: ignore[no-redef]
 
+
 log = logging.getLogger(__name__)
 
-TASK_NUM_LABELS = {"boolq": 2, "rte": 2}
-DEFAULT_TASK = "rte"
+@dataclass(kw_only=True)
+class ITSerializableCfg(yaml.YAMLObject):
+    ...
+
+def it_cfg_mapping_representer(dumper, data):
+    return dumper.represent_mapping('!InterpretuneCfg', data.__dict__)
 
 
 @dataclass
@@ -34,12 +41,16 @@ class LMGenerationConfig:
     output_scores: bool = True
     return_dict_in_generate: bool = True
 
+
 @dataclass(kw_only=True)
-class ITZeroShotClassificationConfig:
+class ITZeroShotClassificationConfig(ITSerializableCfg):
     enabled: bool = False
     lm_generation_cfg: LMGenerationConfig = field(default_factory=lambda: LMGenerationConfig())
-    entailment_mapping: Tuple = ("Yes", "No")  # RTE style, invert mapping for BoolQ
-    entailment_mapping_indices: Optional[torch.Tensor] = None
+
+    # def __repr__(self):
+    #     return f"Zero-Shot Classification Config: {os.linesep}{pformat(self.__dict__)}"
+
+yaml.add_representer(ITSerializableCfg, it_cfg_mapping_representer)
 
 @dataclass
 class ITTLensFromPretrainedConfig:
@@ -86,8 +97,9 @@ class PromptConfig:
 # TODO: since 3.10 is now minimum, make kw_only to leverage dataclass inheritence for shared fields between LM/LDM
 @dataclass
 class ITDataModuleConfig:
+    # See NOTE [Interpretune Dataclass-Oriented Configuration]
     model_name_or_path: str
-    task_name: str = DEFAULT_TASK
+    task_name: str
     os_env_model_auth_key: Optional[str] = None
     tokenizer_id_overrides: Optional[Dict] = field(default_factory=dict)
     max_seq_length: int = 2048
@@ -102,7 +114,6 @@ class ITDataModuleConfig:
     cust_tokenization_pattern: Optional[str] = None
     prepare_validation_set_only: Optional[bool] = False
     enable_datasets_cache: Optional[bool] = False  # disable caching unless explicitly set to improve reproducibility
-    TASK_TEXT_FIELD_MAP = {"rte": ("premise", "hypothesis"), "boolq": ("passage", "question")}
     # note that for prompt_cfg, we:
     #   1. use (data)classes to minimize special character yaml parsing complications (can override w/ diff init_args)
     #   2. do not provide a default dataclass to avoid current dataclass subclass limitations
@@ -116,10 +127,6 @@ class ITDataModuleConfig:
 
     def __post_init__(self) -> None:
         # TODO: validate prompt_cfg validity
-        if self.task_name not in TASK_NUM_LABELS.keys():
-            rank_zero_warn(f"Invalid task_name {self.task_name!r}. Proceeding with the default task: {DEFAULT_TASK!r}")
-            self.task_name = DEFAULT_TASK
-        self.text_fields = self.TASK_TEXT_FIELD_MAP[self.task_name]
         self.dataloader_kwargs = {
             "num_workers": self.dataloader_kwargs.get("num_workers", 0),
             "pin_memory": self.dataloader_kwargs.get("pin_memory", False),
@@ -133,8 +140,9 @@ class ITDataModuleConfig:
 @dataclass
 class ITConfig:
     """Dataclass to encapsulate the ITModuleinternal state."""
+    # See NOTE [Interpretune Dataclass-Oriented Configuration]
     model_name_or_path: str
-    task_name: str = DEFAULT_TASK
+    task_name: str
     os_env_model_auth_key: Optional[str] = None
     tokenizer_id_overrides: Optional[Dict] = field(default_factory=dict)
     experiment_tag: Optional[str] = "default"
@@ -145,11 +153,12 @@ class ITConfig:
     defer_model_init: Optional[bool] = False
     use_model_cache: Optional[bool] = False
     # TODO: support only creation of HookedTransformer with pretrained method for now, later support direct creation
-    #transformer_lens_cfg: HookedTransformerConfig = field(default_factory=lambda: HookedTransformerConfig())
+    # transformer_lens_cfg: HookedTransformerConfig = field(default_factory=lambda: HookedTransformerConfig())
     tlens_from_pretrained_cfg: ITTLensFromPretrainedConfig = \
         field(default_factory=lambda: ITTLensFromPretrainedConfig())
-    zero_shot_cfg: ITZeroShotClassificationConfig = field(default_factory=lambda: ITZeroShotClassificationConfig())
     debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
+    zero_shot_cfg: ITZeroShotClassificationConfig = field(default_factory=lambda: ITZeroShotClassificationConfig())
+    #zero_shot_cfg: ITSerializableCfg = field(default_factory=lambda: ITZeroShotClassificationConfig())
     optimizer_init: Dict[str, Any] = field(default_factory=dict)
     lr_scheduler_init: Dict[str, Any] = field(default_factory=dict)
     pl_lrs_cfg: Dict[str, Any] = field(default_factory=dict)
@@ -173,11 +182,6 @@ class ITConfig:
         return None
 
     def __post_init__(self) -> None:
-        if self.task_name not in TASK_NUM_LABELS.keys():
-            rank_zero_warn(f"Invalid task_name {self.task_name!r}. Proceeding with the default task: {DEFAULT_TASK!r}")
-            self.task_name = DEFAULT_TASK
-        self.num_labels = 0 if self.zero_shot_cfg.enabled else TASK_NUM_LABELS[self.task_name]
-        # always use env specified access token, if loading a checkpoint with another session's token, don't trust it
         if 'token' in self.from_pretrained_cfg:
             del self.from_pretrained_cfg['token']
         self.torch_dtype = self._torch_dtype_serde()

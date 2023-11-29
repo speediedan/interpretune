@@ -30,6 +30,7 @@ class ITDataModule(ABC):
         Args:
             itdm_cfg (:class:`~ITDataModuleConfig`): Configuration for the datamodule.
         """
+        # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__()
         self.itdm_cfg = itdm_cfg
         if self.itdm_cfg.enable_datasets_cache:  # explicitly toggle datasets caching

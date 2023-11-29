@@ -8,9 +8,11 @@ itdm_cfg:
   cust_tokenization_pattern: llama2-chat
 it_cfg:
   zero_shot_cfg:
-    enabled: true
-    lm_generation_cfg:
-      max_new_tokens: 5
+    class_path: it_examples.experiments.rte_boolq.core.RTEBoolqZeroShotClassificationConfig
+    init_args:
+      enabled: true
+      lm_generation_cfg:
+        max_new_tokens: 5
   activation_checkpointing: false
   use_model_cache: true
   auto_model_cfg:

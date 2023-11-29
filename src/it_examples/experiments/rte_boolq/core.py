@@ -1,5 +1,5 @@
 from typing import Any, Dict, Optional, List, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 import evaluate
@@ -10,12 +10,15 @@ from transformer_lens import HookedTransformer
 
 from interpretune.utils.types import STEP_OUTPUT
 from interpretune.base.it_module import ITModule, ITHookedModule
-from interpretune.base.config_classes import ITZeroShotClassificationConfig
-from it_examples.data.rte_bool import RTEBoolqDataModule
+from interpretune.utils.logging import rank_zero_warn
+from interpretune.base.config_classes import ITZeroShotClassificationConfig, ITConfig, LMGenerationConfig
+from it_examples.data.rte_bool import RTEBoolqDataModule, DEFAULT_TASK, TASK_NUM_LABELS, INVALID_TASK_MSG
 
 
 @dataclass
 class RTEBoolqZeroShotClassificationConfig(ITZeroShotClassificationConfig):
+    enabled: bool = False
+    lm_generation_cfg: LMGenerationConfig = field(default_factory=lambda: LMGenerationConfig())
     entailment_mapping: Tuple = ("Yes", "No")  # RTE style, invert mapping for BoolQ
     entailment_mapping_indices: Optional[torch.Tensor] = None
 
@@ -26,6 +29,18 @@ class GPT2PromptConfig:
     ctx_question_join: str = 'Does the previous passage imply that '
     question_suffix: str = '? Answer with only one word, either Yes or No.'
     cust_task_prompt: Optional[Dict[str, Any]] = None
+
+class RTEBoolqModuleMixin:
+    def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
+        if it_cfg.task_name not in TASK_NUM_LABELS.keys():
+            rank_zero_warn(it_cfg.task_name + INVALID_TASK_MSG)
+            it_cfg.task_name = DEFAULT_TASK
+        it_cfg.num_labels = 0 if it_cfg.zero_shot_cfg.enabled else TASK_NUM_LABELS[it_cfg.task_name]
+        return it_cfg
+
+    def _load_metric(self) -> None:
+        self.metric = evaluate.load("super_glue", self.it_cfg.task_name,
+                                    experiment_id=self.init_hparams['experiment_id'])
 
 
 class GPT2RTEBoolqDataModule(RTEBoolqDataModule):
@@ -59,11 +74,7 @@ class GPT2RTEBoolqDataModule(RTEBoolqDataModule):
         return features
 
 
-class GPT2ITModule(ITModule):
-
-    def _load_metric(self) -> None:
-        self.metric = evaluate.load("super_glue", self.it_cfg.task_name,
-                                    experiment_id=self.init_hparams['experiment_id'])
+class GPT2RTEBoolqITModule(RTEBoolqModuleMixin, ITModule):
 
     def temp_hooked_test(self, model_description_text: str) -> None:
 
@@ -117,70 +128,8 @@ class GPT2ITModule(ITModule):
         #                                    gen_config_override={"output_scores": True})
         super().zero_shot_test_step(batch, batch_idx, dataloader_idx)
 
-    # def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-    #     outputs = self(**batch)
-    #     val_loss, logits = outputs[:2]
-    #     if self.it_cfg.num_labels >= 1:
-    #         preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
-    #     elif self.it_cfg.num_labels == 1:
-    #         preds = logits.squeeze()
-    #     labels = batch["labels"]
-    #     self.log("val_loss", val_loss, prog_bar=True, sync_dist=True)
-    #     metric_dict = self.metric.compute(predictions=preds, references=labels)
-    #     metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-    #                            metric_dict.items()))
-    #     self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
 
-    # # some Llama2-specific debug helper functions
-    # def sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:
-    #     """_summary_
-
-    #     Args:
-    #         sequences (Optional[List], optional): _description_. Defaults to None.
-
-    #     Returns:
-    #         List: _description_
-
-    #     Usage:
-
-    #     ```python
-    #     # when using a llama2 chat model, you'll want to have input tokenized with sys and inst metadata
-    #     # to do so with some reasonable default questions as a sanity check and in batch mode:
-    #     self.lm_debug.debug_generate_batch(self.sys_inst_debug_sequences())
-    #     # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
-    #     self.lm_debug.debug_generate_serial(self.sys_inst_debug_sequences())
-    #     # to override the defaults (both questions and current `max_new_tokens` config)
-    #     self.lm_debug.debug_generate_batch(self.sys_inst_debug_sequences([
-    #         'What is the color of a cloudless sky?', 'How many days are in a year?']), max_new_tokens=25)
-    #     ```
-    #     """
-    #     sequences = sequences or self.it_cfg.debug_lm_cfg.raw_debug_sequences
-    #     return [self.trainer.datamodule.tokenizer.bos_token + \
-    #         self.trainer.datamodule.itdm_cfg.prompt_cfg.SYS_PREFIX + \
-    #             f"{ex.strip()} {self.trainer.datamodule.itdm_cfg.prompt_cfg.E_INST}" \
-    #             for ex in sequences]
-
-    # def default_debug_sequences(self, sequences: Optional[List] = None) -> List:
-    #     """_summary_
-
-    #     Args:
-    #         sequences (Optional[List], optional): _description_. Defaults to None.
-
-    #     Returns:
-    #         List: _description_
-
-    #     Usage:
-    #     ```python
-    #     # one can use this method to probe non-chat fine-tuned LLAMA2 models (just the raw sequences, no SYS
-    #     # or INST metadata)
-    #     self.lm_debug.debug_generate_batch(self.no_sys_inst_debug_sequences(), max_new_tokens=25)
-    #     ```
-    #     """
-    #     sequences = sequences or self.it_cfg.debug_lm_cfg.raw_debug_sequences
-    #     return [f"{ex.strip()}" for ex in sequences]
-
-
-class GPT2ITHookedModule(ITHookedModule):
+class GPT2RTEBoolqITHookedModule(RTEBoolqModuleMixin, ITHookedModule):
 
     def _load_metric(self) -> None:
         self.metric = evaluate.load("super_glue", self.it_cfg.task_name,
@@ -292,7 +241,7 @@ class Llama2RTEBoolqDataModule(RTEBoolqDataModule):
         return features
 
 
-class Llama2ITModule(ITModule):
+class Llama2RTEBoolqITModule(RTEBoolqModuleMixin, ITModule):
 
     def _load_metric(self) -> None:
         self.metric = evaluate.load("super_glue", self.it_cfg.task_name,

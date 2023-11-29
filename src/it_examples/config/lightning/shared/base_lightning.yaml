@@ -2,6 +2,7 @@ seed_everything: 42
 data.class_path: interpretune.base.it_lightning_modules.ITLightningDataModule
 model.class_path: interpretune.base.it_lightning_modules.ITLightningModule
 itdm_cfg:
+  task_name: override in experiment config
   model_name_or_path: override in experiment config
   data_collator_cfg:
     collator_class: transformers.DataCollatorWithPadding
