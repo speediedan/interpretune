@@ -1,9 +1,11 @@
 it_cfg:
   debug_lm_cfg:  # enable lm debugging connector features
-    enabled: true
-    record_memory_history: false
-    raw_debug_sequences:
-      - What is the color of a banana?
-      - List the first 5 letters in the alphabet.
-      - How many days in a week?
-      - How old is Barack Obama?
+    class_path: interpretune.base.config_classes.DebugLMConfig
+    init_args:
+      enabled: true
+      record_memory_history: false
+      raw_debug_sequences:
+        - What is the color of a banana?
+        - List the first 5 letters in the alphabet.
+        - How many days in a week?
+        - How old is Barack Obama?

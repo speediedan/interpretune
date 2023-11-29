@@ -1,17 +1,21 @@
 data.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqDataModule
 model.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqITHookedModule
 itdm_cfg:
-  model_name_or_path: gpt2
-  task_name: rte
-  prompt_cfg:
-    class_path: it_examples.experiments.rte_boolq.core.GPT2PromptConfig
-  tokenizers_parallelism: false
-  tokenizer_kwargs:
-    use_fast: true  # by default true
-    add_bos_token: true
-    local_files_only: false
-    padding_side: right
-    model_input_names: ['input_ids', 'attention_mask']
+  class_path: interpretune.base.config_classes.ITDataModuleConfig
+  init_args:
+    model_name_or_path: gpt2
+    task_name: rte
+    prompt_cfg:
+      class_path: it_examples.experiments.rte_boolq.core.GPT2PromptConfig
+    tokenizers_parallelism: false
+    tokenizer_kwargs:
+      use_fast: true  # by default true
+      add_bos_token: true
+      local_files_only: false
+      padding_side: right
+      model_input_names: ['input_ids', 'attention_mask']
 it_cfg:
-  from_pretrained_cfg:
-    device_map: cpu
+  class_path: interpretune.base.config_classes.ITConfig
+  init_args:
+    from_pretrained_cfg:
+      device_map: cpu

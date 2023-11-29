@@ -13,15 +13,15 @@ class ITCLI(LightningCLI):
 
     def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
-        parser.add_class_arguments(ITDataModuleConfig, "itdm_cfg")
-        parser.add_class_arguments(ITConfig, "it_cfg")
+        parser.add_subclass_arguments(ITDataModuleConfig, "itdm_cfg", fail_untyped=False, required=True)
+        parser.add_subclass_arguments(ITConfig, "it_cfg", fail_untyped=False, required=True)
         parser.link_arguments("itdm_cfg", "data.init_args.itdm_cfg")
         parser.link_arguments("it_cfg", "model.init_args.it_cfg")
-        parser.link_arguments("trainer.logger.init_args.name", "it_cfg.experiment_tag")
-        parser.link_arguments("itdm_cfg.model_name_or_path", "it_cfg.model_name_or_path")
-        parser.link_arguments("itdm_cfg.tokenizer_id_overrides", "it_cfg.tokenizer_id_overrides")
-        parser.link_arguments("itdm_cfg.os_env_model_auth_key", "it_cfg.os_env_model_auth_key")
-        parser.link_arguments("itdm_cfg.task_name", "it_cfg.task_name")
+        parser.link_arguments("trainer.logger.init_args.name", "it_cfg.init_args.experiment_tag")
+        parser.link_arguments("itdm_cfg.init_args.model_name_or_path", "it_cfg.init_args.model_name_or_path")
+        parser.link_arguments("itdm_cfg.init_args.tokenizer_id_overrides", "it_cfg.init_args.tokenizer_id_overrides")
+        parser.link_arguments("itdm_cfg.init_args.os_env_model_auth_key", "it_cfg.init_args.os_env_model_auth_key")
+        parser.link_arguments("itdm_cfg.init_args.task_name", "it_cfg.init_args.task_name")
 
 
 def cli_main(args: ArgsType = None, instantiate_only: bool = False) -> Optional[ITCLI]:

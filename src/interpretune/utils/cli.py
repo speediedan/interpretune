@@ -164,14 +164,14 @@ class ITCLI:
         # than passing numerous arguments to the relevant constructors. Aggregate feedback from other ML framework
         # usage arguably suggests this approach makes instantiation both more flexible and intuitive. (e.g. nested
         # configuration, configuration inheritance, modular `post_init` methods etc.)
-        parser.add_class_arguments(ITDataModuleConfig, "itdm_cfg")
-        parser.add_class_arguments(ITConfig, "it_cfg")
+        parser.add_subclass_arguments(ITDataModuleConfig, "itdm_cfg", fail_untyped=False, required=True)
+        parser.add_subclass_arguments(ITConfig, "it_cfg", fail_untyped=False, required=True)
         parser.link_arguments("itdm_cfg", "data.init_args.itdm_cfg")
         parser.link_arguments("it_cfg", "model.init_args.it_cfg")
-        parser.link_arguments("itdm_cfg.model_name_or_path", "it_cfg.model_name_or_path")
-        parser.link_arguments("itdm_cfg.tokenizer_id_overrides", "it_cfg.tokenizer_id_overrides")
-        parser.link_arguments("itdm_cfg.os_env_model_auth_key", "it_cfg.os_env_model_auth_key")
-        parser.link_arguments("itdm_cfg.task_name", "it_cfg.task_name")
+        parser.link_arguments("itdm_cfg.init_args.model_name_or_path", "it_cfg.init_args.model_name_or_path")
+        parser.link_arguments("itdm_cfg.init_args.tokenizer_id_overrides", "it_cfg.init_args.tokenizer_id_overrides")
+        parser.link_arguments("itdm_cfg.init_args.os_env_model_auth_key", "it_cfg.init_args.os_env_model_auth_key")
+        parser.link_arguments("itdm_cfg.init_args.task_name", "it_cfg.init_args.task_name")
 
     def parse_arguments(self, parser: ArgumentParser, args: ArgsType) -> None:
         """Parses command line arguments and stores it in ``self.config``."""

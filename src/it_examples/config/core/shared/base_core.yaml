@@ -2,14 +2,18 @@ seed_everything: 42
 data.class_path: interpretune.base.it_datamodule.ITDataModule
 model.class_path: interpretune.base.it_module.ITHookedModule
 itdm_cfg:
-  task_name: override in experiment config
-  model_name_or_path: override in experiment config
-  data_collator_cfg:
-    collator_class: transformers.DataCollatorWithPadding
-  prompt_cfg:
-    class_path: interpretune.base.config_classes.PromptConfig
+  class_path: interpretune.base.config_classes.ITDataModuleConfig
+  init_args:
+    task_name: override in experiment config
+    model_name_or_path: override in experiment config
+    data_collator_cfg:
+      collator_class: transformers.DataCollatorWithPadding
+    prompt_cfg:
+      class_path: interpretune.base.config_classes.PromptConfig
 it_cfg:
-  use_model_cache: false
-  from_pretrained_cfg:
-    device_map: 0
-    torch_dtype: bfloat16
+  class_path: interpretune.base.config_classes.ITConfig
+  init_args:
+    use_model_cache: false
+    from_pretrained_cfg:
+      device_map: 0
+      torch_dtype: bfloat16

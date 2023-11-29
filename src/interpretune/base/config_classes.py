@@ -26,7 +26,7 @@ def it_cfg_mapping_representer(dumper, data):
     return dumper.represent_mapping('!InterpretuneCfg', data.__dict__)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class LMGenerationConfig(ITSerializableCfg):
     max_new_tokens: int = 5  # nb maxing logits over multiple tokens (n<=5) will yield a very slight perf gain versus 1
     do_sample: bool = True
@@ -52,8 +52,8 @@ class ITZeroShotClassificationConfig(ITSerializableCfg):
 
 yaml.add_representer(ITSerializableCfg, it_cfg_mapping_representer)
 
-@dataclass
-class ITTLensFromPretrainedConfig:
+@dataclass(kw_only=True)
+class ITLensFromPretrainedConfig(ITSerializableCfg):
     # TODO: inherit shared values from it_cfg and remove from here
     # TODO: add logic to allow passing in existing tokenizer rather than letting tlens create it
     enabled: bool = False
@@ -74,8 +74,8 @@ class ITTLensFromPretrainedConfig:
     dtype: Optional[str] = "float32"
 
 
-@dataclass
-class DebugLMConfig:
+@dataclass(kw_only=True)
+class DebugLMConfig(ITSerializableCfg):
     enabled: bool = False
     debug_raw_preds: np.ndarray = field(default_factory=lambda: np.array([]))
     debug_raw_labels: np.ndarray = field(default_factory=lambda: np.array([]))
@@ -89,17 +89,17 @@ class DebugLMConfig:
                                         'How many days in a week?', 'How old is Barack Obama?']
 
 
-@dataclass
-class PromptConfig:
+@dataclass(kw_only=True)
+class PromptConfig(ITSerializableCfg):
     ctx_question_join: str = 'Does the previous passage imply that '
     question_suffix: str = '? Answer with only one word, either Yes or No.'
 
 # TODO: since 3.10 is now minimum, make kw_only to leverage dataclass inheritence for shared fields between LM/LDM
-@dataclass
-class ITDataModuleConfig:
+@dataclass(kw_only=True)
+class ITDataModuleConfig(ITSerializableCfg):
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
-    model_name_or_path: str
-    task_name: str
+    model_name_or_path: str = ''
+    task_name: str = ''
     os_env_model_auth_key: Optional[str] = None
     tokenizer_id_overrides: Optional[Dict] = field(default_factory=dict)
     max_seq_length: int = 2048
@@ -137,8 +137,8 @@ class ITDataModuleConfig:
             assert self.signature_columns is not None, ("`signature_columns` must be specified if `defer_model_init` "
                                                         "is set to True")
 
-@dataclass
-class ITConfig:
+@dataclass(kw_only=True)
+class ITConfig(ITSerializableCfg):
     """Dataclass to encapsulate the ITModuleinternal state."""
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
     model_name_or_path: str
@@ -154,8 +154,8 @@ class ITConfig:
     use_model_cache: Optional[bool] = False
     # TODO: support only creation of HookedTransformer with pretrained method for now, later support direct creation
     # transformer_lens_cfg: HookedTransformerConfig = field(default_factory=lambda: HookedTransformerConfig())
-    tlens_from_pretrained_cfg: ITTLensFromPretrainedConfig = \
-        field(default_factory=lambda: ITTLensFromPretrainedConfig())
+    tlens_from_pretrained_cfg: ITLensFromPretrainedConfig = \
+        field(default_factory=lambda: ITLensFromPretrainedConfig())
     debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
     zero_shot_cfg: ITZeroShotClassificationConfig = field(default_factory=lambda: ITZeroShotClassificationConfig())
     #zero_shot_cfg: ITSerializableCfg = field(default_factory=lambda: ITZeroShotClassificationConfig())
