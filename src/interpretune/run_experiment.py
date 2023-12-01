@@ -11,7 +11,21 @@
 # limitations under the License.
 """TODO, add transformerlens basic llama2 example to cli-driven config in ipynb for rapid experimentation."""
 
-from interpretune.utils.cli import cli_main
+import sys
+from typing import Callable
+
+def bootstrap_cli() -> Callable:
+    # TODO: consider adding an env var option to control CLI selection
+    if "--lightning_cli" in sys.argv[1:]:
+        lightning_cli = True
+        sys.argv.remove("--lightning_cli")
+    else:
+        lightning_cli = False
+    if lightning_cli:
+        from interpretune.utils.lightning_cli import cli_main
+    else:
+        from interpretune.utils.cli import cli_main  # type: ignore[no-redef]
+    return cli_main()
 
 if __name__ == "__main__":
-    cli_main()
+    bootstrap_cli()

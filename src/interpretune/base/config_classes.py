@@ -11,7 +11,7 @@ import numpy as np
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 
 if _LIGHTNING_AVAILABLE:
-    from lightning.pytorch.utilities import rank_zero_warn, rank_zero_info  # type: ignore[no-redef]
+    from lightning.pytorch.utilities import rank_zero_warn, rank_zero_info
 else:
     from interpretune.utils.logging import rank_zero_warn, rank_zero_info  # type: ignore[no-redef]
 
@@ -94,7 +94,7 @@ class PromptConfig(ITSerializableCfg):
     ctx_question_join: str = 'Does the previous passage imply that '
     question_suffix: str = '? Answer with only one word, either Yes or No.'
 
-# TODO: since 3.10 is now minimum, make kw_only to leverage dataclass inheritence for shared fields between LM/LDM
+
 @dataclass(kw_only=True)
 class ITDataModuleConfig(ITSerializableCfg):
     # See NOTE [Interpretune Dataclass-Oriented Configuration]

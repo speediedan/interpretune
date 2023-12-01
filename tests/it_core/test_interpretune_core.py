@@ -9,9 +9,4 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""TODO, add transformerlens basic llama2 example to cli-driven config in ipynb for rapid experimentation."""
-
-from interpretune.utils.lightning_cli import cli_main
-
-if __name__ == "__main__":
-    cli_main()
+# TODO: fill in this placeholder with actual core tests

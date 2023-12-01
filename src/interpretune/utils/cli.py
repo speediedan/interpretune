@@ -18,7 +18,7 @@ import numpy as np
 import random
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Iterable, Tuple
 
 import torch
 from transformers import logging as transformers_logging
@@ -29,6 +29,7 @@ from interpretune.base.it_datamodule import ITDataModule
 from interpretune.base.it_module import ITModule, BaseITModule
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.import_utils import _DOTENV_AVAILABLE
+from interpretune.utils.call import _call_itmodule_hook
 
 from jsonargparse import (
     ActionConfigFile,
@@ -102,6 +103,7 @@ class ITCLI:
         parser_kwargs: Optional[Union[Dict[str, Any], Dict[str, Dict[str, Any]]]] = None,
         args: ArgsType = None,
         seed_everything_default: Union[bool, int] = True,
+        instantiate_only: bool = False,
     ) -> None:
         """fill in
             seed_everything_default: Number for the :func:`~interpretune.utils.cli.seed_everything`
@@ -111,6 +113,7 @@ class ITCLI:
 
         """
         self.seed_everything_default = seed_everything_default
+        self.instantiate_only = instantiate_only
         self.parser_kwargs = parser_kwargs or {}  # type: ignore[var-annotated]  # github.com/python/mypy/issues/6463
         self.model_class = model_class
         self.datamodule_class = datamodule_class
@@ -121,6 +124,8 @@ class ITCLI:
 
         self.before_instantiate_classes()
         self.instantiate_classes()
+        if not self.instantiate_only:
+            self._run_core_flow()
 
 
     def setup_parser(
@@ -164,6 +169,8 @@ class ITCLI:
         # than passing numerous arguments to the relevant constructors. Aggregate feedback from other ML framework
         # usage arguably suggests this approach makes instantiation both more flexible and intuitive. (e.g. nested
         # configuration, configuration inheritance, modular `post_init` methods etc.)
+        # Also note that making these dataclasses subclass arguments maximizes flexibility of this experimental
+        # framework at the expense of modest marginal configuration verbosity (i.e. `init_args` nesting).
         parser.add_subclass_arguments(ITDataModuleConfig, "itdm_cfg", fail_untyped=False, required=True)
         parser.add_subclass_arguments(ITConfig, "it_cfg", fail_untyped=False, required=True)
         parser.link_arguments("itdm_cfg", "data.init_args.itdm_cfg")
@@ -207,6 +214,11 @@ class ITCLI:
         self.datamodule = self.config_init.get("data", None)
         self.model = self.config_init.get("model", None)
 
+    def _run_core_flow(self) -> None:
+        rank_zero_info(f"{self.datamodule.__class__.__name__}: preparing data")
+        _call_itmodule_hook(self.datamodule, "prepare_data", target_model=self.model.model)
+        _call_itmodule_hook(self.datamodule, "setup")
+        _call_itmodule_hook(self.model, "setup", datamodule=self.datamodule)
 
 def env_setup() -> None:
     if _DOTENV_AVAILABLE:
@@ -221,6 +233,14 @@ def env_setup() -> None:
         warnings.filterwarnings("ignore", warnf)
 
 
+def _check_cli_mode() -> bool:
+    if "--instantiate_only" in sys.argv[1:]:
+        insantiate_only = True
+        sys.argv.remove("--instantiate_only")
+    else:
+        insantiate_only = False
+    return insantiate_only
+
 def enumerate_config_files(folder: Union[Path, str]) -> List:
     if not isinstance(folder, Path):
         folder = Path(folder)
@@ -230,7 +250,7 @@ def enumerate_config_files(folder: Union[Path, str]) -> List:
         raise ValueError(f"Non-YAML files found in directory: {non_yaml_files}")
     return files
 
-def compose_config(config_files: List[str]) -> Dict:
+def compose_config(config_files: Iterable[str]) -> List:
     args = []
     config_file_paths = []
 
@@ -259,16 +279,21 @@ def compose_config(config_files: List[str]) -> Dict:
                 raise_fnf(p)
     for config in config_file_paths:
         args.extend(["--config", str(config)])
-    instantiate_only = True
-    return {"args": args, "instantiate_only": instantiate_only}
+    return args
 
+def configure_cli(instantiate_only: bool, shared_config_dir: Union[Path, str]) -> Tuple[bool, List]:
+    env_setup()
+    # configuring `cli_main` with `instantiate_only` short-circuits command-line `--instantiate_only` check
+    instantiate_only |=_check_cli_mode()
+    shared_config_files = enumerate_config_files(shared_config_dir)
+    return instantiate_only, shared_config_files
 
 def cli_main(args: ArgsType = None, instantiate_only: bool = False) -> Optional[ITCLI]:
-    env_setup()
-    shared_config_files = enumerate_config_files(IT_CORE_SHARED)
+    instantiate_only, shared_config_files = configure_cli(instantiate_only, IT_CORE_SHARED)
     parser_kwargs = {"default_config_files": shared_config_files}
     cli = ITCLI(
         parser_kwargs=parser_kwargs,
+        instantiate_only=instantiate_only,
         args=args,
     )
     if instantiate_only:
