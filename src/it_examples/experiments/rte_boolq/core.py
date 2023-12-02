@@ -1,5 +1,7 @@
+import os
 from typing import Any, Dict, Optional, List, Tuple
 from dataclasses import dataclass, field
+from pprint import pformat
 
 import torch
 import evaluate
@@ -14,12 +16,15 @@ from interpretune.utils.logging import rank_zero_warn
 from interpretune.base.config_classes import ITZeroShotClassificationConfig, ITConfig, LMGenerationConfig, PromptConfig
 from it_examples.data.rte_bool import RTEBoolqDataModule, DEFAULT_TASK, TASK_NUM_LABELS, INVALID_TASK_MSG
 
-@dataclass
+@dataclass(kw_only=True)
 class RTEBoolqZeroShotClassificationConfig(ITZeroShotClassificationConfig):
     enabled: bool = False
     lm_generation_cfg: LMGenerationConfig = field(default_factory=lambda: LMGenerationConfig())
     entailment_mapping: Tuple = ("Yes", "No")  # RTE style, invert mapping for BoolQ
     entailment_mapping_indices: Optional[torch.Tensor] = None
+
+    def __repr__(self):
+        return f"Zero-Shot Classification Config: {os.linesep}{pformat(self.__dict__)}"
 
 
 @dataclass(kw_only=True)

@@ -47,9 +47,6 @@ class ITZeroShotClassificationConfig(ITSerializableCfg):
     enabled: bool = False
     lm_generation_cfg: LMGenerationConfig = field(default_factory=lambda: LMGenerationConfig())
 
-    # def __repr__(self):
-    #     return f"Zero-Shot Classification Config: {os.linesep}{pformat(self.__dict__)}"
-
 yaml.add_representer(ITSerializableCfg, it_cfg_mapping_representer)
 
 @dataclass(kw_only=True)
@@ -89,38 +86,49 @@ class DebugLMConfig(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class PromptConfig(ITSerializableCfg):
-    ...
+    cust_task_prompt: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(kw_only=True)
-class ITDataModuleConfig(ITSerializableCfg):
-    # See NOTE [Interpretune Dataclass-Oriented Configuration]
+class ITSharedConfig(ITSerializableCfg):
     model_name_or_path: str = ''
     task_name: str = ''
     os_env_model_auth_key: Optional[str] = None
     tokenizer_id_overrides: Optional[Dict] = field(default_factory=dict)
-    max_seq_length: int = 2048
-    train_batch_size: int = 32
-    eval_batch_size: int = 32
-    remove_unused_columns: bool = True
-    tokenizers_parallelism: bool = True
-    text_fields: Optional[Tuple] = None
+    tokenizer_kwargs: Dict[str, Any] = field(default_factory=dict)
     defer_model_init: Optional[bool] = False
+
+
+@dataclass(kw_only=True)
+class TokenizationConfig(ITSerializableCfg):
+    tokenizers_parallelism: bool = True
     local_fast_tokenizer_path: Optional[str] = None
-    dataset_path: Optional[str] = None
     cust_tokenization_pattern: Optional[str] = None
+    special_tokens_dict: Dict[str, Any] = field(default_factory=dict)
+    max_seq_length: int = 2048
+
+
+@dataclass(kw_only=True)
+class DatasetProcessingConfig(ITSerializableCfg):
+    remove_unused_columns: bool = True
+    text_fields: Optional[Tuple] = None
+    dataset_path: Optional[str] = None
     prepare_validation_set_only: Optional[bool] = False
     enable_datasets_cache: Optional[bool] = False  # disable caching unless explicitly set to improve reproducibility
+    data_collator_cfg: Dict[str, Any] = field(default_factory=dict)
+    signature_columns: Optional[List] = field(default_factory=list)
+
+
+@dataclass(kw_only=True)
+class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingConfig):
+    # See NOTE [Interpretune Dataclass-Oriented Configuration]
+    train_batch_size: int = 32
+    eval_batch_size: int = 32
+    dataloader_kwargs: Dict[str, Any] = field(default_factory=dict)
     # note that for prompt_cfg, we:
     #   1. use (data)classes to minimize special character yaml parsing complications (can override w/ diff init_args)
     #   2. do not provide a default dataclass to avoid current dataclass subclass limitations
     prompt_cfg: PromptConfig = field(default_factory=lambda: PromptConfig())
-    signature_columns: Optional[List] = field(default_factory=list)
-    cust_task_prompt: Dict[str, Any] = field(default_factory=dict)
-    special_tokens_dict: Dict[str, Any] = field(default_factory=dict)
-    tokenizer_kwargs: Dict[str, Any] = field(default_factory=dict)
-    data_collator_cfg: Dict[str, Any] = field(default_factory=dict)
-    dataloader_kwargs: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # TODO: validate prompt_cfg validity
@@ -134,37 +142,42 @@ class ITDataModuleConfig(ITSerializableCfg):
             assert self.signature_columns is not None, ("`signature_columns` must be specified if `defer_model_init` "
                                                         "is set to True")
 
+
 @dataclass(kw_only=True)
-class ITConfig(ITSerializableCfg):
-    """Dataclass to encapsulate the ITModuleinternal state."""
-    # See NOTE [Interpretune Dataclass-Oriented Configuration]
-    model_name_or_path: str
-    task_name: str
-    os_env_model_auth_key: Optional[str] = None
-    tokenizer_id_overrides: Optional[Dict] = field(default_factory=dict)
-    experiment_tag: Optional[str] = "default"
-    torch_dtype: Optional[Union[str, torch.dtype]] = None
-    log_env_details: Optional[bool] = True
+class ModelConfig(ITSerializableCfg):
     model_class: Optional[torch.nn.Module] = None
-    activation_checkpointing: Optional[bool] = True
-    defer_model_init: Optional[bool] = False
+    model_cfg: Dict[str, Any] = field(default_factory=dict)
+    auto_model_cfg: Dict[str, Any] = field(default_factory=dict)
+    from_pretrained_cfg: Dict[str, Any] = field(default_factory=dict)
+    dynamic_module_cfg: Dict[str, Any] = field(default_factory=dict)
     use_model_cache: Optional[bool] = False
-    # TODO: support only creation of HookedTransformer with pretrained method for now, later support direct creation
-    # transformer_lens_cfg: HookedTransformerConfig = field(default_factory=lambda: HookedTransformerConfig())
-    tlens_from_pretrained_cfg: ITLensFromPretrainedConfig = \
-        field(default_factory=lambda: ITLensFromPretrainedConfig())
-    debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
-    zero_shot_cfg: ITZeroShotClassificationConfig = field(default_factory=lambda: ITZeroShotClassificationConfig())
+
+
+@dataclass(kw_only=True)
+class OptimizerSchedulerConfig(ITSerializableCfg):
     optimizer_init: Dict[str, Any] = field(default_factory=dict)
     lr_scheduler_init: Dict[str, Any] = field(default_factory=dict)
     pl_lrs_cfg: Dict[str, Any] = field(default_factory=dict)
-    model_cfg: Dict[str, Any] = field(default_factory=dict)
-    special_tokens_dict: Dict = field(default_factory=dict)
-    auto_model_cfg: Dict[str, Any] = field(default_factory=dict)
-    bitsandbytesconfig: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(kw_only=True)
+class MemoryEfficiencyConfig(ITSerializableCfg):
+    torch_dtype: Optional[Union[str, torch.dtype]] = None
     lora_cfg: Dict[str, Any] = field(default_factory=dict)
-    dynamic_module_cfg: Dict[str, Any] = field(default_factory=dict)
-    from_pretrained_cfg: Dict[str, Any] = field(default_factory=dict)
+    bitsandbytesconfig: Dict[str, Any] = field(default_factory=dict)
+    activation_checkpointing: Optional[bool] = True
+
+
+@dataclass(kw_only=True)
+class ITConfig(ITSharedConfig, ModelConfig, OptimizerSchedulerConfig, MemoryEfficiencyConfig):
+    """Dataclass to encapsulate the ITModuleinternal state."""
+    # See NOTE [Interpretune Dataclass-Oriented Configuration]
+    experiment_tag: Optional[str] = "default"
+    log_env_details: Optional[bool] = True
+    debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
+    zero_shot_cfg: ITZeroShotClassificationConfig = field(default_factory=lambda: ITZeroShotClassificationConfig())
+    # TODO: support only creation of HookedTransformer with pretrained method for now, later support direct creation
+    tlens_from_pretrained_cfg: ITLensFromPretrainedConfig = field(default_factory=lambda: ITLensFromPretrainedConfig())
 
     def _torch_dtype_serde(self) -> Optional[torch.dtype]:
         if self.from_pretrained_cfg.get('torch_dtype', None):

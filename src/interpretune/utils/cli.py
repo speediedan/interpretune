@@ -24,7 +24,7 @@ import torch
 from transformers import logging as transformers_logging
 
 from interpretune.utils.types import ArgsType
-from interpretune.base.config_classes import ITConfig, ITDataModuleConfig
+from interpretune.base.config_classes import ITConfig, ITDataModuleConfig, ITSharedConfig
 from interpretune.base.it_datamodule import ITDataModule
 from interpretune.base.it_module import ITModule, BaseITModule
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
@@ -92,6 +92,24 @@ def seed_everything(seed: Optional[int] = None, workers: bool = False) -> int:
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+
+def add_base_args(parser: ArgumentParser) -> None:
+    """Add and link args to the parser."""
+    # NOTE [Interpretune Dataclass-Oriented Configuration]
+    # For base Interpretune classes, we use configuration dataclasses (e.g. `ITConfig`, `ITDataModuleConfig`) rather
+    # than passing numerous arguments to the relevant constructors. Aggregate feedback from other ML framework
+    # usage arguably suggests this approach makes instantiation both more flexible and intuitive. (e.g. nested
+    # configuration, configuration inheritance, modular `post_init` methods etc.)
+    # Also note that making these dataclasses subclass arguments maximizes flexibility of this experimental
+    # framework at the expense of modest marginal configuration verbosity (i.e. `init_args` nesting).
+    parser.add_subclass_arguments(ITDataModuleConfig, "itdm_cfg", fail_untyped=False, required=True)
+    parser.add_subclass_arguments(ITConfig, "it_cfg", fail_untyped=False, required=True)
+    parser.link_arguments("itdm_cfg", "data.init_args.itdm_cfg")
+    parser.link_arguments("it_cfg", "model.init_args.it_cfg")
+    # link our datamodule and module shared configuration
+    for attr in ITSharedConfig.__dataclass_fields__:
+        parser.link_arguments(f"itdm_cfg.init_args.{attr}", f"it_cfg.init_args.{attr}")
+
 
 class ITCLI:
     """Customize the :class:`~lightning.pytorch.cli.LightningCLI` to ensure the
@@ -161,25 +179,10 @@ class ITCLI:
                 ),
             )
 
-
     def add_arguments_to_parser(self, parser: ArgumentParser) -> None:
         parser.add_subclass_arguments(ITDataModule, "data", fail_untyped=False, required=True)
         parser.add_subclass_arguments(BaseITModule, "model", fail_untyped=False, required=True)
-        # NOTE [Interpretune Dataclass-Oriented Configuration]
-        # For base Interpretune classes, we use configuration dataclasses (e.g. `ITConfig`, `ITDataModuleConfig`) rather
-        # than passing numerous arguments to the relevant constructors. Aggregate feedback from other ML framework
-        # usage arguably suggests this approach makes instantiation both more flexible and intuitive. (e.g. nested
-        # configuration, configuration inheritance, modular `post_init` methods etc.)
-        # Also note that making these dataclasses subclass arguments maximizes flexibility of this experimental
-        # framework at the expense of modest marginal configuration verbosity (i.e. `init_args` nesting).
-        parser.add_subclass_arguments(ITDataModuleConfig, "itdm_cfg", fail_untyped=False, required=True)
-        parser.add_subclass_arguments(ITConfig, "it_cfg", fail_untyped=False, required=True)
-        parser.link_arguments("itdm_cfg", "data.init_args.itdm_cfg")
-        parser.link_arguments("it_cfg", "model.init_args.it_cfg")
-        parser.link_arguments("itdm_cfg.init_args.model_name_or_path", "it_cfg.init_args.model_name_or_path")
-        parser.link_arguments("itdm_cfg.init_args.tokenizer_id_overrides", "it_cfg.init_args.tokenizer_id_overrides")
-        parser.link_arguments("itdm_cfg.init_args.os_env_model_auth_key", "it_cfg.init_args.os_env_model_auth_key")
-        parser.link_arguments("itdm_cfg.init_args.task_name", "it_cfg.init_args.task_name")
+        add_base_args(parser)
 
     def parse_arguments(self, parser: ArgumentParser, args: ArgsType) -> None:
         """Parses command line arguments and stores it in ``self.config``."""

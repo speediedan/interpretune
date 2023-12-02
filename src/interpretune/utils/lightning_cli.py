@@ -3,8 +3,7 @@ from typing import Optional
 import lightning.pytorch as pl
 from lightning.pytorch.cli import LightningCLI, LightningArgumentParser, ArgsType
 
-from interpretune.base.config_classes import ITConfig, ITDataModuleConfig
-from interpretune.utils.cli import configure_cli, IT_LIGHTING_SHARED
+from interpretune.utils.cli import configure_cli, IT_LIGHTING_SHARED, add_base_args
 
 class ITCLI(LightningCLI):
     """Customize the :class:`~lightning.pytorch.cli.LightningCLI` to ensure the
@@ -13,15 +12,7 @@ class ITCLI(LightningCLI):
 
     def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
-        parser.add_subclass_arguments(ITDataModuleConfig, "itdm_cfg", fail_untyped=False, required=True)
-        parser.add_subclass_arguments(ITConfig, "it_cfg", fail_untyped=False, required=True)
-        parser.link_arguments("itdm_cfg", "data.init_args.itdm_cfg")
-        parser.link_arguments("it_cfg", "model.init_args.it_cfg")
-        parser.link_arguments("trainer.logger.init_args.name", "it_cfg.init_args.experiment_tag")
-        parser.link_arguments("itdm_cfg.init_args.model_name_or_path", "it_cfg.init_args.model_name_or_path")
-        parser.link_arguments("itdm_cfg.init_args.tokenizer_id_overrides", "it_cfg.init_args.tokenizer_id_overrides")
-        parser.link_arguments("itdm_cfg.init_args.os_env_model_auth_key", "it_cfg.init_args.os_env_model_auth_key")
-        parser.link_arguments("itdm_cfg.init_args.task_name", "it_cfg.init_args.task_name")
+        add_base_args(parser)
 
 
 def cli_main(args: ArgsType = None, instantiate_only: bool = False) -> Optional[ITCLI]:
