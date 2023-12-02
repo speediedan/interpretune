@@ -11,9 +11,8 @@ from transformer_lens import HookedTransformer
 from interpretune.utils.types import STEP_OUTPUT
 from interpretune.base.it_module import ITModule, ITHookedModule
 from interpretune.utils.logging import rank_zero_warn
-from interpretune.base.config_classes import ITZeroShotClassificationConfig, ITConfig, LMGenerationConfig
+from interpretune.base.config_classes import ITZeroShotClassificationConfig, ITConfig, LMGenerationConfig, PromptConfig
 from it_examples.data.rte_bool import RTEBoolqDataModule, DEFAULT_TASK, TASK_NUM_LABELS, INVALID_TASK_MSG
-
 
 @dataclass
 class RTEBoolqZeroShotClassificationConfig(ITZeroShotClassificationConfig):
@@ -23,12 +22,12 @@ class RTEBoolqZeroShotClassificationConfig(ITZeroShotClassificationConfig):
     entailment_mapping_indices: Optional[torch.Tensor] = None
 
 
-# TODO: use class inheritance instead with 3.10 since it is now minimum version
-@dataclass
-class GPT2PromptConfig:
+@dataclass(kw_only=True)
+class RTEBoolqPromptConfig(PromptConfig):
     ctx_question_join: str = 'Does the previous passage imply that '
     question_suffix: str = '? Answer with only one word, either Yes or No.'
     cust_task_prompt: Optional[Dict[str, Any]] = None
+
 
 class RTEBoolqModuleMixin:
     def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
@@ -188,16 +187,13 @@ class GPT2RTEBoolqITHookedModule(RTEBoolqModuleMixin, ITHookedModule):
         super().zero_shot_test_step(batch, batch_idx, dataloader_idx)
 
 
-@dataclass
-class Llama2PromptConfig:
+@dataclass(kw_only=True)
+class Llama2PromptConfig(RTEBoolqPromptConfig):
     sys_prompt: str = ("You are a helpful, respectful and honest assistant. Always answer as helpfully as"
     " possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, toxic,"
     " dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature."
     " If a question does not make any sense, or is not factually coherent, explain why instead of answering something"
     " not correct. If you don't know the answer to a question, please don't share false information.")
-    ctx_question_join: str = 'Does the previous passage imply that '
-    question_suffix: str = '? Answer with only one word, either Yes or No.'
-    cust_task_prompt: Optional[Dict[str, Any]] = None
     B_INST: str = "[INST]"
     E_INST: str = "[/INST]"
     B_SYS: str = "<<SYS>>\n"

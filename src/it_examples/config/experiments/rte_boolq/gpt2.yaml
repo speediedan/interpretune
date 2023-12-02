@@ -4,7 +4,7 @@ itdm_cfg:
     model_name_or_path: gpt2
     task_name: rte
     prompt_cfg:
-      class_path: it_examples.experiments.rte_boolq.core.GPT2PromptConfig
+      class_path: it_examples.experiments.rte_boolq.core.RTEBoolqPromptConfig
     tokenizers_parallelism: false
     tokenizer_kwargs:
       use_fast: true  # by default true

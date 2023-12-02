@@ -54,10 +54,8 @@ yaml.add_representer(ITSerializableCfg, it_cfg_mapping_representer)
 
 @dataclass(kw_only=True)
 class ITLensFromPretrainedConfig(ITSerializableCfg):
-    # TODO: inherit shared values from it_cfg and remove from here
-    # TODO: add logic to allow passing in existing tokenizer rather than letting tlens create it
     enabled: bool = False
-    model_name: str = "gpt2-large"  # change back to small after testing
+    model_name: str = "gpt2-small"
     fold_ln: Optional[bool] = True
     center_writing_weights: Optional[bool] = True
     center_unembed: Optional[bool] = True
@@ -91,8 +89,7 @@ class DebugLMConfig(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class PromptConfig(ITSerializableCfg):
-    ctx_question_join: str = 'Does the previous passage imply that '
-    question_suffix: str = '? Answer with only one word, either Yes or No.'
+    ...
 
 
 @dataclass(kw_only=True)
@@ -117,7 +114,7 @@ class ITDataModuleConfig(ITSerializableCfg):
     # note that for prompt_cfg, we:
     #   1. use (data)classes to minimize special character yaml parsing complications (can override w/ diff init_args)
     #   2. do not provide a default dataclass to avoid current dataclass subclass limitations
-    prompt_cfg: Optional[Any] = None
+    prompt_cfg: PromptConfig = field(default_factory=lambda: PromptConfig())
     signature_columns: Optional[List] = field(default_factory=list)
     cust_task_prompt: Dict[str, Any] = field(default_factory=dict)
     special_tokens_dict: Dict[str, Any] = field(default_factory=dict)
@@ -158,7 +155,6 @@ class ITConfig(ITSerializableCfg):
         field(default_factory=lambda: ITLensFromPretrainedConfig())
     debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
     zero_shot_cfg: ITZeroShotClassificationConfig = field(default_factory=lambda: ITZeroShotClassificationConfig())
-    #zero_shot_cfg: ITSerializableCfg = field(default_factory=lambda: ITZeroShotClassificationConfig())
     optimizer_init: Dict[str, Any] = field(default_factory=dict)
     lr_scheduler_init: Dict[str, Any] = field(default_factory=dict)
     pl_lrs_cfg: Dict[str, Any] = field(default_factory=dict)

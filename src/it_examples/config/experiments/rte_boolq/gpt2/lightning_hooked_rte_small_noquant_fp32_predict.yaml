@@ -14,7 +14,7 @@ itdm_cfg:
     tokenizer_id_overrides:
       pad_token_id: 50256
     prompt_cfg:
-      class_path: it_examples.experiments.rte_boolq.core.GPT2PromptConfig
+      class_path: it_examples.experiments.rte_boolq.core.RTEBoolqPromptConfig
       init_args:
         cust_task_prompt:
           context: '<|PREMISE|>:'
