@@ -20,7 +20,7 @@ from warnings import WarningMessage
 
 import pytest
 
-from interpretune.utils.cli import IT_CONFIG_BASE, IT_CONFIG_GLOBAL
+
 from tests.helpers.runif import RunIf, EXTENDED_VER_PAT
 
 
@@ -45,9 +45,7 @@ ADV_EXPECTED_WARNS = EXPECTED_WARNS + ["Found an `init_pg_lrs` key"]
 
 RUN_FN = "run_experiment.py"
 
-EXPERIMENTS_BASE = IT_CONFIG_BASE / "experiments"
-EXPERIMENT_BASE_RTEBOOLQ = EXPERIMENTS_BASE / "rte_boolq"
-BASE_DEBUG_CONFIG = IT_CONFIG_GLOBAL / "base_debug.yaml"
+
 
 def dummy_step(*args, **kwargs) -> None:
     ...
@@ -66,32 +64,6 @@ class TestConfig(NamedTuple):
     expected_results: Optional[Tuple] = None
 
 
-# for flexibility, using an explicit mapping rather than a function that would assume a particular folder structure
-model_level_cfgs = {
-("rte_boolq", "gpt2"): EXPERIMENT_BASE_RTEBOOLQ / "gpt2.yaml",
-("rte_boolq", "llama2"): EXPERIMENT_BASE_RTEBOOLQ / "llama2.yaml",
-}
-
-
-experiment_level_cfgs = {
-("rte_boolq", "gpt2", "it_cli_test"): EXPERIMENT_BASE_RTEBOOLQ / "gpt2" / "it_cli_test.yaml",
-("rte_boolq", "gpt2", "rte_small_noquant_test"): EXPERIMENT_BASE_RTEBOOLQ / "gpt2" / "rte_small_noquant_test.yaml",
-("rte_boolq", "llama2", "rte_7b_qlora_zero_shot_test_only"): \
-    EXPERIMENT_BASE_RTEBOOLQ / "llama2" / "rte_7b_qlora_zero_shot_test_only.yaml",
-}
-
-
-EXPERIMENT_CONFIG_SETS = {  # defining incomplete relative paths to test compose config
-    ("rte_boolq", "gpt2_core_hooked"): (model_level_cfgs[("rte_boolq", "gpt2")],
-                                        experiment_level_cfgs[("rte_boolq", "gpt2", "it_cli_test")],
-                                        BASE_DEBUG_CONFIG),
-    ("rte_boolq", "gpt2_lightning_hooked"): (model_level_cfgs[("rte_boolq", "gpt2")],
-                                             experiment_level_cfgs[("rte_boolq", "gpt2", "rte_small_noquant_test")]),
-    ("rte_boolq", "llama2_lightning"): (model_level_cfgs[("rte_boolq", "llama2")],
-                                        experiment_level_cfgs[("rte_boolq", "llama2",
-                                                               "rte_7b_qlora_zero_shot_test_only")],
-                                        BASE_DEBUG_CONFIG),
-}
 
 def pytest_param_factory(test_configs: List[TestConfig]) -> List:
     return [pytest.param(
