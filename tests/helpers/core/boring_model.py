@@ -20,6 +20,7 @@ from warnings import WarningMessage
 
 import pytest
 
+from interpretune.utils.cli import IT_CONFIG_BASE, IT_CONFIG_GLOBAL
 from tests.helpers.runif import RunIf, EXTENDED_VER_PAT
 
 
@@ -42,9 +43,11 @@ else:
     EXPECTED_WARNS.extend(EXPECTED_VERSION_WARNS[MAX_VERSION_WARNS])
 ADV_EXPECTED_WARNS = EXPECTED_WARNS + ["Found an `init_pg_lrs` key"]
 
-BASE_DEBUG_FN = "base_debug.yaml"
-RUN_CORE_FN = "run_experiment.py"
-RUN_LIGHTNING_FN = f"lightning_{RUN_CORE_FN}"
+RUN_FN = "run_experiment.py"
+
+EXPERIMENTS_BASE = IT_CONFIG_BASE / "experiments"
+EXPERIMENT_BASE_RTEBOOLQ = EXPERIMENTS_BASE / "rte_boolq"
+BASE_DEBUG_CONFIG = IT_CONFIG_GLOBAL / "base_debug.yaml"
 
 def dummy_step(*args, **kwargs) -> None:
     ...
@@ -63,27 +66,31 @@ class TestConfig(NamedTuple):
     expected_results: Optional[Tuple] = None
 
 
-class ExperimentFileConfig(NamedTuple):
-    model_lvl_cfg: str
-    experiment_lvl_cfg: str
-    debug_cfg: Optional[str] = BASE_DEBUG_FN
+# for flexibility, using an explicit mapping rather than a function that would assume a particular folder structure
+model_level_cfgs = {
+("rte_boolq", "gpt2"): EXPERIMENT_BASE_RTEBOOLQ / "gpt2.yaml",
+("rte_boolq", "llama2"): EXPERIMENT_BASE_RTEBOOLQ / "llama2.yaml",
+}
 
 
-# TODO: refactor config defs with core/lightning variables as well as possibly example parameterization
-# perhaps use a tuple based key to build config file set based on (model, experiment, debug, example) )
-EXPERIMENT_CONFIGS = {  # defining incomplete relative paths to test compose config
-    "gpt2_hooked_core": ExperimentFileConfig(
-        model_lvl_cfg="core/experiments/rte_boolq/gpt2_hooked/gpt2_hooked.yaml",
-        experiment_lvl_cfg="core/experiments/rte_boolq/gpt2_hooked/basic/it_cli_test.yaml",
-    ),
-    "gpt2_hooked_lightning": ExperimentFileConfig(
-        model_lvl_cfg="lightning/experiments/rte_boolq/gpt2_hooked/gpt2_hooked.yaml",
-        experiment_lvl_cfg="lightning/experiments/rte_boolq/gpt2_hooked/basic/rte_small_noquant_test.yaml",
-    ),
-    "llama2_lightning": ExperimentFileConfig(
-        model_lvl_cfg="lightning/experiments/rte_boolq/llama2/llama2.yaml",
-        experiment_lvl_cfg="lightning/experiments/rte_boolq/llama2/chat/rte_7b_qlora_zero_shot_test_only.yaml",
-    ),
+experiment_level_cfgs = {
+("rte_boolq", "gpt2", "it_cli_test"): EXPERIMENT_BASE_RTEBOOLQ / "gpt2" / "it_cli_test.yaml",
+("rte_boolq", "gpt2", "rte_small_noquant_test"): EXPERIMENT_BASE_RTEBOOLQ / "gpt2" / "rte_small_noquant_test.yaml",
+("rte_boolq", "llama2", "rte_7b_qlora_zero_shot_test_only"): \
+    EXPERIMENT_BASE_RTEBOOLQ / "llama2" / "rte_7b_qlora_zero_shot_test_only.yaml",
+}
+
+
+EXPERIMENT_CONFIG_SETS = {  # defining incomplete relative paths to test compose config
+    ("rte_boolq", "gpt2_core_hooked"): (model_level_cfgs[("rte_boolq", "gpt2")],
+                                        experiment_level_cfgs[("rte_boolq", "gpt2", "it_cli_test")],
+                                        BASE_DEBUG_CONFIG),
+    ("rte_boolq", "gpt2_lightning_hooked"): (model_level_cfgs[("rte_boolq", "gpt2")],
+                                             experiment_level_cfgs[("rte_boolq", "gpt2", "rte_small_noquant_test")]),
+    ("rte_boolq", "llama2_lightning"): (model_level_cfgs[("rte_boolq", "llama2")],
+                                        experiment_level_cfgs[("rte_boolq", "llama2",
+                                                               "rte_7b_qlora_zero_shot_test_only")],
+                                        BASE_DEBUG_CONFIG),
 }
 
 def pytest_param_factory(test_configs: List[TestConfig]) -> List:
@@ -111,222 +118,3 @@ unexpected_warns = partial(multiwarn_check, expected_mode=False)
 
 
 unmatched_warns = partial(multiwarn_check, expected_mode=True)
-
-
-
-
-# class LinearWarmupLR(LambdaLR):
-#     def __init__(self, optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
-#         def lr_lambda(current_step: int):
-#             if current_step < num_warmup_steps:
-#                 return float(current_step) / float(max(1, num_warmup_steps))
-#             return max(
-#                 0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps))
-#             )
-
-#         super().__init__(optimizer, lr_lambda, last_epoch)
-
-
-# class CustomLRScheduler:
-#     def __init__(self, optimizer):
-#         self.optimizer = optimizer
-
-#     def step(self, epoch):
-#         ...
-
-#     def state_dict(self):
-#         ...
-
-#     def load_state_dict(self, state_dict):
-#         ...
-
-
-# class RandomDictDataset(Dataset):
-#     def __init__(self, size: int, length: int):
-#         self.len = length
-#         self.data = torch.randn(length, size)
-
-#     def __getitem__(self, index):
-#         a = self.data[index]
-#         b = a + 2
-#         return {"a": a, "b": b}
-
-#     def __len__(self):
-#         return self.len
-
-
-# class RandomDataset(Dataset):
-#     def __init__(self, size: int, length: int):
-#         self.len = length
-#         self.data = torch.randn(length, size)
-
-#     def __getitem__(self, index):
-#         return self.data[index]
-
-#     def __len__(self):
-#         return self.len
-
-
-# class RandomIterableDataset(IterableDataset):
-#     def __init__(self, size: int, count: int):
-#         self.count = count
-#         self.size = size
-
-#     def __iter__(self):
-#         for _ in range(self.count):
-#             yield torch.randn(self.size)
-
-
-# class RandomIterableDatasetWithLen(IterableDataset):
-#     def __init__(self, size: int, count: int):
-#         self.count = count
-#         self.size = size
-
-#     def __iter__(self):
-#         for _ in range(len(self)):
-#             yield torch.randn(self.size)
-
-#     def __len__(self):
-#         return self.count
-
-
-# class BoringModel(LightningModule):
-#     def __init__(self):
-#         """Testing PL Module.
-
-#         Use as follows:
-#         - subclass
-#         - modify the behavior for what you want
-
-#         class TestModel(BaseTestModel):
-#             def training_step(...):
-#                 # do your own thing
-
-#         or:
-
-#         model = BaseTestModel()
-#         model.training_step_end = None  # disable hook
-#         """
-#         super().__init__()
-#         self.layer = torch.nn.Linear(32, 2)
-
-#     def forward(self, x: Tensor) -> Tensor:
-#         return self.layer(x)
-
-#     def loss(self, preds: Tensor, labels: Optional[Tensor] = None) -> Tensor:
-#         if labels is None:
-#             labels = torch.ones_like(preds)
-#         # An arbitrary loss to have a loss that updates the model weights during `Trainer.fit` calls
-#         return torch.nn.functional.mse_loss(preds, labels)
-
-#     def step(self, batch: Tensor) -> Tensor:
-#         output = self(batch)
-#         return self.loss(output)
-
-#     def training_step(self, batch: Tensor, batch_idx: int) -> STEP_OUTPUT:
-#         return {"loss": self.step(batch)}
-
-#     # def training_step(self, batch, batch_idx):
-#     #     output = self(batch)
-#     #     loss = self.loss(batch, output)
-#     #     return {"loss": loss}
-
-#     def training_step_end(self, training_step_output: STEP_OUTPUT) -> STEP_OUTPUT:
-#         return training_step_output
-
-#     def validation_step(self, batch: Tensor, batch_idx: int) -> Optional[STEP_OUTPUT]:
-#         return {"x": self.step(batch)}
-
-#     # def validation_step(self, batch, batch_idx):
-#     #     output = self(batch)
-#     #     loss = self.loss(batch, output)
-#     #     return {"x": loss}
-
-#     # def on_validation_epoch_end(self, outputs) -> None:
-#     #     torch.stack([x["x"] for x in outputs]).mean()
-
-#     # def test_step(self, batch, batch_idx):
-#     #     output = self(batch)
-#     #     loss = self.loss(batch, output)
-#     #     return {"y": loss}
-
-#     def test_step(self, batch: Tensor, batch_idx: int) -> Optional[STEP_OUTPUT]:
-#         return {"y": self.step(batch)}
-
-#     # def test_epoch_end(self, outputs) -> None:
-#     #     torch.stack([x["y"] for x in outputs]).mean()
-
-#     def configure_optimizers(self) -> Tuple[List[torch.optim.Optimizer], List[_TORCH_LRSCHEDULER]]:
-#         optimizer = torch.optim.SGD(self.layer.parameters(), lr=0.1)
-#         lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1)
-#         return [optimizer], [lr_scheduler]
-
-#     def train_dataloader(self):
-#         return DataLoader(RandomDataset(32, 64))
-
-#     def val_dataloader(self):
-#         return DataLoader(RandomDataset(32, 64))
-
-#     def test_dataloader(self):
-#         return DataLoader(RandomDataset(32, 64))
-
-#     def predict_dataloader(self):
-#         return DataLoader(RandomDataset(32, 64))
-
-
-# class BoringDataModule(LightningDataModule):
-#     def __init__(self, data_dir: str = "./"):
-#         super().__init__()
-#         self.data_dir = data_dir
-#         self.non_picklable = None
-#         self.checkpoint_state: Optional[str] = None
-#         self.random_full = RandomDataset(32, 64 * 4)
-
-#     def setup(self, stage: Optional[str] = None):
-#         if stage == "fit" or stage is None:
-#             self.random_train = Subset(self.random_full, indices=range(64))
-
-#         if stage in ("fit", "validate") or stage is None:
-#             self.random_val = Subset(self.random_full, indices=range(64, 64 * 2))
-
-#         if stage == "test" or stage is None:
-#             self.random_test = Subset(self.random_full, indices=range(64 * 2, 64 * 3))
-
-#         if stage == "predict" or stage is None:
-#             self.random_predict = Subset(self.random_full, indices=range(64 * 3, 64 * 4))
-
-#     def train_dataloader(self):
-#         return DataLoader(self.random_train)
-
-#     def val_dataloader(self):
-#         return DataLoader(self.random_val)
-
-#     def test_dataloader(self):
-#         return DataLoader(self.random_test)
-
-#     def predict_dataloader(self):
-#         return DataLoader(self.random_predict)
-
-
-# class ManualOptimBoringModel(BoringModel):
-#     def __init__(self):
-#         super().__init__()
-#         self.automatic_optimization = False
-
-#     # def training_step(self, batch, batch_idx):
-#     #     opt = self.optimizers()
-#     #     output = self(batch)
-#     #     loss = self.loss(batch, output)
-#     #     opt.zero_grad()
-#     #     self.manual_backward(loss)
-#     #     opt.step()
-#     #     return loss
-
-#     def training_step(self, batch: Tensor, batch_idx: int) -> STEP_OUTPUT:
-#         opt = self.optimizers()
-#         assert isinstance(opt, (Optimizer, LightningOptimizer))
-#         loss = self.step(batch)
-#         opt.zero_grad()
-#         self.manual_backward(loss)
-#         opt.step()
-#         return loss

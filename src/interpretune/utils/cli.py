@@ -42,8 +42,9 @@ min_seed_value = np.iinfo(np.uint32).min
 
 IT_BASE = os.environ.get("IT_BASE", Path(__file__).parent.parent.parent / "it_examples")
 IT_CONFIG_BASE = os.environ.get("IT_BASE", IT_BASE / "config")
-IT_CORE_SHARED = os.environ.get("IT_CORE_SHARED", IT_CONFIG_BASE / "core" / "shared")
-IT_LIGHTING_SHARED = os.environ.get("IT_LIGHTING_SHARED", IT_CONFIG_BASE / "lightning" / "shared")
+IT_CONFIG_GLOBAL = os.environ.get("IT_CONFIG_GLOBAL", IT_CONFIG_BASE / "global")
+IT_CORE_SHARED = os.environ.get("IT_CORE_SHARED", IT_CONFIG_GLOBAL / "core" )
+IT_LIGHTING_SHARED = os.environ.get("IT_LIGHTING_SHARED", IT_CONFIG_GLOBAL / "lightning" )
 
 log = logging.getLogger(__name__)
 

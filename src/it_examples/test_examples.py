@@ -17,8 +17,10 @@ import pytest
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.utils.cli import compose_config, IT_CONFIG_BASE
 from it_examples.experiments.rte_boolq.core import GPT2RTEBoolqITHookedModule
-from tests.helpers.core.boring_model import (unexpected_warns, pytest_param_factory, TestConfig, RUN_CORE_FN,
-                                             RUN_LIGHTNING_FN, dummy_step, EXPECTED_WARNS, EXPERIMENT_CONFIGS)
+from tests.helpers.core.boring_model import (unexpected_warns, pytest_param_factory, TestConfig, RUN_FN,
+                                             dummy_step, EXPECTED_WARNS,
+                                             #EXPERIMENT_CONFIGS,
+                                             EXPERIMENT_CONFIG_SETS)
 from tests.helpers.runif import RunIf
 
 if _LIGHTNING_AVAILABLE:
@@ -32,21 +34,21 @@ else:
 
 RTEBOOLQ_TEST_CONFIGS = (
     TestConfig("core_gpt2_hooked_compose_config",
-               test_config=(False, None, False, EXPERIMENT_CONFIGS["gpt2_hooked_core"], True)),
+               test_config=(False, None, False, EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2_core_hooked")], True)),
     TestConfig("core_gpt2_hooked",
-               test_config=(False, None, False, EXPERIMENT_CONFIGS["gpt2_hooked_core"], False)),
+               test_config=(False, None, False, EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2_core_hooked")], False)),
     TestConfig("core_gpt2_hooked_instantiate_only",
-               test_config=(False, None, True, EXPERIMENT_CONFIGS["gpt2_hooked_core"], False),
+               test_config=(False, None, True, EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2_core_hooked")], False),
                expected_results=(GPT2RTEBoolqITHookedModule,)),
     TestConfig("lightning_gpt2_hooked",
-               test_config=(True, "test", False, EXPERIMENT_CONFIGS["gpt2_hooked_lightning"], False),
+               test_config=(True, "test", False, EXPERIMENT_CONFIG_SETS["rte_boolq", "gpt2_lightning_hooked"], False),
                marks="lightning"),
     TestConfig("lightning_gpt2_hooked_instantiate_only",
-               test_config=(True, None, True, EXPERIMENT_CONFIGS["gpt2_hooked_lightning"], False),
+               test_config=(True, None, True, EXPERIMENT_CONFIG_SETS["rte_boolq", "gpt2_lightning_hooked"], False),
                marks="lightning",
                expected_results=(GPT2ITHookedLightningModule,)),
     TestConfig("lightning_llama2",
-               test_config=(True, "test", False, EXPERIMENT_CONFIGS["llama2_lightning"], False),
+               test_config=(True, "test", False, EXPERIMENT_CONFIG_SETS["rte_boolq", "llama2_lightning"], False),
                marks="lightning"),
                #expected_results=(Llama2ITLightningModule,)),
 )
@@ -61,10 +63,10 @@ def test_rteboolq(recwarn, test_alias, lightning_cli, subcommand, instantiate_on
     # TODO: refactor these conditional evaluations into functions resuable in other tests
     if not lightning_cli:
         from interpretune.utils.cli import cli_main
-        cli_args = [RUN_CORE_FN]
+        cli_args = [RUN_FN]
     else:
         from interpretune.utils.lightning_cli import cli_main
-        cli_args = [RUN_LIGHTNING_FN, subcommand] if subcommand else [RUN_LIGHTNING_FN]
+        cli_args = [RUN_FN, subcommand] if subcommand else [RUN_FN]
     if use_compose_config:
         cli_args.extend(compose_config(config_files))
     else:

@@ -1,5 +1,3 @@
-data.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqDataModule
-model.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqITHookedModule
 itdm_cfg:
   class_path: interpretune.base.config_classes.ITDataModuleConfig
   init_args:

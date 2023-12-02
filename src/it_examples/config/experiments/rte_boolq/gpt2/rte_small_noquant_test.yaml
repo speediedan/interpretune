@@ -1,3 +1,5 @@
+data.class_path: it_examples.experiments.rte_boolq.lightning.GPT2RTEBoolqLightningDataModule
+model.class_path: it_examples.experiments.rte_boolq.lightning.GPT2ITHookedLightningModule
 itdm_cfg:
   class_path: interpretune.base.config_classes.ITDataModuleConfig
   init_args:
@@ -41,6 +43,8 @@ it_cfg:
     activation_checkpointing: false
 trainer:
   accumulate_grad_batches: 1
+  accelerator: gpu  # TODO: optimize hooked model device loading/movement
+  strategy: auto
   devices: 1
   logger:
     class_path: lightning.pytorch.loggers.TensorBoardLogger

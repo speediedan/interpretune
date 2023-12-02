@@ -1,5 +1,3 @@
-data.class_path: it_examples.experiments.rte_boolq.lightning.Llama2RTEBoolqLightningDataModule
-model.class_path: it_examples.experiments.rte_boolq.lightning.Llama2ITLightningModule
 itdm_cfg:
   class_path: interpretune.base.config_classes.ITDataModuleConfig
   init_args:
