@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from copy import deepcopy
 from typing import Any, Dict, Optional, List, Union
-from abc import ABC
+from abc import ABC, abstractmethod
 from functools import reduce
 from pathlib import Path
 
@@ -16,7 +16,7 @@ from interpretune.utils.import_utils import _import_class, instantiate_class, _B
 from interpretune.base.config_classes import ITConfig
 from interpretune.base.it_datamodule import ITDataModule
 from interpretune.utils.debug import DebugGenerationMixin
-from interpretune.utils.logging import rank_zero_info, collect_env_info
+from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
 
 
@@ -31,6 +31,8 @@ class BaseITModule(ABC):
     def __init__(
         self,
         it_cfg: ITConfig,
+        *args,
+        **kwargs
     ):
         """In this example, this :class:`~lightning.pytorch.core.module.LightningModule` is initialized by composing
         the ./config/fts_defaults.yaml default configuration with various scheduled fine-tuning yaml configurations
@@ -43,12 +45,22 @@ class BaseITModule(ABC):
         """
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         ## TODO: consider making this more extensible by passing args/kwargs in addition to it_cfg
-        super().__init__()
+        super().__init__(*args, **kwargs)
+        self._datamodule = None
         self.it_cfg = self._before_it_cfg_init(it_cfg=it_cfg)
         if self.it_cfg.debug_lm_cfg.enabled:  # conditionally load debugging extension
             self.lm_debug = DebugGenerationMixin()
             self.lm_debug.connect_lmdebug(self)
         self._model_init()
+
+    @property
+    def datamodule(self) -> Optional[ITDataModule]:
+        try:
+            datamodule = getattr(self, "_datamodule", None) or reduce(getattr, "trainer.datamodule".split("."), self)
+        except AttributeError as ae:
+            rank_zero_warn(f"Could not find datamodule reference (has it been attached yet?): {ae}")
+            datamodule = None
+        return datamodule
 
     def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
         """Optionally modify configuration before it_cfg is initialized."""
@@ -180,6 +192,11 @@ class BaseITModule(ABC):
                                f"{ae}")
         return serial_cfg
 
+    @abstractmethod
+    def setup(self, *args: Any, **kwargs: Any) -> None:
+        """called with datamodule in raw context, stage in Lightning context."""
+
+
 class ITModule(BaseITModule):
     """A :class:`~lightning.pytorch.core.module.LightningModule` that can be used to fine-tune a foundation model
     on either the RTE or BoolQ `SuperGLUE <https://super.gluebenchmark.com/>`_ tasks using Hugging Face
@@ -188,32 +205,8 @@ class ITModule(BaseITModule):
     <https://huggingface.co/datasets/super_glue#data-instances>`_.
     """
 
-
-    def __init__(  # TODO: remove this duplicate constructor, should only need superclass constructor
-        self,  # note we explicitly include args shared with our data module
-        it_cfg: ITConfig,
-    ):
-        """In this example, this :class:`~lightning.pytorch.core.module.LightningModule` is initialized by composing
-        the ./config/fts_defaults.yaml default configuration with various scheduled fine-tuning yaml configurations
-        via the :class:`~lightning.pytorch.cli.LightningCLI` but it can be used like any other
-        :class:`~lightning.pytorch.core.module.LightningModule` as well.
-
-        Args:
-            it_cfg (ITConfig): Configuration for this
-                :class:`~lightning.pytorch.core.module.LightningModule`.
-        """
-        super().__init__()
-        self.it_cfg = it_cfg
-        if self.it_cfg.debug_lm_cfg.enabled:  # conditionally load debugging extension
-            self.lm_debug = DebugGenerationMixin()
-            self.lm_debug.connect_lmdebug(self)
-        self._model_init()
-
-    def setup(self, stage: str) -> None:
-        # TODO: move this setup to relevant task/model-specific modules
-        if self.it_cfg.zero_shot_cfg.enabled:
-            tokenizer, zs_cfg = self.trainer.datamodule.tokenizer, self.it_cfg.zero_shot_cfg
-            zs_cfg.entailment_mapping_indices = torch.tensor(tokenizer.convert_tokens_to_ids(zs_cfg.entailment_mapping))
+    def setup(self, datamodule: ITDataModule) -> None:
+        self._datamodule = datamodule
 
     def forward(self, **inputs: Any) -> STEP_OUTPUT:
         return self.model(**inputs)
@@ -258,7 +251,7 @@ class ITModule(BaseITModule):
     def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
         Optional[STEP_OUTPUT]:
         outputs = self.model.generate(input_ids=batch['input_ids'],
-                                      pad_token_id=self.trainer.datamodule.tokenizer.pad_token_id,
+                                      pad_token_id=self.datamodule.tokenizer.pad_token_id,
                                       **self.it_cfg.zero_shot_cfg.lm_generation_cfg.__dict__)
         stacked_scores = torch.stack([out for out in outputs['scores']], dim=0).cpu()
         assert self.it_cfg.zero_shot_cfg.entailment_mapping_indices is not None
@@ -328,16 +321,12 @@ class ITHookedModule(BaseITModule):
         """
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__(it_cfg=it_cfg)
-        self.datamodule = None
         self.dump_base = None
 
     def setup(self, datamodule: ITDataModule) -> None:
-        self.datamodule = datamodule
+        self._datamodule = datamodule
         if self.it_cfg.tlens_from_pretrained_cfg.enabled:
             self._convert_hf_to_hooked()
-        if self.it_cfg.zero_shot_cfg.enabled:
-            tokenizer, zs_cfg = self.datamodule.tokenizer, self.it_cfg.zero_shot_cfg
-            zs_cfg.entailment_mapping_indices = torch.tensor(tokenizer.convert_tokens_to_ids(zs_cfg.entailment_mapping))
         self.dump_base = Path("/tmp/")
         self.dump_path = self.dump_base / self.init_hparams['experiment_id']
         self.dump_path.mkdir(exist_ok=True, parents=True)

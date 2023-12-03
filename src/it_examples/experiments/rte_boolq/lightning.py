@@ -110,9 +110,9 @@ class Llama2ITLightningModule(RTEBoolqModuleMixin, ITLightningModule):
         ```
         """
         sequences = sequences or self.it_cfg.debug_lm_cfg.raw_debug_sequences
-        return [self.trainer.datamodule.tokenizer.bos_token + \
-            self.trainer.datamodule.itdm_cfg.prompt_cfg.SYS_PREFIX + \
-                f"{ex.strip()} {self.trainer.datamodule.itdm_cfg.prompt_cfg.E_INST}" \
+        return [self.datamodule.tokenizer.bos_token + \
+            self.datamodule.itdm_cfg.prompt_cfg.SYS_PREFIX + \
+                f"{ex.strip()} {self.datamodule.itdm_cfg.prompt_cfg.E_INST}" \
                 for ex in sequences]
 
     def no_sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:

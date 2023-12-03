@@ -49,8 +49,7 @@ class ITDataModule(ABC):
         """Load the SuperGLUE dataset."""
         raise NotImplementedError
 
-    # making stage optional for raw pytorch support
-    def setup(self, stage: Optional[str] = None) -> None:
+    def setup(self, stage: Optional[str] = None) -> None:  # stage optional for raw pytorch support
         """Setup our dataset splits for training/validation."""
         self.dataset = datasets.load_from_disk(self.itdm_cfg.dataset_path)
 

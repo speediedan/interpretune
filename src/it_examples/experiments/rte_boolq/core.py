@@ -35,6 +35,11 @@ class RTEBoolqPromptConfig(PromptConfig):
 
 
 class RTEBoolqModuleMixin:
+
+    def setup(self, *args, **kwargs) -> None:
+        super().setup(*args, **kwargs)
+        self._init_entailment_mapping()
+
     def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
         if it_cfg.task_name not in TASK_NUM_LABELS.keys():
             rank_zero_warn(it_cfg.task_name + INVALID_TASK_MSG)
@@ -46,6 +51,10 @@ class RTEBoolqModuleMixin:
         self.metric = evaluate.load("super_glue", self.it_cfg.task_name,
                                     experiment_id=self.init_hparams['experiment_id'])
 
+    def _init_entailment_mapping(self) -> None:
+        if self.it_cfg.zero_shot_cfg.enabled:
+            tokenizer, zs_cfg = self.datamodule.tokenizer, self.it_cfg.zero_shot_cfg
+            zs_cfg.entailment_mapping_indices = torch.tensor(tokenizer.convert_tokens_to_ids(zs_cfg.entailment_mapping))
 
 class GPT2RTEBoolqDataModule(RTEBoolqDataModule):
 
@@ -279,9 +288,9 @@ class Llama2RTEBoolqITModule(RTEBoolqModuleMixin, ITModule):
         ```
         """
         sequences = sequences or self.it_cfg.debug_lm_cfg.raw_debug_sequences
-        return [self.trainer.datamodule.tokenizer.bos_token + \
-            self.trainer.datamodule.itdm_cfg.prompt_cfg.SYS_PREFIX + \
-                f"{ex.strip()} {self.trainer.datamodule.itdm_cfg.prompt_cfg.E_INST}" \
+        return [self.datamodule.tokenizer.bos_token + \
+            self.datamodule.itdm_cfg.prompt_cfg.SYS_PREFIX + \
+                f"{ex.strip()} {self.datamodule.itdm_cfg.prompt_cfg.E_INST}" \
                 for ex in sequences]
 
     def no_sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:

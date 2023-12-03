@@ -27,16 +27,6 @@ class DebugGenerationMixin(ABC):
     def connect_lmdebug(self, obj_ref: Any) -> None:
         self.phandle = obj_ref
 
-    # def sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:
-    #     sequences = sequences or self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
-    #     return [self.phandle.trainer.datamodule.tokenizer.bos_token + \
-    #         self.phandle.trainer.datamodule.itdm_cfg.prompt_cfg.SYS_PREFIX + \
-    #             f"{ex.strip()} {self.phandle.trainer.datamodule.itdm_cfg.prompt_cfg.E_INST}" \
-    #             for ex in sequences]
-
-    # def no_sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:
-    #     sequences = sequences or self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
-    #     return [f"{ex.strip()}" for ex in sequences]
     def debug_sequences(self, sequences: Optional[Union[List, str]] = None) -> List:
         """_summary_
 

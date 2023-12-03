@@ -25,11 +25,6 @@ class ITLightningModule(BaseITModule, pl.LightningModule):
     <https://huggingface.co/datasets/super_glue#data-instances>`_.
     """
 
-    def setup(self, stage: str) -> None:
-        if self.it_cfg.zero_shot_cfg.enabled:
-            tokenizer, zs_cfg = self.trainer.datamodule.tokenizer, self.it_cfg.zero_shot_cfg
-            zs_cfg.entailment_mapping_indices = torch.tensor(tokenizer.convert_tokens_to_ids(zs_cfg.entailment_mapping))
-
     def forward(self, **inputs: Any) -> STEP_OUTPUT:
         return self.model(**inputs)
 
@@ -73,7 +68,7 @@ class ITLightningModule(BaseITModule, pl.LightningModule):
     def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
         Optional[STEP_OUTPUT]:
         outputs = self.model.generate(input_ids=batch['input_ids'],
-                                      pad_token_id=self.trainer.datamodule.tokenizer.pad_token_id,
+                                      pad_token_id=self.datamodule.tokenizer.pad_token_id,
                                       **self.it_cfg.zero_shot_cfg.lm_generation_cfg.__dict__)
         stacked_scores = torch.stack([out for out in outputs['scores']], dim=0).cpu()
         assert self.it_cfg.zero_shot_cfg.entailment_mapping_indices is not None
@@ -137,11 +132,8 @@ class ITHookedLightningModule(ITHookedModule, ITLightningModule):
     def setup(self, stage: str) -> None:
         if self.it_cfg.tlens_from_pretrained_cfg.enabled:
             self._convert_hf_to_hooked()
-        if self.it_cfg.zero_shot_cfg.enabled:
-            tokenizer, zs_cfg = self.trainer.datamodule.tokenizer, self.it_cfg.zero_shot_cfg
-            zs_cfg.entailment_mapping_indices = torch.tensor(tokenizer.convert_tokens_to_ids(zs_cfg.entailment_mapping))
         self.dump_base = Path(self.trainer.model._trainer.log_dir)
 
     def _convert_hf_to_hooked(self) -> HookedTransformer:
-        self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=self.trainer.datamodule.tokenizer,
+        self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=self.datamodule.tokenizer,
                                                   **self.it_cfg.tlens_from_pretrained_cfg.__dict__)
