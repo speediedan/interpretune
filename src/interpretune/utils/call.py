@@ -12,13 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
-from typing import Any, Union
+from typing import Any, Union, Optional
 
 from interpretune.base.it_datamodule import ITDataModule
-from interpretune.base.it_module import ITHookedModule
+from interpretune.base.it_module import BaseITModule
+from interpretune.utils.logging import rank_zero_info
 
 log = logging.getLogger(__name__)
 
+HOOKABLE_ITMODULE = Union[ITDataModule, BaseITModule]
+
+def _run(model, datamodule, *args, **kwargs):
+    _call_itmodule_hook(datamodule, hook_name="prepare_data", hook_msg="Preparing data", target_model=model.model)
+    _call_itmodule_hook(datamodule, hook_name="setup", hook_msg="Setting up datamodule")
+    _call_itmodule_hook(model, hook_name="setup", hook_msg="Setting up model", datamodule=datamodule)
+    if model.it_cfg.optimizer_init:  # only attempt optimizer/scheduler initialization if a configuration is provided
+        _call_itmodule_hook(model, hook_name="configure_optimizers", hook_msg="initializing optimizers and schedulers",
+                            connect_output=True)
+    pass
 
 class _hookNameContextManager:
     """A context manager to change the default tensor type when tensors get created.
@@ -26,10 +37,10 @@ class _hookNameContextManager:
     See: :func:`torch.set_default_dtype`
     """
 
-    def __init__(self, it_module: Union["ITHookedModule", "ITDataModule"], hook_name: str) -> None:
-        if not hasattr(it_module, '_current_fx_name'):
-            setattr(it_module, '_current_fx_name', None)
-        self._module_ref = it_module
+    def __init__(self, hookable_module: HOOKABLE_ITMODULE, hook_name: str) -> None:
+        if not hasattr(hookable_module, '_current_fx_name'):
+            setattr(hookable_module, '_current_fx_name', None)
+        self._module_ref = hookable_module
         self._hook_name = hook_name
         self.previous_fx_name = None
 
@@ -41,17 +52,24 @@ class _hookNameContextManager:
         self._module_ref._current_fx_name = self.previous_fx_name
 
 def _call_itmodule_hook(
-    it_module: "ITHookedModule",
+    hookable_module: HOOKABLE_ITMODULE,
     hook_name: str,
+    hook_msg: Optional[str] = None,
+    connect_output: bool = False,
     *args: Any,
     **kwargs: Any,
-) -> Any:
+) -> Optional[Any]:
 
-    fn = getattr(it_module, hook_name)
+    hook_msg = hook_msg + ": " if hook_msg else ""
+
+    fn = getattr(hookable_module, hook_name)
     if not callable(fn):
         return None
 
-    with _hookNameContextManager(it_module, hook_name):
+    with _hookNameContextManager(hookable_module, hook_name):
+        rank_zero_info(f"{hook_msg}{hookable_module.__class__.__name__}")
         output = fn(*args, **kwargs)
-
-    return output
+    if connect_output:
+        hookable_module._hook_output_handler(hook_name, output)
+    else:
+        return output

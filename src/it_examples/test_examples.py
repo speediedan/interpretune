@@ -47,12 +47,14 @@ def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, str]]) -> D
     return exp_cfg_sets
 
 EXPERIMENT_CONFIG_SETS = gen_experiment_cfg_sets(
-    (("rte_boolq", "gpt2", "hooked_rte_small_it_cli_test", "debug"),
+    (("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", "debug"),
+     ("rte_boolq", "gpt2", "hooked_rte_small_it_cli_test", "debug"),
      ("rte_boolq", "gpt2", "lightning_hooked_rte_small_noquant_test", "nodebug"),
      ("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", "debug"))
 )
 
 # experiment config set aliases
+gpt2_core = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", "debug")]
 gpt2_core_hooked = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "hooked_rte_small_it_cli_test", "debug")]
 gpt2_l_hooked = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "lightning_hooked_rte_small_noquant_test", "nodebug")]
 llama2_l = EXPERIMENT_CONFIG_SETS[("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", "debug")]
@@ -62,6 +64,7 @@ TEST_CONFIGS_EXAMPLES = (
     TestConfig("core_gpt2_hooked", test_config=(False, None, False, gpt2_core_hooked, False)),
     TestConfig("core_gpt2_hooked_instantiate_only",test_config=(False, None, True, gpt2_core_hooked, False),
                expected_results=(GPT2RTEBoolqITHookedModule,)),
+    TestConfig("core_gpt2_optim_init", test_config=(False, None, False, gpt2_core, True)),
     TestConfig("lightning_gpt2_hooked", test_config=(True, "test", False, gpt2_l_hooked, False), marks="lightning"),
     TestConfig("lightning_gpt2_hooked_instantiate_only", test_config=(True, None, True, gpt2_l_hooked, False),
                marks="lightning",

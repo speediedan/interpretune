@@ -158,6 +158,8 @@ class OptimizerSchedulerConfig(ITSerializableCfg):
     optimizer_init: Dict[str, Any] = field(default_factory=dict)
     lr_scheduler_init: Dict[str, Any] = field(default_factory=dict)
     pl_lrs_cfg: Dict[str, Any] = field(default_factory=dict)
+    # Whether to enable gradients for the input embeddings. Useful for finetuning adapter weights w/ a frozen model.
+    enable_input_require_grads: Optional[bool] = True
 
 
 @dataclass(kw_only=True)

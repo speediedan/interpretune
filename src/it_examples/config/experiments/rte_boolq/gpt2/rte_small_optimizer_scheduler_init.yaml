@@ -1,0 +1,65 @@
+data.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqDataModule
+model.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqITModule
+itdm_cfg:
+  class_path: interpretune.base.config_classes.ITDataModuleConfig
+  init_args:
+    model_name_or_path: gpt2
+    #model_name_or_path: gpt2-large
+    task_name: rte
+    dataset_path: /home/speediedan/.cache/huggingface/datasets/rte
+    train_batch_size: 32
+    eval_batch_size: 32
+    prepare_validation_set_only: true
+    tokenizer_id_overrides:
+      pad_token_id: 50256
+    prompt_cfg:
+      class_path: it_examples.experiments.rte_boolq.core.RTEBoolqPromptConfig
+      init_args:
+        cust_task_prompt:
+          context: '<|PREMISE|>:'
+          question: '<|HYPOTHESIS|>:'
+it_cfg:
+  class_path: interpretune.base.config_classes.ITConfig
+  init_args:
+    # from_pretrained_cfg:
+    #   torch_dtype: float32
+    experiment_tag: opt_scheduler_init_test
+    auto_model_cfg:
+      model_head: transformers.GPT2LMHeadModel
+    optimizer_init:
+      class_path: torch.optim.AdamW
+      init_args:
+        weight_decay: 1.0e-06
+        eps: 1.0e-07
+        lr: 3.0e-05
+    lr_scheduler_init:
+      class_path: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+      init_args:
+        T_0: 1
+        T_mult: 2
+        eta_min: 1.0e-06
+    # note that pl_lrs_cfg is not required with core IT modules
+    # pl_lrs_cfg is not technically needed for lightning modules but is usually set
+    # pl_lrs_cfg:
+    #   interval: epoch
+    #   frequency: 1
+    #   name: CosineAnnealingWithWarmRestartsLR
+    # tlens_from_pretrained_cfg:
+    #   class_path: interpretune.base.config_classes.ITLensFromPretrainedConfig
+    #   init_args:
+    #     enabled: true
+    #     model_name: gpt2-small
+    #     fold_ln: true
+    #     center_writing_weights: true
+    #     center_unembed: true
+    #     refactor_factored_attn_matrices: false
+    #     checkpoint_index: null
+    #     checkpoint_value: null
+    #     device: cuda
+    #     n_devices: 1
+    #     move_to_device: true
+    #     fold_value_biases: true
+    #     default_prepend_bos: true
+    #     default_padding_side: right
+    #     dtype: float32
+    activation_checkpointing: false

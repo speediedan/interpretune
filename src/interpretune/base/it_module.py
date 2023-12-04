@@ -15,12 +15,14 @@ from transformer_lens import HookedTransformer
 from interpretune.utils.import_utils import _import_class, instantiate_class, _BNB_AVAILABLE
 from interpretune.base.config_classes import ITConfig
 from interpretune.base.it_datamodule import ITDataModule
+from interpretune.base.it_hooks import OptimizerSchedulerInitMixin
 from interpretune.utils.debug import DebugGenerationMixin
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
 
 
-class BaseITModule(ABC):
+
+class BaseITModule(ABC, OptimizerSchedulerInitMixin):
 
     #TODO: move fts callback property to this class once fts supports raw pytorch with plugin
     # @property
@@ -44,9 +46,11 @@ class BaseITModule(ABC):
                 :class:`~lightning.pytorch.core.module.LightningModule`.
         """
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
-        ## TODO: consider making this more extensible by passing args/kwargs in addition to it_cfg
         super().__init__(*args, **kwargs)
+        # datamodule handle
         self._datamodule = None
+        # optional optimizer and lr scheduler handles if initialized via core IT module `configure_optimizers` hook
+        self.it_optimizers, self.it_lr_scheduler_configs, self.it_lr_schedulers = None, None, None
         self.it_cfg = self._before_it_cfg_init(it_cfg=it_cfg)
         if self.it_cfg.debug_lm_cfg.enabled:  # conditionally load debugging extension
             self.lm_debug = DebugGenerationMixin()
@@ -61,6 +65,12 @@ class BaseITModule(ABC):
             rank_zero_warn(f"Could not find datamodule reference (has it been attached yet?): {ae}")
             datamodule = None
         return datamodule
+
+    def _hook_output_handler(self, hook_name: str, output: Any) -> None:
+        if hook_name == "configure_optimizers":
+            self._it_init_optimizers_and_schedulers(output)
+        else:
+            rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
     def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
         """Optionally modify configuration before it_cfg is initialized."""
@@ -112,6 +122,10 @@ class BaseITModule(ABC):
         from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
         self.model = prepare_model_for_kbit_training(self.model)
         self.model = get_peft_model(self.model, LoraConfig(**self.it_cfg.lora_cfg))
+
+    def _set_input_require_grads(self) -> None:
+        if self.it_cfg.enable_input_require_grads:
+            self.model.enable_input_require_grads()
 
     def _cust_token_cfg(self, model: torch.nn.Module) -> Any:
         if self.it_cfg.tokenizer_id_overrides:
@@ -195,6 +209,24 @@ class BaseITModule(ABC):
     @abstractmethod
     def setup(self, *args: Any, **kwargs: Any) -> None:
         """called with datamodule in raw context, stage in Lightning context."""
+
+    def configure_optimizers(self) -> Optional[OptimizerLRScheduler]:
+        """Optional because it is not mandatory in the context of core IT modules (required for Lightning
+        modules)."""
+        # With FTS >= 2.0, ``FinetuningScheduler`` simplifies initial optimizer configuration by ensuring the optimizer
+        # configured here will optimize the parameters (and only those parameters) scheduled to be optimized in phase 0
+        # of the current fine-tuning schedule. This auto-configuration can be disabled if desired by setting
+        # ``enforce_phase0_params`` to ``False``.
+        self._set_input_require_grads()
+        optimizer, scheduler = None, None
+        if self.it_cfg.optimizer_init:  # in case this hook is manually invoked by the user
+            optimizer = instantiate_class(args=self.model.parameters(), init=self.it_cfg.optimizer_init)
+        if self.it_cfg.lr_scheduler_init:
+            scheduler = {
+                "scheduler": instantiate_class(args=optimizer, init=self.it_cfg.lr_scheduler_init),
+                **self.it_cfg.pl_lrs_cfg,
+            }
+        return [optimizer], [scheduler]
 
 
 class ITModule(BaseITModule):
@@ -292,18 +324,6 @@ class ITModule(BaseITModule):
         metric_dict = self.metric.compute(predictions=preds, references=labels)
         rank_zero_info(metric_dict)
 
-    def configure_optimizers(self) -> OptimizerLRScheduler:
-        # With FTS >= 2.0, ``FinetuningScheduler`` simplifies initial optimizer configuration by ensuring the optimizer
-        # configured here will optimize the parameters (and only those parameters) scheduled to be optimized in phase 0
-        # of the current fine-tuning schedule. This auto-configuration can be disabled if desired by setting
-        # ``enforce_phase0_params`` to ``False``.
-        self.model.enable_input_require_grads()
-        optimizer = instantiate_class(args=self.model.parameters(), init=self.init_hparams['optimizer_init'])
-        scheduler = {
-            "scheduler": instantiate_class(args=optimizer, init=self.init_hparams['lr_scheduler_init']),
-            **self.init_hparams['pl_lrs_cfg'],
-        }
-        return [optimizer], [scheduler]
 
 class ITHookedModule(BaseITModule):
     def __init__(
@@ -377,6 +397,10 @@ class ITHookedModule(BaseITModule):
     def _maybe_resize_token_embeddings(self, model: torch.nn.Module) -> None:
         # embedding resizing not currently supported by ITHookedModule
         return model
+
+    def _set_input_require_grads(self) -> None:
+        # not currently supported by ITHookedModule
+        rank_zero_warn("Setting input require grads not currently supported by ITHookedModule.")
 
     def _configure_gradient_checkpointing(self) -> None:
         # gradient checkpointing not currently supported by ITHookedModule

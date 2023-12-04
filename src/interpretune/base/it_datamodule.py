@@ -1,6 +1,6 @@
 import os
 import inspect
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
 from abc import ABC
 import logging
 
@@ -9,7 +9,7 @@ import datasets
 from datasets import Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerFast, PreTrainedTokenizerBase
 
-from interpretune.utils.logging import rank_zero_info
+from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.base.config_classes import ITDataModuleConfig
 from interpretune.utils.import_utils import _import_class
 
@@ -44,6 +44,10 @@ class ITDataModule(ABC):
         collator_kwargs = self.itdm_cfg.data_collator_cfg.get('collator_kwargs', None) or {}
         collator_class = _import_class(self.itdm_cfg.data_collator_cfg["collator_class"])
         self.data_collator = collator_class(self.tokenizer, **collator_kwargs)
+
+    # TODO: define ITDataModule and BaseITModule as adhering to a hookable module protocol
+    def _hook_output_handler(self, hook_name: str, output: Any) -> None:
+        rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""

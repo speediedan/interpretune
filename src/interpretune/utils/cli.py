@@ -18,7 +18,7 @@ import numpy as np
 import random
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Iterable, Tuple
+from typing import Any, Dict, List, Optional, Union, Iterable, Tuple, Callable
 
 import torch
 from transformers import logging as transformers_logging
@@ -29,7 +29,8 @@ from interpretune.base.it_datamodule import ITDataModule
 from interpretune.base.it_module import ITModule, BaseITModule
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.import_utils import _DOTENV_AVAILABLE
-from interpretune.utils.call import _call_itmodule_hook
+from interpretune.utils.call import _run
+
 
 from jsonargparse import (
     ActionConfigFile,
@@ -109,6 +110,19 @@ def add_base_args(parser: ArgumentParser) -> None:
     # link our datamodule and module shared configuration
     for attr in ITSharedConfig.__dataclass_fields__:
         parser.link_arguments(f"itdm_cfg.init_args.{attr}", f"it_cfg.init_args.{attr}")
+
+def bootstrap_cli() -> Callable:
+    # TODO: consider adding an env var option to control CLI selection
+    if "--lightning_cli" in sys.argv[1:]:
+        lightning_cli = True
+        sys.argv.remove("--lightning_cli")
+    else:
+        lightning_cli = False
+    if lightning_cli:
+        from interpretune.utils.lightning_cli import cli_main
+    else:
+        from interpretune.utils.cli import cli_main  # type: ignore[no-redef]
+    return cli_main()
 
 
 class ITCLI:
@@ -219,10 +233,7 @@ class ITCLI:
         self.model = self.config_init.get("model", None)
 
     def _run_core_flow(self) -> None:
-        rank_zero_info(f"{self.datamodule.__class__.__name__}: preparing data")
-        _call_itmodule_hook(self.datamodule, "prepare_data", target_model=self.model.model)
-        _call_itmodule_hook(self.datamodule, "setup")
-        _call_itmodule_hook(self.model, "setup", datamodule=self.datamodule)
+        _run(model=self.model, datamodule=self.datamodule)
 
 def env_setup() -> None:
     if _DOTENV_AVAILABLE:

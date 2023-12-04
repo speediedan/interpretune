@@ -3,6 +3,7 @@ from typing import (
     Any,
     List,
     Mapping,
+    Callable,
     Dict,
     Optional,
     TypeVar,
@@ -21,6 +22,29 @@ from typing_extensions import NotRequired, Required
 from jsonargparse import Namespace
 
 _DictKey = TypeVar("_DictKey")
+
+@runtime_checkable
+class Steppable(Protocol):
+    """To structurally type ``optimizer.step()``"""
+
+    # Inferred from `torch.optim.optimizer.pyi`
+    def step(self, closure: Optional[Callable[[], float]] = ...) -> Optional[float]:
+        ...
+
+@runtime_checkable
+class Optimizable(Steppable, Protocol):
+    """To structurally type ``optimizer``"""
+
+    param_groups: List[Dict[Any, Any]]
+    defaults: Dict[Any, Any]
+    state: Dict[Any, Any]
+
+    def state_dict(self) -> Dict[str, Dict[Any, Any]]:
+        ...
+
+    def load_state_dict(self, state_dict: Dict[str, Dict[Any, Any]]) -> None:
+        ...
+
 
 @runtime_checkable
 class _Stateful(Protocol[_DictKey]):

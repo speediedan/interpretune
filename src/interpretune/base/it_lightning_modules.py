@@ -3,12 +3,11 @@ from pathlib import Path
 
 import torch
 import lightning.pytorch as pl
-from lightning.pytorch.utilities.types import STEP_OUTPUT, OptimizerLRScheduler
+from lightning.pytorch.utilities.types import STEP_OUTPUT
 from transformers.tokenization_utils_base import BatchEncoding
 from transformer_lens import HookedTransformer
 import finetuning_scheduler as fts
 
-from interpretune.utils.import_utils import instantiate_class
 from interpretune.utils.logging import rank_zero_info
 from interpretune.base.it_module import BaseITModule, ITHookedModule
 from interpretune.base.it_datamodule import ITDataModule
@@ -109,18 +108,6 @@ class ITLightningModule(BaseITModule, pl.LightningModule):
         metric_dict = self.metric.compute(predictions=preds, references=labels)
         rank_zero_info(metric_dict)
 
-    def configure_optimizers(self) -> OptimizerLRScheduler:
-        # With FTS >= 2.0, ``FinetuningScheduler`` simplifies initial optimizer configuration by ensuring the optimizer
-        # configured here will optimize the parameters (and only those parameters) scheduled to be optimized in phase 0
-        # of the current fine-tuning schedule. This auto-configuration can be disabled if desired by setting
-        # ``enforce_phase0_params`` to ``False``.
-        self.model.enable_input_require_grads()
-        optimizer = instantiate_class(args=self.model.parameters(), init=self.init_hparams['optimizer_init'])
-        scheduler = {
-            "scheduler": instantiate_class(args=optimizer, init=self.init_hparams['lr_scheduler_init']),
-            **self.init_hparams['pl_lrs_cfg'],
-        }
-        return [optimizer], [scheduler]
 
 class ITHookedLightningModule(ITHookedModule, ITLightningModule):
 
