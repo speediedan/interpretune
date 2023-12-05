@@ -16,7 +16,7 @@ from interpretune.utils.import_utils import _import_class, instantiate_class, _B
 from interpretune.base.config_classes import ITConfig
 from interpretune.base.it_datamodule import ITDataModule
 from interpretune.base.it_hooks import OptimizerSchedulerInitMixin
-from interpretune.utils.debug import DebugGenerationMixin
+from interpretune.base.debug import DebugGenerationMixin
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
 

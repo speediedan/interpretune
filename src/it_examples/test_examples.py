@@ -15,7 +15,7 @@ from typing import Iterable, Dict, Tuple
 import pytest
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-from interpretune.utils.cli import compose_config, IT_CONFIG_BASE, IT_CONFIG_GLOBAL
+from interpretune.cli.core_cli import compose_config, IT_CONFIG_BASE, IT_CONFIG_GLOBAL
 from it_examples.experiments.rte_boolq.core import GPT2RTEBoolqITHookedModule
 from tests.helpers.core.boring_model import (unexpected_warns, pytest_param_factory, TestConfig, RUN_FN, dummy_step,
                                              EXPECTED_WARNS)
@@ -77,10 +77,10 @@ EXPECTED_RESULTS_EXAMPLES = {cfg.test_alias: cfg.expected_results for cfg in TES
 
 def gen_cli_args(l_cli, subcommand, use_compose_config, config_files):
     if not l_cli:
-        from interpretune.utils.cli import cli_main
+        from interpretune.cli.core_cli import cli_main
         cli_args = [RUN_FN]
     else:
-        from interpretune.utils.lightning_cli import cli_main
+        from interpretune.cli.lightning_cli import cli_main
         cli_args = [RUN_FN, subcommand] if subcommand else [RUN_FN]
     if use_compose_config:
         cli_args.extend(compose_config(config_files))

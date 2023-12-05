@@ -3,7 +3,7 @@ from typing import Optional
 import lightning.pytorch as pl
 from lightning.pytorch.cli import LightningCLI, LightningArgumentParser, ArgsType
 
-from interpretune.utils.cli import configure_cli, IT_LIGHTING_SHARED, add_base_args
+from interpretune.cli.core_cli import configure_cli, IT_LIGHTING_SHARED, add_base_args
 
 class ITCLI(LightningCLI):
     """Customize the :class:`~lightning.pytorch.cli.LightningCLI` to ensure the

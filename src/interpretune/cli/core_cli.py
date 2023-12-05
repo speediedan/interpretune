@@ -29,7 +29,7 @@ from interpretune.base.it_datamodule import ITDataModule
 from interpretune.base.it_module import ITModule, BaseITModule
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.import_utils import _DOTENV_AVAILABLE
-from interpretune.utils.call import _run
+from interpretune.base.call import _run
 
 
 from jsonargparse import (
@@ -119,9 +119,9 @@ def bootstrap_cli() -> Callable:
     else:
         lightning_cli = False
     if lightning_cli:
-        from interpretune.utils.lightning_cli import cli_main
+        from interpretune.cli.lightning_cli import cli_main
     else:
-        from interpretune.utils.cli import cli_main  # type: ignore[no-redef]
+        from interpretune.cli.core_cli import cli_main  # type: ignore[no-redef]
     return cli_main()
 
 
@@ -139,7 +139,7 @@ class ITCLI:
         instantiate_only: bool = False,
     ) -> None:
         """fill in
-            seed_everything_default: Number for the :func:`~interpretune.utils.cli.seed_everything`
+            seed_everything_default: Number for the :func:`~interpretune.clieverything`
                 seed value. Set to True to automatically choose a seed value.
         Args:
             model_class: model class
