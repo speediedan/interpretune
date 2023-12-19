@@ -1,4 +1,9 @@
-from typing import Any, Dict, List, Union, Tuple
+import tempfile
+from typing import Any, Dict, List, Union, Tuple, Optional
+from functools import reduce, partial
+from pathlib import Path
+
+import torch
 
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.exceptions import MisconfigurationException
@@ -11,6 +16,45 @@ from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, 
 # with raw PyTorch in a way that is compatible with the Lightning framework. This allows the same code to be reused for
 # maximally flexible interactive experimentation and interleaved Lightning-based tuning, testing and
 # prediction/interpretation tasks.
+
+def _dummy_notify(method: str, ret_callable: bool, rv: Any, *args, **kwargs) -> Optional[Any]:
+    rank_zero_warn(f"The `{method}` method is not defined for this module. For Lightning compatibility, this noop "
+                    "method will be used. This warning will only be issued once by default.")
+    out = lambda *args, **kwargs: rv if ret_callable else rv
+    return out
+
+class CoreHelperAttributeMixin:
+    """Mixin class for adding arbitrary core helper attributes to core (non-Lightning) IT classes."""
+    def __init__(self, *args, **kwargs) -> None:
+        # for core/non-lightning modules, we configure a _log_dir rather than relying on the trainer to do so
+        # if using a Lightning module, we can access the trainer log_dir via the `core_log_dir` property
+        # or continue to rely on the trainer log_dir directly
+        if it_cfg := kwargs.get('it_cfg', None):
+            self._log_dir = Path(it_cfg.core_log_dir or tempfile.gettempdir())
+            ca = it_cfg.lightning_compat_attrs
+        else:
+            raise MisconfigurationException("CoreHelperAttributeMixin requires an ITConfig.")
+        self._supported_helper_attrs = {k: partial(_dummy_notify, k, v.ret_callable, v.ret_val) for k,v in ca.items()}
+        super().__init__(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        # NOTE: somewhat hacky way to dynamically stub a specified subset of Lightning module attributes
+        # (if they don't already exist) to extend the cases where Lightning methods can be iteratively used for core
+        # context experimentation
+        if '_supported_helper_attrs' in self.__dict__:
+            _helper_attrs= self.__dict__['_supported_helper_attrs']
+            if name in _helper_attrs:
+                return _helper_attrs[name]
+        return super().__getattr__(name)  # the unresolved attribute wasn't ours, pass it on to PyTorch's __getattr__
+
+    @property
+    def device(self) -> Optional[torch.device]:
+        try:
+            device = getattr(self, "_device", None) or reduce(getattr, "model.device".split("."), self)
+        except AttributeError as ae:
+            rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
+            device = None
+        return device
 
 # adapted from pytorch/core/optimizer.py initialization methods
 class OptimizerSchedulerInitMixin:

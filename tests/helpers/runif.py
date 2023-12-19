@@ -34,6 +34,7 @@ class RunIf:
     """
 
     standalone_ctx = os.getenv("PL_RUN_STANDALONE_TESTS", "0")
+    profiling_ctx = os.getenv("IT_RUN_PROFILING_TESTS", "0")
 
     def __new__(
         self,
@@ -47,6 +48,7 @@ class RunIf:
         skip_windows: bool = False,
         skip_mac_os: bool = False,
         standalone: bool = False,
+        profiling: bool = False,
         lightning: bool = False,
         bitsandbytes: bool = False,
         slow: bool = False,
@@ -64,11 +66,13 @@ class RunIf:
             skip_windows: Skip for Windows platform.
             skip_mac_os: Skip Mac OS platform.
             standalone: Mark the test as standalone, our CI will run it in a separate process.
-                This requires that the ``PL_RUN_STANDALONE_TESTS=1`` environment variable is set.
+                This requires that the ``IT_RUN_STANDALONE_TESTS=1`` environment variable is set.
+            profiling: Mark the test as for profiling. It will run as a separate process and only be included in CI
+                in limited cases. This requires that the ``IT_RUN_PROFILING_TESTS=1`` environment variable is set.
             lightning: Require that lightning is installed.
             bitsandbytes: Require that bitsandbytes is installed.
             slow: Mark the test as slow, our CI will run it in a separate job.
-                This requires that the ``PL_RUN_SLOW_TESTS=1`` environment variable is set.
+                This requires that the ``IT_RUN_SLOW_TESTS=1`` environment variable is set.
             **kwargs: Any :class:`pytest.mark.skipif` keyword arguments.
         """
         conditions = []
@@ -126,11 +130,18 @@ class RunIf:
             reasons.append("unimplemented or temporarily bypassing these tests for MacOS")
 
         if standalone:
-            env_flag = os.getenv("PL_RUN_STANDALONE_TESTS", "0")
+            env_flag = os.getenv("IT_RUN_STANDALONE_TESTS", "0")
             conditions.append(env_flag != "1")
             reasons.append("Standalone execution")
             # used in conftest.py::pytest_collection_modifyitems
             kwargs["standalone"] = True
+
+        if profiling:
+            env_flag = os.getenv("IT_RUN_PROFILING_TESTS", "0")
+            conditions.append(env_flag != "1")
+            reasons.append("Profiling execution")
+            # used in conftest.py::pytest_collection_modifyitems
+            kwargs["profiling"] = True
 
         if lightning:
             conditions.append(not _LIGHTNING_AVAILABLE)
@@ -141,7 +152,7 @@ class RunIf:
             reasons.append("BitsandBytes")
 
         if slow:
-            env_flag = os.getenv("PL_RUN_SLOW_TESTS", "0")
+            env_flag = os.getenv("IT_RUN_SLOW_TESTS", "0")
             conditions.append(env_flag != "1")
             reasons.append("Slow test")
             # used in tests/conftest.py::pytest_collection_modifyitems

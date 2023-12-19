@@ -9,7 +9,7 @@ itdm_cfg:
     dataset_path: /home/speediedan/.cache/huggingface/datasets/rte
     train_batch_size: 32
     eval_batch_size: 32
-    prepare_validation_set_only: true
+    #prepare_validation_set_only: true
     tokenizer_id_overrides:
       pad_token_id: 50256
     prompt_cfg:

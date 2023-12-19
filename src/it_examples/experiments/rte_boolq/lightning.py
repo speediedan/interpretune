@@ -199,7 +199,7 @@ class GPT2ITHookedLightningModule(RTEBoolqModuleMixin, ITHookedLightningModule):
         if self.probe_setup_only:
             return f"predict step entered and exited successfully for batch_idx: {batch_idx}"
         else:
-            dump_path = self.dump_base / f'fp32_activations_logits_rte_validation_gpt2_batch_{batch_idx}.pt'
+            dump_path = self.core_log_dir / f'fp32_activations_logits_rte_validation_gpt2_batch_{batch_idx}.pt'
             original_logits, cache = self.model.run_with_cache(batch['input_ids'])
             logits_and_activations = {"original_logits": original_logits, "cache": cache}
             torch.save(logits_and_activations, dump_path)

@@ -1,9 +1,226 @@
+import os
+import pickle
+from importlib import import_module
+from dataclasses import fields
 from typing import Optional, List, Any, Dict, Tuple, Union
 from abc import ABC
 from datasets import load_dataset, Dataset
+from psutil import Process
+from pathlib import Path
+from contextlib import contextmanager
+from functools import wraps
+from collections import defaultdict
+
+from interpretune.utils.logging import rank_zero_warn, _get_rank, rank_zero_only
+from interpretune.base.config_classes import MemProfilerCfg
+from interpretune.utils.exceptions import MisconfigurationException
 
 import torch
 from tqdm import tqdm
+
+# adapted from HF utility hooks, takes advantage of our psutil requirement to be slightly more efficient
+
+def _hook_rss_pre_forward(module, *args, **kwargs):
+    mem = module.mem_info_handle()
+    module.rss_pre_forward = mem.rss
+    return None
+
+def _hook_rss_post_forward(module, *args, **kwargs):
+    mem = module.mem_info_handle()
+    module.rss_post_forward = mem.rss
+    rss_diff = module.rss_post_forward - module.rss_pre_forward
+    module.rss_diff = rss_diff + (module.rss_diff if hasattr(module, "rss_diff") else 0)
+    return None
+
+def _reset_memory_hooks_state(model):
+    for module in model.modules():
+        module.rss_diff = 0
+        module.rss_post_forward = 0
+        module.rss_pre_forward = 0
+
+class MemProfilerMixin:
+    def __init__(self, *args, **kwargs) -> None:
+        # TODO: change type to ProfilerCfg dataclass if circular import can be avoided
+        super().__init__()
+        self.memory_stats = {}
+        self._enabled = {}
+        self._module = None
+        self._cuda_snapshot_dir = None
+        self._curr_pid = None
+        self._rank = _get_rank() or 0  # for future use, currently only single rank supported
+        self._snap_indices = {}
+        self._configured_hooks = {}
+        self._hook_handles = defaultdict(list)
+        self._done_prof_funcs = []
+
+
+    def connect(self, obj_ref: Any) -> None:
+        self._module = obj_ref
+        self._curr_pid = Process(os.getpid())
+
+    @property
+    def memprofiler_cfg(self) -> MemProfilerCfg:
+        return self._module.it_cfg.memprofiler_cfg
+
+    @property
+    def schedule(self) -> int:
+        return self._module.it_cfg.memprofiler_cfg.schedule
+
+    def remove_memprofiler_hooks(self) -> None:
+        for handle_list in self._hook_handles.values():
+            for handle in handle_list:
+                handle.remove()
+
+    def resolve_hooks(self, hook_type: str) -> List:
+        resolved_hooks = []
+        hooks_to_resolve = getattr(self.memprofiler_cfg.memory_hooks, hook_type)
+        if not isinstance(hooks_to_resolve, list):
+            hooks_to_resolve = [getattr(self.memprofiler_cfg.memory_hooks, hook_type)]
+        for hook_or_qualname in hooks_to_resolve:
+            if callable(hook_or_qualname):
+                resolved_hooks.append(hook_or_qualname)  # TODO: inspect if signature is appropriate for custom hooks
+            else:
+                try:
+                    module, func = hook_or_qualname.rsplit(".", 1)
+                    mod = import_module(module)
+                    resolved_hook = getattr(mod, func, None)
+                    if callable(resolved_hook):
+                        resolved_hooks.append(resolved_hook)
+                    else:
+                        raise MisconfigurationException(f"Custom hook {func} from module {module} is not callable!")
+                except (AttributeError, ImportError) as e:
+                    err_msg = f"Unable to import and resolve specified hook {func} from module {module}: {e}"
+                    raise MisconfigurationException(err_msg)
+        return resolved_hooks
+
+    def exec_reset_state_hooks(self) -> None:
+        for hook in self._configured_hooks["reset_state_hooks"]:
+            hook(self._module.model)
+
+    def add_memprofiler_hooks(self) -> None:
+        # TODO: extend supported hook points (e.g. backward, etc.) and if/once supporting additional hook points,
+        # use a hook_type to registration function mapping
+        memory_hooks_cfg = self.memprofiler_cfg.memory_hooks
+        has_hooks = any(getattr(memory_hooks_cfg, ht.name) for ht in fields(memory_hooks_cfg))
+        if not has_hooks:
+            rank_zero_warn("MemProfilerCfg is configured to enable memory hooks but MemProfilerHooks does not have"
+                           " any specified.")
+        for supported_hooks in fields(memory_hooks_cfg):
+            if getattr(memory_hooks_cfg, supported_hooks.name):
+                self._configured_hooks[supported_hooks.name] = self.resolve_hooks(supported_hooks.name)
+        for module in self._module.model.modules():
+            module.mem_info_handle = self._curr_pid.memory_info
+            for hook_func in self._configured_hooks["pre_forward_hooks"]:
+                self._hook_handles[hook_func].append(module.register_forward_pre_hook(hook_func))
+            for hook_func in self._configured_hooks["post_forward_hooks"]:
+                self._hook_handles[hook_func].append(module.register_forward_hook(hook_func))
+        self.exec_reset_state_hooks()
+
+    def init_cuda_snapshots_dir(self) -> None:
+        self._cuda_snapshot_dir = self.memprofiler_cfg.save_dir or self._module.core_log_dir / "memprofiler"
+        self._cuda_snapshot_dir = Path(self._cuda_snapshot_dir)  # ensure the dir is a Path
+        self._cuda_snapshot_dir.mkdir(exist_ok=True, parents=True)
+
+    def cuda_allocator_history_snap(self, src_subkey: Tuple) -> Dict:
+        cuda_snapshot_file = (self._cuda_snapshot_dir / "_".join(map(str,("cuda_alloc",
+                                                                          *src_subkey)))).with_suffix('.pickle')
+        torch.cuda.memory._dump_snapshot(cuda_snapshot_file)
+
+    def done(self, step_idx: int) -> bool:
+        return self.schedule.max_step and step_idx >= self.schedule.max_step
+
+    def _process_hooks(self, src_subkey) -> None:
+        if self.memprofiler_cfg.enable_memory_hooks:
+            if len(self._hook_handles) == 0:
+                self.add_memprofiler_hooks()
+            else:
+                self.memory_stats[".".join(map(str,("hooks", *src_subkey)))] = \
+                    {attr: getattr(self._module.model, attr) for attr in  self.memprofiler_cfg.save_hook_attrs}
+
+    def _collect_snap(self, src_subkey, reset_mem_hooks: bool = False) -> None:
+        _, phase, *_ = src_subkey
+        self._process_hooks(src_subkey)
+        mem_cfg = self.memprofiler_cfg
+        if phase in mem_cfg.enabled_funcs.cpu:
+            mem = self._curr_pid.memory_info()
+            self.memory_stats[".".join(map(str,("cpu", *src_subkey)))] = {"rss": mem.rss, "vms": mem.vms}
+        if phase in mem_cfg.enabled_funcs.cuda:
+            self.memory_stats[".".join(map(str,("cuda", *src_subkey)))] = torch.cuda.memory_stats()
+        if phase in mem_cfg.enabled_funcs.cuda_allocator_history and mem_cfg.cuda_allocator_history:
+            self.cuda_allocator_history_snap(src_subkey)
+        if mem_cfg.enable_memory_hooks and reset_mem_hooks:
+            self.exec_reset_state_hooks()
+
+    @property
+    def _should_remove_hooks(self) -> bool:
+        return all(func in self._done_prof_funcs for func in self.memprofiler_cfg.retain_hooks_for_funcs)
+
+    def teardown_prof(self, phase: str, step_ctx: str) -> None:
+        self._enabled[(phase, step_ctx)] = False
+        if not any(self._enabled[(phase, step_ctx)] for step_ctx in ["start", "end"]):
+            self._done_prof_funcs.append(phase)
+        if self.memprofiler_cfg.retain_hooks_for_funcs and self._should_remove_hooks:
+            self.remove_memprofiler_hooks()
+            self.memprofiler_cfg.enable_memory_hooks = False
+
+    def gen_snap_keys(self, phase: str, step_ctx: str, epoch_idx: Optional[int] = None,
+                      step_idx: Optional[int] = None) -> Tuple[int, int, Tuple]:
+        epoch_idx = next(e_idx for e_idx in (epoch_idx, self._module.current_epoch, 0) if e_idx is not None)
+        if step_idx is None:
+            step_idx = self._snap_indices[(phase, step_ctx)]
+        return epoch_idx, step_idx, (self._rank, phase, epoch_idx, step_idx, step_ctx)
+
+    def maybe_init_phase(self, phase: str, step_ctx: str) -> None:
+        if not self._snap_indices.get((phase, step_ctx), None):
+            self._snap_indices[(phase, step_ctx)] = 0
+            self._enabled[(phase, step_ctx)] = True
+
+    def snap(self, phase: str, step_ctx: str, epoch_idx: Optional[int] = None, step_idx: Optional[int] = None,
+             reset_mem_hooks: bool = False) -> None:
+        self.maybe_init_phase(phase, step_ctx)
+        if not self._enabled[(phase, step_ctx)]:
+            return
+        epoch_idx, step_idx, src_subkey = self.gen_snap_keys(phase, step_ctx, epoch_idx, step_idx)
+        if step_idx >= self.schedule.warmup_steps:
+            if not self.done(step_idx):
+                self._collect_snap(src_subkey, reset_mem_hooks)
+            else:
+                self.teardown_prof(phase, step_ctx)
+        if self._enabled[(phase, step_ctx)]:
+            self._snap_indices[(phase, step_ctx)] += 1
+
+    @rank_zero_only
+    def dump_memory_stats(self) -> None:
+        # TODO: all gather memory stats in the future if/when multiple ranks are supported
+        filename = self._cuda_snapshot_dir / "memory_stats.pickle"
+        with open(filename, "wb") as f:
+            pickle.dump(self.memory_stats, f)
+
+
+class ProfilerHooksMixin:
+
+    @contextmanager
+    @staticmethod
+    def memprofile_ctx(memprofiler, phase: str, epoch_idx: Optional[int] = None, step_idx: Optional[int] = None):
+        try:
+            memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="start")
+            yield
+        finally:
+            memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="end", reset_mem_hooks=True)
+
+    @staticmethod
+    def mem_profilable(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            if not hasattr(self, 'memprofiler'):
+                return func(self, *args, **kwargs)
+            phase = func.__name__
+            # for increased generality, we derive a profile `step_idx` based on a profiler snap counter rather than
+            # parsing `args` if a `batch_idx` kwarg isn't found
+            step_idx = kwargs.get("batch_idx", None)
+            with ProfilerHooksMixin.memprofile_ctx(self.memprofiler, phase=phase, step_idx=step_idx):
+                return func(self, *args, **kwargs)
+        return wrapper
 
 
 class DebugGenerationMixin(ABC):
@@ -24,7 +241,7 @@ class DebugGenerationMixin(ABC):
         super().__init__()
         self.phandle = None
 
-    def connect_lmdebug(self, obj_ref: Any) -> None:
+    def connect(self, obj_ref: Any) -> None:
         self.phandle = obj_ref
 
     def debug_sequences(self, sequences: Optional[Union[List, str]] = None) -> List:

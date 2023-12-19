@@ -29,7 +29,7 @@ from interpretune.base.it_datamodule import ITDataModule
 from interpretune.base.it_module import ITModule, BaseITModule
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.import_utils import _DOTENV_AVAILABLE
-from interpretune.base.call import _run
+from interpretune.base.call import it_init
 
 
 from jsonargparse import (
@@ -131,7 +131,7 @@ class ITCLI:
     use the same Hugging Face model, SuperGLUE task and custom logging tag."""
     def __init__(
         self,
-        model_class: ITModule = None,
+        module_class: ITModule = None,
         datamodule_class: ITDataModule = None,
         parser_kwargs: Optional[Union[Dict[str, Any], Dict[str, Dict[str, Any]]]] = None,
         args: ArgsType = None,
@@ -148,7 +148,7 @@ class ITCLI:
         self.seed_everything_default = seed_everything_default
         self.instantiate_only = instantiate_only
         self.parser_kwargs = parser_kwargs or {}  # type: ignore[var-annotated]  # github.com/python/mypy/issues/6463
-        self.model_class = model_class
+        self.module_class = module_class
         self.datamodule_class = datamodule_class
         self.setup_parser(parser_kwargs)
         self.parse_arguments(self.parser, args)
@@ -158,7 +158,7 @@ class ITCLI:
         self.before_instantiate_classes()
         self.instantiate_classes()
         if not self.instantiate_only:
-            self._run_core_flow()
+            it_init(module=self.model, datamodule=self.datamodule)
 
 
     def setup_parser(
@@ -194,6 +194,7 @@ class ITCLI:
             )
 
     def add_arguments_to_parser(self, parser: ArgumentParser) -> None:
+        # N.B. we use data, model top-level keys for Lightning CLI compatibility w/ datamodule and modules respectively
         parser.add_subclass_arguments(ITDataModule, "data", fail_untyped=False, required=True)
         parser.add_subclass_arguments(BaseITModule, "model", fail_untyped=False, required=True)
         add_base_args(parser)
@@ -232,8 +233,8 @@ class ITCLI:
         self.datamodule = self.config_init.get("data", None)
         self.model = self.config_init.get("model", None)
 
-    def _run_core_flow(self) -> None:
-        _run(model=self.model, datamodule=self.datamodule)
+    # def _run_core_flow(self) -> None:
+    #     it_init(model=self.model, datamodule=self.datamodule)
 
 def env_setup() -> None:
     if _DOTENV_AVAILABLE:

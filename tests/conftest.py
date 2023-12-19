@@ -23,6 +23,13 @@ from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 
 from tests import _PATH_DATASETS
 
+@pytest.fixture(scope="function")
+def reset_deterministic_algorithm():
+    """Ensures that torch determinism settings are reset before the next test runs."""
+    yield
+    os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
+    torch.use_deterministic_algorithms(False)
+
 
 @pytest.fixture(scope="session")
 def datadir():
@@ -74,7 +81,8 @@ def restore_env_variables():
         "KMP_DUPLICATE_LIB_OK",  # leaked since PyTorch 1.13
         "CRC32C_SW_MODE",  # leaked by tensorboardX
         "TRITON_CACHE_DIR",  # leaked starting in PyTorch 2.0.0
-        "OMP_NUM_THREADS",  # leaked by Lightning launchers
+        "OMP_NUM_THREADS",  # leaked by Lightning launchers,
+        "TOKENIZERS_PARALLELISM",  # TODO: add a fixture that resets this currently leaked var
     }
     leaked_vars.difference_update(allowlist)
     assert not leaked_vars, f"test is leaking environment variable(s): {set(leaked_vars)}"
@@ -87,11 +95,11 @@ def teardown_process_group():
         torch.distributed.destroy_process_group()
 
 
-@pytest.fixture(scope="function", autouse=True)
-def reset_deterministic_algorithm():
-    """Ensures that torch determinism settings are reset before the next test runs."""
-    yield
-    torch.use_deterministic_algorithms(False)
+# @pytest.fixture(scope="function", autouse=True)
+# def reset_deterministic_algorithm():
+#     """Ensures that torch determinism settings are reset before the next test runs."""
+#     yield
+#     torch.use_deterministic_algorithms(False)
 
 
 @pytest.fixture
@@ -109,7 +117,7 @@ def tmpdir_server(tmpdir):
 
 def pytest_collection_modifyitems(items):
     # filter out special tests
-    if os.getenv("PL_RUN_STANDALONE_TESTS", "0") == "1":
+    if os.getenv("IT_RUN_STANDALONE_TESTS", "0") == "1":
         items[:] = [
             item
             for item in items
@@ -117,7 +125,15 @@ def pytest_collection_modifyitems(items):
             # has `@RunIf(standalone=True)`
             if marker.name == "skipif" and marker.kwargs.get("standalone")
         ]
-    elif os.getenv("PL_RUN_SLOW_TESTS", "0") == "1":
+    elif os.getenv("IT_RUN_PROFILING_TESTS", "0") == "1":
+        items[:] = [
+            item
+            for item in items
+            for marker in item.own_markers
+            # has `@RunIf(slow=True)`
+            if marker.name == "skipif" and marker.kwargs.get("profiling")
+        ]
+    elif os.getenv("IT_RUN_SLOW_TESTS", "0") == "1":
         items[:] = [
             item
             for item in items

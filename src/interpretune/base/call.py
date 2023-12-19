@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+from contextlib import contextmanager
 from typing import Any, Union, Optional
 
 from interpretune.base.it_datamodule import ITDataModule
@@ -22,14 +23,40 @@ log = logging.getLogger(__name__)
 
 HOOKABLE_ITMODULE = Union[ITDataModule, BaseITModule]
 
-def _run(model, datamodule, *args, **kwargs):
-    _call_itmodule_hook(datamodule, hook_name="prepare_data", hook_msg="Preparing data", target_model=model.model)
+def it_init(module, datamodule, *args, **kwargs):
+    _call_itmodule_hook(datamodule, hook_name="prepare_data", hook_msg="Preparing data", target_model=module.model)
     _call_itmodule_hook(datamodule, hook_name="setup", hook_msg="Setting up datamodule")
-    _call_itmodule_hook(model, hook_name="setup", hook_msg="Setting up model", datamodule=datamodule)
-    if model.it_cfg.optimizer_init:  # only attempt optimizer/scheduler initialization if a configuration is provided
-        _call_itmodule_hook(model, hook_name="configure_optimizers", hook_msg="initializing optimizers and schedulers",
+    _call_itmodule_hook(module, hook_name="setup", hook_msg="Setting up model", datamodule=datamodule)
+    if module.it_cfg.optimizer_init:  # only attempt optimizer/scheduler initialization if a configuration is provided
+        _call_itmodule_hook(module, hook_name="configure_optimizers", hook_msg="initializing optimizers and schedulers",
                             connect_output=True)
-    pass
+
+def it_session_end(module, datamodule, *args, **kwargs):
+    # N.B. currently associating session end with `on_train_end` hooks to ensure compatibility with Lightning
+    _call_itmodule_hook(module, hook_name="on_train_end", hook_msg="Running session end hooks on IT module")
+    _call_itmodule_hook(datamodule, hook_name="on_train_end", hook_msg="Running session end hooks on IT datamodule")
+
+# TODO: consider adding IT teardown hooks (among others)
+
+# TODO: consider removing this helper function as it is helpful to users in a fairly narrow context
+@contextmanager
+def model_call_redirect(wrapper_module: Any) -> None:
+    """context manager making an arbitrary model-wrapping object callable, redirecting calls to an underlying
+    model."""
+    try:
+        dunder_redirects = [("__call__", wrapper_module.model)]
+        for method, target in dunder_redirects:
+            if not hasattr(wrapper_module, method):
+                redirect_target = getattr(target, method, None)
+                assert redirect_target, f"Could not find redirect method `{method}` on target `{target}`."
+                # N.B. set at class-level https://docs.python.org/3/reference/datamodel.html#emulating-callable-objects
+                setattr(wrapper_module.__class__, method, redirect_target)
+        yield
+    finally:
+        for method, target in dunder_redirects:
+            if hasattr(wrapper_module, method):
+                delattr(wrapper_module.__class__, method)
+
 
 class _hookNameContextManager:
     """A context manager to change the default tensor type when tensors get created.

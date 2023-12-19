@@ -20,7 +20,7 @@ from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 if _LIGHTNING_AVAILABLE:
     from lightning.fabric.utilities.rank_zero import _get_rank
 else:
-    _get_rank = lambda: None
+    _get_rank = lambda: 0
 
 _default_format_warning = warnings.formatwarning
 

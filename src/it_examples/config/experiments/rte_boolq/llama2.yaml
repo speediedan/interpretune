@@ -7,6 +7,9 @@ itdm_cfg:
     tokenizer_id_overrides:
       pad_token_id: 32000
     special_tokens_dict: {"pad_token": "<PAD>"}
+    enable_datasets_cache: true
+    prepare_data_map_cfg:
+      batched: true
     prompt_cfg:
       class_path: it_examples.experiments.rte_boolq.core.Llama2PromptConfig
     tokenizers_parallelism: false

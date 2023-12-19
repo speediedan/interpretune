@@ -6,6 +6,9 @@ itdm_cfg:
     prompt_cfg:
       class_path: it_examples.experiments.rte_boolq.core.RTEBoolqPromptConfig
     tokenizers_parallelism: false
+    enable_datasets_cache: true
+    prepare_data_map_cfg:
+      batched: true
     tokenizer_kwargs:
       use_fast: true  # by default true
       add_bos_token: true

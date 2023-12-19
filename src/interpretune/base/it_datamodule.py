@@ -2,6 +2,7 @@ import os
 import inspect
 from typing import Optional, Callable, Any
 from abc import ABC
+from functools import reduce
 import logging
 
 import torch
@@ -32,6 +33,8 @@ class ITDataModule(ABC):
         """
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__()
+        # module handle
+        self._module = None
         self.itdm_cfg = itdm_cfg
         if self.itdm_cfg.enable_datasets_cache:  # explicitly toggle datasets caching
             datasets.enable_caching()
@@ -45,6 +48,15 @@ class ITDataModule(ABC):
         collator_class = _import_class(self.itdm_cfg.data_collator_cfg["collator_class"])
         self.data_collator = collator_class(self.tokenizer, **collator_kwargs)
 
+    @property
+    def module(self) -> Optional[torch.nn.Module]:
+        try:
+            module = getattr(self, "_module", None) or reduce(getattr, "trainer.model".split("."), self)
+        except AttributeError as ae:
+            rank_zero_warn(f"Could not find module reference (has it been attached yet?): {ae}")
+            module = None
+        return module
+
     # TODO: define ITDataModule and BaseITModule as adhering to a hookable module protocol
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
@@ -53,9 +65,13 @@ class ITDataModule(ABC):
         """Load the SuperGLUE dataset."""
         raise NotImplementedError
 
-    def setup(self, stage: Optional[str] = None) -> None:  # stage optional for raw pytorch support
+    def setup(self, stage: Optional[str] = None, module: Optional[torch.nn.Module] = None) -> None:
         """Setup our dataset splits for training/validation."""
+        # stage is optional for raw pytorch support
+        # attaching module handle to datamodule is optional. It can be convenient to align data prep witha  model using
+        # signature inspection
         self.dataset = datasets.load_from_disk(self.itdm_cfg.dataset_path)
+        self._module = module
 
     def configure_tokenizer(self) -> PreTrainedTokenizerBase:
         access_token = os.environ[self.itdm_cfg.os_env_model_auth_key.upper()] if self.itdm_cfg.os_env_model_auth_key \
@@ -86,9 +102,10 @@ class ITDataModule(ABC):
                                description: Optional[str] = None) -> Dataset:
             if not self.itdm_cfg.remove_unused_columns:
                 return dataset
-            if not target_model:
-                target_model = self.trainer.model.model
-            self._set_signature_columns_if_needed(target_model)
+            if not self.itdm_cfg.signature_columns:
+                if not target_model:
+                    target_model = self.module.model
+                self._set_signature_columns_if_needed(target_model)
             ignored_columns = list(set(dataset.column_names) - set(self.itdm_cfg.signature_columns))
             if len(ignored_columns) > 0:
                 dset_description = "" if description is None else f"in the {description} set"
@@ -99,3 +116,6 @@ class ITDataModule(ABC):
                     f" expected by {target_name}, you can safely ignore this message."
                 )
             return dataset.remove_columns(ignored_columns)
+
+    def on_train_end(self) -> Optional[Any]:
+        """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""

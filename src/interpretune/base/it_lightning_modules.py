@@ -1,5 +1,4 @@
 from typing import Any, Optional
-from pathlib import Path
 
 import torch
 import lightning.pytorch as pl
@@ -9,7 +8,7 @@ from transformer_lens import HookedTransformer
 import finetuning_scheduler as fts
 
 from interpretune.utils.logging import rank_zero_info
-from interpretune.base.it_module import BaseITModule, ITHookedModule
+from interpretune.base.it_module import BaseITModule, BaseITHookedModule
 from interpretune.base.it_datamodule import ITDataModule
 
 
@@ -28,15 +27,11 @@ class ITLightningModule(BaseITModule, pl.LightningModule):
         return self.model(**inputs)
 
     def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
-        if self.it_cfg.debug_lm_cfg.enabled and self.it_cfg.debug_lm_cfg.record_memory_history:
-            torch.cuda.memory._dump_snapshot(f"/tmp/{self.init_hparams['experiment_id']}_start_train_step_{self.global_step}.pickle")
         loss = self(**batch)[0]
         self.log("train_loss", loss, sync_dist=True)
         return loss
 
     def on_train_epoch_start(self) -> None:
-        if self.it_cfg.debug_lm_cfg.enabled and self.it_cfg.debug_lm_cfg.record_memory_history:
-            torch.cuda.memory._dump_snapshot(f"/tmp/{self.init_hparams['experiment_id']}_start_train_epoch_{self.current_epoch}.pickle")
         assert self.logger is not None
         if self.finetuningscheduler_callback:
             self.logger.log_metrics(
@@ -108,8 +103,12 @@ class ITLightningModule(BaseITModule, pl.LightningModule):
         metric_dict = self.metric.compute(predictions=preds, references=labels)
         rank_zero_info(metric_dict)
 
+    # def on_train_end(self) -> None:
+    #     if self.memprofiler is not None:
+    #         self.memprofiler.dump_memory_stats()
 
-class ITHookedLightningModule(ITHookedModule, ITLightningModule):
+
+class ITHookedLightningModule(BaseITHookedModule, ITLightningModule):
 
     @property
     def finetuningscheduler_callback(self) -> Optional[fts.FinetuningScheduler]:  # type: ignore
@@ -119,8 +118,13 @@ class ITHookedLightningModule(ITHookedModule, ITLightningModule):
     def setup(self, stage: str) -> None:
         if self.it_cfg.tlens_from_pretrained_cfg.enabled:
             self._convert_hf_to_hooked()
-        self.dump_base = Path(self.trainer.model._trainer.log_dir)
+        #self.dump_base = Path(self.trainer.model._trainer.log_dir)
 
     def _convert_hf_to_hooked(self) -> HookedTransformer:
         self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=self.datamodule.tokenizer,
                                                   **self.it_cfg.tlens_from_pretrained_cfg.__dict__)
+
+    # create a separate mixin for marginal core functionality available to hooked and regular IT lightning modules?
+    # def on_train_end(self) -> None:
+    #     if self.memprofiler is not None:
+    #         self.memprofiler.dump_memory_stats()

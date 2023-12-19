@@ -17,7 +17,7 @@ import pytest
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.cli.core_cli import compose_config, IT_CONFIG_BASE, IT_CONFIG_GLOBAL
 from it_examples.experiments.rte_boolq.core import GPT2RTEBoolqITHookedModule
-from tests.helpers.core.boring_model import (unexpected_warns, pytest_param_factory, TestConfig, RUN_FN, dummy_step,
+from tests.helpers.core.boring_model import (unexpected_warns, pytest_param_factory, TestCfg, RUN_FN, dummy_step,
                                              EXPECTED_WARNS)
 from tests.helpers.runif import RunIf
 
@@ -60,16 +60,15 @@ gpt2_l_hooked = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "lightning_hooked_r
 llama2_l = EXPERIMENT_CONFIG_SETS[("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", "debug")]
 
 TEST_CONFIGS_EXAMPLES = (
-    TestConfig("core_gpt2_hooked_compose_config", test_config=(False, None, False, gpt2_core_hooked, True)),
-    TestConfig("core_gpt2_hooked", test_config=(False, None, False, gpt2_core_hooked, False)),
-    TestConfig("core_gpt2_hooked_instantiate_only",test_config=(False, None, True, gpt2_core_hooked, False),
-               expected_results=(GPT2RTEBoolqITHookedModule,)),
-    TestConfig("core_gpt2_optim_init", test_config=(False, None, False, gpt2_core, True)),
-    TestConfig("lightning_gpt2_hooked", test_config=(True, "test", False, gpt2_l_hooked, False), marks="lightning"),
-    TestConfig("lightning_gpt2_hooked_instantiate_only", test_config=(True, None, True, gpt2_l_hooked, False),
-               marks="lightning",
-               expected_results=(GPT2ITHookedLightningModule,)),
-    TestConfig("lightning_llama2", test_config=(True, "test", False, llama2_l, False), marks="lightning"),
+    TestCfg("core_gpt2_hooked_compose_config", test_cfg=(False, None, False, gpt2_core_hooked, True)),
+    TestCfg("core_gpt2_hooked", test_cfg=(False, None, False, gpt2_core_hooked, False)),
+    TestCfg("core_gpt2_hooked_instantiate_only",test_cfg=(False, None, True, gpt2_core_hooked, False),
+               expected_results={'class_type': GPT2RTEBoolqITHookedModule}),
+    TestCfg("core_gpt2_optim_init", test_cfg=(False, None, False, gpt2_core, True)),
+    TestCfg("lightning_gpt2_hooked", test_cfg=(True, "test", False, gpt2_l_hooked, False), marks="lightning"),
+    TestCfg("lightning_gpt2_hooked_instantiate_only", test_cfg=(True, None, True, gpt2_l_hooked, False),
+               marks="lightning", expected_results={'class_type': GPT2ITHookedLightningModule}),
+    TestCfg("lightning_llama2", test_cfg=(True, "test", False, llama2_l, False), marks="lightning"),
 )
 
 EXPECTED_RESULTS_EXAMPLES = {cfg.test_alias: cfg.expected_results for cfg in TEST_CONFIGS_EXAMPLES}
@@ -107,7 +106,7 @@ def test_basic_examples(recwarn, test_alias, l_cli, subcommand, instantiate_only
     cli_main, cli_args = gen_cli_args(l_cli, subcommand, use_compose_config, config_files)
     cli = invoke_cli(cli_main, cli_args, l_cli, instantiate_only)
     if instantiate_only:
-        assert isinstance(cli.model, EXPECTED_RESULTS_EXAMPLES[test_alias][0])
+        assert isinstance(cli.model, EXPECTED_RESULTS_EXAMPLES[test_alias]['class_type'])
     # ensure no unexpected warnings detected
     unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=EXPECTED_WARNS)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)

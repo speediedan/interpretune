@@ -32,12 +32,8 @@ class RTEBoolqDataModule(ITDataModule):
         # note for raw pytorch we require a target_model (vs getting it from the trainer in the lightning version)
         dataset = datasets.load_dataset("super_glue", self.itdm_cfg.task_name)
         for split in dataset.keys():
-            if split == 'validation' or not self.itdm_cfg.prepare_validation_set_only:
-                dataset[split] = dataset[split].map(self.tokenization_func, batched=True)
-                dataset[split] = self._remove_unused_columns(dataset[split], target_model)
-        if self.itdm_cfg.prepare_validation_set_only:
-            for split in ['test', 'train']:
-                del dataset[split]
+            dataset[split] = dataset[split].map(self.tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
+            dataset[split] = self._remove_unused_columns(dataset[split], target_model)
         dataset.save_to_disk(self.itdm_cfg.dataset_path)
 
     def train_dataloader(self) -> DataLoader:
