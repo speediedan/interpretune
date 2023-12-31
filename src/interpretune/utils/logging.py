@@ -3,6 +3,8 @@ import sys
 import logging
 import warnings
 from collections import namedtuple
+from fsspec.core import url_to_fs
+from fsspec.implementations.local import AbstractFileSystem
 from typing import Optional, Callable, Any, TypeVar, Union, Dict, Type
 from typing_extensions import ParamSpec, overload
 from functools import wraps
@@ -248,3 +250,7 @@ def collect_env_info() -> Dict:
     pip_dict = {name: ver for name, ver in [p.split("==") for p in sys_info._asdict()["pip_packages"].split("\n")]}
     sys_dict["pip_packages"] = pip_dict
     return sys_dict
+
+def get_filesystem(path: str | Path, **kwargs: Any) -> AbstractFileSystem:
+    fs, _ = url_to_fs(str(path), **kwargs)
+    return fs
