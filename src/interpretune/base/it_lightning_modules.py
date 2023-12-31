@@ -31,7 +31,7 @@ class ITLightningModule(BaseITModule, pl.LightningModule):
         self.log("train_loss", loss, sync_dist=True)
         return loss
 
-    def on_train_epoch_start(self) -> None:
+    def on_train_epoch_start(self, *args, **kwargs) -> None:
         assert self.logger is not None
         if self.finetuningscheduler_callback:
             self.logger.log_metrics(

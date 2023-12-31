@@ -17,6 +17,13 @@ from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, 
 # maximally flexible interactive experimentation and interleaved Lightning-based tuning, testing and
 # prediction/interpretation tasks.
 
+CORE_TO_LIGHTNING_ATTRS_MAP = {
+    "_log_dir": ("trainer.model._trainer.log_dir", None, "No log_dir has been set yet"),
+    "_datamodule": ("trainer.datamodule", None, "Could not find datamodule reference (has it been attached yet?)"),
+    "_current_epoch": ("trainer.current_epoch", 0, ""),
+    "_global_step": ("trainer.global_step", 0, ""),
+}
+
 def _dummy_notify(method: str, ret_callable: bool, rv: Any, *args, **kwargs) -> Optional[Any]:
     rank_zero_warn(f"The `{method}` method is not defined for this module. For Lightning compatibility, this noop "
                     "method will be used. This warning will only be issued once by default.")
@@ -46,6 +53,14 @@ class CoreHelperAttributeMixin:
             if name in _helper_attrs:
                 return _helper_attrs[name]
         return super().__getattr__(name)  # the unresolved attribute wasn't ours, pass it on to PyTorch's __getattr__
+
+    @property
+    def current_epoch(self) -> int:
+        return self._core_or_lightning(c2l_map_key="_current_epoch")
+
+    @property
+    def global_step(self) -> int:
+        return self._core_or_lightning(c2l_map_key="_global_step")
 
     @property
     def device(self) -> Optional[torch.device]:

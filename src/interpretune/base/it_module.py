@@ -15,7 +15,8 @@ from transformer_lens import HookedTransformer
 from interpretune.utils.import_utils import _import_class, instantiate_class, _BNB_AVAILABLE
 from interpretune.base.config_classes import ITConfig
 from interpretune.base.it_datamodule import ITDataModule
-from interpretune.base.it_hooks import OptimizerSchedulerInitMixin, CoreHelperAttributeMixin
+from interpretune.base.it_hooks import (OptimizerSchedulerInitMixin, CoreHelperAttributeMixin,
+                                        CORE_TO_LIGHTNING_ATTRS_MAP)
 from interpretune.base.debug import DebugGenerationMixin, MemProfilerMixin, ProfilerHooksMixin
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info, rank_zero_debug
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
@@ -65,34 +66,22 @@ class BaseITModule(ABC, OptimizerSchedulerInitMixin, ProfilerHooksMixin, torch.n
             self.lm_debug.connect(self)
         self._model_init()
 
+    def _core_or_lightning(self, c2l_map_key: str):
+        c2l = CORE_TO_LIGHTNING_ATTRS_MAP[c2l_map_key]
+        try:
+            attr_val = getattr(self, c2l_map_key, None) or reduce(getattr, c2l[0].split("."), self)
+        except AttributeError as ae:
+            rank_zero_debug(f"{c2l[2]}: {ae}")
+            attr_val = c2l[1]
+        return attr_val
+
     @property
     def core_log_dir(self) -> Optional[str | os.PathLike]:
-        try:
-            log_dir = getattr(self, "_log_dir", None) or reduce(getattr, "trainer.model._trainer.log_dir".split("."),
-                                                                self)
-        except AttributeError as ae:
-            rank_zero_debug(f"No log_dir has been set yet): {ae}")
-            log_dir = None
-        return log_dir
+        return self._core_or_lightning(c2l_map_key="_log_dir")
 
     @property
     def datamodule(self) -> Optional[ITDataModule]:
-        try:
-            datamodule = getattr(self, "_datamodule", None) or reduce(getattr, "trainer.datamodule".split("."), self)
-        except AttributeError as ae:
-            rank_zero_warn(f"Could not find datamodule reference (has it been attached yet?): {ae}")
-            datamodule = None
-        return datamodule
-
-    @property
-    def current_epoch(self) -> Optional[int]:
-        try:
-            current_epoch = getattr(self, "_current_epoch", None)
-            if current_epoch is None:
-                current_epoch = reduce(getattr, "trainer.current_epoch".split("."), self)
-        except AttributeError:
-            current_epoch = None
-        return current_epoch
+        return self._core_or_lightning(c2l_map_key="_datamodule")
 
     @property
     def cuda_allocator_history(self) -> bool:
@@ -112,6 +101,8 @@ class BaseITModule(ABC, OptimizerSchedulerInitMixin, ProfilerHooksMixin, torch.n
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         if hook_name == "configure_optimizers":
             self._it_init_optimizers_and_schedulers(output)
+        elif hook_name == "on_train_epoch_start":
+            pass  # TODO: remove if decided that no need to connect output of this hook
         else:
             rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
@@ -289,8 +280,11 @@ class BaseITModule(ABC, OptimizerSchedulerInitMixin, ProfilerHooksMixin, torch.n
 
     def on_train_end(self) -> Optional[Any]:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
-        if self.memprofiler is not None:
+        if getattr(self, 'memprofiler', None):
             self.memprofiler.dump_memory_stats()
+
+    def on_train_epoch_start(self, *args, **kwargs) -> None:
+        pass
 
 
 class ITModule(CoreHelperAttributeMixin, BaseITModule):
@@ -318,14 +312,6 @@ class ITModule(CoreHelperAttributeMixin, BaseITModule):
         loss = self(**batch)[0]
         self.log("train_loss", loss, sync_dist=True)
         return loss
-
-    def on_train_epoch_start(self) -> None:
-        assert self.logger is not None
-        if self.finetuningscheduler_callback:
-            self.logger.log_metrics(
-                metrics={"finetuning_schedule_depth": float(self.finetuningscheduler_callback.curr_depth)},
-                step=self.global_step,
-            )
 
     @ProfilerHooksMixin.mem_profilable
     def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
