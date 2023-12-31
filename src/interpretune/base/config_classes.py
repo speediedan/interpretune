@@ -82,7 +82,7 @@ class CoreSteps(Enum):
 
 class DefaultMemHooks(Enum):
     pre_forward = 'interpretune.base.debug._hook_rss_pre_forward'
-    post_forward = 'interpretune.base.debug._hook_rss_post_forward'
+    post_forward = 'interpretune.base.debug._hook_rss_post_forward_w_out'
     reset_state = 'interpretune.base.debug._reset_memory_hooks_state'
 
 @dataclass(kw_only=True)
@@ -107,7 +107,8 @@ class MemProfilerCfg(ITSerializableCfg):
     enable_memory_hooks: bool = True
     memory_hooks: MemProfilerHooks = field(default_factory=lambda: MemProfilerHooks())
     # if you add custom hooks, make sure to add the desired module state attributes to save to `save_hook_attrs`
-    save_hook_attrs: List = field(default_factory=lambda: ["rss_post_forward", "rss_post_forward", "rss_diff"])
+    save_hook_attrs: List = field(default_factory=lambda: ["rss_post_forward", "rss_post_forward", "rss_diff",
+                                                           "out_bytes", "cumul_out_bytes"])
     # since we cannot reliably ascertain when all MemProfilerFuncs will be executed, memory hooks will
     # only be removed once the funcs in this list have reached `max_step`
     retain_hooks_for_funcs: List[str | Enum] = field(default_factory=lambda: list(step.name for step in CoreSteps))

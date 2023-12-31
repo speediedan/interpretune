@@ -32,8 +32,20 @@ def _hook_rss_post_forward(module, *args, **kwargs):
     module.rss_diff = rss_diff + (module.rss_diff if hasattr(module, "rss_diff") else 0)
     return None
 
+def _hook_rss_post_forward_w_out(module, *args, **kwargs):
+    mem = module.mem_info_handle()
+    module.rss_post_forward = mem.rss
+    rss_diff = module.rss_post_forward - module.rss_pre_forward
+    out_bytes = args[1].nbytes if len(args) > 1 and isinstance(args[1], torch.Tensor) else 0
+    module.out_bytes = out_bytes + (module.out_bytes if hasattr(module, "out_bytes") else 0)
+    module.cumul_out_bytes = sum(getattr(m, 'out_bytes', 0) for m in module.modules())
+    module.rss_diff = rss_diff + (module.rss_diff if hasattr(module, "rss_diff") else 0)
+    return None
+
 def _reset_memory_hooks_state(model):
     for module in model.modules():
+        module.cumul_out_bytes = 0
+        module.out_bytes = 0
         module.rss_diff = 0
         module.rss_post_forward = 0
         module.rss_pre_forward = 0
@@ -133,9 +145,8 @@ class MemProfilerMixin:
         if self.memprofiler_cfg.enable_memory_hooks:
             if len(self._hook_handles) == 0:
                 self.add_memprofiler_hooks()
-            else:
-                self.memory_stats[".".join(map(str,("hooks", *src_subkey)))] = \
-                    {attr: getattr(self._module.model, attr) for attr in  self.memprofiler_cfg.save_hook_attrs}
+            self.memory_stats[".".join(map(str,("hooks", *src_subkey)))] = \
+                {attr: getattr(self._module.model, attr, None) for attr in  self.memprofiler_cfg.save_hook_attrs}
 
     def _collect_snap(self, src_subkey, reset_mem_hooks: bool = False) -> None:
         _, phase, *_ = src_subkey
@@ -165,7 +176,11 @@ class MemProfilerMixin:
 
     def gen_snap_keys(self, phase: str, step_ctx: str, epoch_idx: Optional[int] = None,
                       step_idx: Optional[int] = None) -> Tuple[int, int, Tuple]:
-        epoch_idx = next(e_idx for e_idx in (epoch_idx, self._module.current_epoch, 0) if e_idx is not None)
+        # NOTE [Memprofiler Key Format]
+        # snap key format is src.rank.phase.epoch_idx.step_idx.step_ctx
+        # e.g. hooks.0.training_step.0.0.end keys hook output for the end of training step 0, epoch 0 for rank 0
+        # cuda.0.training_step.1.2.start keys cuda mem stats for the start of training step 2, epoch 1 for rank 0
+        epoch_idx = next(e_idx for e_idx in (epoch_idx, self._module.current_epoch) if e_idx is not None)
         if step_idx is None:
             step_idx = self._snap_indices[(phase, step_ctx)]
         return epoch_idx, step_idx, (self._rank, phase, epoch_idx, step_idx, step_ctx)
