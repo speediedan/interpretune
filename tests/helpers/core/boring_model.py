@@ -13,12 +13,13 @@
 # TODO: fill in this placeholder with actual core helper functions
 import re
 import os
-import dataclasses
+import random
+from dataclasses import dataclass, fields, is_dataclass, FrozenInstanceError
 from pathlib import Path
 from abc import ABC
 from collections import ChainMap
 from functools import partial
-from typing import List, Optional, Tuple, NamedTuple, Callable, Any, Mapping, Sequence, Union, Dict
+from typing import List, Optional, Tuple, Callable, Any, Mapping, Sequence, Union, Dict
 from packaging.version import Version
 from pkg_resources import get_distribution
 from warnings import WarningMessage
@@ -40,6 +41,8 @@ from transformers.tokenization_utils_base import BatchEncoding
 from interpretune.base.config_classes import ITDataModuleConfig, ITConfig, MemProfilerCfg, MemProfilerSchedule
 from interpretune.base.it_datamodule import ITDataModule
 from interpretune.base.it_module import ITModule
+from interpretune.base.call import _call_itmodule_hook
+from interpretune.utils.logging import rank_zero_only, get_filesystem
 from interpretune.utils.types import STEP_OUTPUT, Optimizable
 from it_examples.experiments.rte_boolq.core import RTEBoolqPromptConfig, RTEBoolqModuleMixin
 from it_examples.data.rte_bool import RTEBoolqDataModule
@@ -53,6 +56,7 @@ EXPECTED_WARNS = [
     "The truth value of an empty array is ambiguous",  # for jsonargparse
     "The `use_auth_token` argument is deprecated",  # TODO: need to use `token` instead of `use_auth_token`
     "please pass in use_reentrant=True or use_reentrant=False explicitly.",  # hf activation checkpoint warning
+    "Please use torch.utils._pytree.register_pytree_node instead",  # temp  allow deprecated call from hf
     #"dtype is not supported. Disabling autocast",  # enable to allow autocast test paths w/ unsupported types
 ]
 CORE_CONTEXT_WARNS = EXPECTED_WARNS + [
@@ -104,12 +108,18 @@ RUNIF_ALIASES = {
 }
 
 
-class TestCfg(NamedTuple):
-    test_alias: str
-    test_cfg: Tuple
+@dataclass(kw_only=True)
+class TestCfg():
+    alias: Optional[str] = None
+    cfg: Optional[Tuple] = None
     marks: Optional[Tuple] = None
-    expected_results: Optional[Dict] = None
+    expected: Optional[Dict] = None
+    result_gen: Optional[Callable] = None
 
+    def __post_init__(self):
+        if self.expected is None and self.result_gen is not None:
+            assert callable(self.result_gen), "result_gen must be callable"
+            self.expected = self.result_gen(self.alias)
 
 def get_marks(marks: Union[Dict, str]) -> RunIf:
     # support RunIf aliases
@@ -122,13 +132,47 @@ def get_marks(marks: Union[Dict, str]) -> RunIf:
 
 def pytest_param_factory(test_configs: List[TestCfg]) -> List:
     return [pytest.param(
-            config.test_alias,
-            *config.test_cfg,
-            id=config.test_alias,
+            config.alias,
+            *config.cfg,
+            id=config.alias,
             marks=get_marks(config.marks) if config.marks else tuple(),
         )
         for config in test_configs
     ]
+
+# For these result generation functions, result_map should be a tuple of desired results dict and an optional
+# `tolerance_map` dict mapping result keys to a (rtol, atol) tuple (which will be generated for all result keys)
+def mem_results(result_map: Dict[str, Tuple], test_alias: str):
+    """Result generation function for memory profiling tests."""
+    # See NOTE [Memprofiler Key Format]
+    # snap keys are src.rank.phase.epoch_idx.step_idx.step_ctx
+    # we default to step:
+    #   - 3 for cuda in the train phase
+    #   - 0 for all other tests (e.g. hook-based (by default, cpu/rss-based) and all test phase assessment)
+    # all tests currently default to test epoch 0 to minimize TTS
+    default_epoch, default_step, cuda_t_step, rank = 0, 0, 3, 0
+    loop_type, src, test_values, memstats_tol = result_map[test_alias]
+    def_end, bytes = f'_step.{default_epoch}.{default_step}.end', '_bytes.all.'
+    fwd_diff, alloc, reserved = 'rss_diff', f'allocated{bytes}', f'reserved{bytes}'
+    test_key, train_keys = f'{rank}.test{def_end}', {"cuda": f'{rank}.training_step.{default_epoch}.{cuda_t_step}.end',
+                                                     "hooks": f'{rank}.training{def_end}'}
+    mem_keys = (f'{alloc}current', f'{alloc}peak', f'{reserved}peak') if src == "cuda" else (fwd_diff,)
+    step_key = f'{src}.{train_keys[src]}' if loop_type == 'train' else f'{src}.{test_key}'
+    if not memstats_tol:   # default tolerance of rtol=0.05 for all keys unless overridden with memstats_tol
+        memstats_tol = {'tolerance_map': {k: (0.05, 0) for k in mem_keys}}
+    return {**memstats_tol, 'expected_memstats': (step_key, mem_keys, test_values)}
+
+def close_results(result_map: Dict[str, Tuple], test_alias: str):
+    """Result generation function that packages expected close results with a provided tolerance dict or generates
+    a default one based upon the test_alias."""
+    close_map, closestats_tol = result_map[test_alias]
+    expected_close = defaultdict(dict)
+    close_keys = set()
+    for (e, k, v) in close_map:
+        expected_close[e][k] = v
+        close_keys.add(k)
+    closestats_tol = closestats_tol or {'tolerance_map': {k: (0.1, 0) for k in close_keys}}
+    return {**closestats_tol, 'expected_close': expected_close}
 
 
 def multiwarn_check(
@@ -157,7 +201,7 @@ def is_namedtuple(obj: object) -> bool:
 def is_dataclass_instance(obj: object) -> bool:
     """Check if object is dataclass."""
     # https://docs.python.org/3/library/dataclasses.html#module-level-decorators-classes-and-functions
-    return dataclasses.is_dataclass(obj) and not isinstance(obj, type)
+    return is_dataclass(obj) and not isinstance(obj, type)
 
 
 def apply_to_collection(
@@ -279,15 +323,15 @@ def _apply_to_collection_slow(
         # make a deepcopy of the data,
         # but do not deepcopy mapped fields since the computation would
         # be wasted on values that likely get immediately overwritten
-        fields = {}
+        dfields = {}
         memo = {}
-        for field in dataclasses.fields(data):
+        for field in fields(data):
             field_value = getattr(data, field.name)
-            fields[field.name] = (field_value, field.init)
+            dfields[field.name] = (field_value, field.init)
             memo[id(field_value)] = field_value
         result = deepcopy(data, memo=memo)
         # apply function to each field
-        for field_name, (field_value, field_init) in fields.items():
+        for field_name, (field_value, field_init) in dfields.items():
             v = None
             if field_init:
                 v = _apply_to_collection_slow(
@@ -304,7 +348,7 @@ def _apply_to_collection_slow(
                 v = getattr(data, field_name)
             try:
                 setattr(result, field_name, v)
-            except dataclasses.FrozenInstanceError as e:
+            except FrozenInstanceError as e:
                 if allow_frozen:
                     # Quit early if we encounter a frozen data class; return `result` as is.
                     break
@@ -386,11 +430,14 @@ def is_cuda_memory_close(memory_stats_torch, memory_stats_fabric):
 def is_cpu_memory_close(memory_stats_torch, memory_stats_fabric):
     return memory_stats_torch["allocated_bytes.all.peak"] >= memory_stats_fabric["allocated_bytes.all.peak"]
 
-def make_deterministic(warn_only=False):
+def make_deterministic(warn_only=False, fill_uninitialized_memory=True):
+    # https://pytorch.org/docs/2.2/notes/randomness.html#reproducibility
     # https://docs.nvidia.com/cuda/cublas/index.html#results-reproducibility
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     torch.use_deterministic_algorithms(True, warn_only=warn_only)
+    torch._C._set_deterministic_fill_uninitialized_memory(fill_uninitialized_memory)
     torch.backends.cudnn.benchmark = False
+    random.seed(1)
     torch.manual_seed(1)
     torch.cuda.manual_seed(1)
 
@@ -474,9 +521,10 @@ bs1_memprofiler = (bs1_override, base_memprofiler_cfg)
 warm_max_memprofiler = ChainMap(base_memprofiler_kwargs, {"schedule": MemProfilerSchedule(warmup_steps=2, max_step=4)})
 nowarm_max_memprofiler = ChainMap(base_memprofiler_kwargs, {"schedule": MemProfilerSchedule(max_step=4)})
 
-bs1_memprof_sched = (bs1_override, {'memprofiler_cfg': MemProfilerCfg(**warm_max_memprofiler)}, 5, 3, None)
-bs1_memprof_nowarm = (bs1_override, {'memprofiler_cfg': MemProfilerCfg(**nowarm_max_memprofiler)}, 5, 3, None)
-bs1_memprof_nowarm_trainonly_memhooks = (bs1_override, {
+# ("dm_override_cfg", "memprofiling_cfg", "train_steps", "val_steps", "test_steps")
+bs1_mem_sched = (bs1_override, {'memprofiler_cfg': MemProfilerCfg(**warm_max_memprofiler)}, 5, 3, None)
+bs1_mem_nowarm = (bs1_override, {'memprofiler_cfg': MemProfilerCfg(**nowarm_max_memprofiler)}, 5, 3, None)
+bs1_memprof_nowarm_train_memhooks = (bs1_override, {
     'memprofiler_cfg': MemProfilerCfg(**nowarm_max_memprofiler, **retain_trainonly_memhooks)}, 5, 3, None)
 
 test_it_module_base = ChainMap(test_shared_config, test_it_module_kwargs)
@@ -556,19 +604,29 @@ class TestITDataModuleFullDataset(RTEBoolqDataModule, TestITDataModule):
 
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""
+        # Note that the current config for the full dataset uses default batching (1000), so the len of the
+        # `input_ids` will vary a few percent (e.g. between 258 and 304) contributing to differences in certain
+        # profiling metrics. Note that ensuring the use of deterministic algorithims via the `make_deterministic`
+        # method is much more important to reducing this variance than the batching approach (though constraining to
+        # deterministic algorithms will almost always increase resource requirements on some dimension)
         self.itdm_cfg.dataset_path = Path(self.itdm_cfg.dataset_path).parent / 'rte'
         RTEBoolqDataModule.prepare_data(self, target_model=target_model)
 
 
 class TestITModule(RTEBoolqModuleMixin, ITModule):
 
-    def __init__(self, it_cfg: ITConfig, expected_state: Optional[Dict] = None,
+    def __init__(self, it_cfg: ITConfig, expected_exact: Optional[Dict] = None, expected_close: Optional[Dict] = None,
                  expected_memstats: Optional[Dict] = None, tolerance_map: Optional[Dict] = None,
-                   *args, **kwargs) -> None:
+                 state_log_dir: Optional[str] = None, *args, **kwargs) -> None:
         super().__init__(it_cfg=it_cfg)
-        self.expected_state = expected_state
         self.expected_memstats = expected_memstats
+        self.expected_exact = expected_exact
+        self.expected_close = expected_close
+        self.state_log_dir = state_log_dir
         self.tolerance_map = tolerance_map or {}
+        self.epoch_losses = {}
+        self.dev_expected_exact = {}
+        self.dev_expected_close = {}
 
     def setup(self, *args, **kwargs) -> None:
         super().setup(*args, **kwargs)
@@ -589,15 +647,50 @@ class TestITModule(RTEBoolqModuleMixin, ITModule):
     def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         super().test_step(batch=batch, batch_idx=batch_idx, dataloader_idx=dataloader_idx)
 
+    def on_train_epoch_end(self, *args, **kwargs):
+        state_key = self.current_epoch
+        current_exact = (None,)  # TODO: no exact state being tested yet
+        current_close = {'loss': self.epoch_losses[state_key],}
+        self.inspect_or_assert(current_exact, current_close, state_key)
+
     def on_train_end(self) -> Any | None:
         if self.it_cfg.memprofiler_cfg and self.expected_memstats:
             self._validate_memory_stats()
+        if self.state_log_dir:
+            self.log_dev_state()
+        super().on_train_end()
+
+    def inspect_or_assert(self, current_exact, current_close, state_key) -> None:
+        if not self.state_log_dir:
+            if self.expected_exact:
+                assert current_exact == self.expected_exact[state_key]
+            if self.expected_close:
+                for exp_k, exp_v in self.expected_close[state_key].items():
+                    rtol, atol = self.tolerance_map.get(exp_k, (0, 0))
+                    assert_close(actual=current_close[exp_k], expected=exp_v, rtol=rtol, atol=atol)
+        else:
+            self.dev_expected_exact[state_key] = current_exact
+            self.dev_expected_close[state_key] = current_close
+
+    @rank_zero_only
+    def log_dev_state(self) -> None:
+        dump_path = Path(self.state_log_dir)
+        state_log = dump_path / "dev_state_log.yaml"
+        fs = get_filesystem(state_log)
+        with fs.open(state_log, "w", newline="") as fp:
+            for dev_d in [self.dev_expected_exact, self.dev_expected_close]:
+                fp.write(os.linesep)
+                for k, v in dev_d.items():  # control formatting precisely to allow copy/paste expected output
+                    fp.write(f"{' ' * 8}{k}: {v},{os.linesep}")
 
     def _validate_memory_stats(self) -> None:
         for act, exp in zip(self.expected_memstats[1], self.expected_memstats[2]):
-            rtol, atol = self.tolerance_map.get(act, (0, 0))
-            assert_close(actual=self.memprofiler.memory_stats[self.expected_memstats[0]][act], expected=exp,
-                         rtol=rtol, atol=atol)
+            if not self.state_log_dir:
+                rtol, atol = self.tolerance_map.get(act, (0, 0))
+                assert_close(actual=self.memprofiler.memory_stats[self.expected_memstats[0]][act], expected=exp,
+                             rtol=rtol, atol=atol)
+            else:
+                self.dev_expected_close[act] = self.memprofiler.memory_stats[self.expected_memstats[0]][act]
 
 def get_itdm_cfg(dm_override_cfg: Optional[Dict] = None, **kwargs) -> ITConfig:
     test_it_datamodule_cfg = deepcopy(test_datamodule_kwargs)
@@ -691,9 +784,9 @@ def run_step(step_fn, module, iterator, batch_idx, device_type, optimizer: Optio
     else:
         loss = step_func(batch, batch_idx)
     if step_fn == "training_step":
+        module.epoch_losses[module.current_epoch] = loss.item()
         loss.backward()
         optimizer.step()
-
 
 def core_train_loop(
     module: ITModule,
@@ -703,7 +796,6 @@ def core_train_loop(
     epochs: int = 1,
     val_steps: int = 1,
 ):
-    make_deterministic(warn_only=True)
     train_dataloader = datamodule.train_dataloader()
     val_dataloader = datamodule.val_dataloader() if val_steps > 0 else None
     optim = module.it_optimizers[0]
@@ -712,8 +804,10 @@ def core_train_loop(
         module.model.train()
         module._current_epoch = epoch_idx
         iterator = iter(train_dataloader)
+        _call_itmodule_hook(module, hook_name="on_train_epoch_start", hook_msg="Running train epoch start hooks")
         for batch_idx in range(train_steps):
             run_step(step_fn="training_step", iterator=iterator, batch_idx=batch_idx, **train_ctx)
+            _call_itmodule_hook(module, hook_name="on_train_epoch_end", hook_msg="Running train epoch end hooks")
         if val_steps > 0:
             module.model.eval()
             iterator = iter(val_dataloader)
@@ -728,7 +822,6 @@ def core_test_loop(
     device_type: str,
     test_steps: int = 1
 ):
-    make_deterministic(warn_only=True)
     dataloader = datamodule.test_dataloader()
     test_ctx = {"module": module, "device_type": device_type}
     module._current_epoch = 0

@@ -60,18 +60,18 @@ gpt2_l_hooked = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "lightning_hooked_r
 llama2_l = EXPERIMENT_CONFIG_SETS[("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", "debug")]
 
 TEST_CONFIGS_EXAMPLES = (
-    TestCfg("core_gpt2_hooked_compose_config", test_cfg=(False, None, False, gpt2_core_hooked, True)),
-    TestCfg("core_gpt2_hooked", test_cfg=(False, None, False, gpt2_core_hooked, False)),
-    TestCfg("core_gpt2_hooked_instantiate_only",test_cfg=(False, None, True, gpt2_core_hooked, False),
-               expected_results={'class_type': GPT2RTEBoolqITHookedModule}),
-    TestCfg("core_gpt2_optim_init", test_cfg=(False, None, False, gpt2_core, True)),
-    TestCfg("lightning_gpt2_hooked", test_cfg=(True, "test", False, gpt2_l_hooked, False), marks="lightning"),
-    TestCfg("lightning_gpt2_hooked_instantiate_only", test_cfg=(True, None, True, gpt2_l_hooked, False),
-               marks="lightning", expected_results={'class_type': GPT2ITHookedLightningModule}),
-    TestCfg("lightning_llama2", test_cfg=(True, "test", False, llama2_l, False), marks="lightning"),
+    TestCfg(alias="core_gpt2_hooked_compose_config", cfg=(False, None, False, gpt2_core_hooked, True)),
+    TestCfg(alias="core_gpt2_hooked", cfg=(False, None, False, gpt2_core_hooked, False)),
+    TestCfg(alias="core_gpt2_hooked_instantiate_only",cfg=(False, None, True, gpt2_core_hooked, False),
+               expected={'class_type': GPT2RTEBoolqITHookedModule}),
+    TestCfg(alias="core_gpt2_optim_init", cfg=(False, None, False, gpt2_core, True)),
+    TestCfg(alias="lightning_gpt2_hooked", cfg=(True, "test", False, gpt2_l_hooked, False), marks="lightning"),
+    TestCfg(alias="lightning_gpt2_hooked_instantiate_only", cfg=(True, None, True, gpt2_l_hooked, False),
+               marks="lightning", expected={'class_type': GPT2ITHookedLightningModule}),
+    TestCfg(alias="lightning_llama2", cfg=(True, "test", False, llama2_l, False), marks="lightning"),
 )
 
-EXPECTED_RESULTS_EXAMPLES = {cfg.test_alias: cfg.expected_results for cfg in TEST_CONFIGS_EXAMPLES}
+EXPECTED_RESULTS_EXAMPLES = {cfg.alias: cfg.expected for cfg in TEST_CONFIGS_EXAMPLES}
 
 
 def gen_cli_args(l_cli, subcommand, use_compose_config, config_files):
