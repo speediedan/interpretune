@@ -15,7 +15,6 @@ HF_EXPECTED_WARNS = [
 EXPECTED_WARNS = [
     "The truth value of an empty array is ambiguous",  # for jsonargparse
     "The `use_auth_token` argument is deprecated",  # TODO: need to use `token` instead of `use_auth_token`
-    #"dtype is not supported. Disabling autocast",  # enable to allow autocast test paths w/ unsupported types
 ]
 
 CORE_CONTEXT_WARNS = HF_EXPECTED_WARNS + EXPECTED_WARNS + [

@@ -123,7 +123,6 @@ class BaseTestModule:
 
     def setup(self, *args, **kwargs) -> None:
         super().setup(*args, **kwargs)
-        #self._init_entailment_mapping()
 
     def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
         it_cfg.num_labels = 0 if it_cfg.zero_shot_cfg.enabled else 2
