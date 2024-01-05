@@ -17,16 +17,14 @@ This server mainly to get detail info for better bug reporting.
 
 import os
 import platform
-import sys
 
 import numpy
 import torch
 import tqdm
 
-sys.path += [os.path.abspath(".."), os.path.abspath(".")]
-import lightning.pytorch  # noqa: E402
+import lightning.pytorch
 
-import finetuning_scheduler  # noqa: E402
+import finetuning_scheduler
 
 LEVEL_OFFSET = "\t"
 KEY_PADDING = 20
