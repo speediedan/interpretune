@@ -10,6 +10,7 @@ import finetuning_scheduler as fts
 from interpretune.utils.logging import rank_zero_info
 from interpretune.base.it_module import BaseITModule, BaseITHookedModule
 from interpretune.base.it_datamodule import ITDataModule
+from interpretune.base.debug import ProfilerHooksMixin
 
 
 class ITLightningDataModule(ITDataModule, pl.LightningDataModule):
@@ -23,22 +24,21 @@ class ITLightningModule(BaseITModule, pl.LightningModule):
     <https://huggingface.co/datasets/super_glue#data-instances>`_.
     """
 
-    def forward(self, **inputs: Any) -> STEP_OUTPUT:
-        return self.model(**inputs)
+    def on_train_start(self) -> None:
+        self.model.train()  # ensure model is in training mode
+        return super().on_train_start()
 
+    def forward(self, **inputs: Any) -> STEP_OUTPUT:
+        return self.model(**inputs, **self.it_cfg.cust_fwd_kwargs)
+
+    @ProfilerHooksMixin.memprofilable
     def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
-        loss = self(**batch)[0]
+        outputs = self(**batch)
+        loss, _other_outputs = outputs[0], outputs[1:]
         self.log("train_loss", loss, sync_dist=True)
         return loss
 
-    def on_train_epoch_start(self, *args, **kwargs) -> None:
-        assert self.logger is not None
-        if self.finetuningscheduler_callback:
-            self.logger.log_metrics(
-                metrics={"finetuning_schedule_depth": float(self.finetuningscheduler_callback.curr_depth)},
-                step=self.global_step,
-            )
-
+    @ProfilerHooksMixin.memprofilable
     def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         outputs = self(**batch)
         val_loss, logits = outputs[:2]
@@ -53,6 +53,7 @@ class ITLightningModule(BaseITModule, pl.LightningModule):
                                metric_dict.items()))
         self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
 
+    @ProfilerHooksMixin.memprofilable
     def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         if self.it_cfg.zero_shot_cfg.enabled:
             self.zero_shot_test_step(batch, batch_idx)
@@ -103,10 +104,6 @@ class ITLightningModule(BaseITModule, pl.LightningModule):
         metric_dict = self.metric.compute(predictions=preds, references=labels)
         rank_zero_info(metric_dict)
 
-    # def on_train_end(self) -> None:
-    #     if self.memprofiler is not None:
-    #         self.memprofiler.dump_memory_stats()
-
 
 class ITHookedLightningModule(BaseITHookedModule, ITLightningModule):
 
@@ -118,13 +115,7 @@ class ITHookedLightningModule(BaseITHookedModule, ITLightningModule):
     def setup(self, stage: str) -> None:
         if self.it_cfg.tlens_from_pretrained_cfg.enabled:
             self._convert_hf_to_hooked()
-        #self.dump_base = Path(self.trainer.model._trainer.log_dir)
 
     def _convert_hf_to_hooked(self) -> HookedTransformer:
         self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=self.datamodule.tokenizer,
                                                   **self.it_cfg.tlens_from_pretrained_cfg.__dict__)
-
-    # create a separate mixin for marginal core functionality available to hooked and regular IT lightning modules?
-    # def on_train_end(self) -> None:
-    #     if self.memprofiler is not None:
-    #         self.memprofiler.dump_memory_stats()

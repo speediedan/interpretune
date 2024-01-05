@@ -75,10 +75,18 @@ class MemProfilerSchedule(ITSerializableCfg):
     warmup_steps: int = 0
     max_step: Optional[int] = None
 
+
+class CorePhases(Enum):
+    train = auto()
+    validation = auto()
+    test = auto()
+    predict = auto()
+
 class CoreSteps(Enum):
     training_step = auto()
     validation_step = auto()
     test_step = auto()
+    predict_step = auto()
 
 class DefaultMemHooks(Enum):
     pre_forward = 'interpretune.base.debug._hook_rss_pre_forward'
@@ -92,7 +100,7 @@ class MemProfilerHooks(ITSerializableCfg):
     reset_state_hooks: List[str | Callable] = field(default_factory=lambda: [DefaultMemHooks.reset_state.value])
 
 @dataclass(kw_only=True)
-class MemProfilerFuncs(ITSerializableCfg): # can specify arbitrary list of `mem_profilable` decorated function names
+class MemProfilerFuncs(ITSerializableCfg): # can specify arbitrary list of `memprofilable` decorated function names
     cuda: List[str | Enum] = field(default_factory=lambda: list(step.name for step in CoreSteps))
     cpu: List[str | Enum] = field(default_factory=lambda: list(step.name for step in CoreSteps))
     cuda_allocator_history: List[str | Enum] = field(default_factory=lambda: list(step.name for step in CoreSteps))
@@ -199,6 +207,7 @@ class ModelConfig(ITSerializableCfg):
     model_class: Optional[torch.nn.Module] = None
     model_cfg: Dict[str, Any] = field(default_factory=dict)
     auto_model_cfg: Dict[str, Any] = field(default_factory=dict)
+    cust_fwd_kwargs: Dict[str, Any] = field(default_factory=dict)
     from_pretrained_cfg: Dict[str, Any] = field(default_factory=dict)
     dynamic_module_cfg: Dict[str, Any] = field(default_factory=dict)
     use_model_cache: Optional[bool] = False
@@ -214,7 +223,6 @@ class OptimizerSchedulerConfig(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class MemoryEfficiencyConfig(ITSerializableCfg):
-    #torch_dtype: Optional[Union[str, torch.dtype]] = None
     lora_cfg: Dict[str, Any] = field(default_factory=dict)
     bitsandbytesconfig: Dict[str, Any] = field(default_factory=dict)
     activation_checkpointing: Optional[bool] = False
