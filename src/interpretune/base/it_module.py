@@ -3,7 +3,7 @@ import warnings
 from datetime import datetime
 from copy import deepcopy
 from typing import Any, Dict, Optional, List, Union
-from abc import ABC, abstractmethod
+from abc import ABC
 from functools import reduce
 
 import torch
@@ -55,6 +55,7 @@ class BaseITModule(ABC, OptimizerSchedulerInitMixin, ProfilerHooksMixin, torch.n
         self._datamodule = None
         # root device (sometimes used if not handled by Lightning)
         self._device = None
+        self._session_complete = False
         # optional optimizer and lr scheduler handles if initialized via core IT module `configure_optimizers` hook
         self.it_optimizers, self.it_lr_scheduler_configs, self.it_lr_schedulers = None, None, None
         self.it_cfg = self._before_it_cfg_init(it_cfg=it_cfg)
@@ -82,6 +83,10 @@ class BaseITModule(ABC, OptimizerSchedulerInitMixin, ProfilerHooksMixin, torch.n
     @property
     def datamodule(self) -> Optional[ITDataModule]:
         return self._core_or_lightning(c2l_map_key="_datamodule")
+
+    @property
+    def session_complete(self) -> bool:
+        return self._session_complete
 
     @property
     def cuda_allocator_history(self) -> bool:
@@ -121,7 +126,6 @@ class BaseITModule(ABC, OptimizerSchedulerInitMixin, ProfilerHooksMixin, torch.n
         if all((_BNB_AVAILABLE, self.it_cfg.bitsandbytesconfig, self.it_cfg.lora_cfg)):
             self._configure_peft()
         self._capture_hyperparameters()
-        self._init_dirs_and_hooks()
         self._load_metric()
 
     def _load_metric(self) -> None:
@@ -131,8 +135,6 @@ class BaseITModule(ABC, OptimizerSchedulerInitMixin, ProfilerHooksMixin, torch.n
         self._create_experiment_dir()
         if self.cuda_allocator_history:
             self.memprofiler.init_cuda_snapshots_dir()
-        # if hasattr(self, "memprofiler"):
-        #     self.memprofiler.add_profiler_hooks()
         # TODO: add save_hyperparameters/basic logging func for raw pytorch
         # (override w/ lightning version where appropriate)
         #self.save_hyperparameters(self.init_hparams)
@@ -226,6 +228,8 @@ class BaseITModule(ABC, OptimizerSchedulerInitMixin, ProfilerHooksMixin, torch.n
                                "`dynamic_module_cfg`. Proceeding with model init.")
             cust_config = AutoConfig.from_pretrained(**self.it_cfg.from_pretrained_cfg, token=access_token,
                                                      local_files_only=False)
+        if self.it_cfg.from_pretrained_cfg.get('return_unused_kwargs', False):
+            return cust_config[0]
         return cust_config
 
     def _configured_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
@@ -256,9 +260,8 @@ class BaseITModule(ABC, OptimizerSchedulerInitMixin, ProfilerHooksMixin, torch.n
                                f"{ae}")
         return serial_cfg
 
-    @abstractmethod
     def setup(self, *args: Any, **kwargs: Any) -> None:
-        """called with datamodule in raw context, stage in Lightning context."""
+        self._init_dirs_and_hooks()
 
     def configure_optimizers(self) -> Optional[OptimizerLRScheduler]:
         """Optional because it is not mandatory in the context of core IT modules (required for Lightning
@@ -278,10 +281,34 @@ class BaseITModule(ABC, OptimizerSchedulerInitMixin, ProfilerHooksMixin, torch.n
             }
         return [optimizer], [scheduler]
 
-    def on_train_end(self) -> Optional[Any]:
+    def on_session_end(self) -> Optional[Any]:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
         if getattr(self, 'memprofiler', None):
             self.memprofiler.dump_memory_stats()
+        self._session_complete = True
+
+    # N.B. we call `on_session_end` at the end of train, test and predict session types only. This is because Lightning
+    # calls both `on_train_end` and `on_validation_end` with most training sessions when running both a fit and
+    # evaluation loop as is usually the case) but only `on_test_end` with the test stage.
+    # The `on_run_end` hook for Lightning is roughly analogous to Interpretune's `on_session_end` hook but is not
+    # a hook Lightning makes available to users.
+    def on_train_end(self) -> Optional[Any]:
+        """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
+        if not self.session_complete:
+            self.on_session_end()
+
+    def on_validation_end(self) -> Optional[Any]:
+        pass
+
+    def on_test_end(self) -> Optional[Any]:
+        """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
+        if not self.session_complete:
+            self.on_session_end()
+
+    def on_predict_end(self) -> Optional[Any]:
+        """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
+        if not self.session_complete:
+            self.on_session_end()
 
     def on_train_epoch_start(self, *args, **kwargs) -> None:
         pass
@@ -299,21 +326,23 @@ class ITModule(CoreHelperAttributeMixin, BaseITModule):
     #     self._log_dir = Path(it_cfg['log_dir'] or tempfile.gettempdir())
     #     super().__init__(it_cfg, *args, **kwargs)
 
-    def setup(self, datamodule: ITDataModule) -> None:
+    def setup(self, datamodule: ITDataModule, *args, **kwargs) -> None:
+        super().setup(*args, **kwargs)
         self._datamodule = datamodule
 
     def forward(self, **inputs: Any) -> STEP_OUTPUT:
-        return self.model(**inputs)
+        return self.model(**inputs, **self.it_cfg.cust_fwd_kwargs)
 
-    @ProfilerHooksMixin.mem_profilable
+    @ProfilerHooksMixin.memprofilable
     def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
          # TODO: decide whether to build a closure for the core training_step to enable identical
          # core/lightning module training_steps in more cases (need to be explicit about the compatibility constraints)
-        loss = self(**batch)[0]
+        outputs = self(**batch)
+        loss, _other_outputs = outputs[0], outputs[1:]
         self.log("train_loss", loss, sync_dist=True)
         return loss
 
-    @ProfilerHooksMixin.mem_profilable
+    @ProfilerHooksMixin.memprofilable
     def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         outputs = self(**batch)
         val_loss, logits = outputs[:2]
@@ -328,7 +357,7 @@ class ITModule(CoreHelperAttributeMixin, BaseITModule):
                                metric_dict.items()))
         self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
 
-    @ProfilerHooksMixin.mem_profilable
+    @ProfilerHooksMixin.memprofilable
     def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         if self.it_cfg.zero_shot_cfg.enabled:
             self.zero_shot_test_step(batch, batch_idx)

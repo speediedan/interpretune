@@ -129,7 +129,7 @@ class MemProfilerMixin:
         self.exec_reset_state_hooks()
 
     def init_cuda_snapshots_dir(self) -> None:
-        self._cuda_snapshot_dir = self.memprofiler_cfg.save_dir or self._module.core_log_dir / "memprofiler"
+        self._cuda_snapshot_dir = self.memprofiler_cfg.save_dir or Path(self._module.core_log_dir) / "memprofiler"
         self._cuda_snapshot_dir = Path(self._cuda_snapshot_dir)  # ensure the dir is a Path
         self._cuda_snapshot_dir.mkdir(exist_ok=True, parents=True)
 
@@ -224,7 +224,7 @@ class ProfilerHooksMixin:
             memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="end", reset_mem_hooks=True)
 
     @staticmethod
-    def mem_profilable(func):
+    def memprofilable(func):
         @wraps(func)
         def wrapper(self, *args, **kwargs):
             if not hasattr(self, 'memprofiler'):
