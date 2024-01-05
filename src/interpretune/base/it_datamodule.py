@@ -118,4 +118,13 @@ class ITDataModule(ABC):
             return dataset.remove_columns(ignored_columns)
 
     def on_train_end(self) -> Optional[Any]:
-        """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
+        """Optionally execute some post-interpretune train session steps."""
+
+    def on_validation_end(self) -> Optional[Any]:
+        """Optionally execute some post-interpretune train session steps."""
+
+    def on_test_end(self) -> Optional[Any]:
+        """Optionally execute some post-interpretune train session steps."""
+
+    def on_predict_end(self) -> Optional[Any]:
+        """Optionally execute some post-interpretune train session steps."""

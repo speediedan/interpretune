@@ -17,22 +17,23 @@ import pytest
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.cli.core_cli import compose_config, IT_CONFIG_BASE, IT_CONFIG_GLOBAL
 from it_examples.experiments.rte_boolq.core import GPT2RTEBoolqITHookedModule
-from tests.helpers.core.boring_model import (unexpected_warns, pytest_param_factory, TestCfg, RUN_FN, dummy_step,
-                                             EXPECTED_WARNS)
+from tests.helpers.core import pytest_param_factory, TestCfg
+from tests.helpers.utils import dummy_step
 from tests.helpers.runif import RunIf
+from tests.helpers.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, unexpected_warns
 
 if _LIGHTNING_AVAILABLE:
     from interpretune.base.it_lightning_modules import ITLightningModule
-    from it_examples.experiments.rte_boolq.lightning import GPT2ITHookedLightningModule, Llama2ITLightningModule
+    from it_examples.experiments.rte_boolq.lightning import GPT2ITHookedLightningModule
 else:
     ITLightningModule = None  # type: ignore[misc,assignment]
     GPT2ITHookedLightningModule = None  # type: ignore[misc,assignment]
-    Llama2ITLightningModule = None  # type: ignore[misc,assignment]
 
+EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS
 
+RUN_FN = "run_experiment.py"
 EXPERIMENTS_BASE = IT_CONFIG_BASE / "experiments"
 BASE_DEBUG_CONFIG = IT_CONFIG_GLOBAL / "base_debug.yaml"
-
 
 def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, str]]) -> Dict:
     exp_cfg_sets = {}
@@ -108,5 +109,5 @@ def test_basic_examples(recwarn, test_alias, l_cli, subcommand, instantiate_only
     if instantiate_only:
         assert isinstance(cli.model, EXPECTED_RESULTS_EXAMPLES[test_alias]['class_type'])
     # ensure no unexpected warnings detected
-    unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=EXPECTED_WARNS)
+    unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=EXAMPLE_WARNS)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
