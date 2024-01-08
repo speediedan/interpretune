@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 import datasets
 
 from interpretune.base.config_classes import ITDataModuleConfig
-from interpretune.base.it_datamodule import ITDataModule
+from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_warn
 
 log = logging.getLogger(__name__)

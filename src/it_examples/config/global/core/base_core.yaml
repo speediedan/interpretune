@@ -1,6 +1,6 @@
 seed_everything: 42
-data.class_path: interpretune.base.it_datamodule.ITDataModule
-model.class_path: interpretune.base.it_module.ITHookedModule
+data.class_path: interpretune.base.datamodules.ITDataModule
+model.class_path: interpretune.base.modules.ITHookedModule
 itdm_cfg:
   class_path: interpretune.base.config_classes.ITDataModuleConfig
   init_args:

@@ -1,6 +1,6 @@
 seed_everything: 42
-data.class_path: interpretune.base.it_lightning_modules.ITLightningDataModule
-model.class_path: interpretune.base.it_lightning_modules.ITLightningModule
+data.class_path: interpretune.base.datamodules.ITLightningDataModule
+model.class_path: interpretune.base.modules.ITLightningModule
 itdm_cfg:
   class_path: interpretune.base.config_classes.ITDataModuleConfig
   init_args:

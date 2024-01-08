@@ -16,8 +16,8 @@ from contextlib import contextmanager
 from typing import Any, Union, Optional
 from enum import Enum
 
-from interpretune.base.it_datamodule import ITDataModule
-from interpretune.base.it_module import BaseITModule
+from interpretune.base.datamodules import ITDataModule
+from interpretune.base.modules import BaseITModule
 from interpretune.base.config_classes import CorePhases
 from interpretune.utils.logging import rank_zero_info
 

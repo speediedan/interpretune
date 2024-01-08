@@ -12,9 +12,8 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.base.config_classes import ITDataModuleConfig, ITConfig
-from interpretune.base.it_datamodule import ITDataModule
-from interpretune.base.it_module import ITModule
-from interpretune.base.it_lightning_modules import ITLightningModule
+from interpretune.base.datamodules import ITDataModule
+from interpretune.base.modules import ITModule, ITLightningModule
 from interpretune.utils.logging import rank_zero_only, get_filesystem
 from it_examples.experiments.rte_boolq.core import RTEBoolqModuleMixin
 from it_examples.data.rte_bool import RTEBoolqDataModule

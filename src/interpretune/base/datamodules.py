@@ -12,7 +12,7 @@ from transformers import AutoTokenizer, PreTrainedTokenizerFast, PreTrainedToken
 
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.base.config_classes import ITDataModuleConfig
-from interpretune.utils.import_utils import _import_class
+from interpretune.utils.import_utils import _import_class,_LIGHTNING_AVAILABLE
 
 log = logging.getLogger(__name__)
 
@@ -128,3 +128,10 @@ class ITDataModule(ABC):
 
     def on_predict_end(self) -> Optional[Any]:
         """Optionally execute some post-interpretune train session steps."""
+
+if _LIGHTNING_AVAILABLE:
+    from lightning.pytorch import LightningDataModule
+    class ITLightningDataModule(ITDataModule, LightningDataModule):
+        ...
+else:
+    ITLightningDataModule = object

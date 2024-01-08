@@ -11,7 +11,7 @@ from transformers.tokenization_utils_base import BatchEncoding
 from transformer_lens import HookedTransformer
 
 from interpretune.utils.types import STEP_OUTPUT
-from interpretune.base.it_module import ITModule, ITHookedModule
+from interpretune.base.modules import ITModule, ITHookedModule
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.base.config_classes import ITZeroShotClassificationConfig, ITConfig, LMGenerationConfig, PromptConfig
 from it_examples.data.rte_bool import RTEBoolqDataModule, DEFAULT_TASK, TASK_NUM_LABELS, INVALID_TASK_MSG

@@ -6,7 +6,8 @@ from lightning.pytorch.utilities.types import STEP_OUTPUT
 from transformers.tokenization_utils_base import BatchEncoding
 from transformer_lens import HookedTransformer
 
-from interpretune.base.it_lightning_modules import (ITLightningModule, ITHookedLightningModule, ITLightningDataModule)
+from interpretune.base.datamodules import ITLightningDataModule
+from interpretune.base.modules import ITLightningModule, ITHookedLightningModule
 from it_examples.experiments.rte_boolq.core import (GPT2RTEBoolqDataModule, Llama2RTEBoolqDataModule,
                                                     RTEBoolqModuleMixin)
 

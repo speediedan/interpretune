@@ -5,8 +5,8 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.import_utils import instantiate_class
 from interpretune.base.config_classes import ITConfig
-from interpretune.base.it_datamodule import ITDataModule
-from interpretune.base.it_mixins import ProfilerHooksMixin
+from interpretune.base.datamodules import ITDataModule
+from interpretune.base.mixins import ProfilerHooksMixin
 from interpretune.utils.logging import rank_zero_info
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
 

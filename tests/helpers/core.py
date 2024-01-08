@@ -24,8 +24,8 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.base.config_classes import ITDataModuleConfig, ITConfig, CorePhases
-from interpretune.base.it_datamodule import ITDataModule
-from interpretune.base.it_module import ITModule, BaseITModule
+from interpretune.base.datamodules import ITDataModule
+from interpretune.base.modules import ITModule, BaseITModule
 from interpretune.base.call import _call_itmodule_hook, it_init, it_session_end
 from interpretune.utils.types import Optimizable
 from tests.helpers.cfg_aliases import (RUNIF_ALIASES, test_datamodule_kwargs, test_shared_config, test_it_module_base,

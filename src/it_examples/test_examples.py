@@ -23,7 +23,7 @@ from tests.helpers.runif import RunIf
 from tests.helpers.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, unexpected_warns
 
 if _LIGHTNING_AVAILABLE:
-    from interpretune.base.it_lightning_modules import ITLightningModule
+    from interpretune.base.modules import ITLightningModule
     from it_examples.experiments.rte_boolq.lightning import GPT2ITHookedLightningModule
 else:
     ITLightningModule = None  # type: ignore[misc,assignment]

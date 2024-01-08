@@ -11,11 +11,11 @@ from transformers import AutoConfig, AutoModelForSequenceClassification, Pretrai
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformer_lens import HookedTransformer
 
-from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE
+from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE, _LIGHTNING_AVAILABLE
 from interpretune.base.config_classes import ITConfig
-from interpretune.base.it_datamodule import ITDataModule
+from interpretune.base.datamodules import ITDataModule
 from interpretune.base.hooks import BaseITHooks, BaseITLensModuleHooks
-from interpretune.base.it_mixins import (OptimizerSchedulerInitMixin, CoreHelperAttributeMixin, ProfilerHooksMixin,
+from interpretune.base.mixins import (OptimizerSchedulerInitMixin, CoreHelperAttributeMixin, ProfilerHooksMixin,
                                          ZeroShotStepMixin, CORE_TO_LIGHTNING_ATTRS_MAP)
 from interpretune.base.debug import DebugGenerationMixin, MemProfilerMixin
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info, rank_zero_debug
@@ -341,3 +341,23 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
 
 class ITHookedModule(CoreHelperAttributeMixin, BaseITLensModule):
     ...
+
+if _LIGHTNING_AVAILABLE:
+    from lightning.pytorch import LightningModule
+
+    class ITLightningModule(BaseITModule, LightningModule):
+        """A :class:`~lightning.pytorch.core.module.LightningModule` that can be used to fine-tune a foundation
+        model on either the RTE or BoolQ `SuperGLUE <https://super.gluebenchmark.com/>`_ tasks using Hugging Face
+        implementations of a given model and the `SuperGLUE Hugging Face dataset.
+
+        <https://huggingface.co/datasets/super_glue#data-instances>`_.
+        """
+        def on_train_start(self) -> None:
+            self.model.train()  # ensure model is in training mode
+            return super().on_train_start()
+
+    class ITHookedLightningModule(BaseITLensModule, ITLightningModule):
+        ...
+else:
+    ITLightningModule = object
+    ITHookedLightningModule = object
