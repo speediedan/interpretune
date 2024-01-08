@@ -1,18 +1,9 @@
-from typing import Any, Optional
-
-import torch
 import lightning.pytorch as pl
-from lightning.pytorch.utilities.types import STEP_OUTPUT
-from transformers.tokenization_utils_base import BatchEncoding
-from transformer_lens import HookedTransformer
-import finetuning_scheduler as fts
 
-from interpretune.utils.logging import rank_zero_info
-from interpretune.base.it_module import BaseITModule, BaseITHookedModule
+from interpretune.base.it_module import BaseITModule, BaseITLensModule
 from interpretune.base.it_datamodule import ITDataModule
-from interpretune.base.debug import ProfilerHooksMixin
 
-
+#TODO: consider moving these definitions to it_module.py, conditioning definitions on lightning availability
 class ITLightningDataModule(ITDataModule, pl.LightningDataModule):
     ...
 
@@ -28,94 +19,6 @@ class ITLightningModule(BaseITModule, pl.LightningModule):
         self.model.train()  # ensure model is in training mode
         return super().on_train_start()
 
-    def forward(self, **inputs: Any) -> STEP_OUTPUT:
-        return self.model(**inputs, **self.it_cfg.cust_fwd_kwargs)
 
-    @ProfilerHooksMixin.memprofilable
-    def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
-        outputs = self(**batch)
-        loss, _other_outputs = outputs[0], outputs[1:]
-        self.log("train_loss", loss, sync_dist=True)
-        return loss
-
-    @ProfilerHooksMixin.memprofilable
-    def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        outputs = self(**batch)
-        val_loss, logits = outputs[:2]
-        if self.it_cfg.num_labels >= 1:
-            preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
-        elif self.it_cfg.num_labels == 1:
-            preds = logits.squeeze()
-        labels = batch["labels"]
-        self.log("val_loss", val_loss, prog_bar=True, sync_dist=True)
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
-
-    @ProfilerHooksMixin.memprofilable
-    def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        if self.it_cfg.zero_shot_cfg.enabled:
-            self.zero_shot_test_step(batch, batch_idx)
-        else:
-            self.default_test_step(batch, batch_idx)
-
-    def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
-        Optional[STEP_OUTPUT]:
-        outputs = self.model.generate(input_ids=batch['input_ids'],
-                                      pad_token_id=self.datamodule.tokenizer.pad_token_id,
-                                      **self.it_cfg.zero_shot_cfg.lm_generation_cfg.__dict__)
-        stacked_scores = torch.stack([out for out in outputs['scores']], dim=0).cpu()
-        assert self.it_cfg.zero_shot_cfg.entailment_mapping_indices is not None
-        answer_logits = torch.index_select(stacked_scores, -1, self.it_cfg.zero_shot_cfg.entailment_mapping_indices)
-        per_example_answers, _ = torch.max(answer_logits, dim=0)
-        preds = torch.argmax(per_example_answers, axis=1)  # type: ignore[call-arg]
-        labels = batch["labels"]
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
-
-    def default_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        # run predict on val dataset for now
-        outputs = self(**batch)
-        test_loss, logits = outputs[:2]
-        if self.it_cfg.num_labels >= 1:
-            preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
-        elif self.it_cfg.num_labels == 1:
-            preds = logits.squeeze()
-        labels = batch["labels"]
-        self.log("predict_loss", test_loss, prog_bar=True, sync_dist=True)
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
-
-    def predict_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        # run predict on val dataset for now
-        # TODO: clean this up and allow for passing arbitrary data
-        outputs = self(**batch)
-        _, logits = outputs[:2]
-        if self.it_cfg.num_labels >= 1:
-            preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
-        elif self.it_cfg.num_labels == 1:
-            preds = logits.squeeze()
-        labels = batch["labels"]
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        rank_zero_info(metric_dict)
-
-
-class ITHookedLightningModule(BaseITHookedModule, ITLightningModule):
-
-    @property
-    def finetuningscheduler_callback(self) -> Optional[fts.FinetuningScheduler]:  # type: ignore
-        fts_callback = [c for c in self.trainer.callbacks if isinstance(c, fts.FinetuningScheduler)]  # type: ignore
-        return fts_callback[0] if fts_callback else None
-
-    def setup(self, stage: str) -> None:
-        if self.it_cfg.tlens_from_pretrained_cfg.enabled:
-            self._convert_hf_to_hooked()
-
-    def _convert_hf_to_hooked(self) -> HookedTransformer:
-        self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=self.datamodule.tokenizer,
-                                                  **self.it_cfg.tlens_from_pretrained_cfg.__dict__)
+class ITHookedLightningModule(BaseITLensModule, ITLightningModule):
+    ...

@@ -29,7 +29,7 @@ from interpretune.base.it_module import ITModule, BaseITModule
 from interpretune.base.call import _call_itmodule_hook, it_init, it_session_end
 from interpretune.utils.types import Optimizable
 from tests.helpers.cfg_aliases import (RUNIF_ALIASES, test_datamodule_kwargs, test_shared_config, test_it_module_base,
-                                       test_it_module_optim, MemProfResult)
+                                       test_it_module_optim, MemProfResult, test_dataset_state)
 from tests.helpers.runif import RunIf
 from tests.helpers.utils import make_deterministic
 from tests.helpers.lightning_utils import cuda_reset, to_device
@@ -124,8 +124,10 @@ def exact_results(expected_exact: Tuple):
     return {'expected_exact': expected_exact}
 
 def def_results(device_type: str, precision: Union[int, str]):
+
     # wrap result dict such that only the first epoch is checked
-    return {0: {"device_type": device_type, "precision": get_model_input_dtype(precision)}}
+    return {0: {"device_type": device_type, "precision": get_model_input_dtype(precision),
+                "dataset_state": test_dataset_state},}
 
 RESULT_TYPE_MAPPING = {
     "exact_results": exact_results,
@@ -204,7 +206,8 @@ def datamodule_factory(test_cfg: TestCfg, force_prepare_data: bool = False) -> I
         datamodule_class = TestITDataModuleFullDataset if test_cfg.full_dataset else TestITDataModule
     return datamodule_class(itdm_cfg=itdm_cfg, force_prepare_data=force_prepare_data)
 
-def config_modules(test_cfg, expected_results, tmp_path) -> Tuple[ITDataModule, BaseITModule]:
+def config_modules(test_cfg, test_alias, expected_results, tmp_path,
+                   state_log_mode: bool = False) -> Tuple[ITDataModule, BaseITModule]:
     fill_uninitialized_memory = True
     if test_cfg.lightning:
         seed_everything(1, workers=True)
@@ -218,8 +221,8 @@ def config_modules(test_cfg, expected_results, tmp_path) -> Tuple[ITDataModule, 
     datamodule = datamodule_factory(test_cfg)
     it_cfg = get_it_cfg(test_cfg, core_log_dir=tmp_path)
     module_class = TestITLightningModule if test_cfg.lightning else TestITModule
-    module = module_class(it_cfg=it_cfg,
-                          # state_log_dir=tmp_path,  # optionally uncomment to enable dump of expected state logs
+    module = module_class(it_cfg=it_cfg, test_alias=test_alias,
+                          state_log_dir=tmp_path if state_log_mode else None,  # optionally enable expected state logs
                           **expected_results,)
     return datamodule, module
 

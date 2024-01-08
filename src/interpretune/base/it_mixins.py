@@ -2,12 +2,15 @@ import tempfile
 from typing import Any, Dict, List, Union, Tuple, Optional
 from functools import reduce, partial
 from pathlib import Path
+from contextlib import contextmanager
+from functools import wraps
 
 import torch
+from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, LRScheduler
+from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, LRScheduler, STEP_OUTPUT
 
 # simple barebones interface encapsulating the data preparation, data setup, model setup and optimizer/scheduler
 # configuration processes. Intended for maximal interactive experimental flexibility without any iterative assumptions.
@@ -161,3 +164,63 @@ class OptimizerSchedulerInitMixin:
                 ' * {"optimizer": `Optimizer`, (optional) "lr_scheduler": `LRScheduler`}\n'
             )
         return optimizers, lr_schedulers
+
+class ProfilerHooksMixin:
+
+    @contextmanager
+    @staticmethod
+    def memprofile_ctx(memprofiler, phase: str, epoch_idx: Optional[int] = None, step_idx: Optional[int] = None):
+        try:
+            memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="start")
+            yield
+        finally:
+            memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="end", reset_mem_hooks=True)
+
+    @staticmethod
+    def memprofilable(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            if not hasattr(self, 'memprofiler'):
+                return func(self, *args, **kwargs)
+            phase = func.__name__
+            # for increased generality, we derive a profile `step_idx` based on a profiler snap counter rather than
+            # parsing `args` if a `batch_idx` kwarg isn't found
+            step_idx = kwargs.get("batch_idx", None)
+            with ProfilerHooksMixin.memprofile_ctx(self.memprofiler, phase=phase, step_idx=step_idx):
+                return func(self, *args, **kwargs)
+        return wrapper
+
+class ZeroShotStepMixin:
+        # TODO: make memprofilable by default directly? (already usually wrapped by test_step)
+    def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
+        Optional[STEP_OUTPUT]:
+        outputs = self.model.generate(input_ids=batch['input_ids'],
+                                      pad_token_id=self.datamodule.tokenizer.pad_token_id,
+                                      **self.it_cfg.zero_shot_cfg.lm_generation_cfg.__dict__)
+        stacked_scores = torch.stack([out for out in outputs['scores']], dim=0).cpu()
+        assert self.it_cfg.zero_shot_cfg.entailment_mapping_indices is not None
+        answer_logits = torch.index_select(stacked_scores, -1, self.it_cfg.zero_shot_cfg.entailment_mapping_indices)
+        per_example_answers, _ = torch.max(answer_logits, dim=0)
+        preds = torch.argmax(per_example_answers, axis=1)  # type: ignore[call-arg]
+        labels = batch["labels"]
+        metric_dict = self.metric.compute(predictions=preds, references=labels)
+        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
+                               metric_dict.items()))
+        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
+
+    # TODO: make memprofilable by default directly? (already usually wrapped by test_step)
+    def default_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
+        # run predict on val dataset for now
+        outputs = self(**batch)
+        test_loss, logits = outputs[:2]
+        if self.it_cfg.num_labels >= 1:
+            preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
+        elif self.it_cfg.num_labels == 1:
+            preds = logits.squeeze()
+        labels = batch["labels"]
+        # TODO: condition this on a metric being configured
+        #self.log("predict_loss", test_loss, prog_bar=True, sync_dist=True)
+        metric_dict = self.metric.compute(predictions=preds, references=labels)
+        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
+                               metric_dict.items()))
+        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)

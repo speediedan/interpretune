@@ -75,7 +75,6 @@ class MemProfilerSchedule(ITSerializableCfg):
     warmup_steps: int = 0
     max_step: Optional[int] = None
 
-
 class CorePhases(Enum):
     train = auto()
     validation = auto()

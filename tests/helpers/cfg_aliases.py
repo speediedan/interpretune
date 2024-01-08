@@ -48,7 +48,26 @@ nowarm_maxstep_hk_memprof_cfg = MemProfilerCfg(retain_hooks_for_funcs=["training
 test_it_module_base = ChainMap(test_shared_config, test_it_module_kwargs)
 test_it_module_optim = ChainMap(test_it_module_base, test_optimizer_scheduler_init)
 
-
+########################################################################################################################
+# NOTE [Test Dataset Fingerprint]
+# A simple fingerprint of the (deterministic) test dataset used to generate the current incarnation of expected results.
+# Useful for validating that the test dataset has not changed wrt the test dataset used to generate the reference
+# results. A few things to note:
+#   - The dataloader kwargs are not currently part of these fingerprint so if the loss of a given test diverges
+#      from expectation, one may still need to verify shuffling of the fingerprinted dataset etc. has not been
+#      introduced and compare the examples actually passed to the model in a given test/step to the ids below before
+#      subsequently assessing other sources of indeterminism that could be the source of the loss change.
+#   - One should see `tests.helpers.modules.TestITDataModule.sample_dataset_state()` for the indices used to generate
+#      this fingerprint
+#   - The fingerprinted dataset below is not shuffled or sorted with the current dataloader configurations
+#   - All current expected loss results were generated with [train|eval]_batch_size = 2
+#   - All current memory profile results were generated with [train|eval]_batch_size = 1
+deterministic_token_ids = [5674, 24140, 373, 666, 2233, 303, 783, 783, 2055, 319, 373, 910, 17074, 284, 6108]
+test_dataset_state = ('GPT2TokenizerFast', 'pytest_rte', deterministic_token_ids)
+# TODO: add current dataloader kwargs to the fingerprint above? May be an excessively rigid check. Consider associating
+# a fingerprint of salient config with each specific expected scalar test result in the future. At present, that
+# approach seems like overkill given the current codebase.
+########################################################################################################################
 class MemProfResult(NamedTuple):
     # encapsulate memprofiler result defaults
     # we default to step:

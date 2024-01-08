@@ -9,24 +9,24 @@ from functools import reduce
 import torch
 from transformers import AutoConfig, AutoModelForSequenceClassification, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
-from transformers.tokenization_utils_base import BatchEncoding
 from transformer_lens import HookedTransformer
 
-from interpretune.utils.import_utils import _import_class, instantiate_class, _BNB_AVAILABLE
+from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE
 from interpretune.base.config_classes import ITConfig
 from interpretune.base.it_datamodule import ITDataModule
-from interpretune.base.it_hooks import (OptimizerSchedulerInitMixin, CoreHelperAttributeMixin,
-                                        CORE_TO_LIGHTNING_ATTRS_MAP)
-from interpretune.base.debug import DebugGenerationMixin, MemProfilerMixin, ProfilerHooksMixin
+from interpretune.base.hooks import BaseITHooks, BaseITLensModuleHooks
+from interpretune.base.it_mixins import (OptimizerSchedulerInitMixin, CoreHelperAttributeMixin, ProfilerHooksMixin,
+                                         ZeroShotStepMixin, CORE_TO_LIGHTNING_ATTRS_MAP)
+from interpretune.base.debug import DebugGenerationMixin, MemProfilerMixin
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info, rank_zero_debug
-from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
 
 # TODO: add core helper log/log_dict methods for core context usage
 for warnf in [".*For Lightning compatibility, this noop .*",]:
     warnings.filterwarnings("once", warnf)
 
 
-class BaseITModule(ABC, OptimizerSchedulerInitMixin, ProfilerHooksMixin, torch.nn.Module):
+class BaseITModule(ABC, BaseITHooks, OptimizerSchedulerInitMixin, ProfilerHooksMixin, ZeroShotStepMixin,
+                   torch.nn.Module):
 
     #TODO: move fts callback property to this class once fts supports raw pytorch with plugin
     # @property
@@ -260,58 +260,11 @@ class BaseITModule(ABC, OptimizerSchedulerInitMixin, ProfilerHooksMixin, torch.n
                                f"{ae}")
         return serial_cfg
 
-    def setup(self, *args: Any, **kwargs: Any) -> None:
-        self._init_dirs_and_hooks()
-
-    def configure_optimizers(self) -> Optional[OptimizerLRScheduler]:
-        """Optional because it is not mandatory in the context of core IT modules (required for Lightning
-        modules)."""
-        # With FTS >= 2.0, ``FinetuningScheduler`` simplifies initial optimizer configuration by ensuring the optimizer
-        # configured here will optimize the parameters (and only those parameters) scheduled to be optimized in phase 0
-        # of the current fine-tuning schedule. This auto-configuration can be disabled if desired by setting
-        # ``enforce_phase0_params`` to ``False``.
-        self._set_input_require_grads()
-        optimizer, scheduler = None, None
-        if self.it_cfg.optimizer_init:  # in case this hook is manually invoked by the user
-            optimizer = instantiate_class(args=self.model.parameters(), init=self.it_cfg.optimizer_init)
-        if self.it_cfg.lr_scheduler_init:
-            scheduler = {
-                "scheduler": instantiate_class(args=optimizer, init=self.it_cfg.lr_scheduler_init),
-                **self.it_cfg.pl_lrs_cfg,
-            }
-        return [optimizer], [scheduler]
-
     def on_session_end(self) -> Optional[Any]:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
         if getattr(self, 'memprofiler', None):
             self.memprofiler.dump_memory_stats()
         self._session_complete = True
-
-    # N.B. we call `on_session_end` at the end of train, test and predict session types only. This is because Lightning
-    # calls both `on_train_end` and `on_validation_end` with most training sessions when running both a fit and
-    # evaluation loop as is usually the case) but only `on_test_end` with the test stage.
-    # The `on_run_end` hook for Lightning is roughly analogous to Interpretune's `on_session_end` hook but is not
-    # a hook Lightning makes available to users.
-    def on_train_end(self) -> Optional[Any]:
-        """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
-        if not self.session_complete:
-            self.on_session_end()
-
-    def on_validation_end(self) -> Optional[Any]:
-        pass
-
-    def on_test_end(self) -> Optional[Any]:
-        """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
-        if not self.session_complete:
-            self.on_session_end()
-
-    def on_predict_end(self) -> Optional[Any]:
-        """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
-        if not self.session_complete:
-            self.on_session_end()
-
-    def on_train_epoch_start(self, *args, **kwargs) -> None:
-        pass
 
 
 class ITModule(CoreHelperAttributeMixin, BaseITModule):
@@ -321,119 +274,10 @@ class ITModule(CoreHelperAttributeMixin, BaseITModule):
 
     <https://huggingface.co/datasets/super_glue#data-instances>`_.
     """
-    # def __init__(self, it_cfg: ITConfig, *args: Any, **kwargs: Any) -> None:
-    #     # for core/non-lightning modules, we configure a _log_dir rather than relying on the trainer to do so
-    #     self._log_dir = Path(it_cfg['log_dir'] or tempfile.gettempdir())
-    #     super().__init__(it_cfg, *args, **kwargs)
-
-    def setup(self, datamodule: ITDataModule, *args, **kwargs) -> None:
-        super().setup(*args, **kwargs)
-        self._datamodule = datamodule
-
-    def forward(self, **inputs: Any) -> STEP_OUTPUT:
-        return self.model(**inputs, **self.it_cfg.cust_fwd_kwargs)
-
-    @ProfilerHooksMixin.memprofilable
-    def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
-         # TODO: decide whether to build a closure for the core training_step to enable identical
-         # core/lightning module training_steps in more cases (need to be explicit about the compatibility constraints)
-        outputs = self(**batch)
-        loss, _other_outputs = outputs[0], outputs[1:]
-        self.log("train_loss", loss, sync_dist=True)
-        return loss
-
-    @ProfilerHooksMixin.memprofilable
-    def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        outputs = self(**batch)
-        val_loss, logits = outputs[:2]
-        if self.it_cfg.num_labels >= 1:
-            preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
-        elif self.it_cfg.num_labels == 1:
-            preds = logits.squeeze()
-        labels = batch["labels"]
-        self.log("val_loss", val_loss, prog_bar=True, sync_dist=True)
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
-
-    @ProfilerHooksMixin.memprofilable
-    def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        if self.it_cfg.zero_shot_cfg.enabled:
-            self.zero_shot_test_step(batch, batch_idx)
-        else:
-            self.default_test_step(batch, batch_idx)
-
-    def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
-        Optional[STEP_OUTPUT]:
-        outputs = self.model.generate(input_ids=batch['input_ids'],
-                                      pad_token_id=self.datamodule.tokenizer.pad_token_id,
-                                      **self.it_cfg.zero_shot_cfg.lm_generation_cfg.__dict__)
-        stacked_scores = torch.stack([out for out in outputs['scores']], dim=0).cpu()
-        assert self.it_cfg.zero_shot_cfg.entailment_mapping_indices is not None
-        answer_logits = torch.index_select(stacked_scores, -1, self.it_cfg.zero_shot_cfg.entailment_mapping_indices)
-        per_example_answers, _ = torch.max(answer_logits, dim=0)
-        preds = torch.argmax(per_example_answers, axis=1)  # type: ignore[call-arg]
-        labels = batch["labels"]
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
-
-    def default_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        # run predict on val dataset for now
-        outputs = self(**batch)
-        test_loss, logits = outputs[:2]
-        if self.it_cfg.num_labels >= 1:
-            preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
-        elif self.it_cfg.num_labels == 1:
-            preds = logits.squeeze()
-        labels = batch["labels"]
-        #self.log("predict_loss", test_loss, prog_bar=True, sync_dist=True)
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
-
-    def predict_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        # run predict on val dataset for now
-        # TODO: clean this up and allow for passing arbitrary data
-        outputs = self(**batch)
-        _, logits = outputs[:2]
-        if self.it_cfg.num_labels >= 1:
-            preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
-        elif self.it_cfg.num_labels == 1:
-            preds = logits.squeeze()
-        labels = batch["labels"]
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        rank_zero_info(metric_dict)
+    ...
 
 
-class BaseITHookedModule(BaseITModule):
-    # def __init__(
-    #     self,
-    #     it_cfg: ITConfig,
-    # ):
-    #     """In this example, this :class:`~lightning.pytorch.core.module.LightningModule` is initialized by composing
-    #     the ./config/fts_defaults.yaml default configuration with various scheduled fine-tuning yaml configurations
-    #     via the :class:`~lightning.pytorch.cli.LightningCLI` but it can be used like any other
-    #     :class:`~lightning.pytorch.core.module.LightningModule` as well.
-
-    #     Args:
-    #         it_cfg (ITConfig): Configuration for this
-    #             :class:`~lightning.pytorch.core.module.LightningModule`.
-    #     """
-    #     # See NOTE [Interpretune Dataclass-Oriented Configuration]
-    #     super().__init__(it_cfg=it_cfg)
-    #     #self.dump_base = None
-
-    def setup(self, datamodule: ITDataModule) -> None:
-        self._datamodule = datamodule
-        if self.it_cfg.tlens_from_pretrained_cfg.enabled:
-            self._convert_hf_to_hooked()
-        # self.dump_base = Path("/tmp/")
-        # self.dump_path = self.dump_base / self.init_hparams['experiment_id']
-        # self.dump_path.mkdir(exist_ok=True, parents=True)
+class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
 
     def _configured_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
         -> torch.nn.Module:
@@ -494,5 +338,6 @@ class BaseITHookedModule(BaseITModule):
         # peft not currently supported by ITHookedModule
         pass
 
-class ITHookedModule(CoreHelperAttributeMixin, BaseITHookedModule):
+
+class ITHookedModule(CoreHelperAttributeMixin, BaseITLensModule):
     ...

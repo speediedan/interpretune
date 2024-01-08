@@ -16,7 +16,7 @@ from interpretune.utils.import_utils import _import_class
 
 log = logging.getLogger(__name__)
 
-
+# TODO: move overridden datamodule hooks to a separate class (maybe a separate module, maybe this one)
 class ITDataModule(ABC):
 
     tokenization_func: Callable
@@ -65,7 +65,7 @@ class ITDataModule(ABC):
         """Load the SuperGLUE dataset."""
         raise NotImplementedError
 
-    def setup(self, stage: Optional[str] = None, module: Optional[torch.nn.Module] = None) -> None:
+    def setup(self, stage: Optional[str] = None, module: Optional[torch.nn.Module] = None, *args, **kwargs) -> None:
         """Setup our dataset splits for training/validation."""
         # stage is optional for raw pytorch support
         # attaching module handle to datamodule is optional. It can be convenient to align data prep witha  model using

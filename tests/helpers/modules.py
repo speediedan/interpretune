@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, Tuple
 
 import torch
 import datasets
@@ -22,16 +22,6 @@ from it_examples.data.rte_bool import RTEBoolqDataModule
 if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import LightningDataModule
 
-
-PYTEST_RTE = {
-    "premise": ["Dana Reeve, the widow of the actor Christopher Reeve, has died of lung cancer at age 44, according to "
-                "the Christopher Reeve Foundation.", "Yet, we now are discovering that antibiotics are losing their "
-                "effectiveness against illness. Disease-causing bacteria are mutating faster than we can come up with "
-                "new antibiotics to fight the new variations."],
-    "hypothesis": ["Christopher Reeve had an accident.", "Bacteria is winning the war against antibiotics."],
-    "idx": [0, 1],
-    "label": [1, 0]
-}
 
 class TestITDataModule(ITDataModule):
 
@@ -60,31 +50,45 @@ class TestITDataModule(ITDataModule):
         features["labels"] = example_batch["label"]
         return features
 
+    def sample_dataset_state(self) -> Tuple:
+        # note that this only validates the loaded dataset/tokenizer, the dataloaders are not tested in this method
+        # so one may still need to inspect downstream variables (e.g. the dataloader kwargs) and the batch actually
+        # passed to the model in a given test/step to verify that the tested model inputs align with the expected
+        # deterministic dataset state defined in `tests.helpers.cfg_aliases.test_dataset_state`
+        sample_state = []
+        for split in self.dataset.keys():
+            # as a content heuristic, inspect the id of a given index (3) for the first 5 rows of each dataset split
+            sample_state.extend([t[3] for t in self.dataset[split]['input_ids'][0:5]])
+        return (self.tokenizer.__class__.__name__, self.itdm_cfg.task_name, sample_state)
+
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""
         dataset_path = Path(self.itdm_cfg.dataset_path)
         # rebuild the test dataset if it does not exist in the test environment
         if not dataset_path.exists() or self.force_prepare_data:
-            dataset = datasets.Dataset.from_dict(PYTEST_RTE)
-            dataset = dataset.map(self.tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
-            dataset = self._remove_unused_columns(dataset)
-            dataset.save_to_disk(self.itdm_cfg.dataset_path)
+            # regen the 'pytest_rte' subset of rte for testing
+            dataset = datasets.load_dataset("super_glue", 'rte')
+            for split in dataset.keys():
+                dataset[split] = dataset[split].select(range(10))
+                dataset[split] = dataset[split].map(self.tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
+                dataset[split] = self._remove_unused_columns(dataset[split])
+            dataset.save_to_disk(dataset_path)
 
-    def dataloader_factory(self, use_train_batch_size: bool = False) -> DataLoader:
-        dataloader_kwargs = {"dataset": self.dataset, "collate_fn":self.data_collator,
+    def dataloader_factory(self, split: str, use_train_batch_size: bool = False) -> DataLoader:
+        dataloader_kwargs = {"dataset": self.dataset[split], "collate_fn":self.data_collator,
                              **self.itdm_cfg.dataloader_kwargs}
         dataloader_kwargs['batch_size'] = self.itdm_cfg.train_batch_size if use_train_batch_size else \
             self.itdm_cfg.eval_batch_size
         return DataLoader(**dataloader_kwargs)
 
     def train_dataloader(self) -> DataLoader:
-        return self.dataloader_factory(use_train_batch_size=True)
+        return self.dataloader_factory(split='train', use_train_batch_size=True)
 
     def val_dataloader(self) -> DataLoader:
-        return self.dataloader_factory()
+        return self.dataloader_factory(split='validation')
 
     def test_dataloader(self) -> DataLoader:
-        return self.dataloader_factory()
+        return self.dataloader_factory(split='validation')
 
     def predict_dataloader(self) -> DataLoader:
         return self.dataloader_factory()
@@ -110,12 +114,13 @@ class TestITDataModuleFullDataset(RTEBoolqDataModule, TestITDataModule):
 class BaseTestModule:
     def __init__(self, it_cfg: ITConfig, expected_exact: Optional[Dict] = None, expected_close: Optional[Dict] = None,
                 expected_memstats: Optional[Dict] = None, tolerance_map: Optional[Dict] = None,
-                state_log_dir: Optional[str] = None, *args, **kwargs) -> None:
+                test_alias: Optional[str] = None, state_log_dir: Optional[str] = None, *args, **kwargs) -> None:
         super().__init__(it_cfg=it_cfg)
         self.expected_memstats = expected_memstats
         self.expected_exact = expected_exact
         self.expected_close = expected_close
         self.state_log_dir = state_log_dir
+        self.test_alias = test_alias
         self.tolerance_map = tolerance_map or {}
         self.epoch_losses = {}
         self.dev_expected_exact = {}
@@ -141,7 +146,8 @@ class BaseTestModule:
 
     def _epoch_end_validation(self, *args, **kwargs) -> None:
         state_key = self.current_epoch
-        current_exact = {'device_type': self.model.device.type, 'precision': self.model.dtype}
+        current_exact = {'device_type': self.model.device.type, 'precision': self.model.dtype,
+                         'dataset_state': self.datamodule.sample_dataset_state()}
         current_close = {}
         if self.epoch_losses and self.epoch_losses.get(state_key, None):
             current_close.update({'loss': self.epoch_losses[state_key]})
@@ -149,6 +155,9 @@ class BaseTestModule:
 
     def on_test_epoch_end(self, *args, **kwargs):
         self._epoch_end_validation(*args, **kwargs)
+
+    def on_train_epoch_start(self, *args, **kwargs):
+        pass  # TODO: planning to add some on epoch start validation
 
     def on_train_epoch_end(self, *args, **kwargs):
         self._epoch_end_validation(*args, **kwargs)
@@ -179,6 +188,7 @@ class BaseTestModule:
         state_log = dump_path / "dev_state_log.yaml"
         fs = get_filesystem(state_log)
         with fs.open(state_log, "w", newline="") as fp:
+            fp.write(f"State log for test `{self.test_alias}`:{os.linesep}")
             for dev_d in [self.dev_expected_exact, self.dev_expected_close]:
                 fp.write(os.linesep)
                 for k, v in dev_d.items():  # control formatting precisely to allow copy/paste expected output

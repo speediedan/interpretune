@@ -7,8 +7,7 @@ from abc import ABC
 from datasets import load_dataset, Dataset
 from psutil import Process
 from pathlib import Path
-from contextlib import contextmanager
-from functools import wraps
+
 from collections import defaultdict
 
 from interpretune.utils.logging import rank_zero_warn, _get_rank, rank_zero_only
@@ -19,7 +18,6 @@ import torch
 from tqdm import tqdm
 
 # adapted from HF utility hooks, takes advantage of our psutil requirement to be slightly more efficient
-
 def _hook_rss_pre_forward(module, *args, **kwargs):
     mem = module.mem_info_handle()
     module.rss_pre_forward = mem.rss
@@ -145,13 +143,19 @@ class MemProfilerMixin:
         if self.memprofiler_cfg.enable_memory_hooks:
             if len(self._hook_handles) == 0:
                 self.add_memprofiler_hooks()
+            else:
+                *_,  step_idx, step_ctx = src_subkey
+                if step_idx == self.schedule.warmup_steps and step_ctx == 'start':
+                    # conservatively reset hooks on first step after warmup since existing hooks may have accumulated
+                    # state during untracked steps from a previous phase and pre-warmup steps of the current phase
+                    self.exec_reset_state_hooks()
             self.memory_stats[".".join(map(str,("hooks", *src_subkey)))] = \
                 {attr: getattr(self._module.model, attr, None) for attr in  self.memprofiler_cfg.save_hook_attrs}
 
     def _collect_snap(self, src_subkey, reset_mem_hooks: bool = False) -> None:
         _, phase, *_ = src_subkey
-        self._process_hooks(src_subkey)
         mem_cfg = self.memprofiler_cfg
+        self._process_hooks(src_subkey)
         if phase in mem_cfg.enabled_funcs.cpu:
             mem = self._curr_pid.memory_info()
             self.memory_stats[".".join(map(str,("cpu", *src_subkey)))] = {"rss": mem.rss, "vms": mem.vms}
@@ -212,30 +216,6 @@ class MemProfilerMixin:
             pickle.dump(self.memory_stats, f)
 
 
-class ProfilerHooksMixin:
-
-    @contextmanager
-    @staticmethod
-    def memprofile_ctx(memprofiler, phase: str, epoch_idx: Optional[int] = None, step_idx: Optional[int] = None):
-        try:
-            memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="start")
-            yield
-        finally:
-            memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="end", reset_mem_hooks=True)
-
-    @staticmethod
-    def memprofilable(func):
-        @wraps(func)
-        def wrapper(self, *args, **kwargs):
-            if not hasattr(self, 'memprofiler'):
-                return func(self, *args, **kwargs)
-            phase = func.__name__
-            # for increased generality, we derive a profile `step_idx` based on a profiler snap counter rather than
-            # parsing `args` if a `batch_idx` kwarg isn't found
-            step_idx = kwargs.get("batch_idx", None)
-            with ProfilerHooksMixin.memprofile_ctx(self.memprofiler, phase=phase, step_idx=step_idx):
-                return func(self, *args, **kwargs)
-        return wrapper
 
 
 class DebugGenerationMixin(ABC):
