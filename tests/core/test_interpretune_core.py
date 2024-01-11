@@ -19,8 +19,8 @@ import pytest
 from tests.helpers.warns import unexpected_warns, CORE_CONTEXT_WARNS, LIGHTING_EXPECTED_WARNS
 from tests.helpers.core import (TestCfg, TestResult, config_modules, def_results, collect_results, pytest_param_factory,
                                 run_it, run_lightning)
-from tests.helpers.cfg_aliases import (w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l,
-                                       bs1_nowarm_hk_mem, bs1_warm_mem, MemProfResult)
+from tests.helpers.cfg_aliases import (MemProfResult, w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l,
+                                       test_bs1_mem_nosavedt, bs1_nowarm_mem, bs1_nowarm_hk_mem, bs1_warm_mem)
 
 
 class ParityCfg(NamedTuple):
@@ -50,26 +50,27 @@ parity_results = {
     "test_cpu_32": TestResult(exact_results=def_results("cpu", 32)),
     "test_cuda_32": TestResult(exact_results=def_results("cuda", 32)),
     "test_cuda_bf16": TestResult(exact_results=def_results("cuda", "bf16")),
-    "test_cpu_32_prof": TestResult(exact_results=def_results("cpu", 32), mem_results=("test", "hooks", (387866624,)),
+    "test_cpu_32_prof": TestResult(exact_results=def_results("cpu", 32), mem_results=("test", "cpu", (385368064,)),
                                    tolerance_map={"rss_diff": (0.05, 1e08)}),  # lightning ver requires a bit more
     "test_cuda_32_prof": TestResult(exact_results=def_results("cuda", 32),
-                                    mem_results=("test", "cuda", (544712192, 666343424, 729808896))),
+                                    mem_results=("test", "cuda", (544712192, 666343424, 729808896, 0))),
     "test_cuda_bf16_prof": TestResult(exact_results=def_results("cuda", "bf16"),
-                                      mem_results=("test", "cuda", (301458944, 345495552, 362807296))),
+                                      mem_results=("test", "cuda", (301458944, 345495552, 362807296, 0))),
     "train_cpu_32_prof": TestResult(exact_results=def_results("cpu", 32),
-                                    mem_results=("train", "hooks", (373350400,))),
+                                    mem_results=("train", "cpu", (373067776, 177550460))),
     "train_cpu_32_prof_act": TestResult(exact_results=def_results("cpu", 32),
-                                        mem_results=("train", "hooks", (381517824,))),
+                                        mem_results=("train", "cpu", (374231040, 6098252))),
     "train_cuda_32_prof": TestResult(exact_results=def_results("cuda", 32),
-                                     mem_results=("train", "cuda", (1767844352, 2575267840, 2824863744))),
+                                     mem_results=("train", "cuda", (1767844352, 2575267840, 2824863744, 162420092))),
     "train_cuda_32_prof_act": TestResult(exact_results=def_results("cuda", 32),
-                                         mem_results=("train", "cuda", (1581182464, 2573838336, 2782920704))),
+                                     mem_results=("train", "cuda", (1581182464, 2573838336, 2782920704, 5794124))),
     "train_cuda_bf16_prof": TestResult(exact_results=def_results("cuda", "bf16"),
-                                       mem_results=("train", "cuda", (971899904, 1363060736, 1440743424)),
+                                       mem_results=("train", "cuda", (971899904, 1363060736, 1440743424, 123287392)),
                                        tolerance_map={k: (0.1, 2e08) for k in MemProfResult.cuda_mem_keys}),
                                        # TODO: as current allocated memory for Lightning is about 217 MB higher than
-                                       # core, investigate the precise source of this divergence (not presently viewed
-                                       # as a high priority given other values are nearly identical to core)
+                                       # core and npp is about 80 MB lower than core, investigate the precise source of
+                                       # these divergences (not presently viewed as highest priority given other values
+                                       # are nearly identical to core)
 }
 
 @dataclass
@@ -97,13 +98,13 @@ PARITY_SINGLE_DEVICE_CONFIGS = (
     ParityTest(alias="test_cuda_32", cfg=ParityCfg("test", **cuda), marks="cuda"),
     ParityTest(alias="test_cuda_bf16", cfg=ParityCfg("test", **cuda_bf16), marks="bf16_cuda"),
     ParityTest(alias="train_cpu_bf16", cfg=ParityCfg(**bf16), marks="skip_win_slow"),
-    ParityTest(alias="test_cpu_32_prof", cfg=ParityCfg(**test_bs1_mem), marks="prof"),
-    ParityTest(alias="test_cpu_32_prof_l", cfg=ParityCfg(**w_lit, **test_bs1_mem), marks="prof_l"),
+    ParityTest(alias="test_cpu_32_prof", cfg=ParityCfg(**test_bs1_mem_nosavedt), marks="prof"),
+    ParityTest(alias="test_cpu_32_prof_l", cfg=ParityCfg(**w_lit, **test_bs1_mem_nosavedt), marks="prof_l"),
     ParityTest(alias="test_cuda_32_prof", cfg=ParityCfg(**cuda, **test_bs1_mem), marks="cuda_prof"),
     ParityTest(alias="test_cuda_32_prof_l", cfg=ParityCfg(**cuda, **w_lit, **test_bs1_mem), marks="cuda_prof_l"),
     ParityTest(alias="test_cuda_bf16_prof", cfg=ParityCfg(**cuda_bf16, **test_bs1_mem), marks="bf16_cuda_prof"),
     ParityTest(alias="train_cpu_32_prof", cfg=ParityCfg(**bs1_nowarm_hk_mem), marks="prof"),
-    #ParityTest(alias="train_cpu_32_prof_act", cfg=ParityCfg(act_ckpt=True, **bs1_nowarm_mem), marks="prof",),
+    ParityTest(alias="train_cpu_32_prof_act", cfg=ParityCfg(act_ckpt=True, **bs1_nowarm_mem), marks="prof",),
     ParityTest(alias="train_cuda_32_prof", cfg=ParityCfg(**cuda, **bs1_warm_mem), marks="cuda_prof"),
     ParityTest(alias="train_cuda_32_prof_act", cfg=ParityCfg(**cuda_act, **bs1_warm_mem), marks="cuda_prof"),
     ParityTest(alias="train_cuda_bf16_prof", cfg=ParityCfg(**cuda_bf16, **bs1_warm_mem), marks="bf16_cuda_prof"),

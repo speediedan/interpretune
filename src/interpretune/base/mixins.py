@@ -165,6 +165,7 @@ class OptimizerSchedulerInitMixin:
             )
         return optimizers, lr_schedulers
 
+
 class ProfilerHooksMixin:
 
     @contextmanager
@@ -187,7 +188,12 @@ class ProfilerHooksMixin:
             # parsing `args` if a `batch_idx` kwarg isn't found
             step_idx = kwargs.get("batch_idx", None)
             with ProfilerHooksMixin.memprofile_ctx(self.memprofiler, phase=phase, step_idx=step_idx):
-                return func(self, *args, **kwargs)
+                if self.memprofiler.memprofiler_cfg.enable_saved_tensors_hooks and \
+                    self.memprofiler._enabled[(phase, 'start')]:
+                    with torch.autograd.graph.saved_tensors_hooks(*self.memprofiler._saved_tensors_funcs):
+                        return func(self, *args, **kwargs)
+                else:
+                    return func(self, *args, **kwargs)
         return wrapper
 
 class ZeroShotStepMixin:

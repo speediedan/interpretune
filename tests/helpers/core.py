@@ -99,10 +99,10 @@ class TestResult(NamedTuple):
 def mem_results(results: Tuple):
     """Result generation function for memory profiling tests."""
     # See NOTE [Memprofiler Key Format]
-    # snap keys are src.rank.phase.epoch_idx.step_idx.step_ctx
+    # snap keys are rank.phase.epoch_idx.step_idx.step_ctx
     loop_type, src, test_values = results
-    mem_keys = MemProfResult.cuda_mem_keys if src == "cuda" else ('rss_diff',)
-    step_key = f'{src}.{MemProfResult.train_keys[src]}' if loop_type == 'train' else f'{src}.{MemProfResult.test_key}'
+    mem_keys = MemProfResult.cuda_mem_keys if src == "cuda" else MemProfResult.cpu_mem_keys[loop_type]
+    step_key = f'{MemProfResult.train_keys[src]}' if loop_type == 'train' else f'{MemProfResult.test_key}'
     # default tolerance of rtol=0.05, atol=0 for all keys unless overridden with an explicit `tolerance_map`
     tolerance_map = {'tolerance_map': {k: (0.05, 0) for k in mem_keys}}
     return {**tolerance_map, 'expected_memstats': (step_key, mem_keys, test_values)}
@@ -119,12 +119,10 @@ def close_results(close_map: Tuple):
     return {**closestats_tol, 'expected_close': expected_close}
 
 def exact_results(expected_exact: Tuple):
-    """Result generation function that packages expected close results with a provided tolerance dict or generates
-    a default one based upon the test_alias."""
+    """Result generation function that packages."""
     return {'expected_exact': expected_exact}
 
 def def_results(device_type: str, precision: Union[int, str]):
-
     # wrap result dict such that only the first epoch is checked
     return {0: {"device_type": device_type, "precision": get_model_input_dtype(precision),
                 "dataset_state": test_dataset_state},}

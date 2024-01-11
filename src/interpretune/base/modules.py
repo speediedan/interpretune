@@ -17,7 +17,7 @@ from interpretune.base.datamodules import ITDataModule
 from interpretune.base.hooks import BaseITHooks, BaseITLensModuleHooks
 from interpretune.base.mixins import (OptimizerSchedulerInitMixin, CoreHelperAttributeMixin, ProfilerHooksMixin,
                                          ZeroShotStepMixin, CORE_TO_LIGHTNING_ATTRS_MAP)
-from interpretune.base.debug import DebugGenerationMixin, MemProfilerMixin
+from interpretune.base.debug import DebugGeneration, MemProfiler
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info, rank_zero_debug
 
 # TODO: add core helper log/log_dict methods for core context usage
@@ -60,10 +60,10 @@ class BaseITModule(ABC, BaseITHooks, OptimizerSchedulerInitMixin, ProfilerHooksM
         self.it_optimizers, self.it_lr_scheduler_configs, self.it_lr_schedulers = None, None, None
         self.it_cfg = self._before_it_cfg_init(it_cfg=it_cfg)
         if self.it_cfg.memprofiler_cfg.enabled:  # conditionally load simple memory profiling extension
-            self.memprofiler = MemProfilerMixin()
+            self.memprofiler = MemProfiler()
             self.memprofiler.connect(self)
         if self.it_cfg.debug_lm_cfg.enabled:  # conditionally load debugging extension
-            self.lm_debug = DebugGenerationMixin()
+            self.lm_debug = DebugGeneration()
             self.lm_debug.connect(self)
         self._model_init()
 

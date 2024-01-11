@@ -37,7 +37,7 @@ test_it_module_kwargs = {"use_model_cache": False, "cust_fwd_kwargs": {}, "from_
 enable_memprofiler_kwargs = {"enabled": True, "cuda_allocator_history": True}
 bs1_override = {'train_batch_size': 1, 'eval_batch_size': 1}
 memprofiler_cfg = MemProfilerCfg(**enable_memprofiler_kwargs)
-
+no_savedt_memprofiler_cfg = MemProfilerCfg(**enable_memprofiler_kwargs, enable_saved_tensors_hooks=False)
 warm_maxstep_memprof_cfg = MemProfilerCfg(**enable_memprofiler_kwargs,
                                       **{"schedule": MemProfilerSchedule(warmup_steps=2, max_step=4)})
 nowarm_maxstep_memprof_cfg = MemProfilerCfg(**enable_memprofiler_kwargs,
@@ -78,15 +78,12 @@ class MemProfResult(NamedTuple):
     rank = 0
     default_step = 0
     cuda_train_step = 3
-    cuda_mem_keys = ('allocated_bytes.all.current', 'allocated_bytes.all.peak', 'reserved_bytes.all.peak')
+    cuda_mem_keys = ('allocated_bytes.all.current', 'allocated_bytes.all.peak', 'reserved_bytes.all.peak','npp_diff')
+    cpu_mem_keys = {"test": ('rss_diff',), "train": ('rss_diff', 'npp_diff'),}
     test_key = f'{rank}.test_step.{epoch}.{default_step}.end'
     train_keys = {"cuda": f'{rank}.training_step.{epoch}.{cuda_train_step}.end',
-                  "hooks": f'{rank}.training_step.{epoch}.{default_step}.end'}
+                  "cpu": f'{rank}.training_step.{epoch}.{default_step}.end'}
 
-#memprof_default_end = f'_step.{MemProfResult.epoch}.{MemProfResult.default_step}.end'
-#test_key = f'{MemProfResult.rank}.test{memprof_default_end}'
-#train_keys = {"cuda": f'{MemProfResult.rank}.training_step.{MemProfResult.epoch}.{MemProfResult.cuda_train_step}.end',
-#              "hooks": f'{MemProfResult.rank}.training{memprof_default_end}'}
 
 # runif components
 cuda_mark = {'min_cuda_gpus': 1}
@@ -125,6 +122,7 @@ memprof_steps = {"train_steps": 5, "val_steps": 3}
 bs1_memprof_steps = {"dm_override_cfg": bs1_override, **memprof_steps}
 debug_hidden = {"cust_fwd_kwargs": {"output_hidden_states": True}}
 test_bs1_mem = {"loop_type": "test", "dm_override_cfg": bs1_override, "memprofiling_cfg": memprofiler_cfg}
+test_bs1_mem_nosavedt = {**test_bs1_mem, "memprofiling_cfg": no_savedt_memprofiler_cfg}
 bs1_warm_mem = {**bs1_memprof_steps,  "memprofiling_cfg": warm_maxstep_memprof_cfg}
 bs1_nowarm_mem = {**bs1_memprof_steps, "memprofiling_cfg": nowarm_maxstep_memprof_cfg}
 bs1_nowarm_hk_mem = {**bs1_memprof_steps, "memprofiling_cfg": nowarm_maxstep_hk_memprof_cfg}

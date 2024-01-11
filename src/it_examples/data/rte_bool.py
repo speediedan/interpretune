@@ -30,7 +30,7 @@ class RTEBoolqDataModule(ITDataModule):
         # N.B. PL calls prepare_data from a single process (rank 0) so do not use it to assign
         # state (e.g. self.x=y)
         # note for raw pytorch we require a target_model (vs getting it from the trainer in the lightning version)
-        dataset = datasets.load_dataset("super_glue", self.itdm_cfg.task_name)
+        dataset = datasets.load_dataset("super_glue", self.itdm_cfg.task_name, trust_remote_code=True)
         for split in dataset.keys():
             dataset[split] = dataset[split].map(self.tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
             dataset[split] = self._remove_unused_columns(dataset[split], target_model)

@@ -88,14 +88,15 @@ class CoreSteps(Enum):
     predict_step = auto()
 
 class DefaultMemHooks(Enum):
-    pre_forward = 'interpretune.base.debug._hook_rss_pre_forward'
-    post_forward = 'interpretune.base.debug._hook_rss_post_forward_w_out'
+    pre_forward = 'interpretune.base.debug._hook_npp_pre_forward'
+    post_forward = 'interpretune.base.debug._hook_npp_post_forward'
     reset_state = 'interpretune.base.debug._reset_memory_hooks_state'
 
 @dataclass(kw_only=True)
 class MemProfilerHooks(ITSerializableCfg):
     pre_forward_hooks: List[str | Callable] = field(default_factory=lambda: [DefaultMemHooks.pre_forward.value])
     post_forward_hooks: List[str| Callable] = field(default_factory=lambda: [DefaultMemHooks.post_forward.value])
+    # the provided reset_state_hooks will be called with the model and the `save_hook_attrs` list
     reset_state_hooks: List[str | Callable] = field(default_factory=lambda: [DefaultMemHooks.reset_state.value])
 
 @dataclass(kw_only=True)
@@ -112,13 +113,23 @@ class MemProfilerCfg(ITSerializableCfg):
     save_dir: Optional[str | os.PathLike] = None
     enabled_funcs: MemProfilerFuncs = field(default_factory=lambda: MemProfilerFuncs())
     enable_memory_hooks: bool = True
+    enable_saved_tensors_hooks: bool = True
     memory_hooks: MemProfilerHooks = field(default_factory=lambda: MemProfilerHooks())
+    saved_tensors_funcs: List = field(default_factory=lambda: list(('interpretune.base.debug._npp_hook', lambda x: x)))
     # if you add custom hooks, make sure to add the desired module state attributes to save to `save_hook_attrs`
-    save_hook_attrs: List = field(default_factory=lambda: ["rss_post_forward", "rss_post_forward", "rss_diff",
-                                                           "out_bytes", "cumul_out_bytes"])
+    save_hook_attrs: List = field(default_factory=lambda: ["rss_pre_forward", "rss_post_forward", "rss_diff",
+                                                           "npp_pre_forward", "npp_post_forward", "npp_diff"])
     # since we cannot reliably ascertain when all MemProfilerFuncs will be executed, memory hooks will
     # only be removed once the funcs in this list have reached `max_step`
     retain_hooks_for_funcs: List[str | Enum] = field(default_factory=lambda: list(step.name for step in CoreSteps))
+
+    def __post_init__(self) -> None:
+        if not torch.cuda.is_available() and self.enabled and any((self.enabled_funcs.cuda_allocator_history,
+                                                                   self.enabled_funcs.cuda,
+                                                                   self.cuda_allocator_history)):
+            rank_zero_info("Disabling CUDA memory profiling functionality since no CUDA device detected.")
+            self.enabled_funcs.cuda, self.enabled_funcs.cuda_allocator_history = [], []
+            self.cuda_allocator_history = False
 
 # TODO: enable once these hooks are added
 # @dataclass(kw_only=True)

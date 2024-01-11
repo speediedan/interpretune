@@ -1,58 +1,58 @@
 import os
 import pickle
-from importlib import import_module
 from dataclasses import fields
 from typing import Optional, List, Any, Dict, Tuple, Union
-from abc import ABC
-from datasets import load_dataset, Dataset
-from psutil import Process
+from collections import defaultdict
 from pathlib import Path
 
-from collections import defaultdict
+from datasets import load_dataset, Dataset
+from psutil import Process
 
 from interpretune.utils.logging import rank_zero_warn, _get_rank, rank_zero_only
 from interpretune.base.config_classes import MemProfilerCfg
-from interpretune.utils.exceptions import MisconfigurationException
+from interpretune.utils.import_utils import resolve_funcs
+
 
 import torch
 from tqdm import tqdm
 
-# adapted from HF utility hooks, takes advantage of our psutil requirement to be slightly more efficient
-def _hook_rss_pre_forward(module, *args, **kwargs):
+# accessed in global scope to track non-parameter packed bytes (npp) as a simple proxy (ceiling) for activation memory
+_npp_bytes = 0
+
+def _hook_npp_pre_forward(module, *args, **kwargs):
     mem = module.mem_info_handle()
+    global _npp_bytes
+    module.npp_pre_forward = _npp_bytes
     module.rss_pre_forward = mem.rss
     return None
 
-def _hook_rss_post_forward(module, *args, **kwargs):
+def _hook_npp_post_forward(module, *args, **kwargs):
+    global _npp_bytes
+    module.npp_post_forward = _npp_bytes
+    module.npp_diff = module.npp_post_forward - module.npp_pre_forward
     mem = module.mem_info_handle()
     module.rss_post_forward = mem.rss
     rss_diff = module.rss_post_forward - module.rss_pre_forward
     module.rss_diff = rss_diff + (module.rss_diff if hasattr(module, "rss_diff") else 0)
     return None
 
-def _hook_rss_post_forward_w_out(module, *args, **kwargs):
-    mem = module.mem_info_handle()
-    module.rss_post_forward = mem.rss
-    rss_diff = module.rss_post_forward - module.rss_pre_forward
-    out_bytes = args[1].nbytes if len(args) > 1 and isinstance(args[1], torch.Tensor) else 0
-    module.out_bytes = out_bytes + (module.out_bytes if hasattr(module, "out_bytes") else 0)
-    module.cumul_out_bytes = sum(getattr(m, 'out_bytes', 0) for m in module.modules())
-    module.rss_diff = rss_diff + (module.rss_diff if hasattr(module, "rss_diff") else 0)
-    return None
-
-def _reset_memory_hooks_state(model):
+def _reset_memory_hooks_state(model, reset_attrs: List[str]):
+    global _npp_bytes
+    _npp_bytes = 0
     for module in model.modules():
-        module.cumul_out_bytes = 0
-        module.out_bytes = 0
-        module.rss_diff = 0
-        module.rss_post_forward = 0
-        module.rss_pre_forward = 0
+        for attr in reset_attrs:
+            setattr(module, attr, 0)
 
-class MemProfilerMixin:
+def _npp_hook(x):
+    global _npp_bytes
+    if not isinstance(x, torch.nn.Parameter):
+        _npp_bytes += x.nbytes
+    return x
+
+class MemProfiler:
     def __init__(self, *args, **kwargs) -> None:
-        # TODO: change type to ProfilerCfg dataclass if circular import can be avoided
         super().__init__()
-        self.memory_stats = {}
+        self.memory_stats = defaultdict(dict)
         self._enabled = {}
         self._module = None
         self._cuda_snapshot_dir = None
@@ -60,13 +60,15 @@ class MemProfilerMixin:
         self._rank = _get_rank() or 0  # for future use, currently only single rank supported
         self._snap_indices = {}
         self._configured_hooks = {}
+        self._saved_tensors_funcs = []
         self._hook_handles = defaultdict(list)
         self._done_prof_funcs = []
-
 
     def connect(self, obj_ref: Any) -> None:
         self._module = obj_ref
         self._curr_pid = Process(os.getpid())
+        if self.memprofiler_cfg.enable_saved_tensors_hooks:
+            self._saved_tensors_funcs = resolve_funcs(cfg_obj=self.memprofiler_cfg, func_type='saved_tensors_funcs')
 
     @property
     def memprofiler_cfg(self) -> MemProfilerCfg:
@@ -81,31 +83,9 @@ class MemProfilerMixin:
             for handle in handle_list:
                 handle.remove()
 
-    def resolve_hooks(self, hook_type: str) -> List:
-        resolved_hooks = []
-        hooks_to_resolve = getattr(self.memprofiler_cfg.memory_hooks, hook_type)
-        if not isinstance(hooks_to_resolve, list):
-            hooks_to_resolve = [getattr(self.memprofiler_cfg.memory_hooks, hook_type)]
-        for hook_or_qualname in hooks_to_resolve:
-            if callable(hook_or_qualname):
-                resolved_hooks.append(hook_or_qualname)  # TODO: inspect if signature is appropriate for custom hooks
-            else:
-                try:
-                    module, func = hook_or_qualname.rsplit(".", 1)
-                    mod = import_module(module)
-                    resolved_hook = getattr(mod, func, None)
-                    if callable(resolved_hook):
-                        resolved_hooks.append(resolved_hook)
-                    else:
-                        raise MisconfigurationException(f"Custom hook {func} from module {module} is not callable!")
-                except (AttributeError, ImportError) as e:
-                    err_msg = f"Unable to import and resolve specified hook {func} from module {module}: {e}"
-                    raise MisconfigurationException(err_msg)
-        return resolved_hooks
-
     def exec_reset_state_hooks(self) -> None:
         for hook in self._configured_hooks["reset_state_hooks"]:
-            hook(self._module.model)
+            hook(self._module.model, self.memprofiler_cfg.save_hook_attrs)
 
     def add_memprofiler_hooks(self) -> None:
         # TODO: extend supported hook points (e.g. backward, etc.) and if/once supporting additional hook points,
@@ -117,7 +97,8 @@ class MemProfilerMixin:
                            " any specified.")
         for supported_hooks in fields(memory_hooks_cfg):
             if getattr(memory_hooks_cfg, supported_hooks.name):
-                self._configured_hooks[supported_hooks.name] = self.resolve_hooks(supported_hooks.name)
+                self._configured_hooks[supported_hooks.name] = resolve_funcs(cfg_obj=memory_hooks_cfg,
+                                                                             func_type=supported_hooks.name)
         for module in self._module.model.modules():
             module.mem_info_handle = self._curr_pid.memory_info
             for hook_func in self._configured_hooks["pre_forward_hooks"]:
@@ -131,38 +112,38 @@ class MemProfilerMixin:
         self._cuda_snapshot_dir = Path(self._cuda_snapshot_dir)  # ensure the dir is a Path
         self._cuda_snapshot_dir.mkdir(exist_ok=True, parents=True)
 
-    def cuda_allocator_history_snap(self, src_subkey: Tuple) -> Dict:
-        cuda_snapshot_file = (self._cuda_snapshot_dir / "_".join(map(str,("cuda_alloc",
-                                                                          *src_subkey)))).with_suffix('.pickle')
+    def cuda_allocator_history_snap(self, snap_key: Tuple) -> Dict:
+        cuda_snapshot_file = (self._cuda_snapshot_dir / ".".join(("cuda_alloc", snap_key))).with_suffix('.pickle')
         torch.cuda.memory._dump_snapshot(cuda_snapshot_file)
 
     def done(self, step_idx: int) -> bool:
         return self.schedule.max_step and step_idx >= self.schedule.max_step
 
-    def _process_hooks(self, src_subkey) -> None:
+    def _process_hooks(self, snap_key) -> None:
         if self.memprofiler_cfg.enable_memory_hooks:
             if len(self._hook_handles) == 0:
                 self.add_memprofiler_hooks()
             else:
-                *_,  step_idx, step_ctx = src_subkey
+                *_,  step_idx, step_ctx = snap_key
                 if step_idx == self.schedule.warmup_steps and step_ctx == 'start':
                     # conservatively reset hooks on first step after warmup since existing hooks may have accumulated
                     # state during untracked steps from a previous phase and pre-warmup steps of the current phase
                     self.exec_reset_state_hooks()
-            self.memory_stats[".".join(map(str,("hooks", *src_subkey)))] = \
-                {attr: getattr(self._module.model, attr, None) for attr in  self.memprofiler_cfg.save_hook_attrs}
+            collected = {attr: getattr(self._module.model, attr, None) for attr in self.memprofiler_cfg.save_hook_attrs}
+            self.memory_stats[snap_key].update(collected)
 
-    def _collect_snap(self, src_subkey, reset_mem_hooks: bool = False) -> None:
-        _, phase, *_ = src_subkey
+    def _collect_snap(self, snap_key, reset_mem_hooks: bool = False) -> None:
+        _, phase, *_ = snap_key
+        snap_key = ".".join(map(str, snap_key))
         mem_cfg = self.memprofiler_cfg
-        self._process_hooks(src_subkey)
+        self._process_hooks(snap_key)
         if phase in mem_cfg.enabled_funcs.cpu:
             mem = self._curr_pid.memory_info()
-            self.memory_stats[".".join(map(str,("cpu", *src_subkey)))] = {"rss": mem.rss, "vms": mem.vms}
+            self.memory_stats[snap_key].update({"rss": mem.rss, "vms": mem.vms})
         if phase in mem_cfg.enabled_funcs.cuda:
-            self.memory_stats[".".join(map(str,("cuda", *src_subkey)))] = torch.cuda.memory_stats()
+            self.memory_stats[snap_key].update(torch.cuda.memory_stats())
         if phase in mem_cfg.enabled_funcs.cuda_allocator_history and mem_cfg.cuda_allocator_history:
-            self.cuda_allocator_history_snap(src_subkey)
+            self.cuda_allocator_history_snap(snap_key)
         if mem_cfg.enable_memory_hooks and reset_mem_hooks:
             self.exec_reset_state_hooks()
 
@@ -181,9 +162,9 @@ class MemProfilerMixin:
     def gen_snap_keys(self, phase: str, step_ctx: str, epoch_idx: Optional[int] = None,
                       step_idx: Optional[int] = None) -> Tuple[int, int, Tuple]:
         # NOTE [Memprofiler Key Format]
-        # snap key format is src.rank.phase.epoch_idx.step_idx.step_ctx
-        # e.g. hooks.0.training_step.0.0.end keys hook output for the end of training step 0, epoch 0 for rank 0
-        # cuda.0.training_step.1.2.start keys cuda mem stats for the start of training step 2, epoch 1 for rank 0
+        # snap key format is rank.phase.epoch_idx.step_idx.step_ctx
+        # e.g. 0.training_step.0.0.end keys hook output for the end of training step 0, epoch 0 for rank 0
+        # 0.training_step.1.2.start keys mem stats for the start of training step 2, epoch 1 for rank 0
         epoch_idx = next(e_idx for e_idx in (epoch_idx, self._module.current_epoch) if e_idx is not None)
         if step_idx is None:
             step_idx = self._snap_indices[(phase, step_ctx)]
@@ -199,10 +180,10 @@ class MemProfilerMixin:
         self.maybe_init_phase(phase, step_ctx)
         if not self._enabled[(phase, step_ctx)]:
             return
-        epoch_idx, step_idx, src_subkey = self.gen_snap_keys(phase, step_ctx, epoch_idx, step_idx)
+        epoch_idx, step_idx, snap_key = self.gen_snap_keys(phase, step_ctx, epoch_idx, step_idx)
         if step_idx >= self.schedule.warmup_steps:
             if not self.done(step_idx):
-                self._collect_snap(src_subkey, reset_mem_hooks)
+                self._collect_snap(snap_key, reset_mem_hooks)
             else:
                 self.teardown_prof(phase, step_ctx)
         if self._enabled[(phase, step_ctx)]:
@@ -216,9 +197,7 @@ class MemProfilerMixin:
             pickle.dump(self.memory_stats, f)
 
 
-
-
-class DebugGenerationMixin(ABC):
+class DebugGeneration:
     """Give user-provided callbacks with the ability to connect to another user-provided callback.
 
     This resolution logic is provided in order to avoid callback-dependent trainer attributes (e.g.

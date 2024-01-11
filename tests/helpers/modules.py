@@ -66,7 +66,7 @@ class TestITDataModule(ITDataModule):
         # rebuild the test dataset if it does not exist in the test environment
         if not dataset_path.exists() or self.force_prepare_data:
             # regen the 'pytest_rte' subset of rte for testing
-            dataset = datasets.load_dataset("super_glue", 'rte')
+            dataset = datasets.load_dataset("super_glue", 'rte', trust_remote_code=True)
             for split in dataset.keys():
                 dataset[split] = dataset[split].select(range(10))
                 dataset[split] = dataset[split].map(self.tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)

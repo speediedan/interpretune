@@ -1,4 +1,4 @@
-from typing import Any, Union, Optional, Dict, Tuple, Callable
+from typing import Any, Union, Optional, Dict, Tuple, Callable, List
 import importlib
 from functools import lru_cache
 from importlib.util import find_spec
@@ -9,9 +9,7 @@ import torch
 import pkg_resources
 from packaging.version import Version
 
-
-class MisconfigurationException(Exception):
-    """Exception used to inform users of misuse with interpretune."""
+from interpretune.utils.exceptions import MisconfigurationException
 
 @lru_cache()
 def package_available(package_name: str) -> bool:
@@ -145,3 +143,25 @@ def instantiate_class(init: Dict[str, Any], args: Optional[Union[Any, Tuple[Any,
             module = __import__(class_module, fromlist=[class_name])
             args_class = getattr(module, class_name)
         return args_class(**kwargs) if not args else args_class(*args, **kwargs)
+
+def resolve_funcs(cfg_obj: Any, func_type: str) -> List:
+    resolved_funcs = []
+    funcs_to_resolve = getattr(cfg_obj, func_type)
+    if not isinstance(funcs_to_resolve, list):
+        funcs_to_resolve = [funcs_to_resolve]
+    for func_or_qualname in funcs_to_resolve:
+        if callable(func_or_qualname):
+            resolved_funcs.append(func_or_qualname)  # TODO: inspect if signature is appropriate for custom hooks
+        else:
+            try:
+                module, func = func_or_qualname.rsplit(".", 1)
+                mod = importlib.import_module(module)
+                resolved_func = getattr(mod, func, None)
+                if callable(resolved_func):
+                    resolved_funcs.append(resolved_func)
+                else:
+                    raise MisconfigurationException(f"Custom function {func} from module {module} is not callable!")
+            except (AttributeError, ImportError) as e:
+                err_msg = f"Unable to import and resolve specified function {func} from module {module}: {e}"
+                raise MisconfigurationException(err_msg)
+    return resolved_funcs
