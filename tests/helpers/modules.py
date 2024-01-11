@@ -11,7 +11,8 @@ from datasets.arrow_dataset import LazyDict
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-from interpretune.base.config_classes import ITDataModuleConfig, ITConfig
+from interpretune.config_classes.datamodule import ITDataModuleConfig
+from interpretune.config_classes.module import ITConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import ITModule, ITLightningModule
 from interpretune.utils.logging import rank_zero_only, get_filesystem
@@ -139,9 +140,6 @@ class BaseTestModule:
         if self.it_cfg.zero_shot_cfg.enabled:
             tokenizer, zs_cfg = self.datamodule.tokenizer, self.it_cfg.zero_shot_cfg
             zs_cfg.entailment_mapping_indices = torch.tensor(tokenizer.convert_tokens_to_ids(zs_cfg.entailment_mapping))
-
-    # def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-    #     super().test_step(batch=batch, batch_idx=batch_idx, dataloader_idx=dataloader_idx)
 
     def _epoch_end_validation(self, *args, **kwargs) -> None:
         state_key = self.current_epoch

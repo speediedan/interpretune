@@ -18,7 +18,7 @@ from enum import Enum
 
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import BaseITModule
-from interpretune.base.config_classes import CorePhases
+from interpretune.config_classes.shared import CorePhases
 from interpretune.utils.logging import rank_zero_info
 
 log = logging.getLogger(__name__)

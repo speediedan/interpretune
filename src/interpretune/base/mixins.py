@@ -196,6 +196,7 @@ class ProfilerHooksMixin:
                     return func(self, *args, **kwargs)
         return wrapper
 
+
 class ZeroShotStepMixin:
         # TODO: make memprofilable by default directly? (already usually wrapped by test_step)
     def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \

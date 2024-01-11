@@ -24,7 +24,9 @@ import torch
 from transformers import logging as transformers_logging
 
 from interpretune.utils.types import ArgsType
-from interpretune.base.config_classes import ITConfig, ITDataModuleConfig, ITSharedConfig
+from interpretune.config_classes.shared import ITSharedConfig
+from interpretune.config_classes.module import ITConfig
+from interpretune.config_classes.datamodule import ITDataModuleConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import ITModule, BaseITModule
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn

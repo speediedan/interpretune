@@ -1,5 +1,5 @@
 itdm_cfg:
-  class_path: interpretune.base.config_classes.ITDataModuleConfig
+  class_path: interpretune.config_classes.datamodule.ITDataModuleConfig
   init_args:
     model_name_or_path: gpt2
     task_name: rte
@@ -16,7 +16,7 @@ itdm_cfg:
       padding_side: right
       model_input_names: ['input_ids', 'attention_mask']
 it_cfg:
-  class_path: interpretune.base.config_classes.ITConfig
+  class_path: interpretune.config_classes.module.ITConfig
   init_args:
     from_pretrained_cfg:
       device_map: cpu

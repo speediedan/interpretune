@@ -2,16 +2,16 @@ seed_everything: 42
 data.class_path: interpretune.base.datamodules.ITLightningDataModule
 model.class_path: interpretune.base.modules.ITLightningModule
 itdm_cfg:
-  class_path: interpretune.base.config_classes.ITDataModuleConfig
+  class_path: interpretune.config_classes.datamodule.ITDataModuleConfig
   init_args:
     task_name: override in experiment config
     model_name_or_path: override in experiment config
     data_collator_cfg:
       collator_class: transformers.DataCollatorWithPadding
     prompt_cfg:
-      class_path: interpretune.base.config_classes.PromptConfig
+      class_path: interpretune.config_classes.datamodule.PromptConfig
 it_cfg:
-  class_path: interpretune.base.config_classes.ITConfig
+  class_path: interpretune.config_classes.module.ITConfig
   init_args:
     use_model_cache: false
     from_pretrained_cfg:

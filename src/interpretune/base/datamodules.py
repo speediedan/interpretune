@@ -11,10 +11,15 @@ from datasets import Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerFast, PreTrainedTokenizerBase
 
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
-from interpretune.base.config_classes import ITDataModuleConfig
 from interpretune.utils.import_utils import _import_class,_LIGHTNING_AVAILABLE
+from interpretune.config_classes.datamodule import ITDataModuleConfig
 
 log = logging.getLogger(__name__)
+
+
+################################################################################
+# ITDatamodule Definition
+################################################################################
 
 # TODO: move overridden datamodule hooks to a separate class (maybe a separate module, maybe this one)
 class ITDataModule(ABC):

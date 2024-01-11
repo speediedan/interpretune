@@ -1,7 +1,7 @@
 from typing import NamedTuple
 from collections import ChainMap
 
-from interpretune.base.config_classes import (MemProfilerCfg, MemProfilerSchedule, )
+from interpretune.analysis.memprofiler import MemProfilerCfg, MemProfilerSchedule
 from it_examples.experiments.rte_boolq.core import RTEBoolqPromptConfig
 
 # TODO: refactor to dict-based configs to decomposed yaml strings, files or init dataclasses earlier? may make sense

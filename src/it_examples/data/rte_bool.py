@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 import datasets
 
-from interpretune.base.config_classes import ITDataModuleConfig
+from interpretune.config_classes.datamodule import ITDataModuleConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_warn
 

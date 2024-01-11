@@ -5,7 +5,7 @@ import warnings
 from collections import namedtuple
 from fsspec.core import url_to_fs
 from fsspec.implementations.local import AbstractFileSystem
-from typing import Optional, Callable, Any, TypeVar, Union, Dict, Type
+from typing import Optional, Callable, Any, TypeVar, Union, Dict
 from typing_extensions import ParamSpec, overload
 from functools import wraps
 from platform import python_version
@@ -16,121 +16,11 @@ from torch.utils import collect_env
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 
-# for now, if lightning is not available, we assume rank zero is 0 since raw pytorch distributed logic hasn't been
-# implemented yet
-
-if _LIGHTNING_AVAILABLE:
-    from lightning.fabric.utilities.rank_zero import _get_rank
-else:
-    _get_rank = lambda: 0
-
-_default_format_warning = warnings.formatwarning
-
-# mostly adapted from lightning_utilities.core.rank_zero
-
 log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 P = ParamSpec("P")
 
-
-# adapted from lightning.fabric.utilities.warnings
-def _custom_format_warning(
-    message: Union[Warning, str], category: Type[Warning], filename: str, lineno: int, line: Optional[str] = None
-) -> str:
-    """Custom formatting that avoids an extra line in case warnings are emitted from the `rank_zero`-functions."""
-    if _is_path_in_interpretune(Path(filename)):
-        # The warning originates from the Interpretune package
-        return f"{filename}:{lineno}: {message}\n"
-    return _default_format_warning(message, category, filename, lineno, line)
-
-def _is_path_in_interpretune(path: Path) -> bool:
-    """Naive check whether the path looks like a path from the Interpretune package."""
-    return "interpretune" in str(path.absolute())
-
-warnings.formatwarning = _custom_format_warning
-
-@overload
-def rank_zero_only(fn: Callable[P, T]) -> Callable[P, Optional[T]]:
-    ...
-
-
-@overload
-def rank_zero_only(fn: Callable[P, T], default: T) -> Callable[P, T]:
-    ...
-
-
-def rank_zero_only(fn: Callable[P, T], default: Optional[T] = None) -> Callable[P, Optional[T]]:
-    """Wrap a function to call internal function only in rank zero.
-
-    Function that can be used as a decorator to enable a function/method being called only on global rank 0.
-    """
-
-    @wraps(fn)
-    def wrapped_fn(*args: P.args, **kwargs: P.kwargs) -> Optional[T]:
-        rank = getattr(rank_zero_only, "rank", None)
-        if rank is None:
-            raise RuntimeError("The `rank_zero_only.rank` needs to be set before use")
-        if rank == 0:
-            return fn(*args, **kwargs)
-        return default
-
-    return wrapped_fn
-
-
-def _debug(*args: Any, stacklevel: int = 2, **kwargs: Any) -> None:
-    if python_version() >= "3.8.0":
-        kwargs["stacklevel"] = stacklevel
-    log.debug(*args, **kwargs)
-
-
-@rank_zero_only
-def rank_zero_debug(*args: Any, stacklevel: int = 4, **kwargs: Any) -> None:
-    """Emit debug-level messages only on global rank 0."""
-    _debug(*args, stacklevel=stacklevel, **kwargs)
-
-
-def _info(*args: Any, stacklevel: int = 2, **kwargs: Any) -> None:
-    if python_version() >= "3.8.0":
-        kwargs["stacklevel"] = stacklevel
-    log.info(*args, **kwargs)
-
-
-@rank_zero_only
-def rank_zero_info(*args: Any, stacklevel: int = 4, **kwargs: Any) -> None:
-    """Emit info-level messages only on global rank 0."""
-    _info(*args, stacklevel=stacklevel, **kwargs)
-
-
-def _warn(message: Union[str, Warning], stacklevel: int = 2, **kwargs: Any) -> None:
-    warnings.warn(message, stacklevel=stacklevel, **kwargs)
-
-
-@rank_zero_only
-def rank_zero_warn(message: Union[str, Warning], stacklevel: int = 4, **kwargs: Any) -> None:
-    """Emit warn-level messages only on global rank 0."""
-    _warn(message, stacklevel=stacklevel, **kwargs)
-
-
-rank_zero_deprecation_category = DeprecationWarning
-
-
-def rank_zero_deprecation(message: Union[str, Warning], stacklevel: int = 5, **kwargs: Any) -> None:
-    """Emit a deprecation warning only on global rank 0."""
-    category = kwargs.pop("category", rank_zero_deprecation_category)
-    rank_zero_warn(message, stacklevel=stacklevel, category=category, **kwargs)
-
-
-def rank_prefixed_message(message: str, rank: Optional[int]) -> str:
-    """Add a prefix with the rank to a message."""
-    if rank is not None:
-        # specify the rank of the process being logged
-        return f"[rank: {rank}] {message}"
-    return message
-
-
-# add the attribute to the function but don't overwrite in case Trainer has already set it
-rank_zero_only.rank = getattr(rank_zero_only, "rank", _get_rank() or 0)
 
 # override PyTorch default, extending it to capture additional salient packages for reproducability
 # https://github.com/pytorch/pytorch/blob/7c2489bdae5a96dc122c3bb7b42c18528bcfdc86/torch/utils/collect_env.py#L271
@@ -251,6 +141,107 @@ def collect_env_info() -> Dict:
     sys_dict["pip_packages"] = pip_dict
     return sys_dict
 
+
 def get_filesystem(path: str | Path, **kwargs: Any) -> AbstractFileSystem:
     fs, _ = url_to_fs(str(path), **kwargs)
     return fs
+
+
+################################################################################
+# Conditionally imported or locally-defined rank-zero logging functions
+################################################################################
+
+if _LIGHTNING_AVAILABLE:
+    from lightning.fabric.utilities.rank_zero import rank_zero_only as _l_rank_zero_only
+    from lightning.fabric.utilities.rank_zero import _get_rank as _l_get_rank
+    rank_zero_only = _l_rank_zero_only
+    _get_rank = _l_get_rank
+else:
+    # if Lightning is not available, rank zero is 0 since our raw pytorch distributed logic hasn't been added yet
+    _get_rank = lambda: 0
+
+    @overload
+    def rank_zero_only(fn: Callable[P, T]) -> Callable[P, Optional[T]]:
+        ...
+
+
+    @overload
+    def rank_zero_only(fn: Callable[P, T], default: T) -> Callable[P, T]:
+        ...
+
+
+    def rank_zero_only(fn: Callable[P, T], default: Optional[T] = None) -> Callable[P, Optional[T]]:
+        """Wrap a function to call internal function only in rank zero.
+
+        Function that can be used as a decorator to enable a function/method being called only on global rank 0.
+        """
+
+        @wraps(fn)
+        def wrapped_fn(*args: P.args, **kwargs: P.kwargs) -> Optional[T]:
+            rank = getattr(rank_zero_only, "rank", None)
+            if rank is None:
+                raise RuntimeError("The `rank_zero_only.rank` needs to be set before use")
+            if rank == 0:
+                return fn(*args, **kwargs)
+            return default
+
+        return wrapped_fn
+
+# add the attribute to the function but don't overwrite if it already exists
+rank_zero_only.rank = getattr(rank_zero_only, "rank", _get_rank() or 0)
+
+if _LIGHTNING_AVAILABLE:
+    from lightning.fabric.utilities.rank_zero  import rank_zero_debug as _l_rank_zero_debug
+    rank_zero_debug = _l_rank_zero_debug
+else:
+    def _debug(*args: Any, stacklevel: int = 2, **kwargs: Any) -> None:
+        if python_version() >= "3.8.0":
+            kwargs["stacklevel"] = stacklevel
+        log.debug(*args, **kwargs)
+
+
+    @rank_zero_only
+    def rank_zero_debug(*args: Any, stacklevel: int = 4, **kwargs: Any) -> None:
+        """Emit debug-level messages only on global rank 0."""
+        _debug(*args, stacklevel=stacklevel, **kwargs)
+
+
+if _LIGHTNING_AVAILABLE:
+    from lightning.fabric.utilities.rank_zero  import rank_zero_info as _l_rank_zero_info
+    rank_zero_info = _l_rank_zero_info
+else:
+    def _info(*args: Any, stacklevel: int = 2, **kwargs: Any) -> None:
+        if python_version() >= "3.8.0":
+            kwargs["stacklevel"] = stacklevel
+        log.info(*args, **kwargs)
+
+
+    @rank_zero_only
+    def rank_zero_info(*args: Any, stacklevel: int = 4, **kwargs: Any) -> None:
+        """Emit info-level messages only on global rank 0."""
+        _info(*args, stacklevel=stacklevel, **kwargs)
+
+
+if _LIGHTNING_AVAILABLE:
+    from lightning.fabric.utilities.rank_zero  import rank_zero_warn as _l_rank_zero_warn
+    rank_zero_warn = _l_rank_zero_warn
+else:
+    def _warn(message: Union[str, Warning], stacklevel: int = 2, **kwargs: Any) -> None:
+        warnings.warn(message, stacklevel=stacklevel, **kwargs)
+
+
+    @rank_zero_only
+    def rank_zero_warn(message: Union[str, Warning], stacklevel: int = 4, **kwargs: Any) -> None:
+        """Emit warn-level messages only on global rank 0."""
+        _warn(message, stacklevel=stacklevel, **kwargs)
+
+if _LIGHTNING_AVAILABLE:
+    from lightning.fabric.utilities.rank_zero  import rank_zero_deprecation as _l_rank_zero_deprecation
+    rank_zero_deprecation = _l_rank_zero_deprecation
+else:
+    rank_zero_deprecation_category = DeprecationWarning
+
+    def rank_zero_deprecation(message: Union[str, Warning], stacklevel: int = 5, **kwargs: Any) -> None:
+        """Emit a deprecation warning only on global rank 0."""
+        category = kwargs.pop("category", rank_zero_deprecation_category)
+        rank_zero_warn(message, stacklevel=stacklevel, category=category, **kwargs)

@@ -1,7 +1,7 @@
 data.class_path: it_examples.experiments.rte_boolq.lightning.Llama2RTEBoolqLightningDataModule
 model.class_path: it_examples.experiments.rte_boolq.lightning.Llama2ITLightningModule
 itdm_cfg:
-  class_path: interpretune.base.config_classes.ITDataModuleConfig
+  class_path: interpretune.config_classes.datamodule.ITDataModuleConfig
   init_args:
     model_name_or_path: meta-llama/Llama-2-7b-chat-hf
     task_name: rte
@@ -11,7 +11,7 @@ itdm_cfg:
     #prepare_validation_set_only: true
     cust_tokenization_pattern: llama2-chat
 it_cfg:
-  class_path: interpretune.base.config_classes.ITConfig
+  class_path: interpretune.config_classes.module.ITConfig
   init_args:
     # defining the config class with custom dataclass overrides
     zero_shot_cfg:
@@ -19,7 +19,7 @@ it_cfg:
       init_args:
         enabled: true
         lm_generation_cfg:
-          class_path: interpretune.base.config_classes.LMGenerationConfig
+          class_path: interpretune.config_classes.module.LMGenerationConfig
           init_args:
             max_new_tokens: 5
     activation_checkpointing: false

@@ -11,14 +11,16 @@ from transformers import AutoConfig, AutoModelForSequenceClassification, Pretrai
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformer_lens import HookedTransformer
 
-from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE, _LIGHTNING_AVAILABLE
-from interpretune.base.config_classes import ITConfig
+from interpretune.config_classes.module import ITConfig
 from interpretune.base.datamodules import ITDataModule
+from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE, _LIGHTNING_AVAILABLE
 from interpretune.base.hooks import BaseITHooks, BaseITLensModuleHooks
 from interpretune.base.mixins import (OptimizerSchedulerInitMixin, CoreHelperAttributeMixin, ProfilerHooksMixin,
                                          ZeroShotStepMixin, CORE_TO_LIGHTNING_ATTRS_MAP)
-from interpretune.base.debug import DebugGeneration, MemProfiler
+from interpretune.analysis.debug_generation import DebugGeneration
+from interpretune.analysis.memprofiler import MemProfiler
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info, rank_zero_debug
+
 
 # TODO: add core helper log/log_dict methods for core context usage
 for warnf in [".*For Lightning compatibility, this noop .*",]:

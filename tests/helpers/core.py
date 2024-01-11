@@ -23,7 +23,9 @@ import torch
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-from interpretune.base.config_classes import ITDataModuleConfig, ITConfig, CorePhases
+from interpretune.config_classes.shared import CorePhases
+from interpretune.config_classes.module import ITConfig
+from interpretune.config_classes.datamodule import ITDataModuleConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import ITModule, BaseITModule
 from interpretune.base.call import _call_itmodule_hook, it_init, it_session_end
