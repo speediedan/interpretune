@@ -44,7 +44,7 @@ it_cfg:
     #   interval: epoch
     #   frequency: 1
     #   name: CosineAnnealingWithWarmRestartsLR
-    # tlens_from_pretrained_cfg:
+    # tl_from_pretrained_cfg:
     #   class_path: interpretune.config_classes.module.ITLensFromPretrainedConfig
     #   init_args:
     #     enabled: true

@@ -295,19 +295,19 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
         #     model = self.it_cfg.model_class(config=cust_config)  # token=access_token)
         return model
 
-    def _convert_hf_to_hooked(self) -> HookedTransformer:
+    def _convert_hf_to_tl(self) -> HookedTransformer:
         self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=self.datamodule.tokenizer,
-                                                  **self.it_cfg.tlens_from_pretrained_cfg.__dict__)
+                                                  **self.it_cfg.tl_from_pretrained_cfg.__dict__)
 
     def _log_hyperparameters(self) -> None:
         self.it_cfg.lora_cfg = None
         self.it_cfg.bitsandbytesconfig = None
-        # TODO: refactor the captured config here to only add tlens_from_pretrained, other added in superclass
+        # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
         self.init_hparams = {
             "optimizer_init": self.it_cfg.optimizer_init,
             "lr_scheduler_init": self.it_cfg.lr_scheduler_init,
             "pl_lrs_cfg": self.it_cfg.pl_lrs_cfg,
-            "tlens_from_pretrained_cfg": self._make_config_serializable(self.it_cfg.tlens_from_pretrained_cfg,
+            "tl_from_pretrained_cfg": self._make_config_serializable(self.it_cfg.tl_from_pretrained_cfg,
                                                                         ['device']),
             "dynamic_module_cfg": self.it_cfg.dynamic_module_cfg,
             "quantization_cfg": self.it_cfg.lora_cfg,
@@ -325,23 +325,23 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
         #self.save_hyperparameters(self.init_hparams)
 
     def _maybe_resize_token_embeddings(self, model: torch.nn.Module) -> None:
-        # embedding resizing not currently supported by ITHookedModule
+        # embedding resizing not currently supported by ITLensModule
         return model
 
     def _set_input_require_grads(self) -> None:
-        # not currently supported by ITHookedModule
-        rank_zero_warn("Setting input require grads not currently supported by ITHookedModule.")
+        # not currently supported by ITLensModule
+        rank_zero_warn("Setting input require grads not currently supported by ITLensModule.")
 
     def _configure_gradient_checkpointing(self) -> None:
-        # gradient checkpointing not currently supported by ITHookedModule
+        # gradient checkpointing not currently supported by ITLensModule
         pass
 
     def _configure_peft(self) -> None:
-        # peft not currently supported by ITHookedModule
+        # peft not currently supported by ITLensModule
         pass
 
 
-class ITHookedModule(CoreHelperAttributeMixin, BaseITLensModule):
+class ITLensModule(CoreHelperAttributeMixin, BaseITLensModule):
     ...
 
 if _LIGHTNING_AVAILABLE:
@@ -358,8 +358,8 @@ if _LIGHTNING_AVAILABLE:
             self.model.train()  # ensure model is in training mode
             return super().on_train_start()
 
-    class ITHookedLightningModule(BaseITLensModule, ITLightningModule):
+    class ITLensLightningModule(BaseITLensModule, ITLightningModule):
         ...
 else:
     ITLightningModule = object
-    ITHookedLightningModule = object
+    ITLensLightningModule = object

@@ -110,7 +110,7 @@ class ITConfig(ITSharedConfig, ModelConfig, OptimizerSchedulerConfig, MemoryEffi
     debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
     zero_shot_cfg: ITZeroShotClassificationConfig = field(default_factory=lambda: ITZeroShotClassificationConfig())
     # TODO: support only creation of HookedTransformer with pretrained method for now, later support direct creation
-    tlens_from_pretrained_cfg: ITLensFromPretrainedConfig = field(default_factory=lambda: ITLensFromPretrainedConfig())
+    tl_from_pretrained_cfg: ITLensFromPretrainedConfig = field(default_factory=lambda: ITLensFromPretrainedConfig())
 
     def _pop_dtype_msg(self) -> None:
         rank_zero_warn(f"The provided `torch_dtype` {self.from_pretrained_cfg.pop('torch_dtype')} could not be "

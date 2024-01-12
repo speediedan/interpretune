@@ -120,7 +120,7 @@ class BaseITHooks:
 
 
 class BaseITLensModuleHooks:
-    """" LightningModule hooks implemented by the BaseITLensModule (used by both core and lightning hooked
+    """" LightningModule hooks implemented by the BaseITLensModule (used by both core and Lightning TransformerLens
     modules)"""
 
     # proper initialization of these variables should be done in the child class
@@ -128,5 +128,5 @@ class BaseITLensModuleHooks:
 
     def setup(self, *args, **kwargs) -> None:
         super().setup(*args, **kwargs)
-        if self.it_cfg.tlens_from_pretrained_cfg.enabled:
-            self._convert_hf_to_hooked()
+        if self.it_cfg.tl_from_pretrained_cfg.enabled:
+            self._convert_hf_to_tl()

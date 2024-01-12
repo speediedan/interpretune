@@ -16,7 +16,7 @@ import pytest
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.cli.core_cli import compose_config, IT_CONFIG_BASE, IT_CONFIG_GLOBAL
-from it_examples.experiments.rte_boolq.core import GPT2RTEBoolqITHookedModule
+from it_examples.experiments.rte_boolq.core import GPT2RTEBoolqITLensModule
 from tests.helpers.core import pytest_param_factory, TestCfg
 from tests.helpers.utils import dummy_step
 from tests.helpers.runif import RunIf
@@ -24,10 +24,10 @@ from tests.helpers.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, unexpected_wa
 
 if _LIGHTNING_AVAILABLE:
     from interpretune.base.modules import ITLightningModule
-    from it_examples.experiments.rte_boolq.lightning import GPT2ITHookedLightningModule
+    from it_examples.experiments.rte_boolq.lightning import GPT2ITLensLightningModule
 else:
     ITLightningModule = None  # type: ignore[misc,assignment]
-    GPT2ITHookedLightningModule = None  # type: ignore[misc,assignment]
+    GPT2ITLensLightningModule = None  # type: ignore[misc,assignment]
 
 EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS
 
@@ -49,26 +49,26 @@ def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, str]]) -> D
 
 EXPERIMENT_CONFIG_SETS = gen_experiment_cfg_sets(
     (("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", "debug"),
-     ("rte_boolq", "gpt2", "hooked_rte_small_it_cli_test", "debug"),
-     ("rte_boolq", "gpt2", "lightning_hooked_rte_small_noquant_test", "nodebug"),
+     ("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "debug"),
+     ("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "nodebug"),
      ("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", "debug"))
 )
 
 # experiment config set aliases
 gpt2_core = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", "debug")]
-gpt2_core_hooked = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "hooked_rte_small_it_cli_test", "debug")]
-gpt2_l_hooked = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "lightning_hooked_rte_small_noquant_test", "nodebug")]
+gpt2_core_tl = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "debug")]
+gpt2_l_tl = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "nodebug")]
 llama2_l = EXPERIMENT_CONFIG_SETS[("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", "debug")]
 
 TEST_CONFIGS_EXAMPLES = (
-    TestCfg(alias="core_gpt2_hooked_compose_config", cfg=(False, None, False, gpt2_core_hooked, True)),
-    TestCfg(alias="core_gpt2_hooked", cfg=(False, None, False, gpt2_core_hooked, False)),
-    TestCfg(alias="core_gpt2_hooked_instantiate_only",cfg=(False, None, True, gpt2_core_hooked, False),
-               expected={'class_type': GPT2RTEBoolqITHookedModule}),
+    TestCfg(alias="core_gpt2_tl_compose_config", cfg=(False, None, False, gpt2_core_tl, True)),
+    TestCfg(alias="core_gpt2_tl", cfg=(False, None, False, gpt2_core_tl, False)),
+    TestCfg(alias="core_gpt2_tl_instantiate_only",cfg=(False, None, True, gpt2_core_tl, False),
+               expected={'class_type': GPT2RTEBoolqITLensModule}),
     TestCfg(alias="core_gpt2_optim_init", cfg=(False, None, False, gpt2_core, True)),
-    TestCfg(alias="lightning_gpt2_hooked", cfg=(True, "test", False, gpt2_l_hooked, False), marks="lightning"),
-    TestCfg(alias="lightning_gpt2_hooked_instantiate_only", cfg=(True, None, True, gpt2_l_hooked, False),
-               marks="lightning", expected={'class_type': GPT2ITHookedLightningModule}),
+    TestCfg(alias="lightning_gpt2_tl", cfg=(True, "test", False, gpt2_l_tl, False), marks="lightning"),
+    TestCfg(alias="lightning_gpt2_tl_instantiate_only", cfg=(True, None, True, gpt2_l_tl, False),
+               marks="lightning", expected={'class_type': GPT2ITLensLightningModule}),
     TestCfg(alias="lightning_llama2", cfg=(True, "test", False, llama2_l, False), marks="lightning"),
 )
 

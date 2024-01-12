@@ -1,5 +1,5 @@
 data.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqDataModule
-model.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqITHookedModule
+model.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqITLensModule
 itdm_cfg:
   class_path: interpretune.config_classes.datamodule.ITDataModuleConfig
   init_args:
@@ -26,7 +26,7 @@ it_cfg:
     experiment_tag: itt_cli_test
     auto_model_cfg:
       model_head: transformers.GPT2LMHeadModel
-    tlens_from_pretrained_cfg:
+    tl_from_pretrained_cfg:
       class_path: interpretune.config_classes.module.ITLensFromPretrainedConfig
       init_args:
         enabled: true

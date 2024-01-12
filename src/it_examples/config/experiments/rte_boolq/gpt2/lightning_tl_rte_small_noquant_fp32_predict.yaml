@@ -1,5 +1,5 @@
 data.class_path: it_examples.experiments.rte_boolq.lightning.GPT2RTEBoolqLightningDataModule
-model.class_path: it_examples.experiments.rte_boolq.lightning.GPT2ITHookedLightningModule
+model.class_path: it_examples.experiments.rte_boolq.lightning.GPT2ITLensLightningModule
 itdm_cfg:
   class_path: interpretune.config_classes.datamodule.ITDataModuleConfig
   init_args:
@@ -33,7 +33,7 @@ it_cfg:
       torch_dtype: float32
     auto_model_cfg:
       model_head: transformers.GPT2LMHeadModel
-    tlens_from_pretrained_cfg:
+    tl_from_pretrained_cfg:
       class_path: interpretune.config_classes.module.ITLensFromPretrainedConfig
       init_args:
         enabled: true
@@ -66,7 +66,7 @@ trainer:
   # callbacks:
   # - class_path: finetuning_scheduler.FinetuningScheduler
   #   init_args:
-  #     ft_schedule: /home/speediedan/repos/interpretune/src/it_examples/config/lightning/ft_schedules/ITModule_ft_schedule_gpt2_small_sc_no_tlens_max_trans_warmup.yaml
+  #     ft_schedule: /home/speediedan/repos/interpretune/src/it_examples/config/lightning/ft_schedules/ITModule_ft_schedule_gpt2_small_sc_notl_max_trans_warmup.yaml
   #     max_depth: 1
   #     epoch_transitions_only: true
   #     logging_level: 10  # enable DEBUG logging to trace all reinitializations
@@ -86,4 +86,4 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.TensorBoardLogger
     init_args:
-      name: gpt2_tlens_rte_small_noquant_predict
+      name: gpt2_tl_rte_small_noquant_predict

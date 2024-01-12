@@ -44,4 +44,4 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.TensorBoardLogger
     init_args:
-      name: gpt2_notlens_rte_small_noquant_lm_gen_only
+      name: gpt2_notl_rte_small_noquant_lm_gen_only

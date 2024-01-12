@@ -1,5 +1,5 @@
 data.class_path: it_examples.experiments.rte_boolq.lightning.GPT2RTEBoolqLightningDataModule
-model.class_path: it_examples.experiments.rte_boolq.lightning.GPT2ITHookedLightningModule
+model.class_path: it_examples.experiments.rte_boolq.lightning.GPT2ITLensLightningModule
 itdm_cfg:
   class_path: interpretune.config_classes.datamodule.ITDataModuleConfig
   init_args:
@@ -22,7 +22,7 @@ it_cfg:
   init_args:
     auto_model_cfg:
       model_head: transformers.GPT2LMHeadModel
-    tlens_from_pretrained_cfg:
+    tl_from_pretrained_cfg:
       class_path: interpretune.config_classes.module.ITLensFromPretrainedConfig
       init_args:
         enabled: true
@@ -43,10 +43,10 @@ it_cfg:
     activation_checkpointing: false
 trainer:
   accumulate_grad_batches: 1
-  accelerator: gpu  # TODO: optimize hooked model device loading/movement
+  accelerator: gpu  # TODO: optimize tl model device loading/movement
   strategy: auto
   devices: 1
   logger:
     class_path: lightning.pytorch.loggers.TensorBoardLogger
     init_args:
-      name: gpt2_tlens_rte_small_noquant_test
+      name: gpt2_tl_rte_small_noquant_test

@@ -11,7 +11,7 @@ from transformers.tokenization_utils_base import BatchEncoding
 from transformer_lens import HookedTransformer
 
 from interpretune.utils.types import STEP_OUTPUT
-from interpretune.base.modules import ITModule, ITHookedModule
+from interpretune.base.modules import ITModule, ITLensModule
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.config_classes.module import ITZeroShotClassificationConfig, ITConfig, LMGenerationConfig
 from interpretune.config_classes.datamodule import PromptConfig
@@ -90,26 +90,26 @@ class GPT2RTEBoolqDataModule(RTEBoolqDataModule):
 
 class GPT2RTEBoolqITModule(RTEBoolqModuleMixin, ITModule):
 
-    def temp_hooked_test(self, model_description_text: str) -> None:
+    def temp_tl_test(self, model_description_text: str) -> None:
 
-        loss = self.hooked_ref_gpt2(model_description_text, return_type="loss")
+        loss = self.tl_ref_gpt2(model_description_text, return_type="loss")
         print("Model loss:", loss)
 
-        print(self.hooked_ref_gpt2.to_str_tokens("gpt2"))
-        print(self.hooked_ref_gpt2.to_tokens("gpt2"))
-        print(self.hooked_ref_gpt2.to_string([50256, 70, 457, 17]))
+        print(self.tl_ref_gpt2.to_str_tokens("gpt2"))
+        print(self.tl_ref_gpt2.to_tokens("gpt2"))
+        print(self.tl_ref_gpt2.to_string([50256, 70, 457, 17]))
 
-        logits = self.hooked_ref_gpt2(model_description_text, return_type="logits")
+        logits = self.tl_ref_gpt2(model_description_text, return_type="logits")
         prediction = logits.argmax(dim=-1).squeeze()[:-1]
-        true_tokens = self.hooked_ref_gpt2.to_tokens(model_description_text).squeeze()[1:]
+        true_tokens = self.tl_ref_gpt2.to_tokens(model_description_text).squeeze()[1:]
         num_correct = (prediction == true_tokens).sum()
 
         print(f"Model accuracy: {num_correct}/{len(true_tokens)}")
-        print(f"Correct words: {self.hooked_ref_gpt2.to_str_tokens(prediction[prediction == true_tokens])}")
+        print(f"Correct words: {self.tl_ref_gpt2.to_str_tokens(prediction[prediction == true_tokens])}")
 
-        return num_correct/len(true_tokens), self.hooked_ref_gpt2.to_str_tokens(prediction[prediction == true_tokens])
+        return num_correct/len(true_tokens), self.tl_ref_gpt2.to_str_tokens(prediction[prediction == true_tokens])
 
-    def hooked_gpt2_parity_test(self) -> None:
+    def tl_gpt2_parity_test(self) -> None:
         model_description_text = """## Loading Models
         HookedTransformer comes loaded with >40 open source GPT-style models. You can load any of them in with
         `HookedTransformer.from_pretrained(MODEL_NAME)`. Each model is loaded into the consistent HookedTransformer
@@ -118,17 +118,17 @@ class GPT2RTEBoolqITModule(RTEBoolqModuleMixin, ITModule):
         let's find the loss on this paragraph!"""
         # note loading hooked transformer after loading unhooked to avoid an issue where cpu model was partially
         # referring to tensors moved to the GPU (haven't debugged root cause yet)
-        self.hooked_ref_gpt2: HookedTransformer = HookedTransformer.from_pretrained("gpt2-small", device="cpu",
+        self.tl_ref_gpt2: HookedTransformer = HookedTransformer.from_pretrained("gpt2-small", device="cpu",
                                                                                     dtype="float32")
-        hooked_acc, hooked_correct_tokens = self.temp_hooked_test(model_description_text)
+        tl_acc, tl_correct_tokens = self.temp_tl_test(model_description_text)
         acc, correct_tokens = self.lm_debug.top1_token_accuracy_on_sample(model_description_text)
-        assert_close(actual=acc.cpu(), expected=hooked_acc, rtol=0.03, atol=0)
-        assert_close(actual=len(correct_tokens), expected=len(hooked_correct_tokens), rtol=0.03, atol=0)
+        assert_close(actual=acc.cpu(), expected=tl_acc, rtol=0.03, atol=0)
+        assert_close(actual=len(correct_tokens), expected=len(tl_correct_tokens), rtol=0.03, atol=0)
 
     def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
         Optional[STEP_OUTPUT]:
         # uncomment to run debugging sanity check before running the main test step
-        # self.hooked_gpt2_parity_test()
+        # self.tl_gpt2_parity_test()
         # answers, full_outputs = self.lm_debug.debug_generate_batch(self.lm_debug.debug_sequences(
         #     ["Hello, I'm a large language model,", "The day after Tuesday is naturally"]),
         #                             max_new_tokens=30,
@@ -143,32 +143,32 @@ class GPT2RTEBoolqITModule(RTEBoolqModuleMixin, ITModule):
         super().zero_shot_test_step(batch, batch_idx, dataloader_idx)
 
 
-class GPT2RTEBoolqITHookedModule(RTEBoolqModuleMixin, ITHookedModule):
+class GPT2RTEBoolqITLensModule(RTEBoolqModuleMixin, ITLensModule):
 
     def _load_metric(self) -> None:
         self.metric = evaluate.load("super_glue", self.it_cfg.task_name,
                                     experiment_id=self.init_hparams['experiment_id'])
 
-    def temp_hooked_test(self, model_description_text: str) -> None:
+    def temp_tl_test(self, model_description_text: str) -> None:
 
-        loss = self.hooked_ref_gpt2(model_description_text, return_type="loss")
+        loss = self.tl_ref_gpt2(model_description_text, return_type="loss")
         print("Model loss:", loss)
 
-        print(self.hooked_ref_gpt2.to_str_tokens("gpt2"))
-        print(self.hooked_ref_gpt2.to_tokens("gpt2"))
-        print(self.hooked_ref_gpt2.to_string([50256, 70, 457, 17]))
+        print(self.tl_ref_gpt2.to_str_tokens("gpt2"))
+        print(self.tl_ref_gpt2.to_tokens("gpt2"))
+        print(self.tl_ref_gpt2.to_string([50256, 70, 457, 17]))
 
-        logits = self.hooked_ref_gpt2(model_description_text, return_type="logits")
+        logits = self.tl_ref_gpt2(model_description_text, return_type="logits")
         prediction = logits.argmax(dim=-1).squeeze()[:-1]
-        true_tokens = self.hooked_ref_gpt2.to_tokens(model_description_text).squeeze()[1:]
+        true_tokens = self.tl_ref_gpt2.to_tokens(model_description_text).squeeze()[1:]
         num_correct = (prediction == true_tokens).sum()
 
         print(f"Model accuracy: {num_correct}/{len(true_tokens)}")
-        print(f"Correct words: {self.hooked_ref_gpt2.to_str_tokens(prediction[prediction == true_tokens])}")
+        print(f"Correct words: {self.tl_ref_gpt2.to_str_tokens(prediction[prediction == true_tokens])}")
 
-        return num_correct/len(true_tokens), self.hooked_ref_gpt2.to_str_tokens(prediction[prediction == true_tokens])
+        return num_correct/len(true_tokens), self.tl_ref_gpt2.to_str_tokens(prediction[prediction == true_tokens])
 
-    def hooked_gpt2_parity_test(self) -> None:
+    def tl_gpt2_parity_test(self) -> None:
         model_description_text = """## Loading Models
         HookedTransformer comes loaded with >40 open source GPT-style models. You can load any of them in with
         `HookedTransformer.from_pretrained(MODEL_NAME)`. Each model is loaded into the consistent HookedTransformer
@@ -177,17 +177,17 @@ class GPT2RTEBoolqITHookedModule(RTEBoolqModuleMixin, ITHookedModule):
         let's find the loss on this paragraph!"""
         # note loading hooked transformer after loading unhooked to avoid an issue where cpu model was partially
         # referring to tensors moved to the GPU (haven't debugged root cause yet)
-        self.hooked_ref_gpt2: HookedTransformer = HookedTransformer.from_pretrained("gpt2-small", device="cpu",
+        self.tl_ref_gpt2: HookedTransformer = HookedTransformer.from_pretrained("gpt2-small", device="cpu",
                                                                                     dtype="float32")
-        hooked_acc, hooked_correct_tokens = self.temp_hooked_test(model_description_text)
+        tl_acc, tl_correct_tokens = self.temp_tl_test(model_description_text)
         acc, correct_tokens = self.lm_debug.top1_token_accuracy_on_sample(model_description_text)
-        assert_close(actual=acc.cpu(), expected=hooked_acc, rtol=0.03, atol=0)
-        assert_close(actual=len(correct_tokens), expected=len(hooked_correct_tokens), rtol=0.03, atol=0)
+        assert_close(actual=acc.cpu(), expected=tl_acc, rtol=0.03, atol=0)
+        assert_close(actual=len(correct_tokens), expected=len(tl_correct_tokens), rtol=0.03, atol=0)
 
     def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
         Optional[STEP_OUTPUT]:
         # uncomment to run debugging sanity check before running the main test step
-        # self.hooked_gpt2_parity_test()
+        # self.tl_gpt2_parity_test()
         # answers, full_outputs = self.lm_debug.debug_generate_batch(self.lm_debug.debug_sequences(
         #     ["Hello, I'm a large language model,", "The day after Tuesday is naturally"]),
         #                             max_new_tokens=30,
