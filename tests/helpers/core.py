@@ -332,7 +332,7 @@ def run_step(step_fn, module, iterator, batch_idx, device_type, optimizer: Optio
         module.epoch_losses[module.current_epoch] = loss.item()
         loss.backward()
         optimizer.step()
-    module._global_step += 1
+    module.global_step += 1
 
 def fetch_batch(iterator, module) -> BatchEncoding:
     batch = next(iterator)

@@ -46,9 +46,6 @@ class CoreHelperAttributeMixin:
         else:
             raise MisconfigurationException("CoreHelperAttributeMixin requires an ITConfig.")
         self._supported_helper_attrs = {k: partial(_dummy_notify, k, v.ret_callable, v.ret_val) for k,v in ca.items()}
-        # set initial defaults for non-Lightning modules
-        self._current_epoch = 0
-        self._global_step = 0
         super().__init__(*args, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
@@ -65,9 +62,21 @@ class CoreHelperAttributeMixin:
     def current_epoch(self) -> int:
         return self._core_or_lightning(c2l_map_key="_current_epoch")
 
+    # N.B. Lightning does not support directly setting `current_epoch` and `global_step`, instead using
+    # `self.fit_loop.epoch_progress.current.completed` and `self.fit_loop.epoch_loop.global_step` respectively. Instead
+    # of mocking analagous loop attributes, when using this mixin (and not Lightning), we allow settting the values
+    # directly for convenience
+    @current_epoch.setter
+    def current_epoch(self, value: int) -> None:
+        self._current_epoch = value
+
     @property
     def global_step(self) -> int:
         return self._core_or_lightning(c2l_map_key="_global_step")
+
+    @global_step.setter
+    def global_step(self, value: int) -> None:
+        self._global_step = value
 
     @property
     def device(self) -> Optional[torch.device]:
