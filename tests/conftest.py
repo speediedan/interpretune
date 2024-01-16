@@ -15,6 +15,7 @@ import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
+import random
 
 import pytest
 import torch.distributed
@@ -23,9 +24,26 @@ from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 
 from tests import _PATH_DATASETS
 
+
 @pytest.fixture(scope="function")
 def reset_deterministic_algorithm():
     """Ensures that torch determinism settings are reset before the next test runs."""
+    yield
+    os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
+    torch.use_deterministic_algorithms(False)
+
+
+@pytest.fixture(scope="function")
+def make_deterministic(warn_only=True, fill_uninitialized_memory=True):
+    # https://pytorch.org/docs/2.2/notes/randomness.html#reproducibility
+    # https://docs.nvidia.com/cuda/cublas/index.html#results-reproducibility
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    torch.use_deterministic_algorithms(True, warn_only=warn_only)
+    torch._C._set_deterministic_fill_uninitialized_memory(fill_uninitialized_memory)
+    torch.backends.cudnn.benchmark = False
+    random.seed(1)
+    torch.manual_seed(1)
+    torch.cuda.manual_seed(1)
     yield
     os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
     torch.use_deterministic_algorithms(False)

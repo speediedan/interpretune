@@ -19,7 +19,7 @@ it_cfg:
       init_args:
         enabled: true
         lm_generation_cfg:
-          class_path: interpretune.config_classes.module.LMGenerationConfig
+          class_path: interpretune.mixins.zero_shot_classification.HFGenerationConfig
           init_args:
             max_new_tokens: 5
     activation_checkpointing: false

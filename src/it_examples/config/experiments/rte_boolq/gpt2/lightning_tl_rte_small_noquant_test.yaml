@@ -5,10 +5,8 @@ itdm_cfg:
   init_args:
     model_name_or_path: gpt2
     task_name: rte
-    dataset_path: /home/speediedan/.cache/huggingface/datasets/rte
     train_batch_size: 32
     eval_batch_size: 32
-    #prepare_validation_set_only: true
     tokenizer_id_overrides:
       pad_token_id: 50256
     prompt_cfg:

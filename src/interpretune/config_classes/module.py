@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import torch
 
 from interpretune.config_classes.shared import ITSerializableCfg, ITSharedConfig
+from interpretune.mixins.zero_shot_classification import ZeroShotClassificationConfig
 from interpretune.analysis.debug_generation import DebugLMConfig
 from interpretune.analysis.memprofiler import MemProfilerCfg
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
@@ -24,27 +25,6 @@ for warnf in [".*For Lightning compatibility, this noop .*",]:
 # configuration noise that would be incurred by organizing the configuration
 # space using a single flat configuration dataclass.
 ################################################################################
-
-@dataclass(kw_only=True)
-class LMGenerationConfig(ITSerializableCfg):
-    max_new_tokens: int = 5  # nb maxing logits over multiple tokens (n<=5) will yield a very slight perf gain versus 1
-    do_sample: bool = True
-    top_p: float = 1.0
-    temperature: float = 1.0
-    use_cache: bool = True
-    top_k: int = 50
-    repetition_penalty: float = 1.0
-    output_attentions: bool = False
-    output_hidden_states: bool = False
-    length_penalty: float = 1.0
-    output_scores: bool = True
-    return_dict_in_generate: bool = True
-
-
-@dataclass(kw_only=True)
-class ITZeroShotClassificationConfig(ITSerializableCfg):
-    enabled: bool = False
-    lm_generation_cfg: LMGenerationConfig = field(default_factory=lambda: LMGenerationConfig())
 
 
 @dataclass(kw_only=True)
@@ -86,16 +66,19 @@ class OptimizerSchedulerConfig(ITSerializableCfg):
     # Whether to enable gradients for the input embeddings. Useful for finetuning adapter weights w/ a frozen model.
     enable_input_require_grads: Optional[bool] = True
 
+
 @dataclass(kw_only=True)
 class MemoryEfficiencyConfig(ITSerializableCfg):
     lora_cfg: Dict[str, Any] = field(default_factory=dict)
     bitsandbytesconfig: Dict[str, Any] = field(default_factory=dict)
     activation_checkpointing: Optional[bool] = False
 
+
 @dataclass(kw_only=True)
 class AutoCompatConfig(ITSerializableCfg):
     ret_callable: Optional[bool] = False
     ret_val: Optional[Any] = None
+
 
 @dataclass(kw_only=True)
 class ITConfig(ITSharedConfig, ModelConfig, OptimizerSchedulerConfig, MemoryEfficiencyConfig):
@@ -108,7 +91,7 @@ class ITConfig(ITSharedConfig, ModelConfig, OptimizerSchedulerConfig, MemoryEffi
     core_log_dir: Optional[str | os.PathLike] = None
     memprofiler_cfg: MemProfilerCfg = field(default_factory=lambda: MemProfilerCfg())
     debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
-    zero_shot_cfg: ITZeroShotClassificationConfig = field(default_factory=lambda: ITZeroShotClassificationConfig())
+    zero_shot_cfg: ZeroShotClassificationConfig = field(default_factory=lambda: ZeroShotClassificationConfig())
     # TODO: support only creation of HookedTransformer with pretrained method for now, later support direct creation
     tl_from_pretrained_cfg: ITLensFromPretrainedConfig = field(default_factory=lambda: ITLensFromPretrainedConfig())
 

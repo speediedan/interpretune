@@ -6,7 +6,7 @@ from transformers.tokenization_utils_base import BatchEncoding
 from interpretune.utils.import_utils import instantiate_class
 from interpretune.config_classes.module import ITConfig
 from interpretune.base.datamodules import ITDataModule
-from interpretune.base.mixins import ProfilerHooksMixin
+from interpretune.mixins.core import ProfilerHooksMixin
 from interpretune.utils.logging import rank_zero_info
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
 
@@ -130,3 +130,10 @@ class BaseITLensModuleHooks:
         super().setup(*args, **kwargs)
         if self.it_cfg.tl_from_pretrained_cfg.enabled:
             self._convert_hf_to_tl()
+
+    @ProfilerHooksMixin.memprofilable
+    def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
+        if self.it_cfg.zero_shot_cfg.enabled:
+            self.zero_shot_test_step(batch, batch_idx)
+        else:
+            self.default_test_step(batch, batch_idx)

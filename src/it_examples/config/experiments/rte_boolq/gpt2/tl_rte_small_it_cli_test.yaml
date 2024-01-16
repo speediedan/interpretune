@@ -6,10 +6,8 @@ itdm_cfg:
     model_name_or_path: gpt2
     #model_name_or_path: gpt2-large
     task_name: rte
-    dataset_path: /home/speediedan/.cache/huggingface/datasets/rte
     train_batch_size: 32
     eval_batch_size: 32
-    #prepare_validation_set_only: true
     tokenizer_id_overrides:
       pad_token_id: 50256
     prompt_cfg:
@@ -23,7 +21,7 @@ it_cfg:
   init_args:
     from_pretrained_cfg:
       torch_dtype: float32
-    experiment_tag: itt_cli_test
+    experiment_tag: it_cli_test
     auto_model_cfg:
       model_head: transformers.GPT2LMHeadModel
     tl_from_pretrained_cfg:

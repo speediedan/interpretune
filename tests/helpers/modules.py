@@ -1,65 +1,61 @@
 import os
 from pathlib import Path
 from typing import Optional, Any, Dict, Tuple
+from unittest import mock
 
 import torch
 import datasets
 import evaluate
 from torch.testing import assert_close
-from torch.utils.data import DataLoader
-from datasets.arrow_dataset import LazyDict
+from transformer_lens.utilities.devices import get_device_for_block_index
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.config_classes.datamodule import ITDataModuleConfig
 from interpretune.config_classes.module import ITConfig
-from interpretune.base.datamodules import ITDataModule
-from interpretune.base.modules import ITModule, ITLightningModule
+from interpretune.base.modules import ITModule, ITLightningModule, ITLensModule, ITLensLightningModule
 from interpretune.utils.logging import rank_zero_only, get_filesystem
-from it_examples.experiments.rte_boolq.core import RTEBoolqModuleMixin
+from it_examples.experiments.rte_boolq.core import RTEBoolqModuleMixin, GPT2RTEBoolqDataModule
 from it_examples.data.rte_bool import RTEBoolqDataModule
+from tests.helpers.cfg_aliases import TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, sample_rows, sample_pos
 
 if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import LightningDataModule
 
-
-class TestITDataModule(ITDataModule):
+class TestITDataModule(GPT2RTEBoolqDataModule):
 
     def __init__(self, itdm_cfg: ITDataModuleConfig, force_prepare_data: bool = False) -> None:
-        super().__init__(itdm_cfg=itdm_cfg)
+        with mock.patch.multiple('it_examples.data.rte_bool', TASK_NUM_LABELS=TEST_TASK_NUM_LABELS,
+                                 TASK_TEXT_FIELD_MAP=TEST_TASK_TEXT_FIELD_MAP):
+            super().__init__(itdm_cfg=itdm_cfg)
         self.force_prepare_data = force_prepare_data
-        self.tokenization_func = self._tokenize_for_gpt2
-
-    def _tokenize_for_gpt2(self, example_batch: LazyDict) -> BatchEncoding:
-        example_batch['sequences'] = []
-        assert example_batch is not None
-        assert self.itdm_cfg.text_fields is not None
-        assert self.itdm_cfg.prompt_cfg is not None
-        # TODO: use promptsource instead of this manual approach after tinkering
-        for field1, field2 in zip(example_batch[self.itdm_cfg.text_fields[0]],
-                                  example_batch[self.itdm_cfg.text_fields[1]]):
-            if self.itdm_cfg.prompt_cfg.cust_task_prompt:
-                task_prompt = (self.itdm_cfg.prompt_cfg.cust_task_prompt['context'] + "\n" + field1 + "\n\n" +
-                               self.itdm_cfg.prompt_cfg.cust_task_prompt['question'] + "\n" + field2)
-            else:
-                task_prompt = (field1 + self.itdm_cfg.prompt_cfg.ctx_question_join + field2 \
-                               + self.itdm_cfg.prompt_cfg.question_suffix)
-            sequence = task_prompt.strip()
-            example_batch['sequences'].append(sequence)
-        features = self.tokenizer(example_batch["sequences"], padding="longest")
-        features["labels"] = example_batch["label"]
-        return features
 
     def sample_dataset_state(self) -> Tuple:
+        # TODO: use super but with the inputs column instead of input_ids?
+
         # note that this only validates the loaded dataset/tokenizer, the dataloaders are not tested in this method
         # so one may still need to inspect downstream variables (e.g. the dataloader kwargs) and the batch actually
         # passed to the model in a given test/step to verify that the tested model inputs align with the expected
         # deterministic dataset state defined in `tests.helpers.cfg_aliases.test_dataset_state`
         sample_state = []
         for split in self.dataset.keys():
-            # as a content heuristic, inspect the id of a given index (3) for the first 5 rows of each dataset split
-            sample_state.extend([t[3] for t in self.dataset[split]['input_ids'][0:5]])
-        return (self.tokenizer.__class__.__name__, self.itdm_cfg.task_name, sample_state)
+            target_input = self.tokenizer.model_input_names[0]
+            # as a content heuristic, inspect the id of a given position (sample_pos) for the first sample_rows of each
+            # dataset split
+            sample_state.extend([t[sample_pos] for t in self.dataset[split][target_input][:sample_rows]])
+        return (self.itdm_cfg.task_name, self.tokenizer.__class__.__name__, sample_state)
+
+    def sample_step_input(self, batch: BatchEncoding) -> Tuple:
+        # TODO: use super but with the inputs column instead of input_ids?
+
+        # note that this only validates the loaded dataset/tokenizer, the dataloaders are not tested in this method
+        # so one may still need to inspect downstream variables (e.g. the dataloader kwargs) and the batch actually
+        # passed to the model in a given test/step to verify that the tested model inputs align with the expected
+        # deterministic dataset state defined in `tests.helpers.cfg_aliases.test_dataset_state`
+        sample_state = []
+        # as a content heuristic, inspect the id of a given position for each batch example
+        sample_state.extend(batch[self.tokenizer.model_input_names[0]][:, sample_pos].cpu().tolist())
+        return sample_state
 
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""
@@ -74,27 +70,8 @@ class TestITDataModule(ITDataModule):
                 dataset[split] = self._remove_unused_columns(dataset[split])
             dataset.save_to_disk(dataset_path)
 
-    def dataloader_factory(self, split: str, use_train_batch_size: bool = False) -> DataLoader:
-        dataloader_kwargs = {"dataset": self.dataset[split], "collate_fn":self.data_collator,
-                             **self.itdm_cfg.dataloader_kwargs}
-        dataloader_kwargs['batch_size'] = self.itdm_cfg.train_batch_size if use_train_batch_size else \
-            self.itdm_cfg.eval_batch_size
-        return DataLoader(**dataloader_kwargs)
 
-    def train_dataloader(self) -> DataLoader:
-        return self.dataloader_factory(split='train', use_train_batch_size=True)
-
-    def val_dataloader(self) -> DataLoader:
-        return self.dataloader_factory(split='validation')
-
-    def test_dataloader(self) -> DataLoader:
-        return self.dataloader_factory(split='validation')
-
-    def predict_dataloader(self) -> DataLoader:
-        return self.dataloader_factory()
-
-
-class TestITDataModuleFullDataset(RTEBoolqDataModule, TestITDataModule):
+class TestITDataModuleFullDataset(TestITDataModule):
     def __init__(self, itdm_cfg: ITDataModuleConfig, force_prepare_data: bool = False) -> None:
         itdm_cfg.task_name = 'rte'
         TestITDataModule.__init__(self, itdm_cfg=itdm_cfg, force_prepare_data=force_prepare_data)
@@ -123,6 +100,7 @@ class BaseTestModule:
         self.test_alias = test_alias
         self.tolerance_map = tolerance_map or {}
         self.epoch_losses = {}
+        self.sampled_fwd_inputs = None
         self.dev_expected_exact = {}
         self.dev_expected_close = {}
 
@@ -141,14 +119,18 @@ class BaseTestModule:
             tokenizer, zs_cfg = self.datamodule.tokenizer, self.it_cfg.zero_shot_cfg
             zs_cfg.entailment_mapping_indices = torch.tensor(tokenizer.convert_tokens_to_ids(zs_cfg.entailment_mapping))
 
+    def _get_current_exact(self) -> Dict:
+        return {'device_type': self.device.type, 'precision': self.model.dtype, **self._get_dataset_state()}
+
+    def _get_dataset_state(self) -> Dict:
+        return {'dataset_state': self.datamodule.sample_dataset_state() + (self.sampled_fwd_inputs,)}
+
     def _epoch_end_validation(self, *args, **kwargs) -> None:
         state_key = self.current_epoch
-        current_exact = {'device_type': self.model.device.type, 'precision': self.model.dtype,
-                         'dataset_state': self.datamodule.sample_dataset_state()}
         current_close = {}
         if self.epoch_losses and self.epoch_losses.get(state_key, None):
             current_close.update({'loss': self.epoch_losses[state_key]})
-        self.inspect_or_assert(current_exact, current_close, state_key)
+        self.inspect_or_assert(self._get_current_exact(), current_close, state_key)
 
     def on_test_epoch_end(self, *args, **kwargs):
         self._epoch_end_validation(*args, **kwargs)
@@ -204,17 +186,46 @@ class BaseTestModule:
 class TestITModule(BaseTestModule, RTEBoolqModuleMixin, ITModule):
     ...
 
+class TestITLensModule(BaseTestModule, RTEBoolqModuleMixin, ITLensModule):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        # TODO: consider setting output_device as property of the tlens module instead of just in test module
+        self.output_device = None
+
+    def setup(self, *args, **kwargs) -> None:
+        super().setup(*args, **kwargs)
+        # since there may be multiple devices for TransformerLens (once fully supported by Interpretune) we test
+        # the type of the output device
+        self.output_device = get_device_for_block_index(self.model.cfg.n_layers - 1, self.model.cfg)
+
+    def _get_current_exact(self) -> Dict:
+        return {'device_type': self.output_device.type, 'precision': self.tl_cfg.dtype, **self._get_dataset_state()}
+
 
 if _LIGHTNING_AVAILABLE:
     class TestITLightningDataModule(TestITDataModule, LightningDataModule):
         ...
     class TestITLightningDataModuleFullDataset(TestITDataModuleFullDataset, LightningDataModule):
         ...
-    class TestITLightningModule(BaseTestModule, RTEBoolqModuleMixin, ITLightningModule):
+    class BaseTestITLightningModule(BaseTestModule, RTEBoolqModuleMixin):
+        def _on_test_or_train_batch_start(self, batch: Any, batch_idx: int, *args, **kwargs):
+            if self.global_step == 0 and batch_idx == 0:
+                self.sampled_fwd_inputs = self.datamodule.sample_step_input(batch)
+        def on_test_batch_start(self, batch: Any, batch_idx: int, *args, **kwargs):
+            self._on_test_or_train_batch_start(batch, batch_idx, *args, **kwargs)
+        def on_train_batch_start(self, batch: Any, batch_idx: int, *args, **kwargs):
+            self._on_test_or_train_batch_start(batch, batch_idx, *args, **kwargs)
         def on_train_epoch_end(self, *args, **kwargs):
             self.epoch_losses[self.current_epoch] = self.trainer.callback_metrics['train_loss'].item()
             super().on_train_epoch_end(*args, **kwargs)
+
+    class TestITLightningModule(BaseTestITLightningModule, ITLightningModule):
+        ...
+    class TestITLensLightningModule(BaseTestITLightningModule, ITLensLightningModule):
+        ...
+
 else:
     TestITLightningDataModule = object
     TestITLightningDataModuleFullDataset = object
     TestITLightningModule = object
+    TestITLensLightningModule = object

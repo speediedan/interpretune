@@ -15,10 +15,12 @@ from interpretune.config_classes.module import ITConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE, _LIGHTNING_AVAILABLE
 from interpretune.base.hooks import BaseITHooks, BaseITLensModuleHooks
-from interpretune.base.mixins import (OptimizerSchedulerInitMixin, CoreHelperAttributeMixin, ProfilerHooksMixin,
-                                         ZeroShotStepMixin, CORE_TO_LIGHTNING_ATTRS_MAP)
+from interpretune.mixins.core import (OptimizerSchedulerInitMixin, CoreHelperAttributeMixin, ProfilerHooksMixin,
+                                      TLensAttributeMixin, CORE_TO_LIGHTNING_ATTRS_MAP)
+from interpretune.mixins.zero_shot_classification import ZeroShotStepMixin, TLZeroShotStepMixin
 from interpretune.analysis.debug_generation import DebugGeneration
 from interpretune.analysis.memprofiler import MemProfiler
+from interpretune.utils.patched_tlens_generate import generate as patched_generate
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info, rank_zero_debug
 
 
@@ -67,6 +69,7 @@ class BaseITModule(ABC, BaseITHooks, OptimizerSchedulerInitMixin, ProfilerHooksM
         if self.it_cfg.debug_lm_cfg.enabled:  # conditionally load debugging extension
             self.lm_debug = DebugGeneration()
             self.lm_debug.connect(self)
+        self.init_hparams = {}
         self._model_init()
 
     def _core_or_lightning(self, c2l_map_key: str):
@@ -148,7 +151,8 @@ class BaseITModule(ABC, BaseITHooks, OptimizerSchedulerInitMixin, ProfilerHooksM
             self._log_dir.mkdir(exist_ok=True, parents=True)
 
     def _capture_hyperparameters(self) -> None:
-        self.init_hparams = {
+        # subclasses may have provided their own hparams so we update rather than override
+        self.init_hparams.update({
             "optimizer_init": self.it_cfg.optimizer_init,
             "lr_scheduler_init": self.it_cfg.lr_scheduler_init,
             "pl_lrs_cfg": self.it_cfg.pl_lrs_cfg,
@@ -161,7 +165,7 @@ class BaseITModule(ABC, BaseITHooks, OptimizerSchedulerInitMixin, ProfilerHooksM
             "model_name_or_path": self.it_cfg.model_name_or_path,
             "task_name": self.it_cfg.task_name,
             "experiment_id": f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.it_cfg.experiment_tag}",
-            }
+            })
         self.init_hparams["env_info"] = collect_env_info() if self.it_cfg.log_env_details else None
 
     def _configure_gradient_checkpointing(self) -> None:
@@ -203,7 +207,10 @@ class BaseITModule(ABC, BaseITHooks, OptimizerSchedulerInitMixin, ProfilerHooksM
 
     def _maybe_resize_token_embeddings(self, model: torch.nn.Module) -> None:
         vocab_size = getattr(model.base_model, 'vocab_size', None) or model.config.vocab_size
-        model.base_model.resize_token_embeddings(vocab_size + len(self.it_cfg.tokenizer_id_overrides))
+        max_override = max(self.it_cfg.tokenizer_id_overrides.values())
+        if max_override >= vocab_size:
+            #model.base_model.resize_token_embeddings(vocab_size + len(self.it_cfg.tokenizer_id_overrides))
+            model.base_model.resize_token_embeddings(max_override)
         return model
 
     def _configure_quantization(self) -> Optional[Any]:
@@ -279,13 +286,13 @@ class ITModule(CoreHelperAttributeMixin, BaseITModule):
     ...
 
 
-class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
+class BaseITLensModule(BaseITLensModuleHooks, TLZeroShotStepMixin, BaseITModule):
 
     def _configured_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
         -> torch.nn.Module:
-        # usually makes sense to init the hooketransfomer (empty) and pretrained HF model weights on cpu
+        # usually makes sense to init the HookedTransfomer (empty) and pretrained HF model weights on cpu
         # versus moving them both to GPU (may make sense to explore meta device usage for model definition
-        # in the future, only materlizing parameter by parameter during loading from pretrained weights
+        # in the future, only materializing parameter by parameter during loading from pretrained weights
         # to eliminate need for two copies in memory)
         model = self.it_cfg.model_class.from_pretrained(**self.it_cfg.from_pretrained_cfg, config=cust_config,
                                                         token=access_token)
@@ -296,37 +303,24 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
         return model
 
     def _convert_hf_to_tl(self) -> HookedTransformer:
+        HookedTransformer.generate = patched_generate
         self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=self.datamodule.tokenizer,
-                                                  **self.it_cfg.tl_from_pretrained_cfg.__dict__)
+                                                       **self.it_cfg.tl_from_pretrained_cfg.__dict__)
 
-    def _log_hyperparameters(self) -> None:
+    def _capture_hyperparameters(self) -> None:
         self.it_cfg.lora_cfg = None
         self.it_cfg.bitsandbytesconfig = None
         # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
         self.init_hparams = {
-            "optimizer_init": self.it_cfg.optimizer_init,
-            "lr_scheduler_init": self.it_cfg.lr_scheduler_init,
-            "pl_lrs_cfg": self.it_cfg.pl_lrs_cfg,
             "tl_from_pretrained_cfg": self._make_config_serializable(self.it_cfg.tl_from_pretrained_cfg,
                                                                         ['device']),
-            "dynamic_module_cfg": self.it_cfg.dynamic_module_cfg,
-            "quantization_cfg": self.it_cfg.lora_cfg,
-            "auto_model_cfg": self.it_cfg.auto_model_cfg, # TODO: cleanup/consolidate saving configs/dedup
-            "model_config": self._make_config_serializable(self.model.config,
-                                                        ['quantization_config.bnb_4bit_compute_dtype',
-                                                            'torch_dtype', '_pre_quantization_dtype']),
-            "model_name_or_path": self.it_cfg.model_name_or_path,
-            "task_name": self.it_cfg.task_name,
-            "experiment_id": f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.it_cfg.experiment_tag}",
             }
-        self.init_hparams["env_info"] = collect_env_info() if self.it_cfg.log_env_details else None
-        # TODO: add save_hyperparameters/basic logging func for raw pytorch
-        # (override w/ lightning version where appropriate)
-        #self.save_hyperparameters(self.init_hparams)
+        super()._capture_hyperparameters()
 
-    def _maybe_resize_token_embeddings(self, model: torch.nn.Module) -> None:
-        # embedding resizing not currently supported by ITLensModule
-        return model
+
+    # def _maybe_resize_token_embeddings(self, model: torch.nn.Module) -> None:
+    #     # embedding resizing not currently supported by ITLensModule
+    #     return model
 
     def _set_input_require_grads(self) -> None:
         # not currently supported by ITLensModule
@@ -341,7 +335,7 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
         pass
 
 
-class ITLensModule(CoreHelperAttributeMixin, BaseITLensModule):
+class ITLensModule(TLensAttributeMixin, CoreHelperAttributeMixin, BaseITLensModule):
     ...
 
 if _LIGHTNING_AVAILABLE:

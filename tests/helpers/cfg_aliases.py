@@ -2,25 +2,39 @@ from typing import NamedTuple
 from collections import ChainMap
 
 from interpretune.analysis.memprofiler import MemProfilerCfg, MemProfilerSchedule
-from it_examples.experiments.rte_boolq.core import RTEBoolqPromptConfig
+from it_examples.experiments.rte_boolq.core import RTEBoolqPromptConfig, RTEBoolqZeroShotClassificationConfig
+from interpretune.mixins.zero_shot_classification import TLensGenerationConfig
+
+default_test_bs = 2
+default_prof_bs = 1
+tokenizer_base_kwargs = {"add_bos_token": True, "local_files_only": False, "padding_side": "right"}
+core_model_input_names = {"model_input_names": ['input_ids', 'attention_mask']}
+tl_model_input_names = {"model_input_names": ['input', 'attention_mask']}
 
 # TODO: refactor to dict-based configs to decomposed yaml strings, files or init dataclasses earlier? may make sense
-test_tokenizer_kwargs = {"tokenizer_kwargs": {"add_bos_token": True, "local_files_only": False, "padding_side": "right",
-                         "model_input_names": ['input_ids', 'attention_mask']}}
+test_core_tokenizer_kwargs = {"tokenizer_kwargs": {**core_model_input_names, **tokenizer_base_kwargs}}
+test_tl_tokenizer_kwargs = {"tokenizer_kwargs": {**tl_model_input_names, **tokenizer_base_kwargs}}
 
-test_shared_config = {
-    "task_name": "pytest_rte",
-    "model_name_or_path": "gpt2",
-    "tokenizer_id_overrides": {"pad_token_id": 50256},
-    "tokenizer_kwargs": test_tokenizer_kwargs,
-}
+base_shared_config =  {"model_name_or_path": "gpt2", "tokenizer_id_overrides": {"pad_token_id": 50256}}
 
-test_signature_columns= ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds', 'labels',
+test_core_shared_config = {"task_name": "pytest_rte", **test_core_tokenizer_kwargs, **base_shared_config}
+test_tl_shared_config = {"task_name": "pytest_rte_tl", **test_tl_tokenizer_kwargs, **base_shared_config}
+
+test_core_signature_columns= ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
+                              'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+
+test_tl_signature_columns= ['input', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds', 'labels',
                          'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
 
-test_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), "signature_columns": test_signature_columns,
+test_tl_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), "signature_columns": test_tl_signature_columns,
+                          "enable_datasets_cache": False, "prepare_data_map_cfg": {"batched": True},
+                          "text_fields": ("premise", "hypothesis"),  "train_batch_size": default_test_bs,
+                          "eval_batch_size": default_test_bs}
+
+test_core_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), "signature_columns": test_core_signature_columns,
                           "enable_datasets_cache": True, "prepare_data_map_cfg": {"batched": True},
-                          "text_fields": ("premise", "hypothesis"),  "train_batch_size": 2, "eval_batch_size": 2}
+                          "text_fields": ("premise", "hypothesis"),  "train_batch_size": default_test_bs,
+                          "eval_batch_size": default_test_bs}
 
 test_optimizer_init = {"optimizer_init": {"class_path": "torch.optim.AdamW",
                               "init_args": {"weight_decay": 1.0e-06, "eps": 1.0e-07, "lr": 3.0e-05}}}
@@ -30,12 +44,18 @@ test_lr_scheduler_init = {"lr_scheduler_init": {"class_path": "torch.optim.lr_sc
 
 test_optimizer_scheduler_init = ChainMap(test_optimizer_init, test_lr_scheduler_init)
 
-test_it_module_kwargs = {"use_model_cache": False, "cust_fwd_kwargs": {}, "from_pretrained_cfg":
-                         {"device_map": "cpu", "torch_dtype": "float32"}, "experiment_tag": "test_itmodule",
-                         "auto_model_cfg": {"model_head": "transformers.GPT2ForSequenceClassification"},}
+base_it_module_kwargs = {"use_model_cache": False, "cust_fwd_kwargs": {}, "from_pretrained_cfg":
+                         {"device_map": "cpu", "torch_dtype": "float32"}, "experiment_tag": "test_itmodule"}
+
+test_core_it_module_kwargs = {"auto_model_cfg": {"model_head": "transformers.GPT2ForSequenceClassification"},
+                              **base_it_module_kwargs}
+
+base_zero_shot_cfg = RTEBoolqZeroShotClassificationConfig(enabled=True, lm_generation_cfg=TLensGenerationConfig())
+test_tl_it_module_kwargs = {"tl_from_pretrained_cfg": {"enabled": True}, "zero_shot_cfg": base_zero_shot_cfg,
+                            "auto_model_cfg": {"model_head": "transformers.GPT2LMHeadModel"}, **base_it_module_kwargs}
 
 enable_memprofiler_kwargs = {"enabled": True, "cuda_allocator_history": True}
-bs1_override = {'train_batch_size': 1, 'eval_batch_size': 1}
+bs_override = {'train_batch_size': default_prof_bs, 'eval_batch_size': default_prof_bs}
 memprofiler_cfg = MemProfilerCfg(**enable_memprofiler_kwargs)
 no_savedt_memprofiler_cfg = MemProfilerCfg(**enable_memprofiler_kwargs, enable_saved_tensors_hooks=False)
 warm_maxstep_memprof_cfg = MemProfilerCfg(**enable_memprofiler_kwargs,
@@ -45,8 +65,11 @@ nowarm_maxstep_memprof_cfg = MemProfilerCfg(**enable_memprofiler_kwargs,
 nowarm_maxstep_hk_memprof_cfg = MemProfilerCfg(retain_hooks_for_funcs=["training_step"], **enable_memprofiler_kwargs,
                                                  **{"schedule": MemProfilerSchedule(max_step=4)})
 
-test_it_module_base = ChainMap(test_shared_config, test_it_module_kwargs)
-test_it_module_optim = ChainMap(test_it_module_base, test_optimizer_scheduler_init)
+test_core_it_module_base = ChainMap(test_core_shared_config, test_core_it_module_kwargs)
+test_core_it_module_optim = ChainMap(test_core_it_module_base, test_optimizer_scheduler_init)
+
+test_tl_it_module_base = ChainMap(test_tl_shared_config, test_tl_it_module_kwargs)
+test_tl_it_module_optim = ChainMap(test_tl_it_module_base, test_optimizer_scheduler_init)
 
 ########################################################################################################################
 # NOTE [Test Dataset Fingerprint]
@@ -62,8 +85,21 @@ test_it_module_optim = ChainMap(test_it_module_base, test_optimizer_scheduler_in
 #   - The fingerprinted dataset below is not shuffled or sorted with the current dataloader configurations
 #   - All current expected loss results were generated with [train|eval]_batch_size = 2
 #   - All current memory profile results were generated with [train|eval]_batch_size = 1
+sample_rows = 5
+sample_pos = 3
+test_datasets = ("rte", "pytest_rte", "pytest_rte_tl")
+rte_fields = ("premise", "hypothesis")
+TEST_TASK_NUM_LABELS = {k: 2 for k in test_datasets}
+TEST_TASK_TEXT_FIELD_MAP = {k: rte_fields for k in test_datasets}
+# note that we also sample the 'test' split after 'train' and 'validation' though we aren't yet using it
 deterministic_token_ids = [5674, 24140, 373, 666, 2233, 303, 783, 783, 2055, 319, 373, 910, 17074, 284, 6108]
-test_dataset_state = ('GPT2TokenizerFast', 'pytest_rte', deterministic_token_ids)
+expected_first_fwd_ids = {"train": (deterministic_token_ids[:default_test_bs],),
+                          "train_prof": (deterministic_token_ids[:default_prof_bs],),
+                          "test": (deterministic_token_ids[sample_rows:(sample_rows+default_test_bs)],),
+                          "test_prof": (deterministic_token_ids[sample_rows:(sample_rows+default_prof_bs)],)}
+shared_dataset_state = ('GPT2TokenizerFast', deterministic_token_ids)
+test_dataset_state_core = ('pytest_rte',) + shared_dataset_state
+test_dataset_state_tl = ('pytest_rte_tl',) + shared_dataset_state
 # TODO: add current dataloader kwargs to the fingerprint above? May be an excessively rigid check. Consider associating
 # a fingerprint of salient config with each specific expected scalar test result in the future. At present, that
 # approach seems like overkill given the current codebase.
@@ -119,10 +155,12 @@ bf16 = {"precision": "bf16"}
 cuda_bf16 = {**cuda, **bf16}
 cuda_bf16_l = {**cuda, **bf16, **w_lit}
 memprof_steps = {"train_steps": 5, "val_steps": 3}
-bs1_memprof_steps = {"dm_override_cfg": bs1_override, **memprof_steps}
+bs1_memprof_steps = {"dm_override_cfg": bs_override, **memprof_steps}
 debug_hidden = {"cust_fwd_kwargs": {"output_hidden_states": True}}
-test_bs1_mem = {"loop_type": "test", "dm_override_cfg": bs1_override, "memprofiling_cfg": memprofiler_cfg}
-test_bs1_mem_nosavedt = {**test_bs1_mem, "memprofiling_cfg": no_savedt_memprofiler_cfg}
-bs1_warm_mem = {**bs1_memprof_steps,  "memprofiling_cfg": warm_maxstep_memprof_cfg}
-bs1_nowarm_mem = {**bs1_memprof_steps, "memprofiling_cfg": nowarm_maxstep_memprof_cfg}
-bs1_nowarm_hk_mem = {**bs1_memprof_steps, "memprofiling_cfg": nowarm_maxstep_hk_memprof_cfg}
+test_bs1_mem = {"loop_type": "test", "dm_override_cfg": bs_override, "memprofiler_cfg": memprofiler_cfg}
+test_bs1_mem_nosavedt = {**test_bs1_mem, "memprofiler_cfg": no_savedt_memprofiler_cfg}
+bs1_warm_mem = {**bs1_memprof_steps,  "memprofiler_cfg": warm_maxstep_memprof_cfg}
+bs1_nowarm_mem = {**bs1_memprof_steps, "memprofiler_cfg": nowarm_maxstep_memprof_cfg}
+bs1_nowarm_hk_mem = {**bs1_memprof_steps, "memprofiler_cfg": nowarm_maxstep_hk_memprof_cfg}
+
+w_tl = {"transformerlens": True}

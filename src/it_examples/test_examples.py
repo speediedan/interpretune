@@ -34,31 +34,32 @@ EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS
 RUN_FN = "run_experiment.py"
 EXPERIMENTS_BASE = IT_CONFIG_BASE / "experiments"
 BASE_DEBUG_CONFIG = IT_CONFIG_GLOBAL / "base_debug.yaml"
+BASE_TL_CONFIG = IT_CONFIG_GLOBAL / "base_transformerlens.yaml"
 
-def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, str]]) -> Dict:
+def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, bool, bool]]) -> Dict:
     exp_cfg_sets = {}
-    for exp, model, subexp, debug_mode in test_keys:
+    for exp, model, subexp, use_tl, debug_mode in test_keys:
         base_model_cfg =  EXPERIMENTS_BASE / exp / f"{model}.yaml"
         subexp_cfg =  EXPERIMENTS_BASE / exp / model / f"{subexp}.yaml"
         base_cfg_set = (base_model_cfg, subexp_cfg)
-        if debug_mode == "debug":
-            exp_cfg_sets[(exp, model, subexp, debug_mode)] = (*base_cfg_set, BASE_DEBUG_CONFIG)
-        else:
-            exp_cfg_sets[(exp, model, subexp, debug_mode)] = base_cfg_set
+        for cfg, enabled in zip((BASE_TL_CONFIG, BASE_DEBUG_CONFIG), (use_tl, debug_mode)):
+            if enabled:
+                base_cfg_set += (cfg,)
+        exp_cfg_sets[(exp, model, subexp, use_tl, debug_mode)] = base_cfg_set
     return exp_cfg_sets
 
 EXPERIMENT_CONFIG_SETS = gen_experiment_cfg_sets(
-    (("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", "debug"),
-     ("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "debug"),
-     ("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "nodebug"),
-     ("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", "debug"))
+    (("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", False, True),
+     ("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", True, True),
+     ("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", True, False),
+     ("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", False, True))
 )
 
 # experiment config set aliases
-gpt2_core = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", "debug")]
-gpt2_core_tl = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "debug")]
-gpt2_l_tl = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "nodebug")]
-llama2_l = EXPERIMENT_CONFIG_SETS[("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", "debug")]
+gpt2_core = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", False, True)]
+gpt2_core_tl = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", True, True)]
+gpt2_l_tl = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", True, False)]
+llama2_l = EXPERIMENT_CONFIG_SETS[("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", False, True)]
 
 TEST_CONFIGS_EXAMPLES = (
     TestCfg(alias="core_gpt2_tl_compose_config", cfg=(False, None, False, gpt2_core_tl, True)),
@@ -99,6 +100,7 @@ def invoke_cli(cli_main, cli_args, l_cli, instantiate_only):
             cli = cli_main(instantiate_only=instantiate_only)
     return cli
 
+@pytest.mark.usefixtures("make_deterministic")
 @RunIf(min_cuda_gpus=1, skip_windows=True)
 @pytest.mark.parametrize("test_alias, l_cli, subcommand, instantiate_only, config_files, use_compose_config",
                          pytest_param_factory(TEST_CONFIGS_EXAMPLES))

@@ -13,14 +13,16 @@ from transformer_lens import HookedTransformer
 from interpretune.utils.types import STEP_OUTPUT
 from interpretune.base.modules import ITModule, ITLensModule
 from interpretune.utils.logging import rank_zero_warn
-from interpretune.config_classes.module import ITZeroShotClassificationConfig, ITConfig, LMGenerationConfig
+from interpretune.config_classes.module import ITConfig
+from interpretune.mixins.zero_shot_classification import (ZeroShotClassificationConfig, BaseGenerationConfig,
+                                                          HFGenerationConfig)
 from interpretune.config_classes.datamodule import PromptConfig
 from it_examples.data.rte_bool import RTEBoolqDataModule, DEFAULT_TASK, TASK_NUM_LABELS, INVALID_TASK_MSG
 
 @dataclass(kw_only=True)
-class RTEBoolqZeroShotClassificationConfig(ITZeroShotClassificationConfig):
+class RTEBoolqZeroShotClassificationConfig(ZeroShotClassificationConfig):
     enabled: bool = False
-    lm_generation_cfg: LMGenerationConfig = field(default_factory=lambda: LMGenerationConfig())
+    lm_generation_cfg: BaseGenerationConfig = field(default_factory=lambda: HFGenerationConfig())
     entailment_mapping: Tuple = ("Yes", "No")  # RTE style, invert mapping for BoolQ
     entailment_mapping_indices: Optional[torch.Tensor] = None
 
@@ -72,10 +74,6 @@ class GPT2RTEBoolqDataModule(RTEBoolqDataModule):
         for field1, field2 in zip(example_batch[self.itdm_cfg.text_fields[0]],
                                   example_batch[self.itdm_cfg.text_fields[1]]):
             if self.itdm_cfg.prompt_cfg.cust_task_prompt:
-                # task_prompt = (self.itdm_cfg.prompt_cfg.cust_task_prompt['context'] + "\n" +
-                #                field1 + "\n\n" +
-                #                self.itdm_cfg.prompt_cfg.cust_task_prompt['question'] + "\n" +
-                #                field2)
                 task_prompt = (self.itdm_cfg.prompt_cfg.cust_task_prompt['context'] + "\n" + field1 + "\n\n" +
                                self.itdm_cfg.prompt_cfg.cust_task_prompt['question'] + "\n" + field2)
             else:
@@ -85,6 +83,8 @@ class GPT2RTEBoolqDataModule(RTEBoolqDataModule):
             example_batch['sequences'].append(sequence)
         features = self.tokenizer(example_batch["sequences"], padding="longest")
         features["labels"] = example_batch["label"]  # Rename label to labels, easier to pass to model forward
+        if (primary_input := self.tokenizer.model_input_names[0]) != "input_ids":
+            features[primary_input] = features["input_ids"]
         return features
 
 

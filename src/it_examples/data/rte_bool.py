@@ -36,18 +36,21 @@ class RTEBoolqDataModule(ITDataModule):
             dataset[split] = self._remove_unused_columns(dataset[split], target_model)
         dataset.save_to_disk(self.itdm_cfg.dataset_path)
 
+    def dataloader_factory(self, split: str, use_train_batch_size: bool = False) -> DataLoader:
+        dataloader_kwargs = {"dataset": self.dataset[split], "collate_fn":self.data_collator,
+                             **self.itdm_cfg.dataloader_kwargs}
+        dataloader_kwargs['batch_size'] = self.itdm_cfg.train_batch_size if use_train_batch_size else \
+            self.itdm_cfg.eval_batch_size
+        return DataLoader(**dataloader_kwargs)
+
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(self.dataset["train"], batch_size=self.itdm_cfg.train_batch_size,
-                          collate_fn=self.data_collator, **self.itdm_cfg.dataloader_kwargs)
+        return self.dataloader_factory(split='train', use_train_batch_size=True)
 
     def val_dataloader(self) -> DataLoader:
-        return DataLoader(self.dataset["validation"], batch_size=self.itdm_cfg.eval_batch_size,
-                          collate_fn=self.data_collator, **self.itdm_cfg.dataloader_kwargs)
+        return self.dataloader_factory(split='validation')
 
     def test_dataloader(self) -> DataLoader:
-        return DataLoader(self.dataset["validation"], batch_size=self.itdm_cfg.eval_batch_size,
-                          collate_fn=self.data_collator, **self.itdm_cfg.dataloader_kwargs)
+        return self.dataloader_factory(split='validation')
 
     def predict_dataloader(self) -> DataLoader:
-        return DataLoader(self.dataset["validation"], batch_size=self.itdm_cfg.eval_batch_size,
-                          collate_fn=self.data_collator, **self.itdm_cfg.dataloader_kwargs)
+        return self.dataloader_factory()

@@ -20,23 +20,27 @@ from copy import deepcopy
 
 import pytest
 import torch
+from transformer_lens.utilities.devices import get_device_for_block_index
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.config_classes.shared import CorePhases
-from interpretune.config_classes.module import ITConfig
+from interpretune.config_classes.module import ITConfig, ITLensFromPretrainedConfig
 from interpretune.config_classes.datamodule import ITDataModuleConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import ITModule, BaseITModule
 from interpretune.base.call import _call_itmodule_hook, it_init, it_session_end
 from interpretune.utils.types import Optimizable
-from tests.helpers.cfg_aliases import (RUNIF_ALIASES, test_datamodule_kwargs, test_shared_config, test_it_module_base,
-                                       test_it_module_optim, MemProfResult, test_dataset_state)
+from tests.helpers.cfg_aliases import (RUNIF_ALIASES, test_core_datamodule_kwargs, test_tl_datamodule_kwargs,
+                                       test_core_shared_config, test_tl_shared_config, test_core_it_module_base,
+                                       test_tl_it_module_base, test_core_it_module_optim, test_tl_it_module_optim,
+                                        MemProfResult, test_dataset_state_core, test_dataset_state_tl,
+                                        expected_first_fwd_ids)
 from tests.helpers.runif import RunIf
-from tests.helpers.utils import make_deterministic
-from tests.helpers.lightning_utils import cuda_reset, to_device
+from tests.helpers.lightning_utils import cuda_reset, to_device, move_data_to_device
 from tests.helpers.modules import (TestITDataModule, TestITDataModuleFullDataset, TestITLightningDataModule,
-                                   TestITLightningDataModuleFullDataset, TestITModule, TestITLightningModule)
+                                   TestITLightningDataModuleFullDataset, TestITModule, TestITLightningModule,
+                                   TestITLensModule,TestITLensLightningModule)
 
 if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import seed_everything, Trainer
@@ -52,7 +56,7 @@ else:
 @dataclass(kw_only=True)
 class TestCfg():
     alias: str
-    cfg: Optional[Dict | Tuple] = None
+    cfg: Optional[Tuple] = None
     marks: Optional[Tuple] = None
     expected: Optional[Dict] = None
     result_gen: Optional[Callable] = None
@@ -124,8 +128,11 @@ def exact_results(expected_exact: Tuple):
     """Result generation function that packages."""
     return {'expected_exact': expected_exact}
 
-def def_results(device_type: str, precision: Union[int, str]):
+def def_results(device_type: str, precision: Union[int, str], dataset_type: Optional[str] = "core",
+                ds_cfg: Optional[str] = "train_prof"):
     # wrap result dict such that only the first epoch is checked
+    test_dataset_state = test_dataset_state_core if dataset_type == "core" else test_dataset_state_tl
+    test_dataset_state = test_dataset_state + expected_first_fwd_ids[ds_cfg]
     return {0: {"device_type": device_type, "precision": get_model_input_dtype(precision),
                 "dataset_state": test_dataset_state},}
 
@@ -159,6 +166,22 @@ def collect_results(result_map: Dict[str, Tuple], test_alias: str):
 # Configuration composition
 ################################################################################
 
+TEST_DATAMODULE_MAPPING = {
+    # (lightning, full_dataset)
+    (False, False): TestITDataModule,
+    (True, False): TestITLightningDataModule,
+    (False,True): TestITDataModuleFullDataset,
+    (True, True): TestITLightningDataModuleFullDataset,
+}
+
+TEST_MODULE_MAPPING = {
+    # (lightning, transformerlens)
+    (False, False): TestITModule,
+    (True, False): TestITLightningModule,
+    (False, True): TestITLensModule,
+    (True, True): TestITLensLightningModule,
+}
+
 def get_model_input_dtype(precision):
     if precision in ("float16", "16-true", "16-mixed", "16", 16):
         return torch.float16
@@ -168,59 +191,61 @@ def get_model_input_dtype(precision):
         return torch.double
     return torch.float32
 
-def get_itdm_cfg(dm_override_cfg: Optional[Dict] = None, **kwargs) -> ITConfig:
-    test_it_datamodule_cfg = deepcopy(test_datamodule_kwargs)
+def get_itdm_cfg(test_cfg: Tuple, dm_override_cfg: Optional[Dict] = None, **kwargs) -> ITConfig:
+    if test_cfg.transformerlens:
+        default_itdm_kwargs = test_tl_datamodule_kwargs
+        shared_config = test_tl_shared_config
+    else:
+        default_itdm_kwargs = test_core_datamodule_kwargs
+        shared_config = test_core_shared_config
+    test_it_datamodule_cfg = deepcopy(default_itdm_kwargs)
     if dm_override_cfg:
         test_it_datamodule_cfg.update(dm_override_cfg)
-    return ITDataModuleConfig(**test_shared_config, **test_it_datamodule_cfg)
+    return ITDataModuleConfig(**shared_config, **test_it_datamodule_cfg)
 
-def get_it_cfg(test_cfg: TestCfg, core_log_dir: Optional[str| os.PathLike] = None) -> ITConfig:
+def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[str| os.PathLike] = None) -> ITConfig:
+    test_cfg_override_attrs = ["from_pretrained_cfg", "memprofiler_cfg", "cust_fwd_kwargs", "auto_model_cfg",
+                               "tl_from_pretrained_cfg"]
     if test_cfg.loop_type == "test":
-        test_it_module_cfg = deepcopy(test_it_module_base)
+        target_test_it_module_cfg = test_tl_it_module_base if test_cfg.transformerlens else test_core_it_module_base
     elif test_cfg.loop_type == "train":
-        test_it_module_cfg = deepcopy(test_it_module_optim)
+        target_test_it_module_cfg = test_tl_it_module_optim if test_cfg.transformerlens else test_core_it_module_optim
+    test_it_module_cfg = deepcopy(target_test_it_module_cfg)
     if test_cfg.act_ckpt:
         test_it_module_cfg.update({"activation_checkpointing": True})
-    if test_cfg.from_pretrained_cfg:
-        test_it_module_cfg["from_pretrained_cfg"].update(test_cfg.from_pretrained_cfg)
-    if test_cfg.memprofiling_cfg:
-        test_it_module_cfg['memprofiler_cfg'] = test_cfg.memprofiling_cfg
-    if test_cfg.cust_fwd_kwargs:
-        test_it_module_cfg['cust_fwd_kwargs'].update(test_cfg.cust_fwd_kwargs)
+    for attr in test_cfg_override_attrs:
+        if getattr(test_cfg, attr):
+            test_it_module_cfg.update({attr: getattr(test_cfg, attr)})
     if core_log_dir:
         test_it_module_cfg.update({'core_log_dir': core_log_dir})
     test_it_module_cfg = configure_device_precision(test_it_module_cfg, test_cfg.device_type, test_cfg.precision)
+    if test_cfg.transformerlens:
+        test_it_module_cfg['tl_from_pretrained_cfg'] = \
+            ITLensFromPretrainedConfig(**test_it_module_cfg['tl_from_pretrained_cfg'])
     return ITConfig(**test_it_module_cfg)
 
 def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> Dict[str, Any]:
     cfg['from_pretrained_cfg'].update({'torch_dtype': get_model_input_dtype(precision)})
     if device_type == "cuda":
         cfg['from_pretrained_cfg'].update({'device_map': 0})
+    if cfg.get('tl_from_pretrained_cfg', None):
+        cfg['tl_from_pretrained_cfg'].update({'dtype': get_model_input_dtype(precision), 'device': device_type})
     return cfg
 
-def datamodule_factory(test_cfg: TestCfg, force_prepare_data: bool = False) -> ITDataModule:
-    itdm_cfg = get_itdm_cfg(dm_override_cfg=test_cfg.dm_override_cfg)
-    if test_cfg.lightning:
-        datamodule_class = TestITLightningDataModuleFullDataset if test_cfg.full_dataset else TestITLightningDataModule
-    else:
-        datamodule_class = TestITDataModuleFullDataset if test_cfg.full_dataset else TestITDataModule
-    return datamodule_class(itdm_cfg=itdm_cfg, force_prepare_data=force_prepare_data)
+def datamodule_factory(test_cfg: Tuple) -> ITDataModule:
+    itdm_cfg = get_itdm_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
+    datamodule_class = TEST_DATAMODULE_MAPPING[(test_cfg.lightning, test_cfg.full_dataset)]
+    return datamodule_class(itdm_cfg=itdm_cfg, force_prepare_data=test_cfg.force_prepare_data)
 
 def config_modules(test_cfg, test_alias, expected_results, tmp_path,
                    state_log_mode: bool = False) -> Tuple[ITDataModule, BaseITModule]:
-    fill_uninitialized_memory = True
-    if test_cfg.lightning:
+    if test_cfg.lightning: # allow Lightning to set env vars
         seed_everything(1, workers=True)
-        # maximally align our core PyTorch reproducibility settings w/ Lightning
-        # (may remove this in the future if Lightning adds this option to seed everything)
-        torch._C._set_deterministic_fill_uninitialized_memory(fill_uninitialized_memory)
-    else:
-        make_deterministic(warn_only=True, fill_uninitialized_memory=fill_uninitialized_memory)
     cuda_reset()
     torch.set_printoptions(precision=12)
     datamodule = datamodule_factory(test_cfg)
     it_cfg = get_it_cfg(test_cfg, core_log_dir=tmp_path)
-    module_class = TestITLightningModule if test_cfg.lightning else TestITModule
+    module_class = TEST_MODULE_MAPPING[(test_cfg.lightning, test_cfg.transformerlens)]
     module = module_class(it_cfg=it_cfg, test_alias=test_alias,
                           state_log_dir=tmp_path if state_log_mode else None,  # optionally enable expected state logs
                           **expected_results,)
@@ -231,7 +256,7 @@ def config_modules(test_cfg, test_alias, expected_results, tmp_path,
 # Core Train/Test Orchestration
 ################################################################################
 
-def run_it(module: ITModule, datamodule: ITDataModule, test_cfg: TestCfg):
+def run_it(module: ITModule, datamodule: ITDataModule, test_cfg: Tuple):
     it_init(module=module, datamodule=datamodule)
     if test_cfg.loop_type == "test":
         core_test_loop(module=module, datamodule=datamodule, device_type=test_cfg.device_type,
@@ -294,6 +319,8 @@ def core_test_loop(
 def run_step(step_fn, module, iterator, batch_idx, device_type, optimizer: Optional[Optimizable] = None):
     batch = fetch_batch(iterator, module)
     step_func = getattr(module, step_fn)
+    if module.global_step == 0 and step_fn != "validation_step":
+        module.sampled_fwd_inputs = module.datamodule.sample_step_input(batch)
     if step_fn == "training_step":
         optimizer.zero_grad()
     if module.torch_dtype == torch.bfloat16:
@@ -305,10 +332,14 @@ def run_step(step_fn, module, iterator, batch_idx, device_type, optimizer: Optio
         module.epoch_losses[module.current_epoch] = loss.item()
         loss.backward()
         optimizer.step()
+    module._global_step += 1
 
 def fetch_batch(iterator, module) -> BatchEncoding:
     batch = next(iterator)
-    to_device(module.model.device, batch)
+    if hasattr(module, 'tl_cfg'):  # ensure the input is on the same device as TranformerLens assigns to layer 0
+        move_data_to_device(batch, get_device_for_block_index(0, module.tl_cfg))
+    else:
+        to_device(module.device, batch)
     return batch
 
 
@@ -316,7 +347,7 @@ def fetch_batch(iterator, module) -> BatchEncoding:
 # Lightning Train/Test Orchestration
 ################################################################################
 
-def run_lightning(module: ITModule, datamodule: ITDataModule, test_cfg: TestCfg, tmp_path: Path) -> Trainer:
+def run_lightning(module: ITModule, datamodule: ITDataModule, test_cfg: Tuple, tmp_path: Path) -> Trainer:
     accelerator = "cpu" if test_cfg.device_type == "cpu" else "gpu"
     trainer_steps = {"limit_train_batches": test_cfg.train_steps, "limit_val_batches": test_cfg.val_steps,
                      "limit_test_batches": test_cfg.test_steps, "limit_predict_batches": 1,

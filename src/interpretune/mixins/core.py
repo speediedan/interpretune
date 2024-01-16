@@ -6,11 +6,11 @@ from contextlib import contextmanager
 from functools import wraps
 
 import torch
-from transformers.tokenization_utils_base import BatchEncoding
+from transformer_lens import HookedTransformerConfig
 
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, LRScheduler, STEP_OUTPUT
+from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, LRScheduler
 
 # simple barebones interface encapsulating the data preparation, data setup, model setup and optimizer/scheduler
 # configuration processes. Intended for maximal interactive experimental flexibility without any iterative assumptions.
@@ -23,6 +23,7 @@ from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, 
 CORE_TO_LIGHTNING_ATTRS_MAP = {
     "_log_dir": ("trainer.model._trainer.log_dir", None, "No log_dir has been set yet"),
     "_datamodule": ("trainer.datamodule", None, "Could not find datamodule reference (has it been attached yet?)"),
+    "_tl_cfg": ("model.cfg", None, ""),
     "_current_epoch": ("trainer.current_epoch", 0, ""),
     "_global_step": ("trainer.global_step", 0, ""),
 }
@@ -45,6 +46,9 @@ class CoreHelperAttributeMixin:
         else:
             raise MisconfigurationException("CoreHelperAttributeMixin requires an ITConfig.")
         self._supported_helper_attrs = {k: partial(_dummy_notify, k, v.ret_callable, v.ret_val) for k,v in ca.items()}
+        # set initial defaults for non-Lightning modules
+        self._current_epoch = 0
+        self._global_step = 0
         super().__init__(*args, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
@@ -69,6 +73,22 @@ class CoreHelperAttributeMixin:
     def device(self) -> Optional[torch.device]:
         try:
             device = getattr(self, "_device", None) or reduce(getattr, "model.device".split("."), self)
+        except AttributeError as ae:
+            rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
+            device = None
+        return device
+
+
+class TLensAttributeMixin:
+    @property
+    def tl_cfg(self) -> Optional[HookedTransformerConfig]:
+        return self._core_or_lightning(c2l_map_key="_tl_cfg")
+
+    @property
+    def device(self) -> Optional[torch.device]:
+        try:
+            device = getattr(self, "_device", None) or getattr(self.tl_cfg, "device", None) or \
+                reduce(getattr, "model.device".split("."), self)
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
             device = None
@@ -195,39 +215,3 @@ class ProfilerHooksMixin:
                 else:
                     return func(self, *args, **kwargs)
         return wrapper
-
-
-class ZeroShotStepMixin:
-        # TODO: make memprofilable by default directly? (already usually wrapped by test_step)
-    def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
-        Optional[STEP_OUTPUT]:
-        outputs = self.model.generate(input_ids=batch['input_ids'],
-                                      pad_token_id=self.datamodule.tokenizer.pad_token_id,
-                                      **self.it_cfg.zero_shot_cfg.lm_generation_cfg.__dict__)
-        stacked_scores = torch.stack([out for out in outputs['scores']], dim=0).cpu()
-        assert self.it_cfg.zero_shot_cfg.entailment_mapping_indices is not None
-        answer_logits = torch.index_select(stacked_scores, -1, self.it_cfg.zero_shot_cfg.entailment_mapping_indices)
-        per_example_answers, _ = torch.max(answer_logits, dim=0)
-        preds = torch.argmax(per_example_answers, axis=1)  # type: ignore[call-arg]
-        labels = batch["labels"]
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
-
-    # TODO: make memprofilable by default directly? (already usually wrapped by test_step)
-    def default_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        # run predict on val dataset for now
-        outputs = self(**batch)
-        test_loss, logits = outputs[:2]
-        if self.it_cfg.num_labels >= 1:
-            preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
-        elif self.it_cfg.num_labels == 1:
-            preds = logits.squeeze()
-        labels = batch["labels"]
-        # TODO: condition this on a metric being configured
-        #self.log("predict_loss", test_loss, prog_bar=True, sync_dist=True)
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)

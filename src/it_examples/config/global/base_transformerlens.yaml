@@ -1,0 +1,15 @@
+itdm_cfg:
+  class_path: interpretune.config_classes.datamodule.ITDataModuleConfig
+  init_args:
+    #model_name_or_path: gpt2
+    #model_name_or_path: gpt2-large
+    #task_name: rte
+    #train_batch_size: 32
+    #eval_batch_size: 32
+    dataset_path: /home/speediedan/.cache/huggingface/datasets/rte_tl
+    enable_datasets_cache: false
+    # for tlens we must set signature columns because the inspected model forward signature (HF) prior to setup will
+    # differ from HookedTransformer's forward
+    signature_columns: ['input', 'attention_mask', 'labels']
+    tokenizer_kwargs:
+      model_input_names: ['input', 'attention_mask']
