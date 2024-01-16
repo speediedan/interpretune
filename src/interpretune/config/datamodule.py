@@ -3,7 +3,7 @@ from typing import Optional, Any, Dict, Tuple, List
 import logging
 from dataclasses import dataclass, field
 
-from interpretune.config_classes.shared import ITSerializableCfg, ITSharedConfig
+from interpretune.config.shared import ITSerializableCfg, ITSharedConfig
 
 
 log = logging.getLogger(__name__)

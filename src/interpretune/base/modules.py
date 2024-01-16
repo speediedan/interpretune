@@ -9,18 +9,16 @@ from functools import reduce
 import torch
 from transformers import AutoConfig, AutoModelForSequenceClassification, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
-from transformer_lens import HookedTransformer
 
-from interpretune.config_classes.module import ITConfig
+from interpretune.config.module import ITConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE, _LIGHTNING_AVAILABLE
-from interpretune.base.hooks import BaseITHooks, BaseITLensModuleHooks
-from interpretune.mixins.core import (OptimizerSchedulerInitMixin, CoreHelperAttributeMixin, ProfilerHooksMixin,
-                                      TLensAttributeMixin, CORE_TO_LIGHTNING_ATTRS_MAP)
-from interpretune.mixins.zero_shot_classification import ZeroShotStepMixin, TLZeroShotStepMixin
+from interpretune.base.hooks import BaseITHooks
+from interpretune.base.mixins.core import (OptimizerSchedulerInitMixin, CoreHelperAttributeMixin, ProfilerHooksMixin,
+                                           CORE_TO_LIGHTNING_ATTRS_MAP)
+from interpretune.base.mixins.zero_shot_classification import ZeroShotStepMixin
 from interpretune.analysis.debug_generation import DebugGeneration
 from interpretune.analysis.memprofiler import MemProfiler
-from interpretune.utils.patched_tlens_generate import generate as patched_generate
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info, rank_zero_debug
 
 
@@ -209,7 +207,6 @@ class BaseITModule(ABC, BaseITHooks, OptimizerSchedulerInitMixin, ProfilerHooksM
         vocab_size = getattr(model.base_model, 'vocab_size', None) or model.config.vocab_size
         max_override = max(self.it_cfg.tokenizer_id_overrides.values())
         if max_override >= vocab_size:
-            #model.base_model.resize_token_embeddings(vocab_size + len(self.it_cfg.tokenizer_id_overrides))
             model.base_model.resize_token_embeddings(max_override)
         return model
 
@@ -286,58 +283,6 @@ class ITModule(CoreHelperAttributeMixin, BaseITModule):
     ...
 
 
-class BaseITLensModule(BaseITLensModuleHooks, TLZeroShotStepMixin, BaseITModule):
-
-    def _configured_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
-        -> torch.nn.Module:
-        # usually makes sense to init the HookedTransfomer (empty) and pretrained HF model weights on cpu
-        # versus moving them both to GPU (may make sense to explore meta device usage for model definition
-        # in the future, only materializing parameter by parameter during loading from pretrained weights
-        # to eliminate need for two copies in memory)
-        model = self.it_cfg.model_class.from_pretrained(**self.it_cfg.from_pretrained_cfg, config=cust_config,
-                                                        token=access_token)
-        # perhaps explore initializing on the meta device and then materializing as needed layer by layer during
-        # loading/processing into hookedtransformer
-        # with torch.device("meta"):
-        #     model = self.it_cfg.model_class(config=cust_config)  # token=access_token)
-        return model
-
-    def _convert_hf_to_tl(self) -> HookedTransformer:
-        HookedTransformer.generate = patched_generate
-        self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=self.datamodule.tokenizer,
-                                                       **self.it_cfg.tl_from_pretrained_cfg.__dict__)
-
-    def _capture_hyperparameters(self) -> None:
-        self.it_cfg.lora_cfg = None
-        self.it_cfg.bitsandbytesconfig = None
-        # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
-        self.init_hparams = {
-            "tl_from_pretrained_cfg": self._make_config_serializable(self.it_cfg.tl_from_pretrained_cfg,
-                                                                        ['device']),
-            }
-        super()._capture_hyperparameters()
-
-
-    # def _maybe_resize_token_embeddings(self, model: torch.nn.Module) -> None:
-    #     # embedding resizing not currently supported by ITLensModule
-    #     return model
-
-    def _set_input_require_grads(self) -> None:
-        # not currently supported by ITLensModule
-        rank_zero_warn("Setting input require grads not currently supported by ITLensModule.")
-
-    def _configure_gradient_checkpointing(self) -> None:
-        # gradient checkpointing not currently supported by ITLensModule
-        pass
-
-    def _configure_peft(self) -> None:
-        # peft not currently supported by ITLensModule
-        pass
-
-
-class ITLensModule(TLensAttributeMixin, CoreHelperAttributeMixin, BaseITLensModule):
-    ...
-
 if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import LightningModule
 
@@ -349,11 +294,8 @@ if _LIGHTNING_AVAILABLE:
         <https://huggingface.co/datasets/super_glue#data-instances>`_.
         """
         def on_train_start(self) -> None:
-            self.model.train()  # ensure model is in training mode
+            # ensure model is in training mode (e.g. needed for some edge cases w/ skipped sanity checking)
+            self.model.train()
             return super().on_train_start()
-
-    class ITLensLightningModule(BaseITLensModule, ITLightningModule):
-        ...
 else:
     ITLightningModule = object
-    ITLensLightningModule = object

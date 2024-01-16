@@ -6,7 +6,7 @@ from datasets import load_dataset, Dataset
 from tqdm import tqdm
 import numpy as np
 
-from interpretune.config_classes.shared import ITSerializableCfg
+from interpretune.config.shared import ITSerializableCfg
 
 
 @dataclass(kw_only=True)

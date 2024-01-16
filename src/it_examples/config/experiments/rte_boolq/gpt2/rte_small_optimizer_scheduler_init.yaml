@@ -1,7 +1,7 @@
 data.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqDataModule
 model.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqITModule
 itdm_cfg:
-  class_path: interpretune.config_classes.datamodule.ITDataModuleConfig
+  class_path: interpretune.config.datamodule.ITDataModuleConfig
   init_args:
     model_name_or_path: gpt2
     #model_name_or_path: gpt2-large
@@ -19,7 +19,7 @@ itdm_cfg:
           context: '<|PREMISE|>:'
           question: '<|HYPOTHESIS|>:'
 it_cfg:
-  class_path: interpretune.config_classes.module.ITConfig
+  class_path: interpretune.config.module.ITConfig
   init_args:
     # from_pretrained_cfg:
     #   torch_dtype: float32
@@ -45,7 +45,7 @@ it_cfg:
     #   frequency: 1
     #   name: CosineAnnealingWithWarmRestartsLR
     # tl_from_pretrained_cfg:
-    #   class_path: interpretune.config_classes.module.ITLensFromPretrainedConfig
+    #   class_path: interpretune.plugins.transformer_lens.ITLensFromPretrainedConfig
     #   init_args:
     #     enabled: true
     #     model_name: gpt2-small

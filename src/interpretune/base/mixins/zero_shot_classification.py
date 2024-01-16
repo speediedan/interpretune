@@ -1,10 +1,10 @@
-from typing import Optional, Literal
+from typing import Optional
 from dataclasses import dataclass, field
 
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.config_classes.shared import ITSerializableCfg
+from interpretune.config.shared import ITSerializableCfg
 from interpretune.utils.types import  STEP_OUTPUT
 
 
@@ -25,18 +25,6 @@ class HFGenerationConfig(BaseGenerationConfig):
     length_penalty: float = 1.0
     output_scores: bool = True
     return_dict_in_generate: bool = True
-
-@dataclass(kw_only=True)
-class TLensGenerationConfig(BaseGenerationConfig):
-    stop_at_eos: bool = True
-    eos_token_id: Optional[int] = None
-    freq_penalty: float = 0.0
-    use_past_kv_cache: bool = True
-    prepend_bos: Optional[bool] = None
-    padding_side: Optional[Literal["left", "right"]] = None
-    return_type: Optional[str] = "input"
-    output_logits: Optional[bool] = True  # TODO: consider setting this back to None after testing
-    verbose: bool = True
 
 @dataclass(kw_only=True)
 class ZeroShotClassificationConfig(ITSerializableCfg):
@@ -77,44 +65,3 @@ class ZeroShotStepMixin:
         metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
                                metric_dict.items()))
         self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
-
-# TODO: refactor these mixins to share most zeroshotstep functionality among core/tl (specifying input column as param)
-class TLZeroShotStepMixin:
-    # TODO: make memprofilable by default directly? (already usually wrapped by test_step)
-    def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
-        Optional[STEP_OUTPUT]:
-        labels = batch.pop("labels")
-        outputs = self.model.generate(input=batch['input'],
-                                      #pad_token_id=self.datamodule.tokenizer.pad_token_id,
-                                      **self.it_cfg.zero_shot_cfg.lm_generation_cfg.__dict__)
-        #stacked_scores = torch.stack([out for out in outputs.logits], dim=0).cpu()
-        stacked_scores = outputs.logits.cpu()
-        assert self.it_cfg.zero_shot_cfg.entailment_mapping_indices is not None
-        answer_logits = torch.index_select(stacked_scores, -1, self.it_cfg.zero_shot_cfg.entailment_mapping_indices)
-        per_example_answers, _ = torch.max(answer_logits, dim=1)
-        preds = torch.argmax(per_example_answers, axis=1)  # type: ignore[call-arg]
-        #labels = batch["labels"]
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
-
-    # TODO: make memprofilable by default directly? (already usually wrapped by test_step)
-    def default_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        # run predict on val dataset for now
-        batch.pop("labels")
-        outputs = self(**batch)
-        # TODO: switch to zero shot instead of this default sequenceclassification head approach
-        logits = outputs[:2]
-        if self.it_cfg.num_labels >= 1:
-            torch.argmax(logits, axis=1)  # type: ignore[call-arg]
-        elif self.it_cfg.num_labels == 1:
-            logits.squeeze()
-        #labels = batch["labels"]
-        # TODO: move TL examples to use zeroshot instead of default test step
-        # TODO: condition this on a metric being configured
-        #self.log("predict_loss", test_loss, prog_bar=True, sync_dist=True)
-        # metric_dict = self.metric.compute(predictions=preds, references=labels)
-        # metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-        #                        metric_dict.items()))
-        # self.log_dict(metric_dict, prog_bar=True, sync_dist=True)

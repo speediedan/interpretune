@@ -7,7 +7,8 @@ from transformers.tokenization_utils_base import BatchEncoding
 from transformer_lens import HookedTransformer
 
 from interpretune.base.datamodules import ITLightningDataModule
-from interpretune.base.modules import ITLightningModule, ITLensLightningModule
+from interpretune.base.modules import ITLightningModule
+from interpretune.plugins.transformer_lens import ITLensLightningModule
 from it_examples.experiments.rte_boolq.core import (GPT2RTEBoolqDataModule, Llama2RTEBoolqDataModule,
                                                     RTEBoolqModuleMixin)
 

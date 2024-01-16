@@ -23,6 +23,31 @@ from pkg_resources import get_distribution
 
 EXTENDED_VER_PAT = re.compile(r"([0-9]+\.){2}[0-9]+")
 
+# runif components
+cuda_mark = {'min_cuda_gpus': 1}
+bf16_cuda_mark = {'bf16_cuda': True}
+profiling_mark = {'profiling': True}
+lightning_mark = {"lightning": True}
+bitsandbytes_mark = {"bitsandbytes": True}
+skip_win_mark = {'skip_windows': True}
+slow_mark = {'slow': True}
+
+# RunIf aliases
+RUNIF_ALIASES = {
+    "lightning": lightning_mark,
+    "bitsandbytes": bitsandbytes_mark,
+    "prof": profiling_mark,
+    "prof_l": {**profiling_mark, **lightning_mark},
+    "cuda": cuda_mark,
+    "cuda_l": {**cuda_mark, **lightning_mark},
+    "cuda_prof": {**cuda_mark, **profiling_mark},
+    "cuda_prof_l": {**cuda_mark, **profiling_mark, **lightning_mark},
+    "bf16_cuda": bf16_cuda_mark,
+    "bf16_cuda_l": {**bf16_cuda_mark, **lightning_mark},
+    "bf16_cuda_prof": {**bf16_cuda_mark, **profiling_mark},
+    "bf16_cuda_prof_l": {**bf16_cuda_mark, **profiling_mark, **lightning_mark},
+    "skip_win_slow": {**skip_win_mark, **slow_mark},
+}
 
 class RunIf:
     """RunIf wrapper for simple marking specific cases, fully compatible with pytest.mark::

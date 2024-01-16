@@ -17,10 +17,10 @@ import pytest
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.cli.core_cli import compose_config, IT_CONFIG_BASE, IT_CONFIG_GLOBAL
 from it_examples.experiments.rte_boolq.core import GPT2RTEBoolqITLensModule
-from tests.helpers.core import pytest_param_factory, TestCfg
-from tests.helpers.utils import dummy_step
-from tests.helpers.runif import RunIf
-from tests.helpers.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, unexpected_warns
+from tests.configuration import pytest_param_factory, TestCfg
+from tests.orchestration import dummy_step
+from tests.utils.runif import RunIf
+from tests.utils.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, unexpected_warns
 
 if _LIGHTNING_AVAILABLE:
     from interpretune.base.modules import ITLightningModule

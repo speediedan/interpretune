@@ -6,7 +6,6 @@ from contextlib import contextmanager
 from functools import wraps
 
 import torch
-from transformer_lens import HookedTransformerConfig
 
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.exceptions import MisconfigurationException
@@ -87,21 +86,6 @@ class CoreHelperAttributeMixin:
             device = None
         return device
 
-
-class TLensAttributeMixin:
-    @property
-    def tl_cfg(self) -> Optional[HookedTransformerConfig]:
-        return self._core_or_lightning(c2l_map_key="_tl_cfg")
-
-    @property
-    def device(self) -> Optional[torch.device]:
-        try:
-            device = getattr(self, "_device", None) or getattr(self.tl_cfg, "device", None) or \
-                reduce(getattr, "model.device".split("."), self)
-        except AttributeError as ae:
-            rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
-            device = None
-        return device
 
 # adapted from pytorch/core/optimizer.py initialization methods
 class OptimizerSchedulerInitMixin:

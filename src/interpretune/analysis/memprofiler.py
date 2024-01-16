@@ -10,7 +10,7 @@ import torch
 from psutil import Process
 
 from interpretune.utils.logging import rank_zero_warn, _get_rank, rank_zero_only, rank_zero_info
-from interpretune.config_classes.shared import ITSerializableCfg, CoreSteps
+from interpretune.config.shared import ITSerializableCfg, CoreSteps
 from interpretune.utils.import_utils import resolve_funcs
 
 

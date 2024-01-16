@@ -1,12 +1,11 @@
-from typing import Any, Optional, List
-
+from typing import Any, Optional
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.import_utils import instantiate_class
-from interpretune.config_classes.module import ITConfig
+from interpretune.config.module import ITConfig
 from interpretune.base.datamodules import ITDataModule
-from interpretune.mixins.core import ProfilerHooksMixin
+from interpretune.base.mixins.core import ProfilerHooksMixin
 from interpretune.utils.logging import rank_zero_info
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
 
@@ -117,23 +116,3 @@ class BaseITHooks:
         # TODO: condition this on a metric being configured
         metric_dict = self.metric.compute(predictions=preds, references=labels)
         rank_zero_info(metric_dict)
-
-
-class BaseITLensModuleHooks:
-    """" LightningModule hooks implemented by the BaseITLensModule (used by both core and Lightning TransformerLens
-    modules)"""
-
-    # proper initialization of these variables should be done in the child class
-    it_cfg: List[ITConfig]
-
-    def setup(self, *args, **kwargs) -> None:
-        super().setup(*args, **kwargs)
-        if self.it_cfg.tl_from_pretrained_cfg.enabled:
-            self._convert_hf_to_tl()
-
-    @ProfilerHooksMixin.memprofilable
-    def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        if self.it_cfg.zero_shot_cfg.enabled:
-            self.zero_shot_test_step(batch, batch_idx)
-        else:
-            self.default_test_step(batch, batch_idx)

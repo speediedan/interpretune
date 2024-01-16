@@ -11,12 +11,13 @@ from transformers.tokenization_utils_base import BatchEncoding
 from transformer_lens import HookedTransformer
 
 from interpretune.utils.types import STEP_OUTPUT
-from interpretune.base.modules import ITModule, ITLensModule
+from interpretune.base.modules import ITModule
+from interpretune.plugins.transformer_lens import ITLensModule
 from interpretune.utils.logging import rank_zero_warn
-from interpretune.config_classes.module import ITConfig
-from interpretune.mixins.zero_shot_classification import (ZeroShotClassificationConfig, BaseGenerationConfig,
+from interpretune.config.module import ITConfig
+from interpretune.base.mixins.zero_shot_classification import (ZeroShotClassificationConfig, BaseGenerationConfig,
                                                           HFGenerationConfig)
-from interpretune.config_classes.datamodule import PromptConfig
+from interpretune.config.datamodule import PromptConfig
 from it_examples.data.rte_bool import RTEBoolqDataModule, DEFAULT_TASK, TASK_NUM_LABELS, INVALID_TASK_MSG
 
 @dataclass(kw_only=True)

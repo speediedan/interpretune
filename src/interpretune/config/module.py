@@ -1,12 +1,12 @@
 import os
 import warnings
-from typing import Any, Dict, Optional, Literal
+from typing import Any, Dict, Optional
 from dataclasses import dataclass, field
 
 import torch
 
-from interpretune.config_classes.shared import ITSerializableCfg, ITSharedConfig
-from interpretune.mixins.zero_shot_classification import ZeroShotClassificationConfig
+from interpretune.config.shared import ITSerializableCfg, ITSharedConfig
+from interpretune.base.mixins.zero_shot_classification import ZeroShotClassificationConfig
 from interpretune.analysis.debug_generation import DebugLMConfig
 from interpretune.analysis.memprofiler import MemProfilerCfg
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
@@ -25,26 +25,6 @@ for warnf in [".*For Lightning compatibility, this noop .*",]:
 # configuration noise that would be incurred by organizing the configuration
 # space using a single flat configuration dataclass.
 ################################################################################
-
-
-@dataclass(kw_only=True)
-class ITLensFromPretrainedConfig(ITSerializableCfg):
-    enabled: bool = False
-    model_name: str = "gpt2-small"
-    fold_ln: Optional[bool] = True
-    center_writing_weights: Optional[bool] = True
-    center_unembed: Optional[bool] = True
-    refactor_factored_attn_matrices: Optional[bool] = False
-    checkpoint_index: Optional[int] = None
-    checkpoint_value: Optional[int] = None
-    # only supporting str for device for now due to omegaconf container dumping limitations
-    device: Optional[str] = None
-    n_devices: Optional[int] = 1
-    move_to_device: Optional[bool] = True
-    fold_value_biases: Optional[bool] = True
-    default_prepend_bos: Optional[bool] = True
-    default_padding_side: Optional[Literal["left", "right"]] = "right"
-    dtype: Optional[str] = "float32"
 
 
 @dataclass(kw_only=True)
@@ -92,8 +72,6 @@ class ITConfig(ITSharedConfig, ModelConfig, OptimizerSchedulerConfig, MemoryEffi
     memprofiler_cfg: MemProfilerCfg = field(default_factory=lambda: MemProfilerCfg())
     debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
     zero_shot_cfg: ZeroShotClassificationConfig = field(default_factory=lambda: ZeroShotClassificationConfig())
-    # TODO: support only creation of HookedTransformer with pretrained method for now, later support direct creation
-    tl_from_pretrained_cfg: ITLensFromPretrainedConfig = field(default_factory=lambda: ITLensFromPretrainedConfig())
 
     def _pop_dtype_msg(self) -> None:
         rank_zero_warn(f"The provided `torch_dtype` {self.from_pretrained_cfg.pop('torch_dtype')} could not be "

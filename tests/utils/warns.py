@@ -5,7 +5,7 @@ from warnings import WarningMessage
 from packaging.version import Version
 from pkg_resources import get_distribution
 
-from tests.helpers.runif import EXTENDED_VER_PAT
+from tests.utils.runif import EXTENDED_VER_PAT
 
 HF_EXPECTED_WARNS = [
     "Please use torch.utils._pytree.register_pytree_node instead",  # temp  allow deprecated call from hf

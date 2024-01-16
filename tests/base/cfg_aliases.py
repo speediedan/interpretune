@@ -2,34 +2,24 @@ from typing import NamedTuple
 from collections import ChainMap
 
 from interpretune.analysis.memprofiler import MemProfilerCfg, MemProfilerSchedule
-from it_examples.experiments.rte_boolq.core import RTEBoolqPromptConfig, RTEBoolqZeroShotClassificationConfig
-from interpretune.mixins.zero_shot_classification import TLensGenerationConfig
+from it_examples.experiments.rte_boolq.core import RTEBoolqPromptConfig
+
 
 default_test_bs = 2
 default_prof_bs = 1
 tokenizer_base_kwargs = {"add_bos_token": True, "local_files_only": False, "padding_side": "right"}
 core_model_input_names = {"model_input_names": ['input_ids', 'attention_mask']}
-tl_model_input_names = {"model_input_names": ['input', 'attention_mask']}
 
 # TODO: refactor to dict-based configs to decomposed yaml strings, files or init dataclasses earlier? may make sense
 test_core_tokenizer_kwargs = {"tokenizer_kwargs": {**core_model_input_names, **tokenizer_base_kwargs}}
-test_tl_tokenizer_kwargs = {"tokenizer_kwargs": {**tl_model_input_names, **tokenizer_base_kwargs}}
 
 base_shared_config =  {"model_name_or_path": "gpt2", "tokenizer_id_overrides": {"pad_token_id": 50256}}
 
 test_core_shared_config = {"task_name": "pytest_rte", **test_core_tokenizer_kwargs, **base_shared_config}
-test_tl_shared_config = {"task_name": "pytest_rte_tl", **test_tl_tokenizer_kwargs, **base_shared_config}
 
 test_core_signature_columns= ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
                               'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
 
-test_tl_signature_columns= ['input', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds', 'labels',
-                         'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
-
-test_tl_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), "signature_columns": test_tl_signature_columns,
-                          "enable_datasets_cache": False, "prepare_data_map_cfg": {"batched": True},
-                          "text_fields": ("premise", "hypothesis"),  "train_batch_size": default_test_bs,
-                          "eval_batch_size": default_test_bs}
 
 test_core_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), "signature_columns": test_core_signature_columns,
                           "enable_datasets_cache": True, "prepare_data_map_cfg": {"batched": True},
@@ -50,10 +40,6 @@ base_it_module_kwargs = {"use_model_cache": False, "cust_fwd_kwargs": {}, "from_
 test_core_it_module_kwargs = {"auto_model_cfg": {"model_head": "transformers.GPT2ForSequenceClassification"},
                               **base_it_module_kwargs}
 
-base_zero_shot_cfg = RTEBoolqZeroShotClassificationConfig(enabled=True, lm_generation_cfg=TLensGenerationConfig())
-test_tl_it_module_kwargs = {"tl_from_pretrained_cfg": {"enabled": True}, "zero_shot_cfg": base_zero_shot_cfg,
-                            "auto_model_cfg": {"model_head": "transformers.GPT2LMHeadModel"}, **base_it_module_kwargs}
-
 enable_memprofiler_kwargs = {"enabled": True, "cuda_allocator_history": True}
 bs_override = {'train_batch_size': default_prof_bs, 'eval_batch_size': default_prof_bs}
 memprofiler_cfg = MemProfilerCfg(**enable_memprofiler_kwargs)
@@ -68,9 +54,6 @@ nowarm_maxstep_hk_memprof_cfg = MemProfilerCfg(retain_hooks_for_funcs=["training
 test_core_it_module_base = ChainMap(test_core_shared_config, test_core_it_module_kwargs)
 test_core_it_module_optim = ChainMap(test_core_it_module_base, test_optimizer_scheduler_init)
 
-test_tl_it_module_base = ChainMap(test_tl_shared_config, test_tl_it_module_kwargs)
-test_tl_it_module_optim = ChainMap(test_tl_it_module_base, test_optimizer_scheduler_init)
-
 ########################################################################################################################
 # NOTE [Test Dataset Fingerprint]
 # A simple fingerprint of the (deterministic) test dataset used to generate the current incarnation of expected results.
@@ -80,7 +63,7 @@ test_tl_it_module_optim = ChainMap(test_tl_it_module_base, test_optimizer_schedu
 #      from expectation, one may still need to verify shuffling of the fingerprinted dataset etc. has not been
 #      introduced and compare the examples actually passed to the model in a given test/step to the ids below before
 #      subsequently assessing other sources of indeterminism that could be the source of the loss change.
-#   - One should see `tests.helpers.modules.TestITDataModule.sample_dataset_state()` for the indices used to generate
+#   - One should see `tests.tools.core.modules.TestITDataModule.sample_dataset_state()` for the indices used to generate
 #      this fingerprint
 #   - The fingerprinted dataset below is not shuffled or sorted with the current dataloader configurations
 #   - All current expected loss results were generated with [train|eval]_batch_size = 2
@@ -99,7 +82,6 @@ expected_first_fwd_ids = {"train": (deterministic_token_ids[:default_test_bs],),
                           "test_prof": (deterministic_token_ids[sample_rows:(sample_rows+default_prof_bs)],)}
 shared_dataset_state = ('GPT2TokenizerFast', deterministic_token_ids)
 test_dataset_state_core = ('pytest_rte',) + shared_dataset_state
-test_dataset_state_tl = ('pytest_rte_tl',) + shared_dataset_state
 # TODO: add current dataloader kwargs to the fingerprint above? May be an excessively rigid check. Consider associating
 # a fingerprint of salient config with each specific expected scalar test result in the future. At present, that
 # approach seems like overkill given the current codebase.
@@ -121,31 +103,6 @@ class MemProfResult(NamedTuple):
                   "cpu": f'{rank}.training_step.{epoch}.{default_step}.end'}
 
 
-# runif components
-cuda_mark = {'min_cuda_gpus': 1}
-bf16_cuda_mark = {'bf16_cuda': True}
-profiling_mark = {'profiling': True}
-lightning_mark = {"lightning": True}
-bitsandbytes_mark = {"bitsandbytes": True}
-skip_win_mark = {'skip_windows': True}
-slow_mark = {'slow': True}
-
-# RunIf aliases
-RUNIF_ALIASES = {
-    "lightning": lightning_mark,
-    "bitsandbytes": bitsandbytes_mark,
-    "prof": profiling_mark,
-    "prof_l": {**profiling_mark, **lightning_mark},
-    "cuda": cuda_mark,
-    "cuda_l": {**cuda_mark, **lightning_mark},
-    "cuda_prof": {**cuda_mark, **profiling_mark},
-    "cuda_prof_l": {**cuda_mark, **profiling_mark, **lightning_mark},
-    "bf16_cuda": bf16_cuda_mark,
-    "bf16_cuda_l": {**bf16_cuda_mark, **lightning_mark},
-    "bf16_cuda_prof": {**bf16_cuda_mark, **profiling_mark},
-    "bf16_cuda_prof_l": {**bf16_cuda_mark, **profiling_mark, **lightning_mark},
-    "skip_win_slow": {**skip_win_mark, **slow_mark},
-}
 
 # composable cfg aliases
 w_lit = {"lightning": True}
@@ -162,5 +119,3 @@ test_bs1_mem_nosavedt = {**test_bs1_mem, "memprofiler_cfg": no_savedt_memprofile
 bs1_warm_mem = {**bs1_memprof_steps,  "memprofiler_cfg": warm_maxstep_memprof_cfg}
 bs1_nowarm_mem = {**bs1_memprof_steps, "memprofiler_cfg": nowarm_maxstep_memprof_cfg}
 bs1_nowarm_hk_mem = {**bs1_memprof_steps, "memprofiler_cfg": nowarm_maxstep_hk_memprof_cfg}
-
-w_tl = {"transformerlens": True}
