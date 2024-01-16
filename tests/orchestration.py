@@ -19,7 +19,7 @@ from transformer_lens.utilities.devices import get_device_for_block_index
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-from interpretune.config.shared import CorePhases
+from interpretune.base.config.shared import CorePhases
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import ITModule
 from interpretune.base.call import _call_itmodule_hook, it_init, it_session_end

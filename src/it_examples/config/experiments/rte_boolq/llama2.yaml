@@ -1,5 +1,5 @@
 itdm_cfg:
-  class_path: interpretune.config.datamodule.ITDataModuleConfig
+  class_path: interpretune.base.config.datamodule.ITDataModuleConfig
   init_args:
     model_name_or_path: meta-llama/Llama-2-7b-chat-hf
     task_name: rte
@@ -22,7 +22,7 @@ itdm_cfg:
     # signature_columns: ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds', 'labels',
     #                     'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
 it_cfg:
-  class_path: interpretune.config.module.ITConfig
+  class_path: interpretune.base.config.module.ITConfig
   init_args:
     lora_cfg:
       r: 8

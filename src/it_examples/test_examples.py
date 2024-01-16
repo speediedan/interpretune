@@ -15,12 +15,13 @@ from typing import Iterable, Dict, Tuple
 import pytest
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-from interpretune.cli.core_cli import compose_config, IT_CONFIG_BASE, IT_CONFIG_GLOBAL
+from interpretune.base.cli.core_cli import compose_config, IT_CONFIG_BASE, IT_CONFIG_GLOBAL
 from it_examples.experiments.rte_boolq.core import GPT2RTEBoolqITLensModule
 from tests.configuration import pytest_param_factory, TestCfg
 from tests.orchestration import dummy_step
 from tests.utils.runif import RunIf
 from tests.utils.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, unexpected_warns
+from tests.conftest import make_deterministic  # noqa: F401
 
 if _LIGHTNING_AVAILABLE:
     from interpretune.base.modules import ITLightningModule
@@ -78,10 +79,10 @@ EXPECTED_RESULTS_EXAMPLES = {cfg.alias: cfg.expected for cfg in TEST_CONFIGS_EXA
 
 def gen_cli_args(l_cli, subcommand, use_compose_config, config_files):
     if not l_cli:
-        from interpretune.cli.core_cli import cli_main
+        from interpretune.base.cli.core_cli import cli_main
         cli_args = [RUN_FN]
     else:
-        from interpretune.cli.lightning_cli import cli_main
+        from interpretune.base.cli.lightning_cli import cli_main
         cli_args = [RUN_FN, subcommand] if subcommand else [RUN_FN]
     if use_compose_config:
         cli_args.extend(compose_config(config_files))

@@ -1,5 +1,5 @@
 itdm_cfg:
-  class_path: interpretune.config.datamodule.ITDataModuleConfig
+  class_path: interpretune.base.config.datamodule.ITDataModuleConfig
   init_args:
     dataset_path: /home/speediedan/.cache/huggingface/datasets/rte_tl
     enable_datasets_cache: false

@@ -10,8 +10,8 @@ from torch.testing import assert_close
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-from interpretune.config.datamodule import ITDataModuleConfig
-from interpretune.config.module import ITConfig
+from interpretune.base.config.datamodule import ITDataModuleConfig
+from interpretune.base.config.module import ITConfig
 from interpretune.base.modules import ITModule, ITLightningModule
 from interpretune.utils.logging import rank_zero_only, get_filesystem
 from it_examples.experiments.rte_boolq.core import RTEBoolqModuleMixin, GPT2RTEBoolqDataModule

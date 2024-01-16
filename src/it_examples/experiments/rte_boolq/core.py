@@ -14,10 +14,10 @@ from interpretune.utils.types import STEP_OUTPUT
 from interpretune.base.modules import ITModule
 from interpretune.plugins.transformer_lens import ITLensModule
 from interpretune.utils.logging import rank_zero_warn
-from interpretune.config.module import ITConfig
+from interpretune.base.config.module import ITConfig
 from interpretune.base.mixins.zero_shot_classification import (ZeroShotClassificationConfig, BaseGenerationConfig,
                                                           HFGenerationConfig)
-from interpretune.config.datamodule import PromptConfig
+from interpretune.base.config.datamodule import PromptConfig
 from it_examples.data.rte_bool import RTEBoolqDataModule, DEFAULT_TASK, TASK_NUM_LABELS, INVALID_TASK_MSG
 
 @dataclass(kw_only=True)

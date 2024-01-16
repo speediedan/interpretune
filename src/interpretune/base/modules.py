@@ -10,7 +10,7 @@ import torch
 from transformers import AutoConfig, AutoModelForSequenceClassification, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
-from interpretune.config.module import ITConfig
+from interpretune.base.config.module import ITConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE, _LIGHTNING_AVAILABLE
 from interpretune.base.hooks import BaseITHooks

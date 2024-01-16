@@ -21,9 +21,9 @@ import pytest
 import torch
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-from interpretune.config.module import ITConfig
+from interpretune.base.config.module import ITConfig
 from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig, ITLensConfig
-from interpretune.config.datamodule import ITDataModuleConfig
+from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import BaseITModule
 from base.cfg_aliases import (test_core_datamodule_kwargs, test_core_it_module_base, test_core_it_module_optim,

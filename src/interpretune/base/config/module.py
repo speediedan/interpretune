@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import torch
 
-from interpretune.config.shared import ITSerializableCfg, ITSharedConfig
+from interpretune.base.config.shared import ITSerializableCfg, ITSharedConfig
 from interpretune.base.mixins.zero_shot_classification import ZeroShotClassificationConfig
 from interpretune.analysis.debug_generation import DebugLMConfig
 from interpretune.analysis.memprofiler import MemProfilerCfg

@@ -7,13 +7,13 @@ from transformers import PretrainedConfig
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.config.module import ITConfig
+from interpretune.base.config.module import ITConfig
 from interpretune.base.modules import BaseITModule, ITLightningModule
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.base.mixins.core import CoreHelperAttributeMixin, ProfilerHooksMixin
 from interpretune.base.mixins.zero_shot_classification import BaseGenerationConfig
 from interpretune.utils.logging import rank_zero_warn
-from interpretune.config.shared import ITSerializableCfg
+from interpretune.base.config.shared import ITSerializableCfg
 from interpretune.utils.types import  STEP_OUTPUT
 from interpretune.utils.patched_tlens_generate import generate as patched_generate
 

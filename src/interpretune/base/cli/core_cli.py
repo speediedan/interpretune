@@ -24,9 +24,9 @@ import torch
 from transformers import logging as transformers_logging
 
 from interpretune.utils.types import ArgsType
-from interpretune.config.shared import ITSharedConfig
-from interpretune.config.module import ITConfig
-from interpretune.config.datamodule import ITDataModuleConfig
+from interpretune.base.config.shared import ITSharedConfig
+from interpretune.base.config.module import ITConfig
+from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import ITModule, BaseITModule
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
@@ -43,7 +43,7 @@ from jsonargparse import (
 max_seed_value = np.iinfo(np.uint32).max
 min_seed_value = np.iinfo(np.uint32).min
 
-IT_BASE = os.environ.get("IT_BASE", Path(__file__).parent.parent.parent / "it_examples")
+IT_BASE = os.environ.get("IT_BASE", Path(__file__).parent.parent.parent.parent / "it_examples")
 IT_CONFIG_BASE = os.environ.get("IT_BASE", IT_BASE / "config")
 IT_CONFIG_GLOBAL = os.environ.get("IT_CONFIG_GLOBAL", IT_CONFIG_BASE / "global")
 IT_CORE_SHARED = os.environ.get("IT_CORE_SHARED", IT_CONFIG_GLOBAL / "core" )
@@ -121,9 +121,9 @@ def bootstrap_cli() -> Callable:
     else:
         lightning_cli = False
     if lightning_cli:
-        from interpretune.cli.lightning_cli import cli_main
+        from interpretune.base.cli.lightning_cli import cli_main
     else:
-        from interpretune.cli.core_cli import cli_main  # type: ignore[no-redef]
+        from interpretune.base.cli.core_cli import cli_main  # type: ignore[no-redef]
     return cli_main()
 
 
@@ -141,7 +141,7 @@ class ITCLI:
         instantiate_only: bool = False,
     ) -> None:
         """fill in
-            seed_everything_default: Number for the :func:`~interpretune.clieverything`
+            seed_everything_default: Number for the :func:`~interpretune.base.clieverything`
                 seed value. Set to True to automatically choose a seed value.
         Args:
             model_class: model class

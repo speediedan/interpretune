@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.config.shared import ITSerializableCfg
+from interpretune.base.config.shared import ITSerializableCfg
 from interpretune.utils.types import  STEP_OUTPUT
 
 

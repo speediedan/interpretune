@@ -16,7 +16,7 @@
 import sys
 from pathlib import Path
 
-from interpretune.cli.core_cli import env_setup
+from interpretune.base.cli.core_cli import env_setup
 
 # ensure test sub-packages are in the path
 tests_dir = Path(__file__).parent.parent
