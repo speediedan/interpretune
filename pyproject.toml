@@ -112,6 +112,7 @@ select = [
 ]
 ignore = [
     "E731", # Do not assign a lambda expression, use a def
+    "F722", # https://github.com/google/jaxtyping/blob/f18de2ce28e9e01beb1b8d4425ecb23e953075aa/docs/faq.md?plain=1#L21
 ]
 # Exclude a variety of commonly ignored directories.
 exclude = [
@@ -186,7 +187,7 @@ norecursedirs = [
 #addopts = "--strict-markers --doctest-modules --color=yes --disable-pytest-warnings --ignore-glob='src/fts_examples/*/ipynb_src/*.py' --ignore='.actions/assistant.py'"
 addopts = "--strict-markers --doctest-modules --color=yes --disable-pytest-warnings --ignore-glob='tests/*_parity/*.py'"
 junit_duration_report = "call"
-tmp_path_retention_count = 20  # allow retention of more successful runs during profiling result generation (default 3)
+tmp_path_retention_count = 30  # allow retention of more successful runs during profiling result generation (default 3)
 
 
 [tool.jupytext]
