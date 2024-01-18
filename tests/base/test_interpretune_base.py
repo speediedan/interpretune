@@ -16,13 +16,15 @@ from functools import partial
 
 import pytest
 
-from tests.utils.warns import unexpected_warns, CORE_CONTEXT_WARNS, LIGHTING_EXPECTED_WARNS
+from tests.utils.warns import unexpected_warns, CORE_CONTEXT_WARNS, LIGHTING_CONTEXT_WARNS
 from tests.configuration import (TestCfg, TestResult, ParityCfg, config_modules, def_results, collect_results,
                                  pytest_param_factory)
 from tests.orchestration import run_it, run_lightning
 from tests.base.cfg_aliases import (MemProfResult, w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l,
                                     test_bs1_mem_nosavedt, bs1_nowarm_mem, bs1_nowarm_hk_mem, bs1_warm_mem)
 
+########################################################################################################################
+# NOTE: [Parity Testing Approach]
 # we use a single set of results but separate tests for core/lightning parity tests since Lightning is not a required
 # dependency for Interpretune and we want to mark at the test-level for greater clarity and flexibility (we want to
 # signal clearly when either diverges from the expected benchmark so aren't testing relative values only)
@@ -32,44 +34,56 @@ from tests.base.cfg_aliases import (MemProfResult, w_lit, cuda, cuda_bf16, bf16,
 # allows us to flexibly define test ids, configurations, marks and expected outputs together
 # we always check for basic exact match on device type and precision as well
 # note our result mapping function uses these core results for all supported parity test suffixes (e.g. '_l')
+########################################################################################################################
 
-parity_results = {
-    "train_cpu_32": TestResult(exact_results=def_results("cpu", 32, ds_cfg="train"),
-                               close_results=((0, 'loss', 8.9896163),)),
-    "train_cpu_32_debug": TestResult(exact_results=def_results("cpu", 32, ds_cfg="train"),
-                                     close_results=((0, 'loss', 8.9896163),)),
-    "train_cuda_32": TestResult(exact_results=def_results("cuda", 32, ds_cfg="train"),
-                                close_results=((0, 'loss', 7.0788559),)),
-    "train_cuda_bf16": TestResult(exact_results=def_results("cuda", "bf16", ds_cfg="train"),
-                                  close_results=((0, 'loss', 5.1562681),)),
+basic_parity_results = {
+    "train_cpu_32":
+    TestResult(exact_results=def_results("cpu", 32, ds_cfg="train"), close_results=((0, 'loss', 8.9896163),)),
+    "train_cpu_32_debug":
+    TestResult(exact_results=def_results("cpu", 32, ds_cfg="train"), close_results=((0, 'loss', 8.9896163),)),
+    "train_cuda_32":
+    TestResult(exact_results=def_results("cuda", 32, ds_cfg="train"), close_results=((0, 'loss', 7.0788559),)),
+    "train_cuda_bf16":
+    TestResult(exact_results=def_results("cuda", "bf16", ds_cfg="train"), close_results=((0, 'loss', 5.1562681),)),
     "train_cpu_bf16": TestResult(exact_results=def_results("cpu", "bf16", ds_cfg="train")),
     "test_cpu_32": TestResult(exact_results=def_results("cpu", 32, ds_cfg="test")),
     "test_cpu_32_tl": TestResult(exact_results=def_results("cpu", 32, ds_cfg="test")),
     "test_cuda_32": TestResult(exact_results=def_results("cuda", 32, ds_cfg="test")),
     "test_cuda_bf16": TestResult(exact_results=def_results("cuda", "bf16", ds_cfg="test")),
-    "test_cpu_32_prof": TestResult(exact_results=def_results("cpu", 32, ds_cfg="test_prof"),
-                                   mem_results=("test", "cpu", (360402944,)),
-                                   tolerance_map={"rss_diff": (0.05, 1e08)}),  # lightning ver requires a bit more
-    "test_cuda_32_prof": TestResult(exact_results=def_results("cuda", 32, ds_cfg="test_prof"),
-                                    mem_results=("test", "cuda", (544712192, 556677120, 608174080, 0))),
-    "test_cuda_bf16_prof": TestResult(exact_results=def_results("cuda", "bf16", ds_cfg="test_prof"),
-                                      mem_results=("test", "cuda", (301458944, 309889024, 318767104, 0))),
-    "train_cpu_32_prof": TestResult(exact_results=def_results("cpu", 32),
-                                    mem_results=("train", "cpu", (359723008, 177550460))),
-    "train_cpu_32_prof_act": TestResult(exact_results=def_results("cpu", 32),
-                                        mem_results=("train", "cpu", (359092224, 6098252))),
-    "train_cuda_32_prof": TestResult(exact_results=def_results("cuda", 32),
-                                     mem_results=("train", "cuda", (1767844352, 2575136768, 2841640960, 162420092))),
-    "train_cuda_32_prof_act": TestResult(exact_results=def_results("cuda", 32),
-                                     mem_results=("train", "cuda", (1582231040, 2574886912, 2778726400, 5794124))),
-    "train_cuda_bf16_prof": TestResult(exact_results=def_results("cuda", "bf16"),
-                                       mem_results=("train", "cuda", (971867136, 1362683904, 1438646272, 123287392)),
-                                       tolerance_map={k: (0.1, 2e08) for k in MemProfResult.cuda_mem_keys}),
-                                       # TODO: as current allocated memory for Lightning is about 217 MB higher than
-                                       # core and npp is about 80 MB lower than core, investigate the precise source of
-                                       # these divergences (not presently viewed as highest priority given other values
-                                       # are nearly identical to core)
 }
+
+profiling_parity_results = {
+    "test_cpu_32_prof":
+    TestResult(exact_results=def_results("cpu", 32, ds_cfg="test_prof"), mem_results=("test", "cpu", (360402944,)),
+               tolerance_map={"rss_diff": (0.05, 1e08)}),  # lightning ver requires a bit more
+    "test_cuda_32_prof":
+    TestResult(exact_results=def_results("cuda", 32, ds_cfg="test_prof"),
+               mem_results=("test", "cuda", (544712192, 556677120, 608174080, 0))),
+    "test_cuda_bf16_prof":
+    TestResult(exact_results=def_results("cuda", "bf16", ds_cfg="test_prof"),
+               mem_results=("test", "cuda", (301458944, 309889024, 318767104, 0))),
+    "train_cpu_32_prof":
+    TestResult(exact_results=def_results("cpu", 32),
+               mem_results=("train", "cpu", (359723008, 177550460))),
+    "train_cpu_32_prof_act":
+    TestResult(exact_results=def_results("cpu", 32),
+               mem_results=("train", "cpu", (359092224, 6098252))),
+    "train_cuda_32_prof":
+    TestResult(exact_results=def_results("cuda", 32),
+               mem_results=("train", "cuda", (1767844352, 2575136768, 2841640960, 162420092))),
+    "train_cuda_32_prof_act":
+    TestResult(exact_results=def_results("cuda", 32),
+               mem_results=("train", "cuda", (1582231040, 2574886912, 2778726400, 5794124))),
+    "train_cuda_bf16_prof":
+    TestResult(exact_results=def_results("cuda", "bf16"),
+               mem_results=("train", "cuda", (971867136, 1362683904, 1438646272, 123287392)),
+               tolerance_map={k: (0.1, 2e08) for k in MemProfResult.cuda_mem_keys}),
+               # TODO: as current allocated memory for Lightning is about 217 MB higher than core and npp is about 80 MB
+               # lower than core, investigate the precise source of these divergences (not presently viewed as highest
+               # priority given other values are nearly identical to core)
+}
+
+parity_results = {**basic_parity_results, **profiling_parity_results}
 
 @dataclass
 class ParityTest(TestCfg):
@@ -108,7 +122,7 @@ EXPECTED_PARITY = {cfg.alias: cfg.expected for cfg in CORE_PARITY_CONFIGS}
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_param_factory(CORE_PARITY_CONFIGS, unpack=False))
 def test_core_parity(recwarn, tmp_path, test_alias, test_cfg):
     expected_results = EXPECTED_PARITY[test_alias] or {}
-    expected_warnings = LIGHTING_EXPECTED_WARNS if test_cfg.lightning else CORE_CONTEXT_WARNS
+    expected_warnings = LIGHTING_CONTEXT_WARNS if test_cfg.lightning else CORE_CONTEXT_WARNS
     # set `state_log_mode=True` manually below during development to generate/dump state logs for a given test rather
     # than testing the relevant assertions
     datamodule, module = config_modules(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=False)

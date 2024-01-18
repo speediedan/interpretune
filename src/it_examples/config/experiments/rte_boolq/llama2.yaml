@@ -21,13 +21,3 @@ itdm_cfg:
     # defer_model_init: true  # uncomment along with signature_columns to test deferred model init mode
     # signature_columns: ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds', 'labels',
     #                     'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
-it_cfg:
-  class_path: interpretune.base.config.module.ITConfig
-  init_args:
-    lora_cfg:
-      r: 8
-      lora_alpha: 32
-      target_modules: ["q_proj", "v_proj"]
-      lora_dropout: 0.05
-      bias: none
-      task_type: "CAUSAL_LM"

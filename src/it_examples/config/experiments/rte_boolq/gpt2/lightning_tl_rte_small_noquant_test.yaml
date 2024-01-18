@@ -1,5 +1,5 @@
-data.class_path: it_examples.experiments.rte_boolq.lightning.GPT2RTEBoolqLightningDataModule
-model.class_path: it_examples.experiments.rte_boolq.lightning.GPT2ITLensLightningModule
+data.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqLightningDataModule
+model.class_path: it_examples.experiments.rte_boolq.transformer_lens.GPT2ITLensLightningModule
 itdm_cfg:
   class_path: interpretune.base.config.datamodule.ITDataModuleConfig
   init_args:
@@ -16,8 +16,28 @@ itdm_cfg:
           context: '<|PREMISE|>:'
           question: '<|HYPOTHESIS|>:'
 it_cfg:
-  class_path: interpretune.plugins.transformer_lens.ITLensConfig
+  class_path: it_examples.experiments.rte_boolq.transformer_lens.RTEBoolqTLConfig
   init_args:
+    use_model_cache: false
+    from_pretrained_cfg:
+      device_map: cpu
+      torch_dtype: bfloat16
+    optimizer_init:
+      class_path: torch.optim.AdamW
+      init_args:
+        weight_decay: 1.0e-06
+        eps: 1.0e-07
+        lr: 3.0e-05
+    lr_scheduler_init:
+      class_path: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+      init_args:
+        T_0: 1
+        T_mult: 2
+        eta_min: 1.0e-06
+    pl_lrs_cfg:
+      interval: epoch
+      frequency: 1
+      name: CosineAnnealingWithWarmRestartsLR
     auto_model_cfg:
       model_head: transformers.GPT2LMHeadModel
     tl_from_pretrained_cfg:

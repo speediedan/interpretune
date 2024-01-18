@@ -22,20 +22,22 @@ import torch
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.base.config.module import ITConfig
-from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig, ITLensConfig
+from it_examples.experiments.rte_boolq.core import RTEBoolqConfig
+from it_examples.experiments.rte_boolq.transformer_lens import RTEBoolqTLConfig
+from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import BaseITModule
-from base.cfg_aliases import (test_core_datamodule_kwargs, test_core_it_module_base, test_core_it_module_optim,
+from tests.base.cfg_aliases import (test_core_datamodule_kwargs, test_core_it_module_base, test_core_it_module_optim,
                               test_core_shared_config, test_dataset_state_core, expected_first_fwd_ids, MemProfResult,)
 from tests.plugins.transformer_lens.cfg_aliases import (test_tl_it_module_base, test_tl_it_module_optim,
                                                         test_tl_datamodule_kwargs, test_tl_shared_config,
                                                         test_dataset_state_tl)
 from tests.utils.runif import RunIf, RUNIF_ALIASES
 from tests.utils.lightning import cuda_reset
-from tests.plugins.transformer_lens.modules import TestITLensModule,TestITLensLightningModule
-from base.modules import (TestITDataModule, TestITDataModuleFullDataset, TestITLightningDataModule, TestITModule,
-                          TestITLightningDataModuleFullDataset, TestITLightningModule,)
+from tests.modules import (RTETestITLensModule, RTETestITLensLightningModule, TestITDataModule,
+                           TestITDataModuleFullDataset, TestITLightningDataModule, RTETestITModule,
+                           TestITLightningDataModuleFullDataset, RTETestITLightningModule,)
 
 if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import seed_everything
@@ -87,6 +89,7 @@ def pytest_param_factory(test_configs: List[TestCfg], unpack: bool = True) -> Li
 class ParityCfg(NamedTuple):
     loop_type: str = "train"
     device_type: str = "cpu"
+    model_key: str = "rte"  # "real-model"-based acceptance/parity testing/profiling
     precision: str | int = 32
     full_dataset: bool = False
     act_ckpt: bool = False
@@ -187,11 +190,19 @@ TEST_DATAMODULE_MAPPING = {
 }
 
 TEST_MODULE_MAPPING = {
-    # (lightning, transformerlens)
-    (False, False): TestITModule,
-    (True, False): TestITLightningModule,
-    (False, True): TestITLensModule,
-    (True, True): TestITLensLightningModule,
+    # TODO: only using rte module right now for "real model"-based parity/acceptance testing/profiling but will expand
+    #to use different/toy model types for unit testing in the future
+    # (model_key, lightning, transformerlens)
+    ("rte", False, False): RTETestITModule,
+    ("rte", True, False): RTETestITLightningModule,
+    ("rte", False, True): RTETestITLensModule,
+    ("rte", True, True): RTETestITLensLightningModule,
+}
+
+MODULE_CONFIG_MAPPING = {
+    # (model_key, transformerlens)
+    ("rte", False): RTEBoolqConfig,
+    ("rte", True): RTEBoolqTLConfig
 }
 
 def get_model_input_dtype(precision):
@@ -234,12 +245,13 @@ def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[str| os.PathLike] = None)
     if test_cfg.transformerlens:
         test_it_module_cfg['tl_from_pretrained_cfg'] = \
             ITLensFromPretrainedConfig(**test_it_module_cfg['tl_from_pretrained_cfg'])
-        return ITLensConfig(**test_it_module_cfg)
-    return ITConfig(**test_it_module_cfg)
+    config_class = MODULE_CONFIG_MAPPING[(test_cfg.model_key, test_cfg.transformerlens)]
+    return config_class(**test_it_module_cfg)
 
 def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> Dict[str, Any]:
     cfg['from_pretrained_cfg'].update({'torch_dtype': get_model_input_dtype(precision)})
     if device_type == "cuda":
+        # note that with TLens this should be overridden by the tl plugin but we want to test that functionality
         cfg['from_pretrained_cfg'].update({'device_map': 0})
     if cfg.get('tl_from_pretrained_cfg', None):
         cfg['tl_from_pretrained_cfg'].update({'dtype': get_model_input_dtype(precision), 'device': device_type})
@@ -258,7 +270,7 @@ def config_modules(test_cfg, test_alias, expected_results, tmp_path,
     torch.set_printoptions(precision=12)
     datamodule = datamodule_factory(test_cfg)
     it_cfg = get_it_cfg(test_cfg, core_log_dir=tmp_path)
-    module_class = TEST_MODULE_MAPPING[(test_cfg.lightning, test_cfg.transformerlens)]
+    module_class = TEST_MODULE_MAPPING[(test_cfg.model_key, test_cfg.lightning, test_cfg.transformerlens)]
     module = module_class(it_cfg=it_cfg, test_alias=test_alias,
                           state_log_dir=tmp_path if state_log_mode else None,  # optionally enable expected state logs
                           **expected_results,)

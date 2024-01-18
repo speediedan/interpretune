@@ -1,6 +1,6 @@
 seed_everything: 42
 data.class_path: interpretune.base.datamodules.ITDataModule
-model.class_path: interpretune.plugins.transformer_lens.ITLensModule
+model.class_path: interpretune.base.modules.ITModule
 itdm_cfg:
   class_path: interpretune.base.config.datamodule.ITDataModuleConfig
   init_args:
@@ -10,10 +10,3 @@ itdm_cfg:
       collator_class: transformers.DataCollatorWithPadding
     prompt_cfg:
       class_path: interpretune.base.config.datamodule.PromptConfig
-it_cfg:
-  class_path: interpretune.base.config.module.ITConfig
-  init_args:
-    use_model_cache: false
-    from_pretrained_cfg:
-      device_map: 0
-      torch_dtype: bfloat16

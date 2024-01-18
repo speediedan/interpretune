@@ -1,10 +1,9 @@
 data.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqDataModule
-model.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqITLensModule
+model.class_path: it_examples.experiments.rte_boolq.transformer_lens.GPT2RTEBoolqITLensModule
 itdm_cfg:
   class_path: interpretune.base.config.datamodule.ITDataModuleConfig
   init_args:
     model_name_or_path: gpt2
-    #model_name_or_path: gpt2-large
     task_name: rte
     train_batch_size: 32
     eval_batch_size: 32
@@ -17,9 +16,11 @@ itdm_cfg:
           context: '<|PREMISE|>:'
           question: '<|HYPOTHESIS|>:'
 it_cfg:
-  class_path: interpretune.plugins.transformer_lens.ITLensConfig
+  class_path: it_examples.experiments.rte_boolq.transformer_lens.RTEBoolqTLConfig
   init_args:
+    use_model_cache: false
     from_pretrained_cfg:
+      device_map: cpu
       torch_dtype: float32
     experiment_tag: it_cli_test
     auto_model_cfg:

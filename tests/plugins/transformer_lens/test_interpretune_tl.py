@@ -16,11 +16,11 @@ from functools import partial
 
 import pytest
 
-from tests.utils.warns import unexpected_warns, CORE_CONTEXT_WARNS, LIGHTING_EXPECTED_WARNS
+from tests.utils.warns import unexpected_warns, TL_CONTEXT_WARNS, TL_LIGHTNING_CONTEXT_WARNS
 from tests.configuration import (TestCfg, TestResult, config_modules, def_results, collect_results, ParityCfg,
                                  pytest_param_factory)
 from tests.orchestration import run_it, run_lightning
-from tests.plugins.transformer_lens.cfg_aliases import w_tl
+from tests.base.cfg_aliases import (w_lit, cuda)
 
 
 tl_results = partial(def_results, dataset_type="tl")
@@ -28,8 +28,13 @@ tl_results = partial(def_results, dataset_type="tl")
 # note our result mapping function uses these core results for all supported parity test suffixes (e.g. '_l')
 tl_parity_results = {
     "test_cpu_32": TestResult(exact_results=tl_results("cpu", 32, ds_cfg="test")),
+    "test_cuda_32": TestResult(exact_results=tl_results("cuda", 32, ds_cfg="test")),
+    "train_cpu_32": TestResult(exact_results=tl_results("cpu", 32, ds_cfg="train")),
+    "train_cuda_32": TestResult(exact_results=tl_results("cuda", 32, ds_cfg="train")),
 }
 
+class TLParityCfg(ParityCfg):
+    transformerlens: bool = True
 
 @dataclass
 class TLParityTest(TestCfg):
@@ -43,9 +48,15 @@ class TLParityTest(TestCfg):
 # note that while we could access test_alias using the request fixture (`request.node.callspec.id`), this approach
 # allows us to flexibly define test ids, configurations, marks and expected outputs together
 TL_PARITY_CONFIGS = (
-    TLParityTest(alias="test_cpu_32", cfg=ParityCfg("test", **w_tl)),
-    # ParityTest(alias="test_cpu_32_l", cfg=ParityCfg("test", **w_lit), marks="lightning"),
-    # ParityTest(alias="test_cuda_32", cfg=ParityCfg("test", **cuda), marks="cuda"),
+    TLParityTest(alias="test_cpu_32", cfg=TLParityCfg("test")),
+    TLParityTest(alias="test_cpu_32_l", cfg=TLParityCfg("test", **w_lit), marks="lightning"),
+    TLParityTest(alias="test_cuda_32", cfg=TLParityCfg("test", **cuda), marks="cuda"),
+    TLParityTest(alias="test_cuda_32_l", cfg=TLParityCfg("test", **cuda, **w_lit), marks="cuda_l"),
+    TLParityTest(alias="train_cpu_32", cfg=TLParityCfg()),
+    TLParityTest(alias="train_cpu_32_l", cfg=TLParityCfg(**w_lit), marks="lightning"),
+    #TLParityTest(alias="train_cpu_32_debug", cfg=ParityCfg(**debug_hidden)),
+    TLParityTest(alias="train_cuda_32", cfg=TLParityCfg(**cuda), marks="cuda"),
+    TLParityTest(alias="train_cuda_32_l", cfg=TLParityCfg(**cuda, **w_lit), marks="cuda_l"),
     # ParityTest(alias="test_cuda_bf16", cfg=ParityCfg("test", **cuda_bf16), marks="bf16_cuda"),
     # ParityTest(alias="train_cpu_bf16", cfg=ParityCfg(**bf16), marks="skip_win_slow"),
     # ParityTest(alias="test_cpu_32_prof", cfg=ParityCfg(**test_bs1_mem_nosavedt), marks="prof"),
@@ -62,11 +73,11 @@ TL_PARITY_CONFIGS = (
 
 EXPECTED_TL_PARITY = {cfg.alias: cfg.expected for cfg in TL_PARITY_CONFIGS}
 
-@pytest.mark.usefixtures("reset_deterministic_algorithm")
+@pytest.mark.usefixtures("make_deterministic")
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_param_factory(TL_PARITY_CONFIGS, unpack=False))
 def test_tl_parity(recwarn, tmp_path, test_alias, test_cfg):
     expected_results = EXPECTED_TL_PARITY[test_alias] or {}
-    expected_warnings = LIGHTING_EXPECTED_WARNS if test_cfg.lightning else CORE_CONTEXT_WARNS
+    expected_warnings = TL_LIGHTNING_CONTEXT_WARNS if test_cfg.lightning else TL_CONTEXT_WARNS
     # set `state_log_mode=True` manually below during development to generate/dump state logs for a given test rather
     # than testing the relevant assertions
     datamodule, module = config_modules(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=False)

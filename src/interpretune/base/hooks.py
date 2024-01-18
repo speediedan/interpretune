@@ -5,10 +5,9 @@ from transformers.tokenization_utils_base import BatchEncoding
 from interpretune.utils.import_utils import instantiate_class
 from interpretune.base.config.module import ITConfig
 from interpretune.base.datamodules import ITDataModule
-from interpretune.base.mixins.core import ProfilerHooksMixin
-from interpretune.utils.logging import rank_zero_info
+from interpretune.utils.logging import rank_zero_warn
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
-
+from interpretune.base.mixins.core import ProfilerHooksMixin
 
 class BaseITHooks:
     """" LightningModule hooks implemented by BaseITModule."""
@@ -70,31 +69,13 @@ class BaseITHooks:
     def forward(self, **inputs: Any) -> STEP_OUTPUT:
         return self.model(**inputs, **self.it_cfg.cust_fwd_kwargs)
 
-    @ProfilerHooksMixin.memprofilable
     def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
-         # TODO: decide whether to build a closure for the core training_step to enable identical
-         # core/lightning module training_steps in more cases (need to be explicit about the compatibility constraints)
-        outputs = self(**batch)
-        loss, _other_outputs = outputs[0], outputs[1:]
-        self.log("train_loss", loss, sync_dist=True)
-        return loss
+        rank_zero_warn("`training_step` must be implemented to be used with the Interpretune.")
 
-    @ProfilerHooksMixin.memprofilable
     def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        outputs = self(**batch)
-        val_loss, logits = outputs[:2]
-        if self.it_cfg.num_labels >= 1:
-            preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
-        elif self.it_cfg.num_labels == 1:
-            preds = logits.squeeze()
-        labels = batch["labels"]
-        self.log("val_loss", val_loss, prog_bar=True, sync_dist=True)
-        # TODO: condition this on a metric being configured
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
+        rank_zero_warn("`validation_step` must be implemented to be used with the Interpretune.")
 
+    # TODO: test if test_step is overridden, if so call it instead of zeroshot or default_test
     @ProfilerHooksMixin.memprofilable
     def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         if self.it_cfg.zero_shot_cfg.enabled:
@@ -102,17 +83,5 @@ class BaseITHooks:
         else:
             self.default_test_step(batch, batch_idx)
 
-    @ProfilerHooksMixin.memprofilable
     def predict_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        # run predict on val dataset for now
-        # TODO: clean this up and allow for passing arbitrary data
-        outputs = self(**batch)
-        _, logits = outputs[:2]
-        if self.it_cfg.num_labels >= 1:
-            preds = torch.argmax(logits, axis=1)  # type: ignore[call-arg]
-        elif self.it_cfg.num_labels == 1:
-            preds = logits.squeeze()
-        labels = batch["labels"]
-        # TODO: condition this on a metric being configured
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        rank_zero_info(metric_dict)
+        rank_zero_warn("`prediction_step` must be implemented to be used with the Interpretune.")

@@ -15,7 +15,6 @@ from typing import Optional, Tuple
 from collections import defaultdict
 
 import torch
-from transformer_lens.utilities.devices import get_device_for_block_index
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
@@ -67,7 +66,7 @@ def core_train_loop(
     train_ctx = {"module": module, "optimizer": optim, "device_type": device_type}
     for epoch_idx in range(epochs):
         module.model.train()
-        module._current_epoch = epoch_idx
+        module.current_epoch = epoch_idx
         iterator = iter(train_dataloader)
         _call_itmodule_hook(module, hook_name="on_train_epoch_start", hook_msg="Running train epoch start hooks")
         for batch_idx in range(train_steps):
@@ -118,7 +117,7 @@ def run_step(step_fn, module, iterator, batch_idx, device_type, optimizer: Optio
 def fetch_batch(iterator, module) -> BatchEncoding:
     batch = next(iterator)
     if hasattr(module, 'tl_cfg'):  # ensure the input is on the same device as TranformerLens assigns to layer 0
-        move_data_to_device(batch, get_device_for_block_index(0, module.tl_cfg))
+        move_data_to_device(batch, module.input_device)
     else:
         to_device(module.device, batch)
     return batch

@@ -1,7 +1,6 @@
 from collections import ChainMap
 
-from it_examples.experiments.rte_boolq.core import RTEBoolqPromptConfig, RTEBoolqZeroShotClassificationConfig
-from interpretune.plugins.transformer_lens import TLensGenerationConfig
+from it_examples.experiments.rte_boolq.core import RTEBoolqPromptConfig
 from tests.base.cfg_aliases import (tokenizer_base_kwargs, base_shared_config, default_test_bs, shared_dataset_state,
                                     base_it_module_kwargs, test_optimizer_scheduler_init)
 
@@ -14,8 +13,12 @@ test_tl_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), "signature_co
                           "enable_datasets_cache": False, "prepare_data_map_cfg": {"batched": True},
                           "text_fields": ("premise", "hypothesis"),  "train_batch_size": default_test_bs,
                           "eval_batch_size": default_test_bs}
-tl_zero_shot_cfg = RTEBoolqZeroShotClassificationConfig(enabled=True, lm_generation_cfg=TLensGenerationConfig())
-test_tl_it_module_kwargs = {"tl_from_pretrained_cfg": {"enabled": True}, "zero_shot_cfg": tl_zero_shot_cfg,
+# TODO: add zero shot testing separately
+# tl_zero_shot_cfg = RTEBoolqZeroShotClassificationConfig(enabled=True, lm_generation_cfg=TLensGenerationConfig())
+# test_tl_it_module_kwargs = {"tl_from_pretrained_cfg": {"enabled": True}, "zero_shot_cfg": tl_zero_shot_cfg,
+#                             "auto_model_cfg": {"model_head": "transformers.GPT2LMHeadModel"}, **base_it_module_kwargs}
+#tl_entailment_cfg = RTEBoolqZeroShotClassificationConfig(enabled=True, lm_generation_cfg=TLensGenerationConfig())
+test_tl_it_module_kwargs = {"tl_from_pretrained_cfg": {"enabled": True},
                             "auto_model_cfg": {"model_head": "transformers.GPT2LMHeadModel"}, **base_it_module_kwargs}
 test_tl_it_module_base = ChainMap(test_tl_shared_config, test_tl_it_module_kwargs)
 test_tl_it_module_optim = ChainMap(test_tl_it_module_base, test_optimizer_scheduler_init)

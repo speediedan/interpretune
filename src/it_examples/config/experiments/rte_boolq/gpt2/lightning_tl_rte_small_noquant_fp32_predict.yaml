@@ -1,10 +1,9 @@
-data.class_path: it_examples.experiments.rte_boolq.lightning.GPT2RTEBoolqLightningDataModule
-model.class_path: it_examples.experiments.rte_boolq.lightning.GPT2ITLensLightningModule
+data.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqLightningDataModule
+model.class_path: it_examples.experiments.rte_boolq.transformer_lens.GPT2ITLensLightningModule
 itdm_cfg:
   class_path: interpretune.base.config.datamodule.ITDataModuleConfig
   init_args:
     model_name_or_path: gpt2
-    #model_name_or_path: gpt2-large
     task_name: rte
     train_batch_size: 32
     eval_batch_size: 32
@@ -17,16 +16,27 @@ itdm_cfg:
           context: '<|PREMISE|>:'
           question: '<|HYPOTHESIS|>:'
 it_cfg:
-  class_path: interpretune.plugins.transformer_lens.ITLensConfig
+  class_path: it_examples.experiments.rte_boolq.transformer_lens.RTEBoolqTLConfig
   init_args:
-    # zero_shot_cfg:
-    #   enabled: true
-    #   lm_generation_cfg:
-    #     max_new_tokens: 5
+    use_model_cache: false
+    optimizer_init:
+      class_path: torch.optim.AdamW
+      init_args:
+        weight_decay: 1.0e-06
+        eps: 1.0e-07
+        lr: 3.0e-05
+    lr_scheduler_init:
+      class_path: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+      init_args:
+        T_0: 1
+        T_mult: 2
+        eta_min: 1.0e-06
+    pl_lrs_cfg:
+      interval: epoch
+      frequency: 1
+      name: CosineAnnealingWithWarmRestartsLR
     from_pretrained_cfg:
-      #device_map: {"":0}
-      #device_map: 0
-      #device_map: cpu  # set already in shared gpt2
+      device_map: cpu
       torch_dtype: float32
     auto_model_cfg:
       model_head: transformers.GPT2LMHeadModel
@@ -41,20 +51,14 @@ it_cfg:
         refactor_factored_attn_matrices: false
         checkpoint_index: null
         checkpoint_value: null
-        # hf_model: transformers.GPT2LMHeadModel
         device: cuda
         n_devices: 1
-        #tokenizer: null # pass tokenizer during setup
         move_to_device: true
         fold_value_biases: true
         default_prepend_bos: true
         default_padding_side: right
         dtype: float32
     activation_checkpointing: false
-    #bitsandbytesconfig: null
-    #lora_cfg: null
-    # auto_model_cfg:
-    #   model_head: transformers.GPT2ForSequenceClassification
 trainer:
   precision: 32
   #max_epochs: 600

@@ -21,11 +21,18 @@ CORE_CONTEXT_WARNS = HF_EXPECTED_WARNS + EXPECTED_WARNS + [
     "For Lightning compatibility, this noop",  # expected in a core context with modules that use Lightning log methods
 ]
 
-LIGHTING_EXPECTED_WARNS = HF_EXPECTED_WARNS + [
+LIGHTING_CONTEXT_WARNS = HF_EXPECTED_WARNS + [
     "does not have many workers",
     "GPU available but",
     "is smaller than the logging interval",
 ]
+
+TL_EXPECTED_WARNS = [
+    "to transform pretrained weights on cpu", # to support transforming weights on cpu prior to loading to device
+]
+
+TL_CONTEXT_WARNS = TL_EXPECTED_WARNS + CORE_CONTEXT_WARNS
+TL_LIGHTNING_CONTEXT_WARNS = TL_CONTEXT_WARNS + LIGHTING_CONTEXT_WARNS
 
 MIN_VERSION_WARNS = "2.0"
 MAX_VERSION_WARNS = "2.2"

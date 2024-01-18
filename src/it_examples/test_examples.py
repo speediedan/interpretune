@@ -16,7 +16,7 @@ import pytest
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.base.cli.core_cli import compose_config, IT_CONFIG_BASE, IT_CONFIG_GLOBAL
-from it_examples.experiments.rte_boolq.core import GPT2RTEBoolqITLensModule
+from it_examples.experiments.rte_boolq.transformer_lens import GPT2RTEBoolqITLensModule
 from tests.configuration import pytest_param_factory, TestCfg
 from tests.orchestration import dummy_step
 from tests.utils.runif import RunIf
@@ -25,7 +25,7 @@ from tests.conftest import make_deterministic  # noqa: F401
 
 if _LIGHTNING_AVAILABLE:
     from interpretune.base.modules import ITLightningModule
-    from it_examples.experiments.rte_boolq.lightning import GPT2ITLensLightningModule
+    from it_examples.experiments.rte_boolq.transformer_lens import GPT2ITLensLightningModule
 else:
     ITLightningModule = None  # type: ignore[misc,assignment]
     GPT2ITLensLightningModule = None  # type: ignore[misc,assignment]

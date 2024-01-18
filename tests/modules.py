@@ -13,10 +13,14 @@ from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
 from interpretune.base.modules import ITModule, ITLightningModule
+from interpretune.plugins.transformer_lens import ITLensModule, ITLensLightningModule
 from interpretune.utils.logging import rank_zero_only, get_filesystem
-from it_examples.experiments.rte_boolq.core import RTEBoolqModuleMixin, GPT2RTEBoolqDataModule
+from it_examples.experiments.rte_boolq.core import (RTEBoolqModuleMixin, GPT2RTEBoolqDataModule,
+                                                    RTEBoolqClassificationHeadSteps)
+from it_examples.experiments.rte_boolq.transformer_lens import RTEBoolqLMHeadSteps
 from it_examples.data.rte_bool import RTEBoolqDataModule
-from base.cfg_aliases import TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, sample_rows, sample_pos
+from tests.base.cfg_aliases import TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, sample_rows, sample_pos
+
 
 if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import LightningDataModule
@@ -106,6 +110,7 @@ class BaseTestModule:
     def setup(self, *args, **kwargs) -> None:
         super().setup(*args, **kwargs)
 
+    # TODO: use mock TASK_NUM_LABELS here (not just in __init__) to rely on rteboolq example method here for testing
     def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
         it_cfg.num_labels = 0 if it_cfg.zero_shot_cfg.enabled else 2
         return it_cfg
@@ -113,13 +118,11 @@ class BaseTestModule:
     def _load_metric(self) -> None:
         self.metric = evaluate.load("super_glue", 'rte', experiment_id=self.init_hparams['experiment_id'])
 
-    def _init_entailment_mapping(self) -> None:
-        if self.it_cfg.zero_shot_cfg.enabled:
-            tokenizer, zs_cfg = self.datamodule.tokenizer, self.it_cfg.zero_shot_cfg
-            zs_cfg.entailment_mapping_indices = torch.tensor(tokenizer.convert_tokens_to_ids(zs_cfg.entailment_mapping))
-
     def _get_current_exact(self) -> Dict:
-        return {'device_type': self.device.type, 'precision': self.model.dtype, **self._get_dataset_state()}
+        # gather device and precision info for both core and transformer lens contexts
+        device_type = self.device.type if isinstance(self.device, torch.device) else self.output_device.type
+        model_dtype = self.model.dtype if hasattr(self.model, "dtype") else self.tl_cfg.dtype
+        return {'device_type': device_type, 'precision': model_dtype, **self._get_dataset_state()}
 
     def _get_dataset_state(self) -> Dict:
         return {'dataset_state': self.datamodule.sample_dataset_state() + (self.sampled_fwd_inputs,)}
@@ -182,7 +185,7 @@ class BaseTestModule:
                 self.dev_expected_close[act] = self.memprofiler.memory_stats[self.expected_memstats[0]][act]
 
 
-class TestITModule(BaseTestModule, RTEBoolqModuleMixin, ITModule):
+class RTETestITModule(BaseTestModule, RTEBoolqClassificationHeadSteps, RTEBoolqModuleMixin, ITModule):
     ...
 
 
@@ -191,7 +194,7 @@ if _LIGHTNING_AVAILABLE:
         ...
     class TestITLightningDataModuleFullDataset(TestITDataModuleFullDataset, LightningDataModule):
         ...
-    class BaseTestITLightningModule(BaseTestModule, RTEBoolqModuleMixin):
+    class BaseTestITLightningModule(BaseTestModule):
         def _on_test_or_train_batch_start(self, batch: Any, batch_idx: int, *args, **kwargs):
             if self.global_step == 0 and batch_idx == 0:
                 self.sampled_fwd_inputs = self.datamodule.sample_step_input(batch)
@@ -202,10 +205,23 @@ if _LIGHTNING_AVAILABLE:
         def on_train_epoch_end(self, *args, **kwargs):
             self.epoch_losses[self.current_epoch] = self.trainer.callback_metrics['train_loss'].item()
             super().on_train_epoch_end(*args, **kwargs)
-
-    class TestITLightningModule(BaseTestITLightningModule, ITLightningModule):
+    class BaseRTETestITLightningModule(BaseTestITLightningModule, RTEBoolqClassificationHeadSteps,
+                                       RTEBoolqModuleMixin):
+        ...
+    class RTETestITLightningModule(BaseRTETestITLightningModule, ITLightningModule):
         ...
 else:
     TestITLightningDataModule = object
     TestITLightningDataModuleFullDataset = object
-    TestITLightningModule = object
+    RTETestITLightningModule = object
+
+# TODO: autowrap these modules with the relevant types rather than manually defining in this manner
+### TransformerLens Test Modules
+class RTETestITLensModule(BaseTestModule, RTEBoolqLMHeadSteps, RTEBoolqModuleMixin, ITLensModule):
+    ...
+
+if _LIGHTNING_AVAILABLE:
+    class RTETestITLensLightningModule(RTETestITLensModule, BaseTestITLightningModule, ITLensLightningModule):
+        ...
+else:
+    RTETestITLensLightningModule = object

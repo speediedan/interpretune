@@ -15,8 +15,3 @@ itdm_cfg:
       local_files_only: false
       padding_side: right
       model_input_names: ['input_ids', 'attention_mask']
-it_cfg:
-  class_path: interpretune.base.config.module.ITConfig
-  init_args:
-    from_pretrained_cfg:
-      device_map: cpu

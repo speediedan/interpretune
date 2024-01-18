@@ -1,2 +1,16 @@
 data.class_path: it_examples.experiments.rte_boolq.core.Llama2RTEBoolqDataModule
 model.class_path: it_examples.experiments.rte_boolq.core.Llama2RTEBoolqITModule
+it_cfg:
+  class_path: it_examples.experiments.rte_boolq.core.RTEBoolqConfig
+  init_args:
+    use_model_cache: false
+    from_pretrained_cfg:
+      device_map: 0
+      torch_dtype: bfloat16
+    lora_cfg:
+      r: 8
+      lora_alpha: 32
+      target_modules: ["q_proj", "v_proj"]
+      lora_dropout: 0.05
+      bias: none
+      task_type: "CAUSAL_LM"

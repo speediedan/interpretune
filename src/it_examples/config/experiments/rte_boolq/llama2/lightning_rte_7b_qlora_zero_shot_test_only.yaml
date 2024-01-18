@@ -1,5 +1,5 @@
-data.class_path: it_examples.experiments.rte_boolq.lightning.Llama2RTEBoolqLightningDataModule
-model.class_path: it_examples.experiments.rte_boolq.lightning.Llama2ITLightningModule
+data.class_path: it_examples.experiments.rte_boolq.core.Llama2RTEBoolqLightningDataModule
+model.class_path: it_examples.experiments.rte_boolq.core.Llama2ITLightningModule
 itdm_cfg:
   class_path: interpretune.base.config.datamodule.ITDataModuleConfig
   init_args:
@@ -8,12 +8,29 @@ itdm_cfg:
     dataset_path: /home/speediedan/.cache/huggingface/datasets/rte
     train_batch_size: 2
     eval_batch_size: 2
-    #prepare_validation_set_only: true
     cust_tokenization_pattern: llama2-chat
 it_cfg:
-  class_path: interpretune.base.config.module.ITConfig
+  class_path: it_examples.experiments.rte_boolq.core.RTEBoolqConfig
   init_args:
-    # defining the config class with custom dataclass overrides
+    from_pretrained_cfg:
+      device_map: 0
+      torch_dtype: bfloat16
+    optimizer_init:
+      class_path: torch.optim.AdamW
+      init_args:
+        weight_decay: 1.0e-06
+        eps: 1.0e-07
+        lr: 3.0e-05
+    lr_scheduler_init:
+      class_path: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+      init_args:
+        T_0: 1
+        T_mult: 2
+        eta_min: 1.0e-06
+    pl_lrs_cfg:
+      interval: epoch
+      frequency: 1
+      name: CosineAnnealingWithWarmRestartsLR
     zero_shot_cfg:
       class_path: it_examples.experiments.rte_boolq.core.RTEBoolqZeroShotClassificationConfig
       init_args:
@@ -26,6 +43,13 @@ it_cfg:
     use_model_cache: true
     auto_model_cfg:
       model_head: transformers.LlamaForCausalLM
+    lora_cfg:
+      r: 8
+      lora_alpha: 32
+      target_modules: ["q_proj", "v_proj"]
+      lora_dropout: 0.05
+      bias: none
+      task_type: "CAUSAL_LM"
 trainer:
   devices: 1
   logger:
