@@ -168,7 +168,7 @@ class MemProfiler:
         self._cuda_snapshot_dir.mkdir(exist_ok=True, parents=True)
 
     def cuda_allocator_history_snap(self, snap_key: Tuple) -> Dict:
-        cuda_snapshot_file = (self._cuda_snapshot_dir / ".".join(("cuda_alloc", snap_key))).with_suffix('.pickle')
+        cuda_snapshot_file = (self._cuda_snapshot_dir / f"cuda_alloc_{snap_key}.pickle")
         torch.cuda.memory._dump_snapshot(cuda_snapshot_file)
 
     def done(self, step_idx: int) -> bool:

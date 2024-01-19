@@ -12,7 +12,7 @@
 # Initially based on https://bit.ly/3oQ8Vqf
 # TODO: fill in this placeholder with actual core helper functions
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Callable, Any, Union, Dict, NamedTuple
 from collections import defaultdict
 from copy import deepcopy
@@ -50,12 +50,13 @@ else:
 ################################################################################
 
 @dataclass(kw_only=True)
-class TestCfg():
+class TestCfg:
     alias: str
     cfg: Optional[Tuple] = None
-    marks: Optional[Tuple] = None
+    marks: Optional[Dict] = None  # test instance-specific marks
     expected: Optional[Dict] = None
     result_gen: Optional[Callable] = None
+    function_marks: Dict[str, Any] = field(default_factory=dict)  # marks applied at test function level
 
     def __post_init__(self):
         if self.expected is None and self.result_gen is not None:
@@ -66,22 +67,27 @@ class TestCfg():
             self.cfg = self.cfg_gen(self.alias)
         elif isinstance(self.cfg, Dict):
             self.cfg = self.cfg[self.alias]
+        if self.marks or self.function_marks:
+            self.marks = self._get_marks(self.marks, self.function_marks)
 
-def get_marks(marks: Union[Dict, str]) -> RunIf:
-    # support RunIf aliases
-    if isinstance(marks, Dict):
-        return RunIf(**marks)
-    elif isinstance(marks, str):
-        return RunIf(**RUNIF_ALIASES[marks])
-    else:
-        raise ValueError(f"Unexpected marks type (should be Dict or str): {type(marks)}")
+    def _get_marks(self, marks: Optional[Dict | str], function_marks: Dict) -> Optional[RunIf]:
+        # support RunIf aliases
+        if marks:
+            if isinstance(marks, Dict):
+                function_marks.update(marks)
+            elif isinstance(marks, str):
+                function_marks.update(RUNIF_ALIASES[marks])
+            else:
+                raise ValueError(f"Unexpected marks input type (should be Dict, str or None): {type(marks)}")
+        if function_marks:
+            return RunIf(**function_marks)
 
 def pytest_param_factory(test_configs: List[TestCfg], unpack: bool = True) -> List:
     return [pytest.param(
             config.alias,
             *config.cfg if unpack else (config.cfg,),
             id=config.alias,
-            marks=get_marks(config.marks) if config.marks else tuple(),
+            marks=config.marks or tuple(),
         )
         for config in test_configs
     ]
@@ -177,9 +183,9 @@ def collect_results(result_map: Dict[str, Tuple], test_alias: str):
     return collected_results
 
 
-################################################################################
+########################################################################################################################
 # Configuration composition
-################################################################################
+########################################################################################################################
 
 TEST_DATAMODULE_MAPPING = {
     # (lightning, full_dataset)

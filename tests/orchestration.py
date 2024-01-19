@@ -23,6 +23,7 @@ from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import ITModule
 from interpretune.base.call import _call_itmodule_hook, it_init, it_session_end
 from interpretune.utils.types import Optimizable
+from tests.configuration import config_modules
 from tests.utils.lightning import to_device, move_data_to_device
 
 
@@ -35,6 +36,29 @@ else:
 ################################################################################
 # Core Train/Test Orchestration
 ################################################################################
+
+########################################################################################################################
+# NOTE: [Parity Testing Approach]
+# - We use a single set of results but separate tests for core/lightning parity tests since Lightning is not a required
+#   dependency for Interpretune and we want to mark at the test-level for greater clarity and flexibility (we want to
+#   signal clearly when either diverges from the expected benchmark so aren't testing relative values only)
+# - The configuration space for parity tests is sampled rather than exhaustively testing all framework configuration
+#   combinations due to resource constraints
+# - Note that while we could access test_alias using the request fixture (`request.node.callspec.id`), this approach
+#   using dataclass encapsulation allows us to flexibly define test ids, configurations, marks and expected outputs
+#   together
+# - We always check for basic exact match on device type, precision and dataset state
+# - Our result mapping function uses these shared results for all supported parity test suffixes (e.g. '_l')
+# - Set `state_log_mode=True` manually during development to generate/dump state logs for a given test rather
+#   than testing the relevant assertions
+########################################################################################################################
+
+def parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode: bool = False):
+    datamodule, module = config_modules(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)
+    if test_cfg.lightning:
+        _ = run_lightning(module, datamodule, test_cfg, tmp_path)
+    else:
+        run_it(module, datamodule, test_cfg)
 
 def run_it(module: ITModule, datamodule: ITDataModule, test_cfg: Tuple):
     it_init(module=module, datamodule=datamodule)

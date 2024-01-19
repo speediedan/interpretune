@@ -32,7 +32,7 @@ class RTEBoolqLMHeadSteps:
     def logits_and_labels(self, batch: BatchEncoding, batch_idx: int) -> torch.Tensor:
         label_ids = self.labels_to_ids(batch.pop("labels"))
         logits = self(**batch)
-        return torch.squeeze(logits[:, -1, :]), label_ids
+        return torch.squeeze(logits[:, -1, :], dim=1), label_ids
 
     @ProfilerHooksMixin.memprofilable
     def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:

@@ -50,7 +50,7 @@ RUNIF_ALIASES = {
 }
 
 class RunIf:
-    """RunIf wrapper for simple marking specific cases, fully compatible with pytest.mark::
+    """RunIf wrapper for simple marking specific cases, basically a `pytest.mark.skipif` decorator factory:
 
     @RunIf(min_torch="0.0")
     @pytest.mark.parametrize("arg1", [1, 2.0])
