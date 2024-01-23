@@ -12,13 +12,10 @@ from transformers.tokenization_utils_base import BatchEncoding
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
-from interpretune.base.modules import ITModule, ITLightningModule
-from interpretune.plugins.transformer_lens import ITLensModule, ITLensLightningModule
 from interpretune.utils.logging import rank_zero_only, get_filesystem
-from it_examples.experiments.rte_boolq.core import (RTEBoolqModuleMixin, GPT2RTEBoolqDataModule,
-                                                    RTEBoolqClassificationHeadSteps)
-from it_examples.experiments.rte_boolq.transformer_lens import RTEBoolqLMHeadSteps
-from it_examples.data.rte_bool import RTEBoolqDataModule
+from it_examples.experiments.rte_boolq.modules import (RTEBoolqModuleMixin, RTEBoolqClassificationHeadSteps,
+                                                       RTEBoolqLMHeadSteps)
+from it_examples.experiments.rte_boolq.datamodules import RTEBoolqDataModule, GPT2RTEBoolqDataModule
 from tests.base.cfg_aliases import TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, sample_rows, sample_pos
 
 
@@ -28,7 +25,7 @@ if _LIGHTNING_AVAILABLE:
 class TestITDataModule(GPT2RTEBoolqDataModule):
 
     def __init__(self, itdm_cfg: ITDataModuleConfig, force_prepare_data: bool = False) -> None:
-        with mock.patch.multiple('it_examples.data.rte_bool', TASK_NUM_LABELS=TEST_TASK_NUM_LABELS,
+        with mock.patch.multiple('it_examples.experiments.rte_boolq.datamodules', TASK_NUM_LABELS=TEST_TASK_NUM_LABELS,
                                  TASK_TEXT_FIELD_MAP=TEST_TASK_TEXT_FIELD_MAP):
             super().__init__(itdm_cfg=itdm_cfg)
         self.force_prepare_data = force_prepare_data
@@ -185,7 +182,7 @@ class BaseTestModule:
                 self.dev_expected_close[act] = self.memprofiler.memory_stats[self.expected_memstats[0]][act]
 
 
-class RTETestITModule(BaseTestModule, RTEBoolqClassificationHeadSteps, RTEBoolqModuleMixin, ITModule):
+class RTETestITModule(BaseTestModule, RTEBoolqClassificationHeadSteps, RTEBoolqModuleMixin):
     ...
 
 
@@ -205,10 +202,7 @@ if _LIGHTNING_AVAILABLE:
         def on_train_epoch_end(self, *args, **kwargs):
             self.epoch_losses[self.current_epoch] = self.trainer.callback_metrics['train_loss'].item()
             super().on_train_epoch_end(*args, **kwargs)
-    class BaseRTETestITLightningModule(BaseTestITLightningModule, RTEBoolqClassificationHeadSteps,
-                                       RTEBoolqModuleMixin):
-        ...
-    class RTETestITLightningModule(BaseRTETestITLightningModule, ITLightningModule):
+    class RTETestITLightningModule(BaseTestITLightningModule, RTEBoolqClassificationHeadSteps, RTEBoolqModuleMixin):
         ...
 else:
     TestITLightningDataModule = object
@@ -217,11 +211,11 @@ else:
 
 # TODO: autowrap these modules with the relevant types rather than manually defining in this manner
 ### TransformerLens Test Modules
-class RTETestITLensModule(BaseTestModule, RTEBoolqLMHeadSteps, RTEBoolqModuleMixin, ITLensModule):
+class RTETestITLensModule(BaseTestModule, RTEBoolqLMHeadSteps, RTEBoolqModuleMixin):
     ...
 
 if _LIGHTNING_AVAILABLE:
-    class RTETestITLensLightningModule(RTETestITLensModule, BaseTestITLightningModule, ITLensLightningModule):
+    class RTETestITLensLightningModule(RTETestITLensModule, BaseTestITLightningModule):
         ...
 else:
     RTETestITLensLightningModule = object

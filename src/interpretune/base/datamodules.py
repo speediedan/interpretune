@@ -1,7 +1,7 @@
 import os
 import inspect
 from typing import Optional, Callable, Any
-from abc import ABC
+from abc import ABC, abstractmethod
 from functools import reduce
 import logging
 
@@ -62,10 +62,10 @@ class ITDataModule(ABC):
             module = None
         return module
 
-    # TODO: define ITDataModule and BaseITModule as adhering to a hookable module protocol
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
+    @abstractmethod
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""
         raise NotImplementedError

@@ -1,25 +1,26 @@
-data.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqLightningDataModule
-model.class_path: it_examples.experiments.rte_boolq.core.GPT2ITLightningModule
-it_cfg:
-  class_path: it_examples.experiments.rte_boolq.core.RTEBoolqConfig
-  init_args:
-    use_model_cache: false
-    from_pretrained_cfg:
-      device_map: 0
-      torch_dtype: bfloat16
-    optimizer_init:
-      class_path: torch.optim.AdamW
-      init_args:
-        weight_decay: 1.0e-06
-        eps: 1.0e-07
-        lr: 3.0e-05
-    lr_scheduler_init:
-      class_path: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
-      init_args:
-        T_0: 1
-        T_mult: 2
-        eta_min: 1.0e-06
-    pl_lrs_cfg:
-      interval: epoch
-      frequency: 1
-      name: CosineAnnealingWithWarmRestartsLR
+it_session:
+  datamodule_cls: it_examples.experiments.rte_boolq.datamodules.GPT2RTEBoolqDataModule
+  module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqClassificationModule
+  module_cfg:
+    class_path: it_examples.experiments.rte_boolq.config.RTEBoolqConfig
+    init_args:
+      use_model_cache: false
+      from_pretrained_cfg:
+        device_map: 0
+        torch_dtype: bfloat16
+      optimizer_init:
+        class_path: torch.optim.AdamW
+        init_args:
+          weight_decay: 1.0e-06
+          eps: 1.0e-07
+          lr: 3.0e-05
+      lr_scheduler_init:
+        class_path: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+        init_args:
+          T_0: 1
+          T_mult: 2
+          eta_min: 1.0e-06
+      pl_lrs_cfg:
+        interval: epoch
+        frequency: 1
+        name: CosineAnnealingWithWarmRestartsLR

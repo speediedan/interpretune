@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.base.config.shared import ITSerializableCfg
+from interpretune.base.mixins.core import ProfilerHooksMixin
 from interpretune.utils.types import  STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_warn
 
@@ -32,7 +33,14 @@ class ZeroShotClassificationConfig(ITSerializableCfg):
     lm_generation_cfg: BaseGenerationConfig = field(default_factory=lambda: HFGenerationConfig())
 
 class ZeroShotStepMixin:
-    # TODO: likely should make this a stub like other base hooks and implement in actual example modules
+
+    @ProfilerHooksMixin.memprofilable
+    def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
+        if self.it_cfg.zero_shot_cfg.enabled:
+            self.zero_shot_test_step(batch, batch_idx)
+        else:
+            self.default_test_step(batch, batch_idx)
+
     def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
         Optional[STEP_OUTPUT]:
         rank_zero_warn("`zero_shot_test_step` must be implemented to be used with the Interpretune.")

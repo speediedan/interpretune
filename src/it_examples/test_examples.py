@@ -16,7 +16,7 @@ import pytest
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.base.cli.core_cli import compose_config, IT_CONFIG_BASE, IT_CONFIG_GLOBAL
-from it_examples.experiments.rte_boolq.transformer_lens import GPT2RTEBoolqITLensModule
+from interpretune.plugins.transformer_lens import ITLensModule
 from tests.configuration import pytest_param_factory, TestCfg
 from tests.orchestration import dummy_step
 from tests.utils.runif import RunIf
@@ -25,10 +25,10 @@ from tests.conftest import make_deterministic  # noqa: F401
 
 if _LIGHTNING_AVAILABLE:
     from interpretune.base.modules import ITLightningModule
-    from it_examples.experiments.rte_boolq.transformer_lens import GPT2ITLensLightningModule
+    from interpretune.plugins.transformer_lens import ITLensLightningModule
 else:
     ITLightningModule = None  # type: ignore[misc,assignment]
-    GPT2ITLensLightningModule = None  # type: ignore[misc,assignment]
+    ITLensLightningModule = None  # type: ignore[misc,assignment]
 
 EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS
 
@@ -66,11 +66,11 @@ TEST_CONFIGS_EXAMPLES = (
     TestCfg(alias="core_gpt2_tl_compose_config", cfg=(False, None, False, gpt2_core_tl, True)),
     TestCfg(alias="core_gpt2_tl", cfg=(False, None, False, gpt2_core_tl, False)),
     TestCfg(alias="core_gpt2_tl_instantiate_only",cfg=(False, None, True, gpt2_core_tl, False),
-               expected={'class_type': GPT2RTEBoolqITLensModule}),
+               expected={'class_type': ITLensModule}),
     TestCfg(alias="core_gpt2_optim_init", cfg=(False, None, False, gpt2_core, True)),
     TestCfg(alias="lightning_gpt2_tl", cfg=(True, "test", False, gpt2_l_tl, False), marks="lightning"),
     TestCfg(alias="lightning_gpt2_tl_instantiate_only", cfg=(True, None, True, gpt2_l_tl, False),
-               marks="lightning", expected={'class_type': GPT2ITLensLightningModule}),
+               marks="lightning", expected={'class_type': ITLensLightningModule}),
     TestCfg(alias="lightning_llama2", cfg=(True, "test", False, llama2_l, False), marks="lightning"),
 )
 

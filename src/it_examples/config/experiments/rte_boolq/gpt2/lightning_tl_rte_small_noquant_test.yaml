@@ -1,64 +1,66 @@
-data.class_path: it_examples.experiments.rte_boolq.core.GPT2RTEBoolqLightningDataModule
-model.class_path: it_examples.experiments.rte_boolq.transformer_lens.GPT2ITLensLightningModule
-itdm_cfg:
-  class_path: interpretune.base.config.datamodule.ITDataModuleConfig
-  init_args:
-    model_name_or_path: gpt2
-    task_name: rte
-    train_batch_size: 32
-    eval_batch_size: 32
-    tokenizer_id_overrides:
-      pad_token_id: 50256
-    prompt_cfg:
-      class_path: it_examples.experiments.rte_boolq.core.RTEBoolqPromptConfig
-      init_args:
-        cust_task_prompt:
-          context: '<|PREMISE|>:'
-          question: '<|HYPOTHESIS|>:'
-it_cfg:
-  class_path: it_examples.experiments.rte_boolq.transformer_lens.RTEBoolqTLConfig
-  init_args:
-    use_model_cache: false
-    from_pretrained_cfg:
-      device_map: cpu
-      torch_dtype: bfloat16
-    optimizer_init:
-      class_path: torch.optim.AdamW
-      init_args:
-        weight_decay: 1.0e-06
-        eps: 1.0e-07
-        lr: 3.0e-05
-    lr_scheduler_init:
-      class_path: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
-      init_args:
-        T_0: 1
-        T_mult: 2
-        eta_min: 1.0e-06
-    pl_lrs_cfg:
-      interval: epoch
-      frequency: 1
-      name: CosineAnnealingWithWarmRestartsLR
-    auto_model_cfg:
-      model_head: transformers.GPT2LMHeadModel
-    tl_from_pretrained_cfg:
-      class_path: interpretune.plugins.transformer_lens.ITLensFromPretrainedConfig
-      init_args:
-        enabled: true
-        model_name: gpt2-small
-        fold_ln: true
-        center_writing_weights: true
-        center_unembed: true
-        refactor_factored_attn_matrices: false
-        checkpoint_index: null
-        checkpoint_value: null
-        device: cuda
-        n_devices: 1
-        move_to_device: true
-        fold_value_biases: true
-        default_prepend_bos: true
-        default_padding_side: right
-        dtype: bfloat16
-    activation_checkpointing: false
+it_session:
+  datamodule_cls: it_examples.experiments.rte_boolq.datamodules.GPT2RTEBoolqDataModule
+  module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqLMHeadModule
+  datamodule_cfg:
+    class_path: interpretune.base.config.datamodule.ITDataModuleConfig
+    init_args:
+      dataset_path: /home/speediedan/.cache/huggingface/datasets/rte_tl
+      model_name_or_path: gpt2
+      task_name: rte
+      train_batch_size: 32
+      eval_batch_size: 32
+      tokenizer_id_overrides:
+        pad_token_id: 50256
+      prompt_cfg:
+        class_path: it_examples.experiments.rte_boolq.config.RTEBoolqPromptConfig
+        init_args:
+          cust_task_prompt:
+            context: '<|PREMISE|>:'
+            question: '<|HYPOTHESIS|>:'
+  module_cfg:
+    class_path: it_examples.experiments.rte_boolq.config.RTEBoolqTLConfig
+    init_args:
+      use_model_cache: false
+      from_pretrained_cfg:
+        device_map: cpu
+        torch_dtype: bfloat16
+      optimizer_init:
+        class_path: torch.optim.AdamW
+        init_args:
+          weight_decay: 1.0e-06
+          eps: 1.0e-07
+          lr: 3.0e-05
+      lr_scheduler_init:
+        class_path: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+        init_args:
+          T_0: 1
+          T_mult: 2
+          eta_min: 1.0e-06
+      pl_lrs_cfg:
+        interval: epoch
+        frequency: 1
+        name: CosineAnnealingWithWarmRestartsLR
+      auto_model_cfg:
+        model_head: transformers.GPT2LMHeadModel
+      tl_from_pretrained_cfg:
+        class_path: interpretune.plugins.transformer_lens.ITLensFromPretrainedConfig
+        init_args:
+          enabled: true
+          model_name: gpt2-small
+          fold_ln: true
+          center_writing_weights: true
+          center_unembed: true
+          refactor_factored_attn_matrices: false
+          checkpoint_index: null
+          checkpoint_value: null
+          device: cuda
+          n_devices: 1
+          move_to_device: true
+          fold_value_biases: true
+          default_prepend_bos: true
+          default_padding_side: right
+          dtype: bfloat16
+      activation_checkpointing: false
 trainer:
   accumulate_grad_batches: 1
   accelerator: gpu  # TODO: optimize tl model device loading/movement

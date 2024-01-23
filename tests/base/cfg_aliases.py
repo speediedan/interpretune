@@ -1,8 +1,8 @@
 from typing import NamedTuple
 from collections import ChainMap
 
+from it_examples.experiments.rte_boolq.config import RTEBoolqPromptConfig
 from interpretune.analysis.memprofiler import MemProfilerCfg, MemProfilerSchedule
-from it_examples.experiments.rte_boolq.core import RTEBoolqPromptConfig
 
 
 default_test_bs = 2

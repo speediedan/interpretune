@@ -27,7 +27,7 @@ from tests.base.cfg_aliases import w_lit, cuda,test_bs1_mem, test_bs1_mem_nosave
 # TODO: add tl activation checkpointing tests if/when support vetted
 
 class TLParityCfg(ParityCfg):
-    transformerlens: bool = True
+    plugin: Optional[str] = "transformerlens"
 
 @dataclass
 class TLParityTest(TestCfg):

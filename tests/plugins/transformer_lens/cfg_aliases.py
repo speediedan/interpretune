@@ -1,6 +1,6 @@
 from collections import ChainMap
 
-from it_examples.experiments.rte_boolq.core import RTEBoolqPromptConfig
+from it_examples.experiments.rte_boolq.config import RTEBoolqPromptConfig
 from tests.base.cfg_aliases import (tokenizer_base_kwargs, base_shared_config, default_test_bs, shared_dataset_state,
                                     base_it_module_kwargs, test_optimizer_scheduler_init)
 
@@ -28,4 +28,4 @@ test_tl_it_module_optim = ChainMap(test_tl_it_module_base, test_optimizer_schedu
 ########################################################################################################################
 test_dataset_state_tl = ('pytest_rte_tl',) + shared_dataset_state
 
-w_tl = {"transformerlens": True}
+w_tl = {"plugin": "transformerlens"}

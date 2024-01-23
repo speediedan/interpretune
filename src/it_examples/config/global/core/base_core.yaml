@@ -1,12 +1,11 @@
 seed_everything: 42
-data.class_path: interpretune.base.datamodules.ITDataModule
-model.class_path: interpretune.base.modules.ITModule
-itdm_cfg:
-  class_path: interpretune.base.config.datamodule.ITDataModuleConfig
-  init_args:
-    task_name: override in experiment config
-    model_name_or_path: override in experiment config
-    data_collator_cfg:
-      collator_class: transformers.DataCollatorWithPadding
-    prompt_cfg:
-      class_path: interpretune.base.config.datamodule.PromptConfig
+it_session:
+  datamodule_cfg:
+    class_path: interpretune.base.config.datamodule.ITDataModuleConfig
+    init_args:
+      task_name: override in experiment config
+      model_name_or_path: override in experiment config
+      data_collator_cfg:
+        collator_class: transformers.DataCollatorWithPadding
+      prompt_cfg:
+        class_path: interpretune.base.config.datamodule.PromptConfig

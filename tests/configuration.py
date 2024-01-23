@@ -11,23 +11,23 @@
 # limitations under the License.
 # Initially based on https://bit.ly/3oQ8Vqf
 # TODO: fill in this placeholder with actual core helper functions
-import os
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Callable, Any, Union, Dict, NamedTuple
+from typing import List, Optional, Tuple, Callable, Any, Union, Dict, NamedTuple, Type
 from collections import defaultdict
 from copy import deepcopy
 
 import pytest
 import torch
 
-from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-from interpretune.base.config.module import ITConfig
-from it_examples.experiments.rte_boolq.core import RTEBoolqConfig
-from it_examples.experiments.rte_boolq.transformer_lens import RTEBoolqTLConfig
-from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig
 from interpretune.base.config.datamodule import ITDataModuleConfig
+from it_examples.experiments.rte_boolq.config import RTEBoolqConfig, RTEBoolqTLConfig
+from interpretune.base.config.module import ITConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import BaseITModule
+from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig
+from interpretune.base.contract.session import InterpretunableSessionConfig
+from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
+from interpretune.utils.types import StrOrPath
 from tests.base.cfg_aliases import (test_core_datamodule_kwargs, test_core_it_module_base, test_core_it_module_optim,
                               test_core_shared_config, test_dataset_state_core, expected_first_fwd_ids, MemProfResult,)
 from tests.plugins.transformer_lens.cfg_aliases import (test_tl_it_module_base, test_tl_it_module_optim,
@@ -100,7 +100,7 @@ class ParityCfg(NamedTuple):
     full_dataset: bool = False
     act_ckpt: bool = False
     lightning: bool = False
-    transformerlens: bool = False
+    plugin: Optional[str] = None
     train_steps: Optional[int] = 1
     val_steps: Optional[int] = 1
     test_steps: Optional[int] = 1
@@ -187,6 +187,19 @@ def collect_results(result_map: Dict[str, Tuple], test_alias: str):
 # Configuration composition
 ########################################################################################################################
 
+TEST_DATAMODULE_BASE_CONFIGS = {
+    "core": (test_core_shared_config, test_core_datamodule_kwargs),
+    "transformerlens": (test_tl_shared_config, test_tl_datamodule_kwargs),
+}
+
+TEST_MODULE_BASE_CONFIGS = {
+    # (loop_type, plugin_key)
+    ("test", None): test_core_it_module_base,
+    ("train", None): test_core_it_module_optim,
+    ("test", "transformerlens"): test_tl_it_module_base,
+    ("train", "transformerlens"): test_tl_it_module_optim,
+}
+
 TEST_DATAMODULE_MAPPING = {
     # (lightning, full_dataset)
     (False, False): TestITDataModule,
@@ -198,17 +211,17 @@ TEST_DATAMODULE_MAPPING = {
 TEST_MODULE_MAPPING = {
     # TODO: only using rte module right now for "real model"-based parity/acceptance testing/profiling but will expand
     #to use different/toy model types for unit testing in the future
-    # (model_key, lightning, transformerlens)
-    ("rte", False, False): RTETestITModule,
-    ("rte", True, False): RTETestITLightningModule,
-    ("rte", False, True): RTETestITLensModule,
-    ("rte", True, True): RTETestITLensLightningModule,
+    # (model_key, lightning, plugin_key)
+    ("rte", False, None): RTETestITModule,
+    ("rte", True, None): RTETestITLightningModule,
+    ("rte", False, "transformerlens"): RTETestITLensModule,
+    ("rte", True, "transformerlens"): RTETestITLensLightningModule,
 }
 
 MODULE_CONFIG_MAPPING = {
-    # (model_key, transformerlens)
-    ("rte", False): RTEBoolqConfig,
-    ("rte", True): RTEBoolqTLConfig
+    # (model_key, plugin_key)
+    ("rte", None): RTEBoolqConfig,
+    ("rte", "transformerlens"): RTEBoolqTLConfig
 }
 
 def get_model_input_dtype(precision):
@@ -221,24 +234,23 @@ def get_model_input_dtype(precision):
     return torch.float32
 
 def get_itdm_cfg(test_cfg: Tuple, dm_override_cfg: Optional[Dict] = None, **kwargs) -> ITConfig:
-    if test_cfg.transformerlens:
-        default_itdm_kwargs = test_tl_datamodule_kwargs
-        shared_config = test_tl_shared_config
-    else:
-        default_itdm_kwargs = test_core_datamodule_kwargs
-        shared_config = test_core_shared_config
+    shared_config, default_itdm_kwargs  = TEST_DATAMODULE_BASE_CONFIGS[test_cfg.plugin or "core"]
     test_it_datamodule_cfg = deepcopy(default_itdm_kwargs)
     if dm_override_cfg:
         test_it_datamodule_cfg.update(dm_override_cfg)
     return ITDataModuleConfig(**shared_config, **test_it_datamodule_cfg)
 
-def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[str| os.PathLike] = None) -> ITConfig:
+def init_plugin_cfg(test_cfg: Tuple, test_it_module_cfg: Dict):
+    if test_cfg.plugin == "transformerlens":
+        test_it_module_cfg['tl_from_pretrained_cfg'] = \
+            ITLensFromPretrainedConfig(**test_it_module_cfg['tl_from_pretrained_cfg'])
+    else:  # See NOTE [Interpretability Plugins]
+        raise ValueError(f"Unknown plugin type: {test_cfg.plugin}")
+
+def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[StrOrPath] = None) -> ITConfig:
     test_cfg_override_attrs = ["from_pretrained_cfg", "memprofiler_cfg", "cust_fwd_kwargs", "auto_model_cfg",
                                "tl_from_pretrained_cfg"]
-    if test_cfg.loop_type == "test":
-        target_test_it_module_cfg = test_tl_it_module_base if test_cfg.transformerlens else test_core_it_module_base
-    elif test_cfg.loop_type == "train":
-        target_test_it_module_cfg = test_tl_it_module_optim if test_cfg.transformerlens else test_core_it_module_optim
+    target_test_it_module_cfg = TEST_MODULE_BASE_CONFIGS[(test_cfg.loop_type, test_cfg.plugin)]
     test_it_module_cfg = deepcopy(target_test_it_module_cfg)
     if test_cfg.act_ckpt:
         test_it_module_cfg.update({"activation_checkpointing": True})
@@ -248,10 +260,9 @@ def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[str| os.PathLike] = None)
     if core_log_dir:
         test_it_module_cfg.update({'core_log_dir': core_log_dir})
     test_it_module_cfg = configure_device_precision(test_it_module_cfg, test_cfg.device_type, test_cfg.precision)
-    if test_cfg.transformerlens:
-        test_it_module_cfg['tl_from_pretrained_cfg'] = \
-            ITLensFromPretrainedConfig(**test_it_module_cfg['tl_from_pretrained_cfg'])
-    config_class = MODULE_CONFIG_MAPPING[(test_cfg.model_key, test_cfg.transformerlens)]
+    if test_cfg.plugin:
+        init_plugin_cfg(test_cfg, test_it_module_cfg)
+    config_class = MODULE_CONFIG_MAPPING[(test_cfg.model_key, test_cfg.plugin)]
     return config_class(**test_it_module_cfg)
 
 def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> Dict[str, Any]:
@@ -263,10 +274,22 @@ def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int
         cfg['tl_from_pretrained_cfg'].update({'dtype': get_model_input_dtype(precision), 'device': device_type})
     return cfg
 
-def datamodule_factory(test_cfg: Tuple) -> ITDataModule:
+def datamodule_config_factory(test_cfg: Tuple) -> Tuple[Type[ITDataModule], ITDataModuleConfig]:
     itdm_cfg = get_itdm_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
     datamodule_class = TEST_DATAMODULE_MAPPING[(test_cfg.lightning, test_cfg.full_dataset)]
-    return datamodule_class(itdm_cfg=itdm_cfg, force_prepare_data=test_cfg.force_prepare_data)
+    return datamodule_class, itdm_cfg
+
+def module_config_factory(test_cfg: Tuple, core_log_dir: StrOrPath) -> Tuple[Type[BaseITModule], ITConfig]:
+    it_cfg = get_it_cfg(test_cfg=test_cfg, core_log_dir=core_log_dir)
+    module_class = TEST_MODULE_MAPPING[(test_cfg.model_key, test_cfg.lightning, test_cfg.plugin)]
+    return module_class, it_cfg
+
+def config_session(core_cfg, test_cfg, test_alias, expected, state_log_dir):
+    session_type = {'lightning': test_cfg.lightning, 'plugin': test_cfg.plugin}
+    dm_kwargs = {'dm_kwargs': {'force_prepare_data': test_cfg.force_prepare_data}}
+    module_kwargs = {'module_kwargs': {'test_alias': test_alias, 'state_log_dir': state_log_dir, **expected}}
+    session_cfg = InterpretunableSessionConfig(**core_cfg, **session_type, **dm_kwargs, **module_kwargs)
+    return session_cfg
 
 def config_modules(test_cfg, test_alias, expected_results, tmp_path,
                    state_log_mode: bool = False) -> Tuple[ITDataModule, BaseITModule]:
@@ -274,10 +297,9 @@ def config_modules(test_cfg, test_alias, expected_results, tmp_path,
         seed_everything(1, workers=True)
     cuda_reset()
     torch.set_printoptions(precision=12)
-    datamodule = datamodule_factory(test_cfg)
-    it_cfg = get_it_cfg(test_cfg, core_log_dir=tmp_path)
-    module_class = TEST_MODULE_MAPPING[(test_cfg.model_key, test_cfg.lightning, test_cfg.transformerlens)]
-    module = module_class(it_cfg=it_cfg, test_alias=test_alias,
-                          state_log_dir=tmp_path if state_log_mode else None,  # optionally enable expected state logs
-                          **expected_results,)
-    return datamodule, module
+    dm_cls, itdm_cfg = datamodule_config_factory(test_cfg)
+    module_cls, it_cfg = module_config_factory(test_cfg, core_log_dir=tmp_path)
+    core_cfg = {'datamodule_cfg': itdm_cfg, 'datamodule_cls': dm_cls, 'module_cfg': it_cfg, 'module_cls': module_cls}
+    state_log_dir = tmp_path if state_log_mode else None
+    it_session = config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_dir)
+    return it_session.datamodule, it_session.module

@@ -180,7 +180,7 @@ class ITLensModule(TLensAttributeMixin, CoreHelperAttributeMixin, BaseITLensModu
     ...
 
 if _LIGHTNING_AVAILABLE:
-    class ITLensLightningModule(BaseITLensModule, ITLightningModule):
+    class ITLensLightningModule(TLensAttributeMixin, BaseITLensModule, ITLightningModule):
         ...
 else:
     ITLensLightningModule = object

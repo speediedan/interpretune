@@ -1,13 +1,13 @@
 from typing import Any, Optional
+
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.utils.import_utils import instantiate_class
 from interpretune.base.config.module import ITConfig
 from interpretune.base.datamodules import ITDataModule
+from interpretune.utils.import_utils import instantiate_class
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
-from interpretune.base.mixins.core import ProfilerHooksMixin
 
 class BaseITHooks:
     """" LightningModule hooks implemented by BaseITModule."""
@@ -75,13 +75,8 @@ class BaseITHooks:
     def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         rank_zero_warn("`validation_step` must be implemented to be used with the Interpretune.")
 
-    # TODO: test if test_step is overridden, if so call it instead of zeroshot or default_test
-    @ProfilerHooksMixin.memprofilable
     def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        if self.it_cfg.zero_shot_cfg.enabled:
-            self.zero_shot_test_step(batch, batch_idx)
-        else:
-            self.default_test_step(batch, batch_idx)
+        rank_zero_warn("`validation_step` must be implemented to be used with the Interpretune.")
 
     def predict_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         rank_zero_warn("`prediction_step` must be implemented to be used with the Interpretune.")

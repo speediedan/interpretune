@@ -33,3 +33,5 @@ algorithmically allocate layers to the specified number of devices.
 
 Now setting `device_map` to `cpu` and continuing configuration...
 """
+
+unexpected_state_msg_suffix = "This Interpretune session may not work as intended."

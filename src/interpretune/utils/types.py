@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from os import PathLike
 from typing import (
     Any,
     List,
@@ -14,6 +15,7 @@ from typing import (
     TypedDict,
     Union,
     runtime_checkable,
+    TypeAlias
 )
 import torch
 from torch import Tensor
@@ -94,7 +96,6 @@ class ReduceLROnPlateau(_Stateful[str], Protocol):
     def step(self, metrics: Union[float, int, Tensor], epoch: Optional[int] = None) -> None:
         ...
 
-
 STEP_OUTPUT = Optional[Union[Tensor, Mapping[str, Any]]]
 
 LRSchedulerTypeTuple = (torch.optim.lr_scheduler.LRScheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)
@@ -145,3 +146,5 @@ OptimizerLRScheduler = Optional[
 ]
 
 ArgsType = Optional[Union[List[str], Dict[str, Any], Namespace]]
+
+StrOrPath: TypeAlias = Union[str, PathLike]

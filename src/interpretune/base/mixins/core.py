@@ -89,7 +89,7 @@ class CoreHelperAttributeMixin:
 
 
 # adapted from pytorch/core/optimizer.py initialization methods
-class OptimizerSchedulerInitMixin:
+class OptimizerSchedulerMixin:
     """" Barebones interface to setup optimizers and schedulers for manual optimization with core IT modules."""
 
     # proper initialization of these variables should be done in the child class
@@ -105,8 +105,8 @@ class OptimizerSchedulerInitMixin:
                 "`configure_optimizers` returned `None`, Interpretune will not configure an optimizer or scheduler.",
             )
 
-        optims, lrs = OptimizerSchedulerInitMixin._configure_optimizers(optim_conf)
-        lrs_configs = OptimizerSchedulerInitMixin._configure_schedulers_manual_opt(lrs)
+        optims, lrs = OptimizerSchedulerMixin._configure_optimizers(optim_conf)
+        lrs_configs = OptimizerSchedulerMixin._configure_schedulers_manual_opt(lrs)
         lrs = [lrs.scheduler for lrs in lrs_configs]
         self.it_optimizers, self.it_lr_scheduler_configs, self.it_lr_schedulers = optims, lrs_configs, lrs
 

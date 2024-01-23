@@ -12,13 +12,13 @@ from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 from interpretune.base.config.module import ITConfig
 from interpretune.base.datamodules import ITDataModule
-from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE, _LIGHTNING_AVAILABLE
 from interpretune.base.hooks import BaseITHooks
-from interpretune.base.mixins.core import (OptimizerSchedulerInitMixin, CoreHelperAttributeMixin, ProfilerHooksMixin,
+from interpretune.base.mixins.core import (OptimizerSchedulerMixin, CoreHelperAttributeMixin, ProfilerHooksMixin,
                                            CORE_TO_LIGHTNING_ATTRS_MAP)
 from interpretune.base.mixins.zero_shot_classification import ZeroShotStepMixin
 from interpretune.analysis.debug_generation import DebugGeneration
 from interpretune.analysis.memprofiler import MemProfiler
+from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE, _LIGHTNING_AVAILABLE
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info, rank_zero_debug
 
 
@@ -27,14 +27,7 @@ for warnf in [".*For Lightning compatibility, this noop .*",]:
     warnings.filterwarnings("once", warnf)
 
 
-class BaseITModule(ABC, BaseITHooks, OptimizerSchedulerInitMixin, ProfilerHooksMixin, ZeroShotStepMixin,
-                   torch.nn.Module):
-
-    #TODO: move fts callback property to this class once fts supports raw pytorch with plugin
-    # @property
-    # def finetuningscheduler_callback(self) -> Optional[fts.FinetuningScheduler]:  # type: ignore
-    #     fts_callback = [c for c in self.trainer.callbacks if isinstance(c, fts.FinetuningScheduler)]  # type: ignore
-    #     return fts_callback[0] if fts_callback else None
+class BaseITModule(ABC, ZeroShotStepMixin, BaseITHooks, OptimizerSchedulerMixin, ProfilerHooksMixin, torch.nn.Module):
 
     def __init__(
         self,
@@ -121,6 +114,7 @@ class BaseITModule(ABC, BaseITHooks, OptimizerSchedulerInitMixin, ProfilerHooksM
     def _model_init(self) -> None:
         if self.cuda_allocator_history:
             torch.cuda.memory._record_memory_history()
+        # TODO; add path supporting models from config or direct instantiation beginning here
         self.model = self._auto_model_init()
         self.model.config.update(self.it_cfg.model_cfg)  # apply model config overrides
         self.model.config.use_cache = self.it_cfg.use_model_cache

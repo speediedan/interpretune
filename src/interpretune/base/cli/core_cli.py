@@ -17,21 +17,22 @@ import sys
 import numpy as np
 import random
 import logging
+from functools import reduce
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Iterable, Tuple, Callable
 
 import torch
 from transformers import logging as transformers_logging
 
-from interpretune.utils.types import ArgsType
 from interpretune.base.config.shared import ITSharedConfig
-from interpretune.base.config.module import ITConfig
-from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.datamodules import ITDataModule
-from interpretune.base.modules import ITModule, BaseITModule
+from interpretune.base.modules import ITModule
+from interpretune.base.contract.session import InterpretunableSessionConfig
+from interpretune.base.contract.protocol import InterpretunableType
+from interpretune.base.call import it_init
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.import_utils import _DOTENV_AVAILABLE
-from interpretune.base.call import it_init
+from interpretune.utils.types import ArgsType
 
 
 from jsonargparse import (
@@ -105,13 +106,11 @@ def add_base_args(parser: ArgumentParser) -> None:
     # configuration, configuration inheritance, modular `post_init` methods etc.)
     # Also note that making these dataclasses subclass arguments maximizes flexibility of this experimental
     # framework at the expense of modest marginal configuration verbosity (i.e. `init_args` nesting).
-    parser.add_subclass_arguments(ITDataModuleConfig, "itdm_cfg", fail_untyped=False, required=True)
-    parser.add_subclass_arguments(ITConfig, "it_cfg", fail_untyped=False, required=True)
-    parser.link_arguments("itdm_cfg", "data.init_args.itdm_cfg")
-    parser.link_arguments("it_cfg", "model.init_args.it_cfg")
+
     # link our datamodule and module shared configuration
     for attr in ITSharedConfig.__dataclass_fields__:
-        parser.link_arguments(f"itdm_cfg.init_args.{attr}", f"it_cfg.init_args.{attr}")
+        parser.link_arguments(f"it_session.datamodule_cfg.init_args.{attr}", f"it_session.module_cfg.init_args.{attr}")
+
 
 def bootstrap_cli() -> Callable:
     # TODO: consider adding an env var option to control CLI selection
@@ -127,7 +126,28 @@ def bootstrap_cli() -> Callable:
     return cli_main()
 
 
-class ITCLI:
+class ITSessionMixin:
+    core_to_lightning_cli_map = {"data": "it_session.datamodule", "model": "it_session.module"}
+
+    def add_arguments_to_parser(self, parser: ArgumentParser) -> None:
+        parser.add_class_arguments(InterpretunableSessionConfig, "it_session", instantiate=True, sub_configs=True)
+        add_base_args(parser)
+
+    def _it_session(self, config, key) -> Optional[InterpretunableType]:
+        try:
+            attr_val = reduce(getattr, key.split("."), config)
+        except AttributeError:
+            attr_val = None
+        return attr_val
+
+    def _get(self, config: Namespace, key: str, default: Optional[Any] = None) -> Any:
+        """Utility to get a config value which might be inside a subcommand."""
+        if target_key := self.core_to_lightning_cli_map.get(key, None):
+            return self._it_session(config.get(str(self.subcommand), config), target_key)
+        return config.get(str(self.subcommand), config).get(key, default)
+
+
+class ITCLI(ITSessionMixin):
     """Customize the :class:`~lightning.pytorch.cli.LightningCLI` to ensure the
     :class:`~pytorch_lighting.core.LightningDataModule` and :class:`~lightning.pytorch.core.module.LightningModule`
     use the same Hugging Face model, SuperGLUE task and custom logging tag."""
@@ -155,13 +175,17 @@ class ITCLI:
         self.setup_parser(parser_kwargs)
         self.parse_arguments(self.parser, args)
 
+        # we are not yet supporting subcommands using the `core_cli` (versus LightningCLI)
+        self.subcommand = None
+
         self._set_seed()
 
         self.before_instantiate_classes()
         self.instantiate_classes()
+
+        # N.B. we use data, model top-level keys for Lightning CLI compatibility w/ datamodule and modules respectively
         if not self.instantiate_only:
             it_init(module=self.model, datamodule=self.datamodule)
-
 
     def setup_parser(
         self, main_kwargs: Dict[str, Any]) -> None:
@@ -172,7 +196,6 @@ class ITCLI:
 
     def init_parser(self, **kwargs: Any) -> ArgumentParser:
         """Method that instantiates the argument parser."""
-        #kwargs.setdefault("dump_header", [f"lightning.pytorch=={pl.__version__}"])
         parser = ArgumentParser(**kwargs)
         parser.add_argument(
             "-c", "--config", action=ActionConfigFile, help="Path to a configuration file in json or yaml format."
@@ -194,12 +217,6 @@ class ITCLI:
                     "Set to True to use a random seed."
                 ),
             )
-
-    def add_arguments_to_parser(self, parser: ArgumentParser) -> None:
-        # N.B. we use data, model top-level keys for Lightning CLI compatibility w/ datamodule and modules respectively
-        parser.add_subclass_arguments(ITDataModule, "data", fail_untyped=False, required=True)
-        parser.add_subclass_arguments(BaseITModule, "model", fail_untyped=False, required=True)
-        add_base_args(parser)
 
     def parse_arguments(self, parser: ArgumentParser, args: ArgsType) -> None:
         """Parses command line arguments and stores it in ``self.config``."""
@@ -232,11 +249,9 @@ class ITCLI:
     def instantiate_classes(self) -> None:
         """Instantiates the classes and sets their attributes."""
         self.config_init = self.parser.instantiate_classes(self.config)
-        self.datamodule = self.config_init.get("data", None)
-        self.model = self.config_init.get("model", None)
+        self.datamodule = self._get(self.config_init, "data")
+        self.model = self._get(self.config_init, "model")
 
-    # def _run_core_flow(self) -> None:
-    #     it_init(model=self.model, datamodule=self.datamodule)
 
 def env_setup() -> None:
     if _DOTENV_AVAILABLE:
