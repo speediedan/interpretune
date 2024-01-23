@@ -1,33 +1,10 @@
-it_session:
-  datamodule_cls: it_examples.experiments.rte_boolq.datamodules.GPT2RTEBoolqDataModule
-  module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqClassificationModule
-  datamodule_cfg:
-    class_path: interpretune.base.config.datamodule.ITDataModuleConfig
-    init_args:
-      model_name_or_path: gpt2-large
-      task_name: rte
-      dataset_path: /home/speediedan/.cache/huggingface/datasets/rte
-      train_batch_size: 8
-      eval_batch_size: 8
-      #cust_tokenization_pattern: llama2-nochat
-      tokenizer_id_overrides:
-        pad_token_id: 50256
+it_session:  ## TODO: flesh out this example
   module_cfg:
-    class_path: it_examples.experiments.rte_boolq.config.RTEBoolqConfig
-    init_args:
-      use_model_cache: false
-      from_pretrained_cfg:
-        device_map: cpu
-        torch_dtype: bfloat16
-      zero_shot_cfg:
-        class_path: it_examples.experiments.rte_boolq.config.RTEBoolqZeroShotClassificationConfig
-        init_args:
-          enabled: true
-          lm_generation_cfg:
-            max_new_tokens: 5
-      activation_checkpointing: false
-      auto_model_cfg:
-        model_head: transformers.GPT2ForSequenceClassification
+  experiment_tag: rte_small_noquant_gen_ft_schedule_only
+  init_args:
+    from_pretrained_cfg:
+      device_map: cpu
+      torch_dtype: bfloat16
 trainer:
   devices: 1
   callbacks:

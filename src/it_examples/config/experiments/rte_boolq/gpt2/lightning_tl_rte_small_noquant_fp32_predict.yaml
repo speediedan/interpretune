@@ -1,90 +1,18 @@
 it_session:
-  datamodule_cls: it_examples.experiments.rte_boolq.datamodules.GPT2RTEBoolqDataModule
-  module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqLMHeadModule
-  datamodule_cfg:
-    class_path: interpretune.base.config.datamodule.ITDataModuleConfig
-    init_args:
-      dataset_path: /home/speediedan/.cache/huggingface/datasets/rte_tl
-      model_name_or_path: gpt2
-      task_name: rte
-      train_batch_size: 32
-      eval_batch_size: 32
-      tokenizer_id_overrides:
-        pad_token_id: 50256
-      prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.config.RTEBoolqPromptConfig
-        init_args:
-          cust_task_prompt:
-            context: '<|PREMISE|>:'
-            question: '<|HYPOTHESIS|>:'
   module_cfg:
-    class_path: it_examples.experiments.rte_boolq.config.RTEBoolqTLConfig
     init_args:
-      use_model_cache: false
-      optimizer_init:
-        class_path: torch.optim.AdamW
-        init_args:
-          weight_decay: 1.0e-06
-          eps: 1.0e-07
-          lr: 3.0e-05
-      lr_scheduler_init:
-        class_path: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
-        init_args:
-          T_0: 1
-          T_mult: 2
-          eta_min: 1.0e-06
-      pl_lrs_cfg:
-        interval: epoch
-        frequency: 1
-        name: CosineAnnealingWithWarmRestartsLR
+      experiment_tag: lightning_tl_rte_small_noquant_fp32_predict
       from_pretrained_cfg:
         device_map: cpu
         torch_dtype: float32
-      auto_model_cfg:
-        model_head: transformers.GPT2LMHeadModel
       tl_from_pretrained_cfg:
-        class_path: interpretune.plugins.transformer_lens.ITLensFromPretrainedConfig
         init_args:
-          enabled: true
-          model_name: gpt2-small
-          fold_ln: true
-          center_writing_weights: true
-          center_unembed: true
-          refactor_factored_attn_matrices: false
-          checkpoint_index: null
-          checkpoint_value: null
           device: cuda
-          n_devices: 1
-          move_to_device: true
-          fold_value_biases: true
-          default_prepend_bos: true
-          default_padding_side: right
           dtype: float32
-      activation_checkpointing: false
 trainer:
   precision: 32
-  #max_epochs: 600
   accumulate_grad_batches: 1
   devices: 1
-  # callbacks:
-  # - class_path: finetuning_scheduler.FinetuningScheduler
-  #   init_args:
-  #     ft_schedule: /home/speediedan/repos/interpretune/src/it_examples/config/lightning/ft_schedules/ITModule_ft_schedule_gpt2_small_sc_notl_max_trans_warmup.yaml
-  #     max_depth: 1
-  #     epoch_transitions_only: true
-  #     logging_level: 10  # enable DEBUG logging to trace all reinitializations
-  # - class_path: finetuning_scheduler.FTSCheckpoint
-  #   init_args:
-  #     save_top_k: 1
-  #     monitor: val_loss
-  #     verbose: true
-  # - class_path: finetuning_scheduler.FTSEarlyStopping
-  #   init_args:
-  #     monitor: val_loss
-  #     min_delta: 0.001
-  #     patience: 2 # limited patience for example
-  #     verbose: true
-  #     mode: min
   # note logging is disabled in predict mode (might consider adding a special interpret subcommand to the PL trainer)
   logger:
     class_path: lightning.pytorch.loggers.TensorBoardLogger

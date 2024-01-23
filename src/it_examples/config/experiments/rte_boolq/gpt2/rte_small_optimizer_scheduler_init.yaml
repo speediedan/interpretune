@@ -1,32 +1,10 @@
 it_session:
-  datamodule_cls: it_examples.experiments.rte_boolq.datamodules.GPT2RTEBoolqDataModule
-  module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqClassificationModule
-  datamodule_cfg:
-    class_path: interpretune.base.config.datamodule.ITDataModuleConfig
-    init_args:
-      model_name_or_path: gpt2
-      task_name: rte
-      dataset_path: /home/speediedan/.cache/huggingface/datasets/rte
-      train_batch_size: 32
-      eval_batch_size: 32
-      tokenizer_id_overrides:
-        pad_token_id: 50256
-      prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.config.RTEBoolqPromptConfig
-        init_args:
-          cust_task_prompt:
-            context: '<|PREMISE|>:'
-            question: '<|HYPOTHESIS|>:'
   module_cfg:
-    class_path: it_examples.experiments.rte_boolq.config.RTEBoolqConfig
     init_args:
-      use_model_cache: false
+      experiment_tag: opt_scheduler_init_test
       from_pretrained_cfg:
         device_map: cpu
         torch_dtype: bfloat16
-      experiment_tag: opt_scheduler_init_test
-      auto_model_cfg:
-        model_head: transformers.GPT2LMHeadModel
       optimizer_init:
         class_path: torch.optim.AdamW
         init_args:
@@ -39,4 +17,3 @@ it_session:
           T_0: 1
           T_mult: 2
           eta_min: 1.0e-06
-      activation_checkpointing: false

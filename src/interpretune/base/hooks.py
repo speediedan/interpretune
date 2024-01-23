@@ -1,5 +1,4 @@
 from typing import Any, Optional
-
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
 

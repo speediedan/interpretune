@@ -11,7 +11,7 @@
 # limitations under the License.
 import os.path
 from unittest import mock
-from typing import Iterable, Dict, Tuple
+from typing import Iterable, Dict, Tuple, Optional
 import pytest
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
@@ -37,30 +37,36 @@ EXPERIMENTS_BASE = IT_CONFIG_BASE / "experiments"
 BASE_DEBUG_CONFIG = IT_CONFIG_GLOBAL / "base_debug.yaml"
 BASE_TL_CONFIG = IT_CONFIG_GLOBAL / "base_transformerlens.yaml"
 
-def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, bool, bool]]) -> Dict:
+def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, Optional[str], bool]]) -> Dict:
     exp_cfg_sets = {}
-    for exp, model, subexp, use_tl, debug_mode in test_keys:
+    for exp, model, subexp, plugin, debug_mode in test_keys:
         base_model_cfg =  EXPERIMENTS_BASE / exp / f"{model}.yaml"
+        base_cfg_set = (base_model_cfg,)
+        if plugin:
+            if plugin == "transformerlens":
+                exp_plugin_cfg = EXPERIMENTS_BASE / exp /  f"{plugin}.yaml"
+                base_cfg_set += (BASE_TL_CONFIG, exp_plugin_cfg,)
+            else:
+                raise ValueError(f"Unknown plugin type: {plugin}")
         subexp_cfg =  EXPERIMENTS_BASE / exp / model / f"{subexp}.yaml"
-        base_cfg_set = (base_model_cfg, subexp_cfg)
-        for cfg, enabled in zip((BASE_TL_CONFIG, BASE_DEBUG_CONFIG), (use_tl, debug_mode)):
-            if enabled:
-                base_cfg_set += (cfg,)
-        exp_cfg_sets[(exp, model, subexp, use_tl, debug_mode)] = base_cfg_set
+        base_cfg_set += (subexp_cfg,)
+        if debug_mode:
+            base_cfg_set += (BASE_DEBUG_CONFIG,)
+        exp_cfg_sets[(exp, model, subexp, plugin, debug_mode)] = base_cfg_set
     return exp_cfg_sets
 
-EXPERIMENT_CONFIG_SETS = gen_experiment_cfg_sets(
-    (("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", False, True),
-     ("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", True, True),
-     ("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", True, False),
-     ("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", False, True))
+EXPERIMENT_CFG_SETS = gen_experiment_cfg_sets(
+    (("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", None, True),
+     ("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "transformerlens", True),
+     ("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "transformerlens", False),
+     ("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", None, True))
 )
 
 # experiment config set aliases
-gpt2_core = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", False, True)]
-gpt2_core_tl = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", True, True)]
-gpt2_l_tl = EXPERIMENT_CONFIG_SETS[("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", True, False)]
-llama2_l = EXPERIMENT_CONFIG_SETS[("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", False, True)]
+gpt2_core = EXPERIMENT_CFG_SETS[("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", None, True)]
+gpt2_core_tl = EXPERIMENT_CFG_SETS[("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "transformerlens", True)]
+gpt2_l_tl = EXPERIMENT_CFG_SETS[("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "transformerlens", False)]
+llama2_l = EXPERIMENT_CFG_SETS[("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", None, True)]
 
 TEST_CONFIGS_EXAMPLES = (
     TestCfg(alias="core_gpt2_tl_compose_config", cfg=(False, None, False, gpt2_core_tl, True)),
