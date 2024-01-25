@@ -1,4 +1,4 @@
-from typing import Optional, Literal, List
+from typing import Optional, Literal, List, Union
 from dataclasses import dataclass, field
 from functools import reduce
 
@@ -45,11 +45,40 @@ class ITLensConfig(ITConfig):
     """Dataclass to encapsulate the ITModuleinternal state."""
     # TODO: support only creation of HookedTransformer with pretrained method for now, later support direct creation
     tl_from_pretrained_cfg: ITLensFromPretrainedConfig = field(default_factory=lambda: ITLensFromPretrainedConfig())
-    def __post_init__(self) -> None:
-        device_map = self.from_pretrained_cfg.get('device_map', None)
-        if isinstance(device_map, dict) and len(device_map.keys()) > 1:
+
+    def _sync_hf_tl_dtypes(self, hf_dtype, tl_dtype):
+        # we synchronize dtypes as follows:
+        # 1. if both are provided, TL dtype takes precedence
+        if hf_dtype and tl_dtype:
+            if hf_dtype != tl_dtype:
+                rank_zero_warn(f"HF `from_pretrained` dtype {hf_dtype} does not match TL dtype {tl_dtype}."
+                                f" Setting both to the specified TL dtype {tl_dtype}.")
+                self.from_pretrained_cfg['torch_dtype'] = hf_dtype
+        # 2. if only TL `from_pretrained` dtype is provided, we set the HF dtype to the TL dtype
+        else:
+            rank_zero_warn("HF `from_pretrained` dtype was not provided. Setting `from_pretrained` dtype to match"
+                           f" specified TL dtype: {tl_dtype}.")
+            self.from_pretrained_cfg['torch_dtype'] = tl_dtype
+
+    def _check_supported_device_map(self):
+      device_map = self.from_pretrained_cfg.get('device_map', None)
+      if isinstance(device_map, dict) and len(device_map.keys()) > 1:
             rank_zero_warn(tl_invalid_dmap)
             self.from_pretrained_cfg['device_map'] = 'cpu'
+
+    def _resolve_torch_dtype(self, dtype: Union[torch.device, str]) -> Optional[torch.device]:
+        if isinstance(dtype, torch.dtype):
+            return dtype
+        elif isinstance(dtype, str):
+            return self._str_to_torch_dtype(dtype)
+
+    def __post_init__(self) -> None:
+        self._check_supported_device_map()
+        if hf_dtype := self.from_pretrained_cfg.get('torch_dtype', None):
+            hf_dtype = self._resolve_torch_dtype(hf_dtype)
+        tl_dtype = self._resolve_torch_dtype(self.tl_from_pretrained_cfg.dtype)
+        self._sync_hf_tl_dtypes(hf_dtype, tl_dtype)
+        super().__post_init__()
 
 @dataclass(kw_only=True)
 class TLensGenerationConfig(BaseGenerationConfig):
@@ -125,7 +154,7 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
         # versus moving them both to GPU (may make sense to explore meta device usage for model definition
         # in the future, only materializing parameter by parameter during loading from pretrained weights
         # to eliminate need for two copies in memory)
-        # TODO: add warning that TransformerLens only specifying a single device via device map
+        # TODO: add warning that TransformerLens only specifying a single device via device  is supported
         # (though the model will automatically be moved to multiple devices if n_devices > 1)
         if (dmap := self.it_cfg.from_pretrained_cfg.get('device_map', None)) != 'cpu':
             rank_zero_warn('Overriding TransformerLens `from_pretrained_cfg.device_map` to transform pretrained '
@@ -141,6 +170,9 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
 
     def _convert_hf_to_tl(self) -> HookedTransformer:
         HookedTransformer.generate = patched_generate
+        # TODO: decide whether to pass remaining HF from_pretrained_cfg args to HookedTransformer
+        # (other than torch_dtype which should already have been processed and removed, device_map should also be
+        # removed before passing to HookedTransformer)
         self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=self.datamodule.tokenizer,
                                                        **self.it_cfg.tl_from_pretrained_cfg.__dict__)
 

@@ -77,15 +77,19 @@ class ITConfig(ITSharedConfig, ModelConfig, OptimizerSchedulerConfig, MemoryEffi
         rank_zero_warn(f"The provided `torch_dtype` {self.from_pretrained_cfg.pop('torch_dtype')} could not be "
                        "resolved, attempting to proceed with `torch_dtype` unset.")
 
+    def _str_to_torch_dtype(self, str_dtype: str) -> Optional[torch.dtype]:
+        if hasattr(torch, str_dtype):
+            return getattr(torch, str_dtype)
+        elif hasattr(torch, str_dtype.split(".")[-1]):
+            return getattr(torch, str_dtype.split(".")[-1])
+
     def _torch_dtype_serde(self) -> Optional[torch.dtype]:
         if self.from_pretrained_cfg.get('torch_dtype', None):
             if isinstance(self.from_pretrained_cfg['torch_dtype'], str):
-                if hasattr(torch, self.from_pretrained_cfg['torch_dtype']):
-                    return getattr(torch, self.from_pretrained_cfg.pop('torch_dtype'))
-                elif hasattr(torch, self.from_pretrained_cfg['torch_dtype'].split(".")[-1]):
-                    return getattr(torch, self.from_pretrained_cfg.pop('torch_dtype').split(".")[-1])
-                else:
-                    self._pop_dtype_msg()
+                if resolved_dtype := self._str_to_torch_dtype(self.from_pretrained_cfg['torch_dtype']):
+                    del self.from_pretrained_cfg['torch_dtype']
+                    return resolved_dtype
+                self._pop_dtype_msg()
             elif isinstance(self.from_pretrained_cfg['torch_dtype'], torch.dtype):
                 return self.from_pretrained_cfg.pop('torch_dtype')
             else:

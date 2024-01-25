@@ -2,11 +2,6 @@ it_session:
   module_cfg:
     init_args:
       experiment_tag: lightning_tl_rte_small_noquant_test
-      # N.B. We can't share device_map: cpu at experiment-level because the full from_pretrained_cfg because while
-      #      jsonargparse will update/inherit init_args, that behavior doesn't work with normal objects like this dict
-      from_pretrained_cfg:
-        device_map: cpu
-        torch_dtype: bfloat16
       tl_from_pretrained_cfg:
         class_path: interpretune.plugins.transformer_lens.ITLensFromPretrainedConfig
         init_args:

@@ -20,7 +20,7 @@ from interpretune.plugins.transformer_lens import ITLensModule
 from tests.configuration import pytest_param_factory, TestCfg
 from tests.orchestration import dummy_step
 from tests.utils.runif import RunIf
-from tests.utils.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, unexpected_warns
+from tests.utils.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, unexpected_warns, TL_EXPECTED_WARNS
 from tests.conftest import make_deterministic  # noqa: F401
 
 if _LIGHTNING_AVAILABLE:
@@ -30,7 +30,7 @@ else:
     ITLightningModule = None  # type: ignore[misc,assignment]
     ITLensLightningModule = None  # type: ignore[misc,assignment]
 
-EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS
+EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS + TL_EXPECTED_WARNS
 
 RUN_FN = "run_experiment.py"
 EXPERIMENTS_BASE = IT_CONFIG_BASE / "experiments"

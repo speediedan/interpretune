@@ -28,7 +28,9 @@ LIGHTING_CONTEXT_WARNS = HF_EXPECTED_WARNS + [
 ]
 
 TL_EXPECTED_WARNS = [
-    "to transform pretrained weights on cpu", # to support transforming weights on cpu prior to loading to device
+    "to transform pretrained weights on cpu",  # to support transforming weights on cpu prior to loading to device
+    "dtype was not provided. Setting",  # for our HF/TL dtype inference/synchronization warnings
+    "Setting both to the specified TL dtype",  # another variant of HF/TL dtype inference/synchronization warning
 ]
 
 TL_CONTEXT_WARNS = TL_EXPECTED_WARNS + CORE_CONTEXT_WARNS
