@@ -10,6 +10,7 @@ from interpretune.base.mixins.zero_shot_classification import ZeroShotClassifica
 from interpretune.analysis.debug_generation import DebugLMConfig
 from interpretune.analysis.memprofiler import MemProfilerCfg
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
+from interpretune.utils.import_utils import _resolve_torch_dtype
 
 
 # TODO: add core helper log/log_dict methods for core context usage
@@ -73,27 +74,14 @@ class ITConfig(ITSharedConfig, ModelConfig, OptimizerSchedulerConfig, MemoryEffi
     debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
     zero_shot_cfg: ZeroShotClassificationConfig = field(default_factory=lambda: ZeroShotClassificationConfig())
 
-    def _pop_dtype_msg(self) -> None:
-        rank_zero_warn(f"The provided `torch_dtype` {self.from_pretrained_cfg.pop('torch_dtype')} could not be "
-                       "resolved, attempting to proceed with `torch_dtype` unset.")
-
-    def _str_to_torch_dtype(self, str_dtype: str) -> Optional[torch.dtype]:
-        if hasattr(torch, str_dtype):
-            return getattr(torch, str_dtype)
-        elif hasattr(torch, str_dtype.split(".")[-1]):
-            return getattr(torch, str_dtype.split(".")[-1])
-
     def _torch_dtype_serde(self) -> Optional[torch.dtype]:
         if self.from_pretrained_cfg.get('torch_dtype', None):
-            if isinstance(self.from_pretrained_cfg['torch_dtype'], str):
-                if resolved_dtype := self._str_to_torch_dtype(self.from_pretrained_cfg['torch_dtype']):
-                    del self.from_pretrained_cfg['torch_dtype']
-                    return resolved_dtype
-                self._pop_dtype_msg()
-            elif isinstance(self.from_pretrained_cfg['torch_dtype'], torch.dtype):
-                return self.from_pretrained_cfg.pop('torch_dtype')
+            if resolved_dtype := _resolve_torch_dtype(self.from_pretrained_cfg['torch_dtype']):
+                del self.from_pretrained_cfg['torch_dtype']
+                return resolved_dtype
             else:
-                self._pop_dtype_msg()
+                rank_zero_warn(f"The provided `torch_dtype` {self.from_pretrained_cfg.pop('torch_dtype')} could not be "
+                               "resolved, attempting to proceed with `torch_dtype` unset.")
 
     def __post_init__(self) -> None:
         if 'token' in self.from_pretrained_cfg:

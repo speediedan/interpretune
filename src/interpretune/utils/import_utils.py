@@ -165,3 +165,15 @@ def resolve_funcs(cfg_obj: Any, func_type: str) -> List:
                 err_msg = f"Unable to import and resolve specified function {func} from module {module}: {e}"
                 raise MisconfigurationException(err_msg)
     return resolved_funcs
+
+def _resolve_torch_dtype(dtype: Union[torch.device, str]) -> Optional[torch.device]:
+    if isinstance(dtype, torch.dtype):
+        return dtype
+    elif isinstance(dtype, str):
+        return _str_to_torch_dtype(dtype)
+
+def _str_to_torch_dtype(str_dtype: str) -> Optional[torch.dtype]:
+    if hasattr(torch, str_dtype):
+        return getattr(torch, str_dtype)
+    elif hasattr(torch, str_dtype.split(".")[-1]):
+        return getattr(torch, str_dtype.split(".")[-1])
