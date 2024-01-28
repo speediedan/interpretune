@@ -70,13 +70,13 @@ llama2_l = EXPERIMENT_CFG_SETS[("rte_boolq", "llama2", "lightning_rte_7b_qlora_z
 
 TEST_CONFIGS_EXAMPLES = (
     TestCfg(alias="core_gpt2_tl_compose_config", cfg=(False, None, False, gpt2_core_tl, True)),
-    TestCfg(alias="core_gpt2_tl", cfg=(False, None, False, gpt2_core_tl, False)),
+    TestCfg(alias="core_gpt2_tl", cfg=(False, None, False, gpt2_core_tl, False), marks="optional"),
     TestCfg(alias="core_gpt2_tl_instantiate_only",cfg=(False, None, True, gpt2_core_tl, False),
                expected={'class_type': ITLensModule}),
     TestCfg(alias="core_gpt2_optim_init", cfg=(False, None, False, gpt2_core, True)),
     TestCfg(alias="lightning_gpt2_tl", cfg=(True, "test", False, gpt2_l_tl, False), marks="lightning"),
     TestCfg(alias="lightning_gpt2_tl_instantiate_only", cfg=(True, None, True, gpt2_l_tl, False),
-               marks="lightning", expected={'class_type': ITLensLightningModule}),
+               marks="l_optional", expected={'class_type': ITLensLightningModule}),
     TestCfg(alias="lightning_llama2", cfg=(True, "test", False, llama2_l, False), marks="lightning"),
 )
 

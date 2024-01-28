@@ -13,8 +13,8 @@
 # Originally based on https://bit.ly/3AZGVVT
 set -e
 
-# use to run only tests marked as `profiling`
-export IT_RUN_PROFILING_TESTS=1
+# use to run only tests marked as `standalone`
+export IT_RUN_STANDALONE_TESTS=1
 # python arguments
 defaults='-m coverage run --source src/interpretune,src/it_examples/experiments --append -m pytest --capture=no --no-header -v -s'
 
@@ -25,17 +25,17 @@ parametrizations_arr=($parametrizations)
 blocklist=''
 report=''
 
-rm -f profiling_test_output.txt  # in case it exists, remove it
+rm -f standalone_test_output.txt  # in case it exists, remove it
 function show_output {
-  if [ -f profiling_test_output.txt ]; then  # if exists
-    cat profiling_test_output.txt
+  if [ -f standalone_test_output.txt ]; then  # if exists
+    cat standalone_test_output.txt
     # heuristic: stop if there are errors mentioned. this can prevent false negatives when only some of the ranks fail
-    if grep --quiet --ignore-case --extended-regexp 'error|exception|traceback|failed' profiling_test_output.txt; then
+    if grep --quiet --ignore-case --extended-regexp 'error|exception|traceback|failed' standalone_test_output.txt; then
       echo "Potential error! Stopping."
-      rm profiling_test_output.txt
+      rm standalone_test_output.txt
       exit 1
     fi
-    rm profiling_test_output.txt
+    rm standalone_test_output.txt
   fi
 }
 trap show_output EXIT  # show the output on exit

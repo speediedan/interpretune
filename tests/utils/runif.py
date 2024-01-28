@@ -17,7 +17,7 @@ from typing import Optional
 
 import pytest
 import torch
-from interpretune.utils.import_utils import num_cuda_devices, _LIGHTNING_AVAILABLE, _BNB_AVAILABLE
+from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE, _BNB_AVAILABLE
 from packaging.version import Version
 from pkg_resources import get_distribution
 
@@ -27,6 +27,8 @@ EXTENDED_VER_PAT = re.compile(r"([0-9]+\.){2}[0-9]+")
 cuda_mark = {'min_cuda_gpus': 1}
 bf16_cuda_mark = {'bf16_cuda': True}
 profiling_mark = {'profiling': True}
+standalone_mark = {'standalone': True}
+optional_mark = {'optional': True}
 lightning_mark = {"lightning": True}
 bitsandbytes_mark = {"bitsandbytes": True}
 skip_win_mark = {'skip_windows': True}
@@ -36,16 +38,17 @@ slow_mark = {'slow': True}
 RUNIF_ALIASES = {
     "lightning": lightning_mark,
     "bitsandbytes": bitsandbytes_mark,
+    "optional": optional_mark,
     "prof": profiling_mark,
-    "prof_l": {**profiling_mark, **lightning_mark},
+    "standalone": standalone_mark,
     "cuda": cuda_mark,
+    "cuda_alone": {**cuda_mark, **standalone_mark},
     "cuda_l": {**cuda_mark, **lightning_mark},
-    "cuda_prof": {**cuda_mark, **profiling_mark},
-    "cuda_prof_l": {**cuda_mark, **profiling_mark, **lightning_mark},
+    "cuda_l_alone": {**cuda_mark, **lightning_mark, **standalone_mark},
     "bf16_cuda": bf16_cuda_mark,
+    "bf16_cuda_alone": {**bf16_cuda_mark, **standalone_mark},
     "bf16_cuda_l": {**bf16_cuda_mark, **lightning_mark},
-    "bf16_cuda_prof": {**bf16_cuda_mark, **profiling_mark},
-    "bf16_cuda_prof_l": {**bf16_cuda_mark, **profiling_mark, **lightning_mark},
+    "l_optional": {**lightning_mark, **optional_mark},
     "skip_win_slow": {**skip_win_mark, **slow_mark},
 }
 
@@ -57,9 +60,6 @@ class RunIf:
     def test_wrapper(arg1):
         assert arg1 > 0.0
     """
-
-    standalone_ctx = os.getenv("PL_RUN_STANDALONE_TESTS", "0")
-    profiling_ctx = os.getenv("IT_RUN_PROFILING_TESTS", "0")
 
     def __new__(
         self,
@@ -74,6 +74,7 @@ class RunIf:
         skip_mac_os: bool = False,
         standalone: bool = False,
         profiling: bool = False,
+        optional: bool = False,
         lightning: bool = False,
         bitsandbytes: bool = False,
         slow: bool = False,
@@ -94,6 +95,9 @@ class RunIf:
                 This requires that the ``IT_RUN_STANDALONE_TESTS=1`` environment variable is set.
             profiling: Mark the test as for profiling. It will run as a separate process and only be included in CI
                 in limited cases. This requires that the ``IT_RUN_PROFILING_TESTS=1`` environment variable is set.
+            optional: Mark the test as for optional/extended testing. It will run as a separate process and only be
+                included in CI in limited cases. This requires that the ``IT_RUN_OPTIONAL_TESTS=1`` environment variable
+                is set.
             lightning: Require that lightning is installed.
             bitsandbytes: Require that bitsandbytes is installed.
             slow: Mark the test as slow, our CI will run it in a separate job.
@@ -104,8 +108,7 @@ class RunIf:
         reasons = []
 
         if min_cuda_gpus:
-            cuda_device_fx = num_cuda_devices if RunIf.standalone_ctx == "1" else torch.cuda.device_count
-            conditions.append(cuda_device_fx() < min_cuda_gpus)
+            conditions.append(torch.cuda.device_count() < min_cuda_gpus)
             reasons.append(f"GPUs>={min_cuda_gpus}")
             # used in conftest.py::pytest_collection_modifyitems
             kwargs["min_cuda_gpus"] = True
@@ -167,6 +170,13 @@ class RunIf:
             reasons.append("Profiling execution")
             # used in conftest.py::pytest_collection_modifyitems
             kwargs["profiling"] = True
+
+        if optional:
+            env_flag = os.getenv("IT_RUN_OPTIONAL_TESTS", "0")
+            conditions.append(env_flag != "1")
+            reasons.append("Optional/extended test execution")
+            # used in conftest.py::pytest_collection_modifyitems
+            kwargs["optional"] = True
 
         if lightning:
             conditions.append(not _LIGHTNING_AVAILABLE)

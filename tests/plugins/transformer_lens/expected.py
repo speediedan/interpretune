@@ -13,6 +13,7 @@ tl_parity_results = {
     "test_cuda_32": TestResult(exact_results=tl_results("cuda", 32, ds_cfg="test")),
     "train_cpu_32": TestResult(exact_results=tl_results("cpu", 32, ds_cfg="train")),
     "train_cuda_32": TestResult(exact_results=tl_results("cuda", 32, ds_cfg="train")),
+    "train_cpu_32_debug": TestResult(exact_results=tl_results("cpu", 32, ds_cfg="train")),
 }
 
 ########################################################################################################################

@@ -20,7 +20,7 @@ from tests.utils.warns import unexpected_warns, CORE_CONTEXT_WARNS, LIGHTING_CON
 from tests.orchestration import parity_test
 from tests.base.expected import basic_parity_results, profiling_parity_results
 from tests.configuration import TestCfg, ParityCfg, pytest_param_factory, collect_results
-from tests.base.cfg_aliases import (w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l,
+from tests.base.cfg_aliases import (w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l, debug_hidden,
                                     test_bs1_mem_nosavedt, bs1_nowarm_mem, bs1_nowarm_hk_mem, bs1_warm_mem)
 
 
@@ -32,7 +32,7 @@ class ParityTest(TestCfg):
 PARITY_BASIC_CONFIGS = (
     ParityTest(alias="train_cpu_32", cfg=ParityCfg()),
     ParityTest(alias="train_cpu_32_l", cfg=ParityCfg(**w_lit), marks="lightning"),
-    #ParityTest(alias="train_cpu_32_debug", cfg=ParityCfg(**debug_hidden)),
+    ParityTest(alias="train_cpu_32_debug", cfg=ParityCfg(**debug_hidden), marks="optional"),
     ParityTest(alias="train_cuda_32", cfg=ParityCfg(**cuda), marks="cuda"),
     ParityTest(alias="train_cuda_32_l", cfg=ParityCfg(**cuda, **w_lit), marks="cuda_l"),
     ParityTest(alias="train_cuda_bf16", cfg=ParityCfg(**cuda_bf16), marks="bf16_cuda"),
@@ -59,19 +59,20 @@ def test_parity_basic(recwarn, tmp_path, test_alias, test_cfg):
 @dataclass
 class ProfilingTest(TestCfg):
     result_gen: Optional[Callable] = partial(collect_results, profiling_parity_results)
+    # See NOTE [Profiling and Standalone Marks]
     function_marks: Dict = field(default_factory=lambda: {'profiling': True})
 
 PROFILING_PARITY_CONFIGS = (
-    ProfilingTest(alias="test_cpu_32", cfg=ParityCfg(**test_bs1_mem_nosavedt)),
+    ProfilingTest(alias="test_cpu_32", cfg=ParityCfg(**test_bs1_mem_nosavedt), marks="standalone"),
     ProfilingTest(alias="test_cpu_32_l", cfg=ParityCfg(**w_lit, **test_bs1_mem_nosavedt), marks="lightning"),
     ProfilingTest(alias="test_cuda_32", cfg=ParityCfg(**cuda, **test_bs1_mem), marks="cuda"),
-    ProfilingTest(alias="test_cuda_32_l", cfg=ParityCfg(**cuda, **w_lit, **test_bs1_mem), marks="cuda_l"),
+    ProfilingTest(alias="test_cuda_32_l", cfg=ParityCfg(**cuda, **w_lit, **test_bs1_mem), marks="cuda_l_alone"),
     ProfilingTest(alias="test_cuda_bf16", cfg=ParityCfg(**cuda_bf16, **test_bs1_mem), marks="bf16_cuda"),
     ProfilingTest(alias="train_cpu_32", cfg=ParityCfg(**bs1_nowarm_hk_mem)),
     ProfilingTest(alias="train_cpu_32_act", cfg=ParityCfg(act_ckpt=True, **bs1_nowarm_mem)),
     ProfilingTest(alias="train_cuda_32", cfg=ParityCfg(**cuda, **bs1_warm_mem), marks="cuda"),
-    ProfilingTest(alias="train_cuda_32_act", cfg=ParityCfg(**cuda_act, **bs1_warm_mem), marks="cuda"),
-    ProfilingTest(alias="train_cuda_bf16", cfg=ParityCfg(**cuda_bf16, **bs1_warm_mem), marks="bf16_cuda"),
+    ProfilingTest(alias="train_cuda_32_act", cfg=ParityCfg(**cuda_act, **bs1_warm_mem), marks="cuda_alone"),
+    ProfilingTest(alias="train_cuda_bf16", cfg=ParityCfg(**cuda_bf16, **bs1_warm_mem), marks="bf16_cuda_alone"),
     ProfilingTest(alias="train_cuda_bf16_l", cfg=ParityCfg(**cuda_bf16_l, **bs1_warm_mem), marks="bf16_cuda_l"),
 )
 

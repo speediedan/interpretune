@@ -125,6 +125,11 @@ def tmpdir_server(tmpdir):
         yield server.server_address
         server.shutdown()
 
+
+# NOTE [Profiling and Standalone Marks]:
+# CI doesn't run profiling tests by default, but does run standalone tests
+# the standalone mark takes precedence over profiling mark
+
 def pytest_collection_modifyitems(items):
     # filter out special tests
     if os.getenv("IT_RUN_STANDALONE_TESTS", "0") == "1":
@@ -140,8 +145,16 @@ def pytest_collection_modifyitems(items):
             item
             for item in items
             for marker in item.own_markers
-            # has `@RunIf(slow=True)`
+            # has `@RunIf(profiling=True)`
             if marker.name == "skipif" and marker.kwargs.get("profiling")
+        ]
+    elif os.getenv("IT_RUN_OPTIONAL_TESTS", "0") == "1":
+        items[:] = [
+            item
+            for item in items
+            for marker in item.own_markers
+            # has `@RunIf(optional=True)`
+            if marker.name == "skipif" and marker.kwargs.get("optional")
         ]
     elif os.getenv("IT_RUN_SLOW_TESTS", "0") == "1":
         items[:] = [

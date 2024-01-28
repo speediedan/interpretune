@@ -20,7 +20,8 @@ from tests.utils.warns import unexpected_warns, TL_CONTEXT_WARNS, TL_LIGHTNING_C
 from tests.configuration import TestCfg, collect_results, ParityCfg, pytest_param_factory
 from tests.orchestration import parity_test
 from tests.plugins.transformer_lens.expected import tl_parity_results, tl_profiling_parity_results
-from tests.base.cfg_aliases import w_lit, cuda,test_bs1_mem, test_bs1_mem_nosavedt, bs1_nowarm_hk_mem, bs1_warm_mem
+from tests.base.cfg_aliases import (w_lit, cuda,test_bs1_mem, test_bs1_mem_nosavedt, bs1_nowarm_hk_mem, bs1_warm_mem,
+                                    debug_hidden)
 
 
 # TODO: add tl and tl_profiling bf16 tests if/when support vetted
@@ -41,7 +42,7 @@ PARITY_TL_CONFIGS = (
     TLParityTest(alias="test_cuda_32_l", cfg=TLParityCfg("test", **cuda, **w_lit), marks="cuda_l"),
     TLParityTest(alias="train_cpu_32", cfg=TLParityCfg()),
     TLParityTest(alias="train_cpu_32_l", cfg=TLParityCfg(**w_lit), marks="lightning"),
-    #TLParityTest(alias="train_cpu_32_debug", cfg=ParityCfg(**debug_hidden)),
+    TLParityTest(alias="train_cpu_32_debug", cfg=ParityCfg(**debug_hidden), marks="optional"),
     TLParityTest(alias="train_cuda_32", cfg=TLParityCfg(**cuda), marks="cuda"),
     TLParityTest(alias="train_cuda_32_l", cfg=TLParityCfg(**cuda, **w_lit), marks="cuda_l"),
 )
@@ -61,16 +62,17 @@ def test_parity_tl(recwarn, tmp_path, test_alias, test_cfg):
 @dataclass
 class ProfilingTest(TestCfg):
     result_gen: Optional[Callable] = partial(collect_results, tl_profiling_parity_results)
-    function_marks: Dict = field(default_factory=lambda: {'profiling': True})
+    # See NOTE [Profiling and Standalone Marks]
+    function_marks: Dict = field(default_factory=lambda: {'profiling': False})
 
 PARITY_TL_PROFILING_CONFIGS = (
-    ProfilingTest(alias="test_cpu_32", cfg=TLParityCfg(**test_bs1_mem_nosavedt)),
+    ProfilingTest(alias="test_cpu_32", cfg=TLParityCfg(**test_bs1_mem_nosavedt), marks="standalone"),
     ProfilingTest(alias="test_cpu_32_l", cfg=TLParityCfg(**w_lit, **test_bs1_mem_nosavedt), marks="lightning"),
     ProfilingTest(alias="test_cuda_32", cfg=TLParityCfg(**cuda, **test_bs1_mem), marks="cuda"),
     ProfilingTest(alias="test_cuda_32_l", cfg=TLParityCfg(**cuda, **w_lit, **test_bs1_mem), marks="cuda_l"),
-    ProfilingTest(alias="train_cpu_32", cfg=TLParityCfg(**bs1_nowarm_hk_mem)),
+    ProfilingTest(alias="train_cpu_32", cfg=TLParityCfg(**bs1_nowarm_hk_mem), marks="standalone"),
     ProfilingTest(alias="train_cuda_32", cfg=TLParityCfg(**cuda, **bs1_warm_mem), marks="cuda"),
-    ProfilingTest(alias="train_cuda_32_l", cfg=TLParityCfg(**cuda, **w_lit, **bs1_warm_mem), marks="cuda_l"),
+    ProfilingTest(alias="train_cuda_32_l", cfg=TLParityCfg(**cuda, **w_lit, **bs1_warm_mem), marks="cuda_l_alone"),
 )
 
 EXPECTED_PARITY_TL_PROFILING = {cfg.alias: cfg.expected for cfg in PARITY_TL_PROFILING_CONFIGS}
