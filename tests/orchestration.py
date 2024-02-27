@@ -13,6 +13,7 @@
 from pathlib import Path
 from typing import Optional, Tuple
 from collections import defaultdict
+from unittest import mock
 
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
@@ -29,8 +30,10 @@ from tests.utils.lightning import to_device, move_data_to_device
 
 if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import Trainer
+    from lightning.pytorch.callbacks import ModelCheckpoint
 else:
     Trainer = object
+    ModelCheckpoint = object
 
 
 ################################################################################
@@ -159,7 +162,8 @@ def run_lightning(module: ITModule, datamodule: ITDataModule, test_cfg: Tuple, t
     trainer = Trainer(default_root_dir=tmp_path, devices=1, deterministic=True, accelerator=accelerator, max_epochs=1,
                       precision=lightning_prec_alias(test_cfg.precision), num_sanity_val_steps=0, **trainer_steps)
     lightning_func = trainer.fit if test_cfg.loop_type == "train" else trainer.test
-    lightning_func(datamodule=datamodule, model=module)
+    with mock.patch.object(ModelCheckpoint, "_save_checkpoint"):  # do not save checkpoints for lightning tests
+        lightning_func(datamodule=datamodule, model=module)
     return trainer
 
 def lightning_prec_alias(precision: str):
