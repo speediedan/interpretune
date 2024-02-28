@@ -11,7 +11,6 @@ from typing import (
     Protocol,
     Sequence,
     Tuple,
-    Type,
     TypedDict,
     Union,
     runtime_checkable,
@@ -22,6 +21,17 @@ from torch import Tensor
 from torch.optim import Optimizer
 from typing_extensions import NotRequired, Required
 from jsonargparse import Namespace
+
+
+################################################################################
+# Interpretune helper types
+################################################################################
+StrOrPath: TypeAlias = Union[str, PathLike]
+
+################################################################################
+# Lightning Compatibility helper types
+# largely copied from https://bit.ly/lightning_types definitions
+################################################################################
 
 _DictKey = TypeVar("_DictKey")
 
@@ -98,11 +108,7 @@ class ReduceLROnPlateau(_Stateful[str], Protocol):
 
 STEP_OUTPUT = Optional[Union[Tensor, Mapping[str, Any]]]
 
-LRSchedulerTypeTuple = (torch.optim.lr_scheduler.LRScheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)
 LRSchedulerTypeUnion = Union[torch.optim.lr_scheduler.LRScheduler, torch.optim.lr_scheduler.ReduceLROnPlateau]
-LRSchedulerType = Union[Type[torch.optim.lr_scheduler.LRScheduler], Type[torch.optim.lr_scheduler.ReduceLROnPlateau]]
-LRSchedulerPLType = Union[LRScheduler, ReduceLROnPlateau]
-
 
 @dataclass
 class LRSchedulerConfig:
@@ -146,5 +152,3 @@ OptimizerLRScheduler = Optional[
 ]
 
 ArgsType = Optional[Union[List[str], Dict[str, Any], Namespace]]
-
-StrOrPath: TypeAlias = Union[str, PathLike]

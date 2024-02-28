@@ -1,4 +1,3 @@
-## useful Lightning utility functions used for core testing but not imported from Lightning to avoid dependency
 from abc import ABC
 from typing import Optional, Tuple, Callable, Any, Mapping, Sequence, Union
 from collections import OrderedDict, defaultdict
@@ -6,6 +5,14 @@ from copy import deepcopy
 from dataclasses import fields, is_dataclass, FrozenInstanceError
 
 import torch
+
+################################################################################
+# Useful Lightning utility functions used for core testing but not imported
+# from Lightning to avoid dependency. Originally copied and/or adpated from:
+# https://bit.ly/lightning_core_utils and https://bit.ly/lightning_fabric_utils
+################################################################################
+
+
 
 ################################################################################
 # CUDA utils

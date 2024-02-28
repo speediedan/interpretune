@@ -148,9 +148,8 @@ class ITSessionMixin:
 
 
 class ITCLI(ITSessionMixin):
-    """Customize the :class:`~lightning.pytorch.cli.LightningCLI` to ensure the
-    :class:`~pytorch_lighting.core.LightningDataModule` and :class:`~lightning.pytorch.core.module.LightningModule`
-    use the same Hugging Face model, SuperGLUE task and custom logging tag."""
+    """To maximize Lightning compability, the core ITCLI was originally adapted from
+    https://bit.ly/lightning_cli."""
     def __init__(
         self,
         module_class: ITModule = None,

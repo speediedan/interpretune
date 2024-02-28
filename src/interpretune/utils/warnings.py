@@ -9,10 +9,6 @@ def _is_path_in_interpretune(path: Path) -> bool:
     """Naive check whether the path looks like a path from the Interpretune package."""
     return "interpretune" in str(path.absolute())
 
-def _is_path_in_interpretune(path: Path) -> bool:
-    """Naive check whether the path looks like a path from the Interpretune package."""
-    return "interpretune" in str(path.absolute())
-
 # adapted from lightning.fabric.utilities.warnings
 def _custom_format_warning(
     message: Union[Warning, str], category: Type[Warning], filename: str, lineno: int, line: Optional[str] = None
