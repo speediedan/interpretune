@@ -10,11 +10,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # Initially based on https://bit.ly/3oQ8Vqf
-# TODO: fill in this placeholder with actual core helper functions
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Callable, Any, Union, Dict, NamedTuple, Type
 from collections import defaultdict
 from copy import deepcopy
+import os
 
 import pytest
 import torch
@@ -24,15 +24,15 @@ from it_examples.experiments.rte_boolq.config import RTEBoolqConfig, RTEBoolqTLC
 from interpretune.base.config.module import ITConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import BaseITModule
-from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig
+from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig, ITLensCustomConfig
 from interpretune.base.contract.session import InterpretunableSessionConfig
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.utils.types import StrOrPath
 from tests.base.cfg_aliases import (test_core_datamodule_kwargs, test_core_it_module_base, test_core_it_module_optim,
                               test_core_shared_config, test_dataset_state_core, expected_first_fwd_ids, MemProfResult,)
-from tests.plugins.transformer_lens.cfg_aliases import (test_tl_it_module_base, test_tl_it_module_optim,
-                                                        test_tl_datamodule_kwargs, test_tl_shared_config,
-                                                        test_dataset_state_tl)
+from tests.plugins.transformer_lens.cfg_aliases import (
+    test_tl_pretrained_it_module_base, test_tl_cust_it_module_base, test_tl_pretrained_it_module_optim,
+    test_tl_cust_it_module_optim, test_tl_datamodule_kwargs, test_tl_shared_config, test_dataset_state_tl)
 from tests.utils.runif import RunIf, RUNIF_ALIASES
 from tests.utils.lightning import cuda_reset
 from tests.modules import (RTETestITLensModule, RTETestITLensLightningModule, TestITDataModule,
@@ -44,6 +44,8 @@ if _LIGHTNING_AVAILABLE:
 else:
     seed_everything = object
 
+
+IT_GLOBAL_STATE_LOG_MODE = os.environ.get("IT_GLOBAL_STATE_LOG_MODE", "0") == "1"
 
 ################################################################################
 # Core test generation and encapsulation
@@ -92,7 +94,8 @@ def pytest_param_factory(test_configs: List[TestCfg], unpack: bool = True) -> Li
         for config in test_configs
     ]
 
-class ParityCfg(NamedTuple):
+@dataclass(kw_only=True)
+class ParityCfg:
     loop_type: str = "train"
     device_type: str = "cpu"
     model_key: str = "rte"  # "real-model"-based acceptance/parity testing/profiling
@@ -101,14 +104,15 @@ class ParityCfg(NamedTuple):
     act_ckpt: bool = False
     lightning: bool = False
     plugin: Optional[str] = None
+    plugin_cfg_key: Optional[str] = None
     train_steps: Optional[int] = 1
     val_steps: Optional[int] = 1
     test_steps: Optional[int] = 1
     dm_override_cfg: Optional[Dict] = None
     memprofiler_cfg: Optional[Dict] = None
-    auto_model_cfg: Optional[Dict] = None
-    tl_from_pretrained_cfg: Optional[Dict] = None
-    from_pretrained_cfg: Optional[Dict] = None
+    #auto_model_cfg: Optional[Dict] = None
+    tl_cfg: Optional[Dict] = None
+    #hf_from_pretrained_cfg: Optional[Dict] = None
     cust_fwd_kwargs: Optional[Dict] = None
     force_prepare_data: bool = False
 
@@ -149,8 +153,8 @@ def exact_results(expected_exact: Tuple):
     """Result generation function that packages."""
     return {'expected_exact': expected_exact}
 
-def def_results(device_type: str, precision: Union[int, str], dataset_type: Optional[str] = "core",
-                ds_cfg: Optional[str] = "train_prof"):
+def def_results(device_type: str, precision: Union[int, str], dataset_type: str = "core",
+                ds_cfg: str = "train_prof"):
     # wrap result dict such that only the first epoch is checked
     test_dataset_state = test_dataset_state_core if dataset_type == "core" else test_dataset_state_tl
     test_dataset_state = test_dataset_state + expected_first_fwd_ids[ds_cfg]
@@ -193,11 +197,13 @@ TEST_DATAMODULE_BASE_CONFIGS = {
 }
 
 TEST_MODULE_BASE_CONFIGS = {
-    # (loop_type, plugin_key)
-    ("test", None): test_core_it_module_base,
-    ("train", None): test_core_it_module_optim,
-    ("test", "transformerlens"): test_tl_it_module_base,
-    ("train", "transformerlens"): test_tl_it_module_optim,
+    # (loop_type, plugin_key, plugin_cfg_key)
+    ("test", None, None): test_core_it_module_base,
+    ("train", None, None): test_core_it_module_optim,
+    ("test", "transformerlens", "pretrained"): test_tl_pretrained_it_module_base,
+    ("train", "transformerlens", "pretrained"): test_tl_pretrained_it_module_optim,
+    ("test", "transformerlens", "cust"): test_tl_cust_it_module_base,
+    ("train", "transformerlens", "cust"): test_tl_cust_it_module_optim,
 }
 
 TEST_DATAMODULE_MAPPING = {
@@ -242,18 +248,21 @@ def get_itdm_cfg(test_cfg: Tuple, dm_override_cfg: Optional[Dict] = None, **kwar
 
 def init_plugin_cfg(test_cfg: Tuple, test_it_module_cfg: Dict):
     if test_cfg.plugin == "transformerlens":
-        test_it_module_cfg['tl_from_pretrained_cfg'] = \
-            ITLensFromPretrainedConfig(**test_it_module_cfg['tl_from_pretrained_cfg'])
+        if test_cfg.plugin_cfg_key == "pretrained":
+            test_it_module_cfg['tl_cfg'] = ITLensFromPretrainedConfig(**test_it_module_cfg['tl_cfg'])
+        elif test_cfg.plugin_cfg_key == "cust":
+            test_it_module_cfg['tl_cfg'] = ITLensCustomConfig(**test_it_module_cfg['tl_cfg'])
+        else:
+            raise ValueError(f"Unknown plugin_cfg_key: {test_cfg.plugin_cfg_key}")
     else:  # See NOTE [Interpretability Plugins]
         raise ValueError(f"Unknown plugin type: {test_cfg.plugin}")
 
 def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[StrOrPath] = None) -> ITConfig:
-    test_cfg_override_attrs = ["from_pretrained_cfg", "memprofiler_cfg", "cust_fwd_kwargs", "auto_model_cfg",
-                               "tl_from_pretrained_cfg"]
-    target_test_it_module_cfg = TEST_MODULE_BASE_CONFIGS[(test_cfg.loop_type, test_cfg.plugin)]
+    test_cfg_override_attrs = ["memprofiler_cfg", "cust_fwd_kwargs", "tl_cfg"]
+    target_test_it_module_cfg = TEST_MODULE_BASE_CONFIGS[(test_cfg.loop_type, test_cfg.plugin, test_cfg.plugin_cfg_key)]
     test_it_module_cfg = deepcopy(target_test_it_module_cfg)
     if test_cfg.act_ckpt:
-        test_it_module_cfg.update({"activation_checkpointing": True})
+        test_it_module_cfg['hf_from_pretrained_cfg'].activation_checkpointing = True
     for attr in test_cfg_override_attrs:
         if getattr(test_cfg, attr):
             test_it_module_cfg.update({attr: getattr(test_cfg, attr)})
@@ -266,12 +275,17 @@ def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[StrOrPath] = None) -> ITC
     return config_class(**test_it_module_cfg)
 
 def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> Dict[str, Any]:
-    cfg['from_pretrained_cfg'].update({'torch_dtype': get_model_input_dtype(precision)})
-    if device_type == "cuda":
-        # note that with TLens this should be overridden by the tl plugin but we want to test that functionality
-        cfg['from_pretrained_cfg'].update({'device_map': 0})
-    if cfg.get('tl_from_pretrained_cfg', None):
-        cfg['tl_from_pretrained_cfg'].update({'dtype': get_model_input_dtype(precision), 'device': device_type})
+    if cfg.get('hf_from_pretrained_cfg', None) is not None:
+        cfg['hf_from_pretrained_cfg'].pretrained_kwargs.update({'torch_dtype': get_model_input_dtype(precision)})
+        if device_type == "cuda":
+            # note that with TLens this should be overridden by the tl plugin but we want to test that functionality
+            cfg['hf_from_pretrained_cfg'].pretrained_kwargs.update({'device_map': 0})
+    if cfg.get('tl_cfg', None) is not None:
+        dev_prec_override = {'dtype': get_model_input_dtype(precision), 'device': device_type}
+        if cfg['tl_cfg'].get('cfg', None) is not None:  # TL custom model config
+            cfg['tl_cfg']['cfg'].update(dev_prec_override)
+        else:  # TL from pretrained config, we set directly in addition to pretrained above to verify sync behavior
+            cfg['tl_cfg'].update(dev_prec_override)
     return cfg
 
 def datamodule_config_factory(test_cfg: Tuple) -> Tuple[Type[ITDataModule], ITDataModuleConfig]:

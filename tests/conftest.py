@@ -127,11 +127,13 @@ def tmpdir_server(tmpdir):
 
 
 # NOTE [Profiling and Standalone Marks]:
-# CI doesn't run profiling tests by default, but does run standalone tests
-# the standalone mark takes precedence over profiling mark
+# - CI doesn't run all `profiling` marked tests by default, only the subset of profiling tests that are marked both
+#   `profiling` and `profiling_ci`
+# - The standalone marks run with CI by default and take precedence over profiling marks
+# - To run all profiling tests, set `IT_RUN_PROFILING_TESTS` to `2`
 
 def pytest_collection_modifyitems(items):
-    # filter out special tests
+    # select special tests
     if os.getenv("IT_RUN_STANDALONE_TESTS", "0") == "1":
         items[:] = [
             item
@@ -140,13 +142,21 @@ def pytest_collection_modifyitems(items):
             # has `@RunIf(standalone=True)`
             if marker.name == "skipif" and marker.kwargs.get("standalone")
         ]
-    elif os.getenv("IT_RUN_PROFILING_TESTS", "0") == "1":
+    elif os.getenv("IT_RUN_PROFILING_TESTS", "0") == "2":
         items[:] = [
             item
             for item in items
             for marker in item.own_markers
             # has `@RunIf(profiling=True)`
             if marker.name == "skipif" and marker.kwargs.get("profiling")
+        ]
+    elif os.getenv("IT_RUN_PROFILING_TESTS", "0") == "1":
+        items[:] = [
+            item
+            for item in items
+            for marker in item.own_markers
+            # has `@RunIf(profiling_ci=True)`
+            if marker.name == "skipif" and marker.kwargs.get("profiling_ci")
         ]
     elif os.getenv("IT_RUN_OPTIONAL_TESTS", "0") == "1":
         items[:] = [

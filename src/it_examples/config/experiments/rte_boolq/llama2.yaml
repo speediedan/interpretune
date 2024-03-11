@@ -37,17 +37,19 @@ it_session:
         init_args:
           enabled: true
           lm_generation_cfg:
-            class_path: interpretune.base.mixins.zero_shot_classification.HFGenerationConfig
+            class_path: interpretune.base.config.mixins.HFGenerationConfig
             init_args:
               max_new_tokens: 5
-      activation_checkpointing: false
-      use_model_cache: true
-      auto_model_cfg:
-        model_head: transformers.LlamaForCausalLM
-      lora_cfg:
-        r: 8
-        lora_alpha: 32
-        target_modules: ["q_proj", "v_proj"]
-        lora_dropout: 0.05
-        bias: none
-        task_type: "CAUSAL_LM"
+      hf_from_pretrained_cfg:
+        class_path: interpretune.base.config.module.HFFromPretrainedConfig
+        init_args:
+          use_model_cache: false
+          model_head: transformers.LlamaForCausalLM
+          activation_checkpointing: false
+          lora_cfg:
+            r: 8
+            lora_alpha: 32
+            target_modules: ["q_proj", "v_proj"]
+            lora_dropout: 0.05
+            bias: none
+            task_type: "CAUSAL_LM"

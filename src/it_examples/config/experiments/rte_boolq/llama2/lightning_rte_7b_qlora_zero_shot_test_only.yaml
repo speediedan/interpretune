@@ -1,15 +1,18 @@
 it_session:
   module_cfg:
     init_args:
-      from_pretrained_cfg:
-        device_map: 0
-        torch_dtype: bfloat16
+      hf_from_pretrained_cfg:
+        class_path: interpretune.base.config.module.HFFromPretrainedConfig
+        init_args:
+          pretrained_kwargs:
+            device_map: 0
+            torch_dtype: bfloat16
       zero_shot_cfg:
         class_path: it_examples.experiments.rte_boolq.config.RTEBoolqZeroShotClassificationConfig
         init_args:
           enabled: true
           lm_generation_cfg:
-            class_path: interpretune.base.mixins.zero_shot_classification.HFGenerationConfig
+            class_path: interpretune.base.config.mixins.HFGenerationConfig
             init_args:
               max_new_tokens: 5
 trainer:

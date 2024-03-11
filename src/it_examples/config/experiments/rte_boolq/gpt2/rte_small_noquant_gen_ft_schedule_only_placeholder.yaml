@@ -2,9 +2,12 @@ it_session:  ## TODO: flesh out this example
   module_cfg:
   experiment_tag: rte_small_noquant_gen_ft_schedule_only
   init_args:
-    from_pretrained_cfg:
-      device_map: cpu
-      torch_dtype: bfloat16
+    hf_from_pretrained_cfg:
+      class_path: interpretune.base.config.module.HFFromPretrainedConfig
+      init_args:
+        pretrained_kwargs:
+          device_map: cpu
+          torch_dtype: bfloat16
 trainer:
   devices: 1
   callbacks:

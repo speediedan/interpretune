@@ -4,6 +4,7 @@ import logging
 from enum import auto, Enum
 
 import yaml
+from transformers import PreTrainedTokenizerBase
 
 
 log = logging.getLogger(__name__)
@@ -47,6 +48,8 @@ yaml.add_representer(ITSerializableCfg, it_cfg_mapping_representer)
 class ITSharedConfig(ITSerializableCfg):
     model_name_or_path: str = ''
     task_name: str = ''
+    tokenizer_name: Optional[str] = None
+    tokenizer: Optional[PreTrainedTokenizerBase] = None
     os_env_model_auth_key: Optional[str] = None
     tokenizer_id_overrides: Optional[Dict] = field(default_factory=dict)
     tokenizer_kwargs: Dict[str, Any] = field(default_factory=dict)

@@ -52,8 +52,9 @@ else:
 #   together
 # - We always check for basic exact match on device type, precision and dataset state
 # - Our result mapping function uses these shared results for all supported parity test suffixes (e.g. '_l')
-# - Set `state_log_mode=True` manually during development to generate/dump state logs for a given test rather
-#   than testing the relevant assertions
+# - Set `state_log_mode=True` by setting the environmental variable `IT_GLOBAL_STATE_LOG_MODE` to `1` during development
+#   to generate/dump state logs for tests rather than testing the relevant assertions (this can be manually overridden
+#   on a test-by-test basis as well)
 ########################################################################################################################
 
 def parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode: bool = False):
@@ -98,7 +99,6 @@ def core_train_loop(
         _call_itmodule_hook(module, hook_name="on_train_epoch_start", hook_msg="Running train epoch start hooks")
         for batch_idx in range(train_steps):
             run_step(step_fn="training_step", iterator=iterator, batch_idx=batch_idx, **train_ctx)
-            _call_itmodule_hook(module, hook_name="on_train_epoch_end", hook_msg="Running train epoch end hooks")
         if val_steps > 0:
             module.model.eval()
             iterator = iter(val_dataloader)
@@ -106,6 +106,7 @@ def core_train_loop(
                 with torch.inference_mode():
                     run_step(step_fn="validation_step", iterator=iterator, batch_idx=batch_idx, **train_ctx)
         module.model.train()
+        _call_itmodule_hook(module, hook_name="on_train_epoch_end", hook_msg="Running train epoch end hooks")
 
 def core_test_loop(
     module: ITModule,

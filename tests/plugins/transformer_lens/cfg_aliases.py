@@ -1,8 +1,11 @@
 from collections import ChainMap
 
-from it_examples.experiments.rte_boolq.config import RTEBoolqPromptConfig
+from interpretune.base.config.module import HFFromPretrainedConfig
+from it_examples.experiments.rte_boolq.config import RTEBoolqPromptConfig, RTEBoolqZeroShotClassificationConfig
 from tests.base.cfg_aliases import (tokenizer_base_kwargs, base_shared_config, default_test_bs, shared_dataset_state,
-                                    base_it_module_kwargs, test_optimizer_scheduler_init)
+                                    base_it_module_kwargs, test_optimizer_scheduler_init,
+                                    base_hf_from_pretrained_kwargs)
+from interpretune.plugins.transformer_lens import TLensGenerationConfig
 
 tl_model_input_names = {"model_input_names": ['input', 'attention_mask']}
 test_tl_tokenizer_kwargs = {"tokenizer_kwargs": {**tl_model_input_names, **tokenizer_base_kwargs}}
@@ -14,14 +17,26 @@ test_tl_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), "signature_co
                           "text_fields": ("premise", "hypothesis"),  "train_batch_size": default_test_bs,
                           "eval_batch_size": default_test_bs}
 # TODO: add zero shot testing separately
-# tl_zero_shot_cfg = RTEBoolqZeroShotClassificationConfig(enabled=True, lm_generation_cfg=TLensGenerationConfig())
-# test_tl_it_module_kwargs = {"tl_from_pretrained_cfg": {"enabled": True}, "zero_shot_cfg": tl_zero_shot_cfg,
+tl_zero_shot_cfg = RTEBoolqZeroShotClassificationConfig(enabled=True,
+                                                        lm_generation_cfg=TLensGenerationConfig(max_new_tokens=1))
+# test_tl_it_module_kwargs = {"tl_cfg": {"enabled": True}, "zero_shot_cfg": tl_zero_shot_cfg,
 #                             "auto_model_cfg": {"model_head": "transformers.GPT2LMHeadModel"}, **base_it_module_kwargs}
 #tl_entailment_cfg = RTEBoolqZeroShotClassificationConfig(enabled=True, lm_generation_cfg=TLensGenerationConfig())
-test_tl_it_module_kwargs = {"tl_from_pretrained_cfg": {"enabled": True},
-                            "auto_model_cfg": {"model_head": "transformers.GPT2LMHeadModel"}, **base_it_module_kwargs}
-test_tl_it_module_base = ChainMap(test_tl_shared_config, test_tl_it_module_kwargs)
-test_tl_it_module_optim = ChainMap(test_tl_it_module_base, test_optimizer_scheduler_init)
+test_tl_from_pretrained_config = {}  # currently using default from pretrained config
+test_tl_cust_config = {"n_layers":1, "d_mlp": 10, "d_model":10, "d_head":5, "n_heads":2, "n_ctx":200, "act_fn":'relu',
+            "tokenizer_name": 'gpt2'}
+
+test_tl_from_pretrained_cfg = HFFromPretrainedConfig(pretrained_kwargs=base_hf_from_pretrained_kwargs,
+                                                     model_head="transformers.GPT2LMHeadModel")
+test_tl_from_pretrained_it_module_kwargs = {"zero_shot_cfg": tl_zero_shot_cfg, "tl_cfg": test_tl_from_pretrained_config,
+                                             "hf_from_pretrained_cfg": test_tl_from_pretrained_cfg,
+                                             **base_it_module_kwargs}
+test_tl_cust_config_it_module_kwargs = {"zero_shot_cfg": tl_zero_shot_cfg, "tl_cfg": {"cfg": test_tl_cust_config},
+                                        **base_it_module_kwargs}
+test_tl_pretrained_it_module_base = ChainMap(test_tl_shared_config, test_tl_from_pretrained_it_module_kwargs)
+test_tl_cust_it_module_base = ChainMap(test_tl_shared_config, test_tl_cust_config_it_module_kwargs)
+test_tl_pretrained_it_module_optim = ChainMap(test_tl_pretrained_it_module_base, test_optimizer_scheduler_init)
+test_tl_cust_it_module_optim = ChainMap(test_tl_cust_it_module_base, test_optimizer_scheduler_init)
 
 ########################################################################################################################
 # See NOTE [Test Dataset Fingerprint]

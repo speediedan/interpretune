@@ -57,7 +57,7 @@ class DebugGeneration:
         ```python
         # one can use this method to probe non-chat fine-tuned LLAMA2 models (just the raw sequences, no SYS
         # or INST metadata)
-        self.lm_debug.debug_generate_batch(self.no_sys_inst_debug_sequences(), max_new_tokens=25)
+        self.debug_lm.debug_generate_batch(self.no_sys_inst_debug_sequences(), max_new_tokens=25)
         ```
         """
         sequences = sequences or self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
@@ -77,11 +77,11 @@ class DebugGeneration:
         Usage:
 
         ```python
-        self.lm_debug.debug_generate_batch(['my sequence potentially with chat specific tags', 'another sequence'])
+        self.debug_lm.debug_generate_batch(['my sequence potentially with chat specific tags', 'another sequence'])
         # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
-        self.lm_debug.debug_generate_serial(['my sequence potentially with chat specific tags', 'another sequence'])
+        self.debug_lm.debug_generate_serial(['my sequence potentially with chat specific tags', 'another sequence'])
         # to override the defaults (both questions and current `max_new_tokens` config)
-        self.lm_debug.debug_generate_batch(self.lm_debug.sys_inst_debug_sequences([
+        self.debug_lm.debug_generate_batch(self.debug_lm.sys_inst_debug_sequences([
             'What is the color of a cloudless sky?', 'How many days are in a year?']), max_new_tokens=25)
         ```
         """
@@ -192,11 +192,11 @@ class LlamaDebugMixin:
         ```python
         # when using a llama2 chat model, you'll want to have input tokenized with sys and inst metadata
         # to do so with some reasonable default questions as a sanity check and in batch mode:
-        self.lm_debug.debug_generate_batch(self.sys_inst_debug_sequences())
+        self.debug_lm.debug_generate_batch(self.sys_inst_debug_sequences())
         # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
-        self.lm_debug.debug_generate_serial(self.sys_inst_debug_sequences())
+        self.debug_lm.debug_generate_serial(self.sys_inst_debug_sequences())
         # to override the defaults (both questions and current `max_new_tokens` config)
-        self.lm_debug.debug_generate_batch(self.sys_inst_debug_sequences([
+        self.debug_lm.debug_generate_batch(self.sys_inst_debug_sequences([
             'What is the color of a cloudless sky?', 'How many days are in a year?']), max_new_tokens=25)
         ```
         """
@@ -219,7 +219,7 @@ class LlamaDebugMixin:
         ```python
         # one can use this method to probe non-chat fine-tuned LLAMA2 models (just the raw sequences, no SYS
         # or INST metadata)
-        self.lm_debug.debug_generate_batch(self.no_sys_inst_debug_sequences(), max_new_tokens=25)
+        self.debug_lm.debug_generate_batch(self.no_sys_inst_debug_sequences(), max_new_tokens=25)
         ```
         """
         sequences = sequences or self.it_cfg.debug_lm_cfg.raw_debug_sequences

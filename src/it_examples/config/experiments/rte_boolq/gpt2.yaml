@@ -31,10 +31,12 @@ it_session:
   module_cfg:
     class_path: it_examples.experiments.rte_boolq.config.RTEBoolqConfig
     init_args:
-      # N.B. We can't inherit dictionary-contained keys like from_pretrained_cfg['device_map'] at the experiment-level
-      # because while jsonargparse will update/inherit `init_args`, the full dictionary object is replaced by the
+      # N.B. We can't inherit dictionary-contained keys like hf_from_pretrained_cfg['device_map'] at the experiment
+      # level because while jsonargparse will update/inherit `init_args`, the full dictionary object is replaced by the
       # overriding config rather than the relevant dictionary being updated.
-      use_model_cache: false
-      auto_model_cfg:
-        model_head: transformers.GPT2ForSequenceClassification
-      activation_checkpointing: false
+      hf_from_pretrained_cfg:
+        class_path: interpretune.base.config.module.HFFromPretrainedConfig
+        init_args:
+          use_model_cache: false
+          model_head: transformers.GPT2ForSequenceClassification
+          activation_checkpointing: false

@@ -31,6 +31,9 @@ TL_EXPECTED_WARNS = [
     "to transform pretrained weights on cpu",  # to support transforming weights on cpu prior to loading to device
     "dtype was not provided. Setting",  # for our HF/TL dtype inference/synchronization warnings
     "Setting both to the specified TL dtype",  # another variant of HF/TL dtype inference/synchronization warning
+    "Since an `ITLensCustomConfig` has been provided",  # for custom transformerlens configs
+    "Interpretune manages the HF model instantiation via `model_name_or_path`",  # using cust tlens config for fallback
+    "Since no datamodule `model_name_or_path` was provided",  # using cust tlens config for fallback
 ]
 
 TL_CONTEXT_WARNS = TL_EXPECTED_WARNS + CORE_CONTEXT_WARNS

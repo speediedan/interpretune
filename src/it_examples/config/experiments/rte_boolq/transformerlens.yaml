@@ -6,13 +6,15 @@ it_session:
   module_cfg:
     class_path: it_examples.experiments.rte_boolq.config.RTEBoolqTLConfig
     init_args:
-      use_model_cache: false
-      auto_model_cfg:
-        model_head: transformers.GPT2LMHeadModel
-      tl_from_pretrained_cfg:
+      hf_from_pretrained_cfg:
+        class_path: interpretune.base.config.module.HFFromPretrainedConfig
+        init_args:
+          use_model_cache: false
+          model_head: transformers.GPT2LMHeadModel
+          activation_checkpointing: false
+      tl_cfg:
         class_path: interpretune.plugins.transformer_lens.ITLensFromPretrainedConfig
         init_args:
-          enabled: true
           model_name: gpt2-small
           fold_ln: true
           center_writing_weights: true
@@ -27,4 +29,3 @@ it_session:
           default_prepend_bos: true
           default_padding_side: right
           #dtype: float32
-      activation_checkpointing: false

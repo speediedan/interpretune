@@ -22,7 +22,7 @@ tl_parity_results = {
 # 1. The total memory allocated on cuda for a single forward (batch size 1) is ~150MB higher with TransformerLens than
 #    with base. This is largely attributable to the fact we use a LM head (instead the smaller classification head) with
 #    TransformerLens which involves essentially another copy of the wte (150MB) (an aside, inspecting the cuda allocator
-#    state evolution, you'll see HF loads thewte embed last by whereas TransformerLens allocates the embed and unembed
+#    state evolution, you'll see HF loads the wte embed last by whereas TransformerLens allocates the embed and unembed
 #    layers prior to other layers in the state dict)
 # 2. Because we are transforming the state dict on cpu with TransformerLens, it's expected that the `rss_diff`
 #    with the first forward will not require substantial additional memory (3.6 GB already allocated prior to first
@@ -40,15 +40,15 @@ tl_parity_results = {
 ########################################################################################################################
 tl_profiling_parity_results = {
     "test_cpu_32":
-    TestResult(exact_results=def_results("cpu", 32, ds_cfg="test_prof"),
+    TestResult(exact_results=tl_results("cpu", 32, ds_cfg="test_prof"),
                mem_results=("test", "cpu", (71303168,))),  # see note #2 above
     "test_cuda_32":
-    TestResult(exact_results=def_results("cuda", 32, ds_cfg="test_prof"),
-               mem_results=("test", "cuda", (699942912, 771789824, 834666496, 0))), # see note #1 above
+    TestResult(exact_results=tl_results("cuda", 32, ds_cfg="test_prof"),
+               mem_results=("test", "cuda", (699942912, 771789824, 851443712, 0))), # see note #1 above
     "train_cpu_32":
-    TestResult(exact_results=def_results("cpu", 32),
+    TestResult(exact_results=tl_results("cpu", 32),
                mem_results=("train", "cpu", (70086656, 693365760))),  # see note #3 above
     "train_cuda_32":
-    TestResult(exact_results=def_results("cuda", 32),
+    TestResult(exact_results=tl_results("cuda", 32),
                mem_results=("train", "cuda", (2361786368, 3353252352, 3619684352, 693365760))),
 }

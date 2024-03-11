@@ -2,7 +2,7 @@ it_session:
   module_cfg:
     init_args:
       experiment_tag: lightning_tl_rte_small_noquant_fp32_predict
-      tl_from_pretrained_cfg:
+      tl_cfg:
         init_args:
           device: cuda
           dtype: float32

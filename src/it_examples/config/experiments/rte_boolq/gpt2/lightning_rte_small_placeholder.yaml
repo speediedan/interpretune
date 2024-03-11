@@ -1,9 +1,12 @@
 it_session:  ## TODO: flesh out this example
   module_cfg:
     init_args:
-      from_pretrained_cfg:
-        device_map: 0
-        torch_dtype: bfloat16
+      hf_from_pretrained_cfg:
+        class_path: interpretune.base.config.module.HFFromPretrainedConfig
+        init_args:
+          pretrained_kwargs:
+            device_map: 0
+            torch_dtype: bfloat16
 trainer:
   accumulate_grad_batches: 4
   precision: bf16-true

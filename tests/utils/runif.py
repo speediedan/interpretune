@@ -27,6 +27,7 @@ EXTENDED_VER_PAT = re.compile(r"([0-9]+\.){2}[0-9]+")
 cuda_mark = {'min_cuda_gpus': 1}
 bf16_cuda_mark = {'bf16_cuda': True}
 profiling_mark = {'profiling': True}
+profiling_ci_mark = {'profiling_ci': True}
 standalone_mark = {'standalone': True}
 optional_mark = {'optional': True}
 lightning_mark = {"lightning": True}
@@ -40,13 +41,15 @@ RUNIF_ALIASES = {
     "bitsandbytes": bitsandbytes_mark,
     "optional": optional_mark,
     "prof": profiling_mark,
+    "profiling_ci": profiling_ci_mark,
     "standalone": standalone_mark,
     "cuda": cuda_mark,
-    "cuda_alone": {**cuda_mark, **standalone_mark},
+    "cuda_profci": {**cuda_mark, **profiling_ci_mark},
     "cuda_l": {**cuda_mark, **lightning_mark},
-    "cuda_l_alone": {**cuda_mark, **lightning_mark, **standalone_mark},
+    "cuda_l_profci": {**cuda_mark, **lightning_mark, **profiling_ci_mark},
+    "cuda_l_optional": {**cuda_mark, **lightning_mark, **optional_mark},
     "bf16_cuda": bf16_cuda_mark,
-    "bf16_cuda_alone": {**bf16_cuda_mark, **standalone_mark},
+    "bf16_cuda_profci": {**bf16_cuda_mark, **profiling_ci_mark},
     "bf16_cuda_l": {**bf16_cuda_mark, **lightning_mark},
     "l_optional": {**lightning_mark, **optional_mark},
     "skip_win_slow": {**skip_win_mark, **slow_mark},
@@ -74,6 +77,7 @@ class RunIf:
         skip_mac_os: bool = False,
         standalone: bool = False,
         profiling: bool = False,
+        profiling_ci: bool = False,
         optional: bool = False,
         lightning: bool = False,
         bitsandbytes: bool = False,
@@ -93,8 +97,11 @@ class RunIf:
             skip_mac_os: Skip Mac OS platform.
             standalone: Mark the test as standalone, our CI will run it in a separate process.
                 This requires that the ``IT_RUN_STANDALONE_TESTS=1`` environment variable is set.
-            profiling: Mark the test as for profiling. It will run as a separate process and only be included in CI
-                in limited cases. This requires that the ``IT_RUN_PROFILING_TESTS=1`` environment variable is set.
+            profiling: Mark the test as profiling. It will run as a separate process and only be included in CI
+                in limited cases. This requires that the ``IT_RUN_PROFILING_TESTS=2`` environment variable is set.
+            profiling_ci: Mark the test as a profiling test intended to run with normal ci. It will run as a separate
+                process and usually included in CI. This requires that the ``IT_RUN_PROFILING_TESTS=1`` environment
+                variable is set.
             optional: Mark the test as for optional/extended testing. It will run as a separate process and only be
                 included in CI in limited cases. This requires that the ``IT_RUN_OPTIONAL_TESTS=1`` environment variable
                 is set.
@@ -166,10 +173,17 @@ class RunIf:
 
         if profiling:
             env_flag = os.getenv("IT_RUN_PROFILING_TESTS", "0")
-            conditions.append(env_flag != "1")
-            reasons.append("Profiling execution")
+            conditions.append(env_flag not in ["1", "2"])
+            reasons.append("Profiling All execution")
             # used in conftest.py::pytest_collection_modifyitems
             kwargs["profiling"] = True
+
+        if profiling_ci:
+            env_flag = os.getenv("IT_RUN_PROFILING_TESTS", "0")
+            conditions.append(env_flag not in ["1", "2"])
+            reasons.append("Profiling CI execution")
+            # used in conftest.py::pytest_collection_modifyitems
+            kwargs["profiling_ci"] = True
 
         if optional:
             env_flag = os.getenv("IT_RUN_OPTIONAL_TESTS", "0")

@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass, field
 
 from interpretune.base.config.shared import ITSerializableCfg, ITSharedConfig
+from interpretune.utils.logging import rank_zero_warn
 
 
 log = logging.getLogger(__name__)
@@ -61,3 +62,14 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
         if self.defer_model_init:
             assert self.signature_columns is not None, ("`signature_columns` must be specified if `defer_model_init` "
                                                         "is set to True")
+
+    def _cross_validate(self, it_cfg: ITSerializableCfg) -> None:
+        # inspect tokenizer, tokenizer_name, model_name_or_path here, updating datamodule config before instantiation
+        # if a value is missing in the datamodule config but present in the module config
+        # we first inspect to see if we have a fallback `model_name_or_path`
+        self.model_name_or_path = self.model_name_or_path or it_cfg.model_name_or_path
+        for tokenizer_attr in ["tokenizer", "tokenizer_name"]:
+            if getattr(self, tokenizer_attr) is None and getattr(it_cfg, tokenizer_attr, None) is not None:
+                setattr(self, tokenizer_attr, getattr(it_cfg, tokenizer_attr))
+                rank_zero_warn("Since no datamodule `model_name_or_path` was provided, attempting to use fallback"
+                                f" configuration, setting {tokenizer_attr} to {getattr(it_cfg, tokenizer_attr)}.")

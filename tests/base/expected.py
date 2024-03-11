@@ -22,7 +22,7 @@ basic_parity_results = {
 
 profiling_parity_results = {
     "test_cpu_32":
-    TestResult(exact_results=def_results("cpu", 32, ds_cfg="test_prof"), mem_results=("test", "cpu", (360402944,)),
+    TestResult(exact_results=def_results("cpu", 32, ds_cfg="test_prof"), mem_results=("test", "cpu", (378863616,)),
                tolerance_map={"rss_diff": (0.05, 1e08)}),  # lightning ver requires a bit more
     "test_cuda_32":
     TestResult(exact_results=def_results("cuda", 32, ds_cfg="test_prof"),
@@ -32,10 +32,10 @@ profiling_parity_results = {
                mem_results=("test", "cuda", (301458944, 309889024, 318767104, 0))),
     "train_cpu_32":
     TestResult(exact_results=def_results("cpu", 32),
-               mem_results=("train", "cpu", (359723008, 177550460))),
+               mem_results=("train", "cpu", (561709056, 177550460))),
     "train_cpu_32_act":
     TestResult(exact_results=def_results("cpu", 32),
-               mem_results=("train", "cpu", (359092224, 6098252))),
+               mem_results=("train", "cpu", (396951552, 6098252))),
     "train_cuda_32":
     TestResult(exact_results=def_results("cuda", 32),
                mem_results=("train", "cuda", (1767844352, 2575136768, 2841640960, 162420092))),

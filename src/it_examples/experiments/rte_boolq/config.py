@@ -8,8 +8,7 @@ import torch
 from interpretune.base.config.datamodule import PromptConfig
 from interpretune.base.config.module import ITConfig
 from interpretune.plugins.transformer_lens import ITLensConfig
-from interpretune.base.mixins.zero_shot_classification import (ZeroShotClassificationConfig, BaseGenerationConfig,
-                                                          HFGenerationConfig)
+from interpretune.base.config.mixins import ZeroShotClassificationConfig, BaseGenerationConfig, HFGenerationConfig
 
 @dataclass(kw_only=True)
 class RTEBoolqEntailmentMapping:

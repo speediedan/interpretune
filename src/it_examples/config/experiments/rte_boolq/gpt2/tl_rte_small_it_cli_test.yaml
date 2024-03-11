@@ -2,7 +2,7 @@ it_session:
   module_cfg:
     init_args:
       experiment_tag: it_cli_test
-      tl_from_pretrained_cfg:
+      tl_cfg:
         init_args:
           device: cuda
           dtype: float32

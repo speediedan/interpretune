@@ -1,15 +1,21 @@
 import tempfile
-from typing import Any, Dict, List, Union, Tuple, Optional
+import os
+from datetime import datetime
+from typing import Any, Dict, List, Union, Tuple, Optional, NamedTuple
 from functools import reduce, partial
 from pathlib import Path
-from contextlib import contextmanager
-from functools import wraps
+from copy import deepcopy
 
 import torch
 
+from interpretune.base.config.module import ITConfig
+from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.exceptions import MisconfigurationException
+from interpretune.analysis.debug_generation import DebugGeneration
+from interpretune.analysis.memprofiler import MemProfiler
 from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, LRScheduler
+from interpretune.utils.logging import collect_env_info, rank_zero_debug
 
 # simple barebones interface encapsulating the data preparation, data setup, model setup and optimizer/scheduler
 # configuration processes. Intended for maximal interactive experimental flexibility without any iterative assumptions.
@@ -27,13 +33,142 @@ CORE_TO_LIGHTNING_ATTRS_MAP = {
     "_global_step": ("trainer.global_step", 0, ""),
 }
 
+class ITExtension(NamedTuple):
+    ext_attr: str
+    ext_class: Any
+
+SUPPORTED_EXTENSIONS = (ITExtension("debug_lm", DebugGeneration), ITExtension("memprofiler", MemProfiler))
+
+
 def _dummy_notify(method: str, ret_callable: bool, rv: Any, *args, **kwargs) -> Optional[Any]:
     rank_zero_warn(f"The `{method}` method is not defined for this module. For Lightning compatibility, this noop "
                     "method will be used. This warning will only be issued once by default.")
     out = lambda *args, **kwargs: rv if ret_callable else rv
     return out
 
-class CoreHelperAttributeMixin:
+
+class ConfigAdapter:
+    """" Methods for adapting the configuration and logging of BaseITModule."""
+
+    # if you override these in your LightningModule, ensure you cooperatively call super() if you want to retain
+    # the relevant BaseITModule hook functionality
+    # proper initialization of these variables should be done in the child class
+    it_cfg: ITConfig
+    memprofiler: MemProfiler
+    model: torch.nn.Module
+    cuda_allocator_history: bool
+    init_hparams: Dict[str, Any]
+    # conditionally initialized in core subclasses ITModule and ITLensModule (via CoreHelperAttributes)
+    _log_dir: Optional[os.PathLike]
+
+    @staticmethod
+    def _make_config_serializable(config_to_clean: Any, target_keys: Union[str, List]) -> Dict:
+        serial_cfg = deepcopy(config_to_clean)
+        if isinstance(target_keys, str):
+            target_keys = [target_keys]
+        for k in target_keys:
+            fqn_l = k.split(".")
+            try:
+                setattr(reduce(getattr, fqn_l[:-1], serial_cfg), fqn_l[-1], repr(reduce(getattr, fqn_l, serial_cfg)))
+            except AttributeError as ae:
+                rank_zero_info("Attempted to clean a key that was not present, continuing without cleaning that key: "
+                               f"{ae}")
+        return serial_cfg
+
+    def _init_dirs_and_hooks(self) -> None:
+        self._create_experiment_dir()
+        if self.cuda_allocator_history:
+            self.memprofiler.init_cuda_snapshots_dir()
+        # TODO: add save_hyperparameters/basic logging func for raw pytorch
+        # (override w/ lightning version where appropriate)
+        #self.save_hyperparameters(self.init_hparams)
+
+    def _create_experiment_dir(self) -> None:
+        # we only want to create the core experiment-specific dir for non-lightning modules
+        if getattr(self, '_log_dir', None):
+            self._log_dir = self._log_dir / self.init_hparams['experiment_id']
+            self._log_dir.mkdir(exist_ok=True, parents=True)
+
+    def _capture_hyperparameters(self) -> None:
+        # subclasses may have provided their own hparams so we update rather than override
+        model_config = {}
+        if self.it_cfg.hf_from_pretrained_cfg:
+            model_config = self._make_config_serializable(self.model.config,
+                                                          ['quantization_config.bnb_4bit_compute_dtype',
+                                                           'torch_dtype', '_pre_quantization_dtype']),
+        self.init_hparams.update({
+            "optimizer_init": self.it_cfg.optimizer_init,
+            "lr_scheduler_init": self.it_cfg.lr_scheduler_init,
+            "pl_lrs_cfg": self.it_cfg.pl_lrs_cfg,
+            "hf_from_pretrained_cfg": self.it_cfg.hf_from_pretrained_cfg,
+            # "dynamic_module_cfg": self.it_cfg.dynamic_module_cfg,
+            # "quantization_cfg": self.it_cfg.lora_cfg,
+            # "auto_model_cfg": self.it_cfg.auto_model_cfg, # TODO: cleanup/consolidate saving configs/dedup
+            "model_config": model_config,
+            "model_name_or_path": self.it_cfg.model_name_or_path,
+            "task_name": self.it_cfg.task_name,
+            "experiment_id": f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.it_cfg.experiment_tag}",
+            })
+        self.init_hparams["env_info"] = collect_env_info() if self.it_cfg.log_env_details else None
+
+
+class PropertyDispatcher:
+
+    def connect_extensions(self):
+        for ext_name, ext_class in SUPPORTED_EXTENSIONS:
+            if getattr(self.it_cfg, f'{ext_name}_cfg').enabled:
+                setattr(self, ext_name, ext_class())
+                getattr(self, ext_name).connect(self)
+
+    def _core_or_lightning(self, c2l_map_key: str):
+        c2l = CORE_TO_LIGHTNING_ATTRS_MAP[c2l_map_key]
+        try:
+            attr_val = getattr(self, c2l_map_key, None) or reduce(getattr, c2l[0].split("."), self)
+        except AttributeError as ae:
+            rank_zero_debug(f"{c2l[2]}: {ae}")
+            attr_val = c2l[1]
+        return attr_val
+
+    @property
+    def core_log_dir(self) -> Optional[str | os.PathLike]:
+        return self._core_or_lightning(c2l_map_key="_log_dir")
+
+    @property
+    def datamodule(self) -> Optional[ITDataModule]:
+        return self._core_or_lightning(c2l_map_key="_datamodule")
+
+    @property
+    def session_complete(self) -> bool:
+        return self._session_complete
+
+    @property
+    def cuda_allocator_history(self) -> bool:
+        return self.it_cfg.memprofiler_cfg.enabled and self.it_cfg.memprofiler_cfg.cuda_allocator_history
+
+    @property
+    def torch_dtype(self) -> Optional[Union[torch.dtype, 'str']]:
+        try:
+            if dtype := getattr(self.it_cfg, "_torch_dtype", None):
+                return dtype
+            if getattr(self, 'model', None):
+                dtype = getattr(self.model, "_torch_dtype", None) or getattr(self.model, "dtype", None)
+        except AttributeError:
+            dtype = None
+        return dtype
+
+    def _hook_output_handler(self, hook_name: str, output: Any) -> None:
+        if hook_name == "configure_optimizers":
+            self._it_init_optimizers_and_schedulers(output)
+        elif hook_name == "on_train_epoch_start":
+            pass  # TODO: remove if decided that no need to connect output of this hook
+        else:
+            rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
+
+
+class CoreHelperAttributes:
+
+    _log_dir: Optional[os.PathLike]
+
     """Mixin class for adding arbitrary core helper attributes to core (non-Lightning) IT classes."""
     def __init__(self, *args, **kwargs) -> None:
         # for core/non-lightning modules, we configure a _log_dir rather than relying on the trainer to do so
@@ -43,7 +178,7 @@ class CoreHelperAttributeMixin:
             self._log_dir = Path(it_cfg.core_log_dir or tempfile.gettempdir())
             ca = it_cfg.lightning_compat_attrs
         else:
-            raise MisconfigurationException("CoreHelperAttributeMixin requires an ITConfig.")
+            raise MisconfigurationException("CoreHelperAttributes requires an ITConfig.")
         self._supported_helper_attrs = {k: partial(_dummy_notify, k, v.ret_callable, v.ret_val) for k,v in ca.items()}
         super().__init__(*args, **kwargs)
 
@@ -87,9 +222,8 @@ class CoreHelperAttributeMixin:
         return device
 
 
-
 # adapted from pytorch/core/optimizer.py initialization methods
-class OptimizerSchedulerMixin:
+class OptimizerScheduler:
     """" Barebones interface to setup optimizers and schedulers for manual optimization with core IT modules."""
 
     # proper initialization of these variables should be done in the child class
@@ -105,8 +239,8 @@ class OptimizerSchedulerMixin:
                 "`configure_optimizers` returned `None`, Interpretune will not configure an optimizer or scheduler.",
             )
 
-        optims, lrs = OptimizerSchedulerMixin._configure_optimizers(optim_conf)
-        lrs_configs = OptimizerSchedulerMixin._configure_schedulers_manual_opt(lrs)
+        optims, lrs = OptimizerScheduler._configure_optimizers(optim_conf)
+        lrs_configs = OptimizerScheduler._configure_schedulers_manual_opt(lrs)
         lrs = [lrs.scheduler for lrs in lrs_configs]
         self.it_optimizers, self.it_lr_scheduler_configs, self.it_lr_schedulers = optims, lrs_configs, lrs
 
@@ -180,32 +314,5 @@ class OptimizerSchedulerMixin:
         return optimizers, lr_schedulers
 
 
-class ProfilerHooksMixin:
-
-    @contextmanager
-    @staticmethod
-    def memprofile_ctx(memprofiler, phase: str, epoch_idx: Optional[int] = None, step_idx: Optional[int] = None):
-        try:
-            memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="start")
-            yield
-        finally:
-            memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="end", reset_mem_hooks=True)
-
-    @staticmethod
-    def memprofilable(func):
-        @wraps(func)
-        def wrapper(self, *args, **kwargs):
-            if not hasattr(self, 'memprofiler'):
-                return func(self, *args, **kwargs)
-            phase = func.__name__
-            # for increased generality, we derive a profile `step_idx` based on a profiler snap counter rather than
-            # parsing `args` if a `batch_idx` kwarg isn't found
-            step_idx = kwargs.get("batch_idx", None)
-            with ProfilerHooksMixin.memprofile_ctx(self.memprofiler, phase=phase, step_idx=step_idx):
-                if self.memprofiler.memprofiler_cfg.enable_saved_tensors_hooks and \
-                    self.memprofiler._enabled[(phase, 'start')]:
-                    with torch.autograd.graph.saved_tensors_hooks(*self.memprofiler._saved_tensors_funcs):
-                        return func(self, *args, **kwargs)
-                else:
-                    return func(self, *args, **kwargs)
-        return wrapper
+class CoreComponents(ConfigAdapter, PropertyDispatcher, OptimizerScheduler):
+    ...

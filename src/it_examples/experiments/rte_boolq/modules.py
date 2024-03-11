@@ -6,7 +6,7 @@ import evaluate
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.base.config.module import ITConfig
-from interpretune.base.mixins.core import ProfilerHooksMixin
+from interpretune.base.components.mixins import ProfilerHooksMixin
 from it_examples.experiments.rte_boolq.datamodules import DEFAULT_TASK, TASK_NUM_LABELS, INVALID_TASK_MSG
 from interpretune.utils.types import STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_warn, rank_zero_info
@@ -125,15 +125,12 @@ class RTEBoolqLMHeadSteps:
         Optional[STEP_OUTPUT]:
         labels = batch.pop("labels")
         outputs = self.model.generate(input=batch['input'],
-                                      #pad_token_id=self.datamodule.tokenizer.pad_token_id,
-                                      **self.it_cfg.lm_generation_cfg.__dict__)
-        #stacked_scores = torch.stack([out for out in outputs.logits], dim=0).cpu()
-        stacked_scores = outputs.logits.cpu()
+                                      **self.it_cfg.zero_shot_cfg.lm_generation_cfg.__dict__)
+        stacked_scores = outputs.logits.to(device=self.device)
         assert self.it_cfg.entailment_mapping_indices is not None
         answer_logits = torch.index_select(stacked_scores, -1, self.it_cfg.entailment_mapping_indices)
         per_example_answers, _ = torch.max(answer_logits, dim=1)
         preds = torch.argmax(per_example_answers, axis=1)  # type: ignore[call-arg]
-        #labels = batch["labels"]
         metric_dict = self.metric.compute(predictions=preds, references=labels)
         metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
                                metric_dict.items()))
@@ -144,7 +141,7 @@ class RTEBoolqLMHeadSteps:
         batch.pop("labels")
         outputs = self(**batch)
         # TODO: switch to zero shot instead of this default sequenceclassification head approach
-        logits = outputs[:2]
+        _, logits = outputs[:2]
         if self.it_cfg.num_labels >= 1:
             torch.argmax(logits, axis=1)  # type: ignore[call-arg]
         elif self.it_cfg.num_labels == 1:

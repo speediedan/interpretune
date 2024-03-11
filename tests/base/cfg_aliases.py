@@ -2,6 +2,7 @@ from typing import NamedTuple
 from collections import ChainMap
 
 from it_examples.experiments.rte_boolq.config import RTEBoolqPromptConfig
+from interpretune.base.config.module import HFFromPretrainedConfig
 from interpretune.analysis.memprofiler import MemProfilerCfg, MemProfilerSchedule
 
 
@@ -20,7 +21,6 @@ test_core_shared_config = {"task_name": "pytest_rte", **test_core_tokenizer_kwar
 test_core_signature_columns= ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
                               'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
 
-
 test_core_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), "signature_columns": test_core_signature_columns,
                           "enable_datasets_cache": True, "prepare_data_map_cfg": {"batched": True},
                           "text_fields": ("premise", "hypothesis"),  "train_batch_size": default_test_bs,
@@ -34,11 +34,12 @@ test_lr_scheduler_init = {"lr_scheduler_init": {"class_path": "torch.optim.lr_sc
 
 test_optimizer_scheduler_init = ChainMap(test_optimizer_init, test_lr_scheduler_init)
 
-base_it_module_kwargs = {"use_model_cache": False, "cust_fwd_kwargs": {}, "from_pretrained_cfg":
-                         {"device_map": "cpu", "torch_dtype": "float32"}, "experiment_tag": "test_itmodule"}
+base_hf_from_pretrained_kwargs = {"device_map": "cpu", "torch_dtype": "float32"}
+base_hf_from_pretrained_cfg = HFFromPretrainedConfig(pretrained_kwargs=base_hf_from_pretrained_kwargs,
+                                                     model_head="transformers.GPT2ForSequenceClassification")
+base_it_module_kwargs = {"experiment_tag": "test_itmodule", "cust_fwd_kwargs": {}}
 
-test_core_it_module_kwargs = {"auto_model_cfg": {"model_head": "transformers.GPT2ForSequenceClassification"},
-                              **base_it_module_kwargs}
+test_core_it_module_kwargs = {"hf_from_pretrained_cfg": base_hf_from_pretrained_cfg, **base_it_module_kwargs}
 
 enable_memprofiler_kwargs = {"enabled": True, "cuda_allocator_history": True}
 bs_override = {'train_batch_size': default_prof_bs, 'eval_batch_size': default_prof_bs}

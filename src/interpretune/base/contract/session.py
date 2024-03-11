@@ -68,6 +68,9 @@ class InterpretunableSessionConfig(UnencapsulatedArgs):
                 module, module_cls = getattr(self, attr_k).rsplit(".", 1)
                 mod = importlib.import_module(module)
                 setattr(self, attr_k, getattr(mod, module_cls, None))
+        # to improve usability, run a datamodule cross-validation hook to allow auto-reconfiguration prior to
+        # session instantiation
+        self.datamodule_cfg._cross_validate(self.module_cfg)
         self.wrap_interpretunable()
 
     def _check_ready(self):
@@ -89,9 +92,16 @@ class InterpretunableSessionConfig(UnencapsulatedArgs):
         # instantiate the wrapped datamodule and/or module classes and attach them to the session
         if dm_cls:
             self.datamodule = dm_cls(itdm_cfg=self.datamodule_cfg, *self.dm_args, **self.dm_kwargs)
+        self._set_dm_handles_for_instantiation()
         if m_cls:
             self.module = m_cls(it_cfg=self.module_cfg, *self.module_args, **self.module_kwargs)
         self._validate_session(dm_wrapper, m_wrapper)
+
+    def _set_dm_handles_for_instantiation(self):
+        # some datamodule handles may be required for module init, we update the module_cfg to provide them here
+        supported_dm_handles_for_module = {"tokenizer": "tokenizer"}
+        for m_attr, dm_handle in supported_dm_handles_for_module.items():
+            setattr(self.module_cfg, m_attr, getattr(self.datamodule, dm_handle))
 
     def _validate_session(self, dm_wrapper, m_wrapper):
         if not isinstance(self.datamodule, InterpretunableDataModule):

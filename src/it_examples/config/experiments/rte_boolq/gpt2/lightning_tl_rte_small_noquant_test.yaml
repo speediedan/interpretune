@@ -2,7 +2,7 @@ it_session:
   module_cfg:
     init_args:
       experiment_tag: lightning_tl_rte_small_noquant_test
-      tl_from_pretrained_cfg:
+      tl_cfg:
         class_path: interpretune.plugins.transformer_lens.ITLensFromPretrainedConfig
         init_args:
           device: cuda

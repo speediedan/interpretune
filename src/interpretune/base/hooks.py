@@ -8,6 +8,7 @@ from interpretune.utils.import_utils import instantiate_class
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
 
+
 class BaseITHooks:
     """" LightningModule hooks implemented by BaseITModule."""
 
@@ -34,7 +35,7 @@ class BaseITHooks:
         # configured here will optimize the parameters (and only those parameters) scheduled to be optimized in phase 0
         # of the current fine-tuning schedule. This auto-configuration can be disabled if desired by setting
         # ``enforce_phase0_params`` to ``False``.
-        self._set_input_require_grads()
+        self.set_input_require_grads()
         optimizer, scheduler = None, None
         if self.it_cfg.optimizer_init:  # in case this hook is manually invoked by the user
             optimizer = instantiate_class(args=self.model.parameters(), init=self.it_cfg.optimizer_init)
