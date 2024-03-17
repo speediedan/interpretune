@@ -1,26 +1,31 @@
 import os
 from pathlib import Path
-from typing import Optional, Any, Dict, Tuple
+from jaxtyping import Float, Int
+from typing import Optional, Any, Dict, Tuple, NamedTuple, Union, Callable, List
 from unittest import mock
+from functools import reduce
+from dataclasses import dataclass
 
 import torch
+import tqdm
 import datasets
 import evaluate
 from torch.testing import assert_close
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
+from interpretune.base.contract.protocol import InterpretunableModule
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
+from interpretune.utils.types import STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_only, get_filesystem
-from it_examples.experiments.rte_boolq.modules import (RTEBoolqModuleMixin, RTEBoolqClassificationHeadSteps,
-                                                       RTEBoolqLMHeadSteps)
-from it_examples.experiments.rte_boolq.datamodules import RTEBoolqDataModule, GPT2RTEBoolqDataModule
-from tests.base.cfg_aliases import TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, sample_rows, sample_pos
+from it_examples.experiments.rte_boolq.modules import RTEBoolqModuleMixin, RTEBoolqLMHeadSteps
+from it_examples.experiments.rte_boolq.datamodules import GPT2RTEBoolqDataModule
+from tests.base.cfg_aliases import TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS, SAMPLE_POSITION
 
 
-if _LIGHTNING_AVAILABLE:
-    from lightning.pytorch import LightningDataModule
+################################################################################
+# Test DataModules
+################################################################################
 
 class TestITDataModule(GPT2RTEBoolqDataModule):
 
@@ -30,9 +35,12 @@ class TestITDataModule(GPT2RTEBoolqDataModule):
             super().__init__(itdm_cfg=itdm_cfg)
         self.force_prepare_data = force_prepare_data
 
-    def sample_dataset_state(self) -> Tuple:
-        # TODO: use super but with the inputs column instead of input_ids?
+    def sample_unpadded_state(self, rows: List) -> List:
+        # we strip padding from sampled rows before collecting ids to make our sample padding-side agnostic
+        return [list(filter(lambda v: v != self.tokenizer.pad_token_id, t))[SAMPLE_POSITION] for t in rows]
 
+    def sample_dataset_state(self) -> Tuple:
+        # NOTE [Dataset State Validation]:
         # note that this only validates the loaded dataset/tokenizer, the dataloaders are not tested in this method
         # so one may still need to inspect downstream variables (e.g. the dataloader kwargs) and the batch actually
         # passed to the model in a given test/step to verify that the tested model inputs align with the expected
@@ -42,19 +50,16 @@ class TestITDataModule(GPT2RTEBoolqDataModule):
             target_input = self.tokenizer.model_input_names[0]
             # as a content heuristic, inspect the id of a given position (sample_pos) for the first sample_rows of each
             # dataset split
-            sample_state.extend([t[sample_pos] for t in self.dataset[split][target_input][:sample_rows]])
+            sampled_rows = self.dataset[split][target_input][:NUM_SAMPLE_ROWS]
+            sample_state.extend(self.sample_unpadded_state(sampled_rows))
         return (self.itdm_cfg.task_name, self.tokenizer.__class__.__name__, sample_state)
 
     def sample_step_input(self, batch: BatchEncoding) -> Tuple:
-        # TODO: use super but with the inputs column instead of input_ids?
-
-        # note that this only validates the loaded dataset/tokenizer, the dataloaders are not tested in this method
-        # so one may still need to inspect downstream variables (e.g. the dataloader kwargs) and the batch actually
-        # passed to the model in a given test/step to verify that the tested model inputs align with the expected
-        # deterministic dataset state defined in `tests.helpers.cfg_aliases.test_dataset_state`
+        # See NOTE [Dataset State Validation]
         sample_state = []
-        # as a content heuristic, inspect the id of a given position for each batch example
-        sample_state.extend(batch[self.tokenizer.model_input_names[0]][:, sample_pos].cpu().tolist())
+        sampled_rows = batch[self.tokenizer.model_input_names[0]].cpu().tolist()
+        # inspect the id of a given position for each batch example
+        sample_state.extend(self.sample_unpadded_state(sampled_rows))
         return sample_state
 
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
@@ -62,7 +67,7 @@ class TestITDataModule(GPT2RTEBoolqDataModule):
         dataset_path = Path(self.itdm_cfg.dataset_path)
         # rebuild the test dataset if it does not exist in the test environment
         if not dataset_path.exists() or self.force_prepare_data:
-            # regen the 'pytest_rte' subset of rte for testing
+            # regen a cached 'pytest_rte_{hf,pt,tl}' subset of rte for testing with a given model
             dataset = datasets.load_dataset("super_glue", 'rte', trust_remote_code=True)
             for split in dataset.keys():
                 dataset[split] = dataset[split].select(range(10))
@@ -71,22 +76,228 @@ class TestITDataModule(GPT2RTEBoolqDataModule):
             dataset.save_to_disk(dataset_path)
 
 
-class TestITDataModuleFullDataset(TestITDataModule):
-    def __init__(self, itdm_cfg: ITDataModuleConfig, force_prepare_data: bool = False) -> None:
-        itdm_cfg.task_name = 'rte'
-        TestITDataModule.__init__(self, itdm_cfg=itdm_cfg, force_prepare_data=force_prepare_data)
+class SampledOutput(NamedTuple):
+    """Sampled Output Named Tuple.
 
-    def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
-        """Load the SuperGLUE dataset."""
-        # Note that the current config for the full dataset uses default batching (1000), so the len of the
-        # `input_ids` will vary a few percent (e.g. between 258 and 304) contributing to differences in certain
-        # profiling metrics. Note that ensuring the use of deterministic algorithims via the `make_deterministic`
-        # method is much more important to reducing this variance than the batching approach (though constraining to
-        # deterministic algorithms will almost always increase resource requirements on some dimension)
-        self.itdm_cfg.dataset_path = Path(self.itdm_cfg.dataset_path).parent / 'rte'
-        if not self.itdm_cfg.dataset_path.exists() or self.force_prepare_data:
-            RTEBoolqDataModule.prepare_data(self, target_model=target_model)
+    Named tuple object for if we want to output both logits and tokens.
+    """
 
+    tokens: Union[Int[torch.Tensor, "batch pos_plus_new_tokens"], str]
+    logits: Float[torch.Tensor, "batch pos d_vocab"]
+
+
+################################################################################
+# Toy Configurable Transformer (non-TransformerLens)
+# A toy configurable non-TransformerLens based transformer originally based on
+# https://bit.ly/toy_transformer. The intention is to ensure we test a more
+# heterogenous set of toy configurable transformer implementations
+################################################################################
+
+@dataclass
+class TestModelArgs:
+    n_layers: int = 1
+    vocab_size: int = 50257
+    max_seq_len: int = 10
+    dim: int = 10
+    n_heads: int = 2
+    dropout_p: float = 0.1
+    use_attn_mask: bool = True
+    weight_tying: bool = True
+    tokenizer: Optional[Callable] = None
+    device: Optional[torch.device] = None
+    dtype: Optional[torch.dtype] = None
+    # handle below can be used at runtime to allow this model's `generate` to adapt to various configuration contexts
+    ctx_handle: Optional[InterpretunableModule] = None
+
+    def __post_init__(self):
+        if self.ctx_handle:
+            # snag potentially useful context references and then delete the handle
+            self.tokenizer = self.tokenizer or self.ctx_handle.it_cfg.tokenizer
+            self.device = self.device or self.ctx_handle.device
+            self.dtype = self.dtype or self.ctx_handle.torch_dtype
+            del self.ctx_handle
+
+
+class Attention(torch.nn.Module):
+    def __init__(self, args: TestModelArgs):
+        super().__init__()
+        assert args.dim % args.n_heads == 0
+        self.head_dim = args.dim // args.n_heads
+        self.n_heads = args.n_heads
+        self.dropout_p = args.dropout_p
+        self.resid_dropout = torch.nn.Dropout(args.dropout_p)
+        self.use_attn_mask = args.use_attn_mask
+
+        self.wq = torch.nn.Linear(args.dim, args.dim, bias=False)
+        self.wk = torch.nn.Linear(args.dim, args.dim, bias=False)
+        self.wv = torch.nn.Linear(args.dim, args.dim, bias=False)
+        self.wo = torch.nn.Linear(args.dim, args.dim, bias=False)
+
+    def forward(self, x):
+        bsz, seq_len, _ = x.size()
+        queries, keys, values = self.wq(x), self.wk(x), self.wv(x)
+        queries = queries.view(bsz, seq_len, self.n_heads, self.head_dim)
+        keys = keys.view(bsz, seq_len, self.n_heads, self.head_dim)
+        values = values.view(bsz, seq_len, self.n_heads, self.head_dim)
+
+        queries = queries.transpose(1, 2)  # (bsz, n_heads, seq_len, head_dim)
+        keys = keys.transpose(1, 2)  # (bsz, n_heads, seq_len, head_dim)
+        values = values.transpose(1, 2)  # (bsz, n_heads, seq_len, head_dim)
+
+        output = torch.nn.functional.scaled_dot_product_attention(
+            queries, keys, values, None,
+            self.dropout_p if self.training else 0,
+            self.use_attn_mask,
+        )
+        output = output.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
+        return self.resid_dropout(self.wo(output))
+
+class FeedForward(torch.nn.Module):
+    def __init__(self, dim, hidden_dim, dropout_p):
+        super().__init__()
+        self.w1 = torch.nn.Linear(dim, hidden_dim)
+        self.gelu = torch.nn.GELU()
+        self.w2 = torch.nn.Linear(hidden_dim, dim)
+        self.resid_dropout = torch.nn.Dropout(dropout_p)
+
+    def forward(self, x):
+        return self.resid_dropout(self.w2(self.gelu(self.w1(x))))
+
+class TransformerBlock(torch.nn.Module):
+    def __init__(self, args: TestModelArgs):
+        super().__init__()
+        self.attention_norm = torch.nn.LayerNorm(args.dim)
+        self.attention = Attention(args)
+        self.ffn_norm = torch.nn.LayerNorm(args.dim)
+        self.feed_forward = FeedForward(args.dim, hidden_dim=4 * args.dim, dropout_p=args.dropout_p)
+
+    def forward(self, x):
+        h = x + self.attention(self.attention_norm(x))
+        out = h + self.feed_forward(self.ffn_norm(h))
+        return out
+
+
+class Transformer(torch.nn.Module):
+    def __init__(self, args: TestModelArgs):
+        super().__init__()
+        assert args.vocab_size is not None
+        assert args.max_seq_len is not None
+        self.device = args.device
+        self.dtype = args.dtype
+        self.tokenizer = args.tokenizer
+        self.max_seq_len = args.max_seq_len
+        self.tok_embeddings = torch.nn.Embedding(args.vocab_size, args.dim)
+        self.pos_embeddings = torch.nn.Embedding(args.max_seq_len, args.dim)
+        self.dropout = torch.nn.Dropout(args.dropout_p)
+        self.layers = torch.nn.ModuleList()
+        for _ in range(args.n_layers):
+            self.layers.append(TransformerBlock(args))
+        self.norm = torch.nn.LayerNorm(args.dim)
+        self.output = torch.nn.Linear(args.dim, args.vocab_size, bias=False)
+        if args.weight_tying:
+            self.output.weight = self.tok_embeddings.weight
+
+    def forward(self, tokens):
+        _bsz, seq_len = tokens.size()
+        assert seq_len <= self.max_seq_len
+        h = self.tok_embeddings(tokens)
+        pos = torch.arange(0, seq_len, device=tokens.device)
+        p = self.pos_embeddings(pos)  # positional embeddings of shape (seq_len, dim)
+        h = h + p
+        h = self.dropout(h)
+        for layer in self.layers:
+            h = layer(h)
+        h = self.norm(h)
+        output = self.output(h).float()
+        return output
+
+    @torch.inference_mode()
+    def generate(
+        self,
+        tokens: Union[str, Float[torch.Tensor, "batch pos"]] = "",
+        max_new_tokens: int = 5,
+        eos_token_id: Optional[int] = None,
+        output_logits: bool = False,
+        verbose: bool = True,
+        **kwargs
+    ) -> Union[SampledOutput, Int[torch.Tensor, "batch pos_plus_new_tokens"]]:
+        """Toy generate function to support non-HF/TransformerLens tests with the same interface.
+
+        Args:
+            tokens (Union[str, Int[torch.Tensor, "batch pos"])]): A batch of tokens ([batch, pos]).
+            max_new_tokens (int): Maximum number of tokens to generate.
+            eos_token_id (Optional[Union[int, Sequence]]): The token ID to use for end of sentence.
+            output_logits (`bool`, *optional*, defaults to `False`): Whether or not to return the prediction scores.
+            verbose (bool): If True, show tqdm progress bars for generation.
+
+        Returns:
+            outputs (torch.Tensor): [batch, pos + max_new_tokens], generated sequence of new tokens.
+        """
+        # To enable a broader range of testing contexts, use the configuration context of the parent_handle
+        # NEXT: update this method to use parent_handle if available for broader range of testing
+        out_logits = () if output_logits else None
+
+        assert isinstance(tokens, torch.Tensor)
+        batch_size, ctx_length = tokens.shape
+        gen_device = self.device or tokens.device
+        tokens = tokens.to(gen_device)
+
+        stop_tokens = []
+        eos_token_for_padding = 0
+
+        tokenizer_has_eos_token = (self.tokenizer is not None and self.tokenizer.eos_token_id is not None)
+        if eos_token_id is None:
+            assert (tokenizer_has_eos_token), \
+            "Must pass an `eos_token_id` if tokenizer is None or has no eos_token_id"
+            eos_token_id = self.tokenizer.eos_token_id
+
+        stop_tokens = [eos_token_id]
+        eos_token_for_padding = eos_token_id
+
+        # An array to track which sequences in the batch have finished.
+        finished_sequences = torch.zeros(
+            batch_size, dtype=torch.bool, device=gen_device
+        )
+
+        for index in tqdm.tqdm(range(max_new_tokens), disable=not verbose):
+            # While generating, we keep generating logits, throw away all but the final logits,
+            # and then use those logits to sample from the distribution We keep adding the
+            # sampled tokens to the end of tokens.
+            # We input the entire sequence, as a [batch, pos] tensor, since we aren't using
+            # the cache.
+            logits = self.forward(tokens)
+            final_logits = logits[:, -1, :]
+            if output_logits:
+                out_logits += (final_logits,)
+
+            sampled_tokens = final_logits.argmax(-1).to(gen_device)
+
+            # For all unfinished sequences, add on the next token. If a sequence was
+            # finished, throw away the generated token and add eos_token_for_padding
+            # instead.
+            sampled_tokens[finished_sequences] = eos_token_for_padding
+            finished_sequences.logical_or_(
+                torch.isin(sampled_tokens, torch.tensor(stop_tokens).to(gen_device))
+            )
+
+            tokens = torch.cat([tokens, sampled_tokens.unsqueeze(-1)], dim=-1)
+
+            if finished_sequences.all():
+                break
+
+        if output_logits:
+            return SampledOutput(tokens, torch.stack(out_logits, dim=1))
+        else:
+            return tokens
+
+
+################################################################################
+# Test Modules
+# All test modules inherit from BaseTestModule and can be used in the same way,
+# adjusting the desired methods and configuration to load a pretrained model
+# (e.g. HF `from_pretrained`) or custom model and using the desired plugins
+# (e.g. `transformer_lens`) while running on Lightning or native PyTorch.
+################################################################################
 
 class BaseTestModule:
     def __init__(self, it_cfg: ITConfig, expected_exact: Optional[Dict] = None, expected_close: Optional[Dict] = None,
@@ -112,8 +323,17 @@ class BaseTestModule:
         it_cfg.num_labels = 0 if it_cfg.zero_shot_cfg.enabled else 2
         return it_cfg
 
-    def _load_metric(self) -> None:
+    def load_metric(self) -> None:
         self.metric = evaluate.load("super_glue", 'rte', experiment_id=self.init_hparams['experiment_id'])
+
+    def model_init(self) -> None:
+        """If we're not using a from-configuration model, we initialize the model here."""
+        self.device = self.it_cfg.model_cfg.get("device", None) or self.device
+        self.torch_dtype = self.it_cfg.model_cfg.get("dtype", None) or self.torch_dtype
+        cust_config = TestModelArgs(**self.it_cfg.model_cfg.get('model_args', {}), ctx_handle=self)
+        self.model = Transformer(args=cust_config)
+        # TODO: add note to documentation that for now user is responsible for setting device/dtype w model_init
+        self.model.to(device=self.device, dtype=self.torch_dtype)
 
     def _get_current_exact(self) -> Dict:
         # gather device and precision info for both core and transformer lens contexts
@@ -130,6 +350,29 @@ class BaseTestModule:
         if self.epoch_losses and self.epoch_losses.get(state_key, None):
             current_close.update({'loss': self.epoch_losses[state_key]})
         self.inspect_or_assert(self._get_current_exact(), current_close, state_key)
+
+    def _on_test_or_train_batch_start(self, batch: Any, batch_idx: int, *args, **kwargs):
+        if self.global_step == 0 and batch_idx == 0:
+            self.sampled_fwd_inputs = self.datamodule.sample_step_input(batch)
+
+    def on_test_batch_start(self, batch: Any, batch_idx: int, *args, **kwargs):
+        self._on_test_or_train_batch_start(batch, batch_idx, *args, **kwargs)
+
+    def on_train_batch_start(self, batch: Any, batch_idx: int, *args, **kwargs):
+        self._on_test_or_train_batch_start(batch, batch_idx, *args, **kwargs)
+
+    def on_train_batch_end(self, batch: Any, batch_idx: int, outputs: STEP_OUTPUT, *args, **kwargs):
+        if self.epoch_losses.get(self.current_epoch, None) is None:
+            try:
+                if isinstance(outputs, torch.Tensor):
+                    self.epoch_losses[self.current_epoch] = outputs.item()
+                # TODO: add this helper attribute to CoreHerlperAttributes?
+                elif callback_metrics := reduce(getattr, "trainer.callback_metrics".split("."), self):
+                    self.epoch_losses[self.current_epoch] = callback_metrics['train_loss'].item()
+            except AttributeError as ae:
+                raise AttributeError(f"Could not find and log loss output for epoch {self.current_epoch}, "
+                                    f"batch {batch_idx}, received: {ae}")
+            assert self.epoch_losses.get(self.current_epoch, None) is not None, 'No loss recorded for current epoch!'
 
     def on_test_epoch_end(self, *args, **kwargs):
         self._epoch_end_validation(*args, **kwargs)
@@ -182,40 +425,5 @@ class BaseTestModule:
                 self.dev_expected_close[act] = self.memprofiler.memory_stats[self.expected_memstats[0]][act]
 
 
-class RTETestITModule(BaseTestModule, RTEBoolqClassificationHeadSteps, RTEBoolqModuleMixin):
+class TestITModule(BaseTestModule, RTEBoolqLMHeadSteps, RTEBoolqModuleMixin):
     ...
-
-
-if _LIGHTNING_AVAILABLE:
-    class TestITLightningDataModule(TestITDataModule, LightningDataModule):
-        ...
-    class TestITLightningDataModuleFullDataset(TestITDataModuleFullDataset, LightningDataModule):
-        ...
-    class BaseTestITLightningModule(BaseTestModule):
-        def _on_test_or_train_batch_start(self, batch: Any, batch_idx: int, *args, **kwargs):
-            if self.global_step == 0 and batch_idx == 0:
-                self.sampled_fwd_inputs = self.datamodule.sample_step_input(batch)
-        def on_test_batch_start(self, batch: Any, batch_idx: int, *args, **kwargs):
-            self._on_test_or_train_batch_start(batch, batch_idx, *args, **kwargs)
-        def on_train_batch_start(self, batch: Any, batch_idx: int, *args, **kwargs):
-            self._on_test_or_train_batch_start(batch, batch_idx, *args, **kwargs)
-        def on_train_epoch_end(self, *args, **kwargs):
-            self.epoch_losses[self.current_epoch] = self.trainer.callback_metrics['train_loss'].item()
-            super().on_train_epoch_end(*args, **kwargs)
-    class RTETestITLightningModule(BaseTestITLightningModule, RTEBoolqClassificationHeadSteps, RTEBoolqModuleMixin):
-        ...
-else:
-    TestITLightningDataModule = object
-    TestITLightningDataModuleFullDataset = object
-    RTETestITLightningModule = object
-
-# TODO: autowrap these modules with the relevant types rather than manually defining in this manner
-### TransformerLens Test Modules
-class RTETestITLensModule(BaseTestModule, RTEBoolqLMHeadSteps, RTEBoolqModuleMixin):
-    ...
-
-if _LIGHTNING_AVAILABLE:
-    class RTETestITLensLightningModule(RTETestITLensModule, BaseTestITLightningModule):
-        ...
-else:
-    RTETestITLensLightningModule = object

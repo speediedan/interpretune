@@ -30,7 +30,7 @@ from tests.base.cfg_aliases import (w_lit, cuda,test_bs1_mem, test_bs1_mem_nosav
 @dataclass(kw_only=True)
 class TLParityCfg(ParityCfg):
     plugin: Optional[str] = "transformerlens"
-    plugin_cfg_key: Optional[str] = "cust"
+    model_src_key: Optional[str] = "cust"
 
 @dataclass
 class TLParityTest(TestCfg):
@@ -38,7 +38,7 @@ class TLParityTest(TestCfg):
 
 
 PARITY_TL_CONFIGS = (
-    TLParityTest(alias="test_cpu_32", cfg=TLParityCfg(loop_type="test", plugin_cfg_key="pretrained")),
+    TLParityTest(alias="test_cpu_32", cfg=TLParityCfg(loop_type="test", model_src_key="pretrained")),
     TLParityTest(alias="test_cpu_32_l", cfg=TLParityCfg(loop_type="test", **w_lit,), marks="lightning"),
     TLParityTest(alias="test_cuda_32", cfg=TLParityCfg(loop_type="test", **cuda), marks="cuda"),
     TLParityTest(alias="test_cuda_32_l", cfg=TLParityCfg(loop_type="test", **cuda, **w_lit), marks="cuda_l"),
@@ -71,7 +71,7 @@ class ProfilingTest(TestCfg):
 @dataclass(kw_only=True)
 class TLProfileCfg(ParityCfg):
     plugin: Optional[str] = "transformerlens"
-    plugin_cfg_key: Optional[str] = "pretrained"
+    model_src_key: Optional[str] = "pretrained"
 
 PARITY_TL_PROFILING_CONFIGS = (
     ProfilingTest(alias="test_cpu_32", cfg=TLProfileCfg(**test_bs1_mem_nosavedt), marks="optional"),

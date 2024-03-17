@@ -14,17 +14,17 @@ from interpretune.base.contract.protocol import (DataModuleInitable, ModuleStepp
                                                  NamedWrapper, InterpretunableModule, InterpretunableDataModule)
 
 
-def interpretunable_factory(datamodule_wrapper: Generic[T_dm], module_wrapper: Generic[T_m],
+def interpretunable_factory(datamodule_composition: Generic[T_dm], module_composition: Generic[T_m],
                             datamodule: Optional[DataModuleInitable] = None, module: Optional[ModuleSteppable] = None) \
                                 -> InterpretunableTuple:
     built_datamodule = None
     built_module = None
     if datamodule:
-        class InterpretunableDataModule(NamedWrapper, datamodule, datamodule_wrapper):
+        class InterpretunableDataModule(NamedWrapper, datamodule, datamodule_composition):
             _orig_module_name = datamodule.__qualname__
         built_datamodule = InterpretunableDataModule
     if module:
-        class InterpretunableModule(NamedWrapper, module, module_wrapper):
+        class InterpretunableModule(NamedWrapper, module, module_composition):
             _orig_module_name = module.__qualname__
         built_module = InterpretunableModule
     return InterpretunableTuple(datamodule=built_datamodule, module=built_module)
@@ -86,16 +86,17 @@ class InterpretunableSessionConfig(UnencapsulatedArgs):
 
     def wrap_interpretunable(self) -> None:
         self._check_ready()
-        dm_wrapper = ITDataModule if not self.lightning else ITLightningDataModule
-        m_wrapper = INTERPRETUNABLE_MODULE_MAPPING[(self.lightning, self.plugin)]
-        dm_cls, m_cls = interpretunable_factory(dm_wrapper, m_wrapper, self.datamodule_cls, self.module_cls)
+        dm_composition = ITDataModule if not self.lightning else ITLightningDataModule
+        m_composition = INTERPRETUNABLE_MODULE_MAPPING[(self.lightning, self.plugin)]
+        dm_cls, m_cls = interpretunable_factory(dm_composition, m_composition, self.datamodule_cls, self.module_cls)
         # instantiate the wrapped datamodule and/or module classes and attach them to the session
         if dm_cls:
             self.datamodule = dm_cls(itdm_cfg=self.datamodule_cfg, *self.dm_args, **self.dm_kwargs)
         self._set_dm_handles_for_instantiation()
         if m_cls:
             self.module = m_cls(it_cfg=self.module_cfg, *self.module_args, **self.module_kwargs)
-        self._validate_session(dm_wrapper, m_wrapper)
+        self._set_model_handles_for_instantiation()
+        self._validate_session(dm_composition, m_composition)
 
     def _set_dm_handles_for_instantiation(self):
         # some datamodule handles may be required for module init, we update the module_cfg to provide them here
@@ -103,10 +104,21 @@ class InterpretunableSessionConfig(UnencapsulatedArgs):
         for m_attr, dm_handle in supported_dm_handles_for_module.items():
             setattr(self.module_cfg, m_attr, getattr(self.datamodule, dm_handle))
 
-    def _validate_session(self, dm_wrapper, m_wrapper):
+    def _set_model_handles_for_instantiation(self):
+        # having access to a model handle may be useful in some pre-setup hook steps (e.g. signature inspection in
+        # `prepare_data`) we provide early access to the model handle for datamodule
+        # TODO: for Lightning, since we're setting _module before trainer.model is set, we double check attr coherency
+        # TODO: wrt Lightning compatibility, since we're providing access to the model handle before `setup_environment`
+        #       or `configure_model` hooks are executed, need to evaluate the the validity/need to update this reference
+        #       after subsequent model hooks are called
+        supported_module_handles_for_datamodule = {"_module": self.module}
+        for dm_attr, m_handle in supported_module_handles_for_datamodule.items():
+            setattr(self.datamodule, dm_attr, m_handle)
+
+    def _validate_session(self, dm_composition, m_composition):
         if not isinstance(self.datamodule, InterpretunableDataModule):
-            rank_zero_warn(f"{self.datamodule} is not {InterpretunableDataModule} even after wrapping"
-                           f"{self.datamodule_cls} with {dm_wrapper}. {unexpected_state_msg_suffix}")
+            rank_zero_warn(f"{self.datamodule} is not {InterpretunableDataModule} even after composing"
+                           f"{self.datamodule_cls} with {dm_composition}. {unexpected_state_msg_suffix}")
         if not isinstance(self.module, InterpretunableModule):
-            rank_zero_warn(f"{self.module} is not {InterpretunableModule} even after wrapping {self.module_cls} with"
-                           f"{m_wrapper}. {unexpected_state_msg_suffix}")
+            rank_zero_warn(f"{self.module} is not {InterpretunableModule} even after composing {self.module_cls} with"
+                           f"{m_composition}. {unexpected_state_msg_suffix}")

@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Union, Tuple, Optional, NamedTuple
 from functools import reduce, partial
 from pathlib import Path
 from copy import deepcopy
+import inspect
 
 import torch
 
@@ -14,6 +15,7 @@ from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.exceptions import MisconfigurationException
 from interpretune.analysis.debug_generation import DebugGeneration
 from interpretune.analysis.memprofiler import MemProfiler
+from interpretune.utils.import_utils import _resolve_torch_dtype, _LIGHTNING_AVAILABLE
 from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, LRScheduler
 from interpretune.utils.logging import collect_env_info, rank_zero_debug
 
@@ -25,12 +27,29 @@ from interpretune.utils.logging import collect_env_info, rank_zero_debug
 # maximally flexible interactive experimentation and interleaved Lightning-based tuning, testing and
 # prediction/interpretation tasks.
 
+if _LIGHTNING_AVAILABLE:
+    from lightning.fabric.utilities.device_dtype_mixin import _DeviceDtypeModuleMixin
+else:
+    _DeviceDtypeModuleMixin = object
+
 CORE_TO_LIGHTNING_ATTRS_MAP = {
     "_log_dir": ("trainer.model._trainer.log_dir", None, "No log_dir has been set yet"),
     "_datamodule": ("trainer.datamodule", None, "Could not find datamodule reference (has it been attached yet?)"),
     "_tl_cfg": ("model.cfg", None, ""),
     "_current_epoch": ("trainer.current_epoch", 0, ""),
     "_global_step": ("trainer.global_step", 0, ""),
+}
+
+# Below is an experimental feature that enables us to conditionally defer property definitions to other framework/plugin
+# definitions. The intention is to conditionally enhance functionality (e.g., add a setter method where one doesn't
+# exist in a given framework/plugin implementation) while still maximizing compatibility in deferring to the
+# framework/plugin property implementation in contexts where it would be supported.
+# This functionality can be disabled on a property basis by setting `enabled=False` at the cost of potentially reduced
+# compatbility because IT will not dispatch to the framework/plugin's implementation of the IT-enhanced property.
+# Currently only used to augment the `device` property
+
+PROPERTY_COMPOSITION = {
+    "device": {"enabled": True, "target": _DeviceDtypeModuleMixin, "dispatch": _DeviceDtypeModuleMixin.device}
 }
 
 class ITExtension(NamedTuple):
@@ -96,14 +115,14 @@ class ConfigAdapter:
             model_config = self._make_config_serializable(self.model.config,
                                                           ['quantization_config.bnb_4bit_compute_dtype',
                                                            'torch_dtype', '_pre_quantization_dtype']),
+        # if `model.config `exists, any provided `model_cfg` should already be merged with it
+        elif getattr(self.model, 'config', None) is None:
+            model_config = self.it_cfg.model_cfg
         self.init_hparams.update({
             "optimizer_init": self.it_cfg.optimizer_init,
             "lr_scheduler_init": self.it_cfg.lr_scheduler_init,
             "pl_lrs_cfg": self.it_cfg.pl_lrs_cfg,
             "hf_from_pretrained_cfg": self.it_cfg.hf_from_pretrained_cfg,
-            # "dynamic_module_cfg": self.it_cfg.dynamic_module_cfg,
-            # "quantization_cfg": self.it_cfg.lora_cfg,
-            # "auto_model_cfg": self.it_cfg.auto_model_cfg, # TODO: cleanup/consolidate saving configs/dedup
             "model_config": model_config,
             "model_name_or_path": self.it_cfg.model_name_or_path,
             "task_name": self.it_cfg.task_name,
@@ -113,6 +132,29 @@ class ConfigAdapter:
 
 
 class PropertyDispatcher:
+
+    _log_dir: Optional[os.PathLike]
+
+    """property dispatcher"""
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._cached_mro = inspect.getmro(type(self))
+        self._enabled_overrides = [p for p, cfg in PROPERTY_COMPOSITION.items() if cfg['enabled']
+                                   and cfg['target'] in self._cached_mro]
+
+    def _maybe_dispatch(self, non_dispatch_val: Optional[Any] = None) -> Optional[Any]:
+        """_summary_
+
+        Args:
+            non_dispatch_val (Optional[Any], optional): The value to return if we are not dispatching. Defaults to None.
+
+        Returns:
+            Optional[Any]: _description_
+        """
+        if (overridden_method := inspect.currentframe().f_back.f_code.co_name) in self._enabled_overrides:
+            return PROPERTY_COMPOSITION[overridden_method]['dispatch'].__get__(self)
+        else:
+            return non_dispatch_val
 
     def connect_extensions(self):
         for ext_name, ext_class in SUPPORTED_EXTENSIONS:
@@ -156,6 +198,32 @@ class PropertyDispatcher:
             dtype = None
         return dtype
 
+    @property
+    def device(self) -> Optional[torch.device]:
+        try:
+            if self._device is not None:
+                # dispatch Lightning's property implementation if appropriate, otherwise use `self._device`
+                device = self._maybe_dispatch(self._device)
+            else:
+                # check for `model.device`
+                device = reduce(getattr, "model.device".split("."), self)
+        except AttributeError as ae:
+            rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
+            device = None
+        return device
+
+    @device.setter
+    def device(self, value: Optional[str | torch.device]) -> None:
+        if value is not None and not isinstance(value, torch.device):
+            value = torch.device(value)
+        self._device = value
+
+    @torch_dtype.setter
+    def torch_dtype(self, value: Optional[Union[torch.dtype, 'str']]) -> None:
+        if value is not None and not isinstance(value, torch.dtype):
+            value = _resolve_torch_dtype(value)
+        self.it_cfg._torch_dtype = value
+
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         if hook_name == "configure_optimizers":
             self._it_init_optimizers_and_schedulers(output)
@@ -183,9 +251,8 @@ class CoreHelperAttributes:
         super().__init__(*args, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
-        # NOTE: somewhat hacky way to dynamically stub a specified subset of Lightning module attributes
-        # (if they don't already exist) to extend the cases where Lightning methods can be iteratively used for core
-        # context experimentation
+        # NOTE: dynamically stub a specified subset of Lightning module attributes (if they don't already exist) to
+        #       extend the cases where Lightning methods can be iteratively used for core context experimentation
         if '_supported_helper_attrs' in self.__dict__:
             _helper_attrs= self.__dict__['_supported_helper_attrs']
             if name in _helper_attrs:
@@ -211,15 +278,6 @@ class CoreHelperAttributes:
     @global_step.setter
     def global_step(self, value: int) -> None:
         self._global_step = value
-
-    @property
-    def device(self) -> Optional[torch.device]:
-        try:
-            device = getattr(self, "_device", None) or reduce(getattr, "model.device".split("."), self)
-        except AttributeError as ae:
-            rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
-            device = None
-        return device
 
 
 # adapted from pytorch/core/optimizer.py initialization methods

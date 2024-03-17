@@ -44,7 +44,7 @@ tl_profiling_parity_results = {
                mem_results=("test", "cpu", (71303168,))),  # see note #2 above
     "test_cuda_32":
     TestResult(exact_results=tl_results("cuda", 32, ds_cfg="test_prof"),
-               mem_results=("test", "cuda", (699942912, 771789824, 851443712, 0))), # see note #1 above
+               mem_results=("test", "cuda", (699942912, 784842240, 851443712, 0))), # see note #1 above
     "train_cpu_32":
     TestResult(exact_results=tl_results("cpu", 32),
                mem_results=("train", "cpu", (70086656, 693365760))),  # see note #3 above

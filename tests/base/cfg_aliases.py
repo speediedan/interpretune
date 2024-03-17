@@ -1,30 +1,53 @@
 from typing import NamedTuple
 from collections import ChainMap
+from dataclasses import dataclass
 
-from it_examples.experiments.rte_boolq.config import RTEBoolqPromptConfig
+from it_examples.experiments.rte_boolq.config import RTEBoolqPromptConfig, RTEBoolqZeroShotClassificationConfig
+from interpretune.base.config.mixins import CoreGenerationConfig, HFGenerationConfig
 from interpretune.base.config.module import HFFromPretrainedConfig
 from interpretune.analysis.memprofiler import MemProfilerCfg, MemProfilerSchedule
 
+@dataclass(kw_only=True)
+class ToyGenCfg(CoreGenerationConfig):
+    output_logits: bool = True
+    verbose: bool = True
 
 default_test_bs = 2
 default_prof_bs = 1
-tokenizer_base_kwargs = {"add_bos_token": True, "local_files_only": False, "padding_side": "right"}
-core_model_input_names = {"model_input_names": ['input_ids', 'attention_mask']}
+tokenizer_base_kwargs = {"add_bos_token": True, "local_files_only": False}
+model_input_names_pretrained = {"model_input_names": ['input_ids', 'attention_mask']}
+model_input_names_cust = {"model_input_names": ['tokens']}
 
 # TODO: refactor to dict-based configs to decomposed yaml strings, files or init dataclasses earlier? may make sense
-test_core_tokenizer_kwargs = {"tokenizer_kwargs": {**core_model_input_names, **tokenizer_base_kwargs}}
+core_pretrained_tokenizer_kwargs = {"tokenizer_kwargs": {**model_input_names_pretrained, "padding_side": "left",
+                                                         **tokenizer_base_kwargs}}
+core_cust_tokenizer_kwargs = {"tokenizer_kwargs": {**model_input_names_cust, "padding_side": "left",
+                                                   **tokenizer_base_kwargs}}
 
-base_shared_config =  {"model_name_or_path": "gpt2", "tokenizer_id_overrides": {"pad_token_id": 50256}}
+default_token_overrides = {"tokenizer_id_overrides": {"pad_token_id": 50256}}
 
-test_core_shared_config = {"task_name": "pytest_rte", **test_core_tokenizer_kwargs, **base_shared_config}
+base_shared_config =  {"model_name_or_path": "gpt2", **default_token_overrides}
+cust_shared_config = {"tokenizer_name": "gpt2", **default_token_overrides}
 
-test_core_signature_columns= ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
-                              'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+core_pretrained_shared_config = {"task_name": "pytest_rte_hf", **core_pretrained_tokenizer_kwargs, **base_shared_config}
+core_cust_shared_config = {"task_name": "pytest_rte_pt", **core_cust_tokenizer_kwargs, **cust_shared_config}
 
-test_core_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), "signature_columns": test_core_signature_columns,
-                          "enable_datasets_cache": True, "prepare_data_map_cfg": {"batched": True},
-                          "text_fields": ("premise", "hypothesis"),  "train_batch_size": default_test_bs,
-                          "eval_batch_size": default_test_bs}
+
+core_pretrained_signature_columns = ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
+                                     'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+core_cust_signature_columns = ['tokens', 'labels']
+
+core_pretrained_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(),
+                               "signature_columns": core_pretrained_signature_columns,
+                               "enable_datasets_cache": True, "prepare_data_map_cfg": {"batched": True},
+                               "text_fields": ("premise", "hypothesis"),  "train_batch_size": default_test_bs,
+                               "eval_batch_size": default_test_bs}
+
+core_cust_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(),
+                                "signature_columns": core_cust_signature_columns,
+                                "enable_datasets_cache": True, "prepare_data_map_cfg": {"batched": True},
+                                "text_fields": ("premise", "hypothesis"),  "train_batch_size": default_test_bs,
+                                "eval_batch_size": default_test_bs}
 
 test_optimizer_init = {"optimizer_init": {"class_path": "torch.optim.AdamW",
                               "init_args": {"weight_decay": 1.0e-06, "eps": 1.0e-07, "lr": 3.0e-05}}}
@@ -33,13 +56,25 @@ test_lr_scheduler_init = {"lr_scheduler_init": {"class_path": "torch.optim.lr_sc
                               "init_args": {"T_0": 1, "T_mult": 2, "eta_min": 1.0e-06}}}
 
 test_optimizer_scheduler_init = ChainMap(test_optimizer_init, test_lr_scheduler_init)
+base_it_module_kwargs = {"experiment_tag": "test_itmodule", "cust_fwd_kwargs": {}}
 
 base_hf_from_pretrained_kwargs = {"device_map": "cpu", "torch_dtype": "float32"}
 base_hf_from_pretrained_cfg = HFFromPretrainedConfig(pretrained_kwargs=base_hf_from_pretrained_kwargs,
-                                                     model_head="transformers.GPT2ForSequenceClassification")
-base_it_module_kwargs = {"experiment_tag": "test_itmodule", "cust_fwd_kwargs": {}}
+                                                     model_head="transformers.GPT2LMHeadModel")
 
-test_core_it_module_kwargs = {"hf_from_pretrained_cfg": base_hf_from_pretrained_cfg, **base_it_module_kwargs}
+core_hf_zero_shot_cfg = RTEBoolqZeroShotClassificationConfig(
+    enabled=True, lm_generation_cfg=HFGenerationConfig(kwargs={"max_new_tokens": 3}))
+test_core_pretrained_it_module_kwargs = {"zero_shot_cfg": core_hf_zero_shot_cfg,
+                                         "hf_from_pretrained_cfg": base_hf_from_pretrained_cfg, **base_it_module_kwargs}
+
+base_cust_model_cfg_kwargs = {"max_seq_len": 200}
+base_core_cust_config = {"device": "cpu", "dtype": "float32", "model_args": base_cust_model_cfg_kwargs}
+
+core_cust_zero_shot_cfg = RTEBoolqZeroShotClassificationConfig(enabled=True,
+                                                               lm_generation_cfg=ToyGenCfg(max_new_tokens=2))
+test_core_cust_it_module_kwargs = {"zero_shot_cfg": core_cust_zero_shot_cfg, "model_cfg": base_core_cust_config,
+                                   **base_it_module_kwargs}
+
 
 enable_memprofiler_kwargs = {"enabled": True, "cuda_allocator_history": True}
 bs_override = {'train_batch_size': default_prof_bs, 'eval_batch_size': default_prof_bs}
@@ -52,9 +87,11 @@ nowarm_maxstep_memprof_cfg = MemProfilerCfg(**enable_memprofiler_kwargs,
 nowarm_maxstep_hk_memprof_cfg = MemProfilerCfg(retain_hooks_for_funcs=["training_step"], **enable_memprofiler_kwargs,
                                                  **{"schedule": MemProfilerSchedule(max_step=4)})
 
-test_core_it_module_base = ChainMap(test_core_shared_config, test_core_it_module_kwargs)
-test_core_it_module_optim = ChainMap(test_core_it_module_base, test_optimizer_scheduler_init)
-
+test_core_pretrained_it_module_base = ChainMap(core_pretrained_shared_config,
+                                               test_core_pretrained_it_module_kwargs)
+test_core_pretrained_it_module_optim = ChainMap(test_core_pretrained_it_module_base, test_optimizer_scheduler_init)
+test_core_cust_it_module_base = ChainMap(core_cust_shared_config, test_core_cust_it_module_kwargs)
+test_core_cust_it_module_optim = ChainMap(test_core_cust_it_module_base, test_optimizer_scheduler_init)
 ########################################################################################################################
 # NOTE [Test Dataset Fingerprint]
 # A simple fingerprint of the (deterministic) test dataset used to generate the current incarnation of expected results.
@@ -69,9 +106,9 @@ test_core_it_module_optim = ChainMap(test_core_it_module_base, test_optimizer_sc
 #   - The fingerprinted dataset below is not shuffled or sorted with the current dataloader configurations
 #   - All current expected loss results were generated with [train|eval]_batch_size = 2
 #   - All current memory profile results were generated with [train|eval]_batch_size = 1
-sample_rows = 5
-sample_pos = 3
-test_datasets = ("rte", "pytest_rte", "pytest_rte_tl")
+NUM_SAMPLE_ROWS = 5
+SAMPLE_POSITION = 3
+test_datasets = ("rte", "pytest_rte_hf", "pytest_rte_pt", "pytest_rte_tl")
 rte_fields = ("premise", "hypothesis")
 TEST_TASK_NUM_LABELS = {k: 2 for k in test_datasets}
 TEST_TASK_TEXT_FIELD_MAP = {k: rte_fields for k in test_datasets}
@@ -79,10 +116,12 @@ TEST_TASK_TEXT_FIELD_MAP = {k: rte_fields for k in test_datasets}
 deterministic_token_ids = [5674, 24140, 373, 666, 2233, 303, 783, 783, 2055, 319, 373, 910, 17074, 284, 6108]
 expected_first_fwd_ids = {"train": (deterministic_token_ids[:default_test_bs],),
                           "train_prof": (deterministic_token_ids[:default_prof_bs],),
-                          "test": (deterministic_token_ids[sample_rows:(sample_rows+default_test_bs)],),
-                          "test_prof": (deterministic_token_ids[sample_rows:(sample_rows+default_prof_bs)],)}
+                          "test": (deterministic_token_ids[NUM_SAMPLE_ROWS:(NUM_SAMPLE_ROWS+default_test_bs)],),
+                          "test_prof": (deterministic_token_ids[NUM_SAMPLE_ROWS:(NUM_SAMPLE_ROWS+default_prof_bs)],)}
 shared_dataset_state = ('GPT2TokenizerFast', deterministic_token_ids)
-test_dataset_state_core = ('pytest_rte',) + shared_dataset_state
+test_dataset_state_core_pretrained = ('pytest_rte_hf',) + shared_dataset_state
+test_dataset_state_core_cust = ('pytest_rte_pt',) + shared_dataset_state
+
 # TODO: add current dataloader kwargs to the fingerprint above? May be an excessively rigid check. Consider associating
 # a fingerprint of salient config with each specific expected scalar test result in the future. At present, that
 # approach seems like overkill given the current codebase.

@@ -128,7 +128,8 @@ def run_step(step_fn, module, iterator, batch_idx, device_type, optimizer: Optio
     batch = fetch_batch(iterator, module)
     step_func = getattr(module, step_fn)
     if module.global_step == 0 and step_fn != "validation_step":
-        module.sampled_fwd_inputs = module.datamodule.sample_step_input(batch)
+        _call_itmodule_hook(module, hook_name="_on_test_or_train_batch_start",
+                            hook_msg="Running custom test or train batch start hook", batch=batch, batch_idx=batch_idx)
     if step_fn == "training_step":
         optimizer.zero_grad()
     if module.torch_dtype == torch.bfloat16:
@@ -137,7 +138,9 @@ def run_step(step_fn, module, iterator, batch_idx, device_type, optimizer: Optio
     else:
         loss = step_func(batch, batch_idx)
     if step_fn == "training_step":
-        module.epoch_losses[module.current_epoch] = loss.item()
+        _call_itmodule_hook(module, hook_name="on_train_batch_end",
+                            hook_msg="Running custom on_train_batch end hook", outputs=loss,
+                            batch=batch, batch_idx=batch_idx)
         loss.backward()
         optimizer.step()
     module.global_step += 1

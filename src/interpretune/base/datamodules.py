@@ -11,7 +11,7 @@ from datasets import Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerFast, PreTrainedTokenizerBase
 
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
-from interpretune.utils.import_utils import _import_class,_LIGHTNING_AVAILABLE
+from interpretune.utils.import_utils import _import_class, _LIGHTNING_AVAILABLE
 from interpretune.base.config.datamodule import ITDataModuleConfig
 
 log = logging.getLogger(__name__)

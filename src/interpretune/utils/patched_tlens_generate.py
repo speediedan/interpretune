@@ -71,7 +71,8 @@ def generate(
     output_logits: Optional[bool] = None,
     return_type: Optional[str] = "input",
     verbose: bool = True,
-) -> Union[Int[torch.Tensor, "batch pos_plus_new_tokens"], str]:
+    # **kwargs,  # TODO: consider allowing unsupported kwargs to pass through
+) -> Union[SampledOutput, Int[torch.Tensor, "batch pos_plus_new_tokens"], str]:
     """Sample Tokens from the Model.
 
     Sample tokens from the model until the model outputs eos_token or max_new_tokens is reached.

@@ -14,7 +14,8 @@ it_session:
           lm_generation_cfg:
             class_path: interpretune.base.config.mixins.HFGenerationConfig
             init_args:
-              max_new_tokens: 5
+              kwargs:
+                max_new_tokens: 5
 trainer:
   accumulate_grad_batches: 4
   precision: bf16-true

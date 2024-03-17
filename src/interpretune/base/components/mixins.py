@@ -1,5 +1,6 @@
 import os
-from typing import Any, Dict, Optional
+import inspect
+from typing import Any, Dict, Optional, List
 from contextlib import contextmanager
 from functools import wraps
 
@@ -9,10 +10,9 @@ from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.types import  STEP_OUTPUT
-from interpretune.utils.logging import rank_zero_warn
+from interpretune.utils.logging import rank_zero_warn, rank_zero_info
 from interpretune.base.config.module import ITConfig, HFFromPretrainedConfig
 from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE
-from interpretune.utils.logging import rank_zero_info
 
 
 class ProfilerHooksMixin:
@@ -47,12 +47,50 @@ class ProfilerHooksMixin:
 
 class ZeroShotStepMixin:
 
+    _gen_sig_keys: Optional[List] = None
+
+    @property
+    def gen_sig_keys(self) -> List:
+        if not self._gen_sig_keys:
+            generate_signature = inspect.signature(self.model.generate)
+            self._gen_sig_keys = list(generate_signature.parameters.keys())
+        return self._gen_sig_keys
+
+    def map_gen_inputs(self, batch) -> Dict[str, Any]:
+        # since we're abstracting the same zero shot classification logic to be used with different frameworks, models
+        # and datasets we use a mapping function to provide only data inputs a given generate function supports (for
+        # frameworks that don't handle variadic kwargs). This currently requires the user provides
+        # compatible models and dataset.
+        # TODO: consider adding further upstream configuration validation that warns the user if the provided dataset
+        # and step logic are incompatible
+        return {bk: batch[bk] for bk in list(batch.data) if bk in self.gen_sig_keys}
+
+    def map_gen_kwargs(self, kwargs: Dict) -> Dict[str, Any]:
+        # we use a mapping function to provide only generate kwargs a given generate function supports (for
+        # frameworks that don't support variadic kwargs).
+        return {k: v for k, v in kwargs.items() if k in self.gen_sig_keys}
+
+    def it_generate(self, batch: BatchEncoding, **kwargs) -> Any:
+        try:
+            if 'kwargs' in self.gen_sig_keys:
+                outputs = self.model.generate(**batch, **kwargs)
+            else:
+                outputs = self.model.generate(**self.map_gen_inputs(batch), **self.map_gen_kwargs(kwargs))
+        except AttributeError as ae:
+            gen_dataset_info_msg = (
+                f"The following keys were found in the provided data batch: {os.sep} {list(batch.data)}). The current"
+                f" generate method ({self.model.generate.__func__}) accepts: {os.sep} {[self._gen_sig_keys]}."
+            )
+            rank_zero_info(gen_dataset_info_msg)
+            raise AttributeError(f"Received the following error msg: {ae}")
+        return outputs
+
     @ProfilerHooksMixin.memprofilable
     def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         if self.it_cfg.zero_shot_cfg.enabled:
-            self.zero_shot_test_step(batch, batch_idx)
+            self.zero_shot_test_step(batch, batch_idx, dataloader_idx=dataloader_idx)
         else:
-            self.default_test_step(batch, batch_idx)
+            self.default_test_step(batch, batch_idx, dataloader_idx=dataloader_idx)
 
     def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
         Optional[STEP_OUTPUT]:
@@ -80,7 +118,7 @@ class HFFromPretrainedMixin:
         quantization_config = self._hf_configure_quantization()
         self._update_hf_pretrained_cfg(quantization_config)
         cust_config = self._hf_gen_cust_config(access_token)
-        self.model = self._hf_configured_model_init(cust_config, access_token)
+        self.model = self.hf_configured_model_init(cust_config, access_token)
         self._hf_cust_token_cfg()
         self._hf_maybe_resize_token_embeddings()
         self._hf_post_init_cfg()
@@ -126,7 +164,7 @@ class HFFromPretrainedMixin:
             return cust_config[0]
         return cust_config
 
-    def _hf_configured_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
+    def hf_configured_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
         -> torch.nn.Module:
         cust_config.num_labels = self.it_cfg.num_labels
         head_configured = self.hf_cfg.model_head or self.hf_cfg.dynamic_module_cfg

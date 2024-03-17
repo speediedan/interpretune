@@ -12,7 +12,7 @@ from interpretune.base.config.module import ITConfig,HFFromPretrainedConfig
 from interpretune.base.modules import BaseITModule, ITLightningModule
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE, _resolve_torch_dtype
 from interpretune.base.components.core import CoreHelperAttributes
-from interpretune.base.config.mixins import BaseGenerationConfig
+from interpretune.base.config.mixins import CoreGenerationConfig
 from interpretune.utils.logging import rank_zero_warn, rank_zero_info
 from interpretune.base.config.shared import ITSerializableCfg
 from interpretune.utils.warnings import tl_invalid_dmap
@@ -149,7 +149,7 @@ class ITLensConfig(ITConfig):
 
 
 @dataclass(kw_only=True)
-class TLensGenerationConfig(BaseGenerationConfig):
+class TLensGenerationConfig(CoreGenerationConfig):
     stop_at_eos: bool = True
     eos_token_id: Optional[int] = None
     freq_penalty: float = 0.0
@@ -182,6 +182,7 @@ class TLensAttributeMixin:
     def tl_cfg(self) -> Optional[HookedTransformerConfig]:
         return self._core_or_lightning(c2l_map_key="_tl_cfg")
 
+    # TODO: we aren't using IT's Property Composition feature for TLens with Lightning but might be worth enabling it
     @property
     def device(self) -> Optional[torch.device]:
         try:
@@ -191,6 +192,12 @@ class TLensAttributeMixin:
             rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
             device = None
         return device
+
+    @device.setter
+    def device(self, value: Optional[str | torch.device]) -> None:
+        if value is not None and not isinstance(value, torch.device):
+            value = torch.device(value)
+        self._device = value
 
     def get_tl_device(self, block_index: int) -> Optional[torch.device]:
         try:
@@ -216,6 +223,14 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
         HookedTransformer.generate = patched_generate
         self.loss_fn = None
 
+    def auto_model_init(self) -> None:
+        """Can be overridden by subclasses to automatically initialize model from a configuration (e.g.
+        hf_from_pretrained_cfg, tl_from_config etc.)."""
+        if self.it_cfg.hf_from_pretrained_cfg:
+            self.hf_pretrained_model_init()
+        else:
+            self.tl_config_model_init()
+
     def hf_pretrained_model_init(self) -> None:
         # for TL, only a subset of the HF pretrained init flow used since the model is replaced with a HookedTransformer
         access_token = os.environ[self.it_cfg.os_env_model_auth_key.upper()] if self.it_cfg.os_env_model_auth_key \
@@ -223,9 +238,9 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
         quantization_config = super()._hf_configure_quantization()
         super()._update_hf_pretrained_cfg(quantization_config)
         cust_config = super()._hf_gen_cust_config(access_token)
-        self.model = self._hf_configured_model_init(cust_config, access_token)
+        self.model = self.hf_configured_model_init(cust_config, access_token)
 
-    def _hf_configured_model_init(self, cust_config: PretrainedConfig | ITLensCustomConfig,
+    def hf_configured_model_init(self, cust_config: PretrainedConfig | ITLensCustomConfig,
                                   access_token: Optional[str] = None) -> torch.nn.Module:
         # usually makes sense to init the HookedTransfomer (empty) and pretrained HF model weights on cpu
         # versus moving them both to GPU (may make sense to explore meta device usage for model definition
@@ -246,7 +261,10 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
         #     model = self.it_cfg.model_class(config=cust_config)  # token=access_token)
         return model
 
-    def custom_model_init(self):
+    def tl_config_model_init(self) -> None:
+        # TODO: add note to documentation that we currently require tl_cfg to be not None (either from pretrained or
+        #       custom config) based, so model_init will not be used. To fully customize TL behavior, override this
+        #       method and init config-based HookedTransformer as desired
         # TODO: suppress messages from tl about no tokenizer here, we're deferring the tokenizer attach until setup
         self.model = HookedTransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
 

@@ -27,7 +27,7 @@ it_session:
         local_files_only: false
         padding_side: right
         model_input_names: ['input_ids', 'attention_mask']
-  module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqClassificationModule
+  module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqLMHeadModule
   module_cfg:
     class_path: it_examples.experiments.rte_boolq.config.RTEBoolqConfig
     init_args:
@@ -38,5 +38,5 @@ it_session:
         class_path: interpretune.base.config.module.HFFromPretrainedConfig
         init_args:
           use_model_cache: false
-          model_head: transformers.GPT2ForSequenceClassification
+          model_head: transformers.GPT2LMHeadModel
           activation_checkpointing: false

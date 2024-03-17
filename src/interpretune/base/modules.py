@@ -43,12 +43,13 @@ class BaseITModule(ABC, CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module
         self._init_direct_attrs()
         self.it_cfg: ITConfig = self._before_it_cfg_init(it_cfg)
         self.connect_extensions()
-        self.model_init()
+        self._dispatch_model_init()
 
     def _init_direct_attrs(self):
         """Direct base module attribute initialization."""
-        # TODO: maybe move these to the top of the class instead of a separate function
+        # TODO: further reduce/simplify these attributes
         self.model: torch.nn.Module = None
+        # TODO: drop these into a separate opt_sched dataclass encapsulation
         self.it_optimizers: List[Optimizable] = None  # initialized via core IT module `configure_optimizers` hook
         self.it_lr_scheduler_configs: List[LRSchedulerConfig] = None
         self.it_lr_schedulers: List[LRScheduler] = None
@@ -57,25 +58,34 @@ class BaseITModule(ABC, CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module
         self._datamodule: Optional[ITDataModule] = None  # datamodule handle attached after init
         self._device: Optional[torch.device] = None  # root device (sometimes used if not handled by Lightning)
         self._session_complete: bool = False
-        self.init_hparams = {}
+        self.init_hparams = {}  # TODO: make this protected?
 
     def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
         """Optionally modify configuration before it_cfg is initialized."""
         return it_cfg
 
-    def model_init(self) -> None:
+    def _dispatch_model_init(self) -> None:
         if self.cuda_allocator_history:
             torch.cuda.memory._record_memory_history()
-        if self.it_cfg.hf_from_pretrained_cfg:
-            self.hf_pretrained_model_init()
+        self.auto_model_init()
+        if self.model:
+            self.post_auto_model_init()  # allow modification of a configuration-drive model
         else:
-            self.custom_model_init()
+            self.model_init()  # load a custom model
         self._capture_hyperparameters()
         self.load_metric()
 
-    def custom_model_init(self) -> None:
-        """Optionally load a custom configured model instead of using HF pretrained-based initialization."""
-        # see transformer_lens plugin for an example
+    def auto_model_init(self) -> None:
+        """Can be overridden by subclasses to automatically initialize model from a configuration (e.g.
+        hf_from_pretrained_cfg, tl_from_config etc.)."""
+        if self.it_cfg.hf_from_pretrained_cfg:
+            self.hf_pretrained_model_init()
+
+    def post_auto_model_init(self) -> None:
+        """Optionally modify init of an existing configuration-driven model."""
+
+    def model_init(self) -> None:
+        """Optionally load a custom model ."""
 
     def load_metric(self) -> None:
         """Optionally load a metric at the end of model initialization."""
