@@ -13,7 +13,7 @@ import evaluate
 from torch.testing import assert_close
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.base.contract.protocol import InterpretunableModule
+from interpretune.base.contract.protocol import ITModuleProtocol
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
 from interpretune.utils.types import STEP_OUTPUT
@@ -107,7 +107,7 @@ class TestModelArgs:
     device: Optional[torch.device] = None
     dtype: Optional[torch.dtype] = None
     # handle below can be used at runtime to allow this model's `generate` to adapt to various configuration contexts
-    ctx_handle: Optional[InterpretunableModule] = None
+    ctx_handle: Optional[ITModuleProtocol] = None
 
     def __post_init__(self):
         if self.ctx_handle:

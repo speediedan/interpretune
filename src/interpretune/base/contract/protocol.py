@@ -1,11 +1,9 @@
-from typing import  Protocol, runtime_checkable, Union, TypeAlias, Optional, NamedTuple, TypeVar
+from typing import  Protocol, runtime_checkable, Union, TypeAlias, Optional, NamedTuple
 
 import torch
 
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
-from interpretune.base.datamodules import ITDataModule
-from interpretune.base.modules import BaseITModule
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
 
 
@@ -35,7 +33,7 @@ class DataModuleInitable(DataPrepable, DataLoadable, Protocol):
 # N.B. runtime protocol validation will check for attribute presence but not validate the type. With this
 # protocol-based approach we're providing rudimentary functional checks while erroring on the side of flexibility
 @runtime_checkable
-class InterpretunableDataModule(DataModuleInitable, Protocol):
+class ITDataModuleProtocol(DataModuleInitable, Protocol):
     itdm_cfg: ITDataModuleConfig
 
     def setup(self, *args, **kwargs) -> None:
@@ -62,7 +60,7 @@ class PredictSteppable(Protocol):
         ...
 
 @runtime_checkable
-class InterpretunableModule(TrainSteppable, ValidationSteppable, TestSteppable, PredictSteppable, Protocol):
+class ITModuleProtocol(TrainSteppable, ValidationSteppable, TestSteppable, PredictSteppable, Protocol):
     it_cfg: ITConfig
 
     def setup(self, *args, **kwargs) -> None:
@@ -73,9 +71,6 @@ class InterpretunableModule(TrainSteppable, ValidationSteppable, TestSteppable, 
 
 ModuleSteppable: TypeAlias = TrainSteppable | ValidationSteppable | TestSteppable | PredictSteppable
 
-T_dm = TypeVar('T_dm', bound=ITDataModule, covariant=True)
-T_m = TypeVar('T_m', bound=BaseITModule, covariant=True)
-
 
 class NamedWrapper:
     def __str__(self):
@@ -83,8 +78,8 @@ class NamedWrapper:
     def __repr__(self):
         return str(self)
 
-InterpretunableType: TypeAlias = Union[InterpretunableDataModule, InterpretunableModule]
+InterpretunableType: TypeAlias = Union[ITDataModuleProtocol, ITModuleProtocol]
 
 class InterpretunableTuple(NamedTuple):
-    datamodule: Optional[InterpretunableDataModule] = None
-    module: Optional[InterpretunableModule] = None
+    datamodule: Optional[ITDataModuleProtocol] = None
+    module: Optional[ITModuleProtocol] = None

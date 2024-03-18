@@ -1,7 +1,6 @@
 import os
 import inspect
 from typing import Optional, Callable, Any
-from abc import ABC, abstractmethod
 from functools import reduce
 import logging
 
@@ -22,7 +21,8 @@ log = logging.getLogger(__name__)
 ################################################################################
 
 # TODO: move overridden datamodule hooks to a separate class (maybe a separate module, maybe this one)
-class ITDataModule(ABC):
+# TODO: switch ITDataModule from ABC to concrete class and rely upon Protocol?
+class ITDataModule:
 
     tokenization_func: Callable
 
@@ -65,10 +65,9 @@ class ITDataModule(ABC):
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
-    @abstractmethod
+    # @abstractmethod
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""
-        raise NotImplementedError
 
     def setup(self, stage: Optional[str] = None, module: Optional[torch.nn.Module] = None, *args, **kwargs) -> None:
         """Setup our dataset splits for training/validation."""

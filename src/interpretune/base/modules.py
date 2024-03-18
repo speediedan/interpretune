@@ -1,6 +1,5 @@
 import warnings
 from typing import Any, Optional, List
-from abc import ABC
 
 import torch
 
@@ -20,8 +19,8 @@ from interpretune.utils.types import LRSchedulerConfig, Optimizable, LRScheduler
 for warnf in [".*For Lightning compatibility, this noop .*",]:
     warnings.filterwarnings("once", warnf)
 
-
-class BaseITModule(ABC, CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
+#class BaseITModule(ABC, CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
+class BaseITModule(CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
 
     def __init__(
         self,
