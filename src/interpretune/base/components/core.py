@@ -9,7 +9,8 @@ import inspect
 
 import torch
 
-from interpretune.base.config.module import ITConfig
+from interpretune.base.config.module import ITConfig, ITState
+from interpretune.base.components.mixins import ITStateMixin
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.exceptions import MisconfigurationException
@@ -33,9 +34,12 @@ else:
     _DeviceDtypeModuleMixin = object
 
 CORE_TO_LIGHTNING_ATTRS_MAP = {
-    "_log_dir": ("trainer.model._trainer.log_dir", None, "No log_dir has been set yet"),
+    "_it_lr_scheduler_configs": ("trainer.strategy.lr_scheduler_configs", None,
+                                 "No lr_scheduler_configs have been set."),
+    "_it_optimizers": ("trainer.optimizers", None, "No optimizers have been set yet."),
+    "_log_dir": ("trainer.model._trainer.log_dir", None, "No log_dir has been set yet."),
     "_datamodule": ("trainer.datamodule", None, "Could not find datamodule reference (has it been attached yet?)"),
-    "_tl_cfg": ("model.cfg", None, ""),
+    "_tl_cfg": ("model.cfg", None, ""),  # TODO: validate we can remove this and use it_cfg.tl_cfg only
     "_current_epoch": ("trainer.current_epoch", 0, ""),
     "_global_step": ("trainer.global_step", 0, ""),
 }
@@ -76,9 +80,7 @@ class ConfigAdapter:
     memprofiler: MemProfiler
     model: torch.nn.Module
     cuda_allocator_history: bool
-    init_hparams: Dict[str, Any]
-    # conditionally initialized in core subclasses ITModule and ITLensModule (via CoreHelperAttributes)
-    _log_dir: Optional[os.PathLike]
+    _it_state: ITState
 
     @staticmethod
     def _make_config_serializable(config_to_clean: Any, target_keys: Union[str, List]) -> Dict:
@@ -100,13 +102,13 @@ class ConfigAdapter:
             self.memprofiler.init_cuda_snapshots_dir()
         # TODO: add save_hyperparameters/basic logging func for raw pytorch
         # (override w/ lightning version where appropriate)
-        #self.save_hyperparameters(self.init_hparams)
+        #self.save_hyperparameters(self._it_state._init_hparams)
 
     def _create_experiment_dir(self) -> None:
         # we only want to create the core experiment-specific dir for non-lightning modules
-        if getattr(self, '_log_dir', None):
-            self._log_dir = self._log_dir / self.init_hparams['experiment_id']
-            self._log_dir.mkdir(exist_ok=True, parents=True)
+        if getattr(self._it_state, '_log_dir', None):
+            self._it_state._log_dir = self._it_state._log_dir / self._it_state._init_hparams['experiment_id']
+            self._it_state._log_dir.mkdir(exist_ok=True, parents=True)
 
     def _capture_hyperparameters(self) -> None:
         # subclasses may have provided their own hparams so we update rather than override
@@ -118,7 +120,7 @@ class ConfigAdapter:
         # if `model.config `exists, any provided `model_cfg` should already be merged with it
         elif getattr(self.model, 'config', None) is None:
             model_config = self.it_cfg.model_cfg
-        self.init_hparams.update({
+        self._it_state._init_hparams.update({
             "optimizer_init": self.it_cfg.optimizer_init,
             "lr_scheduler_init": self.it_cfg.lr_scheduler_init,
             "pl_lrs_cfg": self.it_cfg.pl_lrs_cfg,
@@ -128,12 +130,12 @@ class ConfigAdapter:
             "task_name": self.it_cfg.task_name,
             "experiment_id": f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.it_cfg.experiment_tag}",
             })
-        self.init_hparams["env_info"] = collect_env_info() if self.it_cfg.log_env_details else None
+        self._it_state._init_hparams["env_info"] = collect_env_info() if self.it_cfg.log_env_details else None
 
 
 class PropertyDispatcher:
 
-    _log_dir: Optional[os.PathLike]
+    _it_state: ITState
 
     """property dispatcher"""
     def __init__(self, *args, **kwargs) -> None:
@@ -152,7 +154,7 @@ class PropertyDispatcher:
             Optional[Any]: _description_
         """
         if (overridden_method := inspect.currentframe().f_back.f_code.co_name) in self._enabled_overrides:
-            return PROPERTY_COMPOSITION[overridden_method]['dispatch'].__get__(self)
+            return PROPERTY_COMPOSITION[overridden_method]['dispatch'].__get__(self._it_state)
         else:
             return non_dispatch_val
 
@@ -165,7 +167,7 @@ class PropertyDispatcher:
     def _core_or_lightning(self, c2l_map_key: str):
         c2l = CORE_TO_LIGHTNING_ATTRS_MAP[c2l_map_key]
         try:
-            attr_val = getattr(self, c2l_map_key, None) or reduce(getattr, c2l[0].split("."), self)
+            attr_val = getattr(self._it_state, c2l_map_key, None) or reduce(getattr, c2l[0].split("."), self)
         except AttributeError as ae:
             rank_zero_debug(f"{c2l[2]}: {ae}")
             attr_val = c2l[1]
@@ -181,7 +183,7 @@ class PropertyDispatcher:
 
     @property
     def session_complete(self) -> bool:
-        return self._session_complete
+        return self._it_state._session_complete
 
     @property
     def cuda_allocator_history(self) -> bool:
@@ -201,9 +203,9 @@ class PropertyDispatcher:
     @property
     def device(self) -> Optional[torch.device]:
         try:
-            if self._device is not None:
-                # dispatch Lightning's property implementation if appropriate, otherwise use `self._device`
-                device = self._maybe_dispatch(self._device)
+            if self._it_state._device is not None:
+                # dispatch Lightning's property implementation if appropriate, otherwise use `self._it_state._device`
+                device = self._maybe_dispatch(self._it_state._device)
             else:
                 # check for `model.device`
                 device = reduce(getattr, "model.device".split("."), self)
@@ -216,7 +218,7 @@ class PropertyDispatcher:
     def device(self, value: Optional[str | torch.device]) -> None:
         if value is not None and not isinstance(value, torch.device):
             value = torch.device(value)
-        self._device = value
+        self._it_state._device = value
 
     @torch_dtype.setter
     def torch_dtype(self, value: Optional[Union[torch.dtype, 'str']]) -> None:
@@ -235,15 +237,15 @@ class PropertyDispatcher:
 
 class CoreHelperAttributes:
 
-    _log_dir: Optional[os.PathLike]
-
     """Mixin class for adding arbitrary core helper attributes to core (non-Lightning) IT classes."""
     def __init__(self, *args, **kwargs) -> None:
         # for core/non-lightning modules, we configure a _log_dir rather than relying on the trainer to do so
         # if using a Lightning module, we can access the trainer log_dir via the `core_log_dir` property
         # or continue to rely on the trainer log_dir directly
+        # we need to initialize internal state before `ITStateMixin`'s __init__ is invoked so use this static method
+        ITStateMixin._init_internal_state(self)
         if it_cfg := kwargs.get('it_cfg', None):
-            self._log_dir = Path(it_cfg.core_log_dir or tempfile.gettempdir())
+            self._it_state._log_dir = Path(it_cfg.core_log_dir or tempfile.gettempdir())
             ca = it_cfg.lightning_compat_attrs
         else:
             raise MisconfigurationException("CoreHelperAttributes requires an ITConfig.")
@@ -263,13 +265,39 @@ class CoreHelperAttributes:
     def current_epoch(self) -> int:
         return self._core_or_lightning(c2l_map_key="_current_epoch")
 
+    @property
+    def optimizers(self) -> Optional[str | os.PathLike]:
+        return self._core_or_lightning(c2l_map_key="_it_optimizers")
+
+    @property
+    def lr_scheduler_configs(self) -> Optional[str | os.PathLike]:
+        return self._core_or_lightning(c2l_map_key="_it_lr_scheduler_configs")
+
+    @property
+    def lr_schedulers(self) -> Union[None, List[LRScheduler], LRScheduler]:
+        """Returns the learning rate scheduler(s) that are being used during training. Useful for manual
+        optimization.
+
+        Returns:
+            A single scheduler, or a list of schedulers in case multiple ones are present, or ``None`` if no
+            schedulers were returned in :meth:`~lightning.pytorch.core.LightningModule.configure_optimizers`.
+        """
+        if not self.lr_scheduler_configs:
+            return None
+
+        lr_schedulers: List[LRScheduler] = [config.scheduler for config in self.lr_scheduler_configs]
+        if len(lr_schedulers) == 1:
+            return lr_schedulers[0]
+
+        return lr_schedulers
+
     # N.B. Lightning does not support directly setting `current_epoch` and `global_step`, instead using
     # `self.fit_loop.epoch_progress.current.completed` and `self.fit_loop.epoch_loop.global_step` respectively. Instead
     # of mocking analagous loop attributes, when using this mixin (and not Lightning), we allow settting the values
     # directly for convenience
     @current_epoch.setter
     def current_epoch(self, value: int) -> None:
-        self._current_epoch = value
+        self._it_state._current_epoch = value
 
     @property
     def global_step(self) -> int:
@@ -277,7 +305,7 @@ class CoreHelperAttributes:
 
     @global_step.setter
     def global_step(self, value: int) -> None:
-        self._global_step = value
+        self._it_state._global_step = value
 
 
 # adapted from pytorch/core/optimizer.py initialization methods
@@ -285,9 +313,7 @@ class OptimizerScheduler:
     """" Barebones interface to setup optimizers and schedulers for manual optimization with core IT modules."""
 
     # proper initialization of these variables should be done in the child class
-    it_optimizers: List[Optimizable]
-    it_lr_scheduler_configs: List[LRSchedulerConfig]
-    it_lr_schedulers: List[LRScheduler]
+    _it_state: ITState
 
     def _it_init_optimizers_and_schedulers(self, optim_conf: Union[Dict[str, Any], List, Optimizer, Tuple]) \
         -> Tuple[List[Optimizer], List[LRSchedulerConfig]]:
@@ -299,8 +325,7 @@ class OptimizerScheduler:
 
         optims, lrs = OptimizerScheduler._configure_optimizers(optim_conf)
         lrs_configs = OptimizerScheduler._configure_schedulers_manual_opt(lrs)
-        lrs = [lrs.scheduler for lrs in lrs_configs]
-        self.it_optimizers, self.it_lr_scheduler_configs, self.it_lr_schedulers = optims, lrs_configs, lrs
+        self._it_state._it_optimizers, self._it_state._it_lr_scheduler_configs = optims, lrs_configs
 
     @staticmethod
     def _configure_schedulers_manual_opt(schedulers: list) -> List[LRSchedulerConfig]:

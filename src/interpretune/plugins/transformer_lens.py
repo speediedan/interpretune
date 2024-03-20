@@ -186,7 +186,7 @@ class TLensAttributeMixin:
     @property
     def device(self) -> Optional[torch.device]:
         try:
-            device = getattr(self, "_device", None) or getattr(self.tl_cfg, "device", None) or \
+            device = getattr(self._it_state, "_device", None) or getattr(self.tl_cfg, "device", None) or \
                 reduce(getattr, "model.device".split("."), self)
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
@@ -197,7 +197,7 @@ class TLensAttributeMixin:
     def device(self, value: Optional[str | torch.device]) -> None:
         if value is not None and not isinstance(value, torch.device):
             value = torch.device(value)
-        self._device = value
+        self._it_state._device = value
 
     def get_tl_device(self, block_index: int) -> Optional[torch.device]:
         try:
@@ -283,10 +283,11 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
         # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
         # TODO: serialize tl_config
         if self.it_cfg.hf_from_pretrained_cfg:
-            self.init_hparams = {"tl_cfg": self._make_config_serializable(self.it_cfg.tl_cfg, ['device', 'dtype']),}
+            self._it_state._init_hparams = {"tl_cfg": self._make_config_serializable(self.it_cfg.tl_cfg, ['device',
+                                                                                                          'dtype']),}
         else:
             self.it_cfg.tl_cfg.cfg = self._make_config_serializable(self.it_cfg.tl_cfg.cfg, ['device', 'dtype'])
-            self.init_hparams = {"tl_cfg": self.it_cfg.tl_cfg}
+            self._it_state._init_hparams = {"tl_cfg": self.it_cfg.tl_cfg}
         super()._capture_hyperparameters()
 
     def set_input_require_grads(self) -> None:

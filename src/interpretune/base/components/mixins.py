@@ -11,9 +11,22 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.types import  STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_warn, rank_zero_info
-from interpretune.base.config.module import ITConfig, HFFromPretrainedConfig
+from interpretune.base.config.module import ITConfig, HFFromPretrainedConfig, ITState
 from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE
 
+
+class ITStateMixin:
+    def __init__(self, *args, **kwargs) -> None:
+        # TODO: explore whether there is an initialization reorganization that can avoid this
+        # some class compositions may need to initialize internal state before this __init__ is invoked, hence we also
+        # make it available as a staticmethod
+        ITStateMixin._init_internal_state(self)
+        super().__init__(*args, **kwargs)
+
+    @staticmethod
+    def _init_internal_state(obj: Any) -> None:
+        if not hasattr(obj, "_it_state"):
+            obj._it_state = ITState()
 
 class ProfilerHooksMixin:
 
@@ -210,5 +223,5 @@ class HFFromPretrainedMixin:
         self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))
 
 
-class CoreMixins(HFFromPretrainedMixin, ZeroShotStepMixin, ProfilerHooksMixin):
+class CoreMixins(ITStateMixin, HFFromPretrainedMixin, ZeroShotStepMixin, ProfilerHooksMixin):
     ...

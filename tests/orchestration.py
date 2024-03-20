@@ -90,7 +90,8 @@ def core_train_loop(
 ):
     train_dataloader = datamodule.train_dataloader()
     val_dataloader = datamodule.val_dataloader() if val_steps > 0 else None
-    optim = module.it_optimizers[0]
+    # TODO: add optimizers property setter to corehelperattributes
+    optim = module.optimizers[0]
     train_ctx = {"module": module, "optimizer": optim, "device_type": device_type}
     for epoch_idx in range(epochs):
         module.model.train()
@@ -116,7 +117,7 @@ def core_test_loop(
 ):
     dataloader = datamodule.test_dataloader()
     test_ctx = {"module": module, "device_type": device_type}
-    module._current_epoch = 0
+    module._it_state._current_epoch = 0
     module.model.eval()
     iterator = iter(dataloader)
     for batch_idx in range(test_steps):

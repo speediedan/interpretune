@@ -1,17 +1,15 @@
 import warnings
-from typing import Any, Optional, List
+from typing import Any, Optional
 
 import torch
 
 from interpretune.base.config.module import ITConfig
-from interpretune.base.datamodules import ITDataModule
 from interpretune.base.hooks import BaseITHooks
 from interpretune.base.components.core import CoreComponents, CoreHelperAttributes
 from interpretune.base.components.mixins import CoreMixins
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.analysis.debug_generation import DebugGeneration
 from interpretune.analysis.memprofiler import MemProfiler
-from interpretune.utils.types import LRSchedulerConfig, Optimizable, LRScheduler
 
 
 
@@ -39,25 +37,12 @@ class BaseITModule(CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
         """
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__(*args, **kwargs)
-        self._init_direct_attrs()
+        self.model: torch.nn.Module = None
+        self.memprofiler: Optional[MemProfiler] = None
+        self.debug_lm: Optional[DebugGeneration] = None
         self.it_cfg: ITConfig = self._before_it_cfg_init(it_cfg)
         self.connect_extensions()
         self._dispatch_model_init()
-
-    def _init_direct_attrs(self):
-        """Direct base module attribute initialization."""
-        # TODO: further reduce/simplify these attributes
-        self.model: torch.nn.Module = None
-        # TODO: drop these into a separate opt_sched dataclass encapsulation
-        self.it_optimizers: List[Optimizable] = None  # initialized via core IT module `configure_optimizers` hook
-        self.it_lr_scheduler_configs: List[LRSchedulerConfig] = None
-        self.it_lr_schedulers: List[LRScheduler] = None
-        self.memprofiler: Optional[MemProfiler] = None
-        self.debug_lm: Optional[DebugGeneration] = None
-        self._datamodule: Optional[ITDataModule] = None  # datamodule handle attached after init
-        self._device: Optional[torch.device] = None  # root device (sometimes used if not handled by Lightning)
-        self._session_complete: bool = False
-        self.init_hparams = {}  # TODO: make this protected?
 
     def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
         """Optionally modify configuration before it_cfg is initialized."""
@@ -93,7 +78,7 @@ class BaseITModule(CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
         if getattr(self, 'memprofiler', None):
             self.memprofiler.dump_memory_stats()
-        self._session_complete = True
+        self._it_state._session_complete = True
 
 
 class ITModule(CoreHelperAttributes, BaseITModule):

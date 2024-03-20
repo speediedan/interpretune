@@ -2,8 +2,7 @@ from typing import Any, Optional
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.base.config.module import ITConfig
-from interpretune.base.datamodules import ITDataModule
+from interpretune.base.config.module import ITConfig, ITState
 from interpretune.utils.import_utils import instantiate_class
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
@@ -15,17 +14,17 @@ class BaseITHooks:
     # if you override these in your LightningModule, ensure you cooperatively call super() if you want to retain
     # the relevant BaseITModule hook functionality
     # proper initialization of these variables should be done in the child class
+    model: torch.nn.Module
     it_cfg: ITConfig
     session_complete: bool
-    _datamodule: ITDataModule
-    model: torch.nn.Module
+    _it_state: ITState
 
     def setup(self, *args, **kwargs) -> None:
         # TODO: add super() calls to these methods once Interpretunable protocol is defined
         # super().setup(*args, **kwargs)
         # if we're setting up a Lightning module, datamodule is not provided in setup and will be accessed via Trainer
         if datamodule := kwargs.get("datamodule", None):
-            self._datamodule = datamodule
+            self._it_state._datamodule = datamodule
         self._init_dirs_and_hooks()
 
     def configure_optimizers(self) -> Optional[OptimizerLRScheduler]:

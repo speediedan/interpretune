@@ -324,7 +324,7 @@ class BaseTestModule:
         return it_cfg
 
     def load_metric(self) -> None:
-        self.metric = evaluate.load("super_glue", 'rte', experiment_id=self.init_hparams['experiment_id'])
+        self.metric = evaluate.load("super_glue", 'rte', experiment_id=self._it_state._init_hparams['experiment_id'])
 
     def model_init(self) -> None:
         """If we're not using a from-configuration model, we initialize the model here."""

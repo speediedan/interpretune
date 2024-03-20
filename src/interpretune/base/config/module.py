@@ -1,6 +1,6 @@
 import os
 import warnings
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from dataclasses import dataclass, field
 
 import torch
@@ -10,7 +10,8 @@ from interpretune.base.config.mixins import ZeroShotClassificationConfig, HFFrom
 from interpretune.analysis.debug_generation import DebugLMConfig
 from interpretune.analysis.memprofiler import MemProfilerCfg
 from interpretune.utils.logging import rank_zero_info
-
+from interpretune.base.datamodules import ITDataModule
+from interpretune.utils.types import LRSchedulerConfig, Optimizable
 
 # TODO: add core helper log/log_dict methods for core context usage
 for warnf in [".*For Lightning compatibility, this noop .*",]:
@@ -66,3 +67,16 @@ class ITConfig(ITSharedConfig, ModelConfig, OptimizerSchedulerConfig):
             if self._torch_dtype and self.hf_from_pretrained_cfg.bitsandbytesconfig:
                 rank_zero_info(f'Specified torch_dtype `{self._torch_dtype}` being overridden by quantization config.')
                 self._torch_dtype = 'see quantization config'
+
+@dataclass
+class ITState:
+    """Dataclass to encapsulate the ITModule internal state and keep top-level namespace as clean as possible."""
+    _it_lr_scheduler_configs: List[LRSchedulerConfig] = None
+    _it_optimizers: List[Optimizable] = None  # initialized via core IT module `configure_optimizers` hook
+    _datamodule: Optional[ITDataModule] = None  # datamodule handle attached after init
+    _device: Optional[torch.device] = None  # root device (sometimes used if not handled by Lightning)
+    _session_complete: bool = False
+    _init_hparams: Dict[str, Any] = field(default_factory=dict)
+    # note we leave initialization of the below to the relevant property dispatch functions
+    _current_epoch: Optional[int] = None
+    _global_step: Optional[int] = None

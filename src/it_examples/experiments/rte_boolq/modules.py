@@ -11,7 +11,6 @@ from interpretune.utils.types import STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_warn
 
 
-
 class RTEBoolqLMHeadSteps:
 
     def __init__(self, *args, **kwargs) -> None:
@@ -105,7 +104,7 @@ class RTEBoolqModuleMixin:
 
     def load_metric(self) -> None:
         self.metric = evaluate.load("super_glue", self.it_cfg.task_name,
-                                    experiment_id=self.init_hparams['experiment_id'])
+                                    experiment_id=self._it_state._init_hparams['experiment_id'])
 
     def _init_entailment_mapping(self) -> None:
         ent_cfg, tokenizer = self.it_cfg, self.datamodule.tokenizer
