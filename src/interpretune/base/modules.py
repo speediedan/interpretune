@@ -8,16 +8,13 @@ from interpretune.base.hooks import BaseITHooks
 from interpretune.base.components.core import CoreComponents, CoreHelperAttributes
 from interpretune.base.components.mixins import CoreMixins
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-from interpretune.analysis.debug_generation import DebugGeneration
-from interpretune.analysis.memprofiler import MemProfiler
-
 
 
 # TODO: add core helper log/log_dict methods for core context usage
 for warnf in [".*For Lightning compatibility, this noop .*",]:
     warnings.filterwarnings("once", warnf)
 
-#class BaseITModule(ABC, CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
+
 class BaseITModule(CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
 
     def __init__(
@@ -38,10 +35,8 @@ class BaseITModule(CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__(*args, **kwargs)
         self.model: torch.nn.Module = None
-        self.memprofiler: Optional[MemProfiler] = None
-        self.debug_lm: Optional[DebugGeneration] = None
         self.it_cfg: ITConfig = self._before_it_cfg_init(it_cfg)
-        self.connect_extensions()
+        self._connect_extensions()
         self._dispatch_model_init()
 
     def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:

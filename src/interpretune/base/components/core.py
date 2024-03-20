@@ -1,7 +1,7 @@
 import tempfile
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Union, Tuple, Optional, NamedTuple
+from typing import Any, Dict, List, Union, Tuple, Optional
 from functools import reduce, partial
 from pathlib import Path
 from copy import deepcopy
@@ -14,7 +14,7 @@ from interpretune.base.components.mixins import ITStateMixin
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.analysis.debug_generation import DebugGeneration
+
 from interpretune.analysis.memprofiler import MemProfiler
 from interpretune.utils.import_utils import _resolve_torch_dtype, _LIGHTNING_AVAILABLE
 from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, LRScheduler
@@ -55,13 +55,6 @@ CORE_TO_LIGHTNING_ATTRS_MAP = {
 PROPERTY_COMPOSITION = {
     "device": {"enabled": True, "target": _DeviceDtypeModuleMixin, "dispatch": _DeviceDtypeModuleMixin.device}
 }
-
-class ITExtension(NamedTuple):
-    ext_attr: str
-    ext_class: Any
-
-SUPPORTED_EXTENSIONS = (ITExtension("debug_lm", DebugGeneration), ITExtension("memprofiler", MemProfiler))
-
 
 def _dummy_notify(method: str, ret_callable: bool, rv: Any, *args, **kwargs) -> Optional[Any]:
     rank_zero_warn(f"The `{method}` method is not defined for this module. For Lightning compatibility, this noop "
@@ -158,11 +151,6 @@ class PropertyDispatcher:
         else:
             return non_dispatch_val
 
-    def connect_extensions(self):
-        for ext_name, ext_class in SUPPORTED_EXTENSIONS:
-            if getattr(self.it_cfg, f'{ext_name}_cfg').enabled:
-                setattr(self, ext_name, ext_class())
-                getattr(self, ext_name).connect(self)
 
     def _core_or_lightning(self, c2l_map_key: str):
         c2l = CORE_TO_LIGHTNING_ATTRS_MAP[c2l_map_key]
@@ -237,29 +225,30 @@ class PropertyDispatcher:
 
 class CoreHelperAttributes:
 
-    """Mixin class for adding arbitrary core helper attributes to core (non-Lightning) IT classes."""
+    """Mixin class for adding arbitrary core helper attributes to core (non-framework adapted) IT classes."""
     def __init__(self, *args, **kwargs) -> None:
-        # for core/non-lightning modules, we configure a _log_dir rather than relying on the trainer to do so
-        # if using a Lightning module, we can access the trainer log_dir via the `core_log_dir` property
-        # or continue to rely on the trainer log_dir directly
         # we need to initialize internal state before `ITStateMixin`'s __init__ is invoked so use this static method
         ITStateMixin._init_internal_state(self)
+        # for core/non-framework modules, we configure a _log_dir rather than relying on the trainer to do so
+        # if using a framework (e.g. Lightning) module, we can access the trainer log_dir via the `core_log_dir`
+        # property or continue to rely on the trainer log_dir directly
         if it_cfg := kwargs.get('it_cfg', None):
             self._it_state._log_dir = Path(it_cfg.core_log_dir or tempfile.gettempdir())
-            ca = it_cfg.lightning_compat_attrs
+            ca = it_cfg.compatibility_attrs
         else:
             raise MisconfigurationException("CoreHelperAttributes requires an ITConfig.")
         self._supported_helper_attrs = {k: partial(_dummy_notify, k, v.ret_callable, v.ret_val) for k,v in ca.items()}
         super().__init__(*args, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
-        # NOTE: dynamically stub a specified subset of Lightning module attributes (if they don't already exist) to
-        #       extend the cases where Lightning methods can be iteratively used for core context experimentation
+        # NOTE: dynamically stub a specified subset of framework module attributes (if they don't already exist) to
+        #       extend the cases where framework methods can be iteratively used for core context experimentation
         if '_supported_helper_attrs' in self.__dict__:
             _helper_attrs= self.__dict__['_supported_helper_attrs']
             if name in _helper_attrs:
                 return _helper_attrs[name]
-        return super().__getattr__(name)  # the unresolved attribute wasn't ours, pass it on to PyTorch's __getattr__
+        # the unresolved attribute wasn't ours, pass it to the next __getattr__ in __mro__
+        return super().__getattr__(name)
 
     @property
     def current_epoch(self) -> int:

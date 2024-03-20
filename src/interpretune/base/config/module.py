@@ -56,7 +56,7 @@ class ITConfig(ITSharedConfig, ModelConfig, OptimizerSchedulerConfig):
     debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
     zero_shot_cfg: ZeroShotClassificationConfig = field(default_factory=lambda: ZeroShotClassificationConfig())
     hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = None
-    lightning_compat_attrs: Dict[str, AutoCompatConfig] = \
+    compatibility_attrs: Dict[str, AutoCompatConfig] = \
         field(default_factory=lambda: {'log': AutoCompatConfig(), 'log_dict': AutoCompatConfig(),})
 
     def __post_init__(self) -> None:
@@ -75,6 +75,7 @@ class ITState:
     _it_optimizers: List[Optimizable] = None  # initialized via core IT module `configure_optimizers` hook
     _datamodule: Optional[ITDataModule] = None  # datamodule handle attached after init
     _device: Optional[torch.device] = None  # root device (sometimes used if not handled by Lightning)
+    _extensions: Dict[str, Any] = field(default_factory=dict)
     _session_complete: bool = False
     _init_hparams: Dict[str, Any] = field(default_factory=dict)
     # note we leave initialization of the below to the relevant property dispatch functions

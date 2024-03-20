@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, NamedTuple
 from dataclasses import dataclass, field
 
 import torch
@@ -7,6 +7,11 @@ from transformers.generation.configuration_utils import GenerationConfig
 from interpretune.base.config.shared import ITSerializableCfg
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.utils.import_utils import _resolve_torch_dtype
+
+
+class ITExtension(NamedTuple):
+    ext_attr: str
+    ext_fqn: str
 
 
 @dataclass(kw_only=True)

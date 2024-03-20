@@ -56,6 +56,7 @@ def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, Optional[st
     return exp_cfg_sets
 
 EXPERIMENT_CFG_SETS = gen_experiment_cfg_sets(
+    # (exp, model, subexp, plugin, debug_mode)
     (("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", None, True),
      ("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "transformerlens", True),
      ("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "transformerlens", False),

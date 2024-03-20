@@ -24,11 +24,12 @@ log = logging.getLogger(__name__)
 # TODO: switch ITDataModule from ABC to concrete class and rely upon Protocol?
 class ITDataModule:
 
-    tokenization_func: Callable
 
     def __init__(
         self,
         itdm_cfg: ITDataModuleConfig,
+        *args,
+        **kwargs
     ):
         r"""Initialize the ``LightningDataModule`` designed for both the RTE or BoolQ SuperGLUE Hugging Face
         datasets.
@@ -37,7 +38,8 @@ class ITDataModule:
             itdm_cfg (:class:`~ITDataModuleConfig`): Configuration for the datamodule.
         """
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
-        super().__init__()
+        super().__init__(*args, **kwargs)
+        self.tokenization_func: Optional[Callable] = None
         # module handle
         self._module = None
         self.itdm_cfg = itdm_cfg
