@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from it_examples.experiments.rte_boolq.config import RTEBoolqPromptConfig, RTEBoolqZeroShotClassificationConfig
 from interpretune.base.config.mixins import CoreGenerationConfig, HFGenerationConfig
 from interpretune.base.config.module import HFFromPretrainedConfig
+from interpretune.base.contract.session import Framework
 from interpretune.analysis.memprofiler import MemProfilerCfg, MemProfilerSchedule
 
 @dataclass(kw_only=True)
@@ -145,16 +146,16 @@ class MemProfResult(NamedTuple):
 
 
 # composable cfg aliases
-w_lit = {"lightning": True}
+w_lit = {"framework_ctx": Framework.lightning}
 cuda = {"device_type": "cuda"}
 cuda_act = {**cuda, "act_ckpt": True}
 bf16 = {"precision": "bf16"}
 cuda_bf16 = {**cuda, **bf16}
 cuda_bf16_l = {**cuda, **bf16, **w_lit}
-memprof_steps = {"train_steps": 5, "val_steps": 3}
+memprof_steps = {"limit_train_batches": 5, "limit_val_batches": 3}
 bs1_memprof_steps = {"dm_override_cfg": bs_override, **memprof_steps}
 debug_hidden = {"cust_fwd_kwargs": {"output_hidden_states": True}}
-test_bs1_mem = {"loop_type": "test", "dm_override_cfg": bs_override, "memprofiler_cfg": memprofiler_cfg}
+test_bs1_mem = {"phase": "test", "dm_override_cfg": bs_override, "memprofiler_cfg": memprofiler_cfg}
 test_bs1_mem_nosavedt = {**test_bs1_mem, "memprofiler_cfg": no_savedt_memprofiler_cfg}
 bs1_warm_mem = {**bs1_memprof_steps,  "memprofiler_cfg": warm_maxstep_memprof_cfg}
 bs1_nowarm_mem = {**bs1_memprof_steps, "memprofiler_cfg": nowarm_maxstep_memprof_cfg}

@@ -18,7 +18,7 @@ from enum import Enum
 
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import BaseITModule
-from interpretune.base.config.shared import CorePhases
+from interpretune.base.config.shared import CorePhase
 from interpretune.utils.logging import rank_zero_info
 
 log = logging.getLogger(__name__)
@@ -33,8 +33,8 @@ def it_init(module, datamodule, *args, **kwargs):
         _call_itmodule_hook(module, hook_name="configure_optimizers", hook_msg="initializing optimizers and schedulers",
                             connect_output=True)
 
-def it_session_end(module, datamodule, session_type: Enum = CorePhases.train, *args, **kwargs):
-    # associate stage end with the relevant Lightning hooks for better Lightning compabitility
+def it_session_end(module, datamodule, session_type: Enum = CorePhase.train, *args, **kwargs):
+    # dispatch the appropriate stage-specific `end` hook upon completion of the session
     hook_name = f"on_{session_type.name}_end"
     _call_itmodule_hook(module, hook_name=hook_name, hook_msg="Running stage end hooks on IT module")
     _call_itmodule_hook(datamodule, hook_name=hook_name, hook_msg="Running stage end hooks on IT datamodule")

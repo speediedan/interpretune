@@ -1,12 +1,14 @@
 it_session:
-  module_cfg:
+  session_cfg:
     init_args:
-      experiment_tag: lightning_tl_rte_small_noquant_test
-      tl_cfg:
-        class_path: interpretune.plugins.transformer_lens.ITLensFromPretrainedConfig
+      module_cfg:
         init_args:
-          device: cuda
-          dtype: bfloat16
+          experiment_tag: lightning_tl_rte_small_noquant_test
+          tl_cfg:
+            class_path: interpretune.plugins.transformer_lens.ITLensFromPretrainedConfig
+            init_args:
+              device: cuda
+              dtype: bfloat16
 trainer:
   precision: bf16-true
   accumulate_grad_batches: 1

@@ -7,9 +7,11 @@ import torch
 from transformers import PretrainedConfig, AutoModelForCausalLM, PreTrainedTokenizerBase
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 from transformer_lens.utilities.devices import get_device_for_block_index
+from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.base.config.module import ITConfig,HFFromPretrainedConfig
 from interpretune.base.modules import BaseITModule, ITLightningModule
+from interpretune.utils.data_movement import move_data_to_device
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE, _resolve_torch_dtype
 from interpretune.base.components.core import CoreHelperAttributes
 from interpretune.base.config.mixins import CoreGenerationConfig
@@ -300,7 +302,10 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
 ################################################################################
 
 class ITLensModule(TLensAttributeMixin, CoreHelperAttributes, BaseITLensModule):
-    ...
+
+    def batch_to_device(self, batch) -> BatchEncoding:
+        move_data_to_device(batch, self.input_device)
+        return batch
 
 if _LIGHTNING_AVAILABLE:
     class ITLensLightningModule(TLensAttributeMixin, BaseITLensModule, ITLightningModule):

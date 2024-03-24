@@ -1,11 +1,13 @@
 it_session:
-  module_cfg:
+  session_cfg:
     init_args:
-      experiment_tag: lightning_tl_rte_small_noquant_fp32_predict
-      tl_cfg:
+      module_cfg:
         init_args:
-          device: cuda
-          dtype: float32
+          experiment_tag: lightning_tl_rte_small_noquant_fp32_predict
+          tl_cfg:
+            init_args:
+              device: cuda
+              dtype: float32
 trainer:
   precision: 32
   accumulate_grad_batches: 1

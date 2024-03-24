@@ -35,38 +35,38 @@ EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS + TL_EXPECTED_WARNS
 RUN_FN = "run_experiment.py"
 EXPERIMENTS_BASE = IT_CONFIG_BASE / "experiments"
 BASE_DEBUG_CONFIG = IT_CONFIG_GLOBAL / "base_debug.yaml"
-BASE_TL_CONFIG = IT_CONFIG_GLOBAL / "base_transformerlens.yaml"
+BASE_TL_CONFIG = IT_CONFIG_GLOBAL / "base_transformer_lens.yaml"
 
 def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, Optional[str], bool]]) -> Dict:
     exp_cfg_sets = {}
-    for exp, model, subexp, plugin, debug_mode in test_keys:
+    for exp, model, subexp, plugin_ctx, debug_mode in test_keys:
         base_model_cfg =  EXPERIMENTS_BASE / exp / f"{model}.yaml"
         base_cfg_set = (base_model_cfg,)
-        if plugin:
-            if plugin == "transformerlens":
-                exp_plugin_cfg = EXPERIMENTS_BASE / exp /  f"{plugin}.yaml"
+        if plugin_ctx:
+            if plugin_ctx == "transformer_lens":
+                exp_plugin_cfg = EXPERIMENTS_BASE / exp /  f"{plugin_ctx}.yaml"
                 base_cfg_set += (BASE_TL_CONFIG, exp_plugin_cfg,)
             else:
-                raise ValueError(f"Unknown plugin type: {plugin}")
+                raise ValueError(f"Unknown plugin type: {plugin_ctx}")
         subexp_cfg =  EXPERIMENTS_BASE / exp / model / f"{subexp}.yaml"
         base_cfg_set += (subexp_cfg,)
         if debug_mode:
             base_cfg_set += (BASE_DEBUG_CONFIG,)
-        exp_cfg_sets[(exp, model, subexp, plugin, debug_mode)] = base_cfg_set
+        exp_cfg_sets[(exp, model, subexp, plugin_ctx, debug_mode)] = base_cfg_set
     return exp_cfg_sets
 
 EXPERIMENT_CFG_SETS = gen_experiment_cfg_sets(
-    # (exp, model, subexp, plugin, debug_mode)
+    # (exp, model, subexp, plugin_ctx, debug_mode)
     (("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", None, True),
-     ("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "transformerlens", True),
-     ("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "transformerlens", False),
+     ("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "transformer_lens", True),
+     ("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "transformer_lens", False),
      ("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", None, True))
 )
 
 # experiment config set aliases
 gpt2_core = EXPERIMENT_CFG_SETS[("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", None, True)]
-gpt2_core_tl = EXPERIMENT_CFG_SETS[("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "transformerlens", True)]
-gpt2_l_tl = EXPERIMENT_CFG_SETS[("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "transformerlens", False)]
+gpt2_core_tl = EXPERIMENT_CFG_SETS[("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "transformer_lens", True)]
+gpt2_l_tl = EXPERIMENT_CFG_SETS[("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "transformer_lens", False)]
 llama2_l = EXPERIMENT_CFG_SETS[("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", None, True)]
 
 TEST_CONFIGS_EXAMPLES = (
@@ -117,7 +117,7 @@ def test_basic_examples(recwarn, test_alias, l_cli, subcommand, instantiate_only
     cli_main, cli_args = gen_cli_args(l_cli, subcommand, use_compose_config, config_files)
     cli = invoke_cli(cli_main, cli_args, l_cli, instantiate_only)
     if instantiate_only:
-        assert isinstance(cli.model, EXPECTED_RESULTS_EXAMPLES[test_alias]['class_type'])
+        assert isinstance(cli.module, EXPECTED_RESULTS_EXAMPLES[test_alias]['class_type'])
     # ensure no unexpected warnings detected
     unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=EXAMPLE_WARNS)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)

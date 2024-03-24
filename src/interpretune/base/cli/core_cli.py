@@ -17,7 +17,6 @@ import sys
 import numpy as np
 import random
 import logging
-from functools import reduce
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Iterable, Tuple, Callable
 
@@ -27,8 +26,7 @@ from transformers import logging as transformers_logging
 from interpretune.base.config.shared import ITSharedConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import ITModule
-from interpretune.base.contract.session import InterpretunableSessionConfig
-from interpretune.base.contract.protocol import InterpretunableType
+from interpretune.base.contract.session import ITSession
 from interpretune.base.call import it_init
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.import_utils import _DOTENV_AVAILABLE
@@ -109,7 +107,9 @@ def add_base_args(parser: ArgumentParser) -> None:
 
     # link our datamodule and module shared configuration
     for attr in ITSharedConfig.__dataclass_fields__:
-        parser.link_arguments(f"it_session.datamodule_cfg.init_args.{attr}", f"it_session.module_cfg.init_args.{attr}")
+        parser.link_arguments(f"it_session.session_cfg.init_args.datamodule_cfg.init_args.{attr}",
+                              f"it_session.session_cfg.init_args.module_cfg.init_args.{attr}")
+
 
 
 def bootstrap_cli() -> Callable:
@@ -127,23 +127,14 @@ def bootstrap_cli() -> Callable:
 
 
 class ITSessionMixin:
-    core_to_lightning_cli_map = {"data": "it_session.datamodule", "model": "it_session.module"}
 
     def add_arguments_to_parser(self, parser: ArgumentParser) -> None:
-        parser.add_class_arguments(InterpretunableSessionConfig, "it_session", instantiate=True, sub_configs=True)
+        parser.add_class_arguments(ITSession, "it_session", instantiate=True, sub_configs=True)
         add_base_args(parser)
 
-    def _it_session(self, config, key) -> Optional[InterpretunableType]:
-        try:
-            attr_val = reduce(getattr, key.split("."), config)
-        except AttributeError:
-            attr_val = None
-        return attr_val
 
     def _get(self, config: Namespace, key: str, default: Optional[Any] = None) -> Any:
         """Utility to get a config value which might be inside a subcommand."""
-        if target_key := self.core_to_lightning_cli_map.get(key, None):
-            return self._it_session(config.get(str(self.subcommand), config), target_key)
         return config.get(str(self.subcommand), config).get(key, default)
 
 
@@ -184,7 +175,7 @@ class ITCLI(ITSessionMixin):
 
         # N.B. we use data, model top-level keys for Lightning CLI compatibility w/ datamodule and modules respectively
         if not self.instantiate_only:
-            it_init(module=self.model, datamodule=self.datamodule)
+            it_init(module=self.module, datamodule=self.datamodule)
 
     def setup_parser(
         self, main_kwargs: Dict[str, Any]) -> None:
@@ -248,8 +239,8 @@ class ITCLI(ITSessionMixin):
     def instantiate_classes(self) -> None:
         """Instantiates the classes and sets their attributes."""
         self.config_init = self.parser.instantiate_classes(self.config)
-        self.datamodule = self._get(self.config_init, "data")
-        self.model = self._get(self.config_init, "model")
+        self.datamodule = self._get(self.config_init.it_session, "datamodule")
+        self.module = self._get(self.config_init.it_session, "module")
 
 
 def env_setup() -> None:

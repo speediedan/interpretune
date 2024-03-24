@@ -5,6 +5,7 @@ from it_examples.experiments.rte_boolq.config import RTEBoolqPromptConfig, RTEBo
 from tests.base.cfg_aliases import (tokenizer_base_kwargs, base_shared_config, default_test_bs, shared_dataset_state,
                                     base_it_module_kwargs, test_optimizer_scheduler_init,
                                     base_hf_from_pretrained_kwargs)
+from interpretune.base.contract.session import Plugin
 from interpretune.plugins.transformer_lens import TLensGenerationConfig
 
 tl_model_input_names = {"model_input_names": ['input', 'attention_mask']}
@@ -41,4 +42,4 @@ test_tl_cust_it_module_optim = ChainMap(test_tl_cust_it_module_base, test_optimi
 ########################################################################################################################
 test_dataset_state_tl = ('pytest_rte_tl',) + shared_dataset_state
 
-w_tl = {"plugin": "transformerlens"}
+w_tl = {"plugin_ctx": Plugin.transformer_lens}

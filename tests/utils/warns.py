@@ -17,11 +17,11 @@ EXPECTED_WARNS = [
     "The `use_auth_token` argument is deprecated",  # TODO: need to use `token` instead of `use_auth_token`
 ]
 
-CORE_CONTEXT_WARNS = HF_EXPECTED_WARNS + EXPECTED_WARNS + [
+CORE_CTX_WARNS = HF_EXPECTED_WARNS + EXPECTED_WARNS + [
     "For Lightning compatibility, this noop",  # expected in a core context with modules that use Lightning log methods
 ]
 
-LIGHTING_CONTEXT_WARNS = HF_EXPECTED_WARNS + [
+LIGHTING_CTX_WARNS = HF_EXPECTED_WARNS + [
     "does not have many workers",
     "GPU available but",
     "is smaller than the logging interval",
@@ -36,8 +36,8 @@ TL_EXPECTED_WARNS = [
     "Since no datamodule `model_name_or_path` was provided",  # using cust tlens config for fallback
 ]
 
-TL_CONTEXT_WARNS = TL_EXPECTED_WARNS + CORE_CONTEXT_WARNS
-TL_LIGHTNING_CONTEXT_WARNS = TL_CONTEXT_WARNS + LIGHTING_CONTEXT_WARNS
+TL_CTX_WARNS = TL_EXPECTED_WARNS + CORE_CTX_WARNS
+TL_LIGHTNING_CTX_WARNS = TL_CTX_WARNS + LIGHTING_CTX_WARNS
 
 MIN_VERSION_WARNS = "2.0"
 MAX_VERSION_WARNS = "2.2"

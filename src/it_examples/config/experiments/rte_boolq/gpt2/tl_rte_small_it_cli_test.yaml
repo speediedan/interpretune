@@ -1,8 +1,10 @@
 it_session:
-  module_cfg:
+  session_cfg:
     init_args:
-      experiment_tag: it_cli_test
-      tl_cfg:
+      module_cfg:
         init_args:
-          device: cuda
-          dtype: float32
+          experiment_tag: it_cli_test
+          tl_cfg:
+            init_args:
+              device: cuda
+              dtype: float32

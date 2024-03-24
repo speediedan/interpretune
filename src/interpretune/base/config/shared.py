@@ -13,13 +13,17 @@ log = logging.getLogger(__name__)
 # Core Enums
 ################################################################################
 
-class CorePhases(Enum):
+class AutoStrEnum(Enum):
+    def _generate_next_value_(name, start, count, last_values) -> str:  # type: ignore
+        return name
+
+class CorePhase(AutoStrEnum):
     train = auto()
     validation = auto()
     test = auto()
     predict = auto()
 
-class CoreSteps(Enum):
+class CoreSteps(AutoStrEnum):
     training_step = auto()
     validation_step = auto()
     test_step = auto()

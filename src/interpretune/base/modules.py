@@ -2,13 +2,14 @@ import warnings
 from typing import Any, Optional
 
 import torch
+from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.base.config.module import ITConfig
 from interpretune.base.hooks import BaseITHooks
 from interpretune.base.components.core import CoreComponents, CoreHelperAttributes
 from interpretune.base.components.mixins import CoreMixins
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-
+from interpretune.utils.data_movement import to_device
 
 # TODO: add core helper log/log_dict methods for core context usage
 for warnf in [".*For Lightning compatibility, this noop .*",]:
@@ -83,7 +84,9 @@ class ITModule(CoreHelperAttributes, BaseITModule):
 
     <https://huggingface.co/datasets/super_glue#data-instances>`_.
     """
-    ...
+    def batch_to_device(self, batch) -> BatchEncoding:
+        to_device(self.device, batch)
+        return batch
 
 
 if _LIGHTNING_AVAILABLE:

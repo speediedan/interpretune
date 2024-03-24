@@ -1,6 +1,9 @@
 seed_everything: 42
 it_session:
-  lightning: True
+  session_cfg:
+    class_path: interpretune.base.contract.session.ITSessionConfig
+    init_args:
+      framework_ctx: lightning
 trainer:
   accelerator: gpu
   strategy: auto

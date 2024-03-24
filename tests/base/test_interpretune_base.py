@@ -16,8 +16,9 @@ from functools import partial
 
 import pytest
 
-from tests.utils.warns import unexpected_warns, CORE_CONTEXT_WARNS, LIGHTING_CONTEXT_WARNS
+from tests.utils.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WARNS
 from tests.orchestration import parity_test
+from interpretune.base.contract.session import Framework
 from tests.base.expected import basic_parity_results, profiling_parity_results
 from tests.configuration import TestCfg, ParityCfg, pytest_param_factory, collect_results, IT_GLOBAL_STATE_LOG_MODE
 from tests.base.cfg_aliases import (w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l, debug_hidden,
@@ -41,10 +42,10 @@ PARITY_BASIC_CONFIGS = (
     ParityTest(alias="train_cuda_32_l", cfg=CoreCfg(**cuda, **w_lit), marks="cuda_l"),
     ParityTest(alias="train_cuda_bf16", cfg=CoreCfg(**cuda_bf16), marks="bf16_cuda"),
     ParityTest(alias="train_cuda_bf16_l", cfg=CoreCfg(**cuda_bf16_l), marks="bf16_cuda_l"),
-    ParityTest(alias="test_cpu_32", cfg=CoreCfg(loop_type="test")),
-    ParityTest(alias="test_cpu_32_l", cfg=CoreCfg(loop_type="test", **w_lit), marks="lightning"),
-    ParityTest(alias="test_cuda_32", cfg=CoreCfg(loop_type="test", model_src_key="pretrained", **cuda), marks="cuda"),
-    ParityTest(alias="test_cuda_bf16", cfg=CoreCfg(loop_type="test", **cuda_bf16), marks="bf16_cuda"),
+    ParityTest(alias="test_cpu_32", cfg=CoreCfg(phase="test")),
+    ParityTest(alias="test_cpu_32_l", cfg=CoreCfg(phase="test", **w_lit), marks="lightning"),
+    ParityTest(alias="test_cuda_32", cfg=CoreCfg(phase="test", model_src_key="pretrained", **cuda), marks="cuda"),
+    ParityTest(alias="test_cuda_bf16", cfg=CoreCfg(phase="test", **cuda_bf16), marks="bf16_cuda"),
     ParityTest(alias="train_cpu_bf16", cfg=CoreCfg(**bf16), marks="skip_win_slow"),
 )
 
@@ -55,7 +56,7 @@ EXPECTED_PARITY_BASIC = {cfg.alias: cfg.expected for cfg in PARITY_BASIC_CONFIGS
 def test_parity_basic(recwarn, tmp_path, test_alias, test_cfg):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PARITY_BASIC[test_alias] or {}
-    expected_warnings = LIGHTING_CONTEXT_WARNS if test_cfg.lightning else CORE_CONTEXT_WARNS
+    expected_warnings = LIGHTING_CTX_WARNS if test_cfg.framework_ctx == Framework.lightning else CORE_CTX_WARNS
     parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)
     unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
@@ -92,7 +93,7 @@ EXPECTED_PROFILING_PARITY = {cfg.alias: cfg.expected for cfg in PROFILING_PARITY
 def test_parity_profiling(recwarn, tmp_path, test_alias, test_cfg):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PROFILING_PARITY[test_alias] or {}
-    expected_warnings = LIGHTING_CONTEXT_WARNS if test_cfg.lightning else CORE_CONTEXT_WARNS
+    expected_warnings = LIGHTING_CTX_WARNS if test_cfg.framework_ctx == Framework.lightning else CORE_CTX_WARNS
     parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)
     unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)

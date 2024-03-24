@@ -22,10 +22,8 @@ import torch
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from it_examples.experiments.rte_boolq.config import RTEBoolqConfig, RTEBoolqTLConfig
 from interpretune.base.config.module import ITConfig
-from interpretune.base.datamodules import ITDataModule
-from interpretune.base.modules import BaseITModule
 from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig, ITLensCustomConfig
-from interpretune.base.contract.session import InterpretunableSessionConfig
+from interpretune.base.contract.session import ITSessionConfig, Framework, Plugin, ITSession
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.utils.types import StrOrPath
 from tests.base.cfg_aliases import (expected_first_fwd_ids, MemProfResult, core_pretrained_datamodule_kwargs,
@@ -37,7 +35,6 @@ from tests.plugins.transformer_lens.cfg_aliases import (
     test_tl_pretrained_it_module_base, test_tl_cust_it_module_base, test_tl_pretrained_it_module_optim,
     test_tl_cust_it_module_optim, test_tl_datamodule_kwargs, test_tl_shared_config, test_dataset_state_tl)
 from tests.utils.runif import RunIf, RUNIF_ALIASES
-from tests.utils.lightning import cuda_reset
 from tests.modules import TestITDataModule, TestITModule
 
 if _LIGHTNING_AVAILABLE:
@@ -51,6 +48,7 @@ TEST_IT_MODULE = TestITModule
 CORE_SESSION_CFG = {'datamodule_cls': TEST_IT_DATAMODULE, 'module_cls': TEST_IT_MODULE}
 
 IT_GLOBAL_STATE_LOG_MODE = os.environ.get("IT_GLOBAL_STATE_LOG_MODE", "0") == "1"
+
 
 ################################################################################
 # Core test generation and encapsulation
@@ -101,22 +99,22 @@ def pytest_param_factory(test_configs: List[TestCfg], unpack: bool = True) -> Li
 
 @dataclass(kw_only=True)
 class ParityCfg:
-    loop_type: str = "train"
+    phase: str = "train"
     device_type: str = "cpu"
     model_key: str = "rte"  # "real-model"-based acceptance/parity testing/profiling
     precision: str | int = 32
-    full_dataset: bool = False
     act_ckpt: bool = False
-    lightning: bool = False
-    plugin: Optional[str] = None
+    framework_ctx: Framework | str = Framework.core
+    plugin_ctx: Optional[Plugin | str] = None
     model_src_key: Optional[str] = None
-    train_steps: Optional[int] = 1
-    val_steps: Optional[int] = 1
-    test_steps: Optional[int] = 1
+    limit_train_batches: Optional[int] = 1
+    limit_val_batches: Optional[int] = 1
+    limit_test_batches: Optional[int] = 1
     dm_override_cfg: Optional[Dict] = None
     memprofiler_cfg: Optional[Dict] = None
     model_cfg: Optional[Dict] = None
     tl_cfg: Optional[Dict] = None
+    max_epochs: Optional[int] = 1
     cust_fwd_kwargs: Optional[Dict] = None
     # used when adding a new test dataset or changing a test model to force re-caching of test datasets
     force_prepare_data: bool = False
@@ -136,9 +134,9 @@ def mem_results(results: Tuple):
     """Result generation function for memory profiling tests."""
     # See NOTE [Memprofiler Key Format]
     # snap keys are rank.phase.epoch_idx.step_idx.step_ctx
-    loop_type, src, test_values = results
-    mem_keys = MemProfResult.cuda_mem_keys if src == "cuda" else MemProfResult.cpu_mem_keys[loop_type]
-    step_key = f'{MemProfResult.train_keys[src]}' if loop_type == 'train' else f'{MemProfResult.test_key}'
+    phase, src, test_values = results
+    mem_keys = MemProfResult.cuda_mem_keys if src == "cuda" else MemProfResult.cpu_mem_keys[phase]
+    step_key = f'{MemProfResult.train_keys[src]}' if phase == 'train' else f'{MemProfResult.test_key}'
     # default tolerance of rtol=0.05, atol=0 for all keys unless overridden with an explicit `tolerance_map`
     tolerance_map = {'tolerance_map': {k: (0.05, 0) for k in mem_keys}}
     return {**tolerance_map, 'expected_memstats': (step_key, mem_keys, test_values)}
@@ -207,26 +205,26 @@ def collect_results(result_map: Dict[str, Tuple], test_alias: str):
 TEST_DATAMODULE_BASE_CONFIGS = {
     "pretrained": (core_pretrained_shared_config, core_pretrained_datamodule_kwargs),
     "cust": (core_cust_shared_config, core_cust_datamodule_kwargs),
-    "transformerlens": (test_tl_shared_config, test_tl_datamodule_kwargs),
+    Plugin.transformer_lens: (test_tl_shared_config, test_tl_datamodule_kwargs),
 }
 
 TEST_MODULE_BASE_CONFIGS = {
-    # (loop_type, plugin_key, model_src_key)
+    # (phase, plugin_ctx, model_src_key)
     ("test", None, "pretrained"): test_core_pretrained_it_module_base,
     ("train", None, "pretrained"): test_core_pretrained_it_module_optim,
     ("test", None, "cust"): test_core_cust_it_module_base,
     ("train", None, "cust"): test_core_cust_it_module_optim,
-    ("test", "transformerlens", "pretrained"): test_tl_pretrained_it_module_base,
-    ("train", "transformerlens", "pretrained"): test_tl_pretrained_it_module_optim,
-    ("test", "transformerlens", "cust"): test_tl_cust_it_module_base,
-    ("train", "transformerlens", "cust"): test_tl_cust_it_module_optim,
+    ("test", Plugin.transformer_lens, "pretrained"): test_tl_pretrained_it_module_base,
+    ("train", Plugin.transformer_lens, "pretrained"): test_tl_pretrained_it_module_optim,
+    ("test", Plugin.transformer_lens, "cust"): test_tl_cust_it_module_base,
+    ("train", Plugin.transformer_lens, "cust"): test_tl_cust_it_module_optim,
 }
 
 
 MODULE_CONFIG_MAPPING = {
     # (model_key, plugin_key)
     ("rte", None): RTEBoolqConfig,
-    ("rte", "transformerlens"): RTEBoolqTLConfig
+    ("rte", Plugin.transformer_lens): RTEBoolqTLConfig
 }
 
 def get_model_input_dtype(precision):
@@ -239,7 +237,7 @@ def get_model_input_dtype(precision):
     return torch.float32
 
 def get_itdm_cfg(test_cfg: Tuple, dm_override_cfg: Optional[Dict] = None, **kwargs) -> ITConfig:
-    dm_base_cfg_key = test_cfg.plugin or test_cfg.model_src_key or "pretrained"
+    dm_base_cfg_key = test_cfg.plugin_ctx or test_cfg.model_src_key or "pretrained"
     shared_config, default_itdm_kwargs  = TEST_DATAMODULE_BASE_CONFIGS[dm_base_cfg_key]
     test_it_datamodule_cfg = deepcopy(default_itdm_kwargs)
     if dm_override_cfg:
@@ -247,7 +245,7 @@ def get_itdm_cfg(test_cfg: Tuple, dm_override_cfg: Optional[Dict] = None, **kwar
     return ITDataModuleConfig(**shared_config, **test_it_datamodule_cfg)
 
 def init_plugin_cfg(test_cfg: Tuple, test_it_module_cfg: Dict):
-    if test_cfg.plugin == "transformerlens":
+    if test_cfg.plugin_ctx == Plugin.transformer_lens:
         if test_cfg.model_src_key == "pretrained":
             test_it_module_cfg['tl_cfg'] = ITLensFromPretrainedConfig(**test_it_module_cfg['tl_cfg'])
         elif test_cfg.model_src_key == "cust":
@@ -255,11 +253,11 @@ def init_plugin_cfg(test_cfg: Tuple, test_it_module_cfg: Dict):
         else:
             raise ValueError(f"Unknown model_src_key: {test_cfg.model_src_key}")
     else:  # See NOTE [Interpretability Plugins]
-        raise ValueError(f"Unknown plugin type: {test_cfg.plugin}")
+        raise ValueError(f"Unknown plugin type: {test_cfg.plugin_ctx}")
 
 def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[StrOrPath] = None) -> ITConfig:
     test_cfg_override_attrs = ["memprofiler_cfg", "cust_fwd_kwargs", "tl_cfg", "model_cfg"]
-    target_test_it_module_cfg = TEST_MODULE_BASE_CONFIGS[(test_cfg.loop_type, test_cfg.plugin, test_cfg.model_src_key)]
+    target_test_it_module_cfg = TEST_MODULE_BASE_CONFIGS[(test_cfg.phase, test_cfg.plugin_ctx, test_cfg.model_src_key)]
     test_it_module_cfg = deepcopy(target_test_it_module_cfg)
     if test_cfg.act_ckpt:
         test_it_module_cfg['hf_from_pretrained_cfg'].activation_checkpointing = True
@@ -269,9 +267,9 @@ def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[StrOrPath] = None) -> ITC
     if core_log_dir:
         test_it_module_cfg.update({'core_log_dir': core_log_dir})
     test_it_module_cfg = configure_device_precision(test_it_module_cfg, test_cfg.device_type, test_cfg.precision)
-    if test_cfg.plugin:
+    if test_cfg.plugin_ctx:
         init_plugin_cfg(test_cfg, test_it_module_cfg)
-    config_class = MODULE_CONFIG_MAPPING[(test_cfg.model_key, test_cfg.plugin)]
+    config_class = MODULE_CONFIG_MAPPING[(test_cfg.model_key, test_cfg.plugin_ctx)]
     return config_class(**test_it_module_cfg)
 
 def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> Dict[str, Any]:
@@ -294,15 +292,15 @@ def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int
     return cfg
 
 def config_session(core_cfg, test_cfg, test_alias, expected, state_log_dir):
-    session_type = {'lightning': test_cfg.lightning, 'plugin': test_cfg.plugin}
+    session_ctx = {'framework_ctx': test_cfg.framework_ctx, 'plugin_ctx': test_cfg.plugin_ctx}
     dm_kwargs = {'dm_kwargs': {'force_prepare_data': test_cfg.force_prepare_data}}
     module_kwargs = {'module_kwargs': {'test_alias': test_alias, 'state_log_dir': state_log_dir, **expected}}
-    session_cfg = InterpretunableSessionConfig(**core_cfg, **session_type, **dm_kwargs, **module_kwargs)
+    session_cfg = ITSessionConfig(**core_cfg, **session_ctx, **dm_kwargs, **module_kwargs)
     return session_cfg
 
-def config_modules(test_cfg, test_alias, expected_results, tmp_path,
-                   state_log_mode: bool = False) -> Tuple[ITDataModule, BaseITModule]:
-    if test_cfg.lightning: # allow Lightning to set env vars
+def config_modules(test_cfg, test_alias, expected_results, tmp_path, state_log_mode: bool = False) \
+    -> ITSessionConfig:
+    if test_cfg.framework_ctx == Framework.lightning:  # allow Lightning to set env vars
         seed_everything(1, workers=True)
     cuda_reset()
     torch.set_printoptions(precision=12)
@@ -310,5 +308,23 @@ def config_modules(test_cfg, test_alias, expected_results, tmp_path,
     it_cfg = get_it_cfg(test_cfg=test_cfg, core_log_dir=tmp_path)
     core_cfg = {'datamodule_cfg': itdm_cfg, 'module_cfg': it_cfg, **CORE_SESSION_CFG}
     state_log_dir = tmp_path if state_log_mode else None
-    it_session = config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_dir)
-    return it_session.datamodule, it_session.module
+    it_session_cfg = config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_dir)
+    it_session = ITSession(it_session_cfg)
+    return it_session
+
+
+################################################################################
+# CUDA utils
+################################################################################
+
+def _clear_cuda_memory() -> None:
+    # strangely, the attribute function be undefined when torch.compile is used
+    if hasattr(torch._C, "_cuda_clearCublasWorkspaces"):
+        # https://github.com/pytorch/pytorch/issues/95668
+        torch._C._cuda_clearCublasWorkspaces()
+    torch.cuda.empty_cache()
+
+def cuda_reset():
+    if torch.cuda.is_available():
+        _clear_cuda_memory()
+        torch.cuda.reset_peak_memory_stats()

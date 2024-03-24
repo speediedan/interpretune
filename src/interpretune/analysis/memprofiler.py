@@ -10,11 +10,11 @@ import torch
 from psutil import Process
 
 from interpretune.utils.logging import rank_zero_warn, _get_rank, rank_zero_only, rank_zero_info
-from interpretune.base.config.shared import ITSerializableCfg, CoreSteps
+from interpretune.base.config.shared import ITSerializableCfg, CoreSteps, AutoStrEnum
 from interpretune.utils.import_utils import resolve_funcs
 
 
-class DefaultMemHooks(Enum):
+class DefaultMemHooks(AutoStrEnum):
     pre_forward = 'interpretune.analysis.memprofiler._hook_npp_pre_forward'
     post_forward = 'interpretune.analysis.memprofiler._hook_npp_post_forward'
     reset_state = 'interpretune.analysis.memprofiler._reset_memory_hooks_state'

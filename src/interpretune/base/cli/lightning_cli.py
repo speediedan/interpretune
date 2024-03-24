@@ -1,14 +1,34 @@
-from typing import Optional
+from typing import Optional, Any
 from typing_extensions import override
+from functools import reduce
 
 from lightning.pytorch.cli import LightningCLI, LightningArgumentParser, ArgsType
 import torch
+from jsonargparse import Namespace
 
 from interpretune.base.cli.core_cli import configure_cli, IT_LIGHTING_SHARED, ITSessionMixin
 from interpretune.base.datamodules import ITDataModule
+from interpretune.base.contract.protocol import InterpretunableType
 
 
-class ITCLI(ITSessionMixin, LightningCLI):
+class LightningCLIAdapter:
+    core_to_lightning_cli_map = {"data": "it_session.datamodule", "model": "it_session.module"}
+
+    def _it_session(self, config, key) -> Optional[InterpretunableType]:
+        try:
+            attr_val = reduce(getattr, key.split("."), config)
+        except AttributeError:
+            attr_val = None
+        return attr_val
+
+    def _get(self, config: Namespace, key: str, default: Optional[Any] = None) -> Any:
+        """Utility to get a config value which might be inside a subcommand."""
+        if target_key := self.core_to_lightning_cli_map.get(key, None):
+            return self._it_session(config.get(str(self.subcommand), config), target_key)
+        return config.get(str(self.subcommand), config).get(key, default)
+
+
+class ITCLI(LightningCLIAdapter, ITSessionMixin, LightningCLI):
     """Customize the :class:`~lightning.pytorch.cli.LightningCLI` to ensure the
     :class:`~pytorch_lighting.core.LightningDataModule` and :class:`~lightning.pytorch.core.module.LightningModule`
     use the same Hugging Face model, SuperGLUE task and custom logging tag."""

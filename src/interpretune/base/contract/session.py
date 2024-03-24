@@ -1,5 +1,5 @@
-from typing import Any, Dict, Optional, Tuple, Callable
-
+from typing import Any, Dict, Optional, Tuple, Callable, Mapping
+from enum import auto
 import importlib
 from dataclasses import dataclass, field
 
@@ -10,6 +10,7 @@ from interpretune.base.datamodules import ITLightningDataModule, ITDataModule
 from interpretune.plugins.transformer_lens import ITLensLightningModule, ITLensModule
 from interpretune.utils.warnings import unexpected_state_msg_suffix
 from interpretune.utils.logging import rank_zero_warn
+from interpretune.base.config.shared import AutoStrEnum
 from interpretune.base.contract.protocol import (DataModuleInitable, ModuleSteppable, NamedWrapper, ITModuleProtocol,
                                                  ITDataModuleProtocol)
 
@@ -17,13 +18,30 @@ from interpretune.base.contract.protocol import (DataModuleInitable, ModuleStepp
 # NOTE [Interpretability Plugins]:
 # `TransformerLens` is the first supported interpretability plugin but support for other plugins is expected
 
+class Framework(AutoStrEnum):
+    # CORE: The provided module and datamodule will be prepared for use with core PyTorch. The default
+    #       trainer, a custom trainer or no trainer all can be used in combination with any supported and specified
+    #       plugin.
+    core = auto()
+    # LIGHTNING: The provided module and datamodule will be prepared for use with the Lightning trainer and any
+    #            supported and specified plugin.
+    lightning = auto()
+
+
+class Plugin(AutoStrEnum):
+    # TRANSFORMER_LENS: The provided module and datamodule will be prepared for use with the TransformerLens plugin in
+    #                  in combination with any supported and specified framework.
+    transformer_lens = auto()
+
+
 INTERPRETUNABLE_MODULE_MAPPING = {
-    # (lightning, plugin_key)
-    (False, None): ITModule,
-    (True, None): ITLightningModule,
-    (False, "transformerlens"): ITLensModule,
-    (True, "transformerlens"): ITLensLightningModule,
+    # (framework_ctx, plugin_ctx)
+    (Framework.core, None): ITModule,
+    (Framework.lightning, None): ITLightningModule,
+    (Framework.core, Plugin.transformer_lens): ITLensModule,
+    (Framework.lightning, Plugin.transformer_lens): ITLensLightningModule,
 }
+
 
 class ITMeta(type):
     def __new__(mcs, name, bases, classdict, **kwargs):
@@ -51,12 +69,12 @@ class ITMeta(type):
 
     @staticmethod
     def _map_composition_target(component, ctx):
-        lightning = ctx.get('lightning', False)
-        plugin = ctx.get('plugin', None)
+        framework_ctx = ctx.get('framework_ctx', Framework.core)
+        plugin_ctx = ctx.get('plugin_ctx', None)
         if component in ('module', 'm'):
-            composition_class = INTERPRETUNABLE_MODULE_MAPPING[(lightning, plugin)]
+            composition_class = INTERPRETUNABLE_MODULE_MAPPING[(framework_ctx, plugin_ctx)]
         else:
-            composition_class = ITDataModule if not lightning else ITLightningDataModule
+            composition_class = ITLightningDataModule if framework_ctx == Framework.lightning else ITDataModule
         return composition_class
 
 
@@ -69,18 +87,24 @@ class UnencapsulatedArgs(ITSerializableCfg):
     module_args: Tuple = ()
     module_kwargs: Dict[str, Any] = field(default_factory=dict)
 
+
 @dataclass(kw_only=True)
-class InterpretunableSessionConfig(UnencapsulatedArgs):
+class ITSessionConfig(UnencapsulatedArgs):
     datamodule: Optional[ITDataModuleProtocol] = None
     module: Optional[ITModuleProtocol] = None
     datamodule_cfg: ITDataModuleConfig
     datamodule_cls: str | DataModuleInitable
     module_cfg: ITConfig
     module_cls: str | ModuleSteppable
-    lightning: bool = False
-    plugin: Optional[str] = None
+    framework_ctx: Framework | str = Framework.core
+    plugin_ctx: Optional[Plugin | str] = None
 
     def __post_init__(self):
+        if isinstance(self.framework_ctx, str):
+            self.framework_ctx = Framework[self.framework_ctx]
+        if isinstance(self.plugin_ctx, str):
+            self.plugin_ctx = Plugin[self.plugin_ctx]
+        # TODO: add checks validating supported framework and plugin combinations are provided
         # N.B. we must defer validating data/module_cls against their respective protocols until after composing
         # TODO: add warnings/errors here in case provided classes cannot be resolved or are invalid
         for attr_k in ["datamodule_cls", "module_cls"]:
@@ -88,45 +112,72 @@ class InterpretunableSessionConfig(UnencapsulatedArgs):
                 module, module_cls = getattr(self, attr_k).rsplit(".", 1)
                 mod = importlib.import_module(module)
                 setattr(self, attr_k, getattr(mod, module_cls, None))
+
+
+class ITSession(Mapping):
+
+    FRAMEWORK_ATTRS = {Framework.core: ('datamodule', 'module'), Framework.lightning: ('datamodule', 'model')}
+
+    def __init__(self, session_cfg: ITSessionConfig, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.datamodule = None
+        self.module = None
         # to improve usability, run a datamodule cross-validation hook to allow auto-reconfiguration prior to
         # session instantiation
-        self.datamodule_cfg._cross_validate(self.module_cfg)
-        self.compose_interpretunable()
+        session_cfg.datamodule_cfg._cross_validate(session_cfg.module_cfg)
+        self.compose_interpretunable(session_cfg)
+        self._ctx = self.FRAMEWORK_ATTRS[session_cfg.framework_ctx]
 
-    def _check_ready(self):
+
+    def __getitem__(self, key):
+        return self.to_dict()[key]
+
+    def __iter__(self):
+        return iter(self.to_dict())
+
+    def __len__(self):
+        return len(self.to_dict())
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {self._ctx[0]: self.datamodule, self._ctx[1]: self.module}
+
+    @staticmethod
+    def _check_ready(session_cfg: ITSessionConfig) -> None:
         ready_module_attrs = ["datamodule", "module"]
         composition_target_attrs = ["datamodule_cls", "module_cls"]
         ready_protocols = [ITDataModuleProtocol, ITModuleProtocol]
         for ready, tocompose, ready_type in zip(ready_module_attrs, composition_target_attrs, ready_protocols):
-            if ready_mod := getattr(self, ready):  # if a module is ready, ensure we don't try to transform it
+            if ready_mod := getattr(session_cfg, ready):  # if a module is ready, ensure we don't try to transform it
                 if not isinstance(ready_mod, ready_type):
-                    raise ValueError(f"{ready_mod} is not a {ready_type}, {ready_mod} should either be left unset (to "
-                                     f"enable auto-composition of {getattr(self, tocompose)}) or be a {ready_type}.")
-                setattr(self, tocompose, None)  # TODO: need to add tests for this functionality
+                    raise ValueError(f"{ready_mod} is not a {ready_type}, {ready_mod} should either be left unset (to"
+                                     f" enable auto-composition of {getattr(session_cfg, tocompose)}) or be a"
+                                     f" {ready_type}.")
+                setattr(session_cfg, tocompose, None)  # TODO: need to add tests for this functionality
 
-    def compose_interpretunable(self) -> None:
+    def compose_interpretunable(self, session_cfg: ITSessionConfig) -> None:
         # 1. We first check to see if the datamodule and module classes are already defined and adhere to the relevant
         #    protocol.
-        self._check_ready()
+        ITSession._check_ready(session_cfg)
         # 2. For the components (i.e. datamodule and module) that aren't ready, we compose the provided input component
         #    with the relevant classes based on the specified execution context.
-        build_ctx = {'lightning': self.lightning, 'plugin': self.plugin}
-        dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input=self.datamodule_cls, ctx=build_ctx)
-        m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=self.module_cls, ctx=build_ctx)
+        build_ctx = {'framework_ctx': session_cfg.framework_ctx, 'plugin_ctx': session_cfg.plugin_ctx}
+        dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input=session_cfg.datamodule_cls,
+                        ctx=build_ctx)
+        m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=session_cfg.module_cls, ctx=build_ctx)
         # 3. We instantiate our Interpretunably enriched components!
         if dm_cls:
-            self.datamodule = dm_cls(itdm_cfg=self.datamodule_cfg, *self.dm_args, **self.dm_kwargs)
-        self._set_dm_handles_for_instantiation()
+            self.datamodule = dm_cls(itdm_cfg=session_cfg.datamodule_cfg, *session_cfg.dm_args, **session_cfg.dm_kwargs)
+        self._set_dm_handles_for_instantiation(session_cfg)
         if m_cls:
-            self.module = m_cls(it_cfg=self.module_cfg, *self.module_args, **self.module_kwargs)
+            self.module = m_cls(it_cfg=session_cfg.module_cfg, *session_cfg.module_args, **session_cfg.module_kwargs)
         self._set_model_handles_for_instantiation()
-        self._validate_session(dm_cls, m_cls)
+        self._validate_session(dm_cls, m_cls, session_cfg)
 
-    def _set_dm_handles_for_instantiation(self):
+    def _set_dm_handles_for_instantiation(self, session_cfg: ITSessionConfig):
         # some datamodule handles may be required for module init, we update the module_cfg to provide them here
         supported_dm_handles_for_module = {"tokenizer": "tokenizer"}
         for m_attr, dm_handle in supported_dm_handles_for_module.items():
-            setattr(self.module_cfg, m_attr, getattr(self.datamodule, dm_handle))
+            setattr(session_cfg.module_cfg, m_attr, getattr(self.datamodule, dm_handle))
 
     def _set_model_handles_for_instantiation(self):
         # having access to a model handle may be useful in some pre-setup hook steps (e.g. signature inspection in
@@ -139,10 +190,10 @@ class InterpretunableSessionConfig(UnencapsulatedArgs):
         for dm_attr, m_handle in supported_module_handles_for_datamodule.items():
             setattr(self.datamodule, dm_attr, m_handle)
 
-    def _validate_session(self, dm_composed, m_composed):
+    def _validate_session(self, dm_composed, m_composed, session_cfg):
         if not isinstance(self.datamodule, ITDataModuleProtocol):
             rank_zero_warn(f"{self.datamodule} is not {ITDataModuleProtocol} even after composing"
-                           f"{self.datamodule_cls} with {dm_composed}. {unexpected_state_msg_suffix}")
+                           f"{session_cfg.datamodule_cls} with {dm_composed}. {unexpected_state_msg_suffix}")
         if not isinstance(self.module, ITModuleProtocol):
-            rank_zero_warn(f"{self.module} is not {ITModuleProtocol} even after composing {self.module_cls} with"
+            rank_zero_warn(f"{self.module} is not {ITModuleProtocol} even after composing {session_cfg.module_cls} with"
                            f"{m_composed}. {unexpected_state_msg_suffix}")
