@@ -6,6 +6,8 @@ from packaging.version import Version
 from pkg_resources import get_distribution
 
 from tests.utils.runif import EXTENDED_VER_PAT
+from interpretune.utils.warnings import dummy_method_warn_fingerprint
+
 
 HF_EXPECTED_WARNS = [
     "Please use torch.utils._pytree.register_pytree_node instead",  # temp  allow deprecated call from hf
@@ -18,7 +20,7 @@ EXPECTED_WARNS = [
 ]
 
 CORE_CTX_WARNS = HF_EXPECTED_WARNS + EXPECTED_WARNS + [
-    "For Lightning compatibility, this noop",  # expected in a core context with modules that use Lightning log methods
+    dummy_method_warn_fingerprint,  # expected in a core context with modules that use dummy log methods
 ]
 
 LIGHTING_CTX_WARNS = HF_EXPECTED_WARNS + EXPECTED_WARNS + [

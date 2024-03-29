@@ -1,4 +1,3 @@
-import warnings
 from typing import Any, Optional
 
 import torch
@@ -8,12 +7,11 @@ from interpretune.base.config.module import ITConfig
 from interpretune.base.hooks import BaseITHooks
 from interpretune.base.components.core import CoreComponents, CoreHelperAttributes
 from interpretune.base.components.mixins import CoreMixins
-from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.utils.data_movement import to_device
 
-# TODO: add core helper log/log_dict methods for core context usage
-for warnf in [".*For Lightning compatibility, this noop .*",]:
-    warnings.filterwarnings("once", warnf)
+# # TODO: add core helper log/log_dict methods for core context usage
+# for warnf in [".*For framework compatibility, this noop .*",]:
+#     warnings.filterwarnings("once", warnf)
 
 
 class BaseITModule(CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
@@ -24,15 +22,7 @@ class BaseITModule(CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
         *args,
         **kwargs
     ):
-        """In this example, this :class:`~lightning.pytorch.core.module.LightningModule` is initialized by composing
-        the ./config/fts_defaults.yaml default configuration with various scheduled fine-tuning yaml configurations
-        via the :class:`~lightning.pytorch.cli.LightningCLI` but it can be used like any other
-        :class:`~lightning.pytorch.core.module.LightningModule` as well.
-
-        Args:
-            it_cfg (ITConfig): Configuration for this
-                :class:`~lightning.pytorch.core.module.LightningModule`.
-        """
+        """"""
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__(*args, **kwargs)
         self.model: torch.nn.Module = None
@@ -78,30 +68,7 @@ class BaseITModule(CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
 
 
 class ITModule(CoreHelperAttributes, BaseITModule):
-    """A :class:`~lightning.pytorch.core.module.LightningModule` that can be used to fine-tune a foundation model
-    on either the RTE or BoolQ `SuperGLUE <https://super.gluebenchmark.com/>`_ tasks using Hugging Face
-    implementations of a given model and the `SuperGLUE Hugging Face dataset.
-
-    <https://huggingface.co/datasets/super_glue#data-instances>`_.
-    """
+    """"""
     def batch_to_device(self, batch) -> BatchEncoding:
         to_device(self.device, batch)
         return batch
-
-
-if _LIGHTNING_AVAILABLE:
-    from lightning.pytorch import LightningModule
-
-    class ITLightningModule(BaseITModule, LightningModule):
-        """A :class:`~lightning.pytorch.core.module.LightningModule` that can be used to fine-tune a foundation
-        model on either the RTE or BoolQ `SuperGLUE <https://super.gluebenchmark.com/>`_ tasks using Hugging Face
-        implementations of a given model and the `SuperGLUE Hugging Face dataset.
-
-        <https://huggingface.co/datasets/super_glue#data-instances>`_.
-        """
-        def on_train_start(self) -> None:
-            # ensure model is in training mode (e.g. needed for some edge cases w/ skipped sanity checking)
-            self.model.train()
-            return super().on_train_start()
-else:
-    ITLightningModule = object

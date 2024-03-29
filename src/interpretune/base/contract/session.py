@@ -5,8 +5,9 @@ from dataclasses import dataclass, field
 
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig, ITSerializableCfg
-from interpretune.base.modules import ITModule, ITLightningModule
-from interpretune.base.datamodules import ITLightningDataModule, ITDataModule
+from interpretune.base.modules import ITModule
+from interpretune.base.datamodules import ITDataModule
+from interpretune.frameworks.lightning import ITLightningDataModule, ITLightningModule
 from interpretune.plugins.transformer_lens import ITLensLightningModule, ITLensModule
 from interpretune.utils.warnings import unexpected_state_msg_suffix
 from interpretune.utils.logging import rank_zero_warn

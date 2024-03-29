@@ -10,7 +10,8 @@ from transformer_lens.utilities.devices import get_device_for_block_index
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.base.config.module import ITConfig,HFFromPretrainedConfig
-from interpretune.base.modules import BaseITModule, ITLightningModule
+from interpretune.base.modules import BaseITModule
+from interpretune.frameworks.lightning import ITLightningModule
 from interpretune.utils.data_movement import move_data_to_device
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE, _resolve_torch_dtype
 from interpretune.base.components.core import CoreHelperAttributes
@@ -166,11 +167,11 @@ class TLensGenerationConfig(CoreGenerationConfig):
     verbose: bool = True
 
 ################################################################################
-# Hooks and Mixins to support Transformer Lens in both Core/Lightning Contexts
+# Hooks and mixins to support Transformer Lens in different framework contexts
 ################################################################################
 
 class BaseITLensModuleHooks:
-    """" LightningModule hooks implemented by the BaseITLensModule (used by both core and Lightning TransformerLens
+    """"IT protocol hooks implemented by the BaseITLensModule (used by all framework TransformerLens adapter
     modules)"""
 
     # proper initialization of these variables should be done in the child class
@@ -185,9 +186,9 @@ class BaseITLensModuleHooks:
 class TLensAttributeMixin:
     @property
     def tl_cfg(self) -> Optional[HookedTransformerConfig]:
-        return self._core_or_lightning(c2l_map_key="_tl_cfg")
+        return self._core_or_framework(c2f_map_key="_tl_cfg")
 
-    # TODO: we aren't using IT's Property Composition feature for TLens with Lightning but might be worth enabling it
+    # TODO: we aren't using IT's Property Composition feature for TLens yet, but might be worth enabling it
     @property
     def device(self) -> Optional[torch.device]:
         try:
@@ -301,7 +302,7 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
 
 
 ################################################################################
-# Transformer Lens Core/Lightning Module Composition
+# Transformer Lens Module Composition
 ################################################################################
 
 class ITLensModule(TLensAttributeMixin, CoreHelperAttributes, BaseITLensModule):
@@ -310,6 +311,7 @@ class ITLensModule(TLensAttributeMixin, CoreHelperAttributes, BaseITLensModule):
         move_data_to_device(batch, self.input_device)
         return batch
 
+# TODO: dynamically generate this ITLensLightningModule class with session-based composition now that it's available
 if _LIGHTNING_AVAILABLE:
     class ITLensLightningModule(TLensAttributeMixin, BaseITLensModule, ITLightningModule):
         ...

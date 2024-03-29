@@ -9,9 +9,9 @@ from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
 
 
 class BaseITHooks:
-    """" LightningModule hooks implemented by BaseITModule."""
+    """" IT Protocol hooks implemented by BaseITModule."""
 
-    # if you override these in your LightningModule, ensure you cooperatively call super() if you want to retain
+    # if you override these in your module, ensure you cooperatively call super() if you want to retain
     # the relevant BaseITModule hook functionality
     # proper initialization of these variables should be done in the child class
     model: torch.nn.Module
@@ -22,13 +22,13 @@ class BaseITHooks:
     def setup(self, *args, **kwargs) -> None:
         # TODO: add super() calls to these methods once Interpretunable protocol is defined
         # super().setup(*args, **kwargs)
-        # if we're setting up a Lightning module, datamodule is not provided in setup and will be accessed via Trainer
+        # for some frameworks, datamodule access is not provided in setup and will be accessed via Trainer
         if datamodule := kwargs.get("datamodule", None):
             self._it_state._datamodule = datamodule
         self._init_dirs_and_hooks()
 
     def configure_optimizers(self) -> Optional[OptimizerLRScheduler]:
-        """Optional because it is not mandatory in the context of core IT modules (required for Lightning
+        """Optional because it is not mandatory in the context of core IT modules (required for some framework
         modules)."""
         # With FTS >= 2.0, ``FinetuningScheduler`` simplifies initial optimizer configuration by ensuring the optimizer
         # configured here will optimize the parameters (and only those parameters) scheduled to be optimized in phase 0
@@ -45,11 +45,9 @@ class BaseITHooks:
             }
         return [optimizer], [scheduler]
 
-    # N.B. we call `on_session_end` at the end of train, test and predict session types only. This is because Lightning
-    # calls both `on_train_end` and `on_validation_end` with most training sessions when running both a fit and
+    # N.B. we call `on_session_end` at the end of train, test and predict session types only. This is because
+    # `on_train_end` and `on_validation_end` are called with most training sessions (when running both a fit and
     # evaluation loop as is usually the case) but only `on_test_end` with the test stage.
-    # The `on_run_end` hook for Lightning is roughly analogous to Interpretune's `on_session_end` hook but is not
-    # a hook Lightning makes available to users.
     def on_train_end(self) -> Optional[Any]:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
         if not self.session_complete:

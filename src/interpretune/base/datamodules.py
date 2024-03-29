@@ -10,7 +10,7 @@ from datasets import Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerFast, PreTrainedTokenizerBase
 
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
-from interpretune.utils.import_utils import _import_class, _LIGHTNING_AVAILABLE
+from interpretune.utils.import_utils import _import_class
 from interpretune.base.config.datamodule import ITDataModuleConfig
 
 log = logging.getLogger(__name__)
@@ -31,8 +31,7 @@ class ITDataModule:
         *args,
         **kwargs
     ):
-        r"""Initialize the ``LightningDataModule`` designed for both the RTE or BoolQ SuperGLUE Hugging Face
-        datasets.
+        r"""
 
         Args:
             itdm_cfg (:class:`~ITDataModuleConfig`): Configuration for the datamodule.
@@ -111,7 +110,7 @@ class ITDataModule:
             self.itdm_cfg.signature_columns = list(signature.parameters.keys())
 
     # adapted from HF native trainer
-    # note for raw pytorch we require a target_model (vs getting it from the trainer in the lightning version)
+    # note for raw pytorch we require a target_model (vs getting it from the trainer)
     def _remove_unused_columns(self, dataset: "datasets.Dataset", target_model: Optional[torch.nn.Module] = None,
                                description: Optional[str] = None) -> Dataset:
             if not self.itdm_cfg.remove_unused_columns:
@@ -142,10 +141,3 @@ class ITDataModule:
 
     def on_predict_end(self) -> Optional[Any]:
         """Optionally execute some post-interpretune train session steps."""
-
-if _LIGHTNING_AVAILABLE:
-    from lightning.pytorch import LightningDataModule
-    class ITLightningDataModule(ITDataModule, LightningDataModule):
-        ...
-else:
-    ITLightningDataModule = object

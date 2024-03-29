@@ -6,12 +6,12 @@ import yaml
 import pytest
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-from interpretune.base.cli.core_cli import core_cli_main, compose_config
+from interpretune.base.components.cli import core_cli_main, compose_config
 from interpretune.base.contract.session import Framework, Plugin
 from tests.parity_acceptance.cli.cfg_aliases import cli_cfgs, CLI_EXP_MODEL, RUN_FN, TEST_CONFIGS_CLI
 
 if _LIGHTNING_AVAILABLE:
-    from interpretune.base.cli.lightning_cli import l_cli_main
+    from interpretune.base.components.cli import l_cli_main
 else:
     l_cli_main = None
 

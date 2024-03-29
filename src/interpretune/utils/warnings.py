@@ -30,3 +30,5 @@ Now setting `device_map` to `cpu` and continuing configuration...
 """
 
 unexpected_state_msg_suffix = "This Interpretune session may not work as intended."
+
+dummy_method_warn_fingerprint = "For framework compatibility, this noop"

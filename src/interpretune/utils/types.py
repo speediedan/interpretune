@@ -29,8 +29,8 @@ from jsonargparse import Namespace
 StrOrPath: TypeAlias = Union[str, PathLike]
 
 ################################################################################
-# Lightning Compatibility helper types
-# largely copied from https://bit.ly/lightning_types definitions
+# Framework Compatibility helper types
+# originally inspired by https://bit.ly/lightning_types definitions
 ################################################################################
 
 _DictKey = TypeVar("_DictKey")

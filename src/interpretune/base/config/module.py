@@ -1,5 +1,5 @@
 import os
-import warnings
+#import warnings
 from typing import Any, Dict, Optional, List
 from dataclasses import dataclass, field
 
@@ -12,10 +12,11 @@ from interpretune.analysis.memprofiler import MemProfilerCfg
 from interpretune.utils.logging import rank_zero_info
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.types import LRSchedulerConfig, Optimizable
+# from interpretune.utils.warnings import dummy_method_warn_fingerprint
 
-# TODO: add core helper log/log_dict methods for core context usage
-for warnf in [".*For Lightning compatibility, this noop .*",]:
-    warnings.filterwarnings("once", warnf)
+# # TODO: add core helper log/log_dict methods for core context usage
+# for warnf in [f".*{dummy_method_warn_fingerprint}.*",]:
+#     warnings.filterwarnings("once", warnf)
 
 
 ################################################################################

@@ -1,5 +1,6 @@
 import tempfile
 import os
+import warnings
 from datetime import datetime
 from typing import Any, Dict, List, Union, Tuple, Optional
 from functools import reduce, partial
@@ -19,21 +20,26 @@ from interpretune.analysis.memprofiler import MemProfiler
 from interpretune.utils.import_utils import _resolve_torch_dtype, _LIGHTNING_AVAILABLE
 from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, LRScheduler
 from interpretune.utils.logging import collect_env_info, rank_zero_debug
+from interpretune.utils.warnings import dummy_method_warn_fingerprint
+
+# TODO: add core helper log/log_dict methods for core context usage
+for warnf in [f".*{dummy_method_warn_fingerprint}.*",]:
+    warnings.filterwarnings("once", warnf)
 
 # simple barebones interface encapsulating the data preparation, data setup, model setup and optimizer/scheduler
 # configuration processes. Intended for maximal interactive experimental flexibility without any iterative assumptions.
 # Interpretune executes these hooks after your IT data and model modules are instantiated. The intention is to
 # convienently handle common LLM interpretability experimental setup to facilitate iterative exploratory analysis
-# with raw PyTorch in a way that is compatible with the Lightning framework. This allows the same code to be reused for
-# maximally flexible interactive experimentation and interleaved Lightning-based tuning, testing and
-# prediction/interpretation tasks.
+# with raw PyTorch in a way that is compatible with wide range of frameworks and research packages. This allows the same
+# code to be reused for maximally flexible interactive experimentation and interleaved framework-based tuning, testing
+# and prediction/interpretation tasks.
 
 if _LIGHTNING_AVAILABLE:
     from lightning.fabric.utilities.device_dtype_mixin import _DeviceDtypeModuleMixin
 else:
     _DeviceDtypeModuleMixin = object
 
-CORE_TO_LIGHTNING_ATTRS_MAP = {
+CORE_TO_FRAMEWORK_ATTRS_MAP = {
     "_it_lr_scheduler_configs": ("trainer.strategy.lr_scheduler_configs", None,
                                  "No lr_scheduler_configs have been set."),
     "_it_optimizers": ("trainer.optimizers", None, "No optimizers have been set yet."),
@@ -53,11 +59,12 @@ CORE_TO_LIGHTNING_ATTRS_MAP = {
 # Currently only used to augment the `device` property
 
 PROPERTY_COMPOSITION = {
-    "device": {"enabled": True, "target": _DeviceDtypeModuleMixin, "dispatch": _DeviceDtypeModuleMixin.device}
+    "device": {"enabled": _LIGHTNING_AVAILABLE, "target": _DeviceDtypeModuleMixin,
+               "dispatch": _DeviceDtypeModuleMixin.device}
 }
 
 def _dummy_notify(method: str, ret_callable: bool, rv: Any, *args, **kwargs) -> Optional[Any]:
-    rank_zero_warn(f"The `{method}` method is not defined for this module. For Lightning compatibility, this noop "
+    rank_zero_warn(f"The `{method}` method is not defined for this module. For framework compatibility, this noop "
                     "method will be used. This warning will only be issued once by default.")
     out = lambda *args, **kwargs: rv if ret_callable else rv
     return out
@@ -66,7 +73,7 @@ def _dummy_notify(method: str, ret_callable: bool, rv: Any, *args, **kwargs) -> 
 class ConfigAdapter:
     """" Methods for adapting the configuration and logging of BaseITModule."""
 
-    # if you override these in your LightningModule, ensure you cooperatively call super() if you want to retain
+    # if you override these in your module, ensure you cooperatively call super() if you want to retain
     # the relevant BaseITModule hook functionality
     # proper initialization of these variables should be done in the child class
     it_cfg: ITConfig
@@ -94,11 +101,11 @@ class ConfigAdapter:
         if self.cuda_allocator_history:
             self.memprofiler.init_cuda_snapshots_dir()
         # TODO: add save_hyperparameters/basic logging func for raw pytorch
-        # (override w/ lightning version where appropriate)
+        # (override w/ a framework-specific version where appropriate)
         #self.save_hyperparameters(self._it_state._init_hparams)
 
     def _create_experiment_dir(self) -> None:
-        # we only want to create the core experiment-specific dir for non-lightning modules
+        # we only want to create the core experiment-specific dir for frameworks that aren't adding their own
         if getattr(self._it_state, '_log_dir', None):
             self._it_state._log_dir = self._it_state._log_dir / self._it_state._init_hparams['experiment_id']
             self._it_state._log_dir.mkdir(exist_ok=True, parents=True)
@@ -152,22 +159,22 @@ class PropertyDispatcher:
             return non_dispatch_val
 
 
-    def _core_or_lightning(self, c2l_map_key: str):
-        c2l = CORE_TO_LIGHTNING_ATTRS_MAP[c2l_map_key]
+    def _core_or_framework(self, c2f_map_key: str):
+        c2f = CORE_TO_FRAMEWORK_ATTRS_MAP[c2f_map_key]
         try:
-            attr_val = getattr(self._it_state, c2l_map_key, None) or reduce(getattr, c2l[0].split("."), self)
+            attr_val = getattr(self._it_state, c2f_map_key, None) or reduce(getattr, c2f[0].split("."), self)
         except AttributeError as ae:
-            rank_zero_debug(f"{c2l[2]}: {ae}")
-            attr_val = c2l[1]
+            rank_zero_debug(f"{c2f[2]}: {ae}")
+            attr_val = c2f[1]
         return attr_val
 
     @property
     def core_log_dir(self) -> Optional[str | os.PathLike]:
-        return self._core_or_lightning(c2l_map_key="_log_dir")
+        return self._core_or_framework(c2f_map_key="_log_dir")
 
     @property
     def datamodule(self) -> Optional[ITDataModule]:
-        return self._core_or_lightning(c2l_map_key="_datamodule")
+        return self._core_or_framework(c2f_map_key="_datamodule")
 
     @property
     def session_complete(self) -> bool:
@@ -192,7 +199,7 @@ class PropertyDispatcher:
     def device(self) -> Optional[torch.device]:
         try:
             if self._it_state._device is not None:
-                # dispatch Lightning's property implementation if appropriate, otherwise use `self._it_state._device`
+                # dispatch a framework's property implementation if appropriate, otherwise use `self._it_state._device`
                 device = self._maybe_dispatch(self._it_state._device)
             else:
                 # check for `model.device`
@@ -252,15 +259,15 @@ class CoreHelperAttributes:
 
     @property
     def current_epoch(self) -> int:
-        return self._core_or_lightning(c2l_map_key="_current_epoch")
+        return self._core_or_framework(c2f_map_key="_current_epoch")
 
     @property
     def optimizers(self) -> Optional[str | os.PathLike]:
-        return self._core_or_lightning(c2l_map_key="_it_optimizers")
+        return self._core_or_framework(c2f_map_key="_it_optimizers")
 
     @property
     def lr_scheduler_configs(self) -> Optional[str | os.PathLike]:
-        return self._core_or_lightning(c2l_map_key="_it_lr_scheduler_configs")
+        return self._core_or_framework(c2f_map_key="_it_lr_scheduler_configs")
 
     @property
     def lr_schedulers(self) -> Union[None, List[LRScheduler], LRScheduler]:
@@ -269,7 +276,7 @@ class CoreHelperAttributes:
 
         Returns:
             A single scheduler, or a list of schedulers in case multiple ones are present, or ``None`` if no
-            schedulers were returned in :meth:`~lightning.pytorch.core.LightningModule.configure_optimizers`.
+            schedulers were returned.
         """
         if not self.lr_scheduler_configs:
             return None
@@ -280,17 +287,18 @@ class CoreHelperAttributes:
 
         return lr_schedulers
 
-    # N.B. Lightning does not support directly setting `current_epoch` and `global_step`, instead using
-    # `self.fit_loop.epoch_progress.current.completed` and `self.fit_loop.epoch_loop.global_step` respectively. Instead
-    # of mocking analagous loop attributes, when using this mixin (and not Lightning), we allow settting the values
-    # directly for convenience
+    # N.B. Some frameworks (e.g. Lightning) do not support directly setting `current_epoch` and `global_step`, instead
+    # using `self.fit_loop.epoch_progress.current.completed` and `self.fit_loop.epoch_loop.global_step` respectively.
+    # Instead of mocking analagous loop attributes, when using this mixin, we allow settting the values directly for
+    # convenience.
+
     @current_epoch.setter
     def current_epoch(self, value: int) -> None:
         self._it_state._current_epoch = value
 
     @property
     def global_step(self) -> int:
-        return self._core_or_lightning(c2l_map_key="_global_step")
+        return self._core_or_framework(c2f_map_key="_global_step")
 
     @global_step.setter
     def global_step(self, value: int) -> None:
@@ -337,8 +345,8 @@ class OptimizerScheduler:
     def _configure_optimizers(
         optim_conf: Union[Dict[str, Any], List, Optimizer, Tuple]
     ) -> Tuple[List, List]:
-        # for basic optimizer/scheduler init, supporting Lightning optimizer/scheduler formats, Note we do not subject
-        # configuration to Lightning validation constraints to increase flexibility in exploratory experimental mode.
+        # for basic optimizer/scheduler init, the proposed IT protocol uses the convenient Lightning optimizer/scheduler
+        # formats. Note we do not subject configuration to Lightning validation constraints to increase flexibility.
         optimizers, lr_schedulers = [], []
 
         # single output, single optimizer

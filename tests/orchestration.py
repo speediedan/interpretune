@@ -35,8 +35,8 @@ else:
 
 ########################################################################################################################
 # NOTE: [Parity Testing Approach]
-# - We use a single set of results but separate tests for core/lightning parity tests since Lightning is not a required
-#   dependency for Interpretune and we want to mark at the test-level for greater clarity and flexibility (we want to
+# - We use a single set of results but separate tests for framework parity tests since we want to minimize framework
+#   dependencies for Interpretune and we want to mark at the test-level for greater clarity and flexibility (we want to
 #   signal clearly when either diverges from the expected benchmark so aren't testing relative values only)
 # - The configuration space for parity tests is sampled rather than exhaustively testing all framework configuration
 #   combinations due to resource constraints
@@ -70,7 +70,7 @@ def run_it(it_session: ITSessionConfig, test_cfg: Tuple):
 
 
 ################################################################################
-# Lightning Train/Test Orchestration
+# Lightning Framework Train/Test Orchestration
 ################################################################################
 
 def run_lightning(it_session: ITSessionConfig, test_cfg: Tuple, tmp_path: Path) -> Trainer:

@@ -1,42 +1,29 @@
-# Copyright The Lightning AI team.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 import warnings
 import os
 import sys
 import numpy as np
 import random
 import logging
+import weakref
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Iterable, Tuple, Callable, Type
+from typing_extensions import override
+from functools import reduce
 
 import torch
 from transformers import logging as transformers_logging
+from jsonargparse import ActionConfigFile, ArgumentParser, Namespace
 
 from interpretune.base.config.shared import ITSharedConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import ITModule
+from interpretune.base.contract.protocol import InterpretunableType
 from interpretune.base.contract.session import ITSession, ITSessionConfig
 from interpretune.utils.basic_trainer import BasicTrainer, BasicTrainerCfg
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
-from interpretune.utils.import_utils import _DOTENV_AVAILABLE
+from interpretune.utils.import_utils import _DOTENV_AVAILABLE, _LIGHTNING_AVAILABLE
 from interpretune.utils.types import ArgsType
 
-from jsonargparse import (
-    ActionConfigFile,
-    ArgumentParser,
-    Namespace,
-)
 
 max_seed_value = np.iinfo(np.uint32).max
 min_seed_value = np.iinfo(np.uint32).min
@@ -47,22 +34,9 @@ IT_CONFIG_GLOBAL = os.environ.get("IT_CONFIG_GLOBAL", IT_CONFIG_BASE / "global")
 
 log = logging.getLogger(__name__)
 
+
 def _select_seed_randomly(min_seed_value: int = min_seed_value, max_seed_value: int = max_seed_value) -> int:
     return random.randint(min_seed_value, max_seed_value)
-
-
-def bootstrap_cli() -> Callable:
-    # TODO: consider adding an env var option to control CLI selection
-    if "--lightning_cli" in sys.argv[1:]:
-        lightning_cli = True
-        sys.argv.remove("--lightning_cli")
-    else:
-        lightning_cli = False
-    if lightning_cli:
-        from interpretune.base.cli.lightning_cli import l_cli_main as cli_main
-    else:
-        from interpretune.base.cli.core_cli import core_cli_main as cli_main  # type: ignore[no-redef]
-    return cli_main()
 
 
 class ITSessionMixin:
@@ -96,8 +70,7 @@ class ITSessionMixin:
 
 
 class ITCLI(ITSessionMixin):
-    """To maximize Lightning compability, the core ITCLI was originally adapted from
-    https://bit.ly/lightning_cli."""
+    """To maximize compability, the core ITCLI was originally adapted from https://bit.ly/lightning_cli."""
     def __init__(
         self,
         module_class: ITModule = None,
@@ -210,8 +183,8 @@ class ITCLI(ITSessionMixin):
         """Parses command line arguments and stores it in ``self.config``."""
         if args is not None and len(sys.argv) > 1:
             rank_zero_info(
-                "LightningCLI's args parameter is intended to run from within Python like if it were from the command "
-                "line. To prevent mistakes it is not recommended to provide both args and command line arguments, got: "
+                "The args parameter is intended to run from within Python as if it were the command-line. To prevent"
+                " mistakes it is not recommended to provide both args and command line arguments, got: "
                 f"sys.argv[1:]={sys.argv[1:]}, args={args}."
             )
         if isinstance(args, (dict, Namespace)):
@@ -310,3 +283,86 @@ def core_cli_main(args: ArgsType = None, run_command: Optional[str] = None) -> O
     )
     if not run_command:
         return cli
+
+
+##########################################################################
+# Framework CLI Adapters
+##########################################################################
+
+if _LIGHTNING_AVAILABLE:
+    from lightning.pytorch.cli import LightningCLI, LightningArgumentParser, ArgsType
+
+    class LightningCLIAdapter:
+        core_to_lightning_cli_map = {"data": "it_session.datamodule", "model": "it_session.module"}
+
+        def instantiate_classes(self) -> None:
+            super().instantiate_classes()
+            # create a convenient alias for the lightning model attribute that uses a standard `module` reference
+            self.module = weakref.proxy(self.model)
+
+        def _it_session_cfg(self, config, key) -> Optional[InterpretunableType]:
+            try:
+                attr_val = reduce(getattr, key.split("."), config)
+            except AttributeError:
+                attr_val = None
+            return attr_val
+
+        def _get(self, config: Namespace, key: str, default: Optional[Any] = None) -> Any:
+            """Utility to get a config value which might be inside a subcommand."""
+            if target_key := self.core_to_lightning_cli_map.get(key, None):
+                return self._it_session_cfg(config.get(str(self.subcommand), config), target_key)
+            return config.get(str(self.subcommand), config).get(key, default)
+
+
+    class LightningITCLI(LightningCLIAdapter, ITSessionMixin, LightningCLI):
+        """Customize the :class:`~lightning.pytorch.cli.LightningCLI` to ensure the
+        :class:`~pytorch_lighting.core.LightningDataModule` and :class:`~lightning.pytorch.core.module.LightningModule`
+        use the same Hugging Face model, SuperGLUE task and custom logging tag."""
+
+        @override
+        def add_core_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
+            """Adds arguments from the Lightning's Trainer to the parser."""
+            # We override LightningCLI's `add_core_arguments_to_parser` because model/data are handled by `it_session`
+            parser.add_lightning_class_args(self.trainer_class, "trainer")
+            trainer_defaults = {"trainer." + k: v for k, v in self.trainer_defaults.items() if k != "callbacks"}
+            parser.set_defaults(trainer_defaults)
+
+
+    def l_cli_main(args: ArgsType = None, run_command: Optional[str] = None) -> Optional[LightningITCLI]:
+        shared_config_dir = os.environ.get("IT_LIGHTNING_SHARED", IT_CONFIG_GLOBAL / "lightning" )  # defer resolution
+        shared_config_files = configure_cli(shared_config_dir)
+        # currently, share config files for each subcommand but leave separate for future customization
+        parser_kwargs = {"default_config_files": shared_config_files} if not run_command else \
+            {"fit": {"default_config_files": shared_config_files},
+            "test": {"default_config_files": shared_config_files},
+            "predict": {"default_config_files": shared_config_files},}
+        cli = LightningITCLI(
+            datamodule_class=ITDataModule,
+            # N.B. we can provide a regular PyTorch module as we're wrapping it as necessary
+            model_class=torch.nn.Module,
+            subclass_mode_model=True,
+            subclass_mode_data=True,
+            save_config_kwargs={"overwrite": True},
+            parser_kwargs=parser_kwargs,
+            args=args,
+            run=bool(run_command),
+        )
+        if not run_command:
+            return cli
+
+else:
+    l_cli_main = object
+
+def bootstrap_cli() -> Callable:
+    # TODO: consider adding an env var option to control CLI selection
+    # dispatch the relevant CLI, right now only `--lightning_cli` is supported beyond the default core CLI.
+    if "--lightning_cli" in sys.argv[1:]:
+        lightning_cli = True
+        sys.argv.remove("--lightning_cli")
+    else:
+        lightning_cli = False
+    if lightning_cli:
+        cli_main = l_cli_main
+    else:
+        cli_main = core_cli_main
+    return cli_main()

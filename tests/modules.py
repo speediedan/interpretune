@@ -297,7 +297,8 @@ class Transformer(torch.nn.Module):
 # All test modules inherit from BaseTestModule and can be used in the same way,
 # adjusting the desired methods and configuration to load a pretrained model
 # (e.g. HF `from_pretrained`) or custom model and using the desired plugins
-# (e.g. `transformer_lens`) while running on Lightning or native PyTorch.
+# (e.g. `transformer_lens`) while running on a supported famework
+# (initially Lightning) or native PyTorch.
 ################################################################################
 
 class BaseTestModule:
