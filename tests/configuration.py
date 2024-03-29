@@ -15,6 +15,7 @@ from typing import List, Optional, Tuple, Callable, Any, Union, Dict, NamedTuple
 from collections import defaultdict
 from copy import deepcopy
 import os
+from functools import reduce
 
 import pytest
 import torch
@@ -26,12 +27,12 @@ from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig, IT
 from interpretune.base.contract.session import ITSessionConfig, Framework, Plugin, ITSession
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.utils.types import StrOrPath
-from tests.base.cfg_aliases import (expected_first_fwd_ids, MemProfResult, core_pretrained_datamodule_kwargs,
-                                    core_cust_datamodule_kwargs, test_core_cust_it_module_base, core_cust_shared_config,
-                                    test_core_cust_it_module_optim, test_core_pretrained_it_module_base,
-                                    test_core_pretrained_it_module_optim, core_pretrained_shared_config,
-                                    test_dataset_state_core_pretrained, test_dataset_state_core_cust)
-from tests.plugins.transformer_lens.cfg_aliases import (
+from tests.parity_acceptance.base.cfg_aliases import (
+    expected_first_fwd_ids, MemProfResult, core_pretrained_datamodule_kwargs, core_cust_datamodule_kwargs,
+    test_core_cust_it_module_base, core_cust_shared_config, test_core_cust_it_module_optim,
+    test_core_pretrained_it_module_base, test_core_pretrained_it_module_optim, core_pretrained_shared_config,
+    test_dataset_state_core_pretrained, test_dataset_state_core_cust)
+from tests.parity_acceptance.plugins.transformer_lens.cfg_aliases import (
     test_tl_pretrained_it_module_base, test_tl_cust_it_module_base, test_tl_pretrained_it_module_optim,
     test_tl_cust_it_module_optim, test_tl_datamodule_kwargs, test_tl_shared_config, test_dataset_state_tl)
 from tests.utils.runif import RunIf, RUNIF_ALIASES
@@ -201,6 +202,17 @@ def collect_results(result_map: Dict[str, Tuple], test_alias: str):
 ########################################################################################################################
 # Configuration composition
 ########################################################################################################################
+
+# useful for manipulating segments of nested dictionaries (e.g. generating config file sets for CLI composition tests)
+def set_nested(chained_keys: List | str, orig_dict: Optional[Dict] = None):
+    orig_dict = {} if orig_dict is None else orig_dict
+    chained_keys = chained_keys if isinstance(chained_keys, list) else chained_keys.split(".")
+    reduce(lambda d, k: d.setdefault(k, {}), chained_keys, orig_dict)
+    return orig_dict
+
+def get_nested(target: Dict, chained_keys: List | str):
+    chained_keys = chained_keys if isinstance(chained_keys, list) else chained_keys.split(".")
+    return reduce(lambda d, k: d.get(k), chained_keys, target)
 
 TEST_DATAMODULE_BASE_CONFIGS = {
     "pretrained": (core_pretrained_shared_config, core_pretrained_datamodule_kwargs),

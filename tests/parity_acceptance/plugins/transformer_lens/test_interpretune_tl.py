@@ -20,9 +20,9 @@ from tests.utils.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_W
 from tests.configuration import TestCfg, collect_results, ParityCfg, pytest_param_factory, IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
 from interpretune.base.contract.session import Framework, Plugin
-from tests.plugins.transformer_lens.expected import tl_parity_results, tl_profiling_parity_results
-from tests.base.cfg_aliases import (w_lit, cuda,test_bs1_mem, test_bs1_mem_nosavedt, bs1_nowarm_hk_mem, bs1_warm_mem,
-                                    debug_hidden)
+from tests.parity_acceptance.plugins.transformer_lens.expected import tl_parity_results, tl_profiling_parity_results
+from tests.parity_acceptance.base.cfg_aliases import (w_lit, cuda,test_bs1_mem, test_bs1_mem_nosavedt,
+                                                      bs1_nowarm_hk_mem, bs1_warm_mem, debug_hidden)
 
 
 # TODO: add tl and tl_profiling bf16 tests if/when support vetted

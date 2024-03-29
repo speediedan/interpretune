@@ -20,7 +20,8 @@ from interpretune.utils.types import STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_only, get_filesystem
 from it_examples.experiments.rte_boolq.modules import RTEBoolqModuleMixin, RTEBoolqLMHeadSteps
 from it_examples.experiments.rte_boolq.datamodules import GPT2RTEBoolqDataModule
-from tests.base.cfg_aliases import TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS, SAMPLE_POSITION
+from tests.parity_acceptance.base.cfg_aliases import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS,
+                                                      SAMPLE_POSITION)
 
 
 ################################################################################

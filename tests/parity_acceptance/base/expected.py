@@ -1,5 +1,5 @@
 from tests.configuration import TestResult, def_results
-from tests.base.cfg_aliases import MemProfResult
+from tests.parity_acceptance.base.cfg_aliases import MemProfResult
 from functools import partial
 
 # TODO: using result dicts in this module for now but ultimately plan to save/construct TestResults from a yaml file

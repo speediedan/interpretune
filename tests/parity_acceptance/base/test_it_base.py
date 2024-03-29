@@ -9,7 +9,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# TODO: fill in this placeholder with actual core tests
 from typing import Optional, Callable, Dict
 from dataclasses import dataclass, field
 from functools import partial
@@ -19,10 +18,11 @@ import pytest
 from tests.utils.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WARNS
 from tests.orchestration import parity_test
 from interpretune.base.contract.session import Framework
-from tests.base.expected import basic_parity_results, profiling_parity_results
+from tests.parity_acceptance.base.expected import basic_parity_results, profiling_parity_results
 from tests.configuration import TestCfg, ParityCfg, pytest_param_factory, collect_results, IT_GLOBAL_STATE_LOG_MODE
-from tests.base.cfg_aliases import (w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l, debug_hidden,
-                                    test_bs1_mem_nosavedt, bs1_nowarm_mem, bs1_nowarm_hk_mem, bs1_warm_mem)
+from tests.parity_acceptance.base.cfg_aliases import (w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l,
+                                                      debug_hidden, test_bs1_mem_nosavedt, bs1_nowarm_mem,
+                                                      bs1_nowarm_hk_mem, bs1_warm_mem)
 
 
 @dataclass(kw_only=True)

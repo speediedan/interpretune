@@ -18,7 +18,6 @@ _TEST_ROOT = os.path.dirname(__file__)
 _PROJECT_ROOT = os.path.dirname(_TEST_ROOT)
 _TEMP_PATH = os.path.join(_PROJECT_ROOT, "test_temp")
 _PATH_DATASETS = os.path.join(_PROJECT_ROOT, "Datasets")
-_PATH_LEGACY = os.path.join(_PROJECT_ROOT, "legacy")
 
 # TODO: this setting `PYTHONPATH` may not be used by other evns like Conda for import packages
 if _PROJECT_ROOT not in os.getenv("PYTHONPATH", ""):

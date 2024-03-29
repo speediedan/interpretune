@@ -21,7 +21,7 @@ CORE_CTX_WARNS = HF_EXPECTED_WARNS + EXPECTED_WARNS + [
     "For Lightning compatibility, this noop",  # expected in a core context with modules that use Lightning log methods
 ]
 
-LIGHTING_CTX_WARNS = HF_EXPECTED_WARNS + [
+LIGHTING_CTX_WARNS = HF_EXPECTED_WARNS + EXPECTED_WARNS + [
     "does not have many workers",
     "GPU available but",
     "is smaller than the logging interval",

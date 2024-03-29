@@ -109,6 +109,7 @@ class BasicTrainer:
         super().__init__(*args, **kwargs)
         self.trainer_cfg = trainer_cfg if isinstance(trainer_cfg, BasicTrainerCfg) else BasicTrainerCfg(**trainer_cfg)
         self._current_phase = None
+        self.supported_commands = (None, "train", "test")
         self.it_init()
 
     @property

@@ -71,6 +71,8 @@ def preserve_global_rank_variable():
 @pytest.fixture(scope="function", autouse=True)
 def restore_env_variables():
     """Ensures that environment variables set during the test do not leak out."""
+    okay_session_scope_keys = {"IT_CONFIG_BASE", "IT_CORE_SHARED", "IT_LIGHTNING_SHARED", "WANDB_API_KEY",
+                               "LLAMA2_AUTH_KEY", "IDE_PROJECT_ROOTS"}
     env_backup = os.environ.copy()
     yield
     leaked_vars = os.environ.keys() - env_backup.keys()
@@ -102,6 +104,7 @@ def restore_env_variables():
         "OMP_NUM_THREADS",  # leaked by Lightning launchers,
         "TOKENIZERS_PARALLELISM",  # TODO: add a fixture that resets this currently leaked var
     }
+    allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)
     assert not leaked_vars, f"test is leaking environment variable(s): {set(leaked_vars)}"
 

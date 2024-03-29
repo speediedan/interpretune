@@ -18,7 +18,7 @@ from unittest import mock
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.utils.basic_trainer import BasicTrainer, BasicTrainerCfg
 from interpretune.base.contract.session import Framework, ITSessionConfig
-from tests.configuration import config_modules
+from configuration import config_modules
 
 
 if _LIGHTNING_AVAILABLE:
@@ -29,9 +29,9 @@ else:
     ModelCheckpoint = object
 
 
-################################################################################
+########################################################################################################################
 # Core Train/Test Orchestration
-################################################################################
+########################################################################################################################
 
 ########################################################################################################################
 # NOTE: [Parity Testing Approach]

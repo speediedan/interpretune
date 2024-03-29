@@ -59,6 +59,9 @@ class ITLensCustomConfig(ITLensSharedConfig):
     # tokenizer: Optional[PreTrainedTokenizerBase] = None
     def __post_init__(self) -> None:
         if not isinstance(self.cfg, HookedTransformerConfig):
+            # ensure the user provided a valid dtype (should be handled by HookedTransformerConfig ideally)
+            if self.cfg['dtype'] and not isinstance(self.cfg['dtype'], torch.device):
+                self.cfg['dtype'] = _resolve_torch_dtype(self.cfg['dtype'])
             self.cfg = HookedTransformerConfig.from_dict(self.cfg)
 
 @dataclass(kw_only=True)
