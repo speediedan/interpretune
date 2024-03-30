@@ -79,6 +79,6 @@ class ITState:
     _extensions: Dict[str, Any] = field(default_factory=dict)
     _session_complete: bool = False
     _init_hparams: Dict[str, Any] = field(default_factory=dict)
-    # note we leave initialization of the below to the relevant property dispatch functions
-    _current_epoch: Optional[int] = None
-    _global_step: Optional[int] = None
+    # TODO: should we leave initialization of the below to the relevant property dispatch functions?
+    _current_epoch: int = 0
+    _global_step: int = 0

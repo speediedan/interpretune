@@ -13,14 +13,13 @@ import torch
 from interpretune.base.config.module import ITConfig, ITState
 from interpretune.base.components.mixins import ITStateMixin
 from interpretune.base.datamodules import ITDataModule
-from interpretune.utils.logging import rank_zero_info, rank_zero_warn
-from interpretune.utils.exceptions import MisconfigurationException
-
 from interpretune.analysis.memprofiler import MemProfiler
-from interpretune.utils.import_utils import _resolve_torch_dtype, _LIGHTNING_AVAILABLE
+from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info, rank_zero_debug
+from interpretune.utils.exceptions import MisconfigurationException
+from interpretune.utils.import_utils import _resolve_torch_dtype
 from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, LRScheduler
-from interpretune.utils.logging import collect_env_info, rank_zero_debug
 from interpretune.utils.warnings import dummy_method_warn_fingerprint
+
 
 # TODO: add core helper log/log_dict methods for core context usage
 for warnf in [f".*{dummy_method_warn_fingerprint}.*",]:
@@ -33,35 +32,6 @@ for warnf in [f".*{dummy_method_warn_fingerprint}.*",]:
 # with raw PyTorch in a way that is compatible with wide range of frameworks and research packages. This allows the same
 # code to be reused for maximally flexible interactive experimentation and interleaved framework-based tuning, testing
 # and prediction/interpretation tasks.
-
-if _LIGHTNING_AVAILABLE:
-    from lightning.fabric.utilities.device_dtype_mixin import _DeviceDtypeModuleMixin
-else:
-    _DeviceDtypeModuleMixin = object
-
-CORE_TO_FRAMEWORK_ATTRS_MAP = {
-    "_it_lr_scheduler_configs": ("trainer.strategy.lr_scheduler_configs", None,
-                                 "No lr_scheduler_configs have been set."),
-    "_it_optimizers": ("trainer.optimizers", None, "No optimizers have been set yet."),
-    "_log_dir": ("trainer.model._trainer.log_dir", None, "No log_dir has been set yet."),
-    "_datamodule": ("trainer.datamodule", None, "Could not find datamodule reference (has it been attached yet?)"),
-    "_tl_cfg": ("model.cfg", None, ""),  # TODO: validate we can remove this and use it_cfg.tl_cfg only
-    "_current_epoch": ("trainer.current_epoch", 0, ""),
-    "_global_step": ("trainer.global_step", 0, ""),
-}
-
-# Below is an experimental feature that enables us to conditionally defer property definitions to other framework/plugin
-# definitions. The intention is to conditionally enhance functionality (e.g., add a setter method where one doesn't
-# exist in a given framework/plugin implementation) while still maximizing compatibility in deferring to the
-# framework/plugin property implementation in contexts where it would be supported.
-# This functionality can be disabled on a property basis by setting `enabled=False` at the cost of potentially reduced
-# compatbility because IT will not dispatch to the framework/plugin's implementation of the IT-enhanced property.
-# Currently only used to augment the `device` property
-
-PROPERTY_COMPOSITION = {
-    "device": {"enabled": _LIGHTNING_AVAILABLE, "target": _DeviceDtypeModuleMixin,
-               "dispatch": _DeviceDtypeModuleMixin.device}
-}
 
 def _dummy_notify(method: str, ret_callable: bool, rv: Any, *args, **kwargs) -> Optional[Any]:
     rank_zero_warn(f"The `{method}` method is not defined for this module. For framework compatibility, this noop "
@@ -137,11 +107,21 @@ class PropertyDispatcher:
 
     _it_state: ITState
 
+    CORE_TO_FRAMEWORK_ATTRS_MAP = {}
+
+    # Below is an experimental feature that enables us to conditionally defer property definitions to other
+    # framework/plugin definitions. The intention is to conditionally enhance functionality (e.g., add a setter method
+    # where one doesn't exist in a given framework/plugin implementation) while still maximizing compatibility in
+    # deferring to the framework/plugin property implementation in contexts where it would be supported. This
+    # functionality can be disabled on a property basis by setting `enabled=False` at the cost of potentially reduced
+    # compatbility because IT will not dispatch to the framework/plugin's implementation of the IT-enhanced property.
+    PROPERTY_COMPOSITION = {}
+
     """property dispatcher"""
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._cached_mro = inspect.getmro(type(self))
-        self._enabled_overrides = [p for p, cfg in PROPERTY_COMPOSITION.items() if cfg['enabled']
+        self._enabled_overrides = [p for p, cfg in self.PROPERTY_COMPOSITION.items() if cfg['enabled']
                                    and cfg['target'] in self._cached_mro]
 
     def _maybe_dispatch(self, non_dispatch_val: Optional[Any] = None) -> Optional[Any]:
@@ -154,13 +134,13 @@ class PropertyDispatcher:
             Optional[Any]: _description_
         """
         if (overridden_method := inspect.currentframe().f_back.f_code.co_name) in self._enabled_overrides:
-            return PROPERTY_COMPOSITION[overridden_method]['dispatch'].__get__(self._it_state)
+            return self.PROPERTY_COMPOSITION[overridden_method]['dispatch'].__get__(self._it_state)
         else:
             return non_dispatch_val
 
-
     def _core_or_framework(self, c2f_map_key: str):
-        c2f = CORE_TO_FRAMEWORK_ATTRS_MAP[c2f_map_key]
+        if not (c2f := self.CORE_TO_FRAMEWORK_ATTRS_MAP.get(c2f_map_key, None)):  # short-circuit w/o mapping dispatch
+            return getattr(self._it_state, c2f_map_key, None)
         try:
             attr_val = getattr(self._it_state, c2f_map_key, None) or reduce(getattr, c2f[0].split("."), self)
         except AttributeError as ae:

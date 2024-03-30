@@ -186,7 +186,12 @@ class BaseITLensModuleHooks:
 class TLensAttributeMixin:
     @property
     def tl_cfg(self) -> Optional[HookedTransformerConfig]:
-        return self._core_or_framework(c2f_map_key="_tl_cfg")
+        try:
+            cfg = reduce(getattr, "model.cfg".split("."), self)
+        except AttributeError as ae:
+            rank_zero_warn(f"Could not find a `HookedTransformerConfig` reference (has it been set yet?): {ae}")
+            cfg = None
+        return cfg
 
     # TODO: we aren't using IT's Property Composition feature for TLens yet, but might be worth enabling it
     @property

@@ -3,19 +3,42 @@ from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import BaseITModule
 
 
-# TODO: dynamically generate ITLightningDataModule and ITLightningModule classes (avoid the model train mode with
-# LightningModule) with session-based approach now that it's available (should be able to get rid of this module)
+# TODO: Dynamically generate ITLightningDataModule and ITLightningModule classes (avoid the model train mode with
+#       LightningModule) with session-based approach now that it's available (should be able to get rid of this module)
+#       In the future, session, should be able to directly inherit a FrameworkAdapter w/ some frameworks like Lightning
 if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import LightningDataModule, LightningModule
+    from lightning.fabric.utilities.device_dtype_mixin import _DeviceDtypeModuleMixin
 
-    class ITLightningDataModule(ITDataModule, LightningDataModule):
-        ...
+    class LightningAdapter:
+        CORE_TO_FRAMEWORK_ATTRS_MAP = {
+            "_it_lr_scheduler_configs": ("trainer.strategy.lr_scheduler_configs", None,
+                                        "No lr_scheduler_configs have been set."),
+            "_it_optimizers": ("trainer.optimizers", None, "No optimizers have been set yet."),
+            "_log_dir": ("trainer.model._trainer.log_dir", None, "No log_dir has been set yet."),
+            "_datamodule": ("trainer.datamodule", None,
+                            "Could not find datamodule reference (has it been attached yet?)"),
+            "_current_epoch": ("trainer.current_epoch", 0, ""),
+            "_global_step": ("trainer.global_step", 0, ""),
+        }
 
-    class ITLightningModule(BaseITModule, LightningModule):
+        PROPERTY_COMPOSITION = {
+            # property composition is by default only enabled for `device` if Lightning is available and only effective
+            # if Lightning actively being used.
+             "device": {"enabled": True, "target": _DeviceDtypeModuleMixin,
+                        "dispatch": _DeviceDtypeModuleMixin.device}
+                        }
+
         def on_train_start(self) -> None:
             # ensure model is in training mode (e.g. needed for some edge cases w/ skipped sanity checking)
             self.model.train()
             return super().on_train_start()
+
+    class ITLightningDataModule(ITDataModule, LightningDataModule):
+        ...
+
+    class ITLightningModule(LightningAdapter, BaseITModule, LightningModule):
+        ...
 
 else:
     ITLightningDataModule = object
