@@ -235,7 +235,7 @@ class Transformer(torch.nn.Module):
             outputs (torch.Tensor): [batch, pos + max_new_tokens], generated sequence of new tokens.
         """
         # To enable a broader range of testing contexts, use the configuration context of the parent_handle
-        # NEXT: update this method to use parent_handle if available for broader range of testing
+        # TODO: update this method to use parent_handle if available for broader range of testing
         out_logits = () if output_logits else None
 
         assert isinstance(tokens, torch.Tensor)

@@ -166,7 +166,7 @@ exclude = ['tests/.*']
 
 
 [tool.coverage.run]
-source = ["src/interpretune", "src/it_examples/experiments"]
+source = ["src/interpretune"]
 
 [tool.coverage.report]
 exclude_lines = [

@@ -204,8 +204,6 @@ class PropertyDispatcher:
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         if hook_name == "configure_optimizers":
             self._it_init_optimizers_and_schedulers(output)
-        elif hook_name == "on_train_epoch_start":
-            pass  # TODO: remove if decided that no need to connect output of this hook
         else:
             rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
@@ -292,16 +290,16 @@ class OptimizerScheduler:
     # proper initialization of these variables should be done in the child class
     _it_state: ITState
 
-    def _it_init_optimizers_and_schedulers(self, optim_conf: Union[Dict[str, Any], List, Optimizer, Tuple]) \
-        -> Tuple[List[Optimizer], List[LRSchedulerConfig]]:
+    def _it_init_optimizers_and_schedulers(self, optim_conf: Union[Dict[str, Any], List, Optimizer, Tuple]) -> None:
 
         if optim_conf is None:
             rank_zero_info(  # TODO: maybe set a debug level instead?
                 "`configure_optimizers` returned `None`, Interpretune will not configure an optimizer or scheduler.",
             )
-
-        optims, lrs = OptimizerScheduler._configure_optimizers(optim_conf)
-        lrs_configs = OptimizerScheduler._configure_schedulers_manual_opt(lrs)
+            optims, lrs_configs = [], []
+        else:
+            optims, lrs = OptimizerScheduler._configure_optimizers(optim_conf)
+            lrs_configs = OptimizerScheduler._configure_schedulers_manual_opt(lrs)
         self._it_state._it_optimizers, self._it_state._it_lr_scheduler_configs = optims, lrs_configs
 
     @staticmethod

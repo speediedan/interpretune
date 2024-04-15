@@ -1,6 +1,6 @@
 import os
 import inspect
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 from contextlib import contextmanager
 from functools import wraps
 
@@ -103,6 +103,7 @@ class ProfilerHooksMixin:
 class ZeroShotStepMixin:
 
     _gen_sig_keys: Optional[List] = None
+    GEN_PREPARES_INPUTS_SIGS: Tuple = ("_prepare_model_inputs",)
 
     @property
     def gen_sig_keys(self) -> List:
@@ -125,12 +126,27 @@ class ZeroShotStepMixin:
         # frameworks that don't support variadic kwargs).
         return {k: v for k, v in kwargs.items() if k in self.gen_sig_keys}
 
-    def it_generate(self, batch: BatchEncoding, **kwargs) -> Any:
+    # TODO: move this property to _it_state?
+    @property
+    def _should_inspect_inputs(self) -> bool:
+        # whether to filter inputs to include only those directly supported by the model's generate function
+        return self.it_cfg.zero_shot_cfg.input_inspection_enabled and not self._generate_prepares_inputs()
+
+    def _generate_prepares_inputs(self) -> bool:
+        # match sentinal methods indicating that a given model's generate function prepares inputs
+        return any(hasattr(self.model, prep_method) for prep_method in self.GEN_PREPARES_INPUTS_SIGS)
+
+    def it_generate(self, batch: BatchEncoding | torch.Tensor, **kwargs) -> Any:
         try:
-            if 'kwargs' in self.gen_sig_keys:
-                outputs = self.model.generate(**batch, **kwargs)
+            # variadic kwargs not supported by generate so inspect kwargs and use only those supported
+            if 'kwargs' not in self.gen_sig_keys:
+                kwargs = self.map_gen_kwargs(kwargs)
+            if isinstance(batch, torch.Tensor):
+                outputs = self.model.generate(batch, **kwargs)
             else:
-                outputs = self.model.generate(**self.map_gen_inputs(batch), **self.map_gen_kwargs(kwargs))
+                if self._should_inspect_inputs:
+                    batch = self.map_gen_inputs(batch)
+                outputs = self.model.generate(**batch, **kwargs)
         except AttributeError as ae:
             gen_dataset_info_msg = (
                 f"The following keys were found in the provided data batch: {os.sep} {list(batch.data)}). The current"

@@ -19,18 +19,18 @@ from tests.utils.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WAR
 from tests.orchestration import parity_test
 from interpretune.base.contract.session import Framework
 from tests.parity_acceptance.base.expected import basic_parity_results, profiling_parity_results
-from tests.configuration import TestCfg, ParityCfg, pytest_param_factory, collect_results, IT_GLOBAL_STATE_LOG_MODE
+from tests.configuration import BaseAugTest, BaseCfg, pytest_param_factory, collect_results, IT_GLOBAL_STATE_LOG_MODE
 from tests.parity_acceptance.base.cfg_aliases import (w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l,
                                                       debug_hidden, test_bs1_mem_nosavedt, bs1_nowarm_mem,
                                                       bs1_nowarm_hk_mem, bs1_warm_mem)
 
 
 @dataclass(kw_only=True)
-class CoreCfg(ParityCfg):
+class CoreCfg(BaseCfg):
     model_src_key: Optional[str] = "cust"
 
 @dataclass
-class ParityTest(TestCfg):
+class ParityTest(BaseAugTest):
     result_gen: Optional[Callable] = partial(collect_results, basic_parity_results)
 
 
@@ -63,11 +63,11 @@ def test_parity_basic(recwarn, tmp_path, test_alias, test_cfg):
 
 
 @dataclass(kw_only=True)
-class ProfParityCfg(ParityCfg):
+class ProfParityCfg(BaseCfg):
     model_src_key: Optional[str] = "pretrained"
 
 @dataclass
-class ProfilingTest(TestCfg):
+class ProfilingTest(BaseAugTest):
     result_gen: Optional[Callable] = partial(collect_results, profiling_parity_results)
     # See NOTE [Profiling and Standalone Marks]
     function_marks: Dict = field(default_factory=lambda: {'profiling': True})

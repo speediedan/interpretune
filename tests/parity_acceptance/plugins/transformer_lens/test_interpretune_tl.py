@@ -17,7 +17,7 @@ from functools import partial
 import pytest
 
 from tests.utils.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS
-from tests.configuration import TestCfg, collect_results, ParityCfg, pytest_param_factory, IT_GLOBAL_STATE_LOG_MODE
+from tests.configuration import BaseAugTest, collect_results, BaseCfg, pytest_param_factory, IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
 from interpretune.base.contract.session import Framework, Plugin
 from tests.parity_acceptance.plugins.transformer_lens.expected import tl_parity_results, tl_profiling_parity_results
@@ -29,12 +29,12 @@ from tests.parity_acceptance.base.cfg_aliases import (w_lit, cuda,test_bs1_mem, 
 # TODO: add tl activation checkpointing tests if/when support vetted
 
 @dataclass(kw_only=True)
-class TLParityCfg(ParityCfg):
+class TLParityCfg(BaseCfg):
     plugin_ctx: Optional[Plugin | str] = Plugin.transformer_lens
     model_src_key: Optional[str] = "cust"
 
 @dataclass
-class TLParityTest(TestCfg):
+class TLParityTest(BaseAugTest):
     result_gen: Optional[Callable] = partial(collect_results, tl_parity_results)
 
 
@@ -45,7 +45,7 @@ PARITY_TL_CONFIGS = (
     TLParityTest(alias="test_cuda_32_l", cfg=TLParityCfg(phase="test", **cuda, **w_lit), marks="cuda_l"),
     TLParityTest(alias="train_cpu_32", cfg=TLParityCfg()),
     TLParityTest(alias="train_cpu_32_l", cfg=TLParityCfg(**w_lit), marks="lightning"),
-    TLParityTest(alias="train_cpu_32_debug", cfg=ParityCfg(**debug_hidden), marks="optional"),
+    TLParityTest(alias="train_cpu_32_debug", cfg=TLParityCfg(**debug_hidden), marks="optional"),
     TLParityTest(alias="train_cuda_32", cfg=TLParityCfg(**cuda), marks="cuda"),
     TLParityTest(alias="train_cuda_32_l", cfg=TLParityCfg(**cuda, **w_lit), marks="cuda_l"),
 )
@@ -64,13 +64,13 @@ def test_parity_tl(recwarn, tmp_path, test_alias, test_cfg):
 
 
 @dataclass
-class ProfilingTest(TestCfg):
+class ProfilingTest(BaseAugTest):
     result_gen: Optional[Callable] = partial(collect_results, tl_profiling_parity_results)
     # See NOTE [Profiling and Standalone Marks]
     function_marks: Dict = field(default_factory=lambda: {'profiling': True})
 
 @dataclass(kw_only=True)
-class TLProfileCfg(ParityCfg):
+class TLProfileCfg(BaseCfg):
     plugin_ctx: Optional[Plugin | str] = Plugin.transformer_lens
     model_src_key: Optional[str] = "pretrained"
 

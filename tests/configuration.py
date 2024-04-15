@@ -25,6 +25,8 @@ from it_examples.experiments.rte_boolq.config import RTEBoolqConfig, RTEBoolqTLC
 from interpretune.base.config.module import ITConfig
 from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig, ITLensCustomConfig
 from interpretune.base.contract.session import ITSessionConfig, Framework, Plugin, ITSession
+from interpretune.analysis.memprofiler import MemProfilerCfg
+from interpretune.analysis.debug_generation import DebugLMConfig
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.utils.types import StrOrPath
 from tests.parity_acceptance.base.cfg_aliases import (
@@ -56,7 +58,7 @@ IT_GLOBAL_STATE_LOG_MODE = os.environ.get("IT_GLOBAL_STATE_LOG_MODE", "0") == "1
 ################################################################################
 
 @dataclass(kw_only=True)
-class TestCfg:
+class BaseAugTest:
     alias: str
     cfg: Optional[Tuple] = None
     marks: Optional[Dict] = None  # test instance-specific marks
@@ -88,7 +90,7 @@ class TestCfg:
         if function_marks:
             return RunIf(**function_marks)
 
-def pytest_param_factory(test_configs: List[TestCfg], unpack: bool = True) -> List:
+def pytest_param_factory(test_configs: List[BaseAugTest], unpack: bool = True) -> List:
     return [pytest.param(
             config.alias,
             *config.cfg if unpack else (config.cfg,),
@@ -99,7 +101,7 @@ def pytest_param_factory(test_configs: List[TestCfg], unpack: bool = True) -> Li
     ]
 
 @dataclass(kw_only=True)
-class ParityCfg:
+class BaseCfg:
     phase: str = "train"
     device_type: str = "cpu"
     model_key: str = "rte"  # "real-model"-based acceptance/parity testing/profiling
@@ -112,7 +114,8 @@ class ParityCfg:
     limit_val_batches: Optional[int] = 1
     limit_test_batches: Optional[int] = 1
     dm_override_cfg: Optional[Dict] = None
-    memprofiler_cfg: Optional[Dict] = None
+    memprofiler_cfg: Optional[MemProfilerCfg] = None
+    debug_lm_cfg: Optional[DebugLMConfig] = None
     model_cfg: Optional[Dict] = None
     tl_cfg: Optional[Dict] = None
     max_epochs: Optional[int] = 1
@@ -215,6 +218,8 @@ def get_nested(target: Dict, chained_keys: List | str):
     return reduce(lambda d, k: d.get(k), chained_keys, target)
 
 TEST_DATAMODULE_BASE_CONFIGS = {
+    # NEXT: add llama2 config aliases (in unit testing only for now), also prob switch base test config dataclass and
+    # configuration flow "pretrained" alias to be "gpt2" instead to enable multiple different pretrained model types
     "pretrained": (core_pretrained_shared_config, core_pretrained_datamodule_kwargs),
     "cust": (core_cust_shared_config, core_cust_datamodule_kwargs),
     Plugin.transformer_lens: (test_tl_shared_config, test_tl_datamodule_kwargs),
@@ -268,7 +273,7 @@ def init_plugin_cfg(test_cfg: Tuple, test_it_module_cfg: Dict):
         raise ValueError(f"Unknown plugin type: {test_cfg.plugin_ctx}")
 
 def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[StrOrPath] = None) -> ITConfig:
-    test_cfg_override_attrs = ["memprofiler_cfg", "cust_fwd_kwargs", "tl_cfg", "model_cfg"]
+    test_cfg_override_attrs = ["memprofiler_cfg", "debug_lm_cfg", "cust_fwd_kwargs", "tl_cfg", "model_cfg"]
     target_test_it_module_cfg = TEST_MODULE_BASE_CONFIGS[(test_cfg.phase, test_cfg.plugin_ctx, test_cfg.model_src_key)]
     test_it_module_cfg = deepcopy(target_test_it_module_cfg)
     if test_cfg.act_ckpt:
@@ -303,27 +308,33 @@ def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int
             cfg['tl_cfg'].update(dev_prec_override)
     return cfg
 
-def config_session(core_cfg, test_cfg, test_alias, expected, state_log_dir):
+def config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_dir, prewrapped_modules) \
+    -> ITSessionConfig:
     session_ctx = {'framework_ctx': test_cfg.framework_ctx, 'plugin_ctx': test_cfg.plugin_ctx}
     dm_kwargs = {'dm_kwargs': {'force_prepare_data': test_cfg.force_prepare_data}}
-    module_kwargs = {'module_kwargs': {'test_alias': test_alias, 'state_log_dir': state_log_dir, **expected}}
-    session_cfg = ITSessionConfig(**core_cfg, **session_ctx, **dm_kwargs, **module_kwargs)
+    module_kwargs = {'module_kwargs': {'test_alias': test_alias, 'state_log_dir': state_log_dir, **expected_results}}
+    session_cfg = ITSessionConfig(**core_cfg, **session_ctx, **dm_kwargs, **module_kwargs, **prewrapped_modules)
     return session_cfg
 
-def config_modules(test_cfg, test_alias, expected_results, tmp_path, state_log_mode: bool = False) \
-    -> ITSessionConfig:
-    if test_cfg.framework_ctx == Framework.lightning:  # allow Lightning to set env vars
-        seed_everything(1, workers=True)
-    cuda_reset()
-    torch.set_printoptions(precision=12)
+def gen_session_cfg(test_cfg, test_alias, expected_results, tmp_path, prewrapped_modules,
+                    state_log_mode: bool = False) -> ITSession:
     itdm_cfg = get_itdm_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
     it_cfg = get_it_cfg(test_cfg=test_cfg, core_log_dir=tmp_path)
     core_cfg = {'datamodule_cfg': itdm_cfg, 'module_cfg': it_cfg, **CORE_SESSION_CFG}
     state_log_dir = tmp_path if state_log_mode else None
-    it_session_cfg = config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_dir)
+    it_session_cfg = config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_dir, prewrapped_modules)
+    return it_session_cfg
+
+def config_modules(test_cfg, test_alias, expected_results, tmp_path,
+                   prewrapped_modules: Optional[Dict[str, Any]] = None, state_log_mode: bool = False) -> ITSession:
+    if test_cfg.framework_ctx == Framework.lightning:  # allow Lightning to set env vars
+        seed_everything(1, workers=True)
+    cuda_reset()
+    torch.set_printoptions(precision=12)
+    prewrapped = prewrapped_modules or {}
+    it_session_cfg = gen_session_cfg(test_cfg, test_alias, expected_results, tmp_path, prewrapped, state_log_mode)
     it_session = ITSession(it_session_cfg)
     return it_session
-
 
 ################################################################################
 # CUDA utils

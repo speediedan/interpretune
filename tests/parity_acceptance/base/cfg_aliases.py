@@ -76,7 +76,6 @@ core_cust_zero_shot_cfg = RTEBoolqZeroShotClassificationConfig(enabled=True,
 test_core_cust_it_module_kwargs = {"zero_shot_cfg": core_cust_zero_shot_cfg, "model_cfg": base_core_cust_config,
                                    **base_it_module_kwargs}
 
-
 enable_memprofiler_kwargs = {"enabled": True, "cuda_allocator_history": True}
 bs_override = {'train_batch_size': default_prof_bs, 'eval_batch_size': default_prof_bs}
 memprofiler_cfg = MemProfilerCfg(**enable_memprofiler_kwargs)

@@ -16,7 +16,7 @@ from tests.utils.warns import CORE_CTX_WARNS, LIGHTING_CTX_WARNS, TL_CTX_WARNS, 
 from interpretune.plugins.transformer_lens import ITLensModule
 from interpretune.base.contract.session import Framework, Plugin
 
-from tests.configuration import TestCfg
+from tests.configuration import BaseAugTest
 from tests.utils.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, TL_EXPECTED_WARNS
 
 if _LIGHTNING_AVAILABLE:
@@ -58,17 +58,17 @@ class CLICfg:
 
 
 TEST_CONFIGS_CLI = (
-    TestCfg(alias=CLI_TESTS.core_tl_test.value, cfg=CLICfg(compose_cfg=True, run="test", debug_mode=True,
+    BaseAugTest(alias=CLI_TESTS.core_tl_test.value, cfg=CLICfg(compose_cfg=True, run="test", debug_mode=True,
                                                            plugin_ctx=Plugin.transformer_lens)),
-    TestCfg(alias=CLI_TESTS.core_tl_norun.value, cfg=CLICfg(plugin_ctx=Plugin.transformer_lens),
+    BaseAugTest(alias=CLI_TESTS.core_tl_norun.value, cfg=CLICfg(plugin_ctx=Plugin.transformer_lens),
             expected={'class_type': ITLensModule}),
-    TestCfg(alias=CLI_TESTS.core_optim_train.value, cfg=CLICfg(compose_cfg=True, run="train", debug_mode=True)),
-    TestCfg(alias=CLI_TESTS.l_tl_test.value, cfg=CLICfg(framework_cli=Framework.lightning, run="test",
+    BaseAugTest(alias=CLI_TESTS.core_optim_train.value, cfg=CLICfg(compose_cfg=True, run="train", debug_mode=True)),
+    BaseAugTest(alias=CLI_TESTS.l_tl_test.value, cfg=CLICfg(framework_cli=Framework.lightning, run="test",
                                                         plugin_ctx=Plugin.transformer_lens), marks="lightning"),
-    TestCfg(alias=CLI_TESTS.l_tl_norun.value, cfg=CLICfg(framework_cli=Framework.lightning,
+    BaseAugTest(alias=CLI_TESTS.l_tl_norun.value, cfg=CLICfg(framework_cli=Framework.lightning,
                                                          plugin_ctx=Plugin.transformer_lens), #marks="l_optional",
                                                          expected={'class_type': ITLensLightningModule}),
-    TestCfg(alias=CLI_TESTS.l_optim_fit.value, cfg=CLICfg(compose_cfg=True, run="fit", debug_mode=True,
+    BaseAugTest(alias=CLI_TESTS.l_optim_fit.value, cfg=CLICfg(compose_cfg=True, run="fit", debug_mode=True,
                                                           framework_cli=Framework.lightning)),
 )
 

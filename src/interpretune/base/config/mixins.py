@@ -49,7 +49,9 @@ class HFGenerationConfig(BaseGenerationConfig):
 class ZeroShotClassificationConfig(ITSerializableCfg):
     enabled: bool = False
     lm_generation_cfg: BaseGenerationConfig = field(default_factory=lambda: HFGenerationConfig())
-
+    # for generate methods that don't also perform data preparation, filter out inputs that the model's generate
+    # function does not support
+    input_inspection_enabled: bool = True
 
 @dataclass(kw_only=True)
 class HFFromPretrainedConfig(ITSerializableCfg):

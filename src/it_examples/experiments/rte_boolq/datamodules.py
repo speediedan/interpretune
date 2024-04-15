@@ -10,6 +10,7 @@ from transformers.tokenization_utils_base import BatchEncoding
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_warn
+from interpretune.utils.tokenization import _sanitize_input_name
 
 log = logging.getLogger(__name__)
 
@@ -82,8 +83,7 @@ class GPT2RTEBoolqDataModule(RTEBoolqDataModule):
             example_batch['sequences'].append(sequence)
         features = self.tokenizer(example_batch["sequences"], padding="longest")
         features["labels"] = example_batch["label"]  # Rename label to labels, easier to pass to model forward
-        if (primary_input := self.tokenizer.model_input_names[0]) != "input_ids":
-            features[primary_input] = features["input_ids"]
+        features = _sanitize_input_name(self.tokenizer.model_input_names, features)
         return features
 
 
