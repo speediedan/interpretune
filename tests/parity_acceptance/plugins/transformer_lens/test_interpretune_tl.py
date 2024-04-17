@@ -39,7 +39,7 @@ class TLParityTest(BaseAugTest):
 
 
 PARITY_TL_CONFIGS = (
-    TLParityTest(alias="test_cpu_32", cfg=TLParityCfg(phase="test", model_src_key="pretrained")),
+    TLParityTest(alias="test_cpu_32", cfg=TLParityCfg(phase="test", model_src_key="gpt2")),
     TLParityTest(alias="test_cpu_32_l", cfg=TLParityCfg(phase="test", **w_lit,), marks="lightning"),
     TLParityTest(alias="test_cuda_32", cfg=TLParityCfg(phase="test", **cuda), marks="cuda"),
     TLParityTest(alias="test_cuda_32_l", cfg=TLParityCfg(phase="test", **cuda, **w_lit), marks="cuda_l"),
@@ -72,7 +72,7 @@ class ProfilingTest(BaseAugTest):
 @dataclass(kw_only=True)
 class TLProfileCfg(BaseCfg):
     plugin_ctx: Optional[Plugin | str] = Plugin.transformer_lens
-    model_src_key: Optional[str] = "pretrained"
+    model_src_key: Optional[str] = "gpt2"
 
 PARITY_TL_PROFILING_CONFIGS = (
     ProfilingTest(alias="test_cpu_32", cfg=TLProfileCfg(**test_bs1_mem_nosavedt), marks="optional"),

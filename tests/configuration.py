@@ -30,25 +30,32 @@ from interpretune.analysis.debug_generation import DebugLMConfig
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.utils.types import StrOrPath
 from tests.parity_acceptance.base.cfg_aliases import (
-    expected_first_fwd_ids, MemProfResult, core_pretrained_datamodule_kwargs, core_cust_datamodule_kwargs,
+    expected_first_fwd_ids, MemProfResult, core_gpt2_datamodule_kwargs, core_cust_datamodule_kwargs,
     test_core_cust_it_module_base, core_cust_shared_config, test_core_cust_it_module_optim,
-    test_core_pretrained_it_module_base, test_core_pretrained_it_module_optim, core_pretrained_shared_config,
-    test_dataset_state_core_pretrained, test_dataset_state_core_cust)
+    test_core_gpt2_it_module_base, test_core_gpt2_it_module_optim, core_gpt2_shared_config, core_llama2_shared_config,
+    core_llama2_datamodule_kwargs, test_dataset_state_core_gpt2, test_dataset_state_core_cust,
+    test_dataset_state_core_llama2, test_core_llama2_it_module_base, test_core_llama2_it_module_optim)
 from tests.parity_acceptance.plugins.transformer_lens.cfg_aliases import (
-    test_tl_pretrained_it_module_base, test_tl_cust_it_module_base, test_tl_pretrained_it_module_optim,
-    test_tl_cust_it_module_optim, test_tl_datamodule_kwargs, test_tl_shared_config, test_dataset_state_tl)
+    test_tl_gpt2_it_module_base, test_tl_cust_it_module_base, test_tl_gpt2_it_module_optim,
+    test_tl_cust_it_module_optim, test_tl_datamodule_kwargs, test_tl_gpt2_shared_config, test_dataset_state_tl)
 from tests.utils.runif import RunIf, RUNIF_ALIASES
-from tests.modules import TestITDataModule, TestITModule
+from tests.modules import TestITDataModule, TestITModule, Llama2TestITDataModule
 
 if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import seed_everything
 else:
     seed_everything = object
 
-# We use the same datamodule and module for all test contexts to ensure cross-framework/plugin compatibility
+# We use the same datamodule and module for all parity test contexts to ensure cross-framework/plugin compatibility
+# Default test modules
 TEST_IT_DATAMODULE = TestITDataModule
 TEST_IT_MODULE = TestITModule
 CORE_SESSION_CFG = {'datamodule_cls': TEST_IT_DATAMODULE, 'module_cls': TEST_IT_MODULE}
+DEFAULT_TEST_DATAMODULES = ('cust', 'gpt2')
+
+# N.B. Some unit tests may require slightly modified/subclassed test datamodules to accommodate testing of functionality
+# not compatible with the default GPT2-based test datamodule
+TEST_IT_DATAMODULE_MAPPING = {'llama2': Llama2TestITDataModule}
 
 IT_GLOBAL_STATE_LOG_MODE = os.environ.get("IT_GLOBAL_STATE_LOG_MODE", "0") == "1"
 
@@ -165,8 +172,10 @@ def def_results(device_type: str, precision: Union[int, str], dataset_type: str 
     match dataset_type:
         case "cust":
             test_dataset_state = test_dataset_state_core_cust
-        case "pretrained":
-            test_dataset_state = test_dataset_state_core_pretrained
+        case "gpt2":
+            test_dataset_state = test_dataset_state_core_gpt2
+        case "llama2":
+            test_dataset_state = test_dataset_state_core_llama2
         case "tl":
             test_dataset_state = test_dataset_state_tl
         case _:
@@ -218,21 +227,24 @@ def get_nested(target: Dict, chained_keys: List | str):
     return reduce(lambda d, k: d.get(k), chained_keys, target)
 
 TEST_DATAMODULE_BASE_CONFIGS = {
-    # NEXT: add llama2 config aliases (in unit testing only for now), also prob switch base test config dataclass and
-    # configuration flow "pretrained" alias to be "gpt2" instead to enable multiple different pretrained model types
-    "pretrained": (core_pretrained_shared_config, core_pretrained_datamodule_kwargs),
+    # TODO: make this dict a more robust registry if the number of tested models profilerates
+    # TODO: pull module/datamodule configs from model-keyed test config dict (fake lightweight registry)
+    "gpt2": (core_gpt2_shared_config, core_gpt2_datamodule_kwargs),
+    "llama2": (core_llama2_shared_config, core_llama2_datamodule_kwargs),
     "cust": (core_cust_shared_config, core_cust_datamodule_kwargs),
-    Plugin.transformer_lens: (test_tl_shared_config, test_tl_datamodule_kwargs),
+    Plugin.transformer_lens: (test_tl_gpt2_shared_config, test_tl_datamodule_kwargs),
 }
 
 TEST_MODULE_BASE_CONFIGS = {
     # (phase, plugin_ctx, model_src_key)
-    ("test", None, "pretrained"): test_core_pretrained_it_module_base,
-    ("train", None, "pretrained"): test_core_pretrained_it_module_optim,
+    ("test", None, "gpt2"): test_core_gpt2_it_module_base,
+    ("train", None, "gpt2"): test_core_gpt2_it_module_optim,
+    ("test", None, "llama2"): test_core_llama2_it_module_base,
+    ("train", None, "llama2"): test_core_llama2_it_module_optim,
     ("test", None, "cust"): test_core_cust_it_module_base,
     ("train", None, "cust"): test_core_cust_it_module_optim,
-    ("test", Plugin.transformer_lens, "pretrained"): test_tl_pretrained_it_module_base,
-    ("train", Plugin.transformer_lens, "pretrained"): test_tl_pretrained_it_module_optim,
+    ("test", Plugin.transformer_lens, "gpt2"): test_tl_gpt2_it_module_base,
+    ("train", Plugin.transformer_lens, "gpt2"): test_tl_gpt2_it_module_optim,
     ("test", Plugin.transformer_lens, "cust"): test_tl_cust_it_module_base,
     ("train", Plugin.transformer_lens, "cust"): test_tl_cust_it_module_optim,
 }
@@ -254,7 +266,7 @@ def get_model_input_dtype(precision):
     return torch.float32
 
 def get_itdm_cfg(test_cfg: Tuple, dm_override_cfg: Optional[Dict] = None, **kwargs) -> ITConfig:
-    dm_base_cfg_key = test_cfg.plugin_ctx or test_cfg.model_src_key or "pretrained"
+    dm_base_cfg_key = test_cfg.plugin_ctx or test_cfg.model_src_key or "gpt2"
     shared_config, default_itdm_kwargs  = TEST_DATAMODULE_BASE_CONFIGS[dm_base_cfg_key]
     test_it_datamodule_cfg = deepcopy(default_itdm_kwargs)
     if dm_override_cfg:
@@ -263,7 +275,7 @@ def get_itdm_cfg(test_cfg: Tuple, dm_override_cfg: Optional[Dict] = None, **kwar
 
 def init_plugin_cfg(test_cfg: Tuple, test_it_module_cfg: Dict):
     if test_cfg.plugin_ctx == Plugin.transformer_lens:
-        if test_cfg.model_src_key == "pretrained":
+        if test_cfg.model_src_key == "gpt2":
             test_it_module_cfg['tl_cfg'] = ITLensFromPretrainedConfig(**test_it_module_cfg['tl_cfg'])
         elif test_cfg.model_src_key == "cust":
             test_it_module_cfg['tl_cfg'] = ITLensCustomConfig(**test_it_module_cfg['tl_cfg'])
@@ -321,6 +333,8 @@ def gen_session_cfg(test_cfg, test_alias, expected_results, tmp_path, prewrapped
     itdm_cfg = get_itdm_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
     it_cfg = get_it_cfg(test_cfg=test_cfg, core_log_dir=tmp_path)
     core_cfg = {'datamodule_cfg': itdm_cfg, 'module_cfg': it_cfg, **CORE_SESSION_CFG}
+    if test_cfg.model_src_key not in DEFAULT_TEST_DATAMODULES:
+        core_cfg['datamodule_cls'] = TEST_IT_DATAMODULE_MAPPING[test_cfg.model_src_key]
     state_log_dir = tmp_path if state_log_mode else None
     it_session_cfg = config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_dir, prewrapped_modules)
     return it_session_cfg

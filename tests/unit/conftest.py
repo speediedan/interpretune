@@ -13,7 +13,14 @@ from tests.parity_acceptance.plugins.transformer_lens.test_interpretune_tl impor
 from interpretune.base.call import _call_itmodule_hook
 from tests.configuration import config_modules, get_it_cfg, get_itdm_cfg
 from tests.modules import TestITDataModule, TestITModule
-from tests.unit.cfg_aliases import TLDebugCfg
+from tests.unit.cfg_aliases import TLDebugCfg, LightningLlama2DebugCfg
+from interpretune.utils.import_utils import _DOTENV_AVAILABLE
+
+if _DOTENV_AVAILABLE:
+    from dotenv import load_dotenv
+else:
+    load_dotenv = lambda: None
+
 
 
 # NOTE [Datamodule/Module/Session Fixture Caching]:
@@ -37,10 +44,11 @@ class FixtureCfg:
 
 FIXTURE_CFGS = {
     "core_cust": FixtureCfg(),
-    "core_pretrained": FixtureCfg(test_cfg=ProfParityCfg),
+    "core_gpt2": FixtureCfg(test_cfg=ProfParityCfg),
+    "l_llama2_debug": FixtureCfg(test_cfg=LightningLlama2DebugCfg),
     "tl_cust": FixtureCfg(test_cfg=TLParityCfg, module_cls=ITLensModule),
-    "tl_pretrained": FixtureCfg(test_cfg=TLProfileCfg, module_cls=ITLensModule),
-    "tl_pretrained_debug": FixtureCfg(test_cfg=TLDebugCfg, module_cls=ITLensModule),
+    "tl_gpt2": FixtureCfg(test_cfg=TLProfileCfg, module_cls=ITLensModule),
+    "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg, module_cls=ITLensModule),
 }
 
 class FixturePhase(IntEnum):
@@ -118,6 +126,7 @@ def session_fixture_hook_exec(it_s, init_key: FixturePhase):
 def session_fixture_factory(config_key, init_key):
     @pytest.fixture(scope="class")
     def get_it_session(tmp_path_factory):
+        load_dotenv()  # load env vars from .env file # NEXT: make a diff fixture?, add standalone tests to gen_coverage
         test_sess_config = FIXTURE_CFGS[config_key].test_cfg
         it_s = config_modules(test_sess_config(), f"{config_key}_{init_key}_it_session_fixture", {},
                               tmp_path_factory.mktemp(f"{config_key}_{init_key}_it_session_fixture"), {}, False)
@@ -126,21 +135,21 @@ def session_fixture_factory(config_key, init_key):
     return get_it_session
 
 for module_key, init_key in product(FIXTURE_CFGS.keys(), ["setup", "configure_optimizers"]):
-    name = f"get_it_module_{module_key}_{init_key}"
+    name = f"get_it_module__{module_key}__{init_key}"
     globals()[name] = module_fixture_factory(module_key, init_key)
     # overwrite just the name/qual name attributes for pytest
     globals()[name].__name__ = name
     globals()[name].__qualname__ = name
 
 for datamodule_key, init_key in product(FIXTURE_CFGS.keys(), ["prepare_data", "setup"]):
-    name = f"get_it_datamodule_{datamodule_key}_{init_key}"
+    name = f"get_it_datamodule__{datamodule_key}__{init_key}"
     globals()[name] = datamodule_fixture_factory(datamodule_key)
     # overwrite just the name/qual name attributes for pytest
     globals()[name].__name__ = name
     globals()[name].__qualname__ = name
 
 for session_key, init_key in product(FIXTURE_CFGS.keys(), ["initonly", "setup", "configure_optimizers"]):
-    name = f"get_it_session_{session_key}_{init_key}"
+    name = f"get_it_session__{session_key}__{init_key}"
     globals()[name] = session_fixture_factory(session_key, init_key)
     # overwrite just the name/qual name attributes for pytest
     globals()[name].__name__ = name

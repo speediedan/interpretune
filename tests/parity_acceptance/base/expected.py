@@ -17,11 +17,11 @@ basic_parity_results = {
     TestResult(exact_results=def_results("cuda", "bf16", ds_cfg="train"), close_results=((0, 'loss', 13.402528),)),
     "train_cpu_bf16": TestResult(exact_results=def_results("cpu", "bf16", ds_cfg="train")),
     "test_cpu_32": TestResult(exact_results=def_results("cpu", 32, ds_cfg="test")),
-    "test_cuda_32": TestResult(exact_results=def_results("cuda", 32, dataset_type="pretrained", ds_cfg="test")),
+    "test_cuda_32": TestResult(exact_results=def_results("cuda", 32, dataset_type="gpt2", ds_cfg="test")),
     "test_cuda_bf16": TestResult(exact_results=def_results("cuda", "bf16", ds_cfg="test")),
 }
 
-cprof_results = partial(def_results, dataset_type="pretrained")
+cprof_results = partial(def_results, dataset_type="gpt2")
 
 profiling_parity_results = {
     "test_cpu_32":

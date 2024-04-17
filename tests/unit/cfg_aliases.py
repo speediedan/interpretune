@@ -1,20 +1,27 @@
 from typing import Optional
 from dataclasses import dataclass, field
+from functools import partial
 
 from tests.parity_acceptance.plugins.transformer_lens.test_interpretune_tl import TLParityCfg
 from tests.configuration import BaseCfg
 from interpretune.analysis.debug_generation import DebugLMConfig
+from tests.configuration import def_results
+from interpretune.base.contract.session import Framework
 
+
+llama2_results = partial(def_results, ds_cfg="no_sample")
 
 @dataclass(kw_only=True)
 class TLDebugCfg(TLParityCfg):
     debug_lm_cfg: Optional[DebugLMConfig] = field(default_factory=lambda: DebugLMConfig(enabled=True))
     phase: Optional[str] = "test"
-    model_src_key: Optional[str] = "pretrained"
+    model_src_key: Optional[str] = "gpt2"
 
 @dataclass(kw_only=True)
-class CoreLlama2DebugCfg(BaseCfg):
+class LightningLlama2DebugCfg(BaseCfg):
     debug_lm_cfg: Optional[DebugLMConfig] = field(default_factory=lambda: DebugLMConfig(enabled=True))
     phase: Optional[str] = "test"
     device_type: Optional[str] = "cuda"
-    model_src_key: Optional[str] = "pretrained"
+    model_src_key: Optional[str] = "llama2"
+    precision: Optional[str | int] = "bf16-true"
+    framework_ctx: Optional[Framework] = Framework.lightning

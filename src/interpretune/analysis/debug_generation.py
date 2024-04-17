@@ -60,9 +60,10 @@ class DebugGeneration:
 
         Usage:
         ```python
-        # one can use this method to probe non-chat fine-tuned LLAMA2 models (just the raw sequences, no SYS
+        # one can use this method to probe non-chat fine-tuned models (just the raw sequences, no SYS
         # or INST metadata)
-        self.debug_lm.debug_generate_batch(self.no_sys_inst_debug_sequences(), max_new_tokens=25)
+        self.debug_lm.debug_generate_batch(self.debug_lm.debug_sequences('My single custom sequence'),
+        gen_config_override={"max_new_tokens": 25})
         ```
         """
         sequences = sequences or self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
@@ -70,13 +71,42 @@ class DebugGeneration:
             sequences = [sequences]
         return [f"{ex.strip()}" for ex in sequences]
 
-    def _debug_generate(self, inputs: List|torch.Tensor, max_new_tokens_override: Optional[int] = None,
-                        gen_config_override: Optional[Dict] = None) -> Any:
+    # TODO: add check to validate compatible model to gracefully handle use with incompatible models
+    # debug helper function for models that use sys and inst metadata (e.g. llama2)
+    def sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:
+        """_summary_
+
+        Args:
+            sequences (Optional[List], optional): _description_. Defaults to None.
+
+        Returns:
+            List: _description_
+
+        Usage:
+
+        ```python
+        # when using a llama2 chat model, you'll want to have input tokenized with sys and inst metadata
+        # to do so with some reasonable default questions as a sanity check and in batch mode:
+        self.debug_lm.debug_generate_batch(self.sys_inst_debug_sequences())
+        # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
+        self.debug_lm.debug_generate_serial(self.sys_inst_debug_sequences())
+        # to override the defaults (both questions and current `max_new_tokens` config)
+        self.debug_lm.debug_generate_batch(self.sys_inst_debug_sequences([
+            'What is the color of a cloudless sky?', 'How many days are in a year?']),
+            gen_config_override={"max_new_tokens": 25})
+        ```
+        """
+        sequences = sequences or self.it_cfg.debug_lm_cfg.raw_debug_sequences
+        return [self.phandle.datamodule.tokenizer.bos_token + \
+            self.phandle.datamodule.itdm_cfg.prompt_cfg.SYS_PREFIX + \
+                f"{ex.strip()} {self.phandle.datamodule.itdm_cfg.prompt_cfg.E_INST}" \
+                for ex in sequences]
+
+    def _debug_generate(self, inputs: List|torch.Tensor, gen_config_override: Optional[Dict] = None) -> Any:
         """_summary_
 
         Args:
             inputs (_type_): _description_
-            max_new_tokens_override (Optional[int], optional): _description_. Defaults to None.
             gen_config_override (Optional[Dict], optional): _description_. Defaults to None.
 
         Usage:
@@ -85,14 +115,13 @@ class DebugGeneration:
         self.debug_lm.debug_generate_batch(['my sequence potentially with chat specific tags', 'another sequence'])
         # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
         self.debug_lm.debug_generate_serial(['my sequence potentially with chat specific tags', 'another sequence'])
-        # to override the defaults (both questions and current `max_new_tokens` config)
+        # to override the defaults (both questions and current generation config with a different `max_new_tokens`)
         self.debug_lm.debug_generate_batch(self.debug_lm.sys_inst_debug_sequences([
-            'What is the color of a cloudless sky?', 'How many days are in a year?']), max_new_tokens=25)
+            'What is the color of a cloudless sky?', 'How many days are in a year?']),
+            gen_config_override={"max_new_tokens": 25})
         ```
         """
         # note we're not using a context manager here, keeping our new override for subsequent debugging convenience
-        if max_new_tokens_override:
-            self.phandle.it_cfg.zero_shot_cfg.lm_generation_cfg.max_new_tokens = max_new_tokens_override
         gen_config_dict = self.phandle.it_cfg.zero_shot_cfg.lm_generation_cfg.__dict__
         if gen_config_override:
             gen_config_dict.update(gen_config_override)
@@ -176,7 +205,6 @@ class DebugGeneration:
         return self.phandle.datamodule.tokenizer.model_input_names
 
     def debug_generate_batch(self, sequences: List,
-                             max_new_tokens: Optional[int] = None,
                              gen_output_attr: Optional[str] = None,
                              gen_config_override: Optional[Dict] = None,
                              decode_cfg_override: Optional[Dict] = None) -> Tuple[List, List]:
@@ -184,13 +212,12 @@ class DebugGeneration:
         test_input_ids = _sanitize_input_name(self.model_input_names, test_input_ids)
         test_input_ids = self.phandle.datamodule.data_collator(test_input_ids)
         test_input_ids = test_input_ids.to(self.phandle.device)
-        outputs = self._debug_generate(test_input_ids[self.model_input_names[0]], max_new_tokens, gen_config_override)
+        outputs = self._debug_generate(test_input_ids[self.model_input_names[0]], gen_config_override)
         decode_target, decode_kwargs = self.sanitize_gen_output(outputs, gen_output_attr, decode_cfg_override)
         answers = self.phandle.datamodule.tokenizer.batch_decode(decode_target, **decode_kwargs)
         return answers, outputs
 
-    def debug_generate_serial(self, sequences: List, max_new_tokens: Optional[int] = None,
-                              gen_output_attr: Optional[str] = None,
+    def debug_generate_serial(self, sequences: List, gen_output_attr: Optional[str] = None,
                               gen_config_override: Optional[Dict] = None,
                               decode_cfg_override: Optional[Dict] = None) -> Tuple[List, List]:
         answers = []
@@ -199,7 +226,7 @@ class DebugGeneration:
             test_input_ids = self.phandle.datamodule.tokenizer.encode(seq)
             test_input_ids = torch.tensor(test_input_ids).to(self.phandle.device)
             test_input_ids = test_input_ids.unsqueeze(0)
-            output = self._debug_generate(test_input_ids, max_new_tokens, gen_config_override)
+            output = self._debug_generate(test_input_ids, gen_config_override)
             decode_target, decode_kwargs = self.sanitize_gen_output(output, gen_output_attr, decode_cfg_override)
             sequences = decode_target.unbind()
             decode_kwargs = deepcopy(self.DEFAULT_DECODE_KWARGS)
@@ -209,53 +236,3 @@ class DebugGeneration:
                 answers.append(self.phandle.datamodule.tokenizer.decode(seq, **decode_kwargs))
             full_outputs.append(output)
         return answers, full_outputs
-
-
-class LlamaDebugMixin:
-    # some Llama2-specific debug helper functions
-    def sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:
-        """_summary_
-
-        Args:
-            sequences (Optional[List], optional): _description_. Defaults to None.
-
-        Returns:
-            List: _description_
-
-        Usage:
-
-        ```python
-        # when using a llama2 chat model, you'll want to have input tokenized with sys and inst metadata
-        # to do so with some reasonable default questions as a sanity check and in batch mode:
-        self.debug_lm.debug_generate_batch(self.sys_inst_debug_sequences())
-        # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
-        self.debug_lm.debug_generate_serial(self.sys_inst_debug_sequences())
-        # to override the defaults (both questions and current `max_new_tokens` config)
-        self.debug_lm.debug_generate_batch(self.sys_inst_debug_sequences([
-            'What is the color of a cloudless sky?', 'How many days are in a year?']), max_new_tokens=25)
-        ```
-        """
-        sequences = sequences or self.it_cfg.debug_lm_cfg.raw_debug_sequences
-        return [self.datamodule.tokenizer.bos_token + \
-            self.datamodule.itdm_cfg.prompt_cfg.SYS_PREFIX + \
-                f"{ex.strip()} {self.datamodule.itdm_cfg.prompt_cfg.E_INST}" \
-                for ex in sequences]
-
-    def no_sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:
-        """_summary_
-
-        Args:
-            sequences (Optional[List], optional): _description_. Defaults to None.
-
-        Returns:
-            List: _description_
-
-        Usage:
-        ```python
-        # one can use this method to probe non-chat fine-tuned LLAMA2 models (just the raw sequences, no SYS
-        # or INST metadata)
-        self.debug_lm.debug_generate_batch(self.no_sys_inst_debug_sequences(), max_new_tokens=25)
-        ```
-        """
-        sequences = sequences or self.it_cfg.debug_lm_cfg.raw_debug_sequences
-        return [f"{ex.strip()}" for ex in sequences]

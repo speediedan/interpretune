@@ -23,8 +23,8 @@ from tests.utils.warns import unmatched_warns
 
 class TestClassCoreModule:
 
-    def test_lr_scheduler_confs(self, get_it_module_core_cust_setup):
-        core_cust_it_m = get_it_module_core_cust_setup
+    def test_lr_scheduler_confs(self, get_it_module__core_cust__setup):
+        core_cust_it_m = get_it_module__core_cust__setup
         _call_itmodule_hook(core_cust_it_m, hook_name="configure_optimizers",
                             hook_msg="initializing optimizers and schedulers",
                             connect_output=True)
@@ -36,7 +36,7 @@ class TestClassCoreModule:
         core_cust_it_m._it_state._it_lr_scheduler_configs = None
         assert core_cust_it_m.lr_schedulers is None
 
-    def test_optim_conf(self, get_it_module_core_cust_setup):
+    def test_optim_conf(self, get_it_module__core_cust__setup):
         def mock_optim_confs(base_optim, base_lr_scheduler):
             """Optional because it is not mandatory in the context of core IT modules (required for some framework
             modules)."""
@@ -48,7 +48,7 @@ class TestClassCoreModule:
             unsupported_cfg = {base_optim[0], base_optim[0]}  # test warning assuming set remains unsupported
             return tuple_lists, single_optim, single_dict, multi_dict, single_tuple, unsupported_cfg
 
-        core_cust_it_m = get_it_module_core_cust_setup
+        core_cust_it_m = get_it_module__core_cust__setup
         base_config = _call_itmodule_hook(core_cust_it_m, hook_name="configure_optimizers", hook_msg="optim conf test")
         *optim_confs, unsupp = mock_optim_confs(base_config[0], base_config[1])
         for optim_conf in optim_confs:
@@ -57,8 +57,8 @@ class TestClassCoreModule:
             core_cust_it_m._it_init_optimizers_and_schedulers(unsupp)
         core_cust_it_m._it_init_optimizers_and_schedulers(None)  # validate graceful handling with empty config
 
-    def test_property_dispatch_exceptions(self, recwarn, get_it_module_core_cust_setup):
-        core_cust_it_m = get_it_module_core_cust_setup
+    def test_property_dispatch_exceptions(self, recwarn, get_it_module__core_cust__setup):
+        core_cust_it_m = get_it_module__core_cust__setup
         EXPECTED_PROP_WARNS = ("Could not find a device reference",)
         core_cust_it_m.CORE_TO_FRAMEWORK_ATTRS_MAP["_current_epoch"] = ("foo.attr", 42, "FooAttr not set yet.")
         assert core_cust_it_m.current_epoch == 42  # validate unset c2f property mapping handling
@@ -78,8 +78,8 @@ class TestClassCoreModule:
         with pytest.raises(MisconfigurationException, match="CoreHelperAttributes requires an ITConfig"):
             _ = CoreHelperAttributes()
 
-    def test_config_adapter(self, get_it_session_tl_cust_initonly):
-        it_session = get_it_session_tl_cust_initonly
+    def test_config_adapter(self, get_it_session__tl_cust__initonly):
+        it_session = get_it_session__tl_cust__initonly
         curr_mod = it_session.module
         curr_config = curr_mod.it_cfg.tl_cfg.cfg
         curr_config = curr_mod._make_config_serializable(curr_config, 'dtype')

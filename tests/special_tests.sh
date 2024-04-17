@@ -115,7 +115,7 @@ echo "IT special tests beginning execution at ${d} PT" > $special_test_session_l
 
 case ${mark_type} in
   profile)
-    echo "Collecting and running all profile tests..." >> $special_test_session_log
+    echo "Collecting and running profile tests..." >> $special_test_session_log
     export IT_RUN_PROFILING_TESTS=2
     ;;
   profile_ci)
@@ -123,7 +123,7 @@ case ${mark_type} in
     export IT_RUN_PROFILING_TESTS=1
     ;;
   standalone)
-    echo "Collecting and running all standalone tests..." >> $special_test_session_log
+    echo "Collecting and running standalone tests..." >> $special_test_session_log
     export IT_RUN_STANDALONE_TESTS=1
     ;;
   *)

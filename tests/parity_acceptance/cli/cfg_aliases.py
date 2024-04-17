@@ -7,7 +7,7 @@ from interpretune.base.config.shared import AutoStrEnum
 from tests.configuration import get_nested, set_nested
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from tests.parity_acceptance.plugins.transformer_lens.cfg_aliases import (test_tl_datamodule_kwargs,
-                                                                          test_tl_shared_config,
+                                                                          test_tl_gpt2_shared_config,
                                                                           test_tl_cust_config_it_module_kwargs)
 from tests.parity_acceptance.base.cfg_aliases import (test_optimizer_init, test_lr_scheduler_init,
                                                       core_cust_shared_config, test_core_cust_it_module_kwargs,
@@ -153,7 +153,7 @@ test_tl_datamodule_kwargs["prompt_cfg"] = {"class_path":
 
 cli_cfgs["global_tl"] = {}
 cli_cfgs["global_tl"]["session_cfg"] = {
-    "plugin_ctx": "transformer_lens", "datamodule_cfg": {"init_args": {**test_tl_shared_config,
+    "plugin_ctx": "transformer_lens", "datamodule_cfg": {"init_args": {**test_tl_gpt2_shared_config,
                                                                        **test_tl_datamodule_kwargs}},
 }
 

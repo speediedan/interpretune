@@ -136,7 +136,9 @@ def tmpdir_server(tmpdir):
 # - To run all profiling tests, set `IT_RUN_PROFILING_TESTS` to `2`
 
 def pytest_collection_modifyitems(items):
-    # select special tests
+    # select special tests, all special tests run standalone
+    # non-specific standalone tests and profiling_ci tests run in CI by default
+    # all other special tests do not run in CI unless explicitly selected
     if os.getenv("IT_RUN_STANDALONE_TESTS", "0") == "1":
         items[:] = [
             item

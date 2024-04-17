@@ -95,7 +95,7 @@ class ITDataModule:
             tokenizer = AutoTokenizer.from_pretrained(
                 self.itdm_cfg.model_name_or_path, token=access_token, **self.itdm_cfg.tokenizer_kwargs
             )
-        # TODO: reconsider whether adding of special tokens be excluded for the local fast tokenizer path
+        # TODO: reconsider whether adding of special tokens should be excluded for the local fast tokenizer path
         _ = tokenizer.add_special_tokens(self.itdm_cfg.special_tokens_dict)
         if self.itdm_cfg.tokenizer_id_overrides:
             for k, v in self.itdm_cfg.tokenizer_id_overrides.items():

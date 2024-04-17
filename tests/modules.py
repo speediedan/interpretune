@@ -19,7 +19,7 @@ from interpretune.base.config.module import ITConfig
 from interpretune.utils.types import STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_only, get_filesystem
 from it_examples.experiments.rte_boolq.modules import RTEBoolqModuleMixin, RTEBoolqLMHeadSteps
-from it_examples.experiments.rte_boolq.datamodules import GPT2RTEBoolqDataModule
+from it_examples.experiments.rte_boolq.datamodules import GPT2RTEBoolqDataModule, Llama2RTEBoolqDataModule
 from tests.parity_acceptance.base.cfg_aliases import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS,
                                                       SAMPLE_POSITION)
 
@@ -28,7 +28,7 @@ from tests.parity_acceptance.base.cfg_aliases import (TEST_TASK_NUM_LABELS, TEST
 # Test DataModules
 ################################################################################
 
-class TestITDataModule(GPT2RTEBoolqDataModule):
+class BaseTestDataModule:
 
     def __init__(self, itdm_cfg: ITDataModuleConfig, force_prepare_data: bool = False) -> None:
         with mock.patch.multiple('it_examples.experiments.rte_boolq.datamodules', TASK_NUM_LABELS=TEST_TASK_NUM_LABELS,
@@ -76,6 +76,19 @@ class TestITDataModule(GPT2RTEBoolqDataModule):
                 dataset[split] = self._remove_unused_columns(dataset[split])
             dataset.save_to_disk(dataset_path)
 
+class TestITDataModule(BaseTestDataModule, GPT2RTEBoolqDataModule):
+    ...
+
+class Llama2TestITDataModule(BaseTestDataModule, Llama2RTEBoolqDataModule):
+    def sample_dataset_state(self) -> Tuple:
+        # dataset validation not currently implemented for Llama2 tests
+        sample_state = []
+        return (self.itdm_cfg.task_name, self.tokenizer.__class__.__name__, sample_state)
+
+    def sample_step_input(self, batch: BatchEncoding) -> Tuple:
+        # dataset validation not currently implemented for Llama2 tests
+        sample_state = []
+        return sample_state
 
 class SampledOutput(NamedTuple):
     """Sampled Output Named Tuple.

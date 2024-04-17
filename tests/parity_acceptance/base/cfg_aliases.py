@@ -2,7 +2,8 @@ from typing import NamedTuple
 from collections import ChainMap
 from dataclasses import dataclass
 
-from it_examples.experiments.rte_boolq.config import RTEBoolqPromptConfig, RTEBoolqZeroShotClassificationConfig
+from it_examples.experiments.rte_boolq.config import (RTEBoolqPromptConfig, Llama2PromptConfig,
+                                                      RTEBoolqZeroShotClassificationConfig)
 from interpretune.base.config.mixins import CoreGenerationConfig, HFGenerationConfig
 from interpretune.base.config.module import HFFromPretrainedConfig
 from interpretune.base.contract.session import Framework
@@ -13,42 +14,51 @@ class ToyGenCfg(CoreGenerationConfig):
     output_logits: bool = True
     verbose: bool = True
 
+# TODO: add model-specific mapping and mapping functions here to dedup some of the shared explicit mapping logic here
+
 default_test_bs = 2
 default_prof_bs = 1
 tokenizer_base_kwargs = {"add_bos_token": True, "local_files_only": False}
-model_input_names_pretrained = {"model_input_names": ['input_ids', 'attention_mask']}
+model_input_names_hf_pretrained = {"model_input_names": ['input_ids', 'attention_mask']}
 model_input_names_cust = {"model_input_names": ['tokens']}
 
-# TODO: refactor to dict-based configs to decomposed yaml strings, files or init dataclasses earlier? may make sense
-core_pretrained_tokenizer_kwargs = {"tokenizer_kwargs": {**model_input_names_pretrained, "padding_side": "left",
-                                                         **tokenizer_base_kwargs}}
+# TODO: refactor to init dataclasses earlier and update them directly with a deferred init flag?
+core_hf_pretrained_tokenizer_kwargs = {"tokenizer_kwargs": {**model_input_names_hf_pretrained, "padding_side": "left",
+                                                            **tokenizer_base_kwargs}}
 core_cust_tokenizer_kwargs = {"tokenizer_kwargs": {**model_input_names_cust, "padding_side": "left",
                                                    **tokenizer_base_kwargs}}
 
-default_token_overrides = {"tokenizer_id_overrides": {"pad_token_id": 50256}}
+gpt2_token_overrides = {"tokenizer_id_overrides": {"pad_token_id": 50256}}
+llama2_token_overrides = {"tokenizer_id_overrides": {"pad_token_id": 32000}}
 
-base_shared_config =  {"model_name_or_path": "gpt2", **default_token_overrides}
-cust_shared_config = {"tokenizer_name": "gpt2", **default_token_overrides}
+llama2_special_tokens_dict = {"special_tokens_dict": {"pad_token": "<PAD>"}}
 
-core_pretrained_shared_config = {"task_name": "pytest_rte_hf", **core_pretrained_tokenizer_kwargs, **base_shared_config}
+gpt2_shared_config =  {"model_name_or_path": "gpt2", **gpt2_token_overrides}
+cust_shared_config = {"tokenizer_name": "gpt2", **gpt2_token_overrides}
+llama2_shared_config =  {"model_name_or_path": "meta-llama/Llama-2-7b-chat-hf",
+                         "os_env_model_auth_key": "LLAMA2_AUTH_KEY",
+                         **llama2_token_overrides}
+
+
+core_gpt2_shared_config = {"task_name": "pytest_rte_hf", **core_hf_pretrained_tokenizer_kwargs, **gpt2_shared_config}
 core_cust_shared_config = {"task_name": "pytest_rte_pt", **core_cust_tokenizer_kwargs, **cust_shared_config}
+core_llama2_shared_config = {"task_name": "pytest_rte_hf", **core_hf_pretrained_tokenizer_kwargs,
+                             **llama2_shared_config}
 
 
 core_pretrained_signature_columns = ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
                                      'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
 core_cust_signature_columns = ['tokens', 'labels']
-
-core_pretrained_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(),
-                               "signature_columns": core_pretrained_signature_columns,
-                               "enable_datasets_cache": True, "prepare_data_map_cfg": {"batched": True},
+core_datamodule_kwargs = {"enable_datasets_cache": True, "prepare_data_map_cfg": {"batched": True},
                                "text_fields": ("premise", "hypothesis"),  "train_batch_size": default_test_bs,
                                "eval_batch_size": default_test_bs}
+core_pretrained_datamodule_kwargs = {"signature_columns": core_pretrained_signature_columns, **core_datamodule_kwargs}
 
-core_cust_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(),
-                                "signature_columns": core_cust_signature_columns,
-                                "enable_datasets_cache": True, "prepare_data_map_cfg": {"batched": True},
-                                "text_fields": ("premise", "hypothesis"),  "train_batch_size": default_test_bs,
-                                "eval_batch_size": default_test_bs}
+core_gpt2_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), **core_pretrained_datamodule_kwargs}
+core_llama2_datamodule_kwargs = {"prompt_cfg": Llama2PromptConfig(), "cust_tokenization_pattern": "llama2-chat",
+                                 **llama2_special_tokens_dict, **core_pretrained_datamodule_kwargs}
+core_cust_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), "signature_columns": core_cust_signature_columns,
+                              **core_datamodule_kwargs}
 
 test_optimizer_init = {"optimizer_init": {"class_path": "torch.optim.AdamW",
                               "init_args": {"weight_decay": 1.0e-06, "eps": 1.0e-07, "lr": 3.0e-05}}}
@@ -60,13 +70,22 @@ test_optimizer_scheduler_init = ChainMap(test_optimizer_init, test_lr_scheduler_
 base_it_module_kwargs = {"experiment_tag": "test_itmodule", "cust_fwd_kwargs": {}}
 
 base_hf_from_pretrained_kwargs = {"device_map": "cpu", "torch_dtype": "float32"}
-base_hf_from_pretrained_cfg = HFFromPretrainedConfig(pretrained_kwargs=base_hf_from_pretrained_kwargs,
+
+llama2_lora_cfg = {"lora_cfg": {"r": 8, "lora_alpha": 32, "target_modules": ["q_proj", "v_proj"], "lora_dropout": 0.05,
+                                "bias": "none", "task_type": "CAUSAL_LM"}}
+
+gpt2_hf_from_pretrained_cfg = HFFromPretrainedConfig(pretrained_kwargs=base_hf_from_pretrained_kwargs,
                                                      model_head="transformers.GPT2LMHeadModel")
+llama2_hf_from_pretrained_cfg = HFFromPretrainedConfig(pretrained_kwargs=base_hf_from_pretrained_kwargs,
+                                                     model_head="transformers.LlamaForCausalLM", **llama2_lora_cfg)
 
 core_hf_zero_shot_cfg = RTEBoolqZeroShotClassificationConfig(
     enabled=True, lm_generation_cfg=HFGenerationConfig(kwargs={"max_new_tokens": 3}))
-test_core_pretrained_it_module_kwargs = {"zero_shot_cfg": core_hf_zero_shot_cfg,
-                                         "hf_from_pretrained_cfg": base_hf_from_pretrained_cfg, **base_it_module_kwargs}
+
+test_core_gpt2_it_module_kwargs = {"zero_shot_cfg": core_hf_zero_shot_cfg,
+                                   "hf_from_pretrained_cfg": gpt2_hf_from_pretrained_cfg, **base_it_module_kwargs}
+test_core_llama2_it_module_kwargs = {"zero_shot_cfg": core_hf_zero_shot_cfg,
+                                   "hf_from_pretrained_cfg": llama2_hf_from_pretrained_cfg, **base_it_module_kwargs}
 
 base_cust_model_cfg_kwargs = {"max_seq_len": 200}
 base_core_cust_config = {"device": "cpu", "dtype": "float32", "model_args": base_cust_model_cfg_kwargs}
@@ -87,9 +106,10 @@ nowarm_maxstep_memprof_cfg = MemProfilerCfg(**enable_memprofiler_kwargs,
 nowarm_maxstep_hk_memprof_cfg = MemProfilerCfg(retain_hooks_for_funcs=["training_step"], **enable_memprofiler_kwargs,
                                                  **{"schedule": MemProfilerSchedule(max_step=4)})
 
-test_core_pretrained_it_module_base = ChainMap(core_pretrained_shared_config,
-                                               test_core_pretrained_it_module_kwargs)
-test_core_pretrained_it_module_optim = ChainMap(test_core_pretrained_it_module_base, test_optimizer_scheduler_init)
+test_core_gpt2_it_module_base = ChainMap(core_gpt2_shared_config, test_core_gpt2_it_module_kwargs)
+test_core_gpt2_it_module_optim = ChainMap(test_core_gpt2_it_module_base, test_optimizer_scheduler_init)
+test_core_llama2_it_module_base = ChainMap(core_llama2_shared_config, test_core_llama2_it_module_kwargs)
+test_core_llama2_it_module_optim = ChainMap(test_core_llama2_it_module_base, test_optimizer_scheduler_init)
 test_core_cust_it_module_base = ChainMap(core_cust_shared_config, test_core_cust_it_module_kwargs)
 test_core_cust_it_module_optim = ChainMap(test_core_cust_it_module_base, test_optimizer_scheduler_init)
 
@@ -115,13 +135,16 @@ TEST_TASK_NUM_LABELS = {k: 2 for k in test_datasets}
 TEST_TASK_TEXT_FIELD_MAP = {k: rte_fields for k in test_datasets}
 # note that we also sample the 'test' split after 'train' and 'validation' though we aren't yet using it
 deterministic_token_ids = [5674, 24140, 373, 666, 2233, 303, 783, 783, 2055, 319, 373, 910, 17074, 284, 6108]
-expected_first_fwd_ids = {"train": (deterministic_token_ids[:default_test_bs],),
+expected_first_fwd_ids = {"no_sample": ([],),
+                          "train": (deterministic_token_ids[:default_test_bs],),
                           "train_prof": (deterministic_token_ids[:default_prof_bs],),
                           "test": (deterministic_token_ids[NUM_SAMPLE_ROWS:(NUM_SAMPLE_ROWS+default_test_bs)],),
                           "test_prof": (deterministic_token_ids[NUM_SAMPLE_ROWS:(NUM_SAMPLE_ROWS+default_prof_bs)],)}
-shared_dataset_state = ('GPT2TokenizerFast', deterministic_token_ids)
-test_dataset_state_core_pretrained = ('pytest_rte_hf',) + shared_dataset_state
-test_dataset_state_core_cust = ('pytest_rte_pt',) + shared_dataset_state
+gpt2_dataset_state = ('GPT2TokenizerFast', deterministic_token_ids)
+llama2_dataset_state = ('LlamaTokenizerFast', [])
+test_dataset_state_core_gpt2 = ('pytest_rte_hf',) + gpt2_dataset_state
+test_dataset_state_core_llama2 = ('pytest_rte_hf',) + llama2_dataset_state
+test_dataset_state_core_cust = ('pytest_rte_pt',) + gpt2_dataset_state
 
 # TODO: add current dataloader kwargs to the fingerprint above? May be an excessively rigid check. Consider associating
 # a fingerprint of salient config with each specific expected scalar test result in the future. At present, that
