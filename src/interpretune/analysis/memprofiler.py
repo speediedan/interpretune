@@ -9,7 +9,7 @@ from pathlib import Path
 import torch
 from psutil import Process
 
-from interpretune.utils.logging import rank_zero_warn, _get_rank, rank_zero_only, rank_zero_info
+from interpretune.utils.logging import rank_zero_warn, _get_rank, rank_zero_only
 from interpretune.base.config.shared import ITSerializableCfg, CoreSteps, AutoStrEnum
 from interpretune.utils.import_utils import resolve_funcs
 
@@ -61,9 +61,13 @@ class MemProfilerCfg(ITSerializableCfg):
         if not torch.cuda.is_available() and self.enabled and any((self.enabled_funcs.cuda_allocator_history,
                                                                    self.enabled_funcs.cuda,
                                                                    self.cuda_allocator_history)):
-            rank_zero_info("Disabling CUDA memory profiling functionality since no CUDA device detected.")
+            rank_zero_warn("Disabling CUDA memory profiling functionality since no CUDA device detected.")
             self.enabled_funcs.cuda, self.enabled_funcs.cuda_allocator_history = [], []
             self.cuda_allocator_history = False
+        has_hooks = any(getattr(self.memory_hooks, ht.name) for ht in fields(self.memory_hooks))
+        if self.enabled and not has_hooks:
+            rank_zero_warn("MemProfilerCfg is configured to enable memory hooks but MemProfilerHooks does not have"
+                           " any specified.")
 
 # TODO: enable once these hooks are added
 # @dataclass(kw_only=True)
@@ -146,10 +150,6 @@ class MemProfiler:
         # TODO: extend supported hook points (e.g. backward, etc.) and if/once supporting additional hook points,
         # use a hook_type to registration function mapping
         memory_hooks_cfg = self.memprofiler_cfg.memory_hooks
-        has_hooks = any(getattr(memory_hooks_cfg, ht.name) for ht in fields(memory_hooks_cfg))
-        if not has_hooks:
-            rank_zero_warn("MemProfilerCfg is configured to enable memory hooks but MemProfilerHooks does not have"
-                           " any specified.")
         for supported_hooks in fields(memory_hooks_cfg):
             if getattr(memory_hooks_cfg, supported_hooks.name):
                 self._configured_hooks[supported_hooks.name] = resolve_funcs(cfg_obj=memory_hooks_cfg,
@@ -178,12 +178,6 @@ class MemProfiler:
         if self.memprofiler_cfg.enable_memory_hooks:
             if len(self._hook_handles) == 0:
                 self.add_memprofiler_hooks()
-            else:
-                *_,  step_idx, step_ctx = snap_key
-                if step_idx == self.schedule.warmup_steps and step_ctx == 'start':
-                    # conservatively reset hooks on first step after warmup since existing hooks may have accumulated
-                    # state during untracked steps from a previous phase and pre-warmup steps of the current phase
-                    self.exec_reset_state_hooks()
             collected = {attr: getattr(self._module.model, attr, None) for attr in self.memprofiler_cfg.save_hook_attrs}
             self.memory_stats[snap_key].update(collected)
 
@@ -209,7 +203,7 @@ class MemProfiler:
     def teardown_prof(self, phase: str, step_ctx: str) -> None:
         self._enabled[(phase, step_ctx)] = False
         if not any(self._enabled[(phase, step_ctx)] for step_ctx in ["start", "end"]):
-            self._done_prof_funcs.append(phase)
+            self._done_prof_funcs.append(CoreSteps[phase])
         if self.memprofiler_cfg.retain_hooks_for_funcs and self._should_remove_hooks:
             self.remove_memprofiler_hooks()
             self.memprofiler_cfg.enable_memory_hooks = False

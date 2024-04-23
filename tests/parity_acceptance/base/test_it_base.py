@@ -21,7 +21,7 @@ from interpretune.base.contract.session import Framework
 from tests.parity_acceptance.base.expected import basic_parity_results, profiling_parity_results
 from tests.configuration import BaseAugTest, BaseCfg, pytest_param_factory, collect_results, IT_GLOBAL_STATE_LOG_MODE
 from tests.parity_acceptance.base.cfg_aliases import (w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l,
-                                                      debug_hidden, test_bs1_mem_nosavedt, bs1_nowarm_mem,
+                                                      debug_hidden, test_bs1_mem_nosavedt, bs1_nowarm_mem, act_ckpt,
                                                       bs1_nowarm_hk_mem, bs1_warm_mem)
 
 
@@ -79,7 +79,7 @@ PROFILING_PARITY_CONFIGS = (
     ProfilingTest(alias="test_cuda_32_l", cfg=ProfParityCfg(**cuda, **w_lit, **test_bs1_mem), marks="cuda_l_profci"),
     ProfilingTest(alias="test_cuda_bf16", cfg=ProfParityCfg(**cuda_bf16, **test_bs1_mem), marks="bf16_cuda"),
     ProfilingTest(alias="train_cpu_32", cfg=ProfParityCfg(**bs1_nowarm_hk_mem), marks="optional"),
-    ProfilingTest(alias="train_cpu_32_act", cfg=ProfParityCfg(act_ckpt=True, **bs1_nowarm_mem)),
+    ProfilingTest(alias="train_cpu_32_act", cfg=ProfParityCfg(**act_ckpt, **bs1_nowarm_mem)),
     ProfilingTest(alias="train_cuda_32", cfg=ProfParityCfg(**cuda, **bs1_warm_mem), marks="cuda"),
     ProfilingTest(alias="train_cuda_32_act", cfg=ProfParityCfg(**cuda_act, **bs1_warm_mem), marks="cuda_profci"),
     ProfilingTest(alias="train_cuda_bf16", cfg=ProfParityCfg(**cuda_bf16, **bs1_warm_mem), marks="bf16_cuda_profci"),

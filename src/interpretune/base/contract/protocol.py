@@ -13,18 +13,18 @@ class DataPrepable(Protocol):
     datamodule config."""
 
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
-        ...
+        ...  # pragma: no cover
 
 @runtime_checkable
 class DataLoadable(Protocol):
     def train_dataloader(self) -> torch.utils.data.DataLoader:
-        ...
+        ...  # pragma: no cover
     def val_dataloader(self) -> torch.utils.data.DataLoader:
-        ...
+        ...  # pragma: no cover
     def test_dataloader(self) -> torch.utils.data.DataLoader:
-        ...
+        ...  # pragma: no cover
     def predict_dataloader(self) -> torch.utils.data.DataLoader:
-        ...
+        ...  # pragma: no cover
 
 @runtime_checkable
 class DataModuleInitable(DataPrepable, DataLoadable, Protocol):
@@ -37,37 +37,37 @@ class ITDataModuleProtocol(DataModuleInitable, Protocol):
     itdm_cfg: ITDataModuleConfig
 
     def setup(self, *args, **kwargs) -> None:
-        ...
+        ...  # pragma: no cover
 
 @runtime_checkable
 class TrainSteppable(Protocol):
     def training_step(self, *args, **kwargs) -> STEP_OUTPUT:
-        ...
+        ...  # pragma: no cover
 
 @runtime_checkable
 class ValidationSteppable(Protocol):
     def validation_step(self, *args, **kwargs) -> STEP_OUTPUT:
-        ...
+        ...  # pragma: no cover
 
 @runtime_checkable
 class TestSteppable(Protocol):
     def test_step(self, *args, **kwargs) -> STEP_OUTPUT:
-        ...
+        ...  # pragma: no cover
 
 @runtime_checkable
 class PredictSteppable(Protocol):
     def predict_step(self, *args, **kwargs) -> STEP_OUTPUT:
-        ...
+        ...  # pragma: no cover
 
 @runtime_checkable
 class ITModuleProtocol(TrainSteppable, ValidationSteppable, TestSteppable, PredictSteppable, Protocol):
     it_cfg: ITConfig
 
     def setup(self, *args, **kwargs) -> None:
-        ...
+        ...  # pragma: no cover
 
     def configure_optimizers(self) -> Optional[OptimizerLRScheduler]:
-        ...
+        ...  # pragma: no cover
 
 ModuleSteppable: TypeAlias = TrainSteppable | ValidationSteppable | TestSteppable | PredictSteppable
 

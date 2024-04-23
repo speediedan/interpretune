@@ -33,10 +33,10 @@ for warnf in [f".*{dummy_method_warn_fingerprint}.*",]:
 # code to be reused for maximally flexible interactive experimentation and interleaved framework-based tuning, testing
 # and prediction/interpretation tasks.
 
-def _dummy_notify(method: str, ret_callable: bool, rv: Any, *args, **kwargs) -> Optional[Any]:
+def _dummy_notify(method: str, ret_callable: bool, ret_val: Any, *args, **kwargs) -> Optional[Any]:
     rank_zero_warn(f"The `{method}` method is not defined for this module. For framework compatibility, this noop "
                     "method will be used. This warning will only be issued once by default.")
-    out = lambda *args, **kwargs: rv if ret_callable else rv
+    out = lambda *args, **kwargs: ret_val if ret_callable else ret_val
     return out
 
 
@@ -222,7 +222,8 @@ class CoreHelperAttributes:
             ca = it_cfg.compatibility_attrs
         else:
             raise MisconfigurationException("CoreHelperAttributes requires an ITConfig.")
-        self._supported_helper_attrs = {k: partial(_dummy_notify, k, v.ret_callable, v.ret_val) for k,v in ca.items()}
+        self._supported_helper_attrs = {k: partial(_dummy_notify, method=k, ret_callable=v.ret_callable,
+                                                   ret_val=v.ret_val) for k,v in ca.items()}
         super().__init__(*args, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
@@ -231,7 +232,7 @@ class CoreHelperAttributes:
         if '_supported_helper_attrs' in self.__dict__:
             _helper_attrs= self.__dict__['_supported_helper_attrs']
             if name in _helper_attrs:
-                return _helper_attrs[name]
+                return _helper_attrs[name]()
         # the unresolved attribute wasn't ours, pass it to the next __getattr__ in __mro__
         return super().__getattr__(name)
 

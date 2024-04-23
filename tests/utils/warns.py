@@ -11,7 +11,7 @@ from interpretune.utils.warnings import dummy_method_warn_fingerprint
 
 HF_EXPECTED_WARNS = [
     "Please use torch.utils._pytree.register_pytree_node instead",  # temp  allow deprecated call from hf
-    "please pass in use_reentrant=True or use_reentrant=False explicitly.",  # hf activation checkpoint warning
+    "use_reentrant parameter should be",  # hf activation checkpoint warning
 ]
 
 EXPECTED_WARNS = [

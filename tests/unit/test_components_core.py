@@ -45,21 +45,27 @@ class TestClassCoreModule:
             single_dict = {"optimizer": base_optim, "lr_scheduler": base_lr_scheduler}
             multi_dict = {"optimizer": base_optim, "lr_scheduler": base_lr_scheduler}, {"optimizer": None}
             single_tuple = base_optim[0], deepcopy(base_optim[0])
+            mon_warn = {"optimizer": base_optim, "monitor": "unsupp_val", "lr_scheduler": base_lr_scheduler}
             unsupported_cfg = {base_optim[0], base_optim[0]}  # test warning assuming set remains unsupported
-            return tuple_lists, single_optim, single_dict, multi_dict, single_tuple, unsupported_cfg
+            return tuple_lists, single_optim, single_dict, multi_dict, single_tuple, mon_warn, unsupported_cfg
 
         core_cust_it_m = get_it_module__core_cust__setup
         base_config = _call_itmodule_hook(core_cust_it_m, hook_name="configure_optimizers", hook_msg="optim conf test")
-        *optim_confs, unsupp = mock_optim_confs(base_config[0], base_config[1])
+        *optim_confs, mon_warn, unsupp = mock_optim_confs(base_config[0], base_config[1])
         for optim_conf in optim_confs:
             core_cust_it_m._it_init_optimizers_and_schedulers(optim_conf)
+        with pytest.warns(UserWarning, match="does not support `monitor`"):
+            core_cust_it_m._it_init_optimizers_and_schedulers(mon_warn)
         with pytest.raises(MisconfigurationException):
             core_cust_it_m._it_init_optimizers_and_schedulers(unsupp)
         core_cust_it_m._it_init_optimizers_and_schedulers(None)  # validate graceful handling with empty config
 
-    def test_property_dispatch_exceptions(self, recwarn, get_it_module__core_cust__setup):
+    def test_property_dispatch_warns(self, recwarn, get_it_module__core_cust__setup):
         core_cust_it_m = get_it_module__core_cust__setup
-        EXPECTED_PROP_WARNS = ("Could not find a device reference",)
+        _call_itmodule_hook(core_cust_it_m, hook_name="setup",
+                            hook_msg="warning on setup hook that does not support connected output",
+                            connect_output=True)
+        EXPECTED_PROP_WARNS = ("Could not find a device reference", "Output received for hook")
         core_cust_it_m.CORE_TO_FRAMEWORK_ATTRS_MAP["_current_epoch"] = ("foo.attr", 42, "FooAttr not set yet.")
         assert core_cust_it_m.current_epoch == 42  # validate unset c2f property mapping handling
         core_cust_it_m._it_state._device = None

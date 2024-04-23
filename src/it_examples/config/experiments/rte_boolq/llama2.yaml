@@ -2,7 +2,7 @@ it_session:
   session_cfg:
     init_args:
       datamodule_cls: it_examples.experiments.rte_boolq.datamodules.Llama2RTEBoolqDataModule
-      module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqLMHeadModule
+      module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqModule
       datamodule_cfg:
         class_path: interpretune.base.config.datamodule.ITDataModuleConfig
         init_args:

@@ -74,8 +74,12 @@ base_hf_from_pretrained_kwargs = {"device_map": "cpu", "torch_dtype": "float32"}
 llama2_lora_cfg = {"lora_cfg": {"r": 8, "lora_alpha": 32, "target_modules": ["q_proj", "v_proj"], "lora_dropout": 0.05,
                                 "bias": "none", "task_type": "CAUSAL_LM"}}
 
-gpt2_hf_from_pretrained_cfg = HFFromPretrainedConfig(pretrained_kwargs=base_hf_from_pretrained_kwargs,
-                                                     model_head="transformers.GPT2LMHeadModel")
+gpt2_hf_from_pretrained_kwargs = {"pretrained_kwargs": base_hf_from_pretrained_kwargs,
+                                  "model_head":"transformers.GPT2LMHeadModel"}
+enable_activation_checkpointing = {"activation_checkpointing": True}
+gpt2_hf_from_pretrained_cfg = HFFromPretrainedConfig(**gpt2_hf_from_pretrained_kwargs)
+gpt2_hf_from_pretrained_act_ckpt_cfg = HFFromPretrainedConfig(**gpt2_hf_from_pretrained_kwargs,
+                                                              **enable_activation_checkpointing)
 llama2_hf_from_pretrained_cfg = HFFromPretrainedConfig(pretrained_kwargs=base_hf_from_pretrained_kwargs,
                                                      model_head="transformers.LlamaForCausalLM", **llama2_lora_cfg)
 
@@ -171,7 +175,8 @@ class MemProfResult(NamedTuple):
 # composable cfg aliases
 w_lit = {"framework_ctx": Framework.lightning}
 cuda = {"device_type": "cuda"}
-cuda_act = {**cuda, "act_ckpt": True}
+act_ckpt = {"hf_from_pretrained_cfg": gpt2_hf_from_pretrained_act_ckpt_cfg}
+cuda_act = {**cuda, **act_ckpt}
 bf16 = {"precision": "bf16"}
 cuda_bf16 = {**cuda, **bf16}
 cuda_bf16_l = {**cuda, **bf16, **w_lit}

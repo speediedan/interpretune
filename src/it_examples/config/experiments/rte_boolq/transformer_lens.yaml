@@ -1,7 +1,7 @@
 it_session:
   session_cfg:
     init_args:
-      module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqLMHeadModule
+      module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqModule
       datamodule_cfg:
         init_args:
           dataset_path: /home/speediedan/.cache/huggingface/datasets/rte_tl

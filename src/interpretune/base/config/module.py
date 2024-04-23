@@ -58,7 +58,8 @@ class ITConfig(ITSharedConfig, ModelConfig, OptimizerSchedulerConfig):
     zero_shot_cfg: ZeroShotClassificationConfig = field(default_factory=lambda: ZeroShotClassificationConfig())
     hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = None
     compatibility_attrs: Dict[str, AutoCompatConfig] = \
-        field(default_factory=lambda: {'log': AutoCompatConfig(), 'log_dict': AutoCompatConfig(),})
+        field(default_factory=lambda: {'log': AutoCompatConfig(),
+                                       'log_dict': AutoCompatConfig(),})
 
     def __post_init__(self) -> None:
         # _torch_dtype may have been resolved and set in a subclass already
@@ -67,7 +68,7 @@ class ITConfig(ITSharedConfig, ModelConfig, OptimizerSchedulerConfig):
                 self._torch_dtype = self.hf_from_pretrained_cfg._torch_dtype_serde()
             if self._torch_dtype and self.hf_from_pretrained_cfg.bitsandbytesconfig:
                 rank_zero_info(f'Specified torch_dtype `{self._torch_dtype}` being overridden by quantization config.')
-                self._torch_dtype = 'see quantization config'
+                self._torch_dtype = None
 
 @dataclass
 class ITState:

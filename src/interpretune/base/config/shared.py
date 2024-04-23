@@ -38,10 +38,7 @@ class CoreSteps(AutoStrEnum):
 class ITSerializableCfg(yaml.YAMLObject):
     ...
 
-def it_cfg_mapping_representer(dumper, data):
-    return dumper.represent_mapping('!InterpretuneCfg', data.__dict__)
-
-yaml.add_representer(ITSerializableCfg, it_cfg_mapping_representer)
+#TODO: add custom constructors and representers for core IT object types
 
 
 ################################################################################

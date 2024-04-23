@@ -14,11 +14,13 @@ from pathlib import Path
 from typing import Tuple
 from collections import defaultdict
 from unittest import mock
+from contextlib import contextmanager
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.utils.basic_trainer import BasicTrainer, BasicTrainerCfg
-from interpretune.base.contract.session import Framework, ITSessionConfig
+from interpretune.base.contract.session import Framework, ITSessionConfig, ITSession
 from configuration import config_modules
+from interpretune.base.config.mixins import ZeroShotClassificationConfig
 
 
 if _LIGHTNING_AVAILABLE:
@@ -57,8 +59,9 @@ def parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode
     else:
         run_it(it_session, test_cfg)
 
-def run_it(it_session: ITSessionConfig, test_cfg: Tuple):
-    trainer_config = BasicTrainerCfg(it_session=it_session, max_epochs=test_cfg.max_epochs)
+def run_it(it_session: ITSession, test_cfg: Tuple):
+    test_cfg_overrides = {k: v for k,v in test_cfg.__dict__.items() if k in BasicTrainerCfg.__dict__.keys()}
+    trainer_config = BasicTrainerCfg(it_session=it_session, **test_cfg_overrides)
     trainer = BasicTrainer(trainer_cfg=trainer_config)
     if test_cfg.phase == "test":
         trainer.test()
@@ -103,3 +106,21 @@ def nones(num_n) -> Tuple:  # to help dedup config
 
 def _recursive_defaultdict():
     return defaultdict(_recursive_defaultdict)
+
+@contextmanager
+def ablate_cls_attr(object: object, attr_name: str):
+    try:
+        ablated_attr = getattr(object, attr_name)
+        delattr(object, attr_name)
+        yield
+    finally:
+        setattr(object, attr_name, ablated_attr)
+
+@contextmanager
+def disable_zero_shot(it_session: ITSession):
+    try:
+        orig_zs_cfg = it_session.module.it_cfg.zero_shot_cfg
+        it_session.module.it_cfg.zero_shot_cfg = ZeroShotClassificationConfig(enabled=False)
+        yield
+    finally:
+        it_session.module.it_cfg.zero_shot_cfg = orig_zs_cfg

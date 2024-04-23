@@ -1,5 +1,4 @@
 import logging
-from contextlib import contextmanager
 from typing import Any, Union, Optional
 from enum import Enum
 
@@ -27,26 +26,6 @@ def it_session_end(module, datamodule, session_type: Enum = CorePhase.train, *ar
     _call_itmodule_hook(datamodule, hook_name=hook_name, hook_msg="Running stage end hooks on IT datamodule")
 
 # TODO: consider adding IT teardown hooks (among others)
-
-# TODO: consider removing this helper function as it is helpful to users in a fairly narrow context
-@contextmanager
-def model_call_redirect(wrapper_module: Any) -> None:
-    """context manager making an arbitrary model-wrapping object callable, redirecting calls to an underlying
-    model."""
-    try:
-        dunder_redirects = [("__call__", wrapper_module.model)]
-        for method, target in dunder_redirects:
-            if not hasattr(wrapper_module, method):
-                redirect_target = getattr(target, method, None)
-                assert redirect_target, f"Could not find redirect method `{method}` on target `{target}`."
-                # N.B. set at class-level https://docs.python.org/3/reference/datamodel.html#emulating-callable-objects
-                setattr(wrapper_module.__class__, method, redirect_target)
-        yield
-    finally:
-        for method, target in dunder_redirects:
-            if hasattr(wrapper_module, method):
-                delattr(wrapper_module.__class__, method)
-
 
 class _hookNameContextManager:
     """A context manager to change the default tensor type when tensors get created.
@@ -80,8 +59,6 @@ def _call_itmodule_hook(
     hook_msg = hook_msg + ": " if hook_msg else ""
 
     fn = getattr(hookable_module, hook_name)
-    if not callable(fn):
-        return None
 
     with _hookNameContextManager(hookable_module, hook_name):
         rank_zero_info(f"{hook_msg}{hookable_module.__class__.__name__}")

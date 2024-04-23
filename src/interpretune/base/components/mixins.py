@@ -12,7 +12,7 @@ from transformers.tokenization_utils_base import BatchEncoding
 from interpretune.analysis.debug_generation import DebugGeneration
 from interpretune.analysis.memprofiler import MemProfiler
 from interpretune.utils.types import  STEP_OUTPUT
-from interpretune.utils.logging import rank_zero_warn, rank_zero_info
+from interpretune.utils.logging import rank_zero_warn
 from interpretune.base.config.mixins import ITExtension
 from interpretune.base.config.module import ITConfig, HFFromPretrainedConfig, ITState
 from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE
@@ -147,13 +147,15 @@ class ZeroShotStepMixin:
                 if self._should_inspect_inputs:
                     batch = self.map_gen_inputs(batch)
                 outputs = self.model.generate(**batch, **kwargs)
-        except AttributeError as ae:
+        except (TypeError, AttributeError, ValueError) as ge:
+            # TODO: consider further inspecting the possible generation errors encountered here to help narrow the
+            # problem space for the user
             gen_dataset_info_msg = (
                 f"The following keys were found in the provided data batch: {os.sep} {list(batch.data)}). The current"
-                f" generate method ({self.model.generate.__func__}) accepts: {os.sep} {[self._gen_sig_keys]}."
+                f" generate method ({self.model.generate}) accepts: {os.sep} {[self._gen_sig_keys]}."
             )
-            rank_zero_info(gen_dataset_info_msg)
-            raise AttributeError(f"Received the following error msg: {ae}")
+            rank_zero_warn(gen_dataset_info_msg)
+            raise Exception(f"{gen_dataset_info_msg} Received the following error msg: {ge}")
         return outputs
 
     @ProfilerHooksMixin.memprofilable
@@ -207,10 +209,9 @@ class HFFromPretrainedMixin:
             quantization_config = None
         return quantization_config
 
-    def _update_hf_pretrained_cfg(self, quantization_config: Optional[Dict[str, Any]]) -> None:
+    def _update_hf_pretrained_cfg(self, quantization_config: Optional[Dict[str, Any]] = None) -> None:
         additional_from_pretrained_kwargs = {"pretrained_model_name_or_path": self.it_cfg.model_name_or_path,
                                             "quantization_config": quantization_config,
-                                            #"torch_dtype": self.it_cfg.torch_dtype,
                                             "torch_dtype": self.torch_dtype,
                                             }
         self.hf_cfg.pretrained_kwargs.update(additional_from_pretrained_kwargs)
@@ -227,7 +228,7 @@ class HFFromPretrainedMixin:
             cust_config = config_class.from_pretrained(self.it_cfg.model_name_or_path)
         else:
             if self.it_cfg.defer_model_init:
-                rank_zero_info("`defer_model_init` not currently supported without `model_head` or "
+                rank_zero_warn("`defer_model_init` not currently supported without `model_head` or "
                                "`dynamic_module_cfg`. Proceeding with model init.")
             cust_config = AutoConfig.from_pretrained(**self.hf_cfg.pretrained_kwargs, token=access_token,
                                                      local_files_only=False)
@@ -247,7 +248,7 @@ class HFFromPretrainedMixin:
                                                             token=access_token)
         else: # defer model materialization (e.g., to `configure_model` hook)
             with torch.device("meta"):
-                model = self.it_cfg.model_class(config=cust_config, token=access_token)
+                model = self.it_cfg.model_class(config=cust_config)
         return model
 
     def _hf_cust_token_cfg(self) -> None:

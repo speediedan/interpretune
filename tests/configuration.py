@@ -23,6 +23,7 @@ import torch
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from it_examples.experiments.rte_boolq.config import RTEBoolqConfig, RTEBoolqTLConfig
 from interpretune.base.config.module import ITConfig
+from interpretune.base.config.mixins import HFFromPretrainedConfig, ZeroShotClassificationConfig
 from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig, ITLensCustomConfig
 from interpretune.base.contract.session import ITSessionConfig, Framework, Plugin, ITSession
 from interpretune.analysis.memprofiler import MemProfilerCfg
@@ -113,7 +114,6 @@ class BaseCfg:
     device_type: str = "cpu"
     model_key: str = "rte"  # "real-model"-based acceptance/parity testing/profiling
     precision: str | int = 32
-    act_ckpt: bool = False
     framework_ctx: Framework | str = Framework.core
     plugin_ctx: Optional[Plugin | str] = None
     model_src_key: Optional[str] = None
@@ -121,6 +121,8 @@ class BaseCfg:
     limit_val_batches: Optional[int] = 1
     limit_test_batches: Optional[int] = 1
     dm_override_cfg: Optional[Dict] = None
+    zero_shot_cfg: Optional[ZeroShotClassificationConfig] = None
+    hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = None
     memprofiler_cfg: Optional[MemProfilerCfg] = None
     debug_lm_cfg: Optional[DebugLMConfig] = None
     model_cfg: Optional[Dict] = None
@@ -285,11 +287,10 @@ def init_plugin_cfg(test_cfg: Tuple, test_it_module_cfg: Dict):
         raise ValueError(f"Unknown plugin type: {test_cfg.plugin_ctx}")
 
 def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[StrOrPath] = None) -> ITConfig:
-    test_cfg_override_attrs = ["memprofiler_cfg", "debug_lm_cfg", "cust_fwd_kwargs", "tl_cfg", "model_cfg"]
+    test_cfg_override_attrs = ["memprofiler_cfg", "debug_lm_cfg", "cust_fwd_kwargs", "tl_cfg", "model_cfg",
+                               "hf_from_pretrained_cfg", "zero_shot_cfg"]
     target_test_it_module_cfg = TEST_MODULE_BASE_CONFIGS[(test_cfg.phase, test_cfg.plugin_ctx, test_cfg.model_src_key)]
     test_it_module_cfg = deepcopy(target_test_it_module_cfg)
-    if test_cfg.act_ckpt:
-        test_it_module_cfg['hf_from_pretrained_cfg'].activation_checkpointing = True
     for attr in test_cfg_override_attrs:
         if getattr(test_cfg, attr):
             test_it_module_cfg.update({attr: getattr(test_cfg, attr)})

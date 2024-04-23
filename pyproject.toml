@@ -173,7 +173,6 @@ exclude_lines = [
     "pragma: no cover",
     "warnings",
     "pass",
-    "rank_zero_warn",
     "raise NotImplementedError",
     "except Exception"
 ]

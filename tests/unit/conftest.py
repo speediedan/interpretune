@@ -2,6 +2,7 @@ from unittest.mock import patch, create_autospec
 from dataclasses import dataclass
 from itertools import product
 import pytest
+from copy import deepcopy
 from enum import auto, IntEnum
 
 
@@ -13,7 +14,8 @@ from tests.parity_acceptance.plugins.transformer_lens.test_interpretune_tl impor
 from interpretune.base.call import _call_itmodule_hook
 from tests.configuration import config_modules, get_it_cfg, get_itdm_cfg
 from tests.modules import TestITDataModule, TestITModule
-from tests.unit.cfg_aliases import TLDebugCfg, LightningLlama2DebugCfg
+from tests.unit.cfg_aliases import (TLDebugCfg, LightningLlama2DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg,
+                                    CoreGPT2PEFTSeqCfg)
 from interpretune.utils.import_utils import _DOTENV_AVAILABLE
 
 if _DOTENV_AVAILABLE:
@@ -45,6 +47,9 @@ class FixtureCfg:
 FIXTURE_CFGS = {
     "core_cust": FixtureCfg(),
     "core_gpt2": FixtureCfg(test_cfg=ProfParityCfg),
+    "core_gpt2_peft": FixtureCfg(test_cfg=CoreGPT2PEFTCfg),
+    "core_gpt2_peft_seq": FixtureCfg(test_cfg=CoreGPT2PEFTSeqCfg),
+    "core_cust_memprof": FixtureCfg(test_cfg=CoreMemProfCfg),
     "l_llama2_debug": FixtureCfg(test_cfg=LightningLlama2DebugCfg),
     "tl_cust": FixtureCfg(test_cfg=TLParityCfg, module_cls=ITLensModule),
     "tl_gpt2": FixtureCfg(test_cfg=TLProfileCfg, module_cls=ITLensModule),
@@ -126,11 +131,12 @@ def session_fixture_hook_exec(it_s, init_key: FixturePhase):
 def session_fixture_factory(config_key, init_key):
     @pytest.fixture(scope="class")
     def get_it_session(tmp_path_factory):
-        load_dotenv()  # load env vars from .env file # NEXT: make a diff fixture?, add standalone tests to gen_coverage
+        load_dotenv()  # load env vars from .env file # TODO: make a diff fixture?
         test_sess_config = FIXTURE_CFGS[config_key].test_cfg
         it_s = config_modules(test_sess_config(), f"{config_key}_{init_key}_it_session_fixture", {},
                               tmp_path_factory.mktemp(f"{config_key}_{init_key}_it_session_fixture"), {}, False)
         session_fixture_hook_exec(it_s, FixturePhase[init_key])
+        setattr(it_s, 'fixt_test_cfg', deepcopy(test_sess_config))
         yield it_s
     return get_it_session
 
