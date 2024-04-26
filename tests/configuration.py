@@ -330,7 +330,7 @@ def config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_d
     return session_cfg
 
 def gen_session_cfg(test_cfg, test_alias, expected_results, tmp_path, prewrapped_modules,
-                    state_log_mode: bool = False) -> ITSession:
+                    state_log_mode: bool = False) -> ITSessionConfig:
     itdm_cfg = get_itdm_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
     it_cfg = get_it_cfg(test_cfg=test_cfg, core_log_dir=tmp_path)
     core_cfg = {'datamodule_cfg': itdm_cfg, 'module_cfg': it_cfg, **CORE_SESSION_CFG}

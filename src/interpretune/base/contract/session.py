@@ -118,6 +118,9 @@ class ITSessionConfig(UnencapsulatedArgs):
 class ITSession(Mapping):
 
     FRAMEWORK_ATTRS = {Framework.core: ('datamodule', 'module'), Framework.lightning: ('datamodule', 'model')}
+    READY_ATTRS = ["datamodule", "module"]
+    COMPOSITION_TARGET_ATTRS = ["datamodule_cls", "module_cls"]
+    READY_PROTOCOLS = [ITDataModuleProtocol, ITModuleProtocol]
 
     def __init__(self, session_cfg: ITSessionConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -142,34 +145,35 @@ class ITSession(Mapping):
     def to_dict(self) -> Dict[str, Any]:
         return {self._ctx[0]: self.datamodule, self._ctx[1]: self.module}
 
-    @staticmethod
-    def _check_ready(session_cfg: ITSessionConfig) -> None:
-        ready_module_attrs = ["datamodule", "module"]
-        composition_target_attrs = ["datamodule_cls", "module_cls"]
-        ready_protocols = [ITDataModuleProtocol, ITModuleProtocol]
-        for ready, tocompose, ready_type in zip(ready_module_attrs, composition_target_attrs, ready_protocols):
+    def _check_ready(self, session_cfg: ITSessionConfig) -> None:
+        for ready, tocompose, ready_type in zip(self.READY_ATTRS, self.COMPOSITION_TARGET_ATTRS, self.READY_PROTOCOLS):
             if ready_mod := getattr(session_cfg, ready):  # if a module is ready, ensure we don't try to transform it
                 if not isinstance(ready_mod, ready_type):
                     raise ValueError(f"{ready_mod} is not a {ready_type}, {ready_mod} should either be left unset (to"
                                      f" enable auto-composition of {getattr(session_cfg, tocompose)}) or be a"
                                      f" {ready_type}.")
-                setattr(session_cfg, tocompose, None)  # TODO: need to add tests for this functionality
+                setattr(session_cfg, tocompose, None)
 
     def compose_interpretunable(self, session_cfg: ITSessionConfig) -> None:
+        dm_cls, m_cls = None, None
         # 1. We first check to see if the datamodule and module classes are already defined and adhere to the relevant
         #    protocol.
-        ITSession._check_ready(session_cfg)
+        self._check_ready(session_cfg)
+        # 1.1. If so, we can skip composition
+        for ready, tocompose in zip(self.READY_ATTRS, self.COMPOSITION_TARGET_ATTRS):
+            if getattr(session_cfg, tocompose) is not None:
+                continue
+            setattr(self, ready, getattr(session_cfg, ready))
         # 2. For the components (i.e. datamodule and module) that aren't ready, we compose the provided input component
-        #    with the relevant classes based on the specified execution context.
+        #    with the relevant classes based on the specified execution context and instantiate our enriched components!
         build_ctx = {'framework_ctx': session_cfg.framework_ctx, 'plugin_ctx': session_cfg.plugin_ctx}
-        dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input=session_cfg.datamodule_cls,
-                        ctx=build_ctx)
-        m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=session_cfg.module_cls, ctx=build_ctx)
-        # 3. We instantiate our Interpretunably enriched components!
-        if dm_cls:
+        if session_cfg.datamodule_cls:  # 2.1 Compose datamodule if necessary
+            dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input=session_cfg.datamodule_cls,
+                            ctx=build_ctx)
             self.datamodule = dm_cls(itdm_cfg=session_cfg.datamodule_cfg, *session_cfg.dm_args, **session_cfg.dm_kwargs)
         self._set_dm_handles_for_instantiation(session_cfg)
-        if m_cls:
+        if session_cfg.module_cls:  # 2.2 Compose module if necessary
+            m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=session_cfg.module_cls, ctx=build_ctx)
             self.module = m_cls(it_cfg=session_cfg.module_cfg, *session_cfg.module_args, **session_cfg.module_kwargs)
         self._set_model_handles_for_instantiation()
         self._validate_session(dm_cls, m_cls, session_cfg)
@@ -178,7 +182,9 @@ class ITSession(Mapping):
         # some datamodule handles may be required for module init, we update the module_cfg to provide them here
         supported_dm_handles_for_module = {"tokenizer": "tokenizer"}
         for m_attr, dm_handle in supported_dm_handles_for_module.items():
-            setattr(session_cfg.module_cfg, m_attr, getattr(self.datamodule, dm_handle))
+            # attach directly to module if it's ready, otherwise pass the handles to our module_cfg
+            attr_target_obj = getattr(self, 'module', None) or session_cfg.module_cfg
+            setattr(attr_target_obj, m_attr, getattr(self.datamodule, dm_handle))
 
     def _set_model_handles_for_instantiation(self):
         # having access to a model handle may be useful in some pre-setup hook steps (e.g. signature inspection in
@@ -191,10 +197,22 @@ class ITSession(Mapping):
         for dm_attr, m_handle in supported_module_handles_for_datamodule.items():
             setattr(self.datamodule, dm_attr, m_handle)
 
+    def _issue_warnings(self, dm_composed, m_composed, session_cfg, warn_datamodule, warn_module):
+        if warn_datamodule:
+            dm_warn_base = f"{self.datamodule} is not {ITDataModuleProtocol}"
+            dm_warn_composed = (f" even after composing {session_cfg.datamodule_cls} with {dm_composed}."
+                                f" {unexpected_state_msg_suffix}")
+            not_ready_dm_warn = dm_warn_base + dm_warn_composed if dm_composed else dm_warn_base
+            rank_zero_warn(not_ready_dm_warn)
+        if warn_module:
+            m_warn_base = f"{self.module} is not {ITModuleProtocol}"
+            m_warn_composed = (f" even after composing {session_cfg.module_cls} with {m_composed}."
+                            f" {unexpected_state_msg_suffix}")
+            not_ready_m_warn = m_warn_base + m_warn_composed if m_composed else m_warn_base
+            rank_zero_warn(not_ready_m_warn)
+
     def _validate_session(self, dm_composed, m_composed, session_cfg):
-        if not isinstance(self.datamodule, ITDataModuleProtocol):
-            rank_zero_warn(f"{self.datamodule} is not {ITDataModuleProtocol} even after composing"
-                           f"{session_cfg.datamodule_cls} with {dm_composed}. {unexpected_state_msg_suffix}")
-        if not isinstance(self.module, ITModuleProtocol):
-            rank_zero_warn(f"{self.module} is not {ITModuleProtocol} even after composing {session_cfg.module_cls} with"
-                           f"{m_composed}. {unexpected_state_msg_suffix}")
+        warn_datamodule = not isinstance(self.datamodule, ITDataModuleProtocol)
+        warn_module = not isinstance(self.module, ITModuleProtocol)
+        if any([warn_datamodule, warn_module]):
+            self._issue_warnings(dm_composed, m_composed, session_cfg, warn_datamodule, warn_module)

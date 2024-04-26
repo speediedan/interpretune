@@ -18,12 +18,11 @@ import torch
 from tests.utils.runif import RunIf
 from tests.parity_acceptance.base.cfg_aliases import test_core_gpt2_it_module_base
 from tests.utils.warns import CORE_CTX_WARNS, unexpected_warns
-from tests.orchestration import run_it, ablate_cls_attr, disable_zero_shot
+from tests.orchestration import run_it, disable_zero_shot
 from interpretune.utils.exceptions import MisconfigurationException
 from interpretune.base.components.mixins import ITExtension, ITExtensionsMixin, HFFromPretrainedMixin
 from interpretune.base.config.module import ITConfig
 from interpretune.base.config.mixins import HFFromPretrainedConfig
-from it_examples.experiments.rte_boolq.modules import RTEBoolqSteps
 
 class TestClassMixins:
 
@@ -109,13 +108,6 @@ class TestClassMixins:
         test_it_cfg['hf_from_pretrained_cfg'] = hf_from_pretrained_cfg
         hf_from_pretrained_mixin = TestClassMixins._get_hf_from_pretrained_mixin(test_it_cfg)
         hf_from_pretrained_mixin._hf_gen_cust_config()
-
-    def test_zero_shot_degen_methods(self, get_it_session__core_cust__initonly):
-        core_cust_it_m = get_it_session__core_cust__initonly.module
-        mock_batch = mock.patch('transformers.tokenization_utils_base.BatchEncoding')
-        for attr in ('zero_shot_test_step', 'default_test_step'):
-            with ablate_cls_attr(RTEBoolqSteps, attr), pytest.warns(UserWarning, match="must be implemented to"):
-                getattr(core_cust_it_m, attr)(mock_batch, 0)
 
     def test_degen_it_extension(self):
         degen_ext = ITExtension("not_here", "oops.not_found")

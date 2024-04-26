@@ -11,7 +11,6 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.analysis.debug_generation import DebugGeneration
 from interpretune.analysis.memprofiler import MemProfiler
-from interpretune.utils.types import  STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.base.config.mixins import ITExtension
 from interpretune.base.config.module import ITConfig, HFFromPretrainedConfig, ITState
@@ -100,6 +99,7 @@ class ProfilerHooksMixin:
         return wrapper
 
 
+# TODO: probably makes sense to rename this to GenerationStepMixin since it better reflects its scope of use
 class ZeroShotStepMixin:
 
     _gen_sig_keys: Optional[List] = None
@@ -158,19 +158,6 @@ class ZeroShotStepMixin:
             raise Exception(f"{gen_dataset_info_msg} Received the following error msg: {ge}")
         return outputs
 
-    @ProfilerHooksMixin.memprofilable
-    def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        if self.it_cfg.zero_shot_cfg.enabled:
-            self.zero_shot_test_step(batch, batch_idx, dataloader_idx=dataloader_idx)
-        else:
-            self.default_test_step(batch, batch_idx, dataloader_idx=dataloader_idx)
-
-    def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
-        Optional[STEP_OUTPUT]:
-        rank_zero_warn("`zero_shot_test_step` must be implemented to be used with the Interpretune.")
-
-    def default_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        rank_zero_warn("`default_test_step` must be implemented to be used with the Interpretune.")
 
 
 class HFFromPretrainedMixin:

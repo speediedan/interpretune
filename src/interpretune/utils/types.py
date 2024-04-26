@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from os import PathLike
+from types import UnionType
+import inspect
 from typing import (
     Any,
     List,
@@ -14,8 +16,12 @@ from typing import (
     TypedDict,
     Union,
     runtime_checkable,
-    TypeAlias
+    TypeAlias,
+    _ProtocolMeta,
+    get_args
 )
+
+
 import torch
 from torch import Tensor
 from torch.optim import Optimizer
@@ -152,3 +158,17 @@ OptimizerLRScheduler = Optional[
 ]
 
 ArgsType = Optional[Union[List[str], Dict[str, Any], Namespace]]
+
+
+def gen_protocol_variants(supported_sub_protocols: UnionType,
+                          base_protocols: _ProtocolMeta | Tuple[_ProtocolMeta]) -> UnionType:
+    protocol_components = []
+    if not isinstance(base_protocols, tuple):
+        base_protocols = (base_protocols,)
+    for sub_proto in get_args(supported_sub_protocols):
+        supported_cls = _ProtocolMeta(f'Built{sub_proto.__name__}', (*base_protocols, sub_proto, Protocol), {})
+        supported_cls._is_runtime_protocol = True
+        supported_cls.__module__ = inspect.getmodule(inspect.currentframe().f_back).__name__
+        protocol_components.append(supported_cls)
+    gen_type_alias = " | ".join([f"protocol_components[{i}]" for i in range(len(protocol_components))])
+    return eval(gen_type_alias)

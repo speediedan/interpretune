@@ -2,6 +2,7 @@ import os
 from typing import Optional, Literal, List, Dict, Any
 from dataclasses import dataclass
 from functools import reduce
+from copy import deepcopy
 
 import torch
 from transformers import PretrainedConfig, AutoModelForCausalLM, PreTrainedTokenizerBase
@@ -297,8 +298,9 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
             self._it_state._init_hparams = {"tl_cfg": self._make_config_serializable(self.it_cfg.tl_cfg, ['device',
                                                                                                           'dtype']),}
         else:
-            self.it_cfg.tl_cfg.cfg = self._make_config_serializable(self.it_cfg.tl_cfg.cfg, ['device', 'dtype'])
-            self._it_state._init_hparams = {"tl_cfg": self.it_cfg.tl_cfg}
+            serializable_tl_cfg = deepcopy(self.it_cfg.tl_cfg)
+            serializable_tl_cfg.cfg = self._make_config_serializable(self.it_cfg.tl_cfg.cfg, ['device', 'dtype'])
+            self._it_state._init_hparams = {"tl_cfg": serializable_tl_cfg}
         super()._capture_hyperparameters()
 
     def set_input_require_grads(self) -> None:

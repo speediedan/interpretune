@@ -12,6 +12,7 @@
 # Initially based on https://bit.ly/3oQ8Vqf
 from pathlib import Path
 from typing import Tuple
+import importlib
 from collections import defaultdict
 from unittest import mock
 from contextlib import contextmanager
@@ -108,13 +109,27 @@ def _recursive_defaultdict():
     return defaultdict(_recursive_defaultdict)
 
 @contextmanager
-def ablate_cls_attr(object: object, attr_name: str):
+def ablate_cls_attrs(object: object, attr_names: str| tuple):
     try:
-        ablated_attr = getattr(object, attr_name)
-        delattr(object, attr_name)
+        # (orig_obj_attach, orig_attr_handle): index by original object and handle of attribute we ablate
+        ablated_attr_indices = {}
+        if not isinstance(attr_names, tuple):
+            attr_names = (attr_names,)
+        for attr_name in attr_names:
+            orig_attr_handle = getattr(object, attr_name, None)
+            if orig_attr_handle is None:
+                raise AttributeError(f"{object} does not have the requested attribute to ablate ({attr_name})")
+            orig_attr_fqn = orig_attr_handle.__qualname__
+            orig_obj_attach = orig_attr_fqn[:-len(orig_attr_fqn.rsplit(".", 1)[-1]) - 1]
+            if (orig_obj_attach_handle := orig_attr_handle.__globals__.get(orig_obj_attach, None)) is None:
+                mod = importlib.import_module(orig_attr_handle.__module__)
+                orig_obj_attach_handle = getattr(mod, orig_obj_attach)
+            ablated_attr_indices[attr_name] = (orig_obj_attach_handle, orig_attr_handle)
+            delattr(orig_obj_attach_handle, attr_name)
         yield
     finally:
-        setattr(object, attr_name, ablated_attr)
+        for attr_name in attr_names:
+            setattr(ablated_attr_indices[attr_name][0], attr_name, ablated_attr_indices[attr_name][1])
 
 @contextmanager
 def disable_zero_shot(it_session: ITSession):

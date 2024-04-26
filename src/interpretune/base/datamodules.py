@@ -20,10 +20,10 @@ log = logging.getLogger(__name__)
 # ITDatamodule Definition
 ################################################################################
 
-# TODO: move overridden datamodule hooks to a separate class (maybe a separate module, maybe this one)
-# TODO: switch ITDataModule from ABC to concrete class and rely upon Protocol?
-class ITDataModule:
 
+# TODO: move core datamodule logic to a separate mixin and compose it with supported hooks analogous to BaseITModule
+#       and ITModule
+class ITDataModule:
 
     def __init__(
         self,
@@ -66,7 +66,6 @@ class ITDataModule:
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
-    # @abstractmethod
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""
 

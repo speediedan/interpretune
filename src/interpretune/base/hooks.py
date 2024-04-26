@@ -1,10 +1,8 @@
 from typing import Any, Optional
 import torch
-from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.base.config.module import ITConfig, ITState
 from interpretune.utils.import_utils import instantiate_class
-from interpretune.utils.logging import rank_zero_warn
 from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
 
 
@@ -66,14 +64,5 @@ class BaseITHooks:
     def forward(self, **inputs: Any) -> STEP_OUTPUT:
         return self.model(**inputs, **self.it_cfg.cust_fwd_kwargs)
 
-    def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
-        rank_zero_warn("`training_step` must be implemented to be used with the Interpretune.")
-
-    def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        rank_zero_warn("`validation_step` must be implemented to be used with the Interpretune.")
-
-    def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        rank_zero_warn("`validation_step` must be implemented to be used with the Interpretune.")
-
-    def predict_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        rank_zero_warn("`prediction_step` must be implemented to be used with the Interpretune.")
+    # TODO: since we mandate the existence of at least one of {training,validation,test,predict}_step methods via our
+    # protocol, we should define them in documentation but not provide default empty implementations here

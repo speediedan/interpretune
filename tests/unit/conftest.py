@@ -12,7 +12,7 @@ from interpretune.plugins.transformer_lens import ITLensModule
 from tests.parity_acceptance.base.test_it_base import CoreCfg, ProfParityCfg, BaseCfg
 from tests.parity_acceptance.plugins.transformer_lens.test_interpretune_tl import TLParityCfg, TLProfileCfg
 from interpretune.base.call import _call_itmodule_hook
-from tests.configuration import config_modules, get_it_cfg, get_itdm_cfg
+from tests.configuration import config_modules, get_it_cfg, get_itdm_cfg, config_session
 from tests.modules import TestITDataModule, TestITModule
 from tests.unit.cfg_aliases import (TLDebugCfg, LightningLlama2DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg,
                                     CoreGPT2PEFTSeqCfg)
@@ -139,6 +139,29 @@ def session_fixture_factory(config_key, init_key):
         setattr(it_s, 'fixt_test_cfg', deepcopy(test_sess_config))
         yield it_s
     return get_it_session
+
+def configure_session_cfg_fixture(test_cfg_cls, tmp_factory):
+    test_cfg = test_cfg_cls()
+    itdm_cfg = get_itdm_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
+    it_cfg = get_it_cfg(test_cfg=test_cfg, core_log_dir=tmp_factory.mktemp(f"{test_cfg_cls.__name__}_sess_cfg_fixture"))
+    TEST_CLS_MAPPING = {'datamodule_cls': 'tests.modules.TestITDataModule', 'module_cls': 'tests.modules.TestITModule'}
+    core_cfg = {'datamodule_cfg': itdm_cfg, 'module_cfg': it_cfg, **TEST_CLS_MAPPING}
+    return core_cfg, test_cfg
+
+@pytest.fixture(scope="class")
+def get_tl_it_session_cfg(tmp_path_factory):
+    core_cfg, test_cfg = configure_session_cfg_fixture(TLParityCfg, tmp_path_factory)
+    test_cfg.framework_ctx = 'core'
+    test_cfg.plugin_ctx = 'transformer_lens'
+    test_cfg.model_src_key = 'cust'
+    yield config_session(core_cfg, test_cfg, 'it_session_cfg_tl_test', {}, None, {})
+
+@pytest.fixture(scope="class")
+def get_core_cust_it_session_cfg(tmp_path_factory):
+    core_cfg, test_cfg = configure_session_cfg_fixture(CoreCfg, tmp_path_factory)
+    test_cfg.framework_ctx = 'core'
+    test_cfg.model_src_key = 'cust'
+    yield config_session(core_cfg, test_cfg, 'it_session_cfg_core_test', {}, None, {})
 
 for module_key, init_key in product(FIXTURE_CFGS.keys(), ["setup", "configure_optimizers"]):
     name = f"get_it_module__{module_key}__{init_key}"
