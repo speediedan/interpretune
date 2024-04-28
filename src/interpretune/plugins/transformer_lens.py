@@ -12,9 +12,8 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.base.config.module import ITConfig,HFFromPretrainedConfig
 from interpretune.base.modules import BaseITModule
-from interpretune.frameworks.lightning import ITLightningModule
 from interpretune.utils.data_movement import move_data_to_device
-from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE, _resolve_torch_dtype
+from interpretune.utils.import_utils import _resolve_torch_dtype
 from interpretune.base.components.core import CoreHelperAttributes
 from interpretune.base.config.mixins import CoreGenerationConfig
 from interpretune.utils.logging import rank_zero_warn, rank_zero_info
@@ -317,10 +316,3 @@ class ITLensModule(TLensAttributeMixin, CoreHelperAttributes, BaseITLensModule):
     def batch_to_device(self, batch) -> BatchEncoding:
         move_data_to_device(batch, self.input_device)
         return batch
-
-# TODO: dynamically generate this ITLensLightningModule class with session-based composition now that it's available
-if _LIGHTNING_AVAILABLE:
-    class ITLensLightningModule(TLensAttributeMixin, BaseITLensModule, ITLightningModule):
-        ...
-else:
-    ITLensLightningModule = object

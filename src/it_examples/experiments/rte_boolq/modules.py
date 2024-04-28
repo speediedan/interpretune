@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Dict
 import torch
 from torch.nn import CrossEntropyLoss
 import evaluate
@@ -46,7 +46,7 @@ class RTEBoolqSteps:
         answer_logits, labels, orig_labels = self.logits_and_labels(batch, batch_idx)
         val_loss = self.loss_fn(answer_logits, labels)
         self.log("val_loss", val_loss, prog_bar=True, sync_dist=True)
-        self.collect_log_answers(answer_logits, orig_labels)
+        self.collect_answers(answer_logits, orig_labels)
 
     @ProfilerHooksMixin.memprofilable
     def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
@@ -61,14 +61,19 @@ class RTEBoolqSteps:
         outputs = self.it_generate(batch,
                                    pad_token_id=self.datamodule.tokenizer.pad_token_id,
                                    **self.it_cfg.zero_shot_cfg.lm_generation_cfg.__dict__)
-        self.collect_log_answers(outputs.logits, labels)
+        self.collect_answers(outputs.logits, labels)
 
     def default_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         labels = batch.pop("labels")
         outputs = self(**batch)
-        self.collect_log_answers(outputs.logits, labels)
+        self.collect_answers(outputs.logits, labels)
 
-    def collect_log_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor) -> None:
+    def predict_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
+        labels = batch.pop("labels")
+        outputs = self(**batch)
+        return self.collect_answers(outputs, labels, mode='return')
+
+    def collect_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor, mode: str = 'log') -> Optional[Dict]:
         logits = self.standardize_logits(logits)
         per_example_answers, _ = torch.max(logits, dim=-2)
         preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
@@ -76,7 +81,10 @@ class RTEBoolqSteps:
         # TODO: check if this type casting is still required for lightning torchmetrics, bug should be fixed now...
         metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
                                metric_dict.items()))
-        self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
+        if mode == 'log':
+            self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
+        else:
+            return metric_dict
 
     def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
         # to support zero_shot/non-zero_shot configs and LM/SeqClassification heads we adhere to the following logits

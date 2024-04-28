@@ -85,7 +85,15 @@ def run_lightning(it_session: ITSessionConfig, test_cfg: Tuple, tmp_path: Path) 
     trainer = Trainer(default_root_dir=tmp_path, devices=1, deterministic=True, accelerator=accelerator,
                       max_epochs=test_cfg.max_epochs, precision=lightning_prec_alias(test_cfg.precision),
                       num_sanity_val_steps=0, **trainer_steps)
-    lightning_func = trainer.fit if test_cfg.phase == "train" else trainer.test
+    match test_cfg.phase:
+        case "train":
+            lightning_func = trainer.fit
+        case "test":
+            lightning_func = trainer.test
+        case "predict":
+            lightning_func = trainer.predict
+        case _:
+            raise ValueError("Unsupported phase type, phase must be 'train', 'test' or 'predict'")
     with mock.patch.object(ModelCheckpoint, "_save_checkpoint"):  # do not save checkpoints for lightning tests
         lightning_func(**it_session)
     return trainer
@@ -116,20 +124,33 @@ def ablate_cls_attrs(object: object, attr_names: str| tuple):
         if not isinstance(attr_names, tuple):
             attr_names = (attr_names,)
         for attr_name in attr_names:
-            orig_attr_handle = getattr(object, attr_name, None)
-            if orig_attr_handle is None:
-                raise AttributeError(f"{object} does not have the requested attribute to ablate ({attr_name})")
-            orig_attr_fqn = orig_attr_handle.__qualname__
-            orig_obj_attach = orig_attr_fqn[:-len(orig_attr_fqn.rsplit(".", 1)[-1]) - 1]
-            if (orig_obj_attach_handle := orig_attr_handle.__globals__.get(orig_obj_attach, None)) is None:
-                mod = importlib.import_module(orig_attr_handle.__module__)
-                orig_obj_attach_handle = getattr(mod, orig_obj_attach)
-            ablated_attr_indices[attr_name] = (orig_obj_attach_handle, orig_attr_handle)
-            delattr(orig_obj_attach_handle, attr_name)
+            ablated_attr_indices[attr_name] = attr_resolve(object, attr_name)
         yield
     finally:
-        for attr_name in attr_names:
+        for attr_name in reversed(ablated_attr_indices.keys()):
             setattr(ablated_attr_indices[attr_name][0], attr_name, ablated_attr_indices[attr_name][1])
+
+def attr_resolve(object: object, attr_name: str):
+    orig_attr_handle = getattr(object, attr_name, None)
+    if orig_attr_handle is None:
+        raise AttributeError(f"{object} does not have the requested attribute to ablate ({attr_name})")
+    if object.__dict__.get(attr_name, None) is not None:
+        orig_obj_attach_handle = object
+    else:
+        orig_obj_attach_handle = indirect_resolve(object, attr_name, orig_attr_handle)
+    ablation_index_entry = (orig_obj_attach_handle, orig_attr_handle)
+    delattr(orig_obj_attach_handle, attr_name)
+    return ablation_index_entry
+
+def indirect_resolve(object: object, attr_name: str, orig_attr_handle: object):
+    try:
+        orig_attr_fqn = getattr(orig_attr_handle, "__qualname__", None) or orig_attr_handle.__class__.__qualname__
+        orig_obj_attach = orig_attr_fqn[:-len(orig_attr_fqn.rsplit(".", 1)[-1]) - 1]
+    except AttributeError as ae:
+        raise AttributeError("Could not resolve the original object and attribute of the requested object and"
+                             f" attribute pair: ({object}, {attr_name}). Received: {ae}")
+    mod = importlib.import_module(orig_attr_handle.__module__)
+    return getattr(mod, orig_obj_attach)
 
 @contextmanager
 def disable_zero_shot(it_session: ITSession):

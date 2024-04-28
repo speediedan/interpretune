@@ -243,6 +243,7 @@ TEST_MODULE_BASE_CONFIGS = {
     ("train", None, "gpt2"): test_core_gpt2_it_module_optim,
     ("test", None, "llama2"): test_core_llama2_it_module_base,
     ("train", None, "llama2"): test_core_llama2_it_module_optim,
+    ("predict", None, "cust"): test_core_cust_it_module_base,
     ("test", None, "cust"): test_core_cust_it_module_base,
     ("train", None, "cust"): test_core_cust_it_module_optim,
     ("test", Plugin.transformer_lens, "gpt2"): test_tl_gpt2_it_module_base,

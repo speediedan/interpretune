@@ -7,7 +7,7 @@ import logging
 import torch
 import datasets
 from datasets import Dataset
-from transformers import AutoTokenizer, PreTrainedTokenizerFast, PreTrainedTokenizerBase
+from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn
 from interpretune.utils.import_utils import _import_class
@@ -80,12 +80,9 @@ class ITDataModule:
     def configure_tokenizer(self) -> PreTrainedTokenizerBase:
         access_token = os.environ[self.itdm_cfg.os_env_model_auth_key.upper()] if self.itdm_cfg.os_env_model_auth_key \
               else None
-        ### tokenizer config precedence: preconfigured > local fast path > pretrained tokenizer name -> model name
+        ### tokenizer config precedence: preconfigured > pretrained tokenizer name -> model name
         if self.itdm_cfg.tokenizer:
             tokenizer = self.itdm_cfg.tokenizer
-        elif self.itdm_cfg.local_fast_tokenizer_path:
-            tokenizer = PreTrainedTokenizerFast.from_pretrained(self.itdm_cfg.local_fast_tokenizer_path,
-                                                                **self.itdm_cfg.tokenizer_kwargs)
         elif self.itdm_cfg.tokenizer_name:
             tokenizer = AutoTokenizer.from_pretrained(
                 self.itdm_cfg.tokenizer_name, token=access_token, **self.itdm_cfg.tokenizer_kwargs
@@ -94,7 +91,6 @@ class ITDataModule:
             tokenizer = AutoTokenizer.from_pretrained(
                 self.itdm_cfg.model_name_or_path, token=access_token, **self.itdm_cfg.tokenizer_kwargs
             )
-        # TODO: reconsider whether adding of special tokens should be excluded for the local fast tokenizer path
         _ = tokenizer.add_special_tokens(self.itdm_cfg.special_tokens_dict)
         if self.itdm_cfg.tokenizer_id_overrides:
             for k, v in self.itdm_cfg.tokenizer_id_overrides.items():

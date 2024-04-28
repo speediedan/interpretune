@@ -5,16 +5,23 @@ from dataclasses import dataclass, field
 
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig, ITSerializableCfg
-from interpretune.base.modules import ITModule
+from interpretune.base.modules import ITModule, BaseITModule
 from interpretune.base.datamodules import ITDataModule
-from interpretune.frameworks.lightning import ITLightningDataModule, ITLightningModule
-from interpretune.plugins.transformer_lens import ITLensLightningModule, ITLensModule
+from interpretune.plugins.transformer_lens import BaseITLensModule, ITLensModule, TLensAttributeMixin
 from interpretune.utils.warnings import unexpected_state_msg_suffix
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.base.config.shared import AutoStrEnum
 from interpretune.base.contract.protocol import (DataModuleInitable, ModuleSteppable, NamedWrapper, ITModuleProtocol,
                                                  ITDataModuleProtocol)
+from interpretune.utils.import_utils import  _LIGHTNING_AVAILABLE
 
+if _LIGHTNING_AVAILABLE:
+    from lightning.pytorch import LightningDataModule, LightningModule
+    from interpretune.frameworks.lightning import LightningAdapter
+else:
+    LightningDataModule = object
+    LightningModule = object
+    LightningAdapter = object
 
 # NOTE [Interpretability Plugins]:
 # `TransformerLens` is the first supported interpretability plugin but support for other plugins is expected
@@ -35,12 +42,17 @@ class Plugin(AutoStrEnum):
     transformer_lens = auto()
 
 
-INTERPRETUNABLE_MODULE_MAPPING = {
-    # (framework_ctx, plugin_ctx)
-    (Framework.core, None): ITModule,
-    (Framework.lightning, None): ITLightningModule,
-    (Framework.core, Plugin.transformer_lens): ITLensModule,
-    (Framework.lightning, Plugin.transformer_lens): ITLensLightningModule,
+COMPOSITION_MAPPING = {
+    # (component_key, framework_ctx, plugin_ctx)
+    ('datamodule', Framework.core, None): (ITDataModule,),
+    ('datamodule', Framework.lightning, None): (ITDataModule, LightningDataModule),
+    ('datamodule', Framework.core, Plugin.transformer_lens): (ITDataModule,),
+    ('datamodule', Framework.lightning, Plugin.transformer_lens): (ITDataModule, LightningDataModule),
+    ('module', Framework.core, None): (ITModule,),
+    ('module', Framework.lightning, None): (LightningAdapter, BaseITModule, LightningModule),
+    ('module', Framework.core, Plugin.transformer_lens): ITLensModule,
+    ('module', Framework.lightning, Plugin.transformer_lens): (TLensAttributeMixin, BaseITLensModule, LightningAdapter,
+                                                     BaseITModule, LightningModule),
 }
 
 
@@ -48,8 +60,10 @@ class ITMeta(type):
     def __new__(mcs, name, bases, classdict, **kwargs):
         component, input, ctx = mcs._validate_build_ctx(kwargs)
         # TODO: add runtime checks for adherence to IT protocol here?
-        composition_class = mcs._map_composition_target(component, ctx)
-        bases = (NamedWrapper, input, composition_class)
+        composition_classes = mcs._map_composition_target(component, ctx)
+        if not isinstance(composition_classes, tuple):
+            composition_classes = (composition_classes,)
+        bases = (NamedWrapper, input, *composition_classes)
         built_class = super().__new__(mcs, name, bases, classdict)
         built_class._orig_module_name = input.__qualname__
         return built_class
@@ -72,12 +86,14 @@ class ITMeta(type):
     def _map_composition_target(component, ctx):
         framework_ctx = ctx.get('framework_ctx', Framework.core)
         plugin_ctx = ctx.get('plugin_ctx', None)
-        if component in ('module', 'm'):
-            composition_class = INTERPRETUNABLE_MODULE_MAPPING[(framework_ctx, plugin_ctx)]
-        else:
-            composition_class = ITLightningDataModule if framework_ctx == Framework.lightning else ITDataModule
-        return composition_class
-
+        component_key = None
+        match component:
+            case 'datamodule' | 'dm':
+                component_key = 'datamodule'
+            case 'module' | 'm':
+                component_key = 'module'
+        assert component_key is not None, "invalid component, should be in: ('module', 'datamodule', 'm', 'dm')"
+        return COMPOSITION_MAPPING[(component_key, framework_ctx, plugin_ctx)]
 
 @dataclass(kw_only=True)
 class UnencapsulatedArgs(ITSerializableCfg):

@@ -20,7 +20,7 @@ def test_cli_configs(recwarn, clean_cli_env, cli_test_configs, test_alias, cli_c
     with mock.patch('sys.argv', cli_args):
         cli = cli_main(**main_kwargs)
     if not cli_cfg.run:
-        assert isinstance(cli.module, EXPECTED_RESULTS_CLI[test_alias]['class_type'])
+        assert hasattr(cli.module, EXPECTED_RESULTS_CLI[test_alias]['hasattr'])
     # ensure no unexpected warnings detected
     unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)

@@ -1,13 +1,7 @@
 from interpretune.utils.import_utils import  _LIGHTNING_AVAILABLE
-from interpretune.base.datamodules import ITDataModule
-from interpretune.base.modules import BaseITModule
 
 
-# TODO: Dynamically generate ITLightningDataModule and ITLightningModule classes (avoid the model train mode with
-#       LightningModule) with session-based approach now that it's available (should be able to get rid of this module)
-#       In the future, session, should be able to directly inherit a FrameworkAdapter w/ some frameworks like Lightning
 if _LIGHTNING_AVAILABLE:
-    from lightning.pytorch import LightningDataModule, LightningModule
     from lightning.fabric.utilities.device_dtype_mixin import _DeviceDtypeModuleMixin
 
     class LightningAdapter:
@@ -33,13 +27,3 @@ if _LIGHTNING_AVAILABLE:
             # ensure model is in training mode (e.g. needed for some edge cases w/ skipped sanity checking)
             self.model.train()
             return super().on_train_start()
-
-    class ITLightningDataModule(ITDataModule, LightningDataModule):
-        ...
-
-    class ITLightningModule(LightningAdapter, BaseITModule, LightningModule):
-        ...
-
-else:
-    ITLightningDataModule = object
-    ITLightningModule = object

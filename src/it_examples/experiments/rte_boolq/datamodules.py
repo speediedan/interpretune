@@ -56,7 +56,7 @@ class RTEBoolqDataModule(ITDataModule):
         return self.dataloader_factory(split='validation')
 
     def predict_dataloader(self) -> DataLoader:
-        return self.dataloader_factory()
+        return self.dataloader_factory(split='validation')
 
 
 class GPT2RTEBoolqDataModule(RTEBoolqDataModule):

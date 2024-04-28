@@ -15,7 +15,7 @@ from interpretune.base.call import _call_itmodule_hook
 from tests.configuration import config_modules, get_it_cfg, get_itdm_cfg, config_session
 from tests.modules import TestITDataModule, TestITModule
 from tests.unit.cfg_aliases import (TLDebugCfg, LightningLlama2DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg,
-                                    CoreGPT2PEFTSeqCfg)
+                                    CoreGPT2PEFTSeqCfg, CoreCfgForcePrepare)
 from interpretune.utils.import_utils import _DOTENV_AVAILABLE
 
 if _DOTENV_AVAILABLE:
@@ -46,6 +46,7 @@ class FixtureCfg:
 
 FIXTURE_CFGS = {
     "core_cust": FixtureCfg(),
+    "core_cust_force_prepare": FixtureCfg(test_cfg=CoreCfgForcePrepare),
     "core_gpt2": FixtureCfg(test_cfg=ProfParityCfg),
     "core_gpt2_peft": FixtureCfg(test_cfg=CoreGPT2PEFTCfg),
     "core_gpt2_peft_seq": FixtureCfg(test_cfg=CoreGPT2PEFTSeqCfg),
@@ -122,7 +123,8 @@ def session_fixture_hook_exec(it_s, init_key: FixturePhase):
             _call_itmodule_hook(it_s.datamodule, hook_name="prepare_data", hook_msg="Preparing data",
                             target_model=it_s.module.model)
         if init_key.value >= FixturePhase.setup:
-            _call_itmodule_hook(it_s.datamodule, hook_name="setup", hook_msg="Setting up datamodule")
+            _call_itmodule_hook(it_s.datamodule, hook_name="setup", hook_msg="Setting up datamodule",
+                                module=it_s.module)
             _call_itmodule_hook(it_s.module, hook_name="setup", hook_msg="Setting up model",
                                 datamodule=it_s.datamodule)
         if init_key.value >= FixturePhase.configure_optimizers:

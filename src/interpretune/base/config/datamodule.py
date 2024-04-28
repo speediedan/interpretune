@@ -71,5 +71,6 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
         for tokenizer_attr in ["tokenizer", "tokenizer_name"]:
             if getattr(self, tokenizer_attr) is None and getattr(it_cfg, tokenizer_attr, None) is not None:
                 setattr(self, tokenizer_attr, getattr(it_cfg, tokenizer_attr))
-                rank_zero_warn("Since no datamodule `model_name_or_path` was provided, attempting to use fallback"
-                                f" configuration, setting {tokenizer_attr} to {getattr(it_cfg, tokenizer_attr)}.")
+                if not self.model_name_or_path:
+                    rank_zero_warn("Since no datamodule `model_name_or_path` was provided, attempting to use fallback"
+                                    f" configuration, setting {tokenizer_attr} to {getattr(it_cfg, tokenizer_attr)}.")

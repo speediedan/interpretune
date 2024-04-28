@@ -44,6 +44,7 @@ PARITY_BASIC_CONFIGS = (
     ParityTest(alias="train_cuda_bf16_l", cfg=CoreCfg(**cuda_bf16_l), marks="bf16_cuda_l"),
     ParityTest(alias="test_cpu_32", cfg=CoreCfg(phase="test")),
     ParityTest(alias="test_cpu_32_l", cfg=CoreCfg(phase="test", **w_lit), marks="lightning"),
+    ParityTest(alias="predict_cpu_32_l", cfg=CoreCfg(phase="predict", **w_lit), marks="lightning"),
     ParityTest(alias="test_cuda_32", cfg=CoreCfg(phase="test", model_src_key="gpt2", **cuda), marks="cuda"),
     ParityTest(alias="test_cuda_bf16", cfg=CoreCfg(phase="test", **cuda_bf16), marks="bf16_cuda"),
     ParityTest(alias="train_cpu_bf16", cfg=CoreCfg(**bf16), marks="skip_win_slow"),

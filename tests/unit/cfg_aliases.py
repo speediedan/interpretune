@@ -20,6 +20,13 @@ gpt2_seq_hf_from_pretrained_kwargs.update({"model_head": "transformers.AutoModel
 
 
 @dataclass(kw_only=True)
+class CoreCfgForcePrepare(BaseCfg):
+    model_src_key: Optional[str] = "cust"
+    force_prepare_data: Optional[bool] = True
+    dm_override_cfg: Optional[Dict] = field(default_factory=lambda: {'enable_datasets_cache': False,
+                                                                     'dataset_path': '/tmp/force_prepare_tests_ds'})
+
+@dataclass(kw_only=True)
 class TLDebugCfg(TLParityCfg):
     debug_lm_cfg: Optional[DebugLMConfig] = field(default_factory=lambda: DebugLMConfig(enabled=True))
     phase: Optional[str] = "test"

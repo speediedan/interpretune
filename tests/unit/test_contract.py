@@ -30,7 +30,7 @@ class TestClassContract:
             m_cls = session_cfg.module_cls
             missing_dm_funcs = ("train_dataloader", "val_dataloader", "test_dataloader", "predict_dataloader") \
                 if invalidate_dm else ()
-            missing_m_funcs = ("training_step", "validation_step", "test_step")
+            missing_m_funcs = ("training_step", "validation_step", "test_step", "predict_step")
             with ablate_cls_attrs(dm_cls, missing_dm_funcs), ablate_cls_attrs(m_cls, missing_m_funcs):
                 yield
         finally:
@@ -44,7 +44,6 @@ class TestClassContract:
         assert not unmatched
 
     def test_it_session_validation_errors(self, recwarn, get_tl_it_session_cfg):
-        expected_warns = (*CORE_CTX_WARNS, "Since no datamodule.*")
         sess_cfg = get_tl_it_session_cfg
         build_ctx = {'framework_ctx': sess_cfg.framework_ctx, 'plugin_ctx': sess_cfg.plugin_ctx}
         m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=sess_cfg.module_cls, ctx=build_ctx)
@@ -69,7 +68,7 @@ class TestClassContract:
             with patch.object(sess_cfg, 'module', new=ready_inval_m):
                 with pytest.raises(ValueError, match="enable auto-composition"):
                     _ = ITSession(sess_cfg)
-        unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warns)
+        unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=CORE_CTX_WARNS)
         assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
 
     @pytest.mark.parametrize(
@@ -109,3 +108,16 @@ class TestClassContract:
         assert len(it_session) == 2
         assert repr(it_session.module) == 'InterpretunableModule(TestITModule)'
         assert repr(it_session.datamodule) == 'InterpretunableDataModule(TestITDataModule)'
+
+    def test_session_min_dep_installed(self):
+        import sys
+        from importlib import reload
+        del sys.modules['interpretune.base.contract.session']
+        with patch('interpretune.utils.import_utils._LIGHTNING_AVAILABLE', False):
+            from interpretune.base.contract.session import LightningModule, LightningDataModule
+            assert LightningModule.__module__ == 'builtins'
+            assert LightningDataModule.__module__ == 'builtins'
+        reload(sys.modules['interpretune.base.contract.session'])
+        from interpretune.base.contract.session import LightningModule, LightningDataModule
+        assert LightningModule.__module__ == 'lightning.pytorch.core.module'
+        assert LightningDataModule.__module__ == 'lightning.pytorch.core.datamodule'

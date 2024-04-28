@@ -65,15 +65,15 @@ class ModuleInvariants(Protocol):
 ModuleSteppable: TypeAlias = TrainSteppable | ValidationSteppable | TestSteppable | PredictSteppable
 DataModuleInitable: TypeAlias = TrainLoadable | ValLoadable | TestLoadable | PredictLoadable
 
-# TODO: ensure protocol variants are explicitly documented and possibly add a section describing the approach to
-#       supported protocol variant generation. Also add an issue tracker for this approach to solicit ideas for a
-#       cleaner/more pythonic approach. As Python structural subtyping features are still evolving, if a cleaner and
-#       more pythonic approach isn't available now, one will hopefully be available in the near future.
+
 # We generate valid datamodule/module protocol variants by composing their respective base protocols with the set of
 # valid subprotocols over which `any` semantics apply.
 ITDataModuleProtocol: TypeAlias = gen_protocol_variants(DataModuleInitable, DataModuleInvariants)  # type: ignore
 ITModuleProtocol: TypeAlias = gen_protocol_variants(ModuleSteppable, ModuleInvariants)   # type: ignore
-
+# TODO: ensure protocol variants are explicitly documented and possibly add a section describing the approach to
+#       supported protocol variant generation. Also add an issue tracker for this approach to solicit ideas for a
+#       cleaner/more pythonic approach. As Python structural subtyping features are still evolving, if a cleaner and
+#       more pythonic approach isn't available now, one will hopefully be available in the near future.
 
 class NamedWrapper:
     def __str__(self):
