@@ -2,103 +2,40 @@ import os
 import sys
 import logging
 import warnings
-from collections import namedtuple
-from fsspec.core import url_to_fs
-from fsspec.implementations.local import AbstractFileSystem
 from typing import Optional, Callable, Any, TypeVar, Union, Dict
 from typing_extensions import ParamSpec, overload
 from functools import wraps
-from platform import python_version
-from pathlib import Path
+from contextlib import contextmanager
 
-import torch
-from torch.utils import collect_env
+from torch.utils.collect_env import get_env_info
 
-from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 
 log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 P = ParamSpec("P")
 
+CUDA_MAY_BE_INIT_MSG = "Unable to patch `get_cuda_module_loading_config`, CUDA may be initialized during env logging."
 
-# override PyTorch default, extending it to capture additional salient packages for reproducability
-# https://github.com/pytorch/pytorch/blob/7c2489bdae5a96dc122c3bb7b42c18528bcfdc86/torch/utils/collect_env.py#L271
-def get_pip_packages(run_lambda):
-    """Returns `pip list` output.
+# generalizing this context manager in case we need to patch other env logging functions
+@contextmanager
+def patch_torch_env_logging_fn(module_name: str, fn_name: str, warn_msg: str):
+    try:
+        orig_fn = sys.modules[module_name].__dict__.pop(fn_name, None)
+        sys.modules[module_name].__dict__[fn_name] = lambda : "not inspected"
+        yield
+    finally:
+        sys.modules[module_name].__dict__[fn_name] = orig_fn
 
-    Note: will also find conda-installed pytorch
-    and numpy packages.
-    """
-    # People generally have `pip` as `pip` or `pip3`
-    # But here it is incoved as `python -mpip`
-    def run_with_pip(pip):
-        if collect_env.get_platform() == "win32":
-            system_root = os.environ.get("SYSTEMROOT", "C:\\Windows")
-            findstr_cmd = os.path.join(system_root, "System32", "findstr")
-            grep_cmd = rf'{findstr_cmd} /R "numpy torch mypy transformers datasets"'
-        else:
-            grep_cmd = r'grep "torch\|numpy\|mypy\|transformers\|datasets"'
-        return collect_env.run_and_read_all(run_lambda, pip + " list --format=freeze | " + grep_cmd)
-
-    pip_version = "pip3" if sys.version[0] == "3" else "pip"
-    out = run_with_pip(sys.executable + " -mpip")
-
-    return pip_version, out
-
-
-def get_env_info():
-    run_lambda = collect_env.run
-    pip_version, pip_list_output = get_pip_packages(run_lambda)
-
-    if collect_env.TORCH_AVAILABLE:
-        version_str = torch.__version__
-        debug_mode_str = str(torch.version.debug)
-        cuda_available_str = str(torch.cuda.is_available())
-        cuda_version_str = torch.version.cuda
-        if not hasattr(torch.version, "hip") or torch.version.hip is None:  # cuda version
-            hip_compiled_version = hip_runtime_version = miopen_runtime_version = "N/A"
-        else:  # HIP version
-            cfg = torch._C._show_config().split("\n")
-            hip_runtime_version = [s.rsplit(None, 1)[-1] for s in cfg if "HIP Runtime" in s][0]
-            miopen_runtime_version = [s.rsplit(None, 1)[-1] for s in cfg if "MIOpen" in s][0]
-            cuda_version_str = "N/A"
-            hip_compiled_version = torch.version.hip
-    else:
-        version_str = debug_mode_str = cuda_available_str = cuda_version_str = "N/A"
-        hip_compiled_version = hip_runtime_version = miopen_runtime_version = "N/A"
-
-    sys_version = sys.version.replace("\n", " ")
-
-    systemenv_kwargs = {
-        "torch_version": version_str,
-        "is_debug_build": debug_mode_str,
-        "python_version": f"{sys_version} ({sys.maxsize.bit_length() + 1}-bit runtime)",
-        "python_platform": collect_env.get_python_platform(),
-        "is_cuda_available": cuda_available_str,
-        "cuda_compiled_version": cuda_version_str,
-        "cuda_runtime_version": collect_env.get_running_cuda_version(run_lambda),
-        "nvidia_gpu_models": collect_env.get_gpu_info(run_lambda),
-        "nvidia_driver_version": collect_env.get_nvidia_driver_version(run_lambda),
-        "cudnn_version": collect_env.get_cudnn_version(run_lambda),
-        "hip_compiled_version": hip_compiled_version,
-        "hip_runtime_version": hip_runtime_version,
-        "miopen_runtime_version": miopen_runtime_version,
-        "pip_version": pip_version,
-        "pip_packages": pip_list_output,
-        "conda_packages": collect_env.get_conda_packages(run_lambda),
-        "os": collect_env.get_os(run_lambda),
-        "libc_version": collect_env.get_libc_version(),
-        "gcc_version": collect_env.get_gcc_version(run_lambda),
-        "clang_version": collect_env.get_clang_version(run_lambda),
-        "cmake_version": collect_env.get_cmake_version(run_lambda),
-        "caching_allocator_config": collect_env.get_cachingallocator_config(),
-        "is_xnnpack_available": collect_env.is_xnnpack_available(),
-        "cpu_info": collect_env.get_cpu_info(run_lambda),
-    }
-    # get_cuda_module_loading_config() initializes CUDA which we want to avoid so we bypass this inspection
-    systemenv_kwargs["cuda_module_loading"] = "not inspected"
-    return collect_env.SystemEnv(**systemenv_kwargs)
+def maybe_patched_get_env_info(module_name: str, fn_name: str, warn_msg: str):
+    try:
+        with patch_torch_env_logging_fn(module_name, fn_name, warn_msg):
+            sys_info = get_env_info()
+    except:  # noqa: E722
+        # if we are unable to patch our target fn for any unexpected reason, we continue with a warn
+        rank_zero_warn(warn_msg)
+        sys_info = get_env_info()
+    return sys_info
 
 
 def collect_env_info() -> Dict:
@@ -107,141 +44,90 @@ def collect_env_info() -> Dict:
     Returns:
         Dict: The dictionary of environmental details
     """
-    _ = namedtuple(
-        "SystemEnv",
-        [
-            "torch_version",
-            "is_debug_build",
-            "cuda_compiled_version",
-            "gcc_version",
-            "clang_version",
-            "cmake_version",
-            "os",
-            "libc_version",
-            "python_version",
-            "python_platform",
-            "is_cuda_available",
-            "cuda_runtime_version",
-            "nvidia_driver_version",
-            "nvidia_gpu_models",
-            "cudnn_version",
-            "pip_version",  # 'pip' or 'pip3'
-            "pip_packages",
-            "conda_packages",
-            "hip_compiled_version",
-            "hip_runtime_version",
-            "miopen_runtime_version",
-            "caching_allocator_config",
-        ],
-    )
-    collect_env.get_pip_packages = get_pip_packages
-    sys_info = get_env_info()
+    # we patch `get_cuda_module_loading_config` to avoid initializing CUDA
+    sys_info = maybe_patched_get_env_info("torch.utils.collect_env", "get_cuda_module_loading_config",
+                                          CUDA_MAY_BE_INIT_MSG)
     sys_dict = sys_info._asdict()
     pip_dict = {name: ver for name, ver in [p.split("==") for p in sys_info._asdict()["pip_packages"].split("\n")]}
     sys_dict["pip_packages"] = pip_dict
     return sys_dict
 
-
-def get_filesystem(path: str | Path, **kwargs: Any) -> AbstractFileSystem:
-    fs, _ = url_to_fs(str(path), **kwargs)
-    return fs
-
-
 ################################################################################
-# Conditionally imported or locally-defined rank-zero logging functions
+# Locally-defined (possibly framework overridding) rank-zero logging functions
+# originally based upon https://bit.ly/orig_fabric_logging_utils and
+# https://bit.ly/lightning_core_utils
 ################################################################################
 
-if _LIGHTNING_AVAILABLE:
-    from lightning.fabric.utilities.rank_zero import rank_zero_only as _l_rank_zero_only
-    from lightning.fabric.utilities.rank_zero import _get_rank as _l_get_rank
-    rank_zero_only = _l_rank_zero_only
-    _get_rank = _l_get_rank
-else:
-    # if Lightning is not available, rank zero is 0 since our raw pytorch distributed logic hasn't been added yet
-    _get_rank = lambda: 0
 
-    @overload
-    def rank_zero_only(fn: Callable[P, T]) -> Callable[P, Optional[T]]:
-        ...
+def _get_rank() -> Optional[int]:
+    rank_keys = ("RANK", "LOCAL_RANK", "SLURM_PROCID", "JSM_NAMESPACE_RANK")
+    for key in rank_keys:
+        rank = os.environ.get(key)
+        if rank is not None:
+            return int(rank)
+    # None to differentiate whether an environment variable was set at all
+    return None
 
-
-    @overload
-    def rank_zero_only(fn: Callable[P, T], default: T) -> Callable[P, T]:
-        ...
+@overload
+def rank_zero_only(fn: Callable[P, T]) -> Callable[P, Optional[T]]: ...
 
 
-    def rank_zero_only(fn: Callable[P, T], default: Optional[T] = None) -> Callable[P, Optional[T]]:
-        """Wrap a function to call internal function only in rank zero.
+@overload
+def rank_zero_only(fn: Callable[P, T], default: T) -> Callable[P, T]: ...
 
-        Function that can be used as a decorator to enable a function/method being called only on global rank 0.
-        """
 
-        @wraps(fn)
-        def wrapped_fn(*args: P.args, **kwargs: P.kwargs) -> Optional[T]:
-            rank = getattr(rank_zero_only, "rank", None)
-            if rank is None:
-                raise RuntimeError("The `rank_zero_only.rank` needs to be set before use")
-            if rank == 0:
-                return fn(*args, **kwargs)
-            return default
+def rank_zero_only(fn: Callable[P, T], default: Optional[T] = None) -> Callable[P, Optional[T]]:
+    """Wrap a function to call internal function only in rank zero.
 
-        return wrapped_fn
+    Function that can be used as a decorator to enable a function/method being called only on global rank 0.
+    """
+
+    @wraps(fn)
+    def wrapped_fn(*args: P.args, **kwargs: P.kwargs) -> Optional[T]:
+        rank = getattr(rank_zero_only, "rank", None)
+        if rank is None:
+            raise RuntimeError("The `rank_zero_only.rank` needs to be set before use")
+        if rank == 0:
+            return fn(*args, **kwargs)
+        return default
+
+    return wrapped_fn
 
 # add the attribute to the function but don't overwrite if it already exists
 rank_zero_only.rank = getattr(rank_zero_only, "rank", _get_rank() or 0)
 
-if _LIGHTNING_AVAILABLE:
-    from lightning.fabric.utilities.rank_zero  import rank_zero_debug as _l_rank_zero_debug
-    rank_zero_debug = _l_rank_zero_debug
-else:
-    def _debug(*args: Any, stacklevel: int = 2, **kwargs: Any) -> None:
-        if python_version() >= "3.8.0":
-            kwargs["stacklevel"] = stacklevel
-        log.debug(*args, **kwargs)
+def _debug(*args: Any, stacklevel: int = 2, **kwargs: Any) -> None:
+    kwargs["stacklevel"] = stacklevel
+    log.debug(*args, **kwargs)
 
 
-    @rank_zero_only
-    def rank_zero_debug(*args: Any, stacklevel: int = 4, **kwargs: Any) -> None:
-        """Emit debug-level messages only on global rank 0."""
-        _debug(*args, stacklevel=stacklevel, **kwargs)
+@rank_zero_only
+def rank_zero_debug(*args: Any, stacklevel: int = 4, **kwargs: Any) -> None:
+    """Emit debug-level messages only on global rank 0."""
+    _debug(*args, stacklevel=stacklevel, **kwargs)
 
 
-if _LIGHTNING_AVAILABLE:
-    from lightning.fabric.utilities.rank_zero  import rank_zero_info as _l_rank_zero_info
-    rank_zero_info = _l_rank_zero_info
-else:
-    def _info(*args: Any, stacklevel: int = 2, **kwargs: Any) -> None:
-        if python_version() >= "3.8.0":
-            kwargs["stacklevel"] = stacklevel
-        log.info(*args, **kwargs)
+def _info(*args: Any, stacklevel: int = 2, **kwargs: Any) -> None:
+    kwargs["stacklevel"] = stacklevel
+    log.info(*args, **kwargs)
+
+@rank_zero_only
+def rank_zero_info(*args: Any, stacklevel: int = 4, **kwargs: Any) -> None:
+    """Emit info-level messages only on global rank 0."""
+    _info(*args, stacklevel=stacklevel, **kwargs)
+
+def _warn(message: Union[str, Warning], stacklevel: int = 2, **kwargs: Any) -> None:
+    warnings.warn(message, stacklevel=stacklevel, **kwargs)
 
 
-    @rank_zero_only
-    def rank_zero_info(*args: Any, stacklevel: int = 4, **kwargs: Any) -> None:
-        """Emit info-level messages only on global rank 0."""
-        _info(*args, stacklevel=stacklevel, **kwargs)
+@rank_zero_only
+def rank_zero_warn(message: Union[str, Warning], stacklevel: int = 4, **kwargs: Any) -> None:
+    """Emit warn-level messages only on global rank 0."""
+    _warn(message, stacklevel=stacklevel, **kwargs)
 
+rank_zero_deprecation_category = DeprecationWarning
 
-if _LIGHTNING_AVAILABLE:
-    from lightning.fabric.utilities.rank_zero  import rank_zero_warn as _l_rank_zero_warn
-    rank_zero_warn = _l_rank_zero_warn
-else:
-    def _warn(message: Union[str, Warning], stacklevel: int = 2, **kwargs: Any) -> None:
-        warnings.warn(message, stacklevel=stacklevel, **kwargs)
-
-
-    @rank_zero_only
-    def rank_zero_warn(message: Union[str, Warning], stacklevel: int = 4, **kwargs: Any) -> None:
-        """Emit warn-level messages only on global rank 0."""
-        _warn(message, stacklevel=stacklevel, **kwargs)
-
-if _LIGHTNING_AVAILABLE:
-    from lightning.fabric.utilities.rank_zero  import rank_zero_deprecation as _l_rank_zero_deprecation
-    rank_zero_deprecation = _l_rank_zero_deprecation
-else:
-    rank_zero_deprecation_category = DeprecationWarning
-
-    def rank_zero_deprecation(message: Union[str, Warning], stacklevel: int = 5, **kwargs: Any) -> None:
-        """Emit a deprecation warning only on global rank 0."""
-        category = kwargs.pop("category", rank_zero_deprecation_category)
-        rank_zero_warn(message, stacklevel=stacklevel, category=category, **kwargs)
+def rank_zero_deprecation(message: Union[str, Warning], stacklevel: int = 5, **kwargs: Any) -> None:
+    """Emit a deprecation warning only on global rank 0."""
+    category = kwargs.pop("category", rank_zero_deprecation_category)
+    rank_zero_warn(message, stacklevel=stacklevel, category=category, **kwargs)

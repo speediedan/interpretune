@@ -73,13 +73,6 @@ def _str_to_torch_dtype(str_dtype: str) -> Optional[torch.dtype]:
     elif hasattr(torch, str_dtype.split(".")[-1]):
         return getattr(torch, str_dtype.split(".")[-1])
 
-@lru_cache(1)
-def num_cuda_devices() -> int:
-    """Returns the number of available CUDA devices.
-
-    Since we require torch > 2.0, we do not need to explicitly use the nvml-based check.
-    """
-    return torch.cuda.device_count()
 
 def _import_class(class_path: str) -> Any:
     class_module, class_name = class_path.rsplit(".", 1)

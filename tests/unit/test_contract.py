@@ -11,6 +11,7 @@
 # limitations under the License.
 from unittest.mock import patch
 from contextlib import contextmanager
+from copy import deepcopy
 
 import pytest
 
@@ -44,7 +45,7 @@ class TestClassContract:
         assert not unmatched
 
     def test_it_session_validation_errors(self, recwarn, get_tl_it_session_cfg):
-        sess_cfg = get_tl_it_session_cfg
+        sess_cfg = deepcopy(get_tl_it_session_cfg)
         build_ctx = {'framework_ctx': sess_cfg.framework_ctx, 'plugin_ctx': sess_cfg.plugin_ctx}
         m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=sess_cfg.module_cls, ctx=build_ctx)
         with TestClassContract.invalid_mods_ctx(sess_cfg, invalidate_dm=False):
@@ -68,7 +69,8 @@ class TestClassContract:
             with patch.object(sess_cfg, 'module', new=ready_inval_m):
                 with pytest.raises(ValueError, match="enable auto-composition"):
                     _ = ITSession(sess_cfg)
-        unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=CORE_CTX_WARNS)
+        expected_warns = (*CORE_CTX_WARNS, "Since no datamodule.*")
+        unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warns)
         assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
 
     @pytest.mark.parametrize(
@@ -77,8 +79,7 @@ class TestClassContract:
         ids=["both_dm_m_precomposed", "dm_precomposed", "m_precomposed"],
     )
     def test_it_session_precomposed(self, recwarn, get_core_cust_it_session_cfg, dm_precomposed, m_precomposed):
-        expected_warns = (*CORE_CTX_WARNS, "Since no datamodule.*")
-        sess_cfg = get_core_cust_it_session_cfg
+        sess_cfg = deepcopy(get_core_cust_it_session_cfg)
         build_ctx = {'framework_ctx': sess_cfg.framework_ctx, 'plugin_ctx': sess_cfg.plugin_ctx}
         if dm_precomposed:
             dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input=sess_cfg.datamodule_cls,
@@ -100,7 +101,7 @@ class TestClassContract:
                 it_session = ITSession(sess_cfg)
         assert isinstance(it_session.datamodule, ITDataModuleProtocol)
         assert isinstance(it_session.module, ITModuleProtocol)
-        unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warns)
+        unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=CORE_CTX_WARNS)
         assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
 
     def test_it_session_cfg_sanitize(self, get_tl_it_session_cfg):

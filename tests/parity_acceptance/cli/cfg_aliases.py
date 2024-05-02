@@ -2,6 +2,8 @@ from copy import deepcopy
 from typing import Optional
 from enum import auto
 from dataclasses import dataclass
+from pathlib import Path
+import os
 
 from interpretune.base.config.shared import AutoStrEnum
 from tests.configuration import get_nested, set_nested
@@ -16,6 +18,9 @@ from interpretune.base.contract.session import Framework, Plugin
 
 from tests.configuration import BaseAugTest
 from tests.utils.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, TL_EXPECTED_WARNS
+
+
+IT_HOME = Path(os.environ.get("IT_HOME", Path(__file__).parent.parent.parent.parent / "src" / "interpretune"))
 
 
 class CLI_TESTS(AutoStrEnum):
@@ -48,11 +53,12 @@ class CLICfg:
     compose_cfg: bool = False
     plugin_ctx: Optional[Plugin] = None
     debug_mode: bool = False
+    use_harness: bool = False
 
 
 TEST_CONFIGS_CLI = (
     BaseAugTest(alias=CLI_TESTS.core_tl_test.value, cfg=CLICfg(compose_cfg=True, run="test", debug_mode=True,
-                                                           plugin_ctx=Plugin.transformer_lens)),
+                                                           plugin_ctx=Plugin.transformer_lens, use_harness=True)),
     BaseAugTest(alias=CLI_TESTS.core_tl_norun.value, cfg=CLICfg(plugin_ctx=Plugin.transformer_lens),
             expected={'hasattr': 'tl_config_model_init'}),
     BaseAugTest(alias=CLI_TESTS.core_optim_train.value, cfg=CLICfg(compose_cfg=True, run="train", debug_mode=True)),

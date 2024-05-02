@@ -20,6 +20,7 @@ from interpretune.utils.logging import rank_zero_warn, rank_zero_info
 from interpretune.base.config.shared import ITSerializableCfg
 from interpretune.utils.warnings import tl_invalid_dmap
 from interpretune.utils.patched_tlens_generate import generate as patched_generate
+from interpretune.utils.exceptions import MisconfigurationException
 
 
 ################################################################################
@@ -61,7 +62,7 @@ class ITLensCustomConfig(ITLensSharedConfig):
     def __post_init__(self) -> None:
         if not isinstance(self.cfg, HookedTransformerConfig):
             # ensure the user provided a valid dtype (should be handled by HookedTransformerConfig ideally)
-            if self.cfg['dtype'] and not isinstance(self.cfg['dtype'], torch.device):
+            if self.cfg['dtype'] and not isinstance(self.cfg['dtype'], torch.dtype):
                 self.cfg['dtype'] = _resolve_torch_dtype(self.cfg['dtype'])
             self.cfg = HookedTransformerConfig.from_dict(self.cfg)
 
@@ -72,8 +73,8 @@ class ITLensConfig(ITConfig):
 
     def __post_init__(self) -> None:
         if not self.tl_cfg:
-            raise ValueError("Either a `ITLensFromPretrainedConfig` or `ITLensCustomConfig` must be provided to"
-                             " initialize a HookedTransformer and use Transformer Lens.")
+            raise MisconfigurationException("Either a `ITLensFromPretrainedConfig` or `ITLensCustomConfig` must be"
+                                            " provided to initialize a HookedTransformer and use Transformer Lens.")
         # internal variable used to bootstrap model initialization mode (we may need to override hf_from_pretrained_cfg)
         self._load_from_pretrained = False if isinstance(self.tl_cfg, ITLensCustomConfig) else True
         if not self._load_from_pretrained:
@@ -83,6 +84,14 @@ class ITLensConfig(ITConfig):
             # TL from pretrained currently requires a hf_from_pretrained_cfg, create one if it's not already configured
             if not self.hf_from_pretrained_cfg:
                 self.hf_from_pretrained_cfg = HFFromPretrainedConfig()
+            elif not isinstance(self.hf_from_pretrained_cfg, HFFromPretrainedConfig):
+                try:
+                    self.hf_from_pretrained_cfg = HFFromPretrainedConfig(**self.hf_from_pretrained_cfg)
+                except Exception as e:
+                    raise MisconfigurationException(f"Failed to initialize `HFFromPretrainedConfig` from provided"
+                                                    f" `hf_from_pretrained_cfg`. `hf_from_pretrained_cfg` should be "
+                                                    " either a `HFFromPretrainedConfig` or a dict convertible to one."
+                                                    f" Error: {e}")
             self._sync_pretrained_cfg()
         self._translate_tl_config()
         super().__post_init__()
@@ -147,7 +156,7 @@ class ITLensConfig(ITConfig):
             if hf_dtype != tl_dtype:  # if both are provided, TL dtype takes precedence
                 rank_zero_warn(f"HF `from_pretrained` dtype {hf_dtype} does not match TL dtype {tl_dtype}."
                                 f" Setting both to the specified TL dtype {tl_dtype}.")
-                self.hf_from_pretrained_cfg.pretrained_kwargs['torch_dtype'] = hf_dtype
+                self.hf_from_pretrained_cfg.pretrained_kwargs['torch_dtype'] = tl_dtype
         else:
             rank_zero_warn("HF `from_pretrained` dtype was not provided. Setting `from_pretrained` dtype to match"
                            f" specified TL dtype: {tl_dtype}.")
@@ -213,7 +222,7 @@ class TLensAttributeMixin:
     def get_tl_device(self, block_index: int) -> Optional[torch.device]:
         try:
             device = get_device_for_block_index(block_index, self.tl_cfg)
-        except AttributeError as ae:
+        except (AttributeError, AssertionError) as ae:
             rank_zero_warn(f"Problem determining appropriate device for block {block_index} from TransformerLens"
                            f" config. Received: {ae}")
             device = None

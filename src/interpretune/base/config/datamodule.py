@@ -67,10 +67,8 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
         # inspect tokenizer, tokenizer_name, model_name_or_path here, updating datamodule config before instantiation
         # if a value is missing in the datamodule config but present in the module config
         # we first inspect to see if we have a fallback `model_name_or_path`
-        self.model_name_or_path = self.model_name_or_path or it_cfg.model_name_or_path
-        for tokenizer_attr in ["tokenizer", "tokenizer_name"]:
-            if getattr(self, tokenizer_attr) is None and getattr(it_cfg, tokenizer_attr, None) is not None:
-                setattr(self, tokenizer_attr, getattr(it_cfg, tokenizer_attr))
-                if not self.model_name_or_path:
-                    rank_zero_warn("Since no datamodule `model_name_or_path` was provided, attempting to use fallback"
-                                    f" configuration, setting {tokenizer_attr} to {getattr(it_cfg, tokenizer_attr)}.")
+        for dm_fallback_attr in ["tokenizer", "tokenizer_name", "model_name_or_path"]:
+            if getattr(self, dm_fallback_attr) is None and getattr(it_cfg, dm_fallback_attr, None) is not None:
+                rank_zero_warn(f"Since no datamodule `{dm_fallback_attr}` was provided, attempting to use fallback"
+                               f" configuration, setting `{dm_fallback_attr}` to {getattr(it_cfg, dm_fallback_attr)}.")
+                setattr(self, dm_fallback_attr, getattr(it_cfg, dm_fallback_attr))

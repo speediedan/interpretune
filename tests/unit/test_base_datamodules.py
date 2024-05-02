@@ -11,6 +11,7 @@
 # limitations under the License.
 from unittest.mock import patch
 import pytest
+from copy import deepcopy
 
 from interpretune.base.modules import ITModule
 from interpretune.base.call import _call_itmodule_hook
@@ -40,7 +41,7 @@ class TestClassBaseMisc:
 
 
     def test_m_no_before_it_cfg_init(self, recwarn, get_core_cust_it_session_cfg):
-        sess_cfg = get_core_cust_it_session_cfg
+        sess_cfg = deepcopy(get_core_cust_it_session_cfg)
         # we ablate _before_it_cfg_init twich to walk up the object hierarchy to the default BaseITModule version
         with ablate_cls_attrs(sess_cfg.module_cls, '_before_it_cfg_init'), \
             ablate_cls_attrs(sess_cfg.module_cls, '_before_it_cfg_init'):

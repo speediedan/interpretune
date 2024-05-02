@@ -13,6 +13,7 @@ from interpretune.base.contract.session import ITSession
 from interpretune.base.call import _call_itmodule_hook, it_init, it_session_end
 from interpretune.utils.types import Optimizable
 from interpretune.utils.logging import rank_zero_warn
+from interpretune.utils.exceptions import MisconfigurationException
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +93,8 @@ class BasicTrainerCfg:
             self._session_validation()
         else:
             if not all((self.module, self.datamodule)):
-                raise ValueError("If not providing `it_session`, must provide both a `datamodule` and `module`")
+                raise MisconfigurationException("If not providing `it_session`, must provide both a `datamodule` and"
+                                                " `module`")
 
     def _session_validation(self):
         if any((self.module, self.datamodule)):

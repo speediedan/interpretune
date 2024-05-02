@@ -17,6 +17,7 @@ from tests.modules import TestITDataModule, TestITModule
 from tests.unit.cfg_aliases import (TLDebugCfg, LightningLlama2DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg,
                                     CoreGPT2PEFTSeqCfg, CoreCfgForcePrepare)
 from interpretune.utils.import_utils import _DOTENV_AVAILABLE
+from interpretune.utils.types import StrOrPath
 
 if _DOTENV_AVAILABLE:
     from dotenv import load_dotenv
@@ -142,17 +143,21 @@ def session_fixture_factory(config_key, init_key):
         yield it_s
     return get_it_session
 
-def configure_session_cfg_fixture(test_cfg_cls, tmp_factory):
+def configure_session_cfg(test_cfg_cls, tmp_path_or_factory):
     test_cfg = test_cfg_cls()
+    if isinstance(tmp_path_or_factory, StrOrPath):
+        tmp_log_dir = tmp_path_or_factory
+    else:
+        tmp_log_dir = tmp_path_or_factory.mktemp(f"{test_cfg_cls.__name__}_sess_cfg_fixture")
     itdm_cfg = get_itdm_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
-    it_cfg = get_it_cfg(test_cfg=test_cfg, core_log_dir=tmp_factory.mktemp(f"{test_cfg_cls.__name__}_sess_cfg_fixture"))
+    it_cfg = get_it_cfg(test_cfg=test_cfg, core_log_dir=tmp_log_dir)
     TEST_CLS_MAPPING = {'datamodule_cls': 'tests.modules.TestITDataModule', 'module_cls': 'tests.modules.TestITModule'}
     core_cfg = {'datamodule_cfg': itdm_cfg, 'module_cfg': it_cfg, **TEST_CLS_MAPPING}
     return core_cfg, test_cfg
 
 @pytest.fixture(scope="class")
 def get_tl_it_session_cfg(tmp_path_factory):
-    core_cfg, test_cfg = configure_session_cfg_fixture(TLParityCfg, tmp_path_factory)
+    core_cfg, test_cfg = configure_session_cfg(TLParityCfg, tmp_path_factory)
     test_cfg.framework_ctx = 'core'
     test_cfg.plugin_ctx = 'transformer_lens'
     test_cfg.model_src_key = 'cust'
@@ -160,7 +165,7 @@ def get_tl_it_session_cfg(tmp_path_factory):
 
 @pytest.fixture(scope="class")
 def get_core_cust_it_session_cfg(tmp_path_factory):
-    core_cfg, test_cfg = configure_session_cfg_fixture(CoreCfg, tmp_path_factory)
+    core_cfg, test_cfg = configure_session_cfg(CoreCfg, tmp_path_factory)
     test_cfg.framework_ctx = 'core'
     test_cfg.model_src_key = 'cust'
     yield config_session(core_cfg, test_cfg, 'it_session_cfg_core_test', {}, None, {})

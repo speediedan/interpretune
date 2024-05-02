@@ -46,8 +46,7 @@ class Steppable(Protocol):
     """To structurally type ``optimizer.step()``"""
 
     # Inferred from `torch.optim.optimizer.pyi`
-    def step(self, closure: Optional[Callable[[], float]] = ...) -> Optional[float]:
-        ...
+    def step(self, closure: Optional[Callable[[], float]] = ...) -> Optional[float]: ...
 
 @runtime_checkable
 class Optimizable(Steppable, Protocol):
@@ -57,22 +56,18 @@ class Optimizable(Steppable, Protocol):
     defaults: Dict[Any, Any]
     state: Dict[Any, Any]
 
-    def state_dict(self) -> Dict[str, Dict[Any, Any]]:
-        ...
+    def state_dict(self) -> Dict[str, Dict[Any, Any]]: ...
 
-    def load_state_dict(self, state_dict: Dict[str, Dict[Any, Any]]) -> None:
-        ...
+    def load_state_dict(self, state_dict: Dict[str, Dict[Any, Any]]) -> None: ...
 
 
 @runtime_checkable
 class _Stateful(Protocol[_DictKey]):
     """This class is used to detect if an object is stateful using `isinstance(obj, _Stateful)`."""
 
-    def state_dict(self) -> Dict[_DictKey, Any]:
-        ...
+    def state_dict(self) -> Dict[_DictKey, Any]: ...
 
-    def load_state_dict(self, state_dict: Dict[_DictKey, Any]) -> None:
-        ...
+    def load_state_dict(self, state_dict: Dict[_DictKey, Any]) -> None: ...
 
 
 @runtime_checkable
@@ -80,11 +75,9 @@ class LRScheduler(_Stateful[str], Protocol):
     optimizer: Optimizer
     base_lrs: List[float]
 
-    def __init__(self, optimizer: Optimizer, *args: Any, **kwargs: Any) -> None:
-        ...
+    def __init__(self, optimizer: Optimizer, *args: Any, **kwargs: Any) -> None: ...
 
-    def step(self, epoch: Optional[int] = None) -> None:
-        ...
+    def step(self, epoch: Optional[int] = None) -> None: ...
 
 
 # Inferred from `torch.optim.lr_scheduler.pyi`
@@ -106,11 +99,9 @@ class ReduceLROnPlateau(_Stateful[str], Protocol):
         cooldown: int = ...,
         min_lr: float = ...,
         eps: float = ...,
-    ) -> None:
-        ...
+    ) -> None: ...
 
-    def step(self, metrics: Union[float, int, Tensor], epoch: Optional[int] = None) -> None:
-        ...
+    def step(self, metrics: Union[float, int, Tensor], epoch: Optional[int] = None) -> None: ...
 
 STEP_OUTPUT = Optional[Union[Tensor, Mapping[str, Any]]]
 

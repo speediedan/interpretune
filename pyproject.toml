@@ -177,6 +177,14 @@ exclude_lines = [
     "except Exception"
 ]
 
+omit = [
+# we test this simple harness but do not include it in coverage to avoid incurring the configuration
+# complexity associated with subprocess coverage (https://coverage.readthedocs.io/en/latest/subprocess.html)
+# If we use subprocesses for testing beyond merely this 3 line wrapper file, it may make sense to set
+# COVERAGE_PROCESS_START, dynamically add a sitecustomize.py etc. in the CI flow to enable subprocess coverage.
+    "src/interpretune/run_experiment.py",
+]
+
 [tool.pytest.ini_options]
 pythonpath = "tests"
 norecursedirs = [

@@ -131,10 +131,10 @@ def ablate_cls_attrs(object: object, attr_names: str| tuple):
             setattr(ablated_attr_indices[attr_name][0], attr_name, ablated_attr_indices[attr_name][1])
 
 def attr_resolve(object: object, attr_name: str):
-    orig_attr_handle = getattr(object, attr_name, None)
-    if orig_attr_handle is None:
+    if not hasattr(object, attr_name):
         raise AttributeError(f"{object} does not have the requested attribute to ablate ({attr_name})")
-    if object.__dict__.get(attr_name, None) is not None:
+    orig_attr_handle = getattr(object, attr_name)
+    if object.__dict__.get(attr_name, '_indirect') != '_indirect':
         orig_obj_attach_handle = object
     else:
         orig_obj_attach_handle = indirect_resolve(object, attr_name, orig_attr_handle)
