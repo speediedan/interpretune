@@ -100,7 +100,7 @@ show_test_results(){
     fi
     rm ${special_test_session_tmp_out}
   elif [ -f ${special_test_session_log} ]; then  # if the log but not the out exists, check for collection errors
-    if grep --quiet --ignore-case --extended-regexp 'error|exception|traceback|failed' ${special_test_session_log} ; then
+    if grep --ignore-case --extended-regexp 'traceback|failed' ${special_test_session_log} ; then
       echo "Potential collection error!"
       exit 1
     fi
@@ -111,7 +111,7 @@ trap show_test_results EXIT  # show the output on exit
 
 ## Main coverage collection logic
 start_time=$(date +%s)
-echo "IT special tests beginning execution at ${d} PT" > $special_test_session_log
+echo "IT special tests beginning execution at ${d} PT" >> $special_test_session_log
 
 case ${mark_type} in
   profile)

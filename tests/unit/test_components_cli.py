@@ -88,13 +88,13 @@ def test_compose_config_relative(clean_cli_env, cli_test_configs, fnf_error, glo
             if not glob_search:
                 explicit_relative_path = f"{cfg_files[2].parts[-2]}/{cfg_files[2].parts[-1]}"
                 cfg_files = cfg_files[:-1] + (explicit_relative_path,)
-                cli_main, _ = gen_cli_args(cli_cfg.run, cli_cfg.framework_cli, cli_cfg.compose_cfg,
+                cli_main, *_ = gen_cli_args(cli_cfg.run, cli_cfg.framework_cli, cli_cfg.compose_cfg,
                                                                cfg_files, cli_cfg.extra_args)
             elif glob_search:  # we always warn with glob_search
                 file_name_only_path = cfg_files[2].parts[-1]
                 cfg_files = cfg_files[:-1] + (file_name_only_path,)
                 with pytest.warns(UserWarning, match="Glob search within"):
-                    cli_main, _ = gen_cli_args(cli_cfg.run, cli_cfg.framework_cli, cli_cfg.compose_cfg, cfg_files,
+                    cli_main, *_ = gen_cli_args(cli_cfg.run, cli_cfg.framework_cli, cli_cfg.compose_cfg, cfg_files,
                                                cli_cfg.extra_args)
             assert cli_main
 
