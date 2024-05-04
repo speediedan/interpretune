@@ -113,12 +113,19 @@ class TestClassContract:
     def test_session_min_dep_installed(self):
         import sys
         from importlib import reload
-        del sys.modules['interpretune.base.contract.session']
+        modules_to_reload = ['interpretune.base.contract.session', 'interpretune.base.components.cli']
+        for module_fqn in modules_to_reload:
+            del sys.modules[module_fqn]
         with patch('interpretune.utils.import_utils._LIGHTNING_AVAILABLE', False):
             from interpretune.base.contract.session import LightningModule, LightningDataModule
             assert LightningModule.__module__ == 'builtins'
             assert LightningDataModule.__module__ == 'builtins'
-        reload(sys.modules['interpretune.base.contract.session'])
+            from interpretune.base.components.cli import l_cli_main
+            assert l_cli_main.__module__ == 'builtins'
+        for module_fqn in modules_to_reload:
+            reload(sys.modules[module_fqn])
         from interpretune.base.contract.session import LightningModule, LightningDataModule
         assert LightningModule.__module__ == 'lightning.pytorch.core.module'
         assert LightningDataModule.__module__ == 'lightning.pytorch.core.datamodule'
+        from interpretune.base.components.cli import l_cli_main
+        assert l_cli_main.__module__ == 'interpretune.base.components.cli'

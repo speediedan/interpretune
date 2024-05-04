@@ -1,14 +1,18 @@
 from typing import Optional, Dict
 from copy import deepcopy
+from enum import auto
 from dataclasses import dataclass, field
 
-from tests.parity_acceptance.base.cfg_aliases import gpt2_hf_from_pretrained_kwargs, enable_activation_checkpointing
-from tests.parity_acceptance.plugins.transformer_lens.test_interpretune_tl import TLParityCfg
-from tests.configuration import BaseCfg
+from interpretune.base.config.shared import AutoStrEnum
 from interpretune.base.config.mixins import HFFromPretrainedConfig, ZeroShotClassificationConfig
+from interpretune.base.contract.session import Framework
 from interpretune.analysis.debug_generation import DebugLMConfig
 from interpretune.analysis.memprofiler import MemProfilerCfg
-from interpretune.base.contract.session import Framework
+from tests.configuration import BaseCfg, set_nested, BaseAugTest
+from tests.parity_acceptance.cli.cfg_aliases import cli_cfgs, CLICfg, test_lr_scheduler_init, test_optimizer_init
+from tests.parity_acceptance.base.cfg_aliases import gpt2_hf_from_pretrained_kwargs, enable_activation_checkpointing
+from tests.parity_acceptance.plugins.transformer_lens.test_interpretune_tl import TLParityCfg
+
 
 nf4_bnb_config = {"load_in_4bit": True, "bnb_4bit_use_double_quant": True, "bnb_4bit_quant_type": "nf4",
                    "bnb_4bit_compute_dtype": "bfloat16"}
@@ -71,3 +75,64 @@ class LightningLlama2DebugCfg(BaseCfg):
     model_src_key: Optional[str] = "llama2"
     precision: Optional[str | int] = "bf16-true"
     framework_ctx: Optional[Framework] = Framework.lightning
+
+class CLI_UNIT_TESTS(AutoStrEnum):
+    seed_null = auto()
+    env_seed = auto()
+    invalid_env_seed = auto()
+    invalid_cfg_seed = auto()
+    nonint_cfg_seed = auto()
+    seed_false = auto()
+    seed_true = auto()
+    excess_args = auto()
+
+TEST_CONFIGS_CLI_UNIT = (
+    BaseAugTest(alias=CLI_UNIT_TESTS.seed_null.value, cfg=CLICfg(compose_cfg=True, debug_mode=True),
+                expected={'seed_test': lambda x: int(x) >= 0}),
+    BaseAugTest(alias=CLI_UNIT_TESTS.env_seed.value, cfg=CLICfg(compose_cfg=True, debug_mode=True, env_seed=13),
+                expected={'seed_test': lambda x: int(x) == 13}),
+    BaseAugTest(alias=CLI_UNIT_TESTS.invalid_env_seed.value, cfg=CLICfg(compose_cfg=True, debug_mode=True,
+                                                                        env_seed="oops"),
+                expected={'seed_test': lambda x: int(x) >= 0}),
+    BaseAugTest(alias=CLI_UNIT_TESTS.invalid_cfg_seed.value, cfg=CLICfg(compose_cfg=True, debug_mode=True),
+                expected={'seed_test': lambda x: int(x) >= 0}),
+    BaseAugTest(alias=CLI_UNIT_TESTS.nonint_cfg_seed.value, cfg=CLICfg(compose_cfg=True, debug_mode=True),
+                expected={'seed_test': lambda x: int(x) == 14}),
+    BaseAugTest(alias=CLI_UNIT_TESTS.seed_false.value, cfg=CLICfg(compose_cfg=True, debug_mode=True),
+                expected={'seed_test': lambda x: x is None}),
+    BaseAugTest(alias=CLI_UNIT_TESTS.seed_true.value, cfg=CLICfg(compose_cfg=True, debug_mode=True),
+                expected={'seed_test': lambda x: int(x) >= 0}),
+    BaseAugTest(alias=CLI_UNIT_TESTS.excess_args.value, cfg=CLICfg(compose_cfg=True, debug_mode=True,
+                                                                   extra_args=["--foo"]),
+                expected={'seed_test': lambda x: int(x) >= 0}),
+)
+
+EXPECTED_RESULTS_CLI_UNIT = {cfg.alias: cfg.expected for cfg in TEST_CONFIGS_CLI_UNIT}
+
+################################################################################
+# core framework training with no transformer_lens plugin context
+################################################################################
+
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null] = set_nested("session_cfg.module_cfg")
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null]["session_cfg"]["module_cfg"]["init_args"] = {
+    "experiment_tag": CLI_UNIT_TESTS.seed_null.value, **test_lr_scheduler_init, **test_optimizer_init,
+}
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null]["seed_everything"] = None
+
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.env_seed] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
+
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.invalid_env_seed] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
+
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.invalid_cfg_seed] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.invalid_cfg_seed]["seed_everything"] = -1
+
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.nonint_cfg_seed] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.nonint_cfg_seed]["seed_everything"] = 14.0
+
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_false] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_false]["seed_everything"] = False
+
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_true] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_true]["seed_everything"] = True
+
+cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.excess_args] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])

@@ -29,8 +29,8 @@ max_seed_value = np.iinfo(np.uint32).max
 min_seed_value = np.iinfo(np.uint32).min
 
 IT_BASE = os.environ.get("IT_BASE", Path(__file__).parent.parent.parent.parent / "it_examples")
-IT_CONFIG_BASE = os.environ.get("IT_BASE", IT_BASE / "config")
-IT_CONFIG_GLOBAL = os.environ.get("IT_CONFIG_GLOBAL", IT_CONFIG_BASE / "global")
+IT_CONFIG_BASE = os.environ.get("IT_CONFIG_BASE", IT_BASE / "config")
+IT_CONFIG_GLOBAL = os.environ.get("IT_CONFIG_GLOBAL", Path(IT_CONFIG_BASE) / "global")
 
 log = logging.getLogger(__name__)
 
@@ -127,6 +127,14 @@ class ITCLI(ITSessionMixin):
         )
         return parser
 
+    def sanitize_seed(self, seed_in: int | str | float) -> int:
+        try:
+            seed = int(seed_in)
+        except ValueError:
+            seed = _select_seed_randomly(min_seed_value, max_seed_value)
+            rank_zero_info(f"Invalid seed found: {repr(seed_in)}, seed set to {seed}")
+        return seed
+
     def seed_everything(self, seed: Optional[int] = None, workers: bool = False) -> int:
         r"""
         """
@@ -136,14 +144,9 @@ class ITCLI(ITSessionMixin):
                 seed = _select_seed_randomly(min_seed_value, max_seed_value)
                 rank_zero_info(f"No seed found, seed set to {seed}")
             else:
-                try:
-                    seed = int(env_seed)
-                except ValueError:
-                    seed = _select_seed_randomly(min_seed_value, max_seed_value)
-                    rank_zero_info(f"Invalid seed found: {repr(env_seed)}, seed set to {seed}")
+                seed = self.sanitize_seed(env_seed)
         elif not isinstance(seed, int):
-            seed = int(seed)
-
+            seed = self.sanitize_seed(seed)
         if not (min_seed_value <= seed <= max_seed_value):
             rank_zero_info(f"{seed} is not in bounds, numpy accepts from {min_seed_value} to {max_seed_value}")
             seed = _select_seed_randomly(min_seed_value, max_seed_value)
@@ -163,7 +166,7 @@ class ITCLI(ITSessionMixin):
             """Adds default arguments to the parser."""
             parser.add_argument(
                 "--seed_everything",
-                type=Union[bool, int],
+                type=Union[bool, int, str, float],
                 default=self.seed_everything_default,
                 help=(
                     "Set to an int to run seed_everything with this value before classes instantiation."
@@ -187,10 +190,10 @@ class ITCLI(ITSessionMixin):
                 " mistakes it is not recommended to provide both args and command line arguments, got: "
                 f"sys.argv[1:]={sys.argv[1:]}, args={args}."
             )
-        if isinstance(args, (dict, Namespace)):
-            self.config = parser.parse_object(args)
-        else:
-            self.config = parser.parse_args(args)
+
+        # TODO: consider supporting parse_object path in the future and document its (in)availability either way
+        # e.g. self.config = parser.parse_object(args)
+        self.config = parser.parse_args(args)
 
     def _set_seed(self) -> None:
         """Sets the seed."""
@@ -258,7 +261,7 @@ def compose_config(config_files: Iterable[str]) -> List:
                 config_file_paths.append(p_cfg_base_found)
             elif (p_base_found := sorted(IT_BASE.rglob(p.name))) and p_base_found[0].exists():  # more expansive search
                 if p_base_found[0].exists():
-                    rank_zero_warn(f"Could not find explicit path for config file: `{IT_CONFIG_BASE / p}`. Glob "
+                    rank_zero_warn(f"Could not find explicit path for config file: `{IT_CONFIG_BASE / p}`. Glob"
                                    f" search within `{IT_BASE}` found `{p_base_found[0]}` which will be used instead.")
                     config_file_paths.append(p_base_found[0])
             else:

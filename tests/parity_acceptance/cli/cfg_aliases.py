@@ -18,7 +18,7 @@ from interpretune.base.contract.session import Framework, Plugin
 
 from tests.configuration import BaseAugTest
 from tests.utils.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, TL_EXPECTED_WARNS
-
+from interpretune.utils.types import ArgsType
 
 IT_HOME = Path(os.environ.get("IT_HOME", Path(__file__).parent.parent.parent.parent / "src" / "interpretune"))
 
@@ -50,13 +50,15 @@ RUN_FN = "run_experiment.py"
 class CLICfg:
     framework_cli: Framework = Framework.core
     run: Optional[str] = None
+    env_seed: Optional[str] = None
     compose_cfg: bool = False
     plugin_ctx: Optional[Plugin] = None
     debug_mode: bool = False
     use_harness: bool = False
+    extra_args: Optional[ArgsType] = None
 
 
-TEST_CONFIGS_CLI = (
+TEST_CONFIGS_CLI_PARITY = (
     BaseAugTest(alias=CLI_TESTS.core_tl_test.value, cfg=CLICfg(compose_cfg=True, run="test", debug_mode=True,
                                                            plugin_ctx=Plugin.transformer_lens, use_harness=True)),
     BaseAugTest(alias=CLI_TESTS.core_tl_norun.value, cfg=CLICfg(plugin_ctx=Plugin.transformer_lens),
@@ -65,13 +67,13 @@ TEST_CONFIGS_CLI = (
     BaseAugTest(alias=CLI_TESTS.l_tl_test.value, cfg=CLICfg(framework_cli=Framework.lightning, run="test",
                                                         plugin_ctx=Plugin.transformer_lens), marks="lightning"),
     BaseAugTest(alias=CLI_TESTS.l_tl_norun.value, cfg=CLICfg(framework_cli=Framework.lightning,
-                                                         plugin_ctx=Plugin.transformer_lens), marks="l_optional",
+                                                         plugin_ctx=Plugin.transformer_lens), marks="lightning",
                                                          expected={'hasattr': 'tl_config_model_init'}),
     BaseAugTest(alias=CLI_TESTS.l_optim_fit.value, cfg=CLICfg(compose_cfg=True, run="fit", debug_mode=True,
                                                           framework_cli=Framework.lightning)),
 )
 
-EXPECTED_RESULTS_CLI = {cfg.alias: cfg.expected for cfg in TEST_CONFIGS_CLI}
+EXPECTED_RESULTS_CLI = {cfg.alias: cfg.expected for cfg in TEST_CONFIGS_CLI_PARITY}
 
 
 ########################################################################################################################
