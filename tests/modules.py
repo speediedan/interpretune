@@ -76,7 +76,11 @@ class BaseTestDataModule:
                 dataset[split] = dataset[split].select(range(10))
                 dataset[split] = dataset[split].map(self.tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
                 dataset[split] = self._remove_unused_columns(dataset[split])
-            dataset.save_to_disk(dataset_path)
+            # TODO: remove below temporary workaround (converting Path to str) once upstream issue resolved
+            # looks like https://github.com/huggingface/datasets/pull/6704 broke `save_to_disk` method for
+            # Path objects https://bit.ly/datasets_save_to_disk_blame
+            dataset.save_to_disk(str(dataset_path))
+            #dataset.save_to_disk(dataset_path)
 
 class TestITDataModule(BaseTestDataModule, GPT2RTEBoolqDataModule):
     ...

@@ -32,7 +32,7 @@ classifiers = [
 dependencies = [
     "transformer_lens",
     "torch >= 2.0.0",
-    "jsonargparse[signatures] >= 4.26.1",  # replace this req once adding fts req
+    "jsonargparse[signatures] >= 4.27.7",  # replace this req once adding fts req
     # "finetuning-scheduler[possible_future_it_plugin] >= 2.1.0",
 
 ]

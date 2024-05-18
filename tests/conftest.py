@@ -153,8 +153,8 @@ def reset_deterministic_algorithm():
 
 
 @pytest.fixture(scope="function")
-def make_deterministic(warn_only=True, fill_uninitialized_memory=True):
-    # https://pytorch.org/docs/2.2/notes/randomness.html#reproducibility
+def make_deterministic(warn_only=False, fill_uninitialized_memory=True):
+    # https://pytorch.org/docs/2.3/notes/randomness.html#reproducibility
     # https://docs.nvidia.com/cuda/cublas/index.html#results-reproducibility
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     torch.use_deterministic_algorithms(True, warn_only=warn_only)
