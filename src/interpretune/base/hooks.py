@@ -20,13 +20,13 @@ class BaseITHooks:
     def setup(self, *args, **kwargs) -> None:
         # TODO: add super() calls to these methods once Interpretunable protocol is defined
         # super().setup(*args, **kwargs)
-        # for some frameworks, datamodule access is not provided in setup and will be accessed via Trainer
+        # for some adapters, datamodule access is not provided in setup and will be accessed via Trainer
         if datamodule := kwargs.get("datamodule", None):
             self._it_state._datamodule = datamodule
         self._init_dirs_and_hooks()
 
     def configure_optimizers(self) -> Optional[OptimizerLRScheduler]:
-        """Optional because it is not mandatory in the context of core IT modules (required for some framework
+        """Optional because it is not mandatory in the context of core IT modules (required for some adapter
         modules)."""
         # With FTS >= 2.0, ``FinetuningScheduler`` simplifies initial optimizer configuration by ensuring the optimizer
         # configured here will optimize the parameters (and only those parameters) scheduled to be optimized in phase 0

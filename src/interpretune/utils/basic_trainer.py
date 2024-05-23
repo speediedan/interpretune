@@ -7,7 +7,7 @@ import torch
 
 from interpretune.base.config.shared import CorePhase
 from interpretune.base.datamodules import ITDataModule
-from interpretune.base.modules import ITModule
+from interpretune.adapters.core import ITModule
 from interpretune.base.contract.protocol import ITModuleProtocol, ITDataModuleProtocol
 from interpretune.base.contract.session import ITSession
 from interpretune.base.call import _call_itmodule_hook, it_init, it_session_end
@@ -105,7 +105,7 @@ class BasicTrainerCfg:
 
 
 class BasicTrainer:
-    """A barebones trainer that can be used to orchestrate training when no framework is specified during ITSession
+    """A barebones trainer that can be used to orchestrate training when no adapter is specified during ITSession
     composition."""
     def __init__(self, trainer_cfg: BasicTrainerCfg | Dict[str, Any], *args: Any, **kwargs: Any) -> Any:
         super().__init__(*args, **kwargs)

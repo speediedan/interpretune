@@ -52,6 +52,9 @@ class TestClassDebugGen:
         pad_included = True if padpat.match(answers[1]) else False
         assert len(answers) == expected[0]
         assert pad_included == expected[1]
+        m_prefix = "composing TestITModule with: \n  - LightningAdapter\n  - BaseITModule"
+        assert m_prefix in repr(get_it_session__l_llama2_debug__setup.module)
+
 
     @pytest.mark.parametrize(
         "gen_kwargs, batch_mode, expected",
@@ -116,7 +119,7 @@ class TestClassDebugGen:
         debug_module = get_it_session__tl_gpt2_debug__setup.module.debug_lm
         test_seqs = debug_module.debug_sequences(["Hello, I'm a large language,", "The day after Tuesday"])
         if gen_error:
-            from interpretune.analysis.debug_generation import DebugGeneration
+            from interpretune.extensions.debug_generation import DebugGeneration
             with patch.object(DebugGeneration, "DEFAULT_OUTPUT_ATTRS", ("fake",)):
                 with pytest.raises(ValueError, match=gen_error):
                     _ = debug_module.debug_generate_batch(test_seqs, **gen_kwargs)

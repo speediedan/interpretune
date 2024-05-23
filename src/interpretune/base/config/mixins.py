@@ -11,7 +11,8 @@ from interpretune.utils.import_utils import _resolve_torch_dtype
 
 class ITExtension(NamedTuple):
     ext_attr: str
-    ext_fqn: str
+    ext_cls_fqn: str
+    ext_cfg_fqn: str
 
 
 @dataclass(kw_only=True)
@@ -48,7 +49,7 @@ class HFGenerationConfig(BaseGenerationConfig):
 @dataclass(kw_only=True)
 class ZeroShotClassificationConfig(ITSerializableCfg):
     enabled: bool = False
-    lm_generation_cfg: BaseGenerationConfig = field(default_factory=lambda: HFGenerationConfig())
+    lm_generation_cfg: BaseGenerationConfig = field(default_factory=HFGenerationConfig)
     # for generate methods that don't also perform data preparation, filter out inputs that the model's generate
     # function does not support
     input_inspection_enabled: bool = True

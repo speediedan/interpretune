@@ -1,7 +1,6 @@
 it_session:
   session_cfg:
     init_args:
-      plugin_ctx: transformer_lens
       datamodule_cfg:
         class_path: interpretune.base.config.datamodule.ITDataModuleConfig
         init_args:

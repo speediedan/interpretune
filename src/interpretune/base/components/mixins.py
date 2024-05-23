@@ -9,16 +9,11 @@ from transformers import AutoConfig, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.analysis.debug_generation import DebugGeneration
-from interpretune.analysis.memprofiler import MemProfiler
 from interpretune.utils.logging import rank_zero_warn
-from interpretune.base.config.mixins import ITExtension
-from interpretune.base.config.module import ITConfig, HFFromPretrainedConfig, ITState
+from interpretune.base.config.mixins import HFFromPretrainedConfig
+from interpretune.base.config.module import ITConfig, ITState
+from interpretune.base.config.extensions import ITExtensionsConfigMixin
 from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE
-from interpretune.utils.exceptions import MisconfigurationException
-
-
-DEFINED_EXTENSIONS = (ITExtension("debug_lm", DebugGeneration), ITExtension("memprofiler", MemProfiler))
 
 
 class ITStateMixin:
@@ -33,39 +28,6 @@ class ITStateMixin:
     def _init_internal_state(obj: Any) -> None:
         if not obj.__dict__.get('_it_state', None):
             obj._it_state = ITState()
-
-
-class ITExtensionsMixin:
-
-    SUPPORTED_EXTENSIONS: Dict[str, ITExtension] = {}
-    DEFAULT_EXTENSIONS = (ITExtension("debug_lm", "interpretune.analysis.debug_generation.DebugGeneration"),
-                          ITExtension("memprofiler", "interpretune.analysis.memprofiler.MemProfiler"))
-
-    def _detect_extensions(self) -> Dict[str, ITExtension]:
-        # TODO: update custom extensions to be read/added from it_cfg once interface stabilizes
-        for it_ext in self.DEFAULT_EXTENSIONS:
-            try:
-                ext_class = _import_class(it_ext.ext_fqn)
-            except (ImportError, AttributeError) as e:
-                err_msg = f"Unable to import and resolve specified extension from {it_ext.ext_fqn}: {e}"
-                raise MisconfigurationException(err_msg)
-            self.SUPPORTED_EXTENSIONS[it_ext.ext_attr] = ext_class
-
-    def _connect_extensions(self):
-        self._detect_extensions()
-        for ext_name, ext_class in self.SUPPORTED_EXTENSIONS.items():
-            if getattr(self.it_cfg, f'{ext_name}_cfg').enabled:
-                self._it_state._extensions[ext_name] = ext_class()
-                getattr(self, ext_name).connect(self)
-            else:
-                self._it_state._extensions[ext_name] = None
-
-    def __getattr__(self, name: str) -> Any:
-        # we make extension handles available as direct root module attributes for convenience
-        # filter only the supported extension attributes, ensuring `_it_state`` has been initialized
-        if self.SUPPORTED_EXTENSIONS.get(name) and (ext_attrs := self.__dict__.get('_it_state', None)) is not None:
-            return ext_attrs._extensions[name]
-        return super().__getattr__(name)
 
 
 class ProfilerHooksMixin:
@@ -270,5 +232,5 @@ class HFFromPretrainedMixin:
         self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))
 
 
-class CoreMixins(ITStateMixin, ITExtensionsMixin, HFFromPretrainedMixin, ZeroShotStepMixin, ProfilerHooksMixin):
+class BaseITMixins(ITStateMixin, ITExtensionsConfigMixin, HFFromPretrainedMixin, ZeroShotStepMixin, ProfilerHooksMixin):
     ...

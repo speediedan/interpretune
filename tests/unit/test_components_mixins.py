@@ -16,13 +16,14 @@ import pytest
 import torch
 
 from tests.utils.runif import RunIf
-from tests.parity_acceptance.base.cfg_aliases import test_core_gpt2_it_module_base
+from tests.parity_acceptance.adapters.lightning.cfg_aliases import test_core_gpt2_it_module_base
 from tests.utils.warns import CORE_CTX_WARNS, unexpected_warns
 from tests.orchestration import run_it, disable_zero_shot
 from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.base.components.mixins import ITExtension, ITExtensionsMixin, HFFromPretrainedMixin
+from interpretune.base.components.mixins import HFFromPretrainedMixin
 from interpretune.base.config.module import ITConfig
-from interpretune.base.config.mixins import HFFromPretrainedConfig
+from interpretune.base.config.extensions import ITExtensionsConfigMixin
+from interpretune.base.config.mixins import HFFromPretrainedConfig, ITExtension
 
 class TestClassMixins:
 
@@ -110,8 +111,8 @@ class TestClassMixins:
         hf_from_pretrained_mixin._hf_gen_cust_config()
 
     def test_degen_it_extension(self):
-        degen_ext = ITExtension("not_here", "oops.not_found")
-        ext_mixin = ITExtensionsMixin()
+        degen_ext = ITExtension("not_here", "oops.not_found", "oops.I.did.it.again")
+        ext_mixin = ITExtensionsConfigMixin()
         ext_mixin.DEFAULT_EXTENSIONS = (degen_ext,)
         with pytest.raises(MisconfigurationException):
             ext_mixin._detect_extensions()

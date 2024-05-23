@@ -4,7 +4,7 @@ it_session:
       module_cfg:
         init_args:
           debug_lm_cfg:  # enable lm debugging connector features
-            class_path: interpretune.analysis.debug_generation.DebugLMConfig
+            class_path: interpretune.extensions.debug_generation.DebugLMConfig
             init_args:
               enabled: true
               raw_debug_sequences:

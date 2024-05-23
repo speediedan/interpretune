@@ -1,9 +1,14 @@
+from typing_extensions import override
+
+from interpretune.base.datamodules import ITDataModule
+from interpretune.base.modules import BaseITModule
 from interpretune.utils.import_utils import  _LIGHTNING_AVAILABLE
+from interpretune.adapters.registration import Adapter, CompositionRegistry
 
 
 if _LIGHTNING_AVAILABLE:
     from lightning.fabric.utilities.device_dtype_mixin import _DeviceDtypeModuleMixin
-
+    from lightning.pytorch import LightningDataModule, LightningModule
     class LightningAdapter:
         CORE_TO_FRAMEWORK_ATTRS_MAP = {
             "_it_lr_scheduler_configs": ("trainer.strategy.lr_scheduler_configs", None,
@@ -27,3 +32,21 @@ if _LIGHTNING_AVAILABLE:
             # ensure model is in training mode (e.g. needed for some edge cases w/ skipped sanity checking)
             self.model.train()
             return super().on_train_start()
+
+        @classmethod
+        @override
+        def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
+            adapter_ctx_registry.register(Adapter.lightning, component_key = "datamodule",
+                                          adapter_combination=(Adapter.lightning,),
+                                          composition_classes=(ITDataModule, LightningDataModule),
+                                          description="lightning adapter to be used with lightning",
+            )
+            adapter_ctx_registry.register(Adapter.lightning, component_key = "module",
+                                          adapter_combination=(Adapter.lightning,),
+                                          composition_classes=(LightningAdapter, BaseITModule, LightningModule),
+                                          description="lightning adapter to be used with lightning",
+            )
+else:
+    LightningDataModule = object
+    LightningModule = object
+    LightningAdapter = object

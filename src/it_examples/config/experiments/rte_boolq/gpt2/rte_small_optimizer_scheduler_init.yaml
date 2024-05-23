@@ -1,6 +1,7 @@
 it_session:
   session_cfg:
     init_args:
+      # adapter_ctx: [core]
       module_cfg:
         init_args:
           experiment_tag: opt_scheduler_init_test

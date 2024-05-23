@@ -2,8 +2,8 @@ from copy import deepcopy
 
 import pytest
 
-from tests.parity_acceptance.base.cfg_aliases import test_core_gpt2_it_module_base
-from tests.parity_acceptance.base.test_it_base import CoreCfg
+from tests.parity_acceptance.adapters.lightning.cfg_aliases import test_core_gpt2_it_module_base
+from parity_acceptance.adapters.lightning.test_interpretune_l import CoreCfg
 from tests.configuration import get_itdm_cfg
 from interpretune.base.config.module import ITConfig
 from interpretune.base.config.mixins import HFFromPretrainedConfig

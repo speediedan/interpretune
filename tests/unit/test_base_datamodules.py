@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 from copy import deepcopy
 
-from interpretune.base.modules import ITModule
+from interpretune.adapters.core import ITModule
 from interpretune.base.call import _call_itmodule_hook
 from tests.orchestration import ablate_cls_attrs
 from interpretune.base.contract.session import ITSession

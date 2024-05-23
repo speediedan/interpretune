@@ -1,5 +1,6 @@
 it_session:
   session_cfg:
+    adapter_ctx: [core]
     init_args:
       module_cfg:
         experiment_tag: rte_small_noquant_gen_ft_schedule_only

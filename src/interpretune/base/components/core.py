@@ -13,7 +13,7 @@ import torch
 from interpretune.base.config.module import ITConfig, ITState
 from interpretune.base.components.mixins import ITStateMixin
 from interpretune.base.datamodules import ITDataModule
-from interpretune.analysis.memprofiler import MemProfiler
+from interpretune.extensions.memprofiler import MemProfiler
 from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info, rank_zero_debug
 from interpretune.utils.exceptions import MisconfigurationException
 from interpretune.utils.import_utils import _resolve_torch_dtype
@@ -40,7 +40,7 @@ def _dummy_notify(method: str, ret_callable: bool, ret_val: Any, *args, **kwargs
     return out
 
 
-class ConfigAdapter:
+class BaseConfigImpl:
     """" Methods for adapting the configuration and logging of BaseITModule."""
 
     # if you override these in your module, ensure you cooperatively call super() if you want to retain
@@ -110,11 +110,11 @@ class PropertyDispatcher:
     CORE_TO_FRAMEWORK_ATTRS_MAP = {}
 
     # Below is an experimental feature that enables us to conditionally defer property definitions to other
-    # framework/plugin definitions. The intention is to conditionally enhance functionality (e.g., add a setter method
-    # where one doesn't exist in a given framework/plugin implementation) while still maximizing compatibility in
-    # deferring to the framework/plugin property implementation in contexts where it would be supported. This
+    # adapter definitions. The intention is to conditionally enhance functionality (e.g., add a setter method
+    # where one doesn't exist in a given adapter implementation) while still maximizing compatibility in
+    # deferring to the adapter property implementation in contexts where it would be supported. This
     # functionality can be disabled on a property basis by setting `enabled=False` at the cost of potentially reduced
-    # compatbility because IT will not dispatch to the framework/plugin's implementation of the IT-enhanced property.
+    # compatbility because IT will not dispatch to the adapter's implementation of the IT-enhanced property.
     PROPERTY_COMPOSITION = {}
 
     """property dispatcher"""
@@ -207,7 +207,6 @@ class PropertyDispatcher:
         else:
             rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
-
 class CoreHelperAttributes:
 
     """Mixin class for adding arbitrary core helper attributes to core (non-framework adapted) IT classes."""
@@ -282,7 +281,6 @@ class CoreHelperAttributes:
     @global_step.setter
     def global_step(self, value: int) -> None:
         self._it_state._global_step = value
-
 
 # adapted from pytorch/core/optimizer.py initialization methods
 class OptimizerScheduler:
@@ -373,5 +371,5 @@ class OptimizerScheduler:
         return optimizers, lr_schedulers
 
 
-class CoreComponents(ConfigAdapter, PropertyDispatcher, OptimizerScheduler):
+class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler):
     ...

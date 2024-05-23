@@ -3,6 +3,7 @@ from typing import Optional, Literal, List, Dict, Any
 from dataclasses import dataclass
 from functools import reduce
 from copy import deepcopy
+from typing_extensions import override
 
 import torch
 from transformers import PretrainedConfig, AutoModelForCausalLM, PreTrainedTokenizerBase
@@ -10,14 +11,17 @@ from transformer_lens import HookedTransformer, HookedTransformerConfig
 from transformer_lens.utilities.devices import get_device_for_block_index
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.base.config.module import ITConfig,HFFromPretrainedConfig
+from interpretune.adapters.registration import CompositionRegistry, Adapter
+from interpretune.adapters.lightning import LightningDataModule, LightningModule, LightningAdapter
+from interpretune.base.config.module import ITConfig, HFFromPretrainedConfig
+from interpretune.base.config.shared import ITSerializableCfg
+from interpretune.base.config.mixins import CoreGenerationConfig
+from interpretune.base.components.core import CoreHelperAttributes
+from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import BaseITModule
 from interpretune.utils.data_movement import move_data_to_device
 from interpretune.utils.import_utils import _resolve_torch_dtype
-from interpretune.base.components.core import CoreHelperAttributes
-from interpretune.base.config.mixins import CoreGenerationConfig
 from interpretune.utils.logging import rank_zero_warn, rank_zero_info
-from interpretune.base.config.shared import ITSerializableCfg
 from interpretune.utils.warnings import tl_invalid_dmap
 from interpretune.utils.patched_tlens_generate import generate as patched_generate
 from interpretune.utils.exceptions import MisconfigurationException
@@ -176,12 +180,11 @@ class TLensGenerationConfig(CoreGenerationConfig):
     verbose: bool = True
 
 ################################################################################
-# Hooks and mixins to support Transformer Lens in different framework contexts
+# Hooks and mixins to support Transformer Lens in different adapter contexts
 ################################################################################
 
 class BaseITLensModuleHooks:
-    """"IT protocol hooks implemented by the BaseITLensModule (used by all framework TransformerLens adapter
-    modules)"""
+    """"IT protocol hooks implemented by the BaseITLensModule (used by all TransformerLens adapter modules)"""
 
     # proper initialization of these variables should be done in the child class
     it_cfg: List[ITConfig]
@@ -320,8 +323,36 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
 # Transformer Lens Module Composition
 ################################################################################
 
-class ITLensModule(TLensAttributeMixin, CoreHelperAttributes, BaseITLensModule):
+class TransformerLensAdapter(TLensAttributeMixin):
+
+    @classmethod
+    @override
+    def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
+        adapter_ctx_registry.register(Adapter.transformer_lens, component_key = "datamodule",
+                                        adapter_combination=( Adapter.core, Adapter.transformer_lens),
+                                        composition_classes=(ITDataModule,),
+                                        description="Transformer Lens adapter that can be composed with core and l...",
+        )
+        adapter_ctx_registry.register(Adapter.transformer_lens, component_key = "datamodule",
+                                        adapter_combination=(Adapter.lightning, Adapter.transformer_lens),
+                                        composition_classes=(ITDataModule, LightningDataModule),
+                                        description="Transformer Lens adapter that can be composed with core and l...",
+        )
+        adapter_ctx_registry.register(Adapter.transformer_lens, component_key = "module",
+                                        adapter_combination=(Adapter.core, Adapter.transformer_lens),
+                                        composition_classes=(ITLensModule,),
+                                        description="Transformer Lens adapter that can be composed with core and l...",
+        )
+        adapter_ctx_registry.register(Adapter.transformer_lens, component_key = "module",
+                                        adapter_combination=(Adapter.lightning, Adapter.transformer_lens),
+                                        composition_classes=(TLensAttributeMixin, BaseITLensModule, LightningAdapter,
+                                                             BaseITModule, LightningModule),
+                                        description="Transformer Lens adapter that can be composed with core and l...",
+        )
 
     def batch_to_device(self, batch) -> BatchEncoding:
         move_data_to_device(batch, self.input_device)
         return batch
+
+class ITLensModule(TransformerLensAdapter, CoreHelperAttributes, BaseITLensModule):
+    ...

@@ -125,6 +125,16 @@ class ITDataModule:
                 )
             return dataset.remove_columns(ignored_columns)
 
+    def __repr__(self):
+        if self._module:
+            module_str = getattr(self._module, '_orig_module_name', self._module.__class__.__name__)
+        else:
+            module_str = 'No module yet attached.'
+        tokenizer_str = self.tokenizer.__class__.__name__ if self.tokenizer else 'No tokenizer yet defined'
+        repr_string = [f'Attached module: {module_str}']
+        repr_string += [f'Attached tokenizer: {tokenizer_str}']
+        return self.__class__.__name__ + '(' + ', '.join(repr_string) + ')'
+
     def on_train_end(self) -> Optional[Any]:
         """Optionally execute some post-interpretune train session steps."""
 

@@ -13,15 +13,17 @@
 from typing import Optional, Callable, Dict
 from dataclasses import dataclass, field
 from functools import partial
+from collections.abc import Iterable
 
 import pytest
 
 from tests.utils.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS
 from tests.configuration import BaseAugTest, collect_results, BaseCfg, pytest_param_factory, IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
-from interpretune.base.contract.session import Framework, Plugin
-from tests.parity_acceptance.plugins.transformer_lens.expected import tl_parity_results, tl_profiling_parity_results
-from tests.parity_acceptance.base.cfg_aliases import (w_lit, cuda,test_bs1_mem, test_bs1_mem_nosavedt,
+from interpretune.adapters.registration import Adapter
+from tests.parity_acceptance.adapters.transformer_lens.expected import tl_parity_results, tl_profiling_parity_results
+from tests.parity_acceptance.adapters.transformer_lens.cfg_aliases import w_l_tl
+from tests.parity_acceptance.adapters.lightning.cfg_aliases import (cuda,test_bs1_mem, test_bs1_mem_nosavedt,
                                                       bs1_nowarm_hk_mem, bs1_warm_mem, debug_hidden)
 
 
@@ -30,7 +32,7 @@ from tests.parity_acceptance.base.cfg_aliases import (w_lit, cuda,test_bs1_mem, 
 
 @dataclass(kw_only=True)
 class TLParityCfg(BaseCfg):
-    plugin_ctx: Optional[Plugin | str] = Plugin.transformer_lens
+    adapter_ctx: Iterable[Adapter | str] = (Adapter.core, Adapter.transformer_lens)
     model_src_key: Optional[str] = "cust"
 
 @dataclass
@@ -40,14 +42,14 @@ class TLParityTest(BaseAugTest):
 
 PARITY_TL_CONFIGS = (
     TLParityTest(alias="test_cpu_32", cfg=TLParityCfg(phase="test", model_src_key="gpt2")),
-    TLParityTest(alias="test_cpu_32_l", cfg=TLParityCfg(phase="test", **w_lit,), marks="lightning"),
+    TLParityTest(alias="test_cpu_32_l", cfg=TLParityCfg(phase="test", **w_l_tl,), marks="lightning"),
     TLParityTest(alias="test_cuda_32", cfg=TLParityCfg(phase="test", **cuda), marks="cuda"),
-    TLParityTest(alias="test_cuda_32_l", cfg=TLParityCfg(phase="test", **cuda, **w_lit), marks="cuda_l"),
+    TLParityTest(alias="test_cuda_32_l", cfg=TLParityCfg(phase="test", **cuda, **w_l_tl), marks="cuda_l"),
     TLParityTest(alias="train_cpu_32", cfg=TLParityCfg()),
-    TLParityTest(alias="train_cpu_32_l", cfg=TLParityCfg(**w_lit), marks="lightning"),
+    TLParityTest(alias="train_cpu_32_l", cfg=TLParityCfg(**w_l_tl), marks="lightning"),
     TLParityTest(alias="train_cpu_32_debug", cfg=TLParityCfg(**debug_hidden), marks="optional"),
     TLParityTest(alias="train_cuda_32", cfg=TLParityCfg(**cuda), marks="cuda"),
-    TLParityTest(alias="train_cuda_32_l", cfg=TLParityCfg(**cuda, **w_lit), marks="cuda_l"),
+    TLParityTest(alias="train_cuda_32_l", cfg=TLParityCfg(**cuda, **w_l_tl), marks="cuda_l"),
 )
 
 EXPECTED_PARITY_TL = {cfg.alias: cfg.expected for cfg in PARITY_TL_CONFIGS}
@@ -57,7 +59,7 @@ EXPECTED_PARITY_TL = {cfg.alias: cfg.expected for cfg in PARITY_TL_CONFIGS}
 def test_parity_tl(recwarn, tmp_path, test_alias, test_cfg):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PARITY_TL[test_alias] or {}
-    expected_warnings = TL_LIGHTNING_CTX_WARNS if test_cfg.framework_ctx == Framework.lightning else TL_CTX_WARNS
+    expected_warnings = TL_LIGHTNING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else TL_CTX_WARNS
     parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)
     unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
@@ -71,17 +73,17 @@ class ProfilingTest(BaseAugTest):
 
 @dataclass(kw_only=True)
 class TLProfileCfg(BaseCfg):
-    plugin_ctx: Optional[Plugin | str] = Plugin.transformer_lens
+    adapter_ctx: Iterable[Adapter | str] = (Adapter.core, Adapter.transformer_lens)
     model_src_key: Optional[str] = "gpt2"
 
 PARITY_TL_PROFILING_CONFIGS = (
     ProfilingTest(alias="test_cpu_32", cfg=TLProfileCfg(**test_bs1_mem_nosavedt), marks="optional"),
-    ProfilingTest(alias="test_cpu_32_l", cfg=TLProfileCfg(**w_lit, **test_bs1_mem_nosavedt), marks="l_optional"),
+    ProfilingTest(alias="test_cpu_32_l", cfg=TLProfileCfg(**w_l_tl, **test_bs1_mem_nosavedt), marks="l_optional"),
     ProfilingTest(alias="test_cuda_32", cfg=TLProfileCfg(**cuda, **test_bs1_mem), marks="cuda"),
-    ProfilingTest(alias="test_cuda_32_l", cfg=TLProfileCfg(**cuda, **w_lit, **test_bs1_mem), marks="cuda_l"),
+    ProfilingTest(alias="test_cuda_32_l", cfg=TLProfileCfg(**cuda, **w_l_tl, **test_bs1_mem), marks="cuda_l"),
     ProfilingTest(alias="train_cpu_32", cfg=TLProfileCfg(**bs1_nowarm_hk_mem), marks="optional"),
     ProfilingTest(alias="train_cuda_32", cfg=TLProfileCfg(**cuda, **bs1_warm_mem), marks="cuda_profci"),
-    ProfilingTest(alias="train_cuda_32_l", cfg=TLProfileCfg(**cuda, **w_lit, **bs1_warm_mem), marks="cuda_l_optional"),
+    ProfilingTest(alias="train_cuda_32_l", cfg=TLProfileCfg(**cuda, **w_l_tl, **bs1_warm_mem), marks="cuda_l_optional"),
 )
 
 EXPECTED_PARITY_TL_PROFILING = {cfg.alias: cfg.expected for cfg in PARITY_TL_PROFILING_CONFIGS}
@@ -91,7 +93,7 @@ EXPECTED_PARITY_TL_PROFILING = {cfg.alias: cfg.expected for cfg in PARITY_TL_PRO
 def test_parity_tl_profiling(recwarn, tmp_path, test_alias, test_cfg):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PARITY_TL_PROFILING[test_alias] or {}
-    expected_warnings = TL_LIGHTNING_CTX_WARNS if test_cfg.framework_ctx == Framework.lightning else TL_CTX_WARNS
+    expected_warnings = TL_LIGHTNING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else TL_CTX_WARNS
     parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)
     unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)

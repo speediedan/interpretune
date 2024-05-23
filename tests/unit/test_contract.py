@@ -46,21 +46,22 @@ class TestClassContract:
 
     def test_it_session_validation_errors(self, recwarn, get_tl_it_session_cfg):
         sess_cfg = deepcopy(get_tl_it_session_cfg)
-        build_ctx = {'framework_ctx': sess_cfg.framework_ctx, 'plugin_ctx': sess_cfg.plugin_ctx}
-        m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=sess_cfg.module_cls, ctx=build_ctx)
+        m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=sess_cfg.module_cls,
+                       ctx=sess_cfg.adapter_ctx)
         with TestClassContract.invalid_mods_ctx(sess_cfg, invalidate_dm=False):
             with pytest.raises(ValueError, match="must be provided"):
                 dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input=sess_cfg.datamodule_cls)
             with pytest.raises(ValueError, match="Specified component was"):
                 dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='oops', input=sess_cfg.datamodule_cls,
-                                ctx=build_ctx)
+                                ctx=sess_cfg.adapter_ctx)
             with pytest.raises(ValueError, match="is not a callable"):
-                dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input="oops", ctx=build_ctx)
+                dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input="oops",
+                                ctx=sess_cfg.adapter_ctx)
             with pytest.raises(ValueError, match="desired class enrichment"):
                 dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input=sess_cfg.datamodule_cls,
                                 ctx="oops")
             dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input=sess_cfg.datamodule_cls,
-                                ctx=build_ctx)
+                                ctx=sess_cfg.adapter_ctx)
             tmp_dm = dm_cls(itdm_cfg=sess_cfg.datamodule_cfg, *sess_cfg.dm_args, **sess_cfg.dm_kwargs)
             # if we are manually preparing this particular module, we need to manually implement the attribute handle
             # sharing that session auto-composition would provide us via `ITSession._set_dm_handles_for_instantiation`
@@ -80,13 +81,13 @@ class TestClassContract:
     )
     def test_it_session_precomposed(self, recwarn, get_core_cust_it_session_cfg, dm_precomposed, m_precomposed):
         sess_cfg = deepcopy(get_core_cust_it_session_cfg)
-        build_ctx = {'framework_ctx': sess_cfg.framework_ctx, 'plugin_ctx': sess_cfg.plugin_ctx}
         if dm_precomposed:
             dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input=sess_cfg.datamodule_cls,
-                                    ctx=build_ctx)
+                                    ctx=sess_cfg.adapter_ctx)
             ready_dm = dm_cls(itdm_cfg=sess_cfg.datamodule_cfg, *sess_cfg.dm_args, **sess_cfg.dm_kwargs)
         if m_precomposed:
-            m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=sess_cfg.module_cls, ctx=build_ctx)
+            m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=sess_cfg.module_cls,
+                           ctx=sess_cfg.adapter_ctx)
             ready_m = m_cls(it_cfg=sess_cfg.module_cfg, *sess_cfg.module_args, **sess_cfg.module_kwargs)
         if dm_precomposed and m_precomposed:
             # we patch *_cls attributes to `None` so we can reuse the same session cfg object across multiple tests
@@ -107,24 +108,29 @@ class TestClassContract:
     def test_it_session_cfg_sanitize(self, get_tl_it_session_cfg):
         it_session = ITSession(get_tl_it_session_cfg)
         assert len(it_session) == 2
-        assert repr(it_session.module) == 'InterpretunableModule(TestITModule)'
-        assert repr(it_session.datamodule) == 'InterpretunableDataModule(TestITDataModule)'
+        m_prefix = "Original module: TestITModule \nNow InterpretunableModule composing TestITModule with: \n  - ITLe"
+        dm_prefix = " TestITDataModule with: \n  - ITDataModule\nInterpretunableDataModule(Attached module: TestITM"
+        assert repr(it_session.module).startswith(m_prefix)
+        assert dm_prefix in repr(it_session.datamodule)
+        it_session.datamodule._module = None
+        dm_no_attach_prefix = "Attached module: No module yet attached"
+        assert dm_no_attach_prefix in repr(it_session.datamodule)
 
     def test_session_min_dep_installed(self):
         import sys
         from importlib import reload
-        modules_to_reload = ['interpretune.base.contract.session', 'interpretune.base.components.cli']
+        modules_to_reload = ('interpretune.adapters.lightning', 'interpretune.base.components.cli')
         for module_fqn in modules_to_reload:
             del sys.modules[module_fqn]
         with patch('interpretune.utils.import_utils._LIGHTNING_AVAILABLE', False):
-            from interpretune.base.contract.session import LightningModule, LightningDataModule
+            from interpretune.adapters.lightning import LightningModule, LightningDataModule
             assert LightningModule.__module__ == 'builtins'
             assert LightningDataModule.__module__ == 'builtins'
             from interpretune.base.components.cli import l_cli_main
             assert l_cli_main.__module__ == 'builtins'
         for module_fqn in modules_to_reload:
             reload(sys.modules[module_fqn])
-        from interpretune.base.contract.session import LightningModule, LightningDataModule
+        from interpretune.adapters.lightning import LightningModule, LightningDataModule
         assert LightningModule.__module__ == 'lightning.pytorch.core.module'
         assert LightningDataModule.__module__ == 'lightning.pytorch.core.datamodule'
         from interpretune.base.components.cli import l_cli_main

@@ -13,6 +13,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Callable, Any, Union, Dict, NamedTuple
 from collections import defaultdict
+from collections.abc import Iterable
 from copy import deepcopy
 import os
 from functools import reduce
@@ -24,19 +25,21 @@ from interpretune.base.config.datamodule import ITDataModuleConfig
 from it_examples.experiments.rte_boolq.config import RTEBoolqConfig, RTEBoolqTLConfig
 from interpretune.base.config.module import ITConfig
 from interpretune.base.config.mixins import HFFromPretrainedConfig, ZeroShotClassificationConfig
-from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig, ITLensCustomConfig
-from interpretune.base.contract.session import ITSessionConfig, Framework, Plugin, ITSession
-from interpretune.analysis.memprofiler import MemProfilerCfg
-from interpretune.analysis.debug_generation import DebugLMConfig
+from interpretune.adapters.transformer_lens import ITLensFromPretrainedConfig, ITLensCustomConfig
+from interpretune.base.contract.session import ITSessionConfig, ITSession
+from interpretune.adapters.registration import Adapter
+from interpretune.adapters import ADAPTER_REGISTRY
+from interpretune.extensions.memprofiler import MemProfilerCfg
+from interpretune.extensions.debug_generation import DebugLMConfig
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.utils.types import StrOrPath
-from tests.parity_acceptance.base.cfg_aliases import (
+from tests.parity_acceptance.adapters.lightning.cfg_aliases import (
     expected_first_fwd_ids, MemProfResult, core_gpt2_datamodule_kwargs, core_cust_datamodule_kwargs,
     test_core_cust_it_module_base, core_cust_shared_config, test_core_cust_it_module_optim,
     test_core_gpt2_it_module_base, test_core_gpt2_it_module_optim, core_gpt2_shared_config, core_llama2_shared_config,
     core_llama2_datamodule_kwargs, test_dataset_state_core_gpt2, test_dataset_state_core_cust,
     test_dataset_state_core_llama2, test_core_llama2_it_module_base, test_core_llama2_it_module_optim)
-from tests.parity_acceptance.plugins.transformer_lens.cfg_aliases import (
+from tests.parity_acceptance.adapters.transformer_lens.cfg_aliases import (
     test_tl_gpt2_it_module_base, test_tl_cust_it_module_base, test_tl_gpt2_it_module_optim,
     test_tl_cust_it_module_optim, test_tl_datamodule_kwargs, test_tl_gpt2_shared_config, test_dataset_state_tl)
 from tests.utils.runif import RunIf, RUNIF_ALIASES
@@ -47,7 +50,7 @@ if _LIGHTNING_AVAILABLE:
 else:
     seed_everything = object
 
-# We use the same datamodule and module for all parity test contexts to ensure cross-framework/plugin compatibility
+# We use the same datamodule and module for all parity test contexts to ensure cross-adapter compatibility
 # Default test modules
 TEST_IT_DATAMODULE = TestITDataModule
 TEST_IT_MODULE = TestITModule
@@ -114,8 +117,7 @@ class BaseCfg:
     device_type: str = "cpu"
     model_key: str = "rte"  # "real-model"-based acceptance/parity testing/profiling
     precision: str | int = 32
-    framework_ctx: Framework | str = Framework.core
-    plugin_ctx: Optional[Plugin | str] = None
+    adapter_ctx: Iterable[Adapter | str] = (Adapter.core,)
     model_src_key: Optional[str] = None
     limit_train_batches: Optional[int] = 1
     limit_val_batches: Optional[int] = 1
@@ -131,6 +133,9 @@ class BaseCfg:
     cust_fwd_kwargs: Optional[Dict] = None
     # used when adding a new test dataset or changing a test model to force re-caching of test datasets
     force_prepare_data: bool = False
+
+    def __post_init__(self):
+        self.adapter_ctx = ADAPTER_REGISTRY.canonicalize_composition(self.adapter_ctx)
 
 ################################################################################
 # Expected result generation and encapsulation
@@ -231,14 +236,15 @@ def get_nested(target: Dict, chained_keys: List | str):
 TEST_DATAMODULE_BASE_CONFIGS = {
     # TODO: make this dict a more robust registry if the number of tested models profilerates
     # TODO: pull module/datamodule configs from model-keyed test config dict (fake lightweight registry)
-    "gpt2": (core_gpt2_shared_config, core_gpt2_datamodule_kwargs),
-    "llama2": (core_llama2_shared_config, core_llama2_datamodule_kwargs),
-    "cust": (core_cust_shared_config, core_cust_datamodule_kwargs),
-    Plugin.transformer_lens: (test_tl_gpt2_shared_config, test_tl_datamodule_kwargs),
+    # (dm_adapter_ctx, model_src_key)
+    (Adapter.core, "gpt2"): (core_gpt2_shared_config, core_gpt2_datamodule_kwargs),
+    (Adapter.core, "llama2"): (core_llama2_shared_config, core_llama2_datamodule_kwargs),
+    (Adapter.core, "cust"): (core_cust_shared_config, core_cust_datamodule_kwargs),
+    (Adapter.transformer_lens, "any"): (test_tl_gpt2_shared_config, test_tl_datamodule_kwargs),
 }
 
 TEST_MODULE_BASE_CONFIGS = {
-    # (phase, plugin_ctx, model_src_key)
+    # (phase, adapter_mod_cfg_key, model_src_key)
     ("test", None, "gpt2"): test_core_gpt2_it_module_base,
     ("train", None, "gpt2"): test_core_gpt2_it_module_optim,
     ("test", None, "llama2"): test_core_llama2_it_module_base,
@@ -246,17 +252,17 @@ TEST_MODULE_BASE_CONFIGS = {
     ("predict", None, "cust"): test_core_cust_it_module_base,
     ("test", None, "cust"): test_core_cust_it_module_base,
     ("train", None, "cust"): test_core_cust_it_module_optim,
-    ("test", Plugin.transformer_lens, "gpt2"): test_tl_gpt2_it_module_base,
-    ("train", Plugin.transformer_lens, "gpt2"): test_tl_gpt2_it_module_optim,
-    ("test", Plugin.transformer_lens, "cust"): test_tl_cust_it_module_base,
-    ("train", Plugin.transformer_lens, "cust"): test_tl_cust_it_module_optim,
+    ("test", Adapter.transformer_lens, "gpt2"): test_tl_gpt2_it_module_base,
+    ("train", Adapter.transformer_lens, "gpt2"): test_tl_gpt2_it_module_optim,
+    ("test", Adapter.transformer_lens, "cust"): test_tl_cust_it_module_base,
+    ("train", Adapter.transformer_lens, "cust"): test_tl_cust_it_module_optim,
 }
 
 
 MODULE_CONFIG_MAPPING = {
-    # (model_key, plugin_key)
+    # (model_key,  adapter_mod_cfg_key)
     ("rte", None): RTEBoolqConfig,
-    ("rte", Plugin.transformer_lens): RTEBoolqTLConfig
+    ("rte", Adapter.transformer_lens): RTEBoolqTLConfig
 }
 
 def get_model_input_dtype(precision):
@@ -269,28 +275,30 @@ def get_model_input_dtype(precision):
     return torch.float32
 
 def get_itdm_cfg(test_cfg: Tuple, dm_override_cfg: Optional[Dict] = None, **kwargs) -> ITConfig:
-    dm_base_cfg_key = test_cfg.plugin_ctx or test_cfg.model_src_key or "gpt2"
+    dm_base_cfg_key = (Adapter.transformer_lens, "any") if Adapter.transformer_lens in test_cfg.adapter_ctx else \
+        (Adapter.core, test_cfg.model_src_key or "gpt2")
     shared_config, default_itdm_kwargs  = TEST_DATAMODULE_BASE_CONFIGS[dm_base_cfg_key]
     test_it_datamodule_cfg = deepcopy(default_itdm_kwargs)
     if dm_override_cfg:
         test_it_datamodule_cfg.update(dm_override_cfg)
     return ITDataModuleConfig(**shared_config, **test_it_datamodule_cfg)
 
-def init_plugin_cfg(test_cfg: Tuple, test_it_module_cfg: Dict):
-    if test_cfg.plugin_ctx == Plugin.transformer_lens:
+def init_adapter_mod_cfg(test_cfg: Tuple, test_it_module_cfg: Dict):
+    if Adapter.transformer_lens in test_cfg.adapter_ctx:
         if test_cfg.model_src_key == "gpt2":
             test_it_module_cfg['tl_cfg'] = ITLensFromPretrainedConfig(**test_it_module_cfg['tl_cfg'])
         elif test_cfg.model_src_key == "cust":
             test_it_module_cfg['tl_cfg'] = ITLensCustomConfig(**test_it_module_cfg['tl_cfg'])
         else:
             raise ValueError(f"Unknown model_src_key: {test_cfg.model_src_key}")
-    else:  # See NOTE [Interpretability Plugins]
-        raise ValueError(f"Unknown plugin type: {test_cfg.plugin_ctx}")
+    else:  # See NOTE [Interpretability Adapters]
+        raise ValueError(f"Unknown adapter type: {test_cfg.adapter_ctx}")
 
 def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[StrOrPath] = None) -> ITConfig:
     test_cfg_override_attrs = ["memprofiler_cfg", "debug_lm_cfg", "cust_fwd_kwargs", "tl_cfg", "model_cfg",
                                "hf_from_pretrained_cfg", "zero_shot_cfg"]
-    target_test_it_module_cfg = TEST_MODULE_BASE_CONFIGS[(test_cfg.phase, test_cfg.plugin_ctx, test_cfg.model_src_key)]
+    adapter_mod_cfg_key = Adapter.transformer_lens if Adapter.transformer_lens in test_cfg.adapter_ctx else None
+    target_test_it_module_cfg = TEST_MODULE_BASE_CONFIGS[(test_cfg.phase, adapter_mod_cfg_key, test_cfg.model_src_key)]
     test_it_module_cfg = deepcopy(target_test_it_module_cfg)
     for attr in test_cfg_override_attrs:
         if getattr(test_cfg, attr):
@@ -298,9 +306,9 @@ def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[StrOrPath] = None) -> ITC
     if core_log_dir:
         test_it_module_cfg.update({'core_log_dir': core_log_dir})
     test_it_module_cfg = configure_device_precision(test_it_module_cfg, test_cfg.device_type, test_cfg.precision)
-    if test_cfg.plugin_ctx:
-        init_plugin_cfg(test_cfg, test_it_module_cfg)
-    config_class = MODULE_CONFIG_MAPPING[(test_cfg.model_key, test_cfg.plugin_ctx)]
+    if adapter_mod_cfg_key:
+        init_adapter_mod_cfg(test_cfg, test_it_module_cfg)
+    config_class = MODULE_CONFIG_MAPPING[(test_cfg.model_key, adapter_mod_cfg_key)]
     return config_class(**test_it_module_cfg)
 
 def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> Dict[str, Any]:
@@ -312,7 +320,7 @@ def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int
     if cfg.get('hf_from_pretrained_cfg', None) is not None:
         cfg['hf_from_pretrained_cfg'].pretrained_kwargs.update({'torch_dtype': get_model_input_dtype(precision)})
         if device_type == "cuda":
-            # note that with TLens this should be overridden by the tl plugin but we want to test that functionality
+            # note that with TLens this should be overridden by the tl adapter but we want to test that functionality
             cfg['hf_from_pretrained_cfg'].pretrained_kwargs.update({'device_map': 0})
     if cfg.get('tl_cfg', None) is not None:
         dev_prec_override = {'dtype': get_model_input_dtype(precision), 'device': device_type}
@@ -324,7 +332,7 @@ def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int
 
 def config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_dir, prewrapped_modules) \
     -> ITSessionConfig:
-    session_ctx = {'framework_ctx': test_cfg.framework_ctx, 'plugin_ctx': test_cfg.plugin_ctx}
+    session_ctx = {'adapter_ctx': test_cfg.adapter_ctx}
     dm_kwargs = {'dm_kwargs': {'force_prepare_data': test_cfg.force_prepare_data}}
     module_kwargs = {'module_kwargs': {'test_alias': test_alias, 'state_log_dir': state_log_dir, **expected_results}}
     session_cfg = ITSessionConfig(**core_cfg, **session_ctx, **dm_kwargs, **module_kwargs, **prewrapped_modules)
@@ -343,7 +351,7 @@ def gen_session_cfg(test_cfg, test_alias, expected_results, tmp_path, prewrapped
 
 def config_modules(test_cfg, test_alias, expected_results, tmp_path,
                    prewrapped_modules: Optional[Dict[str, Any]] = None, state_log_mode: bool = False) -> ITSession:
-    if test_cfg.framework_ctx == Framework.lightning:  # allow Lightning to set env vars
+    if Adapter.lightning in test_cfg.adapter_ctx:  # allow Lightning to set env vars
         seed_everything(1, workers=True)
     cuda_reset()
     torch.set_printoptions(precision=12)

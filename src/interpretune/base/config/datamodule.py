@@ -3,7 +3,7 @@ from typing import Optional, Any, Dict, Tuple, List
 import logging
 from dataclasses import dataclass, field
 
-from interpretune.base.config.shared import ITSerializableCfg, ITSharedConfig
+from interpretune.base.config.shared import ITSerializableCfg, ITSharedConf
 from interpretune.utils.logging import rank_zero_warn
 
 
@@ -39,7 +39,7 @@ class DatasetProcessingConfig(ITSerializableCfg):
 
 
 @dataclass(kw_only=True)
-class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingConfig):
+class ITDataModuleConfig(ITSharedConf, TokenizationConfig, DatasetProcessingConfig):
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
     train_batch_size: int = 32
     eval_batch_size: int = 32
@@ -47,7 +47,7 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
     # note that for prompt_cfg, we:
     #   1. use (data)classes to minimize special character yaml parsing complications (can override w/ diff init_args)
     #   2. do not provide a default dataclass to avoid current dataclass subclass limitations
-    prompt_cfg: PromptConfig = field(default_factory=lambda: PromptConfig())
+    prompt_cfg: PromptConfig = field(default_factory=PromptConfig)
 
     def __post_init__(self) -> None:
         # TODO: validate prompt_cfg validity

@@ -7,7 +7,7 @@ import torch
 
 from interpretune.base.config.datamodule import PromptConfig
 from interpretune.base.config.module import ITConfig
-from interpretune.plugins.transformer_lens import ITLensConfig
+from interpretune.adapters.transformer_lens import ITLensConfig
 from interpretune.base.config.mixins import ZeroShotClassificationConfig, BaseGenerationConfig, HFGenerationConfig
 
 @dataclass(kw_only=True)
@@ -19,7 +19,7 @@ class RTEBoolqEntailmentMapping:
 @dataclass(kw_only=True)
 class RTEBoolqZeroShotClassificationConfig(RTEBoolqEntailmentMapping, ZeroShotClassificationConfig):
     enabled: bool = False
-    lm_generation_cfg: BaseGenerationConfig = field(default_factory=lambda: HFGenerationConfig())
+    lm_generation_cfg: BaseGenerationConfig = field(default_factory=HFGenerationConfig)
 
     def __repr__(self):
         return f"Zero-Shot Classification Config: {os.linesep}{pformat(self.__dict__)}"

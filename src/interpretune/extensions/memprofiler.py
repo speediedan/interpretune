@@ -15,9 +15,9 @@ from interpretune.utils.import_utils import resolve_funcs
 
 
 class DefaultMemHooks(AutoStrEnum):
-    pre_forward = 'interpretune.analysis.memprofiler._hook_npp_pre_forward'
-    post_forward = 'interpretune.analysis.memprofiler._hook_npp_post_forward'
-    reset_state = 'interpretune.analysis.memprofiler._reset_memory_hooks_state'
+    pre_forward = 'interpretune.extensions.memprofiler._hook_npp_pre_forward'
+    post_forward = 'interpretune.extensions.memprofiler._hook_npp_post_forward'
+    reset_state = 'interpretune.extensions.memprofiler._reset_memory_hooks_state'
 
 @dataclass(kw_only=True)
 class MemProfilerHooks(ITSerializableCfg):
@@ -42,13 +42,13 @@ class MemProfilerSchedule(ITSerializableCfg):
 class MemProfilerCfg(ITSerializableCfg):
     enabled: bool = False
     cuda_allocator_history: bool = False
-    schedule: MemProfilerSchedule = field(default_factory=lambda: MemProfilerSchedule())
+    schedule: MemProfilerSchedule = field(default_factory=MemProfilerSchedule)
     save_dir: Optional[str | os.PathLike] = None
-    enabled_funcs: MemProfilerFuncs = field(default_factory=lambda: MemProfilerFuncs())
+    enabled_funcs: MemProfilerFuncs = field(default_factory=MemProfilerFuncs)
     enable_memory_hooks: bool = True
     enable_saved_tensors_hooks: bool = True
-    memory_hooks: MemProfilerHooks = field(default_factory=lambda: MemProfilerHooks())
-    saved_tensors_funcs: List = field(default_factory=lambda: list(('interpretune.analysis.memprofiler._npp_hook',
+    memory_hooks: MemProfilerHooks = field(default_factory=MemProfilerHooks)
+    saved_tensors_funcs: List = field(default_factory=lambda: list(('interpretune.extensions.memprofiler._npp_hook',
                                                                     lambda x: x)))
     # if you add custom hooks, make sure to add the desired module state attributes to save to `save_hook_attrs`
     save_hook_attrs: List = field(default_factory=lambda: ["rss_pre_forward", "rss_post_forward", "rss_diff",

@@ -38,7 +38,7 @@ class TestClassCoreModule:
 
     def test_optim_conf(self, get_it_module__core_cust__setup):
         def mock_optim_confs(base_optim, base_lr_scheduler):
-            """Optional because it is not mandatory in the context of core IT modules (required for some framework
+            """Optional because it is not mandatory in the context of core IT modules (required for some adapter
             modules)."""
             tuple_lists = base_optim, base_lr_scheduler
             single_optim = base_optim[0]

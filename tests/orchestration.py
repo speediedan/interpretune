@@ -19,7 +19,8 @@ from contextlib import contextmanager
 
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.utils.basic_trainer import BasicTrainer, BasicTrainerCfg
-from interpretune.base.contract.session import Framework, ITSessionConfig, ITSession
+from interpretune.adapters.registration import Adapter
+from interpretune.base.contract.session import ITSessionConfig, ITSession
 from configuration import config_modules
 from interpretune.base.config.mixins import ZeroShotClassificationConfig
 
@@ -38,10 +39,10 @@ else:
 
 ########################################################################################################################
 # NOTE: [Parity Testing Approach]
-# - We use a single set of results but separate tests for framework parity tests since we want to minimize framework
+# - We use a single set of results but separate tests for adapter parity tests since we want to minimize adapter
 #   dependencies for Interpretune and we want to mark at the test-level for greater clarity and flexibility (we want to
 #   signal clearly when either diverges from the expected benchmark so aren't testing relative values only)
-# - The configuration space for parity tests is sampled rather than exhaustively testing all framework configuration
+# - The configuration space for parity tests is sampled rather than exhaustively testing all adapter configuration
 #   combinations due to resource constraints
 # - Note that while we could access test_alias using the request fixture (`request.node.callspec.id`), this approach
 #   using dataclass encapsulation allows us to flexibly define test ids, configurations, marks and expected outputs
@@ -55,7 +56,7 @@ else:
 
 def parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode: bool = False):
     it_session = config_modules(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)
-    if test_cfg.framework_ctx == Framework.lightning:
+    if Adapter.lightning in test_cfg.adapter_ctx:
         _ = run_lightning(it_session, test_cfg, tmp_path)
     else:
         run_it(it_session, test_cfg)
@@ -74,7 +75,7 @@ def run_it(it_session: ITSession, test_cfg: Tuple):
 
 
 ################################################################################
-# Lightning Framework Train/Test Orchestration
+# Lightning Adapter Train/Test Orchestration
 ################################################################################
 
 def run_lightning(it_session: ITSessionConfig, test_cfg: Tuple, tmp_path: Path) -> Trainer:

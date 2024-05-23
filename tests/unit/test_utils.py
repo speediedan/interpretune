@@ -27,7 +27,7 @@ from interpretune.utils.import_utils import (resolve_funcs, instantiate_class, _
                                              module_available, compare_version)
 from interpretune.base.config.mixins import ITExtension
 from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.analysis.memprofiler import MemProfilerHooks, DefaultMemHooks
+from interpretune.extensions.memprofiler import MemProfilerHooks, DefaultMemHooks
 from tests.orchestration import ablate_cls_attrs
 from interpretune.utils.data_movement import move_data_to_device, to_device
 from interpretune.utils.basic_trainer import BasicTrainerCfg
@@ -80,11 +80,12 @@ class TestClassUtils:
 
     def test_fn_instantiate_class(self):
         short_circuit_path = "ITExtension"
-        ext_init = {"class_path": short_circuit_path, "init_args": {'ext_attr': 'test_ext', 'ext_fqn': 'some.loc'}}
+        ext_init = {"class_path": short_circuit_path, "init_args": {'ext_attr': 'test_ext', 'ext_cls_fqn': 'some.loc',
+                                                                    'ext_cfg_fqn': 'another.loc'}}
         sys.modules['interpretune.utils.import_utils'].instantiate_class.__globals__[short_circuit_path] = ITExtension
         test_ext = instantiate_class(init=ext_init)
         sys.modules['interpretune.utils.import_utils'].instantiate_class.__globals__.pop(short_circuit_path)
-        assert test_ext.ext_fqn == 'some.loc'
+        assert test_ext.ext_cls_fqn == 'some.loc'
         del ext_init['class_path']
         with pytest.raises(MisconfigurationException, match="A class_path was not included"):
             test_ext = instantiate_class(init=ext_init)
@@ -110,7 +111,7 @@ class TestClassUtils:
     def test_package_module_available(self):
         assert not package_available("notgoingtofind.this.package")
         assert not module_available("missingtoplevelpackage.analysis.memprofiler")
-        assert not module_available("interpretune.analysis.missingmodule")
+        assert not module_available("interpretune.extensions.missingmodule")
 
     def test_compare_version(self):
         assert not compare_version("torchnotfound", operator.ge, "2.2.0", use_base_version=True)

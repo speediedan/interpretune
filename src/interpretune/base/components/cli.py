@@ -6,7 +6,8 @@ import random
 import logging
 import weakref
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Iterable, Tuple, Callable, Type
+from collections.abc import Iterable
+from typing import Any, Dict, List, Optional, Union, Tuple, Callable, Type
 from typing_extensions import override
 from functools import reduce
 
@@ -14,9 +15,9 @@ import torch
 from transformers import logging as transformers_logging
 from jsonargparse import ActionConfigFile, ArgumentParser, Namespace
 
-from interpretune.base.config.shared import ITSharedConfig
+from interpretune.base.config.shared import ITSharedConf
 from interpretune.base.datamodules import ITDataModule
-from interpretune.base.modules import ITModule
+from interpretune.adapters.core import ITModule
 from interpretune.base.contract.protocol import InterpretunableType
 from interpretune.base.contract.session import ITSession, ITSessionConfig
 from interpretune.utils.basic_trainer import BasicTrainer, BasicTrainerCfg
@@ -53,7 +54,7 @@ class ITSessionMixin:
 
         # link our datamodule and module shared configuration
         skey = "session_cfg"
-        for attr in ITSharedConfig.__dataclass_fields__:
+        for attr in ITSharedConf.__dataclass_fields__:
             # parser.link_arguments(f"it_session.session_cfg.init_args.datamodule_cfg.init_args.{attr}",
             #                     f"it_session.session_cfg.init_args.module_cfg.init_args.{attr}")
             parser.link_arguments(f"{skey}.datamodule_cfg.init_args.{attr}", f"{skey}.module_cfg.init_args.{attr}")
@@ -289,7 +290,7 @@ def core_cli_main(args: ArgsType = None, run_command: Optional[str] = None) -> O
 
 
 ##########################################################################
-# Framework CLI Adapters
+# CLI Adapters
 ##########################################################################
 
 if _LIGHTNING_AVAILABLE:

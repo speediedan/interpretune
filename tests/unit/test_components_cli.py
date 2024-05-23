@@ -25,9 +25,9 @@ def collect_base_config():
 @RunIf(min_cuda_gpus=1, skip_windows=True)
 @pytest.mark.parametrize("test_alias, cli_cfg", pytest_param_factory(TEST_CONFIGS_CLI_UNIT, unpack=False))
 def test_cli_unit_configs(recwarn, clean_cli_env, cli_test_configs, test_alias, cli_cfg):
-    expected_warnings = CLI_EXPECTED_WARNS[(cli_cfg.framework_cli, cli_cfg.plugin_ctx)]
-    cfg_files = cli_test_configs[(*CLI_EXP_MODEL, test_alias, cli_cfg.plugin_ctx, cli_cfg.debug_mode)]
-    cli_main, cli_args, main_kwargs = gen_cli_args(cli_cfg.run, cli_cfg.framework_cli, cli_cfg.compose_cfg, cfg_files,
+    expected_warnings = CLI_EXPECTED_WARNS[(cli_cfg.cli_adapter, *cli_cfg.adapter_ctx)]
+    cfg_files = cli_test_configs[(*CLI_EXP_MODEL, test_alias, cli_cfg.adapter_ctx, cli_cfg.debug_mode)]
+    cli_main, cli_args, main_kwargs = gen_cli_args(cli_cfg.run, cli_cfg.cli_adapter, cli_cfg.compose_cfg, cfg_files,
                                                    cli_cfg.extra_args)
     should_raise = (cli_cfg.extra_args)
     if should_raise:
@@ -50,8 +50,8 @@ def test_cli_unit_configs(recwarn, clean_cli_env, cli_test_configs, test_alias, 
 
 def test_enumerate_config(clean_cli_env, cli_test_configs):
     cli_cfg, test_alias = collect_base_config()
-    cfg_files = cli_test_configs[(*CLI_EXP_MODEL, test_alias, cli_cfg.plugin_ctx, cli_cfg.debug_mode)]
-    cli_main, cli_args, main_kwargs = gen_cli_args(cli_cfg.run, cli_cfg.framework_cli, cli_cfg.compose_cfg, cfg_files,
+    cfg_files = cli_test_configs[(*CLI_EXP_MODEL, test_alias, cli_cfg.adapter_ctx, cli_cfg.debug_mode)]
+    cli_main, cli_args, main_kwargs = gen_cli_args(cli_cfg.run, cli_cfg.cli_adapter, cli_cfg.compose_cfg, cfg_files,
                                                    cli_cfg.extra_args)
     shared_dir_err_path = (cfg_files[2].parent / "core" / cfg_files[2].parts[-1]).with_suffix('.err')
     shutil.copy(cfg_files[2], shared_dir_err_path)
@@ -63,17 +63,17 @@ def test_enumerate_config(clean_cli_env, cli_test_configs):
 
 def test_compose_config_absolute_exception(clean_cli_env, cli_test_configs):
     cli_cfg, test_alias = collect_base_config()
-    cfg_files = cli_test_configs[(*CLI_EXP_MODEL, test_alias, cli_cfg.plugin_ctx, cli_cfg.debug_mode)]
+    cfg_files = cli_test_configs[(*CLI_EXP_MODEL, test_alias, cli_cfg.adapter_ctx, cli_cfg.debug_mode)]
     fnf_path = (cfg_files[2].parent / "core" / cfg_files[2].parts[-1]).with_suffix('.err')
     cfg_files = cfg_files + (fnf_path,)
     with pytest.raises(FileNotFoundError, match="Could not find configuration file path"):
-        _ = gen_cli_args(cli_cfg.run, cli_cfg.framework_cli, cli_cfg.compose_cfg, cfg_files, cli_cfg.extra_args)
+        _ = gen_cli_args(cli_cfg.run, cli_cfg.cli_adapter, cli_cfg.compose_cfg, cfg_files, cli_cfg.extra_args)
 
 @pytest.mark.parametrize("glob_search", [True, False], ids=["glob_search", "no_glob_search"])
 @pytest.mark.parametrize("fnf_error", [True, False], ids=["fnf_error", "no_fnf_error"])
 def test_compose_config_relative(clean_cli_env, cli_test_configs, fnf_error, glob_search):
     cli_cfg, test_alias = collect_base_config()
-    cfg_files = cli_test_configs[(*CLI_EXP_MODEL, test_alias, cli_cfg.plugin_ctx, cli_cfg.debug_mode)]
+    cfg_files = cli_test_configs[(*CLI_EXP_MODEL, test_alias, cli_cfg.adapter_ctx, cli_cfg.debug_mode)]
     with patch('interpretune.base.components.cli.IT_CONFIG_BASE', os.environ.get('IT_CONFIG_BASE')):
         if fnf_error:
             if not glob_search:
@@ -83,18 +83,18 @@ def test_compose_config_relative(clean_cli_env, cli_test_configs, fnf_error, glo
                 file_name_only_path = cfg_files[2].parts[-1].replace('.yaml', '.err')
                 cfg_files = cfg_files[:-1] + (file_name_only_path,)
             with pytest.raises(FileNotFoundError, match="Could not find configuration file path"):
-                _ = gen_cli_args(cli_cfg.run, cli_cfg.framework_cli, cli_cfg.compose_cfg, cfg_files, cli_cfg.extra_args)
+                _ = gen_cli_args(cli_cfg.run, cli_cfg.cli_adapter, cli_cfg.compose_cfg, cfg_files, cli_cfg.extra_args)
         else:
             if not glob_search:
                 explicit_relative_path = f"{cfg_files[2].parts[-2]}/{cfg_files[2].parts[-1]}"
                 cfg_files = cfg_files[:-1] + (explicit_relative_path,)
-                cli_main, *_ = gen_cli_args(cli_cfg.run, cli_cfg.framework_cli, cli_cfg.compose_cfg,
+                cli_main, *_ = gen_cli_args(cli_cfg.run, cli_cfg.cli_adapter, cli_cfg.compose_cfg,
                                                                cfg_files, cli_cfg.extra_args)
             elif glob_search:  # we always warn with glob_search
                 file_name_only_path = cfg_files[2].parts[-1]
                 cfg_files = cfg_files[:-1] + (file_name_only_path,)
                 with pytest.warns(UserWarning, match="Glob search within"):
-                    cli_main, *_ = gen_cli_args(cli_cfg.run, cli_cfg.framework_cli, cli_cfg.compose_cfg, cfg_files,
+                    cli_main, *_ = gen_cli_args(cli_cfg.run, cli_cfg.cli_adapter, cli_cfg.compose_cfg, cfg_files,
                                                cli_cfg.extra_args)
             assert cli_main
 

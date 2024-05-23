@@ -6,12 +6,14 @@ from copy import deepcopy
 from enum import auto, IntEnum
 
 
-from interpretune.base.modules import ITModule, BaseITModule
+from interpretune.base.modules import BaseITModule
 from interpretune.base.datamodules import ITDataModule
-from interpretune.plugins.transformer_lens import ITLensModule
-from tests.parity_acceptance.base.test_it_base import CoreCfg, ProfParityCfg, BaseCfg
-from tests.parity_acceptance.plugins.transformer_lens.test_interpretune_tl import TLParityCfg, TLProfileCfg
+from interpretune.adapters.core import ITModule
+from interpretune.adapters.transformer_lens import ITLensModule
+from parity_acceptance.adapters.lightning.test_interpretune_l import CoreCfg, ProfParityCfg, BaseCfg
+from tests.parity_acceptance.adapters.transformer_lens.test_interpretune_tl import TLParityCfg, TLProfileCfg
 from interpretune.base.call import _call_itmodule_hook
+from interpretune.adapters.registration import Adapter
 from tests.configuration import config_modules, get_it_cfg, get_itdm_cfg, config_session
 from tests.modules import TestITDataModule, TestITModule
 from tests.unit.cfg_aliases import (TLDebugCfg, LightningLlama2DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg,
@@ -158,15 +160,13 @@ def configure_session_cfg(test_cfg_cls, tmp_path_or_factory):
 @pytest.fixture(scope="class")
 def get_tl_it_session_cfg(tmp_path_factory):
     core_cfg, test_cfg = configure_session_cfg(TLParityCfg, tmp_path_factory)
-    test_cfg.framework_ctx = 'core'
-    test_cfg.plugin_ctx = 'transformer_lens'
+    test_cfg.adapter_ctx = (Adapter.core, Adapter.transformer_lens)
     test_cfg.model_src_key = 'cust'
     yield config_session(core_cfg, test_cfg, 'it_session_cfg_tl_test', {}, None, {})
 
 @pytest.fixture(scope="class")
 def get_core_cust_it_session_cfg(tmp_path_factory):
     core_cfg, test_cfg = configure_session_cfg(CoreCfg, tmp_path_factory)
-    test_cfg.framework_ctx = 'core'
     test_cfg.model_src_key = 'cust'
     yield config_session(core_cfg, test_cfg, 'it_session_cfg_core_test', {}, None, {})
 

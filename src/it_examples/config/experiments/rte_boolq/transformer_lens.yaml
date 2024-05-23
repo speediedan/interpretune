@@ -15,7 +15,7 @@ it_session:
               model_head: transformers.GPT2LMHeadModel
               activation_checkpointing: false
           tl_cfg:
-            class_path: interpretune.plugins.transformer_lens.ITLensFromPretrainedConfig
+            class_path: interpretune.adapters.transformer_lens.ITLensFromPretrainedConfig
             init_args:
               model_name: gpt2-small
               fold_ln: true

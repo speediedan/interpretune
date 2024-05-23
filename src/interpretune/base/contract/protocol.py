@@ -74,13 +74,6 @@ ITModuleProtocol: TypeAlias = gen_protocol_variants(ModuleSteppable, ModuleInvar
 #       supported protocol variant generation. Also add an issue tracker for this approach to solicit ideas for a
 #       cleaner/more pythonic approach. As Python structural subtyping features are still evolving, if a cleaner and
 #       more pythonic approach isn't available now, one will hopefully be available in the near future.
-
-class NamedWrapper:
-    def __str__(self):
-        return f"{self.__class__.__name__}({self._orig_module_name})"
-    def __repr__(self):
-        return str(self)
-
 InterpretunableType: TypeAlias = Union[ITDataModuleProtocol, ITModuleProtocol]
 
 class InterpretunableTuple(NamedTuple):

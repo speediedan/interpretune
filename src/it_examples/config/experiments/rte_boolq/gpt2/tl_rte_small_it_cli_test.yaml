@@ -1,6 +1,7 @@
 it_session:
   session_cfg:
     init_args:
+      adapter_ctx: [core, transformer_lens]
       module_cfg:
         init_args:
           experiment_tag: it_cli_test

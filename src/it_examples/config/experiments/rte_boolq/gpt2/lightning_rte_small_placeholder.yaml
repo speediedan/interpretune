@@ -1,6 +1,7 @@
 it_session:
   session_cfg:
     init_args:
+      adapter_ctx: [lightning]
       module_cfg:
         init_args:
           hf_from_pretrained_cfg:

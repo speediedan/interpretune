@@ -22,8 +22,8 @@ from interpretune.utils.types import STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_only
 from it_examples.experiments.rte_boolq.modules import RTEBoolqModuleMixin, RTEBoolqSteps
 from it_examples.experiments.rte_boolq.datamodules import GPT2RTEBoolqDataModule, Llama2RTEBoolqDataModule
-from tests.parity_acceptance.base.cfg_aliases import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS,
-                                                      SAMPLE_POSITION)
+from tests.parity_acceptance.adapters.lightning.cfg_aliases import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP,
+                                                                    NUM_SAMPLE_ROWS, SAMPLE_POSITION)
 
 
 ################################################################################
@@ -196,7 +196,6 @@ class TransformerBlock(torch.nn.Module):
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
-
 class Transformer(torch.nn.Module):
     def __init__(self, args: TestModelArgs):
         super().__init__()
@@ -318,9 +317,8 @@ def get_filesystem(path: str | Path, **kwargs: Any) -> AbstractFileSystem:
 # Test Modules
 # All test modules inherit from BaseTestModule and can be used in the same way,
 # adjusting the desired methods and configuration to load a pretrained model
-# (e.g. HF `from_pretrained`) or custom model and using the desired plugins
-# (e.g. `transformer_lens`) while running on a supported famework
-# (initially Lightning) or native PyTorch.
+# (e.g. HF `from_pretrained`) or custom model and using the desired adapter
+# compositions (e.g. `transformer_lens`, `Lightning`, native PyTorch)
 ################################################################################
 
 class BaseTestModule:

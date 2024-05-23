@@ -12,12 +12,13 @@
 # TODO: re-enable one or more applied interpretune examples once they are ready
 # import os.path
 # from unittest import mock
-# from typing import Iterable, Dict, Tuple, Optional
+#from collections.abc import Iterable
+# from typing import Dict, Tuple, Optional
 # import pytest
 
 # from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 # from interpretune.base.cli.core_cli import compose_config, IT_CONFIG_BASE, IT_CONFIG_GLOBAL
-# from interpretune.plugins.transformer_lens import ITLensModule
+# from interpretune.adapters.transformer_lens import ITLensModule
 # from tests.configuration import pytest_param_factory, TestCfg
 # from tests.orchestration import dummy_step
 # from tests.utils.runif import RunIf
@@ -26,7 +27,7 @@
 
 # if _LIGHTNING_AVAILABLE:
 #     from interpretune.base.modules import ITLightningModule
-#     from interpretune.plugins.transformer_lens import ITLensLightningModule
+#     from interpretune.adapters.transformer_lens import ITLensLightningModule
 # else:
 #     ITLightningModule = None  # type: ignore[misc,assignment]
 #     ITLensLightningModule = None  # type: ignore[misc,assignment]
@@ -40,24 +41,24 @@
 
 # def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, Optional[str], bool]]) -> Dict:
 #     exp_cfg_sets = {}
-#     for exp, model, subexp, plugin_ctx, debug_mode in test_keys:
+#     for exp, model, subexp, adapter_ctx, debug_mode in test_keys:
 #         base_model_cfg =  EXPERIMENTS_BASE / exp / f"{model}.yaml"
 #         base_cfg_set = (base_model_cfg,)
-#         if plugin_ctx:
-#             if plugin_ctx == "transformer_lens":
-#                 exp_plugin_cfg = EXPERIMENTS_BASE / exp /  f"{plugin_ctx}.yaml"
+#         if adapter_ctx:
+#             if adapter_ctx == "transformer_lens":
+#                 exp_plugin_cfg = EXPERIMENTS_BASE / exp /  f"{adapter_ctx}.yaml"
 #                 base_cfg_set += (BASE_TL_CONFIG, exp_plugin_cfg,)
 #             else:
-#                 raise ValueError(f"Unknown plugin type: {plugin_ctx}")
+#                 raise ValueError(f"Unknown adapter type: {adapter_ctx}")
 #         subexp_cfg =  EXPERIMENTS_BASE / exp / model / f"{subexp}.yaml"
 #         base_cfg_set += (subexp_cfg,)
 #         if debug_mode:
 #             base_cfg_set += (BASE_DEBUG_CONFIG,)
-#         exp_cfg_sets[(exp, model, subexp, plugin_ctx, debug_mode)] = base_cfg_set
+#         exp_cfg_sets[(exp, model, subexp, adapter_ctx, debug_mode)] = base_cfg_set
 #     return exp_cfg_sets
 
 # EXPERIMENT_CFG_SETS = gen_experiment_cfg_sets(
-#     # (exp, model, subexp, plugin_ctx, debug_mode)
+#     # (exp, model, subexp, adapter_ctx, debug_mode)
 #     (("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", None, True),
 #      ("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "transformer_lens", True),
 #      ("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "transformer_lens", False),

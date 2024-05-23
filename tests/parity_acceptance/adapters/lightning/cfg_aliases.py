@@ -6,8 +6,8 @@ from it_examples.experiments.rte_boolq.config import (RTEBoolqPromptConfig, Llam
                                                       RTEBoolqZeroShotClassificationConfig)
 from interpretune.base.config.mixins import CoreGenerationConfig, HFGenerationConfig
 from interpretune.base.config.module import HFFromPretrainedConfig
-from interpretune.base.contract.session import Framework
-from interpretune.analysis.memprofiler import MemProfilerCfg, MemProfilerSchedule
+from interpretune.adapters.registration import Adapter
+from interpretune.extensions.memprofiler import MemProfilerCfg, MemProfilerSchedule
 
 @dataclass(kw_only=True)
 class ToyGenCfg(CoreGenerationConfig):
@@ -173,7 +173,7 @@ class MemProfResult(NamedTuple):
 
 
 # composable cfg aliases
-w_lit = {"framework_ctx": Framework.lightning}
+w_lit = {"adapter_ctx": (Adapter.lightning,)}
 cuda = {"device_type": "cuda"}
 act_ckpt = {"hf_from_pretrained_cfg": gpt2_hf_from_pretrained_act_ckpt_cfg}
 cuda_act = {**cuda, **act_ckpt}

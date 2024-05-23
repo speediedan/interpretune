@@ -46,7 +46,7 @@ class ITSerializableCfg(yaml.YAMLObject):
 ################################################################################
 
 @dataclass(kw_only=True)
-class ITSharedConfig(ITSerializableCfg):
+class ITSharedConf(ITSerializableCfg):
     model_name_or_path: str = ''
     task_name: str = ''
     tokenizer_name: Optional[str] = None

@@ -3,11 +3,11 @@ from copy import deepcopy
 import pytest
 from torch import device
 
-from interpretune.plugins.transformer_lens import ITLensFromPretrainedConfig, ITLensConfig, ITLensCustomConfig
+from interpretune.adapters.transformer_lens import ITLensFromPretrainedConfig, ITLensConfig, ITLensCustomConfig
 from interpretune.utils.exceptions import MisconfigurationException
 from tests.utils.warns import unexpected_warns, TL_CTX_WARNS
 from tests.orchestration import ablate_cls_attrs
-from tests.parity_acceptance.plugins.transformer_lens.cfg_aliases import (test_tl_gpt2_it_module_base,
+from tests.parity_acceptance.adapters.transformer_lens.cfg_aliases import (test_tl_gpt2_it_module_base,
                                                                           test_tl_cust_it_module_base)
 
 

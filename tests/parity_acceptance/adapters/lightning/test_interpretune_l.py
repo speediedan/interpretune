@@ -17,12 +17,12 @@ import pytest
 
 from tests.utils.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WARNS
 from tests.orchestration import parity_test
-from interpretune.base.contract.session import Framework
-from tests.parity_acceptance.base.expected import basic_parity_results, profiling_parity_results
+from interpretune.adapters.registration import Adapter
+from tests.parity_acceptance.adapters.lightning.expected import basic_parity_results, profiling_parity_results
 from tests.configuration import BaseAugTest, BaseCfg, pytest_param_factory, collect_results, IT_GLOBAL_STATE_LOG_MODE
-from tests.parity_acceptance.base.cfg_aliases import (w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l,
-                                                      debug_hidden, test_bs1_mem_nosavedt, bs1_nowarm_mem, act_ckpt,
-                                                      bs1_nowarm_hk_mem, bs1_warm_mem)
+from tests.parity_acceptance.adapters.lightning.cfg_aliases import (
+    w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l, debug_hidden, test_bs1_mem_nosavedt,
+    bs1_nowarm_mem, act_ckpt, bs1_nowarm_hk_mem, bs1_warm_mem)
 
 
 @dataclass(kw_only=True)
@@ -54,10 +54,10 @@ EXPECTED_PARITY_BASIC = {cfg.alias: cfg.expected for cfg in PARITY_BASIC_CONFIGS
 
 @pytest.mark.usefixtures("make_deterministic")
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_param_factory(PARITY_BASIC_CONFIGS, unpack=False))
-def test_parity_basic(recwarn, tmp_path, test_alias, test_cfg):
+def test_parity_l(recwarn, tmp_path, test_alias, test_cfg):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PARITY_BASIC[test_alias] or {}
-    expected_warnings = LIGHTING_CTX_WARNS if test_cfg.framework_ctx == Framework.lightning else CORE_CTX_WARNS
+    expected_warnings = LIGHTING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else CORE_CTX_WARNS
     parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)
     unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
@@ -94,7 +94,7 @@ EXPECTED_PROFILING_PARITY = {cfg.alias: cfg.expected for cfg in PROFILING_PARITY
 def test_parity_profiling(recwarn, tmp_path, test_alias, test_cfg):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PROFILING_PARITY[test_alias] or {}
-    expected_warnings = LIGHTING_CTX_WARNS if test_cfg.framework_ctx == Framework.lightning else CORE_CTX_WARNS
+    expected_warnings = LIGHTING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else CORE_CTX_WARNS
     parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)
     unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)

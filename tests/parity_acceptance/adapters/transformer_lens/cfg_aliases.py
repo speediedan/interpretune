@@ -2,11 +2,11 @@ from collections import ChainMap
 
 from interpretune.base.config.module import HFFromPretrainedConfig
 from it_examples.experiments.rte_boolq.config import RTEBoolqPromptConfig, RTEBoolqZeroShotClassificationConfig
-from tests.parity_acceptance.base.cfg_aliases import (
+from tests.parity_acceptance.adapters.lightning.cfg_aliases import (
     tokenizer_base_kwargs, gpt2_shared_config, default_test_bs, gpt2_dataset_state, base_it_module_kwargs,
     test_optimizer_scheduler_init, base_hf_from_pretrained_kwargs)
-from interpretune.base.contract.session import Plugin
-from interpretune.plugins.transformer_lens import TLensGenerationConfig
+from interpretune.adapters.registration import Adapter
+from interpretune.adapters.transformer_lens import TLensGenerationConfig
 
 tl_model_input_names = {"model_input_names": ['input', 'attention_mask']}
 test_tl_tokenizer_kwargs = {"tokenizer_kwargs": {**tl_model_input_names, **tokenizer_base_kwargs}}
@@ -42,4 +42,4 @@ test_tl_cust_it_module_optim = ChainMap(test_tl_cust_it_module_base, test_optimi
 ########################################################################################################################
 test_dataset_state_tl = ('pytest_rte_tl',) + gpt2_dataset_state
 
-w_tl = {"plugin_ctx": Plugin.transformer_lens}
+w_l_tl = {"adapter_ctx": (Adapter.lightning, Adapter.transformer_lens)}

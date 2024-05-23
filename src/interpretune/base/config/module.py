@@ -1,22 +1,15 @@
 import os
-#import warnings
 from typing import Any, Dict, Optional, List
 from dataclasses import dataclass, field
 
 import torch
 
-from interpretune.base.config.shared import ITSerializableCfg, ITSharedConfig
+from interpretune.base.config.shared import ITSerializableCfg, ITSharedConf
 from interpretune.base.config.mixins import ZeroShotClassificationConfig, HFFromPretrainedConfig
-from interpretune.analysis.debug_generation import DebugLMConfig
-from interpretune.analysis.memprofiler import MemProfilerCfg
-from interpretune.utils.logging import rank_zero_info
+from interpretune.base.config.extensions import ExtensionConf
 from interpretune.base.datamodules import ITDataModule
+from interpretune.utils.logging import rank_zero_info
 from interpretune.utils.types import LRSchedulerConfig, Optimizable
-# from interpretune.utils.warnings import dummy_method_warn_fingerprint
-
-# # TODO: add core helper log/log_dict methods for core context usage
-# for warnf in [f".*{dummy_method_warn_fingerprint}.*",]:
-#     warnings.filterwarnings("once", warnf)
 
 
 ################################################################################
@@ -30,16 +23,27 @@ from interpretune.utils.types import LRSchedulerConfig, Optimizable
 
 
 @dataclass(kw_only=True)
-class ModelConfig(ITSerializableCfg):
+class ModelConf(ITSerializableCfg):
     model_class: Optional[torch.nn.Module] = None
     model_cfg: Dict[str, Any] = field(default_factory=dict)
     cust_fwd_kwargs: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass(kw_only=True)
-class OptimizerSchedulerConfig(ITSerializableCfg):
+class OptimizerSchedulerConf(ITSerializableCfg):
     optimizer_init: Dict[str, Any] = field(default_factory=dict)
     lr_scheduler_init: Dict[str, Any] = field(default_factory=dict)
     pl_lrs_cfg: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass(kw_only=True)
+class MixinsConf(ITSerializableCfg):
+    zero_shot_cfg: ZeroShotClassificationConfig = field(default_factory=ZeroShotClassificationConfig)
+    hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = None
+
+@dataclass(kw_only=True)
+class LoggingConf(ITSerializableCfg):
+    experiment_tag: Optional[str] = "default"
+    log_env_details: Optional[bool] = True
+    core_log_dir: Optional[str | os.PathLike] = None
 
 @dataclass(kw_only=True)
 class AutoCompatConfig(ITSerializableCfg):
@@ -47,19 +51,17 @@ class AutoCompatConfig(ITSerializableCfg):
     ret_val: Optional[Any] = None
 
 @dataclass(kw_only=True)
-class ITConfig(ITSharedConfig, ModelConfig, OptimizerSchedulerConfig):
-    """Dataclass to encapsulate the ITModuleinternal state."""
+class CompatConf(ITSerializableCfg):
+    compatibility_attrs: Dict[str, AutoCompatConfig] = field(default_factory=lambda: {'log': AutoCompatConfig(),
+                                                                                      'log_dict': AutoCompatConfig(),})
+
+@dataclass(kw_only=True)
+class ITConfig(ITSharedConf, ModelConf, OptimizerSchedulerConf, MixinsConf, LoggingConf, CompatConf, ExtensionConf):
+    #"""Dataclass to encapsulate the ITModuleinternal state."""
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
-    experiment_tag: Optional[str] = "default"
-    log_env_details: Optional[bool] = True
-    core_log_dir: Optional[str | os.PathLike] = None
-    memprofiler_cfg: MemProfilerCfg = field(default_factory=lambda: MemProfilerCfg())
-    debug_lm_cfg: DebugLMConfig = field(default_factory=lambda: DebugLMConfig())
-    zero_shot_cfg: ZeroShotClassificationConfig = field(default_factory=lambda: ZeroShotClassificationConfig())
-    hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = None
-    compatibility_attrs: Dict[str, AutoCompatConfig] = \
-        field(default_factory=lambda: {'log': AutoCompatConfig(),
-                                       'log_dict': AutoCompatConfig(),})
+    # dynamic fields added via ExtensionConf contingent on supported extension availability
+    # debug_lm_cfg: DebugLMConfig = field(default_factory=DebugLMConfig)
+    # memprofiler_cfg: MemProfilerCfg = field(default_factory=MemProfilerCfg)
 
     def __post_init__(self) -> None:
         # _torch_dtype may have been resolved and set in a subclass already

@@ -12,7 +12,8 @@
 # initially based on: https://bit.ly/3GDHDcI
 import os
 import threading
-from typing import Iterable,Dict, Tuple, Optional, List
+from collections.abc import Iterable
+from typing import Dict, Tuple, List
 from functools import partial
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
@@ -24,7 +25,7 @@ import torch.distributed
 from tests import _PATH_DATASETS
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
 from interpretune.base.components.cli import core_cli_main, compose_config
-from interpretune.base.contract.session import Framework, Plugin
+from interpretune.adapters.registration import Adapter
 from tests.parity_acceptance.cli.cfg_aliases import cli_cfgs, CLI_EXP_MODEL, RUN_FN, TEST_CONFIGS_CLI_PARITY
 from tests.unit.cfg_aliases import TEST_CONFIGS_CLI_UNIT
 
@@ -37,11 +38,11 @@ else:
 # them sessionwise
 GEN_CLI_CFGS = [TEST_CONFIGS_CLI_PARITY, TEST_CONFIGS_CLI_UNIT]
 
-def gen_cli_args(run, framework_cli, compose_cfg, config_files, extra_args: List = None):
+def gen_cli_args(run, cli_adapter, compose_cfg, config_files, extra_args: List = None):
     cli_main_kwargs = {"run_command": run}
     cli_main_kwargs["args"] = extra_args if extra_args else None
-    cli_args, cli_main =  [RUN_FN], core_cli_main  # defaults w/ no framework
-    if framework_cli == Framework.lightning:
+    cli_args, cli_main =  [RUN_FN], core_cli_main  # defaults w/ no adapter
+    if cli_adapter == Adapter.lightning:
         cli_main = l_cli_main
         if run:
             cli_args += [run]  # Lightning uses a `jsonargparse` subcommand in sys.argv
@@ -53,23 +54,21 @@ def gen_cli_args(run, framework_cli, compose_cfg, config_files, extra_args: List
     return cli_main, cli_args, cli_main_kwargs
 
 
-def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, Optional[str], bool]], sess_paths: Tuple) -> Dict:
+def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, Tuple[Adapter], bool]], sess_paths: Tuple) \
+      -> Dict:
     EXPERIMENTS_BASE, BASE_TL_CONFIG, BASE_DEBUG_CONFIG = sess_paths
     exp_cfg_sets = {}
-    for exp, model, subexp, plugin_ctx, debug_mode in test_keys:
+    for exp, model, subexp, adapter_ctx, debug_mode in test_keys:
         base_model_cfg =  EXPERIMENTS_BASE / f"{model}.yaml"
         base_cfg_set = (base_model_cfg,)
-        if plugin_ctx:
-            if plugin_ctx == Plugin.transformer_lens:
-                exp_plugin_cfg = EXPERIMENTS_BASE /  f"{plugin_ctx.value}.yaml"
-                base_cfg_set += (BASE_TL_CONFIG, exp_plugin_cfg,)
-            else:
-                raise ValueError(f"Unknown plugin type: {plugin_ctx}")
+        if Adapter.transformer_lens in adapter_ctx:
+            exp_adapter_cfg = EXPERIMENTS_BASE /  f"{Adapter.transformer_lens.value}.yaml"
+            base_cfg_set += (BASE_TL_CONFIG, exp_adapter_cfg,)
         subexp_cfg =  EXPERIMENTS_BASE / model / f"{subexp}.yaml"
         base_cfg_set += (subexp_cfg,)
         if debug_mode:
             base_cfg_set += (BASE_DEBUG_CONFIG,)
-        exp_cfg_sets[(exp, model, subexp, plugin_ctx, debug_mode)] = base_cfg_set
+        exp_cfg_sets[(exp, model, subexp, adapter_ctx, debug_mode)] = base_cfg_set
     return exp_cfg_sets
 
 
@@ -139,7 +138,7 @@ def cli_test_configs(cli_test_file_env):
     test_config_files = write_cli_config_files(test_cli_cfg_files, test_exp_model_dir)
     sess_paths = Path(experiments_base), Path(test_config_files["global_tl"]), Path(test_config_files["global_debug"])
     # we specify a set of CLI test configurations (GEN_CLI_CFGS) to drive our CLI configuration file generation
-    test_keys = ((*CLI_EXP_MODEL, tc.alias, tc.cfg.plugin_ctx, tc.cfg.debug_mode) for cfg in GEN_CLI_CFGS for tc in cfg)
+    test_keys = ((*CLI_EXP_MODEL, c.alias, c.cfg.adapter_ctx, c.cfg.debug_mode) for cfg in GEN_CLI_CFGS for c in cfg)
     EXPERIMENT_CFG_SETS = gen_experiment_cfg_sets(test_keys=test_keys, sess_paths=sess_paths)
     yield EXPERIMENT_CFG_SETS
 

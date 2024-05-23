@@ -17,9 +17,9 @@ from tests.parity_acceptance.cli.cfg_aliases import (TEST_CONFIGS_CLI_PARITY, CL
 @RunIf(min_cuda_gpus=1, skip_windows=True)
 @pytest.mark.parametrize("test_alias, cli_cfg", pytest_param_factory(TEST_CONFIGS_CLI_PARITY, unpack=False))
 def test_cli_configs(recwarn, clean_cli_env, cli_test_configs, test_alias, cli_cfg):
-    expected_warnings = CLI_EXPECTED_WARNS[(cli_cfg.framework_cli, cli_cfg.plugin_ctx)]
-    cfg_files = cli_test_configs[(*CLI_EXP_MODEL, test_alias, cli_cfg.plugin_ctx, cli_cfg.debug_mode)]
-    cli_main, cli_args, main_kwargs = gen_cli_args(cli_cfg.run, cli_cfg.framework_cli, cli_cfg.compose_cfg, cfg_files)
+    expected_warnings = CLI_EXPECTED_WARNS[(cli_cfg.cli_adapter, *cli_cfg.adapter_ctx)]
+    cfg_files = cli_test_configs[(*CLI_EXP_MODEL, test_alias, cli_cfg.adapter_ctx, cli_cfg.debug_mode)]
+    cli_main, cli_args, main_kwargs = gen_cli_args(cli_cfg.run, cli_cfg.cli_adapter, cli_cfg.compose_cfg, cfg_files)
     if cli_cfg.use_harness:
         command = [sys.executable] + [os.path.join(IT_HOME, cli_args.pop(0))] + cli_args
         cp = subprocess.run(command)

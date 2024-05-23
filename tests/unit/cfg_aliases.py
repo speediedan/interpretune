@@ -2,16 +2,18 @@ from typing import Optional, Dict
 from copy import deepcopy
 from enum import auto
 from dataclasses import dataclass, field
+from collections.abc import Iterable
 
 from interpretune.base.config.shared import AutoStrEnum
 from interpretune.base.config.mixins import HFFromPretrainedConfig, ZeroShotClassificationConfig
-from interpretune.base.contract.session import Framework
-from interpretune.analysis.debug_generation import DebugLMConfig
-from interpretune.analysis.memprofiler import MemProfilerCfg
+from interpretune.adapters.registration import Adapter
+from interpretune.extensions.debug_generation import DebugLMConfig
+from interpretune.extensions.memprofiler import MemProfilerCfg
 from tests.configuration import BaseCfg, set_nested, BaseAugTest
 from tests.parity_acceptance.cli.cfg_aliases import cli_cfgs, CLICfg, test_lr_scheduler_init, test_optimizer_init
-from tests.parity_acceptance.base.cfg_aliases import gpt2_hf_from_pretrained_kwargs, enable_activation_checkpointing
-from tests.parity_acceptance.plugins.transformer_lens.test_interpretune_tl import TLParityCfg
+from tests.parity_acceptance.adapters.lightning.cfg_aliases import (gpt2_hf_from_pretrained_kwargs,
+                                                                    enable_activation_checkpointing)
+from tests.parity_acceptance.adapters.transformer_lens.test_interpretune_tl import TLParityCfg
 
 
 nf4_bnb_config = {"load_in_4bit": True, "bnb_4bit_use_double_quant": True, "bnb_4bit_quant_type": "nf4",
@@ -74,7 +76,7 @@ class LightningLlama2DebugCfg(BaseCfg):
     device_type: Optional[str] = "cuda"
     model_src_key: Optional[str] = "llama2"
     precision: Optional[str | int] = "bf16-true"
-    framework_ctx: Optional[Framework] = Framework.lightning
+    adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning,)
 
 class CLI_UNIT_TESTS(AutoStrEnum):
     seed_null = auto()
@@ -110,7 +112,7 @@ TEST_CONFIGS_CLI_UNIT = (
 EXPECTED_RESULTS_CLI_UNIT = {cfg.alias: cfg.expected for cfg in TEST_CONFIGS_CLI_UNIT}
 
 ################################################################################
-# core framework training with no transformer_lens plugin context
+# core adapter training with no transformer_lens adapter context
 ################################################################################
 
 cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null] = set_nested("session_cfg.module_cfg")

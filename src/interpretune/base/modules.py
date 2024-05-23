@@ -1,20 +1,18 @@
 from typing import Any, Optional
 
 import torch
-from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.base.config.module import ITConfig
 from interpretune.base.hooks import BaseITHooks
-from interpretune.base.components.core import CoreComponents, CoreHelperAttributes
-from interpretune.base.components.mixins import CoreMixins
-from interpretune.utils.data_movement import to_device
+from interpretune.base.components.core import BaseITComponents
+from interpretune.base.components.mixins import BaseITMixins
 
 # # TODO: add core helper log/log_dict methods for core context usage
 # for warnf in [".*For framework compatibility, this noop .*",]:
 #     warnings.filterwarnings("once", warnf)
 
 
-class BaseITModule(CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
+class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):
 
     def __init__(
         self,
@@ -65,10 +63,3 @@ class BaseITModule(CoreMixins, CoreComponents, BaseITHooks, torch.nn.Module):
         if getattr(self, 'memprofiler', None):
             self.memprofiler.dump_memory_stats()
         self._it_state._session_complete = True
-
-
-class ITModule(CoreHelperAttributes, BaseITModule):
-    """"""
-    def batch_to_device(self, batch) -> BatchEncoding:
-        to_device(self.device, batch)
-        return batch

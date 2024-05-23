@@ -1,6 +1,7 @@
 it_session:
   session_cfg:
     init_args:
+      adapter_ctx: [lightning, transformer_lens]
       module_cfg:
         init_args:
           experiment_tag: lightning_tl_rte_small_noquant_fp32_predict
