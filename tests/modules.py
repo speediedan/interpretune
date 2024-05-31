@@ -22,8 +22,9 @@ from interpretune.utils.types import STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_only
 from it_examples.experiments.rte_boolq.modules import RTEBoolqModuleMixin, RTEBoolqSteps
 from it_examples.experiments.rte_boolq.datamodules import GPT2RTEBoolqDataModule, Llama2RTEBoolqDataModule
-from tests.parity_acceptance.adapters.lightning.cfg_aliases import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP,
-                                                                    NUM_SAMPLE_ROWS, SAMPLE_POSITION)
+from tests import FinetuningScheduler
+from tests.results import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS, SAMPLE_POSITION,
+                           DatasetState, TestDatasetKey)
 
 
 ################################################################################
@@ -42,7 +43,7 @@ class BaseTestDataModule:
         # we strip padding from sampled rows before collecting ids to make our sample padding-side agnostic
         return [list(filter(lambda v: v != self.tokenizer.pad_token_id, t))[SAMPLE_POSITION] for t in rows]
 
-    def sample_dataset_state(self) -> Tuple:
+    def sample_dataset_state(self, ds_task_agnostic: bool = False) -> Tuple:
         # NOTE [Dataset State Validation]:
         # note that this only validates the loaded dataset/tokenizer, the dataloaders are not tested in this method
         # so one may still need to inspect downstream variables (e.g. the dataloader kwargs) and the batch actually
@@ -55,7 +56,8 @@ class BaseTestDataModule:
             # dataset split
             sampled_rows = self.dataset[split][target_input][:NUM_SAMPLE_ROWS]
             sample_state.extend(self.sample_unpadded_state(sampled_rows))
-        return (self.itdm_cfg.task_name, self.tokenizer.__class__.__name__, sample_state)
+        ds_task_name = TestDatasetKey.ANY if ds_task_agnostic else TestDatasetKey[self.itdm_cfg.task_name]
+        return (ds_task_name, self.tokenizer.__class__.__name__, sample_state)
 
     def sample_step_input(self, batch: BatchEncoding) -> Tuple:
         # See NOTE [Dataset State Validation]
@@ -321,21 +323,62 @@ def get_filesystem(path: str | Path, **kwargs: Any) -> AbstractFileSystem:
 # compositions (e.g. `transformer_lens`, `Lightning`, native PyTorch)
 ################################################################################
 
-class BaseTestModule:
-    def __init__(self, it_cfg: ITConfig, expected_exact: Optional[Dict] = None, expected_close: Optional[Dict] = None,
+class StateLogInspectMixin:
+    def __init__(self, *args, expected_exact: Optional[Dict] = None, expected_close: Optional[Dict] = None,
                 expected_memstats: Optional[Dict] = None, tolerance_map: Optional[Dict] = None,
-                test_alias: Optional[str] = None, state_log_dir: Optional[str] = None, *args, **kwargs) -> None:
-        super().__init__(it_cfg=it_cfg)
+                test_alias: Optional[str] = None, state_log_dir: Optional[str] = None, **kwargs) -> None:
         self.expected_memstats = expected_memstats
         self.expected_exact = expected_exact
         self.expected_close = expected_close
         self.state_log_dir = state_log_dir
         self.test_alias = test_alias
         self.tolerance_map = tolerance_map or {}
-        self.epoch_losses = {}
-        self.sampled_fwd_inputs = None
         self.dev_expected_exact = {}
         self.dev_expected_close = {}
+        super().__init__(*args, **kwargs)
+
+    def inspect_or_assert(self, current_exact, current_close, state_key) -> None:
+        if not self.state_log_dir:
+            if self.expected_exact and self.expected_exact.get(state_key, None):
+                for exp_k, exp_v in self.expected_exact[state_key].items():
+                    assert current_exact[exp_k] == exp_v
+            if self.expected_close and self.expected_close.get(state_key, None):
+                for exp_k, exp_v in self.expected_close[state_key].items():
+                    rtol, atol = self.tolerance_map.get(exp_k, (0, 0))
+                    assert_close(actual=current_close[exp_k], expected=exp_v, rtol=rtol, atol=atol)
+        else:
+            self.dev_expected_exact[state_key] = current_exact
+            self.dev_expected_close[state_key] = current_close
+
+    @rank_zero_only
+    def log_dev_state(self) -> None:
+        dump_path = Path(self.state_log_dir)
+        state_log = dump_path / "dev_state_log.yaml"
+        fs = get_filesystem(state_log)
+        with fs.open(state_log, "a", newline="") as fp:
+            fp.write(f"State log for test `{self.test_alias}`:{os.linesep}")
+            for dev_d in [self.dev_expected_exact, self.dev_expected_close]:
+                fp.write(os.linesep)
+                for k, v in dev_d.items():  # control formatting precisely to allow copy/paste expected output
+                    fp.write(f"{' ' * 8}{k}: {v},{os.linesep}")
+
+    def _validate_memory_stats(self) -> None:
+        for act, exp in zip(self.expected_memstats[1], self.expected_memstats[2]):
+            if not self.state_log_dir:
+                rtol, atol = self.tolerance_map.get(act, (0, 0))
+                assert_close(actual=self.memprofiler.memory_stats[self.expected_memstats[0]][act], expected=exp,
+                             rtol=rtol, atol=atol)
+            else:
+                self.dev_expected_close[act] = self.memprofiler.memory_stats[self.expected_memstats[0]][act]
+
+
+class BaseTestModule(StateLogInspectMixin):
+
+    def __init__(self, *args, dstype_agnostic: bool = False, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.dstype_agnostic = dstype_agnostic
+        self.epoch_losses = {}
+        self.sampled_fwd_inputs = None
 
     def setup(self, *args, **kwargs) -> None:
         super().setup(*args, **kwargs)
@@ -358,13 +401,14 @@ class BaseTestModule:
         self.model.to(device=self.device, dtype=self.torch_dtype)
 
     def _get_current_exact(self) -> Dict:
-        # gather device and precision info for both core and transformer lens contexts
+        # gather device and precision and dastaset state info
         device_type = self.device.type if isinstance(self.device, torch.device) else self.output_device.type
         model_dtype = self.model.dtype if hasattr(self.model, "dtype") else self.tl_cfg.dtype
         return {'device_type': device_type, 'precision': model_dtype, **self._get_dataset_state()}
 
     def _get_dataset_state(self) -> Dict:
-        return {'dataset_state': self.datamodule.sample_dataset_state() + (self.sampled_fwd_inputs,)}
+        dataset_state = self.datamodule.sample_dataset_state(self.dstype_agnostic) + (self.sampled_fwd_inputs,)
+        return {'dataset_state': DatasetState(*dataset_state)}
 
     def _epoch_end_validation(self, *args, **kwargs) -> None:
         state_key = self.current_epoch
@@ -412,40 +456,28 @@ class BaseTestModule:
         if self.state_log_dir:
             self.log_dev_state()
 
-    def inspect_or_assert(self, current_exact, current_close, state_key) -> None:
-        if not self.state_log_dir:
-            if self.expected_exact and self.expected_exact.get(state_key, None):
-                for exp_k, exp_v in self.expected_exact[state_key].items():
-                    assert current_exact[exp_k] == exp_v
-            if self.expected_close and self.expected_close.get(state_key, None):
-                for exp_k, exp_v in self.expected_close[state_key].items():
-                    rtol, atol = self.tolerance_map.get(exp_k, (0, 0))
-                    assert_close(actual=current_close[exp_k], expected=exp_v, rtol=rtol, atol=atol)
-        else:
-            self.dev_expected_exact[state_key] = current_exact
-            self.dev_expected_close[state_key] = current_close
-
-    @rank_zero_only
-    def log_dev_state(self) -> None:
-        dump_path = Path(self.state_log_dir)
-        state_log = dump_path / "dev_state_log.yaml"
-        fs = get_filesystem(state_log)
-        with fs.open(state_log, "w", newline="") as fp:
-            fp.write(f"State log for test `{self.test_alias}`:{os.linesep}")
-            for dev_d in [self.dev_expected_exact, self.dev_expected_close]:
-                fp.write(os.linesep)
-                for k, v in dev_d.items():  # control formatting precisely to allow copy/paste expected output
-                    fp.write(f"{' ' * 8}{k}: {v},{os.linesep}")
-
-    def _validate_memory_stats(self) -> None:
-        for act, exp in zip(self.expected_memstats[1], self.expected_memstats[2]):
-            if not self.state_log_dir:
-                rtol, atol = self.tolerance_map.get(act, (0, 0))
-                assert_close(actual=self.memprofiler.memory_stats[self.expected_memstats[0]][act], expected=exp,
-                             rtol=rtol, atol=atol)
-            else:
-                self.dev_expected_close[act] = self.memprofiler.memory_stats[self.expected_memstats[0]][act]
-
-
 class TestITModule(BaseTestModule, RTEBoolqSteps, RTEBoolqModuleMixin):
     ...
+
+class TestFTS(StateLogInspectMixin, FinetuningScheduler):
+
+    def on_train_epoch_start(self, trainer, pl_module):
+        super().on_train_epoch_start(trainer, pl_module)
+        state_key = trainer.current_epoch
+        fts_current_state = {'curr_depth': self.curr_depth,
+                             'depth_remaining': self.depth_remaining,
+                             'ft_epoch': self._fts_state._ft_epoch,
+                             'current_ckpt_depth': self._fts_state._fts_ckpt_metadata["current_ckpt_depth"],
+                             'best_ckpt_depth': self._fts_state._fts_ckpt_metadata["best_ckpt_depth"],
+                             'best_ckpt_pgs_len': len(self._fts_state._fts_ckpt_metadata["best_ckpt_pgs"]),
+                             'curr_thawed_params': len(self._fts_state._curr_thawed_params),
+                             'optim_pg_len': len(self._internal_optimizer_metadata[0]),
+                             'ckpt_cback_current_ckpt_depth': trainer.checkpoint_callback.current_ckpt_depth,
+                             'ckpt_cback_best_ckpt_depth': trainer.checkpoint_callback.best_ckpt_depth,
+                             }
+        current_close = {}
+        self.inspect_or_assert(fts_current_state, current_close, state_key)
+
+    def on_train_end(self, trainer, pl_module) -> None:
+        if self.state_log_dir:
+            self.log_dev_state()

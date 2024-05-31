@@ -14,6 +14,40 @@ import os
 
 import numpy as np
 
+from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE, _FTS_AVAILABLE, _DOTENV_AVAILABLE
+
+if _LIGHTNING_AVAILABLE:
+    from lightning.pytorch import seed_everything
+    from lightning.pytorch import Trainer, Callback
+    from lightning.pytorch.callbacks import ModelCheckpoint
+    from interpretune.base.components.cli import l_cli_main
+else:
+    seed_everything = object
+    l_cli_main = None
+    Trainer = object
+    Callback = object
+    ModelCheckpoint = object
+
+
+if _FTS_AVAILABLE:
+    from finetuning_scheduler import FinetuningScheduler, CallbackResolverMixin
+
+    fts_resolver = CallbackResolverMixin()
+
+    def get_fts(trainer: Trainer) -> Callback:
+        fts_resolver.connect_callback(trainer, reconnect=True)
+        return fts_resolver.finetuningscheduler_callback
+
+else:
+    FinetuningScheduler = object
+    get_fts = lambda: None
+
+if _DOTENV_AVAILABLE:
+    from dotenv import load_dotenv
+else:
+    load_dotenv = lambda: None
+
+
 _TEST_ROOT = os.path.dirname(__file__)
 _PROJECT_ROOT = os.path.dirname(_TEST_ROOT)
 _TEMP_PATH = os.path.join(_PROJECT_ROOT, "test_temp")

@@ -28,7 +28,7 @@ from interpretune.utils.import_utils import (resolve_funcs, instantiate_class, _
 from interpretune.base.config.mixins import ITExtension
 from interpretune.utils.exceptions import MisconfigurationException
 from interpretune.extensions.memprofiler import MemProfilerHooks, DefaultMemHooks
-from tests.orchestration import ablate_cls_attrs
+from tests.utils.misc import ablate_cls_attrs
 from interpretune.utils.data_movement import move_data_to_device, to_device
 from interpretune.utils.basic_trainer import BasicTrainerCfg
 

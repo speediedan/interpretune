@@ -17,7 +17,7 @@ from typing import Optional
 
 import pytest
 import torch
-from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE, _BNB_AVAILABLE
+from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE, _BNB_AVAILABLE, _FTS_AVAILABLE
 from packaging.version import Version
 from pkg_resources import get_distribution
 
@@ -31,6 +31,7 @@ profiling_ci_mark = {'profiling_ci': True}
 standalone_mark = {'standalone': True}
 optional_mark = {'optional': True}
 lightning_mark = {"lightning": True}
+fts_mark = {'finetuning_scheduler': True}
 bitsandbytes_mark = {"bitsandbytes": True}
 skip_win_mark = {'skip_windows': True}
 slow_mark = {'slow': True}
@@ -39,13 +40,17 @@ slow_mark = {'slow': True}
 RUNIF_ALIASES = {
     "lightning": lightning_mark,
     "bitsandbytes": bitsandbytes_mark,
+    "fts": fts_mark,
     "optional": optional_mark,
     "prof": profiling_mark,
     "profiling_ci": profiling_ci_mark,
     "standalone": standalone_mark,
+    "l_fts": {**lightning_mark, **fts_mark},
     "cuda": cuda_mark,
     "cuda_profci": {**cuda_mark, **profiling_ci_mark},
     "cuda_l": {**cuda_mark, **lightning_mark},
+    "cuda_l_fts": {**cuda_mark, **lightning_mark, **fts_mark},
+    "cuda_l_fts_profci": {**cuda_mark, **lightning_mark, **fts_mark, **profiling_ci_mark},
     "cuda_l_profci": {**cuda_mark, **lightning_mark, **profiling_ci_mark},
     "cuda_l_optional": {**cuda_mark, **lightning_mark, **optional_mark},
     "bf16_cuda": bf16_cuda_mark,
@@ -80,6 +85,7 @@ class RunIf:
         profiling_ci: bool = False,
         optional: bool = False,
         lightning: bool = False,
+        finetuning_scheduler: bool = False,
         bitsandbytes: bool = False,
         slow: bool = False,
         **kwargs,
@@ -106,6 +112,7 @@ class RunIf:
                 included in CI in limited cases. This requires that the ``IT_RUN_OPTIONAL_TESTS=1`` environment variable
                 is set.
             lightning: Require that lightning is installed.
+            finetuning_scheduler: Require that finetuning_scheduler is installed.
             bitsandbytes: Require that bitsandbytes is installed.
             slow: Mark the test as slow, our CI will run it in a separate job.
                 This requires that the ``IT_RUN_SLOW_TESTS=1`` environment variable is set.
@@ -195,6 +202,10 @@ class RunIf:
         if lightning:
             conditions.append(not _LIGHTNING_AVAILABLE)
             reasons.append("Lightning")
+
+        if finetuning_scheduler:
+            conditions.append(not _FTS_AVAILABLE)
+            reasons.append("Finetuning Scheduler")
 
         if bitsandbytes:
             conditions.append(not _BNB_AVAILABLE)

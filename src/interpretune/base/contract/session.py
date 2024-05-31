@@ -73,13 +73,13 @@ class UnencapsulatedArgs(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class ITSessionConfig(UnencapsulatedArgs):
+    adapter_ctx: Iterable[Adapter | str] = (Adapter.core,)
+    datamodule_cfg: ITDataModuleConfig
+    module_cfg: ITConfig
+    datamodule_cls: Optional[str | DataModuleInitable] = None
+    module_cls: Optional[str | ModuleSteppable] = None
     datamodule: Optional[ITDataModuleProtocol] = None
     module: Optional[ITModuleProtocol] = None
-    datamodule_cfg: ITDataModuleConfig
-    datamodule_cls: str | DataModuleInitable
-    module_cfg: ITConfig
-    module_cls: str | ModuleSteppable
-    adapter_ctx: Iterable[Adapter | str] = (Adapter.core,)
 
     def __post_init__(self):
         self.adapter_ctx = ADAPTER_REGISTRY.canonicalize_composition(self.adapter_ctx)

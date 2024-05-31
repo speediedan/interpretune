@@ -143,8 +143,8 @@ class PropertyDispatcher:
             return getattr(self._it_state, c2f_map_key, None)
         try:
             attr_val = getattr(self._it_state, c2f_map_key, None) or reduce(getattr, c2f[0].split("."), self)
-        except AttributeError as ae:
-            rank_zero_debug(f"{c2f[2]}: {ae}")
+        except (AttributeError, RuntimeError) as resolution_error:
+            rank_zero_debug(f"{c2f[2]}: {resolution_error}")
             attr_val = c2f[1]
         return attr_val
 

@@ -15,15 +15,17 @@ from unittest import mock
 import pytest
 import torch
 
-from tests.utils.runif import RunIf
-from tests.parity_acceptance.adapters.lightning.cfg_aliases import test_core_gpt2_it_module_base
-from tests.utils.warns import CORE_CTX_WARNS, unexpected_warns
-from tests.orchestration import run_it, disable_zero_shot
 from interpretune.utils.exceptions import MisconfigurationException
 from interpretune.base.components.mixins import HFFromPretrainedMixin
 from interpretune.base.config.module import ITConfig
 from interpretune.base.config.extensions import ITExtensionsConfigMixin
 from interpretune.base.config.mixins import HFFromPretrainedConfig, ITExtension
+from parity_acceptance.cfg_aliases import test_core_gpt2_it_module_base
+from tests.utils.misc import disable_zero_shot
+from tests.utils.runif import RunIf
+from tests.utils.warns import CORE_CTX_WARNS, unexpected_warns
+from tests.orchestration import run_it
+
 
 class TestClassMixins:
 
@@ -42,19 +44,31 @@ class TestClassMixins:
         from_pretrained_cfg = HFFromPretrainedConfig(**pretrained_kwargs, model_head="transformers.GPT2LMHeadModel")
         assert from_pretrained_cfg.pretrained_kwargs.get('token', None) is None
 
-    def test_hf_from_pretrained_hf_cust_config(self):
+    @pytest.mark.parametrize(
+        "return_unused, tie_word_embeddings",
+        [pytest.param(True, False)],
+        ids=["return_unused_no_tie_embeddings",],
+    )
+    def test_hf_from_pretrained_hf_cust_config(self, return_unused, tie_word_embeddings):
+        access_token = None
         test_it_cfg = deepcopy(test_core_gpt2_it_module_base)
-        test_it_cfg['defer_model_init'] = True
-        test_it_cfg['hf_from_pretrained_cfg'].model_head = ''
-        test_it_cfg['hf_from_pretrained_cfg'].pretrained_kwargs['return_unused_kwargs'] = True
+        test_it_cfg['hf_from_pretrained_cfg'].pretrained_kwargs['return_unused_kwargs'] = return_unused
+        test_it_cfg['model_cfg'] = {'tie_word_embeddings': tie_word_embeddings}
+        if return_unused:
+            test_it_cfg['hf_from_pretrained_cfg'].pretrained_kwargs['give_it_back'] = True
         hf_from_pretrained_mixin = TestClassMixins._get_hf_from_pretrained_mixin(test_it_cfg)
-        with pytest.warns(UserWarning, match="`defer_model_init` not currently supported without `model_head`"):
-            _ = hf_from_pretrained_mixin._hf_gen_cust_config()
+        cust_config, unused_kwargs = hf_from_pretrained_mixin._hf_gen_cust_config()
+        assert cust_config.tie_word_embeddings == tie_word_embeddings
+        if return_unused:
+            assert 'give_it_back' in unused_kwargs
+            hf_from_pretrained_mixin.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs.pop('give_it_back', None)
+        model = hf_from_pretrained_mixin.hf_configured_model_init(cust_config, access_token)
+        assert model.config.tie_word_embeddings == tie_word_embeddings
 
     @pytest.mark.parametrize(
         "head_configured, defer_init",
-        [pytest.param(True, True), pytest.param(False, False)],
-        ids=["head_config_defer_init", "no_head_config_no_defer_init"],
+        [pytest.param(True, True), pytest.param(False, False), pytest.param(False, True)],
+        ids=["head_config_defer_init", "no_head_config_no_defer_init", "no_head_config_defer_init"],
     )
     def test_hf_from_pretrained_hf_configured_model_init(self, head_configured, defer_init):
         test_it_cfg = deepcopy(test_core_gpt2_it_module_base)
@@ -62,8 +76,12 @@ class TestClassMixins:
         if not head_configured:
             test_it_cfg['hf_from_pretrained_cfg'].model_head = ''
         hf_from_pretrained_mixin = TestClassMixins._get_hf_from_pretrained_mixin(test_it_cfg)
-        cust_config = hf_from_pretrained_mixin._hf_gen_cust_config()
-        _ = hf_from_pretrained_mixin.hf_configured_model_init(cust_config)
+        if not head_configured and defer_init:
+            with pytest.warns(UserWarning, match="`defer_model_init` not currently supported without `model_head`"):
+                _ = hf_from_pretrained_mixin._hf_gen_cust_config()
+        else:
+            cust_config, _ = hf_from_pretrained_mixin._hf_gen_cust_config()
+            _ = hf_from_pretrained_mixin.hf_configured_model_init(cust_config)
 
     @RunIf(min_cuda_gpus=1)
     def test_hf_from_pretrained_peft_init(self, get_it_session__core_gpt2_peft__initonly):

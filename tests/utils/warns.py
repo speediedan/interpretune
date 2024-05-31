@@ -5,8 +5,9 @@ from warnings import WarningMessage
 from packaging.version import Version
 from pkg_resources import get_distribution
 
-from tests.utils.runif import EXTENDED_VER_PAT
+from interpretune.adapters.registration import Adapter
 from interpretune.utils.warnings import dummy_method_warn_fingerprint
+from tests.utils.runif import EXTENDED_VER_PAT
 
 
 HF_EXPECTED_WARNS = [
@@ -39,8 +40,21 @@ TL_EXPECTED_WARNS = [
     "Since no datamodule",  # using cust tlens config for fallback
 ]
 
+FTS_CTX_WARNS = [".*currently depends upon.*", "No monitor metric specified for.*",]
+
 TL_CTX_WARNS = TL_EXPECTED_WARNS + CORE_CTX_WARNS
 TL_LIGHTNING_CTX_WARNS = TL_CTX_WARNS + LIGHTING_CTX_WARNS
+
+
+EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS + TL_EXPECTED_WARNS
+
+CLI_EXPECTED_WARNS = {
+    # cli_adapter, *adapter_ctx
+    (Adapter.core, Adapter.core): CORE_CTX_WARNS,
+    (Adapter.lightning, Adapter.lightning): LIGHTING_CTX_WARNS,
+    (Adapter.lightning, Adapter.lightning, Adapter.transformer_lens): TL_LIGHTNING_CTX_WARNS,
+    (Adapter.core, Adapter.core, Adapter.transformer_lens): TL_CTX_WARNS
+}
 
 MIN_VERSION_WARNS = "2.0"
 MAX_VERSION_WARNS = "2.2"

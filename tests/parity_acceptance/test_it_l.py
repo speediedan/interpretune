@@ -15,14 +15,15 @@ from functools import partial
 
 import pytest
 
-from tests.utils.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WARNS
-from tests.orchestration import parity_test
 from interpretune.adapters.registration import Adapter
-from tests.parity_acceptance.adapters.lightning.expected import basic_parity_results, profiling_parity_results
-from tests.configuration import BaseAugTest, BaseCfg, pytest_param_factory, collect_results, IT_GLOBAL_STATE_LOG_MODE
-from tests.parity_acceptance.adapters.lightning.cfg_aliases import (
+from tests.configuration import BaseAugTest, BaseCfg, pytest_param_factory, IT_GLOBAL_STATE_LOG_MODE
+from tests.results import collect_results
+from tests.orchestration import parity_test
+from tests.parity_acceptance.expected import l_parity_results, l_profiling_parity_results
+from tests.parity_acceptance.cfg_aliases import (
     w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l, debug_hidden, test_bs1_mem_nosavedt,
     bs1_nowarm_mem, act_ckpt, bs1_nowarm_hk_mem, bs1_warm_mem)
+from tests.utils.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WARNS
 
 
 @dataclass(kw_only=True)
@@ -31,7 +32,7 @@ class CoreCfg(BaseCfg):
 
 @dataclass
 class ParityTest(BaseAugTest):
-    result_gen: Optional[Callable] = partial(collect_results, basic_parity_results)
+    result_gen: Optional[Callable] = partial(collect_results, l_parity_results)
 
 
 PARITY_BASIC_CONFIGS = (
@@ -69,7 +70,7 @@ class ProfParityCfg(BaseCfg):
 
 @dataclass
 class ProfilingTest(BaseAugTest):
-    result_gen: Optional[Callable] = partial(collect_results, profiling_parity_results)
+    result_gen: Optional[Callable] = partial(collect_results, l_profiling_parity_results)
     # See NOTE [Profiling and Standalone Marks]
     function_marks: Dict = field(default_factory=lambda: {'profiling': True})
 

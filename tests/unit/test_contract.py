@@ -15,10 +15,10 @@ from copy import deepcopy
 
 import pytest
 
-from tests.utils.warns import CORE_CTX_WARNS, unexpected_warns, unmatched_warns
-from tests.orchestration import ablate_cls_attrs
 from interpretune.base.contract.session import ITSession, ITMeta
 from interpretune.base.contract.protocol import ITDataModuleProtocol, ITModuleProtocol
+from tests.utils.warns import CORE_CTX_WARNS, unexpected_warns, unmatched_warns
+from tests.utils.misc import ablate_cls_attrs
 
 
 class TestClassContract:

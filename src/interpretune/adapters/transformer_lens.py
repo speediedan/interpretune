@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Literal, List, Dict, Any
+from typing import Optional, Literal, Dict, Any
 from dataclasses import dataclass
 from functools import reduce
 from copy import deepcopy
@@ -180,19 +180,8 @@ class TLensGenerationConfig(CoreGenerationConfig):
     verbose: bool = True
 
 ################################################################################
-# Hooks and mixins to support Transformer Lens in different adapter contexts
+# Mixins to support Transformer Lens in different adapter contexts
 ################################################################################
-
-class BaseITLensModuleHooks:
-    """"IT protocol hooks implemented by the BaseITLensModule (used by all TransformerLens adapter modules)"""
-
-    # proper initialization of these variables should be done in the child class
-    it_cfg: List[ITConfig]
-
-    def setup(self, *args, **kwargs) -> None:
-        super().setup(*args, **kwargs)
-        if self.it_cfg.hf_from_pretrained_cfg:
-            self._convert_hf_to_tl()
 
 
 class TLensAttributeMixin:
@@ -240,7 +229,7 @@ class TLensAttributeMixin:
         return self.get_tl_device(0)
 
 
-class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
+class BaseITLensModule(BaseITModule):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         HookedTransformer.generate = patched_generate
@@ -260,8 +249,9 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
             else None
         quantization_config = super()._hf_configure_quantization()
         super()._update_hf_pretrained_cfg(quantization_config)
-        cust_config = super()._hf_gen_cust_config(access_token)
+        cust_config, _ = super()._hf_gen_cust_config(access_token)
         self.model = self.hf_configured_model_init(cust_config, access_token)
+        self._convert_hf_to_tl()
 
     def hf_configured_model_init(self, cust_config: PretrainedConfig | ITLensCustomConfig,
                                   access_token: Optional[str] = None) -> torch.nn.Module:
@@ -295,8 +285,12 @@ class BaseITLensModule(BaseITLensModuleHooks, BaseITModule):
         # TODO: decide whether to pass remaining hf_from_pretrained_cfg args to HookedTransformer
         # (other than torch_dtype which should already have been processed and removed, device_map should also be
         # removed before passing to HookedTransformer)
-        self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=self.datamodule.tokenizer,
+        # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
+        tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
+        hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
+        self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle,
                                                        **self.it_cfg.tl_cfg.__dict__)
+        self.model.config = hf_preconversion_config
 
     def _capture_hyperparameters(self) -> None:
         # override unsupported from pretrained options

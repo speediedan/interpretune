@@ -139,7 +139,7 @@ class HFFromPretrainedMixin:
             else None
         quantization_config = self._hf_configure_quantization()
         self._update_hf_pretrained_cfg(quantization_config)
-        cust_config = self._hf_gen_cust_config(access_token)
+        cust_config, _ = self._hf_gen_cust_config(access_token)
         self.model = self.hf_configured_model_init(cust_config, access_token)
         self._hf_cust_token_cfg()
         self._hf_maybe_resize_token_embeddings()
@@ -165,7 +165,7 @@ class HFFromPretrainedMixin:
                                             }
         self.hf_cfg.pretrained_kwargs.update(additional_from_pretrained_kwargs)
 
-    def _hf_gen_cust_config(self, access_token: Optional[str] = None) -> PretrainedConfig:
+    def _hf_gen_cust_config(self, access_token: Optional[str] = None) -> Tuple[PretrainedConfig, Dict]:
         if self.hf_cfg.model_head:
             self.it_cfg.model_class = _import_class(self.hf_cfg.model_head)
             cust_config = AutoConfig.from_pretrained(**self.hf_cfg.pretrained_kwargs, token=access_token)
@@ -181,9 +181,11 @@ class HFFromPretrainedMixin:
                                "`dynamic_module_cfg`. Proceeding with model init.")
             cust_config = AutoConfig.from_pretrained(**self.hf_cfg.pretrained_kwargs, token=access_token,
                                                      local_files_only=False)
-        if self.hf_cfg.pretrained_kwargs.get('return_unused_kwargs', False):
-            return cust_config[0]
-        return cust_config
+        unused_kwargs = {}
+        if self.hf_cfg.pretrained_kwargs.pop('return_unused_kwargs', False):
+            cust_config, unused_kwargs = cust_config
+        cust_config.update(self.it_cfg.model_cfg)  # apply pre-init model config overrides
+        return cust_config, unused_kwargs
 
     def hf_configured_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
         -> torch.nn.Module:

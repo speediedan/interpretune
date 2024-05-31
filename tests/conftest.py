@@ -12,47 +12,220 @@
 # initially based on: https://bit.ly/3GDHDcI
 import os
 import threading
+import random
 from collections.abc import Iterable
-from typing import Dict, Tuple, List
+from collections import defaultdict
+from typing import Dict, Tuple
 from functools import partial
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
-import random
 
+from unittest.mock import patch, create_autospec
+from dataclasses import dataclass
+from itertools import product
+from copy import deepcopy
+from enum import auto, IntEnum
 import pytest
 import yaml
 import torch.distributed
-from tests import _PATH_DATASETS
-from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-from interpretune.base.components.cli import core_cli_main, compose_config
-from interpretune.adapters.registration import Adapter
-from tests.parity_acceptance.cli.cfg_aliases import cli_cfgs, CLI_EXP_MODEL, RUN_FN, TEST_CONFIGS_CLI_PARITY
-from tests.unit.cfg_aliases import TEST_CONFIGS_CLI_UNIT
 
-if _LIGHTNING_AVAILABLE:
-    from interpretune.base.components.cli import l_cli_main
-else:
-    l_cli_main = None
+from interpretune.adapters.registration import Adapter
+from interpretune.base.call import _call_itmodule_hook
+from interpretune.base.contract.session import ITMeta
+from interpretune.base.contract.protocol import ModuleSteppable, DataModuleInitable
+from interpretune.base.datamodules import ITDataModule
+from interpretune.utils.logging import rank_zero_only
+from interpretune.utils.types import StrOrPath
+from tests import _PATH_DATASETS, seed_everything, load_dotenv, FinetuningScheduler, get_fts, Trainer
+from tests.configuration import (config_modules, get_it_cfg, get_itdm_cfg, config_session, TEST_IT_DATAMODULE,
+                                 TEST_IT_MODULE)
+from tests.modules import TestITDataModule
+from tests.parity_acceptance.cfg_aliases import CLI_EXP_MODEL, parity_cli_cfgs
+from tests.parity_acceptance.test_it_cli import TEST_CONFIGS_CLI_PARITY
+from tests.parity_acceptance.test_it_l import CoreCfg, ProfParityCfg, BaseCfg
+from tests.parity_acceptance.test_it_tl import TLParityCfg, TLProfileCfg
+from tests.unit.cfg_aliases import (
+    TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg, LightningLlama2DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg,
+    CoreGPT2PEFTSeqCfg, CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2)
+
+
+test_cli_cfgs = deepcopy(parity_cli_cfgs)
+test_cli_cfgs['exp_cfgs'].update(unit_exp_cli_cfgs)
+
+# NOTE [Datamodule/Module/Session Fixture Caching]:
+# We note when instantiating module and datamodule manually (as is done in our datamodule/module fixture factories)
+# before passing modules to ITSession, the module won't have a handle to the datamodule so any logic that relies
+# on a datamodule attribute (like tokenizer) will fail. This prevents us from reusing any existing datamodule/
+# module fixture for a full session without exploding the number of different fixtures we create/cache by
+# creating some module fixtures with module definitions but not instantiation.
+#
+# TODO: If the resource parsimony is worth the added complexity, to address the above, we could patch the
+# module fixtures with a mock tokenizer during instantiation until we can replace the mock with a real tokenizer
+# during ITSession construction.
+
+
+# TODO: switch to namedtuple if not subclassing this in the future
+@dataclass(kw_only=True)
+class FixtureCfg:
+    test_cfg: BaseCfg = CoreCfg
+    module_cls: ModuleSteppable = TEST_IT_MODULE
+    datamodule_cls: DataModuleInitable = TEST_IT_DATAMODULE
+    scope: str = "class"
+
+FIXTURE_CFGS = {
+    "core_cust": FixtureCfg(scope="session"),
+    "core_cust_force_prepare": FixtureCfg(test_cfg=CoreCfgForcePrepare),
+    "core_gpt2": FixtureCfg(test_cfg=ProfParityCfg),
+    "core_gpt2_peft": FixtureCfg(test_cfg=CoreGPT2PEFTCfg),
+    "core_gpt2_peft_seq": FixtureCfg(test_cfg=CoreGPT2PEFTSeqCfg),
+    "core_cust_memprof": FixtureCfg(test_cfg=CoreMemProfCfg),
+    "l_gpt2": FixtureCfg(test_cfg=LightningGPT2, scope="function"),
+    "l_tl_gpt2": FixtureCfg(test_cfg=LightningTLGPT2, scope="function"),
+    "l_llama2_debug": FixtureCfg(test_cfg=LightningLlama2DebugCfg),
+    "tl_cust": FixtureCfg(test_cfg=TLParityCfg, scope="session"),
+    "tl_gpt2": FixtureCfg(test_cfg=TLProfileCfg),
+    "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg),
+}
+
+class FixturePhase(IntEnum):
+    initonly: int = auto()
+    prepare_data: int = auto()
+    setup: int = auto()
+    configure_optimizers: int = auto()
+
+@pytest.fixture(scope="class")
+def mock_dm():
+    # this mock fixture is necessary because many tests will want a mock tokenizer but being a dynamic attribute,
+    # the tokenizer isn't generated with autospec. We therefore attach a mock tokenizer to our mock datamodule here
+    dm_cls = type('InterpretunableDataModule', (TestITDataModule, ITDataModule), {})
+    with patch("transformers.PreTrainedTokenizer", autospec=True) as mock_tok:
+        mock_uninit_dm = create_autospec(dm_cls)
+        mock_uninit_dm.tokenizer = mock_tok
+        yield mock_uninit_dm
+
+@pytest.fixture(scope="class")
+def make_it_datamodule():
+    def __make_it_datamodule(datamodule_key):
+        test_cfg = FIXTURE_CFGS[datamodule_key].test_cfg()
+        dm_kwargs = {'force_prepare_data': test_cfg.force_prepare_data}
+        itdm_cfg = get_itdm_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
+        dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm',
+                        input=FIXTURE_CFGS[datamodule_key].datamodule_cls, ctx=test_cfg.adapter_ctx)
+        it_dm = dm_cls(itdm_cfg=itdm_cfg, **dm_kwargs)
+        return it_dm
+    yield __make_it_datamodule
+
+# TODO: not currently used, may refactor and remove if not used in the near future
+def datamodule_fixture_factory(datamodule_key):
+    @pytest.fixture(scope="class")
+    def get_it_datamodule(make_it_datamodule):
+        it_dm = make_it_datamodule(datamodule_key)
+        if init_key in ("setup", "prepare_data"):
+            with patch("tests.modules.TestITModule", autospec=True) as mock_m:
+                _call_itmodule_hook(it_dm, hook_name="prepare_data", hook_msg="Preparing data",
+                                    target_model=mock_m.model)
+        if init_key == "setup":
+            _call_itmodule_hook(it_dm, hook_name="setup", hook_msg="Setting up datamodule")
+        yield it_dm
+    return get_it_datamodule
+
+@pytest.fixture(scope="class")
+def make_it_module(tmp_path_factory):
+    def __make_it_module(module_key, init_key):
+        m_kwargs = {'test_alias': f"{module_key}_{init_key}_it_m_fixture", 'state_log_dir': None}
+        test_cfg=FIXTURE_CFGS[module_key].test_cfg()
+        core_log_dir = tmp_path_factory.mktemp(f"{module_key}_{init_key}_it_m_fixture")
+        it_cfg = get_it_cfg(test_cfg=test_cfg, core_log_dir=core_log_dir)
+        m_cls = ITMeta('InterpretunableModule', (), {}, component='m',
+                       input=FIXTURE_CFGS[module_key].module_cls, ctx=test_cfg.adapter_ctx)
+        it_m = m_cls(it_cfg=it_cfg, **m_kwargs)
+        return it_m
+    yield __make_it_module
+
+def module_fixture_factory(module_key, init_key):
+    @pytest.fixture(scope="class")
+    def get_it_module(make_it_module, mock_dm):
+        it_m = make_it_module(module_key, init_key)
+        if init_key == "setup":
+            _call_itmodule_hook(it_m, hook_name="setup", hook_msg="Setting up model", datamodule=mock_dm)
+        yield it_m
+    return get_it_module
+
+def session_fixture_hook_exec(it_s, init_key: FixturePhase):
+    if init_key.value > FixturePhase.initonly:  # call appropriate init phases if requested
+        if init_key.value >= FixturePhase.prepare_data:
+            _call_itmodule_hook(it_s.datamodule, hook_name="prepare_data", hook_msg="Preparing data",
+                            target_model=it_s.module.model)
+        if init_key.value >= FixturePhase.setup:
+            _call_itmodule_hook(it_s.datamodule, hook_name="setup", hook_msg="Setting up datamodule",
+                                module=it_s.module)
+            _call_itmodule_hook(it_s.module, hook_name="setup", hook_msg="Setting up model",
+                                datamodule=it_s.datamodule)
+        if init_key.value >= FixturePhase.configure_optimizers:
+            _call_itmodule_hook(it_s.module, hook_name="configure_optimizers",
+                                hook_msg="initializing optimizers and schedulers", connect_output=True)
+
+def it_session_fixture_factory(config_key, init_key):
+    @pytest.fixture(scope=FIXTURE_CFGS[config_key].scope)
+    def get_it_session(tmp_path_factory):
+        load_dotenv()  # load env vars from .env file # TODO: make a diff fixture?
+        test_sess_config = FIXTURE_CFGS[config_key].test_cfg
+        it_s = config_modules(test_sess_config(), f"{config_key}_{init_key}_it_session_fixture", {},
+                              tmp_path_factory.mktemp(f"{config_key}_{init_key}_it_session_fixture"), {}, False)
+        session_fixture_hook_exec(it_s, FixturePhase[init_key])
+        setattr(it_s, 'fixt_test_cfg', deepcopy(test_sess_config))
+        yield it_s
+    return get_it_session
+
+def configure_session_cfg(test_cfg_cls, tmp_path_or_factory):
+    test_cfg = test_cfg_cls()
+    if isinstance(tmp_path_or_factory, StrOrPath):
+        tmp_log_dir = tmp_path_or_factory
+    else:
+        tmp_log_dir = tmp_path_or_factory.mktemp(f"{test_cfg_cls.__name__}_sess_cfg_fixture")
+    itdm_cfg = get_itdm_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
+    it_cfg = get_it_cfg(test_cfg=test_cfg, core_log_dir=tmp_log_dir)
+    TEST_CLS_MAPPING = {'datamodule_cls': 'tests.modules.TestITDataModule', 'module_cls': 'tests.modules.TestITModule'}
+    core_cfg = {'datamodule_cfg': itdm_cfg, 'module_cfg': it_cfg, **TEST_CLS_MAPPING}
+    return core_cfg, test_cfg
+
+@pytest.fixture(scope="class")
+def get_tl_it_session_cfg(tmp_path_factory):
+    core_cfg, test_cfg = configure_session_cfg(TLParityCfg, tmp_path_factory)
+    test_cfg.adapter_ctx = (Adapter.core, Adapter.transformer_lens)
+    test_cfg.model_src_key = 'cust'
+    yield config_session(core_cfg, test_cfg, 'it_session_cfg_tl_test', {}, None, {})
+
+@pytest.fixture(scope="class")
+def get_core_cust_it_session_cfg(tmp_path_factory):
+    core_cfg, test_cfg = configure_session_cfg(CoreCfg, tmp_path_factory)
+    test_cfg.model_src_key = 'cust'
+    yield config_session(core_cfg, test_cfg, 'it_session_cfg_core_test', {}, None, {})
+
+for module_key, init_key in product(FIXTURE_CFGS.keys(), ["setup", "configure_optimizers"]):
+    name = f"get_it_module__{module_key}__{init_key}"
+    globals()[name] = module_fixture_factory(module_key, init_key)
+    # overwrite just the name/qual name attributes for pytest
+    globals()[name].__name__ = name
+    globals()[name].__qualname__ = name
+
+for datamodule_key, init_key in product(FIXTURE_CFGS.keys(), ["prepare_data", "setup"]):
+    name = f"get_it_datamodule__{datamodule_key}__{init_key}"
+    globals()[name] = datamodule_fixture_factory(datamodule_key)
+    # overwrite just the name/qual name attributes for pytest
+    globals()[name].__name__ = name
+    globals()[name].__qualname__ = name
+
+for session_key, init_key in product(FIXTURE_CFGS.keys(), ["initonly", "setup", "configure_optimizers"]):
+    name = f"get_it_session__{session_key}__{init_key}"
+    globals()[name] = it_session_fixture_factory(session_key, init_key)
+    # overwrite just the name/qual name attributes for pytest
+    globals()[name].__name__ = name
+    globals()[name].__qualname__ = name
 
 # if additional CLI test configurations are needed, append them here and the `cli_test_configs` fixture will generate
 # them sessionwise
 GEN_CLI_CFGS = [TEST_CONFIGS_CLI_PARITY, TEST_CONFIGS_CLI_UNIT]
-
-def gen_cli_args(run, cli_adapter, compose_cfg, config_files, extra_args: List = None):
-    cli_main_kwargs = {"run_command": run}
-    cli_main_kwargs["args"] = extra_args if extra_args else None
-    cli_args, cli_main =  [RUN_FN], core_cli_main  # defaults w/ no adapter
-    if cli_adapter == Adapter.lightning:
-        cli_main = l_cli_main
-        if run:
-            cli_args += [run]  # Lightning uses a `jsonargparse` subcommand in sys.argv
-    if compose_cfg:
-        cli_args.extend(compose_config(config_files))
-    else:
-        for f in config_files:
-            cli_args.extend(["--config", str(f)])
-    return cli_main, cli_args, cli_main_kwargs
-
 
 def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, Tuple[Adapter], bool]], sess_paths: Tuple) \
       -> Dict:
@@ -71,6 +244,13 @@ def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, Tuple[Adapt
         exp_cfg_sets[(exp, model, subexp, adapter_ctx, debug_mode)] = base_cfg_set
     return exp_cfg_sets
 
+@pytest.fixture(scope="function")
+def fts_patch_env():
+    os.environ["FTS_GEN_SCHEDULE_ALLOW_DUPLICATE"] = "True"
+    yield
+    for env_key in ("FTS_GEN_SCHEDULE_ALLOW_DUPLICATE",):
+        if env_key in os.environ:
+            del os.environ[env_key]
 
 @pytest.fixture(scope="function")
 def clean_cli_env():
@@ -91,13 +271,13 @@ def cli_test_file_env(tmp_path_factory):
     os.environ["IT_LIGHTNING_SHARED"] = str(IT_LIGHTNING_SHARED)
     IT_CONFIG_GLOBAL = sess_cfg_base / "global"
     TEST_CLI_CONFIG_FILES = {
-        "global_debug": (IT_CONFIG_GLOBAL, "base_debug.yaml", cli_cfgs["global_debug"]),
-        "global_tl": (IT_CONFIG_GLOBAL, "base_transformer_lens.yaml", cli_cfgs["global_tl"]),
-        "global_core": (IT_CORE_SHARED, "base_core.yaml", cli_cfgs["global_core"]),
-        "global_lightning": (IT_LIGHTNING_SHARED, "base_lightning.yaml", cli_cfgs["global_lightning"]),
-        "model_tl_cfg": (EXPERIMENTS_BASE, "transformer_lens.yaml", cli_cfgs["model_tl_cfg"]),
-        "model_cfgs": (EXPERIMENTS_BASE, "cust.yaml", cli_cfgs["model_cfgs"]),
-        "exp_cfgs": cli_cfgs["exp_cfgs"],
+        "global_debug": (IT_CONFIG_GLOBAL, "base_debug.yaml", test_cli_cfgs["global_debug"]),
+        "global_tl": (IT_CONFIG_GLOBAL, "base_transformer_lens.yaml", test_cli_cfgs["global_tl"]),
+        "global_core": (IT_CORE_SHARED, "base_core.yaml", test_cli_cfgs["global_core"]),
+        "global_lightning": (IT_LIGHTNING_SHARED, "base_lightning.yaml", test_cli_cfgs["global_lightning"]),
+        "model_tl_cfg": (EXPERIMENTS_BASE, "transformer_lens.yaml", test_cli_cfgs["model_tl_cfg"]),
+        "model_cfgs": (EXPERIMENTS_BASE, "cust.yaml", test_cli_cfgs["model_cfgs"]),
+        "exp_cfgs": test_cli_cfgs["exp_cfgs"],
     }
     yield TEST_CLI_CONFIG_FILES, TEST_EXP_MODEL_DIR, EXPERIMENTS_BASE
     for env_key in ("IT_CONFIG_BASE", "IT_CORE_SHARED", "IT_LIGHTNING_SHARED", "WANDB_API_KEY", "LLAMA2_AUTH_KEY",
@@ -142,6 +322,57 @@ def cli_test_configs(cli_test_file_env):
     EXPERIMENT_CFG_SETS = gen_experiment_cfg_sets(test_keys=test_keys, sess_paths=sess_paths)
     yield EXPERIMENT_CFG_SETS
 
+def l_imp_to_exp(sched_dict: Dict) -> Dict:
+    sched_dict[0]["params"] = [r"model.transformer.h.(9|1[0-1]).(mlp|attn|ln_(1|2)).(c_proj|c_fc|c_attn|weight|bias).*"]
+    sched_dict[0]["max_transition_epoch"] = 2
+    phase_1_pats = [r"model.transformer.h.([0-8](?!\d)).(mlp|attn|ln_(1|2)).(c_proj|c_fc|c_attn|weight|bias).*",
+     r"model.transformer.(wpe|wte).weight", r"model.transformer.ln_f.*"]
+    sched_dict[1]["params"] = phase_1_pats
+    sched_dict[1]["lr"] = 1e-06
+    sched_dict = {phase:phase_def for phase, phase_def in sched_dict.items() if phase in range(2)}
+    return sched_dict
+
+def tl_imp_to_exp(sched_dict: Dict) -> Dict:
+    sched_dict[0]["params"] = [r"model.blocks.(9|1[0-1]).*"]
+    sched_dict[0]["max_transition_epoch"] = 2
+    phase_1_pats = [r"model.blocks.([0-8](?!\d)).*", r"model.(pos_embed|embed).*", "model.unembed.W_U",
+                    "model.unembed.b_U"]
+    sched_dict[1]["params"] = phase_1_pats
+    sched_dict[1]["lr"] = 1e-06
+    sched_dict = {phase:phase_def for phase, phase_def in sched_dict.items() if phase in range(2)}
+    return sched_dict
+
+@pytest.fixture(scope="function")
+def gpt2_ft_schedules(tmpdir_factory, fts_patch_env, get_it_session__l_gpt2__setup,
+                      get_it_session__l_tl_gpt2__setup) -> Tuple[Path, Dict]:
+    """Generates a default fine-tuning schedule for 'implicit' testing, a modified one for 'explicit' mode and an
+    epoch-driven transitions only one for epoch_transitions_only testing."""
+    SCHED_TRANSFORMS = defaultdict(dict)
+    SCHED_TRANSFORMS["l_gpt2"]["basic_explicit"] = l_imp_to_exp
+    SCHED_TRANSFORMS["l_tl_gpt2"]["basic_explicit"] = tl_imp_to_exp
+    seed_everything(42)
+    callbacks = [FinetuningScheduler(gen_ft_sched_only=True)]
+    # for simplicity, initially only running FTS non-distributed tests
+    tmpdir = tmpdir_factory.mktemp("test_fts_schedules")
+    rank = getattr(rank_zero_only, "rank", 0)
+    models = {"l_gpt2": deepcopy(get_it_session__l_gpt2__setup.module),
+              "l_tl_gpt2": deepcopy(get_it_session__l_tl_gpt2__setup.module)}
+    test_schedules = defaultdict(dict)
+    for i, (model_key, model) in enumerate(models.items()):
+        trainer = Trainer(default_root_dir=tmpdir, callbacks=callbacks, devices=1)
+        unmod_schedule_file = \
+              tmpdir / "lightning_logs" / f"version_{i}" / f"{model.__class__.__name__}_ft_schedule.yaml"
+        # N.B. Though we run this fixture for each rank to avoid adding special logic to each distributed client test,
+        # we only generate a schedule on rank 0, linking to it on the other ranks.
+        if rank == 0:
+            with pytest.raises(SystemExit):
+                trainer.fit(model)
+        test_schedules[model_key]["implicit"] = get_fts(trainer).load_yaml_schedule(unmod_schedule_file)
+        for transform_key, transform_fn in SCHED_TRANSFORMS[model_key].items():
+            test_schedules[model_key][transform_key] = transform_fn(deepcopy(test_schedules[model_key]["implicit"]))
+    return test_schedules
+
+
 
 @pytest.fixture(scope="function")
 def reset_deterministic_algorithm():
@@ -174,12 +405,8 @@ def datadir():
 
 @pytest.fixture(scope="function", autouse=True)
 def preserve_global_rank_variable():
+    from interpretune.utils.logging import rank_zero_only
     """Ensures that the rank_zero_only.rank global variable gets reset in each test."""
-    if _LIGHTNING_AVAILABLE:
-        from lightning.fabric.utilities import rank_zero_only
-    else:
-        from interpretune.utils.logging import rank_zero_only  # type: ignore[no-redef]
-
     rank = getattr(rank_zero_only, "rank", None)
     yield
     if rank is not None:

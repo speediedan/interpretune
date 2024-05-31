@@ -11,26 +11,14 @@
 # limitations under the License.
 # Initially based on https://bit.ly/3oQ8Vqf
 from pathlib import Path
-from typing import Tuple
-import importlib
-from collections import defaultdict
+from typing import Tuple, Dict
 from unittest import mock
-from contextlib import contextmanager
 
-from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE
-from interpretune.utils.basic_trainer import BasicTrainer, BasicTrainerCfg
 from interpretune.adapters.registration import Adapter
 from interpretune.base.contract.session import ITSessionConfig, ITSession
-from configuration import config_modules
-from interpretune.base.config.mixins import ZeroShotClassificationConfig
-
-
-if _LIGHTNING_AVAILABLE:
-    from lightning.pytorch import Trainer
-    from lightning.pytorch.callbacks import ModelCheckpoint
-else:
-    Trainer = object
-    ModelCheckpoint = object
+from interpretune.utils.basic_trainer import BasicTrainer, BasicTrainerCfg
+from tests import Trainer, ModelCheckpoint
+from tests.configuration import config_modules
 
 
 ########################################################################################################################
@@ -80,12 +68,13 @@ def run_it(it_session: ITSession, test_cfg: Tuple):
 
 def run_lightning(it_session: ITSessionConfig, test_cfg: Tuple, tmp_path: Path) -> Trainer:
     accelerator = "cpu" if test_cfg.device_type == "cpu" else "gpu"
+    callbacks = instantiate_callbacks(getattr(test_cfg, 'callback_cfgs', {}))
     trainer_steps = {"limit_train_batches": test_cfg.limit_train_batches,
                      "limit_val_batches": test_cfg.limit_val_batches, "limit_test_batches": test_cfg.limit_test_batches,
-                     "limit_predict_batches": 1, "max_steps": test_cfg.limit_train_batches}
+                     "limit_predict_batches": 1, "max_steps": test_cfg.max_steps}
     trainer = Trainer(default_root_dir=tmp_path, devices=1, deterministic=True, accelerator=accelerator,
                       max_epochs=test_cfg.max_epochs, precision=lightning_prec_alias(test_cfg.precision),
-                      num_sanity_val_steps=0, **trainer_steps)
+                      num_sanity_val_steps=0, callbacks=callbacks, **trainer_steps)
     match test_cfg.phase:
         case "train":
             lightning_func = trainer.fit
@@ -95,8 +84,11 @@ def run_lightning(it_session: ITSessionConfig, test_cfg: Tuple, tmp_path: Path) 
             lightning_func = trainer.predict
         case _:
             raise ValueError("Unsupported phase type, phase must be 'train', 'test' or 'predict'")
-    with mock.patch.object(ModelCheckpoint, "_save_checkpoint"):  # do not save checkpoints for lightning tests
+    if test_cfg.save_checkpoints:
         lightning_func(**it_session)
+    else:
+        with mock.patch.object(ModelCheckpoint, "_save_checkpoint"):  # by default, don't save checkpoints for lightning
+            lightning_func(**it_session)
     return trainer
 
 def lightning_prec_alias(precision: str):
@@ -104,60 +96,5 @@ def lightning_prec_alias(precision: str):
     # types are tested
     return "bf16-true" if precision == "bf16" else "32-true"
 
-################################################################################
-# Simple Utility Functions
-################################################################################
-
-def dummy_step(*args, **kwargs) -> None:
-    ...
-
-def nones(num_n) -> Tuple:  # to help dedup config
-    return (None,) * num_n
-
-def _recursive_defaultdict():
-    return defaultdict(_recursive_defaultdict)
-
-@contextmanager
-def ablate_cls_attrs(object: object, attr_names: str| tuple):
-    try:
-        # (orig_obj_attach, orig_attr_handle): index by original object and handle of attribute we ablate
-        ablated_attr_indices = {}
-        if not isinstance(attr_names, tuple):
-            attr_names = (attr_names,)
-        for attr_name in attr_names:
-            ablated_attr_indices[attr_name] = attr_resolve(object, attr_name)
-        yield
-    finally:
-        for attr_name in reversed(ablated_attr_indices.keys()):
-            setattr(ablated_attr_indices[attr_name][0], attr_name, ablated_attr_indices[attr_name][1])
-
-def attr_resolve(object: object, attr_name: str):
-    if not hasattr(object, attr_name):
-        raise AttributeError(f"{object} does not have the requested attribute to ablate ({attr_name})")
-    orig_attr_handle = getattr(object, attr_name)
-    if object.__dict__.get(attr_name, '_indirect') != '_indirect':
-        orig_obj_attach_handle = object
-    else:
-        orig_obj_attach_handle = indirect_resolve(object, attr_name, orig_attr_handle)
-    ablation_index_entry = (orig_obj_attach_handle, orig_attr_handle)
-    delattr(orig_obj_attach_handle, attr_name)
-    return ablation_index_entry
-
-def indirect_resolve(object: object, attr_name: str, orig_attr_handle: object):
-    try:
-        orig_attr_fqn = getattr(orig_attr_handle, "__qualname__", None) or orig_attr_handle.__class__.__qualname__
-        orig_obj_attach = orig_attr_fqn[:-len(orig_attr_fqn.rsplit(".", 1)[-1]) - 1]
-    except AttributeError as ae:
-        raise AttributeError("Could not resolve the original object and attribute of the requested object and"
-                             f" attribute pair: ({object}, {attr_name}). Received: {ae}")
-    mod = importlib.import_module(orig_attr_handle.__module__)
-    return getattr(mod, orig_obj_attach)
-
-@contextmanager
-def disable_zero_shot(it_session: ITSession):
-    try:
-        orig_zs_cfg = it_session.module.it_cfg.zero_shot_cfg
-        it_session.module.it_cfg.zero_shot_cfg = ZeroShotClassificationConfig(enabled=False)
-        yield
-    finally:
-        it_session.module.it_cfg.zero_shot_cfg = orig_zs_cfg
+def instantiate_callbacks(callbacks_cfg: Dict):
+    return [callback_cls(**kwargs) for callback_cls, kwargs in callbacks_cfg.items()]

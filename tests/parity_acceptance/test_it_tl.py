@@ -17,15 +17,15 @@ from collections.abc import Iterable
 
 import pytest
 
-from tests.utils.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS
-from tests.configuration import BaseAugTest, collect_results, BaseCfg, pytest_param_factory, IT_GLOBAL_STATE_LOG_MODE
-from tests.orchestration import parity_test
 from interpretune.adapters.registration import Adapter
-from tests.parity_acceptance.adapters.transformer_lens.expected import tl_parity_results, tl_profiling_parity_results
-from tests.parity_acceptance.adapters.transformer_lens.cfg_aliases import w_l_tl
-from tests.parity_acceptance.adapters.lightning.cfg_aliases import (cuda,test_bs1_mem, test_bs1_mem_nosavedt,
-                                                      bs1_nowarm_hk_mem, bs1_warm_mem, debug_hidden)
 
+from tests.configuration import BaseAugTest, BaseCfg, pytest_param_factory, IT_GLOBAL_STATE_LOG_MODE
+from tests.orchestration import parity_test
+from tests.parity_acceptance.cfg_aliases import (cuda,test_bs1_mem, test_bs1_mem_nosavedt, bs1_nowarm_hk_mem,
+                                                 bs1_warm_mem, debug_hidden, w_l_tl)
+from tests.parity_acceptance.expected import tl_parity_results, tl_profiling_parity_results
+from tests.results import collect_results
+from tests.utils.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS
 
 # TODO: add tl and tl_profiling bf16 tests if/when support vetted
 # TODO: add tl activation checkpointing tests if/when support vetted

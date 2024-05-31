@@ -6,13 +6,11 @@ from torch import device
 from interpretune.adapters.transformer_lens import ITLensFromPretrainedConfig, ITLensConfig, ITLensCustomConfig
 from interpretune.utils.exceptions import MisconfigurationException
 from tests.utils.warns import unexpected_warns, TL_CTX_WARNS
-from tests.orchestration import ablate_cls_attrs
-from tests.parity_acceptance.adapters.transformer_lens.cfg_aliases import (test_tl_gpt2_it_module_base,
-                                                                          test_tl_cust_it_module_base)
+from tests.utils.misc import ablate_cls_attrs
+from tests.parity_acceptance.cfg_aliases import test_tl_gpt2_it_module_base, test_tl_cust_it_module_base
 
 
 class TestClassTransformerLens:
-
 
     def test_tl_session_exceptions(self, get_it_session__tl_cust__setup):
         tl_test_module = get_it_session__tl_cust__setup.module

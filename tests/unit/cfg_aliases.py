@@ -4,16 +4,18 @@ from enum import auto
 from dataclasses import dataclass, field
 from collections.abc import Iterable
 
+from interpretune.adapters.registration import Adapter
 from interpretune.base.config.shared import AutoStrEnum
 from interpretune.base.config.mixins import HFFromPretrainedConfig, ZeroShotClassificationConfig
-from interpretune.adapters.registration import Adapter
 from interpretune.extensions.debug_generation import DebugLMConfig
 from interpretune.extensions.memprofiler import MemProfilerCfg
-from tests.configuration import BaseCfg, set_nested, BaseAugTest
-from tests.parity_acceptance.cli.cfg_aliases import cli_cfgs, CLICfg, test_lr_scheduler_init, test_optimizer_init
-from tests.parity_acceptance.adapters.lightning.cfg_aliases import (gpt2_hf_from_pretrained_kwargs,
-                                                                    enable_activation_checkpointing)
-from tests.parity_acceptance.adapters.transformer_lens.test_interpretune_tl import TLParityCfg
+from tests.configuration import BaseCfg, BaseAugTest
+from tests.parity_acceptance.cfg_aliases import (test_lr_scheduler_init, test_optimizer_init,
+                                                 gpt2_hf_from_pretrained_kwargs, enable_act_checkpointing)
+from tests.parity_acceptance.test_it_tl import TLParityCfg
+from tests.parity_acceptance.test_it_cli import CLICfg
+from tests.utils.misc import set_nested
+
 
 
 nf4_bnb_config = {"load_in_4bit": True, "bnb_4bit_use_double_quant": True, "bnb_4bit_quant_type": "nf4",
@@ -44,7 +46,7 @@ class CoreGPT2PEFTCfg(BaseCfg):
     model_src_key: Optional[str] = "gpt2"
     dm_override_cfg: Optional[Dict] = field(default_factory=lambda: {'train_batch_size': 1, 'eval_batch_size': 1})
     hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = field(default_factory=lambda: HFFromPretrainedConfig(
-        **gpt2_hf_bnb_lora_cfg, **gpt2_hf_from_pretrained_kwargs, **enable_activation_checkpointing))
+        **gpt2_hf_bnb_lora_cfg, **gpt2_hf_from_pretrained_kwargs, **enable_act_checkpointing))
     limit_train_batches: Optional[int] = 3
     limit_val_batches: Optional[int] = 3
     limit_test_batches: Optional[int] = 2
@@ -55,7 +57,7 @@ class CoreGPT2PEFTSeqCfg(CoreGPT2PEFTCfg):
     zero_shot_cfg: Optional[ZeroShotClassificationConfig] = \
         field(default_factory=lambda: ZeroShotClassificationConfig(enabled=False))
     hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = field(default_factory=lambda: HFFromPretrainedConfig(
-        **gpt2_hf_bnb_lora_cfg, **gpt2_seq_hf_from_pretrained_kwargs, **enable_activation_checkpointing))
+        **gpt2_hf_bnb_lora_cfg, **gpt2_seq_hf_from_pretrained_kwargs, **enable_act_checkpointing))
 
 
 @dataclass(kw_only=True)
@@ -77,6 +79,17 @@ class LightningLlama2DebugCfg(BaseCfg):
     model_src_key: Optional[str] = "llama2"
     precision: Optional[str | int] = "bf16-true"
     adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning,)
+
+@dataclass(kw_only=True)
+class LightningGPT2(BaseCfg):
+    model_src_key: Optional[str] = "gpt2"
+    adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning,)
+    model_cfg: Optional[Dict] = field(default_factory=lambda: {"tie_word_embeddings": False})
+
+@dataclass(kw_only=True)
+class LightningTLGPT2(BaseCfg):
+    model_src_key: Optional[str] = "gpt2"
+    adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
 
 class CLI_UNIT_TESTS(AutoStrEnum):
     seed_null = auto()
@@ -114,27 +127,27 @@ EXPECTED_RESULTS_CLI_UNIT = {cfg.alias: cfg.expected for cfg in TEST_CONFIGS_CLI
 ################################################################################
 # core adapter training with no transformer_lens adapter context
 ################################################################################
-
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null] = set_nested("session_cfg.module_cfg")
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null]["session_cfg"]["module_cfg"]["init_args"] = {
+unit_exp_cli_cfgs = {}
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null] = set_nested("session_cfg.module_cfg")
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null]["session_cfg"]["module_cfg"]["init_args"] = {
     "experiment_tag": CLI_UNIT_TESTS.seed_null.value, **test_lr_scheduler_init, **test_optimizer_init,
 }
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null]["seed_everything"] = None
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null]["seed_everything"] = None
 
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.env_seed] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.env_seed] = deepcopy(unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null])
 
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.invalid_env_seed] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.invalid_env_seed] = deepcopy(unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null])
 
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.invalid_cfg_seed] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.invalid_cfg_seed]["seed_everything"] = -1
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.invalid_cfg_seed] = deepcopy(unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null])
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.invalid_cfg_seed]["seed_everything"] = -1
 
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.nonint_cfg_seed] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.nonint_cfg_seed]["seed_everything"] = 14.0
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.nonint_cfg_seed] = deepcopy(unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null])
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.nonint_cfg_seed]["seed_everything"] = 14.0
 
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_false] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_false]["seed_everything"] = False
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_false] = deepcopy(unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null])
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_false]["seed_everything"] = False
 
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_true] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_true]["seed_everything"] = True
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_true] = deepcopy(unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null])
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_true]["seed_everything"] = True
 
-cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.excess_args] = deepcopy(cli_cfgs["exp_cfgs"][CLI_UNIT_TESTS.seed_null])
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.excess_args] = deepcopy(unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null])
