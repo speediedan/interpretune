@@ -10,18 +10,20 @@ from interpretune.utils.warnings import dummy_method_warn_fingerprint
 from tests.utils.runif import EXTENDED_VER_PAT
 
 
+EXPECTED_WARNS = [
+    "The truth value of an empty array is ambiguous",  # for jsonargparse
+    ".*torch.cpu.amp.autocast.*",  # required for PT nightly 20240601, likely can be removed with 2.4 PT release
+]
+
 HF_EXPECTED_WARNS = [
     "Please use torch.utils._pytree.register_pytree_node instead",  # temp  allow deprecated call from hf
     "use_reentrant parameter should be",  # hf activation checkpoint warning
     "`resume_download` is deprecated",  # required because of upstream usage
-]
-
-EXPECTED_WARNS = [
-    "The truth value of an empty array is ambiguous",  # for jsonargparse
+    "`is_compiling` is deprecated",  # required with `transformers` 4.41.2 and PT nightly 20240601
     "The `use_auth_token` argument is deprecated",  # TODO: need to use `token` instead of `use_auth_token`
 ]
 
-CORE_CTX_WARNS = HF_EXPECTED_WARNS + EXPECTED_WARNS + [
+CORE_CTX_WARNS =  EXPECTED_WARNS + HF_EXPECTED_WARNS + [
     dummy_method_warn_fingerprint,  # expected in a core context with modules that use dummy log methods
 ]
 
