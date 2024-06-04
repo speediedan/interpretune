@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from tests.orchestration import run_it
-from tests.utils.runif import RunIf
+from tests.runif import RunIf
 from interpretune.extensions.memprofiler import MemProfilerSchedule, MemProfilerCfg, MemProfilerHooks
 from interpretune.base.config.shared import CoreSteps
 

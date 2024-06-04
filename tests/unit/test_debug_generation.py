@@ -4,7 +4,7 @@ import re
 import pytest
 from torch.testing import assert_close
 
-from tests.utils.runif import RunIf
+from tests.runif import RunIf
 
 IT_TEST_TEXT = {
     "text": [("Interpretune is a flexible ML experimentation framework that makes code adhering to a simple"

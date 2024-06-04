@@ -25,7 +25,7 @@ from tests.parity_acceptance.cfg_aliases import (cuda,test_bs1_mem, test_bs1_mem
                                                  bs1_warm_mem, debug_hidden, w_l_tl)
 from tests.parity_acceptance.expected import tl_parity_results, tl_profiling_parity_results
 from tests.results import collect_results
-from tests.utils.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS
+from tests.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS
 
 # TODO: add tl and tl_profiling bf16 tests if/when support vetted
 # TODO: add tl activation checkpointing tests if/when support vetted

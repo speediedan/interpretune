@@ -14,7 +14,7 @@ from interpretune.base.config.shared import AutoStrEnum
 from interpretune.extensions.memprofiler import MemProfilerCfg, MemProfilerSchedule
 from tests.global_defaults import default_prof_bs, default_test_bs
 from tests.modules import TestFTS
-from tests.utils.misc import ToyGenCfg, get_nested, set_nested
+from tests.utils import ToyGenCfg, get_nested, set_nested
 
 
 # TODO: add model-specific mapping and mapping functions here to dedup some of the shared explicit mapping logic here
@@ -337,7 +337,7 @@ test_core_cust_it_module_kwargs_zero_shot = deepcopy(test_core_cust_it_module_kw
 test_core_cust_it_module_kwargs_zero_shot["zero_shot_cfg"] = {
     "class_path": "it_examples.experiments.rte_boolq.config.RTEBoolqZeroShotClassificationConfig",
     "init_args": {"enabled": True, "lm_generation_cfg": {
-        "class_path": "tests.utils.misc.ToyGenCfg",
+        "class_path": "tests.utils.ToyGenCfg",
         "init_args": {"max_new_tokens": 2}},
         },
 }

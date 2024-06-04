@@ -17,8 +17,8 @@ import pytest
 
 from interpretune.base.contract.session import ITSession, ITMeta
 from interpretune.base.contract.protocol import ITDataModuleProtocol, ITModuleProtocol
-from tests.utils.warns import CORE_CTX_WARNS, unexpected_warns, unmatched_warns
-from tests.utils.misc import ablate_cls_attrs
+from tests.warns import CORE_CTX_WARNS, unexpected_warns, unmatched_warns
+from tests.utils import ablate_cls_attrs
 
 
 class TestClassContract:

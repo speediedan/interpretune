@@ -16,8 +16,8 @@ from copy import deepcopy
 from interpretune.adapters.core import ITModule
 from interpretune.base.call import _call_itmodule_hook
 from interpretune.base.contract.session import ITSession
-from tests.utils.misc import ablate_cls_attrs
-from tests.utils.warns import CORE_CTX_WARNS, unexpected_warns
+from tests.utils import ablate_cls_attrs
+from tests.warns import CORE_CTX_WARNS, unexpected_warns
 
 
 class TestClassBaseMisc:

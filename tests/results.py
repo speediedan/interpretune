@@ -4,7 +4,7 @@ from interpretune.base.config.shared import AutoStrEnum
 from collections import defaultdict
 
 from tests.global_defaults import default_test_bs, default_prof_bs
-from tests.utils.misc import get_model_input_dtype
+from tests.utils import get_model_input_dtype
 
 ################################################################################
 # Test Dataset Fingerprint Definitions

@@ -33,8 +33,8 @@ from interpretune.utils.types import StrOrPath
 from it_examples.experiments.rte_boolq.config import RTEBoolqConfig, RTEBoolqTLConfig
 from tests import seed_everything
 from tests.modules import TestITDataModule, TestITModule, Llama2TestITDataModule
-from tests.utils.runif import RunIf, RUNIF_ALIASES
-from tests.utils.misc import get_model_input_dtype
+from tests.runif import RunIf, RUNIF_ALIASES
+from tests.utils import get_model_input_dtype
 from tests.parity_acceptance.cfg_aliases import (
     core_gpt2_datamodule_kwargs, core_cust_datamodule_kwargs,
     test_core_cust_it_module_base, core_cust_shared_config, test_core_cust_it_module_optim,

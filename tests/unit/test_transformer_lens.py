@@ -5,8 +5,8 @@ from torch import device
 
 from interpretune.adapters.transformer_lens import ITLensFromPretrainedConfig, ITLensConfig, ITLensCustomConfig
 from interpretune.utils.exceptions import MisconfigurationException
-from tests.utils.warns import unexpected_warns, TL_CTX_WARNS
-from tests.utils.misc import ablate_cls_attrs
+from tests.warns import unexpected_warns, TL_CTX_WARNS
+from tests.utils import ablate_cls_attrs
 from tests.parity_acceptance.cfg_aliases import test_tl_gpt2_it_module_base, test_tl_cust_it_module_base
 
 

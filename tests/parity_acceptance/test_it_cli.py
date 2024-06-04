@@ -13,8 +13,8 @@ from interpretune.base.components.cli import core_cli_main, compose_config, l_cl
 from interpretune.utils.types import ArgsType
 from tests.configuration import pytest_param_factory, BaseAugTest
 from tests.parity_acceptance.cfg_aliases import CLI_TESTS, CLI_EXP_MODEL, IT_HOME, RUN_FN
-from tests.utils.runif import RunIf
-from tests.utils.warns import unexpected_warns, CLI_EXPECTED_WARNS
+from tests.runif import RunIf
+from tests.warns import unexpected_warns, CLI_EXPECTED_WARNS
 
 
 @dataclass(kw_only=True)

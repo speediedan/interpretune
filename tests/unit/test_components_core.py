@@ -18,7 +18,7 @@ from interpretune.base.call import _call_itmodule_hook
 from interpretune.base.components.core import CoreHelperAttributes
 from interpretune.utils.types import LRSchedulerConfig, LRScheduler
 from interpretune.utils.exceptions import MisconfigurationException
-from tests.utils.warns import unmatched_warns
+from tests.warns import unmatched_warns
 
 
 class TestClassCoreModule:

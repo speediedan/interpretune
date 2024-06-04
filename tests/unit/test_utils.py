@@ -19,8 +19,9 @@ from typing import Any
 import pytest
 import torch
 
-from tests.utils.runif import RunIf
-from tests.utils.warns import CORE_CTX_WARNS, unexpected_warns, unmatched_warns
+from tests.runif import RunIf
+from tests.utils import ablate_cls_attrs
+from tests.warns import CORE_CTX_WARNS, unexpected_warns, unmatched_warns
 from interpretune.base.contract.session import ITSession
 from interpretune.utils.logging import _get_rank, rank_zero_only, rank_zero_deprecation
 from interpretune.utils.import_utils import (resolve_funcs, instantiate_class, _resolve_torch_dtype, package_available,
@@ -28,7 +29,6 @@ from interpretune.utils.import_utils import (resolve_funcs, instantiate_class, _
 from interpretune.base.config.mixins import ITExtension
 from interpretune.utils.exceptions import MisconfigurationException
 from interpretune.extensions.memprofiler import MemProfilerHooks, DefaultMemHooks
-from tests.utils.misc import ablate_cls_attrs
 from interpretune.utils.data_movement import move_data_to_device, to_device
 from interpretune.utils.basic_trainer import BasicTrainerCfg
 

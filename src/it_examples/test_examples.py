@@ -20,9 +20,9 @@
 # from interpretune.base.cli.core_cli import compose_config, IT_CONFIG_BASE, IT_CONFIG_GLOBAL
 # from interpretune.adapters.transformer_lens import ITLensModule
 # from tests.configuration import pytest_param_factory, TestCfg
-# from tests.utils.misc import dummy_step
-# from tests.utils.runif import RunIf
-# from tests.utils.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, unexpected_warns, TL_EXPECTED_WARNS
+# from tests.utils import dummy_step
+# from tests.runif import RunIf
+# from tests.warns import EXPECTED_WARNS, HF_EXPECTED_WARNS, unexpected_warns, TL_EXPECTED_WARNS
 # from tests.conftest import make_deterministic
 
 # if _LIGHTNING_AVAILABLE:

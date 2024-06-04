@@ -23,7 +23,7 @@ from tests.parity_acceptance.expected import l_parity_results, l_profiling_parit
 from tests.parity_acceptance.cfg_aliases import (
     w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l, debug_hidden, test_bs1_mem_nosavedt,
     bs1_nowarm_mem, act_ckpt, bs1_nowarm_hk_mem, bs1_warm_mem)
-from tests.utils.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WARNS
+from tests.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WARNS
 
 
 @dataclass(kw_only=True)

@@ -24,8 +24,8 @@ from tests.orchestration import parity_test
 from tests.parity_acceptance.cfg_aliases import cuda, l_gpt2_fts, l_tl_gpt2_fts, TestFTS
 from tests.parity_acceptance.expected import fts_parity_results
 from tests.results import collect_results
-from tests.utils.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS, FTS_CTX_WARNS
-from tests.utils.runif import RunIf
+from tests.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS, FTS_CTX_WARNS
+from tests.runif import RunIf
 
 
 @dataclass(kw_only=True)

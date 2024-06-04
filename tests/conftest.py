@@ -46,7 +46,7 @@ from tests.parity_acceptance.test_it_l import CoreCfg, ProfParityCfg, BaseCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg, TLProfileCfg
 from tests.unit.cfg_aliases import (
     TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg, LightningLlama2DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg,
-    CoreGPT2PEFTSeqCfg, CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2)
+    CoreGPT2PEFTSeqCfg, CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, TLMechInterpCfg)
 
 
 test_cli_cfgs = deepcopy(parity_cli_cfgs)
@@ -83,6 +83,7 @@ FIXTURE_CFGS = {
     "l_tl_gpt2": FixtureCfg(test_cfg=LightningTLGPT2, scope="function"),
     "l_llama2_debug": FixtureCfg(test_cfg=LightningLlama2DebugCfg),
     "tl_cust": FixtureCfg(test_cfg=TLParityCfg, scope="session"),
+    "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function"),
     "tl_gpt2": FixtureCfg(test_cfg=TLProfileCfg),
     "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg),
 }

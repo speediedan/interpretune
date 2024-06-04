@@ -14,7 +14,7 @@ from tests.parity_acceptance.cfg_aliases import (test_lr_scheduler_init, test_op
                                                  gpt2_hf_from_pretrained_kwargs, enable_act_checkpointing)
 from tests.parity_acceptance.test_it_tl import TLParityCfg
 from tests.parity_acceptance.test_it_cli import CLICfg
-from tests.utils.misc import set_nested
+from tests.utils import set_nested
 
 
 
@@ -25,7 +25,23 @@ gpt2_lora_cfg = {"target_modules": ["c_attn", "c_proj"], **base_lora_cfg}
 gpt2_hf_bnb_lora_cfg = {"bitsandbytesconfig": nf4_bnb_config, "lora_cfg": gpt2_lora_cfg}
 gpt2_seq_hf_from_pretrained_kwargs = deepcopy(gpt2_hf_from_pretrained_kwargs)
 gpt2_seq_hf_from_pretrained_kwargs.update({"model_head": "transformers.AutoModelForSequenceClassification"})
-
+tl_cust_mi_cfg = {"cfg":
+    dict(
+    d_model=768,
+    d_head=64,
+    n_heads=12,
+    n_layers=2,
+    n_ctx=200,
+    #d_vocab=50278,
+    act_fn="relu",
+    attention_dir="causal",
+    #attn_only=True, # defaults to False
+    tokenizer_name='gpt2',
+    seed=1,
+    use_attn_result=True,
+    #normalization_type=None, # defaults to "LN", i.e. layernorm with weights & biases
+    #positional_embedding_type="shortformer")
+)}
 
 @dataclass(kw_only=True)
 class CoreCfgForcePrepare(BaseCfg):
@@ -33,6 +49,12 @@ class CoreCfgForcePrepare(BaseCfg):
     force_prepare_data: Optional[bool] = True
     dm_override_cfg: Optional[Dict] = field(default_factory=lambda: {'enable_datasets_cache': False,
                                                                      'dataset_path': '/tmp/force_prepare_tests_ds'})
+
+@dataclass(kw_only=True)
+class TLMechInterpCfg(BaseCfg):
+    adapter_ctx: Iterable[Adapter | str] = (Adapter.core, Adapter.transformer_lens)
+    model_src_key: Optional[str] = "cust"
+    tl_cfg: Optional[Dict] = field(default_factory=lambda: tl_cust_mi_cfg)
 
 @dataclass(kw_only=True)
 class TLDebugCfg(TLParityCfg):

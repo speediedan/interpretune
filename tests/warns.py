@@ -7,7 +7,7 @@ from pkg_resources import get_distribution
 
 from interpretune.adapters.registration import Adapter
 from interpretune.utils.warnings import dummy_method_warn_fingerprint
-from tests.utils.runif import EXTENDED_VER_PAT
+from tests.runif import EXTENDED_VER_PAT
 
 
 EXPECTED_WARNS = [

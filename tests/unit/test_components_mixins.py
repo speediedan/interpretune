@@ -21,9 +21,9 @@ from interpretune.base.config.module import ITConfig
 from interpretune.base.config.extensions import ITExtensionsConfigMixin
 from interpretune.base.config.mixins import HFFromPretrainedConfig, ITExtension
 from parity_acceptance.cfg_aliases import test_core_gpt2_it_module_base
-from tests.utils.misc import disable_zero_shot
-from tests.utils.runif import RunIf
-from tests.utils.warns import CORE_CTX_WARNS, unexpected_warns
+from tests.utils import disable_zero_shot
+from tests.runif import RunIf
+from tests.warns import CORE_CTX_WARNS, unexpected_warns
 from tests.orchestration import run_it
 
 
