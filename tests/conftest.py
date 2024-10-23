@@ -40,13 +40,13 @@ from tests import _PATH_DATASETS, seed_everything, load_dotenv, FinetuningSchedu
 from tests.configuration import (config_modules, get_it_cfg, get_itdm_cfg, config_session, TEST_IT_DATAMODULE,
                                  TEST_IT_MODULE)
 from tests.modules import TestITDataModule
-from tests.parity_acceptance.cfg_aliases import CLI_EXP_MODEL, parity_cli_cfgs
+from tests.parity_acceptance.cfg_aliases import parity_cli_cfgs, CLI_EXP
 from tests.parity_acceptance.test_it_cli import TEST_CONFIGS_CLI_PARITY
 from tests.parity_acceptance.test_it_l import CoreCfg, ProfParityCfg, BaseCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg, TLProfileCfg
-from tests.unit.cfg_aliases import (
-    TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg, LightningLlama2DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg,
-    CoreGPT2PEFTSeqCfg, CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, TLMechInterpCfg)
+from tests.unit.cfg_aliases import (TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg,
+    LightningLlama2DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg, CoreGPT2PEFTSeqCfg, CoreCfgForcePrepare, LightningGPT2,
+    LightningTLGPT2, TLMechInterpCfg)
 
 
 test_cli_cfgs = deepcopy(parity_cli_cfgs)
@@ -228,21 +228,12 @@ for session_key, init_key in product(FIXTURE_CFGS.keys(), ["initonly", "setup", 
 # them sessionwise
 GEN_CLI_CFGS = [TEST_CONFIGS_CLI_PARITY, TEST_CONFIGS_CLI_UNIT]
 
-def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, str, Tuple[Adapter], bool]], sess_paths: Tuple) \
-      -> Dict:
-    EXPERIMENTS_BASE, BASE_TL_CONFIG, BASE_DEBUG_CONFIG = sess_paths
+def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, bool]], sess_paths: Tuple) -> Dict:
+    EXPERIMENTS_BASE, BASE_DEBUG_CONFIG = sess_paths
     exp_cfg_sets = {}
-    for exp, model, subexp, adapter_ctx, debug_mode in test_keys:
-        base_model_cfg =  EXPERIMENTS_BASE / f"{model}.yaml"
-        base_cfg_set = (base_model_cfg,)
-        if Adapter.transformer_lens in adapter_ctx:
-            exp_adapter_cfg = EXPERIMENTS_BASE /  f"{Adapter.transformer_lens.value}.yaml"
-            base_cfg_set += (BASE_TL_CONFIG, exp_adapter_cfg,)
-        subexp_cfg =  EXPERIMENTS_BASE / model / f"{subexp}.yaml"
-        base_cfg_set += (subexp_cfg,)
-        if debug_mode:
-            base_cfg_set += (BASE_DEBUG_CONFIG,)
-        exp_cfg_sets[(exp, model, subexp, adapter_ctx, debug_mode)] = base_cfg_set
+    for exp, subexp, debug_mode in test_keys:
+        subexp_cfg =  EXPERIMENTS_BASE / f"{subexp}.yaml"
+        exp_cfg_sets[(exp, subexp, debug_mode)] = (subexp_cfg, BASE_DEBUG_CONFIG) if debug_mode else (subexp_cfg,)
     return exp_cfg_sets
 
 @pytest.fixture(scope="function")
@@ -264,25 +255,17 @@ def clean_cli_env():
 def cli_test_file_env(tmp_path_factory):
     os.environ["IT_CONFIG_BASE"] = str(tmp_path_factory.mktemp("test_cli_files"))
     sess_cfg_base = Path(os.environ["IT_CONFIG_BASE"])
-    EXPERIMENTS_BASE = sess_cfg_base / "experiments" / CLI_EXP_MODEL[0]
-    TEST_EXP_MODEL_DIR = EXPERIMENTS_BASE / CLI_EXP_MODEL[1]
-    IT_CORE_SHARED = sess_cfg_base / "global" / "core"
-    os.environ["IT_CORE_SHARED"] = str(IT_CORE_SHARED)
-    IT_LIGHTNING_SHARED = sess_cfg_base / "global" / "lightning"
-    os.environ["IT_LIGHTNING_SHARED"] = str(IT_LIGHTNING_SHARED)
+    EXPERIMENTS_BASE = sess_cfg_base / "experiments" / CLI_EXP
+    IT_CONFIG_DEFAULTS = sess_cfg_base / "global" / "defaults"
+    os.environ["IT_CONFIG_DEFAULTS"] = str(IT_CONFIG_DEFAULTS)
     IT_CONFIG_GLOBAL = sess_cfg_base / "global"
     TEST_CLI_CONFIG_FILES = {
         "global_debug": (IT_CONFIG_GLOBAL, "base_debug.yaml", test_cli_cfgs["global_debug"]),
-        "global_tl": (IT_CONFIG_GLOBAL, "base_transformer_lens.yaml", test_cli_cfgs["global_tl"]),
-        "global_core": (IT_CORE_SHARED, "base_core.yaml", test_cli_cfgs["global_core"]),
-        "global_lightning": (IT_LIGHTNING_SHARED, "base_lightning.yaml", test_cli_cfgs["global_lightning"]),
-        "model_tl_cfg": (EXPERIMENTS_BASE, "transformer_lens.yaml", test_cli_cfgs["model_tl_cfg"]),
-        "model_cfgs": (EXPERIMENTS_BASE, "cust.yaml", test_cli_cfgs["model_cfgs"]),
+        "global_defaults": (IT_CONFIG_DEFAULTS, "default.yaml", test_cli_cfgs["global_defaults"]),
         "exp_cfgs": test_cli_cfgs["exp_cfgs"],
     }
-    yield TEST_CLI_CONFIG_FILES, TEST_EXP_MODEL_DIR, EXPERIMENTS_BASE
-    for env_key in ("IT_CONFIG_BASE", "IT_CORE_SHARED", "IT_LIGHTNING_SHARED", "WANDB_API_KEY", "LLAMA2_AUTH_KEY",
-                    "IDE_PROJECT_ROOTS"):
+    yield TEST_CLI_CONFIG_FILES, EXPERIMENTS_BASE
+    for env_key in ("IT_CONFIG_BASE", "IT_CONFIG_DEFAULTS", "WANDB_API_KEY", "LLAMA2_AUTH_KEY", "IDE_PROJECT_ROOTS"):
         if env_key in os.environ:
             del os.environ[env_key]
 
@@ -297,7 +280,7 @@ def write_cfg_to_yaml_file(path, config):
 
 def write_cli_config_files(test_cli_cfg_files, test_exp_model_dir):
     test_config_files = {}
-    for k, v in test_cli_cfg_files.items():
+    for k, v in test_cli_cfg_files.items():  # experiment-level files
         if k == "exp_cfgs":
             for k, v in v.items():
                 cfg_dir = ensure_path(test_exp_model_dir)
@@ -311,15 +294,14 @@ def write_cli_config_files(test_cli_cfg_files, test_exp_model_dir):
             test_config_files[k] = cfg_file_path
     return test_config_files
 
-
 @pytest.fixture(scope="session")
 def cli_test_configs(cli_test_file_env):
     # this fixture will collect all required cli test configuration files and dynamically generate them sessionwise
-    test_cli_cfg_files, test_exp_model_dir, experiments_base = cli_test_file_env
-    test_config_files = write_cli_config_files(test_cli_cfg_files, test_exp_model_dir)
-    sess_paths = Path(experiments_base), Path(test_config_files["global_tl"]), Path(test_config_files["global_debug"])
+    test_cli_cfg_files, experiments_base = cli_test_file_env
+    test_config_files = write_cli_config_files(test_cli_cfg_files, experiments_base)
+    sess_paths = Path(experiments_base), Path(test_config_files["global_debug"])
     # we specify a set of CLI test configurations (GEN_CLI_CFGS) to drive our CLI configuration file generation
-    test_keys = ((*CLI_EXP_MODEL, c.alias, c.cfg.adapter_ctx, c.cfg.debug_mode) for cfg in GEN_CLI_CFGS for c in cfg)
+    test_keys = ((CLI_EXP, c.alias, c.cfg.debug_mode) for cfg in GEN_CLI_CFGS for c in cfg)
     EXPERIMENT_CFG_SETS = gen_experiment_cfg_sets(test_keys=test_keys, sess_paths=sess_paths)
     yield EXPERIMENT_CFG_SETS
 

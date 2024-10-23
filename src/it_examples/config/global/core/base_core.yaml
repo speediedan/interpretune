@@ -1,4 +1,0 @@
-seed_everything: 42
-it_session:
-  session_cfg:
-    class_path: interpretune.base.contract.session.ITSessionConfig

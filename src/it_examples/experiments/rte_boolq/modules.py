@@ -1,4 +1,5 @@
 from typing import Optional, List, Dict
+
 import torch
 from torch.nn import CrossEntropyLoss
 import evaluate
@@ -58,9 +59,7 @@ class RTEBoolqSteps:
     def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
         Optional[STEP_OUTPUT]:
         labels = batch.pop("labels")
-        outputs = self.it_generate(batch,
-                                   pad_token_id=self.datamodule.tokenizer.pad_token_id,
-                                   **self.it_cfg.zero_shot_cfg.lm_generation_cfg.__dict__)
+        outputs = self.it_generate(batch, **self.it_cfg.zero_shot_cfg.lm_generation_cfg.generate_kwargs)
         self.collect_answers(outputs.logits, labels)
 
     def default_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
@@ -94,7 +93,7 @@ class RTEBoolqSteps:
         logits = logits.to(device=self.device)
         if logits.ndim == 2:  # if answer logits have already been squeezed
             logits = logits.unsqueeze(1)
-        if getattr(self.model, 'lm_head', None):
+        if logits.shape[-1] != self.it_cfg.num_labels:
             logits = torch.index_select(logits, -1, self.it_cfg.entailment_mapping_indices)
             if not self.it_cfg.zero_shot_cfg.enabled:
                 logits = logits[:, -1:, :]

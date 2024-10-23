@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Tuple, Callable, Mapping
+from typing import Any, Dict, Optional, Tuple, Callable, Mapping, Type
 from collections.abc import Iterable
 import os
 import importlib
@@ -76,8 +76,8 @@ class ITSessionConfig(UnencapsulatedArgs):
     adapter_ctx: Iterable[Adapter | str] = (Adapter.core,)
     datamodule_cfg: ITDataModuleConfig
     module_cfg: ITConfig
-    datamodule_cls: Optional[str | DataModuleInitable] = None
-    module_cls: Optional[str | ModuleSteppable] = None
+    datamodule_cls: Optional[Type[DataModuleInitable] | str] = None
+    module_cls: Optional[Type[ModuleSteppable] | str] = None
     datamodule: Optional[ITDataModuleProtocol] = None
     module: Optional[ITModuleProtocol] = None
 

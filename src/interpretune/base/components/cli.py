@@ -79,7 +79,7 @@ class ITCLI(ITSessionMixin):
         parser_kwargs: Optional[Union[Dict[str, Any], Dict[str, Dict[str, Any]]]] = None,
         args: ArgsType = None,
         seed_everything_default: Union[bool, int] = True,
-        run_command: str = "test",
+        run_command: Optional[str] = "test",
         trainer_class: Union[Type[BasicTrainer], Callable[..., BasicTrainer]] = BasicTrainer,
         trainer_cfg: Union[Type[BasicTrainerCfg], Dict[str, Any]] = BasicTrainerCfg,
     ) -> None:
@@ -119,7 +119,6 @@ class ITCLI(ITSessionMixin):
         self.parser = self.init_parser(**main_kwargs)
         self._add_arguments(self.parser)
 
-
     def init_parser(self, **kwargs: Any) -> ArgumentParser:
         """Method that instantiates the argument parser."""
         parser = ArgumentParser(**kwargs)
@@ -137,8 +136,7 @@ class ITCLI(ITSessionMixin):
         return seed
 
     def seed_everything(self, seed: Optional[int] = None, workers: bool = False) -> int:
-        r"""
-        """
+        r""""""
         if seed is None:
             env_seed = os.environ.get("IT_GLOBAL_SEED")
             if env_seed is None:
@@ -241,6 +239,7 @@ def enumerate_config_files(folder: Union[Path, str]) -> List:
     return files
 
 def compose_config(config_files: Iterable[str]) -> List:
+    # TODO: consider deprecating `compose_config` for simplicity and subsequently removing this path if not widely used
     args = []
     config_file_paths = []
 
@@ -276,10 +275,13 @@ def configure_cli(shared_config_dir: Union[Path, str]) -> Tuple[bool, List]:
     shared_config_files = enumerate_config_files(shared_config_dir)
     return shared_config_files
 
-def core_cli_main(args: ArgsType = None, run_command: Optional[str] = None) -> Optional[ITCLI]:
-    shared_config_dir = os.environ.get("IT_CORE_SHARED", IT_CONFIG_GLOBAL / "core" )  # deferred resolution
-    shared_config_files = configure_cli(shared_config_dir)
-    parser_kwargs = {"default_config_files": shared_config_files}
+def core_cli_main(run_mode: Optional[str | bool] = None , args: ArgsType = None) -> Optional[ITCLI]:
+    # note deferred resolution
+    default_config_dir = os.environ.get("IT_CONFIG_DEFAULTS", IT_CONFIG_GLOBAL / "defaults" )
+    default_config_files = configure_cli(default_config_dir)
+    parser_kwargs = {"default_config_files": default_config_files}
+    default_run_command = "test"
+    run_command = default_run_command if run_mode is True else None if run_mode is False else run_mode
     cli = ITCLI(
         parser_kwargs=parser_kwargs,
         run_command=run_command,
@@ -320,8 +322,9 @@ if _LIGHTNING_AVAILABLE:
 
     class LightningITCLI(LightningCLIAdapter, ITSessionMixin, LightningCLI):
         """Customize the :class:`~lightning.pytorch.cli.LightningCLI` to ensure the
-        :class:`~pytorch_lighting.core.LightningDataModule` and :class:`~lightning.pytorch.core.module.LightningModule`
-        use the same Hugging Face model, SuperGLUE task and custom logging tag."""
+        :class:`~pytorch_lighting.core.LightningDataModule` and
+        :class:`~lightning.pytorch.core.module.LightningModule` use the same Hugging Face model, SuperGLUE task and
+        custom logging tag."""
 
         @override
         def add_core_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
@@ -332,14 +335,15 @@ if _LIGHTNING_AVAILABLE:
             parser.set_defaults(trainer_defaults)
 
 
-    def l_cli_main(args: ArgsType = None, run_command: Optional[str] = None) -> Optional[LightningITCLI]:
-        shared_config_dir = os.environ.get("IT_LIGHTNING_SHARED", IT_CONFIG_GLOBAL / "lightning" )  # defer resolution
-        shared_config_files = configure_cli(shared_config_dir)
+    def l_cli_main(run_mode: bool = True, args: ArgsType = None) -> Optional[LightningITCLI]:
+        # note deferred resolution
+        default_config_dir = os.environ.get("IT_CONFIG_DEFAULTS", IT_CONFIG_GLOBAL / "defaults" )
+        default_config_files = configure_cli(default_config_dir)
         # currently, share config files for each subcommand but leave separate for future customization
-        parser_kwargs = {"default_config_files": shared_config_files} if not run_command else \
-            {"fit": {"default_config_files": shared_config_files},
-            "test": {"default_config_files": shared_config_files},
-            "predict": {"default_config_files": shared_config_files},}
+        parser_kwargs = {"default_config_files": default_config_files} if not run_mode else \
+            {"fit": {"default_config_files": default_config_files},
+            "test": {"default_config_files": default_config_files},
+            "predict": {"default_config_files": default_config_files},}
         cli = LightningITCLI(
             datamodule_class=ITDataModule,
             # N.B. we can provide a regular PyTorch module as we're wrapping it as necessary
@@ -349,24 +353,47 @@ if _LIGHTNING_AVAILABLE:
             save_config_kwargs={"overwrite": True},
             parser_kwargs=parser_kwargs,
             args=args,
-            run=bool(run_command),
+            run=run_mode,
         )
-        if not run_command:
+        if not run_mode:
             return cli
 
 else:
     l_cli_main = object
 
+def _parse_run_option(lightning_cli: bool = False) -> Optional[bool | str]:
+    run_mode = None
+    if lightning_cli:
+        sys.argv.pop(sys.argv.index("--lightning_cli"))
+        # LightningCLI offers a boolean `run` option that is by default `True`, we offer the `--no_run` flag to
+        # control setting it to `False` which returns the CLI with parsed/instantiated config.
+        no_run = False
+        if no_run := "--no_run" in sys.argv[1:]:
+            sys.argv.pop(sys.argv.index("--no_run"))
+        return not no_run
+    for i, arg in enumerate(sys.argv):
+        if arg.startswith("--run_command"):
+            run_mode = sys.argv[i + 1] if "=" not in arg else arg.split("=")[1]
+            sys.argv.pop(i)
+            if "=" not in arg:
+                sys.argv.pop(i)
+    # core CLI's string `run_mode` controls both the command to run and if not provided, invokes parse/instantiate only
+    return run_mode
+
 def bootstrap_cli() -> Callable:
     # TODO: consider adding an env var option to control CLI selection
     # dispatch the relevant CLI, right now only `--lightning_cli` is supported beyond the default core CLI.
-    if "--lightning_cli" in sys.argv[1:]:
-        lightning_cli = True
-        sys.argv.remove("--lightning_cli")
-    else:
-        lightning_cli = False
+    # TODO: note in the run_experiment.py documentation that we provide the --no_run flag to allow configuring the
+    #       Lightning CLI to not run subcommands and instead return the cli with parsed/instantiated config.
+    # TODO: for the core CLI only, we provide the --run_command flag option to to control which command to run,
+    #       LightningCLI uses the normal LightningCLI format (passing the command as a separate arg without a flag,
+    #       e.g. `python run_experiment.py fit --config some_path/to/some_config.yaml`).
+    lightning_cli = "--lightning_cli" in sys.argv[1:]
+    run_mode = None
     if lightning_cli:
         cli_main = l_cli_main
+        run_mode = _parse_run_option(lightning_cli=True)
     else:
         cli_main = core_cli_main
-    return cli_main()
+        run_mode = _parse_run_option()
+    return cli_main(run_mode=run_mode)

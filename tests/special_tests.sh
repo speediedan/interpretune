@@ -16,27 +16,42 @@ set -eo pipefail
 
 unset mark_type
 unset log_file
+unset filter_pattern
+unset experiments_list
+unset experiment_patch_mask
+unset collect_dir
 unset IT_RUN_PROFILING_TESTS
 unset IT_RUN_STANDALONE_TESTS
+unset IT_EXPERIMENTAL_PATCH_TESTS
+
+source $(dirname "$0")/infra_utils.sh
 
 usage(){
 >&2 cat << EOF
 Usage: $0
    [ --mark_type input]
    [ --log_file input]
+   [ --filter_pattern input]
+   [ --experiments_list input]
+   [ --experiment_patch_mask input]
+   [ --collect_dir input]
    [ --help ]
    Examples:
-	# run profile tests marked to run with CI:
-	#   ./special_tests.sh --mark_type=profile
-	# run all profile tests:
+	# run profile tests marked to run with CI following a filter pattern:
+	#   ./special_tests.sh --mark_type=profile --filter_pattern='test_f'
+	# run all profile tests passing a parent process log file to use:
 	#   ./special_tests.sh --mark_type=profile_ci --log_file=/tmp/some_parent_process_file_to_append_to.log
   # run all standalone tests:
   #   ./special_tests.sh --mark_type=standalone
+	# run all standalone tests following a pattern using a non-default test collection directory:
+	#   ./tests/special_tests.sh --mark_type=standalone --collect_dir='src/my_examples' --filter_pattern='special_examples'
+  # default `tests/.experiments` experiments definition location with a specific patch mask:
+	#   ./tests/special_tests.sh --mark_type=exp_patch --filter_pattern='test_' --experiment_patch_mask="1 0 0"
 EOF
 exit 1
 }
 
-args=$(getopt -o '' --long mark_type:,log_file:,help -- "$@")
+args=$(getopt -o '' --long mark_type:,log_file:,filter_pattern:,experiments_list:,experiment_patch_mask:,collect_dir:,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -47,6 +62,10 @@ do
   case $1 in
     --mark_type)  mark_type=$2    ; shift 2  ;;
     --log_file)  log_file=$2    ; shift 2  ;;
+    --filter_pattern)  filter_pattern=$2    ; shift 2  ;;
+    --experiments_list)  experiments_list=$2    ; shift 2  ;;
+    --experiment_patch_mask) experiment_patch_mask+=($2) ; shift 2  ;;
+    --collect_dir)  collect_dir=$2    ; shift 2  ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
     *) >&2 echo Unsupported option: $1
@@ -56,101 +75,73 @@ done
 
 d=`date +%Y%m%d%H%M%S`
 tmp_log_dir="/tmp"
-special_test_session_log=${log_file:-"${tmp_log_dir}/special_tests_${mark_type}_${d}.log"}
-special_test_session_tmp_out="${tmp_log_dir}/special_tests_${mark_type}_${d}.out"
-
-collect_tests(){
-  printf "Collected the following tests: \n" >> $special_test_session_log
-  special_tests=$(python3 -m pytest tests -q --collect-only --pythonwarnings ignore | tee -a $special_test_session_log)
-  # echo "Collected tests: \n ${special_tests}" >> $special_test_session_log
-  # match only lines with tests
-  declare -a -g parameterizations=($(grep -oP '\S+::test_\S+' <<< "$special_tests"))
-}
-
-execute_tests(){
-  # hardcoded tests to skip - space separated
-  blocklist=''
-  export report=''
-
-  for i in "${!parameterizations[@]}"; do
-    parameterization=${parameterizations[$i]}
-
-    # check blocklist
-    if echo $blocklist | grep -F "${parameterization}"; then
-      report+="Skipped\t$parameterization\n"
-      continue
-    fi
-
-    # run the test
-    echo "Running ${parameterization}" >> $special_test_session_log
-    python ${defaults} ${parameterization} >> $special_test_session_tmp_out
-
-    report+="Ran\t$parameterization\n"
-  done
-}
-
-show_test_results(){
-
-  if [ -f ${special_test_session_tmp_out} ]; then  # if exists
-    cat $special_test_session_tmp_out
-    if grep --quiet --ignore-case --extended-regexp 'error|exception|traceback|failed' ${special_test_session_tmp_out} ; then
-      echo "Potential error!"
-      rm ${special_test_session_tmp_out}
-      exit 1
-    fi
-    rm ${special_test_session_tmp_out}
-  elif [ -f ${special_test_session_log} ]; then  # if the log but not the out exists, check for collection errors
-    if grep --ignore-case --extended-regexp 'traceback|failed' ${special_test_session_log} ; then
-      echo "Potential collection error!"
-      exit 1
-    fi
+mark_type=${mark_type:-"standalone"}
+experiments_list=${experiments_list:-$(dirname "$0")/.experiments}
+if [ -s "${experiments_list}" ]; then
+  if [ -z "${experiment_patch_mask:-}" ]; then
+    experiment_patch_mask=($(cat tests/.experiments | awk '{for(i=1;i<=NF;i++) print "0"}'))
   fi
-}
-trap show_test_results EXIT  # show the output on exit
-
-
-## Main coverage collection logic
-start_time=$(date +%s)
-echo "IT special tests beginning execution at ${d} PT" >> $special_test_session_log
-
-case ${mark_type} in
-  profile)
-    echo "Collecting and running profile tests..." >> $special_test_session_log
-    export IT_RUN_PROFILING_TESTS=2
-    ;;
-  profile_ci)
-    echo "Collecting and running only profile tests marked for CI..." >> $special_test_session_log
-    export IT_RUN_PROFILING_TESTS=1
-    ;;
-  standalone)
-    echo "Collecting and running standalone tests..." >> $special_test_session_log
-    export IT_RUN_STANDALONE_TESTS=1
-    ;;
-  *)
-    echo "no matching `mark_type` found, exiting..."  >> $special_test_session_log
-    exit 1
-    ;;
-esac
+fi
+collect_dir=${collect_dir:-"tests"}
+special_test_session_log=${log_file:-"${tmp_log_dir}/special_tests_${mark_type}_${d}.log"}
+test_session_tmp_log="${tmp_log_dir}/special_tests_raw_${mark_type}_${d}.log"
 
 # default python coverage arguments
-defaults='-m coverage run --source src/interpretune --append -m pytest --capture=no --no-header -v -s'
-collect_tests
-execute_tests
-show_test_results
 
-## write elapsed time in user-friendly fashion
-end_time=$(date +%s)
-elapsed_seconds=$(($end_time-$start_time))
-if (( $elapsed_seconds/60 == 0 )); then
-            echo "Script completed in $elapsed_seconds seconds" >> $special_test_session_log
-elif (( $elapsed_seconds%60 == 0 )); then
-    echo "Script completed in $(($elapsed_seconds/60)) minutes" >> $special_test_session_log
-else
-    echo "Script completed in $(($elapsed_seconds/60)) minutes and $(($elapsed_seconds%60)) seconds" >> $special_test_session_log
-fi
+exec_defaults='-m coverage run --source src/interpretune --append -m pytest --capture=no --no-header -v -s -rA'
+collect_defaults="-m pytest ${collect_dir} -q --collect-only --pythonwarnings ignore"
+start_time=$(date +%s)
+echo `printf "%0.s-" {1..120} && printf "\n"` | tee -a $special_test_session_log
+printf "IT special tests beginning execution at ${d} PT \n" | tee -a $special_test_session_log
+echo `printf "%0.s-" {1..120} && printf "\n"` | tee -a $special_test_session_log
+printf "\n" | tee -a $special_test_session_log
 
-# summarize test report
-printf '=%.s' {1..80} >> $special_test_session_log
-printf "\n$report" >> $special_test_session_log
-printf '=%.s' {1..80} >> $special_test_session_log
-printf '\n' >> $special_test_session_log
+define_configuration(){
+  echo `printf "%0.s-" {1..120} && printf "\n"` | tee -a $special_test_session_log
+  printf "Run configuration: \n" | tee -a $special_test_session_log
+  echo `printf "%0.s-" {1..120} && printf "\n"` | tee -a $special_test_session_log
+  case ${mark_type} in
+    profile)
+      echo "Collecting and running profile tests..." | tee -a $special_test_session_log
+      export IT_RUN_PROFILING_TESTS=2
+      ;;
+    profile_ci)
+      echo "Collecting and running only profile tests marked for CI..." | tee -a $special_test_session_log
+      export IT_RUN_PROFILING_TESTS=1
+      ;;
+    standalone)
+      echo "Collecting and running standalone tests..." | tee -a $special_test_session_log
+      export IT_RUN_STANDALONE_TESTS=1
+      ;;
+    exp_patch)
+      echo "Collecting and running only experimental patch tests supported w/ provided patch mask (${experiment_patch_mask[@]})." | tee -a $special_test_session_log
+      export IT_EXPERIMENTAL_PATCH_TESTS=1
+      ;;
+    *)
+      echo "no matching `mark_type` found, exiting..." | tee -a $special_test_session_log
+      exit 1
+      ;;
+  esac
+
+  if [ -s "${experiments_list}" ]; then
+    # toggle optional experimental patches if requested
+    toggle_experimental_patches ${experiments_list} "${experiment_patch_mask[@]}"
+  else
+    echo "No experimental patches were found in the environment." | tee -a $special_test_session_log
+  fi
+  printf "${patch_report}" | tee -a $special_test_session_log
+
+  if [[ -n ${filter_pattern} ]]; then
+    echo "Using filter pattern: ${filter_pattern}" | tee -a $special_test_session_log
+    exec_defaults+=" -k ${filter_pattern}"
+    collect_defaults+=" -k ${filter_pattern}"
+  fi
+  printf '\n' | tee -a  $special_test_session_log
+}
+
+trap 'show_test_results "$special_test_session_log" "$test_session_tmp_log"' EXIT  # show the output on exit
+
+## Special coverage collection flow
+define_configuration
+collect_tests "$collect_defaults" "$special_test_session_log"
+execute_tests "$exec_defaults" "$special_test_session_log" "$test_session_tmp_log"

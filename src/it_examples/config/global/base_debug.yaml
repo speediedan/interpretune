@@ -1,14 +1,10 @@
-it_session:
-  session_cfg:
+session_cfg:
+  module_cfg:
     init_args:
-      module_cfg:
+      debug_lm_cfg:  # enable lm debugging connector features
+        class_path: interpretune.extensions.debug_generation.DebugLMConfig
         init_args:
-          debug_lm_cfg:  # enable lm debugging connector features
-            class_path: interpretune.extensions.debug_generation.DebugLMConfig
-            init_args:
-              enabled: true
-              raw_debug_sequences:
-                - What is the color of a banana?
-                - List the first 5 letters in the alphabet.
-                - How many days in a week?
-                - How old is Barack Obama?
+          enabled: true
+          raw_debug_sequences:
+          - How many days in a week?
+          - How old is Barack Obama?

@@ -10,11 +10,11 @@ from interpretune.base.config.mixins import HFFromPretrainedConfig, ZeroShotClas
 from interpretune.extensions.debug_generation import DebugLMConfig
 from interpretune.extensions.memprofiler import MemProfilerCfg
 from tests.configuration import BaseCfg, BaseAugTest
-from tests.parity_acceptance.cfg_aliases import (test_lr_scheduler_init, test_optimizer_init,
-                                                 gpt2_hf_from_pretrained_kwargs, enable_act_checkpointing)
+from tests.parity_acceptance.cfg_aliases import (parity_cli_cfgs, mod_initargs, gpt2_hf_from_pretrained_kwargs,
+                                                 enable_act_checkpointing, CLI_TESTS)
 from tests.parity_acceptance.test_it_tl import TLParityCfg
 from tests.parity_acceptance.test_it_cli import CLICfg
-from tests.utils import set_nested
+from tests.utils import get_nested
 
 
 
@@ -150,10 +150,10 @@ EXPECTED_RESULTS_CLI_UNIT = {cfg.alias: cfg.expected for cfg in TEST_CONFIGS_CLI
 # core adapter training with no transformer_lens adapter context
 ################################################################################
 unit_exp_cli_cfgs = {}
-unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null] = set_nested("session_cfg.module_cfg")
-unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null]["session_cfg"]["module_cfg"]["init_args"] = {
-    "experiment_tag": CLI_UNIT_TESTS.seed_null.value, **test_lr_scheduler_init, **test_optimizer_init,
-}
+base_unit_exp_cli_cfg = deepcopy(parity_cli_cfgs["exp_cfgs"][CLI_TESTS.core_optim_train])
+get_nested(base_unit_exp_cli_cfg, mod_initargs)["experiment_tag"] = CLI_UNIT_TESTS.seed_null.value
+
+unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null] = base_unit_exp_cli_cfg
 unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null]["seed_everything"] = None
 
 unit_exp_cli_cfgs[CLI_UNIT_TESTS.env_seed] = deepcopy(unit_exp_cli_cfgs[CLI_UNIT_TESTS.seed_null])

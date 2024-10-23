@@ -10,7 +10,7 @@ from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.utils.logging import rank_zero_warn
-from interpretune.base.config.mixins import HFFromPretrainedConfig
+from interpretune.base.config.mixins import HFFromPretrainedConfig, HFGenerationConfig, BaseGenerationConfig
 from interpretune.base.config.module import ITConfig, ITState
 from interpretune.base.config.extensions import ITExtensionsConfigMixin
 from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE
@@ -61,11 +61,16 @@ class ProfilerHooksMixin:
         return wrapper
 
 
-# TODO: probably makes sense to rename this to GenerationStepMixin since it better reflects its scope of use
+# TODO: may make sense to factor out zero_shot_cfg references into a separate mixin and rename this to
+#       GenerationStepMixin since it better reflects its scope of use
 class ZeroShotStepMixin:
 
     _gen_sig_keys: Optional[List] = None
     GEN_PREPARES_INPUTS_SIGS: Tuple = ("_prepare_model_inputs",)
+
+    @property
+    def generation_cfg(self) -> Optional[BaseGenerationConfig]:
+        return self.it_cfg.zero_shot_cfg.lm_generation_cfg
 
     @property
     def gen_sig_keys(self) -> List:
@@ -128,7 +133,6 @@ class HFFromPretrainedMixin:
     # proper initialization of these variables should be done in the child class
     it_cfg: ITConfig
     model: torch.nn.Module
-
 
     @property
     def hf_cfg(self) -> Optional[HFFromPretrainedConfig]:
@@ -216,6 +220,17 @@ class HFFromPretrainedMixin:
 
     def _hf_post_init_cfg(self) -> None:
         self.model.config.update(self.it_cfg.model_cfg)  # apply post-init model config overrides
+        # TODO: right now, a default lm_generation_cfg is always loaded even when not needed which is wasteful
+        #       this checks for the presence of `lm_generation_cfg` so it still works when lm_generation_cfg defaults
+        #       to None
+        # since some generation config depends on post-init model updates, we defer generation-related
+        # model.config and model.generation_config until post-init
+        # (key assumption: generation arguments do not affect model init)
+        if self.generation_cfg and isinstance(self.generation_cfg, HFGenerationConfig):
+            self.model.config.update(self.generation_cfg.model_config)
+            if getattr(self.model, "generation_config", None):
+                for k, v in self.generation_cfg.model_config.items():
+                    setattr(self.model.generation_config, k, v)
         self.model.config.use_cache = self.hf_cfg.use_model_cache
         self._configure_gradient_checkpointing()
         # TODO: disentagle use of bnb and lora configs in the future, create single peft config perhaps

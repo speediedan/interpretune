@@ -1,15 +1,56 @@
-it_session:
-  session_cfg:
+session_cfg:
+  adapter_ctx: [lightning, transformer_lens]
+  datamodule_cls: it_examples.experiments.rte_boolq.datamodules.GPT2RTEBoolqDataModule
+  datamodule_cfg:
+    class_path: interpretune.base.config.datamodule.ITDataModuleConfig
     init_args:
-      adapter_ctx: [lightning, transformer_lens]
-      module_cfg:
+      enable_datasets_cache: false
+      eval_batch_size: 2
+      task_name: rte
+      model_name_or_path: gpt2
+      prepare_data_map_cfg:
+        batched: true
+      prompt_cfg:
+        class_path: it_examples.experiments.rte_boolq.config.RTEBoolqPromptConfig
+      # for tlens we must set signature columns because the inspected model forward signature (HF) prior to setup will
+      # differ from HookedTransformer's forward
+      signature_columns: ['input', 'attention_mask', 'labels']
+      tokenizer_id_overrides:
+        pad_token_id: 50256
+      tokenizer_kwargs:
+        padding_side: right
+        add_bos_token: true
+        local_files_only: false
+        model_input_names:
+        - input
+        - attention_mask
+      tokenizer_name: gpt2
+      train_batch_size: 2
+  module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqModule
+  module_cfg:
+    class_path: it_examples.experiments.rte_boolq.config.RTEBoolqTLConfig
+    init_args:
+      cust_fwd_kwargs: {}
+      experiment_tag: lightning_tl_rte_small_noquant_test
+      tl_cfg:
+        class_path: interpretune.adapters.transformer_lens.ITLensFromPretrainedConfig
         init_args:
-          experiment_tag: lightning_tl_rte_small_noquant_test
-          tl_cfg:
-            class_path: interpretune.adapters.transformer_lens.ITLensFromPretrainedConfig
+          device: cuda
+          dtype: bfloat16
+      hf_from_pretrained_cfg:
+        class_path: interpretune.base.config.module.HFFromPretrainedConfig
+        init_args:
+          use_model_cache: false
+          model_head: transformers.GPT2LMHeadModel
+          activation_checkpointing: false
+      zero_shot_cfg:
+        class_path: it_examples.experiments.rte_boolq.config.RTEBoolqZeroShotClassificationConfig
+        init_args:
+          enabled: true
+          lm_generation_cfg:
+            class_path: interpretune.adapters.transformer_lens.TLensGenerationConfig
             init_args:
-              device: cuda
-              dtype: bfloat16
+              max_new_tokens: 1
 trainer:
   precision: bf16-true
   accumulate_grad_batches: 1
@@ -19,4 +60,5 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.TensorBoardLogger
     init_args:
+      save_dir: lightning_logs
       name: gpt2_tl_rte_small_noquant_test

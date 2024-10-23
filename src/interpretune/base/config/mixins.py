@@ -17,8 +17,8 @@ class ITExtension(NamedTuple):
 
 @dataclass(kw_only=True)
 class BaseGenerationConfig(ITSerializableCfg):
-    ...  # core generation config that may be extended and include common `ITConfig` logic in the future
-
+    # kwargs passed directly to the model.generate method
+    generate_kwargs: Dict = field(default_factory=dict)
 
 @dataclass(kw_only=True)
 class CoreGenerationConfig(BaseGenerationConfig):
@@ -27,24 +27,36 @@ class CoreGenerationConfig(BaseGenerationConfig):
     top_p: float = 1.0
     top_k: int = 50
     temperature: float = 1.0
+    # TODO: test these additions below
+    return_dict_in_generate: Optional[bool] = True
+    output_logits: Optional[bool] = True
+
+    def __post_init__(self):
+        # TODO: consider finding a more elegant abstraction that allows providing both model.config based and direct to
+        #       generate method kwargs for assorted generate contexts
+        #       currently, HF uses model.config based and potentially generate_kwargs, TL uses only generate_kwargs
+        for k, v in self.__dict__.items():
+            if k != "generate_kwargs":
+                self.generate_kwargs[k] = v
 
 @dataclass(kw_only=True)
 class HFGenerationConfig(BaseGenerationConfig):
-    kwargs: Dict[str, Any] = field(default_factory=dict)
+    # generation kwargs to be added to the HF model config (which in turn override the model.generation_config)
+    model_config: Dict = field(default_factory=dict)
+    default_overrides: Dict = field(default_factory=lambda: {"return_dict_in_generate": True, "output_logits": True})
 
     def __post_init__(self):
-        default_overrides = {"return_dict_in_generate": True, "output_logits": True}
-        hf_overrides = self.kwargs.pop('cust_hf_overrides', default_overrides)
         valid_hf_keys = [k for k in GenerationConfig().__dict__.keys()  if not k.startswith("_")]
         # we defer to HF's default generation config for all supported `GenerationConfig` settings except for attributes
-        # specified in the default or provided (`cust_hf_overrides`) override config
-        for k, v in self.kwargs.items():
+        # specified in the default or provided (`default_overrides`) override config
+        # TODO: add warnings for invalid keys rather than silently ignoring
+        for k, v in self.model_config.items():
             if k in valid_hf_keys:
-                setattr(self, k, v)
-        for k, v in hf_overrides.items():
-            if k not in self.kwargs.keys() and k in valid_hf_keys:
-                setattr(self, k, v)
-        self.kwargs = {}
+                self.model_config[k] = v
+        for k, v in self.default_overrides.items():
+            if k not in self.model_config.keys() and k in valid_hf_keys:
+                self.model_config[k] = v
+
 
 @dataclass(kw_only=True)
 class ZeroShotClassificationConfig(ITSerializableCfg):

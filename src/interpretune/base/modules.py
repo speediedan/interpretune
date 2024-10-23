@@ -37,7 +37,7 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
             torch.cuda.memory._record_memory_history()
         self.auto_model_init()
         if self.model:
-            self.post_auto_model_init()  # allow modification of a configuration-drive model
+            self.post_auto_model_init()  # allow modification of a configuration-driven model
         else:
             self.model_init()  # load a custom model
         self._capture_hyperparameters()

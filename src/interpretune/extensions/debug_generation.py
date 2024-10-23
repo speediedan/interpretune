@@ -87,27 +87,28 @@ class DebugGeneration:
         ```python
         # when using a llama2 chat model, you'll want to have input tokenized with sys and inst metadata
         # to do so with some reasonable default questions as a sanity check and in batch mode:
-        self.debug_lm.debug_generate_batch(self.sys_inst_debug_sequences())
+        self.debug_lm.debug_generate_batch(self.debug_lm.sys_inst_debug_sequences())
         # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
-        self.debug_lm.debug_generate_serial(self.sys_inst_debug_sequences())
+        self.debug_lm.debug_generate_serial(self.debug_lm.sys_inst_debug_sequences())
         # to override the defaults (both questions and current `max_new_tokens` config)
-        self.debug_lm.debug_generate_batch(self.sys_inst_debug_sequences([
+        self.debug_lm.debug_generate_batch(self.debug_lm.sys_inst_debug_sequences([
             'What is the color of a cloudless sky?', 'How many days are in a year?']),
             gen_config_override={"max_new_tokens": 25})
         ```
         """
-        sequences = sequences or self.it_cfg.debug_lm_cfg.raw_debug_sequences
+        sequences = sequences or self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
         return [self.phandle.datamodule.tokenizer.bos_token + \
             self.phandle.datamodule.itdm_cfg.prompt_cfg.SYS_PREFIX + \
                 f"{ex.strip()} {self.phandle.datamodule.itdm_cfg.prompt_cfg.E_INST}" \
                 for ex in sequences]
 
-    def _debug_generate(self, inputs: List|torch.Tensor, gen_config_override: Optional[Dict] = None) -> Any:
+    def _debug_generate(self, inputs: List|torch.Tensor, gen_kwargs_override: Optional[Dict] = None,
+                        gen_config_override: Optional[Dict] = None) -> Any:
         """_summary_
 
         Args:
             inputs (_type_): _description_
-            gen_config_override (Optional[Dict], optional): _description_. Defaults to None.
+            gen_kwargs_override (Optional[Dict], optional): _description_. Defaults to None.
 
         Usage:
 
@@ -122,12 +123,13 @@ class DebugGeneration:
         ```
         """
         # note we're not using a context manager here, keeping our new override for subsequent debugging convenience
-        gen_config_dict = self.phandle.it_cfg.zero_shot_cfg.lm_generation_cfg.__dict__
-        if gen_config_override:
-            gen_config_dict.update(gen_config_override)
-        return self.phandle.it_generate(inputs,
-                                          pad_token_id=self.phandle.datamodule.tokenizer.pad_token_id,
-                                          **gen_config_dict)
+        gen_kwargs = self.phandle.it_cfg.zero_shot_cfg.lm_generation_cfg.generate_kwargs
+        if gen_kwargs_override:
+            gen_kwargs.update(gen_kwargs_override)
+        if gen_config_override and getattr(self.phandle.model, "generation_config", None):
+            for k, v in gen_config_override.items():
+                setattr(self.phandle.model.generation_config, k, v)
+        return self.phandle.it_generate(inputs, **gen_kwargs)
 
     def perplexity_on_sample(self, corpus: Optional[Dataset|Dict] = None, stride: Optional[int] = None,
                              limit_chars: Optional[int] = None) -> float:
@@ -207,18 +209,21 @@ class DebugGeneration:
     def debug_generate_batch(self, sequences: List,
                              gen_output_attr: Optional[str] = None,
                              gen_config_override: Optional[Dict] = None,
+                             gen_kwargs_override: Optional[Dict] = None,
                              decode_cfg_override: Optional[Dict] = None) -> Tuple[List, List]:
         test_input_ids = self.phandle.datamodule.tokenizer.batch_encode_plus(sequences)
         test_input_ids = _sanitize_input_name(self.model_input_names, test_input_ids)
         test_input_ids = self.phandle.datamodule.data_collator(test_input_ids)
         test_input_ids = test_input_ids.to(self.phandle.device)
-        outputs = self._debug_generate(test_input_ids[self.model_input_names[0]], gen_config_override)
+        outputs = self._debug_generate(inputs=test_input_ids[self.model_input_names[0]],
+                                       gen_config_override=gen_config_override,
+                                       gen_kwargs_override=gen_kwargs_override)
         decode_target, decode_kwargs = self.sanitize_gen_output(outputs, gen_output_attr, decode_cfg_override)
         answers = self.phandle.datamodule.tokenizer.batch_decode(decode_target, **decode_kwargs)
         return answers, outputs
 
     def debug_generate_serial(self, sequences: List, gen_output_attr: Optional[str] = None,
-                              gen_config_override: Optional[Dict] = None,
+                              gen_config_override: Optional[Dict] = None, gen_kwargs_override: Optional[Dict] = None,
                               decode_cfg_override: Optional[Dict] = None) -> Tuple[List, List]:
         answers = []
         full_outputs = []
@@ -226,7 +231,8 @@ class DebugGeneration:
             test_input_ids = self.phandle.datamodule.tokenizer.encode(seq)
             test_input_ids = torch.tensor(test_input_ids).to(self.phandle.device)
             test_input_ids = test_input_ids.unsqueeze(0)
-            output = self._debug_generate(test_input_ids, gen_config_override)
+            output = self._debug_generate(inputs=test_input_ids, gen_config_override=gen_config_override,
+                                          gen_kwargs_override=gen_kwargs_override)
             decode_target, decode_kwargs = self.sanitize_gen_output(output, gen_output_attr, decode_cfg_override)
             sequences = decode_target.unbind()
             decode_kwargs = deepcopy(self.DEFAULT_DECODE_KWARGS)

@@ -1,0 +1,8 @@
+seed_everything: 42
+session_cfg:
+  datamodule_cfg:
+    class_path: interpretune.base.config.datamodule.ITDataModuleConfig
+  datamodule_cls: null
+  module_cfg:
+    class_path: interpretune.base.config.module.ITConfig
+  module_cls: null

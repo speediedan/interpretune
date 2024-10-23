@@ -296,7 +296,7 @@ class BaseITLensModule(BaseITModule):
         # override unsupported from pretrained options
         if self.hf_cfg:
             self.hf_cfg.lora_cfg = None
-            self.hf_cfg.bitsandbytesconfig = None
+            self.hf_cfg.bitsandbytesconfig = None  # TODO NEXT: enable bnb now that it's supported by TransformerLens
         # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
         # TODO: serialize tl_config
         if self.it_cfg.hf_from_pretrained_cfg:
