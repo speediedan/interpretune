@@ -45,8 +45,8 @@ from tests.parity_acceptance.test_it_cli import TEST_CONFIGS_CLI_PARITY
 from tests.parity_acceptance.test_it_l import CoreCfg, ProfParityCfg, BaseCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg, TLProfileCfg
 from tests.unit.cfg_aliases import (TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg,
-    LightningLlama2DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg, CoreGPT2PEFTSeqCfg, CoreCfgForcePrepare, LightningGPT2,
-    LightningTLGPT2, TLMechInterpCfg)
+    LightningLlama3DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg, CoreGPT2PEFTSeqCfg,
+    CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, TLMechInterpCfg)
 
 
 test_cli_cfgs = deepcopy(parity_cli_cfgs)
@@ -81,7 +81,7 @@ FIXTURE_CFGS = {
     "core_cust_memprof": FixtureCfg(test_cfg=CoreMemProfCfg),
     "l_gpt2": FixtureCfg(test_cfg=LightningGPT2, scope="function"),
     "l_tl_gpt2": FixtureCfg(test_cfg=LightningTLGPT2, scope="function"),
-    "l_llama2_debug": FixtureCfg(test_cfg=LightningLlama2DebugCfg),
+    "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg),
     "tl_cust": FixtureCfg(test_cfg=TLParityCfg, scope="session"),
     "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function"),
     "tl_gpt2": FixtureCfg(test_cfg=TLProfileCfg),
@@ -265,7 +265,8 @@ def cli_test_file_env(tmp_path_factory):
         "exp_cfgs": test_cli_cfgs["exp_cfgs"],
     }
     yield TEST_CLI_CONFIG_FILES, EXPERIMENTS_BASE
-    for env_key in ("IT_CONFIG_BASE", "IT_CONFIG_DEFAULTS", "WANDB_API_KEY", "LLAMA2_AUTH_KEY", "IDE_PROJECT_ROOTS"):
+    for env_key in ("IT_CONFIG_BASE", "IT_CONFIG_DEFAULTS", "WANDB_API_KEY", "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+                    "IDE_PROJECT_ROOTS"):
         if env_key in os.environ:
             del os.environ[env_key]
 
@@ -400,7 +401,7 @@ def preserve_global_rank_variable():
 def restore_env_variables():
     """Ensures that environment variables set during the test do not leak out."""
     okay_session_scope_keys = {"IT_CONFIG_BASE", "IT_CORE_SHARED", "IT_LIGHTNING_SHARED", "WANDB_API_KEY",
-                               "LLAMA2_AUTH_KEY", "IDE_PROJECT_ROOTS"}
+                               "HF_GATED_PUBLIC_REPO_AUTH_KEY", "IDE_PROJECT_ROOTS"}
     env_backup = os.environ.copy()
     yield
     leaked_vars = os.environ.keys() - env_backup.keys()

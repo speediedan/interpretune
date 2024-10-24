@@ -7,6 +7,7 @@ from datasets import load_dataset, Dataset
 import numpy as np
 from torch.nn import CrossEntropyLoss
 
+from interpretune.utils.logging import rank_zero_warn
 from interpretune.base.config.shared import ITSerializableCfg
 from interpretune.utils.tokenization import _sanitize_input_name
 
@@ -71,9 +72,7 @@ class DebugGeneration:
             sequences = [sequences]
         return [f"{ex.strip()}" for ex in sequences]
 
-    # TODO: add check to validate compatible model to gracefully handle use with incompatible models
-    # debug helper function for models that use sys and inst metadata (e.g. llama2)
-    def sys_inst_debug_sequences(self, sequences: Optional[List] = None) -> List:
+    def chat_debug_sequences(self, format = 'llama3', sequences: Optional[List] = None) -> List:
         """_summary_
 
         Args:
@@ -85,22 +84,29 @@ class DebugGeneration:
         Usage:
 
         ```python
-        # when using a llama2 chat model, you'll want to have input tokenized with sys and inst metadata
+        # for example, using the llama3 chat format, youwant to have input tokenized with sys and inst metadata
         # to do so with some reasonable default questions as a sanity check and in batch mode:
-        self.debug_lm.debug_generate_batch(self.debug_lm.sys_inst_debug_sequences())
+        self.debug_lm.debug_generate_batch(self.debug_lm.chat_debug_sequences(format='llama3'),)
         # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
-        self.debug_lm.debug_generate_serial(self.debug_lm.sys_inst_debug_sequences())
+        self.debug_lm.debug_generate_serial(self.debug_lm.chat_debug_sequences(format='llama3'))
         # to override the defaults (both questions and current `max_new_tokens` config)
-        self.debug_lm.debug_generate_batch(self.debug_lm.sys_inst_debug_sequences([
+        self.debug_lm.debug_generate_batch(self.debug_lm.chat_debug_sequences(format='llama3', sequences=[
             'What is the color of a cloudless sky?', 'How many days are in a year?']),
             gen_config_override={"max_new_tokens": 25})
         ```
         """
         sequences = sequences or self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
-        return [self.phandle.datamodule.tokenizer.bos_token + \
-            self.phandle.datamodule.itdm_cfg.prompt_cfg.SYS_PREFIX + \
-                f"{ex.strip()} {self.phandle.datamodule.itdm_cfg.prompt_cfg.E_INST}" \
-                for ex in sequences]
+        match format:
+            case 'llama3':
+                return [self.phandle.datamodule.itdm_cfg.prompt_cfg.SYS_ROLE_START + \
+                        f"{ex.strip()} {self.phandle.datamodule.itdm_cfg.prompt_cfg.USER_ROLE_END}" \
+                            for ex in sequences]
+            case _:
+                rank_zero_warn(f"Unrecognized format for chat debug sequences: {format}. "
+                               "Returning the stripped sequences but without the corresponding "
+                               "chat format metadata.")
+                return [f"{ex.strip()}" for ex in sequences]
+
 
     def _debug_generate(self, inputs: List|torch.Tensor, gen_kwargs_override: Optional[Dict] = None,
                         gen_config_override: Optional[Dict] = None) -> Any:
@@ -117,7 +123,7 @@ class DebugGeneration:
         # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
         self.debug_lm.debug_generate_serial(['my sequence potentially with chat specific tags', 'another sequence'])
         # to override the defaults (both questions and current generation config with a different `max_new_tokens`)
-        self.debug_lm.debug_generate_batch(self.debug_lm.sys_inst_debug_sequences([
+        self.debug_lm.debug_generate_batch(self.debug_lm.chat_debug_sequences([
             'What is the color of a cloudless sky?', 'How many days are in a year?']),
             gen_config_override={"max_new_tokens": 25})
         ```
@@ -192,6 +198,10 @@ class DebugGeneration:
         return decode_target, decode_kwargs
 
     def sanitize_model_output(self, output: Any, gen_output_attr: Optional[str] = None) -> List[str]:
+        # TODO: consider updating for cache ahead of 4.47
+        #       From v4.47 onwards, when a model cache is to be returned, `generate` will return a `Cache` instance
+        #       instead by default (as opposed to the legacy tuple of tuples format). If you want to keep returning the
+        #       legacy format, please set `return_legacy_cache=True`.
         if gen_output_attr:
             return getattr(output, gen_output_attr)
         for output_attr in self.DEFAULT_OUTPUT_ATTRS:

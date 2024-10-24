@@ -62,7 +62,7 @@
 #     (("rte_boolq", "gpt2", "rte_small_optimizer_scheduler_init", None, True),
 #      ("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "transformer_lens", True),
 #      ("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "transformer_lens", False),
-#      ("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", None, True))
+#      ("rte_boolq", "llama3", "lightning_rte_7b_qlora_zero_shot_test_only", None, True))
 # )
 
 # # experiment config set aliases
@@ -70,7 +70,7 @@
 # gpt2_core_tl = EXPERIMENT_CFG_SETS[("rte_boolq", "gpt2", "tl_rte_small_it_cli_test", "transformer_lens", True)]
 # gpt2_l_tl = EXPERIMENT_CFG_SETS[("rte_boolq", "gpt2", "lightning_tl_rte_small_noquant_test", "transformer_lens",
 #                                  False)]
-# llama2_l = EXPERIMENT_CFG_SETS[("rte_boolq", "llama2", "lightning_rte_7b_qlora_zero_shot_test_only", None, True)]
+# llama3_l = EXPERIMENT_CFG_SETS[("rte_boolq", "llama3", "lightning_rte_7b_qlora_zero_shot_test_only", None, True)]
 
 # TEST_CONFIGS_EXAMPLES = (
 #     TestCfg(alias="core_gpt2_tl_compose_config", cfg=(False, None, False, gpt2_core_tl, True)),
@@ -81,7 +81,7 @@
 #     TestCfg(alias="lightning_gpt2_tl", cfg=(True, "test", False, gpt2_l_tl, False), marks="lightning"),
 #     TestCfg(alias="lightning_gpt2_tl_instantiate_only", cfg=(True, None, True, gpt2_l_tl, False),
 #                marks="l_optional", expected={'class_type': ITLensLightningModule}),
-#     TestCfg(alias="lightning_llama2", cfg=(True, "test", False, llama2_l, False), marks="lightning"),
+#     TestCfg(alias="lightning_llama3", cfg=(True, "test", False, llama3_l, False), marks="lightning"),
 # )
 
 # EXPECTED_RESULTS_EXAMPLES = {cfg.alias: cfg.expected for cfg in TEST_CONFIGS_EXAMPLES}

@@ -94,11 +94,11 @@ class CoreMemProfCfg(BaseCfg):
     model_src_key: Optional[str] = "gpt2"
 
 @dataclass(kw_only=True)
-class LightningLlama2DebugCfg(BaseCfg):
+class LightningLlama3DebugCfg(BaseCfg):
     debug_lm_cfg: Optional[DebugLMConfig] = field(default_factory=lambda: DebugLMConfig(enabled=True))
     phase: Optional[str] = "test"
     device_type: Optional[str] = "cuda"
-    model_src_key: Optional[str] = "llama2"
+    model_src_key: Optional[str] = "llama3"
     precision: Optional[str | int] = "bf16-true"
     adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning,)
 

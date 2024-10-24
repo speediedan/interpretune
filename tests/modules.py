@@ -21,7 +21,7 @@ from interpretune.base.config.module import ITConfig
 from interpretune.utils.types import STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_only
 from it_examples.experiments.rte_boolq.modules import RTEBoolqModuleMixin, RTEBoolqSteps
-from it_examples.experiments.rte_boolq.datamodules import GPT2RTEBoolqDataModule, Llama2RTEBoolqDataModule
+from it_examples.experiments.rte_boolq.datamodules import GPT2RTEBoolqDataModule, LlamaRTEBoolqDataModule
 from tests import FinetuningScheduler
 from tests.results import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS, SAMPLE_POSITION,
                            DatasetState, TestDatasetKey)
@@ -87,16 +87,16 @@ class BaseTestDataModule:
 class TestITDataModule(BaseTestDataModule, GPT2RTEBoolqDataModule):
     ...
 
-class Llama2TestITDataModule(BaseTestDataModule, Llama2RTEBoolqDataModule):
+class SimpleDatasetStateMixin:
+    # dataset fingerprinting not currently implemented for this datamodule so we validate task name and tokenizer only
     def sample_dataset_state(self) -> Tuple:
-        # dataset validation not currently implemented for Llama2 tests
-        sample_state = []
-        return (self.itdm_cfg.task_name, self.tokenizer.__class__.__name__, sample_state)
+        return (self.itdm_cfg.task_name, self.tokenizer.__class__.__name__, [])
 
     def sample_step_input(self, batch: BatchEncoding) -> Tuple:
-        # dataset validation not currently implemented for Llama2 tests
-        sample_state = []
-        return sample_state
+        return []
+
+class LlamaTestITDataModule(SimpleDatasetStateMixin, BaseTestDataModule, LlamaRTEBoolqDataModule):
+    ...
 
 class SampledOutput(NamedTuple):
     """Sampled Output Named Tuple.

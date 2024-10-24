@@ -212,6 +212,8 @@ class HFFromPretrainedMixin:
                 setattr(self.model.config, k, v)
 
     def _hf_maybe_resize_token_embeddings(self) -> None:
+        if not self.it_cfg.tokenizer_id_overrides:
+            return
         vocab_size = getattr(self.model.base_model, 'vocab_size', None) or self.model.config.vocab_size
         max_override_id = max(self.it_cfg.tokenizer_id_overrides.values())
         if max_override_id >= vocab_size:

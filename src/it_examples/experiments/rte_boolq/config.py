@@ -33,20 +33,30 @@ class RTEBoolqPromptConfig(PromptConfig):
 
 
 @dataclass(kw_only=True)
-class Llama2PromptConfig(RTEBoolqPromptConfig):
-    sys_prompt: str = ("You are a helpful, respectful and honest assistant. Always answer as helpfully as"
-    " possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, toxic,"
-    " dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature."
-    " If a question does not make any sense, or is not factually coherent, explain why instead of answering something"
-    " not correct. If you don't know the answer to a question, please don't share false information.")
-    B_INST: str = "[INST]"
-    E_INST: str = "[/INST]"
-    B_SYS: str = "<<SYS>>\n"
-    E_SYS: str = "\n<</SYS>>\n\n"
+class Llama3PromptConfig(RTEBoolqPromptConfig):
+    # see https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/prompt_format.md for more details
+    sys_prompt: str = ("You are a helpful assistant.")
+    B_TEXT: str = "<|begin_of_text|>"
+    E_TEXT: str = "<|end_of_text|>"
+    B_HEADER: str = "<|start_header_id|>"
+    E_HEADER: str = "<|end_header_id|>"
+    E_TURN: str = "<|eot_id|>"
+    # tool tags, see https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/text_prompt_format.md
+    # for tool prompt format details
+    TOOL_TAG: str = "<|python_tag|>"
+    E_TOOL_MSG: str = "<|eom_id|>"
+    SYS_ROLE: str = "system"
+    USER_ROLE: str = "user"
+    ASSISTANT_ROLE: str = "assistant"
+    TOOL_ROLE: str = "ipython"
 
     def __post_init__(self) -> None:
-        self.SYS_PREFIX_START = f"{self.B_INST} " + self.B_SYS
-        self.SYS_PREFIX = self.SYS_PREFIX_START + self.sys_prompt + self.E_SYS
+        self.SYS_ROLE_HEADER = self.B_HEADER + self.SYS_ROLE + self.E_HEADER
+        self.USER_ROLE_HEADER = self.B_HEADER + self.USER_ROLE + self.E_HEADER
+        self.ASSISTANT_ROLE_HEADER = self.B_HEADER + self.ASSISTANT_ROLE + self.E_HEADER
+        self.SYS_ROLE_START = self.B_TEXT + self.SYS_ROLE_HEADER + "\n" + self.sys_prompt + self.E_TURN + \
+            self.USER_ROLE_HEADER + "\n"
+        self.USER_ROLE_END = self.E_TURN + self.ASSISTANT_ROLE_HEADER + "\n"
 
 
 # add our custom model attributes

@@ -220,7 +220,7 @@ class ITCLI(ITSessionMixin):
 def env_setup() -> None:
     if _DOTENV_AVAILABLE:
         from dotenv import load_dotenv
-        # set WandB API Key if desired, load LLAMA2_AUTH_KEY if it exists
+        # set WandB API Key if desired, load HF_GATED_PUBLIC_REPO_AUTH_KEY if it exists
         load_dotenv()
     transformers_logging.set_verbosity_error()
     # ignore warnings related tokenizers_parallelism/DataLoader parallelism tradeoff and

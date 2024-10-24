@@ -4,7 +4,7 @@ from copy import deepcopy
 from enum import auto
 from pathlib import Path
 
-from it_examples.experiments.rte_boolq.config import (RTEBoolqPromptConfig, Llama2PromptConfig,
+from it_examples.experiments.rte_boolq.config import (RTEBoolqPromptConfig, Llama3PromptConfig,
                                                       RTEBoolqZeroShotClassificationConfig)
 from interpretune.adapters.registration import Adapter
 from interpretune.adapters.transformer_lens import TLensGenerationConfig
@@ -36,33 +36,36 @@ cuda_bf16_l = {**cuda, **bf16, **w_lit}
 # Core config aliases
 ##################################
 
+# TODO: consider refactoring these aliases into flattened dict/dataclasses earlier and update them directly with a
+#       deferred init flag?
 tokenizer_base_kwargs = {"add_bos_token": True, "local_files_only": False}
 model_input_names_hf_pretrained = {"model_input_names": ['input_ids', 'attention_mask']}
 model_input_names_cust = {"model_input_names": ['tokens']}
 
-# TODO: refactor to init dataclasses earlier and update them directly with a deferred init flag?
 core_hf_pretrained_tokenizer_kwargs = {"tokenizer_kwargs": {**model_input_names_hf_pretrained, "padding_side": "left",
                                                             **tokenizer_base_kwargs}}
 core_cust_tokenizer_kwargs = {"tokenizer_kwargs": {**model_input_names_cust, "padding_side": "left",
                                                    **tokenizer_base_kwargs}}
 
-gpt2_token_overrides = {"tokenizer_id_overrides": {"pad_token_id": 50256}}
-llama2_token_overrides = {"tokenizer_id_overrides": {"pad_token_id": 32000}}
+# NOTE: this configuration is for testing, for finetuning, llama3 should be changed to right padding
+llama3_cust_tokenizer_kwargs = {"tokenizer_kwargs": {**model_input_names_cust, "padding_side": "left",
+                                                     "add_bos_token": False, "local_files_only": False}}
 
-llama2_special_tokens_dict = {"special_tokens_dict": {"pad_token": "<PAD>"}}
+gpt2_token_overrides = {"tokenizer_id_overrides": {"pad_token_id": 50256}}
+llama3_token_overrides = {"tokenizer_id_overrides": {"pad_token_id": 128004}}
+
+llama3_special_tokens_dict = {"special_tokens_dict": {"pad_token": "<|finetune_right_pad_id|>"}}
 
 gpt2_shared_config =  {"model_name_or_path": "gpt2", **gpt2_token_overrides}
 cust_shared_config = {"tokenizer_name": "gpt2", **gpt2_token_overrides}
-llama2_shared_config =  {"model_name_or_path": "meta-llama/Llama-2-7b-chat-hf",
-                         "os_env_model_auth_key": "LLAMA2_AUTH_KEY",
-                         **llama2_token_overrides}
-
+llama3_shared_config =  {"model_name_or_path": "meta-llama/Llama-3.2-3B-Instruct",
+                         "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+                         **llama3_token_overrides,
+                         }
 
 core_gpt2_shared_config = {"task_name": "pytest_rte_hf", **core_hf_pretrained_tokenizer_kwargs, **gpt2_shared_config}
 core_cust_shared_config = {"task_name": "pytest_rte_pt", **core_cust_tokenizer_kwargs, **cust_shared_config}
-core_llama2_shared_config = {"task_name": "pytest_rte_hf", **core_hf_pretrained_tokenizer_kwargs,
-                             **llama2_shared_config}
-
+core_llama3_shared_config = {"task_name": "pytest_rte_hf", **llama3_cust_tokenizer_kwargs, **llama3_shared_config}
 
 core_pretrained_signature_columns = ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
                                      'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
@@ -73,8 +76,8 @@ core_datamodule_kwargs = {"enable_datasets_cache": True, "prepare_data_map_cfg":
 core_pretrained_datamodule_kwargs = {"signature_columns": core_pretrained_signature_columns, **core_datamodule_kwargs}
 
 core_gpt2_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), **core_pretrained_datamodule_kwargs}
-core_llama2_datamodule_kwargs = {"prompt_cfg": Llama2PromptConfig(), "cust_tokenization_pattern": "llama2-chat",
-                                 **llama2_special_tokens_dict, **core_pretrained_datamodule_kwargs}
+core_llama3_datamodule_kwargs = {"prompt_cfg": Llama3PromptConfig(), "cust_tokenization_pattern": "llama3-chat",
+                                 **llama3_special_tokens_dict, **core_pretrained_datamodule_kwargs}
 core_cust_datamodule_kwargs = {"prompt_cfg": RTEBoolqPromptConfig(), "signature_columns": core_cust_signature_columns,
                               **core_datamodule_kwargs}
 
@@ -91,7 +94,7 @@ base_hf_from_pretrained_kwargs = {"device_map": "cpu", "torch_dtype": "float32"}
 no_tie_word_embeddings = {"tie_word_embeddings": False}
 no_tie_hf_from_pretrained_kwargs = {**base_hf_from_pretrained_kwargs, **no_tie_word_embeddings}
 
-llama2_lora_cfg = {"lora_cfg": {"r": 8, "lora_alpha": 32, "target_modules": ["q_proj", "v_proj"], "lora_dropout": 0.05,
+llama3_lora_cfg = {"lora_cfg": {"r": 8, "lora_alpha": 32, "target_modules": ["q_proj", "v_proj"], "lora_dropout": 0.05,
                                 "bias": "none", "task_type": "CAUSAL_LM"}}
 
 gpt2_hf_from_pretrained_kwargs = {"pretrained_kwargs": base_hf_from_pretrained_kwargs,
@@ -104,16 +107,16 @@ gpt2_hf_from_pretrained_cfg = HFFromPretrainedConfig(**gpt2_hf_from_pretrained_k
 no_tie_gpt2_hf_from_pretrained_cfg = HFFromPretrainedConfig(**no_tie_gpt2_hf_from_pretrained_kwargs)
 gpt2_hf_from_pretrained_act_ckpt_cfg = HFFromPretrainedConfig(**gpt2_hf_from_pretrained_kwargs,
                                                               **enable_act_checkpointing)
-llama2_hf_from_pretrained_cfg = HFFromPretrainedConfig(pretrained_kwargs=base_hf_from_pretrained_kwargs,
-                                                     model_head="transformers.LlamaForCausalLM", **llama2_lora_cfg)
+llama3_hf_from_pretrained_cfg = HFFromPretrainedConfig(pretrained_kwargs=base_hf_from_pretrained_kwargs,
+                                                     model_head="transformers.LlamaForCausalLM", **llama3_lora_cfg)
 
 core_hf_zero_shot_cfg = RTEBoolqZeroShotClassificationConfig(
     enabled=True, lm_generation_cfg=HFGenerationConfig(model_config={"max_new_tokens": 3}))
 
 test_core_gpt2_it_module_kwargs = {"zero_shot_cfg": core_hf_zero_shot_cfg,
                                    "hf_from_pretrained_cfg": gpt2_hf_from_pretrained_cfg, **base_it_module_kwargs}
-test_core_llama2_it_module_kwargs = {"zero_shot_cfg": core_hf_zero_shot_cfg,
-                                   "hf_from_pretrained_cfg": llama2_hf_from_pretrained_cfg, **base_it_module_kwargs}
+test_core_llama3_it_module_kwargs = {"zero_shot_cfg": core_hf_zero_shot_cfg,
+                                   "hf_from_pretrained_cfg": llama3_hf_from_pretrained_cfg, **base_it_module_kwargs}
 
 base_cust_model_cfg_kwargs = {"max_seq_len": 200}
 base_core_cust_config = {"device": "cpu", "dtype": "float32", "model_args": base_cust_model_cfg_kwargs}
@@ -136,8 +139,8 @@ nowarm_maxstep_hk_memprof_cfg = MemProfilerCfg(retain_hooks_for_funcs=["training
 
 test_core_gpt2_it_module_base = ChainMap(core_gpt2_shared_config, test_core_gpt2_it_module_kwargs)
 test_core_gpt2_it_module_optim = ChainMap(test_core_gpt2_it_module_base, test_optimizer_scheduler_init)
-test_core_llama2_it_module_base = ChainMap(core_llama2_shared_config, test_core_llama2_it_module_kwargs)
-test_core_llama2_it_module_optim = ChainMap(test_core_llama2_it_module_base, test_optimizer_scheduler_init)
+test_core_llama3_it_module_base = ChainMap(core_llama3_shared_config, test_core_llama3_it_module_kwargs)
+test_core_llama3_it_module_optim = ChainMap(test_core_llama3_it_module_base, test_optimizer_scheduler_init)
 test_core_cust_it_module_base = ChainMap(core_cust_shared_config, test_core_cust_it_module_kwargs)
 test_core_cust_it_module_optim = ChainMap(test_core_cust_it_module_base, test_optimizer_scheduler_init)
 

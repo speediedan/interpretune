@@ -32,14 +32,14 @@ from interpretune.extensions.debug_generation import DebugLMConfig
 from interpretune.utils.types import StrOrPath
 from it_examples.experiments.rte_boolq.config import RTEBoolqConfig, RTEBoolqTLConfig
 from tests import seed_everything
-from tests.modules import TestITDataModule, TestITModule, Llama2TestITDataModule
+from tests.modules import TestITDataModule, TestITModule, LlamaTestITDataModule
 from tests.runif import RunIf, RUNIF_ALIASES
 from tests.utils import get_model_input_dtype
 from tests.parity_acceptance.cfg_aliases import (
     core_gpt2_datamodule_kwargs, core_cust_datamodule_kwargs,
     test_core_cust_it_module_base, core_cust_shared_config, test_core_cust_it_module_optim,
-    test_core_gpt2_it_module_base, test_core_gpt2_it_module_optim, core_gpt2_shared_config, core_llama2_shared_config,
-    core_llama2_datamodule_kwargs, test_core_llama2_it_module_base, test_core_llama2_it_module_optim,
+    test_core_gpt2_it_module_base, test_core_gpt2_it_module_optim, core_gpt2_shared_config, core_llama3_shared_config,
+    core_llama3_datamodule_kwargs, test_core_llama3_it_module_base, test_core_llama3_it_module_optim,
     test_tl_gpt2_it_module_base, test_tl_cust_it_module_base, test_tl_gpt2_it_module_optim,
     test_tl_cust_it_module_optim, test_tl_datamodule_kwargs, test_tl_gpt2_shared_config)
 
@@ -53,7 +53,7 @@ DEFAULT_TEST_DATAMODULES = ('cust', 'gpt2')
 
 # N.B. Some unit tests may require slightly modified/subclassed test datamodules to accommodate testing of functionality
 # not compatible with the default GPT2-based test datamodule
-TEST_IT_DATAMODULE_MAPPING = {'llama2': Llama2TestITDataModule}
+TEST_IT_DATAMODULE_MAPPING = {'llama3': LlamaTestITDataModule}
 
 IT_GLOBAL_STATE_LOG_MODE = os.environ.get("IT_GLOBAL_STATE_LOG_MODE", "0") == "1"
 
@@ -125,7 +125,7 @@ class BaseCfg:
     max_epochs: Optional[int] = 1
     cust_fwd_kwargs: Optional[Dict] = None
     # used when adding a new test dataset or changing a test model to force re-caching of test datasets
-    force_prepare_data: bool = False
+    force_prepare_data: bool = False  # TODO: make this settable via an env variable as well
     max_steps: Optional[int] = None
     save_checkpoints: bool = False
 
@@ -143,7 +143,7 @@ TEST_DATAMODULE_BASE_CONFIGS = {
     # TODO: pull module/datamodule configs from model-keyed test config dict (fake lightweight registry)
     # (dm_adapter_ctx, model_src_key)
     (Adapter.core, "gpt2"): (core_gpt2_shared_config, core_gpt2_datamodule_kwargs),
-    (Adapter.core, "llama2"): (core_llama2_shared_config, core_llama2_datamodule_kwargs),
+    (Adapter.core, "llama3"): (core_llama3_shared_config, core_llama3_datamodule_kwargs),
     (Adapter.core, "cust"): (core_cust_shared_config, core_cust_datamodule_kwargs),
     (Adapter.transformer_lens, "any"): (test_tl_gpt2_shared_config, test_tl_datamodule_kwargs),
 }
@@ -152,8 +152,8 @@ TEST_MODULE_BASE_CONFIGS = {
     # (phase, adapter_mod_cfg_key, model_src_key)
     ("test", None, "gpt2"): test_core_gpt2_it_module_base,
     ("train", None, "gpt2"): test_core_gpt2_it_module_optim,
-    ("test", None, "llama2"): test_core_llama2_it_module_base,
-    ("train", None, "llama2"): test_core_llama2_it_module_optim,
+    ("test", None, "llama3"): test_core_llama3_it_module_base,
+    ("train", None, "llama3"): test_core_llama3_it_module_optim,
     ("predict", None, "cust"): test_core_cust_it_module_base,
     ("test", None, "cust"): test_core_cust_it_module_base,
     ("train", None, "cust"): test_core_cust_it_module_optim,

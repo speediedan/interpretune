@@ -1,5 +1,6 @@
 from typing import Optional, Any
 import logging
+from functools import partial
 
 import torch
 from torch.utils.data import DataLoader
@@ -87,13 +88,17 @@ class GPT2RTEBoolqDataModule(RTEBoolqDataModule):
         return features
 
 
-class Llama2RTEBoolqDataModule(RTEBoolqDataModule):
+class LlamaRTEBoolqDataModule(RTEBoolqDataModule):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.tokenization_func = self._tokenize_for_llama2
 
-    def _tokenize_for_llama2(self, example_batch: LazyDict) -> BatchEncoding:
+        # HF Datasets' transformation cache fingerprinting algo necessitates construction of these partials as the hash
+        # is generated using function args, dataset file, mapping args: https://bit.ly/HF_Datasets_fingerprint_algo)
+        self.tokenization_func = partial(self._tokenize_for_llama,
+                                         tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern)
+
+    def _tokenize_for_llama(self, example_batch: LazyDict, tokenization_pattern: Optional[str] = None) -> BatchEncoding:
         example_batch['sequences'] = []
         assert example_batch is not None
         assert self.itdm_cfg.text_fields is not None
@@ -109,9 +114,9 @@ class Llama2RTEBoolqDataModule(RTEBoolqDataModule):
             else:
                 task_prompt = (field1 + self.itdm_cfg.prompt_cfg.ctx_question_join + field2 \
                                + self.itdm_cfg.prompt_cfg.question_suffix)
-            if self.itdm_cfg.cust_tokenization_pattern == "llama2-chat":
-                sequence = self.itdm_cfg.prompt_cfg.SYS_PREFIX + \
-                    f"{task_prompt.strip()} {self.itdm_cfg.prompt_cfg.E_INST}"
+            if tokenization_pattern == "llama3-chat":
+                sequence = self.itdm_cfg.prompt_cfg.SYS_ROLE_START + \
+                    f"{task_prompt.strip()} {self.itdm_cfg.prompt_cfg.USER_ROLE_END}"
             else:
                 sequence = task_prompt.strip()
             example_batch['sequences'].append(sequence)

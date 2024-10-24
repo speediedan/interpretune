@@ -146,3 +146,16 @@ class TestClassMixins:
             mock.patch.object(core_cust_it_m, 'map_gen_inputs', lambda x: x):
             with pytest.warns(UserWarning, match="The following keys were found"), pytest.raises(Exception):
                 run_it(it_session=get_it_session__core_cust__initonly, test_cfg=test_cfg)
+
+    @pytest.mark.parametrize("tokenizer_id_overrides", [None, {'pad_token_id': 150}],
+                             ids=["no_token_overrides", "new_token_overrides"],)
+    def test_hf_from_pretrained_maybe_resize_token_embeddings(self, tokenizer_id_overrides):
+        test_it_cfg = deepcopy(test_core_gpt2_it_module_base)
+        test_it_cfg['tokenizer_id_overrides'] = tokenizer_id_overrides
+        hf_from_pretrained_mixin = TestClassMixins._get_hf_from_pretrained_mixin(test_it_cfg)
+        hf_from_pretrained_mixin.model = mock.Mock()
+        hf_from_pretrained_mixin.model.base_model = mock.Mock()
+        hf_from_pretrained_mixin.model.base_model.vocab_size = 100
+        expected_calls = 0 if tokenizer_id_overrides is None else 1
+        hf_from_pretrained_mixin._hf_maybe_resize_token_embeddings()
+        assert hf_from_pretrained_mixin.model.base_model.resize_token_embeddings.call_count == expected_calls
