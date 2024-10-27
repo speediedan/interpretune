@@ -1,6 +1,6 @@
 session_cfg:
   adapter_ctx: [lightning, transformer_lens]
-  datamodule_cls: it_examples.example_module_registry.GPT2RTEBoolqDataModule
+  datamodule_cls: it_examples.experiments.rte_boolq.RTEBoolqDataModule
   datamodule_cfg:
     class_path: interpretune.base.config.datamodule.ITDataModuleConfig
     init_args:

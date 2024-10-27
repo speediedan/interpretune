@@ -1,18 +1,12 @@
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Optional, Any
-from functools import partial
+from typing import Optional
 
-from datasets.arrow_dataset import LazyDict
-from transformers.tokenization_utils_base import BatchEncoding
-
-from it_examples.experiments.rte_boolq import (RTEBoolqPromptConfig, RTEBoolqConfig, RTEBoolqTLConfig,
-                                                      RTEBoolqZeroShotClassificationConfig)
-from it_examples.experiments.rte_boolq import RTEBoolqDataModule
+from it_examples.experiments.rte_boolq import (RTEBoolqPromptConfig, RTEBoolqDataModule, RTEBoolqConfig,
+                                               RTEBoolqTLConfig, RTEBoolqZeroShotClassificationConfig)
 from interpretune.adapters.transformer_lens import (TLensGenerationConfig, ITLensFromPretrainedConfig,
                                                     ITLensCustomConfig)
 from interpretune.base.config.datamodule import ITDataModuleConfig
-from interpretune.utils.tokenization import _sanitize_input_name
 from interpretune.base.config.mixins import HFGenerationConfig, CoreGenerationConfig
 from interpretune.base.config.module import HFFromPretrainedConfig
 from interpretune.adapters.registration import Adapter
@@ -44,32 +38,6 @@ base_it_module_kwargs = {"experiment_tag": "test_itmodule", "cust_fwd_kwargs": {
 ####################################
 # GPT2
 ####################################
-class GPT2RTEBoolqDataModule(RTEBoolqDataModule):
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.tokenization_func = self._tokenize_for_gpt2
-
-    def _tokenize_for_gpt2(self, example_batch: LazyDict) -> BatchEncoding:
-        example_batch['sequences'] = []
-        assert example_batch is not None
-        assert self.itdm_cfg.text_fields is not None
-        assert self.itdm_cfg.prompt_cfg is not None
-        # TODO: use promptsource instead of this manual approach after tinkering
-        for field1, field2 in zip(example_batch[self.itdm_cfg.text_fields[0]],
-                                  example_batch[self.itdm_cfg.text_fields[1]]):
-            if self.itdm_cfg.prompt_cfg.cust_task_prompt:
-                task_prompt = (self.itdm_cfg.prompt_cfg.cust_task_prompt['context'] + "\n" + field1 + "\n\n" +
-                               self.itdm_cfg.prompt_cfg.cust_task_prompt['question'] + "\n" + field2)
-            else:
-                task_prompt = (field1 + self.itdm_cfg.prompt_cfg.ctx_question_join + field2 \
-                               + self.itdm_cfg.prompt_cfg.question_suffix)
-            sequence = task_prompt.strip()
-            example_batch['sequences'].append(sequence)
-        features = self.tokenizer(example_batch["sequences"], padding="longest")
-        features["labels"] = example_batch["label"]  # Rename label to labels, easier to pass to model forward
-        features = _sanitize_input_name(self.tokenizer.model_input_names, features)
-        return features
 
 core_gpt2_shared_config = dict(task_name="pytest_rte_hf", tokenizer_kwargs=default_tokenizer_kwargs,
                                model_name_or_path="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
@@ -124,39 +92,13 @@ class RTEBoolqLlama3PromptConfig(Llama3PromptConfig, RTEBoolqPromptConfig):
 
 class LlamaRTEBoolqDataModule(RTEBoolqDataModule):
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-
-        # HF Datasets' transformation cache fingerprinting algo necessitates construction of these partials as the hash
-        # is generated using function args, dataset file, mapping args: https://bit.ly/HF_Datasets_fingerprint_algo)
-        self.tokenization_func = partial(self._tokenize_for_llama,
-                                         tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern)
-
-    def _tokenize_for_llama(self, example_batch: LazyDict, tokenization_pattern: Optional[str] = None) -> BatchEncoding:
-        example_batch['sequences'] = []
-        assert example_batch is not None
-        assert self.itdm_cfg.text_fields is not None
-        assert self.itdm_cfg.prompt_cfg is not None
-        # TODO: use promptsource instead of this manual approach after tinkering
-        for field1, field2 in zip(example_batch[self.itdm_cfg.text_fields[0]],
-                                  example_batch[self.itdm_cfg.text_fields[1]]):
-            if self.itdm_cfg.prompt_cfg.cust_task_prompt:
-                task_prompt = (self.itdm_cfg.prompt_cfg.cust_task_prompt['context'] + "\n" +
-                               field1 + "\n" +
-                               self.itdm_cfg.prompt_cfg.cust_task_prompt['question'] + "\n" +
-                               field2)
-            else:
-                task_prompt = (field1 + self.itdm_cfg.prompt_cfg.ctx_question_join + field2 \
-                               + self.itdm_cfg.prompt_cfg.question_suffix)
-            if tokenization_pattern == "llama3-chat":
-                sequence = self.itdm_cfg.prompt_cfg.SYS_ROLE_START + \
-                    f"{task_prompt.strip()} {self.itdm_cfg.prompt_cfg.USER_ROLE_END}"
-            else:
-                sequence = task_prompt.strip()
-            example_batch['sequences'].append(sequence)
-        features = self.tokenizer.batch_encode_plus(example_batch["sequences"], padding="longest")
-        features["labels"] = example_batch["label"]  # Rename label to labels, easier to pass to model forward
-        return features
+    def cust_tokenization_pattern(self, task_prompt: str, tokenization_pattern: Optional[str] = None) -> str:
+        if tokenization_pattern == "llama3-chat":
+            sequence = self.itdm_cfg.prompt_cfg.SYS_ROLE_START + \
+            f"{task_prompt.strip()} {self.itdm_cfg.prompt_cfg.USER_ROLE_END}"
+        else:
+            sequence = task_prompt.strip()
+        return sequence
 
 # NOTE: this configuration is for testing, for finetuning, llama3 should be changed to right padding
 llama3_cust_tokenizer_kwargs = {"model_input_names": ["input_ids", "attention_mask"],

@@ -20,8 +20,8 @@ from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
 from interpretune.utils.types import STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_only
-from it_examples.experiments.rte_boolq import RTEBoolqModuleMixin, RTEBoolqSteps
-from it_examples.example_module_registry import GPT2RTEBoolqDataModule, LlamaRTEBoolqDataModule
+from it_examples.experiments.rte_boolq import RTEBoolqDataModule, RTEBoolqModuleMixin, RTEBoolqSteps
+from it_examples.example_module_registry import LlamaRTEBoolqDataModule
 from tests import FinetuningScheduler
 from tests.results import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS, SAMPLE_POSITION,
                            DatasetState, TestDatasetKey)
@@ -84,7 +84,7 @@ class BaseTestDataModule:
             dataset.save_to_disk(str(dataset_path))
             #dataset.save_to_disk(dataset_path)
 
-class TestITDataModule(BaseTestDataModule, GPT2RTEBoolqDataModule):
+class TestITDataModule(BaseTestDataModule, RTEBoolqDataModule):
     ...
 
 class SimpleDatasetStateMixin:

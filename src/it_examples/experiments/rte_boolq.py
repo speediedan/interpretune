@@ -3,12 +3,14 @@ from typing import Any, Dict, Optional, Tuple, List
 from dataclasses import dataclass, field
 from pprint import pformat
 import logging
+from functools import partial
 
 import torch
 from torch.utils.data import DataLoader
 from torch.nn import CrossEntropyLoss
 import evaluate
 import datasets
+from datasets.arrow_dataset import LazyDict
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.adapters.transformer_lens import ITLensConfig
@@ -19,6 +21,7 @@ from interpretune.base.components.mixins import ProfilerHooksMixin
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.utils.types import STEP_OUTPUT
+from interpretune.utils.tokenization import _sanitize_input_name
 
 
 log = logging.getLogger(__name__)
@@ -68,6 +71,10 @@ class RTEBoolqDataModule(ITDataModule):
             itdm_cfg.task_name = DEFAULT_TASK
         itdm_cfg.text_fields = TASK_TEXT_FIELD_MAP[itdm_cfg.task_name]
         super().__init__(itdm_cfg=itdm_cfg)
+        # HF Datasets' transformation cache fingerprinting algo necessitates construction of these partials as the hash
+        # is generated using function args, dataset file, mapping args: https://bit.ly/HF_Datasets_fingerprint_algo)
+        self.tokenization_func = partial(
+            self.encode_for_rteboolq, tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern)
 
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""
@@ -99,6 +106,31 @@ class RTEBoolqDataModule(ITDataModule):
     def predict_dataloader(self) -> DataLoader:
         return self.dataloader_factory(split='validation')
 
+    def cust_tokenization_pattern(self, task_prompt: str, tokenization_pattern: Optional[str] = None) -> str:
+        return task_prompt.strip()
+
+    def encode_for_rteboolq(self, example_batch: LazyDict, tokenization_pattern: Optional[str] = None) -> BatchEncoding:
+        example_batch['sequences'] = []
+        assert example_batch is not None
+        assert self.itdm_cfg.text_fields is not None
+        assert self.itdm_cfg.prompt_cfg is not None
+        # TODO: use promptsource instead of this manual approach after tinkering
+        for field1, field2 in zip(example_batch[self.itdm_cfg.text_fields[0]],
+                                  example_batch[self.itdm_cfg.text_fields[1]]):
+            if self.itdm_cfg.prompt_cfg.cust_task_prompt:
+                task_prompt = (self.itdm_cfg.prompt_cfg.cust_task_prompt['context'] + "\n" +
+                               field1 + "\n" +
+                               self.itdm_cfg.prompt_cfg.cust_task_prompt['question'] + "\n" +
+                               field2)
+            else:
+                task_prompt = (field1 + self.itdm_cfg.prompt_cfg.ctx_question_join + field2 \
+                               + self.itdm_cfg.prompt_cfg.question_suffix)
+            sequence = self.cust_tokenization_pattern(task_prompt, tokenization_pattern)
+            example_batch['sequences'].append(sequence)
+        features = self.tokenizer.batch_encode_plus(example_batch["sequences"], padding="longest")
+        features["labels"] = example_batch["label"]  # Rename label to labels, easier to pass to model forward
+        features = _sanitize_input_name(self.tokenizer.model_input_names, features)
+        return features
 
 class RTEBoolqSteps:
 
