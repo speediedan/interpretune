@@ -57,6 +57,33 @@ test_core_gpt2_it_module_optim = deepcopy(test_core_gpt2_it_module_base)
 test_core_gpt2_it_module_optim.__dict__.update(test_optimizer_scheduler_init)
 
 ####################################
+# Gemma2
+####################################
+# TODO: gemma2 non-instruction finetuned performance is terrible relative to llama3_2, try switching to
+#       google/gemma-2-2b-it version with relevant prompt config and custom tokenization pattern here
+# TODO: add option for using HF `tokenizer.apply_chat_template` api?
+#       We usually want full control so lower priority atm, but will likely be valuable in the future.
+core_gemma2_shared_config = dict(task_name="pytest_rte_hf", tokenizer_kwargs=default_tokenizer_kwargs,
+                                      model_name_or_path="google/gemma-2-2b")
+
+core_gemma2_datamodule_cfg = ITDataModuleConfig(**core_gemma2_shared_config,
+                                                     prompt_cfg=RTEBoolqPromptConfig(),
+                                                     signature_columns=core_pretrained_signature_columns,
+                                                     prepare_data_map_cfg={"batched": True},
+                                                     text_fields=("premise", "hypothesis"),
+                                                     enable_datasets_cache=True,
+                                                     train_batch_size=default_example_bs,
+                                                     eval_batch_size=default_example_bs)
+test_core_gemma2_it_module_base = RTEBoolqConfig(**base_it_module_kwargs, **core_gemma2_shared_config,
+    zero_shot_cfg=RTEBoolqZeroShotClassificationConfig(
+        enabled=True, lm_generation_cfg=HFGenerationConfig(model_config={"max_new_tokens": 3})),
+    hf_from_pretrained_cfg=HFFromPretrainedConfig(pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"},
+                                                  model_head="transformers.Gemma2ForCausalLM"))
+test_core_gemma2_it_module_optim = deepcopy(test_core_gemma2_it_module_base)
+test_core_gemma2_it_module_optim.__dict__.update(test_optimizer_scheduler_init)
+
+
+####################################
 # Llama3
 ####################################
 
@@ -204,6 +231,7 @@ TEST_DATAMODULE_BASE_CONFIGS = {
     # TODO: pull module/datamodule configs from model-keyed test config dict (fake lightweight registry)
     # (dm_adapter_ctx, model_src_key)
     (Adapter.core, "gpt2"): core_gpt2_datamodule_cfg,
+    (Adapter.core, "gemma2"): core_gemma2_datamodule_cfg,
     (Adapter.core, "llama3"): core_llama3_datamodule_cfg,
     (Adapter.core, "cust"): core_cust_datamodule_cfg,
     (Adapter.transformer_lens, "any"): test_tl_datamodule_cfg,
@@ -213,6 +241,8 @@ TEST_MODULE_BASE_CONFIGS = {
     # (phase, adapter_mod_cfg_key, model_src_key)
     ("test", None, "gpt2"): test_core_gpt2_it_module_base,
     ("train", None, "gpt2"): test_core_gpt2_it_module_optim,
+    ("test", None, "gemma2"): test_core_gemma2_it_module_base,
+    ("train", None, "gemma2"): test_core_gemma2_it_module_optim,
     ("test", None, "llama3"): test_core_llama3_it_module_base,
     ("train", None, "llama3"): test_core_llama3_it_module_optim,
     ("predict", None, "cust"): test_core_cust_it_module_base,

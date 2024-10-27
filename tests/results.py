@@ -48,6 +48,7 @@ class TestDatasetKey(AutoStrEnum):
 
 gpt2_dataset_state = ('GPT2TokenizerFast', deterministic_token_ids)
 llama_dataset_state = ('LlamaTokenizerFast', [])
+gemma2_dataset_state = ('GemmaTokenizerFast', deterministic_token_ids)
 test_dataset_state_core_gpt2 = (TestDatasetKey.pytest_rte_hf,) + gpt2_dataset_state
 test_dataset_state_core_llama = (TestDatasetKey.pytest_rte_hf,) +  llama_dataset_state
 test_dataset_state_core_cust = (TestDatasetKey.pytest_rte_pt,) + gpt2_dataset_state

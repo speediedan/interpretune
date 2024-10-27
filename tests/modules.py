@@ -95,6 +95,9 @@ class SimpleDatasetStateMixin:
     def sample_step_input(self, batch: BatchEncoding) -> Tuple:
         return []
 
+class NoFingerprintTestITDataModule(SimpleDatasetStateMixin, BaseTestDataModule, RTEBoolqDataModule):
+    ...
+
 class LlamaTestITDataModule(SimpleDatasetStateMixin, BaseTestDataModule, LlamaRTEBoolqDataModule):
     ...
 
