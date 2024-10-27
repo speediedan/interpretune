@@ -1,15 +1,103 @@
-from typing import Optional, List, Dict
+import os
+from typing import Any, Dict, Optional, Tuple, List
+from dataclasses import dataclass, field
+from pprint import pformat
+import logging
 
 import torch
+from torch.utils.data import DataLoader
 from torch.nn import CrossEntropyLoss
 import evaluate
+import datasets
 from transformers.tokenization_utils_base import BatchEncoding
 
+from interpretune.adapters.transformer_lens import ITLensConfig
+from interpretune.base.config.datamodule import PromptConfig, ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
+from interpretune.base.config.mixins import ZeroShotClassificationConfig, BaseGenerationConfig, HFGenerationConfig
 from interpretune.base.components.mixins import ProfilerHooksMixin
-from it_examples.experiments.rte_boolq.datamodules import DEFAULT_TASK, TASK_NUM_LABELS, INVALID_TASK_MSG
-from interpretune.utils.types import STEP_OUTPUT
+from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_warn
+from interpretune.utils.types import STEP_OUTPUT
+
+
+log = logging.getLogger(__name__)
+
+TASK_TEXT_FIELD_MAP = {"rte": ("premise", "hypothesis"), "boolq": ("passage", "question")}
+TASK_NUM_LABELS = {"boolq": 2, "rte": 2}
+DEFAULT_TASK = "rte"
+INVALID_TASK_MSG = f" is an invalid task_name. Proceeding with the default task: {DEFAULT_TASK!r}"
+
+
+@dataclass(kw_only=True)
+class RTEBoolqEntailmentMapping:
+    entailment_mapping: Tuple = ("Yes", "No")  # RTE style, invert mapping for BoolQ
+    entailment_mapping_indices: Optional[torch.Tensor] = None
+
+
+@dataclass(kw_only=True)
+class RTEBoolqZeroShotClassificationConfig(RTEBoolqEntailmentMapping, ZeroShotClassificationConfig):
+    enabled: bool = False
+    lm_generation_cfg: BaseGenerationConfig = field(default_factory=HFGenerationConfig)
+
+    def __repr__(self):
+        return f"Zero-Shot Classification Config: {os.linesep}{pformat(self.__dict__)}"
+
+
+@dataclass(kw_only=True)
+class RTEBoolqPromptConfig(PromptConfig):
+    ctx_question_join: str = 'Does the previous passage imply that '
+    question_suffix: str = '? Answer with only one word, either Yes or No.'
+    cust_task_prompt: Optional[Dict[str, Any]] = None
+
+# add our custom model attributes
+@dataclass(kw_only=True)
+class RTEBoolqConfig(RTEBoolqEntailmentMapping, ITConfig):
+    ...
+
+
+@dataclass(kw_only=True)
+class RTEBoolqTLConfig(RTEBoolqEntailmentMapping, ITLensConfig):
+    ...
+
+
+class RTEBoolqDataModule(ITDataModule):
+    def __init__(self, itdm_cfg: ITDataModuleConfig) -> None:
+        if itdm_cfg.task_name not in TASK_NUM_LABELS.keys():
+            rank_zero_warn(itdm_cfg.task_name + INVALID_TASK_MSG)
+            itdm_cfg.task_name = DEFAULT_TASK
+        itdm_cfg.text_fields = TASK_TEXT_FIELD_MAP[itdm_cfg.task_name]
+        super().__init__(itdm_cfg=itdm_cfg)
+
+    def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
+        """Load the SuperGLUE dataset."""
+        # N.B. PL calls prepare_data from a single process (rank 0) so do not use it to assign
+        # state (e.g. self.x=y)
+        # note for raw pytorch we require a target_model
+        dataset = datasets.load_dataset("super_glue", self.itdm_cfg.task_name, trust_remote_code=True)
+        for split in dataset.keys():
+            dataset[split] = dataset[split].map(self.tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
+            dataset[split] = self._remove_unused_columns(dataset[split], target_model)
+        dataset.save_to_disk(self.itdm_cfg.dataset_path)
+
+    def dataloader_factory(self, split: str, use_train_batch_size: bool = False) -> DataLoader:
+        dataloader_kwargs = {"dataset": self.dataset[split], "collate_fn":self.data_collator,
+                             **self.itdm_cfg.dataloader_kwargs}
+        dataloader_kwargs['batch_size'] = self.itdm_cfg.train_batch_size if use_train_batch_size else \
+            self.itdm_cfg.eval_batch_size
+        return DataLoader(**dataloader_kwargs)
+
+    def train_dataloader(self) -> DataLoader:
+        return self.dataloader_factory(split='train', use_train_batch_size=True)
+
+    def val_dataloader(self) -> DataLoader:
+        return self.dataloader_factory(split='validation')
+
+    def test_dataloader(self) -> DataLoader:
+        return self.dataloader_factory(split='validation')
+
+    def predict_dataloader(self) -> DataLoader:
+        return self.dataloader_factory(split='validation')
 
 
 class RTEBoolqSteps:
@@ -122,7 +210,6 @@ class RTEBoolqModuleMixin:
         token_ids = tokenizer.convert_tokens_to_ids(ent_cfg.entailment_mapping)
         device = self.device if isinstance(self.device, torch.device) else self.output_device
         ent_cfg.entailment_mapping_indices = torch.tensor(token_ids).to(device)
-
 
 
 class RTEBoolqModule(RTEBoolqSteps, RTEBoolqModuleMixin, torch.nn.Module):

@@ -1,6 +1,6 @@
 session_cfg:
   adapter_ctx: [lightning, transformer_lens]
-  datamodule_cls: it_examples.experiments.rte_boolq.datamodules.GPT2RTEBoolqDataModule
+  datamodule_cls: it_examples.example_module_registry.GPT2RTEBoolqDataModule
   datamodule_cfg:
     class_path: interpretune.base.config.datamodule.ITDataModuleConfig
     init_args:
@@ -11,7 +11,7 @@ session_cfg:
       prepare_data_map_cfg:
         batched: true
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.config.RTEBoolqPromptConfig
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
       # for tlens we must set signature columns because the inspected model forward signature (HF) prior to setup will
       # differ from HookedTransformer's forward
       signature_columns: ['input', 'attention_mask', 'labels']
@@ -26,9 +26,9 @@ session_cfg:
         - attention_mask
       tokenizer_name: gpt2
       train_batch_size: 2
-  module_cls: it_examples.experiments.rte_boolq.modules.RTEBoolqModule
+  module_cls: it_examples.experiments.rte_boolq.RTEBoolqModule
   module_cfg:
-    class_path: it_examples.experiments.rte_boolq.config.RTEBoolqTLConfig
+    class_path: it_examples.experiments.rte_boolq.RTEBoolqTLConfig
     init_args:
       cust_fwd_kwargs: {}
       experiment_tag: lightning_tl_rte_small_noquant_test
@@ -44,7 +44,7 @@ session_cfg:
           model_head: transformers.GPT2LMHeadModel
           activation_checkpointing: false
       zero_shot_cfg:
-        class_path: it_examples.experiments.rte_boolq.config.RTEBoolqZeroShotClassificationConfig
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
         init_args:
           enabled: true
           lm_generation_cfg:

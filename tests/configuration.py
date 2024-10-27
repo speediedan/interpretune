@@ -29,7 +29,7 @@ from interpretune.extensions.memprofiler import MemProfilerCfg
 from interpretune.extensions.debug_generation import DebugLMConfig
 from interpretune.utils.types import StrOrPath
 from tests import seed_everything
-from tests.test_module_registry import TEST_MODULE_BASE_CONFIGS, TEST_DATAMODULE_BASE_CONFIGS
+from it_examples.example_module_registry import TEST_MODULE_BASE_CONFIGS, TEST_DATAMODULE_BASE_CONFIGS
 from tests.modules import TestITDataModule, TestITModule, LlamaTestITDataModule
 from tests.runif import RunIf, RUNIF_ALIASES
 from tests.utils import get_model_input_dtype

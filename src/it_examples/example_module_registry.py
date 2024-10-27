@@ -1,16 +1,26 @@
 from copy import deepcopy
+from dataclasses import dataclass
+from typing import Optional, Any
+from functools import partial
 
-from it_examples.experiments.rte_boolq.config import (RTEBoolqPromptConfig, RTEBoolqLlama3PromptConfig, RTEBoolqConfig,
-                                                      RTEBoolqTLConfig, RTEBoolqZeroShotClassificationConfig, )
+from datasets.arrow_dataset import LazyDict
+from transformers.tokenization_utils_base import BatchEncoding
+
+from it_examples.experiments.rte_boolq import (RTEBoolqPromptConfig, RTEBoolqConfig, RTEBoolqTLConfig,
+                                                      RTEBoolqZeroShotClassificationConfig)
+from it_examples.experiments.rte_boolq import RTEBoolqDataModule
 from interpretune.adapters.transformer_lens import (TLensGenerationConfig, ITLensFromPretrainedConfig,
                                                     ITLensCustomConfig)
 from interpretune.base.config.datamodule import ITDataModuleConfig
-from interpretune.base.config.mixins import HFGenerationConfig
+from interpretune.utils.tokenization import _sanitize_input_name
+from interpretune.base.config.mixins import HFGenerationConfig, CoreGenerationConfig
 from interpretune.base.config.module import HFFromPretrainedConfig
 from interpretune.adapters.registration import Adapter
-from tests.global_defaults import default_test_bs
-from tests.utils import ToyGenCfg
 
+
+default_example_bs = 2
+
+# We define and 'register' basic example module configs here which are used in both example and parity acceptance tests.
 
 ##################################
 # Core config aliases
@@ -27,9 +37,39 @@ test_lr_scheduler_init = {"lr_scheduler_init": {"class_path": "torch.optim.lr_sc
 test_optimizer_scheduler_init = {**test_optimizer_init, **test_lr_scheduler_init}
 base_it_module_kwargs = {"experiment_tag": "test_itmodule", "cust_fwd_kwargs": {}}
 
-##################################
-# GPT2 Test Module Configs
-##################################
+####################################
+# Test/Example Module Configs
+####################################
+
+####################################
+# GPT2
+####################################
+class GPT2RTEBoolqDataModule(RTEBoolqDataModule):
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.tokenization_func = self._tokenize_for_gpt2
+
+    def _tokenize_for_gpt2(self, example_batch: LazyDict) -> BatchEncoding:
+        example_batch['sequences'] = []
+        assert example_batch is not None
+        assert self.itdm_cfg.text_fields is not None
+        assert self.itdm_cfg.prompt_cfg is not None
+        # TODO: use promptsource instead of this manual approach after tinkering
+        for field1, field2 in zip(example_batch[self.itdm_cfg.text_fields[0]],
+                                  example_batch[self.itdm_cfg.text_fields[1]]):
+            if self.itdm_cfg.prompt_cfg.cust_task_prompt:
+                task_prompt = (self.itdm_cfg.prompt_cfg.cust_task_prompt['context'] + "\n" + field1 + "\n\n" +
+                               self.itdm_cfg.prompt_cfg.cust_task_prompt['question'] + "\n" + field2)
+            else:
+                task_prompt = (field1 + self.itdm_cfg.prompt_cfg.ctx_question_join + field2 \
+                               + self.itdm_cfg.prompt_cfg.question_suffix)
+            sequence = task_prompt.strip()
+            example_batch['sequences'].append(sequence)
+        features = self.tokenizer(example_batch["sequences"], padding="longest")
+        features["labels"] = example_batch["label"]  # Rename label to labels, easier to pass to model forward
+        features = _sanitize_input_name(self.tokenizer.model_input_names, features)
+        return features
 
 core_gpt2_shared_config = dict(task_name="pytest_rte_hf", tokenizer_kwargs=default_tokenizer_kwargs,
                                model_name_or_path="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
@@ -39,7 +79,7 @@ core_gpt2_datamodule_cfg = ITDataModuleConfig(**core_gpt2_shared_config, prompt_
                                                prepare_data_map_cfg={"batched": True},
                                                text_fields=("premise", "hypothesis"),
                                                enable_datasets_cache=True,
-                                               train_batch_size=default_test_bs, eval_batch_size=default_test_bs)
+                                               train_batch_size=default_example_bs, eval_batch_size=default_example_bs)
 test_core_gpt2_it_module_base = RTEBoolqConfig(**base_it_module_kwargs, **core_gpt2_shared_config,
     zero_shot_cfg=RTEBoolqZeroShotClassificationConfig(
         enabled=True, lm_generation_cfg=HFGenerationConfig(model_config={"max_new_tokens": 3})),
@@ -48,9 +88,75 @@ test_core_gpt2_it_module_base = RTEBoolqConfig(**base_it_module_kwargs, **core_g
 test_core_gpt2_it_module_optim = deepcopy(test_core_gpt2_it_module_base)
 test_core_gpt2_it_module_optim.__dict__.update(test_optimizer_scheduler_init)
 
-##################################
-# Llama3 Test Module Configs
-##################################
+####################################
+# Llama3
+####################################
+
+@dataclass(kw_only=True)
+class Llama3PromptConfig:
+    # see https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/prompt_format.md for more details
+    sys_prompt: str = ("You are a helpful assistant.")
+    B_TEXT: str = "<|begin_of_text|>"
+    E_TEXT: str = "<|end_of_text|>"
+    B_HEADER: str = "<|start_header_id|>"
+    E_HEADER: str = "<|end_header_id|>"
+    E_TURN: str = "<|eot_id|>"
+    # tool tags, see https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/text_prompt_format.md
+    # for tool prompt format details
+    TOOL_TAG: str = "<|python_tag|>"
+    E_TOOL_MSG: str = "<|eom_id|>"
+    SYS_ROLE: str = "system"
+    USER_ROLE: str = "user"
+    ASSISTANT_ROLE: str = "assistant"
+    TOOL_ROLE: str = "ipython"
+
+    def __post_init__(self) -> None:
+        self.SYS_ROLE_HEADER = self.B_HEADER + self.SYS_ROLE + self.E_HEADER
+        self.USER_ROLE_HEADER = self.B_HEADER + self.USER_ROLE + self.E_HEADER
+        self.ASSISTANT_ROLE_HEADER = self.B_HEADER + self.ASSISTANT_ROLE + self.E_HEADER
+        self.SYS_ROLE_START = self.B_TEXT + self.SYS_ROLE_HEADER + "\n" + self.sys_prompt + self.E_TURN + \
+            self.USER_ROLE_HEADER + "\n"
+        self.USER_ROLE_END = self.E_TURN + self.ASSISTANT_ROLE_HEADER + "\n"
+
+@dataclass(kw_only=True)
+class RTEBoolqLlama3PromptConfig(Llama3PromptConfig, RTEBoolqPromptConfig):
+    ...
+
+class LlamaRTEBoolqDataModule(RTEBoolqDataModule):
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+
+        # HF Datasets' transformation cache fingerprinting algo necessitates construction of these partials as the hash
+        # is generated using function args, dataset file, mapping args: https://bit.ly/HF_Datasets_fingerprint_algo)
+        self.tokenization_func = partial(self._tokenize_for_llama,
+                                         tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern)
+
+    def _tokenize_for_llama(self, example_batch: LazyDict, tokenization_pattern: Optional[str] = None) -> BatchEncoding:
+        example_batch['sequences'] = []
+        assert example_batch is not None
+        assert self.itdm_cfg.text_fields is not None
+        assert self.itdm_cfg.prompt_cfg is not None
+        # TODO: use promptsource instead of this manual approach after tinkering
+        for field1, field2 in zip(example_batch[self.itdm_cfg.text_fields[0]],
+                                  example_batch[self.itdm_cfg.text_fields[1]]):
+            if self.itdm_cfg.prompt_cfg.cust_task_prompt:
+                task_prompt = (self.itdm_cfg.prompt_cfg.cust_task_prompt['context'] + "\n" +
+                               field1 + "\n" +
+                               self.itdm_cfg.prompt_cfg.cust_task_prompt['question'] + "\n" +
+                               field2)
+            else:
+                task_prompt = (field1 + self.itdm_cfg.prompt_cfg.ctx_question_join + field2 \
+                               + self.itdm_cfg.prompt_cfg.question_suffix)
+            if tokenization_pattern == "llama3-chat":
+                sequence = self.itdm_cfg.prompt_cfg.SYS_ROLE_START + \
+                    f"{task_prompt.strip()} {self.itdm_cfg.prompt_cfg.USER_ROLE_END}"
+            else:
+                sequence = task_prompt.strip()
+            example_batch['sequences'].append(sequence)
+        features = self.tokenizer.batch_encode_plus(example_batch["sequences"], padding="longest")
+        features["labels"] = example_batch["label"]  # Rename label to labels, easier to pass to model forward
+        return features
 
 # NOTE: this configuration is for testing, for finetuning, llama3 should be changed to right padding
 llama3_cust_tokenizer_kwargs = {"model_input_names": ["input_ids", "attention_mask"],
@@ -68,7 +174,7 @@ core_llama3_datamodule_cfg = ITDataModuleConfig(**core_llama3_shared_config, pro
                                                prepare_data_map_cfg={"batched": True},
                                                text_fields=("premise", "hypothesis"),
                                                enable_datasets_cache=False,
-                                               train_batch_size=default_test_bs, eval_batch_size=default_test_bs)
+                                               train_batch_size=default_example_bs, eval_batch_size=default_example_bs)
 
 test_core_llama3_it_module_base = RTEBoolqConfig(**base_it_module_kwargs, **core_llama3_shared_config,
     zero_shot_cfg=RTEBoolqZeroShotClassificationConfig(enabled=True,
@@ -84,7 +190,7 @@ test_core_llama3_it_module_optim = deepcopy(test_core_llama3_it_module_base)
 test_core_llama3_it_module_optim.__dict__.update(test_optimizer_scheduler_init)
 
 ##################################
-# Cust Test Module Configs
+# Cust Model
 ##################################
 
 core_cust_tokenizer_kwargs = {"model_input_names": ['tokens'], "padding_side": "left", "add_bos_token": True,
@@ -98,18 +204,19 @@ core_cust_datamodule_cfg = ITDataModuleConfig(**core_cust_shared_config, prompt_
                                                prepare_data_map_cfg={"batched": True},
                                                text_fields=("premise", "hypothesis"),
                                                enable_datasets_cache=True,
-                                               train_batch_size=default_test_bs, eval_batch_size=default_test_bs)
+                                               train_batch_size=default_example_bs, eval_batch_size=default_example_bs)
 
 test_core_cust_it_module_base = RTEBoolqConfig(**base_it_module_kwargs, **core_cust_shared_config,
     model_cfg={"device": "cpu", "dtype": "float32", "model_args": {"max_seq_len": 200}},
-    zero_shot_cfg=RTEBoolqZeroShotClassificationConfig(enabled=True, lm_generation_cfg=ToyGenCfg(max_new_tokens=2))
+    zero_shot_cfg=RTEBoolqZeroShotClassificationConfig(
+        enabled=True, lm_generation_cfg=CoreGenerationConfig(max_new_tokens=2, output_logits=True)),
 )
 
 test_core_cust_it_module_optim = deepcopy(test_core_cust_it_module_base)
 test_core_cust_it_module_optim.__dict__.update(test_optimizer_scheduler_init)
 
 ##################################
-# TL GPT2 Module Configs
+# TL GPT2
 ##################################
 
 tl_tokenizer_kwargs = deepcopy(default_tokenizer_kwargs) | {"model_input_names": ['input', 'attention_mask']}
@@ -124,7 +231,7 @@ test_tl_datamodule_cfg = ITDataModuleConfig(**test_tl_gpt2_shared_config, prompt
                                                prepare_data_map_cfg={"batched": True},
                                                text_fields=("premise", "hypothesis"),
                                                enable_datasets_cache=False,
-                                               train_batch_size=default_test_bs, eval_batch_size=default_test_bs)
+                                               train_batch_size=default_example_bs, eval_batch_size=default_example_bs)
 
 test_tl_gpt2_it_module_base = RTEBoolqTLConfig(**base_it_module_kwargs, **test_tl_gpt2_shared_config,
     zero_shot_cfg=RTEBoolqZeroShotClassificationConfig(
@@ -136,7 +243,7 @@ test_tl_gpt2_it_module_optim = deepcopy(test_tl_gpt2_it_module_base)
 test_tl_gpt2_it_module_optim.__dict__.update(test_optimizer_scheduler_init)
 
 ##################################
-# TL Cust Module Configs
+# TL Cust
 ##################################
 
 test_tl_cust_config = {"n_layers":1, "d_mlp": 10, "d_model":10, "d_head":5, "n_heads":2, "n_ctx":200,

@@ -20,8 +20,8 @@ from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
 from interpretune.utils.types import STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_only
-from it_examples.experiments.rte_boolq.modules import RTEBoolqModuleMixin, RTEBoolqSteps
-from it_examples.experiments.rte_boolq.datamodules import GPT2RTEBoolqDataModule, LlamaRTEBoolqDataModule
+from it_examples.experiments.rte_boolq import RTEBoolqModuleMixin, RTEBoolqSteps
+from it_examples.example_module_registry import GPT2RTEBoolqDataModule, LlamaRTEBoolqDataModule
 from tests import FinetuningScheduler
 from tests.results import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS, SAMPLE_POSITION,
                            DatasetState, TestDatasetKey)
@@ -34,7 +34,7 @@ from tests.results import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_S
 class BaseTestDataModule:
 
     def __init__(self, itdm_cfg: ITDataModuleConfig, force_prepare_data: bool = False) -> None:
-        with mock.patch.multiple('it_examples.experiments.rte_boolq.datamodules', TASK_NUM_LABELS=TEST_TASK_NUM_LABELS,
+        with mock.patch.multiple('it_examples.experiments.rte_boolq', TASK_NUM_LABELS=TEST_TASK_NUM_LABELS,
                                  TASK_TEXT_FIELD_MAP=TEST_TASK_TEXT_FIELD_MAP):
             super().__init__(itdm_cfg=itdm_cfg)
         self.force_prepare_data = force_prepare_data

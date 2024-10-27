@@ -7,7 +7,7 @@ from interpretune.adapters.registration import Adapter
 from interpretune.base.config.module import HFFromPretrainedConfig
 from interpretune.base.config.shared import AutoStrEnum
 from interpretune.extensions.memprofiler import MemProfilerCfg, MemProfilerSchedule
-from test_module_registry import (core_cust_shared_config, test_tl_datamodule_cfg, test_optimizer_init,
+from it_examples.example_module_registry import (core_cust_shared_config, test_tl_datamodule_cfg, test_optimizer_init,
                                        test_lr_scheduler_init, test_tl_signature_columns)
 from tests.global_defaults import default_prof_bs
 from tests.modules import TestFTS
@@ -129,7 +129,7 @@ default_session_cfg = {
 
 test_core_cust_it_module_kwargs_zero_shot = {
     "model_cfg": {"device": "cpu", "dtype": "float32", "model_args": {"max_seq_len": 200}},
-    "zero_shot_cfg": {"class_path": "it_examples.experiments.rte_boolq.config.RTEBoolqZeroShotClassificationConfig",
+    "zero_shot_cfg": {"class_path": "it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig",
                       "init_args": {"enabled": True, "lm_generation_cfg": {
                           "class_path": "tests.utils.ToyGenCfg",
                           "init_args": {"max_new_tokens": 2}},
@@ -139,7 +139,7 @@ test_core_cust_it_module_kwargs_zero_shot = {
 
 ## override with appropriate CLI class_path config since we're serializing and loading from yaml
 core_cust_datamodule_cfg_prompt_cfg = { "prompt_cfg":
-                                       {"class_path": "it_examples.experiments.rte_boolq.config.RTEBoolqPromptConfig"}}
+                                       {"class_path": "it_examples.experiments.rte_boolq.RTEBoolqPromptConfig"}}
 
 # create a deepcopy for likely future manipulation
 core_cust_shared_config_cli = deepcopy(core_cust_shared_config)
@@ -148,7 +148,7 @@ test_core_cust_it_model_cfg_cuda_bf16 = {"device": "cuda", "dtype": "bfloat16", 
 # override zero_shot_cfg with serializable CLI args
 test_tl_cust_config_it_module_kwargs_zero_shot = {
     "zero_shot_cfg": {
-        "class_path": "it_examples.experiments.rte_boolq.config.RTEBoolqZeroShotClassificationConfig",
+        "class_path": "it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig",
         "init_args": {"enabled": True,
                       "lm_generation_cfg": {
                           "class_path": "interpretune.adapters.transformer_lens.TLensGenerationConfig",
@@ -168,7 +168,7 @@ test_tl_cust_config_it_module_kwargs_zero_shot = {
 base_tl_cust_model_cfg = {}
 base_tl_cust_model_cfg["session_cfg"] = {
     "module_cfg": {
-        "class_path": "it_examples.experiments.rte_boolq.config.RTEBoolqTLConfig",
+        "class_path": "it_examples.experiments.rte_boolq.RTEBoolqTLConfig",
         "init_args": { **test_tl_cust_config_it_module_kwargs_zero_shot}
     }
 }
@@ -190,14 +190,14 @@ base_cust_rte_cfg = {}
 base_cust_rte_cfg["session_cfg"] = {
     "datamodule_cfg": {"init_args": {**core_cust_shared_config_cli, **core_cust_datamodule_cfg_prompt_cfg}},
     "module_cfg": {
-        "class_path": "it_examples.experiments.rte_boolq.config.RTEBoolqConfig",
+        "class_path": "it_examples.experiments.rte_boolq.RTEBoolqConfig",
         "init_args": {**test_core_cust_it_module_kwargs_zero_shot},
     },
 }
 
 test_tl_datamodule_cfg.text_fields = None
 ## override with appropriate CLI class_path config since we're serializing and loading from yaml
-test_tl_datamodule_cfg.prompt_cfg = {"class_path": "it_examples.experiments.rte_boolq.config.RTEBoolqPromptConfig"}
+test_tl_datamodule_cfg.prompt_cfg = {"class_path": "it_examples.experiments.rte_boolq.RTEBoolqPromptConfig"}
 
 ################################################################################
 # global default cfg file
