@@ -16,32 +16,23 @@ from typing import List, Optional, Tuple, Callable, Any, Union, Dict
 from collections.abc import Iterable
 from copy import deepcopy
 
-
 import pytest
 import torch
 
 from interpretune.adapters import ADAPTER_REGISTRY
 from interpretune.adapters.transformer_lens import ITLensFromPretrainedConfig, ITLensCustomConfig
 from interpretune.adapters.registration import Adapter
-from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.mixins import HFFromPretrainedConfig, ZeroShotClassificationConfig
 from interpretune.base.config.module import ITConfig
 from interpretune.base.contract.session import ITSessionConfig, ITSession
 from interpretune.extensions.memprofiler import MemProfilerCfg
 from interpretune.extensions.debug_generation import DebugLMConfig
 from interpretune.utils.types import StrOrPath
-from it_examples.experiments.rte_boolq.config import RTEBoolqConfig, RTEBoolqTLConfig
 from tests import seed_everything
+from tests.test_module_registry import TEST_MODULE_BASE_CONFIGS, TEST_DATAMODULE_BASE_CONFIGS
 from tests.modules import TestITDataModule, TestITModule, LlamaTestITDataModule
 from tests.runif import RunIf, RUNIF_ALIASES
 from tests.utils import get_model_input_dtype
-from tests.parity_acceptance.cfg_aliases import (
-    core_gpt2_datamodule_kwargs, core_cust_datamodule_kwargs,
-    test_core_cust_it_module_base, core_cust_shared_config, test_core_cust_it_module_optim,
-    test_core_gpt2_it_module_base, test_core_gpt2_it_module_optim, core_gpt2_shared_config, core_llama3_shared_config,
-    core_llama3_datamodule_kwargs, test_core_llama3_it_module_base, test_core_llama3_it_module_optim,
-    test_tl_gpt2_it_module_base, test_tl_cust_it_module_base, test_tl_gpt2_it_module_optim,
-    test_tl_cust_it_module_optim, test_tl_datamodule_kwargs, test_tl_gpt2_shared_config)
 
 
 # We use the same datamodule and module for all parity test contexts to ensure cross-adapter compatibility
@@ -138,56 +129,13 @@ class BaseCfg:
 # Configuration composition
 ########################################################################################################################
 
-TEST_DATAMODULE_BASE_CONFIGS = {
-    # TODO: make this dict a more robust registry if the number of tested models profilerates
-    # TODO: pull module/datamodule configs from model-keyed test config dict (fake lightweight registry)
-    # (dm_adapter_ctx, model_src_key)
-    (Adapter.core, "gpt2"): (core_gpt2_shared_config, core_gpt2_datamodule_kwargs),
-    (Adapter.core, "llama3"): (core_llama3_shared_config, core_llama3_datamodule_kwargs),
-    (Adapter.core, "cust"): (core_cust_shared_config, core_cust_datamodule_kwargs),
-    (Adapter.transformer_lens, "any"): (test_tl_gpt2_shared_config, test_tl_datamodule_kwargs),
-}
-
-TEST_MODULE_BASE_CONFIGS = {
-    # (phase, adapter_mod_cfg_key, model_src_key)
-    ("test", None, "gpt2"): test_core_gpt2_it_module_base,
-    ("train", None, "gpt2"): test_core_gpt2_it_module_optim,
-    ("test", None, "llama3"): test_core_llama3_it_module_base,
-    ("train", None, "llama3"): test_core_llama3_it_module_optim,
-    ("predict", None, "cust"): test_core_cust_it_module_base,
-    ("test", None, "cust"): test_core_cust_it_module_base,
-    ("train", None, "cust"): test_core_cust_it_module_optim,
-    ("test", Adapter.transformer_lens, "gpt2"): test_tl_gpt2_it_module_base,
-    ("train", Adapter.transformer_lens, "gpt2"): test_tl_gpt2_it_module_optim,
-    ("test", Adapter.transformer_lens, "cust"): test_tl_cust_it_module_base,
-    ("train", Adapter.transformer_lens, "cust"): test_tl_cust_it_module_optim,
-}
-
-MODULE_CONFIG_MAPPING = {
-    # (model_key,  adapter_mod_cfg_key)
-    ("rte", None): RTEBoolqConfig,
-    ("rte", Adapter.transformer_lens): RTEBoolqTLConfig
-}
-
 def get_itdm_cfg(test_cfg: Tuple, dm_override_cfg: Optional[Dict] = None, **kwargs) -> ITConfig:
     dm_base_cfg_key = (Adapter.transformer_lens, "any") if Adapter.transformer_lens in test_cfg.adapter_ctx else \
         (Adapter.core, test_cfg.model_src_key or "gpt2")
-    shared_config, default_itdm_kwargs  = TEST_DATAMODULE_BASE_CONFIGS[dm_base_cfg_key]
-    test_it_datamodule_cfg = deepcopy(default_itdm_kwargs)
+    test_it_datamodule_cfg = deepcopy(TEST_DATAMODULE_BASE_CONFIGS[dm_base_cfg_key])
     if dm_override_cfg:
-        test_it_datamodule_cfg.update(dm_override_cfg)
-    return ITDataModuleConfig(**shared_config, **test_it_datamodule_cfg)
-
-def init_adapter_mod_cfg(test_cfg: Tuple, test_it_module_cfg: Dict):
-    if Adapter.transformer_lens in test_cfg.adapter_ctx:
-        if test_cfg.model_src_key == "gpt2":
-            test_it_module_cfg['tl_cfg'] = ITLensFromPretrainedConfig(**test_it_module_cfg['tl_cfg'])
-        elif test_cfg.model_src_key == "cust":
-            test_it_module_cfg['tl_cfg'] = ITLensCustomConfig(**test_it_module_cfg['tl_cfg'])
-        else:
-            raise ValueError(f"Unknown model_src_key: {test_cfg.model_src_key}")
-    else:  # See NOTE [Interpretability Adapters]
-        raise ValueError(f"Unknown adapter type: {test_cfg.adapter_ctx}")
+        test_it_datamodule_cfg.__dict__.update(dm_override_cfg)
+    return test_it_datamodule_cfg
 
 def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[StrOrPath] = None) -> ITConfig:
     test_cfg_override_attrs = ["memprofiler_cfg", "debug_lm_cfg", "cust_fwd_kwargs", "tl_cfg", "model_cfg",
@@ -197,33 +145,39 @@ def get_it_cfg(test_cfg: Tuple, core_log_dir: Optional[StrOrPath] = None) -> ITC
     test_it_module_cfg = deepcopy(target_test_it_module_cfg)
     for attr in test_cfg_override_attrs:
         if getattr(test_cfg, attr):
-            test_it_module_cfg.update({attr: getattr(test_cfg, attr)})
+            test_it_module_cfg.__dict__.update({attr: getattr(test_cfg, attr)})
     if core_log_dir:
-        test_it_module_cfg.update({'core_log_dir': core_log_dir})
-    test_it_module_cfg = configure_device_precision(test_it_module_cfg, test_cfg.device_type, test_cfg.precision)
-    if adapter_mod_cfg_key:
-        init_adapter_mod_cfg(test_cfg, test_it_module_cfg)
-    config_class = MODULE_CONFIG_MAPPING[(test_cfg.model_key, adapter_mod_cfg_key)]
-    return config_class(**test_it_module_cfg)
+        test_it_module_cfg.__dict__.update({'core_log_dir': core_log_dir})
+    return configure_device_precision(test_it_module_cfg, test_cfg.device_type, test_cfg.precision)
 
 def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> Dict[str, Any]:
-    # TODO: As we accommodate many different device/precision settting sources at the moment, it may make sense
+    # TODO: As we accommodate many different device/precision setting sources at the moment, it may make sense
     # to refactor hf and tl support via additional adapter functions and only test adherence to the
     # common Interpretune protocol here (testing the adapter functions separately with smaller unit tests)
-    if cfg.get('model_cfg', None) is not None:
-        cfg['model_cfg'].update({'dtype': get_model_input_dtype(precision), 'device': device_type})
-    if cfg.get('hf_from_pretrained_cfg', None) is not None:
-        cfg['hf_from_pretrained_cfg'].pretrained_kwargs.update({'torch_dtype': get_model_input_dtype(precision)})
+    # if we've already initialized config, we need to manually update (`_torch_dtype`)
+    if hasattr(cfg, '_torch_dtype'):
+        cfg._torch_dtype = get_model_input_dtype(precision)
+    if cfg.model_cfg:
+        cfg.model_cfg.update({'dtype': get_model_input_dtype(precision), 'device': device_type})
+    if cfg.hf_from_pretrained_cfg:
+        cfg.hf_from_pretrained_cfg.pretrained_kwargs.update({'torch_dtype': get_model_input_dtype(precision)})
         if device_type == "cuda":
             # note that with TLens this should be overridden by the tl adapter but we want to test that functionality
-            cfg['hf_from_pretrained_cfg'].pretrained_kwargs.update({'device_map': 0})
-    if cfg.get('tl_cfg', None) is not None:
-        dev_prec_override = {'dtype': get_model_input_dtype(precision), 'device': device_type}
-        if cfg['tl_cfg'].get('cfg', None) is not None:  # TL custom model config
-            cfg['tl_cfg']['cfg'].update(dev_prec_override)
-        else:  # TL from pretrained config, we set directly in addition to pretrained above to verify sync behavior
-            cfg['tl_cfg'].update(dev_prec_override)
+            cfg.hf_from_pretrained_cfg.pretrained_kwargs.update({'device_map': 0})
+    if getattr(cfg, 'tl_cfg', None) is not None:  # if we're using a TL subclass of ITConfig
+        _update_tl_cfg_device_precision(cfg, device_type, precision)
     return cfg
+
+def _update_tl_cfg_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> None:
+        dev_prec_override = {'dtype': get_model_input_dtype(precision), 'device': device_type}
+        if isinstance(cfg.tl_cfg, ITLensCustomConfig):  # initialized TL custom model config
+            cfg.tl_cfg.cfg.__dict__.update(dev_prec_override)
+        elif isinstance(cfg.tl_cfg, ITLensFromPretrainedConfig):
+            # TL from pretrained config, we set directly in addition to pretrained above to verify sync behavior
+            cfg.tl_cfg.__dict__.update(dev_prec_override)
+        else:  # likely uninitialized TL custom model config, may want to remove this branch and check
+            assert cfg.tl_cfg.get('cfg', None)
+            cfg.tl_cfg['cfg'].update(dev_prec_override)
 
 def config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_dir, prewrapped_modules) \
     -> ITSessionConfig:

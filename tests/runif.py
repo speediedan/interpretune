@@ -34,7 +34,6 @@ lightning_mark = {"lightning": True}
 fts_mark = {'finetuning_scheduler': True}
 bitsandbytes_mark = {"bitsandbytes": True}
 skip_win_mark = {'skip_windows': True}
-slow_mark = {'slow': True}
 
 # RunIf aliases
 RUNIF_ALIASES = {
@@ -57,7 +56,7 @@ RUNIF_ALIASES = {
     "bf16_cuda_profci": {**bf16_cuda_mark, **profiling_ci_mark},
     "bf16_cuda_l": {**bf16_cuda_mark, **lightning_mark},
     "l_optional": {**lightning_mark, **optional_mark},
-    "skip_win_slow": {**skip_win_mark, **slow_mark},
+    "skip_win_optional": {**skip_win_mark, **optional_mark},
 }
 
 class RunIf:
@@ -87,7 +86,6 @@ class RunIf:
         lightning: bool = False,
         finetuning_scheduler: bool = False,
         bitsandbytes: bool = False,
-        slow: bool = False,
         **kwargs,
     ):
         """
@@ -114,8 +112,6 @@ class RunIf:
             lightning: Require that lightning is installed.
             finetuning_scheduler: Require that finetuning_scheduler is installed.
             bitsandbytes: Require that bitsandbytes is installed.
-            slow: Mark the test as slow, our CI will run it in a separate job.
-                This requires that the ``IT_RUN_SLOW_TESTS=1`` environment variable is set.
             **kwargs: Any :class:`pytest.mark.skipif` keyword arguments.
         """
         conditions = []
@@ -210,13 +206,6 @@ class RunIf:
         if bitsandbytes:
             conditions.append(not _BNB_AVAILABLE)
             reasons.append("BitsandBytes")
-
-        if slow:
-            env_flag = os.getenv("IT_RUN_SLOW_TESTS", "0")
-            conditions.append(env_flag != "1")
-            reasons.append("Slow test")
-            # used in tests/conftest.py::pytest_collection_modifyitems
-            kwargs["slow"] = True
 
         reasons = [rs for cond, rs in zip(conditions, reasons) if cond]
         return pytest.mark.skipif(

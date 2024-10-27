@@ -21,7 +21,7 @@ from tests.results import collect_results
 from tests.orchestration import parity_test
 from tests.parity_acceptance.expected import l_parity_results, l_profiling_parity_results
 from tests.parity_acceptance.cfg_aliases import (
-    w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l, debug_hidden, test_bs1_mem_nosavedt,
+    w_lit, cuda, cuda_bf16, bf16, cuda_act, test_bs1_mem, cuda_bf16_l, test_bs1_mem_nosavedt,
     bs1_nowarm_mem, act_ckpt, bs1_nowarm_hk_mem, bs1_warm_mem)
 from tests.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WARNS
 
@@ -38,7 +38,6 @@ class ParityTest(BaseAugTest):
 PARITY_BASIC_CONFIGS = (
     ParityTest(alias="train_cpu_32", cfg=CoreCfg()),
     ParityTest(alias="train_cpu_32_l", cfg=CoreCfg(**w_lit), marks="lightning"),
-    ParityTest(alias="train_cpu_32_debug", cfg=CoreCfg(**debug_hidden), marks="optional"),
     ParityTest(alias="train_cuda_32", cfg=CoreCfg(**cuda), marks="cuda"),
     ParityTest(alias="train_cuda_32_l", cfg=CoreCfg(**cuda, **w_lit), marks="cuda_l"),
     ParityTest(alias="train_cuda_bf16", cfg=CoreCfg(**cuda_bf16), marks="bf16_cuda"),
@@ -48,7 +47,7 @@ PARITY_BASIC_CONFIGS = (
     ParityTest(alias="predict_cpu_32_l", cfg=CoreCfg(phase="predict", **w_lit), marks="lightning"),
     ParityTest(alias="test_cuda_32", cfg=CoreCfg(phase="test", model_src_key="gpt2", **cuda), marks="cuda"),
     ParityTest(alias="test_cuda_bf16", cfg=CoreCfg(phase="test", **cuda_bf16), marks="bf16_cuda"),
-    ParityTest(alias="train_cpu_bf16", cfg=CoreCfg(**bf16), marks="skip_win_slow"),
+    ParityTest(alias="train_cpu_bf16", cfg=CoreCfg(**bf16), marks="skip_win_optional"),
 )
 
 EXPECTED_PARITY_BASIC = {cfg.alias: cfg.expected for cfg in PARITY_BASIC_CONFIGS}

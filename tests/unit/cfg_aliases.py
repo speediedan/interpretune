@@ -7,15 +7,14 @@ from collections.abc import Iterable
 from interpretune.adapters.registration import Adapter
 from interpretune.base.config.shared import AutoStrEnum
 from interpretune.base.config.mixins import HFFromPretrainedConfig, ZeroShotClassificationConfig
+from interpretune.adapters.transformer_lens import ITLensCustomConfig
 from interpretune.extensions.debug_generation import DebugLMConfig
 from interpretune.extensions.memprofiler import MemProfilerCfg
 from tests.configuration import BaseCfg, BaseAugTest
-from tests.parity_acceptance.cfg_aliases import (parity_cli_cfgs, mod_initargs, gpt2_hf_from_pretrained_kwargs,
-                                                 enable_act_checkpointing, CLI_TESTS)
+from tests.parity_acceptance.cfg_aliases import parity_cli_cfgs, mod_initargs, CLI_TESTS
 from tests.parity_acceptance.test_it_tl import TLParityCfg
 from tests.parity_acceptance.test_it_cli import CLICfg
 from tests.utils import get_nested
-
 
 
 nf4_bnb_config = {"load_in_4bit": True, "bnb_4bit_use_double_quant": True, "bnb_4bit_quant_type": "nf4",
@@ -23,8 +22,8 @@ nf4_bnb_config = {"load_in_4bit": True, "bnb_4bit_use_double_quant": True, "bnb_
 base_lora_cfg = {"r": 8, "lora_alpha": 32, "lora_dropout": 0.05, "bias": "none", "task_type": "CAUSAL_LM"}
 gpt2_lora_cfg = {"target_modules": ["c_attn", "c_proj"], **base_lora_cfg}
 gpt2_hf_bnb_lora_cfg = {"bitsandbytesconfig": nf4_bnb_config, "lora_cfg": gpt2_lora_cfg}
-gpt2_seq_hf_from_pretrained_kwargs = deepcopy(gpt2_hf_from_pretrained_kwargs)
-gpt2_seq_hf_from_pretrained_kwargs.update({"model_head": "transformers.AutoModelForSequenceClassification"})
+gpt2_seq_hf_from_pretrained_kwargs = {"pretrained_kwargs": {"device_map": "cpu", "torch_dtype": "float32"},
+                                      "model_head": "transformers.AutoModelForSequenceClassification"}
 tl_cust_mi_cfg = {"cfg":
     dict(
     d_model=768,
@@ -54,7 +53,7 @@ class CoreCfgForcePrepare(BaseCfg):
 class TLMechInterpCfg(BaseCfg):
     adapter_ctx: Iterable[Adapter | str] = (Adapter.core, Adapter.transformer_lens)
     model_src_key: Optional[str] = "cust"
-    tl_cfg: Optional[Dict] = field(default_factory=lambda: tl_cust_mi_cfg)
+    tl_cfg: Optional[Dict] = field(default_factory=lambda: ITLensCustomConfig(**tl_cust_mi_cfg))
 
 @dataclass(kw_only=True)
 class TLDebugCfg(TLParityCfg):
@@ -68,7 +67,8 @@ class CoreGPT2PEFTCfg(BaseCfg):
     model_src_key: Optional[str] = "gpt2"
     dm_override_cfg: Optional[Dict] = field(default_factory=lambda: {'train_batch_size': 1, 'eval_batch_size': 1})
     hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = field(default_factory=lambda: HFFromPretrainedConfig(
-        **gpt2_hf_bnb_lora_cfg, **gpt2_hf_from_pretrained_kwargs, **enable_act_checkpointing))
+        **gpt2_hf_bnb_lora_cfg, pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"},
+        model_head="transformers.GPT2LMHeadModel", activation_checkpointing=True))
     limit_train_batches: Optional[int] = 3
     limit_val_batches: Optional[int] = 3
     limit_test_batches: Optional[int] = 2
@@ -79,7 +79,7 @@ class CoreGPT2PEFTSeqCfg(CoreGPT2PEFTCfg):
     zero_shot_cfg: Optional[ZeroShotClassificationConfig] = \
         field(default_factory=lambda: ZeroShotClassificationConfig(enabled=False))
     hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = field(default_factory=lambda: HFFromPretrainedConfig(
-        **gpt2_hf_bnb_lora_cfg, **gpt2_seq_hf_from_pretrained_kwargs, **enable_act_checkpointing))
+        **gpt2_hf_bnb_lora_cfg, **gpt2_seq_hf_from_pretrained_kwargs, activation_checkpointing=True))
 
 
 @dataclass(kw_only=True)

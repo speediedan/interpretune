@@ -113,6 +113,10 @@ define_configuration(){
       echo "Collecting and running standalone tests..." | tee -a $special_test_session_log
       export IT_RUN_STANDALONE_TESTS=1
       ;;
+    optional)
+      echo "Collecting and running optional tests..." | tee -a $special_test_session_log
+      export IT_RUN_OPTIONAL_TESTS=1
+      ;;
     exp_patch)
       echo "Collecting and running only experimental patch tests supported w/ provided patch mask (${experiment_patch_mask[@]})." | tee -a $special_test_session_log
       export IT_EXPERIMENTAL_PATCH_TESTS=1

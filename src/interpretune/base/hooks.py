@@ -62,7 +62,7 @@ class BaseITHooks:
             self.on_session_end()
 
     def forward(self, *args, **kwargs) -> STEP_OUTPUT:
-        return self.model(*args,**kwargs, **self.it_cfg.cust_fwd_kwargs)
+        return self.model(*args, **kwargs, **self.it_cfg.cust_fwd_kwargs)
 
     # TODO: since we mandate the existence of at least one of {training,validation,test,predict}_step methods via our
     # protocol, we should define them in documentation but not provide default empty implementations here

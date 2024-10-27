@@ -33,7 +33,7 @@ class RTEBoolqPromptConfig(PromptConfig):
 
 
 @dataclass(kw_only=True)
-class Llama3PromptConfig(RTEBoolqPromptConfig):
+class RTEBoolqLlama3PromptConfig(RTEBoolqPromptConfig):
     # see https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/prompt_format.md for more details
     sys_prompt: str = ("You are a helpful assistant.")
     B_TEXT: str = "<|begin_of_text|>"

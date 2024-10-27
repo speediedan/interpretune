@@ -22,7 +22,7 @@ from interpretune.adapters.registration import Adapter
 from tests.configuration import BaseAugTest, BaseCfg, pytest_param_factory, IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
 from tests.parity_acceptance.cfg_aliases import (cuda,test_bs1_mem, test_bs1_mem_nosavedt, bs1_nowarm_hk_mem,
-                                                 bs1_warm_mem, debug_hidden, w_l_tl)
+                                                 bs1_warm_mem, w_l_tl)
 from tests.parity_acceptance.expected import tl_parity_results, tl_profiling_parity_results
 from tests.results import collect_results
 from tests.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS
@@ -47,7 +47,6 @@ PARITY_TL_CONFIGS = (
     TLParityTest(alias="test_cuda_32_l", cfg=TLParityCfg(phase="test", **cuda, **w_l_tl), marks="cuda_l"),
     TLParityTest(alias="train_cpu_32", cfg=TLParityCfg()),
     TLParityTest(alias="train_cpu_32_l", cfg=TLParityCfg(**w_l_tl), marks="lightning"),
-    TLParityTest(alias="train_cpu_32_debug", cfg=TLParityCfg(**debug_hidden), marks="optional"),
     TLParityTest(alias="train_cuda_32", cfg=TLParityCfg(**cuda), marks="cuda"),
     TLParityTest(alias="train_cuda_32_l", cfg=TLParityCfg(**cuda, **w_l_tl), marks="cuda_l"),
 )

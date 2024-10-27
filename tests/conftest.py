@@ -500,11 +500,3 @@ def pytest_collection_modifyitems(items):
             # has `@RunIf(optional=True)`
             if marker.name == "skipif" and marker.kwargs.get("optional")
         ]
-    elif os.getenv("IT_RUN_SLOW_TESTS", "0") == "1":
-        items[:] = [
-            item
-            for item in items
-            for marker in item.own_markers
-            # has `@RunIf(slow=True)`
-            if marker.name == "skipif" and marker.kwargs.get("slow")
-        ]

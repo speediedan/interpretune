@@ -20,7 +20,6 @@ from interpretune.base.components.mixins import HFFromPretrainedMixin
 from interpretune.base.config.module import ITConfig
 from interpretune.base.config.extensions import ITExtensionsConfigMixin
 from interpretune.base.config.mixins import HFFromPretrainedConfig, ITExtension
-from parity_acceptance.cfg_aliases import test_core_gpt2_it_module_base
 from tests.utils import disable_zero_shot
 from tests.runif import RunIf
 from tests.warns import CORE_CTX_WARNS, unexpected_warns
@@ -28,6 +27,15 @@ from tests.orchestration import run_it
 
 
 class TestClassMixins:
+
+    core_gpt2_shared_config = dict(task_name="pytest_rte_hf",
+        tokenizer_kwargs={"add_bos_token": True, "local_files_only": False, "padding_side": "left",
+                          "model_input_names": ["input_ids", "attention_mask"]},
+        model_name_or_path="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
+
+    test_core_gpt2 = {**core_gpt2_shared_config,
+                      "hf_from_pretrained_cfg": HFFromPretrainedConfig(pretrained_kwargs={
+                          "device_map": "cpu", "torch_dtype": "float32"}, model_head="transformers.GPT2LMHeadModel")}
 
     @staticmethod
     def _get_hf_from_pretrained_mixin(test_it_cfg):
@@ -51,7 +59,7 @@ class TestClassMixins:
     )
     def test_hf_from_pretrained_hf_cust_config(self, return_unused, tie_word_embeddings):
         access_token = None
-        test_it_cfg = deepcopy(test_core_gpt2_it_module_base)
+        test_it_cfg = deepcopy(TestClassMixins.test_core_gpt2)
         test_it_cfg['hf_from_pretrained_cfg'].pretrained_kwargs['return_unused_kwargs'] = return_unused
         test_it_cfg['model_cfg'] = {'tie_word_embeddings': tie_word_embeddings}
         if return_unused:
@@ -71,7 +79,7 @@ class TestClassMixins:
         ids=["head_config_defer_init", "no_head_config_no_defer_init", "no_head_config_defer_init"],
     )
     def test_hf_from_pretrained_hf_configured_model_init(self, head_configured, defer_init):
-        test_it_cfg = deepcopy(test_core_gpt2_it_module_base)
+        test_it_cfg = deepcopy(TestClassMixins.test_core_gpt2)
         test_it_cfg['defer_model_init'] = defer_init
         if not head_configured:
             test_it_cfg['hf_from_pretrained_cfg'].model_head = ''
@@ -121,7 +129,7 @@ class TestClassMixins:
         pretrained_kwargs = {"pretrained_kwargs":{"device_map": "cpu", "torch_dtype": "float32"}}
         dynamic_module_cfg = {"config_class": "configuration_falcon.FalconConfig",
                               "model_class": "modeling_falcon.FalconForCausalLM"}
-        test_it_cfg = deepcopy(test_core_gpt2_it_module_base)
+        test_it_cfg = deepcopy(TestClassMixins.test_core_gpt2)
         test_it_cfg['model_name_or_path'] = "tiiuae/falcon-7b"
         hf_from_pretrained_cfg = HFFromPretrainedConfig(**pretrained_kwargs, dynamic_module_cfg=dynamic_module_cfg)
         test_it_cfg['hf_from_pretrained_cfg'] = hf_from_pretrained_cfg
@@ -150,7 +158,7 @@ class TestClassMixins:
     @pytest.mark.parametrize("tokenizer_id_overrides", [None, {'pad_token_id': 150}],
                              ids=["no_token_overrides", "new_token_overrides"],)
     def test_hf_from_pretrained_maybe_resize_token_embeddings(self, tokenizer_id_overrides):
-        test_it_cfg = deepcopy(test_core_gpt2_it_module_base)
+        test_it_cfg = deepcopy(TestClassMixins.test_core_gpt2)
         test_it_cfg['tokenizer_id_overrides'] = tokenizer_id_overrides
         hf_from_pretrained_mixin = TestClassMixins._get_hf_from_pretrained_mixin(test_it_cfg)
         hf_from_pretrained_mixin.model = mock.Mock()

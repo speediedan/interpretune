@@ -2,25 +2,32 @@ from copy import deepcopy
 
 import pytest
 
-from parity_acceptance.cfg_aliases import test_core_gpt2_it_module_base
-from parity_acceptance.test_it_l import CoreCfg
-from tests.configuration import get_itdm_cfg
+from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
 from interpretune.base.config.mixins import HFFromPretrainedConfig
 
+
 class TestClassBaseConfigs:
 
+    core_gpt2_shared_config = dict(task_name="pytest_rte_hf",
+        tokenizer_kwargs={"add_bos_token": True, "local_files_only": False, "padding_side": "left",
+                          "model_input_names": ["input_ids", "attention_mask"]},
+        model_name_or_path="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
+
+    test_core_gpt2 = {**core_gpt2_shared_config,
+                      "hf_from_pretrained_cfg": HFFromPretrainedConfig(pretrained_kwargs={
+                          "device_map": "cpu", "torch_dtype": "float32"}, model_head="transformers.GPT2LMHeadModel")}
+
     def test_datamodule_cfg_defer_init(self):
-        test_cfg = CoreCfg()
-        test_cfg.dm_override_cfg = {"defer_model_init": True}
-        itdm_cfg = get_itdm_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
-        assert itdm_cfg
+        test_core_datamodule = {**TestClassBaseConfigs.core_gpt2_shared_config, "signature_columns": ["input_ids"]}
+        itdm_cfg = deepcopy(test_core_datamodule) | {"defer_model_init": True}
+        assert ITDataModuleConfig(**itdm_cfg)
 
     def test_hf_from_pretrained_cfg_validation(self):
         pretrained_kwargs = {"pretrained_kwargs":{"device_map": "cpu", "torch_dtype": "float32", "token": "strip-me"}}
         from_pretrained_cfg = HFFromPretrainedConfig(**pretrained_kwargs, model_head="transformers.GPT2LMHeadModel")
         assert from_pretrained_cfg.pretrained_kwargs.get('token', None) is None
-        test_it_cfg = deepcopy(test_core_gpt2_it_module_base)
+        test_it_cfg = deepcopy(TestClassBaseConfigs.test_core_gpt2)
         test_it_cfg['hf_from_pretrained_cfg'].bitsandbytesconfig = True
         it_cfg = ITConfig(**test_it_cfg)
         assert it_cfg._torch_dtype is None
