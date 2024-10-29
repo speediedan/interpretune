@@ -6,6 +6,7 @@ jupytext>=1.10  # converting notebook source .py to .ipynb
 nbval>=0.9.6  # testing the notebook
 python-dotenv  # to load various private API keys from a .env file
 transformer_lens # for mech interp example/testing
+sae-lens # for additional mech interp example/testing
 plotly
 gdown
 evaluate

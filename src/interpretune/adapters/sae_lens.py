@@ -1,0 +1,392 @@
+from typing import Optional, Dict, Any
+from dataclasses import dataclass
+from functools import reduce
+from copy import deepcopy
+from typing_extensions import override
+
+import torch
+from transformers import PretrainedConfig #, AutoModelForCausalLM, PreTrainedTokenizerBase
+#from transformer_lens import HookedTransformer, HookedTransformerConfig
+from transformer_lens import HookedTransformerConfig
+#from transformer_lens.hook_points import HookedRootModule
+from transformer_lens.utilities.devices import get_device_for_block_index
+from sae_lens.sae import SAE, SAEConfig
+from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer
+from transformers.tokenization_utils_base import BatchEncoding
+
+from interpretune.adapters.registration import CompositionRegistry, Adapter
+from interpretune.adapters.lightning import LightningDataModule, LightningModule, LightningAdapter
+from interpretune.base.config.module import ITConfig
+from interpretune.base.config.shared import ITSerializableCfg
+#from interpretune.base.config.mixins import CoreGenerationConfig
+from interpretune.base.components.core import CoreHelperAttributes
+from interpretune.base.datamodules import ITDataModule
+from interpretune.base.modules import BaseITModule
+from interpretune.utils.data_movement import move_data_to_device
+from interpretune.utils.import_utils import _resolve_torch_dtype
+from interpretune.utils.logging import rank_zero_warn, rank_zero_info
+#from interpretune.utils.warnings import tl_invalid_dmap
+from interpretune.utils.patched_tlens_generate import generate as patched_generate
+from interpretune.utils.exceptions import MisconfigurationException
+
+
+################################################################################
+# SAE Lens Configuration Encapsulation
+################################################################################
+
+# @dataclass(kw_only=True)
+# class ITSAELensSharedConfig(ITSerializableCfg):
+#     """SAE Lens configuration shared across both `from_pretrained` and config based instantiation modes."""
+#     use_error_term: bool = False
+
+# TODO NEXT:
+#            - Use ITLensFromPretrainedConfig and ITLensCustomConfig instead of the below and then change initialization
+#              to use HookedSAETransformer.from_pretrained
+#            - Change the below dataclasses to constructe SAEs (pretrained and custom)
+#            - change init flow to add_sae by default (eventually controllable with sl_cfg)
+#            - need to decide best cfg structure that allows configuration of both SAE and HookedSAETransformer under
+#              sl_cfg
+#            - if adapter proves sufficiently useful, add options running with run_with_hooks_with_saes,
+#               run_with_cache_with_saes etc for temporary sae usage
+#            - Add support for SAETrainer and LanguageModelSAERunnerConfig, SAETrainingRunner  once initial eval done
+#              (see repo tests/examples):
+#               - likely would require substantial additional adapters, might be fertile ground for collaboration with
+#                 SAELens/TransformerLens maintainers as it could vastly extend flexibility and power of the SAE
+#                 training framework
+@dataclass(kw_only=True)
+class SAELensFromPretrainedConfig(ITSerializableCfg):
+    release: str
+    sae_id: str
+    device: str = "cpu"
+    # model_name: str = "gpt2-small"
+    # fold_ln: Optional[bool] = True
+    # center_writing_weights: Optional[bool] = True
+    # center_unembed: Optional[bool] = True
+    # refactor_factored_attn_matrices: Optional[bool] = False
+    # checkpoint_index: Optional[int] = None
+    # checkpoint_value: Optional[int] = None
+    # # for pretrained cfg, IT handles the HF model instantiation via model_name or_path
+    # hf_model: Optional[AutoModelForCausalLM | str] = None
+    # # currently only support serializing str for device due to omegaconf container dumping limitations
+    # device: Optional[str] = None
+    # n_devices: Optional[int] = 1
+    # # IT handles the tokenizer instantiation via either tokenizer, tokenizer_name or model_name_or_path
+    # tokenizer: Optional[PreTrainedTokenizerBase] = None  # for pretrained cfg, IT instantiates the tokenizer
+    # fold_value_biases: Optional[bool] = True
+    # default_prepend_bos: Optional[bool] = True
+    # dtype: str = "float32"
+
+@dataclass(kw_only=True)
+class SAELensCustomConfig(ITSerializableCfg):
+    cfg: SAEConfig | Dict[str, Any]
+    # IT handles the tokenizer instantiation via either tokenizer, tokenizer_name or model_name_or_path
+    # tokenizer: Optional[PreTrainedTokenizerBase] = None
+    def __post_init__(self) -> None:
+        if not isinstance(self.cfg, SAEConfig):
+            # ensure the user provided a valid dtype (should be handled by SAEConfig ideally)
+            if self.cfg.get('dtype', None) and not isinstance(self.cfg['dtype'], torch.dtype):
+                self.cfg['dtype'] = _resolve_torch_dtype(self.cfg['dtype'])
+            self.cfg = SAEConfig.from_dict(self.cfg)
+
+@dataclass(kw_only=True)
+class SAELensConfig(ITConfig):
+    """Dataclass to encapsulate the ITModuleinternal state."""
+    sl_cfg: SAELensFromPretrainedConfig | SAELensCustomConfig
+    #use_error_term: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.sl_cfg:
+            raise MisconfigurationException("Either a `SAELensFromPretrainedConfig` or `SAELensCustomConfig` must be"
+                                            " provided to initialize an SAE and use SAE Lens.")
+        # internal variable used to bootstrap model initialization mode (we may need to override hf_from_pretrained_cfg)
+        self._load_from_pretrained = False if isinstance(self.sl_cfg, SAELensCustomConfig) else True
+        if not self._load_from_pretrained:
+            self._disable_pretrained_model_mode()  # after this, hf_from_pretrained_cfg exists only if used
+            self._torch_dtype = _resolve_torch_dtype(self.sl_cfg.cfg.dtype)
+        else:
+            # the only SL from_pretrained SAE ctor argument we need to sync is `device`
+            # SL construction with hf_from_pretrained_cfg is not currently supported, so we warn and continue if it's
+            # used
+            if self.hf_from_pretrained_cfg:
+                rank_zero_warn("SL from_pretrained SAE does not support HF `from_pretrained` config. "
+                               "Continuing with SL `from_pretrained` config initialization.")
+            #self._sync_pretrained_cfg()
+        #self._translate_sl_config()
+        super().__post_init__()
+
+    def _map_sl_fallback(self, target_key: str, sl_cfg_key: str):
+        pass
+        # qual_sub_key = sl_cfg_key.split(".")
+        # fallback_val = reduce(getattr, qual_sub_key, self)
+        # if fallback_val not in [None, 'custom']:
+        #     if getattr(self, target_key, None) is not None:
+        #         hf_override_msg = f"Since `{target_key}` was provided, `{sl_cfg_key}` will be ignored."
+        #     else:
+        #         hf_override_msg = (f"Since `{target_key} was not provided, the value provided for `{sl_cfg_key}` will"
+        #                            f" be used for `{target_key}`.")
+        #         setattr(self, target_key, fallback_val)
+        #     setattr(reduce(getattr, qual_sub_key[:-1], self), qual_sub_key[-1], None)
+        #     rank_zero_warn("Interpretune manages the HF model instantiation via `model_name_or_path`."
+        #                     f" {hf_override_msg}")
+
+    def _translate_sl_config(self):
+        pass
+        # if self._load_from_pretrained:
+        #     self._map_sl_fallback(target_key='model_name_or_path', sl_cfg_key='sl_cfg.hf_model')
+        #     self._map_sl_fallback(target_key='tokenizer', sl_cfg_key='sl_cfg.tokenizer')
+        #     self._prune_converted_keys()
+        # else:
+        #     self._map_sl_fallback(target_key='model_name_or_path', sl_cfg_key='sl_cfg.cfg.model_name')
+        #     self._map_sl_fallback(target_key='tokenizer_name', sl_cfg_key='sl_cfg.cfg.tokenizer_name')
+
+    def _prune_converted_keys(self):
+        pass
+        # if self._load_from_pretrained:
+        #     for attr in ['tokenizer', 'hf_model']:
+        #         if hasattr(self.sl_cfg, attr):
+        #             expected_none = f"{getattr(self.sl_cfg, attr)} should have been translated and set to `None`."
+        #             assert getattr(self.sl_cfg, attr) is None, expected_none
+        #             delattr(self.sl_cfg, attr)
+
+    def _disable_pretrained_model_mode(self):
+        ignored_attrs = []
+        for attr in ['hf_from_pretrained_cfg', 'defer_model_init']:
+            if getattr(self, attr):
+                ignored_attrs.append(attr)
+                setattr(self, attr, None)
+        if len(ignored_attrs) > 0:
+            rank_zero_warn("Since an `SAELensCustomConfig` has been provided, the following list of set `ITConfig`"
+                           f" attributes will be ignored: {ignored_attrs}.")
+
+    def _sync_pretrained_cfg(self):
+        if self._load_from_pretrained:
+            pass
+            #self._check_supported_device_map()
+            # if hf_dtype := self.hf_from_pretrained_cfg.pretrained_kwargs.get('torch_dtype', None):
+            #     hf_dtype = _resolve_torch_dtype(hf_dtype)
+            # sl_dtype = _resolve_torch_dtype(self.sl_cfg.dtype)
+            # self._sync_hf_sl_dtypes(hf_dtype, sl_dtype)
+
+    # def _check_supported_device_map(self):
+    #   device_map = self.hf_from_pretrained_cfg.pretrained_kwargs.get('device_map', None)
+    #   if isinstance(device_map, dict) and len(device_map.keys()) > 1:
+    #     rank_zero_warn(sl_invalid_dmap)
+    #     self.hf_from_pretrained_cfg.pretrained_kwargs['device_map'] = 'cpu'
+
+    def _sync_hf_sl_dtypes(self, hf_dtype, sl_dtype):
+        pass
+        # if hf_dtype and sl_dtype:
+        #     if hf_dtype != sl_dtype:  # if both are provided, TL dtype takes precedence
+        #         rank_zero_warn(f"HF `from_pretrained` dtype {hf_dtype} does not match TL dtype {sl_dtype}."
+        #                         f" Setting both to the specified TL dtype {sl_dtype}.")
+        #         self.hf_from_pretrained_cfg.pretrained_kwargs['torch_dtype'] = sl_dtype
+        # else:
+        #     rank_zero_warn("HF `from_pretrained` dtype was not provided. Setting `from_pretrained` dtype to match"
+        #                    f" specified TL dtype: {sl_dtype}.")
+        #     self.hf_from_pretrained_cfg.pretrained_kwargs['torch_dtype'] = sl_dtype
+
+
+# @dataclass(kw_only=True)
+# class SAELensGenerationConfig(CoreGenerationConfig):
+#     stop_at_eos: bool = True
+#     eos_token_id: Optional[int] = None
+#     freq_penalty: float = 0.0
+#     use_past_kv_cache: bool = True
+#     prepend_bos: Optional[bool] = None
+#     padding_side: Optional[Literal["left", "right"]] = None
+#     return_type: Optional[str] = "input"
+#     output_logits: Optional[bool] = True  # TODO: consider setting this back to None after testing
+#     verbose: bool = True
+
+################################################################################
+# Mixins to support SAE Lens in different adapter contexts
+################################################################################
+
+
+class SAELensAttributeMixin:
+    @property
+    def sl_cfg(self) -> Optional[HookedTransformerConfig]:
+        try:
+            # TODO: probably will need to add a separate sae_cfg property here as well that points to the configured
+            #       SAEConfig
+            cfg = reduce(getattr, "model.cfg".split("."), self)
+        except AttributeError as ae:
+            rank_zero_warn(f"Could not find a `SAEConfig` reference (has it been set yet?): {ae}")
+            cfg = None
+        return cfg
+
+    # TODO: we aren't using IT's Property Composition feature for TLens yet, but might be worth enabling it
+    @property
+    def device(self) -> Optional[torch.device]:
+        try:
+            device = getattr(self._it_state, "_device", None) or getattr(self.sl_cfg, "device", None) or \
+                reduce(getattr, "model.device".split("."), self)
+            # SAE Lens does not update the SAEConfig device to be a torch.device
+            #device = getattr(self._it_state, "_device", None) or reduce(getattr, "model.device".split("."), self)
+        except AttributeError as ae:
+            rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
+            device = None
+        return device
+
+    @device.setter
+    def device(self, value: Optional[str | torch.device]) -> None:
+        if value is not None and not isinstance(value, torch.device):
+            value = torch.device(value)
+        self._it_state._device = value
+
+    def get_sl_device(self, block_index: int) -> Optional[torch.device]:
+        try:
+            device = get_device_for_block_index(block_index, self.sl_cfg)
+        except (AttributeError, AssertionError) as ae:
+            rank_zero_warn(f"Problem determining appropriate device for block {block_index} from TransformerLens"
+                           f" config. Received: {ae}")
+            device = None
+        return device
+
+    @property
+    def output_device(self) -> Optional[torch.device]:
+        return self.get_sl_device(self.model.cfg.n_layers - 1)
+
+    @property
+    def input_device(self) -> Optional[torch.device]:
+        return self.get_sl_device(0)
+
+
+class BaseSAELensModule(BaseITModule):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.original_cfg_dict = None
+        self.sparsity = None
+        # TODO: test patch of HookedSAETransformer.generate instead of hookedrootmodule.generate
+        HookedSAETransformer.generate = patched_generate
+        #HookedRootModule.generate = patched_generate
+        #HookedRootModule.tokenizer = self.it_cfg.tokenizer
+        #self.loss_fn = None
+
+    def auto_model_init(self) -> None:
+        """Can be overridden by subclasses to automatically initialize model from a configuration (e.g.
+        hf_from_pretrained_cfg, sl_from_config etc.)."""
+        if self.it_cfg._load_from_pretrained:
+            self.from_pretrained_model_init()
+        else:
+            self.sl_config_model_init()
+        # TODO: remove this one-off attribute after adapting SL generation more robustly,
+        #self.sl_cfg.default_prepend_bos = getattr(self.sl_cfg, 'default_prepend_bos', None)
+
+    def from_pretrained_model_init(self) -> None:
+        # for TL, only a subset of the HF pretrained init flow used since the model is replaced with a HookedTransformer
+        # access_token = os.environ[self.it_cfg.os_env_model_auth_key.upper()] if self.it_cfg.os_env_model_auth_key \
+        #     else None
+        # quantization_config = super()._hf_configure_quantization()
+        # super()._update_hf_pretrained_cfg(quantization_config)
+        # cust_config, _ = super()._hf_gen_cust_config(access_token)
+        # self.model = self.hf_configured_model_init(cust_config, access_token)
+        # TODO: need to decide best cfg structure that allows configuration of both SAE and HookedSAETransformer
+        # e.g.:
+        # self.model = HookedSAETransformer.from_pretrained(self.sl_cfg.transformer.__dict__)
+        # self.sae, self.original_cfg_dict, self.sparsity = SAE.from_pretrained(self.sl_cfg.sae.__dict__)
+        # self.model.add_sae(self.sae)
+        # self.sae, self.original_cfg_dict, self.sparsity = SAE.from_pretrained(**self.it_cfg.sl_cfg.__dict__)
+        pass
+        #self._convert_hf_to_sl()
+
+    def hf_configured_model_init(self, cust_config: PretrainedConfig | SAELensCustomConfig,
+                                  access_token: Optional[str] = None) -> torch.nn.Module:
+        # usually makes sense to init the HookedTransfomer (empty) and pretrained HF model weights on cpu
+        # versus moving them both to GPU (may make sense to explore meta device usage for model definition
+        # in the future, only materializing parameter by parameter during loading from pretrained weights
+        # to eliminate need for two copies in memory)
+        # TODO: add warning that TransformerLens only specifying a single device via device  is supported
+        # (though the model will automatically be moved to multiple devices if n_devices > 1)
+        pass
+        # cust_config.num_labels = self.it_cfg.num_labels
+        # if (dmap := self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs.get('device_map', None)) != 'cpu':
+        #     rank_zero_warn('Overriding `device_map` passed to TransformerLens to transform pretrained weights on'
+        #                 f' cpu prior to moving the model to target device: {dmap}')
+        #     self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs['device_map'] = "cpu"
+        # model = self.it_cfg.model_class.from_pretrained(**self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs,
+        #                                                 config=cust_config, token=access_token)
+        # perhaps explore initializing on the meta device and then materializing as needed layer by layer during
+        # loading/processing into hookedtransformer
+        # with torch.device("meta"):
+        #     model = self.it_cfg.model_class(config=cust_config)  # token=access_token)
+        #return model
+
+    def sl_config_model_init(self) -> None:
+        # TODO: add note to documentation that we currently require sl_cfg to be not None (either from pretrained or
+        #       custom config) based, so model_init will not be used. To fully customize TL behavior, override this
+        #       method and init config-based HookedTransformer as desired
+        # TODO: suppress messages from tl about no tokenizer here, we're deferring the tokenizer attach until setup
+        self.sae = SAE.from_dict(self.it_cfg.sl_cfg.cfg.__dict__)
+
+    def _convert_hf_to_sl(self) -> None:
+        # TODO: decide whether to pass remaining hf_from_pretrained_cfg args to HookedTransformer
+        # (other than torch_dtype which should already have been processed and removed, device_map should also be
+        # removed before passing to HookedTransformer)
+        pass
+        # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
+        # tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
+        # hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
+        # self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle,
+        #                                                **self.it_cfg.sl_cfg.__dict__)
+        # self.model.config = hf_preconversion_config
+
+    def _capture_hyperparameters(self) -> None:
+        # override unsupported from pretrained options
+        if self.hf_cfg:
+            self.hf_cfg.lora_cfg = None
+            self.hf_cfg.bitsandbytesconfig = None  # TODO NEXT: enable bnb now that it's supported by TransformerLens
+        # TODO: refactor the captured config here to only add sl_from_pretrained, other added in superclass
+        # TODO: serialize sl_config
+        if self.it_cfg._load_from_pretrained:
+            pass
+            # self._it_state._init_hparams = {"sl_cfg": self._make_config_serializable(self.it_cfg.sl_cfg, ['device',
+            #                                                                                               'dtype']),}
+        else:
+            serializable_sl_cfg = deepcopy(self.it_cfg.sl_cfg)
+            serializable_sl_cfg.cfg = self._make_config_serializable(self.it_cfg.sl_cfg.cfg, ['device', 'dtype'])
+            self._it_state._init_hparams = {"sl_cfg": serializable_sl_cfg}
+        super()._capture_hyperparameters()
+
+    def set_input_require_grads(self) -> None:
+        # not currently supported by ITLensModule
+        rank_zero_info("Setting input require grads not currently supported by ITLensModule.")
+
+
+################################################################################
+# SAE Lens Module Composition
+################################################################################
+
+class SAELensAdapter(SAELensAttributeMixin):
+
+    @classmethod
+    @override
+    def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
+        adapter_ctx_registry.register(Adapter.sae_lens, component_key = "datamodule",
+                                        adapter_combination=(Adapter.core, Adapter.sae_lens),
+                                        composition_classes=(ITDataModule,),
+                                        description="SAE Lens adapter that can be composed with core and l...",
+        )
+        adapter_ctx_registry.register(Adapter.sae_lens, component_key = "datamodule",
+                                        adapter_combination=(Adapter.lightning, Adapter.sae_lens),
+                                        composition_classes=(ITDataModule, LightningDataModule),
+                                        description="SAE Lens adapter that can be composed with core and l...",
+        )
+        adapter_ctx_registry.register(Adapter.sae_lens, component_key = "module",
+                                        adapter_combination=(Adapter.core, Adapter.sae_lens),
+                                        composition_classes=(SAELensModule,),
+                                        description="SAE Lens adapter that can be composed with core and l...",
+        )
+        adapter_ctx_registry.register(Adapter.sae_lens, component_key = "module",
+                                        adapter_combination=(Adapter.lightning, Adapter.sae_lens),
+                                        composition_classes=(SAELensAttributeMixin, BaseSAELensModule, LightningAdapter,
+                                                             BaseITModule, LightningModule),
+                                        description="SAE Lens adapter that can be composed with core and l...",
+        )
+
+    def batch_to_device(self, batch) -> BatchEncoding:
+        move_data_to_device(batch, self.input_device)
+        return batch
+
+class SAELensModule(SAELensAdapter, CoreHelperAttributes, BaseSAELensModule):
+    ...

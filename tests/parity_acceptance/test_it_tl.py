@@ -19,7 +19,8 @@ import pytest
 
 from interpretune.adapters.registration import Adapter
 
-from tests.configuration import BaseAugTest, BaseCfg, pytest_param_factory, IT_GLOBAL_STATE_LOG_MODE
+from tests.base_defaults import BaseAugTest, BaseCfg, pytest_param_factory
+from tests.configuration import IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
 from tests.parity_acceptance.cfg_aliases import (cuda,test_bs1_mem, test_bs1_mem_nosavedt, bs1_nowarm_hk_mem,
                                                  bs1_warm_mem, w_l_tl)

@@ -14,6 +14,7 @@ from datasets.arrow_dataset import LazyDict
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.adapters.transformer_lens import ITLensConfig
+from interpretune.adapters.sae_lens import SAELensConfig
 from interpretune.base.config.datamodule import PromptConfig, ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
 from interpretune.base.config.mixins import ZeroShotClassificationConfig, BaseGenerationConfig, HFGenerationConfig
@@ -63,6 +64,9 @@ class RTEBoolqConfig(RTEBoolqEntailmentMapping, ITConfig):
 class RTEBoolqTLConfig(RTEBoolqEntailmentMapping, ITLensConfig):
     ...
 
+@dataclass(kw_only=True)
+class RTEBoolqSLConfig(RTEBoolqEntailmentMapping, SAELensConfig):
+    ...
 
 class RTEBoolqDataModule(ITDataModule):
     def __init__(self, itdm_cfg: ITDataModuleConfig) -> None:

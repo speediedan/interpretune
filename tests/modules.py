@@ -21,7 +21,6 @@ from interpretune.base.config.module import ITConfig
 from interpretune.utils.types import STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_only
 from it_examples.experiments.rte_boolq import RTEBoolqDataModule, RTEBoolqModuleMixin, RTEBoolqSteps
-from it_examples.example_module_registry import LlamaRTEBoolqDataModule
 from tests import FinetuningScheduler
 from tests.results import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS, SAMPLE_POSITION,
                            DatasetState, TestDatasetKey)
@@ -96,9 +95,6 @@ class SimpleDatasetStateMixin:
         return []
 
 class NoFingerprintTestITDataModule(SimpleDatasetStateMixin, BaseTestDataModule, RTEBoolqDataModule):
-    ...
-
-class LlamaTestITDataModule(SimpleDatasetStateMixin, BaseTestDataModule, LlamaRTEBoolqDataModule):
     ...
 
 class SampledOutput(NamedTuple):

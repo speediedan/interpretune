@@ -10,7 +10,7 @@ from interpretune.base.config.mixins import HFFromPretrainedConfig, ZeroShotClas
 from interpretune.adapters.transformer_lens import ITLensCustomConfig
 from interpretune.extensions.debug_generation import DebugLMConfig
 from interpretune.extensions.memprofiler import MemProfilerCfg
-from tests.configuration import BaseCfg, BaseAugTest
+from tests.base_defaults import BaseAugTest, BaseCfg
 from tests.parity_acceptance.cfg_aliases import parity_cli_cfgs, mod_initargs, CLI_TESTS
 from tests.parity_acceptance.test_it_tl import TLParityCfg
 from tests.parity_acceptance.test_it_cli import CLICfg
@@ -112,6 +112,12 @@ class LightningGPT2(BaseCfg):
 class LightningTLGPT2(BaseCfg):
     model_src_key: Optional[str] = "gpt2"
     adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
+
+@dataclass(kw_only=True)
+class LightningSLGPT2(BaseCfg):
+    phase: Optional[str] = "test"
+    model_src_key: Optional[str] = "gpt2"
+    adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning, Adapter.sae_lens)
 
 class CLI_UNIT_TESTS(AutoStrEnum):
     seed_null = auto()

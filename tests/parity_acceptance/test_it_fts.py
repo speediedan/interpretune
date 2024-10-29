@@ -19,7 +19,8 @@ from collections.abc import Iterable
 import pytest
 
 from interpretune.adapters.registration import Adapter
-from tests.configuration import BaseAugTest, BaseCfg, pytest_param_factory, IT_GLOBAL_STATE_LOG_MODE
+from tests.base_defaults import BaseAugTest, BaseCfg, pytest_param_factory
+from tests.configuration import IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
 from tests.parity_acceptance.cfg_aliases import cuda, l_gpt2_fts, l_tl_gpt2_fts, TestFTS
 from tests.parity_acceptance.expected import fts_parity_results

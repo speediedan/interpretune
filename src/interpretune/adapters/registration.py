@@ -24,6 +24,9 @@ class Adapter(AutoStrEnum):
     # TRANSFORMER_LENS: The provided module and datamodule will be prepared for use with the TransformerLens adapter in
     #                  in combination with any supported and specified adapter.
     transformer_lens = auto()
+    # SAE_LENS: The provided module and datamodule will be prepared for use with the SAELens adapter in
+    #                  in combination with any supported and specified adapter.
+    sae_lens = auto()
 
 
 class CompositionRegistry(dict):

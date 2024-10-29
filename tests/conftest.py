@@ -15,7 +15,7 @@ import threading
 import random
 from collections.abc import Iterable
 from collections import defaultdict
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Type
 from functools import partial
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
@@ -37,16 +37,17 @@ from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_only
 from interpretune.utils.types import StrOrPath
 from tests import _PATH_DATASETS, seed_everything, load_dotenv, FinetuningScheduler, get_fts, Trainer
-from tests.configuration import (config_modules, get_it_cfg, get_itdm_cfg, config_session, TEST_IT_DATAMODULE,
-                                 TEST_IT_MODULE)
-from tests.modules import TestITDataModule
+from tests.configuration import config_modules, apply_it_test_cfg, apply_itdm_test_cfg, config_session
+from tests.modules import TestITDataModule, TestITModule
 from tests.parity_acceptance.cfg_aliases import parity_cli_cfgs, CLI_EXP
 from tests.parity_acceptance.test_it_cli import TEST_CONFIGS_CLI_PARITY
-from tests.parity_acceptance.test_it_l import CoreCfg, ProfParityCfg, BaseCfg
+from tests.base_defaults import BaseCfg
+from tests.parity_acceptance.test_it_l import CoreCfg, ProfParityCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg, TLProfileCfg
 from tests.unit.cfg_aliases import (TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg,
     LightningLlama3DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg, CoreGPT2PEFTSeqCfg,
-    CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, TLMechInterpCfg)
+    CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, LightningSLGPT2, TLMechInterpCfg)
+from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
 
 test_cli_cfgs = deepcopy(parity_cli_cfgs)
@@ -68,8 +69,8 @@ test_cli_cfgs['exp_cfgs'].update(unit_exp_cli_cfgs)
 @dataclass(kw_only=True)
 class FixtureCfg:
     test_cfg: BaseCfg = CoreCfg
-    module_cls: ModuleSteppable = TEST_IT_MODULE
-    datamodule_cls: DataModuleInitable = TEST_IT_DATAMODULE
+    module_cls: Type[ModuleSteppable] = TestITModule
+    datamodule_cls: Type[DataModuleInitable] = TestITDataModule
     scope: str = "class"
 
 FIXTURE_CFGS = {
@@ -81,6 +82,7 @@ FIXTURE_CFGS = {
     "core_cust_memprof": FixtureCfg(test_cfg=CoreMemProfCfg),
     "l_gpt2": FixtureCfg(test_cfg=LightningGPT2, scope="function"),
     "l_tl_gpt2": FixtureCfg(test_cfg=LightningTLGPT2, scope="function"),
+    "l_sl_gpt2": FixtureCfg(test_cfg=LightningSLGPT2, scope="function"),
     "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg),
     "tl_cust": FixtureCfg(test_cfg=TLParityCfg, scope="session"),
     "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function"),
@@ -109,7 +111,9 @@ def make_it_datamodule():
     def __make_it_datamodule(datamodule_key):
         test_cfg = FIXTURE_CFGS[datamodule_key].test_cfg()
         dm_kwargs = {'force_prepare_data': test_cfg.force_prepare_data}
-        itdm_cfg = get_itdm_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
+        base_itdm_cfg, *_ = MODULE_EXAMPLE_REGISTRY.get(test_cfg)
+        itdm_cfg = apply_itdm_test_cfg(base_itdm_cfg=base_itdm_cfg, test_cfg=test_cfg)
+        #itdm_cfg = apply_itdm_test_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
         dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm',
                         input=FIXTURE_CFGS[datamodule_key].datamodule_cls, ctx=test_cfg.adapter_ctx)
         it_dm = dm_cls(itdm_cfg=itdm_cfg, **dm_kwargs)
@@ -136,7 +140,7 @@ def make_it_module(tmp_path_factory):
         m_kwargs = {'test_alias': f"{module_key}_{init_key}_it_m_fixture", 'state_log_dir': None}
         test_cfg=FIXTURE_CFGS[module_key].test_cfg()
         core_log_dir = tmp_path_factory.mktemp(f"{module_key}_{init_key}_it_m_fixture")
-        it_cfg = get_it_cfg(test_cfg=test_cfg, core_log_dir=core_log_dir)
+        it_cfg = apply_it_test_cfg(test_cfg=test_cfg, core_log_dir=core_log_dir)
         m_cls = ITMeta('InterpretunableModule', (), {}, component='m',
                        input=FIXTURE_CFGS[module_key].module_cls, ctx=test_cfg.adapter_ctx)
         it_m = m_cls(it_cfg=it_cfg, **m_kwargs)
@@ -184,8 +188,10 @@ def configure_session_cfg(test_cfg_cls, tmp_path_or_factory):
         tmp_log_dir = tmp_path_or_factory
     else:
         tmp_log_dir = tmp_path_or_factory.mktemp(f"{test_cfg_cls.__name__}_sess_cfg_fixture")
-    itdm_cfg = get_itdm_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
-    it_cfg = get_it_cfg(test_cfg=test_cfg, core_log_dir=tmp_log_dir)
+    base_itdm_cfg, base_it_cfg, *_ = MODULE_EXAMPLE_REGISTRY.get(test_cfg)
+    itdm_cfg = apply_itdm_test_cfg(base_itdm_cfg=base_itdm_cfg, test_cfg=test_cfg)
+    it_cfg = apply_it_test_cfg(base_it_cfg=base_it_cfg, test_cfg=test_cfg, core_log_dir=tmp_log_dir)
+    # TODO: re-validate these should still be fqns instead of Module objects
     TEST_CLS_MAPPING = {'datamodule_cls': 'tests.modules.TestITDataModule', 'module_cls': 'tests.modules.TestITModule'}
     core_cfg = {'datamodule_cfg': itdm_cfg, 'module_cfg': it_cfg, **TEST_CLS_MAPPING}
     return core_cfg, test_cfg

@@ -11,7 +11,7 @@ from interpretune.adapters.registration import Adapter
 from interpretune.adapters import ADAPTER_REGISTRY
 from interpretune.base.components.cli import core_cli_main, compose_config, l_cli_main
 from interpretune.utils.types import ArgsType
-from tests.configuration import pytest_param_factory, BaseAugTest
+from tests.base_defaults import pytest_param_factory, BaseAugTest
 from tests.parity_acceptance.cfg_aliases import CLI_TESTS, IT_HOME, RUN_FN, CLI_EXP
 from tests.runif import RunIf
 from tests.warns import unexpected_warns, CLI_EXPECTED_WARNS

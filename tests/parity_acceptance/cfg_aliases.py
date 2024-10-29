@@ -9,7 +9,7 @@ from interpretune.base.config.shared import AutoStrEnum
 from interpretune.extensions.memprofiler import MemProfilerCfg, MemProfilerSchedule
 from it_examples.example_module_registry import (core_cust_shared_config, test_tl_datamodule_cfg, test_optimizer_init,
                                        test_lr_scheduler_init, test_tl_signature_columns)
-from tests.global_defaults import default_prof_bs
+from base_defaults import default_prof_bs
 from tests.modules import TestFTS
 from tests.utils import get_nested, set_nested
 
