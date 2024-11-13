@@ -42,11 +42,19 @@ TL_EXPECTED_WARNS = [
     "Since no datamodule",  # using cust tlens config for fallback
 ]
 
-FTS_CTX_WARNS = [".*currently depends upon.*", "No monitor metric specified for.*",]
-
 TL_CTX_WARNS = TL_EXPECTED_WARNS + CORE_CTX_WARNS
 TL_LIGHTNING_CTX_WARNS = TL_CTX_WARNS + LIGHTING_CTX_WARNS
 
+SL_EXPECTED_WARNS = [
+    "interactive_bk attribute",  # temporarily triggered in pydevd context
+    "open_text is deprecated",
+    "SAE has non-empty model_from_pretrained_kwargs",
+]
+
+SL_CTX_WARNS = SL_EXPECTED_WARNS + CORE_CTX_WARNS
+SL_LIGHTNING_CTX_WARNS = SL_CTX_WARNS + LIGHTING_CTX_WARNS
+
+FTS_CTX_WARNS = [".*currently depends upon.*", "No monitor metric specified for.*",]
 
 EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS + TL_EXPECTED_WARNS
 
@@ -58,12 +66,11 @@ CLI_EXPECTED_WARNS = {
     (Adapter.core, Adapter.core, Adapter.transformer_lens): TL_CTX_WARNS
 }
 
-MIN_VERSION_WARNS = "2.0"
-MAX_VERSION_WARNS = "2.2"
+MIN_VERSION_WARNS = "2.2"
+MAX_VERSION_WARNS = "2.5"
 # torch version-specific warns go here
 EXPECTED_VERSION_WARNS = {MIN_VERSION_WARNS: [],
                           MAX_VERSION_WARNS: [
-                              'PairwiseParallel is deprecated and will be removed soon.',  # temp warning for pt 2.2
                               ]}
 torch_version = get_distribution("torch").version
 extended_torch_ver = EXTENDED_VER_PAT.match(torch_version).group() or torch_version

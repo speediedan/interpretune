@@ -103,6 +103,15 @@ class LightningLlama3DebugCfg(BaseCfg):
     adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning,)
 
 @dataclass(kw_only=True)
+class LightningGemma2DebugCfg(BaseCfg):
+    debug_lm_cfg: Optional[DebugLMConfig] = field(default_factory=lambda: DebugLMConfig(enabled=True))
+    phase: Optional[str] = "test"
+    device_type: Optional[str] = "cuda"
+    model_src_key: Optional[str] = "gemma2"
+    precision: Optional[str | int] = "bf16-true"
+    adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning,)
+
+@dataclass(kw_only=True)
 class LightningGPT2(BaseCfg):
     model_src_key: Optional[str] = "gpt2"
     adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning,)

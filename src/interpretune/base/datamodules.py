@@ -1,6 +1,6 @@
 import os
 import inspect
-from typing import Optional, Callable, Any
+from typing import Optional, Any
 from functools import reduce
 import logging
 
@@ -38,7 +38,6 @@ class ITDataModule:
         """
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__(*args, **kwargs)
-        self.tokenization_func: Optional[Callable] = None
         # module handle
         self._module = None
         self.itdm_cfg = itdm_cfg

@@ -28,6 +28,9 @@ class Adapter(AutoStrEnum):
     #                  in combination with any supported and specified adapter.
     sae_lens = auto()
 
+    def __lt__(self, other: 'Adapter') -> bool:
+        return self.value < other.value
+
 
 class CompositionRegistry(dict):
     # TODO: if this experimental compositional utility and protocol gains traction with external users:
@@ -79,7 +82,7 @@ class CompositionRegistry(dict):
             supported_composition = self[composition_key]
             return supported_composition[composition_key]
 
-        available_keys = pformat(sorted(self.keys())) or "none"
+        available_keys = pformat(self.keys()) or "none"
         err_msg = (f"The composition key `{composition_key}` was not found in the registry."
                    f" Available valid compositions: {available_keys}")
         raise KeyError(err_msg)
@@ -107,7 +110,7 @@ class CompositionRegistry(dict):
         return set(self.keys())
 
     def __str__(self) -> str:
-        return f"Registered Adapter Compositions: {pformat(sorted(self.keys()))}"
+        return f"Registered Adapter Compositions: {pformat(self.keys())}"
 
 @runtime_checkable
 class AdapterProtocol(Protocol):

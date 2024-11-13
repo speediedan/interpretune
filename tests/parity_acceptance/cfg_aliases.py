@@ -20,6 +20,7 @@ from tests.utils import get_nested, set_nested
 ################################################################################
 w_lit = {"adapter_ctx": (Adapter.lightning,)}
 w_l_tl = {"adapter_ctx": (Adapter.lightning, Adapter.transformer_lens)}
+w_l_sl = {"adapter_ctx": (Adapter.lightning, Adapter.sae_lens)}
 
 ################################################################################
 # Device and Precision cfg aliases
@@ -58,6 +59,8 @@ act_ckpt = {
         pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"}, model_head="transformers.GPT2LMHeadModel",
         activation_checkpointing=True)}
 cuda_act = {**cuda, **act_ckpt}
+cust_no_sae_grad = {"req_grad_mask": {'blocks.0.hook_resid_pre.b_enc': False, 'blocks.0.hook_resid_pre.W_dec': False,
+                                      'blocks.0.hook_resid_pre.W_enc': False, 'blocks.0.hook_resid_pre.b_dec': False}}
 
 ##################################
 # FTS config aliases

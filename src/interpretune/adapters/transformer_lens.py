@@ -58,6 +58,17 @@ class ITLensFromPretrainedConfig(ITLensSharedConfig):
     default_prepend_bos: Optional[bool] = True
     dtype: str = "float32"
 
+# rather than use from_pretrained_no_processing wrapper, we specify the simplfied config defaults we want directly
+@dataclass(kw_only=True)
+class ITLensFromPretrainedNoProcessingConfig(ITLensFromPretrainedConfig):
+    fold_ln: bool = False
+    center_writing_weights: bool = False
+    center_unembed: bool = False
+    refactor_factored_attn_matrices: bool = False
+    fold_value_biases: bool = False
+    dtype: str = "torch.float32"
+    default_prepend_bos: bool = True
+
 @dataclass(kw_only=True)
 class ITLensCustomConfig(ITLensSharedConfig):
     cfg: HookedTransformerConfig | Dict[str, Any]

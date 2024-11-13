@@ -3,7 +3,7 @@ from pathlib import Path
 from jaxtyping import Float, Int
 from typing import Optional, Any, Dict, Tuple, NamedTuple, Union, Callable, List
 from unittest import mock
-from functools import reduce
+from functools import reduce, partial
 from dataclasses import dataclass
 from fsspec.core import url_to_fs
 from fsspec.implementations.local import AbstractFileSystem
@@ -68,6 +68,15 @@ class BaseTestDataModule:
 
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""
+
+        tokenization_func = partial(
+            self.encode_for_rteboolq,
+            tokenizer=self.tokenizer,
+            text_fields=self.itdm_cfg.text_fields,
+            prompt_cfg=self.itdm_cfg.prompt_cfg,
+            template_fn=self.model_chat_template_fn,
+            tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern,
+        )
         dataset_path = Path(self.itdm_cfg.dataset_path)
         # rebuild the test dataset if it does not exist in the test environment
         if not dataset_path.exists() or self.force_prepare_data:
@@ -75,7 +84,7 @@ class BaseTestDataModule:
             dataset = datasets.load_dataset("super_glue", 'rte', trust_remote_code=True)
             for split in dataset.keys():
                 dataset[split] = dataset[split].select(range(10))
-                dataset[split] = dataset[split].map(self.tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
+                dataset[split] = dataset[split].map(tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
                 dataset[split] = self._remove_unused_columns(dataset[split])
             # TODO: remove below temporary workaround (converting Path to str) once upstream issue resolved
             # looks like https://github.com/huggingface/datasets/pull/6704 broke `save_to_disk` method for
@@ -373,9 +382,10 @@ class StateLogInspectMixin:
 
 class BaseTestModule(StateLogInspectMixin):
 
-    def __init__(self, *args, dstype_agnostic: bool = False, **kwargs) -> None:
+    def __init__(self, *args, dstype_agnostic: bool = False, req_grad_mask: Optional[Dict] = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.dstype_agnostic = dstype_agnostic
+        self.req_grad_mask = req_grad_mask or {}
         self.epoch_losses = {}
         self.sampled_fwd_inputs = None
 
@@ -415,6 +425,18 @@ class BaseTestModule(StateLogInspectMixin):
         if self.epoch_losses and self.epoch_losses.get(state_key, None):
             current_close.update({'loss': self.epoch_losses[state_key]})
         self.inspect_or_assert(self._get_current_exact(), current_close, state_key)
+
+    def configure_optimizers(self):
+        # maybe apply a given `req_grad_mask` (for non-FTS context testing)
+        # usually should be used for a small subset of parameters so we don't iterate through ``named_parameters`` but
+        # use `get_parameter`` call instead
+        for n, val in self.req_grad_mask.items():
+            try:
+                p = self.model.get_parameter(n)
+                p.requires_grad_(val)
+            except AttributeError:
+                rank_zero_only(f"Test `req_grad_mask` parameter {n} was not found in the test model")
+        return super().configure_optimizers()
 
     def _on_test_or_train_batch_start(self, batch: Any, batch_idx: int, *args, **kwargs):
         if self.global_step == 0 and batch_idx == 0:

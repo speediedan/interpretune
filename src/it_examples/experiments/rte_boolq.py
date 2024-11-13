@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List, Callable
 from dataclasses import dataclass, field
 from pprint import pformat
 import logging
@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 from torch.nn import CrossEntropyLoss
 import evaluate
 import datasets
+from transformers import PreTrainedTokenizerBase
 from datasets.arrow_dataset import LazyDict
 from transformers.tokenization_utils_base import BatchEncoding
 
@@ -68,6 +69,7 @@ class RTEBoolqTLConfig(RTEBoolqEntailmentMapping, ITLensConfig):
 class RTEBoolqSLConfig(RTEBoolqEntailmentMapping, SAELensConfig):
     ...
 
+
 class RTEBoolqDataModule(ITDataModule):
     def __init__(self, itdm_cfg: ITDataModuleConfig) -> None:
         if itdm_cfg.task_name not in TASK_NUM_LABELS.keys():
@@ -75,19 +77,25 @@ class RTEBoolqDataModule(ITDataModule):
             itdm_cfg.task_name = DEFAULT_TASK
         itdm_cfg.text_fields = TASK_TEXT_FIELD_MAP[itdm_cfg.task_name]
         super().__init__(itdm_cfg=itdm_cfg)
-        # HF Datasets' transformation cache fingerprinting algo necessitates construction of these partials as the hash
-        # is generated using function args, dataset file, mapping args: https://bit.ly/HF_Datasets_fingerprint_algo)
-        self.tokenization_func = partial(
-            self.encode_for_rteboolq, tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern)
 
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""
-        # N.B. PL calls prepare_data from a single process (rank 0) so do not use it to assign
-        # state (e.g. self.x=y)
+        # N.B. prepare_data is called in a single process (rank 0, either per node or globally) so do not use it to
+        # assign state (e.g. self.x=y)
         # note for raw pytorch we require a target_model
+        # HF Datasets' transformation cache fingerprinting algo necessitates construction of these partials as the hash
+        # is generated using function args, dataset file, mapping args: https://bit.ly/HF_Datasets_fingerprint_algo)
+        tokenization_func = partial(
+            self.encode_for_rteboolq,
+            tokenizer=self.tokenizer,
+            text_fields=self.itdm_cfg.text_fields,
+            prompt_cfg=self.itdm_cfg.prompt_cfg,
+            template_fn=self.model_chat_template_fn,
+            tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern,
+        )
         dataset = datasets.load_dataset("super_glue", self.itdm_cfg.task_name, trust_remote_code=True)
         for split in dataset.keys():
-            dataset[split] = dataset[split].map(self.tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
+            dataset[split] = dataset[split].map(tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
             dataset[split] = self._remove_unused_columns(dataset[split], target_model)
         dataset.save_to_disk(self.itdm_cfg.dataset_path)
 
@@ -110,30 +118,35 @@ class RTEBoolqDataModule(ITDataModule):
     def predict_dataloader(self) -> DataLoader:
         return self.dataloader_factory(split='validation')
 
-    def cust_tokenization_pattern(self, task_prompt: str, tokenization_pattern: Optional[str] = None) -> str:
+    @staticmethod
+    def model_chat_template_fn(task_prompt: str, prompt_cfg: Optional[PromptConfig] = None,
+                               tokenization_pattern: Optional[str] = None) -> str:
         return task_prompt.strip()
 
-    def encode_for_rteboolq(self, example_batch: LazyDict, tokenization_pattern: Optional[str] = None) -> BatchEncoding:
+    #TODO: relax PreTrainedTokenizerBase to the protocol that is actually required
+    @staticmethod
+    def encode_for_rteboolq(example_batch: LazyDict, tokenizer: PreTrainedTokenizerBase, text_fields: List[str],
+                            prompt_cfg: PromptConfig, template_fn: Callable,
+                            tokenization_pattern: Optional[str] = None) -> BatchEncoding:
         example_batch['sequences'] = []
-        assert example_batch is not None
-        assert self.itdm_cfg.text_fields is not None
-        assert self.itdm_cfg.prompt_cfg is not None
         # TODO: use promptsource instead of this manual approach after tinkering
-        for field1, field2 in zip(example_batch[self.itdm_cfg.text_fields[0]],
-                                  example_batch[self.itdm_cfg.text_fields[1]]):
-            if self.itdm_cfg.prompt_cfg.cust_task_prompt:
-                task_prompt = (self.itdm_cfg.prompt_cfg.cust_task_prompt['context'] + "\n" +
+        for field1, field2 in zip(example_batch[text_fields[0]],
+                                  example_batch[text_fields[1]]):
+            if prompt_cfg.cust_task_prompt:
+                task_prompt = (prompt_cfg.cust_task_prompt['context'] + "\n" +
                                field1 + "\n" +
-                               self.itdm_cfg.prompt_cfg.cust_task_prompt['question'] + "\n" +
+                               prompt_cfg.cust_task_prompt['question'] + "\n" +
                                field2)
             else:
-                task_prompt = (field1 + self.itdm_cfg.prompt_cfg.ctx_question_join + field2 \
-                               + self.itdm_cfg.prompt_cfg.question_suffix)
-            sequence = self.cust_tokenization_pattern(task_prompt, tokenization_pattern)
+                task_prompt = (field1 + prompt_cfg.ctx_question_join + field2 \
+                               + prompt_cfg.question_suffix)
+            sequence = template_fn(prompt_cfg=prompt_cfg, task_prompt=task_prompt,
+                                   tokenization_pattern=tokenization_pattern)
             example_batch['sequences'].append(sequence)
-        features = self.tokenizer.batch_encode_plus(example_batch["sequences"], padding="longest")
+        features = tokenizer.batch_encode_plus(example_batch["sequences"], padding="longest",
+                                               padding_side=tokenizer.padding_side)
         features["labels"] = example_batch["label"]  # Rename label to labels, easier to pass to model forward
-        features = _sanitize_input_name(self.tokenizer.model_input_names, features)
+        features = _sanitize_input_name(tokenizer.model_input_names, features)
         return features
 
 class RTEBoolqSteps:

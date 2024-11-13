@@ -101,6 +101,10 @@ class DebugGeneration:
                 return [self.phandle.datamodule.itdm_cfg.prompt_cfg.SYS_ROLE_START + \
                         f"{ex.strip()} {self.phandle.datamodule.itdm_cfg.prompt_cfg.USER_ROLE_END}" \
                             for ex in sequences]
+            case 'gemma2':
+                return [self.phandle.datamodule.itdm_cfg.prompt_cfg.USER_ROLE_START + \
+                        f"{ex.strip()} {self.phandle.datamodule.itdm_cfg.prompt_cfg.USER_ROLE_END}" \
+                            for ex in sequences]
             case _:
                 rank_zero_warn(f"Unrecognized format for chat debug sequences: {format}. "
                                "Returning the stripped sequences but without the corresponding "

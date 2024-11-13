@@ -58,6 +58,7 @@ l_profiling_parity_results = {
 
 
 tl_results = partial(def_results, dataset_fingerprint=DatasetFingerprint.tl)
+sl_results = partial(def_results, dataset_fingerprint=DatasetFingerprint.sl)
 
 # TODO: using result dicts in this module for now but ultimately plan to save/construct TestResults from a yaml file
 # here to make programmatic management of expected results easier
@@ -70,6 +71,14 @@ tl_parity_results = {
     "train_cpu_32": TestResult(exact_results=tl_results("cpu", 32, ds_cfg="train")),
     "train_cuda_32": TestResult(exact_results=tl_results("cuda", 32, ds_cfg="train")),
     "train_cpu_32_debug": TestResult(exact_results=tl_results("cpu", 32, ds_cfg="train")),
+}
+
+# we always check for basic exact match on device type and precision as well
+# note our result mapping function uses these core results for all supported parity test suffixes (e.g. '_l')
+sl_parity_results = {
+    "test_cpu_32": TestResult(exact_results=sl_results("cpu", 32, ds_cfg="test")),
+    "train_cpu_32": TestResult(exact_results=sl_results("cpu", 32, ds_cfg="train")),
+    "train_cuda_32": TestResult(exact_results=sl_results("cuda", 32, ds_cfg="train")),
 }
 
 ########################################################################################################################

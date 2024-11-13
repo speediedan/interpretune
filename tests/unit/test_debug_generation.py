@@ -26,37 +26,48 @@ class TestClassDebugGen:
         assert_close(actual=acc.cpu().item(), expected=EXPECTED_DEBUG_BASIC[0], rtol=0.10, atol=0)
         assert_close(actual=len(correct_tokens), expected=EXPECTED_DEBUG_BASIC[1], rtol=0.10, atol=0)
 
+    # TODO: extract model-specific debug pattern logic from DebugGeneration to a pattern dispatcher fn/class
     @pytest.mark.parametrize(
-        "format, gen_kwargs, batch_mode, expected",
+        "session_fixture, format, pad_token, gen_kwargs, batch_mode, expected",
         [
-            pytest.param("llama3", {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 128004},
+            pytest.param("get_it_session__l_gemma2_debug__setup", "gemma2", "<pad>",
+                         {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 0},
                           "decode_cfg_override": {"skip_special_tokens": False}}, True, (2, True),
                           marks=RunIf(standalone=True, lightning=True, bf16_cuda=True)),
-            pytest.param("llama3", {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 128004}}, False,
-                         (2, False),
+            pytest.param("get_it_session__l_llama3_debug__setup", "llama3", "<|finetune_right_pad_id|>",
+                         {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 128004},
+                          "decode_cfg_override": {"skip_special_tokens": False}}, True, (2, True),
+                          marks=RunIf(standalone=True, lightning=True, bf16_cuda=True)),
+            pytest.param("get_it_session__l_gemma2_debug__setup", "gemma2", "<pad>",
+                         {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 0}}, False, (2, False),
+                         marks=RunIf(optional=True, lightning=True, bf16_cuda=True)),
+            pytest.param("get_it_session__l_llama3_debug__setup", "llama3", "<|finetune_right_pad_id|>",
+                         {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 128004}}, False, (2, False),
                          marks=RunIf(optional=True, lightning=True, bf16_cuda=True)),
         ],
-        ids=["decode_override_no_skip_special_batch", "default_serial",],
+        ids=["gemma2_decode_override_no_skip_special_batch", "llama3_decode_override_no_skip_special_batch",
+             "gemma2_default_serial", "llama3_default_serial",],
     )
-    def test_debug_session_llama3_chat(self, get_it_session__l_llama3_debug__setup, format, gen_kwargs, batch_mode,
-                                       expected):
-        debug_module = get_it_session__l_llama3_debug__setup.module.debug_lm
+    def test_debug_session_chat(self, request, session_fixture, format, pad_token,gen_kwargs, batch_mode, expected):
+        it_session_fixture = request.getfixturevalue(session_fixture)
+        debug_module = it_session_fixture.module.debug_lm
         test_seqs = debug_module.chat_debug_sequences(format=format, sequences=self.TEST_DEBUG_SEQS)
         debug_gen_fn = debug_module.debug_generate_batch if batch_mode else debug_module.debug_generate_serial
         answers, full_outputs = debug_gen_fn(test_seqs, **gen_kwargs)
+        pad_token_id = gen_kwargs.get("gen_config_override", {}).get("pad_token_id", 0)
         if batch_mode:
             inspect_tokens = full_outputs.sequences[1]
-            assert inspect_tokens[2].item() == 128004
+            assert inspect_tokens[2].item() == pad_token_id
         else:
             inspect_tokens = full_outputs[1].sequences
             inspect_tokens = inspect_tokens.squeeze()
-            assert inspect_tokens[2].item() != 128004
-        padpat = re.compile(r".*<|finetune_right_pad_id|>.*")
+            assert inspect_tokens[2].item() != pad_token_id
+        padpat = re.compile(r".*" + pad_token + ".*")
         pad_included = True if padpat.match(answers[1]) else False
         assert len(answers) == expected[0]
         assert pad_included == expected[1]
         m_prefix = "composing TestITModule with: \n  - LightningAdapter\n  - BaseITModule"
-        assert m_prefix in repr(get_it_session__l_llama3_debug__setup.module)
+        assert m_prefix in repr(it_session_fixture.module)
 
     def test_debug_generation_chat_invalid_format(self):
         with pytest.warns(UserWarning, match=r"Unrecognized format for chat debug sequences: .*"):

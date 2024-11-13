@@ -45,7 +45,7 @@ from tests.base_defaults import BaseCfg
 from tests.parity_acceptance.test_it_l import CoreCfg, ProfParityCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg, TLProfileCfg
 from tests.unit.cfg_aliases import (TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg,
-    LightningLlama3DebugCfg, CoreMemProfCfg, CoreGPT2PEFTCfg, CoreGPT2PEFTSeqCfg,
+    LightningLlama3DebugCfg, LightningGemma2DebugCfg,CoreMemProfCfg, CoreGPT2PEFTCfg, CoreGPT2PEFTSeqCfg,
     CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, LightningSLGPT2, TLMechInterpCfg)
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
@@ -84,6 +84,7 @@ FIXTURE_CFGS = {
     "l_tl_gpt2": FixtureCfg(test_cfg=LightningTLGPT2, scope="function"),
     "l_sl_gpt2": FixtureCfg(test_cfg=LightningSLGPT2, scope="function"),
     "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg),
+    "l_gemma2_debug": FixtureCfg(test_cfg=LightningGemma2DebugCfg),
     "tl_cust": FixtureCfg(test_cfg=TLParityCfg, scope="session"),
     "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function"),
     "tl_gpt2": FixtureCfg(test_cfg=TLProfileCfg),
@@ -140,7 +141,8 @@ def make_it_module(tmp_path_factory):
         m_kwargs = {'test_alias': f"{module_key}_{init_key}_it_m_fixture", 'state_log_dir': None}
         test_cfg=FIXTURE_CFGS[module_key].test_cfg()
         core_log_dir = tmp_path_factory.mktemp(f"{module_key}_{init_key}_it_m_fixture")
-        it_cfg = apply_it_test_cfg(test_cfg=test_cfg, core_log_dir=core_log_dir)
+        _, base_it_cfg, *_ = MODULE_EXAMPLE_REGISTRY.get(test_cfg)
+        it_cfg = apply_it_test_cfg(base_it_cfg=base_it_cfg, test_cfg=test_cfg, core_log_dir=core_log_dir)
         m_cls = ITMeta('InterpretunableModule', (), {}, component='m',
                        input=FIXTURE_CFGS[module_key].module_cls, ctx=test_cfg.adapter_ctx)
         it_m = m_cls(it_cfg=it_cfg, **m_kwargs)

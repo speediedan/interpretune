@@ -67,7 +67,7 @@ class BaseCfg:
     phase: str = "train"
     device_type: str = "cpu"
     model_key: str = "rte"  # "real-model"-based acceptance/parity testing/profiling
-    precision: str | int = 32
+    precision: str | int = "torch.float32"
     adapter_ctx: Iterable[Adapter | str] = (Adapter.core,)
     model_src_key: Optional[str] = None
     limit_train_batches: Optional[int] = 1
@@ -80,7 +80,8 @@ class BaseCfg:
     debug_lm_cfg: Optional[DebugLMConfig] = None
     model_cfg: Optional[Dict] = None
     tl_cfg: Optional[Dict] = None
-    sl_cfg: Optional[Dict] = None
+    sae_cfg: Optional[Dict] = None
+    req_grad_mask: Optional[Tuple] = None  # used to toggle requires grad for non-fts contexts
     max_epochs: Optional[int] = 1
     cust_fwd_kwargs: Optional[Dict] = None
     # used when adding a new test dataset or changing a test model to force re-caching of test datasets

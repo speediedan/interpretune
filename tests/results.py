@@ -3,7 +3,7 @@ from enum import auto, Enum
 from interpretune.base.config.shared import AutoStrEnum
 from collections import defaultdict
 
-from base_defaults import default_test_bs, default_prof_bs
+from tests.base_defaults import default_test_bs, default_prof_bs
 from tests.utils import get_model_input_dtype
 
 ################################################################################
@@ -41,18 +41,20 @@ EXPECTED_FIRST_FWD_IDS = {"no_sample": ([],),
 
 class TestDatasetKey(AutoStrEnum):
     # datamodule task names that are cached separately by HF `datasets`
-    pytest_rte_hf = auto()
-    pytest_rte_pt = auto()
-    pytest_rte_tl = auto()
+    pytest_rte_hf = auto()  # dataset inputs tokenized with standard HF 'input_ids'
+    pytest_rte_pt = auto()  # dataset inputs tokenized with custom 'tokens'
+    pytest_rte_tl = auto()  # dataset inputs tokenized with standard TL 'input'
+    #pytest_rte_sl = auto()  # TODO: decide if we should/need to customize sl dataset, probably will in the future
     ANY = auto()  # used for testing that may use multiple dataset cache keys
 
 gpt2_dataset_state = ('GPT2TokenizerFast', deterministic_token_ids)
 llama_dataset_state = ('LlamaTokenizerFast', [])
-gemma2_dataset_state = ('GemmaTokenizerFast', deterministic_token_ids)
+gemma2_dataset_state = ('GemmaTokenizerFast', [])
 test_dataset_state_core_gpt2 = (TestDatasetKey.pytest_rte_hf,) + gpt2_dataset_state
 test_dataset_state_core_llama = (TestDatasetKey.pytest_rte_hf,) +  llama_dataset_state
 test_dataset_state_core_cust = (TestDatasetKey.pytest_rte_pt,) + gpt2_dataset_state
 test_dataset_state_tl = (TestDatasetKey.pytest_rte_tl,) + gpt2_dataset_state
+test_dataset_state_sl = (TestDatasetKey.pytest_rte_tl,) + gpt2_dataset_state
 test_dataset_state_gpt2_dstype_agnostic = (TestDatasetKey.ANY,) + gpt2_dataset_state
 
 
@@ -130,6 +132,7 @@ class DatasetFingerprint(Enum):
     gpt2: tuple = test_dataset_state_core_gpt2
     llama3: tuple = test_dataset_state_core_llama
     tl: tuple = test_dataset_state_tl
+    sl: tuple = test_dataset_state_sl
     gpt2_agnostic: tuple = test_dataset_state_gpt2_dstype_agnostic
 
 def def_results(device_type: str, precision: Union[int, str],
