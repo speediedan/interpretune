@@ -1,31 +1,38 @@
 from copy import deepcopy
-from dataclasses import dataclass
 from typing import Optional, Any, Dict, Tuple, Type, Set, Iterable, NamedTuple
 from typing_extensions import override
 from pprint import pformat
+from pathlib import Path
 
-from it_examples.experiments.rte_boolq import (RTEBoolqPromptConfig, RTEBoolqDataModule, RTEBoolqConfig,
-                                               RTEBoolqSLConfig, RTEBoolqTLConfig, RTEBoolqZeroShotClassificationConfig)
+from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
+from interpretune.utils.import_utils import instantiate_class
+from it_examples.experiments.rte_boolq import (RTEBoolqPromptConfig, RTEBoolqSLConfig, RTEBoolqTLConfig,
+                                               RTEBoolqZeroShotClassificationConfig)
 from interpretune.adapters.transformer_lens import (TLensGenerationConfig, ITLensFromPretrainedConfig,
                                                     ITLensFromPretrainedNoProcessingConfig,
                                                     ITLensCustomConfig)
 from interpretune.adapters.sae_lens import SAELensFromPretrainedConfig, SAELensCustomConfig
 from interpretune.base.config.datamodule import ITDataModuleConfig
-from interpretune.base.config.mixins import HFGenerationConfig, CoreGenerationConfig
 from interpretune.base.config.module import HFFromPretrainedConfig, ITConfig
 from interpretune.adapters.registration import Adapter
 from interpretune.base.contract.protocol import ModuleSteppable, DataModuleInitable
-from tests.modules import (TestITDataModule, TestITModule, BaseTestDataModule, SimpleDatasetStateMixin)
+from tests.modules import (TestITDataModule, TestITModule, NoFingerprintTestITDataModule)
 from tests.base_defaults import BaseCfg, default_test_bs
 
+import yaml
+
+from interpretune.base.components.cli import IT_BASE
 
 # We define and 'register' basic example module configs here which are used in both example and parity acceptance tests.
+
+DEFAULT_TEST_DATAMODULE = TestITDataModule
+DEFAULT_TEST_MODULE = TestITModule
 
 class RegisteredExampleCfg(NamedTuple):
     datamodule_cfg: ITDataModuleConfig
     module_cfg: ITConfig
-    datamodule_cls: Type[DataModuleInitable] = TestITDataModule
-    module_cls: Type[ModuleSteppable] = TestITModule
+    datamodule_cls: Type[DataModuleInitable] = DEFAULT_TEST_DATAMODULE
+    module_cls: Type[ModuleSteppable] = DEFAULT_TEST_MODULE
 
 
 class ModuleExampleRegistry(dict):
@@ -93,10 +100,90 @@ class ModuleExampleRegistry(dict):
 
 MODULE_EXAMPLE_REGISTRY = ModuleExampleRegistry()
 
+
+def gen_module_example_registry() -> None:
+    yaml_reg_path = Path(IT_BASE) / "example_module_registry.yaml"
+    with open(yaml_reg_path) as file:
+      # Load the YAML file content
+      data = yaml.safe_load(file)
+      for reg_key, rv in data.items():
+        try:
+            instantiate_and_register(reg_key, rv)
+        except Exception as e:  # we don't want to fail on a single example registration for any reason
+            rank_zero_warn(f"Failed to register module example: {reg_key}. Exception: {e}")
+            continue
+        rank_zero_debug(f"Registered module example: {reg_key}")
+
+def instantiate_and_register(reg_info: Dict[str, Any], rv: Dict[str, Any]) -> None:
+    datamodule_cls, module_cls = DEFAULT_TEST_DATAMODULE, DEFAULT_TEST_MODULE
+    reg_info, shared_cfg, registered_example_cfg = rv['reg_info'], rv['shared_config'], rv['registered_example_cfg']
+    reg_info['adapter_combinations'] = resolve_adapter_combinations(reg_info['adapter_combinations'])
+    example_datamodule_cfg = itdm_cfg_factory(registered_example_cfg['datamodule_cfg'], shared_cfg)
+    example_module_cfg = it_cfg_factory(registered_example_cfg['module_cfg'], shared_cfg)
+    if datamodule_cls_path := registered_example_cfg.get('datamodule_cls', None):
+        datamodule_cls = instantiate_class(init=datamodule_cls_path, import_only=True)
+    registered_example = RegisteredExampleCfg(datamodule_cfg=example_datamodule_cfg, module_cfg=example_module_cfg,
+                                              datamodule_cls=datamodule_cls, module_cls=module_cls)
+    for supported_p in reg_info.get('supported_phases', ("train", "test", "predict")):
+        reg_info['phase'] = supported_p
+        MODULE_EXAMPLE_REGISTRY.register(**reg_info, registered_example_cfg=registered_example)
+
+def resolve_adapter_combinations(adapter_combinations: Iterable):
+    registered_combinations = []
+    for adps in adapter_combinations:
+        if isinstance(adps, str):
+            adps = (adps,)
+        resolved_adapters = []
+        for adp in adps:
+            if not isinstance(adp, Adapter):
+                adp = Adapter[adp]
+            resolved_adapters.append(adp)
+        registered_combinations.append(tuple(resolved_adapters))
+    return tuple(registered_combinations)
+
+def instantiate_nested(d: Dict):
+    for k, v in d.items():  # recursively instantiate nested directives
+        if isinstance(v, dict):
+            d[k] = instantiate_nested(v)
+    if 'class_path' in d:  # if the dict directly contains a class_path key
+        d = instantiate_class(d)  # with instantiating the class
+    return d
+
+def apply_example_defaults(cfg: ITConfig| ITDataModuleConfig, example_defaults: Dict, force_override: bool = False):
+    for k, v in example_defaults.items():
+        if not getattr(cfg, k) or force_override:
+            setattr(cfg, k, v)
+
+def itdm_cfg_factory(cfg: Dict, shared_config: Dict):
+    prompt_cfg = cfg.get('prompt_cfg', {})
+    # instantiate supported class_path refs
+    # TODO: add path for specifying custom datamodule_cfg subclass when necessary
+    if 'class_path' in prompt_cfg:
+        cfg['prompt_cfg'] = instantiate_class(prompt_cfg)
+    instantiated_cfg = ITDataModuleConfig(**shared_config, **cfg)
+    apply_example_defaults(instantiated_cfg, example_datamodule_defaults) # update instantiated_cfg w/ example defaults
+    return instantiated_cfg
+
+def it_cfg_factory(cfg: Dict, shared_config: Dict):
+    if 'class_path' in cfg:
+        cfg['init_args'] = cfg['init_args'] | shared_config if 'init_args' in cfg else shared_config
+        instantiated_cfg = instantiate_nested(cfg)
+    else:
+        instantiated_cfg = ITConfig(**cfg)
+    apply_example_defaults(instantiated_cfg, example_itmodule_defaults) # update instantiated_cfg with example defaults
+    return instantiated_cfg
+
 ##################################
-# Core config aliases
+# Core example config aliases
 ##################################
 
+default_experiment_tag = 'test_itmodule'
+example_datamodule_defaults = dict(prepare_data_map_cfg={"batched": True})
+example_itmodule_defaults = dict(
+    optimizer_init={"class_path": "torch.optim.AdamW",
+                    "init_args": {"weight_decay": 1.0e-06, "eps": 1.0e-07, "lr": 3.0e-05}},
+    lr_scheduler_init={"class_path": "torch.optim.lr_scheduler.CosineAnnealingWarmRestarts",
+                       "init_args": {"T_0": 1, "T_mult": 2, "eta_min": 1.0e-06}})
 core_pretrained_signature_columns = ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
                                      'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
 default_tokenizer_kwargs = {"add_bos_token": True, "local_files_only": False,  "padding_side": "left",
@@ -108,43 +195,12 @@ test_lr_scheduler_init = {"lr_scheduler_init": {"class_path": "torch.optim.lr_sc
 test_optimizer_scheduler_init = {**test_optimizer_init, **test_lr_scheduler_init}
 base_it_module_kwargs = {"experiment_tag": "test_itmodule", "cust_fwd_kwargs": {}}
 
+
 ####################################
 # Test/Example Module Configs
 ####################################
 
-####################################
-# GPT2
-####################################
-
-core_gpt2_shared_config = dict(task_name="pytest_rte_hf", tokenizer_kwargs=default_tokenizer_kwargs,
-                               model_name_or_path="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
-
-core_gpt2_datamodule_cfg = ITDataModuleConfig(**core_gpt2_shared_config, prompt_cfg=RTEBoolqPromptConfig(),
-                                               signature_columns=core_pretrained_signature_columns,
-                                               prepare_data_map_cfg={"batched": True},
-                                               text_fields=("premise", "hypothesis"),
-                                               enable_datasets_cache=True,
-                                               train_batch_size=default_test_bs, eval_batch_size=default_test_bs)
-test_core_gpt2_it_module_base = RTEBoolqConfig(**base_it_module_kwargs, **core_gpt2_shared_config,
-    zero_shot_cfg=RTEBoolqZeroShotClassificationConfig(
-        enabled=True, lm_generation_cfg=HFGenerationConfig(model_config={"max_new_tokens": 3})),
-    hf_from_pretrained_cfg=HFFromPretrainedConfig(pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"},
-                                                  model_head="transformers.GPT2LMHeadModel"))
-test_core_gpt2_it_module_optim = deepcopy(test_core_gpt2_it_module_base)
-test_core_gpt2_it_module_optim.__dict__.update(test_optimizer_scheduler_init)
-
-MODULE_EXAMPLE_REGISTRY.register(phase="test", model_src_key="gpt2", task_name="rte",
-                                 adapter_combinations=((Adapter.core,), (Adapter.lightning,)),
-                                 registered_example_cfg=RegisteredExampleCfg(
-                                     datamodule_cfg=core_gpt2_datamodule_cfg,
-                                     module_cfg=test_core_gpt2_it_module_base),
-                                 description="Basic example, GPT2 with supported adapter compositions")
-MODULE_EXAMPLE_REGISTRY.register(phase="train", model_src_key="gpt2", task_name="rte",
-                                 adapter_combinations=((Adapter.core,), (Adapter.lightning,)),
-                                 registered_example_cfg=RegisteredExampleCfg(
-                                     datamodule_cfg=core_gpt2_datamodule_cfg,
-                                     module_cfg=test_core_gpt2_it_module_optim),
-                                 description="Basic example, GPT2 with supported adapter compositions")
+gen_module_example_registry()
 
 ####################################
 # Gemma2
@@ -152,213 +208,11 @@ MODULE_EXAMPLE_REGISTRY.register(phase="train", model_src_key="gpt2", task_name=
 # TODO: add option for using HF `tokenizer.apply_chat_template` api?
 #       We usually want full control so lower priority atm, but will likely be valuable in the future.
 
-@dataclass(kw_only=True)
-class Gemma2PromptConfig:
-    # see https://huggingface.co/google/gemma-2-2b-it for more details
-    B_TURN: str = "<start_of_turn>"
-    E_TURN: str = "<end_of_turn>"
-    USER_ROLE: str = "user"
-    ASSISTANT_ROLE: str = "model"
-
-    def __post_init__(self) -> None:
-        self.USER_ROLE_START = self.B_TURN + self.USER_ROLE + "\n"
-        self.USER_ROLE_END = self.E_TURN + self.B_TURN + self.ASSISTANT_ROLE + "\n"
-
-@dataclass(kw_only=True)
-class RTEBoolqGemma2PromptConfig(Gemma2PromptConfig, RTEBoolqPromptConfig):
-    ...
-
-class Gemma2RTEBoolqDataModule(RTEBoolqDataModule):
-
-    @staticmethod
-    def model_chat_template_fn(task_prompt: str, prompt_cfg: Optional[Gemma2PromptConfig] = None,
-                                  tokenization_pattern: Optional[str] = None) -> str:
-        if tokenization_pattern == "gemma2-chat":
-            sequence = prompt_cfg.USER_ROLE_START + f"{task_prompt.strip()} {prompt_cfg.USER_ROLE_END}"
-        else:
-            sequence = task_prompt.strip()
-        return sequence
-
-class Gemma2TestITDataModule(SimpleDatasetStateMixin, BaseTestDataModule, Gemma2RTEBoolqDataModule):
-    ...
-
 gemma2_tokenizer_kwargs = {"model_input_names": ["input_ids", "attention_mask"],
                                 "padding_side": "left", "add_bos_token": True, "add_eos_token": False,
                                 "local_files_only": False}
 
-core_gemma2_shared_config = dict(task_name="pytest_rte_hf", tokenizer_kwargs=gemma2_tokenizer_kwargs,
-                                      model_name_or_path="google/gemma-2-2b-it")
-
-core_gemma2_datamodule_cfg = ITDataModuleConfig(**core_gemma2_shared_config,
-                                                     prompt_cfg=RTEBoolqGemma2PromptConfig(),
-                                                     signature_columns=core_pretrained_signature_columns,
-                                                     prepare_data_map_cfg={"batched": True},
-                                                     text_fields=("premise", "hypothesis"),
-                                                     enable_datasets_cache=True,
-                                                     train_batch_size=default_test_bs,
-                                                     eval_batch_size=default_test_bs)
-test_core_gemma2_it_module_base = RTEBoolqConfig(**base_it_module_kwargs, **core_gemma2_shared_config,
-    zero_shot_cfg=RTEBoolqZeroShotClassificationConfig(
-        enabled=True, lm_generation_cfg=HFGenerationConfig(model_config={"max_new_tokens": 3})),
-    hf_from_pretrained_cfg=HFFromPretrainedConfig(pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"},
-                                                  model_head="transformers.Gemma2ForCausalLM"))
-test_core_gemma2_it_module_optim = deepcopy(test_core_gemma2_it_module_base)
-test_core_gemma2_it_module_optim.__dict__.update(test_optimizer_scheduler_init)
-
-MODULE_EXAMPLE_REGISTRY.register(phase="test", model_src_key="gemma2", task_name="rte",
-                                 adapter_combinations=((Adapter.core,), (Adapter.lightning,)),
-                                 registered_example_cfg=RegisteredExampleCfg(
-                                     datamodule_cfg=core_gemma2_datamodule_cfg,
-                                     module_cfg=test_core_gemma2_it_module_base,
-                                     datamodule_cls=Gemma2TestITDataModule),
-                                 description="Basic example, Gemma2 with supported adapter compositions")
-MODULE_EXAMPLE_REGISTRY.register(phase="train", model_src_key="gemma2", task_name="rte",
-                                 adapter_combinations=((Adapter.core,), (Adapter.lightning,)),
-                                 registered_example_cfg=RegisteredExampleCfg(
-                                     datamodule_cfg=core_gemma2_datamodule_cfg,
-                                     module_cfg=test_core_gemma2_it_module_optim,
-                                     datamodule_cls=Gemma2TestITDataModule),
-                                 description="Basic example, Gemma2 with supported adapter compositions")
-
-
-####################################
-# Llama3
-####################################
-
-@dataclass(kw_only=True)
-class Llama3PromptConfig:
-    # see https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/prompt_format.md for more details
-    sys_prompt: str = ("You are a helpful assistant.")
-    B_TEXT: str = "<|begin_of_text|>"
-    E_TEXT: str = "<|end_of_text|>"
-    B_HEADER: str = "<|start_header_id|>"
-    E_HEADER: str = "<|end_header_id|>"
-    E_TURN: str = "<|eot_id|>"
-    # tool tags, see https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/text_prompt_format.md
-    # for tool prompt format details
-    TOOL_TAG: str = "<|python_tag|>"
-    E_TOOL_MSG: str = "<|eom_id|>"
-    SYS_ROLE: str = "system"
-    USER_ROLE: str = "user"
-    ASSISTANT_ROLE: str = "assistant"
-    TOOL_ROLE: str = "ipython"
-
-    def __post_init__(self) -> None:
-        self.SYS_ROLE_HEADER = self.B_HEADER + self.SYS_ROLE + self.E_HEADER
-        self.USER_ROLE_HEADER = self.B_HEADER + self.USER_ROLE + self.E_HEADER
-        self.ASSISTANT_ROLE_HEADER = self.B_HEADER + self.ASSISTANT_ROLE + self.E_HEADER
-        self.SYS_ROLE_START = self.B_TEXT + self.SYS_ROLE_HEADER + "\n" + self.sys_prompt + self.E_TURN + \
-            self.USER_ROLE_HEADER + "\n"
-        self.USER_ROLE_END = self.E_TURN + self.ASSISTANT_ROLE_HEADER + "\n"
-
-@dataclass(kw_only=True)
-class RTEBoolqLlama3PromptConfig(Llama3PromptConfig, RTEBoolqPromptConfig):
-    ...
-
-class LlamaRTEBoolqDataModule(RTEBoolqDataModule):
-
-    @staticmethod
-    def model_chat_template_fn(task_prompt: str, prompt_cfg: Optional[Llama3PromptConfig] = None,
-                                  tokenization_pattern: Optional[str] = None) -> str:
-        if tokenization_pattern == "llama3-chat":
-            sequence = prompt_cfg.SYS_ROLE_START + f"{task_prompt.strip()} {prompt_cfg.USER_ROLE_END}"
-        else:
-            sequence = task_prompt.strip()
-        return sequence
-
-class LlamaTestITDataModule(SimpleDatasetStateMixin, BaseTestDataModule, LlamaRTEBoolqDataModule):
-    ...
-
-# NOTE: this configuration is for testing, for finetuning, llama3 should be changed to right padding
-llama3_cust_tokenizer_kwargs = {"model_input_names": ["input_ids", "attention_mask"],
-                                "padding_side": "left", "add_bos_token": False, "local_files_only": False}
-
-core_llama3_shared_config = dict(task_name="pytest_rte_hf", tokenizer_kwargs=llama3_cust_tokenizer_kwargs,
-                               model_name_or_path="meta-llama/Llama-3.2-3B-Instruct",
-                               os_env_model_auth_key="HF_GATED_PUBLIC_REPO_AUTH_KEY",
-                               tokenizer_id_overrides={"pad_token_id": 128004})
-
-core_llama3_datamodule_cfg = ITDataModuleConfig(**core_llama3_shared_config, prompt_cfg=RTEBoolqLlama3PromptConfig(),
-                                               signature_columns=core_pretrained_signature_columns,
-                                               cust_tokenization_pattern="llama3-chat",
-                                               special_tokens_dict={"pad_token": "<|finetune_right_pad_id|>"},
-                                               prepare_data_map_cfg={"batched": True},
-                                               text_fields=("premise", "hypothesis"),
-                                               enable_datasets_cache=False,
-                                               train_batch_size=default_test_bs, eval_batch_size=default_test_bs)
-
-test_core_llama3_it_module_base = RTEBoolqConfig(**base_it_module_kwargs, **core_llama3_shared_config,
-    zero_shot_cfg=RTEBoolqZeroShotClassificationConfig(enabled=True,
-                                                       lm_generation_cfg=HFGenerationConfig(
-                                                           model_config={"max_new_tokens": 3})),
-    hf_from_pretrained_cfg=HFFromPretrainedConfig(
-        pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"},
-        model_head="transformers.LlamaForCausalLM",
-        lora_cfg={"r": 8, "lora_alpha": 32, "bias": "none", "target_modules": ["q_proj", "v_proj"],
-                  "lora_dropout": 0.05, "task_type": "CAUSAL_LM"})
-)
-test_core_llama3_it_module_optim = deepcopy(test_core_llama3_it_module_base)
-test_core_llama3_it_module_optim.__dict__.update(test_optimizer_scheduler_init)
-
-MODULE_EXAMPLE_REGISTRY.register(phase="test", model_src_key="llama3", task_name="rte",
-                                 adapter_combinations=((Adapter.core,), (Adapter.lightning,)),
-                                 registered_example_cfg=RegisteredExampleCfg(
-                                     datamodule_cfg=core_llama3_datamodule_cfg,
-                                     module_cfg=test_core_llama3_it_module_base,
-                                     datamodule_cls=LlamaTestITDataModule),
-                                 description="Basic example, Llama3 with supported adapter compositions")
-MODULE_EXAMPLE_REGISTRY.register(phase="train", model_src_key="llama3", task_name="rte",
-                                 adapter_combinations=((Adapter.core,), (Adapter.lightning,)),
-                                 registered_example_cfg=RegisteredExampleCfg(
-                                     datamodule_cfg=core_llama3_datamodule_cfg,
-                                     module_cfg=test_core_llama3_it_module_optim,
-                                     datamodule_cls=LlamaTestITDataModule),
-                                 description="Basic example, Llama3 with supported adapter compositions")
-
-##################################
-# Cust Model
-##################################
-
-core_cust_tokenizer_kwargs = {"model_input_names": ['tokens'], "padding_side": "left", "add_bos_token": True,
-                              "local_files_only": False}
-
-core_cust_shared_config = dict(task_name="pytest_rte_pt", tokenizer_kwargs=core_cust_tokenizer_kwargs,
-                               tokenizer_name="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
-
-core_cust_datamodule_cfg = ITDataModuleConfig(**core_cust_shared_config, prompt_cfg=RTEBoolqPromptConfig(),
-                                               signature_columns=['tokens', 'labels'],
-                                               prepare_data_map_cfg={"batched": True},
-                                               text_fields=("premise", "hypothesis"),
-                                               enable_datasets_cache=True,
-                                               train_batch_size=default_test_bs, eval_batch_size=default_test_bs)
-
-test_core_cust_it_module_base = RTEBoolqConfig(**base_it_module_kwargs, **core_cust_shared_config,
-    model_cfg={"device": "cpu", "dtype": "float32", "model_args": {"max_seq_len": 200}},
-    zero_shot_cfg=RTEBoolqZeroShotClassificationConfig(
-        enabled=True, lm_generation_cfg=CoreGenerationConfig(max_new_tokens=2, output_logits=True)),
-)
-
-test_core_cust_it_module_optim = deepcopy(test_core_cust_it_module_base)
-test_core_cust_it_module_optim.__dict__.update(test_optimizer_scheduler_init)
-
-MODULE_EXAMPLE_REGISTRY.register(phase="test", model_src_key="cust", task_name="rte",
-                                 adapter_combinations=((Adapter.core,), (Adapter.lightning,)),
-                                 registered_example_cfg=RegisteredExampleCfg(
-                                     datamodule_cfg=core_cust_datamodule_cfg,
-                                     module_cfg=test_core_cust_it_module_base),
-                                 description="Basic example, Custom Transformer with supported adapter compositions")
-MODULE_EXAMPLE_REGISTRY.register(phase="predict", model_src_key="cust", task_name="rte",
-                                 adapter_combinations=((Adapter.core,), (Adapter.lightning,)),
-                                 registered_example_cfg=RegisteredExampleCfg(
-                                     datamodule_cfg=core_cust_datamodule_cfg,
-                                     module_cfg=test_core_cust_it_module_base),
-                                 description="Basic example, Custom Transformer with supported adapter compositions")
-MODULE_EXAMPLE_REGISTRY.register(phase="train", model_src_key="cust", task_name="rte",
-                                 adapter_combinations=((Adapter.core,), (Adapter.lightning,)),
-                                 registered_example_cfg=RegisteredExampleCfg(
-                                     datamodule_cfg=core_cust_datamodule_cfg,
-                                     module_cfg=test_core_cust_it_module_optim),
-                                 description="Basic example, Custom Transformer with supported adapter compositions")
+# TODO: NEXT below example registrations remain to be converted yaml-driven configs
 
 ##################################
 # TL GPT2
@@ -512,7 +366,7 @@ MODULE_EXAMPLE_REGISTRY.register(phase="test", model_src_key="gemma2", task_name
                                  registered_example_cfg=RegisteredExampleCfg(
                                      datamodule_cfg=test_tl_gemma2_datamodule_cfg,
                                      module_cfg=test_sl_gemma2_it_module_base,
-                                     datamodule_cls=Gemma2TestITDataModule),
+                                     datamodule_cls=NoFingerprintTestITDataModule),
                                  description="SL example, gemma2 with supported adapter compositions")
 MODULE_EXAMPLE_REGISTRY.register(phase="train", model_src_key="gemma2", task_name="rte",
                                  adapter_combinations=((Adapter.core, Adapter.sae_lens),
@@ -520,7 +374,7 @@ MODULE_EXAMPLE_REGISTRY.register(phase="train", model_src_key="gemma2", task_nam
                                  registered_example_cfg=RegisteredExampleCfg(
                                      datamodule_cfg=test_tl_gemma2_datamodule_cfg,
                                      module_cfg=test_sl_gemma2_it_module_optim,
-                                     datamodule_cls=Gemma2TestITDataModule),
+                                     datamodule_cls=NoFingerprintTestITDataModule),
                                  description="SL example, gemma2 with supported adapter compositions")
 
 ##################################

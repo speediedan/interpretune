@@ -1,6 +1,6 @@
 session_cfg:
   adapter_ctx: [lightning, sae_lens]
-  datamodule_cls: it_examples.example_module_registry.Gemma2RTEBoolqDataModule
+  datamodule_cls: it_examples.experiments.rte_boolq.RTEBoolqDataModule
   module_cls: it_examples.experiments.rte_boolq.RTEBoolqModule
   datamodule_cfg:
     class_path: interpretune.base.config.datamodule.ITDataModuleConfig
@@ -17,7 +17,7 @@ session_cfg:
       data_collator_cfg:
         collator_class: transformers.DataCollatorWithPadding
       prompt_cfg:
-        class_path: it_examples.example_module_registry.RTEBoolqGemma2PromptConfig
+        class_path: it_examples.example_prompt_configs.RTEBoolqGemma2PromptConfig
       tokenizers_parallelism: false
       signature_columns: ['input', 'attention_mask', 'labels']
       tokenizer_kwargs:

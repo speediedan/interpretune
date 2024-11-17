@@ -7,12 +7,23 @@ from interpretune.adapters.registration import Adapter
 from interpretune.base.config.module import HFFromPretrainedConfig
 from interpretune.base.config.shared import AutoStrEnum
 from interpretune.extensions.memprofiler import MemProfilerCfg, MemProfilerSchedule
-from it_examples.example_module_registry import (core_cust_shared_config, test_tl_datamodule_cfg, test_optimizer_init,
-                                       test_lr_scheduler_init, test_tl_signature_columns)
+from it_examples.example_module_registry import (MODULE_EXAMPLE_REGISTRY, core_pretrained_signature_columns,
+                                                 example_itmodule_defaults)
 from base_defaults import default_prof_bs
 from tests.modules import TestFTS
 from tests.utils import get_nested, set_nested
 
+# TODO: replace these refs with improved registry references
+test_tl_signature_columns = core_pretrained_signature_columns.copy()
+test_tl_signature_columns[0] = 'input'
+test_optimizer_init = example_itmodule_defaults["optimizer_init"]
+test_lr_scheduler_init = example_itmodule_defaults["lr_scheduler_init"]
+test_tl_datamodule_cfg, *_ = MODULE_EXAMPLE_REGISTRY.get(("gpt2", "rte", "test",
+                                                          (Adapter.core, Adapter.transformer_lens)))
+core_cust_tokenizer_kwargs = {"model_input_names": ['tokens'], "padding_side": "left", "add_bos_token": True,
+                              "local_files_only": False}
+core_cust_shared_config = dict(task_name="pytest_rte_pt", tokenizer_kwargs=core_cust_tokenizer_kwargs,
+                               tokenizer_name="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
 
 # TODO: add model-specific mapping and mapping functions here to dedup some of the shared explicit mapping logic here
 ################################################################################

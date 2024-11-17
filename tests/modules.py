@@ -74,7 +74,8 @@ class BaseTestDataModule:
             tokenizer=self.tokenizer,
             text_fields=self.itdm_cfg.text_fields,
             prompt_cfg=self.itdm_cfg.prompt_cfg,
-            template_fn=self.model_chat_template_fn,
+            template_fn=self.itdm_cfg.prompt_cfg.model_chat_template_fn,
+            #template_fn=self.model_chat_template_fn,
             tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern,
         )
         dataset_path = Path(self.itdm_cfg.dataset_path)

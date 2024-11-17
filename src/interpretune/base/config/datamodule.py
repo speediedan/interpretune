@@ -17,6 +17,8 @@ log = logging.getLogger(__name__)
 class PromptConfig(ITSerializableCfg):
     cust_task_prompt: Dict[str, Any] = field(default_factory=dict)
 
+    def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: Optional[str] = None) -> str:
+        return task_prompt.strip()
 
 @dataclass(kw_only=True)
 class TokenizationConfig(ITSerializableCfg):
@@ -24,7 +26,7 @@ class TokenizationConfig(ITSerializableCfg):
     local_fast_tokenizer_path: Optional[str] = None
     cust_tokenization_pattern: Optional[str] = None
     special_tokens_dict: Dict[str, Any] = field(default_factory=dict)
-    max_seq_length: int = 2048
+    max_seq_length: int = 2048   # TODO: force this to be set rather than allowing a default?
 
 
 @dataclass(kw_only=True)

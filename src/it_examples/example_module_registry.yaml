@@ -1,0 +1,209 @@
+##################################
+# Cust Transformer
+##################################
+cust_rte:
+  reg_info:
+    model_src_key: cust
+    task_name: rte
+    adapter_combinations:
+      - core
+      - lightning
+    description: Basic example, custom transformer with supported adapter compositions
+  shared_config:
+    task_name: pytest_rte_pt
+    tokenizer_name: gpt2
+    tokenizer_id_overrides:
+      pad_token_id: 50256
+    tokenizer_kwargs:
+        model_input_names: ['tokens']
+        padding_side: left
+        add_bos_token: true
+  registered_example_cfg:
+    datamodule_cfg:
+      prompt_cfg:
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+      signature_columns: ['tokens', 'labels']
+      text_fields: ["premise", "hypothesis"]
+      enable_datasets_cache: True
+      train_batch_size: 2
+      eval_batch_size: 2
+    module_cfg:
+      class_path: it_examples.experiments.rte_boolq.RTEBoolqConfig
+      init_args:
+        model_cfg:
+          device: cpu
+          dtype: float32
+          model_args:
+            max_seq_len: 200
+        zero_shot_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+          init_args:
+            enabled: True
+            lm_generation_cfg:
+              class_path: interpretune.base.config.mixins.CoreGenerationConfig
+              init_args:
+                max_new_tokens: 2
+##################################
+# GPT2
+##################################
+gpt2_rte:
+  reg_info:
+    model_src_key: gpt2
+    task_name: rte
+    adapter_combinations:
+      - core
+      - lightning
+    description: Basic example, GPT2 with supported adapter compositions
+  shared_config:
+    task_name: pytest_rte_hf
+    model_name_or_path: gpt2
+    tokenizer_id_overrides:
+      pad_token_id: 50256
+    tokenizer_kwargs:
+        model_input_names: ['input_ids', 'attention_mask']
+        padding_side: left
+        add_bos_token: true
+  registered_example_cfg:
+    datamodule_cfg:
+      prompt_cfg:
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+      signature_columns: ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
+                          'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+      text_fields: ["premise", "hypothesis"]
+      enable_datasets_cache: True
+      train_batch_size: 2
+      eval_batch_size: 2
+    module_cfg:
+      class_path: it_examples.experiments.rte_boolq.RTEBoolqConfig
+      init_args:
+        zero_shot_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+          init_args:
+            enabled: True
+            lm_generation_cfg:
+              class_path: interpretune.base.config.mixins.HFGenerationConfig
+              init_args:
+                model_config:
+                  max_new_tokens: 3
+        hf_from_pretrained_cfg:
+          class_path: interpretune.base.config.mixins.HFFromPretrainedConfig
+          init_args:
+            pretrained_kwargs:
+              device_map: cpu
+              torch_dtype: float32
+            model_head: transformers.GPT2LMHeadModel
+##################################
+# Gemma2
+##################################
+gemma2_rte:
+  reg_info:
+    model_src_key: gemma2
+    task_name: rte
+    adapter_combinations:
+      - core
+      - lightning
+    description: Basic example, Gemma2 with supported adapter compositions
+  shared_config:
+    task_name: pytest_rte_hf
+    os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
+    model_name_or_path: google/gemma-2-2b-it
+    tokenizer_kwargs:
+        model_input_names: ['input_ids', 'attention_mask']
+        padding_side: left
+        add_bos_token: true
+  registered_example_cfg:
+    datamodule_cfg:
+      prompt_cfg:
+        class_path: it_examples.example_prompt_configs.RTEBoolqGemma2PromptConfig
+      signature_columns: ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
+                          'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+      text_fields: ["premise", "hypothesis"]
+      enable_datasets_cache: True
+      train_batch_size: 2
+      eval_batch_size: 2
+    module_cfg:
+      class_path: it_examples.experiments.rte_boolq.RTEBoolqConfig
+      init_args:
+        zero_shot_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+          init_args:
+            enabled: True
+            lm_generation_cfg:
+              class_path: interpretune.base.config.mixins.HFGenerationConfig
+              init_args:
+                model_config:
+                  max_new_tokens: 3
+        hf_from_pretrained_cfg:
+          class_path: interpretune.base.config.mixins.HFFromPretrainedConfig
+          init_args:
+            pretrained_kwargs:
+              device_map: cpu
+              torch_dtype: float32
+            model_head: transformers.Gemma2ForCausalLM
+    datamodule_cls:
+      class_path: tests.modules.NoFingerprintTestITDataModule
+llama3_rte:
+  reg_info:
+    model_src_key: llama3
+    task_name: rte
+    adapter_combinations:
+      - core
+      - lightning
+    description: Basic example, Llama3 with supported adapter compositions
+  shared_config:
+    task_name: pytest_rte_hf
+    os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
+    model_name_or_path: meta-llama/Llama-3.2-3B-Instruct
+    tokenizer_id_overrides:
+      pad_token_id: 128004
+    tokenizer_kwargs:
+        model_input_names: ['input_ids', 'attention_mask']
+        # NOTE: this configuration is for testing, for finetuning, llama3 should be changed to right padding
+        padding_side: left
+        add_bos_token: false
+  registered_example_cfg:
+    datamodule_cfg:
+      prompt_cfg:
+        class_path: it_examples.example_prompt_configs.RTEBoolqLlama3PromptConfig
+      signature_columns: ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
+                          'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+      text_fields: ["premise", "hypothesis"]
+      enable_datasets_cache: True
+      train_batch_size: 2
+      eval_batch_size: 2
+      special_tokens_dict: {"pad_token": "<|finetune_right_pad_id|>"}
+      cust_tokenization_pattern: llama3-chat
+    module_cfg:
+      class_path: it_examples.experiments.rte_boolq.RTEBoolqConfig
+      init_args:
+        zero_shot_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+          init_args:
+            enabled: True
+            lm_generation_cfg:
+              class_path: interpretune.base.config.mixins.HFGenerationConfig
+              init_args:
+                model_config:
+                  max_new_tokens: 3
+        hf_from_pretrained_cfg:
+          class_path: interpretune.base.config.mixins.HFFromPretrainedConfig
+          init_args:
+            use_model_cache: false
+            pretrained_kwargs:
+              device_map: cpu
+              torch_dtype: float32
+            model_head: transformers.LlamaForCausalLM
+            bitsandbytesconfig:
+              load_in_4bit: True
+              bnb_4bit_use_double_quant: True
+              bnb_4bit_quant_type: nf4
+              bnb_4bit_compute_dtype: bfloat16
+            lora_cfg:
+              r: 8
+              lora_alpha: 32
+              target_modules: ["q_proj", "v_proj"]
+              lora_dropout: 0.05
+              bias: none
+              task_type: "CAUSAL_LM"
+    datamodule_cls:  # TODO: invert this to make dataset fingerprinting off by default
+      class_path: tests.modules.NoFingerprintTestITDataModule

@@ -10,7 +10,9 @@ from packaging.version import Version
 from interpretune.utils.exceptions import MisconfigurationException
 
 
-def instantiate_class(init: Dict[str, Any], args: Optional[Union[Any, Tuple[Any, ...]]] = None) -> Any:
+def instantiate_class(init: Dict[str, Any],
+                      args: Optional[Union[Any, Tuple[Any, ...]]] = None,
+                      import_only: bool = False) -> Any:
         """Instantiates a class with the given args and init. Accepts class definitions with a "class_path".
 
         Args:
@@ -37,7 +39,10 @@ def instantiate_class(init: Dict[str, Any], args: Optional[Union[Any, Tuple[Any,
         if not shortcircuit_local:
             module = __import__(class_module, fromlist=[class_name])
             args_class = getattr(module, class_name)
-        return args_class(**kwargs) if not args else args_class(*args, **kwargs)
+        if import_only:
+            return args_class
+        else:
+            return args_class(**kwargs) if not args else args_class(*args, **kwargs)
 
 def resolve_funcs(cfg_obj: Any, func_type: str) -> List:
     resolved_funcs = []
