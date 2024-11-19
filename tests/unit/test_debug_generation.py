@@ -30,25 +30,25 @@ class TestClassDebugGen:
     @pytest.mark.parametrize(
         "session_fixture, format, pad_token, gen_kwargs, batch_mode, expected",
         [
-            pytest.param("get_it_session__l_gemma2_debug__setup", "gemma2", "<pad>",
+            pytest.param("get_it_session__l_gemma2_debug__setup", "gemma2-chat", "<pad>",
                          {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 0},
                           "decode_cfg_override": {"skip_special_tokens": False}}, True, (2, True),
                           marks=RunIf(standalone=True, lightning=True, bf16_cuda=True)),
-            pytest.param("get_it_session__l_llama3_debug__setup", "llama3", "<|finetune_right_pad_id|>",
+            pytest.param("get_it_session__l_llama3_debug__setup", None, "<|finetune_right_pad_id|>",
                          {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 128004},
                           "decode_cfg_override": {"skip_special_tokens": False}}, True, (2, True),
                           marks=RunIf(standalone=True, lightning=True, bf16_cuda=True)),
-            pytest.param("get_it_session__l_gemma2_debug__setup", "gemma2", "<pad>",
+            pytest.param("get_it_session__l_gemma2_debug__setup", None, "<pad>",
                          {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 0}}, False, (2, False),
                          marks=RunIf(optional=True, lightning=True, bf16_cuda=True)),
-            pytest.param("get_it_session__l_llama3_debug__setup", "llama3", "<|finetune_right_pad_id|>",
+            pytest.param("get_it_session__l_llama3_debug__setup", "llama3-chat", "<|finetune_right_pad_id|>",
                          {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 128004}}, False, (2, False),
                          marks=RunIf(optional=True, lightning=True, bf16_cuda=True)),
         ],
         ids=["gemma2_decode_override_no_skip_special_batch", "llama3_decode_override_no_skip_special_batch",
              "gemma2_default_serial", "llama3_default_serial",],
     )
-    def test_debug_session_chat(self, request, session_fixture, format, pad_token,gen_kwargs, batch_mode, expected):
+    def test_debug_session_chat(self, request, session_fixture, format, pad_token, gen_kwargs, batch_mode, expected):
         it_session_fixture = request.getfixturevalue(session_fixture)
         debug_module = it_session_fixture.module.debug_lm
         test_seqs = debug_module.chat_debug_sequences(format=format, sequences=self.TEST_DEBUG_SEQS)
@@ -70,7 +70,7 @@ class TestClassDebugGen:
         assert m_prefix in repr(it_session_fixture.module)
 
     def test_debug_generation_chat_invalid_format(self):
-        with pytest.warns(UserWarning, match=r"Unrecognized format for chat debug sequences: .*"):
+        with pytest.warns(UserWarning, match=r"Failed to generate chat.*"):
             debug_gen = DebugGeneration()
             stripped_seqs = debug_gen.chat_debug_sequences(format="invalid_format", sequences=["test A ", " test B"])
             assert stripped_seqs == ["test A", "test B"]

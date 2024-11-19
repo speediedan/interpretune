@@ -56,7 +56,6 @@ class BaseTestDataModule:
             text_fields=self.itdm_cfg.text_fields,
             prompt_cfg=self.itdm_cfg.prompt_cfg,
             template_fn=self.itdm_cfg.prompt_cfg.model_chat_template_fn,
-            #template_fn=self.model_chat_template_fn,
             tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern,
         )
         dataset_path = Path(self.itdm_cfg.dataset_path)
@@ -195,7 +194,7 @@ class FeedForward(torch.nn.Module):
         self.resid_dropout = torch.nn.Dropout(dropout_p)
 
     def forward(self, x):
-        return self.resid_dropout(self.w2(self.gelu(self.w1(x))))
+        return self.resid_dropout(self.w2(self.geld(self.w1(x))))
 
 class TransformerBlock(torch.nn.Module):
     def __init__(self, args: TestModelArgs):
@@ -414,7 +413,7 @@ class BaseTestModule(StateLogInspectMixin):
         self.model.to(device=self.device, dtype=self.torch_dtype)
 
     def _get_current_exact(self) -> Dict:
-        # gather device and precision and dastaset state info
+        # gather device and precision and dataset state info
         device_type = self.device.type if isinstance(self.device, torch.device) else self.output_device.type
         model_dtype = self.model.dtype if hasattr(self.model, "dtype") else self.tl_cfg.dtype
         return {'device_type': device_type, 'precision': model_dtype, **self._get_dataset_state()}
@@ -457,7 +456,7 @@ class BaseTestModule(StateLogInspectMixin):
             try:
                 if isinstance(outputs, torch.Tensor):
                     self.epoch_losses[self.current_epoch] = outputs.item()
-                # TODO: add this helper attribute to CoreHerlperAttributes?
+                # TODO: add this helper attribute to CoreHelperAttributes?
                 elif callback_metrics := reduce(getattr, "trainer.callback_metrics".split("."), self):
                     self.epoch_losses[self.current_epoch] = callback_metrics['train_loss'].item()
             except AttributeError as ae:

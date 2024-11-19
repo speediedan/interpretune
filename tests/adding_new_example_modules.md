@@ -1,89 +1,92 @@
 # Adding new test/example modules to Interpretune
 
-0. Add api key if necessary, usually can just use the default HF public gated repo key
-   `~/repos/interpretune/.env`
+0. New test/example modules are registered in`example_module_registry.yaml`
+   `~/repos/interpretune/src/it_examples/example_module_registry.yaml`
 
-1. Most changes are currently to `example_module_registry` (may simplfy this and package them into a deferred init dataclass)
-   `~/repos/interpretune/src/it_examples/example_module_registry.py`
+   ```yaml
+    gpt2.rte.transformer_lens:
+    reg_info:
+      model_src_key: gpt2
+        task_name: rte
+        adapter_combinations:
+          - [core, transformer_lens]
+          - [lightning, transformer_lens]
+        description: Basic TL example, GPT2 with supported adapter compositions
+    shared_config:
+        task_name: pytest_rte_tl
+        model_name_or_path: gpt2
+        tokenizer_id_overrides:
+          pad_token_id: 50256
+        tokenizer_kwargs:
+          model_input_names: ['input', 'attention_mask']
+          padding_side: left
+          add_bos_token: false
+    registered_example_cfg:
+        datamodule_cfg:
+          prompt_cfg:
+            class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+          signature_columns: ['input', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
+                            'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+          text_fields: ["premise", "hypothesis"]
+          enable_datasets_cache: True
+          train_batch_size: 2
+          eval_batch_size: 2
+        module_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqTLConfig
+          init_args:
+            zero_shot_cfg:
+              class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+              init_args:
+                enabled: True
+                lm_generation_cfg:
+                  class_path: interpretune.adapters.transformer_lens.TLensGenerationConfig
+                  init_args:
+                    max_new_tokens: 1
+            hf_from_pretrained_cfg:
+              class_path: interpretune.base.config.mixins.HFFromPretrainedConfig
+              init_args:
+                pretrained_kwargs:
+                  device_map: cpu
+                  torch_dtype: float32
+                model_head: transformers.GPT2LMHeadModel
+            tl_cfg:
+              class_path: interpretune.adapters.transformer_lens.ITLensFromPretrainedConfig
+        datamodule_cls:  # if you want to enable dataset fingerprinting, override the base test datamodule as follows:
+          class_path: tests.modules.FingerprintTestITDataModule
+   ```
 
-   - datamodule and module configs
-   - if necessary: cust prompt config, example datamodule subclass  w/ tokenization func
-     ```python
-        ####################################
-        # Llama3
-        ####################################
+   - if the new model requires a custom prompt (most instruction tuned models will), add the relevant example model
+     prompt config dataclass to `~/repos/interpretune/src/it_examples/example_prompt_configs.py`, e.g.
 
-        @dataclass(kw_only=True)
-        class Llama3PromptConfig:
-            # see https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/prompt_format.md for more details
-            sys_prompt: str = ("You are a helpful assistant.")
-            B_TEXT: str = "<|begin_of_text|>"
-            E_TEXT: str = "<|end_of_text|>"
-            B_HEADER: str = "<|start_header_id|>"
-            E_HEADER: str = "<|end_header_id|>"
-            E_TURN: str = "<|eot_id|>"
-            # tool tags, see https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/text_prompt_format.md
-            # for tool prompt format details
-            TOOL_TAG: str = "<|python_tag|>"
-            E_TOOL_MSG: str = "<|eom_id|>"
-            SYS_ROLE: str = "system"
-            USER_ROLE: str = "user"
-            ASSISTANT_ROLE: str = "assistant"
-            TOOL_ROLE: str = "ipython"
+   ```python
+   ####################################
+   # Gemma2
+   ####################################
 
-            def __post_init__(self) -> None:
-                self.SYS_ROLE_HEADER = self.B_HEADER + self.SYS_ROLE + self.E_HEADER
-                self.USER_ROLE_HEADER = self.B_HEADER + self.USER_ROLE + self.E_HEADER
-                self.ASSISTANT_ROLE_HEADER = self.B_HEADER + self.ASSISTANT_ROLE + self.E_HEADER
-                self.SYS_ROLE_START = self.B_TEXT + self.SYS_ROLE_HEADER + "\n" + self.sys_prompt + self.E_TURN + \
-                    self.USER_ROLE_HEADER + "\n"
-                self.USER_ROLE_END = self.E_TURN + self.ASSISTANT_ROLE_HEADER + "\n"
+   @dataclass(kw_only=True)
+   class Gemma2PromptConfig:
+       # see https://huggingface.co/google/gemma-2-2b-it for more details
+       B_TURN: str = "<start_of_turn>"
+       E_TURN: str = "<end_of_turn>"
+       USER_ROLE: str = "user"
+       ASSISTANT_ROLE: str = "model"
 
-        @dataclass(kw_only=True)
-        class RTEBoolqLlama3PromptConfig(Llama3PromptConfig, RTEBoolqPromptConfig):
-            ...
+       def __post_init__(self) -> None:
+           self.USER_ROLE_START = self.B_TURN + self.USER_ROLE + "\n"
+           self.USER_ROLE_END = self.E_TURN + self.B_TURN + self.ASSISTANT_ROLE + "\n"
 
-        class LlamaRTEBoolqDataModule(RTEBoolqDataModule):
+       def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: Optional[str] = None) -> str:
+           if tokenization_pattern == "gemma2-chat":
+               sequence = self.USER_ROLE_START + f"{task_prompt.strip()} {self.USER_ROLE_END}"
+           else:
+               sequence = task_prompt.strip()
+           return sequence
 
-            def cust_tokenization_pattern(self, task_prompt: str, tokenization_pattern: Optional[str] = None) -> str:
-                if tokenization_pattern == "llama3-chat":
-                    sequence = self.itdm_cfg.prompt_cfg.SYS_ROLE_START + \
-                    f"{task_prompt.strip()} {self.itdm_cfg.prompt_cfg.USER_ROLE_END}"
-                else:
-                    sequence = task_prompt.strip()
-                return sequence
+   @dataclass(kw_only=True)
+   class RTEBoolqGemma2PromptConfig(Gemma2PromptConfig, RTEBoolqPromptConfig):
+       ...
+   ```
 
-        # NOTE: this configuration is for testing, for finetuning, llama3 should be changed to right padding
-        llama3_cust_tokenizer_kwargs = {"model_input_names": ["input_ids", "attention_mask"],
-                                        "padding_side": "left", "add_bos_token": False, "local_files_only": False}
-
-        core_llama3_shared_config = dict(task_name="pytest_rte_hf", tokenizer_kwargs=llama3_cust_tokenizer_kwargs,
-                                    model_name_or_path="meta-llama/Llama-3.2-3B-Instruct",
-                                    os_env_model_auth_key="HF_GATED_PUBLIC_REPO_AUTH_KEY",
-                                    tokenizer_id_overrides={"pad_token_id": 128004})
-
-        core_llama3_datamodule_cfg = ITDataModuleConfig(**core_llama3_shared_config, prompt_cfg=RTEBoolqLlama3PromptConfig(),
-                                                    signature_columns=core_pretrained_signature_columns,
-                                                    cust_tokenization_pattern="llama3-chat",
-                                                    special_tokens_dict={"pad_token": "<|finetune_right_pad_id|>"},
-                                                    prepare_data_map_cfg={"batched": True},
-                                                    text_fields=("premise", "hypothesis"),
-                                                    enable_datasets_cache=False,
-                                                    train_batch_size=default_example_bs, eval_batch_size=default_example_bs)
-
-        test_core_llama3_it_module_base = RTEBoolqConfig(**base_it_module_kwargs, **core_llama3_shared_config,
-            zero_shot_cfg=RTEBoolqZeroShotClassificationConfig(enabled=True,
-                                                            lm_generation_cfg=HFGenerationConfig(
-                                                                model_config={"max_new_tokens": 3})),
-            hf_from_pretrained_cfg=HFFromPretrainedConfig(
-                pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"},
-                model_head="transformers.LlamaForCausalLM",
-                lora_cfg={"r": 8, "lora_alpha": 32, "bias": "none", "target_modules": ["q_proj", "v_proj"],
-                        "lora_dropout": 0.05, "task_type": "CAUSAL_LM"})
-        )
-        test_core_llama3_it_module_optim = deepcopy(test_core_llama3_it_module_base)
-        test_core_llama3_it_module_optim.__dict__.update(test_optimizer_scheduler_init)
-     ```
    - add new module variants to test module registry
      ```python
      TEST_DATAMODULE_BASE_CONFIGS = {
@@ -98,58 +101,34 @@
          ("train", None, "llama3"): test_core_llama3_it_module_optim,
      ```
 
-1. For modules we're not currently activating dataset sample fingerprinting for, we need to override the `<ModelType><ExpType>>DataModule` with a `SimpleDatasetStateMixin` which samples only the tokenizer and task_name (may make sense to invert this so that fingerprinting is disabled rather than enabled by default)
-   `~/repos/interpretune/tests/modules.py`
+1. OPTIONAL: Add api key if necessary, usually can just use the default HF public gated repo key
+   `~/repos/interpretune/.env`
 
-   ```python
-   class LlamaTestITDataModule(SimpleDatasetStateMixin, BaseTestDataModule, LlamaRTEBoolqDataModule):
-       ...
-   ```
+1. OPTIONAL: If any of the test/example modules for a new model will require dataset fingerprinting enabled, update
+   `~/repos/interpretune/tests/results.py` with:
 
-1. We always verify the tokenizer, (for datasets that have fingerprint testing enabled, we need to update that enum as well here)
-   `~/repos/interpretune/tests/results.py`
+   - the target tokenizer (always used for fingerprinting)
 
    ```python
    llama_dataset_state = ('LlamaTokenizerFast', [])
    ...
    test_dataset_state_core_llama = (TestDatasetKey.pytest_rte_hf,) +  llama_dataset_state
-
    ```
 
-1. Update examples if desired, potentially adding a new model directory
+   - if any tests will have `dstype_agnostic=False` (e.g. new profiling tests), generate and add the relevant expected dataset fingerprint samples (dataset and `forward`)
+
+   ```python
+   deterministic_token_ids = [5674, 24140, 373, 666, 2233, 303, 783, 783, 2055, 319, 373, 910, 17074, 284, 6108]
+   EXPECTED_FIRST_FWD_IDS = {"no_sample": ([],),
+                           "train": (deterministic_token_ids[:default_test_bs],),
+                           "train_prof": (deterministic_token_ids[:default_prof_bs],),
+                           "test": (deterministic_token_ids[NUM_SAMPLE_ROWS:(NUM_SAMPLE_ROWS+default_test_bs)],),
+                           "test_prof": (deterministic_token_ids[NUM_SAMPLE_ROWS:(NUM_SAMPLE_ROWS+default_prof_bs)],)}
+   gpt2_dataset_state = ('GPT2TokenizerFast', deterministic_token_ids)
+   ```
+
+1. OPTIONAL:Update examples if desired, potentially adding a new model directory
    `~/repos/interpretune/src/it_examples/config/experiments/rte_boolq/lightning_rte_3b_qlora_zero_shot_test_only.yaml`
-
-1. OPTIONAL: If the new model requires a custom prompt (most instruction tuned models will), proceed with the following steps:
-
-   - add a model debugging cfg for unit testing
-     `~/repos/interpretune/tests/unit/cfg_aliases.py`
-
-     ```python
-     @dataclass(kw_only=True)
-     class LightningLlama3DebugCfg(BaseCfg):
-     ```
-
-   - Add a debug test fixture associated with a new model cfg
-     `~/repos/interpretune/tests/conftest.py`
-
-     ```python
-         "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg),
-     ```
-
-   - Add the supported `DebugGeneration` chat format (TODO: maybe abstract this)
-     `~/repos/interpretune/src/interpretune/extensions/debug_generation.py`
-
-     ```python
-
-         def chat_debug_sequences(self, format = 'llama3', sequences: Optional[List] = None) -> List:
-         ...
-             sequences = sequences or self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
-             match format:
-                 case 'llama3':
-                     return [self.phandle.datamodule.itdm_cfg.prompt_cfg.SYS_ROLE_START + \
-                             f"{ex.strip()} {self.phandle.datamodule.itdm_cfg.prompt_cfg.USER_ROLE_END}" \
-                                 for ex in sequences]
-     ```
 
 ### Debugging guidance
 

@@ -72,7 +72,7 @@ class DebugGeneration:
             sequences = [sequences]
         return [f"{ex.strip()}" for ex in sequences]
 
-    def chat_debug_sequences(self, format = 'llama3', sequences: Optional[List] = None) -> List:
+    def chat_debug_sequences(self, sequences: Optional[List] = None, format: Optional[str] = None) -> List:
         """_summary_
 
         Args:
@@ -84,33 +84,26 @@ class DebugGeneration:
         Usage:
 
         ```python
-        # for example, using the llama3 chat format, youwant to have input tokenized with sys and inst metadata
+        # for example, using the llama3 chat format, you want to have input tokenized with sys and inst metadata
         # to do so with some reasonable default questions as a sanity check and in batch mode:
-        self.debug_lm.debug_generate_batch(self.debug_lm.chat_debug_sequences(format='llama3'),)
+        self.debug_lm.debug_generate_batch(self.debug_lm.chat_debug_sequences()
         # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
-        self.debug_lm.debug_generate_serial(self.debug_lm.chat_debug_sequences(format='llama3'))
+        self.debug_lm.debug_generate_serial(self.debug_lm.chat_debug_sequences())
         # to override the defaults (both questions and current `max_new_tokens` config)
-        self.debug_lm.debug_generate_batch(self.debug_lm.chat_debug_sequences(format='llama3', sequences=[
+        # you can also specify a specific model variant pattern for a given prompt config, e.g. `format="llama3-chat"`
+        self.debug_lm.debug_generate_batch(self.debug_lm.chat_debug_sequences(format='llama3-chat', sequences=[
             'What is the color of a cloudless sky?', 'How many days are in a year?']),
             gen_config_override={"max_new_tokens": 25})
         ```
         """
         sequences = sequences or self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
-        match format:
-            case 'llama3':
-                return [self.phandle.datamodule.itdm_cfg.prompt_cfg.SYS_ROLE_START + \
-                        f"{ex.strip()} {self.phandle.datamodule.itdm_cfg.prompt_cfg.USER_ROLE_END}" \
-                            for ex in sequences]
-            case 'gemma2':
-                return [self.phandle.datamodule.itdm_cfg.prompt_cfg.USER_ROLE_START + \
-                        f"{ex.strip()} {self.phandle.datamodule.itdm_cfg.prompt_cfg.USER_ROLE_END}" \
-                            for ex in sequences]
-            case _:
-                rank_zero_warn(f"Unrecognized format for chat debug sequences: {format}. "
-                               "Returning the stripped sequences but without the corresponding "
-                               "chat format metadata.")
-                return [f"{ex.strip()}" for ex in sequences]
-
+        format = format or self.phandle.datamodule.itdm_cfg.cust_tokenization_pattern
+        try:
+            return [self.phandle.datamodule.itdm_cfg.prompt_cfg.model_chat_template_fn(ex, format) for ex in sequences]
+        except Exception as e:
+            rank_zero_warn(f"Failed to generate chat debug sequences. Exception: {e}. "
+                           "Returning the stripped sequences but without the corresponding chat format metadata.")
+            return [f"{ex.strip()}" for ex in sequences]
 
     def _debug_generate(self, inputs: List|torch.Tensor, gen_kwargs_override: Optional[Dict] = None,
                         gen_config_override: Optional[Dict] = None) -> Any:

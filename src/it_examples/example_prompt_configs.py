@@ -31,26 +31,6 @@ class Gemma2PromptConfig:
 class RTEBoolqGemma2PromptConfig(Gemma2PromptConfig, RTEBoolqPromptConfig):
     ...
 
-# class PromptMeta(type):
-#     def __new__(mcs, name, bases, classdict, **kwargs):
-#         #component, input, ctx = mcs._validate_build_ctx(kwargs)
-#         # TODO: add runtime checks for adherence to IT protocol here?
-#         #composition_classes = mcs._map_composition_target(component, ctx)
-#         #bases = (input, *composition_classes)
-#         built_class = super().__new__(mcs, name, bases, classdict)
-#         #built_class._orig_module_name = input.__qualname__
-#         #built_class._composed_classes = composition_classes
-#         return built_class
-
-# RTEBoolqGemma2PromptConfig = dataclass(kw_only=True)(
-#     type('RTEBoolqGemma2PromptConfig', (Gemma2PromptConfig, RTEBoolqPromptConfig), {})
-# )
-
-# class ComposedPromptClsFactory:
-#     def __new__(cls, name: str, bases: Tuple[type, ...]) -> type:
-#         return dataclass(kw_only=True)(type.__new__(cls, name, bases, {}))
-
-
 ####################################
 # Llama3
 ####################################
@@ -87,6 +67,7 @@ class Llama3PromptConfig:
         else:
             sequence = task_prompt.strip()
         return sequence
+
 
 @dataclass(kw_only=True)
 class RTEBoolqLlama3PromptConfig(Llama3PromptConfig, RTEBoolqPromptConfig):

@@ -91,7 +91,6 @@ class RTEBoolqDataModule(ITDataModule):
             text_fields=self.itdm_cfg.text_fields,
             prompt_cfg=self.itdm_cfg.prompt_cfg,
             template_fn=self.itdm_cfg.prompt_cfg.model_chat_template_fn,
-            #template_fn=self.model_chat_template_fn,
             tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern,
         )
         dataset = datasets.load_dataset("super_glue", self.itdm_cfg.task_name, trust_remote_code=True)
@@ -119,11 +118,6 @@ class RTEBoolqDataModule(ITDataModule):
     def predict_dataloader(self) -> DataLoader:
         return self.dataloader_factory(split='validation')
 
-    # @staticmethod
-    # def model_chat_template_fn(task_prompt: str, prompt_cfg: Optional[PromptConfig] = None,
-    #                            tokenization_pattern: Optional[str] = None) -> str:
-    #     return task_prompt.strip()
-
     #TODO: relax PreTrainedTokenizerBase to the protocol that is actually required
     @staticmethod
     def encode_for_rteboolq(example_batch: LazyDict, tokenizer: PreTrainedTokenizerBase, text_fields: List[str],
@@ -141,8 +135,6 @@ class RTEBoolqDataModule(ITDataModule):
             else:
                 task_prompt = (field1 + prompt_cfg.ctx_question_join + field2 \
                                + prompt_cfg.question_suffix)
-            # sequence = template_fn(prompt_cfg=prompt_cfg, task_prompt=task_prompt,
-            #                        tokenization_pattern=tokenization_pattern)
             sequence = template_fn(task_prompt=task_prompt, tokenization_pattern=tokenization_pattern)
             example_batch['sequences'].append(sequence)
         features = tokenizer.batch_encode_plus(example_batch["sequences"], padding="longest",
