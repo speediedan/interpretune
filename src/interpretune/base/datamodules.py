@@ -74,7 +74,8 @@ class ITDataModule:
         # attaching module handle to datamodule is optional. It can be convenient to align data prep witha  model using
         # signature inspection
         self.dataset = datasets.load_from_disk(self.itdm_cfg.dataset_path)
-        self._module = module
+        if module is not None:
+            self._module = module
 
     def configure_tokenizer(self) -> PreTrainedTokenizerBase:
         access_token = os.environ[self.itdm_cfg.os_env_model_auth_key.upper()] if self.itdm_cfg.os_env_model_auth_key \

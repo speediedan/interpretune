@@ -50,11 +50,12 @@ class TestDatasetKey(AutoStrEnum):
 gpt2_dataset_state = ('GPT2TokenizerFast', deterministic_token_ids)
 llama_dataset_state = ('LlamaTokenizerFast', [])
 gemma2_dataset_state = ('GemmaTokenizerFast', [])
-test_dataset_state_core_gpt2 = (TestDatasetKey.pytest_rte_hf,) + gpt2_dataset_state
-test_dataset_state_core_llama = (TestDatasetKey.pytest_rte_hf,) +  llama_dataset_state
-test_dataset_state_core_cust = (TestDatasetKey.pytest_rte_pt,) + gpt2_dataset_state
-test_dataset_state_tl = (TestDatasetKey.pytest_rte_tl,) + gpt2_dataset_state
-test_dataset_state_sl = (TestDatasetKey.pytest_rte_tl,) + gpt2_dataset_state
+test_dataset_state_no_sample = (TestDatasetKey.ANY, None, [])
+test_dataset_state_gpt2 = (TestDatasetKey.pytest_rte_hf,) + gpt2_dataset_state
+test_dataset_state_llama = (TestDatasetKey.pytest_rte_hf,) +  llama_dataset_state
+test_dataset_state_cust = (TestDatasetKey.pytest_rte_pt,) + gpt2_dataset_state
+test_dataset_state_gpt2_tl = (TestDatasetKey.pytest_rte_tl,) + gpt2_dataset_state
+test_dataset_state_gpt2_sl = (TestDatasetKey.pytest_rte_tl,) + gpt2_dataset_state
 test_dataset_state_gpt2_dstype_agnostic = (TestDatasetKey.ANY,) + gpt2_dataset_state
 
 
@@ -88,7 +89,7 @@ class TestResult(NamedTuple):
     close_results: Optional[Tuple] = None
     mem_results: Optional[Tuple] = None
     tolerance_map: Optional[Dict[str, float]] = None
-    dstype_agnostic: bool = False
+    dstype_agnostic: bool = True
     callback_results: Optional[Dict] = None
 
 def mem_results(results: Tuple):
@@ -128,15 +129,16 @@ class DatasetState(NamedTuple):
     expected_first_fwd_ids: List
 
 class DatasetFingerprint(Enum):
-    cust: tuple = test_dataset_state_core_cust
-    gpt2: tuple = test_dataset_state_core_gpt2
-    llama3: tuple = test_dataset_state_core_llama
-    tl: tuple = test_dataset_state_tl
-    sl: tuple = test_dataset_state_sl
+    any: tuple = test_dataset_state_no_sample
+    cust: tuple = test_dataset_state_cust
+    gpt2: tuple = test_dataset_state_gpt2
+    llama3: tuple = test_dataset_state_llama
+    tl: tuple = test_dataset_state_gpt2_tl
+    sl: tuple = test_dataset_state_gpt2_sl
     gpt2_agnostic: tuple = test_dataset_state_gpt2_dstype_agnostic
 
 def def_results(device_type: str, precision: Union[int, str],
-                dataset_fingerprint: DatasetFingerprint = DatasetFingerprint.cust, ds_cfg: str = "train_prof"):
+                dataset_fingerprint: DatasetFingerprint = DatasetFingerprint.any, ds_cfg: str = "no_sample"):
     test_dataset_state = DatasetState(*dataset_fingerprint.value, *EXPECTED_FIRST_FWD_IDS[ds_cfg])
     # wrap result dict such that only the first epoch is checked
     return {0: {"device_type": device_type, "precision": get_model_input_dtype(precision),

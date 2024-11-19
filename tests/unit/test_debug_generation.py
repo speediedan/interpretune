@@ -99,11 +99,11 @@ class TestClassDebugGen:
         answers, full_outputs = debug_gen_fn(test_seqs, **gen_kwargs)
         if batch_mode:
             inspect_tokens = full_outputs.tokens[1]
-            assert inspect_tokens[4].item() == 50256
+            assert inspect_tokens[3].item() == 50256
         else:
             inspect_tokens = full_outputs[1].tokens
             inspect_tokens = inspect_tokens.squeeze()
-            assert inspect_tokens[4].item() != 50256
+            assert inspect_tokens[3].item() != 50256
         padpat = re.compile(r".*\|endoftext\|.*")
         pad_included = True if padpat.match(answers[1]) else False
         assert len(answers) == expected[0]

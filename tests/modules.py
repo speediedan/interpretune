@@ -38,33 +38,14 @@ class BaseTestDataModule:
             super().__init__(itdm_cfg=itdm_cfg)
         self.force_prepare_data = force_prepare_data
 
-    def sample_unpadded_state(self, rows: List) -> List:
-        # we strip padding from sampled rows before collecting ids to make our sample padding-side agnostic
-        return [list(filter(lambda v: v != self.tokenizer.pad_token_id, t))[SAMPLE_POSITION] for t in rows]
-
-    def sample_dataset_state(self, ds_task_agnostic: bool = False) -> Tuple:
-        # NOTE [Dataset State Validation]:
-        # note that this only validates the loaded dataset/tokenizer, the dataloaders are not tested in this method
-        # so one may still need to inspect downstream variables (e.g. the dataloader kwargs) and the batch actually
-        # passed to the model in a given test/step to verify that the tested model inputs align with the expected
-        # deterministic dataset state defined in `tests.helpers.cfg_aliases.test_dataset_state`
-        sample_state = []
-        for split in self.dataset.keys():
-            target_input = self.tokenizer.model_input_names[0]
-            # as a content heuristic, inspect the id of a given position (sample_pos) for the first sample_rows of each
-            # dataset split
-            sampled_rows = self.dataset[split][target_input][:NUM_SAMPLE_ROWS]
-            sample_state.extend(self.sample_unpadded_state(sampled_rows))
-        ds_task_name = TestDatasetKey.ANY if ds_task_agnostic else TestDatasetKey[self.itdm_cfg.task_name]
-        return (ds_task_name, self.tokenizer.__class__.__name__, sample_state)
+    # dataset fingerprinting is not enabled by default
+    def sample_dataset_state(self, ds_task_agnostic: bool = True) -> Tuple:
+        if ds_task_agnostic:
+            return (TestDatasetKey.ANY, None, [])
+        return (TestDatasetKey[self.itdm_cfg.task_name], self.tokenizer.__class__.__name__, [])
 
     def sample_step_input(self, batch: BatchEncoding) -> Tuple:
-        # See NOTE [Dataset State Validation]
-        sample_state = []
-        sampled_rows = batch[self.tokenizer.model_input_names[0]].cpu().tolist()
-        # inspect the id of a given position for each batch example
-        sample_state.extend(self.sample_unpadded_state(sampled_rows))
-        return sample_state
+        return []
 
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""
@@ -96,15 +77,37 @@ class BaseTestDataModule:
 class TestITDataModule(BaseTestDataModule, RTEBoolqDataModule):
     ...
 
-class SimpleDatasetStateMixin:
-    # dataset fingerprinting not currently implemented for this datamodule so we validate task name and tokenizer only
-    def sample_dataset_state(self) -> Tuple:
-        return (self.itdm_cfg.task_name, self.tokenizer.__class__.__name__, [])
+class SampleDatasetStateMixin:
+
+    def sample_unpadded_state(self, rows: List) -> List:
+        # we strip padding from sampled rows before collecting ids to make our sample padding-side agnostic
+        return [list(filter(lambda v: v != self.tokenizer.pad_token_id, t))[SAMPLE_POSITION] for t in rows]
+
+    def sample_dataset_state(self, ds_task_agnostic: bool = False) -> Tuple:
+        # NOTE [Dataset State Validation]:
+        # note that this only validates the loaded dataset/tokenizer, the dataloaders are not tested in this method
+        # so one may still need to inspect downstream variables (e.g. the dataloader kwargs) and the batch actually
+        # passed to the model in a given test/step to verify that the tested model inputs align with the expected
+        # deterministic dataset state defined in `tests.helpers.cfg_aliases.test_dataset_state`
+        sample_state = []
+        for split in self.dataset.keys():
+            target_input = self.tokenizer.model_input_names[0]
+            # as a content heuristic, inspect the id of a given position (sample_pos) for the first sample_rows of each
+            # dataset split
+            sampled_rows = self.dataset[split][target_input][:NUM_SAMPLE_ROWS]
+            sample_state.extend(self.sample_unpadded_state(sampled_rows))
+        ds_task_name = TestDatasetKey.ANY if ds_task_agnostic else TestDatasetKey[self.itdm_cfg.task_name]
+        return (ds_task_name, self.tokenizer.__class__.__name__, sample_state)
 
     def sample_step_input(self, batch: BatchEncoding) -> Tuple:
-        return []
+        # See NOTE [Dataset State Validation]
+        sample_state = []
+        sampled_rows = batch[self.tokenizer.model_input_names[0]].cpu().tolist()
+        # inspect the id of a given position for each batch example
+        sample_state.extend(self.sample_unpadded_state(sampled_rows))
+        return sample_state
 
-class NoFingerprintTestITDataModule(SimpleDatasetStateMixin, BaseTestDataModule, RTEBoolqDataModule):
+class FingerprintTestITDataModule(SampleDatasetStateMixin, BaseTestDataModule, RTEBoolqDataModule):
     ...
 
 class SampledOutput(NamedTuple):

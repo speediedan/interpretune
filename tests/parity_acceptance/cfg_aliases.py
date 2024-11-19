@@ -18,8 +18,8 @@ test_tl_signature_columns = core_pretrained_signature_columns.copy()
 test_tl_signature_columns[0] = 'input'
 test_optimizer_init = example_itmodule_defaults["optimizer_init"]
 test_lr_scheduler_init = example_itmodule_defaults["lr_scheduler_init"]
-test_tl_datamodule_cfg, *_ = MODULE_EXAMPLE_REGISTRY.get(("gpt2", "rte", "test",
-                                                          (Adapter.core, Adapter.transformer_lens)))
+test_tl_datamodule_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY.get(("gpt2", "rte", "test",
+                                                          (Adapter.core, Adapter.transformer_lens))).datamodule_cfg)
 core_cust_tokenizer_kwargs = {"model_input_names": ['tokens'], "padding_side": "left", "add_bos_token": True,
                               "local_files_only": False}
 core_cust_shared_config = dict(task_name="pytest_rte_pt", tokenizer_kwargs=core_cust_tokenizer_kwargs,
@@ -244,8 +244,9 @@ core_optim_train["session_cfg"].update({"module_cfg": deepcopy(base_cust_rte_cfg
                          "datamodule_cfg": deepcopy(base_cust_rte_cfg["session_cfg"]["datamodule_cfg"])})
 core_optim_train["trainer_cfg"] = deepcopy(default_trainer_kwargs)
 get_nested(core_optim_train, mod_cfg)["init_args"] = {"experiment_tag": CLI_TESTS.core_optim_train.value,
-                                                      **test_core_cust_it_module_kwargs_zero_shot,
-                                                      **test_lr_scheduler_init, **test_optimizer_init}
+                                                      "optimizer_init": test_optimizer_init,
+                                                      "lr_scheduler_init": test_lr_scheduler_init,
+                                                      **test_core_cust_it_module_kwargs_zero_shot}
 parity_cli_cfgs["exp_cfgs"][CLI_TESTS.core_optim_train] = core_optim_train
 
 ################################################################################
