@@ -83,6 +83,7 @@ class RTEBoolqDataModule(ITDataModule):
         # N.B. prepare_data is called in a single process (rank 0, either per node or globally) so do not use it to
         # assign state (e.g. self.x=y)
         # note for raw pytorch we require a target_model
+        # NOTE [HF Datasets Transformation Caching]:
         # HF Datasets' transformation cache fingerprinting algo necessitates construction of these partials as the hash
         # is generated using function args, dataset file, mapping args: https://bit.ly/HF_Datasets_fingerprint_algo)
         tokenization_func = partial(

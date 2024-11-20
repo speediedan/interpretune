@@ -44,7 +44,7 @@ class ITSessionMixin:
 
     def add_base_args(self, parser: ArgumentParser) -> None:
         """Add and link args to the parser."""
-        # NOTE [Interpretune Dataclass-Oriented Configuration]
+        # NOTE [Interpretune Dataclass-Oriented Configuration]:
         # For base Interpretune classes, we use configuration dataclasses (e.g. `ITConfig`, `ITDataModuleConfig`) rather
         # than passing numerous arguments to the relevant constructors. Aggregate feedback from other ML framework
         # usage arguably suggests this approach makes instantiation both more flexible and intuitive. (e.g. nested
@@ -71,7 +71,7 @@ class ITSessionMixin:
 
 
 class ITCLI(ITSessionMixin):
-    """To maximize compability, the core ITCLI was originally adapted from https://bit.ly/lightning_cli."""
+    """To maximize compatibility, the core ITCLI was originally adapted from https://bit.ly/lightning_cli."""
     def __init__(
         self,
         module_class: ITModule = None,
@@ -84,7 +84,7 @@ class ITCLI(ITSessionMixin):
         trainer_cfg: Union[Type[BasicTrainerCfg], Dict[str, Any]] = BasicTrainerCfg,
     ) -> None:
         """fill in
-            seed_everything_default: Number for the :func:`~interpretune.base.clieverything`
+            seed_everything_default: Number for the :func:`~interpretune.base.cli.seed_everything`
                 seed value. Set to True to automatically choose a seed value.
         Args:
             model_class: model class

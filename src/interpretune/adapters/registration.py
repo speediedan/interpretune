@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Tuple, Callable, Type, Protocol, Set, runtime_checkable
+from typing import Any, Dict, Optional, Tuple, Callable, Type, Protocol, Set, runtime_checkable, List
 from collections.abc import Iterable
 from enum import auto
 from inspect import getmembers, isclass
@@ -61,6 +61,21 @@ class CompositionRegistry(dict):
         self[composition_key] = supported_composition
 
     @staticmethod
+    def resolve_adapter_filter(adapter_filter: Optional[Iterable[Adapter| str]| Adapter | str] = None) -> List[Adapter]:
+            unresolved_filters = []
+            if isinstance(adapter_filter, str):
+                adapter_filter = [Adapter[adapter_filter]]
+            for adapter in adapter_filter:
+                try:
+                    adapter = CompositionRegistry.sanitize_adapter(adapter)
+                except ValueError:
+                    unresolved_filters.append(adapter)
+            if unresolved_filters:
+                rank_zero_warn("The following adapter names specified in `adapter_filter` could not be resolved: "
+                               f" {unresolved_filters}.")
+            return [adapter for adapter in adapter_filter if isinstance(adapter, Adapter)]
+
+    @staticmethod
     def sanitize_adapter(adapter: Adapter | str) -> Adapter:
         if isinstance(adapter, str):
             try:
@@ -95,17 +110,7 @@ class CompositionRegistry(dict):
         """Returns a list of registered adapters, optionally filtering by the lead adapter that registered the
         valid composition."""
         if adapter_filter is not None:
-            unresolved_filters = []
-            if isinstance(adapter_filter, str):
-                adapter_filter = [Adapter[adapter_filter]]
-            for adapter in adapter_filter:
-                try:
-                    adapter = CompositionRegistry.sanitize_adapter(adapter)
-                except ValueError:
-                    unresolved_filters.append(adapter)
-            if unresolved_filters:
-                rank_zero_warn("The following adapter names specified in `adapter_filter` could not be resolved: "
-                               f" {unresolved_filters}.")
+            adapter_filter = CompositionRegistry.resolve_adapter_filter(adapter_filter)
             return {key for key in self.keys() for subkey in key if subkey in adapter_filter}
         return set(self.keys())
 

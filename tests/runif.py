@@ -176,7 +176,7 @@ class RunIf:
 
         if profiling:
             env_flag = os.getenv("IT_RUN_PROFILING_TESTS", "0")
-            conditions.append(env_flag not in ["1", "2"])
+            conditions.append(env_flag != "2")
             reasons.append("Profiling All execution")
             # used in conftest.py::pytest_collection_modifyitems
             kwargs["profiling"] = True

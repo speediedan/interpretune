@@ -34,7 +34,7 @@ class MemProfilerFuncs(ITSerializableCfg): # can specify arbitrary list of `memp
 
 @dataclass(kw_only=True)
 class MemProfilerSchedule(ITSerializableCfg):
-    # keeping schedule simple as possibile for now, may expand to accommodate more flexible schedules in the future
+    # keeping schedule simple as possible for now, may expand to accommodate more flexible schedules in the future
     warmup_steps: int = 0
     max_step: Optional[int] = None
 
@@ -210,7 +210,7 @@ class MemProfiler:
 
     def gen_snap_keys(self, phase: str, step_ctx: str, epoch_idx: Optional[int] = None,
                       step_idx: Optional[int] = None) -> Tuple[int, int, Tuple]:
-        # NOTE [Memprofiler Key Format]
+        # NOTE [Memprofiler Key Format]:
         # snap key format is rank.phase.epoch_idx.step_idx.step_ctx
         # e.g. 0.training_step.0.0.end keys hook output for the end of training step 0, epoch 0 for rank 0
         # 0.training_step.1.2.start keys mem stats for the start of training step 2, epoch 1 for rank 0

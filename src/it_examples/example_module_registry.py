@@ -2,12 +2,13 @@ from typing import Optional, Any, Dict, Tuple, Type, Set, Iterable, NamedTuple
 from typing_extensions import override
 from pprint import pformat
 from pathlib import Path
+from copy import deepcopy
 
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 from interpretune.utils.import_utils import instantiate_class
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
-from interpretune.adapters.registration import Adapter
+from interpretune.adapters.registration import Adapter, CompositionRegistry
 from interpretune.base.contract.protocol import ModuleSteppable, DataModuleInitable
 from tests.modules import (TestITDataModule, TestITModule)
 from tests.base_defaults import BaseCfg
@@ -34,7 +35,9 @@ class ModuleExampleRegistry(dict):
         model_src_key: str,
         task_name: str,
         adapter_combinations: Tuple[Adapter] | Tuple[Tuple[Adapter]],
+        reg_key: str,
         registered_example_cfg: RegisteredExampleCfg,
+        cfg_dict: Optional[Dict[str, Any]] = None,
         description: Optional[str] = None,
     ) -> None:
         """Registers valid component + adapter compositions mapped to composition keys with required metadata.
@@ -45,34 +48,49 @@ class ModuleExampleRegistry(dict):
             model_src_key:
             task_name:
             adapter_combination: tuple identifying the valid adapter composition
+            reg_key: The canonical key of the test/example module.
             registered_example_cfg: Tuple[Callable],
             description : composition description
+            cfg_dict: optionally save original configuration dictionary
         """
         supported_composition: Dict[str | Adapter | Tuple[Adapter | str], Tuple[Dict]] = {}
+        supported_composition[reg_key] = registered_example_cfg
+        supported_composition["description"] = description if description is not None else ""
+        supported_composition["cfg_dict"] = cfg_dict
+        self[reg_key] = supported_composition
         for a_combo in adapter_combinations:
             a_combo = (a_combo,) if not isinstance(a_combo, tuple) else a_combo
             composition_key = (model_src_key, task_name, phase, self.canonicalize_composition(a_combo))
             supported_composition[composition_key] = registered_example_cfg
-            supported_composition["description"] = description if description is not None else ""
             self[composition_key] = supported_composition
 
     def canonicalize_composition(self, adapter_ctx: Iterable[Adapter]) -> Tuple:
         return tuple(sorted(list(adapter_ctx), key=lambda a: a.value))
 
-    @override
-    def get(self, composition_key: Tuple| BaseCfg ) -> Any:
-        if not isinstance(composition_key, tuple):
-            assert isinstance(composition_key, BaseCfg), "`composition_key` must be either a tuple or a `BaseCfg`"
-            # TODO: change "model_key" references to "task_key" to avoid confusion
-            composition_key = (composition_key.model_src_key, composition_key.model_key, composition_key.phase,
-                               composition_key.adapter_ctx)
-        if composition_key in self:
-            supported_composition = self[composition_key]
-            return supported_composition[composition_key]
+    def available_keys_feedback(self, target_key: str | Tuple) -> Set:
+        assert isinstance(target_key, (str, tuple)), "`target_key` must be either a str or a tuple"
+        return {key for key in self.keys() if isinstance(key, type(target_key))}
 
-        available_keys = pformat(sorted(self.keys())) if self.keys() else "none"
-        err_msg = (f"The composition key `{composition_key}` was not found in the registry."
-                   f" Available valid module example compositions: {available_keys}")
+    def composition_keys(self) -> Set:
+        return {key for key in self.keys() if isinstance(key, tuple)}
+
+    @override
+    def get(self, target: Tuple| BaseCfg | str) -> Any:
+        if not isinstance(target, (tuple, str)):
+            assert isinstance(target, BaseCfg), "`composition_key` must be either a tuple or a `BaseCfg`"
+            # TODO: change "model_key" references to "task_key" to avoid confusion
+            target = (target.model_src_key, target.model_key, target.phase,
+                               target.adapter_ctx)
+        if target in self:
+            supported_composition = self[target]
+            return supported_composition[target]
+
+        available_keys_set = None
+        if available_keys_set := self.available_keys_feedback(target):
+            available_keys_set = pformat(sorted(available_keys_set))
+        err_msg = (f"A test/example module registered with `{target}` was not found in the registry."
+                   "\nAvailable valid modules:\n"
+                   f"{available_keys_set}")
         raise KeyError(err_msg)
 
     def remove(self, composition_key: Tuple[Adapter | str]) -> None:
@@ -80,12 +98,12 @@ class ModuleExampleRegistry(dict):
         del self[composition_key]
 
     def available_compositions(self, adapter_filter: Optional[Iterable[Adapter]| Adapter] = None) -> Set:
-        """Returns a list of registered adapters, optionally filtering by an adapter or iterable of adapters."""
+        """Returns a list of registered compositions, optionally filtering by an adapter or iterable of
+        adapters."""
         if adapter_filter is not None:
-            if isinstance(adapter_filter, Adapter):
-                adapter_filter = (adapter_filter,)
-            return {key for key in self.keys() for subkey in key if subkey in adapter_filter}
-        return set(self.keys())
+            adapter_filter = CompositionRegistry.resolve_adapter_filter(adapter_filter)
+            return {key for key in self.composition_keys() for subkey in key[3] if subkey in adapter_filter}
+        return set(self.composition_keys())
 
     def __str__(self) -> str:
         return f"Registered Module Example Compositions: {pformat(self.keys())}"
@@ -105,8 +123,9 @@ def gen_module_example_registry() -> None:
             continue
         rank_zero_debug(f"Registered module example: {reg_key}")
 
-def instantiate_and_register(reg_info: Dict[str, Any], rv: Dict[str, Any]) -> None:
+def instantiate_and_register(reg_key: str, rv: Dict[str, Any]) -> None:
     datamodule_cls, module_cls = DEFAULT_TEST_DATAMODULE, DEFAULT_TEST_MODULE
+    cfg_dict = deepcopy(rv)
     reg_info, shared_cfg, registered_example_cfg = rv['reg_info'], rv['shared_config'], rv['registered_example_cfg']
     reg_info['adapter_combinations'] = resolve_adapter_combinations(reg_info['adapter_combinations'])
     example_datamodule_cfg = itdm_cfg_factory(registered_example_cfg['datamodule_cfg'], shared_cfg)
@@ -117,7 +136,8 @@ def instantiate_and_register(reg_info: Dict[str, Any], rv: Dict[str, Any]) -> No
                                               datamodule_cls=datamodule_cls, module_cls=module_cls)
     for supported_p in reg_info.get('supported_phases', ("train", "test", "predict")):
         reg_info['phase'] = supported_p
-        MODULE_EXAMPLE_REGISTRY.register(**reg_info, registered_example_cfg=registered_example)
+        MODULE_EXAMPLE_REGISTRY.register(**reg_info, reg_key=reg_key, registered_example_cfg=registered_example,
+                                         cfg_dict=cfg_dict)
 
 def resolve_adapter_combinations(adapter_combinations: Iterable):
     registered_combinations = []
@@ -175,12 +195,6 @@ example_itmodule_defaults = dict(
                     "init_args": {"weight_decay": 1.0e-06, "eps": 1.0e-07, "lr": 3.0e-05}},
     lr_scheduler_init={"class_path": "torch.optim.lr_scheduler.CosineAnnealingWarmRestarts",
                        "init_args": {"T_0": 1, "T_mult": 2, "eta_min": 1.0e-06}})
-core_pretrained_signature_columns = ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
-                                     'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
-default_tokenizer_kwargs = {"add_bos_token": True, "local_files_only": False,  "padding_side": "left",
-                            "model_input_names": ["input_ids", "attention_mask"]}
-base_it_module_kwargs = {"experiment_tag": "test_itmodule", "cust_fwd_kwargs": {}}
-
 
 #######################################
 # Register Test/Example Module Configs

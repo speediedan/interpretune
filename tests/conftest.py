@@ -114,7 +114,6 @@ def make_it_datamodule():
         dm_kwargs = {'force_prepare_data': test_cfg.force_prepare_data}
         base_itdm_cfg, *_ = MODULE_EXAMPLE_REGISTRY.get(test_cfg)
         itdm_cfg = apply_itdm_test_cfg(base_itdm_cfg=base_itdm_cfg, test_cfg=test_cfg)
-        #itdm_cfg = apply_itdm_test_cfg(test_cfg=test_cfg, dm_override_cfg=test_cfg.dm_override_cfg)
         dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm',
                         input=FIXTURE_CFGS[datamodule_key].datamodule_cls, ctx=test_cfg.adapter_ctx)
         it_dm = dm_cls(itdm_cfg=itdm_cfg, **dm_kwargs)

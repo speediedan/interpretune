@@ -20,6 +20,7 @@ from interpretune.base.components.mixins import HFFromPretrainedMixin
 from interpretune.base.config.module import ITConfig
 from interpretune.base.config.extensions import ITExtensionsConfigMixin
 from interpretune.base.config.mixins import HFFromPretrainedConfig, ITExtension
+from tests.base_defaults import default_test_task
 from tests.utils import disable_zero_shot
 from tests.runif import RunIf
 from tests.warns import CORE_CTX_WARNS, unexpected_warns
@@ -28,7 +29,7 @@ from tests.orchestration import run_it
 
 class TestClassMixins:
 
-    core_gpt2_shared_config = dict(task_name="pytest_rte_hf",
+    core_gpt2_shared_config = dict(task_name=default_test_task,
         tokenizer_kwargs={"add_bos_token": True, "local_files_only": False, "padding_side": "left",
                           "model_input_names": ["input_ids", "attention_mask"]},
         model_name_or_path="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
@@ -149,7 +150,7 @@ class TestClassMixins:
         test_cfg.phase = 'test'
         def generate(oops_no_matching_args):
             pass
-        # we modify our generate function and avoid checking the batch inputs in order to generate our error feedeback
+        # we modify our generate function and avoid checking the batch inputs in order to generate our error feedback
         with mock.patch.object(core_cust_it_m.model, 'generate', generate), \
             mock.patch.object(core_cust_it_m, 'map_gen_inputs', lambda x: x):
             with pytest.warns(UserWarning, match="The following keys were found"), pytest.raises(Exception):

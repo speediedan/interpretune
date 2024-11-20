@@ -7,6 +7,7 @@ from interpretune.adapters.transformer_lens import ITLensFromPretrainedConfig, I
 from interpretune.utils.exceptions import MisconfigurationException
 from tests.warns import unexpected_warns, TL_CTX_WARNS
 from tests.utils import ablate_cls_attrs
+from tests.base_defaults import default_test_task
 
 
 class TestClassTransformerLens:
@@ -15,7 +16,7 @@ class TestClassTransformerLens:
                             "model_input_names": ['input', 'attention_mask']}
     test_tl_signature_columns = ['input', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
                                      'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
-    test_tl_gpt2_shared_config = dict(task_name="pytest_rte_tl", tokenizer_kwargs=tl_tokenizer_kwargs,
+    test_tl_gpt2_shared_config = dict(task_name=default_test_task, tokenizer_kwargs=tl_tokenizer_kwargs,
                                     model_name_or_path="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
     test_tl_cust_config = {"cfg": {"n_layers":1, "d_mlp": 10, "d_model":10, "d_head":5, "n_heads":2, "n_ctx":200,
                         "act_fn":'relu', "tokenizer_name": 'gpt2'}}
@@ -48,7 +49,7 @@ class TestClassTransformerLens:
          pytest.param(False, {'x': 2}, {'dtype': 'float32'}, None, "attributes will be ignore", None),
          pytest.param(True, {'pretrained_kwargs': {'device_map': {"unsupp": 0, "lm_head": 1}}}, None, None,
                       "mapping to multiple devices", None),
-         pytest.param(True, {'dict unconvertiable': 'to hf_cfg'}, None, None, None, "or a dict convertible"),
+         pytest.param(True, {'dict unconvertible': 'to hf_cfg'}, None, None, None, "or a dict convertible"),
          pytest.param(True, {'pretrained_kwargs': {'torch_dtype': 'bfloat16'}}, None, {'dtype': 'float32'},
                       "does not match TL dtype", None),
                       ],

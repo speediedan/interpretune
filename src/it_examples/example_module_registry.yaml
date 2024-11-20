@@ -59,15 +59,14 @@ cust.rte.transformer_lens:
     tokenizer_id_overrides:
       pad_token_id: 50256
     tokenizer_kwargs:
-      model_input_names: ['input', 'attention_mask']
+      model_input_names: ['input']
       padding_side: left
       add_bos_token: true
   registered_example_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
-      signature_columns: ['input', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
-                          'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+      signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
@@ -83,13 +82,6 @@ cust.rte.transformer_lens:
               class_path: interpretune.adapters.transformer_lens.TLensGenerationConfig
               init_args:
                   max_new_tokens: 1
-        hf_from_pretrained_cfg:
-          class_path: interpretune.base.config.mixins.HFFromPretrainedConfig
-          init_args:
-            pretrained_kwargs:
-              device_map: cpu
-              torch_dtype: float32
-            model_head: transformers.GPT2LMHeadModel
         tl_cfg:
           class_path: interpretune.adapters.transformer_lens.ITLensCustomConfig
           init_args:
@@ -118,15 +110,14 @@ cust.rte.sae_lens:
     tokenizer_id_overrides:
       pad_token_id: 50256
     tokenizer_kwargs:
-      model_input_names: ['input', 'attention_mask']
+      model_input_names: ['input']
       padding_side: left
       add_bos_token: True
   registered_example_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
-      signature_columns: ['input', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
-                          'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+      signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
@@ -200,8 +191,7 @@ gpt2.rte:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
-      signature_columns: ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
-                          'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+      signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
@@ -241,15 +231,14 @@ gpt2.rte.transformer_lens:
     tokenizer_id_overrides:
       pad_token_id: 50256
     tokenizer_kwargs:
-      model_input_names: ['input', 'attention_mask']
+      model_input_names: ['input']
       padding_side: left
       add_bos_token: false
   registered_example_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
-      signature_columns: ['input', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
-                          'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+      signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
@@ -290,15 +279,14 @@ gpt2.rte.sae_lens:
     tokenizer_id_overrides:
       pad_token_id: 50256
     tokenizer_kwargs:
-      model_input_names: ['input', 'attention_mask']
+      model_input_names: ['input']
       padding_side: left
       add_bos_token: true
   registered_example_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
-      signature_columns: ['input', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
-                          'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+      signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
@@ -352,8 +340,7 @@ gemma2.rte:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.example_prompt_configs.RTEBoolqGemma2PromptConfig
-      signature_columns: ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
-                          'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+      signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
@@ -389,15 +376,14 @@ gemma2.rte.sae_lens:
     task_name: pytest_rte_tl
     model_name_or_path: google/gemma-2-2b-it
     tokenizer_kwargs:
-      model_input_names: ['input', 'attention_mask']
+      model_input_names: ['input']
       padding_side: left
       add_bos_token: true
   registered_example_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
-      signature_columns: ['input', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
-                          'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+      signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
@@ -454,8 +440,7 @@ llama3.rte:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.example_prompt_configs.RTEBoolqLlama3PromptConfig
-      signature_columns: ['input_ids', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
-                          'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+      signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2

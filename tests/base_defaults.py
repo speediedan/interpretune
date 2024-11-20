@@ -10,6 +10,7 @@ from interpretune.extensions.memprofiler import MemProfilerCfg
 from interpretune.extensions.debug_generation import DebugLMConfig
 from tests.runif import RunIf, RUNIF_ALIASES
 
+default_test_task = "rte"
 
 ### global test defaults
 default_test_bs = 2
@@ -66,7 +67,7 @@ def pytest_param_factory(test_configs: List[BaseAugTest], unpack: bool = True) -
 class BaseCfg:
     phase: str = "train"
     device_type: str = "cpu"
-    model_key: str = "rte"  # "real-model"-based acceptance/parity testing/profiling
+    model_key: str = default_test_task  # "real-model"-based acceptance/parity testing/profiling
     precision: str | int = "torch.float32"
     adapter_ctx: Iterable[Adapter | str] = (Adapter.core,)
     model_src_key: Optional[str] = None

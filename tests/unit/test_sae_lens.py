@@ -11,6 +11,7 @@ from tests.utils import ablate_cls_attrs
 from tests.runif import RunIf
 from tests.warns import SL_LIGHTNING_CTX_WARNS
 from tests.orchestration import run_lightning
+from tests.base_defaults import default_test_task
 
 class TestClassSAELens:
 
@@ -18,7 +19,7 @@ class TestClassSAELens:
                             "model_input_names": ['input_ids', 'attention_mask']}
     test_sl_signature_columns = ['inputs', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
                                      'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
-    test_tl_gpt2_shared_config = dict(task_name="pytest_rte_tl", tokenizer_kwargs=sl_tokenizer_kwargs,
+    test_tl_gpt2_shared_config = dict(task_name=default_test_task, tokenizer_kwargs=sl_tokenizer_kwargs,
                                     model_name_or_path="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
     test_tlens_gpt2 = {**test_tl_gpt2_shared_config, "tl_cfg": ITLensFromPretrainedConfig(),
                        "hf_from_pretrained_cfg": dict(

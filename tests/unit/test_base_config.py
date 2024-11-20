@@ -5,11 +5,12 @@ import pytest
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
 from interpretune.base.config.mixins import HFFromPretrainedConfig
+from tests.base_defaults import default_test_task
 
 
 class TestClassBaseConfigs:
 
-    core_gpt2_shared_config = dict(task_name="pytest_rte_hf",
+    core_gpt2_shared_config = dict(task_name=default_test_task,
         tokenizer_kwargs={"add_bos_token": True, "local_files_only": False, "padding_side": "left",
                           "model_input_names": ["input_ids", "attention_mask"]},
         model_name_or_path="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})

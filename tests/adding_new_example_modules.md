@@ -1,6 +1,6 @@
 # Adding new test/example modules to Interpretune
 
-0. New test/example modules are registered in`example_module_registry.yaml`
+0. New test/example modules are registered in
    `~/repos/interpretune/src/it_examples/example_module_registry.yaml`
 
    ```yaml
@@ -18,15 +18,14 @@
         tokenizer_id_overrides:
           pad_token_id: 50256
         tokenizer_kwargs:
-          model_input_names: ['input', 'attention_mask']
+          model_input_names: ['input']
           padding_side: left
           add_bos_token: false
     registered_example_cfg:
         datamodule_cfg:
           prompt_cfg:
             class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
-          signature_columns: ['input', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
-                            'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
+          signature_columns: ['input', 'labels']
           text_fields: ["premise", "hypothesis"]
           enable_datasets_cache: True
           train_batch_size: 2
@@ -87,45 +86,17 @@
        ...
    ```
 
-   - add new module variants to test module registry
-     ```python
-     TEST_DATAMODULE_BASE_CONFIGS = {
-         # (dm_adapter_ctx, model_src_key)
-         ...
-        (Adapter.core, "llama3"): core_llama3_datamodule_cfg,
-
-     TEST_MODULE_BASE_CONFIGS = {
-         # (phase, adapter_mod_cfg_key, model_src_key)
-         ...
-         ("test", None, "llama3"): test_core_llama3_it_module_base,
-         ("train", None, "llama3"): test_core_llama3_it_module_optim,
-     ```
-
 1. OPTIONAL: Add api key if necessary, usually can just use the default HF public gated repo key
    `~/repos/interpretune/.env`
 
-1. OPTIONAL: If any of the test/example modules for a new model will require dataset fingerprinting enabled, update
-   `~/repos/interpretune/tests/results.py` with:
+1. OPTIONAL: If any of the test/example modules for a new model will require dataset fingerprinting enabled, generate
+   and add the relevant expected dataset fingerprint samples in `~/repos/interpretune/tests/results.py` e.g.:
 
-   - the target tokenizer (always used for fingerprinting)
-
-   ```python
-   llama_dataset_state = ('LlamaTokenizerFast', [])
-   ...
-   test_dataset_state_core_llama = (TestDatasetKey.pytest_rte_hf,) +  llama_dataset_state
-   ```
-
-   - if any tests will have `dstype_agnostic=False` (e.g. new profiling tests), generate and add the relevant expected dataset fingerprint samples (dataset and `forward`)
-
-   ```python
-   deterministic_token_ids = [5674, 24140, 373, 666, 2233, 303, 783, 783, 2055, 319, 373, 910, 17074, 284, 6108]
-   EXPECTED_FIRST_FWD_IDS = {"no_sample": ([],),
-                           "train": (deterministic_token_ids[:default_test_bs],),
-                           "train_prof": (deterministic_token_ids[:default_prof_bs],),
-                           "test": (deterministic_token_ids[NUM_SAMPLE_ROWS:(NUM_SAMPLE_ROWS+default_test_bs)],),
-                           "test_prof": (deterministic_token_ids[NUM_SAMPLE_ROWS:(NUM_SAMPLE_ROWS+default_prof_bs)],)}
-   gpt2_dataset_state = ('GPT2TokenizerFast', deterministic_token_ids)
-   ```
+```python
+deterministic_token_ids = {
+    ("rte", "GPT2TokenizerFast"): [5674, 24140, 373, 666, 2233, 303, 783, 783, 2055, 319, 373, 910, 17074, 284, 6108]
+}
+```
 
 1. OPTIONAL:Update examples if desired, potentially adding a new model directory
    `~/repos/interpretune/src/it_examples/config/experiments/rte_boolq/lightning_rte_3b_qlora_zero_shot_test_only.yaml`

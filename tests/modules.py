@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from jaxtyping import Float, Int
-from typing import Optional, Any, Dict, Tuple, NamedTuple, Union, Callable, List
+from typing import Optional, Any, Dict, NamedTuple, Union, Callable, List
 from unittest import mock
 from functools import reduce, partial
 from dataclasses import dataclass
@@ -22,8 +22,9 @@ from interpretune.utils.types import STEP_OUTPUT
 from interpretune.utils.logging import rank_zero_only
 from it_examples.experiments.rte_boolq import RTEBoolqDataModule, RTEBoolqModuleMixin, RTEBoolqSteps
 from tests import FinetuningScheduler
+from tests.base_defaults import default_test_task
 from tests.results import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS, SAMPLE_POSITION,
-                           DatasetState, TestDatasetKey)
+                           DatasetState)
 
 
 ################################################################################
@@ -39,12 +40,10 @@ class BaseTestDataModule:
         self.force_prepare_data = force_prepare_data
 
     # dataset fingerprinting is not enabled by default
-    def sample_dataset_state(self, ds_task_agnostic: bool = True) -> Tuple:
-        if ds_task_agnostic:
-            return (TestDatasetKey.ANY, None, [])
-        return (TestDatasetKey[self.itdm_cfg.task_name], self.tokenizer.__class__.__name__, [])
+    def sample_dataset_state(self) -> List:
+        return []
 
-    def sample_step_input(self, batch: BatchEncoding) -> Tuple:
+    def sample_step_input(self, batch: BatchEncoding) -> List:
         return []
 
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
@@ -61,8 +60,9 @@ class BaseTestDataModule:
         dataset_path = Path(self.itdm_cfg.dataset_path)
         # rebuild the test dataset if it does not exist in the test environment
         if not dataset_path.exists() or self.force_prepare_data:
-            # regen a cached 'pytest_rte_{hf,pt,tl}' subset of rte for testing with a given model
-            dataset = datasets.load_dataset("super_glue", 'rte', trust_remote_code=True)
+            # regen a cached 'pytest_{default_test_task}_{hf,pt,tl}' subset of the default test task for testing with
+            # a given model
+            dataset = datasets.load_dataset("super_glue", default_test_task, trust_remote_code=True)
             for split in dataset.keys():
                 dataset[split] = dataset[split].select(range(10))
                 dataset[split] = dataset[split].map(tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
@@ -82,7 +82,7 @@ class SampleDatasetStateMixin:
         # we strip padding from sampled rows before collecting ids to make our sample padding-side agnostic
         return [list(filter(lambda v: v != self.tokenizer.pad_token_id, t))[SAMPLE_POSITION] for t in rows]
 
-    def sample_dataset_state(self, ds_task_agnostic: bool = False) -> Tuple:
+    def sample_dataset_state(self) -> List:
         # NOTE [Dataset State Validation]:
         # note that this only validates the loaded dataset/tokenizer, the dataloaders are not tested in this method
         # so one may still need to inspect downstream variables (e.g. the dataloader kwargs) and the batch actually
@@ -95,10 +95,9 @@ class SampleDatasetStateMixin:
             # dataset split
             sampled_rows = self.dataset[split][target_input][:NUM_SAMPLE_ROWS]
             sample_state.extend(self.sample_unpadded_state(sampled_rows))
-        ds_task_name = TestDatasetKey.ANY if ds_task_agnostic else TestDatasetKey[self.itdm_cfg.task_name]
-        return (ds_task_name, self.tokenizer.__class__.__name__, sample_state)
+        return sample_state
 
-    def sample_step_input(self, batch: BatchEncoding) -> Tuple:
+    def sample_step_input(self, batch: BatchEncoding) -> List:
         # See NOTE [Dataset State Validation]
         sample_state = []
         sampled_rows = batch[self.tokenizer.model_input_names[0]].cpu().tolist()
@@ -194,7 +193,7 @@ class FeedForward(torch.nn.Module):
         self.resid_dropout = torch.nn.Dropout(dropout_p)
 
     def forward(self, x):
-        return self.resid_dropout(self.w2(self.geld(self.w1(x))))
+        return self.resid_dropout(self.w2(self.gelu(self.w1(x))))
 
 class TransformerBlock(torch.nn.Module):
     def __init__(self, args: TestModelArgs):
@@ -385,9 +384,8 @@ class StateLogInspectMixin:
 
 class BaseTestModule(StateLogInspectMixin):
 
-    def __init__(self, *args, dstype_agnostic: bool = False, req_grad_mask: Optional[Dict] = None, **kwargs) -> None:
+    def __init__(self, *args, req_grad_mask: Optional[Dict] = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.dstype_agnostic = dstype_agnostic
         self.req_grad_mask = req_grad_mask or {}
         self.epoch_losses = {}
         self.sampled_fwd_inputs = None
@@ -401,7 +399,8 @@ class BaseTestModule(StateLogInspectMixin):
         return it_cfg
 
     def load_metric(self) -> None:
-        self.metric = evaluate.load("super_glue", 'rte', experiment_id=self._it_state._init_hparams['experiment_id'])
+        self.metric = evaluate.load("super_glue", default_test_task,
+                                    experiment_id=self._it_state._init_hparams['experiment_id'])
 
     def model_init(self) -> None:
         """If we're not using a from-configuration model, we initialize the model here."""
@@ -419,7 +418,8 @@ class BaseTestModule(StateLogInspectMixin):
         return {'device_type': device_type, 'precision': model_dtype, **self._get_dataset_state()}
 
     def _get_dataset_state(self) -> Dict:
-        dataset_state = self.datamodule.sample_dataset_state(self.dstype_agnostic) + (self.sampled_fwd_inputs,)
+        dataset_state = (self.datamodule.tokenizer.__class__.__name__, self.datamodule.sample_dataset_state(),
+                         self.sampled_fwd_inputs)
         return {'dataset_state': DatasetState(*dataset_state)}
 
     def _epoch_end_validation(self, *args, **kwargs) -> None:

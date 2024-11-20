@@ -7,23 +7,12 @@ from interpretune.adapters.registration import Adapter
 from interpretune.base.config.module import HFFromPretrainedConfig
 from interpretune.base.config.shared import AutoStrEnum
 from interpretune.extensions.memprofiler import MemProfilerCfg, MemProfilerSchedule
-from it_examples.example_module_registry import (MODULE_EXAMPLE_REGISTRY, core_pretrained_signature_columns,
+from it_examples.example_module_registry import (MODULE_EXAMPLE_REGISTRY, example_datamodule_defaults,
                                                  example_itmodule_defaults)
 from base_defaults import default_prof_bs
 from tests.modules import TestFTS
 from tests.utils import get_nested, set_nested
 
-# TODO: replace these refs with improved registry references
-test_tl_signature_columns = core_pretrained_signature_columns.copy()
-test_tl_signature_columns[0] = 'input'
-test_optimizer_init = example_itmodule_defaults["optimizer_init"]
-test_lr_scheduler_init = example_itmodule_defaults["lr_scheduler_init"]
-test_tl_datamodule_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY.get(("gpt2", "rte", "test",
-                                                          (Adapter.core, Adapter.transformer_lens))).datamodule_cfg)
-core_cust_tokenizer_kwargs = {"model_input_names": ['tokens'], "padding_side": "left", "add_bos_token": True,
-                              "local_files_only": False}
-core_cust_shared_config = dict(task_name="pytest_rte_pt", tokenizer_kwargs=core_cust_tokenizer_kwargs,
-                               tokenizer_name="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
 
 # TODO: add model-specific mapping and mapping functions here to dedup some of the shared explicit mapping logic here
 ################################################################################
@@ -141,50 +130,22 @@ default_session_cfg = {
     "module_cfg": {"class_path": "interpretune.base.config.module.ITConfig"}
 }
 
-test_core_cust_it_module_kwargs_zero_shot = {
-    "model_cfg": {"device": "cpu", "dtype": "float32", "model_args": {"max_seq_len": 200}},
-    "zero_shot_cfg": {"class_path": "it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig",
-                      "init_args": {"enabled": True, "lm_generation_cfg": {
-                          "class_path": "tests.utils.ToyGenCfg",
-                          "init_args": {"max_new_tokens": 2}},
-                       },
+core_cust_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY['cust.rte']['cfg_dict'])
+base_cust_rte_cfg = {
+    "session_cfg": {
+        "datamodule_cfg": {"init_args": {**example_datamodule_defaults, **core_cust_cfg['shared_config'],
+                                         **core_cust_cfg['registered_example_cfg']['datamodule_cfg']}},
+        "module_cfg": core_cust_cfg['registered_example_cfg']['module_cfg']
     }
 }
 
-## override with appropriate CLI class_path config since we're serializing and loading from yaml
-core_cust_datamodule_cfg_prompt_cfg = { "prompt_cfg":
-                                       {"class_path": "it_examples.experiments.rte_boolq.RTEBoolqPromptConfig"}}
-
-# create a deepcopy for likely future manipulation
-core_cust_shared_config_cli = deepcopy(core_cust_shared_config)
-test_core_cust_it_model_cfg_cuda_bf16 = {"device": "cuda", "dtype": "bfloat16", "model_args": {"max_seq_len": 200}}
-
-# override zero_shot_cfg with serializable CLI args
-test_tl_cust_config_it_module_kwargs_zero_shot = {
-    "zero_shot_cfg": {
-        "class_path": "it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig",
-        "init_args": {"enabled": True,
-                      "lm_generation_cfg": {
-                          "class_path": "interpretune.adapters.transformer_lens.TLensGenerationConfig",
-                          "init_args": {"max_new_tokens": 1}
-                    }
-                }
+core_tl_cust_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY['cust.rte.transformer_lens']['cfg_dict'])
+base_tl_cust_model_cfg = {
+    "session_cfg": {
+        "datamodule_cfg": {"init_args": {**example_datamodule_defaults, **core_tl_cust_cfg["shared_config"],
+                                         **core_tl_cust_cfg["registered_example_cfg"]["datamodule_cfg"]}},
+        "module_cfg": core_tl_cust_cfg["registered_example_cfg"]["module_cfg"],
     },
-    "tl_cfg": {
-        'class_path': 'interpretune.adapters.transformer_lens.ITLensCustomConfig',
-        'init_args': {'cfg': {"n_layers":1, "d_mlp": 10, "d_model":10, "d_head":5, "n_heads":2, "n_ctx":200,
-                              "act_fn":'relu', "tokenizer_name": 'gpt2'}
-        }
-    }
-}
-
-
-base_tl_cust_model_cfg = {}
-base_tl_cust_model_cfg["session_cfg"] = {
-    "module_cfg": {
-        "class_path": "it_examples.experiments.rte_boolq.RTEBoolqTLConfig",
-        "init_args": { **test_tl_cust_config_it_module_kwargs_zero_shot}
-    }
 }
 
 base_lightning_trainer_cfg = {
@@ -199,19 +160,6 @@ base_lightning_trainer_cfg = {
         },
     },
 }
-
-base_cust_rte_cfg = {}
-base_cust_rte_cfg["session_cfg"] = {
-    "datamodule_cfg": {"init_args": {**core_cust_shared_config_cli, **core_cust_datamodule_cfg_prompt_cfg}},
-    "module_cfg": {
-        "class_path": "it_examples.experiments.rte_boolq.RTEBoolqConfig",
-        "init_args": {**test_core_cust_it_module_kwargs_zero_shot},
-    },
-}
-
-test_tl_datamodule_cfg.text_fields = None
-## override with appropriate CLI class_path config since we're serializing and loading from yaml
-test_tl_datamodule_cfg.prompt_cfg = {"class_path": "it_examples.experiments.rte_boolq.RTEBoolqPromptConfig"}
 
 ################################################################################
 # global default cfg file
@@ -240,13 +188,11 @@ get_nested(parity_cli_cfgs["global_debug"], "session_cfg.module_cfg.init_args")[
 ################################################################################
 
 core_optim_train = deepcopy(default_cfg)
-core_optim_train["session_cfg"].update({"module_cfg": deepcopy(base_cust_rte_cfg["session_cfg"]["module_cfg"]),
-                         "datamodule_cfg": deepcopy(base_cust_rte_cfg["session_cfg"]["datamodule_cfg"])})
+core_optim_train["session_cfg"]["datamodule_cfg"].update(base_cust_rte_cfg["session_cfg"]["datamodule_cfg"])
+core_optim_train["session_cfg"]["module_cfg"].update(base_cust_rte_cfg["session_cfg"]["module_cfg"])
 core_optim_train["trainer_cfg"] = deepcopy(default_trainer_kwargs)
-get_nested(core_optim_train, mod_cfg)["init_args"] = {"experiment_tag": CLI_TESTS.core_optim_train.value,
-                                                      "optimizer_init": test_optimizer_init,
-                                                      "lr_scheduler_init": test_lr_scheduler_init,
-                                                      **test_core_cust_it_module_kwargs_zero_shot}
+get_nested(core_optim_train, mod_cfg)["init_args"].update({"experiment_tag": CLI_TESTS.core_optim_train.value,
+                                                           **example_itmodule_defaults})
 parity_cli_cfgs["exp_cfgs"][CLI_TESTS.core_optim_train] = core_optim_train
 
 ################################################################################
@@ -254,16 +200,10 @@ parity_cli_cfgs["exp_cfgs"][CLI_TESTS.core_optim_train] = core_optim_train
 ################################################################################
 
 core_tl_test = deepcopy(default_cfg)
+core_tl_test["session_cfg"]["datamodule_cfg"].update(base_tl_cust_model_cfg["session_cfg"]["datamodule_cfg"])
+core_tl_test["session_cfg"]["module_cfg"].update(base_tl_cust_model_cfg["session_cfg"]["module_cfg"])
 core_tl_test["trainer_cfg"] = deepcopy(default_trainer_kwargs)
-core_tl_test["session_cfg"]["adapter_ctx"] = ["core", "transformer_lens"]
-tl_task_sig_columns = {'task_name': 'pytest_rte_tl', 'signature_columns': test_tl_signature_columns}
-get_nested(core_tl_test, datamod_cfg)['init_args'] = {
-    **core_cust_shared_config_cli, **core_cust_datamodule_cfg_prompt_cfg, **tl_task_sig_columns}
-get_nested(core_tl_test, datamod_cfg)['init_args']["tokenizer_kwargs"].update({"model_input_names":
-                                                                               ['input', 'attention_mask']})
-get_nested(core_tl_test, "session_cfg")["module_cfg"] = deepcopy(base_tl_cust_model_cfg["session_cfg"]["module_cfg"])
-get_nested(core_tl_test, mod_initargs)["model_cfg"] = {"device": "cpu", "dtype": "float32",
-                                                       "model_args": {"max_seq_len": 200}}
+core_tl_test["session_cfg"]["adapter_ctx"] = core_tl_cust_cfg["reg_info"]["adapter_combinations"][0]
 get_nested(core_tl_test, f"{mod_initargs}.tl_cfg.init_args")["cfg"].update({"dtype": "float32", "device": "cuda"})
 get_nested(core_tl_test, mod_initargs)["experiment_tag"] = CLI_TESTS.core_tl_test.value
 parity_cli_cfgs["exp_cfgs"][CLI_TESTS.core_tl_test] = core_tl_test
