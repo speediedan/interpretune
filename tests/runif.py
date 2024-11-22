@@ -38,6 +38,7 @@ skip_win_mark = {'skip_windows': True}
 # RunIf aliases
 RUNIF_ALIASES = {
     "lightning": lightning_mark,
+    "lightning_prof": {**lightning_mark, **profiling_mark},
     "bitsandbytes": bitsandbytes_mark,
     "fts": fts_mark,
     "optional": optional_mark,
@@ -46,15 +47,19 @@ RUNIF_ALIASES = {
     "standalone": standalone_mark,
     "l_fts": {**lightning_mark, **fts_mark},
     "cuda": cuda_mark,
+    "cuda_prof": {**cuda_mark, **profiling_mark},
     "cuda_profci": {**cuda_mark, **profiling_ci_mark},
     "cuda_l": {**cuda_mark, **lightning_mark},
     "cuda_l_fts": {**cuda_mark, **lightning_mark, **fts_mark},
     "cuda_l_fts_profci": {**cuda_mark, **lightning_mark, **fts_mark, **profiling_ci_mark},
+    "cuda_l_prof": {**cuda_mark, **lightning_mark, **profiling_mark},
     "cuda_l_profci": {**cuda_mark, **lightning_mark, **profiling_ci_mark},
     "cuda_l_optional": {**cuda_mark, **lightning_mark, **optional_mark},
     "bf16_cuda": bf16_cuda_mark,
+    "bf16_cuda_prof": {**bf16_cuda_mark, **profiling_mark},
     "bf16_cuda_profci": {**bf16_cuda_mark, **profiling_ci_mark},
     "bf16_cuda_l": {**bf16_cuda_mark, **lightning_mark},
+    "bf16_cuda_l_prof": {**bf16_cuda_mark, **lightning_mark, **profiling_mark},
     "l_optional": {**lightning_mark, **optional_mark},
     "skip_win_optional": {**skip_win_mark, **optional_mark},
 }
@@ -183,7 +188,7 @@ class RunIf:
 
         if profiling_ci:
             env_flag = os.getenv("IT_RUN_PROFILING_TESTS", "0")
-            conditions.append(env_flag not in ["1", "2"])
+            conditions.append(env_flag != "1")
             reasons.append("Profiling CI execution")
             # used in conftest.py::pytest_collection_modifyitems
             kwargs["profiling_ci"] = True

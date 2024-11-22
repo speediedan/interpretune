@@ -10,7 +10,7 @@ from interpretune.base.components.cli import LightningCLIAdapter, bootstrap_cli
 from tests.runif import RunIf
 from tests.warns import unexpected_warns, CLI_EXPECTED_WARNS
 from tests.conftest import make_deterministic  # noqa: F401
-from tests.base_defaults import pytest_param_factory
+from tests.base_defaults import pytest_factory
 from tests.parity_acceptance.cfg_aliases import RUN_FN, CLI_EXP
 from tests.unit.cfg_aliases import TEST_CONFIGS_CLI_UNIT, EXPECTED_RESULTS_CLI_UNIT
 from tests.parity_acceptance.test_it_cli import gen_cli_args
@@ -24,7 +24,7 @@ def collect_base_config():
 
 @pytest.mark.usefixtures("make_deterministic")
 @RunIf(min_cuda_gpus=1, skip_windows=True)
-@pytest.mark.parametrize("test_alias, cli_cfg", pytest_param_factory(TEST_CONFIGS_CLI_UNIT, unpack=False))
+@pytest.mark.parametrize("test_alias, cli_cfg", pytest_factory(TEST_CONFIGS_CLI_UNIT, unpack=False))
 def test_cli_unit_configs(recwarn, clean_cli_env, cli_test_configs, test_alias, cli_cfg):
     expected_warnings = CLI_EXPECTED_WARNS[(cli_cfg.cli_adapter, *cli_cfg.adapter_ctx)]
     cfg_files = cli_test_configs[(CLI_EXP, test_alias, cli_cfg.debug_mode)]

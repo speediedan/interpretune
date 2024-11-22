@@ -18,7 +18,7 @@ import pytest
 
 from interpretune.adapters.registration import Adapter
 
-from tests.base_defaults import BaseAugTest, BaseCfg, pytest_param_factory
+from tests.base_defaults import BaseAugTest, BaseCfg, pytest_factory
 from tests.configuration import IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
 from tests.parity_acceptance.cfg_aliases import (cuda, w_l_sl, cust_no_sae_grad)
@@ -50,7 +50,7 @@ PARITY_SL_CONFIGS = (
 EXPECTED_PARITY_SL = {cfg.alias: cfg.expected for cfg in PARITY_SL_CONFIGS}
 
 @pytest.mark.usefixtures("make_deterministic")
-@pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_param_factory(PARITY_SL_CONFIGS, unpack=False))
+@pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(PARITY_SL_CONFIGS, unpack=False))
 def test_parity_sl(recwarn, tmp_path, test_alias, test_cfg):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PARITY_SL[test_alias] or {}

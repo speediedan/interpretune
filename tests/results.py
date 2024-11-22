@@ -1,5 +1,7 @@
-from typing import List, Optional, Tuple,  Union, Dict, NamedTuple
+from typing import List, Optional, Tuple, Union, Dict, NamedTuple
 from collections import defaultdict
+from pathlib import Path
+import yaml
 
 from tests.base_defaults import default_test_bs, default_prof_bs, default_test_task
 from tests.utils import get_model_input_dtype
@@ -76,7 +78,7 @@ class MemProfResult(NamedTuple):
     rank = 0
     default_step = 0
     cuda_train_step = 3
-    cuda_mem_keys = ('allocated_bytes.all.current', 'allocated_bytes.all.peak', 'reserved_bytes.all.peak','npp_diff')
+    cuda_mem_keys = ('allocated_bytes.all.current', 'allocated_bytes.all.peak', 'reserved_bytes.all.peak', 'npp_diff')
     cpu_mem_keys = {"test": ('rss_diff',), "train": ('rss_diff', 'npp_diff'),}
     test_key = f'{rank}.test_step.{epoch}.{default_step}.end'
     train_keys = {"cuda": f'{rank}.training_step.{epoch}.{cuda_train_step}.end',
@@ -90,22 +92,23 @@ class TestResult(NamedTuple):
     result_alias: Optional[str] = None  # N.B. diff test aliases may map to the same result alias (e.g. parity tests)
     exact_results: Optional[Dict] = None
     close_results: Optional[Tuple] = None
-    mem_results: Optional[Tuple] = None
+    mem_results: Optional[Dict] = None
     tolerance_map: Optional[Dict[str, float]] = None
     callback_results: Optional[Dict] = None
 
-def mem_results(results: Tuple):
+
+def mem_results(results: Dict, test_alias: str):
     """Result generation function for memory profiling tests."""
     # See NOTE [Memprofiler Key Format]
     # snap keys are rank.phase.epoch_idx.step_idx.step_ctx
-    phase, src, test_values = results
-    mem_keys = MemProfResult.cuda_mem_keys if src == "cuda" else MemProfResult.cpu_mem_keys[phase]
+    expected_results = results[test_alias]
+    src, phase, expected_mem = expected_results['src'], expected_results['phase'], expected_results['expected_mem']
     step_key = f'{MemProfResult.train_keys[src]}' if phase == 'train' else f'{MemProfResult.test_key}'
     # default tolerance of rtol=0.05, atol=0 for all keys unless overridden with an explicit `tolerance_map`
-    tolerance_map = {'tolerance_map': {k: (0.05, 0) for k in mem_keys}}
-    return {**tolerance_map, 'expected_memstats': (step_key, mem_keys, test_values)}
+    tolerance_map = {'tolerance_map': {k: (0.05, 0) for k in expected_mem.keys()}}
+    return {**tolerance_map, 'expected_memstats': (step_key, expected_mem)}
 
-def close_results(close_map: Tuple):
+def close_results(close_map: Tuple, test_alias: Optional[str] = None):
     """Result generation function that packages expected close results with a provided tolerance dict or generates
     a default one based upon the test_alias."""
     expected_close = defaultdict(dict)
@@ -116,11 +119,11 @@ def close_results(close_map: Tuple):
     closestats_tol = {'tolerance_map': {k: (0.1, 0) for k in close_keys}}
     return {**closestats_tol, 'expected_close': expected_close}
 
-def exact_results(expected_exact: Tuple):
+def exact_results(expected_exact: Tuple, test_alias: Optional[str] = None):
     """Result generation function that packages."""
     return {'expected_exact': expected_exact}
 
-def callback_results(callback_results: Dict):
+def callback_results(callback_results: Dict, test_alias: Optional[str] = None):
     """Result generation function that packages."""
     return {'callback_results': callback_results}
 
@@ -158,7 +161,26 @@ def collect_results(result_map: Dict[str, Tuple], test_alias: str, normalize: bo
     collected_results = defaultdict(dict)
     for rtype, rfunc in RESULT_TYPE_MAPPING.items():
         if rattr := getattr(test_result, rtype):
-            collected_results.update(rfunc(rattr))
+            collected_results.update(rfunc(rattr, test_alias=test_alias))
     if exp_tol := test_result.tolerance_map:
         collected_results['tolerance_map'].update(exp_tol)
     return collected_results
+
+MEMORY_FOOTPRINTS_PATH = Path(__file__).parent / "parity_acceptance" / "profile_memory_footprints.yaml"
+
+def load_memory_footprint_results() -> Dict:
+    with open(MEMORY_FOOTPRINTS_PATH) as file:
+        # Load the YAML file content
+        data = yaml.safe_load(file)
+        mem_footprint = {}
+        for fq_alias, rv in data.items():
+            # TODO: structured this way to allow us to serialize other result types in the future
+            mem_footprint[fq_alias] = rv["mem_results"]
+    return mem_footprint
+
+def save_memory_footprint_results(results: Dict):
+    mem_footprint = {}
+    for fq_alias, rv in results.items():
+        mem_footprint[fq_alias] = {"mem_results": rv}
+    with open(MEMORY_FOOTPRINTS_PATH, "w") as file:
+        yaml.dump(mem_footprint, file)

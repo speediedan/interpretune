@@ -11,7 +11,7 @@ from interpretune.adapters.registration import Adapter
 from interpretune.adapters import ADAPTER_REGISTRY
 from interpretune.base.components.cli import core_cli_main, compose_config, l_cli_main
 from interpretune.utils.types import ArgsType
-from tests.base_defaults import pytest_param_factory, BaseAugTest
+from tests.base_defaults import pytest_factory, BaseAugTest
 from tests.parity_acceptance.cfg_aliases import CLI_TESTS, IT_HOME, RUN_FN, CLI_EXP
 from tests.runif import RunIf
 from tests.warns import unexpected_warns, CLI_EXPECTED_WARNS
@@ -80,7 +80,7 @@ def gen_cli_args(run, cli_adapter, compose_cfg, config_files, bootstrap_args: Op
     return cli_main, cli_args, cli_main_kwargs
 
 @RunIf(min_cuda_gpus=1, skip_windows=True)
-@pytest.mark.parametrize("test_alias, cli_cfg", pytest_param_factory(TEST_CONFIGS_CLI_PARITY, unpack=False))
+@pytest.mark.parametrize("test_alias, cli_cfg", pytest_factory(TEST_CONFIGS_CLI_PARITY, unpack=False))
 def test_cli_configs(recwarn, make_deterministic, clean_cli_env, cli_test_configs, test_alias, cli_cfg):
     expected_warnings = CLI_EXPECTED_WARNS[(cli_cfg.cli_adapter, *cli_cfg.adapter_ctx)]
     cfg_files = cli_test_configs[(CLI_EXP, test_alias, cli_cfg.debug_mode)]

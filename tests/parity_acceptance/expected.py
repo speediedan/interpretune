@@ -1,10 +1,9 @@
-from tests.results import TestResult, def_results, MemProfResult
+from tests.results import TestResult, def_results, MemProfResult, load_memory_footprint_results
 from functools import partial
 
 
-# TODO: using result dicts in this module for now but ultimately plan to save/construct TestResults from a yaml file
-# here to make programmatic management of expected results easier
-
+# TODO: using result dicts in this module for now but may save/construct all TestResults from yaml files in a manner
+# similar to ``mem_results`` to make programmatic management of expected results easier
 
 l_parity_results = {
     "train_cpu_32":
@@ -24,59 +23,8 @@ l_parity_results = {
 
 cprof_results = partial(def_results, ds_cfg="train_prof")
 
-l_profiling_parity_results = {
-    "test_cpu_32":
-    TestResult(exact_results=cprof_results("cpu", 32, ds_cfg="test_prof"), mem_results=("test", "cpu", (633864192,)),
-               tolerance_map={"rss_diff": (0.05, 1e08)}),  # lightning ver requires a bit more
-    "test_cuda_32":
-    TestResult(exact_results=cprof_results("cuda", 32, ds_cfg="test_prof"),
-               mem_results=("test", "cuda", (544706048, 641185280, 708837376, 0))),
-    "test_cuda_bf16":
-    TestResult(exact_results=cprof_results("cuda", "bf16", ds_cfg="test_prof"),
-               mem_results=("test", "cuda", (301455872, 347033088, 371195904, 0))),
-    "train_cpu_32":
-    TestResult(exact_results=cprof_results("cpu", 32),
-               mem_results=("train", "cpu", (561709056, 177550460))),
-    "train_cpu_32_act":
-    TestResult(exact_results=cprof_results("cpu", 32),
-               mem_results=("train", "cpu", (648609792, 161311584))),
-    "train_cuda_32":
-    TestResult(exact_results=cprof_results("cuda", 32),
-               mem_results=("train", "cuda", (1746485248, 2576384000, 2965372928, 309007392))),
-    "train_cuda_32_act":
-    TestResult(exact_results=cprof_results("cuda", 32),
-               mem_results=("train", "cuda", (1581433344, 2573807616, 2923429888, 161007456))),
-    "train_cuda_bf16":
-    TestResult(exact_results=cprof_results("cuda", "bf16"),
-               mem_results=("train", "cuda", (956976640, 1363192832, 1507852288, 190250016)),
-               tolerance_map={k: (0.1, 2e08) for k in MemProfResult.cuda_mem_keys}),
-               # TODO: as current allocated memory for Lightning is about 217 MB higher than core and npp is about 80 MB
-               # lower than core, investigate the precise source of these divergences (not presently viewed as highest
-               # priority given other values are nearly identical to core)
-}
-
-# TODO: using result dicts in this module for now but ultimately plan to save/construct TestResults from a yaml file
-# here to make programmatic management of expected results easier
-
-# we always check for basic exact match on device type and precision as well
-# note our result mapping function uses these core results for all supported parity test suffixes (e.g. '_l')
-tl_parity_results = {
-    "test_cpu_32": TestResult(exact_results=def_results("cpu", 32, ds_cfg="test")),
-    "test_cuda_32": TestResult(exact_results=def_results("cuda", 32, ds_cfg="test")),
-    "train_cpu_32": TestResult(exact_results=def_results("cpu", 32, ds_cfg="train")),
-    "train_cuda_32": TestResult(exact_results=def_results("cuda", 32, ds_cfg="train")),
-    "train_cpu_32_debug": TestResult(exact_results=def_results("cpu", 32, ds_cfg="train")),
-}
-
-# we always check for basic exact match on device type and precision as well
-# note our result mapping function uses these core results for all supported parity test suffixes (e.g. '_l')
-sl_parity_results = {
-    "test_cpu_32": TestResult(exact_results=def_results("cpu", 32)),
-    "train_cpu_32": TestResult(exact_results=def_results("cpu", 32)),
-    "train_cuda_32": TestResult(exact_results=def_results("cuda", 32)),
-}
-
 ########################################################################################################################
+# NOTE [Transformer Lens Profiling Parity Differences]:
 # Salient differences between TransformerLens and Base Profiling Contexts
 # ----------------------------------------------------------------------------------------------------------------------
 # 1. The total memory allocated on cuda for a single forward (batch size 1) is ~150MB higher with TransformerLens than
@@ -98,19 +46,54 @@ sl_parity_results = {
 #    TODO: Consider disabling npp collection for TransformerLens unless activation checkpointing is supported and it's
 #    decided that enhancing npp to be useful for TransformerLens-like transformations is sufficiently valuable
 ########################################################################################################################
-tl_profiling_parity_results = {
-    "test_cpu_32":
-    TestResult(exact_results=def_results("cpu", 32, ds_cfg="test_prof"),
-               mem_results=("test", "cpu", (71303168,))),  # see note #2 above
-    "test_cuda_32":
-    TestResult(exact_results=def_results("cuda", 32, ds_cfg="test_prof"),  # see note #1 above
-               mem_results=("test", "cuda", (699944960, 750239232, 815792128, 0))),
-    "train_cpu_32":
-    TestResult(exact_results=def_results("cpu", 32, ds_cfg="train_prof"),
-               mem_results=("train", "cpu", (70086656, 693365760))),  # see note #3 above
-    "train_cuda_32":
-    TestResult(exact_results=def_results("cuda", 32, ds_cfg="train_prof"),
-               mem_results=("train", "cuda", (2332741632, 3352547840, 3619684352, 312485028))),
+
+memory_footprints = load_memory_footprint_results()
+
+class MemResult(TestResult):
+    __slots__ = ()
+
+    def __new__(cls, *args, **kwargs):
+        return super().__new__(cls, mem_results=memory_footprints, *args, **kwargs)
+
+profiling_results = {
+    "test_l_profiling.test_cuda_32": MemResult(exact_results=cprof_results("cuda", 32, ds_cfg="test_prof")),
+    "test_l_profiling.test_cuda_bf16": MemResult(exact_results=cprof_results("cuda", "bf16", ds_cfg="test_prof")),
+    "test_l_profiling.train_cpu_32": MemResult(exact_results=cprof_results("cpu", 32)),
+    "test_l_profiling.train_cpu_32_act": MemResult(exact_results=cprof_results("cpu", 32)),
+    "test_l_profiling.train_cuda_32": MemResult(exact_results=cprof_results("cuda", 32)),
+    "test_l_profiling.train_cuda_32_act": MemResult(exact_results=cprof_results("cuda", 32)),
+    "test_tl_profiling.test_cpu_32": MemResult(exact_results=def_results("cpu", 32, ds_cfg="test_prof")),
+    "test_tl_profiling.test_cuda_32": MemResult(exact_results=def_results("cuda", 32, ds_cfg="test_prof")),
+    "test_tl_profiling.train_cpu_32": MemResult(exact_results=def_results("cpu", 32, ds_cfg="train_prof")),
+    "test_tl_profiling.train_cuda_32": MemResult(exact_results=def_results("cuda", 32, ds_cfg="train_prof")),
+    "test_l_profiling.test_cpu_32": MemResult(exact_results=cprof_results("cpu", 32, ds_cfg="test_prof"),
+                                              tolerance_map={"rss_diff": (0.05, 1e08)}),
+    "test_l_profiling.train_cuda_bf16": MemResult(exact_results=cprof_results("cuda", "bf16"),
+                                                  tolerance_map={k: (0.1, 2e08) for k in MemProfResult.cuda_mem_keys}),
+    # TODO: as current allocated memory for Lightning is about 217 MB higher than core and npp is about 80 MB lower than
+    # core, investigate the precise source of these divergences (not presently viewed as highest priority given other
+    # values are nearly identical to core)
+}
+
+# TODO: using result dicts in this module for now but ultimately plan to save/construct TestResults from a yaml file
+# here to make programmatic management of expected results easier
+
+# we always check for basic exact match on device type and precision as well
+# note our result mapping function uses these core results for all supported parity test suffixes (e.g. '_l')
+tl_parity_results = {
+    "test_cpu_32": TestResult(exact_results=def_results("cpu", 32, ds_cfg="test")),
+    "test_cuda_32": TestResult(exact_results=def_results("cuda", 32, ds_cfg="test")),
+    "train_cpu_32": TestResult(exact_results=def_results("cpu", 32, ds_cfg="train")),
+    "train_cuda_32": TestResult(exact_results=def_results("cuda", 32, ds_cfg="train")),
+    "train_cpu_32_debug": TestResult(exact_results=def_results("cpu", 32, ds_cfg="train")),
+}
+
+# we always check for basic exact match on device type and precision as well
+# note our result mapping function uses these core results for all supported parity test suffixes (e.g. '_l')
+sl_parity_results = {
+    "test_cpu_32": TestResult(exact_results=def_results("cpu", 32)),
+    "train_cpu_32": TestResult(exact_results=def_results("cpu", 32)),
+    "train_cuda_32": TestResult(exact_results=def_results("cuda", 32)),
 }
 
 l_fts_callback_results = {

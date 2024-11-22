@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from jaxtyping import Float, Int
-from typing import Optional, Any, Dict, NamedTuple, Union, Callable, List
+from typing import Optional, Any, Dict, NamedTuple, Union, Callable, List, Tuple
 from unittest import mock
 from functools import reduce, partial
 from dataclasses import dataclass
@@ -24,7 +24,8 @@ from it_examples.experiments.rte_boolq import RTEBoolqDataModule, RTEBoolqModule
 from tests import FinetuningScheduler
 from tests.base_defaults import default_test_task
 from tests.results import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS, SAMPLE_POSITION,
-                           DatasetState)
+                           DatasetState, save_memory_footprint_results, parity_normalize)
+from tests.parity_acceptance.expected import memory_footprints
 
 
 ################################################################################
@@ -335,7 +336,7 @@ def get_filesystem(path: str | Path, **kwargs: Any) -> AbstractFileSystem:
 
 class StateLogInspectMixin:
     def __init__(self, *args, expected_exact: Optional[Dict] = None, expected_close: Optional[Dict] = None,
-                expected_memstats: Optional[Dict] = None, tolerance_map: Optional[Dict] = None,
+                expected_memstats: Optional[Tuple] = None, tolerance_map: Optional[Dict] = None,
                 test_alias: Optional[str] = None, state_log_dir: Optional[str] = None, **kwargs) -> None:
         self.expected_memstats = expected_memstats
         self.expected_exact = expected_exact
@@ -362,6 +363,8 @@ class StateLogInspectMixin:
 
     @rank_zero_only
     def log_dev_state(self) -> None:
+        if self.expected_memstats:
+            save_memory_footprint_results(memory_footprints)
         dump_path = Path(self.state_log_dir)
         state_log = dump_path / "dev_state_log.yaml"
         fs = get_filesystem(state_log)
@@ -373,13 +376,14 @@ class StateLogInspectMixin:
                     fp.write(f"{' ' * 8}{k}: {v},{os.linesep}")
 
     def _validate_memory_stats(self) -> None:
-        for act, exp in zip(self.expected_memstats[1], self.expected_memstats[2]):
+        for act, exp in self.expected_memstats[1].items():
+            actual_val = self.memprofiler.memory_stats[self.expected_memstats[0]][act]
             if not self.state_log_dir:
                 rtol, atol = self.tolerance_map.get(act, (0, 0))
-                assert_close(actual=self.memprofiler.memory_stats[self.expected_memstats[0]][act], expected=exp,
-                             rtol=rtol, atol=atol)
+                assert_close(actual=actual_val, expected=exp, rtol=rtol, atol=atol)
             else:
                 self.dev_expected_close[act] = self.memprofiler.memory_stats[self.expected_memstats[0]][act]
+                memory_footprints[parity_normalize(self.test_alias)]['expected_mem'][act] = actual_val
 
 
 class BaseTestModule(StateLogInspectMixin):

@@ -19,7 +19,7 @@ from collections.abc import Iterable
 import pytest
 
 from interpretune.adapters.registration import Adapter
-from tests.base_defaults import BaseAugTest, BaseCfg, pytest_param_factory
+from tests.base_defaults import BaseAugTest, BaseCfg, pytest_factory
 from tests.configuration import IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
 from tests.parity_acceptance.cfg_aliases import cuda, l_gpt2_fts, l_tl_gpt2_fts, TestFTS
@@ -60,7 +60,7 @@ EXPECTED_PARITY_FTS = {cfg.alias: cfg.expected for cfg in PARITY_FTS_CONFIGS}
 
 @pytest.mark.usefixtures("make_deterministic")
 @RunIf(lightning=True, finetuning_scheduler=True)
-@pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_param_factory(PARITY_FTS_CONFIGS, unpack=False))
+@pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(PARITY_FTS_CONFIGS, unpack=False))
 def test_parity_fts(gpt2_ft_schedules, recwarn, tmp_path, test_alias, test_cfg):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PARITY_FTS[test_alias] or {}

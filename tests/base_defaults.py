@@ -53,11 +53,11 @@ class BaseAugTest:
         if function_marks:
             return RunIf(**function_marks)
 
-def pytest_param_factory(test_configs: List[BaseAugTest], unpack: bool = True) -> List:
+def pytest_factory(test_configs: List[BaseAugTest], unpack: bool = True, fq_alias: bool = False) -> List:
     return [pytest.param(
             config.alias,
             *config.cfg if unpack else (config.cfg,),
-            id=config.alias,
+            id=config.alias if not fq_alias else config.alias.split(".")[-1],
             marks=config.marks or tuple(),
         )
         for config in test_configs
