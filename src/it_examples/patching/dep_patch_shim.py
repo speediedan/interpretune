@@ -1,4 +1,5 @@
 import operator
+import sys
 import os
 from enum import Enum
 from typing import NamedTuple, Tuple, Callable
@@ -30,23 +31,23 @@ DependencyPatch.__repr__ = _dep_patch_repr
 # N.B. One needs to ensure they patch all relevant _calling module_ references to patch targets since we usually patch
 # after those calling modules have already secured the original (unpatched) references.
 
-def _patch_some_dep():
-    #from it_examples.patching.my_patch import patched_func
-    #target_mod = 'some_dep'
-    #sys.modules.get(some_dep).__dict__.get('SomeClass').some_func = patched_func
-    pass
+def _patch_sae_from_pretrained():
+    from it_examples.patching.patched_sae_from_pretrained import from_pretrained
+    target_mod = 'sae_lens.sae'
+    sys.modules.get(target_mod).__dict__.get('SAE').from_pretrained = from_pretrained
 
-some_dep_patch = DependencyPatch(
-    condition=(lwt_compare_version("torch", operator.le, "2.5.1"), lwt_compare_version("torch", operator.ge, "2.5.0")),
-    env_flag=OSEnvToggle("ENABLE_IT_SOME_DEP_PATCH", default="0"),
-    function=_patch_some_dep, patched_package='torch',
-    description=("Example patch, would apply to `torch` versions `2.5.0` and `2.5.1`. Only enabled if the the OS env"
-                 " variable `ENABLE_IT_SOME_DEP_PATCH` is set to `1` and those conditions are met.")
+
+sae_from_pretrained_patch = DependencyPatch(
+    condition=(lwt_compare_version("sae_lens", operator.ge, "4.4.1"),),
+    env_flag=OSEnvToggle("ENABLE_IT_SAE_FROM_PRETRAINED_PATCH", default="1"),
+    function=_patch_sae_from_pretrained, patched_package='sae_lens',
+    description=("SAELens `from_pretrained` patch. Only enabled if the the OS env"
+                 " variable `ENABLE_IT_SOME_DEP_PATCH` is set to `1` and `sae_lens` >= 4.4.1.")
 )
 
 # when adding patches in the future, ensure they're included in this enum
 class ExpPatch(Enum):
-    PLACEHOLDER = some_dep_patch
+    SAE_FROM_PRETRAINED = sae_from_pretrained_patch
 
 _DEFINED_PATCHES = set(ExpPatch)
 _ACTIVE_PATCHES = set()

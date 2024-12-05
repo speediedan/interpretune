@@ -13,15 +13,30 @@
 import os
 import re
 import sys
-from typing import Optional
+from typing import Optional, Union, Dict, Set
 
 import pytest
 import torch
 from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE, _BNB_AVAILABLE, _FTS_AVAILABLE
 from packaging.version import Version
 from pkg_resources import get_distribution
+from it_examples.patching.dep_patch_shim import ExpPatch, _ACTIVE_PATCHES
 
 EXTENDED_VER_PAT = re.compile(r"([0-9]+\.){2}[0-9]+")
+
+def maybe_mark_exp(exp_patch_set: Set[ExpPatch], mark_if_false: Optional[Dict] = None):
+    """This allows us to evaluate whether an experimental patch set that is conditionally required for a given test
+    is required in the current execution context.
+
+    If the experimental patch set is not required, we mark the
+    test with the provided `mark_if_false` dictionary directive (or an empty dictionary).
+    """
+
+    exp_patch_set = {ep for ep in exp_patch_set if all(ep.value.condition)}
+    if any(exp_patch_set):
+        return {"exp_patch": exp_patch_set}
+    else:
+        return mark_if_false or {}
 
 # runif components
 cuda_mark = {'min_cuda_gpus': 1}
@@ -91,6 +106,7 @@ class RunIf:
         lightning: bool = False,
         finetuning_scheduler: bool = False,
         bitsandbytes: bool = False,
+        exp_patch: Optional[Union[ExpPatch, Set[ExpPatch]]] = None,
         **kwargs,
     ):
         """
@@ -117,6 +133,7 @@ class RunIf:
             lightning: Require that lightning is installed.
             finetuning_scheduler: Require that finetuning_scheduler is installed.
             bitsandbytes: Require that bitsandbytes is installed.
+            exp_patch: Require that a given experimental patch is installed.
             **kwargs: Any :class:`pytest.mark.skipif` keyword arguments.
         """
         conditions = []
@@ -211,6 +228,22 @@ class RunIf:
         if bitsandbytes:
             conditions.append(not _BNB_AVAILABLE)
             reasons.append("BitsandBytes")
+
+        if exp_patch:
+            # since we want to ensure we separate all experimental test combinations from normal unpatched tests, we
+            # gate experimental patches with both an environmental flag and the required subset of active patches
+            env_flag = os.getenv("IT_EXPERIMENTAL_PATCH_TESTS", "0")
+            if env_exp_flag := (env_flag != "1"):
+                conditions.append(env_exp_flag)
+                reasons.append("Experimental tests not enabled via 'IT_EXPERIMENTAL_PATCH_TESTS' env variable")
+            else:
+                if not isinstance(exp_patch, Set):
+                    exp_patch = {exp_patch}
+                conditions.append(not exp_patch.issubset(_ACTIVE_PATCHES))
+                reasons.append(f"Required experimental patch configuration {exp_patch} is not active.")
+            # used in conftest.py::pytest_collection_modifyitems
+            kwargs["exp_patch"] = True
+
 
         reasons = [rs for cond, rs in zip(conditions, reasons) if cond]
         return pytest.mark.skipif(

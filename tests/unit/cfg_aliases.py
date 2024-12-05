@@ -1,8 +1,7 @@
-from typing import Optional, Dict
+from typing import Optional, Dict, Sequence
 from copy import deepcopy
 from enum import auto
 from dataclasses import dataclass, field
-from collections.abc import Iterable
 
 from interpretune.adapters.registration import Adapter
 from interpretune.base.config.shared import AutoStrEnum
@@ -42,6 +41,9 @@ tl_cust_mi_cfg = {"cfg":
     #positional_embedding_type="shortformer")
 )}
 
+test_tl_cust_2L_config = {"n_layers":2, "d_mlp": 10, "d_model":10, "d_head":5, "n_heads":2, "n_ctx":200,
+                          "act_fn":'relu', "tokenizer_name": 'gpt2'}
+
 @dataclass(kw_only=True)
 class CoreCfgForcePrepare(BaseCfg):
     model_src_key: Optional[str] = "cust"
@@ -51,7 +53,7 @@ class CoreCfgForcePrepare(BaseCfg):
 
 @dataclass(kw_only=True)
 class TLMechInterpCfg(BaseCfg):
-    adapter_ctx: Iterable[Adapter | str] = (Adapter.core, Adapter.transformer_lens)
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.transformer_lens)
     model_src_key: Optional[str] = "cust"
     tl_cfg: Optional[Dict] = field(default_factory=lambda: ITLensCustomConfig(**tl_cust_mi_cfg))
 
@@ -100,7 +102,7 @@ class LightningLlama3DebugCfg(BaseCfg):
     device_type: Optional[str] = "cuda"
     model_src_key: Optional[str] = "llama3"
     precision: Optional[str | int] = "bf16-true"
-    adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning,)
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning,)
 
 @dataclass(kw_only=True)
 class LightningGemma2DebugCfg(BaseCfg):
@@ -109,24 +111,37 @@ class LightningGemma2DebugCfg(BaseCfg):
     device_type: Optional[str] = "cuda"
     model_src_key: Optional[str] = "gemma2"
     precision: Optional[str | int] = "bf16-true"
-    adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning,)
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning,)
 
 @dataclass(kw_only=True)
 class LightningGPT2(BaseCfg):
     model_src_key: Optional[str] = "gpt2"
-    adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning,)
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning,)
     model_cfg: Optional[Dict] = field(default_factory=lambda: {"tie_word_embeddings": False})
 
 @dataclass(kw_only=True)
 class LightningTLGPT2(BaseCfg):
     model_src_key: Optional[str] = "gpt2"
-    adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
+
+@dataclass(kw_only=True)
+class CoreSLGPT2(BaseCfg):
+    phase: Optional[str] = "test"
+    model_src_key: Optional[str] = "gpt2"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
+
+@dataclass(kw_only=True)
+class CoreSLCust(BaseCfg):
+    phase: Optional[str] = "test"
+    model_src_key: Optional[str] = "cust"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
+    tl_cfg: Optional[Dict] = field(default_factory=lambda: ITLensCustomConfig(cfg=test_tl_cust_2L_config))
 
 @dataclass(kw_only=True)
 class LightningSLGPT2(BaseCfg):
     phase: Optional[str] = "test"
     model_src_key: Optional[str] = "gpt2"
-    adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning, Adapter.sae_lens)
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.sae_lens)
 
 class CLI_UNIT_TESTS(AutoStrEnum):
     seed_null = auto()

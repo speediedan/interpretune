@@ -42,7 +42,7 @@ session_cfg:
           dtype: bfloat16
           #default_padding_side: right  # to pad on right
           default_padding_side: left  # to pad on left
-      sae_cfg:
+      sae_cfgs:
         class_path: interpretune.adapters.sae_lens.SAELensFromPretrainedConfig
         init_args:
           release: gemma-scope-2b-pt-res-canonical

@@ -41,8 +41,8 @@ class TestClassUtils:
         ["Unable to patch `get_cud.*", None],
         ids=["cuda_loading_warn_unpatched", "cuda_loading_patched"],
     )
-    def test_get_cuda_loading_patch(self, recwarn, get_core_cust_it_session_cfg, w_expected):
-        sess_cfg = deepcopy(get_core_cust_it_session_cfg)
+    def test_get_cuda_loading_patch(self, recwarn, get_it_session_cfg__core_cust, w_expected):
+        sess_cfg = deepcopy(get_it_session_cfg__core_cust)
         orig_patch_mgr = None
         if w_expected:
             orig_patch_mgr = sys.modules['interpretune.utils.logging'].__dict__.pop('patch_torch_env_logging_fn')

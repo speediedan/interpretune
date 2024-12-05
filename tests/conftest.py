@@ -13,40 +13,36 @@
 import os
 import threading
 import random
-from collections.abc import Iterable
 from collections import defaultdict
-from typing import Dict, Tuple, Type
+from typing import Dict, Tuple, Type, Sequence
 from functools import partial
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
 
 from unittest.mock import patch, create_autospec
-from dataclasses import dataclass
-from itertools import product
+from dataclasses import dataclass, field
 from copy import deepcopy
 from enum import auto, IntEnum
 import pytest
 import yaml
 import torch.distributed
 
-from interpretune.adapters.registration import Adapter
 from interpretune.base.call import _call_itmodule_hook
 from interpretune.base.contract.session import ITMeta
 from interpretune.base.contract.protocol import ModuleSteppable, DataModuleInitable
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_only
-from interpretune.utils.types import StrOrPath
 from tests import _PATH_DATASETS, seed_everything, load_dotenv, FinetuningScheduler, get_fts, Trainer
-from tests.configuration import config_modules, apply_it_test_cfg, apply_itdm_test_cfg, config_session
+from tests.configuration import config_modules, apply_it_test_cfg
 from tests.modules import TestITDataModule, TestITModule
 from tests.parity_acceptance.cfg_aliases import parity_cli_cfgs, CLI_EXP
 from tests.parity_acceptance.test_it_cli import TEST_CONFIGS_CLI_PARITY
 from tests.base_defaults import BaseCfg
-from tests.parity_acceptance.test_it_l import CoreCfg, ProfParityCfg
-from tests.parity_acceptance.test_it_tl import TLParityCfg, TLProfileCfg
+from tests.parity_acceptance.test_it_l import CoreCfg
+from tests.parity_acceptance.test_it_tl import TLParityCfg
 from tests.unit.cfg_aliases import (TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg,
     LightningLlama3DebugCfg, LightningGemma2DebugCfg,CoreMemProfCfg, CoreGPT2PEFTCfg, CoreGPT2PEFTSeqCfg,
-    CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, LightningSLGPT2, TLMechInterpCfg)
+    CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, CoreSLGPT2, CoreSLCust, LightningSLGPT2, TLMechInterpCfg)
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
 
@@ -64,6 +60,20 @@ test_cli_cfgs['exp_cfgs'].update(unit_exp_cli_cfgs)
 # module fixtures with a mock tokenizer during instantiation until we can replace the mock with a real tokenizer
 # during ITSession construction.
 
+#################################
+# Generated Fixtures
+#################################
+
+class FixtPhase(IntEnum):
+    cfgonly: int = auto()
+    initonly: int = auto()
+    prepare_data: int = auto()
+    setup: int = auto()
+    configure_optimizers: int = auto()
+
+# we make the fixture phases an IntEnum to enable explicit definition of phase order
+# we then map the enum values to their string representations for use in generated fixture names
+PHASE_STR = {v: v.name for v in FixtPhase.__members__.values()}
 
 # TODO: switch to namedtuple if not subclassing this in the future
 @dataclass(kw_only=True)
@@ -72,30 +82,30 @@ class FixtureCfg:
     module_cls: Type[ModuleSteppable] = TestITModule
     datamodule_cls: Type[DataModuleInitable] = TestITDataModule
     scope: str = "class"
+    variants: Dict[str, Sequence[FixtPhase]] = field(default_factory=lambda: defaultdict(list))
 
 FIXTURE_CFGS = {
-    "core_cust": FixtureCfg(scope="session"),
-    "core_cust_force_prepare": FixtureCfg(test_cfg=CoreCfgForcePrepare),
-    "core_gpt2": FixtureCfg(test_cfg=ProfParityCfg),
-    "core_gpt2_peft": FixtureCfg(test_cfg=CoreGPT2PEFTCfg),
-    "core_gpt2_peft_seq": FixtureCfg(test_cfg=CoreGPT2PEFTSeqCfg),
-    "core_cust_memprof": FixtureCfg(test_cfg=CoreMemProfCfg),
-    "l_gpt2": FixtureCfg(test_cfg=LightningGPT2, scope="function"),
-    "l_tl_gpt2": FixtureCfg(test_cfg=LightningTLGPT2, scope="function"),
-    "l_sl_gpt2": FixtureCfg(test_cfg=LightningSLGPT2, scope="function"),
-    "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg),
-    "l_gemma2_debug": FixtureCfg(test_cfg=LightningGemma2DebugCfg),
-    "tl_cust": FixtureCfg(test_cfg=TLParityCfg, scope="session"),
-    "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function"),
-    "tl_gpt2": FixtureCfg(test_cfg=TLProfileCfg),
-    "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg),
+    "core_cust": FixtureCfg(scope="session", variants={
+        "it_session": [FixtPhase.initonly, FixtPhase.setup], "it_module": [FixtPhase.setup],
+        "it_session_cfg": [FixtPhase.cfgonly]}),
+    "tl_cust": FixtureCfg(test_cfg=TLParityCfg, scope="session", variants={
+        "it_session": [FixtPhase.initonly, FixtPhase.setup], "it_session_cfg": [FixtPhase.cfgonly]}),
+    "sl_cust": FixtureCfg(test_cfg=CoreSLCust, scope="session", variants={"it_session_cfg": [FixtPhase.cfgonly]}),
+    "core_cust_force_prepare": FixtureCfg(test_cfg=CoreCfgForcePrepare, variants={"it_session": [FixtPhase.initonly]}),
+    "core_gpt2_peft": FixtureCfg(test_cfg=CoreGPT2PEFTCfg, variants={"it_session": [FixtPhase.initonly]}),
+    "core_gpt2_peft_seq": FixtureCfg(test_cfg=CoreGPT2PEFTSeqCfg, variants={"it_session": [FixtPhase.initonly]}),
+    "core_cust_memprof": FixtureCfg(test_cfg=CoreMemProfCfg, variants={"it_session": [FixtPhase.initonly]}),
+    "l_gpt2": FixtureCfg(test_cfg=LightningGPT2, scope="function", variants={"it_session": [FixtPhase.setup]}),
+    "l_tl_gpt2": FixtureCfg(test_cfg=LightningTLGPT2, scope="function", variants={"it_session": [FixtPhase.setup]}),
+    "l_sl_gpt2": FixtureCfg(test_cfg=LightningSLGPT2, variants={"it_session": [FixtPhase.initonly]}),
+    "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg, variants={"it_session": [FixtPhase.setup]}),
+    "l_gemma2_debug": FixtureCfg(test_cfg=LightningGemma2DebugCfg, variants={"it_session": [FixtPhase.setup]}),
+    "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function", variants={"it_session": [FixtPhase.setup]}),
+    "sl_gpt2": FixtureCfg(test_cfg=CoreSLGPT2, variants={"it_session": [FixtPhase.initonly],
+                                                         "it_session_cfg": [FixtPhase.cfgonly]}),
+    "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg, variants={"it_session": [FixtPhase.setup]}),
 }
 
-class FixturePhase(IntEnum):
-    initonly: int = auto()
-    prepare_data: int = auto()
-    setup: int = auto()
-    configure_optimizers: int = auto()
 
 @pytest.fixture(scope="class")
 def mock_dm():
@@ -106,33 +116,6 @@ def mock_dm():
         mock_uninit_dm = create_autospec(dm_cls)
         mock_uninit_dm.tokenizer = mock_tok
         yield mock_uninit_dm
-
-@pytest.fixture(scope="class")
-def make_it_datamodule():
-    def __make_it_datamodule(datamodule_key):
-        test_cfg = FIXTURE_CFGS[datamodule_key].test_cfg()
-        dm_kwargs = {'force_prepare_data': test_cfg.force_prepare_data}
-        base_itdm_cfg, *_ = MODULE_EXAMPLE_REGISTRY.get(test_cfg)
-        itdm_cfg = apply_itdm_test_cfg(base_itdm_cfg=base_itdm_cfg, test_cfg=test_cfg)
-        dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm',
-                        input=FIXTURE_CFGS[datamodule_key].datamodule_cls, ctx=test_cfg.adapter_ctx)
-        it_dm = dm_cls(itdm_cfg=itdm_cfg, **dm_kwargs)
-        return it_dm
-    yield __make_it_datamodule
-
-# TODO: not currently used, may refactor and remove if not used in the near future
-def datamodule_fixture_factory(datamodule_key):
-    @pytest.fixture(scope="class")
-    def get_it_datamodule(make_it_datamodule):
-        it_dm = make_it_datamodule(datamodule_key)
-        if init_key in ("setup", "prepare_data"):
-            with patch("tests.modules.TestITModule", autospec=True) as mock_m:
-                _call_itmodule_hook(it_dm, hook_name="prepare_data", hook_msg="Preparing data",
-                                    target_model=mock_m.model)
-        if init_key == "setup":
-            _call_itmodule_hook(it_dm, hook_name="setup", hook_msg="Setting up datamodule")
-        yield it_dm
-    return get_it_datamodule
 
 @pytest.fixture(scope="class")
 def make_it_module(tmp_path_factory):
@@ -152,104 +135,85 @@ def module_fixture_factory(module_key, init_key):
     @pytest.fixture(scope="class")
     def get_it_module(make_it_module, mock_dm):
         it_m = make_it_module(module_key, init_key)
-        if init_key == "setup":
+        if init_key == FixtPhase.setup:
             _call_itmodule_hook(it_m, hook_name="setup", hook_msg="Setting up model", datamodule=mock_dm)
         yield it_m
     return get_it_module
 
-def session_fixture_hook_exec(it_s, init_key: FixturePhase):
-    if init_key.value > FixturePhase.initonly:  # call appropriate init phases if requested
-        if init_key.value >= FixturePhase.prepare_data:
+def session_fixture_hook_exec(it_s, init_key: FixtPhase):
+    if init_key.value > FixtPhase.initonly:  # call appropriate init phases if requested
+        if init_key.value >= FixtPhase.prepare_data:
             _call_itmodule_hook(it_s.datamodule, hook_name="prepare_data", hook_msg="Preparing data",
                             target_model=it_s.module.model)
-        if init_key.value >= FixturePhase.setup:
+        if init_key.value >= FixtPhase.setup:
             _call_itmodule_hook(it_s.datamodule, hook_name="setup", hook_msg="Setting up datamodule",
                                 module=it_s.module)
             _call_itmodule_hook(it_s.module, hook_name="setup", hook_msg="Setting up model",
                                 datamodule=it_s.datamodule)
-        if init_key.value >= FixturePhase.configure_optimizers:
+        if init_key.value >= FixtPhase.configure_optimizers:
             _call_itmodule_hook(it_s.module, hook_name="configure_optimizers",
                                 hook_msg="initializing optimizers and schedulers", connect_output=True)
 
-def it_session_fixture_factory(config_key, init_key):
+def it_session_fixture_factory(config_key, phase):
     @pytest.fixture(scope=FIXTURE_CFGS[config_key].scope)
     def get_it_session(tmp_path_factory):
         load_dotenv()  # load env vars from .env file # TODO: make a diff fixture?
         test_sess_config = FIXTURE_CFGS[config_key].test_cfg
-        it_s = config_modules(test_sess_config(), f"{config_key}_{init_key}_it_session_fixture", {},
-                              tmp_path_factory.mktemp(f"{config_key}_{init_key}_it_session_fixture"), {}, False)
-        session_fixture_hook_exec(it_s, FixturePhase[init_key])
+        it_s = config_modules(test_sess_config(), f"{config_key}_{PHASE_STR[phase]}_it_session_fixture", {},
+                              tmp_path_factory.mktemp(f"{config_key}_{PHASE_STR[phase]}_it_session_fixture"), {}, False)
+        session_fixture_hook_exec(it_s, phase)
         setattr(it_s, 'fixt_test_cfg', deepcopy(test_sess_config))
         yield it_s
     return get_it_session
 
-def configure_session_cfg(test_cfg_cls, tmp_path_or_factory):
-    test_cfg = test_cfg_cls()
-    if isinstance(tmp_path_or_factory, StrOrPath):
-        tmp_log_dir = tmp_path_or_factory
+def it_session_cfg_fixture_factory(config_key):
+    @pytest.fixture(scope=FIXTURE_CFGS[config_key].scope)
+    def get_it_session_cfg(tmp_path_factory):
+        load_dotenv()  # load env vars from .env file # TODO: make a diff fixture?
+        test_sess_config = FIXTURE_CFGS[config_key].test_cfg
+        yield config_modules(test_sess_config(), f"{config_key}_it_session_cfg_fixture", {},
+                             tmp_path_factory.mktemp(f"{config_key}_it_session_cfg_fixture"), {}, False, True)
+    return get_it_session_cfg
+
+def gen_fixture(fixt_type, fixt_key, phase):
+    args = (fixt_key, phase)
+    if fixt_type == "it_session":
+        name = f"get_it_session__{fixt_key}__{PHASE_STR[phase]}"
+        factory = it_session_fixture_factory
+    elif fixt_type == "it_module":
+        name = f"get_it_module__{fixt_key}__{PHASE_STR[phase]}"
+        factory = module_fixture_factory
+    elif fixt_type == "it_session_cfg":
+        name = f"get_it_session_cfg__{fixt_key}"
+        factory = it_session_cfg_fixture_factory
+        args = (fixt_key,)
     else:
-        tmp_log_dir = tmp_path_or_factory.mktemp(f"{test_cfg_cls.__name__}_sess_cfg_fixture")
-    base_itdm_cfg, base_it_cfg, *_ = MODULE_EXAMPLE_REGISTRY.get(test_cfg)
-    itdm_cfg = apply_itdm_test_cfg(base_itdm_cfg=base_itdm_cfg, test_cfg=test_cfg)
-    it_cfg = apply_it_test_cfg(base_it_cfg=base_it_cfg, test_cfg=test_cfg, core_log_dir=tmp_log_dir)
-    # TODO: re-validate these should still be fqns instead of Module objects
-    TEST_CLS_MAPPING = {'datamodule_cls': 'tests.modules.TestITDataModule', 'module_cls': 'tests.modules.TestITModule'}
-    core_cfg = {'datamodule_cfg': itdm_cfg, 'module_cfg': it_cfg, **TEST_CLS_MAPPING}
-    return core_cfg, test_cfg
-
-@pytest.fixture(scope="class")
-def get_tl_it_session_cfg(tmp_path_factory):
-    core_cfg, test_cfg = configure_session_cfg(TLParityCfg, tmp_path_factory)
-    test_cfg.adapter_ctx = (Adapter.core, Adapter.transformer_lens)
-    test_cfg.model_src_key = 'cust'
-    yield config_session(core_cfg, test_cfg, 'it_session_cfg_tl_test', {}, None, {})
-
-@pytest.fixture(scope="class")
-def get_core_cust_it_session_cfg(tmp_path_factory):
-    core_cfg, test_cfg = configure_session_cfg(CoreCfg, tmp_path_factory)
-    test_cfg.model_src_key = 'cust'
-    yield config_session(core_cfg, test_cfg, 'it_session_cfg_core_test', {}, None, {})
-
-for module_key, init_key in product(FIXTURE_CFGS.keys(), ["setup", "configure_optimizers"]):
-    name = f"get_it_module__{module_key}__{init_key}"
-    globals()[name] = module_fixture_factory(module_key, init_key)
+        raise NotImplementedError
+    globals()[name] = factory(*args)
     # overwrite just the name/qual name attributes for pytest
     globals()[name].__name__ = name
     globals()[name].__qualname__ = name
 
-for datamodule_key, init_key in product(FIXTURE_CFGS.keys(), ["prepare_data", "setup"]):
-    name = f"get_it_datamodule__{datamodule_key}__{init_key}"
-    globals()[name] = datamodule_fixture_factory(datamodule_key)
-    # overwrite just the name/qual name attributes for pytest
-    globals()[name].__name__ = name
-    globals()[name].__qualname__ = name
+for fixt_key, fixt_cfg in FIXTURE_CFGS.items():
+    for fixt_type, phases in fixt_cfg.variants.items():
+        for phase in phases:
+            gen_fixture(fixt_type, fixt_key, phase)
 
-for session_key, init_key in product(FIXTURE_CFGS.keys(), ["initonly", "setup", "configure_optimizers"]):
-    name = f"get_it_session__{session_key}__{init_key}"
-    globals()[name] = it_session_fixture_factory(session_key, init_key)
-    # overwrite just the name/qual name attributes for pytest
-    globals()[name].__name__ = name
-    globals()[name].__qualname__ = name
+#################################
+# CLI Fixtures
+#################################
 
 # if additional CLI test configurations are needed, append them here and the `cli_test_configs` fixture will generate
 # them sessionwise
 GEN_CLI_CFGS = [TEST_CONFIGS_CLI_PARITY, TEST_CONFIGS_CLI_UNIT]
 
-def gen_experiment_cfg_sets(test_keys: Iterable[Tuple[str, str, bool]], sess_paths: Tuple) -> Dict:
+def gen_experiment_cfg_sets(test_keys: Sequence[Tuple[str, str, bool]], sess_paths: Tuple) -> Dict:
     EXPERIMENTS_BASE, BASE_DEBUG_CONFIG = sess_paths
     exp_cfg_sets = {}
     for exp, subexp, debug_mode in test_keys:
         subexp_cfg =  EXPERIMENTS_BASE / f"{subexp}.yaml"
         exp_cfg_sets[(exp, subexp, debug_mode)] = (subexp_cfg, BASE_DEBUG_CONFIG) if debug_mode else (subexp_cfg,)
     return exp_cfg_sets
-
-@pytest.fixture(scope="function")
-def fts_patch_env():
-    os.environ["FTS_GEN_SCHEDULE_ALLOW_DUPLICATE"] = "True"
-    yield
-    for env_key in ("FTS_GEN_SCHEDULE_ALLOW_DUPLICATE",):
-        if env_key in os.environ:
-            del os.environ[env_key]
 
 @pytest.fixture(scope="function")
 def clean_cli_env():
@@ -313,6 +277,19 @@ def cli_test_configs(cli_test_file_env):
     EXPERIMENT_CFG_SETS = gen_experiment_cfg_sets(test_keys=test_keys, sess_paths=sess_paths)
     yield EXPERIMENT_CFG_SETS
 
+
+#################################
+# Schedule Fixtures
+#################################
+
+@pytest.fixture(scope="function")
+def fts_patch_env():
+    os.environ["FTS_GEN_SCHEDULE_ALLOW_DUPLICATE"] = "True"
+    yield
+    for env_key in ("FTS_GEN_SCHEDULE_ALLOW_DUPLICATE",):
+        if env_key in os.environ:
+            del os.environ[env_key]
+
 def l_imp_to_exp(sched_dict: Dict) -> Dict:
     sched_dict[0]["params"] = [r"model.transformer.h.(9|1[0-1]).(mlp|attn|ln_(1|2)).(c_proj|c_fc|c_attn|weight|bias).*"]
     sched_dict[0]["max_transition_epoch"] = 2
@@ -363,7 +340,9 @@ def gpt2_ft_schedules(tmpdir_factory, fts_patch_env, get_it_session__l_gpt2__set
             test_schedules[model_key][transform_key] = transform_fn(deepcopy(test_schedules[model_key]["implicit"]))
     return test_schedules
 
-
+#################################
+# Misc Training Fixtures
+#################################
 
 @pytest.fixture(scope="function")
 def reset_deterministic_algorithm():
@@ -464,6 +443,9 @@ def tmpdir_server(tmpdir):
         yield server.server_address
         server.shutdown()
 
+#################################
+# Pytest Collection Customization
+#################################
 
 # NOTE [Profiling and Standalone Marks]:
 # - CI doesn't run all `profiling` marked tests by default, only the subset of profiling tests that are marked both

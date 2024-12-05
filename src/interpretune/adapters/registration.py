@@ -1,5 +1,4 @@
-from typing import Any, Dict, Optional, Tuple, Callable, Type, Protocol, Set, runtime_checkable, List
-from collections.abc import Iterable
+from typing import Any, Dict, Optional, Tuple, Callable, Type, Protocol, Set, runtime_checkable, List, Sequence
 from enum import auto
 from inspect import getmembers, isclass
 from typing_extensions import override
@@ -61,7 +60,7 @@ class CompositionRegistry(dict):
         self[composition_key] = supported_composition
 
     @staticmethod
-    def resolve_adapter_filter(adapter_filter: Optional[Iterable[Adapter| str]| Adapter | str] = None) -> List[Adapter]:
+    def resolve_adapter_filter(adapter_filter: Optional[Sequence[Adapter| str]| Adapter | str] = None) -> List[Adapter]:
             unresolved_filters = []
             if isinstance(adapter_filter, str):
                 adapter_filter = [Adapter[adapter_filter]]
@@ -84,7 +83,7 @@ class CompositionRegistry(dict):
                 raise ValueError(f"Provided adapter string `{adapter}` could not be resolved.")
         return adapter
 
-    def canonicalize_composition(self, adapter_ctx: Iterable[Adapter | str]) -> Tuple:
+    def canonicalize_composition(self, adapter_ctx: Sequence[Adapter | str]) -> Tuple:
         resolved_adapter_ctx = set()
         for adapter in adapter_ctx:
             resolved_adapter_ctx.add(CompositionRegistry.sanitize_adapter(adapter))
@@ -106,7 +105,7 @@ class CompositionRegistry(dict):
         """Removes the registered adapter composition by name."""
         del self[composition_key]
 
-    def available_compositions(self, adapter_filter: Optional[Iterable[Adapter| str]| Adapter | str] = None) -> Set:
+    def available_compositions(self, adapter_filter: Optional[Sequence[Adapter| str]| Adapter | str] = None) -> Set:
         """Returns a list of registered adapters, optionally filtering by the lead adapter that registered the
         valid composition."""
         if adapter_filter is not None:

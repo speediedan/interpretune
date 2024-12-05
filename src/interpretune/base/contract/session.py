@@ -1,5 +1,4 @@
-from typing import Any, Dict, Optional, Tuple, Callable, Mapping, Type
-from collections.abc import Iterable
+from typing import Any, Dict, Optional, Tuple, Callable, Mapping, Type, Sequence
 import os
 import importlib
 from dataclasses import dataclass, field
@@ -73,7 +72,7 @@ class UnencapsulatedArgs(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class ITSessionConfig(UnencapsulatedArgs):
-    adapter_ctx: Iterable[Adapter | str] = (Adapter.core,)
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     datamodule_cfg: ITDataModuleConfig
     module_cfg: ITConfig
     datamodule_cls: Optional[Type[DataModuleInitable] | str] = None

@@ -145,7 +145,7 @@ cust.rte.sae_lens:
               n_ctx: 200
               act_fn: 'relu'
               tokenizer_name: 'gpt2'
-        sae_cfg:
+        sae_cfgs:
           class_path: interpretune.adapters.sae_lens.SAELensCustomConfig
           init_args:
             cfg:
@@ -311,12 +311,17 @@ gpt2.rte.sae_lens:
             model_head: transformers.GPT2LMHeadModel
         tl_cfg:
           class_path: interpretune.adapters.transformer_lens.ITLensFromPretrainedNoProcessingConfig
-        sae_cfg:
-          class_path: interpretune.adapters.sae_lens.SAELensFromPretrainedConfig
-          init_args:
-            release: gpt2-small-res-jb
-            sae_id: blocks.0.hook_resid_pre
-            device: cpu
+        sae_cfgs:
+          - class_path: interpretune.adapters.sae_lens.SAELensFromPretrainedConfig
+            init_args:
+              release: gpt2-small-res-jb
+              sae_id: blocks.0.hook_resid_pre
+              device: cpu
+          - class_path: interpretune.adapters.sae_lens.SAELensFromPretrainedConfig
+            init_args:
+              release: gpt2-small-res-jb
+              sae_id: blocks.1.hook_resid_pre
+              device: cpu
 ##################################
 # Gemma2
 ##################################
@@ -408,7 +413,7 @@ gemma2.rte.sae_lens:
             model_head: transformers.Gemma2ForCausalLM
         tl_cfg:
           class_path: interpretune.adapters.transformer_lens.ITLensFromPretrainedNoProcessingConfig
-        sae_cfg:
+        sae_cfgs:
           class_path: interpretune.adapters.sae_lens.SAELensFromPretrainedConfig
           init_args:
             release: gemma-scope-2b-pt-res-canonical

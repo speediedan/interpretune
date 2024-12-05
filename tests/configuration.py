@@ -11,7 +11,7 @@
 # limitations under the License.
 # Initially based on https://bit.ly/3oQ8Vqf
 import os
-from typing import Optional, Any, Union, Dict
+from typing import Optional, Any, Union, Dict, Sequence
 from copy import deepcopy
 
 import torch
@@ -41,8 +41,8 @@ def apply_itdm_test_cfg(base_itdm_cfg: ITDataModuleConfig, test_cfg: BaseCfg, **
     return test_itdm_cfg
 
 def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: Optional[StrOrPath] = None) -> ITConfig:
-    test_cfg_override_attrs = ["memprofiler_cfg", "debug_lm_cfg", "cust_fwd_kwargs", "tl_cfg", "model_cfg",
-                               "hf_from_pretrained_cfg", "zero_shot_cfg"]
+    test_cfg_override_attrs = ["memprofiler_cfg", "debug_lm_cfg", "cust_fwd_kwargs", "tl_cfg", "model_cfg", "sae_cfgs",
+                               "hf_from_pretrained_cfg", "zero_shot_cfg", "add_saes_on_init"]
     test_it_cfg = deepcopy(base_it_cfg)
     for attr in test_cfg_override_attrs:
         if getattr(test_cfg, attr):
@@ -67,8 +67,11 @@ def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int
             cfg.hf_from_pretrained_cfg.pretrained_kwargs.update({'device_map': 0})
     if getattr(cfg, 'tl_cfg', None) is not None:  # if we're using a TL subclass of ITConfig
         _update_tl_cfg_device_precision(cfg, device_type, precision)
-        if getattr(cfg, 'sae_cfg', None) is not None:  # if we're using a SL subclass of ITConfig, also requires TL
-            _update_sae_cfg_device_precision(cfg, device_type, precision)
+        if getattr(cfg, 'sae_cfgs', None) is not None:  # if we're using a SL subclass of ITConfig, also requires TL
+            if not isinstance(cfg.sae_cfgs, Sequence):
+                cfg.sae_cfgs = [cfg.sae_cfgs]
+            for sae_cfg in cfg.sae_cfgs:
+                _update_sae_cfg_device_precision(sae_cfg, device_type, precision)
     return cfg
 
 def _update_tl_cfg_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> None:
@@ -81,18 +84,19 @@ def _update_tl_cfg_device_precision(cfg: Dict, device_type: str, precision: Unio
         else:  # likely uninitialized TL custom model config, may want to remove this branch/check
             assert cfg.tl_cfg.get('cfg', None)
 
-def _update_sae_cfg_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> None:
+def _update_sae_cfg_device_precision(sae_cfg: SAELensCustomConfig | SAELensFromPretrainedConfig, device_type: str,
+                                     precision: Union[int, str]) -> None:
     dev_prec_override = {'dtype': precision, 'device': device_type}  # SAEConfig currently requires strings
-    if isinstance(cfg.sae_cfg, SAELensCustomConfig):
-        cfg.sae_cfg.cfg.__dict__.update(dev_prec_override)
-    elif isinstance(cfg.sae_cfg, SAELensFromPretrainedConfig):
+    if isinstance(sae_cfg, SAELensCustomConfig):
+        sae_cfg.cfg.__dict__.update(dev_prec_override)
+    elif isinstance(sae_cfg, SAELensFromPretrainedConfig):
         # TODO: SAE.from_pretrained() ctor doesn't support dtype a the moment. It could be added for specific loaders
         # via cfg_overrides dict read from config_overrides defined in ``pretrained_saes.yaml```
         dev_prec_override.pop('dtype')
-        cfg.sae_cfg.__dict__.update(dev_prec_override)
+        sae_cfg.__dict__.update(dev_prec_override)
     else: # likely uninitialized SL custom model config, may want to remove this branch/check
-        assert cfg.sae_cfg.get('cfg', None)
-        cfg.sae_cfg['cfg'].update(dev_prec_override)
+        assert sae_cfg.get('cfg', None)
+        sae_cfg['cfg'].update(dev_prec_override)
 
 def config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_dir, prewrapped_modules) \
     -> ITSessionConfig:
@@ -114,13 +118,16 @@ def gen_session_cfg(test_cfg, test_alias, expected_results, tmp_path, prewrapped
     return it_session_cfg
 
 def config_modules(test_cfg, test_alias, expected_results, tmp_path,
-                   prewrapped_modules: Optional[Dict[str, Any]] = None, state_log_mode: bool = False) -> ITSession:
+                   prewrapped_modules: Optional[Dict[str, Any]] = None, state_log_mode: bool = False,
+                   cfg_only: bool = False) -> ITSession:
     if Adapter.lightning in test_cfg.adapter_ctx:  # allow Lightning to set env vars
         seed_everything(1, workers=True)
     cuda_reset()
     torch.set_printoptions(precision=12)
     prewrapped = prewrapped_modules or {}
     it_session_cfg = gen_session_cfg(test_cfg, test_alias, expected_results, tmp_path, prewrapped, state_log_mode)
+    if cfg_only:
+        return it_session_cfg
     it_session = ITSession(it_session_cfg)
     return it_session
 

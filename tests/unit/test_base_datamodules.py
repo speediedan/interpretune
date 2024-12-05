@@ -40,8 +40,8 @@ class TestClassBaseMisc:
                                 target_model=get_it_session__core_cust_force_prepare__initonly.module.model)
 
 
-    def test_m_no_before_it_cfg_init(self, recwarn, get_core_cust_it_session_cfg):
-        sess_cfg = deepcopy(get_core_cust_it_session_cfg)
+    def test_m_no_before_it_cfg_init(self, recwarn, get_it_session_cfg__core_cust):
+        sess_cfg = deepcopy(get_it_session_cfg__core_cust)
         # we ablate _before_it_cfg_init twich to walk up the object hierarchy to the default BaseITModule version
         with ablate_cls_attrs(sess_cfg.module_cls, '_before_it_cfg_init'), \
             ablate_cls_attrs(sess_cfg.module_cls, '_before_it_cfg_init'):

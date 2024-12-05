@@ -10,11 +10,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # TODO: fill in this placeholder with actual core tests
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable, Dict, Any, Sequence
 from copy import copy
 from dataclasses import dataclass, field
 from functools import partial
-from collections.abc import Iterable
 
 import pytest
 
@@ -31,7 +30,7 @@ from tests.runif import RunIf
 
 @dataclass(kw_only=True)
 class FTSParityCfg(BaseCfg):
-    adapter_ctx: Iterable[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
     model_src_key: Optional[str] = "gpt2"
     callback_cfgs: Optional[Dict[Any, Dict]] = field(default_factory=lambda: {})
     limit_train_batches: Optional[int] = 2

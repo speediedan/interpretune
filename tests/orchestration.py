@@ -49,10 +49,15 @@ def parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode
     else:
         run_it(it_session, test_cfg)
 
-def run_it(it_session: ITSession, test_cfg: Tuple):
+def init_it_trainer(it_session: ITSession, test_cfg: Tuple, *args, **kwargs):
+    # we allow passing unused args for parity testing, e.g. the IT module configured tmp_path is needed by some trainers
     test_cfg_overrides = {k: v for k,v in test_cfg.__dict__.items() if k in BasicTrainerCfg.__dict__.keys()}
     trainer_config = BasicTrainerCfg(it_session=it_session, **test_cfg_overrides)
     trainer = BasicTrainer(trainer_cfg=trainer_config)
+    return trainer
+
+def run_it(it_session: ITSession, test_cfg: Tuple):
+    trainer = init_it_trainer(it_session, test_cfg)
     if test_cfg.phase == "test":
         trainer.test()
     elif test_cfg.phase == "train":
@@ -66,7 +71,7 @@ def run_it(it_session: ITSession, test_cfg: Tuple):
 # Lightning Adapter Train/Test Orchestration
 ################################################################################
 
-def run_lightning(it_session: ITSessionConfig, test_cfg: Tuple, tmp_path: Path) -> Trainer:
+def init_lightning_trainer(it_session: ITSession, test_cfg: Tuple, tmp_path: Path) -> Trainer:
     accelerator = "cpu" if test_cfg.device_type == "cpu" else "gpu"
     callbacks = instantiate_callbacks(getattr(test_cfg, 'callback_cfgs', {}))
     trainer_steps = {"limit_train_batches": test_cfg.limit_train_batches,
@@ -75,6 +80,10 @@ def run_lightning(it_session: ITSessionConfig, test_cfg: Tuple, tmp_path: Path) 
     trainer = Trainer(default_root_dir=tmp_path, devices=1, deterministic=True, accelerator=accelerator,
                       max_epochs=test_cfg.max_epochs, precision=lightning_prec_alias(test_cfg.precision),
                       num_sanity_val_steps=0, callbacks=callbacks, **trainer_steps)
+    return trainer
+
+def run_lightning(it_session: ITSessionConfig, test_cfg: Tuple, tmp_path: Path) -> Trainer:
+    trainer = init_lightning_trainer(it_session, test_cfg, tmp_path)
     match test_cfg.phase:
         case "train":
             lightning_func = trainer.fit

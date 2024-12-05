@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Callable, Any, Dict
-from collections.abc import Iterable
+from typing import List, Optional, Tuple, Callable, Any, Dict, Sequence
 import pytest
 
 from interpretune.adapters import ADAPTER_REGISTRY
@@ -69,7 +68,7 @@ class BaseCfg:
     device_type: str = "cpu"
     model_key: str = default_test_task  # "real-model"-based acceptance/parity testing/profiling
     precision: str | int = "torch.float32"
-    adapter_ctx: Iterable[Adapter | str] = (Adapter.core,)
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     model_src_key: Optional[str] = None
     limit_train_batches: Optional[int] = 1
     limit_val_batches: Optional[int] = 1
@@ -81,7 +80,8 @@ class BaseCfg:
     debug_lm_cfg: Optional[DebugLMConfig] = None
     model_cfg: Optional[Dict] = None
     tl_cfg: Optional[Dict] = None
-    sae_cfg: Optional[Dict] = None
+    sae_cfgs: Optional[Dict] = None
+    add_saes_on_init: bool = False
     req_grad_mask: Optional[Tuple] = None  # used to toggle requires grad for non-fts contexts
     max_epochs: Optional[int] = 1
     cust_fwd_kwargs: Optional[Dict] = None

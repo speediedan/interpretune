@@ -6,8 +6,7 @@ import random
 import logging
 import weakref
 from pathlib import Path
-from collections.abc import Iterable
-from typing import Any, Dict, List, Optional, Union, Tuple, Callable, Type
+from typing import Any, Dict, List, Optional, Union, Tuple, Callable, Type, Sequence
 from typing_extensions import override
 from functools import reduce
 
@@ -238,7 +237,7 @@ def enumerate_config_files(folder: Union[Path, str]) -> List:
         raise ValueError(f"Non-YAML files found in directory: {non_yaml_files}")
     return files
 
-def compose_config(config_files: Iterable[str]) -> List:
+def compose_config(config_files: Sequence[str]) -> List:
     # TODO: consider deprecating `compose_config` for simplicity and subsequently removing this path if not widely used
     args = []
     config_file_paths = []

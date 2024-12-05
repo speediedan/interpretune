@@ -9,9 +9,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Optional, Callable
+from typing import Optional, Callable, Sequence
 from dataclasses import dataclass
-from collections.abc import Iterable
 from functools import partial
 
 import pytest
@@ -31,8 +30,9 @@ from tests.warns import unexpected_warns, SL_CTX_WARNS, SL_LIGHTNING_CTX_WARNS
 
 @dataclass(kw_only=True)
 class SLParityCfg(BaseCfg):
-    adapter_ctx: Iterable[Adapter | str] = (Adapter.core, Adapter.sae_lens)
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
     model_src_key: Optional[str] = "cust"
+    add_saes_on_init: bool = True
 
 @dataclass
 class SLParityTest(BaseAugTest):

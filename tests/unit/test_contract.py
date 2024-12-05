@@ -15,7 +15,7 @@ from copy import deepcopy
 
 import pytest
 
-from interpretune.base.contract.session import ITSession, ITMeta
+from interpretune.base.contract.session import ITSession, ITMeta, ITSessionConfig
 from interpretune.base.contract.protocol import ITDataModuleProtocol, ITModuleProtocol
 from tests.warns import CORE_CTX_WARNS, unexpected_warns, unmatched_warns
 from tests.utils import ablate_cls_attrs
@@ -37,15 +37,15 @@ class TestClassContract:
         finally:
             pass
 
-    def test_it_session_warns(self, recwarn, get_tl_it_session_cfg):
+    def test_it_session_warns(self, recwarn, get_it_session_cfg__tl_cust):
         expected_warns = (".*TestITDataModule.* is not", ".*TestITModule.* is not")
-        with TestClassContract.invalid_mods_ctx(get_tl_it_session_cfg):
-            _ = ITSession(get_tl_it_session_cfg)
+        with TestClassContract.invalid_mods_ctx(get_it_session_cfg__tl_cust):
+            _ = ITSession(get_it_session_cfg__tl_cust)
         unmatched = unmatched_warns(rec_warns=recwarn.list, expected_warns=expected_warns)
         assert not unmatched
 
-    def test_it_session_validation_errors(self, recwarn, get_tl_it_session_cfg):
-        sess_cfg = deepcopy(get_tl_it_session_cfg)
+    def test_it_session_validation_errors(self, recwarn, get_it_session_cfg__tl_cust):
+        sess_cfg = deepcopy(get_it_session_cfg__tl_cust)
         m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=sess_cfg.module_cls,
                        ctx=sess_cfg.adapter_ctx)
         with TestClassContract.invalid_mods_ctx(sess_cfg, invalidate_dm=False):
@@ -79,8 +79,8 @@ class TestClassContract:
         [pytest.param(True, True), pytest.param(True, False), pytest.param(False, True)],
         ids=["both_dm_m_precomposed", "dm_precomposed", "m_precomposed"],
     )
-    def test_it_session_precomposed(self, recwarn, get_core_cust_it_session_cfg, dm_precomposed, m_precomposed):
-        sess_cfg = deepcopy(get_core_cust_it_session_cfg)
+    def test_it_session_precomposed(self, recwarn, get_it_session_cfg__core_cust, dm_precomposed, m_precomposed):
+        sess_cfg = deepcopy(get_it_session_cfg__core_cust)
         if dm_precomposed:
             dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input=sess_cfg.datamodule_cls,
                                     ctx=sess_cfg.adapter_ctx)
@@ -105,16 +105,26 @@ class TestClassContract:
         unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=CORE_CTX_WARNS)
         assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
 
-    def test_it_session_cfg_sanitize(self, get_tl_it_session_cfg):
-        it_session = ITSession(get_tl_it_session_cfg)
+    def test_it_session_cfg_sanitize(self, get_it_session_cfg__tl_cust):
+        it_session = ITSession(get_it_session_cfg__tl_cust)
         assert len(it_session) == 2
         m_prefix = "Original module: TestITModule \nNow InterpretunableModule composing TestITModule with: \n  - ITLe"
-        dm_prefix = " TestITDataModule with: \n  - ITDataModule\nInterpretunableDataModule(Attached module: TestITM"
+        dm_prefix = "Original module: FingerprintTestITDataModule \nNow InterpretunableDataModule composing"
         assert repr(it_session.module).startswith(m_prefix)
         assert dm_prefix in repr(it_session.datamodule)
         it_session.datamodule._module = None
         dm_no_attach_prefix = "Attached module: No module yet attached"
         assert dm_no_attach_prefix in repr(it_session.datamodule)
+
+    def test_it_session_cfg_from_module_cls_fqn(self, get_it_session_cfg__tl_cust):
+        tmp_get_it_session_cfg = deepcopy(get_it_session_cfg__tl_cust)
+        tmp_get_it_session_cfg.module_cls = 'tests.modules.TestITModule'
+        test_tmp_session_cfg = ITSessionConfig(
+            module_cls=tmp_get_it_session_cfg.module_cls, adapter_ctx=tmp_get_it_session_cfg.adapter_ctx,
+            module_cfg=tmp_get_it_session_cfg.module_cfg, datamodule_cls=tmp_get_it_session_cfg.datamodule_cls,
+            datamodule_cfg=tmp_get_it_session_cfg.datamodule_cfg, module_kwargs=tmp_get_it_session_cfg.module_kwargs,
+            dm_kwargs=tmp_get_it_session_cfg.dm_kwargs)
+        assert isinstance(test_tmp_session_cfg, ITSessionConfig)
 
     def test_session_min_dep_installed(self):
         import sys

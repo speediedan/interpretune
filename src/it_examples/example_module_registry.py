@@ -1,4 +1,4 @@
-from typing import Optional, Any, Dict, Tuple, Type, Set, Iterable, NamedTuple
+from typing import Optional, Any, Dict, Tuple, Type, Set, Sequence, NamedTuple, List
 from typing_extensions import override
 from pprint import pformat
 from pathlib import Path
@@ -64,7 +64,7 @@ class ModuleExampleRegistry(dict):
             supported_composition[composition_key] = registered_example_cfg
             self[composition_key] = supported_composition
 
-    def canonicalize_composition(self, adapter_ctx: Iterable[Adapter]) -> Tuple:
+    def canonicalize_composition(self, adapter_ctx: Sequence[Adapter]) -> Tuple:
         return tuple(sorted(list(adapter_ctx), key=lambda a: a.value))
 
     def available_keys_feedback(self, target_key: str | Tuple) -> Set:
@@ -97,8 +97,8 @@ class ModuleExampleRegistry(dict):
         """Removes the registered adapter composition by name."""
         del self[composition_key]
 
-    def available_compositions(self, adapter_filter: Optional[Iterable[Adapter]| Adapter] = None) -> Set:
-        """Returns a list of registered compositions, optionally filtering by an adapter or iterable of
+    def available_compositions(self, adapter_filter: Optional[Sequence[Adapter]| Adapter] = None) -> Set:
+        """Returns a list of registered compositions, optionally filtering by an adapter or sequence of
         adapters."""
         if adapter_filter is not None:
             adapter_filter = CompositionRegistry.resolve_adapter_filter(adapter_filter)
@@ -139,7 +139,7 @@ def instantiate_and_register(reg_key: str, rv: Dict[str, Any]) -> None:
         MODULE_EXAMPLE_REGISTRY.register(**reg_info, reg_key=reg_key, registered_example_cfg=registered_example,
                                          cfg_dict=cfg_dict)
 
-def resolve_adapter_combinations(adapter_combinations: Iterable):
+def resolve_adapter_combinations(adapter_combinations: Sequence):
     registered_combinations = []
     for adps in adapter_combinations:
         if isinstance(adps, str):
@@ -152,13 +152,17 @@ def resolve_adapter_combinations(adapter_combinations: Iterable):
         registered_combinations.append(tuple(resolved_adapters))
     return tuple(registered_combinations)
 
-def instantiate_nested(d: Dict):
-    for k, v in d.items():  # recursively instantiate nested directives
-        if isinstance(v, dict):
-            d[k] = instantiate_nested(v)
-    if 'class_path' in d:  # if the dict directly contains a class_path key
-        d = instantiate_class(d)  # with instantiating the class
-    return d
+def instantiate_nested(c: Dict | List):
+    if isinstance(c, dict):
+        for k, v in c.items():  # recursively instantiate nested directives
+            if isinstance(v, (dict, List)):
+                c[k] = instantiate_nested(v)
+    elif isinstance(c, List):
+        for i, v in enumerate(c):
+            c[i] = instantiate_nested(c[i])
+    if 'class_path' in c:  # if the dict directly contains a class_path key
+        c = instantiate_class(c)  # with instantiating the class
+    return c
 
 def apply_example_defaults(cfg: ITConfig| ITDataModuleConfig, example_defaults: Dict, force_override: bool = False):
     for k, v in example_defaults.items():

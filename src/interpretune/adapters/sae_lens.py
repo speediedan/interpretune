@@ -1,5 +1,5 @@
-from typing import Optional, Dict, Any
-from dataclasses import dataclass
+from typing import Optional, Dict, Any, List, Sequence, TypeAlias
+from dataclasses import dataclass, field
 from functools import reduce
 from copy import deepcopy
 from typing_extensions import override
@@ -26,6 +26,12 @@ from interpretune.utils.exceptions import MisconfigurationException
 ################################################################################
 
 @dataclass(kw_only=True)
+class InstantiatedSAE:
+    handle: SAE
+    original_cfg: Dict[str, Any] = field(default_factory=dict)
+    sparsity: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass(kw_only=True)
 class SAELensFromPretrainedConfig(ITSerializableCfg):
     release: str
     sae_id: str
@@ -45,16 +51,30 @@ class SAELensCustomConfig(ITSerializableCfg):
             #     self.cfg['dtype'] = _resolve_torch_dtype(self.cfg['dtype'])
             self.cfg = SAEConfig.from_dict(self.cfg)
 
+SAECfgType: TypeAlias = SAELensFromPretrainedConfig | SAELensCustomConfig
+
 @dataclass(kw_only=True)
 class SAELensConfig(ITLensConfig):
-    # TODO: enable adding a list of saes (pretrained or custom) to a HookedSAETransformer after single case verification
-    sae_cfg: SAELensFromPretrainedConfig | SAELensCustomConfig
-    # use_error_term: bool = False  # TODO: add support for use_error_term
+    sae_cfgs: SAECfgType | Sequence[SAECfgType]
+    add_saes_on_init: bool = False  # TODO: may push this down to SAE config level instead of setting for all saes
+    # use_error_term: bool = False  # TODO: add support for use_error_term with on_init stateful SAEs
+
+    @property
+    def normalized_sae_cfg_refs(self) -> List[str]:
+        normalized_names = []
+        for sae_cfg in self.sae_cfgs:
+            if isinstance(sae_cfg, SAELensFromPretrainedConfig):
+                normalized_names.append(sae_cfg.sae_id)
+            elif isinstance(sae_cfg, SAELensCustomConfig):
+                normalized_names.append(sae_cfg.cfg.hook_name)
+        return normalized_names
 
     def __post_init__(self) -> None:
-        if not self.sae_cfg:
-            raise MisconfigurationException("Either a `SAELensFromPretrainedConfig` or `SAELensCustomConfig` must be"
-                                            " provided to initialize a HookedSAETransformer and use SAE Lens.")
+        if not self.sae_cfgs:
+            raise MisconfigurationException("At least one `SAELensFromPretrainedConfig` or `SAELensCustomConfig` must "
+                                            " be provided to initialize a HookedSAETransformer and use SAE Lens.")
+        if isinstance(self.sae_cfgs, (SAELensFromPretrainedConfig, SAELensCustomConfig)):
+            self.sae_cfgs = [self.sae_cfgs]
         super().__post_init__()
 
 
@@ -64,22 +84,26 @@ class SAELensConfig(ITLensConfig):
 
 class SAELensAttributeMixin(TLensAttributeMixin):
     @property
-    def sae_cfg(self) -> Optional[SAEConfig]:
+    def sae_cfgs(self) -> Optional[SAEConfig]:
         try:
             # TODO: probably will need to add a separate sae_cfg property here as well that points to the configured
             #       SAEConfig
-            cfg = reduce(getattr, "it_cfg.sae_cfg".split("."), self)
+            cfg = reduce(getattr, "it_cfg.sae_cfgs".split("."), self)
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a `SAEConfig` reference (has it been set yet?): {ae}")
             cfg = None
         return cfg
 
+    @property
+    def sae_handles(self) -> List[SAE]:
+        return [sae.handle for sae in self.saes]
+
 
 class BaseSAELensModule(BaseITLensModule):
     def __init__(self, *args, **kwargs):
+        # using cooperative inheritance, so initialize attributes that may be required in base init methods
+        self.saes: List[InstantiatedSAE] = []
         super().__init__(*args, **kwargs)
-        self.original_cfg_dict = None
-        self.sparsity = None
         HookedSAETransformer.generate = patched_generate
 
     def _convert_hf_to_tl(self) -> None:
@@ -89,16 +113,26 @@ class BaseSAELensModule(BaseITLensModule):
         self.model = HookedSAETransformer.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle,
                                                           **self.it_cfg.tl_cfg.__dict__)
         self.model.config = hf_preconversion_config
-        self.sae, self.original_cfg_dict, self.sparsity = SAE.from_pretrained(**self.sae_cfg.__dict__)
-        self.model.add_sae(self.sae)
+        self.instantiate_saes()
+
+    def instantiate_saes(self) -> None:
+        for sae_cfg in self.it_cfg.sae_cfgs:
+            assert isinstance(sae_cfg, (SAELensFromPretrainedConfig, SAELensCustomConfig))
+            original_cfg, sparsity = None, None
+            if isinstance(sae_cfg, SAELensFromPretrainedConfig):
+                handle, original_cfg, sparsity = SAE.from_pretrained(**sae_cfg.__dict__)
+            else:
+                handle = SAE(cfg=sae_cfg.cfg)
+            self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))
+            if self.it_cfg.add_saes_on_init:
+                self.model.add_sae(added_sae.handle)
 
     def tl_config_model_init(self) -> None:
         self.model = HookedSAETransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
-        self.sae = SAE(cfg=self.sae_cfg.cfg)
-        self.model.add_sae(self.sae)
+        self.instantiate_saes()
 
     def _capture_hyperparameters(self) -> None:
-        self._it_state._init_hparams = {"sae_cfg": deepcopy(self.it_cfg.sae_cfg)}
+        self._it_state._init_hparams = {"sae_cfgs": deepcopy(self.it_cfg.sae_cfgs)}
         super()._capture_hyperparameters()
 
     def set_input_require_grads(self) -> None:

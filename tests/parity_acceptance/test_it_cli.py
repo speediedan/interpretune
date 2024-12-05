@@ -3,8 +3,7 @@ import subprocess
 import os
 import sys
 from unittest import mock
-from collections.abc import Iterable
-from typing import Optional, List
+from typing import Optional, List, Sequence
 from dataclasses import dataclass
 
 from interpretune.adapters.registration import Adapter
@@ -23,7 +22,7 @@ class CLICfg:
     run: Optional[str] = None
     env_seed: Optional[str] = None
     compose_cfg: bool = False
-    adapter_ctx: Iterable[Adapter | str] = (Adapter.core,)
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     debug_mode: bool = False
     use_harness: bool = False
     bootstrap_args: Optional[List] = None
