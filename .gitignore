@@ -8,7 +8,7 @@ lightning_logs/
 tb_logs/
 .vscode/
 # ignore ipynb files themselves since we want to only store the source *.py
-*.ipynb
+#*.ipynb
 
 # Test-tube
 test_tube_*/
@@ -24,6 +24,7 @@ docs/source/_static/images/lightning_examples
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
+*.pyc
 *.py[cod]
 *$py.class
 timit_data/
