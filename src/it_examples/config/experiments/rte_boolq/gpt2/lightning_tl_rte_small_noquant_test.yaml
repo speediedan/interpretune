@@ -43,8 +43,8 @@ session_cfg:
           use_model_cache: false
           model_head: transformers.GPT2LMHeadModel
           activation_checkpointing: false
-      zero_shot_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+      generative_step_cfg:
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
         init_args:
           enabled: true
           lm_generation_cfg:

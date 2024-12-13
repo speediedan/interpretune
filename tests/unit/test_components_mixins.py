@@ -21,7 +21,7 @@ from interpretune.base.config.module import ITConfig
 from interpretune.base.config.extensions import ITExtensionsConfigMixin
 from interpretune.base.config.mixins import HFFromPretrainedConfig, ITExtension
 from tests.base_defaults import default_test_task
-from tests.utils import disable_zero_shot
+from tests.utils import disable_genclassif
 from tests.runif import RunIf
 from tests.warns import CORE_CTX_WARNS, unexpected_warns
 from tests.orchestration import run_it
@@ -102,16 +102,16 @@ class TestClassMixins:
 
     @RunIf(min_cuda_gpus=1)
     @pytest.mark.parametrize(
-        "phase, zero_shot",
+        "phase, genclassif",
         [pytest.param('train', True), pytest.param('test', True), pytest.param('test', False)],
-        ids=["train_zero_shot", "test_zero_shot", "test_no_zero_shot"],
+        ids=["train_genclassif", "test_genclassif", "test_no_genclassif"],
     )
-    def test_peft(self, recwarn, get_it_session__core_gpt2_peft__initonly, phase, zero_shot):
+    def test_peft(self, recwarn, get_it_session__core_gpt2_peft__initonly, phase, genclassif):
         expected_warnings = CORE_CTX_WARNS
         test_cfg = get_it_session__core_gpt2_peft__initonly.fixt_test_cfg()
         test_cfg.phase = phase
-        if not zero_shot:
-            with disable_zero_shot(get_it_session__core_gpt2_peft__initonly):
+        if not genclassif:
+            with disable_genclassif(get_it_session__core_gpt2_peft__initonly):
                 run_it(it_session=get_it_session__core_gpt2_peft__initonly, test_cfg=test_cfg)
         else:
             run_it(it_session=get_it_session__core_gpt2_peft__initonly, test_cfg=test_cfg)

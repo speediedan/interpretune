@@ -65,7 +65,6 @@ class ModuleInvariants(Protocol):
 ModuleSteppable: TypeAlias = TrainSteppable | ValidationSteppable | TestSteppable | PredictSteppable
 DataModuleInitable: TypeAlias = TrainLoadable | ValLoadable | TestLoadable | PredictLoadable
 
-
 # We generate valid datamodule/module protocol variants by composing their respective base protocols with the set of
 # valid subprotocols over which `any` semantics apply.
 ITDataModuleProtocol: TypeAlias = gen_protocol_variants(DataModuleInitable, DataModuleInvariants)  # type: ignore

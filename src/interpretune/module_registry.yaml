@@ -1,0 +1,131 @@
+# ##################################
+# # GPT2
+# ##################################
+# gpt2.rte.sae_lens:
+#   reg_info:
+#     model_src_key: gpt2
+#     task_name: rte
+#     adapter_combinations:
+#       - [core, sae_lens]
+#       - [lightning, sae_lens]
+#     description: Basic SL RTE example, GPT2 with supported adapter compositions
+#   shared_config:
+#     task_name: rte
+#     model_name_or_path: gpt2
+#     tokenizer_id_overrides:
+#       pad_token_id: 50256
+#     tokenizer_kwargs:
+#       model_input_names: ['input']
+#       padding_side: left
+#       add_bos_token: true
+#   registered_cfg:
+#     datamodule_cls:
+#       class_path: it_examples.experiments.rte_boolq.RTEBoolqDataModule
+#     module_cls:
+#       class_path: it_examples.experiments.rte_boolq.RTEBoolqModule
+#     datamodule_cfg:
+#       prompt_cfg:
+#         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+#       signature_columns: ['input', 'labels']
+#       text_fields: ["premise", "hypothesis"]
+#       enable_datasets_cache: True
+#       train_batch_size: 2
+#       eval_batch_size: 2
+#     module_cfg:
+#       class_path: interpretune.base.config.module.ITConfig
+#       init_args:
+#         auto_comp_cfg:
+#           class_path: interpretune.base.config.shared.AutoCompConfig
+#           init_args:
+#             module_cfg_name: RTEBoolqConfig
+#             module_cfg_mixin:
+#               class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+#         generative_step_cfg:
+#           class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+#           init_args:
+#             enabled: True
+#             lm_generation_cfg:
+#               class_path: interpretune.adapters.transformer_lens.TLensGenerationConfig
+#               init_args:
+#                 max_new_tokens: 1
+#         hf_from_pretrained_cfg:
+#           class_path: interpretune.base.config.mixins.HFFromPretrainedConfig
+#           init_args:
+#             pretrained_kwargs:
+#               device_map: cpu
+#               torch_dtype: float32
+#             model_head: transformers.GPT2LMHeadModel
+#         tl_cfg:
+#           class_path: interpretune.adapters.transformer_lens.ITLensFromPretrainedNoProcessingConfig
+#         sae_cfgs:
+#           - class_path: interpretune.adapters.sae_lens.SAELensFromPretrainedConfig
+#             init_args:
+#               release: gpt2-small-res-jb
+#               sae_id: blocks.0.hook_resid_pre
+#               device: cuda
+#           - class_path: interpretune.adapters.sae_lens.SAELensFromPretrainedConfig
+#             init_args:
+#               release: gpt2-small-res-jb
+#               sae_id: blocks.1.hook_resid_pre
+#               device: cuda
+# cust.rte.transformer_lens:
+#   reg_info:
+#     model_src_key: cust
+#     task_name: rte
+#     adapter_combinations:
+#       - [core, transformer_lens]
+#       - [lightning, transformer_lens]
+#     description: Custom transformer with Transformer Lens and supported adapter compositions
+#   shared_config:
+#     task_name: pytest_rte_tl
+#     model_name_or_path: gpt2
+#     tokenizer_id_overrides:
+#       pad_token_id: 50256
+#     tokenizer_kwargs:
+#       model_input_names: ['input']
+#       padding_side: left
+#       add_bos_token: true
+#   registered_cfg:
+#     datamodule_cls:
+#       class_path: it_examples.experiments.rte_boolq.RTEBoolqDataModule
+#     module_cls:
+#       class_path: it_examples.experiments.rte_boolq.RTEBoolqModule
+#     datamodule_cfg:
+#       prompt_cfg:
+#         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+#       signature_columns: ['input', 'labels']
+#       text_fields: ["premise", "hypothesis"]
+#       enable_datasets_cache: True
+#       train_batch_size: 2
+#       eval_batch_size: 2
+#     module_cfg:
+#       class_path: interpretune.base.config.module.ITConfig
+#       init_args:
+#         auto_comp_cfg:
+#           class_path: interpretune.base.config.shared.AutoCompConfig
+#           init_args:
+#             module_cfg_name: RTEBoolqConfig
+#             module_cfg_mixin:
+#               class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+#         generative_step_cfg:
+#           class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+#           init_args:
+#             enabled: True
+#             lm_generation_cfg:
+#               class_path: interpretune.adapters.transformer_lens.TLensGenerationConfig
+#               init_args:
+#                   max_new_tokens: 1
+#         tl_cfg:
+#           class_path: interpretune.adapters.transformer_lens.ITLensCustomConfig
+#           init_args:
+#             cfg:
+#               n_layers: 2
+#               d_mlp: 10
+#               d_model: 10
+#               d_head: 5
+#               n_heads: 2
+#               n_ctx: 200
+#               act_fn: 'relu'
+#               tokenizer_name: 'gpt2'
+#     datamodule_cls:
+#       class_path: tests.modules.FingerprintTestITDataModule

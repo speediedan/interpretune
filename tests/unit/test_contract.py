@@ -15,6 +15,7 @@ from copy import deepcopy
 
 import pytest
 
+from interpretune.base.config.shared import ITSharedConfig
 from interpretune.base.contract.session import ITSession, ITMeta, ITSessionConfig
 from interpretune.base.contract.protocol import ITDataModuleProtocol, ITModuleProtocol
 from tests.warns import CORE_CTX_WARNS, unexpected_warns, unmatched_warns
@@ -125,6 +126,23 @@ class TestClassContract:
             datamodule_cfg=tmp_get_it_session_cfg.datamodule_cfg, module_kwargs=tmp_get_it_session_cfg.module_kwargs,
             dm_kwargs=tmp_get_it_session_cfg.dm_kwargs)
         assert isinstance(test_tmp_session_cfg, ITSessionConfig)
+
+    def test_it_session_cfg_override_warns(self, recwarn, get_it_session_cfg__tl_cust):
+        it_session_cfg = deepcopy(get_it_session_cfg__tl_cust)
+        default_shared_cfg = ITSharedConfig()
+        for attr in ITSharedConfig.__dataclass_fields__:
+            setattr(it_session_cfg.datamodule_cfg, attr, getattr(default_shared_cfg, attr))
+        rebound_kwargs = dict(module_cls=it_session_cfg.module_cls, adapter_ctx=it_session_cfg.adapter_ctx,
+                module_cfg=it_session_cfg.module_cfg, datamodule_cls=it_session_cfg.datamodule_cls,
+                datamodule_cfg=it_session_cfg.datamodule_cfg, module_kwargs=it_session_cfg.module_kwargs,
+                dm_kwargs=it_session_cfg.dm_kwargs, shared_cfg=default_shared_cfg.__dict__)  # exercise dict ctor branch
+        expected_override_msg = "Overriding `defer_model_init`"
+        # assert that we warn about overriding datamodule/module configs from a shared config only when values change
+        ITSessionConfig(**rebound_kwargs)
+        assert not any(expected_override_msg in str(w.message) for w in recwarn.list)
+        it_session_cfg.datamodule_cfg.defer_model_init = True
+        with pytest.warns(UserWarning, match=expected_override_msg):
+            ITSessionConfig(**rebound_kwargs)
 
     def test_session_min_dep_installed(self):
         import sys

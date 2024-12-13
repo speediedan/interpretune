@@ -126,7 +126,7 @@ class DebugGeneration:
         ```
         """
         # note we're not using a context manager here, keeping our new override for subsequent debugging convenience
-        gen_kwargs = self.phandle.it_cfg.zero_shot_cfg.lm_generation_cfg.generate_kwargs
+        gen_kwargs = self.phandle.it_cfg.generative_step_cfg.lm_generation_cfg.generate_kwargs
         if gen_kwargs_override:
             gen_kwargs.update(gen_kwargs_override)
         if gen_config_override and getattr(self.phandle.model, "generation_config", None):

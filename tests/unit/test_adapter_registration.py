@@ -11,9 +11,10 @@
 # limitations under the License.
 import pytest
 
-from interpretune.adapters.registration import CompositionRegistry, Adapter
+from interpretune.adapters.registration import CompositionRegistry
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import BaseITModule
+from interpretune.base.config.shared import Adapter
 from interpretune.adapters.core import ITModule
 from interpretune.adapters.lightning import LightningAdapter, LightningModule
 

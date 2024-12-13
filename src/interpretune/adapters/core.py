@@ -4,7 +4,8 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.base.modules import BaseITModule
 from interpretune.base.datamodules import ITDataModule
-from interpretune.adapters.registration import Adapter, CompositionRegistry
+from interpretune.base.config.shared import Adapter
+from interpretune.adapters.registration import CompositionRegistry
 from interpretune.base.components.core import CoreHelperAttributes
 from interpretune.utils.data_movement import to_device
 

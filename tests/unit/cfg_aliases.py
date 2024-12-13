@@ -3,9 +3,8 @@ from copy import deepcopy
 from enum import auto
 from dataclasses import dataclass, field
 
-from interpretune.adapters.registration import Adapter
-from interpretune.base.config.shared import AutoStrEnum
-from interpretune.base.config.mixins import HFFromPretrainedConfig, ZeroShotClassificationConfig
+from interpretune.base.config.shared import AutoStrEnum, Adapter
+from interpretune.base.config.mixins import HFFromPretrainedConfig, GenerativeClassificationConfig
 from interpretune.adapters.transformer_lens import ITLensCustomConfig
 from interpretune.extensions.debug_generation import DebugLMConfig
 from interpretune.extensions.memprofiler import MemProfilerCfg
@@ -78,8 +77,8 @@ class CoreGPT2PEFTCfg(BaseCfg):
 @dataclass(kw_only=True)
 class CoreGPT2PEFTSeqCfg(CoreGPT2PEFTCfg):
     phase: Optional[str] = "test"
-    zero_shot_cfg: Optional[ZeroShotClassificationConfig] = \
-        field(default_factory=lambda: ZeroShotClassificationConfig(enabled=False))
+    generative_step_cfg: Optional[GenerativeClassificationConfig] = \
+        field(default_factory=lambda: GenerativeClassificationConfig(enabled=False))
     hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = field(default_factory=lambda: HFFromPretrainedConfig(
         **gpt2_hf_bnb_lora_cfg, **gpt2_seq_hf_from_pretrained_kwargs, activation_checkpointing=True))
 

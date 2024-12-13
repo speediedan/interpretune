@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Tuple, Dict
 from unittest import mock
 
-from interpretune.adapters.registration import Adapter
+from interpretune.base.config.shared import Adapter
 from interpretune.base.contract.session import ITSessionConfig, ITSession
 from interpretune.utils.basic_trainer import BasicTrainer, BasicTrainerCfg
 from tests import Trainer, ModelCheckpoint

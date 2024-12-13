@@ -1,5 +1,7 @@
+import os
 from typing import Any, Dict, Optional, NamedTuple
 from dataclasses import dataclass, field
+from pprint import pformat
 
 import torch
 from transformers.generation.configuration_utils import GenerationConfig
@@ -59,12 +61,15 @@ class HFGenerationConfig(BaseGenerationConfig):
 
 
 @dataclass(kw_only=True)
-class ZeroShotClassificationConfig(ITSerializableCfg):
+class GenerativeClassificationConfig(ITSerializableCfg):
     enabled: bool = False
     lm_generation_cfg: BaseGenerationConfig = field(default_factory=HFGenerationConfig)
     # for generate methods that don't also perform data preparation, filter out inputs that the model's generate
     # function does not support
     input_inspection_enabled: bool = True
+
+    def __repr__(self):
+        return f"Generative Classification Config: {os.linesep}{pformat(self.__dict__)}"
 
 @dataclass(kw_only=True)
 class HFFromPretrainedConfig(ITSerializableCfg):

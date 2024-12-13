@@ -14,7 +14,7 @@ import torch
 from transformers import logging as transformers_logging
 from jsonargparse import ActionConfigFile, ArgumentParser, Namespace
 
-from interpretune.base.config.shared import ITSharedConf
+from interpretune.base.config.shared import ITSharedConfig
 from interpretune.base.datamodules import ITDataModule
 from interpretune.adapters.core import ITModule
 from interpretune.base.contract.protocol import InterpretunableType
@@ -53,9 +53,7 @@ class ITSessionMixin:
 
         # link our datamodule and module shared configuration
         skey = "session_cfg"
-        for attr in ITSharedConf.__dataclass_fields__:
-            # parser.link_arguments(f"it_session.session_cfg.init_args.datamodule_cfg.init_args.{attr}",
-            #                     f"it_session.session_cfg.init_args.module_cfg.init_args.{attr}")
+        for attr in ITSharedConfig.__dataclass_fields__:
             parser.link_arguments(f"{skey}.datamodule_cfg.init_args.{attr}", f"{skey}.module_cfg.init_args.{attr}")
         parser.link_arguments(skey, f"it_session.{skey}", apply_on="instantiate")
 

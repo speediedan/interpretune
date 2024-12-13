@@ -33,8 +33,8 @@ session_cfg:
     init_args:
       model_cfg:
         _attn_implementation: eager
-      zero_shot_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+      generative_step_cfg:
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
         init_args:
           enabled: true
           lm_generation_cfg:
@@ -71,5 +71,5 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.TensorBoardLogger
     init_args:
-      name: llama3_chat_rte_3b_qlora_zero_shot_test_only
+      name: llama3_chat_rte_3b_qlora_genclassif_test_only
       save_dir: lightning_logs

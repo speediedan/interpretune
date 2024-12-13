@@ -5,6 +5,7 @@ import pytest
 
 import torch
 from transformer_lens.ActivationCache import ActivationCache
+from transformer_lens.utils import get_device as tl_get_device
 
 from interpretune.utils.exceptions import MisconfigurationException
 from interpretune.base.contract.session import ITSession
@@ -84,6 +85,11 @@ class TestClassSAELens:
     @staticmethod
     def get_ref_logits(test_module):
         return test_module.model(TestClassSAELens.prompt)
+
+    def test_from_pretrained_device_init(self):
+        test_sl_from_pretrained = SAELensFromPretrainedConfig(release="gpt2-small-res-jb",
+                                                              sae_id="blocks.0.hook_resid_pre", device=None)
+        assert test_sl_from_pretrained.device == str(tl_get_device())
 
     @pytest.mark.parametrize("session_fixture", **core_l_run_w_pytest_cfg)
     def test_run_with_saes_with_cache_fwd_bwd(self, request, session_fixture):
@@ -194,4 +200,16 @@ class TestClassSAELens:
         assert it_cfg
         test_sl_cfg.update({'sae_cfgs': None})
         with pytest.raises(MisconfigurationException, match="At least one `SAELens"):
-            _ = SAELensConfig(**test_sl_cfg)
+                _ = SAELensConfig(**test_sl_cfg)
+
+    def test_sl_tl_device_sync_warnings(self):
+        test_sl_cfg = deepcopy(TestClassSAELens.test_sl_cust)
+        with pytest.warns(UserWarning, match=r"This SAEConfig's device type \('cpu'\) does not match the"):
+            it_cfg = SAELensConfig(**test_sl_cfg)
+        assert isinstance(it_cfg, SAELensConfig)
+        assert it_cfg.sae_cfgs[0].cfg.device == "cuda"
+        test_sl_cfg['sae_cfgs'].cfg.device = None
+        with pytest.warns(UserWarning, match=r"An SAEConfig device type was not provided"):
+            it_cfg = SAELensConfig(**test_sl_cfg)
+        assert isinstance(it_cfg, SAELensConfig)
+        assert it_cfg.sae_cfgs[0].cfg.device == "cuda"

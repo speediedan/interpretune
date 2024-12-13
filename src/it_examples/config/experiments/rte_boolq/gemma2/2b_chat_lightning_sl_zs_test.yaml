@@ -49,8 +49,8 @@ session_cfg:
           sae_id: layer_25/width_16k/canonical
           device: cuda
           dtype: torch.bfloat16
-      zero_shot_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+      generative_step_cfg:
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
         init_args:
           enabled: true
           lm_generation_cfg:

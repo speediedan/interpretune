@@ -3,7 +3,7 @@ from typing import Optional, Any, Dict, Tuple, List
 import logging
 from dataclasses import dataclass, field
 
-from interpretune.base.config.shared import ITSerializableCfg, ITSharedConf
+from interpretune.base.config.shared import ITSerializableCfg, ITSharedConfig
 from interpretune.utils.logging import rank_zero_warn
 
 
@@ -41,7 +41,7 @@ class DatasetProcessingConfig(ITSerializableCfg):
 
 
 @dataclass(kw_only=True)
-class ITDataModuleConfig(ITSharedConf, TokenizationConfig, DatasetProcessingConfig):
+class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingConfig):
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
     train_batch_size: int = 32
     eval_batch_size: int = 32
@@ -61,9 +61,6 @@ class ITDataModuleConfig(ITSharedConf, TokenizationConfig, DatasetProcessingConf
             self.data_collator_cfg = {"collator_class": "transformers.DataCollatorWithPadding"}
         default_dataset_save_path = f"{os.environ['HOME']}/.cache/huggingface/datasets/{self.task_name}"
         self.dataset_path = self.dataset_path or default_dataset_save_path
-        if self.defer_model_init:
-            assert self.signature_columns is not None, ("`signature_columns` must be specified if `defer_model_init` "
-                                                        "is set to True")
 
     def _cross_validate(self, it_cfg: ITSerializableCfg) -> None:
         # inspect tokenizer, tokenizer_name, model_name_or_path here, updating datamodule config before instantiation

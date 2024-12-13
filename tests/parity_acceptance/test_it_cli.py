@@ -6,7 +6,7 @@ from unittest import mock
 from typing import Optional, List, Sequence
 from dataclasses import dataclass
 
-from interpretune.adapters.registration import Adapter
+from interpretune.base.config.shared import Adapter
 from interpretune.adapters import ADAPTER_REGISTRY
 from interpretune.base.components.cli import core_cli_main, compose_config, l_cli_main
 from interpretune.utils.types import ArgsType

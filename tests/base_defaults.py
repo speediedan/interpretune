@@ -3,8 +3,8 @@ from typing import List, Optional, Tuple, Callable, Any, Dict, Sequence
 import pytest
 
 from interpretune.adapters import ADAPTER_REGISTRY
-from interpretune.adapters.registration import Adapter
-from interpretune.base.config.mixins import HFFromPretrainedConfig, ZeroShotClassificationConfig
+from interpretune.base.config.shared import Adapter
+from interpretune.base.config.mixins import HFFromPretrainedConfig, GenerativeClassificationConfig
 from interpretune.extensions.memprofiler import MemProfilerCfg
 from interpretune.extensions.debug_generation import DebugLMConfig
 from tests.runif import RunIf, RUNIF_ALIASES
@@ -74,7 +74,7 @@ class BaseCfg:
     limit_val_batches: Optional[int] = 1
     limit_test_batches: Optional[int] = 1
     dm_override_cfg: Optional[Dict] = None
-    zero_shot_cfg: Optional[ZeroShotClassificationConfig] = None
+    generative_step_cfg: Optional[GenerativeClassificationConfig] = None
     hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = None
     memprofiler_cfg: Optional[MemProfilerCfg] = None
     debug_lm_cfg: Optional[DebugLMConfig] = None

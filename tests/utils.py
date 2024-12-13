@@ -8,7 +8,7 @@ from functools import reduce
 import torch
 
 from interpretune.base.contract.session import ITSession
-from interpretune.base.config.mixins import ZeroShotClassificationConfig, CoreGenerationConfig
+from interpretune.base.config.mixins import GenerativeClassificationConfig, CoreGenerationConfig
 
 ################################################################################
 # Test Utility Functions
@@ -85,10 +85,10 @@ def indirect_resolve(object: object, attr_name: str, orig_attr_handle: object):
     return getattr(mod, orig_obj_attach)
 
 @contextmanager
-def disable_zero_shot(it_session: ITSession):
+def disable_genclassif(it_session: ITSession):
     try:
-        orig_zs_cfg = it_session.module.it_cfg.zero_shot_cfg
-        it_session.module.it_cfg.zero_shot_cfg = ZeroShotClassificationConfig(enabled=False)
+        orig_genclassif_cfg = it_session.module.it_cfg.generative_step_cfg
+        it_session.module.it_cfg.generative_step_cfg = GenerativeClassificationConfig(enabled=False)
         yield
     finally:
-        it_session.module.it_cfg.zero_shot_cfg = orig_zs_cfg
+        it_session.module.it_cfg.generative_step_cfg = orig_genclassif_cfg

@@ -399,7 +399,7 @@ class BaseTestModule(StateLogInspectMixin):
 
     # TODO: use mock TASK_NUM_LABELS here (not just in __init__) to rely on rteboolq example method here for testing
     def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
-        it_cfg.num_labels = 0 if it_cfg.zero_shot_cfg.enabled else 2
+        it_cfg.num_labels = 0 if it_cfg.generative_step_cfg.enabled else 2
         return it_cfg
 
     def load_metric(self) -> None:

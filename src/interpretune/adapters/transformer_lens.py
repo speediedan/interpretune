@@ -9,12 +9,13 @@ import torch
 from transformers import PretrainedConfig, AutoModelForCausalLM, PreTrainedTokenizerBase
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 from transformer_lens.utilities.devices import get_device_for_block_index
+from transformer_lens.utils import get_device as tl_get_device
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.adapters.registration import CompositionRegistry, Adapter
+from interpretune.adapters.registration import CompositionRegistry
 from interpretune.adapters.lightning import LightningDataModule, LightningModule, LightningAdapter
 from interpretune.base.config.module import ITConfig, HFFromPretrainedConfig
-from interpretune.base.config.shared import ITSerializableCfg
+from interpretune.base.config.shared import ITSerializableCfg, Adapter
 from interpretune.base.config.mixins import CoreGenerationConfig
 from interpretune.base.components.core import CoreHelperAttributes
 from interpretune.base.datamodules import ITDataModule
@@ -58,7 +59,11 @@ class ITLensFromPretrainedConfig(ITLensSharedConfig):
     default_prepend_bos: Optional[bool] = True
     dtype: str = "float32"
 
-# rather than use from_pretrained_no_processing wrapper, we specify the simplfied config defaults we want directly
+    def __post_init__(self) -> None:
+        if self.device is None:  # align with TL default device resolution
+            self.device = tl_get_device()
+
+# rather than use from_pretrained_no_processing wrapper, we can specify the simplified config defaults we want directly
 @dataclass(kw_only=True)
 class ITLensFromPretrainedNoProcessingConfig(ITLensFromPretrainedConfig):
     fold_ln: bool = False
@@ -66,7 +71,7 @@ class ITLensFromPretrainedNoProcessingConfig(ITLensFromPretrainedConfig):
     center_unembed: bool = False
     refactor_factored_attn_matrices: bool = False
     fold_value_biases: bool = False
-    dtype: str = "torch.float32"
+    dtype: str = "float32"
     default_prepend_bos: bool = True
 
 @dataclass(kw_only=True)

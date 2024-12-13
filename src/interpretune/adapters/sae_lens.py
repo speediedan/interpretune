@@ -7,11 +7,12 @@ from typing_extensions import override
 from sae_lens.sae import SAE, SAEConfig
 from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer
 from transformers.tokenization_utils_base import BatchEncoding
+from transformer_lens.utils import get_device as tl_get_device
 
-from interpretune.adapters.registration import CompositionRegistry, Adapter
+from interpretune.adapters.registration import CompositionRegistry
 from interpretune.adapters.lightning import LightningDataModule, LightningModule, LightningAdapter
 from interpretune.adapters.transformer_lens import ITLensConfig, BaseITLensModule, TLensAttributeMixin
-from interpretune.base.config.shared import ITSerializableCfg
+from interpretune.base.config.shared import ITSerializableCfg, Adapter
 from interpretune.base.components.core import CoreHelperAttributes
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.modules import BaseITModule
@@ -35,9 +36,12 @@ class InstantiatedSAE:
 class SAELensFromPretrainedConfig(ITSerializableCfg):
     release: str
     sae_id: str
-    device: str = "cpu"
+    device: Optional[str] = None
     dtype: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        if self.device is None:  # align with TL default device resolution
+            self.device = str(tl_get_device())
 
 @dataclass(kw_only=True)
 class SAELensCustomConfig(ITSerializableCfg):
@@ -70,12 +74,33 @@ class SAELensConfig(ITLensConfig):
         return normalized_names
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         if not self.sae_cfgs:
             raise MisconfigurationException("At least one `SAELensFromPretrainedConfig` or `SAELensCustomConfig` must "
                                             " be provided to initialize a HookedSAETransformer and use SAE Lens.")
         if isinstance(self.sae_cfgs, (SAELensFromPretrainedConfig, SAELensCustomConfig)):
             self.sae_cfgs = [self.sae_cfgs]
-        super().__post_init__()
+        self._sync_sl_tl_device_cfg()
+
+    def _sync_sl_tl_device_cfg(self):
+        tl_device = self.tl_cfg.cfg.device if hasattr(self.tl_cfg, 'cfg') else self.tl_cfg.device
+        for sae_cfg in self.sae_cfgs:
+            if hasattr(sae_cfg, 'cfg'):
+                self._sync_sl_tl_default_device(sae_cfg_obj=sae_cfg.cfg, tl_device=str(tl_device))
+            else:
+                self._sync_sl_tl_default_device(sae_cfg_obj=sae_cfg, tl_device=str(tl_device))
+
+    def _sync_sl_tl_default_device(self, sae_cfg_obj: SAECfgType, tl_device):
+        if sae_cfg_obj.device and tl_device:
+            if sae_cfg_obj.device != tl_device:  # if both are provided, TL dtype takes precedence
+                rank_zero_warn(f"This SAEConfig's device type ('{sae_cfg_obj.device}') does not match the configured TL"
+                               f" device ('{tl_device}'). Setting the device type for this SAE to match the specified"
+                               f" TL device type ('{tl_device}').")
+                setattr(sae_cfg_obj, 'device', tl_device)
+        else:  # only SAEConfigs can be provided without a device
+            rank_zero_warn("An SAEConfig device type was not provided. Setting the device type to match"
+                           f" the currently specified TL device type: '{tl_device}'.")
+            setattr(sae_cfg_obj, 'device', tl_device)
 
 
 ################################################################################
@@ -164,10 +189,20 @@ class SAELensAdapter(SAELensAttributeMixin):
                                         composition_classes=(SAELensModule,),
                                         description="SAE Lens adapter that can be composed with core and l...",
         )
+        adapter_ctx_registry.register(Adapter.sae_lens, component_key = "module_cfg",
+                                        adapter_combination=(Adapter.core, Adapter.sae_lens),
+                                        composition_classes=(SAELensConfig,),
+                                        description="SAE Lens configuration that can be composed with core and l...",
+        )
         adapter_ctx_registry.register(Adapter.sae_lens, component_key = "module",
                                         adapter_combination=(Adapter.lightning, Adapter.sae_lens),
                                         composition_classes=(SAELensAttributeMixin, BaseSAELensModule, LightningAdapter,
                                                              BaseITModule, LightningModule),
+                                        description="SAE Lens adapter that can be composed with core and l...",
+        )
+        adapter_ctx_registry.register(Adapter.sae_lens, component_key = "module_cfg",
+                                        adapter_combination=(Adapter.lightning, Adapter.sae_lens),
+                                        composition_classes=(SAELensConfig,),
                                         description="SAE Lens adapter that can be composed with core and l...",
         )
 

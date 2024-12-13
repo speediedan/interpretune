@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 
 import torch
 
-from interpretune.base.config.shared import ITSerializableCfg, ITSharedConf
-from interpretune.base.config.mixins import ZeroShotClassificationConfig, HFFromPretrainedConfig
+from interpretune.base.config.shared import ITSerializableCfg, ITSharedConfig, AutoCompConf
+from interpretune.base.config.mixins import GenerativeClassificationConfig, HFFromPretrainedConfig
 from interpretune.base.config.extensions import ExtensionConf
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_info
@@ -21,7 +21,6 @@ from interpretune.utils.types import LRSchedulerConfig, Optimizable
 # space using a single flat configuration dataclass.
 ################################################################################
 
-
 @dataclass(kw_only=True)
 class ModelConf(ITSerializableCfg):
     model_class: Optional[torch.nn.Module] = None
@@ -36,7 +35,7 @@ class OptimizerSchedulerConf(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class MixinsConf(ITSerializableCfg):
-    zero_shot_cfg: ZeroShotClassificationConfig = field(default_factory=ZeroShotClassificationConfig)
+    generative_step_cfg: GenerativeClassificationConfig = field(default_factory=GenerativeClassificationConfig)
     hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = None
 
 @dataclass(kw_only=True)
@@ -56,7 +55,8 @@ class CompatConf(ITSerializableCfg):
                                                                                       'log_dict': AutoCompatConfig(),})
 
 @dataclass(kw_only=True)
-class ITConfig(ITSharedConf, ModelConf, OptimizerSchedulerConf, MixinsConf, LoggingConf, CompatConf, ExtensionConf):
+class ITConfig(ITSharedConfig, ModelConf, OptimizerSchedulerConf, MixinsConf, LoggingConf, CompatConf, AutoCompConf,
+               ExtensionConf):
     #"""Dataclass to encapsulate the ITModuleinternal state."""
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
     # dynamic fields added via ExtensionConf contingent on supported extension availability

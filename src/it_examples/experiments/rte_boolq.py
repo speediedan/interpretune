@@ -18,7 +18,7 @@ from interpretune.adapters.transformer_lens import ITLensConfig
 from interpretune.adapters.sae_lens import SAELensConfig
 from interpretune.base.config.datamodule import PromptConfig, ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
-from interpretune.base.config.mixins import ZeroShotClassificationConfig, BaseGenerationConfig, HFGenerationConfig
+from interpretune.base.config.mixins import GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig
 from interpretune.base.components.mixins import ProfilerHooksMixin
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_warn
@@ -41,12 +41,12 @@ class RTEBoolqEntailmentMapping:
 
 
 @dataclass(kw_only=True)
-class RTEBoolqZeroShotClassificationConfig(RTEBoolqEntailmentMapping, ZeroShotClassificationConfig):
+class RTEBoolqGenerativeClassificationConfig(RTEBoolqEntailmentMapping, GenerativeClassificationConfig):
     enabled: bool = False
     lm_generation_cfg: BaseGenerationConfig = field(default_factory=HFGenerationConfig)
 
     def __repr__(self):
-        return f"Zero-Shot Classification Config: {os.linesep}{pformat(self.__dict__)}"
+        return f"Generative Classification Config: {os.linesep}{pformat(self.__dict__)}"
 
 
 @dataclass(kw_only=True)
@@ -166,9 +166,9 @@ class RTEBoolqSteps:
     @ProfilerHooksMixin.memprofilable
     def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
         # TODO: need to be explicit about the compatibility constraints/contract
-        # TODO: note that this example uses zero_shot_cfg and lm_head except for the test_step where we demo how to
-        # use the ZeroShotMixin to run inference with or without a zero_shot_cfg enabled as well as with different heads
-        # (e.g., seqclassification or LM head in this case)
+        # TODO: note that this example uses generative_step_cfg and lm_head except for the test_step where we demo how
+        # to use the GenerativeMixin to run inference with or without a generative_step_cfg enabled as well as with
+        # different heads (e.g., seqclassification or LM head in this case)
         answer_logits, labels, _ = self.logits_and_labels(batch, batch_idx)
         loss = self.loss_fn(answer_logits, labels)
         self.log("train_loss", loss, sync_dist=True)
@@ -183,15 +183,15 @@ class RTEBoolqSteps:
 
     @ProfilerHooksMixin.memprofilable
     def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
-        if self.it_cfg.zero_shot_cfg.enabled:
-            self.zero_shot_test_step(batch, batch_idx, dataloader_idx=dataloader_idx)
+        if self.it_cfg.generative_step_cfg.enabled:
+            self.generative_classification_test_step(batch, batch_idx, dataloader_idx=dataloader_idx)
         else:
             self.default_test_step(batch, batch_idx, dataloader_idx=dataloader_idx)
 
-    def zero_shot_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
+    def generative_classification_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
         Optional[STEP_OUTPUT]:
         labels = batch.pop("labels")
-        outputs = self.it_generate(batch, **self.it_cfg.zero_shot_cfg.lm_generation_cfg.generate_kwargs)
+        outputs = self.it_generate(batch, **self.it_cfg.generative_step_cfg.lm_generation_cfg.generate_kwargs)
         self.collect_answers(outputs.logits, labels)
 
     def default_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
@@ -218,7 +218,7 @@ class RTEBoolqSteps:
             return metric_dict
 
     def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
-        # to support zero_shot/non-zero_shot configs and LM/SeqClassification heads we adhere to the following logits
+        # to support genclassif/non-genclassif configs and LM/SeqClassification heads we adhere to the following logits
         # logical shape invariant: [batch size, positions to consider, answers to consider]
         if isinstance(logits, tuple):
             logits = torch.stack([out for out in logits], dim=1)
@@ -227,7 +227,7 @@ class RTEBoolqSteps:
             logits = logits.unsqueeze(1)
         if logits.shape[-1] != self.it_cfg.num_labels:
             logits = torch.index_select(logits, -1, self.it_cfg.entailment_mapping_indices)
-            if not self.it_cfg.zero_shot_cfg.enabled:
+            if not self.it_cfg.generative_step_cfg.enabled:
                 logits = logits[:, -1:, :]
         return logits
 
@@ -242,7 +242,7 @@ class RTEBoolqModuleMixin:
         if it_cfg.task_name not in TASK_NUM_LABELS.keys():
             rank_zero_warn(it_cfg.task_name + INVALID_TASK_MSG)
             it_cfg.task_name = DEFAULT_TASK
-        it_cfg.num_labels = 0 if it_cfg.zero_shot_cfg.enabled else TASK_NUM_LABELS[it_cfg.task_name]
+        it_cfg.num_labels = 0 if it_cfg.generative_step_cfg.enabled else TASK_NUM_LABELS[it_cfg.task_name]
         return it_cfg
 
     def load_metric(self) -> None:

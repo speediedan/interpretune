@@ -59,7 +59,7 @@ repos:
         name: Unused noqa
 
   - repo: https://github.com/executablebooks/mdformat
-    rev: 0.7.16
+    rev: 0.7.19
     hooks:
       - id: mdformat
         additional_dependencies:

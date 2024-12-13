@@ -3,9 +3,8 @@ from copy import deepcopy
 from enum import auto
 from pathlib import Path
 
-from interpretune.adapters.registration import Adapter
 from interpretune.base.config.module import HFFromPretrainedConfig
-from interpretune.base.config.shared import AutoStrEnum
+from interpretune.base.config.shared import AutoStrEnum, Adapter
 from interpretune.extensions.memprofiler import MemProfilerCfg, MemProfilerSchedule
 from it_examples.example_module_registry import (MODULE_EXAMPLE_REGISTRY, example_datamodule_defaults,
                                                  example_itmodule_defaults)
@@ -134,8 +133,8 @@ core_cust_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY['cust.rte']['cfg_dict'])
 base_cust_rte_cfg = {
     "session_cfg": {
         "datamodule_cfg": {"init_args": {**example_datamodule_defaults, **core_cust_cfg['shared_config'],
-                                         **core_cust_cfg['registered_example_cfg']['datamodule_cfg']}},
-        "module_cfg": core_cust_cfg['registered_example_cfg']['module_cfg']
+                                         **core_cust_cfg['registered_cfg']['datamodule_cfg']}},
+        "module_cfg": core_cust_cfg['registered_cfg']['module_cfg']
     }
 }
 
@@ -143,8 +142,8 @@ core_tl_cust_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY['cust.rte.transformer_lens']
 base_tl_cust_model_cfg = {
     "session_cfg": {
         "datamodule_cfg": {"init_args": {**example_datamodule_defaults, **core_tl_cust_cfg["shared_config"],
-                                         **core_tl_cust_cfg["registered_example_cfg"]["datamodule_cfg"]}},
-        "module_cfg": core_tl_cust_cfg["registered_example_cfg"]["module_cfg"],
+                                         **core_tl_cust_cfg["registered_cfg"]["datamodule_cfg"]}},
+        "module_cfg": core_tl_cust_cfg["registered_cfg"]["module_cfg"],
     },
 }
 

@@ -61,16 +61,15 @@ class ProfilerHooksMixin:
         return wrapper
 
 
-# TODO: may make sense to factor out zero_shot_cfg references into a separate mixin and rename this to
-#       GenerationStepMixin since it better reflects its scope of use
-class ZeroShotStepMixin:
+class GenerativeStepMixin:
+    # Often used for n-shot classification, those contexts are only a subset of generative classification use cases
 
     _gen_sig_keys: Optional[List] = None
     GEN_PREPARES_INPUTS_SIGS: Tuple = ("_prepare_model_inputs",)
 
     @property
     def generation_cfg(self) -> Optional[BaseGenerationConfig]:
-        return self.it_cfg.zero_shot_cfg.lm_generation_cfg
+        return self.it_cfg.generative_step_cfg.lm_generation_cfg
 
     @property
     def gen_sig_keys(self) -> List:
@@ -80,7 +79,7 @@ class ZeroShotStepMixin:
         return self._gen_sig_keys
 
     def map_gen_inputs(self, batch) -> Dict[str, Any]:
-        # since we're abstracting the same zero shot classification logic to be used with different frameworks, models
+        # since we're abstracting the same generative classification logic to be used with different frameworks, models
         # and datasets we use a mapping function to provide only data inputs a given generate function supports (for
         # frameworks that don't handle variadic kwargs). This currently requires the user provides
         # compatible models and dataset.
@@ -97,7 +96,7 @@ class ZeroShotStepMixin:
     @property
     def _should_inspect_inputs(self) -> bool:
         # whether to filter inputs to include only those directly supported by the model's generate function
-        return self.it_cfg.zero_shot_cfg.input_inspection_enabled and not self._generate_prepares_inputs()
+        return self.it_cfg.generative_step_cfg.input_inspection_enabled and not self._generate_prepares_inputs()
 
     def _generate_prepares_inputs(self) -> bool:
         # match sentinal methods indicating that a given model's generate function prepares inputs
@@ -251,5 +250,6 @@ class HFFromPretrainedMixin:
         self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))
 
 
-class BaseITMixins(ITStateMixin, ITExtensionsConfigMixin, HFFromPretrainedMixin, ZeroShotStepMixin, ProfilerHooksMixin):
+class BaseITMixins(ITStateMixin, ITExtensionsConfigMixin, HFFromPretrainedMixin, GenerativeStepMixin,
+                   ProfilerHooksMixin):
     ...

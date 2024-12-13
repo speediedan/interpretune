@@ -163,3 +163,5 @@ def gen_protocol_variants(supported_sub_protocols: UnionType,
         protocol_components.append(supported_cls)
     gen_type_alias = " | ".join([f"protocol_components[{i}]" for i in range(len(protocol_components))])
     return eval(gen_type_alias)
+
+AnyDataClass = TypeVar('AnyDataClass', bound=dataclass)

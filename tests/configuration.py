@@ -18,7 +18,7 @@ import torch
 
 from interpretune.adapters.transformer_lens import ITLensFromPretrainedConfig, ITLensCustomConfig
 from interpretune.adapters.sae_lens import SAELensFromPretrainedConfig, SAELensCustomConfig
-from interpretune.adapters.registration import Adapter
+from interpretune.base.config.shared import Adapter
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig
 from interpretune.base.contract.session import ITSessionConfig, ITSession
@@ -42,7 +42,7 @@ def apply_itdm_test_cfg(base_itdm_cfg: ITDataModuleConfig, test_cfg: BaseCfg, **
 
 def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: Optional[StrOrPath] = None) -> ITConfig:
     test_cfg_override_attrs = ["memprofiler_cfg", "debug_lm_cfg", "cust_fwd_kwargs", "tl_cfg", "model_cfg", "sae_cfgs",
-                               "hf_from_pretrained_cfg", "zero_shot_cfg", "add_saes_on_init"]
+                               "hf_from_pretrained_cfg", "generative_step_cfg", "add_saes_on_init"]
     test_it_cfg = deepcopy(base_it_cfg)
     for attr in test_cfg_override_attrs:
         if getattr(test_cfg, attr):

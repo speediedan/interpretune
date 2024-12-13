@@ -1,34 +1,13 @@
 from typing import Any, Dict, Optional, Tuple, Callable, Type, Protocol, Set, runtime_checkable, List, Sequence
-from enum import auto
 from inspect import getmembers, isclass
 from typing_extensions import override
 from types import ModuleType
 
 from pprint import pformat
 
-from interpretune.base.config.shared import AutoStrEnum
+from interpretune.base.config.shared import Adapter
 from interpretune.utils.logging import rank_zero_warn
 
-
-# NOTE [Interpretability Adapters]:
-# `TransformerLens` is the first supported interpretability adapter but support for other adapters is expected
-class Adapter(AutoStrEnum):
-    # CORE: The provided module and datamodule will be prepared for use with core PyTorch. The default
-    #       trainer, a custom trainer or no trainer all can be used in combination with any supported and specified
-    #       adapter.
-    core = auto()
-    # LIGHTNING: The provided module and datamodule will be prepared for use with the Lightning trainer and any
-    #            supported and specified adapter.
-    lightning = auto()
-    # TRANSFORMER_LENS: The provided module and datamodule will be prepared for use with the TransformerLens adapter in
-    #                  in combination with any supported and specified adapter.
-    transformer_lens = auto()
-    # SAE_LENS: The provided module and datamodule will be prepared for use with the SAELens adapter in
-    #                  in combination with any supported and specified adapter.
-    sae_lens = auto()
-
-    def __lt__(self, other: 'Adapter') -> bool:
-        return self.value < other.value
 
 
 class CompositionRegistry(dict):

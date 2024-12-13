@@ -18,7 +18,7 @@ cust.rte:
         model_input_names: ['tokens']
         padding_side: left
         add_bos_token: true
-  registered_example_cfg:
+  registered_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
@@ -35,8 +35,8 @@ cust.rte:
           dtype: float32
           model_args:
             max_seq_len: 200
-        zero_shot_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+        generative_step_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -62,7 +62,7 @@ cust.rte.transformer_lens:
       model_input_names: ['input']
       padding_side: left
       add_bos_token: true
-  registered_example_cfg:
+  registered_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
@@ -74,8 +74,8 @@ cust.rte.transformer_lens:
     module_cfg:
       class_path: it_examples.experiments.rte_boolq.RTEBoolqTLConfig
       init_args:
-        zero_shot_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+        generative_step_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -113,7 +113,7 @@ cust.rte.sae_lens:
       model_input_names: ['input']
       padding_side: left
       add_bos_token: True
-  registered_example_cfg:
+  registered_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
@@ -125,8 +125,8 @@ cust.rte.sae_lens:
     module_cfg:
       class_path: it_examples.experiments.rte_boolq.RTEBoolqSLConfig
       init_args:
-        zero_shot_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+        generative_step_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -153,7 +153,7 @@ cust.rte.sae_lens:
               d_in: 10
               d_sae: 20
               dtype: float32
-              device: cpu
+              device: cuda
               model_name: cust
               hook_name: blocks.0.hook_resid_pre
               hook_layer: 0
@@ -187,7 +187,7 @@ gpt2.rte:
         model_input_names: ['input_ids', 'attention_mask']
         padding_side: left
         add_bos_token: true
-  registered_example_cfg:
+  registered_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
@@ -199,8 +199,8 @@ gpt2.rte:
     module_cfg:
       class_path: it_examples.experiments.rte_boolq.RTEBoolqConfig
       init_args:
-        zero_shot_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+        generative_step_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -234,7 +234,7 @@ gpt2.rte.transformer_lens:
       model_input_names: ['input']
       padding_side: left
       add_bos_token: false
-  registered_example_cfg:
+  registered_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
@@ -244,10 +244,18 @@ gpt2.rte.transformer_lens:
       train_batch_size: 2
       eval_batch_size: 2
     module_cfg:
-      class_path: it_examples.experiments.rte_boolq.RTEBoolqTLConfig
+      class_path: interpretune.base.config.module.ITConfig
       init_args:
-        zero_shot_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+        auto_comp_cfg:
+          class_path: interpretune.base.config.shared.AutoCompConfig
+          init_args:
+            module_cfg_name: RTEBoolqConfig
+            module_cfg_mixin:
+              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              import_only: True
+            target_adapters: transformer_lens
+        generative_step_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -265,6 +273,8 @@ gpt2.rte.transformer_lens:
           class_path: interpretune.adapters.transformer_lens.ITLensFromPretrainedConfig
     datamodule_cls:
       class_path: tests.modules.FingerprintTestITDataModule
+    module_cls:
+      class_path: tests.modules.TestITModule  # validate explicit class_path based module_cls registration
 gpt2.rte.sae_lens:
   reg_info:
     model_src_key: gpt2
@@ -282,7 +292,7 @@ gpt2.rte.sae_lens:
       model_input_names: ['input']
       padding_side: left
       add_bos_token: true
-  registered_example_cfg:
+  registered_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
@@ -292,10 +302,17 @@ gpt2.rte.sae_lens:
       train_batch_size: 2
       eval_batch_size: 2
     module_cfg:
-      class_path: it_examples.experiments.rte_boolq.RTEBoolqSLConfig
+      class_path: interpretune.base.config.module.ITConfig
       init_args:
-        zero_shot_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+        auto_comp_cfg:
+          class_path: interpretune.base.config.shared.AutoCompConfig
+          init_args:
+            module_cfg_name: RTEBoolqConfig
+            module_cfg_mixin:
+              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              import_only: True
+        generative_step_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -316,12 +333,12 @@ gpt2.rte.sae_lens:
             init_args:
               release: gpt2-small-res-jb
               sae_id: blocks.0.hook_resid_pre
-              device: cpu
+              device: cuda
           - class_path: interpretune.adapters.sae_lens.SAELensFromPretrainedConfig
             init_args:
               release: gpt2-small-res-jb
               sae_id: blocks.1.hook_resid_pre
-              device: cpu
+              device: cuda
 ##################################
 # Gemma2
 ##################################
@@ -341,7 +358,7 @@ gemma2.rte:
         model_input_names: ['input_ids', 'attention_mask']
         padding_side: left
         add_bos_token: true
-  registered_example_cfg:
+  registered_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.example_prompt_configs.RTEBoolqGemma2PromptConfig
@@ -353,8 +370,8 @@ gemma2.rte:
     module_cfg:
       class_path: it_examples.experiments.rte_boolq.RTEBoolqConfig
       init_args:
-        zero_shot_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+        generative_step_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -384,7 +401,7 @@ gemma2.rte.sae_lens:
       model_input_names: ['input']
       padding_side: left
       add_bos_token: true
-  registered_example_cfg:
+  registered_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
@@ -396,8 +413,8 @@ gemma2.rte.sae_lens:
     module_cfg:
       class_path: it_examples.experiments.rte_boolq.RTEBoolqSLConfig
       init_args:
-        zero_shot_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+        generative_step_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -441,7 +458,7 @@ llama3.rte:
         # NOTE: this configuration is for testing, for finetuning, llama3 should be changed to right padding
         padding_side: left
         add_bos_token: false
-  registered_example_cfg:
+  registered_cfg:
     datamodule_cfg:
       prompt_cfg:
         class_path: it_examples.example_prompt_configs.RTEBoolqLlama3PromptConfig
@@ -455,8 +472,8 @@ llama3.rte:
     module_cfg:
       class_path: it_examples.experiments.rte_boolq.RTEBoolqConfig
       init_args:
-        zero_shot_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqZeroShotClassificationConfig
+        generative_step_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:

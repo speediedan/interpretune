@@ -11,8 +11,7 @@ from interpretune.utils.exceptions import MisconfigurationException
 
 
 def instantiate_class(init: Dict[str, Any],
-                      args: Optional[Union[Any, Tuple[Any, ...]]] = None,
-                      import_only: bool = False) -> Any:
+                      args: Optional[Union[Any, Tuple[Any, ...]]] = None, import_only: bool = False) -> Any:
         """Instantiates a class with the given args and init. Accepts class definitions with a "class_path".
 
         Args:
@@ -37,7 +36,7 @@ def instantiate_class(init: Dict[str, Any],
         else:
             raise MisconfigurationException("A class_path was not included in a configuration that requires one")
         if not shortcircuit_local:
-            module = __import__(class_module, fromlist=[class_name])
+            module = importlib.import_module(class_module)
             args_class = getattr(module, class_name)
         if import_only:
             return args_class

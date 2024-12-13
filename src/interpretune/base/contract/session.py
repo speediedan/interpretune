@@ -5,10 +5,10 @@ from dataclasses import dataclass, field
 
 from interpretune.base.config.datamodule import ITDataModuleConfig
 from interpretune.base.config.module import ITConfig, ITSerializableCfg
+from interpretune.base.config.shared import ITSharedConfig, Adapter
 from interpretune.utils.warnings import unexpected_state_msg_suffix
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.adapters import ADAPTER_REGISTRY
-from interpretune.adapters.registration import Adapter
 from interpretune.base.contract.protocol import (DataModuleInitable, ModuleSteppable, ITModuleProtocol,
                                                  ITDataModuleProtocol)
 
@@ -26,6 +26,9 @@ class NamedWrapper:
 
 
 class ITMeta(type):
+
+    supported_component_keys = ('datamodule', 'dm', 'module', 'm')
+
     def __new__(mcs, name, bases, classdict, **kwargs):
         component, input, ctx = mcs._validate_build_ctx(kwargs)
         # TODO: add runtime checks for adherence to IT protocol here?
@@ -42,7 +45,7 @@ class ITMeta(type):
         for kwarg in required_kwargs:
             if kwarg not in kwargs:
                 raise ValueError(f"{kwarg} must be provided")
-        if (component := kwargs.get('component')) not in ('module', 'datamodule', 'm', 'dm'):
+        if (component := kwargs.get('component')) not in ITMeta.supported_component_keys:
             raise ValueError(f"Specified component was {component}, should be either 'module' or 'datamodule'")
         if not callable(input := kwargs.get('input')):
             raise ValueError(f"Specified input {input} is not a callable, it should be the class to be enriched.")
@@ -58,7 +61,7 @@ class ITMeta(type):
                 component_key = 'datamodule'
             case 'module' | 'm':
                 component_key = 'module'
-        assert component_key is not None, "invalid component, should be in: ('module', 'datamodule', 'm', 'dm')"
+        assert component_key is not None, f"invalid component, should be in: {ITMeta.supported_component_keys}"
         return ADAPTER_REGISTRY.get((component_key, *ctx))
 
 @dataclass(kw_only=True)
@@ -75,6 +78,7 @@ class ITSessionConfig(UnencapsulatedArgs):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     datamodule_cfg: ITDataModuleConfig
     module_cfg: ITConfig
+    shared_cfg: Optional[ITSharedConfig | Dict] = None
     datamodule_cls: Optional[Type[DataModuleInitable] | str] = None
     module_cls: Optional[Type[ModuleSteppable] | str] = None
     datamodule: Optional[ITDataModuleProtocol] = None
@@ -90,6 +94,17 @@ class ITSessionConfig(UnencapsulatedArgs):
                 module, module_cls = getattr(self, attr_k).rsplit(".", 1)
                 mod = importlib.import_module(module)
                 setattr(self, attr_k, getattr(mod, module_cls, None))
+        if self.shared_cfg:
+            if isinstance(self.shared_cfg, dict):
+                self.shared_cfg = ITSharedConfig(**self.shared_cfg)
+            for attr, value in self.shared_cfg.__dict__.items():
+                for cfg in [self.datamodule_cfg, self.module_cfg]:
+                    if getattr(cfg, attr, None) not in (None, {}, '', value):
+                        rank_zero_warn(f"Overriding `{attr}` from `{cfg.__class__.__name__}` with value from"
+                                       " `shared_cfg`")
+                    setattr(cfg, attr, value)
+                    cfg._validate_on_session_cfg_init()
+
 
 
 class ITSession(Mapping):
