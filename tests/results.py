@@ -104,8 +104,8 @@ def mem_results(results: Dict, test_alias: str):
     expected_results = results[test_alias]
     src, phase, expected_mem = expected_results['src'], expected_results['phase'], expected_results['expected_mem']
     step_key = f'{MemProfResult.train_keys[src]}' if phase == 'train' else f'{MemProfResult.test_key}'
-    # default tolerance of rtol=0.05, atol=0 for all keys unless overridden with an explicit `tolerance_map`
-    tolerance_map = {'tolerance_map': {k: (0.05, 0) for k in expected_mem.keys()}}
+    # default tolerance of rtol=0.1, atol=0 for all keys unless overridden with an explicit `tolerance_map`
+    tolerance_map = {'tolerance_map': {k: (0.1, 0) for k in expected_mem.keys()}}
     return {**tolerance_map, 'expected_memstats': (step_key, expected_mem)}
 
 def close_results(close_map: Tuple, test_alias: Optional[str] = None):

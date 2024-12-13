@@ -3,3 +3,4 @@
 finetuning-scheduler[examples, cli, extra]>=2.1.0
 bitsandbytes
 peft
+tabulate>=0.9.0

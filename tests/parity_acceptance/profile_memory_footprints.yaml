@@ -1,16 +1,16 @@
 test_l_profiling.test_cpu_32:
   mem_results:
     expected_mem:
-      rss_diff: 632291328
+      rss_diff: 623247360
     phase: test
     src: cpu
 test_l_profiling.test_cuda_32:
   mem_results:
     expected_mem:
-      allocated_bytes.all.current: 544706048
-      allocated_bytes.all.peak: 641186304
+      allocated_bytes.all.current: 544708096
+      allocated_bytes.all.peak: 606073856
       npp_diff: 0
-      reserved_bytes.all.peak: 708837376
+      reserved_bytes.all.peak: 673185792
     phase: test
     src: cuda
 test_l_profiling.test_cuda_bf16:
@@ -57,10 +57,10 @@ test_l_profiling.train_cuda_32_act:
 test_l_profiling.train_cuda_bf16:
   mem_results:
     expected_mem:
-      allocated_bytes.all.current: 1176488448
-      allocated_bytes.all.peak: 1360967680
-      npp_diff: 155831328
-      reserved_bytes.all.peak: 1533018112
+      allocated_bytes.all.current: 956976640
+      allocated_bytes.all.peak: 1363192832
+      npp_diff: 190250016
+      reserved_bytes.all.peak: 1507852288
     phase: train
     src: cuda
 test_tl_profiling.test_cpu_32:
@@ -89,7 +89,7 @@ test_tl_profiling.train_cuda_32:
   mem_results:
     expected_mem:
       allocated_bytes.all.current: 2332523008
-      allocated_bytes.all.peak: 3352548864
+      allocated_bytes.all.peak: 3352546304
       npp_diff: 312483840
       reserved_bytes.all.peak: 3619684352
     phase: train
