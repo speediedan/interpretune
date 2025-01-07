@@ -174,7 +174,7 @@ class ITCLI(ITSessionMixin):
         """Adds core arguments to the parser."""
         super().add_base_args(parser)
         parser.add_class_arguments(self.trainer_class, "trainer", instantiate=True, sub_configs=True,)
-        parser.add_dataclass_arguments(self.trainer_cfg, "trainer_cfg", instantiate=True, sub_configs=True)
+        parser.add_class_arguments(self.trainer_cfg, "trainer_cfg", instantiate=True, sub_configs=True)
         parser.link_arguments("it_session", "trainer_cfg.it_session", apply_on="instantiate")
         parser.link_arguments("trainer_cfg", "trainer.trainer_cfg", apply_on="instantiate")
 
