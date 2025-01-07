@@ -33,10 +33,10 @@ classifiers = [
 dependencies = [
     "transformer_lens",
     "sae_lens",
-    "torch >= 2.0.0",
-    "tabulate>=0.9.0",
-    "jsonargparse[signatures] >= 4.27.7",  # replace this req once adding fts req
-    # "finetuning-scheduler[possible_future_it_plugin] >= 2.1.0",
+    "torch >= 2.2.0",
+    "tabulate >= 0.9.0",
+    "jsonargparse[signatures] >= 4.35.0",  # replace this req once adding fts req
+    # "finetuning-scheduler[possible_future_it_plugin] >= 2.2.0",
 
 ]
 
@@ -44,7 +44,7 @@ dependencies = [
 
 lightning = [
     #"finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@4fe135a132e75575d0271d7b4e095c8f8da985cb",
-    "finetuning-scheduler[examples, cli, extra] >= 2.1.0",
+    "finetuning-scheduler[examples, cli, extra] >= 2.2.0",
     "bitsandbytes",
     "peft",
 ]
