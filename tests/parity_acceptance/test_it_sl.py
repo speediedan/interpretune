@@ -32,6 +32,7 @@ class SLParityCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
     model_src_key: Optional[str] = "cust"
     add_saes_on_init: bool = True
+    force_prepare_data: bool = True # TODO: remove after debugging
 
 @dataclass
 class SLParityTest(BaseAugTest):

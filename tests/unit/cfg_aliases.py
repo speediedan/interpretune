@@ -128,6 +128,7 @@ class CoreSLGPT2(BaseCfg):
     phase: Optional[str] = "test"
     model_src_key: Optional[str] = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
+    # force_prepare_data: Optional[bool] = True  # sometimes useful to enable for test debugging
 
 @dataclass(kw_only=True)
 class CoreSLCust(BaseCfg):
