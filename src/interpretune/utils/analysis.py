@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Callable, Literal, Tuple, List, Union
+from typing import Optional, Dict, Callable, Literal, Tuple, List, Union, NamedTuple
+from types import MappingProxyType
 from collections import defaultdict
 from functools import partial
 from enum import auto
@@ -10,6 +11,9 @@ from transformers import BatchEncoding, PreTrainedTokenizerBase
 from transformer_lens import ActivationCache
 from transformer_lens.hook_points import HookPoint, NamesFilter
 from IPython.display import IFrame, display
+from tabulate import tabulate
+import plotly.express as px
+import pandas as pd
 
 from interpretune.utils.import_utils import _SL_AVAILABLE
 from interpretune.adapters.sae_lens import SAELensModule
@@ -18,7 +22,6 @@ from interpretune.base.config.shared import AutoStrEnum
 
 if _SL_AVAILABLE:
     from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
-
 else:
     def get_pretrained_saes_directory():
         raise NotImplementedError("sae_lens not available")
@@ -85,8 +88,9 @@ class AnalysisBatch:
     grad_cache: ActivationCache = None
     answer_indices: torch.Tensor = None
     alive_latents: dict[str, list[int]] = None
+    # TODO: need to rename this to collected activations or add a collected_activations field in addition to
+    #       correct_activations for use cases where we want to keep all activations
     correct_activations: dict[str, torch.Tensor] = None
-    ablation_effects: dict[str, torch.Tensor] = field(default_factory=dict)
     attribution_values: dict[str, torch.Tensor] = field(default_factory=dict)
     tokens: torch.Tensor = None
     prompts: list[str] = None
@@ -356,42 +360,6 @@ class AnalysisCfg:
             )
         return fwd_hooks, bwd_hooks
 
-def compute_correct(analysis_obj: AnalysisCache | AnalysisCfg,
-                    mode: Union[str, AnalysisMode, None] = None) -> tuple[int, float, Optional[list]]:
-    """Compute correct prediction statistics for a given analysis mode.
-
-    Args:
-        log_summs: Either an AnalysisCache containing prediction results or an AnalysisCfg object
-        mode: Analysis mode to compute statistics for. Only required if passing an AnalysisCache
-
-    Returns:
-        Tuple of (total_correct, percentage_correct, batch_predictions) for the given mode
-        batch_predictions is None except for ablation mode where it contains the modal predictions
-    """
-    # Handle input type and get mode
-    if isinstance(analysis_obj, AnalysisCfg):
-        analysis_cache = analysis_obj.analysis_cache
-        mode = analysis_obj.mode
-    else:
-        if mode is None:
-            raise ValueError("mode argument required when passing AnalysisCache")
-        analysis_cache = analysis_obj
-
-    if isinstance(mode, str):
-        mode = AnalysisMode(mode)
-
-    batch_preds = (
-        [b.mode(dim=0).values.cpu() for b in analysis_cache.by_sae('preds').batch_join(across_saes=True)]
-        if mode == AnalysisMode.ablation else analysis_cache.preds
-    )
-    correct_statuses = [
-        (labels == preds).nonzero().unique().size(0)
-        for labels, preds in zip(analysis_cache.orig_labels, batch_preds)
-    ]
-    total_correct = sum(correct_statuses)
-    percentage_correct = total_correct / (len(torch.cat(analysis_cache.orig_labels))) * 100
-    return (total_correct, percentage_correct, batch_preds if mode == AnalysisMode.ablation else None)
-
 def get_latents_and_indices(module: SAELensModule, analysis_cfg: AnalysisCfg, batch: BatchEncoding, batch_idx: int,
                             analysis_batch: Optional[AnalysisBatch] = None,
                             cache: Optional[ActivationCache] = None) -> Tuple[torch.Tensor, dict]:
@@ -474,11 +442,11 @@ def calc_ablation_effects(module: SAELensModule, analysis_batch: AnalysisBatch, 
     assert analysis_cfg.base_logit_diffs, "base_logit_diffs required for ablation mode"
     if batch_idx >= len(analysis_cfg.base_logit_diffs):
         raise IndexError(f"Batch index {batch_idx} out of range for base_logit_diffs")
-    ablation_effects = {}
+    attribution_values = {}
     per_latent = {'loss': defaultdict(dict),'logit_diffs': defaultdict(dict),'preds': defaultdict(dict),
                     'answer_logits': defaultdict(dict)}
     for act_name, logits in analysis_batch.answer_logits.items():
-        ablation_effects[act_name] = torch.zeros(batch["input"].size(0), module.sae_handles[0].cfg.d_sae)
+        attribution_values[act_name] = torch.zeros(batch["input"].size(0), module.sae_handles[0].cfg.d_sae)
         for latent_idx in analysis_batch.alive_latents[act_name]:
             loss_preds_diffs = get_loss_preds_diffs(module, analysis_batch, analysis_cfg, logits[latent_idx])
             for metric_name, value in zip(per_latent.keys(), loss_preds_diffs):
@@ -493,11 +461,11 @@ def calc_ablation_effects(module: SAELensModule, analysis_batch: AnalysisBatch, 
                 if t.dim() == 0:
                     t.unsqueeze_(0)
             base_diffs = base_diffs.cpu()
-            ablation_effects[act_name][example_mask, latent_idx] = (
+            attribution_values[act_name][example_mask, latent_idx] = (
                 base_diffs[example_mask] - per_latent['logit_diffs'][act_name][latent_idx]
             )
     per_latent_results = {key: per_latent[key] for key in ['loss', 'logit_diffs', 'preds', 'answer_logits']}
-    return per_latent_results, ablation_effects
+    return per_latent_results, attribution_values
 
 def calc_attribution_values(module: SAELensModule, analysis_batch: AnalysisBatch, analysis_cfg: AnalysisCfg,
                             batch: BatchEncoding, batch_idx: int) -> Tuple[dict, dict]:
@@ -543,9 +511,9 @@ def loss_and_logit_diffs(module: SAELensModule, analysis_batch: AnalysisBatch, a
     if analysis_cfg.mode in [AnalysisMode.clean_w_sae, AnalysisMode.clean_no_sae]:
         calc_clean_diffs(module, analysis_batch, analysis_cfg, batch)
     elif analysis_cfg.mode == AnalysisMode.ablation:
-        per_latent_results, ablation_effects = calc_ablation_effects(
+        per_latent_results, attribution_values = calc_ablation_effects(
             module=module, analysis_batch=analysis_batch, analysis_cfg=analysis_cfg, batch=batch, batch_idx=batch_idx)
-        analysis_batch.update(**per_latent_results, ablation_effects=ablation_effects)
+        analysis_batch.update(**per_latent_results, attribution_values=attribution_values)
     elif analysis_cfg.mode == AnalysisMode.attr_patching:
         attribution_values, correct_activations = calc_attribution_values(
             module=module, analysis_batch=analysis_batch, analysis_cfg=analysis_cfg, batch=batch, batch_idx=batch_idx)
@@ -587,6 +555,316 @@ def batch_alive_latents(answer_indices, cache, names_filter):
             alive_latents[name] = [alive_latents[name]]
     return alive_latents
 
+@dataclass(kw_only=True)
+class BaseMetrics:
+    """Base class for all latent metrics containers."""
+    custom_repr: Dict[str, str] = field(default_factory=dict)
+    run_name: Optional[str] = None
+
+    def __post_init__(self):
+        self._set_field_repr()
+        # Validation of metric dictionaries
+        metric_dicts = [
+            value for value in self.__dict__.values()
+            if isinstance(value, dict) and value not in (self.custom_repr, self._field_repr)
+        ]
+
+        if metric_dicts:
+            reference_keys = set(metric_dicts[0].keys())
+            if not all(set(d.keys()) == reference_keys for d in metric_dicts):
+                raise ValueError("All hook dictionaries must have the same keys")
+
+    def get_field_name(self, field: str) -> str:
+        """Get display name for a metric field."""
+        return self._field_repr.get(field, field)
+
+    def _set_field_repr(self, default_field_repr: Optional[Dict] = None) -> None:
+        """Update field representations with defaults and custom values."""
+        # Initialize field_repr if not already done
+        if not hasattr(self, '_field_repr'):
+            self._field_repr = {}
+        default_values = default_field_repr or {}
+        self._field_repr.update({**default_values, **self.custom_repr})
+
+    def get_field_names(self, dict_only: bool = False) -> Dict[str, str]:
+        """Get all non-protected field names and their representations.
+
+        Args:
+            dict_only: If True, return only fields that are dictionaries
+
+        Returns:
+            Dict mapping field names to their display representations
+        """
+        return {f: r for f, r in self._field_repr.items() if f != 'custom_repr' and
+               (not dict_only or isinstance(getattr(self, f), dict))}
+
+@dataclass(kw_only=True)
+class ActivationSumm(BaseMetrics):
+    """Container for activation summary metrics."""
+    mean_activation: Dict[str, torch.Tensor]
+    num_samples_active: Dict[str, torch.Tensor]
+
+    def __post_init__(self):
+        _default_field_repr = MappingProxyType({
+            'mean_activation': 'Mean Activation',
+            'num_samples_active': 'Number Active'
+        })
+        self._set_field_repr(_default_field_repr)
+        super().__post_init__()
+
+@dataclass(kw_only=True)
+class LatentMetrics(ActivationSumm):
+    """Container for latent analysis metrics.
+
+    Each metric maps sae names to tensors of latent-level statistics.
+    """
+    total_effect: Dict[str, torch.Tensor]
+    mean_effect: Dict[str, torch.Tensor]
+    proportion_samples_active: Dict[str, torch.Tensor]
+
+    def __post_init__(self):
+        _default_field_repr = MappingProxyType({'total_effect': 'Total Effect', 'mean_effect': 'Mean Effect',
+                                                'proportion_samples_active': 'Proportion Active'})
+        self._set_field_repr(_default_field_repr)
+        super().__post_init__()
+
+def display_latent_dashboards(
+    metrics: LatentMetrics,
+    title: str,
+    sae_release: str,
+    hook_to_sae_id: Callable[[str], str] = lambda hook: f"blocks.{hook.split('.')[1]}.hook_z",
+    top_k: int = 1
+) -> None:
+    """Print top positive and negative latent dashboards for all hooks in metrics."""
+
+    analysis_dict = metrics.total_effect
+    activation_counts = metrics.num_samples_active
+
+    for hook_name, total_values in analysis_dict.items():
+        print(f"\n{title} for {hook_name}:")
+
+        directions = {
+            "positive": total_values.topk(top_k),
+            "negative": total_values.topk(top_k, largest=False),
+        }
+
+        for direction, (values, indices) in directions.items():
+            print(f"\n{direction}:")
+            for value, idx in zip(values, indices):
+                effect_str = f"#{idx} had total effect {value:.2f}"
+                effect_str += f" and was active in {activation_counts[hook_name][idx]} examples"
+                print(effect_str)
+
+                display_dashboard(
+                    sae_release=sae_release,
+                    sae_id=hook_to_sae_id(hook_name),
+                    latent_idx=int(idx),
+                )
+
+def calc_activation_summary(analysis_cache: AnalysisCache) -> ActivationSumm:
+    """Calculate per-SAE activation summary from analysis cache.
+
+    Computes mean activations and number of non-zero activations per SAE based on activation data
+    stored in AnalysisCache. The cache must contain 'correct_activations' data.
+
+    Args:
+        analysis_cache (AnalysisCache): Cache containing SAE activation data.
+            Must include 'correct_activations' data.
+
+    Returns:
+        ActivationSumm: Container with:
+            - mean_activation: Mean activation values per SAE
+            - num_samples_active: Number of non-zero activations per SAE
+
+    Raises:
+        ValueError: If no 'correct_activations' data is present in analysis_cache.
+    """
+    if not analysis_cache.correct_activations:
+        raise ValueError("Analysis cache requires 'correct_activations' data to calculate per-SAE activation stats")
+
+    sae_data = analysis_cache.by_sae('correct_activations').batch_join()
+    mean_activation = sae_data.apply_op_by_sae(operation='mean', dim=0)
+    num_samples_active = sae_data.apply_op_by_sae(operation=torch.count_nonzero, dim=0)
+
+    return ActivationSumm(mean_activation=mean_activation, num_samples_active=num_samples_active)
+
+class PredSumm(NamedTuple):
+    total_correct: int
+    percentage_correct: float
+    batch_predictions: Optional[list]
+
+def compute_correct(analysis_obj: AnalysisCache | AnalysisCfg,
+                    mode: Union[str, AnalysisMode, None] = None) -> PredSumm:
+    """Compute correct prediction statistics for a given analysis mode.
+
+    Args:
+        log_summs: Either an AnalysisCache containing prediction results or an AnalysisCfg object
+        mode: Analysis mode to compute statistics for. Only required if passing an AnalysisCache
+
+    Returns:
+        PredSumm containing:
+            total_correct: Total number of correct predictions
+            percentage_correct: Percentage of correct predictions
+            batch_predictions: Modal predictions for ablation mode, None otherwise
+    """
+    # Handle input type and get mode
+    if isinstance(analysis_obj, AnalysisCfg):
+        analysis_cache = analysis_obj.analysis_cache
+        mode = analysis_obj.mode
+    else:
+        if mode is None:
+            raise ValueError("mode argument required when passing AnalysisCache")
+        analysis_cache = analysis_obj
+
+    if isinstance(mode, str):
+        mode = AnalysisMode(mode)
+
+    batch_preds = (
+        [b.mode(dim=0).values.cpu() for b in analysis_cache.by_sae('preds').batch_join(across_saes=True)]
+        if mode == AnalysisMode.ablation else analysis_cache.preds
+    )
+    correct_statuses = [
+        (labels == preds).nonzero().unique().size(0)
+        for labels, preds in zip(analysis_cache.orig_labels, batch_preds)
+    ]
+    total_correct = sum(correct_statuses)
+    percentage_correct = total_correct / (len(torch.cat(analysis_cache.orig_labels))) * 100
+    return PredSumm(total_correct, percentage_correct,
+                    batch_preds if mode == AnalysisMode.ablation else None)
+
+def calculate_latent_metrics(
+    analysis_cache: AnalysisCache,
+    pred_summ: PredSumm,
+    activation_summary: Optional[ActivationSumm] = None,
+    filter_by_correct: bool = True,
+    run_name: Optional[str] = None
+) -> LatentMetrics:
+    """Calculate latent metrics from analysis cache.
+
+    Args:
+        analysis_cache: Analysis cache containing results and summaries
+        pred_summ: Prediction summary containing model predictions
+        activation_summary: Optional summary of activation statistics. If None, will be calculated.
+        filter_by_correct: If True, only use examples with correct predictions. Default True.
+        run_name: Optional name for this analysis run
+
+    Returns:
+        LatentMetrics object containing computed metrics
+    """
+    if activation_summary is None:
+        activation_summary = calc_activation_summary(analysis_cache)
+
+    total_examples = len(torch.cat(analysis_cache.orig_labels))
+
+    correct_mask = None
+    if filter_by_correct:
+        if pred_summ.batch_predictions is not None:
+            correct_mask = torch.cat([
+                (labels == preds) for labels, preds in
+                zip(analysis_cache.orig_labels, pred_summ.batch_predictions)
+            ])
+        else:
+            correct_mask = torch.cat([(diffs > 0) for diffs in analysis_cache.logit_diffs])
+        total_examples = correct_mask.sum()
+
+    proportion_samples_active = activation_summary.num_samples_active.apply_op_by_sae(operation=torch.div,
+                                                                                   other=total_examples)
+
+    attribution_values = analysis_cache.by_sae('attribution_values').batch_join()
+
+    if filter_by_correct:
+        per_example_latent_effects = attribution_values.apply_op_by_sae(
+            operation=lambda x, mask: x[mask],
+            mask=correct_mask
+        )
+    else:
+        per_example_latent_effects = attribution_values
+
+    total_effect = per_example_latent_effects.apply_op_by_sae(operation=torch.sum, dim=0)
+    # TODO: make mean effect normalized by num samples active?
+    mean_effect = per_example_latent_effects.apply_op_by_sae(operation=torch.mean, dim=0)
+
+    return LatentMetrics(
+        total_effect=total_effect,
+        mean_effect=mean_effect,
+        proportion_samples_active=proportion_samples_active,
+        mean_activation=activation_summary.mean_activation,
+        num_samples_active=activation_summary.num_samples_active,
+        run_name=run_name
+    )
+
+def create_attribution_tables(metrics: LatentMetrics,
+                            sort_by: str = 'total_effect',
+                            top_k: int = 10,
+                            filter_type: Literal['positive', 'negative', 'both'] = 'both',
+                            per_sae: Optional[bool] = False) -> Dict[str, str]:
+    """Creates formatted tables of attribution metrics.
+
+    Args:
+        metrics: Instance of LatentMetrics or subclass containing attribution data
+        sort_by: Attribute name from metrics instance to sort by
+        top_k: Number of top entries to include
+        filter_type: Which values to include ('positive', 'negative', or 'both')
+        per_hook: Whether to create separate tables per hook
+    """
+    # Validate sort_by attribute exists
+    if not hasattr(metrics, sort_by):
+        valid_attrs = [attr for attr in dir(metrics) if not attr.startswith('_')]
+        raise ValueError(f"Invalid sort_by field '{sort_by}'. Must be one of: {valid_attrs}")
+
+    sort_metric = getattr(metrics, sort_by)
+    tables = {}
+    hooks = list(sort_metric.keys()) if per_sae else ['all']
+
+    # Get metric names and their display representations
+    metric_names = metrics.get_field_names(dict_only=True)
+
+    for hook in hooks:
+        for sign in (['positive', 'negative'] if filter_type == 'both' else [filter_type]):
+            largest = (sign == 'positive')
+            if per_sae:
+                values = sort_metric[hook]
+                topk_values, indices = torch.topk(values, min(top_k, len(values)), largest=largest)
+                table_data = []
+                for idx, val in zip(indices, topk_values):
+                    if (largest and val > 0) or (not largest and val < 0):
+                        row = {
+                            'Hook': hook,
+                            'Latent Index': idx.item(),
+                        }
+                        for metric_attr, display_name in metric_names.items():
+                            metric_values = getattr(metrics, metric_attr)
+                            row[display_name] = f"{float(metric_values[hook][idx]):.4f}"
+                        table_data.append(row)
+            else:
+                # Combine values from all hooks
+                all_values = []
+                for h in sort_metric.keys():
+                    values = sort_metric[h]
+                    topk_values, indices = torch.topk(values, min(top_k, len(values)), largest=largest)
+                    for idx, val in zip(indices, topk_values):
+                        if (largest and val > 0) or (not largest and val < 0):
+                            all_values.append((h, idx, val))
+                # Sort combined values
+                all_values.sort(key=lambda x: x[2], reverse=largest)
+                table_data = []
+                for h, idx, _ in all_values[:top_k]:
+                    row = {
+                        'Hook': h,
+                        'Latent Index': idx.item(),
+                    }
+                    for metric_attr, display_name in metric_names.items():
+                        metric_values = getattr(metrics, metric_attr)
+                        row[display_name] = f"{float(metric_values[hook][idx]):.4f}"
+                    table_data.append(row)
+
+            if table_data:
+                title = f"Top {top_k} {sign} {sort_by} "
+                title += f"for {hook}" if per_sae else "across all hooks"
+                tables[title] = tabulate(table_data, headers='keys', tablefmt='pipe')
+
+    return tables
+
 def ablate_sae_latent(
     sae_acts: torch.Tensor,
     hook: HookPoint,
@@ -609,3 +887,131 @@ def display_dashboard(sae_release="gpt2-small-res-jb", sae_id="blocks.9.hook_res
 
     print(url)
     display(IFrame(url, width=width, height=height))
+
+def plot_latent_effects(analysis_cache, per_batch: Optional[bool] = False, title_prefix="Latent effects of"):
+    """Plot Latent Effects aggregated or per-batch.
+
+    Args:
+        analysis_cache: Analysis cache containing attribution values and alive latents
+        per_batch: If True, plot effects per batch. If False, aggregate across all batches. Defaults to True.
+        title_prefix: Optional string prefix for plot titles. Defaults to "Latent effects of".
+
+    Returns:
+        None - displays plots in notebook
+    """
+    if per_batch:
+        # Plot per batch
+        for i, batch in enumerate(analysis_cache.attribution_values):
+            for act_name, attribution_values in batch.items():
+                len_alive = len(analysis_cache.alive_latents[i][act_name])
+                px.line(
+                    attribution_values.mean(dim=0).cpu().numpy(),
+                    title=f"{title_prefix} ({act_name}) latent effect on logit diff of batch {i} ({len_alive} alive)",
+                    labels={"index": "Latent", "value": "Latent effect on logit diff"},
+                    template="ggplot2",
+                    width=1000
+                ).update_layout(showlegend=False).show()
+    else:
+        # Aggregate across all batches using SAEAnalysisDict operations
+        stacked_values = analysis_cache.by_sae('attribution_values').batch_join()
+        len_alives = {act_name: len({latent for batch in analysis_cache.alive_latents
+                                        for latent in batch.get(act_name, [])})
+                     for act_name in stacked_values.keys()}
+
+        mean_effects = stacked_values.apply_op_by_sae(operation='mean', dim=0)
+
+        for act_name, effects in mean_effects.items():
+            px.line(
+                effects.cpu().numpy(),
+                title=(f"{title_prefix} ({act_name}) Latent effect on logit diff "
+                       f"(aggregated, {len_alives[act_name]} alive)"),
+                labels={"index": "Latent", "value": "Latent effect on logit diff"},
+                template="ggplot2",
+                width=1000
+            ).update_layout(showlegend=False).show()
+
+
+def latent_metrics_scatter(metrics1: LatentMetrics, metrics2: LatentMetrics,
+                            metric_field: str = 'total_effect',
+                            label1: str = "Metrics 1", label2: str = "Metrics 2",
+                            width: int = 800, height: int = 600) -> None:
+    """Create scatter plots comparing two sets of LatentMetrics.
+
+    Args:
+        metrics1: First LatentMetrics to compare
+        metrics2: Second LatentMetrics to compare
+        metric_field: Name of metric field to compare (default: 'total_effect')
+        label1: Label for first metrics set
+        label2: Label for second metrics set
+        width: Plot width in pixels
+        height: Plot height in pixels
+    """
+    if not hasattr(metrics1, metric_field) or not hasattr(metrics2, metric_field):
+        raise ValueError(f"Metric field '{metric_field}' not found in one or both metrics")
+
+    metrics1_data = getattr(metrics1, metric_field)
+    metrics2_data = getattr(metrics2, metric_field)
+
+    for hook_name in metrics1_data.keys():
+        df = pd.DataFrame({
+            label1: metrics1_data[hook_name].numpy(),
+            label2: metrics2_data[hook_name].numpy(),
+            "Latent": torch.arange(metrics2_data[hook_name].size(0)).numpy(),
+        })
+
+        px.scatter(
+            df,
+            x=label1,
+            y=label2,
+            hover_data=["Latent"],
+            title=f"{label2} vs {label1} {metric_field} for {hook_name}",
+            template="ggplot2",
+            width=width,
+            height=height,
+        ).add_shape(
+            type="line",
+            x0=metrics2_data[hook_name].min(),
+            x1=metrics2_data[hook_name].max(),
+            y0=metrics2_data[hook_name].min(),
+            y1=metrics2_data[hook_name].max(),
+            line=dict(color="red", width=2, dash="dash"),
+        ).show()
+
+def display_ref_vs_sae_logit_diffs(sae: AnalysisCache, no_sae_ref: AnalysisCache, tokenizer: PreTrainedTokenizerBase,
+                                    top_k: int = 10, max_prompt_width: int = 80) -> None:
+    """Display a table comparing reference vs SAE logit differences.
+
+    Args:
+        sae: Analysis cache from clean with SAE run
+        no_sae_ref: Analysis cache from clean without SAE reference run
+        tokenizer: Tokenizer for decoding labels
+        top_k: Number of top samples to show
+        max_prompt_width: Maximum width for prompt column
+    """
+    translated_labels = [tokenizer.batch_decode(labels, **DEFAULT_DECODE_KWARGS) for labels in no_sae_ref.labels]
+
+    df = pd.DataFrame(
+        {
+            "prompt": sae.prompts,
+            "correct_answer": translated_labels,
+            "clean_logit_diff": no_sae_ref.logit_diffs,
+            "sae_logit_diff": sae.logit_diffs,
+        }
+    )
+    df = df.explode(["prompt", "correct_answer", "clean_logit_diff", "sae_logit_diff"])
+    df["sample_id"] = range(len(df))
+    df = df[["sample_id", "prompt", "correct_answer", "clean_logit_diff", "sae_logit_diff"]]
+    df = df[df.clean_logit_diff > 0].sort_values(by="clean_logit_diff", ascending=False)
+
+    max_samples = min(top_k, len(df))
+    df = df.head(max_samples)
+
+    print(tabulate(
+        df,
+        headers=["Sample ID", "Prompt", "Answer", "Clean Logit Diff", "SAE Logit Diff"],
+        maxcolwidths=[None, max_prompt_width, None, None, None],
+        tablefmt="grid",
+        numalign="left",
+        floatfmt="+.3f",
+        showindex="never"
+    ))
