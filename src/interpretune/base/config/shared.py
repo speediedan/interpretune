@@ -1,16 +1,18 @@
-from typing import Any, Dict, Optional, List, Tuple, TypeVar, Type, Set, Sequence, TypeAlias
+from typing import Any, TypeVar, TypeAlias
+from collections.abc import Sequence
 from dataclasses import dataclass, field, fields, make_dataclass
 import inspect
 import logging
 import os
 import sys
-from enum import auto, Enum
+from enum import auto
 
 import yaml
 from transformers import PreTrainedTokenizerBase
 
 from interpretune.utils.logging import rank_zero_warn, rank_zero_debug
-from interpretune.utils.types import AnyDataClass
+from interpretune.utils.types import AnyDataClass, AutoStrEnum, SetDerivedEnum
+
 
 log = logging.getLogger(__name__)
 
@@ -18,21 +20,27 @@ log = logging.getLogger(__name__)
 # Core Enums
 ################################################################################
 
-class AutoStrEnum(Enum):
-    def _generate_next_value_(name, start, count, last_values) -> str:  # type: ignore
-        return name
+# TODO: consider switching these to a data structure that natively allows for more flexible DRY composition
+#       (currently preferring a custom enum for IDE autocompletion etc.)
 
-class CorePhase(AutoStrEnum):
-    train = auto()
-    validation = auto()
-    test = auto()
-    predict = auto()
+CORE_PHASES = frozenset(['train', 'validation', 'test', 'predict'])
+EXT_PHASES = frozenset(['analysis'])
+ALL_PHASES = CORE_PHASES.union(EXT_PHASES)
 
-class CoreSteps(AutoStrEnum):
-    training_step = auto()
-    validation_step = auto()
-    test_step = auto()
-    predict_step = auto()
+class CorePhases(SetDerivedEnum):
+    # The _input_set class attribute is used by DerivedEnumMeta to generate enum members.
+    _input_set = CORE_PHASES
+
+class CoreSteps(SetDerivedEnum):
+    _input_set = CORE_PHASES
+    _transform = lambda x: f"{x}_step"
+
+class AllPhases(SetDerivedEnum):
+    _input_set = ALL_PHASES
+
+class AllSteps(SetDerivedEnum):
+    _input_set = ALL_PHASES
+    _transform = lambda x: f"{x}_step"
 
 # NOTE [Interpretability Adapters]:
 # `TransformerLens` is the first supported interpretability adapter but support for other adapters is expected
@@ -53,6 +61,12 @@ class Adapter(AutoStrEnum):
 
     def __lt__(self, other: 'Adapter') -> bool:
         return self.value < other.value
+
+class AnalysisMode(AutoStrEnum):
+    clean_no_sae = auto()
+    clean_w_sae = auto()
+    attr_patching = auto()
+    ablation = auto()
 
 AdapterSeq: TypeAlias = Sequence[Adapter | str] | Adapter | str
 
@@ -87,8 +101,8 @@ class ITSerializableCfg(yaml.YAMLObject):
 @dataclass(kw_only=True)
 class AutoCompConfig(ITSerializableCfg):
     module_cfg_name: str
-    module_cfg_mixin: List[AnyDataClass] | AnyDataClass
-    target_adapters: Optional[AdapterSeq] = None
+    module_cfg_mixin: list[AnyDataClass] | AnyDataClass
+    target_adapters: AdapterSeq | None = None
 
     def __post_init__(self):
         if not isinstance(self.module_cfg_mixin, list):
@@ -98,7 +112,7 @@ class AutoCompConfig(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class AutoCompConf(ITSerializableCfg):
-    auto_comp_cfg: Optional[AutoCompConfig] = None
+    auto_comp_cfg: AutoCompConfig | None = None
 
     def __new__(cls, **kwargs):
         if kwargs.get('auto_comp_cfg', None) is not None:
@@ -122,7 +136,7 @@ class AutoCompConf(ITSerializableCfg):
         built_class._composed_classes = composition_classes
         return built_class
 
-def collect_exhaustive_attr_set(target_type: Type) -> Set[str]:
+def collect_exhaustive_attr_set(target_type: type) -> set[str]:
     target_type_attrs = {attr for attr in dir(target_type) if not attr.startswith('__')}
     parent_attrs = set()
     for parent_cls in inspect.getmro(target_type)[1:]:
@@ -132,14 +146,14 @@ def collect_exhaustive_attr_set(target_type: Type) -> Set[str]:
     all_attrs = target_type_attrs.union(parent_attrs).union(dataclass_fields)
     return all_attrs
 
-def candidate_subclass_attrs(kwargs: Dict, target_type: Type) -> Dict:
+def candidate_subclass_attrs(kwargs: dict, target_type: type) -> dict:
     """Finds the keys in kwargs that are not attributes of target_type."""
     all_attrs = collect_exhaustive_attr_set(target_type)
     return {key: value for key, value in kwargs.items() if key not in all_attrs and not key.startswith('__')}
 
 T = TypeVar("T")
 
-def find_adapter_subclasses(T: Type, target_adapters: Optional[AdapterSeq] = None) -> Dict[str, Type[T]]:
+def find_adapter_subclasses(T: type, target_adapters: AdapterSeq | None = None) -> dict[str, type[T]]:
     """Searches the current global namespace underneath `interpretune.adapters` for subclasses of `T` and returns
     them.
 
@@ -160,8 +174,8 @@ def find_adapter_subclasses(T: Type, target_adapters: Optional[AdapterSeq] = Non
                 superclasses[adapter] = member
     return subclasses, superclasses
 
-def search_candidate_subclass_attrs(candidate_modules: Dict[Adapter, Type],
-                                    kwargs_not_in_target_type: Dict) -> Optional[Tuple[Type]]:
+def search_candidate_subclass_attrs(candidate_modules: dict[Adapter, type],
+                                    kwargs_not_in_target_type: dict) -> tuple[type] | None:
     valid_subclasses = []
     min_extra_attrs = float('inf')
     for _, module_class in candidate_modules.items():
@@ -179,7 +193,7 @@ def search_candidate_subclass_attrs(candidate_modules: Dict[Adapter, Type],
         return
     return (valid_subclasses[0],)  # Return the first valid subclass (they all have the same number of extra attributes)
 
-def check_non_subclasses(target_class: Type, candidate_classes: List[Type]) -> Optional[Tuple[Type]]:
+def check_non_subclasses(target_class: type, candidate_classes: list[type]) -> tuple[type] | None:
     unfullfilled_subclasses = []
     for cls in candidate_classes:
         if not issubclass(target_class, cls):
@@ -210,7 +224,7 @@ def issue_incomplete_composition_feedback(auto_comp_cfg, kwargs_not_in_target_ty
                     f"{auto_comp_cfg.module_cfg_mixin}, trying instantiation without further composition.")
         return
 
-def resolve_composition_classes(auto_comp_cfg: AutoCompConfig, kwargs: Dict) -> Optional[Tuple[Type]]:
+def resolve_composition_classes(auto_comp_cfg: AutoCompConfig, kwargs: dict) -> tuple[type] | None:
     adapter_composition_classes = None
     subclasses, superclasses = find_adapter_subclasses(auto_comp_cfg._orig_cfg_cls, auto_comp_cfg.target_adapters)
     kwargs_not_in_target_type = candidate_subclass_attrs(kwargs, auto_comp_cfg._orig_cfg_cls)
@@ -239,12 +253,12 @@ def resolve_composition_classes(auto_comp_cfg: AutoCompConfig, kwargs: Dict) -> 
 class ITSharedConfig(ITSerializableCfg):
     model_name_or_path: str = ''
     task_name: str = ''
-    tokenizer_name: Optional[str] = None
-    tokenizer: Optional[PreTrainedTokenizerBase] = None
-    os_env_model_auth_key: Optional[str] = None
-    tokenizer_id_overrides: Optional[Dict] = field(default_factory=dict)
-    tokenizer_kwargs: Dict[str, Any] = field(default_factory=dict)
-    defer_model_init: Optional[bool] = False
+    tokenizer_name: str | None = None
+    tokenizer: PreTrainedTokenizerBase | None = None
+    os_env_model_auth_key: str | None = None
+    tokenizer_id_overrides: dict | None = field(default_factory=dict)
+    tokenizer_kwargs: dict[str, Any] = field(default_factory=dict)
+    defer_model_init: bool | None = False
 
     def _validate_on_session_cfg_init(self):
         # deferred validation for attributes that my be set via shared datamodule/module config

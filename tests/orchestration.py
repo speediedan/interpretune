@@ -11,12 +11,11 @@
 # limitations under the License.
 # Initially based on https://bit.ly/3oQ8Vqf
 from pathlib import Path
-from typing import Tuple, Dict
 from unittest import mock
 
 from interpretune.base.config.shared import Adapter
 from interpretune.base.contract.session import ITSessionConfig, ITSession
-from interpretune.utils.basic_trainer import BasicTrainer, BasicTrainerCfg
+from interpretune.utils.session_runner import SessionRunner, SessionRunnerCfg
 from tests import Trainer, ModelCheckpoint
 from tests.configuration import config_modules
 
@@ -49,14 +48,14 @@ def parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode
     else:
         run_it(it_session, test_cfg)
 
-def init_it_trainer(it_session: ITSession, test_cfg: Tuple, *args, **kwargs):
+def init_it_trainer(it_session: ITSession, test_cfg: tuple, *args, **kwargs):
     # we allow passing unused args for parity testing, e.g. the IT module configured tmp_path is needed by some trainers
-    test_cfg_overrides = {k: v for k,v in test_cfg.__dict__.items() if k in BasicTrainerCfg.__dict__.keys()}
-    trainer_config = BasicTrainerCfg(it_session=it_session, **test_cfg_overrides)
-    trainer = BasicTrainer(trainer_cfg=trainer_config)
+    test_cfg_overrides = {k: v for k,v in test_cfg.__dict__.items() if k in SessionRunnerCfg.__dict__.keys()}
+    trainer_config = SessionRunnerCfg(it_session=it_session, **test_cfg_overrides)
+    trainer = SessionRunner(run_cfg=trainer_config)
     return trainer
 
-def run_it(it_session: ITSession, test_cfg: Tuple):
+def run_it(it_session: ITSession, test_cfg: tuple):
     trainer = init_it_trainer(it_session, test_cfg)
     if test_cfg.phase == "test":
         trainer.test()
@@ -71,7 +70,7 @@ def run_it(it_session: ITSession, test_cfg: Tuple):
 # Lightning Adapter Train/Test Orchestration
 ################################################################################
 
-def init_lightning_trainer(it_session: ITSession, test_cfg: Tuple, tmp_path: Path) -> Trainer:
+def init_lightning_trainer(it_session: ITSession, test_cfg: tuple, tmp_path: Path) -> Trainer:
     accelerator = "cpu" if test_cfg.device_type == "cpu" else "gpu"
     callbacks = instantiate_callbacks(getattr(test_cfg, 'callback_cfgs', {}))
     trainer_steps = {"limit_train_batches": test_cfg.limit_train_batches,
@@ -82,7 +81,7 @@ def init_lightning_trainer(it_session: ITSession, test_cfg: Tuple, tmp_path: Pat
                       num_sanity_val_steps=0, callbacks=callbacks, **trainer_steps)
     return trainer
 
-def run_lightning(it_session: ITSessionConfig, test_cfg: Tuple, tmp_path: Path) -> Trainer:
+def run_lightning(it_session: ITSessionConfig, test_cfg: tuple, tmp_path: Path) -> Trainer:
     trainer = init_lightning_trainer(it_session, test_cfg, tmp_path)
     match test_cfg.phase:
         case "train":
@@ -105,5 +104,5 @@ def lightning_prec_alias(precision: str):
     # types are tested
     return "bf16-true" if precision == "bf16" else "32-true"
 
-def instantiate_callbacks(callbacks_cfg: Dict):
+def instantiate_callbacks(callbacks_cfg: dict):
     return [callback_cls(**kwargs) for callback_cls, kwargs in callbacks_cfg.items()]

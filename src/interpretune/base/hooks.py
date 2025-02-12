@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 import torch
 
 from interpretune.base.config.module import ITConfig, ITState
@@ -25,7 +25,7 @@ class BaseITHooks:
             self._it_state._datamodule = datamodule
         self._init_dirs_and_hooks()
 
-    def configure_optimizers(self) -> Optional[OptimizerLRScheduler]:
+    def configure_optimizers(self) -> OptimizerLRScheduler | None:
         """Optional because it is not mandatory in the context of core IT modules (required for some adapter
         modules)."""
         # With FTS >= 2.0, ``FinetuningScheduler`` simplifies initial optimizer configuration by ensuring the optimizer
@@ -43,20 +43,20 @@ class BaseITHooks:
             }
         return [optimizer], [scheduler]
 
-    # N.B. we call `on_session_end` at the end of train, test and predict session types only. This is because
+    # N.B. we call `on_session_end` at the end of train, test, analysis and predict session types only. This is because
     # `on_train_end` and `on_validation_end` are called with most training sessions (when running both a fit and
     # evaluation loop as is usually the case) but only `on_test_end` with the test stage.
-    def on_train_end(self) -> Optional[Any]:
+    def on_train_end(self) -> Any | None:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
         if not self.session_complete:
             self.on_session_end()
 
-    def on_test_end(self) -> Optional[Any]:
+    def on_test_end(self) -> Any | None:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
         if not self.session_complete:
             self.on_session_end()
 
-    def on_predict_end(self) -> Optional[Any]:
+    def on_predict_end(self) -> Any | None:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
         if not self.session_complete:
             self.on_session_end()

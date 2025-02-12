@@ -2,17 +2,12 @@ from dataclasses import dataclass
 from os import PathLike
 from types import UnionType
 import inspect
+from enum import auto, Enum, EnumMeta
 from typing import (
     Any,
-    List,
-    Mapping,
-    Callable,
-    Dict,
     Optional,
     TypeVar,
     Protocol,
-    Sequence,
-    Tuple,
     TypedDict,
     Union,
     runtime_checkable,
@@ -20,7 +15,7 @@ from typing import (
     _ProtocolMeta,
     get_args
 )
-
+from collections.abc import Mapping, Callable, Sequence
 
 import torch
 from torch import Tensor
@@ -35,6 +30,40 @@ from jsonargparse import Namespace
 StrOrPath: TypeAlias = Union[str, PathLike]
 
 ################################################################################
+# Interpretune Enhanced Enums
+################################################################################
+
+class AutoStrEnum(Enum):
+    def _generate_next_value_(name, _start, _count, _last_values) -> str:  # type: ignore
+        return name
+
+# DerivedEnumMeta is a custom metaclass that adds enum members from an input set.
+class DerivedEnumMeta(EnumMeta):  # change EnumMeta alias to EnumType when 3.11 python is minimum
+    _derived_enum_internal = ("_input_set", "_transform")
+
+    @classmethod
+    def __prepare__(metacls, clsname, bases, **kwargs):
+        enum_dict = super().__prepare__(clsname, bases, **kwargs)
+        enum_dict._ignore = list(metacls._derived_enum_internal)
+        return enum_dict
+
+    def __new__(mcls, clsname, bases, classdict):
+        # Pop and remove temporary keys so they don't become enum members.
+        # While we could use '_ignore_', as we need these variables anyway, we go ahead and proactively pop them here
+        input_set = classdict.pop("_input_set", None)
+        transform = classdict.pop("_transform", None)
+        if input_set is not None:
+            if transform and callable(transform):
+                input_set = {transform(x) for x in input_set}
+            for member in sorted(input_set):
+                if member not in classdict:
+                    classdict[member] = auto()
+        return super().__new__(mcls, clsname, bases, classdict)
+
+class SetDerivedEnum(AutoStrEnum, metaclass=DerivedEnumMeta):
+    ...
+
+################################################################################
 # Framework Compatibility helper types
 # originally inspired by https://bit.ly/lightning_types definitions
 ################################################################################
@@ -46,38 +75,38 @@ class Steppable(Protocol):
     """To structurally type ``optimizer.step()``"""
 
     # Inferred from `torch.optim.optimizer.pyi`
-    def step(self, closure: Optional[Callable[[], float]] = ...) -> Optional[float]: ...
+    def step(self, closure: Callable[[], float] | None = ...) -> float | None: ...
 
 @runtime_checkable
 class Optimizable(Steppable, Protocol):
     """To structurally type ``optimizer``"""
 
-    param_groups: List[Dict[Any, Any]]
-    defaults: Dict[Any, Any]
-    state: Dict[Any, Any]
+    param_groups: list[dict[Any, Any]]
+    defaults: dict[Any, Any]
+    state: dict[Any, Any]
 
-    def state_dict(self) -> Dict[str, Dict[Any, Any]]: ...
+    def state_dict(self) -> dict[str, dict[Any, Any]]: ...
 
-    def load_state_dict(self, state_dict: Dict[str, Dict[Any, Any]]) -> None: ...
+    def load_state_dict(self, state_dict: dict[str, dict[Any, Any]]) -> None: ...
 
 
 @runtime_checkable
 class _Stateful(Protocol[_DictKey]):
     """This class is used to detect if an object is stateful using `isinstance(obj, _Stateful)`."""
 
-    def state_dict(self) -> Dict[_DictKey, Any]: ...
+    def state_dict(self) -> dict[_DictKey, Any]: ...
 
-    def load_state_dict(self, state_dict: Dict[_DictKey, Any]) -> None: ...
+    def load_state_dict(self, state_dict: dict[_DictKey, Any]) -> None: ...
 
 
 @runtime_checkable
 class LRScheduler(_Stateful[str], Protocol):
     optimizer: Optimizer
-    base_lrs: List[float]
+    base_lrs: list[float]
 
     def __init__(self, optimizer: Optimizer, *args: Any, **kwargs: Any) -> None: ...
 
-    def step(self, epoch: Optional[int] = None) -> None: ...
+    def step(self, epoch: int | None = None) -> None: ...
 
 
 # Inferred from `torch.optim.lr_scheduler.pyi`
@@ -101,7 +130,7 @@ class ReduceLROnPlateau(_Stateful[str], Protocol):
         eps: float = ...,
     ) -> None: ...
 
-    def step(self, metrics: Union[float, int, Tensor], epoch: Optional[int] = None) -> None: ...
+    def step(self, metrics: float | int | Tensor, epoch: int | None = None) -> None: ...
 
 STEP_OUTPUT = Optional[Union[Tensor, Mapping[str, Any]]]
 
@@ -109,9 +138,9 @@ LRSchedulerTypeUnion = Union[torch.optim.lr_scheduler.LRScheduler, torch.optim.l
 
 @dataclass
 class LRSchedulerConfig:
-    scheduler: Union[torch.optim.lr_scheduler.LRScheduler, ReduceLROnPlateau]
+    scheduler: torch.optim.lr_scheduler.LRScheduler | ReduceLROnPlateau
     # no custom name
-    name: Optional[str] = None
+    name: str | None = None
     # after epoch is over
     interval: str = "epoch"
     # every epoch/batch
@@ -119,40 +148,40 @@ class LRSchedulerConfig:
     # most often not ReduceLROnPlateau scheduler
     reduce_on_plateau: bool = False
     # value to monitor for ReduceLROnPlateau
-    monitor: Optional[str] = None
+    monitor: str | None = None
     # enforce that the monitor exists for ReduceLROnPlateau
     strict: bool = True
 
 
 class LRSchedulerConfigType(TypedDict, total=False):
     scheduler: Required[LRSchedulerTypeUnion]
-    name: Optional[str]
+    name: str | None
     interval: str
     frequency: int
     reduce_on_plateau: bool
-    monitor: Optional[str]
+    monitor: str | None
     scrict: bool
 
 
 class OptimizerLRSchedulerConfig(TypedDict):
     optimizer: Optimizer
-    lr_scheduler: NotRequired[Union[LRSchedulerTypeUnion, LRSchedulerConfigType]]
+    lr_scheduler: NotRequired[LRSchedulerTypeUnion | LRSchedulerConfigType]
 
 
 OptimizerLRScheduler = Optional[
     Union[
         Optimizer,
         Sequence[Optimizer],
-        Tuple[Sequence[Optimizer], Sequence[Union[LRSchedulerTypeUnion, LRSchedulerConfig]]],
+        tuple[Sequence[Optimizer], Sequence[Union[LRSchedulerTypeUnion, LRSchedulerConfig]]],
         OptimizerLRSchedulerConfig,
     ]
 ]
 
-ArgsType = Optional[Union[List[str], Dict[str, Any], Namespace]]
+ArgsType = Optional[Union[list[str], dict[str, Any], Namespace]]
 
 
 def gen_protocol_variants(supported_sub_protocols: UnionType,
-                          base_protocols: _ProtocolMeta | Tuple[_ProtocolMeta]) -> UnionType:
+                          base_protocols: _ProtocolMeta | tuple[_ProtocolMeta]) -> UnionType:
     protocol_components = []
     if not isinstance(base_protocols, tuple):
         base_protocols = (base_protocols,)

@@ -1,9 +1,10 @@
-from typing import Optional, Dict, Sequence
+from collections.abc import Sequence
 from copy import deepcopy
 from enum import auto
 from dataclasses import dataclass, field
 
-from interpretune.base.config.shared import AutoStrEnum, Adapter
+from interpretune.base.config.shared import Adapter
+from interpretune.utils.types import AutoStrEnum
 from interpretune.base.config.mixins import HFFromPretrainedConfig, GenerativeClassificationConfig
 from interpretune.adapters.transformer_lens import ITLensCustomConfig
 from interpretune.extensions.debug_generation import DebugLMConfig
@@ -45,102 +46,102 @@ test_tl_cust_2L_config = {"n_layers":2, "d_mlp": 10, "d_model":10, "d_head":5, "
 
 @dataclass(kw_only=True)
 class CoreCfgForcePrepare(BaseCfg):
-    model_src_key: Optional[str] = "cust"
-    force_prepare_data: Optional[bool] = True
-    dm_override_cfg: Optional[Dict] = field(default_factory=lambda: {'enable_datasets_cache': False,
+    model_src_key: str | None = "cust"
+    force_prepare_data: bool | None = True
+    dm_override_cfg: dict | None = field(default_factory=lambda: {'enable_datasets_cache': False,
                                                                      'dataset_path': '/tmp/force_prepare_tests_ds'})
 
 @dataclass(kw_only=True)
 class TLMechInterpCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.transformer_lens)
-    model_src_key: Optional[str] = "cust"
-    tl_cfg: Optional[Dict] = field(default_factory=lambda: ITLensCustomConfig(**tl_cust_mi_cfg))
+    model_src_key: str | None = "cust"
+    tl_cfg: dict | None = field(default_factory=lambda: ITLensCustomConfig(**tl_cust_mi_cfg))
 
 @dataclass(kw_only=True)
 class TLDebugCfg(TLParityCfg):
-    debug_lm_cfg: Optional[DebugLMConfig] = field(default_factory=lambda: DebugLMConfig(enabled=True))
-    phase: Optional[str] = "test"
-    model_src_key: Optional[str] = "gpt2"
+    debug_lm_cfg: DebugLMConfig | None = field(default_factory=lambda: DebugLMConfig(enabled=True))
+    phase: str | None = "test"
+    model_src_key: str | None = "gpt2"
 
 @dataclass(kw_only=True)
 class CoreGPT2PEFTCfg(BaseCfg):
     device_type: str = "cuda"
-    model_src_key: Optional[str] = "gpt2"
-    dm_override_cfg: Optional[Dict] = field(default_factory=lambda: {'train_batch_size': 1, 'eval_batch_size': 1})
-    hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = field(default_factory=lambda: HFFromPretrainedConfig(
+    model_src_key: str | None = "gpt2"
+    dm_override_cfg: dict | None = field(default_factory=lambda: {'train_batch_size': 1, 'eval_batch_size': 1})
+    hf_from_pretrained_cfg: HFFromPretrainedConfig | None = field(default_factory=lambda: HFFromPretrainedConfig(
         **gpt2_hf_bnb_lora_cfg, pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"},
         model_head="transformers.GPT2LMHeadModel", activation_checkpointing=True))
-    limit_train_batches: Optional[int] = 3
-    limit_val_batches: Optional[int] = 3
-    limit_test_batches: Optional[int] = 2
+    limit_train_batches: int | None = 3
+    limit_val_batches: int | None = 3
+    limit_test_batches: int | None = 2
 
 @dataclass(kw_only=True)
 class CoreGPT2PEFTSeqCfg(CoreGPT2PEFTCfg):
-    phase: Optional[str] = "test"
-    generative_step_cfg: Optional[GenerativeClassificationConfig] = \
+    phase: str | None = "test"
+    generative_step_cfg: GenerativeClassificationConfig | None = \
         field(default_factory=lambda: GenerativeClassificationConfig(enabled=False))
-    hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = field(default_factory=lambda: HFFromPretrainedConfig(
+    hf_from_pretrained_cfg: HFFromPretrainedConfig | None = field(default_factory=lambda: HFFromPretrainedConfig(
         **gpt2_hf_bnb_lora_cfg, **gpt2_seq_hf_from_pretrained_kwargs, activation_checkpointing=True))
 
 
 @dataclass(kw_only=True)
 class CoreMemProfCfg(BaseCfg):
-    memprofiler_cfg: Optional[MemProfilerCfg] = field(default_factory=lambda: MemProfilerCfg(enabled=True,
+    memprofiler_cfg: MemProfilerCfg | None = field(default_factory=lambda: MemProfilerCfg(enabled=True,
                                                                                          cuda_allocator_history=True))
-    dm_override_cfg: Optional[Dict] = field(default_factory=lambda: {'train_batch_size': 1, 'eval_batch_size': 1})
-    limit_train_batches: Optional[int] = 5
-    limit_val_batches: Optional[int] = 3
-    limit_test_batches: Optional[int] = 5
-    phase: Optional[str] = "test"
-    model_src_key: Optional[str] = "gpt2"
+    dm_override_cfg: dict | None = field(default_factory=lambda: {'train_batch_size': 1, 'eval_batch_size': 1})
+    limit_train_batches: int | None = 5
+    limit_val_batches: int | None = 3
+    limit_test_batches: int | None = 5
+    phase: str | None = "test"
+    model_src_key: str | None = "gpt2"
 
 @dataclass(kw_only=True)
 class LightningLlama3DebugCfg(BaseCfg):
-    debug_lm_cfg: Optional[DebugLMConfig] = field(default_factory=lambda: DebugLMConfig(enabled=True))
-    phase: Optional[str] = "test"
-    device_type: Optional[str] = "cuda"
-    model_src_key: Optional[str] = "llama3"
-    precision: Optional[str | int] = "bf16-true"
+    debug_lm_cfg: DebugLMConfig | None = field(default_factory=lambda: DebugLMConfig(enabled=True))
+    phase: str | None = "test"
+    device_type: str | None = "cuda"
+    model_src_key: str | None = "llama3"
+    precision: str | int | None = "bf16-true"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning,)
 
 @dataclass(kw_only=True)
 class LightningGemma2DebugCfg(BaseCfg):
-    debug_lm_cfg: Optional[DebugLMConfig] = field(default_factory=lambda: DebugLMConfig(enabled=True))
-    phase: Optional[str] = "test"
-    device_type: Optional[str] = "cuda"
-    model_src_key: Optional[str] = "gemma2"
-    precision: Optional[str | int] = "bf16-true"
+    debug_lm_cfg: DebugLMConfig | None = field(default_factory=lambda: DebugLMConfig(enabled=True))
+    phase: str | None = "test"
+    device_type: str | None = "cuda"
+    model_src_key: str | None = "gemma2"
+    precision: str | int | None = "bf16-true"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning,)
 
 @dataclass(kw_only=True)
 class LightningGPT2(BaseCfg):
-    model_src_key: Optional[str] = "gpt2"
+    model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning,)
-    model_cfg: Optional[Dict] = field(default_factory=lambda: {"tie_word_embeddings": False})
+    model_cfg: dict | None = field(default_factory=lambda: {"tie_word_embeddings": False})
 
 @dataclass(kw_only=True)
 class LightningTLGPT2(BaseCfg):
-    model_src_key: Optional[str] = "gpt2"
+    model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
 
 @dataclass(kw_only=True)
 class CoreSLGPT2(BaseCfg):
-    phase: Optional[str] = "test"
-    model_src_key: Optional[str] = "gpt2"
+    phase: str | None = "test"
+    model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
     # force_prepare_data: Optional[bool] = True  # sometimes useful to enable for test debugging
 
 @dataclass(kw_only=True)
 class CoreSLCust(BaseCfg):
-    phase: Optional[str] = "test"
-    model_src_key: Optional[str] = "cust"
+    phase: str | None = "test"
+    model_src_key: str | None = "cust"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
-    tl_cfg: Optional[Dict] = field(default_factory=lambda: ITLensCustomConfig(cfg=test_tl_cust_2L_config))
+    tl_cfg: dict | None = field(default_factory=lambda: ITLensCustomConfig(cfg=test_tl_cust_2L_config))
 
 @dataclass(kw_only=True)
 class LightningSLGPT2(BaseCfg):
-    phase: Optional[str] = "test"
-    model_src_key: Optional[str] = "gpt2"
+    phase: str | None = "test"
+    model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.sae_lens)
 
 class CLI_UNIT_TESTS(AutoStrEnum):

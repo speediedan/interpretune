@@ -1,6 +1,6 @@
 import os
 import inspect
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any
 from contextlib import contextmanager
 from functools import wraps
 
@@ -12,9 +12,10 @@ from transformers.tokenization_utils_base import BatchEncoding
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.base.config.mixins import HFFromPretrainedConfig, HFGenerationConfig, BaseGenerationConfig
 from interpretune.base.config.module import ITConfig, ITState
+from interpretune.base.config.shared import AnalysisMode
 from interpretune.base.config.extensions import ITExtensionsConfigMixin
 from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE
-
+from interpretune.base.contract.analysis import AnalysisCfgProtocol
 
 class ITStateMixin:
     def __init__(self, *args, **kwargs) -> None:
@@ -34,7 +35,7 @@ class ProfilerHooksMixin:
 
     @contextmanager
     @staticmethod
-    def memprofile_ctx(memprofiler, phase: str, epoch_idx: Optional[int] = None, step_idx: Optional[int] = None):
+    def memprofile_ctx(memprofiler, phase: str, epoch_idx: int | None = None, step_idx: int | None = None):
         try:
             memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="start")
             yield
@@ -61,24 +62,74 @@ class ProfilerHooksMixin:
         return wrapper
 
 
+
+class AnalysisStepMixin:
+
+    @property
+    def analysis_caches(self):
+        caches = getattr(self, '_analysis_caches', [])
+        # If the caches list has exactly one element, return that element directly
+        if isinstance(caches, list) and len(caches) == 1:
+            return caches[0]
+        return caches
+
+    @analysis_caches.setter
+    def analysis_caches(self, value):
+        self._analysis_caches = value
+
+    @property
+    def analysis_cfg(self) -> AnalysisCfgProtocol:
+        if not hasattr(self.it_cfg, 'analysis_cfg') or self.it_cfg.analysis_cfg is None:
+            raise AttributeError("Analysis configuration has not been set.")
+        return self.it_cfg.analysis_cfg
+
+    @analysis_cfg.setter
+    def analysis_cfg(self, cfg: AnalysisCfgProtocol) -> None:
+        self.it_cfg.analysis_cfg = cfg
+
+    def on_analysis_start(self) -> Any | None:
+        """Optionally execute some post-interpretune session steps if the session is not complete."""
+        if self.analysis_cfg.mode == AnalysisMode.attr_patching:
+            torch.set_grad_enabled(True)
+        else:
+            torch.set_grad_enabled(False)
+        # Initialize internal cache list if not present
+        if not hasattr(self, '_analysis_caches'):
+            self._analysis_caches = []
+
+    def on_analysis_epoch_end(self) -> Any | None:
+        # Create a shallow copy from the current analysis cache
+        cache_copy = self.analysis_cfg.analysis_cache
+        self._analysis_caches.append(cache_copy)
+        self.analysis_cfg.reset_analysis_cache()  # Prepare a new instance for the next epoch, preserving save_cfg
+
+    def on_analysis_end(self) -> Any | None:
+        """Optionally execute some post-interpretune session steps if the session is not complete."""
+        # reset internal cache list (TODO: maybe keep this around and reset only on session start?)
+        self._analysis_caches = []
+        if self.analysis_cfg.mode == AnalysisMode.attr_patching:
+            torch.set_grad_enabled(False)
+        if not self.session_complete:
+            self.on_session_end()
+
 class GenerativeStepMixin:
     # Often used for n-shot classification, those contexts are only a subset of generative classification use cases
 
-    _gen_sig_keys: Optional[List] = None
-    GEN_PREPARES_INPUTS_SIGS: Tuple = ("_prepare_model_inputs",)
+    _gen_sig_keys: list | None = None
+    GEN_PREPARES_INPUTS_SIGS: tuple = ("_prepare_model_inputs",)
 
     @property
-    def generation_cfg(self) -> Optional[BaseGenerationConfig]:
+    def generation_cfg(self) -> BaseGenerationConfig | None:
         return self.it_cfg.generative_step_cfg.lm_generation_cfg
 
     @property
-    def gen_sig_keys(self) -> List:
+    def gen_sig_keys(self) -> list:
         if not self._gen_sig_keys:
             generate_signature = inspect.signature(self.model.generate)
             self._gen_sig_keys = list(generate_signature.parameters.keys())
         return self._gen_sig_keys
 
-    def map_gen_inputs(self, batch) -> Dict[str, Any]:
+    def map_gen_inputs(self, batch) -> dict[str, Any]:
         # since we're abstracting the same generative classification logic to be used with different frameworks, models
         # and datasets we use a mapping function to provide only data inputs a given generate function supports (for
         # frameworks that don't handle variadic kwargs). This currently requires the user provides
@@ -87,7 +138,7 @@ class GenerativeStepMixin:
         # and step logic are incompatible
         return {bk: batch[bk] for bk in list(batch.data) if bk in self.gen_sig_keys}
 
-    def map_gen_kwargs(self, kwargs: Dict) -> Dict[str, Any]:
+    def map_gen_kwargs(self, kwargs: dict) -> dict[str, Any]:
         # we use a mapping function to provide only generate kwargs a given generate function supports (for
         # frameworks that don't support variadic kwargs).
         return {k: v for k, v in kwargs.items() if k in self.gen_sig_keys}
@@ -134,7 +185,7 @@ class HFFromPretrainedMixin:
     model: torch.nn.Module
 
     @property
-    def hf_cfg(self) -> Optional[HFFromPretrainedConfig]:
+    def hf_cfg(self) -> HFFromPretrainedConfig | None:
         return self.it_cfg.hf_from_pretrained_cfg
 
     def hf_pretrained_model_init(self) -> None:
@@ -153,7 +204,7 @@ class HFFromPretrainedMixin:
         if self.hf_cfg and self.hf_cfg.enable_input_require_grads:
             self.model.enable_input_require_grads()
 
-    def _hf_configure_quantization(self) -> Optional[Any]:
+    def _hf_configure_quantization(self) -> Any | None:
         if self.hf_cfg.bitsandbytesconfig and _BNB_AVAILABLE:
             from transformers import BitsAndBytesConfig
             quantization_config = BitsAndBytesConfig(**self.hf_cfg.bitsandbytesconfig)
@@ -161,14 +212,14 @@ class HFFromPretrainedMixin:
             quantization_config = None
         return quantization_config
 
-    def _update_hf_pretrained_cfg(self, quantization_config: Optional[Dict[str, Any]] = None) -> None:
+    def _update_hf_pretrained_cfg(self, quantization_config: dict[str, Any] | None = None) -> None:
         additional_from_pretrained_kwargs = {"pretrained_model_name_or_path": self.it_cfg.model_name_or_path,
                                             "quantization_config": quantization_config,
                                             "torch_dtype": self.torch_dtype,
                                             }
         self.hf_cfg.pretrained_kwargs.update(additional_from_pretrained_kwargs)
 
-    def _hf_gen_cust_config(self, access_token: Optional[str] = None) -> Tuple[PretrainedConfig, Dict]:
+    def _hf_gen_cust_config(self, access_token: str | None = None) -> tuple[PretrainedConfig, dict]:
         if self.hf_cfg.model_head:
             self.it_cfg.model_class = _import_class(self.hf_cfg.model_head)
             cust_config = AutoConfig.from_pretrained(**self.hf_cfg.pretrained_kwargs, token=access_token)
@@ -190,7 +241,7 @@ class HFFromPretrainedMixin:
         cust_config.update(self.it_cfg.model_cfg)  # apply pre-init model config overrides
         return cust_config, unused_kwargs
 
-    def hf_configured_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
+    def hf_configured_model_init(self, cust_config: PretrainedConfig, access_token: str | None = None) \
         -> torch.nn.Module:
         cust_config.num_labels = self.it_cfg.num_labels
         head_configured = self.hf_cfg.model_head or self.hf_cfg.dynamic_module_cfg
@@ -250,6 +301,6 @@ class HFFromPretrainedMixin:
         self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))
 
 
-class BaseITMixins(ITStateMixin, ITExtensionsConfigMixin, HFFromPretrainedMixin, GenerativeStepMixin,
+class BaseITMixins(ITStateMixin, ITExtensionsConfigMixin, HFFromPretrainedMixin, AnalysisStepMixin, GenerativeStepMixin,
                    ProfilerHooksMixin):
     ...

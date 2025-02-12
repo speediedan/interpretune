@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Optional, List
+from typing import Any
 from dataclasses import dataclass, field
 
 import torch
@@ -10,6 +10,7 @@ from interpretune.base.config.extensions import ExtensionConf
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_info
 from interpretune.utils.types import LRSchedulerConfig, Optimizable
+from interpretune.base.contract.analysis import AnalysisCfgProtocol
 
 
 ################################################################################
@@ -23,35 +24,36 @@ from interpretune.utils.types import LRSchedulerConfig, Optimizable
 
 @dataclass(kw_only=True)
 class ModelConf(ITSerializableCfg):
-    model_class: Optional[torch.nn.Module] = None
-    model_cfg: Dict[str, Any] = field(default_factory=dict)
-    cust_fwd_kwargs: Dict[str, Any] = field(default_factory=dict)
+    model_class: torch.nn.Module | None = None
+    model_cfg: dict[str, Any] = field(default_factory=dict)
+    cust_fwd_kwargs: dict[str, Any] = field(default_factory=dict)
 
 @dataclass(kw_only=True)
 class OptimizerSchedulerConf(ITSerializableCfg):
-    optimizer_init: Dict[str, Any] = field(default_factory=dict)
-    lr_scheduler_init: Dict[str, Any] = field(default_factory=dict)
-    pl_lrs_cfg: Dict[str, Any] = field(default_factory=dict)
+    optimizer_init: dict[str, Any] = field(default_factory=dict)
+    lr_scheduler_init: dict[str, Any] = field(default_factory=dict)
+    pl_lrs_cfg: dict[str, Any] = field(default_factory=dict)
 
 @dataclass(kw_only=True)
 class MixinsConf(ITSerializableCfg):
+    analysis_cfg: AnalysisCfgProtocol | None = None
     generative_step_cfg: GenerativeClassificationConfig = field(default_factory=GenerativeClassificationConfig)
-    hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = None
+    hf_from_pretrained_cfg: HFFromPretrainedConfig | None = None
 
 @dataclass(kw_only=True)
 class LoggingConf(ITSerializableCfg):
-    experiment_tag: Optional[str] = "default"
-    log_env_details: Optional[bool] = True
-    core_log_dir: Optional[str | os.PathLike] = None
+    experiment_tag: str | None = "default"
+    log_env_details: bool | None = True
+    core_log_dir: str | os.PathLike | None = None
 
 @dataclass(kw_only=True)
 class AutoCompatConfig(ITSerializableCfg):
-    ret_callable: Optional[bool] = False
-    ret_val: Optional[Any] = None
+    ret_callable: bool | None = False
+    ret_val: Any | None = None
 
 @dataclass(kw_only=True)
 class CompatConf(ITSerializableCfg):
-    compatibility_attrs: Dict[str, AutoCompatConfig] = field(default_factory=lambda: {'log': AutoCompatConfig(),
+    compatibility_attrs: dict[str, AutoCompatConfig] = field(default_factory=lambda: {'log': AutoCompatConfig(),
                                                                                       'log_dict': AutoCompatConfig(),})
 
 @dataclass(kw_only=True)
@@ -75,13 +77,13 @@ class ITConfig(ITSharedConfig, ModelConf, OptimizerSchedulerConf, MixinsConf, Lo
 @dataclass
 class ITState:
     """Dataclass to encapsulate the ITModule internal state and keep top-level namespace as clean as possible."""
-    _it_lr_scheduler_configs: List[LRSchedulerConfig] = None
-    _it_optimizers: List[Optimizable] = None  # initialized via core IT module `configure_optimizers` hook
-    _datamodule: Optional[ITDataModule] = None  # datamodule handle attached after init
-    _device: Optional[torch.device] = None  # root device (sometimes used if not handled by Lightning)
-    _extensions: Dict[str, Any] = field(default_factory=dict)
+    _it_lr_scheduler_configs: list[LRSchedulerConfig] = None
+    _it_optimizers: list[Optimizable] = None  # initialized via core IT module `configure_optimizers` hook
+    _datamodule: ITDataModule | None = None  # datamodule handle attached after init
+    _device: torch.device | None = None  # root device (sometimes used if not handled by Lightning)
+    _extensions: dict[str, Any] = field(default_factory=dict)
     _session_complete: bool = False
-    _init_hparams: Dict[str, Any] = field(default_factory=dict)
+    _init_hparams: dict[str, Any] = field(default_factory=dict)
     # TODO: should we leave initialization of the below to the relevant property dispatch functions?
     _current_epoch: int = 0
     _global_step: int = 0

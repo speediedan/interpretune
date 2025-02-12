@@ -1,6 +1,6 @@
 import os
 import inspect
-from typing import Optional, Any
+from typing import Any
 from functools import reduce
 import logging
 
@@ -54,7 +54,7 @@ class ITDataModule:
         self.data_collator = collator_class(self.tokenizer, **collator_kwargs)
 
     @property
-    def module(self) -> Optional[torch.nn.Module]:
+    def module(self) -> torch.nn.Module | None:
         try:
             module = getattr(self, "_module", None) or reduce(getattr, "trainer.model".split("."), self)
         except AttributeError as ae:
@@ -65,10 +65,10 @@ class ITDataModule:
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
-    def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
+    def prepare_data(self, target_model: torch.nn.Module | None = None) -> None:
         """Load the SuperGLUE dataset."""
 
-    def setup(self, stage: Optional[str] = None, module: Optional[torch.nn.Module] = None, *args, **kwargs) -> None:
+    def setup(self, stage: str | None = None, module: torch.nn.Module | None = None, *args, **kwargs) -> None:
         """Setup our dataset splits for training/validation."""
         # stage is optional for raw pytorch support
         # attaching module handle to datamodule is optional. It can be convenient to align data prep with a  model using
@@ -106,8 +106,8 @@ class ITDataModule:
 
     # adapted from HF native trainer
     # note for raw pytorch we require a target_model (vs getting it from the trainer)
-    def _remove_unused_columns(self, dataset: "datasets.Dataset", target_model: Optional[torch.nn.Module] = None,
-                               description: Optional[str] = None) -> Dataset:
+    def _remove_unused_columns(self, dataset: "datasets.Dataset", target_model: torch.nn.Module | None = None,
+                               description: str | None = None) -> Dataset:
             if not self.itdm_cfg.remove_unused_columns:
                 return dataset
             if not self.itdm_cfg.signature_columns:
@@ -135,14 +135,17 @@ class ITDataModule:
         repr_string += [f'Attached tokenizer: {tokenizer_str}']
         return self.__class__.__name__ + '(' + ', '.join(repr_string) + ')'
 
-    def on_train_end(self) -> Optional[Any]:
+    def on_train_end(self) -> Any | None:
         """Optionally execute some post-interpretune train session steps."""
 
-    def on_validation_end(self) -> Optional[Any]:
+    def on_validation_end(self) -> Any | None:
         """Optionally execute some post-interpretune train session steps."""
 
-    def on_test_end(self) -> Optional[Any]:
+    def on_test_end(self) -> Any | None:
         """Optionally execute some post-interpretune train session steps."""
 
-    def on_predict_end(self) -> Optional[Any]:
+    def on_predict_end(self) -> Any | None:
         """Optionally execute some post-interpretune train session steps."""
+
+    def on_analysis_end(self) -> Any | None:
+        """Optionally execute relevant post-phase steps."""

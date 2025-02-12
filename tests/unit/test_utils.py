@@ -30,7 +30,7 @@ from interpretune.base.config.mixins import ITExtension
 from interpretune.utils.exceptions import MisconfigurationException
 from interpretune.extensions.memprofiler import MemProfilerHooks, DefaultMemHooks
 from interpretune.utils.data_movement import move_data_to_device, to_device
-from interpretune.utils.basic_trainer import BasicTrainerCfg
+from interpretune.utils.session_runner import SessionRunnerCfg
 
 
 class TestClassUtils:
@@ -141,11 +141,11 @@ class TestClassUtils:
 
     def test_basic_trainer_warns(self, get_it_session__core_cust__setup):
         test_cfg = get_it_session__core_cust__setup.fixt_test_cfg()
-        test_cfg_overrides = {k: v for k,v in test_cfg.__dict__.items() if k in BasicTrainerCfg.__dict__.keys()}
+        test_cfg_overrides = {k: v for k,v in test_cfg.__dict__.items() if k in SessionRunnerCfg.__dict__.keys()}
         with pytest.raises(MisconfigurationException, match="If not providing `it_session`"):
-            _ = BasicTrainerCfg(module=get_it_session__core_cust__setup.module, datamodule=None, **test_cfg_overrides)
+            _ = SessionRunnerCfg(module=get_it_session__core_cust__setup.module, datamodule=None, **test_cfg_overrides)
         assert test_cfg
         with pytest.warns(UserWarning, match="should only be specified if not providing `it_session`"):
-            trainer_config = BasicTrainerCfg(module=get_it_session__core_cust__setup.module,
+            trainer_config = SessionRunnerCfg(module=get_it_session__core_cust__setup.module,
                                 it_session=get_it_session__core_cust__setup, **test_cfg_overrides)
         assert trainer_config
