@@ -2,17 +2,13 @@
 from __future__ import annotations
 import os
 from typing import Any, NamedTuple
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pprint import pformat
 
 import torch
 from transformers.generation.configuration_utils import GenerationConfig
 
-from interpretune.base.analysis import (AnalysisCache, ablate_sae_latent, boolean_logits_to_avg_logit_diff,
-                                        resolve_names_filter, _make_simple_cache_hook)
-from interpretune.base.contract.analysis import NamesFilter, AnalysisCacheProtocol
-from interpretune.base.config.shared import ITSerializableCfg, AnalysisMode
+from interpretune.base.config.shared import ITSerializableCfg
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.utils.import_utils import _resolve_torch_dtype
 
@@ -104,60 +100,3 @@ class HFFromPretrainedConfig(ITSerializableCfg):
             else:
                 rank_zero_warn(f"The provided `torch_dtype` {self.pretrained_kwargs.pop('torch_dtype')} could not"
                                " be resolved, attempting to proceed with `torch_dtype` unset.")
-
-@dataclass(kw_only=True)
-class AnalysisCfg(ITSerializableCfg):
-    analysis_cache: AnalysisCacheProtocol = field(default_factory=AnalysisCache)
-    mode: AnalysisMode = AnalysisMode.clean_no_sae
-    ablate_latent_fn: Callable = ablate_sae_latent
-    logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff
-    fwd_hooks: list[tuple] = field(default_factory=list)
-    bwd_hooks: list[tuple] = field(default_factory=list)
-    cache_dict: dict = field(default_factory=dict)
-    names_filter: NamesFilter | None = None
-    base_logit_diffs: list = field(default_factory=list)
-    alive_latents: list[dict] = field(default_factory=list)
-    answer_indices: list[torch.Tensor] = field(default_factory=list)
-
-    def __post_init__(self):
-        if isinstance(self.mode, str):
-            self.mode = AnalysisMode(self.mode)
-        self.names_filter = resolve_names_filter(self.names_filter)
-        if not self.fwd_hooks and not self.bwd_hooks:
-            self.fwd_hooks, self.bwd_hooks = self.check_add_default_hooks(
-                mode=self.mode,
-                names_filter=self.names_filter,
-                cache_dict=self.cache_dict,
-            )
-        if self.logit_diff_fn is None:
-            self.logit_diff_fn = boolean_logits_to_avg_logit_diff
-        if self.ablate_latent_fn is None:
-            self.ablate_latent_fn = ablate_sae_latent
-
-    def reset_analysis_cache(self) -> None:
-        # Prepare a new cache for the next epoch preserving save_cfg (for multi-epoch AnalysisSessionCfg instances)
-        current_analysis_cls = self.analysis_cache.__class__
-        current_save_cfg_cls = self.analysis_cache.save_cfg.__class__
-        current_save_cfg = {k: v for k, v in self.analysis_cache.save_cfg.__dict__.items() if k != 'analysis_cache'}
-        self.analysis_cache = current_analysis_cls(save_cfg=current_save_cfg_cls(**current_save_cfg))
-        assert id(self.analysis_cache) == id(self.analysis_cache.save_cfg.analysis_cache)
-
-    def check_add_default_hooks(
-            self, mode: AnalysisMode, names_filter: NamesFilter | None,
-            cache_dict: dict | None
-            ) -> tuple[list[tuple], list[tuple]]:
-        """Construct forward and backward hooks based on analysis mode."""
-        fwd_hooks, bwd_hooks = [], []
-
-        if mode == AnalysisMode.clean_no_sae:
-            return fwd_hooks, bwd_hooks
-        if names_filter is None:
-            raise ValueError("names_filter required for non-clean modes")
-        if mode == AnalysisMode.attr_patching:
-            fwd_hooks.append(
-                (names_filter, _make_simple_cache_hook(cache_dict=cache_dict))
-            )
-            bwd_hooks.append(
-                (names_filter, _make_simple_cache_hook(cache_dict=cache_dict, is_backward=True))
-            )
-        return fwd_hooks, bwd_hooks

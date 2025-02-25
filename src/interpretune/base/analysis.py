@@ -1,24 +1,26 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from dataclasses import dataclass, field
-from typing import Literal, NamedTuple
-from collections.abc import Callable, Sequence
+from typing import Literal, NamedTuple, Optional, Any, Callable, Sequence, Union, List, Dict
 from types import MappingProxyType
+import os
+from pathlib import Path
+from copy import copy
 
 import torch
 import pandas as pd
 import plotly.express as px
 from tabulate import tabulate
-from transformers import BatchEncoding, PreTrainedTokenizerBase
+from transformers import PreTrainedTokenizerBase
 from transformer_lens.hook_points import HookPoint
+from sae_lens.config import HfDataset
 from jaxtyping import Float
+from datasets import Features, Array2D, Value, Array3D, load_dataset
+from datasets import Sequence as DatasetsSequence
 
-from interpretune.base.config.shared import ITSerializableCfg, AnalysisMode
-from interpretune.base.contract.analysis import (ActivationCacheProtocol, AnalysisCacheProtocol, AnalysisBatchProtocol,
-                                                  AnalysisCfgProtocol, SaveCfgProtocol, NamesFilter, SAEFqn)
+from interpretune.base.contract.analysis import (AnalysisStoreProtocol, AnalysisBatchProtocol, NamesFilter, SAEFqn,
+                                                AnalysisCfgProtocol, AnalysisOp, ANALYSIS_OPS, DEFAULT_DECODE_KWARGS)
 from interpretune.utils.logging import rank_zero_warn
 
-
-DEFAULT_DECODE_KWARGS = {"skip_special_tokens": True, "clean_up_tokenization_spaces": True}
 
 class SAEAnalysisDict(dict):
     """Dictionary for SAE-specific data where values must be torch.Tensor or list[torch.Tensor]."""
@@ -26,7 +28,11 @@ class SAEAnalysisDict(dict):
     def __setitem__(self, key: str, value: torch.Tensor | list[torch.Tensor]) -> None:
         if not isinstance(value, (torch.Tensor, list)):
             raise TypeError("Values must be torch.Tensor or list[torch.Tensor]")
-        if isinstance(value, list) and not all(isinstance(v, torch.Tensor) for v in value):
+        # TODO: at which point in the pipeline should we remove batches with None or empty list values?
+        #       to maintain batch alignment, we keep None valued batches for now and skip them in operations that join
+        #       batches
+        if isinstance(value, list) and not all(isinstance(v, torch.Tensor) for v in value
+                                               if v is not None and len(v) > 0):
             raise TypeError("All list elements must be torch.Tensor")
         super().__setitem__(key, value)
 
@@ -67,14 +73,23 @@ class SAEAnalysisDict(dict):
             for batch_idx in range(num_batches):
                 batch_tensors = []
                 for sae_values in self.values():
-                    batch_tensors.append(sae_values[batch_idx])
-                result.append(join_fn(batch_tensors))
+                    if sae_values[batch_idx] is not None:
+                        batch_tensors.append(sae_values[batch_idx])
+                if batch_tensors:  # Only join if there are non-None tensors
+                    result.append(join_fn(batch_tensors))
+                else:
+                    result.append(None)
             return result
         else:
             # Join batches for each SAE separately
             result = SAEAnalysisDict()
             for k, v in self.items():
-                result[k] = join_fn(v, dim=0)
+                # Filter out None values before joining
+                valid_batches = [batch for batch in v if batch is not None]
+                if valid_batches:  # Only join if there are valid batches
+                    result[k] = join_fn(valid_batches, dim=0)
+                else:
+                    result[k] = None
             return result
 
     def apply_op_by_sae(self, operation: Callable | str,
@@ -106,97 +121,389 @@ class SAEAnalysisDict(dict):
         return result
 
 
-@dataclass(kw_only=True)
-class AnalysisBatch:
-    """Contains all analysis results for a single batch."""
-    logit_diffs: torch.Tensor | dict[str, dict[int, torch.Tensor]] = None
-    answer_logits: torch.Tensor | dict[str, dict[int, torch.Tensor]] = None
-    loss: torch.Tensor | dict[str, dict[int, torch.Tensor]] = None
-    labels: torch.Tensor = None
-    orig_labels: torch.Tensor = None
-    preds: torch.Tensor | dict[str, dict[int, torch.Tensor]] = None
-    cache: ActivationCacheProtocol = None
-    grad_cache: ActivationCacheProtocol = None
-    answer_indices: torch.Tensor = None
-    alive_latents: dict[str, list[int]] = None
-    # TODO: need to rename this to collected activations or add a collected_activations field in addition to
-    #       correct_activations for use cases where we want to keep all activations
-    correct_activations: dict[str, torch.Tensor] = None
-    attribution_values: dict[str, torch.Tensor] = field(default_factory=dict)
-    tokens: torch.Tensor = None
-    prompts: list[str] = None
+class AttrDict(dict):
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+
+    def __getattr__(self, name):
+        try:
+            return super().__getitem__(name)
+        except KeyError as e:
+            raise AttributeError(e)
+
+    def __setattr__(self, name, value):
+         super().__setitem__(name, value)
+
+    def __delattr__(self, name):
+        try:
+            super().__delitem__(name)
+        except KeyError as e:
+            raise AttributeError(e)
+
+class AnalysisBatch(AttrDict):
+    """Contains all analysis results for a single batch.
+
+    Fields:
+        logit_diffs: torch.Tensor | dict[str, dict[int, torch.Tensor]]  # [batch_size]
+        answer_logits: torch.Tensor | dict[str, dict[int, torch.Tensor]]  # [batch_size, 1, num_classes]
+        loss: torch.Tensor | dict[str, dict[int, torch.Tensor]]  # [batch_size]
+        labels: torch.Tensor  # [batch_size]
+        orig_labels: torch.Tensor  # [batch_size]
+        preds: torch.Tensor | dict[str, dict[int, torch.Tensor]]  # [batch_size]
+        cache: ActivationCacheProtocol
+        grad_cache: ActivationCacheProtocol
+        answer_indices: torch.Tensor  # [batch_size]
+        alive_latents: dict[str, list[int]]
+        correct_activations: dict[str, torch.Tensor]  # [batch_size, d_sae] (for each sae)
+        attribution_values: dict[str, torch.Tensor]
+        tokens: torch.Tensor
+        prompts: list[str]
+    """
+    # TODO: update this docstring to reflect current protocol usage
+
+    def __getattr__(self, name):
+        if name not in AnalysisBatchProtocol.__annotations__:
+            raise AttributeError(f"'{name}' is not a valid AnalysisBatch attribute")
+        return super().__getattr__(name)
 
     def update(self, **kwargs):
-        """Update multiple fields of the dataclass at once."""
         for key, value in kwargs.items():
-            if key in self.__annotations__:
-                setattr(self, key, value)
+            self[key] = value
 
     def to_cpu(self):
-        """Detach and move all AnalysisBatch field tensors to CPU."""
-        def maybe_detach_to_cpu(val):
+        """Detach and move all field tensors to CPU."""
+        def maybe_detach(val, visited=None):
+            if visited is None:
+                visited = set()
+            if id(val) in visited:
+                return val
+            visited.add(id(val))
             if isinstance(val, torch.Tensor):
                 return val.detach().cpu()
             elif isinstance(val, dict):
-                return {k: maybe_detach_to_cpu(v) for k, v in val.items()}
-            elif isinstance(val, list):
-                return [maybe_detach_to_cpu(v) for v in val]
+                return {k: maybe_detach(v, visited) for k, v in val.items()}
             return val
 
-        for key, val in self.__dict__.items():
-            setattr(self, key, maybe_detach_to_cpu(val))
+        for key, value in list(self.items()):
+            self[key] = maybe_detach(value)
 
+def get_module_dims(module) -> tuple[int, int, int, tuple[int, int]]:
+    """Extract key dimensions from module state.
 
-@dataclass(kw_only=True)
-class SaveCfg(ITSerializableCfg):
-    analysis_cache: AnalysisCacheProtocol | None = None
-    prompts: bool = False
-    tokens: bool = False
-    cache: bool = False
-    grad_cache: bool = False
-    decode_kwargs: dict = field(default_factory=dict)
+    Args:
+        module: Module instance containing batch information
 
-    def __post_init__(self):
-        default_decode_kwargs = {'skip_special_tokens': True, 'clean_up_tokenization_spaces': True}.copy()
-        for k, v in default_decode_kwargs.items():
-            self.decode_kwargs.setdefault(k, v)
+    Returns:
+        Tuple containing:
+            batch_size: Current batch size
+            max_answer_tokens: Maximum number of answer tokens
+            num_classes: Number of output classes
+            tokens_shape: Tuple of (batch_size, max_seq_len)
+    """
+    # TODO: in the future, this will depend on our configured dataloader (e.g. for train modes etc.)
+    batch_size = module.datamodule.itdm_cfg.eval_batch_size
+    # TODO: currently only support a single new token, but this will be configurable
+    max_answer_tokens = module.it_cfg.generative_step_cfg.lm_generation_cfg.max_new_tokens
+    # TODO: abstract this so it's not tied to entailment use case but num_classes
+    num_classes = module.it_cfg.num_labels or len(module.it_cfg.entailment_mapping)
+    # TODO: max_seq_len not currently used, could be provided for downstream usage
+    #       should be same as module.model.cfg.n_ctx, assert this here?
+    # max_seq_len = module.model.tokenizer.model_max_length
+    return batch_size, max_answer_tokens, num_classes
 
-    def wrap_summary(self, analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
-                     tokenizer: PreTrainedTokenizerBase | None = None) -> None:
-        if self.prompts:
-            assert tokenizer is not None, "Tokenizer is required to decode prompts"
-            analysis_batch.prompts = tokenizer.batch_decode(batch['input'], **self.decode_kwargs)
-        if self.tokens:
-            analysis_batch.tokens = batch['input'].detach().cpu()
-        for cache_type, should_keep in [("cache", self.cache), ("grad_cache", self.grad_cache)]:
-            if not should_keep and getattr(analysis_batch, cache_type, None):
-                setattr(analysis_batch, cache_type, None)
-        analysis_batch.to_cpu()
-        self.analysis_cache.batches.append(analysis_batch)
+def get_filtered_sae_hook_keys(handle, names_filter: Callable[[str], bool]) -> list[str]:
+    """Get filtered hook keys based on names_filter.
 
+    Args:
+        handle: SAE handle containing hook configuration
+        names_filter: Function to filter hook names
 
-# TODO: maybe keep as tensors via cat for future analysis rather than separate batches
-@dataclass(kw_only=True)
-class AnalysisCache:
-    batches: list[AnalysisBatchProtocol] = field(default_factory=list)
-    save_cfg: SaveCfgProtocol = field(default_factory=SaveCfg)
+    Returns:
+        List of filtered hook keys
+    """
+    return [
+        f'{handle.cfg.hook_name}.{key}'
+        for key in handle.hook_dict.keys()
+        if names_filter(f'{handle.cfg.hook_name}.{key}')
+    ]
 
-    def __post_init__(self):
-        self.save_cfg.analysis_cache = self
+def build_analysis_features(module,
+                          op: str | AnalysisOp,
+                          default_dtype: str = "float32",
+                          int_dtype: str = "int64") -> Features:
+    """Build Features object for AnalysisBatch based on operation schema and module dimensions.
+
+    Args:
+        module: Module instance containing dimension information
+        op: Analysis operation or name to build features for
+        default_dtype: Default dtype for float tensors
+        int_dtype: Default dtype for integer tensors
+
+    Returns:
+        Features: Dataset features specification for the operation
+    """
+    # Get operation schema
+    if isinstance(op, str):
+        schema = ANALYSIS_OPS.get_schema(op)
+    else:
+        schema = op.schema
+
+    if schema is None:
+        raise ValueError(f"No schema found for operation {op}")
+
+    batch_size, max_answer_tokens, num_classes = get_module_dims(module)
+
+    # Base features present in all operations
+    features_dict = {
+        "logit_diffs": DatasetsSequence(Value(default_dtype)),
+        "answer_logits": Array3D(shape=(batch_size, max_answer_tokens, num_classes), dtype=default_dtype),
+        "loss": Value(default_dtype),
+        "labels": DatasetsSequence(Value(int_dtype)),
+        "orig_labels": DatasetsSequence(Value(int_dtype)),
+        "preds": DatasetsSequence(Value(int_dtype)),
+        "answer_indices": DatasetsSequence(Value(int_dtype)),
+    }
+
+    # Optional prompts/tokens features
+    if schema.optional_prompts:
+        features_dict["prompts"] = DatasetsSequence(Value('string'))
+
+    if schema.optional_tokens:
+        # Verify token column format configuration is properly specified in schema
+        # Assert schema.col_cfg has a 'tokens' key with a valid dyn_dim before using dynamic dimension
+        assert schema.col_cfg.get('tokens', None) and schema.col_cfg['tokens'].dyn_dim, \
+            "Schema must specify a valid dynamic dimension for the 'tokens' column"
+        features_dict["tokens"] = Array2D(shape=(None, batch_size), dtype=int_dtype)
+
+    if schema.has_sae_fields:
+        # Generate SAE features by iterating over sae_handles and their hook_dict keys
+        sae_features = {
+            feature_key: Array2D(shape=(None, handle.cfg.d_sae), dtype=handle.cfg.dtype)
+            for handle in module.sae_handles
+            for feature_key in get_filtered_sae_hook_keys(handle, module.analysis_cfg.names_filter)
+        }
+
+        # Similarly, generate latent_list_features using the same key format and names_filter
+        latent_list_features = {
+            feature_key: DatasetsSequence(Value(int_dtype))
+            for handle in module.sae_handles
+            for feature_key in get_filtered_sae_hook_keys(handle, module.analysis_cfg.names_filter)
+        }
+        # Initialize SAE field containers
+        features_dict['alive_latents'] = latent_list_features
+
+        if schema.has_attribution:
+            # Add attribution features
+            if 'attribution_values' not in features_dict:
+                features_dict['attribution_values'] = sae_features
+
+        if schema.has_correct_activations:
+            # Add correct activations features
+            features_dict['correct_activations'] = sae_features
+
+        if schema.per_latent_outputs:  # TODO: make explicit that per_latent_outputs is per-sae hook
+            # Convert relevant fields to per-latent format
+            per_latent_fields = ["logit_diffs", "answer_logits", "loss", "preds"]
+
+            for attr in per_latent_fields:
+                features_dict[attr] = {feature_key: {'latents': DatasetsSequence(Value(int_dtype)),
+                                                     'per_latent': DatasetsSequence(features_dict[attr])}
+                                    for handle in module.sae_handles
+                                    for feature_key in get_filtered_sae_hook_keys(handle,
+                                                                                  module.analysis_cfg.names_filter)}
+
+    return Features(features_dict)
+
+class AnalysisStore:
+    def __init__(self,
+                 # dataset: can be a path or a loaded Hugging Face dataset
+                 dataset: HfDataset | str | os.PathLike | None = None,
+                 op_output_dataset_path: str | None = None,
+                 cache_dir: str | None = None,
+                 dataset_trust_remote_code: bool = False,
+                 streaming: bool = False,
+                 split: str = "validation",
+                 stack_batches: bool = False,  # Controls tensor stacking behavior
+                 ) -> None:
+        self.stack_batches = stack_batches
+        self.cache_dir = cache_dir
+        self.streaming = streaming
+        self.dataset_trust_remote_code = dataset_trust_remote_code
+        self.op_output_dataset_path = op_output_dataset_path
+        self.split = split
+
+        load_dataset_kwargs = dict(split=split, streaming=streaming, trust_remote_code=dataset_trust_remote_code)
+
+        if isinstance(dataset, (str, os.PathLike)):
+            dataset_path = os.path.abspath(str(dataset))
+            if op_output_dataset_path is not None:
+                op_output_abs = os.path.abspath(op_output_dataset_path)
+                if dataset_path == op_output_abs:  # TODO: consider conditionally allowing overlap here
+                    raise ValueError("The dataset path and op_output_dataset_path must not overlap.")
+            self.dataset = load_dataset(dataset_path, **load_dataset_kwargs)
+        else:
+            self.dataset = dataset
+
+        if self.dataset is not None:
+            # Set default format as our custom analysis formatter
+            self.dataset.set_format(type='interpretune')
+
+    def _format_columns(self, cols_to_fetch: list[str], indices: Optional[Union[int, slice, list[int]]] = None) -> dict:
+        """Internal helper to format specified columns into tensors with proper shape reconstruction.
+
+        Args:
+            cols_to_fetch: List of column names to fetch and format
+            indices: Optional index, slice or list of indices to select. If None, fetch all rows.
+        """
+        # Let the dataset handle the formatting using our registered ITAnalysisFormatter
+        self.dataset.set_format(type='interpretune', columns=cols_to_fetch)
+
+        # Handle different types of indexing to get examples
+        if indices is None:
+            examples = list(self.dataset)
+        elif isinstance(indices, int):
+            examples = [self.dataset[indices]]
+        elif isinstance(indices, slice):
+            start = indices.start or 0
+            stop = indices.stop or len(self.dataset)
+            step = indices.step or 1
+            examples = [self.dataset[i] for i in range(start, stop, step)]
+        else:
+            examples = [self.dataset[idx] for idx in indices]
+
+        # Extract requested columns
+        result = {col: [ex[col] for ex in examples] for col in cols_to_fetch}
+
+        # Return single item instead of list for integer indices
+        if isinstance(indices, int):
+            result = {k: v[0] for k, v in result.items()}
+
+        return result
+
+    @property
+    def save_dir(self) -> Path:
+        """Directory where datasets will be saved."""
+        if self.op_output_dataset_path is None:
+            raise ValueError("op_output_dataset_path must be set to save datasets")
+        return Path(self.op_output_dataset_path)
+
+    def _load_dataset(self, dataset: HfDataset | str | os.PathLike) -> None:
+        """Load a dataset from a path or existing dataset object."""
+        load_dataset_kwargs = dict(
+            split=self.split,
+            streaming=self.streaming,
+            trust_remote_code=self.dataset_trust_remote_code
+        )
+
+        if isinstance(dataset, (str, os.PathLike)):
+            dataset_path = os.path.abspath(str(dataset))
+            if self.op_output_dataset_path:
+                op_output_abs = os.path.abspath(self.op_output_dataset_path)
+                if dataset_path == op_output_abs:
+                    raise ValueError("The dataset path and op_output_dataset_path must not overlap.")
+            self.dataset = load_dataset(dataset_path, **load_dataset_kwargs)
+        else:
+            self.dataset = dataset
+
+        # Set default tensor format
+        self.dataset.set_format(type='interpretune')
 
     def reset(self) -> None:
-        """Reset the analysis cache by clearing all stored batches while keeping the current save_cfg."""
-        self.batches = []
+        """Reset the dataset."""
+        # TODO: decide on appropriate reloading/clearing behavior
+        if hasattr(self, 'dataset'):
+            # Reload dataset from disk if available
+            try:
+                self._load_dataset(self.save_dir)
+            except Exception:
+                self.dataset = None
 
-    def save(self, analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
-             tokenizer: PreTrainedTokenizerBase | None = None) -> None:
-        self.save_cfg.wrap_summary(analysis_batch=analysis_batch, batch=batch, tokenizer=tokenizer)
+    def __getitem__(self, key: Union[str, List[str], int, slice]) -> Union[List, Dict]:
+        """Enable direct column/row access similar to HF Dataset.
 
-    def __getattr__(self, name: str) -> list:
-        """Get list of values across all batches for a given field."""
-        if name not in AnalysisBatchProtocol.__annotations__:
-            raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
-        return [getattr(batch, name) for batch in self.batches if getattr(batch, name) is not None]
+        Args:
+            key: Column name(s) or row indices
+
+        Returns:
+            Selected columns or rows. For tensor data:
+            - If stack_batches=False (default): Returns list of individual tensors
+            - If stack_batches=True: Returns stacked tensor
+        """
+        if isinstance(key, str):
+            # Single column access
+            data = self.dataset[key]
+            # If tensor data, optionally split into individual tensors
+            if isinstance(data, torch.Tensor) and not self.stack_batches:
+                if data.dim() > 1:
+                    return [t for t in data]
+                # Split 1D tensors into scalar tensors
+                return [torch.tensor(x) for x in data]
+            return data
+        elif isinstance(key, list) and all(isinstance(k, str) for k in key):
+            # Multiple column access
+            result = {}
+            for col in key:
+                data = self.dataset[col]
+                # If tensor data, optionally split into individual tensors
+                if isinstance(data, torch.Tensor) and not self.stack_batches:
+                    if data.dim() > 1:
+                        result[col] = [t for t in data]
+                    else:
+                        # Split 1D tensors into scalar tensors
+                        result[col] = [torch.tensor(x) for x in data]
+                else:
+                    result[col] = data
+            return result
+        else:
+            # Row access delegates to dataset
+            return self.dataset[key]
+
+    def select_columns(self, column_names: List[str]) -> "AnalysisStore":
+        """Select a subset of columns.
+
+        Args:
+            column_names: List of column names to select
+
+        Returns:
+            New AnalysisStore with only selected columns
+        """
+        selected_dataset = self.dataset.select_columns(column_names)
+        new_store = copy.copy(self)
+        new_store.dataset = selected_dataset
+        return new_store
+
+    def __getattr__(self, name: str) -> Any:
+        """Allow accessing dataset columns and attributes.
+
+        Args:
+            name: Name of column or dataset attribute to fetch
+
+        Returns:
+            Column data if name exists in AnalysisBatchProtocol annotations,
+            otherwise returns dataset attribute.
+
+        Raises:
+            AttributeError: If name doesn't exist in protocol annotations or dataset attributes
+        """
+        # First check if it's a protocol-defined column
+        if name in AnalysisBatchProtocol.__annotations__:
+            return self[name]
+
+        # If not, try to get attribute from dataset
+        if hasattr(self.dataset, name):
+            attr = getattr(self.dataset, name)
+            # Handle callable attributes (e.g. dataset methods)
+            if callable(attr):
+                def _caller(*args, **kwargs):
+                    result = attr(*args, **kwargs)
+                    # If the result is a Dataset, ensure it maintains the interpretune format
+                    if hasattr(result, 'set_format'):
+                        result.set_format(type='interpretune')
+                    return result
+                return _caller
+            return attr
+
+        raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
 
     def by_sae(self, field_name: str, stack_latents: bool = True) -> SAEAnalysisDict:
         """Transform batch-oriented field values into per-SAE lists of batch values.
@@ -212,34 +519,36 @@ class AnalysisCache:
         Raises:
             TypeError: If the values are not dictionaries and thus cannot be transformed into an SAEAnalysisDict
         """
-        values = getattr(self, field_name)
+        values = self.__getattr__(field_name)
         assert values, f"No values found for field {field_name}"
         if not isinstance(values[0], dict):
             raise TypeError(
                 f"Values for field {field_name} must be dictionaries to be transformed into an SAEAnalysisDict"
             )
-
         result = SAEAnalysisDict()
         sae_names = values[0].keys()
-
         for sae in sae_names:
             if isinstance(values[0][sae], dict) and stack_latents:
                 # Stack latent tensors for each batch
                 batch_tensors = []
                 for batch in values:
                     latent_tensors = [t for t in batch[sae].values()]
-                    batch_tensors.append(torch.stack(latent_tensors))
+                    batch_tensors.append(torch.stack(latent_tensors) if latent_tensors else None)
                 result[sae] = batch_tensors
             else:
                 # Handle both non-nested and non-stacked nested cases
-                result[sae] = [batch[sae] for batch in values]
+                result[sae] = [
+                    None if isinstance(batch[sae], list) and not batch[sae]
+                    else batch[sae]
+                    for batch in values
+            ]
         return result
 
     def calc_activation_summary(self) -> ActivationSumm:
         """Calculate per-SAE activation summary from analysis cache.
 
         Computes mean activations and number of non-zero activations per SAE based on activation data
-        stored in AnalysisCache. The cache must contain 'correct_activations' data.
+        stored in AnalysisStore. The cache must contain 'correct_activations' data.
 
         Returns:
             ActivationSumm: Container with:
@@ -247,7 +556,7 @@ class AnalysisCache:
                 - num_samples_active: Number of non-zero activations per SAE
 
         Raises:
-            ValueError: If no 'correct_activations' data is present in analysis_cache.
+            ValueError: If no 'correct_activations' data is present in analysis_store.
         """
         if not self.correct_activations:
             raise ValueError("Analysis cache requires 'correct_activations' data to calculate per-SAE activation stats")
@@ -268,7 +577,6 @@ class AnalysisCache:
         """Calculate latent metrics from analysis cache.
 
         Args:
-            analysis_cache: Analysis cache containing results and summaries
             pred_summ: Prediction summary containing model predictions
             activation_summary: Optional summary of activation statistics. If None, will be calculated.
             filter_by_correct: If True, only use examples with correct predictions. Default True.
@@ -323,7 +631,6 @@ class AnalysisCache:
         """Plot Latent Effects aggregated or per-batch.
 
         Args:
-            analysis_cache: Analysis cache containing attribution values and alive latents
             per_batch: If True, plot effects per batch. If False, aggregate across all batches. Defaults to True.
             title_prefix: Optional string prefix for plot titles. Defaults to "Latent effects of".
 
@@ -346,8 +653,8 @@ class AnalysisCache:
             # Aggregate across all batches using SAEAnalysisDict operations
             stacked_values = self.by_sae('attribution_values').batch_join()
             len_alives = {act_name: len({latent for batch in self.alive_latents
-                                            for latent in batch.get(act_name, [])})
-                        for act_name in stacked_values.keys()}
+                                          for latent in batch.get(act_name, [])})
+                          for act_name in stacked_values.keys()}
 
             mean_effects = stacked_values.apply_op_by_sae(operation='mean', dim=0)
 
@@ -355,18 +662,12 @@ class AnalysisCache:
                 px.line(
                     effects.cpu().numpy(),
                     title=(f"{title_prefix} ({act_name}) Latent effect on logit diff "
-                        f"(aggregated, {len_alives[act_name]} alive)"),
+                           f"(aggregated, {len_alives[act_name]} alive)"),
                     labels={"index": "Latent", "value": "Latent effect on logit diff"},
                     template="ggplot2",
                     width=1000
                 ).update_layout(showlegend=False).show()
 
-
-# TODO:
-#      - after using for a little while, revisit whether this is the most useful level of abstraction
-#      - changing analysis_modes to registered/conditionally composable ops is one of many refactors that may make sense
-#        but whose appropriateness can only be assessed after using the framework for a while before refining them
-#        towards a stable API
 
 def default_sae_id_factory_fn(layer: int, prefix_pat: str = "blocks", suffix_pat: str = "hook_z") -> str:
     return ".".join([prefix_pat, str(layer), suffix_pat])
@@ -420,59 +721,6 @@ class SAEAnalysisTargets:
                 rank_zero_warn("SAEFqns could not be resolved based on provided configuration")
                 self.sae_fqns = tuple()
         return self.sae_fqns
-
-
-@dataclass
-class AnalysisSetCfg(ITSerializableCfg):
-    # Accept any sequence as input and convert to tuple in __post_init__
-    analysis_modes: Sequence[AnalysisMode] = field(default_factory=lambda: tuple(AnalysisMode))
-    # we allow for limiting the number of analysis batches both here and in the runner for convenience
-    limit_analysis_batches: int = -1
-    sae_analysis_targets: SAEAnalysisTargets = field(default_factory=SAEAnalysisTargets)
-    latent_effects_graphs: bool = True
-    latent_effects_graphs_per_batch: bool = False  # can be overwhelming with many batches
-    latents_table_per_sae: bool = True
-    top_k_latents_table: int = 2
-    top_k_latent_dashboards: int = 1  # (don't set too high, num dashboards = top_k_latent_dashboards * num_hooks * 2)
-    top_k_clean_logit_diffs: int = 10
-
-    def __post_init__(self):
-        # Ensure analysis_modes is stored as a tuple regardless of input sequence type
-        if not isinstance(self.analysis_modes, tuple):
-            self.analysis_modes = tuple(self.analysis_modes)
-        if self.latent_effects_graphs_per_batch and not self.latent_effects_graphs:
-            print("Note: Setting latent_effects_graphs to True since latent_effects_graphs_per_batch is True")
-            self.latent_effects_graphs = True
-        self.cfg_analysis_caches()
-
-    def cfg_analysis_caches(self):
-        # configures the tutorial analysis set to save prompts and tokens when needed based on active analysis
-        # modes in the set
-        self.validate_analysis_order()
-        clean_w_sae_enabled = AnalysisMode.clean_w_sae in self.analysis_modes
-        prompts_tokens_cfg = dict(prompts=not clean_w_sae_enabled, tokens=not clean_w_sae_enabled)
-        analysis_caches = {}
-        for mode in self.analysis_modes:
-            if mode == AnalysisMode.clean_w_sae:
-                analysis_caches[mode] = AnalysisCache(save_cfg=SaveCfg(prompts=True, tokens=True))
-            elif mode == AnalysisMode.ablation:
-                analysis_caches[mode] = AnalysisCache()
-            else:
-                analysis_caches[mode] = AnalysisCache(save_cfg=SaveCfg(**prompts_tokens_cfg))
-        self.analysis_caches = analysis_caches
-
-    def validate_analysis_order(self):
-        # Ensure that clean_w_sae comes before ablation if ablation is enabled
-        if AnalysisMode.ablation in self.analysis_modes:
-            if AnalysisMode.clean_w_sae not in self.analysis_modes:
-                print("Note: Adding clean_w_sae mode since it is required for ablation")
-                self.analysis_modes = tuple([AnalysisMode.clean_w_sae] + list(self.analysis_modes))
-            # Sort modes to ensure clean_w_sae comes before ablation
-            sorted_modes = sorted(self.analysis_modes,
-                                  key=lambda x: (x != AnalysisMode.clean_w_sae, x != AnalysisMode.ablation))
-            if sorted_modes != list(self.analysis_modes):
-                print("Note: Re-ordering analysis modes to ensure clean_w_sae runs before ablation")
-                self.analysis_modes = tuple(sorted_modes)
 
 @dataclass(kw_only=True)
 class BaseMetrics:
@@ -671,7 +919,7 @@ def latent_metrics_scatter(metrics1: LatentMetrics, metrics2: LatentMetrics,
             line=dict(color="red", width=2, dash="dash"),
         ).show()
 
-def base_vs_sae_logit_diffs(sae: AnalysisCacheProtocol, base_ref: AnalysisCacheProtocol,
+def base_vs_sae_logit_diffs(sae: AnalysisStoreProtocol, base_ref: AnalysisStoreProtocol,
                             tokenizer: PreTrainedTokenizerBase, top_k: int = 10, max_prompt_width: int = 80) -> None:
     """Display a table comparing reference vs SAE logit differences.
 
@@ -710,13 +958,13 @@ def base_vs_sae_logit_diffs(sae: AnalysisCacheProtocol, base_ref: AnalysisCacheP
         showindex="never"
     ))
 
-def compute_correct(analysis_obj: AnalysisCacheProtocol | AnalysisCfgProtocol,
-                    mode: str | AnalysisMode | None = None) -> PredSumm:
+def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
+                    op: str | AnalysisOp | None = None) -> PredSumm:
     """Compute correct prediction statistics for a given analysis mode.
 
     Args:
-        log_summs: Either an AnalysisCache containing prediction results or an AnalysisCfg object
-        mode: Analysis mode to compute statistics for. Only required if passing an AnalysisCache
+        log_summs: Either an AnalysisStore containing prediction results or an AnalysisCfg object
+        mode: Analysis mode to compute statistics for. Only required if passing an AnalysisStore
 
     Returns:
         PredSumm containing:
@@ -724,30 +972,30 @@ def compute_correct(analysis_obj: AnalysisCacheProtocol | AnalysisCfgProtocol,
             percentage_correct: Percentage of correct predictions
             batch_predictions: Modal predictions for ablation mode, None otherwise
     """
-    # Handle input type and get mode
-    if hasattr(analysis_obj, 'analysis_cache') and hasattr(analysis_obj, 'mode'):
-        analysis_cache = analysis_obj.analysis_cache
-        mode = analysis_obj.mode
+    # Handle input type and get op and analysis_store
+    if hasattr(analysis_obj, 'analysis_store') and hasattr(analysis_obj, 'op'):
+        analysis_store = analysis_obj.analysis_store
+        op = analysis_obj.op
     else:
-        if mode is None:
-            raise ValueError("mode argument required when passing AnalysisCache type objects")
-        analysis_cache = analysis_obj
+        if op is None:
+            raise ValueError("op argument required when passing AnalysisStore type objects")
+        analysis_store = analysis_obj
 
-    if isinstance(mode, str):
-        mode = AnalysisMode(mode)
+    if isinstance(op, str):
+        op = AnalysisOp(op)
 
     batch_preds = (
-        [b.mode(dim=0).values.cpu() for b in analysis_cache.by_sae('preds').batch_join(across_saes=True)]
-        if mode == AnalysisMode.ablation else analysis_cache.preds
+        [b.mode(dim=0).values.cpu() for b in analysis_store.by_sae('preds').batch_join(across_saes=True)]
+        if op == ANALYSIS_OPS['ablation'] else analysis_store.preds
     )
     correct_statuses = [
         (labels == preds).nonzero().unique().size(0)
-        for labels, preds in zip(analysis_cache.orig_labels, batch_preds)
+        for labels, preds in zip(analysis_store.orig_labels, batch_preds)
     ]
     total_correct = sum(correct_statuses)
-    percentage_correct = total_correct / (len(torch.cat(analysis_cache.orig_labels))) * 100
+    percentage_correct = total_correct / (len(torch.cat(analysis_store.orig_labels))) * 100
     return PredSumm(total_correct, percentage_correct,
-                    batch_preds if mode == AnalysisMode.ablation else None)
+                    batch_preds if op == ANALYSIS_OPS['ablation'] else None)
 
 def boolean_logits_to_avg_logit_diff(
     logits: Float[torch.Tensor, "batch seq 2"],

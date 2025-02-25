@@ -1,5 +1,4 @@
-from typing import Any, TypeVar, TypeAlias
-from collections.abc import Sequence
+from typing import Any, TypeVar, TypeAlias, Sequence
 from dataclasses import dataclass, field, fields, make_dataclass
 import inspect
 import logging
@@ -62,11 +61,6 @@ class Adapter(AutoStrEnum):
     def __lt__(self, other: 'Adapter') -> bool:
         return self.value < other.value
 
-class AnalysisMode(AutoStrEnum):
-    clean_no_sae = auto()
-    clean_w_sae = auto()
-    attr_patching = auto()
-    ablation = auto()
 
 AdapterSeq: TypeAlias = Sequence[Adapter | str] | Adapter | str
 

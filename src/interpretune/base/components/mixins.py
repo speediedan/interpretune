@@ -12,10 +12,10 @@ from transformers.tokenization_utils_base import BatchEncoding
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.base.config.mixins import HFFromPretrainedConfig, HFGenerationConfig, BaseGenerationConfig
 from interpretune.base.config.module import ITConfig, ITState
-from interpretune.base.config.shared import AnalysisMode
 from interpretune.base.config.extensions import ITExtensionsConfigMixin
 from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE
-from interpretune.base.contract.analysis import AnalysisCfgProtocol
+from interpretune.base.contract.analysis import AnalysisCfgProtocol, ANALYSIS_OPS
+
 
 class ITStateMixin:
     def __init__(self, *args, **kwargs) -> None:
@@ -65,17 +65,6 @@ class ProfilerHooksMixin:
 
 class AnalysisStepMixin:
 
-    @property
-    def analysis_caches(self):
-        caches = getattr(self, '_analysis_caches', [])
-        # If the caches list has exactly one element, return that element directly
-        if isinstance(caches, list) and len(caches) == 1:
-            return caches[0]
-        return caches
-
-    @analysis_caches.setter
-    def analysis_caches(self, value):
-        self._analysis_caches = value
 
     @property
     def analysis_cfg(self) -> AnalysisCfgProtocol:
@@ -89,25 +78,27 @@ class AnalysisStepMixin:
 
     def on_analysis_start(self) -> Any | None:
         """Optionally execute some post-interpretune session steps if the session is not complete."""
-        if self.analysis_cfg.mode == AnalysisMode.attr_patching:
+        if self.analysis_cfg.op == ANALYSIS_OPS['attr_patching']:
             torch.set_grad_enabled(True)
         else:
             torch.set_grad_enabled(False)
-        # Initialize internal cache list if not present
-        if not hasattr(self, '_analysis_caches'):
-            self._analysis_caches = []
+
 
     def on_analysis_epoch_end(self) -> Any | None:
+        pass
+        # TODO: maybe reintroduce logic here if we decide to keep per-epoch versions or perform other caching
         # Create a shallow copy from the current analysis cache
-        cache_copy = self.analysis_cfg.analysis_cache
-        self._analysis_caches.append(cache_copy)
-        self.analysis_cfg.reset_analysis_cache()  # Prepare a new instance for the next epoch, preserving save_cfg
+        #cache_copy = self.analysis_cfg.analysis_store
+        #self._analysis_stores.append(cache_copy)
+        # TODO: we don't want to reset the analysis store but rather ensure we flush the current epoch
+        #self.analysis_cfg.reset_analysis_store()  # Prepare a new instance for the next epoch, preserving save_cfg
 
     def on_analysis_end(self) -> Any | None:
         """Optionally execute some post-interpretune session steps if the session is not complete."""
         # reset internal cache list (TODO: maybe keep this around and reset only on session start?)
-        self._analysis_caches = []
-        if self.analysis_cfg.mode == AnalysisMode.attr_patching:
+        # TODO: we can avoid this analysis_stores reset if we make dataset per-epoch subsplits
+        # self._analysis_stores = []  # uncomment if we re-enable the reset of the analysis stores
+        if self.analysis_cfg.op == ANALYSIS_OPS['attr_patching']:
             torch.set_grad_enabled(False)
         if not self.session_complete:
             self.on_session_end()

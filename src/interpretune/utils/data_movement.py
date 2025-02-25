@@ -25,7 +25,6 @@ def to_device(device: _DEVICE, obj: Union[torch.nn.Module, torch.Tensor, Any]) -
 
     Returns:
         A reference to the object that was moved to the new device.
-
     """
     if isinstance(obj, torch.nn.Module):
         obj.to(device)
