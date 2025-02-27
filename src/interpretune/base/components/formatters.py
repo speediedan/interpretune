@@ -6,8 +6,7 @@ from datasets.formatting import TorchFormatter
 import pyarrow as pa
 from contextlib import contextmanager
 
-from interpretune.base.contract.analysis import ColCfg
-
+from interpretune.base.ops import ColCfg
 
 class OpSchemaExt:
     """Provides operation schema extensions for tensor processing."""

@@ -11,15 +11,15 @@ import pandas as pd
 import plotly.express as px
 from tabulate import tabulate
 from transformers import PreTrainedTokenizerBase
-from transformer_lens.hook_points import HookPoint
 from sae_lens.config import HfDataset
-from jaxtyping import Float
 from datasets import Features, Array2D, Value, Array3D, load_dataset
 from datasets import Sequence as DatasetsSequence
 
 from interpretune.base.contract.analysis import (AnalysisStoreProtocol, AnalysisBatchProtocol, NamesFilter, SAEFqn,
-                                                AnalysisCfgProtocol, AnalysisOp, ANALYSIS_OPS, DEFAULT_DECODE_KWARGS)
+                                                AnalysisCfgProtocol)
+from interpretune.base.ops import ANALYSIS_OPS, AnalysisOp
 from interpretune.utils.logging import rank_zero_warn
+from interpretune.utils.tokenization import DEFAULT_DECODE_KWARGS
 
 
 class SAEAnalysisDict(dict):
@@ -227,90 +227,86 @@ def get_filtered_sae_hook_keys(handle, names_filter: Callable[[str], bool]) -> l
         if names_filter(f'{handle.cfg.hook_name}.{key}')
     ]
 
-def build_analysis_features(module,
+def schema_to_features(module,
                           op: str | AnalysisOp,
                           default_dtype: str = "float32",
                           int_dtype: str = "int64") -> Features:
-    """Build Features object for AnalysisBatch based on operation schema and module dimensions.
-
-    Args:
-        module: Module instance containing dimension information
-        op: Analysis operation or name to build features for
-        default_dtype: Default dtype for float tensors
-        int_dtype: Default dtype for integer tensors
-
-    Returns:
-        Features: Dataset features specification for the operation
-    """
-    # Get operation schema
+    """Build Features object for AnalysisBatch based on operation schema and module dimensions."""
     if isinstance(op, str):
-        schema = ANALYSIS_OPS.get_schema(op)
-    else:
-        schema = op.schema
-
-    if schema is None:
-        raise ValueError(f"No schema found for operation {op}")
+        op = ANALYSIS_OPS[op]
 
     batch_size, max_answer_tokens, num_classes = get_module_dims(module)
+    features_dict = {}
 
-    # Base features present in all operations
-    features_dict = {
-        "logit_diffs": DatasetsSequence(Value(default_dtype)),
-        "answer_logits": Array3D(shape=(batch_size, max_answer_tokens, num_classes), dtype=default_dtype),
-        "loss": Value(default_dtype),
-        "labels": DatasetsSequence(Value(int_dtype)),
-        "orig_labels": DatasetsSequence(Value(int_dtype)),
-        "preds": DatasetsSequence(Value(int_dtype)),
-        "answer_indices": DatasetsSequence(Value(int_dtype)),
+    # Map dimension variables to their actual values
+    dim_vars = {
+        'batch_size': batch_size,
+        'max_answer_tokens': max_answer_tokens,
+        'num_classes': num_classes
     }
 
-    # Optional prompts/tokens features
-    if schema.optional_prompts:
-        features_dict["prompts"] = DatasetsSequence(Value('string'))
+    for col_name, col_cfg in op.output_schema.items():
+        if col_cfg.intermediate_only:
+            continue
 
-    if schema.optional_tokens:
-        # Verify token column format configuration is properly specified in schema
-        # Assert schema.col_cfg has a 'tokens' key with a valid dyn_dim before using dynamic dimension
-        assert schema.col_cfg.get('tokens', None) and schema.col_cfg['tokens'].dyn_dim, \
-            "Schema must specify a valid dynamic dimension for the 'tokens' column"
-        features_dict["tokens"] = Array2D(shape=(None, batch_size), dtype=int_dtype)
+        dtype = col_cfg.array_dtype or col_cfg.datasets_dtype
 
-    if schema.has_sae_fields:
-        # Generate SAE features by iterating over sae_handles and their hook_dict keys
-        sae_features = {
-            feature_key: Array2D(shape=(None, handle.cfg.d_sae), dtype=handle.cfg.dtype)
-            for handle in module.sae_handles
-            for feature_key in get_filtered_sae_hook_keys(handle, module.analysis_cfg.names_filter)
-        }
+        # Handle per-SAE hook fields first
+        if col_cfg.per_sae_hook:
+            sae_features = {}
+            for handle in module.sae_handles:
+                for hook_key in get_filtered_sae_hook_keys(handle, module.analysis_cfg.names_filter):
+                    if col_cfg.non_tensor and col_cfg.sequence_type:
+                        sae_features[hook_key] = DatasetsSequence(Value(dtype=dtype))
+                    else:
+                        sae_features[hook_key] = Array2D(shape=(None, handle.cfg.d_sae),
+                                                       dtype=handle.cfg.dtype or default_dtype)
+            features_dict[col_name] = sae_features
+            continue
 
-        # Similarly, generate latent_list_features using the same key format and names_filter
-        latent_list_features = {
-            feature_key: DatasetsSequence(Value(int_dtype))
-            for handle in module.sae_handles
-            for feature_key in get_filtered_sae_hook_keys(handle, module.analysis_cfg.names_filter)
-        }
-        # Initialize SAE field containers
-        features_dict['alive_latents'] = latent_list_features
+        # Handle per-latent fields
+        if col_cfg.per_latent:
+            sae_features = {}
+            for handle in module.sae_handles:
+                for hook_key in get_filtered_sae_hook_keys(handle, module.analysis_cfg.names_filter):
+                    # Determine base feature based on ColCfg properties
+                    if col_cfg.array_shape:
+                        shape = list(col_cfg.array_shape)
+                        shape = [dim_vars.get(dim, dim) if isinstance(dim, str) else dim for dim in shape]
+                        if len(shape) == 2:
+                            base_feature = Array2D(shape=tuple(shape), dtype=dtype)
+                        elif len(shape) == 3:
+                            base_feature = Array3D(shape=tuple(shape), dtype=dtype)
+                    elif col_cfg.sequence_type:
+                        base_feature = DatasetsSequence(Value(dtype=dtype))
+                    else:
+                        base_feature = Value(dtype=dtype)
 
-        if schema.has_attribution:
-            # Add attribution features
-            if 'attribution_values' not in features_dict:
-                features_dict['attribution_values'] = sae_features
+                    sae_features[hook_key] = {
+                        'latents': DatasetsSequence(Value(int_dtype)),
+                        'per_latent': DatasetsSequence(base_feature)
+                    }
+            features_dict[col_name] = sae_features
+            continue
 
-        if schema.has_correct_activations:
-            # Add correct activations features
-            features_dict['correct_activations'] = sae_features
+        # Handle sequence types
+        if col_cfg.sequence_type:
+            features_dict[col_name] = DatasetsSequence(Value(dtype=dtype))
+            continue
 
-        if schema.per_latent_outputs:  # TODO: make explicit that per_latent_outputs is per-sae hook
-            # Convert relevant fields to per-latent format
-            per_latent_fields = ["logit_diffs", "answer_logits", "loss", "preds"]
+        # Handle explicit array shapes
+        if col_cfg.array_shape:
+            shape = list(col_cfg.array_shape)
+            shape = [dim_vars.get(dim, dim) if isinstance(dim, str) else dim for dim in shape]
 
-            for attr in per_latent_fields:
-                features_dict[attr] = {feature_key: {'latents': DatasetsSequence(Value(int_dtype)),
-                                                     'per_latent': DatasetsSequence(features_dict[attr])}
-                                    for handle in module.sae_handles
-                                    for feature_key in get_filtered_sae_hook_keys(handle,
-                                                                                  module.analysis_cfg.names_filter)}
+            if len(shape) == 2:
+                features_dict[col_name] = Array2D(shape=tuple(shape), dtype=dtype)
+            elif len(shape) == 3:
+                features_dict[col_name] = Array3D(shape=tuple(shape), dtype=dtype)
+            continue
+
+        # Handle scalar values (no array_shape and not sequence_type)
+        features_dict[col_name] = Value(dtype=dtype)
 
     return Features(features_dict)
 
@@ -960,21 +956,10 @@ def base_vs_sae_logit_diffs(sae: AnalysisStoreProtocol, base_ref: AnalysisStoreP
 
 def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
                     op: str | AnalysisOp | None = None) -> PredSumm:
-    """Compute correct prediction statistics for a given analysis mode.
-
-    Args:
-        log_summs: Either an AnalysisStore containing prediction results or an AnalysisCfg object
-        mode: Analysis mode to compute statistics for. Only required if passing an AnalysisStore
-
-    Returns:
-        PredSumm containing:
-            total_correct: Total number of correct predictions
-            percentage_correct: Percentage of correct predictions
-            batch_predictions: Modal predictions for ablation mode, None otherwise
-    """
+    """Compute correct prediction statistics for a given analysis mode."""
     # Handle input type and get op and analysis_store
-    if hasattr(analysis_obj, 'analysis_store') and hasattr(analysis_obj, 'op'):
-        analysis_store = analysis_obj.analysis_store
+    if hasattr(analysis_obj, 'output_store') and hasattr(analysis_obj, 'op'):
+        analysis_store = analysis_obj.output_store
         op = analysis_obj.op
     else:
         if op is None:
@@ -986,7 +971,7 @@ def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
 
     batch_preds = (
         [b.mode(dim=0).values.cpu() for b in analysis_store.by_sae('preds').batch_join(across_saes=True)]
-        if op == ANALYSIS_OPS['ablation'] else analysis_store.preds
+        if op == ANALYSIS_OPS["logit_diffs.attribution.ablation"] else analysis_store.preds
     )
     correct_statuses = [
         (labels == preds).nonzero().unique().size(0)
@@ -995,35 +980,7 @@ def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
     total_correct = sum(correct_statuses)
     percentage_correct = total_correct / (len(torch.cat(analysis_store.orig_labels))) * 100
     return PredSumm(total_correct, percentage_correct,
-                    batch_preds if op == ANALYSIS_OPS['ablation'] else None)
-
-def boolean_logits_to_avg_logit_diff(
-    logits: Float[torch.Tensor, "batch seq 2"],
-    target_indices: torch.Tensor,
-    reduction: Literal["mean", "sum"] | None = None,
-    keep_as_tensor: bool = True,
-) -> list[float] | float:
-    """Returns the avg logit diff on a set of prompts, with fixed s2 pos and stuff."""
-    incorrect_indices = 1 - target_indices
-    correct_logits = torch.gather(logits, 2, torch.reshape(target_indices, (-1,1,1))).squeeze()
-    incorrect_logits = torch.gather(logits, 2, torch.reshape(incorrect_indices, (-1,1,1))).squeeze()
-    logit_diff = correct_logits - incorrect_logits
-    if reduction is not None:
-        logit_diff = logit_diff.mean() if reduction == "mean" else logit_diff.sum()
-    return logit_diff if keep_as_tensor else logit_diff.tolist()
-
-def ablate_sae_latent(
-    sae_acts: torch.Tensor,
-    hook: HookPoint, # required by transformer_lens.hook_points._HookFunctionProtocol
-    latent_idx: int | None = None,
-    seq_pos: torch.Tensor | None = None,  # batched
-) -> torch.Tensor:
-    """Ablate a particular latent at a particular sequence position.
-
-    If either argument is None, we ablate at all latents / sequence positions.
-    """
-    sae_acts[torch.arange(sae_acts.size(0)), seq_pos, latent_idx] = 0.0
-    return sae_acts
+                    batch_preds if op == ANALYSIS_OPS["logit_diffs.attribution.ablation"] else None)
 
 def resolve_names_filter(names_filter: NamesFilter | None) -> Callable[[str], bool]:
     # similar to logic in `transformer_lens.hook_points.get_caching_hooks` but accessible to other functions
@@ -1059,3 +1016,22 @@ def _make_simple_cache_hook(cache_dict: dict, is_backward: bool = False) -> Call
             hook_name += "_grad"
         cache_dict[hook_name] = act.detach()
     return cache_hook
+
+def validate_analysis_order(self):
+    """Validates and potentially reorders analysis operations to ensure dependencies are met.
+
+    Currently ensures that logit_diffs.sae comes before ablation if ablation is enabled.
+    """
+    # Check if ablation analysis is requested
+    if ANALYSIS_OPS["logit_diffs.attribution.ablation"] in self.analysis_ops:
+        # Ensure logit_diffs.sae is included and comes before ablation
+        if ANALYSIS_OPS["logit_diffs.sae"] not in self.analysis_ops:
+            print("Note: Adding logit_diffs.sae op since it is required for ablation")
+            self.analysis_ops = tuple([ANALYSIS_OPS["logit_diffs.sae"]] + list(self.analysis_ops))
+        # Sort ops to ensure logit_diffs.sae comes before ablation
+        sorted_ops = sorted(self.analysis_ops,
+                          key=lambda x: (x != ANALYSIS_OPS["logit_diffs.sae"],
+                                       x != ANALYSIS_OPS["logit_diffs.attribution.ablation"]))
+        if sorted_ops != list(self.analysis_ops):
+            print("Note: Re-ordering analysis ops to ensure logit_diffs.sae runs before ablation")
+            self.analysis_ops = tuple(sorted_ops)

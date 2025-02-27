@@ -9,7 +9,7 @@ from torch.nn import CrossEntropyLoss
 
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.base.config.shared import ITSerializableCfg
-from interpretune.utils.tokenization import _sanitize_input_name
+from interpretune.utils.tokenization import _sanitize_input_name, DEFAULT_DECODE_KWARGS
 
 
 @dataclass(kw_only=True)
@@ -38,7 +38,6 @@ class DebugGeneration:
     #   including `output_attentions` and `output_hidden_states` etc.
     DEFAULT_OUTPUT_ATTRS = ("sequences", "tokens")
     DEFAULT_MODEL_CONFIG_ATTRS = ("cfg", "config")
-    DEFAULT_DECODE_KWARGS = dict(skip_special_tokens=True, clean_up_tokenization_spaces=True)
 
     def __init__(
         self,
@@ -189,7 +188,7 @@ class DebugGeneration:
     def sanitize_gen_output(self, outputs: Any, gen_output_attr: Optional[str] = None,
                               decode_cfg_override: Optional[Dict] = None) -> Tuple[Any, Dict]:
         decode_target = self.sanitize_model_output(outputs, gen_output_attr)
-        decode_kwargs = deepcopy(self.DEFAULT_DECODE_KWARGS)
+        decode_kwargs = deepcopy(DEFAULT_DECODE_KWARGS)
         if decode_cfg_override:
             decode_kwargs.update(decode_cfg_override)
         return decode_target, decode_kwargs
@@ -242,7 +241,7 @@ class DebugGeneration:
                                           gen_kwargs_override=gen_kwargs_override)
             decode_target, decode_kwargs = self.sanitize_gen_output(output, gen_output_attr, decode_cfg_override)
             sequences = decode_target.unbind()
-            decode_kwargs = deepcopy(self.DEFAULT_DECODE_KWARGS)
+            decode_kwargs = deepcopy(DEFAULT_DECODE_KWARGS)
             if decode_cfg_override:
                 decode_kwargs.update(decode_cfg_override)
             for seq in sequences:  # in case num_return_sequences > 1

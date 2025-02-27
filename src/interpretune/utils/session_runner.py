@@ -9,22 +9,22 @@ import torch
 from tqdm.auto import tqdm
 from datasets import Dataset
 
+from interpretune.adapters.core import ITModule
+from interpretune.base.analysis import AnalysisStore, SAEAnalysisTargets, schema_to_features
+from interpretune.base.call import _call_itmodule_hook, it_init, it_session_end
 from interpretune.base.config.shared import AllPhases, CorePhases, ITSerializableCfg
 from interpretune.base.config.analysis import AnalysisCfg
-from interpretune.base.datamodules import ITDataModule, IT_ANALYSIS_CACHE
-from interpretune.adapters.core import ITModule
+from interpretune.base.contract.analysis import SAEAnalysisProtocol
 from interpretune.base.contract.protocol import ITModuleProtocol, ITDataModuleProtocol
 from interpretune.base.contract.session import ITSession
-from interpretune.base.analysis import AnalysisStore, SAEAnalysisTargets, build_analysis_features
-from interpretune.base.call import _call_itmodule_hook, it_init, it_session_end
+from interpretune.base.datamodules import ITDataModule, IT_ANALYSIS_CACHE
+from interpretune.base.ops import ANALYSIS_OPS, AnalysisOp
 from interpretune.utils.types import Optimizable
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.base.contract.analysis import SAEAnalysisProtocol, AnalysisOp, ANALYSIS_OPS
 
 
 log = logging.getLogger(__name__)
-
 
 def core_train_loop(module: ITModule, datamodule: ITDataModule, limit_train_batches: int, limit_val_batches: int,
     max_epochs: int, *args, **kwargs):
@@ -74,7 +74,7 @@ def analysis_store_generator(module: ITModule, datamodule: ITDataModule,
         for batch_idx, batch in tqdm(enumerate(dataloader)):
             if batch_idx >= limit_analysis_batches >= 0:
                 break
-            if module.analysis_cfg.op != ANALYSIS_OPS["attr_patching"]:
+            if module.analysis_cfg.op != ANALYSIS_OPS["logit_diffs.attribution.grad_based"]:
                 with torch.inference_mode():
                     yield from run_step(step_fn=step_fn, batch=batch, batch_idx=batch_idx, **test_ctx)
             else:
@@ -92,26 +92,26 @@ def core_analysis_loop(module: ITModule, datamodule: ITDataModule,
     # TODO: probably better to make this a method on the AnalysisStepMixin
     # TODO: allow for custom dataloader associations
     # Generate appropriate features based on module configuration and current op context
-    features = build_analysis_features(module=module, op=module.analysis_cfg.op)
+    features = schema_to_features(module=module, op=module.analysis_cfg.op)
     gen_kwargs = dict(module=module, datamodule=datamodule, limit_analysis_batches=limit_analysis_batches,
                       step_fn=step_fn, max_epochs=max_epochs)
 
     # Convert ColCfg objects to dicts for JSON serialization
-    serializable_col_cfg = {k: v.to_dict() for k, v in module.analysis_cfg.op.schema.col_cfg.items()}
+    serializable_col_cfg = {k: v.to_dict() for k, v in module.analysis_cfg.op.output_schema.items()}
     it_format_kwargs = dict(col_cfg=serializable_col_cfg)
     from_gen_kwargs = dict(generator=analysis_store_generator, gen_kwargs=gen_kwargs, features=features, split="test",
-                           cache_dir=module.analysis_cfg.analysis_store.cache_dir)
+                           cache_dir=module.analysis_cfg.output_store.cache_dir)
 
     # Create dataset with ITAnalysisFormatter
     dataset = Dataset.from_generator(**from_gen_kwargs).with_format("interpretune", **it_format_kwargs)
-    dataset.save_to_disk(str(module.analysis_cfg.analysis_store.save_dir))
+    dataset.save_to_disk(str(module.analysis_cfg.output_store.save_dir))
     # Assign dataset to analysis store
-    module.analysis_cfg.analysis_store.dataset = dataset
+    module.analysis_cfg.output_store.dataset = dataset
 
     # Run analysis end hooks
     _call_itmodule_hook(module, hook_name="on_analysis_end", hook_msg="Running analysis end hooks")
 
-    return module.analysis_cfg.analysis_store
+    return module.analysis_cfg.output_store
 
 # TODO: currently, analysis_step will only be supported IT SessionRunner and not Lightning framework's Trainer
 #       If sufficient interest is shown, we can consider a PR adding support for Lightning's Trainer
@@ -227,7 +227,7 @@ class AnalysisSetCfg(ITSerializableCfg):
     def init_analysis_cfgs(self, module: SAEAnalysisProtocol):
         target_layers, match_fn = self.sae_analysis_targets.target_layers, self.sae_analysis_targets.sae_hook_match_fn
         names_filter = module.construct_names_filter(target_layers, match_fn)
-        clean_w_sae_enabled = ANALYSIS_OPS["clean_w_sae"] in self.analysis_ops
+        clean_w_sae_enabled = ANALYSIS_OPS["logit_diffs.sae"] in self.analysis_ops
         # TODO: decouple prompts and tokens logic from AnalysisSetCfg, unnest SaveCfg to AnalysisStore (configurable
         #       from AnalysisCfg)
         # TODO: We currently generate AnalysisCfg objects for each analysis op in the set but we want to allow
@@ -254,27 +254,34 @@ class AnalysisSetCfg(ITSerializableCfg):
                 analysis_store = AnalysisStore(**analysis_dirs)
                 # Configure AnalysisCfg for the user based on the provided op with default settings
                 self.analysis_cfgs[op] = AnalysisCfg(
-                    analysis_store=analysis_store,
+                    output_store=analysis_store,
                     op=op,
                     names_filter=names_filter,
-                    save_prompts=True if op == ANALYSIS_OPS["clean_w_sae"] else prompts_tokens_cfg["save_prompts"],
-                    save_tokens=True if op == ANALYSIS_OPS["clean_w_sae"] else prompts_tokens_cfg["save_tokens"],
+                    save_prompts=True if op == ANALYSIS_OPS["logit_diffs.sae"] else prompts_tokens_cfg["save_prompts"],
+                    save_tokens=True if op == ANALYSIS_OPS["logit_diffs.sae"] else prompts_tokens_cfg["save_tokens"],
                 )
 
     def validate_analysis_order(self):
+        """Validates and potentially reorders analysis operations to ensure dependencies are met.
+
+        Currently ensures that logit_diffs.sae comes before ablation if ablation is enabled.
+        """
         # TODO: currently AnalysisSetCfg supports a simple sequence of AnalysisOps, we ultimately want to support an
         #       arbitrary DAG of ops.
         # Ensure that clean_w_sae comes before ablation if ablation is enabled
         # TODO: update for analysis_cfg path
-        if ANALYSIS_OPS["ablation"] in self.analysis_ops:
-            if ANALYSIS_OPS["clean_w_sae"] not in self.analysis_ops:
-                print("Note: Adding clean_w_sae op since it is required for ablation")
-                self.analysis_ops = tuple([ANALYSIS_OPS["clean_w_sae"]] + list(self.analysis_ops))
-            # Sort ops to ensure clean_w_sae comes before ablation
+        # Check if ablation analysis is requested
+        if ANALYSIS_OPS["logit_diffs.attribution.ablation"] in self.analysis_ops:
+            # Ensure logit_diffs.sae is included and comes before ablation
+            if ANALYSIS_OPS["logit_diffs.sae"] not in self.analysis_ops:
+                print("Note: Adding logit_diffs.sae op since it is required for ablation")
+                self.analysis_ops = tuple([ANALYSIS_OPS["logit_diffs.sae"]] + list(self.analysis_ops))
+            # Sort ops to ensure logit_diffs.sae comes before ablation
             sorted_ops = sorted(self.analysis_ops,
-                                  key=lambda x: (x != ANALYSIS_OPS["clean_w_sae"], x != ANALYSIS_OPS["ablation"]))
+                            key=lambda x: (x != ANALYSIS_OPS["logit_diffs.sae"],
+                                        x != ANALYSIS_OPS["logit_diffs.attribution.ablation"]))
             if sorted_ops != list(self.analysis_ops):
-                print("Note: Re-ordering analysis ops to ensure clean_w_sae runs before ablation")
+                print("Note: Re-ordering analysis ops to ensure logit_diffs.sae runs before ablation")
                 self.analysis_ops = tuple(sorted_ops)
 
 @dataclass(kw_only=True)
@@ -351,30 +358,30 @@ class AnalysisRunner(SessionRunner):
     #     self.analysis_set_results[mode] = self.analysis()
 
     def run_analysis_set(self) -> dict[str, Any]:
-        # for now we are requiring that the user provide an AnalysisSetCfg to run analysis
-        # assert self.run_cfg.analysis_set_cfg, "AnalysisSetCfg must be provided to run analysis set"
+        """Run sequence of analysis operations, handling dependencies between ops."""
         for op, analysis_cfg in self.run_cfg.analysis_set_cfg.analysis_cfgs.items():
-            if op == ANALYSIS_OPS["ablation"]:
-                # Ensure that 'clean_w_sae' has already run (maybe upstream logic altered or previous runs were skipped)
-                assert ANALYSIS_OPS["clean_w_sae"] in self.analysis_set_results, \
-                    "clean_w_sae must be run before ablation"
-                ref_results = self.analysis_set_results[ANALYSIS_OPS["clean_w_sae"]]
-                assert (isinstance(ref_results.logit_diffs[0], torch.Tensor) and
-                       ref_results.logit_diffs[0].size(0) == 2), \
-                        "Expected first batch of logit_diffs to be a list of 2 tensors"
+            if op == ANALYSIS_OPS["logit_diffs.attribution.ablation"]:
+                # Ensure that 'logit_diffs.sae' has already run and produced results
+                assert ANALYSIS_OPS["logit_diffs.sae"] in self.analysis_set_results, \
+                    "logit_diffs.sae must be run before ablation"
+                # Set the input store to the results from logit_diffs.sae op
+                analysis_cfg.input_store = self.analysis_set_results[ANALYSIS_OPS["logit_diffs.sae"]]
+
+                # Validate required fields are present in input store
+                required_fields = ['logit_diffs', 'answer_indices', 'alive_latents']
+                for attr in required_fields:
+                    assert hasattr(analysis_cfg.input_store, attr), f"Input store missing required field: {attr}"
+
+                # Validate input data format - check batch size matches dataloader config
+                expected_batch_size = self.run_cfg.module.datamodule.itdm_cfg.eval_batch_size
+                assert (isinstance(analysis_cfg.input_store.logit_diffs[0], torch.Tensor) and
+                       analysis_cfg.input_store.logit_diffs[0].size(0) == expected_batch_size), \
+                    f"Expected first batch of logit_diffs to match dataloader batch size ({expected_batch_size})"
                 assert all([not isinstance(v, torch.Tensor)
-                          for hook_dict in ref_results.alive_latents
-                          for v in hook_dict.values()])
-                # TODO: pull these values from preceding op via input_schema of ablation op
-                ref_artifacts = {
-                    "base_logit_diffs": ref_results.logit_diffs,
-                    "answer_indices": ref_results.answer_indices,
-                    "alive_latents": ref_results.alive_latents,
-                }
-                analysis_cfg.update(**ref_artifacts)
+                           for hook_dict in analysis_cfg.input_store.alive_latents
+                           for v in hook_dict.values()])
             self.run_cfg.module.analysis_cfg = analysis_cfg
-            # TODO: make this a DatasetDict instead?
-            self.analysis_set_results[op] = self.analysis()
+            self.analysis_set_results[op] = self.analysis()  # TODO: make this a DatasetDict instead?
         # TODO: maybe return results in case we want to chain multiple analysis modes or user doesn't provide a dict
         return self.analysis_set_results
 

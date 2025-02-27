@@ -8,6 +8,8 @@ from copy import deepcopy
 from collections import defaultdict
 from typing_extensions import override
 
+from IPython.display import IFrame, display
+from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
 from sae_lens.sae import SAE, SAEConfig
 from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer
 from transformer_lens.hook_points import NamesFilter
@@ -25,10 +27,8 @@ from interpretune.utils.data_movement import move_data_to_device
 from interpretune.utils.logging import rank_zero_warn, rank_zero_info
 from interpretune.utils.patched_tlens_generate import generate as patched_generate
 from interpretune.utils.exceptions import MisconfigurationException
-from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
-from IPython.display import IFrame, display
-from interpretune.base.contract.analysis import AnalysisBatchProtocol, AnalysisStoreProtocol, ANALYSIS_OPS
-
+from interpretune.base.contract.analysis import AnalysisBatchProtocol, AnalysisStoreProtocol
+from interpretune.base.ops import ANALYSIS_OPS
 
 ################################################################################
 # SAE Lens Configuration Encapsulation
@@ -264,17 +264,19 @@ class SAEAnalysisMixin:
         # Determine answer_indices
         if getattr(analysis_batch, "answer_indices", None) is not None:
             answer_indices = analysis_batch.answer_indices
-        elif self.analysis_cfg.answer_indices:
-            answer_indices = self.analysis_cfg.answer_indices[batch_idx]
+        elif self.analysis_cfg.input_store and hasattr(self.analysis_cfg.input_store, 'answer_indices'):
+            answer_indices = self.analysis_cfg.input_store.answer_indices[batch_idx]
         else:
             answer_indices = self.resolve_answer_indices(batch)
+
         # Determine alive_latents
-        if self.analysis_cfg.alive_latents:
-            alive_latents = self.analysis_cfg.alive_latents[batch_idx]
+        if self.analysis_cfg.input_store and hasattr(self.analysis_cfg.input_store, 'alive_latents'):
+            alive_latents = self.analysis_cfg.input_store.alive_latents[batch_idx]
         elif not cache:
             alive_latents = {}
         else:
             alive_latents = self.batch_alive_latents(answer_indices, cache, self.analysis_cfg.names_filter)
+
         if analysis_batch is not None:
             analysis_batch.update(answer_indices=answer_indices, alive_latents=alive_latents)
             return None
@@ -288,7 +290,8 @@ class SAEAnalysisMixin:
         answer_logits = self.standardize_logits(answer_logits)
         per_example_answers, _ = torch.max(answer_logits, dim=-2)
         preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
-        logit_diffs = self.analysis_cfg.logit_diff_fn(answer_logits, target_indices=analysis_batch.orig_labels)
+        # Use the op's logit_diff_fn instead of analysis_cfg
+        logit_diffs = self.analysis_cfg.op.logit_diff_fn(answer_logits, target_indices=analysis_batch.orig_labels)
         return loss, logit_diffs, preds, answer_logits
 
     def run_with_ctx(
@@ -298,24 +301,25 @@ class SAEAnalysisMixin:
         batch_idx: int,
         **kwargs: Any
     ) -> None:
-        if self.analysis_cfg.op == ANALYSIS_OPS["clean_no_sae"]:
+        if self.analysis_cfg.op == ANALYSIS_OPS["logit_diffs.base"]:
             answer_logits = self(**batch)
             answer_indices, alive_latents = self.get_latents_and_indices(batch, batch_idx)
             analysis_batch.update(answer_indices=answer_indices, alive_latents=alive_latents)
-        elif self.analysis_cfg.op == ANALYSIS_OPS["clean_w_sae"]:
+        elif self.analysis_cfg.op == ANALYSIS_OPS["logit_diffs.sae"]:
             answer_logits, cache = self.model.run_with_cache_with_saes(
                 **batch, saes=self.sae_handles,
                 names_filter=self.analysis_cfg.names_filter
             )
             answer_indices, alive_latents = self.get_latents_and_indices(batch, batch_idx, cache=cache)
             analysis_batch.update(cache=cache, answer_indices=answer_indices, alive_latents=alive_latents)
-        elif self.analysis_cfg.op == ANALYSIS_OPS["ablation"]:
-            assert self.analysis_cfg.alive_latents, "alive_latents required for ablation op"
+        elif self.analysis_cfg.op == ANALYSIS_OPS["logit_diffs.attribution.ablation"]:
+            # Use the op's ablate_latent_fn instead of analysis_cfg
+            assert self.analysis_cfg.input_store.alive_latents, "alive_latents required for ablation op"
             answer_indices, alive_latents = self.get_latents_and_indices(batch, batch_idx)
             per_latent_logits: dict[str, dict[Any, torch.Tensor]] = defaultdict(dict)
             for name, alive in alive_latents.items():
                 for latent_idx in alive:
-                    fwd_hooks_cfg = [(name, partial(self.analysis_cfg.ablate_latent_fn,
+                    fwd_hooks_cfg = [(name, partial(self.analysis_cfg.op.ablate_latent_fn,
                                                     latent_idx=latent_idx,
                                                     seq_pos=answer_indices))]
                     answer_logits = self.model.run_with_hooks_with_saes(
@@ -327,9 +331,9 @@ class SAEAnalysisMixin:
                     ]
             analysis_batch.update(alive_latents=alive_latents, answer_indices=answer_indices)
             answer_logits = per_latent_logits
-        elif self.analysis_cfg.op == ANALYSIS_OPS["attr_patching"]:
+        elif self.analysis_cfg.op == ANALYSIS_OPS["logit_diffs.attribution.grad_based"]:
             assert all((self.analysis_cfg.fwd_hooks, self.analysis_cfg.bwd_hooks)), (
-                "fwd_hooks and bwd_hooks required for attr_patching op"
+                "fwd_hooks and bwd_hooks required for grad_based attribution op"
             )
             answer_indices, _ = self.get_latents_and_indices(batch, batch_idx)
             with self.model.saes(saes=self.sae_handles):
@@ -355,12 +359,14 @@ class SAEAnalysisMixin:
 
     def calc_ablation_effects(self, analysis_batch: AnalysisBatchProtocol, batch: dict[str, Any],
                               batch_idx: int) -> tuple[dict[str, Any], dict[str, Any]]:
-        assert self.analysis_cfg.base_logit_diffs, "base_logit_diffs required for ablation mode"
-        if batch_idx >= len(self.analysis_cfg.base_logit_diffs):
-            raise IndexError(f"Batch index {batch_idx} out of range for base_logit_diffs")
+        assert self.analysis_cfg.input_store, "input_store required for ablation mode"
+        if batch_idx >= len(self.analysis_cfg.input_store.logit_diffs):
+            raise IndexError(f"Batch index {batch_idx} out of range for logit_diffs in input_store")
+
         attribution_values: dict[str, torch.Tensor] = {}
         per_latent = {"loss": defaultdict(dict), "logit_diffs": defaultdict(dict), "preds": defaultdict(dict),
-                      "answer_logits": defaultdict(dict)}
+                        "answer_logits": defaultdict(dict)}
+
         for act_name, logits in analysis_batch.answer_logits.items():
             attribution_values[act_name] = torch.zeros(batch["input"].size(0), self.sae_handles[0].cfg.d_sae)
             for latent_idx in analysis_batch.alive_latents[act_name]:
@@ -371,7 +377,7 @@ class SAEAnalysisMixin:
                 per_latent["logit_diffs"][act_name][latent_idx] = (
                     per_latent["logit_diffs"][act_name][latent_idx][example_mask].detach().cpu()
                 )
-                base_diffs = torch.as_tensor(self.analysis_cfg.base_logit_diffs[batch_idx])
+                base_diffs = torch.as_tensor(self.analysis_cfg.input_store.logit_diffs[batch_idx])
                 for t in [example_mask, base_diffs]:
                     if t.dim() == 0:
                         t.unsqueeze_(0)
@@ -379,6 +385,7 @@ class SAEAnalysisMixin:
                 attribution_values[act_name][example_mask, latent_idx] = (
                     base_diffs[example_mask] - per_latent["logit_diffs"][act_name][latent_idx]
                 )
+
         per_latent_results = {key: per_latent[key]
                               for key in ["loss", "logit_diffs", "preds", "answer_logits"]}
         return per_latent_results, attribution_values
@@ -414,7 +421,7 @@ class SAEAnalysisMixin:
         if logit_diffs.dim() == 0:
             logit_diffs.unsqueeze_(0)
         analysis_batch.update(loss=loss, logit_diffs=logit_diffs, preds=preds, answer_logits=answer_logits)
-        if self.analysis_cfg.op == ANALYSIS_OPS['clean_w_sae']:
+        if self.analysis_cfg.op == ANALYSIS_OPS['logit_diffs.sae']:
             correct_activations: dict[str, torch.Tensor] = {}
             logit_diffs = logit_diffs.cpu()
             for name in analysis_batch.cache.keys():
@@ -424,12 +431,12 @@ class SAEAnalysisMixin:
 
     def loss_and_logit_diffs(self, analysis_batch: AnalysisBatchProtocol, batch: dict[str, Any],
                              batch_idx: int) -> None:
-        if self.analysis_cfg.op in [ANALYSIS_OPS["clean_w_sae"], ANALYSIS_OPS["clean_no_sae"]]:
+        if self.analysis_cfg.op in [ANALYSIS_OPS["logit_diffs.sae"], ANALYSIS_OPS["logit_diffs.base"]]:
             self.calc_clean_diffs(analysis_batch, batch)
-        elif self.analysis_cfg.op == ANALYSIS_OPS["ablation"]:
+        elif self.analysis_cfg.op == ANALYSIS_OPS["logit_diffs.attribution.ablation"]:
             per_latent_results, attribution_values = self.calc_ablation_effects(analysis_batch, batch, batch_idx)
             analysis_batch.update(**per_latent_results, attribution_values=attribution_values)
-        elif self.analysis_cfg.op == ANALYSIS_OPS["attr_patching"]:
+        elif self.analysis_cfg.op == ANALYSIS_OPS["logit_diffs.attribution.grad_based"]:
             attribution_values, correct_activations = self.calc_attribution_values(analysis_batch, batch, batch_idx)
             analysis_batch.update(attribution_values=attribution_values, correct_activations=correct_activations)
         else:
