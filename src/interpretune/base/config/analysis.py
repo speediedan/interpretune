@@ -3,9 +3,10 @@ from dataclasses import dataclass, field
 
 from transformers import BatchEncoding, PreTrainedTokenizerBase
 
-from interpretune.base.analysis import AnalysisStore, resolve_names_filter, _make_simple_cache_hook
-from interpretune.base.contract.analysis import NamesFilter, AnalysisStoreProtocol, AnalysisBatchProtocol
-from interpretune.base.ops import ANALYSIS_OPS, AnalysisOp
+import interpretune as it
+from interpretune.analysis.core import AnalysisStore, resolve_names_filter, _make_simple_cache_hook
+from interpretune.analysis.protocol import NamesFilter, AnalysisStoreProtocol, AnalysisBatchProtocol
+from interpretune.analysis.ops import ANALYSIS_OPS, AnalysisOp
 from interpretune.base.config.shared import ITSerializableCfg
 from interpretune.utils.tokenization import DEFAULT_DECODE_KWARGS
 
@@ -14,7 +15,7 @@ from interpretune.utils.tokenization import DEFAULT_DECODE_KWARGS
 class AnalysisCfg(ITSerializableCfg):
     output_store: AnalysisStoreProtocol = None  # usually constructed on setup()
     input_store: AnalysisStoreProtocol | None = None  # store containing input data from previous op
-    op: str | AnalysisOp = field(default_factory=lambda: ANALYSIS_OPS['logit_diffs.base'])  # Renamed from mode
+    op: str | AnalysisOp = field(default_factory=lambda: it.logit_diffs_base)  # Renamed from mode
     fwd_hooks: list[tuple] = field(default_factory=list)
     bwd_hooks: list[tuple] = field(default_factory=list)
     cache_dict: dict = field(default_factory=dict)

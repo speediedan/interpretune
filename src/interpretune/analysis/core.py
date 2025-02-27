@@ -15,9 +15,10 @@ from sae_lens.config import HfDataset
 from datasets import Features, Array2D, Value, Array3D, load_dataset
 from datasets import Sequence as DatasetsSequence
 
-from interpretune.base.contract.analysis import (AnalysisStoreProtocol, AnalysisBatchProtocol, NamesFilter, SAEFqn,
+import interpretune as it
+from interpretune.analysis.protocol import (AnalysisStoreProtocol, AnalysisBatchProtocol, NamesFilter, SAEFqn,
                                                 AnalysisCfgProtocol)
-from interpretune.base.ops import ANALYSIS_OPS, AnalysisOp
+from interpretune.analysis.ops import ANALYSIS_OPS, AnalysisOp
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.utils.tokenization import DEFAULT_DECODE_KWARGS
 
@@ -119,7 +120,6 @@ class SAEAnalysisDict(dict):
                 result[k] = operation(v, *args, **kwargs)
 
         return result
-
 
 class AttrDict(dict):
     def __init__(self, *args, **kwargs):
@@ -664,7 +664,6 @@ class AnalysisStore:
                     width=1000
                 ).update_layout(showlegend=False).show()
 
-
 def default_sae_id_factory_fn(layer: int, prefix_pat: str = "blocks", suffix_pat: str = "hook_z") -> str:
     return ".".join([prefix_pat, str(layer), suffix_pat])
 
@@ -971,7 +970,7 @@ def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
 
     batch_preds = (
         [b.mode(dim=0).values.cpu() for b in analysis_store.by_sae('preds').batch_join(across_saes=True)]
-        if op == ANALYSIS_OPS["logit_diffs.attribution.ablation"] else analysis_store.preds
+        if op == it.logit_diffs_attr_ablation else analysis_store.preds
     )
     correct_statuses = [
         (labels == preds).nonzero().unique().size(0)
@@ -980,7 +979,7 @@ def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
     total_correct = sum(correct_statuses)
     percentage_correct = total_correct / (len(torch.cat(analysis_store.orig_labels))) * 100
     return PredSumm(total_correct, percentage_correct,
-                    batch_preds if op == ANALYSIS_OPS["logit_diffs.attribution.ablation"] else None)
+                    batch_preds if op == it.logit_diffs_attr_ablation else None)
 
 def resolve_names_filter(names_filter: NamesFilter | None) -> Callable[[str], bool]:
     # similar to logic in `transformer_lens.hook_points.get_caching_hooks` but accessible to other functions
@@ -1023,15 +1022,15 @@ def validate_analysis_order(self):
     Currently ensures that logit_diffs.sae comes before ablation if ablation is enabled.
     """
     # Check if ablation analysis is requested
-    if ANALYSIS_OPS["logit_diffs.attribution.ablation"] in self.analysis_ops:
+    if it.logit_diffs_attr_ablation in self.analysis_ops:
         # Ensure logit_diffs.sae is included and comes before ablation
-        if ANALYSIS_OPS["logit_diffs.sae"] not in self.analysis_ops:
+        if it.logit_diffs_sae not in self.analysis_ops:
             print("Note: Adding logit_diffs.sae op since it is required for ablation")
-            self.analysis_ops = tuple([ANALYSIS_OPS["logit_diffs.sae"]] + list(self.analysis_ops))
+            self.analysis_ops = tuple([it.logit_diffs_sae] + list(self.analysis_ops))
         # Sort ops to ensure logit_diffs.sae comes before ablation
         sorted_ops = sorted(self.analysis_ops,
-                          key=lambda x: (x != ANALYSIS_OPS["logit_diffs.sae"],
-                                       x != ANALYSIS_OPS["logit_diffs.attribution.ablation"]))
+                          key=lambda x: (x != it.logit_diffs_sae,
+                                       x != it.logit_diffs_attr_ablation))
         if sorted_ops != list(self.analysis_ops):
             print("Note: Re-ordering analysis ops to ensure logit_diffs.sae runs before ablation")
             self.analysis_ops = tuple(sorted_ops)

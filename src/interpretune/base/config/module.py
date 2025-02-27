@@ -10,7 +10,7 @@ from interpretune.base.config.extensions import ExtensionConf
 from interpretune.base.datamodules import ITDataModule
 from interpretune.utils.logging import rank_zero_info
 from interpretune.utils.types import LRSchedulerConfig, Optimizable
-from interpretune.base.contract.analysis import AnalysisCfgProtocol
+from interpretune.analysis.protocol import AnalysisCfgProtocol
 
 
 ################################################################################

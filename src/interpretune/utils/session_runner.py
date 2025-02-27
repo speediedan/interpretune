@@ -9,16 +9,17 @@ import torch
 from tqdm.auto import tqdm
 from datasets import Dataset
 
+import interpretune as it
 from interpretune.adapters.core import ITModule
-from interpretune.base.analysis import AnalysisStore, SAEAnalysisTargets, schema_to_features
+from interpretune.analysis.core import AnalysisStore, SAEAnalysisTargets, schema_to_features
 from interpretune.base.call import _call_itmodule_hook, it_init, it_session_end
 from interpretune.base.config.shared import AllPhases, CorePhases, ITSerializableCfg
 from interpretune.base.config.analysis import AnalysisCfg
-from interpretune.base.contract.analysis import SAEAnalysisProtocol
+from interpretune.analysis.protocol import SAEAnalysisProtocol
 from interpretune.base.contract.protocol import ITModuleProtocol, ITDataModuleProtocol
 from interpretune.base.contract.session import ITSession
 from interpretune.base.datamodules import ITDataModule, IT_ANALYSIS_CACHE
-from interpretune.base.ops import ANALYSIS_OPS, AnalysisOp
+from interpretune.analysis.ops import AnalysisOp
 from interpretune.utils.types import Optimizable
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.utils.exceptions import MisconfigurationException
@@ -74,7 +75,7 @@ def analysis_store_generator(module: ITModule, datamodule: ITDataModule,
         for batch_idx, batch in tqdm(enumerate(dataloader)):
             if batch_idx >= limit_analysis_batches >= 0:
                 break
-            if module.analysis_cfg.op != ANALYSIS_OPS["logit_diffs.attribution.grad_based"]:
+            if module.analysis_cfg.op != it.logit_diffs_attr_grad:
                 with torch.inference_mode():
                     yield from run_step(step_fn=step_fn, batch=batch, batch_idx=batch_idx, **test_ctx)
             else:
@@ -177,7 +178,8 @@ class SessionRunnerCfg:
 @dataclass(kw_only=True)
 class AnalysisSetCfg(ITSerializableCfg):
     # Accept any sequence as input and convert to tuple in __post_init__
-    analysis_ops: Sequence[AnalysisOp] = field(default_factory=lambda: tuple(ANALYSIS_OPS.values()))
+    # TODO: ultimately we want to support an arbitrary DAG of ops
+    analysis_ops: Sequence[AnalysisOp] | None = None
     # currently allow executing a sequence of Ops (generating cfgs) or a sequence of AnalysisCfg objects if passed
     analysis_cfgs: Dict[AnalysisOp, AnalysisCfg] = field(default_factory=dict)
     # TODO: next two attributes available in AnalysisCfg as well, prob should decouple from AnalysisSetCfg
@@ -194,13 +196,16 @@ class AnalysisSetCfg(ITSerializableCfg):
     top_k_clean_logit_diffs: int = 10
 
     def __post_init__(self):
-        # Ensure analysis_ops is stored as a tuple regardless of input sequence type
-        if not isinstance(self.analysis_ops, tuple):
+        if not self.analysis_ops and not self.analysis_cfgs:
+            raise MisconfigurationException("Either analysis_ops or analysis_cfgs must be provided")
+        # Ensure analysis_ops is stored as a tuple if provided
+        if self.analysis_ops is not None and not isinstance(self.analysis_ops, tuple):
             self.analysis_ops = tuple(self.analysis_ops)
         if self.latent_effects_graphs_per_batch and not self.latent_effects_graphs:
             print("Note: Setting latent_effects_graphs to True since latent_effects_graphs_per_batch is True")
             self.latent_effects_graphs = True
-        self.validate_analysis_order()
+        if self.analysis_ops:
+            self.validate_analysis_order()
 
     def init_analysis_dirs(self, module: SAEAnalysisProtocol):
         # TODO: after debugging update the default path to be more configurable instead of default to validation
@@ -227,7 +232,7 @@ class AnalysisSetCfg(ITSerializableCfg):
     def init_analysis_cfgs(self, module: SAEAnalysisProtocol):
         target_layers, match_fn = self.sae_analysis_targets.target_layers, self.sae_analysis_targets.sae_hook_match_fn
         names_filter = module.construct_names_filter(target_layers, match_fn)
-        clean_w_sae_enabled = ANALYSIS_OPS["logit_diffs.sae"] in self.analysis_ops
+        clean_w_sae_enabled = it.logit_diffs_sae in self.analysis_ops
         # TODO: decouple prompts and tokens logic from AnalysisSetCfg, unnest SaveCfg to AnalysisStore (configurable
         #       from AnalysisCfg)
         # TODO: We currently generate AnalysisCfg objects for each analysis op in the set but we want to allow
@@ -257,8 +262,8 @@ class AnalysisSetCfg(ITSerializableCfg):
                     output_store=analysis_store,
                     op=op,
                     names_filter=names_filter,
-                    save_prompts=True if op == ANALYSIS_OPS["logit_diffs.sae"] else prompts_tokens_cfg["save_prompts"],
-                    save_tokens=True if op == ANALYSIS_OPS["logit_diffs.sae"] else prompts_tokens_cfg["save_tokens"],
+                    save_prompts=True if op == it.logit_diffs_sae else prompts_tokens_cfg["save_prompts"],
+                    save_tokens=True if op == it.logit_diffs_sae else prompts_tokens_cfg["save_tokens"],
                 )
 
     def validate_analysis_order(self):
@@ -271,15 +276,15 @@ class AnalysisSetCfg(ITSerializableCfg):
         # Ensure that clean_w_sae comes before ablation if ablation is enabled
         # TODO: update for analysis_cfg path
         # Check if ablation analysis is requested
-        if ANALYSIS_OPS["logit_diffs.attribution.ablation"] in self.analysis_ops:
+        if it.logit_diffs_attr_ablation in self.analysis_ops:
             # Ensure logit_diffs.sae is included and comes before ablation
-            if ANALYSIS_OPS["logit_diffs.sae"] not in self.analysis_ops:
+            if it.logit_diffs_sae not in self.analysis_ops:
                 print("Note: Adding logit_diffs.sae op since it is required for ablation")
-                self.analysis_ops = tuple([ANALYSIS_OPS["logit_diffs.sae"]] + list(self.analysis_ops))
+                self.analysis_ops = tuple([it.logit_diffs_sae] + list(self.analysis_ops))
             # Sort ops to ensure logit_diffs.sae comes before ablation
             sorted_ops = sorted(self.analysis_ops,
-                            key=lambda x: (x != ANALYSIS_OPS["logit_diffs.sae"],
-                                        x != ANALYSIS_OPS["logit_diffs.attribution.ablation"]))
+                            key=lambda x: (x != it.logit_diffs_sae,
+                                        x != it.logit_diffs_attr_ablation))
             if sorted_ops != list(self.analysis_ops):
                 print("Note: Re-ordering analysis ops to ensure logit_diffs.sae runs before ablation")
                 self.analysis_ops = tuple(sorted_ops)
@@ -360,12 +365,12 @@ class AnalysisRunner(SessionRunner):
     def run_analysis_set(self) -> dict[str, Any]:
         """Run sequence of analysis operations, handling dependencies between ops."""
         for op, analysis_cfg in self.run_cfg.analysis_set_cfg.analysis_cfgs.items():
-            if op == ANALYSIS_OPS["logit_diffs.attribution.ablation"]:
+            if op == it.logit_diffs_attr_ablation:
                 # Ensure that 'logit_diffs.sae' has already run and produced results
-                assert ANALYSIS_OPS["logit_diffs.sae"] in self.analysis_set_results, \
+                assert it.logit_diffs_sae in self.analysis_set_results, \
                     "logit_diffs.sae must be run before ablation"
                 # Set the input store to the results from logit_diffs.sae op
-                analysis_cfg.input_store = self.analysis_set_results[ANALYSIS_OPS["logit_diffs.sae"]]
+                analysis_cfg.input_store = self.analysis_set_results[it.logit_diffs_sae]
 
                 # Validate required fields are present in input store
                 required_fields = ['logit_diffs', 'answer_indices', 'alive_latents']

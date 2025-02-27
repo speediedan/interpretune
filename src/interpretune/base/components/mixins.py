@@ -9,13 +9,13 @@ from transformers import AutoConfig, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
 
+import interpretune as it
 from interpretune.utils.logging import rank_zero_warn
 from interpretune.base.config.mixins import HFFromPretrainedConfig, HFGenerationConfig, BaseGenerationConfig
 from interpretune.base.config.module import ITConfig, ITState
 from interpretune.base.config.extensions import ITExtensionsConfigMixin
 from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE
-from interpretune.base.contract.analysis import AnalysisCfgProtocol
-from interpretune.base.ops import ANALYSIS_OPS
+from interpretune.analysis.protocol import AnalysisCfgProtocol
 
 
 class ITStateMixin:
@@ -77,7 +77,7 @@ class AnalysisStepMixin:
 
     def on_analysis_start(self) -> Any | None:
         """Optionally execute some post-interpretune session steps if the session is not complete."""
-        if self.analysis_cfg.op == ANALYSIS_OPS['logit_diffs.attribution.grad_based']:
+        if self.analysis_cfg.op == it.logit_diffs_attr_grad:
             torch.set_grad_enabled(True)
         else:
             torch.set_grad_enabled(False)
@@ -97,7 +97,7 @@ class AnalysisStepMixin:
         # reset internal cache list (TODO: maybe keep this around and reset only on session start?)
         # TODO: we can avoid this analysis_stores reset if we make dataset per-epoch subsplits
         # self._analysis_stores = []  # uncomment if we re-enable the reset of the analysis stores
-        if self.analysis_cfg.op == ANALYSIS_OPS['logit_diffs.attribution.grad_based']:
+        if self.analysis_cfg.op == it.logit_diffs_attr_grad:
             torch.set_grad_enabled(False)
         if not self.session_complete:
             self.on_session_end()

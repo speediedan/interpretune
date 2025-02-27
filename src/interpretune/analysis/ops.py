@@ -1,13 +1,13 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from typing import Callable, Literal, Union, Optional, Any
-from dataclasses import dataclass,  fields
+from dataclasses import dataclass, fields
 
 import torch
 from transformers import BatchEncoding, PreTrainedTokenizerBase
 from transformer_lens.hook_points import HookPoint
 from jaxtyping import Float
 
-from interpretune.base.contract.analysis import AnalysisBatchProtocol
+from interpretune.analysis.protocol import AnalysisBatchProtocol
 
 
 def boolean_logits_to_avg_logit_diff(
@@ -168,6 +168,25 @@ def wrap_summary(analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
     analysis_batch.to_cpu()
     return analysis_batch
 
+class CallableAnalysisOp:
+    """Wrapper to make AnalysisOp callable with the same interface as the operation."""
+    def __init__(self, op: AnalysisOp):
+        self._op = op
+        self.__name__ = op.name
+        self.__module__ = "interpretune"
+        self.__qualname__ = op.name
+        self.__doc__ = op.description
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate all other attribute access to the wrapped operation."""
+        return getattr(self._op, name)
+
+    def __call__(self, *args, **kwargs):
+        # The actual implementation will be provided by the concrete operation class
+        raise NotImplementedError(
+            f"Callable interface for {self._op.name} has not been implemented"
+        )
+
 class AnalysisOp:
     """Base class for analysis operations."""
     def __init__(self, name: str, description: str,
@@ -177,6 +196,14 @@ class AnalysisOp:
         self.description = description
         self.output_schema = output_schema
         self.input_schema = input_schema
+        self._callable = None
+
+    @property
+    def callable(self) -> CallableAnalysisOp:
+        """Get callable wrapper for this operation."""
+        if self._callable is None:
+            self._callable = CallableAnalysisOp(self)
+        return self._callable
 
     def save_batch(self, analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
                   tokenizer: PreTrainedTokenizerBase | None = None, save_prompts: bool = False,
@@ -269,11 +296,28 @@ class AnalysisOps(dict):
     """Registry of available analysis operations."""
     def __init__(self):
         super().__init__()
+        # TODO: move these native op aliases to be loaded from config similar to module_registry.yaml
+        # TODO: make op registration lazy once/if we start to have a reasonable number of ops
+        self.op_aliases = {
+            'logit_diffs.sae': 'logit_diffs_sae',
+            'logit_diffs.base': 'logit_diffs_base',
+            'logit_diffs.attribution.ablation': 'logit_diffs_attr_ablation',
+            'logit_diffs.attribution.grad_based': 'logit_diffs_attr_grad',
+        }
         self._register_defaults()
 
-    def register(self, op: AnalysisOp) -> None:
-        """Register a new analysis operation."""
+    def register(self, op: AnalysisOp, alias: str | None = None) -> None:
+        """Register a new analysis operation with optional alias."""
         self[op.name] = op
+        if alias is not None:
+            self.op_aliases[op.name] = alias
+
+    def iter_aliased_ops(self):
+        """Iterate through (op, alias) pairs for all registered ops with aliases."""
+        for op_name, alias in self.op_aliases.items():
+            op = self.get(op_name)
+            if op is not None:
+                yield op, alias
 
     def get_op(self, op_name: str) -> Optional[AnalysisOp]:
         """Get registered operation."""

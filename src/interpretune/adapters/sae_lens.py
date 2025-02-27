@@ -16,6 +16,7 @@ from transformer_lens.hook_points import NamesFilter
 from transformers.tokenization_utils_base import BatchEncoding
 from transformer_lens.utils import get_device as tl_get_device
 
+import interpretune as it
 from interpretune.adapters.registration import CompositionRegistry
 from interpretune.adapters.lightning import LightningDataModule, LightningModule, LightningAdapter
 from interpretune.adapters.transformer_lens import ITLensConfig, BaseITLensModule, TLensAttributeMixin
@@ -27,8 +28,7 @@ from interpretune.utils.data_movement import move_data_to_device
 from interpretune.utils.logging import rank_zero_warn, rank_zero_info
 from interpretune.utils.patched_tlens_generate import generate as patched_generate
 from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.base.contract.analysis import AnalysisBatchProtocol, AnalysisStoreProtocol
-from interpretune.base.ops import ANALYSIS_OPS
+from interpretune.analysis.protocol import AnalysisBatchProtocol, AnalysisStoreProtocol
 
 ################################################################################
 # SAE Lens Configuration Encapsulation
@@ -301,18 +301,18 @@ class SAEAnalysisMixin:
         batch_idx: int,
         **kwargs: Any
     ) -> None:
-        if self.analysis_cfg.op == ANALYSIS_OPS["logit_diffs.base"]:
+        if self.analysis_cfg.op == it.logit_diffs_base:
             answer_logits = self(**batch)
             answer_indices, alive_latents = self.get_latents_and_indices(batch, batch_idx)
             analysis_batch.update(answer_indices=answer_indices, alive_latents=alive_latents)
-        elif self.analysis_cfg.op == ANALYSIS_OPS["logit_diffs.sae"]:
+        elif self.analysis_cfg.op == it.logit_diffs_sae:
             answer_logits, cache = self.model.run_with_cache_with_saes(
                 **batch, saes=self.sae_handles,
                 names_filter=self.analysis_cfg.names_filter
             )
             answer_indices, alive_latents = self.get_latents_and_indices(batch, batch_idx, cache=cache)
             analysis_batch.update(cache=cache, answer_indices=answer_indices, alive_latents=alive_latents)
-        elif self.analysis_cfg.op == ANALYSIS_OPS["logit_diffs.attribution.ablation"]:
+        elif self.analysis_cfg.op == it.logit_diffs_attr_ablation:
             # Use the op's ablate_latent_fn instead of analysis_cfg
             assert self.analysis_cfg.input_store.alive_latents, "alive_latents required for ablation op"
             answer_indices, alive_latents = self.get_latents_and_indices(batch, batch_idx)
@@ -331,7 +331,7 @@ class SAEAnalysisMixin:
                     ]
             analysis_batch.update(alive_latents=alive_latents, answer_indices=answer_indices)
             answer_logits = per_latent_logits
-        elif self.analysis_cfg.op == ANALYSIS_OPS["logit_diffs.attribution.grad_based"]:
+        elif self.analysis_cfg.op == it.logit_diffs_attr_grad:
             assert all((self.analysis_cfg.fwd_hooks, self.analysis_cfg.bwd_hooks)), (
                 "fwd_hooks and bwd_hooks required for grad_based attribution op"
             )
@@ -421,7 +421,7 @@ class SAEAnalysisMixin:
         if logit_diffs.dim() == 0:
             logit_diffs.unsqueeze_(0)
         analysis_batch.update(loss=loss, logit_diffs=logit_diffs, preds=preds, answer_logits=answer_logits)
-        if self.analysis_cfg.op == ANALYSIS_OPS['logit_diffs.sae']:
+        if self.analysis_cfg.op == it.logit_diffs_sae:
             correct_activations: dict[str, torch.Tensor] = {}
             logit_diffs = logit_diffs.cpu()
             for name in analysis_batch.cache.keys():
@@ -431,12 +431,12 @@ class SAEAnalysisMixin:
 
     def loss_and_logit_diffs(self, analysis_batch: AnalysisBatchProtocol, batch: dict[str, Any],
                              batch_idx: int) -> None:
-        if self.analysis_cfg.op in [ANALYSIS_OPS["logit_diffs.sae"], ANALYSIS_OPS["logit_diffs.base"]]:
+        if self.analysis_cfg.op in [it.logit_diffs_sae, it.logit_diffs_base]:
             self.calc_clean_diffs(analysis_batch, batch)
-        elif self.analysis_cfg.op == ANALYSIS_OPS["logit_diffs.attribution.ablation"]:
+        elif self.analysis_cfg.op == it.logit_diffs_attr_ablation:
             per_latent_results, attribution_values = self.calc_ablation_effects(analysis_batch, batch, batch_idx)
             analysis_batch.update(**per_latent_results, attribution_values=attribution_values)
-        elif self.analysis_cfg.op == ANALYSIS_OPS["logit_diffs.attribution.grad_based"]:
+        elif self.analysis_cfg.op == it.logit_diffs_attr_grad:
             attribution_values, correct_activations = self.calc_attribution_values(analysis_batch, batch, batch_idx)
             analysis_batch.update(attribution_values=attribution_values, correct_activations=correct_activations)
         else:
