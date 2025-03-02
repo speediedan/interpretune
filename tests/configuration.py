@@ -16,13 +16,11 @@ from copy import deepcopy
 
 import torch
 
-from interpretune.adapters.transformer_lens import ITLensFromPretrainedConfig, ITLensCustomConfig
-from interpretune.adapters.sae_lens import SAELensFromPretrainedConfig, SAELensCustomConfig
-from interpretune.base.config.shared import Adapter
-from interpretune.base.config.datamodule import ITDataModuleConfig
-from interpretune.base.config.module import ITConfig
-from interpretune.base.contract.session import ITSessionConfig, ITSession
-from interpretune.utils.types import StrOrPath
+from interpretune.adapters import (ITLensFromPretrainedConfig, ITLensCustomConfig, SAELensFromPretrainedConfig,
+                                   SAELensCustomConfig)
+from interpretune.config import ITConfig, ITDataModuleConfig
+from interpretune.session import ITSessionConfig, ITSession
+from interpretune.utils import StrOrPath, Adapter
 from tests import seed_everything
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 from tests.utils import get_model_input_dtype

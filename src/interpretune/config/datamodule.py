@@ -3,8 +3,8 @@ from typing import Optional, Any, Dict, Tuple, List
 import logging
 from dataclasses import dataclass, field
 
-from interpretune.base.config.shared import ITSerializableCfg, ITSharedConfig
-from interpretune.utils.logging import rank_zero_warn
+from interpretune.config import ITSerializableCfg, ITSharedConfig
+from interpretune.utils import rank_zero_warn
 
 
 log = logging.getLogger(__name__)

@@ -14,10 +14,8 @@ from copy import deepcopy
 import pytest
 import torch
 
-from interpretune.base.call import _call_itmodule_hook
-from interpretune.base.components.core import CoreHelperAttributes
-from interpretune.utils.types import LRSchedulerConfig, LRScheduler
-from interpretune.utils.exceptions import MisconfigurationException
+from interpretune.base import _call_itmodule_hook, CoreHelperAttributes
+from interpretune.utils import LRSchedulerConfig, LRScheduler, MisconfigurationException
 from tests.warns import unmatched_warns
 
 

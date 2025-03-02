@@ -13,9 +13,9 @@ from unittest.mock import patch
 import pytest
 from copy import deepcopy
 
-from interpretune.adapters.core import ITModule
-from interpretune.base.call import _call_itmodule_hook
-from interpretune.base.contract.session import ITSession
+from interpretune.adapters import ITModule
+from interpretune.base import _call_itmodule_hook
+from interpretune.session import ITSession
 from tests.utils import ablate_cls_attrs
 from tests.warns import CORE_CTX_WARNS, unexpected_warns
 

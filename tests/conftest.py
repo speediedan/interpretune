@@ -27,11 +27,10 @@ import pytest
 import yaml
 import torch.distributed
 
-from interpretune.base.call import _call_itmodule_hook
-from interpretune.base.contract.session import ITMeta
-from interpretune.base.contract.protocol import ModuleSteppable, DataModuleInitable
-from interpretune.base.datamodules import ITDataModule
-from interpretune.utils.logging import rank_zero_only
+from interpretune.base import _call_itmodule_hook, ITDataModule
+from interpretune.session import ITMeta
+from interpretune.protocol import ModuleSteppable, DataModuleInitable
+from interpretune.utils import rank_zero_only
 from tests import _PATH_DATASETS, seed_everything, load_dotenv, FinetuningScheduler, get_fts, Trainer
 from tests.configuration import config_modules, apply_it_test_cfg
 from tests.modules import TestITDataModule, TestITModule
@@ -375,7 +374,7 @@ def datadir():
 
 @pytest.fixture(scope="function", autouse=True)
 def preserve_global_rank_variable():
-    from interpretune.utils.logging import rank_zero_only
+    from interpretune.utils import rank_zero_only
     """Ensures that the rank_zero_only.rank global variable gets reset in each test."""
     rank = getattr(rank_zero_only, "rank", None)
     yield

@@ -10,10 +10,8 @@ from pathlib import Path
 import torch
 from psutil import Process
 
-from interpretune.utils.logging import rank_zero_warn, _get_rank, rank_zero_only
-from interpretune.base.config.shared import ITSerializableCfg, CoreSteps
-from interpretune.utils.import_utils import resolve_funcs
-from interpretune.utils.types import AutoStrEnum
+from interpretune.utils import rank_zero_warn, resolve_funcs, _get_rank, rank_zero_only, AutoStrEnum, CoreSteps
+from interpretune.config import ITSerializableCfg
 
 
 class DefaultMemHooks(AutoStrEnum):

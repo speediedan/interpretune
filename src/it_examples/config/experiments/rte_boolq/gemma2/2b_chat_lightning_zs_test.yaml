@@ -3,7 +3,7 @@ session_cfg:
   datamodule_cls: it_examples.experiments.rte_boolq.RTEBoolqDataModule
   module_cls: it_examples.experiments.rte_boolq.RTEBoolqModule
   datamodule_cfg:
-    class_path: interpretune.base.config.datamodule.ITDataModuleConfig
+    class_path: interpretune.config.datamodule.ITDataModuleConfig
     init_args:
       model_name_or_path: google/gemma-2-2b-it
       task_name: rte
@@ -37,7 +37,7 @@ session_cfg:
         init_args:
           enabled: true
           lm_generation_cfg:
-            class_path: interpretune.base.config.mixins.HFGenerationConfig
+            class_path: interpretune.config.mixins.HFGenerationConfig
             init_args:
               model_config:
                 eos_token_id: 1
@@ -47,7 +47,7 @@ session_cfg:
                 top_k: 50
                 padding_side: left
       hf_from_pretrained_cfg:
-        class_path: interpretune.base.config.module.HFFromPretrainedConfig
+        class_path: interpretune.config.module.HFFromPretrainedConfig
         init_args:
           use_model_cache: false
           model_head: transformers.Gemma2ForCausalLM

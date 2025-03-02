@@ -32,10 +32,10 @@
 #       train_batch_size: 2
 #       eval_batch_size: 2
 #     module_cfg:
-#       class_path: interpretune.base.config.module.ITConfig
+#       class_path: interpretune.config.module.ITConfig
 #       init_args:
 #         auto_comp_cfg:
-#           class_path: interpretune.base.config.shared.AutoCompConfig
+#           class_path: interpretune.config.shared.AutoCompConfig
 #           init_args:
 #             module_cfg_name: RTEBoolqConfig
 #             module_cfg_mixin:
@@ -45,25 +45,25 @@
 #           init_args:
 #             enabled: True
 #             lm_generation_cfg:
-#               class_path: interpretune.adapters.transformer_lens.TLensGenerationConfig
+#               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
 #               init_args:
 #                 max_new_tokens: 1
 #         hf_from_pretrained_cfg:
-#           class_path: interpretune.base.config.mixins.HFFromPretrainedConfig
+#           class_path: interpretune.config.mixins.HFFromPretrainedConfig
 #           init_args:
 #             pretrained_kwargs:
 #               device_map: cpu
 #               torch_dtype: float32
 #             model_head: transformers.GPT2LMHeadModel
 #         tl_cfg:
-#           class_path: interpretune.adapters.transformer_lens.ITLensFromPretrainedNoProcessingConfig
+#           class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
 #         sae_cfgs:
-#           - class_path: interpretune.adapters.sae_lens.SAELensFromPretrainedConfig
+#           - class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
 #             init_args:
 #               release: gpt2-small-res-jb
 #               sae_id: blocks.0.hook_resid_pre
 #               device: cuda
-#           - class_path: interpretune.adapters.sae_lens.SAELensFromPretrainedConfig
+#           - class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
 #             init_args:
 #               release: gpt2-small-res-jb
 #               sae_id: blocks.1.hook_resid_pre
@@ -99,10 +99,10 @@
 #       train_batch_size: 2
 #       eval_batch_size: 2
 #     module_cfg:
-#       class_path: interpretune.base.config.module.ITConfig
+#       class_path: interpretune.config.module.ITConfig
 #       init_args:
 #         auto_comp_cfg:
-#           class_path: interpretune.base.config.shared.AutoCompConfig
+#           class_path: interpretune.config.shared.AutoCompConfig
 #           init_args:
 #             module_cfg_name: RTEBoolqConfig
 #             module_cfg_mixin:
@@ -112,11 +112,11 @@
 #           init_args:
 #             enabled: True
 #             lm_generation_cfg:
-#               class_path: interpretune.adapters.transformer_lens.TLensGenerationConfig
+#               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
 #               init_args:
 #                   max_new_tokens: 1
 #         tl_cfg:
-#           class_path: interpretune.adapters.transformer_lens.ITLensCustomConfig
+#           class_path: interpretune.config.transformer_lens.ITLensCustomConfig
 #           init_args:
 #             cfg:
 #               n_layers: 2

@@ -6,7 +6,7 @@ from copy import deepcopy
 
 from jsonargparse import Namespace, ArgumentError
 
-from interpretune.base.components.cli import LightningCLIAdapter, bootstrap_cli
+from interpretune.base import LightningCLIAdapter, bootstrap_cli
 from tests.runif import RunIf
 from tests.warns import unexpected_warns, CLI_EXPECTED_WARNS
 from tests.conftest import make_deterministic  # noqa: F401
@@ -114,7 +114,7 @@ def test_bootstrap_cli(clean_cli_env, l_cli, run):
     # the CLI bootstrap options are also exercised in `test_cli_configs` but tested here as well in part to ensure the
     # lines covered by `test_cli_configs` via subprocesses are properly captured by coverage without the burden
     # of extra coverage-specific subprocess configuration
-    from interpretune.base.components.cli import l_cli_main, core_cli_main
+    from interpretune.base import l_cli_main, core_cli_main
     cli_args = [RUN_FN]
     target_cli = l_cli_main if l_cli else core_cli_main
     if l_cli:

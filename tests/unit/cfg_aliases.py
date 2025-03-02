@@ -3,12 +3,9 @@ from copy import deepcopy
 from enum import auto
 from dataclasses import dataclass, field
 
-from interpretune.base.config.shared import Adapter
-from interpretune.utils.types import AutoStrEnum
-from interpretune.base.config.mixins import HFFromPretrainedConfig, GenerativeClassificationConfig
-from interpretune.adapters.transformer_lens import ITLensCustomConfig
-from interpretune.extensions.debug_generation import DebugLMConfig
-from interpretune.extensions.memprofiler import MemProfilerCfg
+from interpretune.utils import AutoStrEnum, Adapter
+from interpretune.config import HFFromPretrainedConfig, GenerativeClassificationConfig, ITLensCustomConfig
+from interpretune.extensions import DebugLMConfig, MemProfilerCfg
 from tests.base_defaults import BaseAugTest, BaseCfg
 from tests.parity_acceptance.cfg_aliases import parity_cli_cfgs, mod_initargs, CLI_TESTS
 from tests.parity_acceptance.test_it_tl import TLParityCfg

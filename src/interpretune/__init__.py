@@ -8,7 +8,10 @@ import os
 import sys
 from importlib.abc import MetaPathFinder
 from importlib.machinery import ModuleSpec
+
 from interpretune.__about__ import *  # noqa: F401, F403
+from interpretune.protocol import ITModuleProtocol, ITDataModuleProtocol
+
 
 # In PyTorch 2.0+, setting this variable will force `torch.cuda.is_available()` and `torch.cuda.device_count()`
 # to use an NVML-based implementation that doesn't poison forks.
@@ -40,3 +43,29 @@ class _AnalysisImportHook(MetaPathFinder):
 
 # Register our import hook to handle interpretune.analysis imports
 sys.meta_path.insert(0, _AnalysisImportHook())
+
+# we need to defer all imports that depend on the analysis module until after the import hook is registered
+from interpretune.session import ITSession, ITSessionConfig  # noqa: E402
+from interpretune.runners import SessionRunner, AnalysisRunner  # noqa: E402
+from interpretune.base import ITDataModule, BaseITModule, ProfilerHooksMixin  # noqa: E402
+
+__all__ = [
+    # Session Module
+    "ITSession",
+    "ITSessionConfig",
+
+    # Runners
+    "SessionRunner",
+    "AnalysisRunner",
+
+    # Protocol Module
+    "ITModuleProtocol",
+    "ITDataModuleProtocol",
+
+    # Base Modules
+    "ITDataModule",
+    "BaseITModule",
+
+    # Base Components
+    "ProfilerHooksMixin",
+]

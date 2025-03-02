@@ -3,10 +3,9 @@ from copy import deepcopy
 from enum import auto
 from pathlib import Path
 
-from interpretune.base.config.module import HFFromPretrainedConfig
-from interpretune.base.config.shared import Adapter
-from interpretune.utils.types import AutoStrEnum
-from interpretune.extensions.memprofiler import MemProfilerCfg, MemProfilerSchedule
+from interpretune.config import HFFromPretrainedConfig
+from interpretune.utils import AutoStrEnum, Adapter
+from interpretune.extensions import MemProfilerCfg, MemProfilerSchedule
 from it_examples.example_module_registry import (MODULE_EXAMPLE_REGISTRY, example_datamodule_defaults,
                                                  example_itmodule_defaults)
 from base_defaults import default_prof_bs
@@ -125,9 +124,9 @@ default_seed_cfg = {"seed_everything": 42}
 # note we use the same datamodule and module cls for all test contexts
 default_session_cfg = {
     "datamodule_cls": "tests.modules.TestITDataModule",
-    "datamodule_cfg": {"class_path": "interpretune.base.config.datamodule.ITDataModuleConfig"},
+    "datamodule_cfg": {"class_path": "interpretune.config.datamodule.ITDataModuleConfig"},
     "module_cls": "tests.modules.TestITModule",
-    "module_cfg": {"class_path": "interpretune.base.config.module.ITConfig"}
+    "module_cfg": {"class_path": "interpretune.config.module.ITConfig"}
 }
 
 core_cust_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY['cust.rte']['cfg_dict'])

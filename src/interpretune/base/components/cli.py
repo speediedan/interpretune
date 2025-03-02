@@ -1,3 +1,4 @@
+from __future__ import annotations
 import warnings
 import os
 import sys
@@ -6,7 +7,7 @@ import random
 import logging
 import weakref
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Union, TYPE_CHECKING
 from collections.abc import Callable, Sequence
 from typing_extensions import override
 from functools import reduce
@@ -15,16 +16,16 @@ import torch
 from transformers import logging as transformers_logging
 from jsonargparse import ActionConfigFile, ArgumentParser, Namespace
 
-from interpretune.base.config.shared import ITSharedConfig
-from interpretune.base.datamodules import ITDataModule
-from interpretune.adapters.core import ITModule
-from interpretune.base.contract.protocol import InterpretunableType
-from interpretune.base.contract.session import ITSession, ITSessionConfig
-from interpretune.utils.session_runner import SessionRunner, SessionRunnerCfg
-from interpretune.utils.logging import rank_zero_info, rank_zero_warn
-from interpretune.utils.import_utils import _DOTENV_AVAILABLE, _LIGHTNING_AVAILABLE
-from interpretune.utils.types import ArgsType
+from interpretune.config import ITSharedConfig, SessionRunnerCfg
+from interpretune.base import ITDataModule
+from interpretune.protocol import InterpretunableType
 
+from interpretune.runners import SessionRunner
+from interpretune.utils import ArgsType, rank_zero_info, rank_zero_warn, _DOTENV_AVAILABLE, _LIGHTNING_AVAILABLE
+
+if TYPE_CHECKING:
+    from interpretune.session import ITSession, ITSessionConfig
+    from interpretune.adapters import ITModule
 
 max_seed_value = np.iinfo(np.uint32).max
 min_seed_value = np.iinfo(np.uint32).min
@@ -296,7 +297,7 @@ def core_cli_main(run_mode: str | bool | None = None , args: ArgsType = None) ->
 ##########################################################################
 
 if _LIGHTNING_AVAILABLE:
-    from lightning.pytorch.cli import LightningCLI, LightningArgumentParser, ArgsType
+    from lightning.pytorch.cli import LightningCLI, LightningArgumentParser
 
     class LightningCLIAdapter:
         core_to_lightning_cli_map = {"data": "it_session.datamodule", "model": "it_session.module"}
@@ -360,6 +361,8 @@ if _LIGHTNING_AVAILABLE:
 
 else:
     l_cli_main = object
+    LightningCLIAdapter = object
+    LightningITCLI = object
 
 def _parse_run_option(lightning_cli: bool = False) -> bool | str | None:
     run_mode = None

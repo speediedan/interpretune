@@ -5,7 +5,7 @@ import pytest
 from torch.testing import assert_close
 
 from tests.runif import RunIf
-from interpretune.extensions.debug_generation import DebugGeneration
+from interpretune.extensions import DebugGeneration
 
 IT_TEST_TEXT = {
     "text": [("Interpretune is a flexible ML experimentation framework that makes code adhering to a simple"
@@ -138,7 +138,7 @@ class TestClassDebugGen:
         debug_module = get_it_session__tl_gpt2_debug__setup.module.debug_lm
         test_seqs = debug_module.debug_sequences(["Hello, I'm a large language,", "The day after Tuesday"])
         if gen_error:
-            from interpretune.extensions.debug_generation import DebugGeneration
+            from interpretune.extensions import DebugGeneration
             with patch.object(DebugGeneration, "DEFAULT_OUTPUT_ATTRS", ("fake",)):
                 with pytest.raises(ValueError, match=gen_error):
                     _ = debug_module.debug_generate_batch(test_seqs, **gen_kwargs)

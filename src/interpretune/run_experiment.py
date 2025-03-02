@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Convenient wrapper script to bootstrap CLI-invoked experiments."""
-from interpretune.base.components.cli import bootstrap_cli
+from interpretune.base import bootstrap_cli
 
 
 if __name__ == "__main__":

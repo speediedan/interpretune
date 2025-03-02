@@ -3,14 +3,10 @@ import os
 import importlib
 from dataclasses import dataclass, field
 
-from interpretune.base.config.datamodule import ITDataModuleConfig
-from interpretune.base.config.module import ITConfig, ITSerializableCfg
-from interpretune.base.config.shared import ITSharedConfig, Adapter
-from interpretune.utils.warnings import unexpected_state_msg_suffix
-from interpretune.utils.logging import rank_zero_warn
 from interpretune.adapters import ADAPTER_REGISTRY
-from interpretune.base.contract.protocol import (DataModuleInitable, ModuleSteppable, ITModuleProtocol,
-                                                 ITDataModuleProtocol)
+from interpretune.config import ITDataModuleConfig, ITConfig, ITSerializableCfg, ITSharedConfig
+from interpretune.protocol import DataModuleInitable, ModuleSteppable, ITModuleProtocol, ITDataModuleProtocol
+from interpretune.utils import unexpected_state_msg_suffix, rank_zero_warn, Adapter
 
 
 class NamedWrapper:

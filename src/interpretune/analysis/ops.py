@@ -7,7 +7,7 @@ from transformers import BatchEncoding, PreTrainedTokenizerBase
 from transformer_lens.hook_points import HookPoint
 from jaxtyping import Float
 
-from interpretune.analysis.protocol import AnalysisBatchProtocol
+from interpretune.protocol import AnalysisBatchProtocol
 
 
 def boolean_logits_to_avg_logit_diff(

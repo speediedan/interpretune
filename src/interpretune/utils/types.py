@@ -37,6 +37,27 @@ class AutoStrEnum(Enum):
     def _generate_next_value_(name, _start, _count, _last_values) -> str:  # type: ignore
         return name
 
+
+# NOTE [Interpretability Adapters]:
+# `TransformerLens` is the first supported interpretability adapter but support for other adapters is expected
+class Adapter(AutoStrEnum):
+    # CORE: The provided module and datamodule will be prepared for use with core PyTorch. The default
+    #       trainer, a custom trainer or no trainer all can be used in combination with any supported and specified
+    #       adapter.
+    core = auto()
+    # LIGHTNING: The provided module and datamodule will be prepared for use with the Lightning trainer and any
+    #            supported and specified adapter.
+    lightning = auto()
+    # TRANSFORMER_LENS: The provided module and datamodule will be prepared for use with the TransformerLens adapter in
+    #                  in combination with any supported and specified adapter.
+    transformer_lens = auto()
+    # SAE_LENS: The provided module and datamodule will be prepared for use with the SAELens adapter in
+    #                  in combination with any supported and specified adapter.
+    sae_lens = auto()
+
+    def __lt__(self, other: 'Adapter') -> bool:
+        return self.value < other.value
+
 # DerivedEnumMeta is a custom metaclass that adds enum members from an input set.
 class DerivedEnumMeta(EnumMeta):  # change EnumMeta alias to EnumType when 3.11 python is minimum
     _derived_enum_internal = ("_input_set", "_transform")
@@ -62,6 +83,32 @@ class DerivedEnumMeta(EnumMeta):  # change EnumMeta alias to EnumType when 3.11 
 
 class SetDerivedEnum(AutoStrEnum, metaclass=DerivedEnumMeta):
     ...
+
+################################################################################
+# Core Enums
+################################################################################
+
+# TODO: consider switching these to a data structure that natively allows for more flexible DRY composition
+#       (currently preferring a custom enum for IDE autocompletion etc.)
+
+CORE_PHASES = frozenset(['train', 'validation', 'test', 'predict'])
+EXT_PHASES = frozenset(['analysis'])
+ALL_PHASES = CORE_PHASES.union(EXT_PHASES)
+
+class CorePhases(SetDerivedEnum):
+    # The _input_set class attribute is used by DerivedEnumMeta to generate enum members.
+    _input_set = CORE_PHASES
+
+class CoreSteps(SetDerivedEnum):
+    _input_set = CORE_PHASES
+    _transform = lambda x: f"{x}_step"
+
+class AllPhases(SetDerivedEnum):
+    _input_set = ALL_PHASES
+
+class AllSteps(SetDerivedEnum):
+    _input_set = ALL_PHASES
+    _transform = lambda x: f"{x}_step"
 
 ################################################################################
 # Framework Compatibility helper types

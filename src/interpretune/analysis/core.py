@@ -16,11 +16,10 @@ from datasets import Features, Array2D, Value, Array3D, load_dataset
 from datasets import Sequence as DatasetsSequence
 
 import interpretune as it
-from interpretune.analysis.protocol import (AnalysisStoreProtocol, AnalysisBatchProtocol, NamesFilter, SAEFqn,
-                                                AnalysisCfgProtocol)
-from interpretune.analysis.ops import ANALYSIS_OPS, AnalysisOp
-from interpretune.utils.logging import rank_zero_warn
-from interpretune.utils.tokenization import DEFAULT_DECODE_KWARGS
+from interpretune.protocol import (AnalysisStoreProtocol, AnalysisBatchProtocol, NamesFilter, SAEFqn,
+                                   AnalysisCfgProtocol)
+from interpretune.analysis import ANALYSIS_OPS, AnalysisOp
+from interpretune.utils import rank_zero_warn, DEFAULT_DECODE_KWARGS
 
 
 class SAEAnalysisDict(dict):

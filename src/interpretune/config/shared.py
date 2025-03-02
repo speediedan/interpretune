@@ -4,63 +4,17 @@ import inspect
 import logging
 import os
 import sys
-from enum import auto
 
 import yaml
 from transformers import PreTrainedTokenizerBase
 
-from interpretune.utils.logging import rank_zero_warn, rank_zero_debug
-from interpretune.utils.types import AnyDataClass, AutoStrEnum, SetDerivedEnum
+from interpretune.utils import rank_zero_warn, rank_zero_debug, AnyDataClass, Adapter
 
 
 log = logging.getLogger(__name__)
 
-################################################################################
-# Core Enums
-################################################################################
-
-# TODO: consider switching these to a data structure that natively allows for more flexible DRY composition
-#       (currently preferring a custom enum for IDE autocompletion etc.)
-
-CORE_PHASES = frozenset(['train', 'validation', 'test', 'predict'])
-EXT_PHASES = frozenset(['analysis'])
-ALL_PHASES = CORE_PHASES.union(EXT_PHASES)
-
-class CorePhases(SetDerivedEnum):
-    # The _input_set class attribute is used by DerivedEnumMeta to generate enum members.
-    _input_set = CORE_PHASES
-
-class CoreSteps(SetDerivedEnum):
-    _input_set = CORE_PHASES
-    _transform = lambda x: f"{x}_step"
-
-class AllPhases(SetDerivedEnum):
-    _input_set = ALL_PHASES
-
-class AllSteps(SetDerivedEnum):
-    _input_set = ALL_PHASES
-    _transform = lambda x: f"{x}_step"
-
-# NOTE [Interpretability Adapters]:
-# `TransformerLens` is the first supported interpretability adapter but support for other adapters is expected
-class Adapter(AutoStrEnum):
-    # CORE: The provided module and datamodule will be prepared for use with core PyTorch. The default
-    #       trainer, a custom trainer or no trainer all can be used in combination with any supported and specified
-    #       adapter.
-    core = auto()
-    # LIGHTNING: The provided module and datamodule will be prepared for use with the Lightning trainer and any
-    #            supported and specified adapter.
-    lightning = auto()
-    # TRANSFORMER_LENS: The provided module and datamodule will be prepared for use with the TransformerLens adapter in
-    #                  in combination with any supported and specified adapter.
-    transformer_lens = auto()
-    # SAE_LENS: The provided module and datamodule will be prepared for use with the SAELens adapter in
-    #                  in combination with any supported and specified adapter.
-    sae_lens = auto()
-
-    def __lt__(self, other: 'Adapter') -> bool:
-        return self.value < other.value
-
+# DEFAULT auto-composition search paths
+AUTOCOMP_SEARCH_PATHS = ['interpretune.adapters', 'interpretune.config']
 
 AdapterSeq: TypeAlias = Sequence[Adapter | str] | Adapter | str
 
@@ -148,24 +102,30 @@ def candidate_subclass_attrs(kwargs: dict, target_type: type) -> dict:
 T = TypeVar("T")
 
 def find_adapter_subclasses(T: type, target_adapters: AdapterSeq | None = None) -> dict[str, type[T]]:
-    """Searches the current global namespace underneath `interpretune.adapters` for subclasses of `T` and returns
-    them.
+    """Searches `interpretune.adapters` and `interpretune.config` for subclasses of `T` and returns them.
 
     If target_adapters is provided, only considers subclasses from the specified adapters.
     """
     subclasses, superclasses = {}, {}
     adapter_space = adapter_seq_to_list(target_adapters) if target_adapters is not None \
         else Adapter.__members__.values()
-    candidate_modules = {val: (f'interpretune.adapters.{val.name}',
-                               sys.modules[f'interpretune.adapters.{val.name}']) for val in adapter_space}
-    for adapter, (module_fqn, module) in candidate_modules.items():
-        for _, member in inspect.getmembers(module, inspect.isclass):
-            if member.__module__ != module_fqn:
+    # Search both adapters and config namespaces
+    for base_path in AUTOCOMP_SEARCH_PATHS:
+        candidate_modules = {}
+        for val in adapter_space:
+            module_path = f'{base_path}.{val.name}'
+            if module_path in sys.modules:
+                candidate_modules[val] = (module_path, sys.modules[module_path])
+        for adapter, (module_fqn, module) in candidate_modules.items():
+            if module is None:  # Skip if module doesn't exist in this namespace
                 continue
-            if issubclass(member, T) and member is not T:
-                subclasses[adapter] = member
-            elif issubclass(T, member):
-                superclasses[adapter] = member
+            for _, member in inspect.getmembers(module, inspect.isclass):
+                if member.__module__ != module_fqn:
+                    continue
+                if issubclass(member, T) and member is not T:
+                    subclasses[adapter] = member
+                elif issubclass(T, member):
+                    superclasses[adapter] = member
     return subclasses, superclasses
 
 def search_candidate_subclass_attrs(candidate_modules: dict[Adapter, type],

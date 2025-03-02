@@ -14,16 +14,10 @@ from transformers import PreTrainedTokenizerBase
 from datasets.arrow_dataset import LazyDict
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.adapters.transformer_lens import ITLensConfig
-from interpretune.adapters.sae_lens import SAELensConfig
-from interpretune.base.config.datamodule import PromptConfig, ITDataModuleConfig
-from interpretune.base.config.module import ITConfig
-from interpretune.base.config.mixins import GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig
-from interpretune.base.components.mixins import ProfilerHooksMixin
-from interpretune.base.datamodules import ITDataModule
-from interpretune.utils.logging import rank_zero_warn
-from interpretune.utils.types import STEP_OUTPUT
-from interpretune.utils.tokenization import _sanitize_input_name
+from interpretune.config import (ITLensConfig, SAELensConfig, PromptConfig, ITDataModuleConfig, ITConfig,
+                                 GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig)
+from interpretune.base import ProfilerHooksMixin, ITDataModule
+from interpretune.utils import rank_zero_warn, STEP_OUTPUT,_sanitize_input_name
 
 
 log = logging.getLogger(__name__)

@@ -15,11 +15,9 @@ from unittest import mock
 import pytest
 import torch
 
-from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.base.components.mixins import HFFromPretrainedMixin
-from interpretune.base.config.module import ITConfig
-from interpretune.base.config.extensions import ITExtensionsConfigMixin
-from interpretune.base.config.mixins import HFFromPretrainedConfig, ITExtension
+from interpretune.utils import MisconfigurationException
+from interpretune.base import HFFromPretrainedMixin
+from interpretune.config import ITConfig, ITExtensionsConfigMixin, HFFromPretrainedConfig, ITExtension
 from tests.base_defaults import default_test_task
 from tests.utils import disable_genclassif
 from tests.runif import RunIf

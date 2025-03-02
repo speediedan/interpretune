@@ -7,9 +7,8 @@ from datasets import load_dataset, Dataset
 import numpy as np
 from torch.nn import CrossEntropyLoss
 
-from interpretune.utils.logging import rank_zero_warn
-from interpretune.base.config.shared import ITSerializableCfg
-from interpretune.utils.tokenization import _sanitize_input_name, DEFAULT_DECODE_KWARGS
+from interpretune.config import ITSerializableCfg
+from interpretune.utils import rank_zero_warn, _sanitize_input_name, DEFAULT_DECODE_KWARGS
 
 
 @dataclass(kw_only=True)

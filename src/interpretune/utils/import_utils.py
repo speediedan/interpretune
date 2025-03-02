@@ -7,7 +7,7 @@ import torch
 import pkg_resources
 from packaging.version import Version
 
-from interpretune.utils.exceptions import MisconfigurationException
+from interpretune.utils import MisconfigurationException
 
 
 def instantiate_class(init: Dict[str, Any],

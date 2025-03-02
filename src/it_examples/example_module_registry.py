@@ -1,10 +1,9 @@
 from pathlib import Path
 from functools import partial
 
-from interpretune.base.registry import ModuleRegistry, gen_module_registry, instantiate_and_register, apply_defaults
-from tests.modules import (TestITDataModule, TestITModule)
-
-from interpretune.base.components.cli import IT_BASE
+from interpretune.base import IT_BASE
+from interpretune.registry import ModuleRegistry, gen_module_registry, instantiate_and_register, apply_defaults
+from tests.modules import TestITDataModule, TestITModule
 
 # We define and 'register' basic example module configs here which are used in both example and parity acceptance tests.
 

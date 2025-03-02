@@ -22,15 +22,12 @@ import torch
 from tests.runif import RunIf
 from tests.utils import ablate_cls_attrs
 from tests.warns import CORE_CTX_WARNS, unexpected_warns, unmatched_warns
-from interpretune.base.contract.session import ITSession
-from interpretune.utils.logging import _get_rank, rank_zero_only, rank_zero_deprecation
-from interpretune.utils.import_utils import (resolve_funcs, instantiate_class, _resolve_torch_dtype, package_available,
-                                             module_available, compare_version)
-from interpretune.base.config.mixins import ITExtension
-from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.extensions.memprofiler import MemProfilerHooks, DefaultMemHooks
-from interpretune.utils.data_movement import move_data_to_device, to_device
-from interpretune.utils.session_runner import SessionRunnerCfg
+from interpretune.session import ITSession
+from interpretune.utils import (
+    resolve_funcs, _get_rank, rank_zero_only, rank_zero_deprecation, instantiate_class, _resolve_torch_dtype,
+    package_available,  MisconfigurationException, move_data_to_device, to_device, module_available, compare_version)
+from interpretune.config import ITExtension, SessionRunnerCfg
+from interpretune.extensions import MemProfilerHooks, DefaultMemHooks
 
 
 class TestClassUtils:

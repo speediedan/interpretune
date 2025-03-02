@@ -7,8 +7,8 @@ from functools import reduce
 
 import torch
 
-from interpretune.base.contract.session import ITSession
-from interpretune.base.config.mixins import GenerativeClassificationConfig, CoreGenerationConfig
+from interpretune.session import ITSession
+from interpretune.config import GenerativeClassificationConfig, CoreGenerationConfig
 
 ################################################################################
 # Test Utility Functions

@@ -3,10 +3,9 @@ from typing import List, Optional, Tuple, Callable, Any, Dict, Sequence
 import pytest
 
 from interpretune.adapters import ADAPTER_REGISTRY
-from interpretune.base.config.shared import Adapter
-from interpretune.base.config.mixins import HFFromPretrainedConfig, GenerativeClassificationConfig
-from interpretune.extensions.memprofiler import MemProfilerCfg
-from interpretune.extensions.debug_generation import DebugLMConfig
+from interpretune.config import HFFromPretrainedConfig, GenerativeClassificationConfig
+from interpretune.extensions import MemProfilerCfg, DebugLMConfig
+from interpretune.utils import Adapter
 from tests.runif import RunIf, RUNIF_ALIASES
 
 default_test_task = "rte"

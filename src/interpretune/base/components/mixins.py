@@ -1,6 +1,7 @@
+from __future__ import annotations
 import os
 import inspect
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from contextlib import contextmanager
 from functools import wraps
 
@@ -10,12 +11,12 @@ from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
 
 import interpretune as it
-from interpretune.utils.logging import rank_zero_warn
-from interpretune.base.config.mixins import HFFromPretrainedConfig, HFGenerationConfig, BaseGenerationConfig
-from interpretune.base.config.module import ITConfig, ITState
-from interpretune.base.config.extensions import ITExtensionsConfigMixin
-from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE
-from interpretune.analysis.protocol import AnalysisCfgProtocol
+from interpretune.utils import rank_zero_warn, _import_class, _BNB_AVAILABLE
+from interpretune.config import (HFFromPretrainedConfig, HFGenerationConfig, BaseGenerationConfig, ITConfig, ITState,
+                                 ITExtensionsConfigMixin)
+
+if TYPE_CHECKING:
+    from interpretune.protocol import AnalysisCfgProtocol
 
 
 class ITStateMixin:

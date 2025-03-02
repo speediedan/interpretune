@@ -1,16 +1,17 @@
+from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 import os
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 import torch
 
-from interpretune.base.config.shared import ITSerializableCfg, ITSharedConfig, AutoCompConf
-from interpretune.base.config.mixins import GenerativeClassificationConfig, HFFromPretrainedConfig
-from interpretune.base.config.extensions import ExtensionConf
-from interpretune.base.datamodules import ITDataModule
-from interpretune.utils.logging import rank_zero_info
-from interpretune.utils.types import LRSchedulerConfig, Optimizable
-from interpretune.analysis.protocol import AnalysisCfgProtocol
+from interpretune.config import (ITSerializableCfg, ITSharedConfig, AutoCompConf, ExtensionConf, HFFromPretrainedConfig,
+                                 GenerativeClassificationConfig)
+from interpretune.utils import rank_zero_info, LRSchedulerConfig, Optimizable
+
+if TYPE_CHECKING:
+    from interpretune.protocol import AnalysisCfgProtocol
+    from interpretune.base import ITDataModule
 
 
 ################################################################################

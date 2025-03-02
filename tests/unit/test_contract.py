@@ -15,9 +15,9 @@ from copy import deepcopy
 
 import pytest
 
-from interpretune.base.config.shared import ITSharedConfig
-from interpretune.base.contract.session import ITSession, ITMeta, ITSessionConfig
-from interpretune.base.contract.protocol import ITDataModuleProtocol, ITModuleProtocol
+from interpretune.config import ITSharedConfig
+from interpretune.session import ITSession, ITMeta, ITSessionConfig
+from interpretune.protocol import ITDataModuleProtocol, ITModuleProtocol
 from tests.warns import CORE_CTX_WARNS, unexpected_warns, unmatched_warns
 from tests.utils import ablate_cls_attrs
 

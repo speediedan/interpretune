@@ -1,10 +1,11 @@
-from typing import Any
+from __future__ import annotations
+from typing import Any, TYPE_CHECKING
 import torch
 
-from interpretune.base.config.module import ITConfig, ITState
-from interpretune.utils.import_utils import instantiate_class
-from interpretune.utils.types import STEP_OUTPUT, OptimizerLRScheduler
+from interpretune.utils import instantiate_class, STEP_OUTPUT, OptimizerLRScheduler
 
+if TYPE_CHECKING:
+    from interpretune.config import ITConfig, ITState
 
 class BaseITHooks:
     """" IT Protocol hooks implemented by BaseITModule."""

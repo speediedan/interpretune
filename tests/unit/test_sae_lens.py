@@ -7,10 +7,10 @@ import torch
 from transformer_lens.ActivationCache import ActivationCache
 from transformer_lens.utils import get_device as tl_get_device
 
-from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.base.contract.session import ITSession
-from interpretune.adapters.sae_lens import SAELensFromPretrainedConfig, SAELensConfig, SAELensCustomConfig
-from interpretune.adapters.transformer_lens import ITLensFromPretrainedConfig, ITLensCustomConfig
+from interpretune.utils import MisconfigurationException
+from interpretune.session import ITSession
+from interpretune.config import (SAELensFromPretrainedConfig, SAELensConfig, SAELensCustomConfig,
+                                 ITLensFromPretrainedConfig, ITLensCustomConfig)
 from tests.utils import ablate_cls_attrs
 from tests.base_defaults import default_test_task
 

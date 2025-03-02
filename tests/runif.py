@@ -17,7 +17,7 @@ from typing import Optional, Union, Dict, Set
 
 import pytest
 import torch
-from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE, _BNB_AVAILABLE, _FTS_AVAILABLE
+from interpretune.utils import _LIGHTNING_AVAILABLE, _BNB_AVAILABLE, _FTS_AVAILABLE
 from packaging.version import Version
 from pkg_resources import get_distribution
 from it_examples.patching.dep_patch_shim import ExpPatch, _ACTIVE_PATCHES

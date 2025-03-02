@@ -3,8 +3,8 @@ from copy import deepcopy
 import pytest
 from torch import device
 
-from interpretune.adapters.transformer_lens import ITLensFromPretrainedConfig, ITLensConfig, ITLensCustomConfig
-from interpretune.utils.exceptions import MisconfigurationException
+from interpretune.config import ITLensFromPretrainedConfig, ITLensConfig, ITLensCustomConfig
+from interpretune.utils import MisconfigurationException
 from tests.warns import unexpected_warns, TL_CTX_WARNS
 from tests.utils import ablate_cls_attrs
 from tests.base_defaults import default_test_task

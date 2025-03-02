@@ -13,9 +13,9 @@
 from pathlib import Path
 from unittest import mock
 
-from interpretune.base.config.shared import Adapter
-from interpretune.base.contract.session import ITSessionConfig, ITSession
-from interpretune.utils.session_runner import SessionRunner, SessionRunnerCfg
+from interpretune.utils import Adapter
+from interpretune.session import ITSessionConfig, ITSession
+from interpretune.runners import SessionRunner, SessionRunnerCfg
 from tests import Trainer, ModelCheckpoint
 from tests.configuration import config_modules
 

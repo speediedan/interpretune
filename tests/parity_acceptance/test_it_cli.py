@@ -6,10 +6,9 @@ from unittest import mock
 from typing import Optional, List, Sequence
 from dataclasses import dataclass
 
-from interpretune.base.config.shared import Adapter
 from interpretune.adapters import ADAPTER_REGISTRY
-from interpretune.base.components.cli import core_cli_main, compose_config, l_cli_main
-from interpretune.utils.types import ArgsType
+from interpretune.base import core_cli_main, compose_config, l_cli_main
+from interpretune.utils import ArgsType, Adapter
 from tests.base_defaults import pytest_factory, BaseAugTest
 from tests.parity_acceptance.cfg_aliases import CLI_TESTS, IT_HOME, RUN_FN, CLI_EXP
 from tests.runif import RunIf

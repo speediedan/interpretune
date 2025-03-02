@@ -1,11 +1,13 @@
-from typing import Any, Dict, Callable
+from typing import Any, Dict, Callable, NamedTuple
 from dataclasses import field, make_dataclass
 
-from interpretune.base.config.mixins import  ITExtension
-from interpretune.base.config.shared import ITSerializableCfg
-from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.utils.import_utils import _import_class
+from interpretune.config import ITSerializableCfg
+from interpretune.utils import MisconfigurationException, _import_class
 
+class ITExtension(NamedTuple):
+    ext_attr: str
+    ext_cls_fqn: str
+    ext_cfg_fqn: str
 
 class ITExtensionsConfigMixin:
 

@@ -3,23 +3,17 @@ import inspect
 from typing import Any
 from functools import reduce
 import logging
-from pathlib import Path
 
 import torch
 import datasets
 from datasets import Dataset
-from datasets.config import HF_CACHE_HOME
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
-from interpretune.utils.logging import rank_zero_info, rank_zero_warn
-from interpretune.utils.import_utils import _import_class
-from interpretune.base.config.datamodule import ITDataModuleConfig
+from interpretune.utils import rank_zero_info, rank_zero_warn, _import_class
+from interpretune.config import ITDataModuleConfig
 
 log = logging.getLogger(__name__)
 
-IT_ANALYSIS_CACHE_DIR = "interpretune"
-DEFAULT_IT_ANALYSIS_CACHE = os.path.join(HF_CACHE_HOME, IT_ANALYSIS_CACHE_DIR)
-IT_ANALYSIS_CACHE = Path(os.getenv("IT_ANALYSIS_CACHE_DIR", DEFAULT_IT_ANALYSIS_CACHE))
 
 ################################################################################
 # ITDatamodule Definition

@@ -1,13 +1,14 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.base.modules import BaseITModule
-from interpretune.base.datamodules import ITDataModule
-from interpretune.base.config.shared import Adapter
-from interpretune.adapters.registration import CompositionRegistry
-from interpretune.base.components.core import CoreHelperAttributes
-from interpretune.utils.data_movement import to_device
+from interpretune.base import CoreHelperAttributes, BaseITModule, ITDataModule
+from interpretune.utils import to_device, Adapter
+
+if TYPE_CHECKING:
+    from interpretune.adapters import CompositionRegistry
 
 
 class CoreAdapter(CoreHelperAttributes):

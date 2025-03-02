@@ -3,15 +3,12 @@ from copy import deepcopy
 import pytest
 from unittest.mock import Mock, patch
 
-from interpretune.base.config.datamodule import ITDataModuleConfig
-from interpretune.base.config.module import ITConfig
-from interpretune.base.config.shared import AutoCompConfig, search_candidate_subclass_attrs
-from interpretune.base.config.mixins import HFFromPretrainedConfig
-from interpretune.adapters.sae_lens import SAELensFromPretrainedConfig, SAELensConfig
-from interpretune.adapters.transformer_lens import ITLensFromPretrainedConfig, ITLensConfig
+from interpretune.config import (ITDataModuleConfig, ITLensFromPretrainedConfig, ITLensConfig,
+                                 SAELensFromPretrainedConfig, SAELensConfig, ITConfig, AutoCompConfig,
+                                 search_candidate_subclass_attrs, HFFromPretrainedConfig)
 from it_examples.experiments.rte_boolq import (RTEBoolqEntailmentMapping, GenerativeClassificationConfig,
                                                RTEBoolqSLConfig)
-from interpretune.adapters.transformer_lens import TLensGenerationConfig
+from interpretune.adapters import TLensGenerationConfig
 from tests.base_defaults import default_test_task
 
 
@@ -124,7 +121,7 @@ class TestClassBaseConfigs:
         module2 = Mock(name='Module2')
         candidate_modules = {Mock(name='Adapter1'): module1, Mock(name='Adapter2'): module2,}
         kwargs_not_in_target_type = {'attr1': 'value1','attr2': 'value2'}
-        with patch('interpretune.base.config.shared.collect_exhaustive_attr_set',
+        with patch('interpretune.config.shared.collect_exhaustive_attr_set',
                    return_value={'attr1', 'attr2', 'attr3'}):
             result = search_candidate_subclass_attrs(candidate_modules, kwargs_not_in_target_type)
         assert result == (module1,)

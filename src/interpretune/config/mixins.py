@@ -1,22 +1,20 @@
 # see https://peps.python.org/pep-0749, no longer needed when 3.13 reaches EOL
 from __future__ import annotations
 import os
-from typing import Any, NamedTuple
+from typing import Any
 from dataclasses import dataclass, field
 from pprint import pformat
 
 import torch
 from transformers.generation.configuration_utils import GenerationConfig
 
-from interpretune.base.config.shared import ITSerializableCfg
-from interpretune.utils.logging import rank_zero_warn
-from interpretune.utils.import_utils import _resolve_torch_dtype
+from interpretune.config import ITSerializableCfg
+from interpretune.utils import rank_zero_warn, _resolve_torch_dtype
 
-
-class ITExtension(NamedTuple):
-    ext_attr: str
-    ext_cls_fqn: str
-    ext_cfg_fqn: str
+# class ITExtension(NamedTuple):
+#     ext_attr: str
+#     ext_cls_fqn: str
+#     ext_cfg_fqn: str
 
 @dataclass(kw_only=True)
 class BaseGenerationConfig(ITSerializableCfg):

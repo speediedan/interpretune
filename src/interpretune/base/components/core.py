@@ -1,8 +1,9 @@
+from __future__ import annotations
 import tempfile
 import os
 import warnings
 from datetime import datetime
-from typing import Any, Union
+from typing import Any, Union, TYPE_CHECKING
 from functools import reduce, partial
 from pathlib import Path
 from copy import deepcopy
@@ -10,15 +11,14 @@ import inspect
 
 import torch
 
-from interpretune.base.config.module import ITConfig, ITState
-from interpretune.base.components.mixins import ITStateMixin
-from interpretune.base.datamodules import ITDataModule
-from interpretune.extensions.memprofiler import MemProfiler
-from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info, rank_zero_debug
-from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.utils.import_utils import _resolve_torch_dtype
-from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, LRScheduler
-from interpretune.utils.warnings import dummy_method_warn_fingerprint
+from interpretune.base import ITStateMixin, ITDataModule
+from interpretune.extensions import MemProfiler
+from interpretune.utils import (rank_zero_info, rank_zero_warn, LRScheduler, rank_zero_debug, Optimizable, Optimizer,
+                                MisconfigurationException, _resolve_torch_dtype, LRSchedulerConfig, collect_env_info,
+                                dummy_method_warn_fingerprint)
+
+if TYPE_CHECKING:
+    from interpretune.config import ITConfig, ITState
 
 
 # TODO: add core helper log/log_dict methods for core context usage

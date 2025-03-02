@@ -3,7 +3,7 @@ session_cfg:
   datamodule_cls: it_examples.experiments.rte_boolq.RTEBoolqDataModule
   module_cls: it_examples.experiments.rte_boolq.RTEBoolqModule
   datamodule_cfg:
-    class_path: interpretune.base.config.datamodule.ITDataModuleConfig
+    class_path: interpretune.config.datamodule.ITDataModuleConfig
     init_args:
       model_name_or_path: meta-llama/Llama-3.2-3B-Instruct
       task_name: rte
@@ -38,13 +38,13 @@ session_cfg:
         init_args:
           enabled: true
           lm_generation_cfg:
-            class_path: interpretune.base.config.mixins.HFGenerationConfig
+            class_path: interpretune.config.mixins.HFGenerationConfig
             init_args:
               model_config:
                 max_new_tokens: 5
                 pad_token_id: 128004
       hf_from_pretrained_cfg:
-        class_path: interpretune.base.config.module.HFFromPretrainedConfig
+        class_path: interpretune.config.module.HFFromPretrainedConfig
         init_args:
           use_model_cache: false
           model_head: transformers.LlamaForCausalLM
