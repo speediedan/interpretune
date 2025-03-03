@@ -8,7 +8,7 @@ import numpy as np
 from torch.nn import CrossEntropyLoss
 
 from interpretune.config import ITSerializableCfg
-from interpretune.utils import rank_zero_warn, _sanitize_input_name, DEFAULT_DECODE_KWARGS
+from interpretune.utils import rank_zero_warn, sanitize_input_name, DEFAULT_DECODE_KWARGS
 
 
 @dataclass(kw_only=True)
@@ -139,7 +139,7 @@ class DebugGeneration:
         corpus_raw = "\n\n".join(corpus["text"])
         corpus_max_idx = limit_chars or len(corpus_raw)
         encoded_corpus = self.phandle.datamodule.tokenizer(corpus_raw[:corpus_max_idx], return_tensors="pt")
-        encoded_corpus = _sanitize_input_name(self.model_input_names, encoded_corpus)
+        encoded_corpus = sanitize_input_name(self.model_input_names, encoded_corpus)
         return self.naive_perplexity(encoded_corpus, stride=stride)
 
     def top1_token_accuracy_on_sample(self, sample: str) -> Tuple[float, List[str]]:
@@ -217,7 +217,7 @@ class DebugGeneration:
                              gen_kwargs_override: Optional[Dict] = None,
                              decode_cfg_override: Optional[Dict] = None) -> Tuple[List, List]:
         test_input_ids = self.phandle.datamodule.tokenizer.batch_encode_plus(sequences)
-        test_input_ids = _sanitize_input_name(self.model_input_names, test_input_ids)
+        test_input_ids = sanitize_input_name(self.model_input_names, test_input_ids)
         test_input_ids = self.phandle.datamodule.data_collator(test_input_ids)
         test_input_ids = test_input_ids.to(self.phandle.device)
         outputs = self._debug_generate(inputs=test_input_ids[self.model_input_names[0]],

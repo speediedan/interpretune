@@ -9,14 +9,15 @@ import sys
 from importlib.abc import MetaPathFinder
 from importlib.machinery import ModuleSpec
 
-from interpretune.__about__ import *  # noqa: F401, F403
-from interpretune.protocol import ITModuleProtocol, ITDataModuleProtocol
-
-
+# we ignore these for the entire file due to our import hook dependency
+# ruff: noqa: E402
 # In PyTorch 2.0+, setting this variable will force `torch.cuda.is_available()` and `torch.cuda.device_count()`
 # to use an NVML-based implementation that doesn't poison forks.
 # https://github.com/pytorch/pytorch/issues/83973
 os.environ["PYTORCH_NVML_BASED_CUDA_CHECK"] = "1"
+
+from interpretune.__about__ import *  # noqa: F401, F403
+from interpretune.protocol import ITModuleProtocol, ITDataModuleProtocol
 
 class _AnalysisImportHook(MetaPathFinder):
     """MetaPathFinder that exposes analysis ops in the top-level interpretune namespace only when analysis module
@@ -44,28 +45,86 @@ class _AnalysisImportHook(MetaPathFinder):
 # Register our import hook to handle interpretune.analysis imports
 sys.meta_path.insert(0, _AnalysisImportHook())
 
+# allow import of core objects from all second-level IT modules via interpretune.x import y
+from interpretune.adapters import (ITModule, LightningDataModule, LightningModule, ITLensModule, SAELensModule,
+                                   ADAPTER_REGISTRY)
+from interpretune.analysis import AnalysisStore, AnalysisBatch, ANALYSIS_OPS, SAEAnalysisTargets
+from interpretune.config import (ITConfig, ITDataModuleConfig, AnalysisCfg, AnalysisSetCfg, AnalysisRunnerCfg,
+                                 ITLensConfig, SAELensConfig, ITSharedConfig, PromptConfig, AutoCompConfig,
+                                 HFFromPretrainedConfig, ITLensFromPretrainedNoProcessingConfig, TLensGenerationConfig,
+                                 GenerativeClassificationConfig, SAELensFromPretrainedConfig)
+from interpretune.extensions import MemProfiler, MemProfilerCfg, DebugGeneration, DebugLMConfig
+from interpretune.utils import (MisconfigurationException, rank_zero_info, rank_zero_warn, to_device,
+                                move_data_to_device, sanitize_input_name)
+
 # we need to defer all imports that depend on the analysis module until after the import hook is registered
-from interpretune.session import ITSession, ITSessionConfig  # noqa: E402
-from interpretune.runners import SessionRunner, AnalysisRunner  # noqa: E402
-from interpretune.base import ITDataModule, BaseITModule, ProfilerHooksMixin  # noqa: E402
+from interpretune.session import ITSession, ITSessionConfig
+from interpretune.runners import SessionRunner, AnalysisRunner
+from interpretune.base import ITDataModule, ProfilerHooksMixin, ITCLI, it_init, IT_BASE, it_session_end
 
 __all__ = [
-    # Session Module
-    "ITSession",
-    "ITSessionConfig",
-
-    # Runners
-    "SessionRunner",
-    "AnalysisRunner",
-
     # Protocol Module
     "ITModuleProtocol",
     "ITDataModuleProtocol",
 
-    # Base Modules
-    "ITDataModule",
-    "BaseITModule",
+    # Adapters Module
+    "ITModule",
+    "LightningDataModule",
+    "LightningModule",
+    "ITLensModule",
+    "SAELensModule",
+    "ADAPTER_REGISTRY",
 
-    # Base Components
+    # Analysis Module
+    "AnalysisStore",
+    "AnalysisBatch",
+    "ANALYSIS_OPS",
+    "SAEAnalysisTargets",
+
+    # Config Module
+    "ITConfig",
+    "ITDataModuleConfig",
+    "AnalysisCfg",
+    "AnalysisSetCfg",
+    "AnalysisRunnerCfg",
+    "ITLensConfig",
+    "SAELensConfig",
+    "ITSharedConfig",
+    "PromptConfig",
+    "AutoCompConfig",
+    "HFFromPretrainedConfig",
+    "ITLensFromPretrainedNoProcessingConfig",
+    "TLensGenerationConfig",
+    "GenerativeClassificationConfig",
+    "SAELensFromPretrainedConfig",
+
+    # Extensions Module
+    "MemProfiler",
+    "MemProfilerCfg",
+    "DebugGeneration",
+    "DebugLMConfig",
+
+    # Utils Module
+    "MisconfigurationException",
+    "rank_zero_info",
+    "rank_zero_warn",
+    "to_device",
+    "move_data_to_device",
+    "sanitize_input_name",
+
+    # Session Module
+    "ITSession",
+    "ITSessionConfig",
+
+    # Runners Module
+    "SessionRunner",
+    "AnalysisRunner",
+
+    # Base Module
+    "ITDataModule",
     "ProfilerHooksMixin",
+    "ITCLI",
+    "it_init",
+    "IT_BASE",
+    "it_session_end",
 ]

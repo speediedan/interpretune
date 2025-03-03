@@ -17,7 +17,7 @@ from transformers.tokenization_utils_base import BatchEncoding
 from interpretune.config import (ITLensConfig, SAELensConfig, PromptConfig, ITDataModuleConfig, ITConfig,
                                  GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig)
 from interpretune.base import ProfilerHooksMixin, ITDataModule
-from interpretune.utils import rank_zero_warn, _sanitize_input_name
+from interpretune.utils import rank_zero_warn, sanitize_input_name
 from interpretune.protocol import STEP_OUTPUT
 
 
@@ -136,7 +136,7 @@ class RTEBoolqDataModule(ITDataModule):
         features = tokenizer.batch_encode_plus(example_batch["sequences"], padding="longest",
                                                padding_side=tokenizer.padding_side)
         features["labels"] = example_batch["label"]  # Rename label to labels, easier to pass to model forward
-        features = _sanitize_input_name(tokenizer.model_input_names, features)
+        features = sanitize_input_name(tokenizer.model_input_names, features)
         return features
 
 class RTEBoolqSteps:
