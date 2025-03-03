@@ -17,7 +17,9 @@ from importlib.machinery import ModuleSpec
 os.environ["PYTORCH_NVML_BASED_CUDA_CHECK"] = "1"
 
 from interpretune.__about__ import *  # noqa: F401, F403
-from interpretune.protocol import ITModuleProtocol, ITDataModuleProtocol
+from interpretune.protocol import (ITModuleProtocol, ITDataModuleProtocol, Adapter, STEP_OUTPUT,
+                                   CorePhases, CoreSteps, AllPhases, AllSteps, AnalysisStoreProtocol,
+                                   AnalysisBatchProtocol, AnalysisOpProtocol)
 
 class _AnalysisImportHook(MetaPathFinder):
     """MetaPathFinder that exposes analysis ops in the top-level interpretune namespace only when analysis module
@@ -47,12 +49,12 @@ sys.meta_path.insert(0, _AnalysisImportHook())
 
 # allow import of core objects from all second-level IT modules via interpretune.x import y
 from interpretune.adapters import (ITModule, LightningDataModule, LightningModule, ITLensModule, SAELensModule,
-                                   ADAPTER_REGISTRY)
+                                   ADAPTER_REGISTRY, CompositionRegistry)
 from interpretune.analysis import AnalysisStore, AnalysisBatch, ANALYSIS_OPS, SAEAnalysisTargets
 from interpretune.config import (ITConfig, ITDataModuleConfig, AnalysisCfg, AnalysisSetCfg, AnalysisRunnerCfg,
                                  ITLensConfig, SAELensConfig, ITSharedConfig, PromptConfig, AutoCompConfig,
                                  HFFromPretrainedConfig, ITLensFromPretrainedNoProcessingConfig, TLensGenerationConfig,
-                                 GenerativeClassificationConfig, SAELensFromPretrainedConfig)
+                                 GenerativeClassificationConfig, SAELensFromPretrainedConfig, ITSerializableCfg)
 from interpretune.extensions import MemProfiler, MemProfilerCfg, DebugGeneration, DebugLMConfig
 from interpretune.utils import (MisconfigurationException, rank_zero_info, rank_zero_warn, to_device,
                                 move_data_to_device, sanitize_input_name)
@@ -60,12 +62,21 @@ from interpretune.utils import (MisconfigurationException, rank_zero_info, rank_
 # we need to defer all imports that depend on the analysis module until after the import hook is registered
 from interpretune.session import ITSession, ITSessionConfig
 from interpretune.runners import SessionRunner, AnalysisRunner
-from interpretune.base import ITDataModule, ProfilerHooksMixin, ITCLI, it_init, IT_BASE, it_session_end
+from interpretune.base import ITDataModule, MemProfilerHooks, ITCLI, it_init, IT_BASE, it_session_end
 
 __all__ = [
     # Protocol Module
     "ITModuleProtocol",
     "ITDataModuleProtocol",
+    "Adapter",
+    "STEP_OUTPUT",
+    "CorePhases",
+    "CoreSteps",
+    "AllPhases",
+    "AllSteps",
+    "AnalysisStoreProtocol",
+    "AnalysisBatchProtocol",
+    "AnalysisOpProtocol",
 
     # Adapters Module
     "ITModule",
@@ -74,6 +85,7 @@ __all__ = [
     "ITLensModule",
     "SAELensModule",
     "ADAPTER_REGISTRY",
+    "CompositionRegistry",
 
     # Analysis Module
     "AnalysisStore",
@@ -97,6 +109,7 @@ __all__ = [
     "TLensGenerationConfig",
     "GenerativeClassificationConfig",
     "SAELensFromPretrainedConfig",
+    "ITSerializableCfg",
 
     # Extensions Module
     "MemProfiler",
@@ -122,7 +135,7 @@ __all__ = [
 
     # Base Module
     "ITDataModule",
-    "ProfilerHooksMixin",
+    "MemProfilerHooks",
     "ITCLI",
     "it_init",
     "IT_BASE",

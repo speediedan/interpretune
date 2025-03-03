@@ -1,7 +1,7 @@
 from interpretune.base.hooks import BaseITHooks
 from interpretune.base.datamodules import ITDataModule
 from interpretune.base.components.mixins import (BaseITMixins, ITStateMixin, GenerativeStepMixin, HFFromPretrainedMixin,
-                                                 AnalysisStepMixin, ProfilerHooksMixin)
+                                                 AnalysisStepMixin, MemProfilerHooks)
 from interpretune.base.components.core import (BaseITComponents, BaseConfigImpl, PropertyDispatcher,
                                                CoreHelperAttributes)
 from interpretune.base.modules import BaseITModule
@@ -22,7 +22,7 @@ __all__ = [
     "GenerativeStepMixin",
     "HFFromPretrainedMixin",
     "AnalysisStepMixin",
-    "ProfilerHooksMixin",
+    "MemProfilerHooks",
 
     # CLI Components
     "ITCLI",

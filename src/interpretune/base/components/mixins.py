@@ -33,7 +33,7 @@ class ITStateMixin:
             obj._it_state = ITState()
 
 
-class ProfilerHooksMixin:
+class MemProfilerHooks:
 
     @contextmanager
     @staticmethod
@@ -54,7 +54,7 @@ class ProfilerHooksMixin:
             # for increased generality, we derive a profile `step_idx` based on a profiler snap counter rather than
             # parsing `args` if a `batch_idx` kwarg isn't found
             step_idx = kwargs.get("batch_idx", None)
-            with ProfilerHooksMixin.memprofile_ctx(self.memprofiler, phase=phase, step_idx=step_idx):
+            with MemProfilerHooks.memprofile_ctx(self.memprofiler, phase=phase, step_idx=step_idx):
                 if self.memprofiler.memprofiler_cfg.enable_saved_tensors_hooks and \
                     self.memprofiler._enabled[(phase, 'start')]:
                     with torch.autograd.graph.saved_tensors_hooks(*self.memprofiler._saved_tensors_funcs):
@@ -293,5 +293,5 @@ class HFFromPretrainedMixin:
 
 
 class BaseITMixins(ITStateMixin, ITExtensionsConfigMixin, HFFromPretrainedMixin, AnalysisStepMixin, GenerativeStepMixin,
-                   ProfilerHooksMixin):
+                   MemProfilerHooks):
     ...

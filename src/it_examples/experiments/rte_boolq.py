@@ -16,7 +16,7 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.config import (ITLensConfig, SAELensConfig, PromptConfig, ITDataModuleConfig, ITConfig,
                                  GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig)
-from interpretune.base import ProfilerHooksMixin, ITDataModule
+from interpretune.base import MemProfilerHooks, ITDataModule
 from interpretune.utils import rank_zero_warn, sanitize_input_name
 from interpretune.protocol import STEP_OUTPUT
 
@@ -158,7 +158,7 @@ class RTEBoolqSteps:
             assert isinstance(logits, torch.Tensor), f"Expected logits to be a torch.Tensor but got {type(logits)}"
         return torch.squeeze(logits[:, -1, :], dim=1), label_ids, labels
 
-    @ProfilerHooksMixin.memprofilable
+    @MemProfilerHooks.memprofilable
     def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
         # TODO: need to be explicit about the compatibility constraints/contract
         # TODO: note that this example uses generative_step_cfg and lm_head except for the test_step where we demo how
@@ -169,14 +169,14 @@ class RTEBoolqSteps:
         self.log("train_loss", loss, sync_dist=True)
         return loss
 
-    @ProfilerHooksMixin.memprofilable
+    @MemProfilerHooks.memprofilable
     def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         answer_logits, labels, orig_labels = self.logits_and_labels(batch, batch_idx)
         val_loss = self.loss_fn(answer_logits, labels)
         self.log("val_loss", val_loss, prog_bar=True, sync_dist=True)
         self.collect_answers(answer_logits, orig_labels)
 
-    @ProfilerHooksMixin.memprofilable
+    @MemProfilerHooks.memprofilable
     def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         if self.it_cfg.generative_step_cfg.enabled:
             self.generative_classification_test_step(batch, batch_idx, dataloader_idx=dataloader_idx)
