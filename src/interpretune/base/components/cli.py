@@ -21,7 +21,8 @@ from interpretune.base import ITDataModule
 from interpretune.protocol import InterpretunableType
 
 from interpretune.runners import SessionRunner
-from interpretune.utils import ArgsType, rank_zero_info, rank_zero_warn, _DOTENV_AVAILABLE, _LIGHTNING_AVAILABLE
+from interpretune.utils import rank_zero_info, rank_zero_warn, _DOTENV_AVAILABLE, _LIGHTNING_AVAILABLE
+from interpretune.protocol import ArgsType
 
 if TYPE_CHECKING:
     from interpretune.session import ITSession, ITSessionConfig

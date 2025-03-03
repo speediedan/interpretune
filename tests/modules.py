@@ -15,9 +15,9 @@ import evaluate
 from torch.testing import assert_close
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.protocol import ITModuleProtocol
+from interpretune.protocol import ITModuleProtocol, STEP_OUTPUT
 from interpretune.config import ITDataModuleConfig, ITConfig
-from interpretune.utils import STEP_OUTPUT, rank_zero_only
+from interpretune.utils import rank_zero_only
 from it_examples.experiments.rte_boolq import RTEBoolqDataModule, RTEBoolqModuleMixin, RTEBoolqSteps
 from tests import FinetuningScheduler
 from tests.base_defaults import default_test_task

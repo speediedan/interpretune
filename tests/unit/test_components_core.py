@@ -15,7 +15,8 @@ import pytest
 import torch
 
 from interpretune.base import _call_itmodule_hook, CoreHelperAttributes
-from interpretune.utils import LRSchedulerConfig, LRScheduler, MisconfigurationException
+from interpretune.utils import MisconfigurationException
+from interpretune.protocol import LRSchedulerConfig, LRScheduler
 from tests.warns import unmatched_warns
 
 

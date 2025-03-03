@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from interpretune.registry import ModuleRegistry, RegisteredCfg, RegKeyType, it_cfg_factory
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
-from interpretune.utils import Adapter
+from interpretune.protocol import Adapter
 from tests.base_defaults import default_test_task
 from base_defaults import BaseCfg
 

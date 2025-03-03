@@ -13,9 +13,9 @@ import torch
 
 from interpretune.base import ITStateMixin, ITDataModule
 from interpretune.extensions import MemProfiler
-from interpretune.utils import (rank_zero_info, rank_zero_warn, LRScheduler, rank_zero_debug, Optimizable, Optimizer,
-                                MisconfigurationException, _resolve_torch_dtype, LRSchedulerConfig, collect_env_info,
-                                dummy_method_warn_fingerprint)
+from interpretune.utils import (rank_zero_info, rank_zero_warn, rank_zero_debug, MisconfigurationException,
+                                _resolve_torch_dtype, collect_env_info, dummy_method_warn_fingerprint)
+from interpretune.protocol import LRScheduler, Optimizable, Optimizer,LRSchedulerConfig
 
 if TYPE_CHECKING:
     from interpretune.config import ITConfig, ITState

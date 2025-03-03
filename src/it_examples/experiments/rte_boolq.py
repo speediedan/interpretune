@@ -17,7 +17,8 @@ from transformers.tokenization_utils_base import BatchEncoding
 from interpretune.config import (ITLensConfig, SAELensConfig, PromptConfig, ITDataModuleConfig, ITConfig,
                                  GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig)
 from interpretune.base import ProfilerHooksMixin, ITDataModule
-from interpretune.utils import rank_zero_warn, STEP_OUTPUT,_sanitize_input_name
+from interpretune.utils import rank_zero_warn, _sanitize_input_name
+from interpretune.protocol import STEP_OUTPUT
 
 
 log = logging.getLogger(__name__)

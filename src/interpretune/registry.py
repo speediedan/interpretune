@@ -7,11 +7,11 @@ from copy import deepcopy
 from tabulate import tabulate
 from enum import Enum
 
-from interpretune.utils import Adapter, rank_zero_debug, rank_zero_warn, instantiate_class
+from interpretune.utils import rank_zero_debug, rank_zero_warn, instantiate_class
 from interpretune.config import ITDataModuleConfig, ITConfig
 from interpretune.base import ITDataModule
 from interpretune.adapters import ITModule, CompositionRegistry
-from interpretune.protocol import ModuleSteppable, DataModuleInitable
+from interpretune.protocol import Adapter, ModuleSteppable, DataModuleInitable
 
 import yaml
 

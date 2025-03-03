@@ -2,7 +2,8 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 import torch
 
-from interpretune.utils import instantiate_class, STEP_OUTPUT, OptimizerLRScheduler
+from interpretune.utils import instantiate_class
+from interpretune.protocol import OptimizerLRScheduler, STEP_OUTPUT
 
 if TYPE_CHECKING:
     from interpretune.config import ITConfig, ITState

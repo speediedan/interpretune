@@ -10,7 +10,8 @@ from pathlib import Path
 import torch
 from psutil import Process
 
-from interpretune.utils import rank_zero_warn, resolve_funcs, _get_rank, rank_zero_only, AutoStrEnum, CoreSteps
+from interpretune.utils import rank_zero_warn, resolve_funcs, _get_rank, rank_zero_only
+from interpretune.protocol import AutoStrEnum, CoreSteps
 from interpretune.config import ITSerializableCfg
 
 

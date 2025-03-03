@@ -4,8 +4,8 @@ from typing_extensions import override
 from types import ModuleType
 from pprint import pformat
 
-from interpretune.utils import rank_zero_warn, Adapter
-
+from interpretune.utils import rank_zero_warn
+from interpretune.protocol import Adapter
 
 class CompositionRegistry(dict):
     # TODO: if this experimental compositional utility and protocol gains traction with external users:

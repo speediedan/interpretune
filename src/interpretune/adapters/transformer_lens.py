@@ -12,7 +12,8 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.adapters import CompositionRegistry, LightningDataModule, LightningModule, LightningAdapter
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
-from interpretune.utils import move_data_to_device, patched_generate, rank_zero_warn, rank_zero_info, Adapter
+from interpretune.utils import move_data_to_device, patched_generate, rank_zero_warn, rank_zero_info
+from interpretune.protocol import Adapter
 from interpretune.config import ITLensCustomConfig
 
 

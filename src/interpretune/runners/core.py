@@ -6,7 +6,7 @@ import torch
 
 from interpretune.config import SessionRunnerCfg
 from interpretune.base import _call_itmodule_hook, it_init, it_session_end, ITDataModule
-from interpretune.utils import Optimizable, CorePhases
+from interpretune.protocol import Optimizable, CorePhases
 
 if TYPE_CHECKING:
     from interpretune.adapters import ITModule

@@ -8,7 +8,8 @@ import sys
 import yaml
 from transformers import PreTrainedTokenizerBase
 
-from interpretune.utils import rank_zero_warn, rank_zero_debug, AnyDataClass, Adapter
+from interpretune.utils import rank_zero_warn, rank_zero_debug
+from interpretune.protocol import AnyDataClass, Adapter
 
 
 log = logging.getLogger(__name__)

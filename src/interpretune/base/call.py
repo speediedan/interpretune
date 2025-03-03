@@ -2,7 +2,8 @@ import logging
 from typing import Any, Union
 
 from interpretune.base import ITDataModule, BaseITModule
-from interpretune.utils import CorePhases, AllPhases, rank_zero_info
+from interpretune.utils import rank_zero_info
+from interpretune.protocol import AllPhases, CorePhases
 
 log = logging.getLogger(__name__)
 

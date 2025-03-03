@@ -5,7 +5,7 @@ import pytest
 from tests.orchestration import run_it
 from tests.runif import RunIf
 from interpretune.extensions import MemProfilerSchedule, MemProfilerCfg, MemProfilerHooks
-from interpretune.utils import CoreSteps
+from interpretune.protocol import CoreSteps
 
 class TestClassMemProfiler:
 

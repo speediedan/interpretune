@@ -5,7 +5,7 @@ import pytest
 from interpretune.adapters import ADAPTER_REGISTRY
 from interpretune.config import HFFromPretrainedConfig, GenerativeClassificationConfig
 from interpretune.extensions import MemProfilerCfg, DebugLMConfig
-from interpretune.utils import Adapter
+from interpretune.protocol import Adapter
 from tests.runif import RunIf, RUNIF_ALIASES
 
 default_test_task = "rte"

@@ -20,7 +20,7 @@ from interpretune.adapters import (ITLensFromPretrainedConfig, ITLensCustomConfi
                                    SAELensCustomConfig)
 from interpretune.config import ITConfig, ITDataModuleConfig
 from interpretune.session import ITSessionConfig, ITSession
-from interpretune.utils import StrOrPath, Adapter
+from interpretune.protocol import StrOrPath, Adapter
 from tests import seed_everything
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 from tests.utils import get_model_input_dtype

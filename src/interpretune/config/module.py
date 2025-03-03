@@ -7,7 +7,8 @@ import torch
 
 from interpretune.config import (ITSerializableCfg, ITSharedConfig, AutoCompConf, ExtensionConf, HFFromPretrainedConfig,
                                  GenerativeClassificationConfig)
-from interpretune.utils import rank_zero_info, LRSchedulerConfig, Optimizable
+from interpretune.utils import rank_zero_info
+from interpretune.protocol import LRSchedulerConfig, Optimizable
 
 if TYPE_CHECKING:
     from interpretune.protocol import AnalysisCfgProtocol

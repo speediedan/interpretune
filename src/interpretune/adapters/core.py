@@ -5,7 +5,8 @@ from typing_extensions import override
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.base import CoreHelperAttributes, BaseITModule, ITDataModule
-from interpretune.utils import to_device, Adapter
+from interpretune.utils import to_device
+from interpretune.protocol import Adapter
 
 if TYPE_CHECKING:
     from interpretune.adapters import CompositionRegistry

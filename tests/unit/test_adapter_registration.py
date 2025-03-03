@@ -12,7 +12,7 @@
 import pytest
 
 from interpretune.base import ITDataModule, BaseITModule
-from interpretune.utils import Adapter
+from interpretune.protocol import Adapter
 from interpretune.adapters import CompositionRegistry, ITModule, LightningAdapter, LightningModule
 
 

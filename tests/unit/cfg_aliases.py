@@ -3,7 +3,7 @@ from copy import deepcopy
 from enum import auto
 from dataclasses import dataclass, field
 
-from interpretune.utils import AutoStrEnum, Adapter
+from interpretune.protocol import Adapter, AutoStrEnum
 from interpretune.config import HFFromPretrainedConfig, GenerativeClassificationConfig, ITLensCustomConfig
 from interpretune.extensions import DebugLMConfig, MemProfilerCfg
 from tests.base_defaults import BaseAugTest, BaseCfg

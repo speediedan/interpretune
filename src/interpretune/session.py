@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 
 from interpretune.adapters import ADAPTER_REGISTRY
 from interpretune.config import ITDataModuleConfig, ITConfig, ITSerializableCfg, ITSharedConfig
-from interpretune.protocol import DataModuleInitable, ModuleSteppable, ITModuleProtocol, ITDataModuleProtocol
-from interpretune.utils import unexpected_state_msg_suffix, rank_zero_warn, Adapter
+from interpretune.protocol import Adapter, DataModuleInitable, ModuleSteppable, ITModuleProtocol, ITDataModuleProtocol
+from interpretune.utils import unexpected_state_msg_suffix, rank_zero_warn
 
 
 class NamedWrapper:

@@ -21,7 +21,8 @@ from interpretune.adapters import (CompositionRegistry, LightningDataModule, Lig
                                    BaseITLensModule, TLensAttributeMixin)
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import SAELensFromPretrainedConfig, SAELensCustomConfig, SAELensConfig
-from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info, patched_generate, Adapter
+from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info, patched_generate
+from interpretune.protocol import Adapter
 
 if TYPE_CHECKING:
     from interpretune.protocol import AnalysisBatchProtocol, AnalysisStoreProtocol

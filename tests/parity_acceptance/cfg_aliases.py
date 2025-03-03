@@ -4,7 +4,7 @@ from enum import auto
 from pathlib import Path
 
 from interpretune.config import HFFromPretrainedConfig
-from interpretune.utils import AutoStrEnum, Adapter
+from interpretune.protocol import AutoStrEnum, Adapter
 from interpretune.extensions import MemProfilerCfg, MemProfilerSchedule
 from it_examples.example_module_registry import (MODULE_EXAMPLE_REGISTRY, example_datamodule_defaults,
                                                  example_itmodule_defaults)

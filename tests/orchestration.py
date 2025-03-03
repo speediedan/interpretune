@@ -13,7 +13,7 @@
 from pathlib import Path
 from unittest import mock
 
-from interpretune.utils import Adapter
+from interpretune.protocol import Adapter
 from interpretune.session import ITSessionConfig, ITSession
 from interpretune.runners import SessionRunner, SessionRunnerCfg
 from tests import Trainer, ModelCheckpoint

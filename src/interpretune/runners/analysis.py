@@ -11,7 +11,7 @@ import interpretune as it
 from interpretune.analysis import schema_to_features
 from interpretune.base import _call_itmodule_hook, ITDataModule
 from interpretune.runners import SessionRunner, run_step
-from interpretune.utils import AllPhases
+from interpretune.protocol import AllPhases
 from interpretune.config import AnalysisRunnerCfg
 
 
