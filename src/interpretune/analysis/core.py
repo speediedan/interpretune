@@ -331,8 +331,8 @@ class AnalysisStore:
 
         if isinstance(dataset, (str, os.PathLike)):
             dataset_path = os.path.abspath(str(dataset))
-            if op_output_dataset_path is not None:
-                op_output_abs = os.path.abspath(op_output_dataset_path)
+            if self.op_output_dataset_path is not None:
+                op_output_abs = os.path.abspath(self.op_output_dataset_path)
                 if dataset_path == op_output_abs:  # TODO: consider conditionally allowing overlap here
                     raise ValueError("The dataset path and op_output_dataset_path must not overlap.")
             self.dataset = load_dataset(dataset_path, **load_dataset_kwargs)

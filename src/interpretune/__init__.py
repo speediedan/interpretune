@@ -52,9 +52,10 @@ from interpretune.adapters import (ITModule, LightningDataModule, LightningModul
                                    ADAPTER_REGISTRY, CompositionRegistry)
 from interpretune.analysis import AnalysisStore, AnalysisBatch, ANALYSIS_OPS, SAEAnalysisTargets
 from interpretune.config import (ITConfig, ITDataModuleConfig, AnalysisCfg, AnalysisSetCfg, AnalysisRunnerCfg,
-                                 ITLensConfig, SAELensConfig, ITSharedConfig, PromptConfig, AutoCompConfig,
-                                 HFFromPretrainedConfig, ITLensFromPretrainedNoProcessingConfig, TLensGenerationConfig,
-                                 GenerativeClassificationConfig, SAELensFromPretrainedConfig, ITSerializableCfg)
+                                 AnalysisArtifactCfg, ITLensConfig, SAELensConfig, ITSharedConfig, PromptConfig,
+                                 AutoCompConfig, HFFromPretrainedConfig, ITLensFromPretrainedNoProcessingConfig,
+                                 TLensGenerationConfig, GenerativeClassificationConfig, SAELensFromPretrainedConfig,
+                                 ITSerializableCfg)
 from interpretune.extensions import MemProfiler, MemProfilerCfg, DebugGeneration, DebugLMConfig
 from interpretune.utils import (MisconfigurationException, rank_zero_info, rank_zero_warn, to_device,
                                 move_data_to_device, sanitize_input_name)
@@ -99,6 +100,7 @@ __all__ = [
     "AnalysisCfg",
     "AnalysisSetCfg",
     "AnalysisRunnerCfg",
+    "AnalysisArtifactCfg",
     "ITLensConfig",
     "SAELensConfig",
     "ITSharedConfig",

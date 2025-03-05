@@ -11,8 +11,9 @@ import interpretune as it
 from interpretune.analysis import (SAEAnalysisTargets, ANALYSIS_OPS, AnalysisOp, AnalysisStore, resolve_names_filter,
                                    _make_simple_cache_hook)
 from interpretune.config import ITSerializableCfg
-from interpretune.protocol import NamesFilter, AnalysisStoreProtocol, AnalysisBatchProtocol, SAEAnalysisProtocol
+from interpretune.protocol import NamesFilter, AnalysisStoreProtocol, AnalysisBatchProtocol
 from interpretune.utils import DEFAULT_DECODE_KWARGS, MisconfigurationException
+from interpretune.utils import rank_zero_warn
 
 IT_ANALYSIS_CACHE_DIR = "interpretune"
 DEFAULT_IT_ANALYSIS_CACHE = os.path.join(HF_CACHE_HOME, IT_ANALYSIS_CACHE_DIR)
@@ -31,16 +32,40 @@ class AnalysisCfg(ITSerializableCfg):
     names_filter: NamesFilter | None = None
     save_prompts: bool = False
     save_tokens: bool = False
-    cache_dir: Optional[str] = None
-    op_output_dataset_path: Optional[str] = None
     decode_kwargs: dict = field(default_factory=lambda: DEFAULT_DECODE_KWARGS)
+    sae_analysis_targets: SAEAnalysisTargets = None
 
     def __post_init__(self):
         # Convert string op to AnalysisOp
         if isinstance(self.op, str):
             self.op = ANALYSIS_OPS[self.op]
 
+    def update(self, **kwargs):
+        """Update multiple fields of the dataclass at once."""
+        for key, value in kwargs.items():
+            if key in self.__annotations__:
+                setattr(self, key, value)
+
+    def materialize_names_filter(self, module, fallback_sae_targets: Optional[SAEAnalysisTargets] = None) -> None:
+        """Set names_filter using sae_analysis_targets if not already set.
+
+        Args:
+            module: The module to construct the names_filter for.
+            fallback_sae_targets: Optional fallback SAEAnalysisTargets to use if this config doesn't have one.
+        """
+        # Choose the appropriate SAEAnalysisTargets
+        sae_targets = self.sae_analysis_targets if self.sae_analysis_targets is not None else fallback_sae_targets
+
+        if sae_targets is not None:
+            target_layers = sae_targets.target_layers
+            match_fn = sae_targets.sae_hook_match_fn
+            self.names_filter = module.construct_names_filter(target_layers, match_fn)
+        else:
+            raise ValueError("No SAEAnalysisTargets available to create names_filter")
         self.names_filter = resolve_names_filter(self.names_filter)
+
+    def maybe_set_hooks(self) -> None:
+        """Set hooks if they're not already set."""
         if not self.fwd_hooks and not self.bwd_hooks:
             self.fwd_hooks, self.bwd_hooks = self.check_add_default_hooks(
                 op=self.op,
@@ -48,11 +73,15 @@ class AnalysisCfg(ITSerializableCfg):
                 cache_dict=self.cache_dict,
             )
 
-    def update(self, **kwargs):
-        """Update multiple fields of the dataclass at once."""
-        for key, value in kwargs.items():
-            if key in self.__annotations__:
-                setattr(self, key, value)
+    def prepare_model_ctx(self, module, fallback_sae_targets: Optional[SAEAnalysisTargets] = None) -> None:
+        """Configure names_filter and hooks for a specific module.
+
+        Args:
+            module: The module to configure for.
+            fallback_sae_targets: Optional fallback SAEAnalysisTargets to use if this config doesn't have one.
+        """
+        self.materialize_names_filter(module, fallback_sae_targets)
+        self.maybe_set_hooks()
 
     def reset_analysis_store(self) -> None:
         # TODO: May be able to refactor this out if using per-epoch op dataset subsplits
@@ -66,13 +95,6 @@ class AnalysisCfg(ITSerializableCfg):
         #"""Reset analysis store, preserving configuration."""
         #self.analysis_store.reset()
 
-    def setup(self):
-        # Use shared cache_dir for all ops; create op-specific output directory only
-        op_output_path = self.op_output_dataset_path / self.op.name
-        op_output_path.mkdir(exist_ok=True, parents=True)
-        analysis_dirs = {"cache_dir": self.cache_dir, "op_output_dataset_path": op_output_path}
-        # Create analysis store
-        self.output_store = AnalysisStore(**analysis_dirs)
 
     def save_batch(self, analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
                    tokenizer: PreTrainedTokenizerBase | None = None):
@@ -99,20 +121,38 @@ class AnalysisCfg(ITSerializableCfg):
             )
         return fwd_hooks, bwd_hooks
 
+    def apply(self, module, cache_dir: Optional[str] = None, op_output_dataset_path: Optional[str] = None,
+              fallback_sae_targets: Optional[SAEAnalysisTargets] = None):
+        """Set up analysis configuration and configure for the given module.
+
+        This method handles both setting up the analysis store and configuring
+        the names_filter and hooks for the module.
+
+        Args:
+            module: The module to configure for.
+            cache_dir: Optional cache directory.
+            op_output_dataset_path: Optional output path.
+            fallback_sae_targets: Optional fallback SAEAnalysisTargets to use if this config doesn't have one.
+        """
+        if not self.output_store:
+            # create the output store if needed
+            self.output_store = AnalysisStore(cache_dir=cache_dir, op_output_dataset_path=op_output_dataset_path)
+        elif cache_dir or op_output_dataset_path:
+            rank_zero_warn(
+                f"The provided cache_dir={cache_dir} and op_output_dataset_path={op_output_dataset_path} "
+                "will be ignored in favor of the existing AnalysisStore configuration "
+                f"(cache_dir={self.output_store.cache_dir}, "
+                f" op_output_dataset_path={self.output_store.op_output_dataset_path})"
+            )
+
+        # Then configure for the module to set names_filter and hooks
+        self.prepare_model_ctx(module, fallback_sae_targets)
+        # return self
+
 
 @dataclass(kw_only=True)
-class AnalysisSetCfg(ITSerializableCfg):
-    # Accept any sequence as input and convert to tuple in __post_init__
-    # TODO: ultimately we want to support an arbitrary DAG of ops
-    analysis_ops: Sequence[AnalysisOp] | None = None
-    # currently allow executing a sequence of Ops (generating cfgs) or a sequence of AnalysisCfg objects if passed
-    analysis_cfgs: Dict[AnalysisOp, AnalysisCfg] = field(default_factory=dict)
-    # TODO: next two attributes available in AnalysisCfg as well, prob should decouple from AnalysisSetCfg
-    cache_dir: Optional[str] = None
-    op_output_dataset_path: Optional[str] = None
-    # we allow for limiting the number of analysis batches both here and in the runner for convenience
-    limit_analysis_batches: int = -1
-    sae_analysis_targets: SAEAnalysisTargets = field(default_factory=SAEAnalysisTargets)
+class AnalysisArtifactCfg(ITSerializableCfg):
+    """Configuration for analysis artifacts and visualizations."""
     latent_effects_graphs: bool = True
     latent_effects_graphs_per_batch: bool = False  # can be overwhelming with many batches
     latents_table_per_sae: bool = True
@@ -121,75 +161,27 @@ class AnalysisSetCfg(ITSerializableCfg):
     top_k_clean_logit_diffs: int = 10
 
     def __post_init__(self):
+        if self.latent_effects_graphs_per_batch and not self.latent_effects_graphs:
+            print("Note: Setting latent_effects_graphs to True since latent_effects_graphs_per_batch is True")
+            self.latent_effects_graphs = True
+
+
+@dataclass(kw_only=True)
+class AnalysisSetCfg(ITSerializableCfg):
+    # Accept any sequence as input and convert to tuple in __post_init__
+    # TODO: ultimately we want to support an arbitrary DAG of ops
+    analysis_ops: Sequence[AnalysisOp] | None = None
+    # currently allow executing a sequence of Ops (generating cfgs) or a sequence of AnalysisCfg objects if passed
+    analysis_cfgs: Dict[AnalysisOp, AnalysisCfg] = field(default_factory=dict)
+
+    def __post_init__(self):
         if not self.analysis_ops and not self.analysis_cfgs:
             raise MisconfigurationException("Either analysis_ops or analysis_cfgs must be provided")
         # Ensure analysis_ops is stored as a tuple if provided
         if self.analysis_ops is not None and not isinstance(self.analysis_ops, tuple):
             self.analysis_ops = tuple(self.analysis_ops)
-        if self.latent_effects_graphs_per_batch and not self.latent_effects_graphs:
-            print("Note: Setting latent_effects_graphs to True since latent_effects_graphs_per_batch is True")
-            self.latent_effects_graphs = True
         if self.analysis_ops:
             self.validate_analysis_order()
-
-    def init_analysis_dirs(self, module: SAEAnalysisProtocol):
-        # TODO: after debugging update the default path to be more configurable instead of default to validation
-        if self.cache_dir is None:
-            self.cache_dir = (Path(IT_ANALYSIS_CACHE) /
-                            module.datamodule.dataset['validation'].config_name /
-                            module.datamodule.dataset['validation']._fingerprint /
-                            module.__class__._orig_module_name)
-        self.cache_dir = Path(self.cache_dir)
-        self.cache_dir.mkdir(exist_ok=True, parents=True)
-        if self.op_output_dataset_path is None:
-            self.op_output_dataset_path = module.core_log_dir / "analysis_datasets"
-        self.op_output_dataset_path = Path(self.op_output_dataset_path)
-        self.op_output_dataset_path.mkdir(exist_ok=True, parents=True)
-        for op in self.analysis_ops:
-            op_dir = self.op_output_dataset_path / op.name
-            if op_dir.exists() and any(op_dir.iterdir()):
-                raise Exception(
-                    f"Analysis dataset directory for op '{op.name}' ({op_dir}) is not empty. "
-                    "Please delete it or specify a different path."
-                )
-
-    # TODO: revisit appropriate type approach/hints here
-    def init_analysis_cfgs(self, module: SAEAnalysisProtocol):
-        target_layers, match_fn = self.sae_analysis_targets.target_layers, self.sae_analysis_targets.sae_hook_match_fn
-        names_filter = module.construct_names_filter(target_layers, match_fn)
-        clean_w_sae_enabled = it.logit_diffs_sae in self.analysis_ops
-        # TODO: decouple prompts and tokens logic from AnalysisSetCfg, unnest SaveCfg to AnalysisStore (configurable
-        #       from AnalysisCfg)
-        # TODO: We currently generate AnalysisCfg objects for each analysis op in the set but we want to allow
-        #       for the user to explicitly provide a sequence of AnalysisCfg objects instead (should be mutually
-        #       exclusive with specifying ops)
-        prompts_tokens_cfg = dict(save_prompts=not clean_w_sae_enabled, save_tokens=not clean_w_sae_enabled)
-        # TODO: make this a DatasetDict for each epoch for each analysis op? Should just need to flush cache per epoch
-        #       now.
-        self.init_analysis_dirs(module)
-        # TODO: Decouple analysis_ops from AnalysisSetCfg, instead create an AnalysisDispatcher
-        # TODO: For now, allowing both an analysis_ops path and a separate analysis_cfg path, but should probably unify
-        if self.analysis_cfgs:
-            for op, cfg in self.analysis_cfgs.items():
-                # TODO: disentangle AnalysisCfg path from AnalysisSetCfg so AnalysisSetCfg is optional
-                cfg.setup()
-                cfg.names_filter = names_filter
-        else:
-            for op in self.analysis_ops:
-                # Use shared cache_dir for all ops; create op-specific output directory only
-                op_output_path = self.op_output_dataset_path / op.name
-                op_output_path.mkdir(exist_ok=True, parents=True)
-                analysis_dirs = {"cache_dir": self.cache_dir, "op_output_dataset_path": op_output_path}
-                # Create analysis store
-                analysis_store = AnalysisStore(**analysis_dirs)
-                # Configure AnalysisCfg for the user based on the provided op with default settings
-                self.analysis_cfgs[op] = AnalysisCfg(
-                    output_store=analysis_store,
-                    op=op,
-                    names_filter=names_filter,
-                    save_prompts=True if op == it.logit_diffs_sae else prompts_tokens_cfg["save_prompts"],
-                    save_tokens=True if op == it.logit_diffs_sae else prompts_tokens_cfg["save_tokens"],
-                )
 
     def validate_analysis_order(self):
         """Validates and potentially reorders analysis operations to ensure dependencies are met.

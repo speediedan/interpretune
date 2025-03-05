@@ -2,6 +2,7 @@ from __future__ import annotations  # see PEP 749, no longer needed when 3.13 re
 from typing import Any, TYPE_CHECKING
 import logging
 from functools import partialmethod
+from pathlib import Path
 
 import torch
 from tqdm.auto import tqdm
@@ -13,6 +14,7 @@ from interpretune.base import _call_itmodule_hook, ITDataModule
 from interpretune.runners import SessionRunner, run_step
 from interpretune.protocol import AllPhases
 from interpretune.config import AnalysisRunnerCfg
+from interpretune.config.analysis import AnalysisCfg, AnalysisSetCfg
 
 
 if TYPE_CHECKING:
@@ -73,20 +75,91 @@ def core_analysis_loop(module: ITModule, datamodule: ITDataModule,
 class AnalysisRunner(SessionRunner):
     """Trainer subclass with analysis orchestration logic."""
     def __init__(self, run_cfg: AnalysisRunnerCfg | dict[str, Any], *args: Any, **kwargs: Any) -> Any:
+        run_cfg = run_cfg if isinstance(run_cfg, AnalysisRunnerCfg) else AnalysisRunnerCfg(**run_cfg)
         super().__init__(run_cfg, *args, **kwargs)
         # Extend supported commands to include analysis
         self.supported_commands = (*self.supported_commands, "analysis")
         self.analysis_set_results = {}
 
-    # TODO: Likely re-enable running a single mode/op to be run at a time rather than requiring AnalysisSetCfg and an
-    #  internal self.analysis_set_results if that pattern makes sense
-    # def run_analysis_mode(self, mode: AnalysisMode, analysis_store: AnalysisStore, names_filter: NamesFilter,
-    # **kwargs):
-    #     self.run_cfg.module.analysis_cfg = AnalysisCfg(analysis_store=analysis_store, mode=mode,
-    # names_filter=names_filter, **kwargs)
-    #     self.analysis_set_results[mode] = self.analysis()
+    def _run(self, phase, loop_fn, *args: Any, **kwargs: Any) -> Any | None:
+        self.phase = AllPhases[phase]
+        phase_artifacts = loop_fn(**self.run_cfg.__dict__)
+        self.it_session_end()
+        return phase_artifacts
 
-    def run_analysis_set(self) -> dict[str, Any]:
+    analysis = partialmethod(_run, phase="analysis", loop_fn=core_analysis_loop)
+
+    def run_analysis(self,
+                     analysis_set_cfg: AnalysisSetCfg | dict[str, Any] | None = None,
+                     analysis_cfg: AnalysisCfg | dict[str, Any] | None = None,
+                     analysis_op: Any = None,
+                     cache_dir: str | Path | None = None,
+                     op_output_dataset_path: str | Path | None = None,
+                     **kwargs) -> Any:
+        """Unified method to run analysis operations based on the provided configuration.
+
+        Args:
+            analysis_set_cfg: Configuration for running a set of analysis operations
+            analysis_cfg: Configuration for a single analysis operation
+            analysis_op: A specific analysis operation to run with default configuration
+            cache_dir: Optional override for the cache directory
+            op_output_dataset_path: Optional override for the output dataset path
+            **kwargs: Additional arguments to pass to the analysis function
+
+        Returns:
+            Results of the analysis operation(s)
+        """
+        # Reset analysis results for this run
+        self.analysis_set_results = {}
+
+        # Update configuration parameters if provided
+        if cache_dir is not None:
+            self.run_cfg.cache_dir = cache_dir
+        if op_output_dataset_path is not None:
+            self.run_cfg.op_output_dataset_path = op_output_dataset_path
+
+        # Convert dict configs to appropriate dataclasses if needed
+        if analysis_set_cfg is not None:
+            if isinstance(analysis_set_cfg, dict):
+                analysis_set_cfg = AnalysisSetCfg(**analysis_set_cfg)
+            self.run_cfg.analysis_set_cfg = analysis_set_cfg
+            self.run_cfg.analysis_cfg = None
+            self.run_cfg.analysis_op = None
+        elif analysis_cfg is not None:
+            if isinstance(analysis_cfg, dict):
+                analysis_cfg = AnalysisCfg(**analysis_cfg)
+            self.run_cfg.analysis_set_cfg = None
+            self.run_cfg.analysis_cfg = analysis_cfg
+            self.run_cfg.analysis_op = None
+        elif analysis_op is not None:
+            self.run_cfg.analysis_set_cfg = None
+            self.run_cfg.analysis_cfg = None
+            self.run_cfg.analysis_op = analysis_op
+
+        # Initialize analysis configurations
+        self.run_cfg.init_analysis_cfgs(self.run_cfg.module)
+
+        # Determine which execution path to take based on the configuration
+        if self.run_cfg.analysis_set_cfg is not None:
+            return self._run_analysis_set()
+        elif self.run_cfg.analysis_cfg is not None:
+            return self._run_analysis_op()
+        elif self.run_cfg.analysis_op is not None:
+            self.run_cfg.analysis_cfg = AnalysisCfg(op=self.run_cfg.analysis_op)
+            self.run_cfg.analysis_cfg.apply(self.run_cfg.module, self.run_cfg.cache_dir,
+                                            self.run_cfg.op_output_dataset_path, self.run_cfg.sae_analysis_targets)
+            return self._run_analysis_op()
+        else:
+            raise ValueError("No analysis configuration provided. Please specify one of: analysis_set_cfg,"
+                             " analysis_cfg, or analysis_op")
+
+    def _run_analysis_op(self) -> Any:
+        """Run a single analysis operation with the provided configuration."""
+        # set active analysis config
+        self.run_cfg.module.analysis_cfg = self.run_cfg.analysis_cfg
+        return self.analysis(**self.run_cfg.__dict__)
+
+    def _run_analysis_set(self) -> dict[str, Any]:
         """Run sequence of analysis operations, handling dependencies between ops."""
         for op, analysis_cfg in self.run_cfg.analysis_set_cfg.analysis_cfgs.items():
             if op == it.logit_diffs_attr_ablation:
@@ -110,14 +183,5 @@ class AnalysisRunner(SessionRunner):
                            for hook_dict in analysis_cfg.input_store.alive_latents
                            for v in hook_dict.values()])
             self.run_cfg.module.analysis_cfg = analysis_cfg
-            self.analysis_set_results[op] = self.analysis()  # TODO: make this a DatasetDict instead?
-        # TODO: maybe return results in case we want to chain multiple analysis modes or user doesn't provide a dict
+            self.analysis_set_results[op] = self.analysis(**self.run_cfg.__dict__)
         return self.analysis_set_results
-
-    def _run(self, phase, loop_fn, *args: Any, **kwargs: Any) -> Any | None:
-        self.phase = AllPhases[phase]
-        phase_artifacts = loop_fn(**self.run_cfg.__dict__)
-        self.it_session_end()
-        return phase_artifacts
-
-    analysis = partialmethod(_run, phase="analysis", loop_fn=core_analysis_loop)

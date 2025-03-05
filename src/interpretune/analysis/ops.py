@@ -187,6 +187,14 @@ class CallableAnalysisOp:
             f"Callable interface for {self._op.name} has not been implemented"
         )
 
+    def __str__(self) -> str:
+        """String representation showing the operation name."""
+        return f"{self._op.name}"
+
+    def __repr__(self) -> str:
+        """Detailed representation showing the wrapped operation."""
+        return f"CallableAnalysisOp(op={self._op!r})"
+
 class AnalysisOp:
     """Base class for analysis operations."""
     def __init__(self, name: str, description: str,

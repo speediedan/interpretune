@@ -69,9 +69,7 @@ class BaseConfigImpl:
     def _init_dirs_and_hooks(self) -> None:
         self._create_experiment_dir()
         if self.analysis_run_cfg:
-            assert getattr(self.analysis_run_cfg, 'analysis_set_cfg', None), \
-                "Analysis run config must have an analysis set config."
-            self.analysis_run_cfg.analysis_set_cfg.init_analysis_cfgs(self)
+            self.analysis_run_cfg.init_analysis_cfgs(self)
         if self.cuda_allocator_history:
             self.memprofiler.init_cuda_snapshots_dir()
         # TODO: add save_hyperparameters/basic logging func for raw pytorch
