@@ -9,7 +9,7 @@ from interpretune.config.transformer_lens import (ITLensConfig, ITLensCustomConf
                                                   ITLensFromPretrainedNoProcessingConfig, TLensGenerationConfig)
 from interpretune.config.sae_lens import (SAEConfig, SAECfgType, SAELensFromPretrainedConfig, SAELensCustomConfig,
                                           SAELensConfig)
-from interpretune.config.analysis import (AnalysisCfg, AnalysisSetCfg, IT_ANALYSIS_CACHE, IT_ANALYSIS_CACHE_DIR,
+from interpretune.config.analysis import (AnalysisCfg, IT_ANALYSIS_CACHE, IT_ANALYSIS_CACHE_DIR,
                                           DEFAULT_IT_ANALYSIS_CACHE, AnalysisArtifactCfg)
 from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg
 
@@ -58,7 +58,6 @@ __all__ = [
 
     # from interpretune.config.analysis
     "AnalysisCfg",
-    "AnalysisSetCfg",
     "AnalysisArtifactCfg",
     "IT_ANALYSIS_CACHE",
     "IT_ANALYSIS_CACHE_DIR",

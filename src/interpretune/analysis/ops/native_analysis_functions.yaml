@@ -1,0 +1,465 @@
+---
+labels_to_ids:
+  class_path: interpretune.analysis.ops.definitions.LabelsToIDsOp
+  description: Convert label strings to tensor IDs
+  aliases: []
+  output_schema:
+    labels:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+  input_schema:
+    labels:
+      datasets_dtype: string
+      connected_obj: datamodule
+
+get_answer_indices:
+  class_path: interpretune.analysis.ops.definitions.GetAnswerIndicesOp
+  description: Extract answer indices from batch
+  aliases: []
+  output_schema:
+    answer_indices:
+      datasets_dtype: int64
+    tokens:
+      datasets_dtype: int64
+      required: false
+      dyn_dim: 1
+      array_shape: [null, batch_size]
+      sequence_type: false
+
+get_alive_latents:
+  class_path: interpretune.analysis.ops.definitions.GetAliveLatentsOp
+  description: Extract alive latents from cache
+  aliases: []
+  output_schema:
+    alive_latents:
+      datasets_dtype: int64
+      per_sae_hook: true
+      non_tensor: true
+    answer_indices:
+      datasets_dtype: int64
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+
+model_forward:
+  class_path: interpretune.analysis.ops.definitions.ModelForwardOp
+  description: Basic model forward pass
+  aliases: []
+  output_schema:
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    answer_indices:
+      datasets_dtype: int64
+
+model_cache_forward:
+  class_path: interpretune.analysis.ops.definitions.ModelCacheForwardOp
+  description: Model forward pass with cache
+  aliases: []
+  output_schema:
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    answer_indices:
+      datasets_dtype: int64
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+
+model_ablation:
+  class_path: interpretune.analysis.ops.definitions.ModelAblationOp
+  description: Model ablation analysis
+  aliases: []
+  output_schema:
+    answer_logits:
+      datasets_dtype: float32
+      per_latent: true
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    answer_indices:
+      datasets_dtype: int64
+    alive_latents:
+      datasets_dtype: int64
+      per_sae_hook: true
+      non_tensor: true
+    logit_diffs:
+      datasets_dtype: float32
+      required: false
+    loss:
+      datasets_dtype: float32
+      sequence_type: false
+      required: false
+    preds:
+      datasets_dtype: int64
+      required: false
+    labels:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+    tokens:
+      datasets_dtype: int64
+      required: false
+      dyn_dim: 1
+      array_shape: [null, batch_size]
+      sequence_type: false
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+  input_schema:
+    logit_diffs:
+      datasets_dtype: float32
+      required: false
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    loss:
+      datasets_dtype: float32
+      sequence_type: false
+      required: false
+    preds:
+      datasets_dtype: int64
+      required: false
+    labels:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+    answer_indices:
+      datasets_dtype: int64
+    tokens:
+      datasets_dtype: int64
+      required: false
+      dyn_dim: 1
+      array_shape: [null, batch_size]
+      sequence_type: false
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+
+model_gradient:
+  class_path: interpretune.analysis.ops.definitions.ModelGradientOp
+  description: Model gradient-based attribution
+  aliases: []
+  output_schema:
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    answer_indices:
+      datasets_dtype: int64
+    loss:
+      datasets_dtype: float32
+      sequence_type: false
+    logit_diffs:
+      datasets_dtype: float32
+    preds:
+      datasets_dtype: int64
+    grad_cache:
+      datasets_dtype: object
+      non_tensor: true
+
+logit_diffs:
+  class_path: interpretune.analysis.ops.definitions.LogitDiffsOp
+  description: Clean forward pass for computing logit differences
+  aliases: []
+  output_schema:
+    logit_diffs:
+      datasets_dtype: float32
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    loss:
+      datasets_dtype: float32
+      sequence_type: false
+    preds:
+      datasets_dtype: int64
+    labels:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+    answer_indices:
+      datasets_dtype: int64
+    tokens:
+      datasets_dtype: int64
+      required: false
+      dyn_dim: 1
+      array_shape: [null, batch_size]
+      sequence_type: false
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+  input_schema:
+    input:
+      datasets_dtype: float32
+      connected_obj: datamodule
+    labels:
+      datasets_dtype: int64
+      connected_obj: datamodule
+    orig_labels:
+      datasets_dtype: int64
+
+logit_diffs_cache:
+  class_path: interpretune.analysis.ops.definitions.LogitDiffsOp
+  description: Clean forward pass for computing logit differences including cache activations (chained only)
+  aliases: []
+  output_schema:
+    logit_diffs:
+      datasets_dtype: float32
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    loss:
+      datasets_dtype: float32
+      sequence_type: false
+    preds:
+      datasets_dtype: int64
+    labels:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+    answer_indices:
+      datasets_dtype: int64
+    tokens:
+      datasets_dtype: int64
+      required: false
+      dyn_dim: 1
+      array_shape: [null, batch_size]
+      sequence_type: false
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+  input_schema:
+    input:
+      datasets_dtype: float32
+      connected_obj: datamodule
+    labels:
+      datasets_dtype: int64
+      connected_obj: datamodule
+    orig_labels:
+      datasets_dtype: int64
+
+sae_correct_acts:
+  class_path: interpretune.analysis.ops.definitions.SAECorrectActivationsOp
+  description: Compute correct activations from SAE cache
+  aliases: []
+  output_schema:
+    logit_diffs:
+      datasets_dtype: float32
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    loss:
+      datasets_dtype: float32
+      sequence_type: false
+    preds:
+      datasets_dtype: int64
+    labels:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+    answer_indices:
+      datasets_dtype: int64
+    tokens:
+      datasets_dtype: int64
+      required: false
+      dyn_dim: 1
+      array_shape: [null, batch_size]
+      sequence_type: false
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    alive_latents:
+      datasets_dtype: int64
+      per_sae_hook: true
+      non_tensor: true
+    correct_activations:
+      datasets_dtype: float32
+      per_sae_hook: true
+  input_schema:
+    logit_diffs:
+      datasets_dtype: float32
+    answer_indices:
+      datasets_dtype: int64
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+
+gradient_attribution:
+  class_path: interpretune.analysis.ops.definitions.GradientAttributionOp
+  description: Compute attribution values from gradients
+  aliases: []
+  output_schema:
+    logit_diffs:
+      datasets_dtype: float32
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    loss:
+      datasets_dtype: float32
+      sequence_type: false
+    preds:
+      datasets_dtype: int64
+    labels:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+    answer_indices:
+      datasets_dtype: int64
+    tokens:
+      datasets_dtype: int64
+      required: false
+      dyn_dim: 1
+      array_shape: [null, batch_size]
+      sequence_type: false
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    alive_latents:
+      datasets_dtype: int64
+      per_sae_hook: true
+      non_tensor: true
+    attribution_values:
+      datasets_dtype: float32
+      per_sae_hook: true
+    correct_activations:
+      datasets_dtype: float32
+      per_sae_hook: true
+    grad_cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+  input_schema:
+    answer_indices:
+      datasets_dtype: int64
+    logit_diffs:
+      datasets_dtype: float32
+    grad_cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    alive_latents:
+      datasets_dtype: int64
+      per_sae_hook: true
+      non_tensor: true
+
+ablation_attribution:
+  class_path: interpretune.analysis.ops.definitions.AblationAttributionOp
+  description: Compute attribution values from ablation
+  aliases: []
+  output_schema:
+    attribution_values:
+      datasets_dtype: float32
+      per_sae_hook: true
+    logit_diffs:
+      datasets_dtype: float32
+      per_latent: true
+    answer_logits:
+      datasets_dtype: float32
+      per_latent: true
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    loss:
+      datasets_dtype: float32
+      per_latent: true
+      sequence_type: false
+    preds:
+      datasets_dtype: int64
+      per_latent: true
+    labels:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+    answer_indices:
+      datasets_dtype: int64
+    tokens:
+      datasets_dtype: int64
+      required: false
+      dyn_dim: 1
+      array_shape: [null, batch_size]
+      sequence_type: false
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    alive_latents:
+      datasets_dtype: int64
+      per_sae_hook: true
+      non_tensor: true
+      required: false
+  input_schema:
+    answer_logits:
+      datasets_dtype: float32
+      per_latent: true
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    answer_indices:
+      datasets_dtype: int64
+    alive_latents:
+      datasets_dtype: int64
+      per_sae_hook: true
+      non_tensor: true
+    logit_diffs:
+      datasets_dtype: float32
+      required: false
+    loss:
+      datasets_dtype: float32
+      sequence_type: false
+      required: false
+    preds:
+      datasets_dtype: int64
+      required: false
+    labels:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+    tokens:
+      datasets_dtype: int64
+      required: false
+      dyn_dim: 1
+      array_shape: [null, batch_size]
+      sequence_type: false
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+
+# Composite operations
+composite_operations:
+  logit_diffs_base:
+    chain: labels_to_ids.model_forward.logit_diffs
+    alias: logit_diffs_base
+
+  logit_diffs_sae:
+    chain: labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts
+    alias: logit_diffs_sae
+
+  logit_diffs_attr_grad:
+    chain: labels_to_ids.model_gradient.gradient_attribution
+    alias: logit_diffs_attr_grad
+
+  logit_diffs_attr_ablation:
+    chain: labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.ablation_attribution
+    alias: logit_diffs_attr_ablation

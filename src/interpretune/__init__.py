@@ -21,9 +21,10 @@ from interpretune.protocol import (ITModuleProtocol, ITDataModuleProtocol, Adapt
                                    CorePhases, CoreSteps, AllPhases, AllSteps, AnalysisStoreProtocol,
                                    AnalysisBatchProtocol, AnalysisOpProtocol)
 
+
 class _AnalysisImportHook(MetaPathFinder):
-    """MetaPathFinder that exposes analysis ops in the top-level interpretune namespace only when analysis module
-    is imported."""
+    """MetaPathFinder that exposes analysis ops in the top-level interpretune namespace when analysis module is
+    imported."""
     def find_spec(self, fullname, path, target=None):
         if fullname == "interpretune.analysis":
             return ModuleSpec(fullname, self, is_package=True)
@@ -36,11 +37,30 @@ class _AnalysisImportHook(MetaPathFinder):
         # Remove ourselves temporarily from sys.meta_path to avoid infinite recursion
         sys.meta_path.remove(self)
         try:
-            import interpretune.analysis as analysis
+            # First, import just the dispatcher to avoid circular imports
+            import importlib
+            dispatcher_module = importlib.import_module("interpretune.analysis.ops.dispatcher")
+
+            # Load operation definitions but don't instantiate yet
+            dispatcher_module.DISPATCHER.load_definitions()
+
+            # Then import the rest of the analysis module
+            import interpretune.analysis
+
+            # Now register all operations directly to the module
             current_module = sys.modules["interpretune"]
-            for op, alias in analysis.ANALYSIS_OPS.iter_aliased_ops():
-                setattr(current_module, alias, op.callable)
-            return analysis
+
+            # Register utility functions
+            setattr(current_module, "create_op_chain", interpretune.analysis.DISPATCHER.create_chain)
+            setattr(current_module, "create_op_chain_from_ops", interpretune.analysis.DISPATCHER.create_chain_from_ops)
+
+            # All operations should already be instantiated when loaded
+            for op_name, op_alias in interpretune.analysis.DISPATCHER.get_op_aliases():
+                # Get the already instantiated op
+                op = interpretune.analysis.DISPATCHER.get_op(op_name)
+                setattr(current_module, op_alias, op)
+
+            return sys.modules["interpretune.analysis"]
         finally:
             sys.meta_path.insert(0, self)
 
@@ -50,8 +70,8 @@ sys.meta_path.insert(0, _AnalysisImportHook())
 # allow import of core objects from all second-level IT modules via interpretune.x import y
 from interpretune.adapters import (ITModule, LightningDataModule, LightningModule, ITLensModule, SAELensModule,
                                    ADAPTER_REGISTRY, CompositionRegistry)
-from interpretune.analysis import AnalysisStore, AnalysisBatch, ANALYSIS_OPS, SAEAnalysisTargets
-from interpretune.config import (ITConfig, ITDataModuleConfig, AnalysisCfg, AnalysisSetCfg, AnalysisRunnerCfg,
+from interpretune.analysis import AnalysisStore, AnalysisBatch, DISPATCHER, SAEAnalysisTargets
+from interpretune.config import (ITConfig, ITDataModuleConfig, AnalysisCfg, AnalysisRunnerCfg,
                                  AnalysisArtifactCfg, ITLensConfig, SAELensConfig, ITSharedConfig, PromptConfig,
                                  AutoCompConfig, HFFromPretrainedConfig, ITLensFromPretrainedNoProcessingConfig,
                                  TLensGenerationConfig, GenerativeClassificationConfig, SAELensFromPretrainedConfig,
@@ -64,6 +84,7 @@ from interpretune.utils import (MisconfigurationException, rank_zero_info, rank_
 from interpretune.session import ITSession, ITSessionConfig
 from interpretune.runners import SessionRunner, AnalysisRunner
 from interpretune.base import ITDataModule, MemProfilerHooks, ITCLI, it_init, IT_BASE, it_session_end
+
 
 __all__ = [
     # Protocol Module
@@ -91,14 +112,13 @@ __all__ = [
     # Analysis Module
     "AnalysisStore",
     "AnalysisBatch",
-    "ANALYSIS_OPS",
+    "DISPATCHER",
     "SAEAnalysisTargets",
 
     # Config Module
     "ITConfig",
     "ITDataModuleConfig",
     "AnalysisCfg",
-    "AnalysisSetCfg",
     "AnalysisRunnerCfg",
     "AnalysisArtifactCfg",
     "ITLensConfig",

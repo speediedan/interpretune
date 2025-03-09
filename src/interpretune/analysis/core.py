@@ -18,7 +18,8 @@ from datasets import Sequence as DatasetsSequence
 import interpretune as it
 from interpretune.protocol import (AnalysisStoreProtocol, AnalysisBatchProtocol, NamesFilter, SAEFqn,
                                    AnalysisCfgProtocol)
-from interpretune.analysis import ANALYSIS_OPS, AnalysisOp
+from interpretune.analysis.ops.base import AnalysisOp, OpSchema
+from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.utils import rank_zero_warn, DEFAULT_DECODE_KWARGS
 
 
@@ -120,71 +121,6 @@ class SAEAnalysisDict(dict):
 
         return result
 
-class AttrDict(dict):
-    def __init__(self, *args, **kwargs):
-        super(AttrDict, self).__init__(*args, **kwargs)
-
-    def __getattr__(self, name):
-        try:
-            return super().__getitem__(name)
-        except KeyError as e:
-            raise AttributeError(e)
-
-    def __setattr__(self, name, value):
-         super().__setitem__(name, value)
-
-    def __delattr__(self, name):
-        try:
-            super().__delitem__(name)
-        except KeyError as e:
-            raise AttributeError(e)
-
-class AnalysisBatch(AttrDict):
-    """Contains all analysis results for a single batch.
-
-    Fields:
-        logit_diffs: torch.Tensor | dict[str, dict[int, torch.Tensor]]  # [batch_size]
-        answer_logits: torch.Tensor | dict[str, dict[int, torch.Tensor]]  # [batch_size, 1, num_classes]
-        loss: torch.Tensor | dict[str, dict[int, torch.Tensor]]  # [batch_size]
-        labels: torch.Tensor  # [batch_size]
-        orig_labels: torch.Tensor  # [batch_size]
-        preds: torch.Tensor | dict[str, dict[int, torch.Tensor]]  # [batch_size]
-        cache: ActivationCacheProtocol
-        grad_cache: ActivationCacheProtocol
-        answer_indices: torch.Tensor  # [batch_size]
-        alive_latents: dict[str, list[int]]
-        correct_activations: dict[str, torch.Tensor]  # [batch_size, d_sae] (for each sae)
-        attribution_values: dict[str, torch.Tensor]
-        tokens: torch.Tensor
-        prompts: list[str]
-    """
-    # TODO: update this docstring to reflect current protocol usage
-
-    def __getattr__(self, name):
-        if name not in AnalysisBatchProtocol.__annotations__:
-            raise AttributeError(f"'{name}' is not a valid AnalysisBatch attribute")
-        return super().__getattr__(name)
-
-    def update(self, **kwargs):
-        for key, value in kwargs.items():
-            self[key] = value
-
-    def to_cpu(self):
-        """Detach and move all field tensors to CPU."""
-        def maybe_detach(val, visited=None):
-            if visited is None:
-                visited = set()
-            if id(val) in visited:
-                return val
-            visited.add(id(val))
-            if isinstance(val, torch.Tensor):
-                return val.detach().cpu()
-            elif isinstance(val, dict):
-                return {k: maybe_detach(v, visited) for k, v in val.items()}
-            return val
-
-        for key, value in list(self.items()):
-            self[key] = maybe_detach(value)
 
 def get_module_dims(module) -> tuple[int, int, int, tuple[int, int]]:
     """Extract key dimensions from module state.
@@ -226,13 +162,27 @@ def get_filtered_sae_hook_keys(handle, names_filter: Callable[[str], bool]) -> l
         if names_filter(f'{handle.cfg.hook_name}.{key}')
     ]
 
-def schema_to_features(module,
-                          op: str | AnalysisOp,
-                          default_dtype: str = "float32",
-                          int_dtype: str = "int64") -> Features:
-    """Build Features object for AnalysisBatch based on operation schema and module dimensions."""
+def schema_to_features(module, op: str | AnalysisOp | None = None, schema: OpSchema | None = None,
+                       default_dtype: str = "float32", int_dtype: str = "int64") -> Features:
+    """Convert an operation schema or direct schema to features for Dataset.from_generator.
+
+    Args:
+        module: The module being analyzed
+        op: An optional AnalysisOp to get the schema from
+        schema: An optional direct schema to use instead of op.output_schema
+
+    Returns:
+        A features dict compatible with Dataset.from_generator
+    """
     if isinstance(op, str):
-        op = ANALYSIS_OPS[op]
+        op = DISPATCHER.get_op(op) or DISPATCHER.get_by_alias(op)
+    if schema is None and op is not None:
+        schema = op.output_schema
+    elif schema is None and module is not None and hasattr(module, 'analysis_cfg') and hasattr(module.analysis_cfg,
+                                                                                               'output_schema'):
+        schema = module.analysis_cfg.output_schema
+    if not schema:
+        return {}  # Return empty dict if no schema available
 
     batch_size, max_answer_tokens, num_classes = get_module_dims(module)
     features_dict = {}
@@ -244,7 +194,7 @@ def schema_to_features(module,
         'num_classes': num_classes
     }
 
-    for col_name, col_cfg in op.output_schema.items():
+    for col_name, col_cfg in schema.items():
         if col_cfg.intermediate_only:
             continue
 
@@ -965,7 +915,7 @@ def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
         analysis_store = analysis_obj
 
     if isinstance(op, str):
-        op = AnalysisOp(op)
+        op = DISPATCHER.get_op(op) or DISPATCHER.get_by_alias(op)
 
     batch_preds = (
         [b.mode(dim=0).values.cpu() for b in analysis_store.by_sae('preds').batch_join(across_saes=True)]
