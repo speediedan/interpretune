@@ -13,6 +13,7 @@ from interpretune.runners import SessionRunner, run_step
 from interpretune.protocol import AllPhases
 from interpretune.config import AnalysisRunnerCfg, AnalysisCfg
 from interpretune.utils import rank_zero_warn
+from interpretune.utils.exceptions import handle_exception_with_debug_dump
 
 
 if TYPE_CHECKING:
@@ -70,7 +71,22 @@ def core_analysis_loop(module: ITModule, datamodule: ITDataModule,
                            cache_dir=module.analysis_cfg.output_store.cache_dir)
 
     # Create dataset with ITAnalysisFormatter
-    dataset = Dataset.from_generator(**from_gen_kwargs).with_format("interpretune", **it_format_kwargs)
+    try:
+        dataset = Dataset.from_generator(**from_gen_kwargs).with_format("interpretune", **it_format_kwargs)
+    except Exception as e:
+        # improve visibility of errors since they can otherwise be obscured by the dataset generator
+        context_data = (
+            features,                 # Features derived from schema
+            from_gen_kwargs,          # Arguments for Dataset.from_generator
+            gen_kwargs,               # Arguments for the analysis generator
+            it_format_kwargs,         # Arguments for interpretune format
+            kwargs,                   # Additional user-provided arguments
+            schema_source,            # Source of the schema definition
+            serializable_col_cfg,     # Column configs converted to serializable format
+            module,                   # The module being analyzed
+            datamodule               # The data module being used
+        )
+        handle_exception_with_debug_dump(e, context_data, "dataset_generation")
     dataset.save_to_disk(str(module.analysis_cfg.output_store.save_dir))
     # Assign dataset to analysis store
     module.analysis_cfg.output_store.dataset = dataset

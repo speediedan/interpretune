@@ -54,11 +54,20 @@ class _AnalysisImportHook(MetaPathFinder):
             setattr(current_module, "create_op_chain", interpretune.analysis.DISPATCHER.create_chain)
             setattr(current_module, "create_op_chain_from_ops", interpretune.analysis.DISPATCHER.create_chain_from_ops)
 
-            # All operations should already be instantiated when loaded
-            for op_name, op_alias in interpretune.analysis.DISPATCHER.get_op_aliases():
-                # Get the already instantiated op
-                op = interpretune.analysis.DISPATCHER.get_op(op_name)
-                setattr(current_module, op_alias, op)
+            # Register all operations by instantiating them
+            ops_dict = interpretune.analysis.DISPATCHER.instantiate_all_ops()
+            for op_name, op in ops_dict.items():
+                # Set the operation by name
+                setattr(current_module, op_name, op)
+                # Set the operation by alias if it has one
+                if hasattr(op, 'alias') and op.alias != op_name:
+                    setattr(current_module, op.alias, op)
+
+            # Register all aliases as well
+            for op_alias, op_name in interpretune.analysis.DISPATCHER.get_op_aliases():
+                if not hasattr(current_module, op_alias):
+                    op = interpretune.analysis.DISPATCHER.get_op(op_name)
+                    setattr(current_module, op_alias, op)
 
             return sys.modules["interpretune.analysis"]
         finally:

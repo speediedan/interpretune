@@ -1,6 +1,6 @@
 """Base classes for analysis operations."""
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Literal, Union, Optional, Any
+from typing import Literal, Union, Optional, Any, Dict, Callable
 from dataclasses import dataclass, fields
 
 import torch
@@ -180,13 +180,15 @@ class AnalysisOp:
     def __init__(self, name: str, description: str,
                  output_schema: OpSchema,
                  input_schema: Optional[OpSchema] = None,
-                 active_alias: Optional[str] = None) -> None:
+                 active_alias: Optional[str] = None,
+                 callables: Optional[Dict[str, Callable]] = None) -> None:
         self.name = name
         self.description = description
         self.output_schema = output_schema
         self.input_schema = input_schema
         self.active_alias = active_alias  # Store the active alias when op is part of a chain
         self._impl = None
+        self.callables = callables or {}  # Store functions for operation implementation
 
     @property
     def alias(self) -> str:
@@ -199,6 +201,28 @@ class AnalysisOp:
         if self._impl is None:
             self._impl = CallableAnalysisOp(self)
         return self._impl
+
+    def _validate_input_schema(self, analysis_batch: Optional[AnalysisBatchProtocol], batch: BatchEncoding) -> None:
+        """Validate that required inputs defined in input_schema exist in analysis_batch or batch."""
+        if self.input_schema is None:
+            return
+
+        for key, col_cfg in self.input_schema.items():
+            if not col_cfg.required:
+                continue
+
+            if col_cfg.connected_obj == 'datamodule':
+                # Check in batch for fields from datamodule
+                # TODO: decide whether to allow this fallback behavior or require explicit mapping by the op definitions
+                # We don't raise an error until we also check if it's already been processed and moved to analysis_batch
+                if key not in batch and (analysis_batch is None or
+                                          not hasattr(analysis_batch, key) or
+                                          getattr(analysis_batch, key) is None):
+                    raise ValueError(f"Missing required input '{key}' for {self.name} operation")
+            else:  # 'analysis_store'
+                # Check in analysis_batch for fields from previous operations
+                if analysis_batch is None or not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None:
+                    raise ValueError(f"Missing required analysis input '{key}' for {self.name} operation")
 
     @staticmethod
     def process_batch(analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
@@ -303,8 +327,19 @@ class AnalysisOp:
 
     def __call__(self, module, analysis_batch: Optional[AnalysisBatchProtocol],
                 batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
-        """Default implementation - should be overridden by subclasses."""
-        raise NotImplementedError(f"Operation {self.name} does not implement __call__")
+        """Execute the operation using the configured implementation."""
+        # Validate input schema if provided
+        if self.input_schema is not None:
+            self._validate_input_schema(analysis_batch, batch)
+
+        # Use the implementation function from callables if available
+        if "implementation" in self.callables:
+            return self.callables["implementation"](module, analysis_batch, batch, batch_idx, **{
+                k: v for k, v in self.callables.items() if k != "implementation"
+            })
+
+        # Fallback to direct invocation if no implementation is registered
+        raise NotImplementedError(f"Operation {self.name} does not have an implementation function registered")
 
 
 class CallableAnalysisOp(AnalysisOp):

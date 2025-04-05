@@ -1,7 +1,7 @@
 ---
 labels_to_ids:
-  class_path: interpretune.analysis.ops.definitions.LabelsToIDsOp
   description: Convert label strings to tensor IDs
+  implementation: interpretune.analysis.ops.definitions.labels_to_ids_impl
   aliases: []
   output_schema:
     labels:
@@ -14,8 +14,8 @@ labels_to_ids:
       connected_obj: datamodule
 
 get_answer_indices:
-  class_path: interpretune.analysis.ops.definitions.GetAnswerIndicesOp
   description: Extract answer indices from batch
+  implementation: interpretune.analysis.ops.definitions.get_answer_indices_impl
   aliases: []
   output_schema:
     answer_indices:
@@ -28,8 +28,8 @@ get_answer_indices:
       sequence_type: false
 
 get_alive_latents:
-  class_path: interpretune.analysis.ops.definitions.GetAliveLatentsOp
   description: Extract alive latents from cache
+  implementation: interpretune.analysis.ops.definitions.get_alive_latents_impl
   aliases: []
   output_schema:
     alive_latents:
@@ -44,8 +44,8 @@ get_alive_latents:
       intermediate_only: true
 
 model_forward:
-  class_path: interpretune.analysis.ops.definitions.ModelForwardOp
   description: Basic model forward pass
+  implementation: interpretune.analysis.ops.definitions.model_forward_impl
   aliases: []
   output_schema:
     answer_logits:
@@ -56,8 +56,8 @@ model_forward:
       datasets_dtype: int64
 
 model_cache_forward:
-  class_path: interpretune.analysis.ops.definitions.ModelCacheForwardOp
   description: Model forward pass with cache
+  implementation: interpretune.analysis.ops.definitions.model_cache_forward_impl
   aliases: []
   output_schema:
     answer_logits:
@@ -69,10 +69,13 @@ model_cache_forward:
     cache:
       datasets_dtype: object
       non_tensor: true
+      intermediate_only: true
 
 model_ablation:
-  class_path: interpretune.analysis.ops.definitions.ModelAblationOp
   description: Model ablation analysis
+  implementation: interpretune.analysis.ops.definitions.model_ablation_impl
+  function_params:
+    ablate_latent_fn: interpretune.analysis.ops.definitions.ablate_sae_latent
   aliases: []
   output_schema:
     answer_logits:
@@ -143,8 +146,11 @@ model_ablation:
       non_tensor: true
 
 model_gradient:
-  class_path: interpretune.analysis.ops.definitions.ModelGradientOp
   description: Model gradient-based attribution
+  implementation: interpretune.analysis.ops.definitions.model_gradient_impl
+  function_params:
+    logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
+    get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
   aliases: []
   output_schema:
     answer_logits:
@@ -163,10 +169,14 @@ model_gradient:
     grad_cache:
       datasets_dtype: object
       non_tensor: true
+      intermediate_only: true
 
 logit_diffs:
-  class_path: interpretune.analysis.ops.definitions.LogitDiffsOp
   description: Clean forward pass for computing logit differences
+  implementation: interpretune.analysis.ops.definitions.logit_diffs_impl
+  function_params:
+    logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
+    get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
   aliases: []
   output_schema:
     logit_diffs:
@@ -207,8 +217,11 @@ logit_diffs:
       datasets_dtype: int64
 
 logit_diffs_cache:
-  class_path: interpretune.analysis.ops.definitions.LogitDiffsOp
   description: Clean forward pass for computing logit differences including cache activations (chained only)
+  implementation: interpretune.analysis.ops.definitions.logit_diffs_impl
+  function_params:
+    logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
+    get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
   aliases: []
   output_schema:
     logit_diffs:
@@ -253,8 +266,8 @@ logit_diffs_cache:
       datasets_dtype: int64
 
 sae_correct_acts:
-  class_path: interpretune.analysis.ops.definitions.SAECorrectActivationsOp
   description: Compute correct activations from SAE cache
+  implementation: interpretune.analysis.ops.definitions.sae_correct_acts_impl
   aliases: []
   output_schema:
     logit_diffs:
@@ -306,8 +319,8 @@ sae_correct_acts:
       intermediate_only: true
 
 gradient_attribution:
-  class_path: interpretune.analysis.ops.definitions.GradientAttributionOp
   description: Compute attribution values from gradients
+  implementation: interpretune.analysis.ops.definitions.gradient_attribution_impl
   aliases: []
   output_schema:
     logit_diffs:
@@ -360,14 +373,18 @@ gradient_attribution:
       datasets_dtype: object
       non_tensor: true
       intermediate_only: true
-    alive_latents:
-      datasets_dtype: int64
-      per_sae_hook: true
-      non_tensor: true
+    # TODO: refactor validation
+    # alive_latents:
+    #   datasets_dtype: int64
+    #   per_sae_hook: true
+    #   non_tensor: true
 
 ablation_attribution:
-  class_path: interpretune.analysis.ops.definitions.AblationAttributionOp
   description: Compute attribution values from ablation
+  implementation: interpretune.analysis.ops.definitions.ablation_attribution_impl
+  function_params:
+    logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
+    get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
   aliases: []
   output_schema:
     attribution_values:

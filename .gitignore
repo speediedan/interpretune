@@ -7,6 +7,7 @@ pip-wheel-metadata/
 lightning_logs/
 tb_logs/
 .vscode/
+debug/
 # ignore ipynb files themselves since we want to only store the source *.py
 #*.ipynb
 
