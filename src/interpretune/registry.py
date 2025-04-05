@@ -17,7 +17,7 @@ import yaml
 
 DEFAULT_DATAMODULE = ITDataModule
 DEFAULT_MODULE = ITModule
-DEFAULT_MODULE_REGISTRY_PATH = Path(__file__).parent.parent / "module_registry.yaml"
+DEFAULT_MODULE_REGISTRY_PATH = Path(__file__).parent / "module_registry.yaml"
 
 class RegKeyType(Enum):
     STRING = ''

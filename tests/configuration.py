@@ -16,8 +16,8 @@ from copy import deepcopy
 
 import torch
 
-from interpretune.adapters import (ITLensFromPretrainedConfig, ITLensCustomConfig, SAELensFromPretrainedConfig,
-                                   SAELensCustomConfig)
+from interpretune.config.transformer_lens import ITLensFromPretrainedConfig, ITLensCustomConfig
+from interpretune.config.sae_lens import SAELensFromPretrainedConfig, SAELensCustomConfig
 from interpretune.config import ITConfig, ITDataModuleConfig
 from interpretune.session import ITSessionConfig, ITSession
 from interpretune.protocol import StrOrPath, Adapter

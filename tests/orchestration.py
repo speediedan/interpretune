@@ -15,7 +15,8 @@ from unittest import mock
 
 from interpretune.protocol import Adapter
 from interpretune.session import ITSessionConfig, ITSession
-from interpretune.runners import SessionRunner, SessionRunnerCfg
+from interpretune.runners import SessionRunner
+from interpretune.config.runner import SessionRunnerCfg
 from tests import Trainer, ModelCheckpoint
 from tests.configuration import config_modules
 

@@ -8,7 +8,7 @@ from interpretune.config import (ITDataModuleConfig, ITLensFromPretrainedConfig,
                                  search_candidate_subclass_attrs, HFFromPretrainedConfig)
 from it_examples.experiments.rte_boolq import (RTEBoolqEntailmentMapping, GenerativeClassificationConfig,
                                                RTEBoolqSLConfig)
-from interpretune.adapters import TLensGenerationConfig
+from interpretune.config.transformer_lens import TLensGenerationConfig
 from tests.base_defaults import default_test_task
 
 
