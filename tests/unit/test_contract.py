@@ -150,7 +150,7 @@ class TestClassContract:
         modules_to_reload = ('interpretune.adapters.lightning', 'interpretune.base.components.cli')
         for module_fqn in modules_to_reload:
             del sys.modules[module_fqn]
-        with patch('interpretune.utils.import_utils._LIGHTNING_AVAILABLE', False):
+        with patch('interpretune.utils._LIGHTNING_AVAILABLE', False):
             from interpretune.adapters.lightning import LightningModule, LightningDataModule
             assert LightningModule.__module__ == 'builtins'
             assert LightningDataModule.__module__ == 'builtins'

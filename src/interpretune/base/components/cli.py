@@ -19,13 +19,13 @@ from jsonargparse import ActionConfigFile, ArgumentParser, Namespace
 from interpretune.config import ITSharedConfig, SessionRunnerCfg
 from interpretune.base import ITDataModule
 from interpretune.protocol import InterpretunableType
+from interpretune.session import ITSession, ITSessionConfig
 
 from interpretune.runners import SessionRunner
 from interpretune.utils import rank_zero_info, rank_zero_warn, _DOTENV_AVAILABLE, _LIGHTNING_AVAILABLE
 from interpretune.protocol import ArgsType
 
 if TYPE_CHECKING:
-    from interpretune.session import ITSession, ITSessionConfig
     from interpretune.adapters import ITModule
 
 max_seed_value = np.iinfo(np.uint32).max
@@ -82,8 +82,8 @@ class ITCLI(ITSessionMixin):
         args: ArgsType = None,
         seed_everything_default: bool | int = True,
         run_command: str | None = "test",
-        trainer_class: type[SessionRunner] | Callable[..., SessionRunner] = SessionRunner,
-        trainer_cfg: type[SessionRunnerCfg] | dict[str, Any] = SessionRunnerCfg,
+        runner_class: type[SessionRunner] | Callable[..., SessionRunner] = SessionRunner,
+        run_cfg: type[SessionRunnerCfg] | dict[str, Any] = SessionRunnerCfg,
     ) -> None:
         """fill in
             seed_everything_default: Number for the :func:`~interpretune.base.cli.seed_everything`
@@ -96,16 +96,16 @@ class ITCLI(ITSessionMixin):
         self.parser_kwargs = parser_kwargs or {}  # type: ignore[var-annotated]  # github.com/python/mypy/issues/6463
         self.module_class = module_class
         self.datamodule_class = datamodule_class
-        self.trainer_class = trainer_class
-        self._supported_run_commands = getattr(self.trainer_class, "supported_commands", None) or (None, "train",
+        self.runner_class = runner_class
+        self._supported_run_commands = getattr(self.runner_class, "supported_commands", None) or (None, "train",
                                                                                                    "test")
-        self.trainer_cfg = trainer_cfg
+        self.run_cfg = run_cfg
         self.setup_parser(parser_kwargs)
         self.parse_arguments(self.parser, args)
 
         self.run_command = run_command
         assert self.run_command in self._supported_run_commands, \
-              f"`{self.trainer_class}` only supports the following commands: {self._supported_run_commands}"
+              f"`{self.runner_class}` only supports the following commands: {self._supported_run_commands}"
 
         self._set_seed()
 
@@ -113,7 +113,7 @@ class ITCLI(ITSessionMixin):
         self.instantiate_classes()
 
         if self.run_command:
-            getattr(self.trainer, self.run_command)()
+            getattr(self.runner, self.run_command)()
 
     def setup_parser(
         self, main_kwargs: dict[str, Any]) -> None:
@@ -178,10 +178,10 @@ class ITCLI(ITSessionMixin):
     def add_base_args(self, parser: ArgumentParser) -> None:
         """Adds core arguments to the parser."""
         super().add_base_args(parser)
-        parser.add_class_arguments(self.trainer_class, "trainer", instantiate=True, sub_configs=True,)
-        parser.add_class_arguments(self.trainer_cfg, "trainer_cfg", instantiate=True, sub_configs=True)
-        parser.link_arguments("it_session", "trainer_cfg.it_session", apply_on="instantiate")
-        parser.link_arguments("trainer_cfg", "trainer.trainer_cfg", apply_on="instantiate")
+        parser.add_class_arguments(self.runner_class, "runner", instantiate=True, sub_configs=True,)
+        parser.add_class_arguments(self.run_cfg, "run_cfg", instantiate=True, sub_configs=True)
+        parser.link_arguments("it_session", "run_cfg.it_session", apply_on="instantiate")
+        parser.link_arguments("run_cfg", "runner.run_cfg", apply_on="instantiate")
 
     def parse_arguments(self, parser: ArgumentParser, args: ArgsType) -> None:
         """Parses command line arguments and stores it in ``self.config``."""
@@ -216,7 +216,7 @@ class ITCLI(ITSessionMixin):
         self.config_init = self.parser.instantiate_classes(self.config)
         self.datamodule = self._get(self.config_init.it_session, "datamodule")
         self.module = self._get(self.config_init.it_session, "module")
-        self.trainer =  self._get(self.config_init, "trainer")
+        self.runner = self._get(self.config_init, "runner")
 
 
 def env_setup() -> None:

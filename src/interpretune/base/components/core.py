@@ -68,7 +68,7 @@ class BaseConfigImpl:
 
     def _init_dirs_and_hooks(self) -> None:
         self._create_experiment_dir()
-        if self.analysis_run_cfg:
+        if hasattr(self, 'analysis_run_cfg') and self.analysis_run_cfg:
             self.analysis_run_cfg.init_analysis_cfgs(self)
         if self.cuda_allocator_history:
             self.memprofiler.init_cuda_snapshots_dir()

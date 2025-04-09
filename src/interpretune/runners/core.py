@@ -77,7 +77,10 @@ def run_step(step_fn, module, batch, batch_idx, optimizer: Optimizable | None = 
     module.global_step += 1
 
     if as_generator:
-        yield from output
+        #yield from output
+        def generator():
+            yield from output
+        return generator()  # Return a generator object
     else:
         return output
 

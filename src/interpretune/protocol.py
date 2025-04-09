@@ -96,14 +96,14 @@ class CorePhases(SetDerivedEnum):
 
 class CoreSteps(SetDerivedEnum):
     _input_set = CORE_PHASES
-    _transform = lambda x: f"{x}_step"
+    _transform = lambda x: "training_step" if x == "train" else f"{x}_step"
 
 class AllPhases(SetDerivedEnum):
     _input_set = ALL_PHASES
 
 class AllSteps(SetDerivedEnum):
     _input_set = ALL_PHASES
-    _transform = lambda x: f"{x}_step"
+    _transform = lambda x: "training_step" if x == "train" else f"{x}_step"
 
 ################################################################################
 # Framework Compatibility helper types

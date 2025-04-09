@@ -24,7 +24,7 @@ unset IT_RUN_PROFILING_TESTS
 unset IT_RUN_STANDALONE_TESTS
 unset IT_EXPERIMENTAL_PATCH_TESTS
 
-source $(dirname "$0")/infra_utils.sh
+source $(dirname "$0")/test_utils.sh
 
 usage(){
 >&2 cat << EOF

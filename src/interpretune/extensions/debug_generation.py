@@ -200,7 +200,7 @@ class DebugGeneration:
         if gen_output_attr:
             return getattr(output, gen_output_attr)
         for output_attr in self.DEFAULT_OUTPUT_ATTRS:
-            if hasattr(type(output), output_attr):
+            if hasattr(output, output_attr):
                 return getattr(output, output_attr)
         raise ValueError(f"No compatible default output attribute found for type: {type(output)}, if the"
                             " generate method attached to your model is not returning a supported output attribute"

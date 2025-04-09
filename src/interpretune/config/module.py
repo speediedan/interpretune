@@ -1,6 +1,6 @@
-from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
+#from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 import os
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, Optional
 from dataclasses import dataclass, field
 
 import torch
@@ -13,7 +13,7 @@ from interpretune.protocol import LRSchedulerConfig, Optimizable
 if TYPE_CHECKING:
     from interpretune.protocol import AnalysisCfgProtocol
     from interpretune.base import ITDataModule
-
+    #from interpretune.config import GenerativeClassificationConfig
 
 ################################################################################
 # ITModule Configuration Dataclasses
@@ -38,7 +38,8 @@ class OptimizerSchedulerConf(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class MixinsConf(ITSerializableCfg):
-    analysis_cfg: AnalysisCfgProtocol | None = None
+    analysis_cfg: Optional["AnalysisCfgProtocol"] = None
+    # generative_step_cfg: GenerativeClassificationConfig | None = None
     generative_step_cfg: GenerativeClassificationConfig = field(default_factory=GenerativeClassificationConfig)
     hf_from_pretrained_cfg: HFFromPretrainedConfig | None = None
 
@@ -76,12 +77,17 @@ class ITConfig(ITSharedConfig, ModelConf, OptimizerSchedulerConf, MixinsConf, Lo
                 rank_zero_info(f'Specified torch_dtype `{self._torch_dtype}` being overridden by quantization config.')
                 self._torch_dtype = None
 
+    # @classmethod
+    # def get_resolved_type_hints(cls):
+    #     from typing import get_type_hints
+    #     return get_type_hints(cls)
+
 @dataclass
 class ITState:
     """Dataclass to encapsulate the ITModule internal state and keep top-level namespace as clean as possible."""
     _it_lr_scheduler_configs: list[LRSchedulerConfig] = None
     _it_optimizers: list[Optimizable] = None  # initialized via core IT module `configure_optimizers` hook
-    _datamodule: ITDataModule | None = None  # datamodule handle attached after init
+    _datamodule: Optional["ITDataModule"] = None  # datamodule handle attached after init
     _device: torch.device | None = None  # root device (sometimes used if not handled by Lightning)
     _extensions: dict[str, Any] = field(default_factory=dict)
     _session_complete: bool = False
@@ -89,3 +95,8 @@ class ITState:
     # TODO: should we leave initialization of the below to the relevant property dispatch functions?
     _current_epoch: int = 0
     _global_step: int = 0
+
+    # @classmethod
+    # def get_resolved_type_hints(cls):
+    #     from typing import get_type_hints
+    #     return get_type_hints(cls)

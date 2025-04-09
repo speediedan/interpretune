@@ -16,3 +16,10 @@ show_elapsed_time(){
   fi
   printf "\n" | tee -a $test_log
 }
+
+# Function to safely deactivate a virtual environment if one is active
+maybe_deactivate(){
+    if [ -n "$VIRTUAL_ENV" ]; then
+        deactivate
+    fi
+}

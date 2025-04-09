@@ -114,12 +114,10 @@ env_rebuild(){
 
 collect_env_coverage(){
     temp_special_log="${tmp_coverage_dir}/special_test_output_$1_${d}.log"
-    if [ -n "$VIRTUAL_ENV" ]; then
-        deactivate
-    fi
+    source ./scripts/infra_utils.sh
+    maybe_deactivate
     source ~/.venvs/$1/bin/activate
     cd ${repo_home}
-    source ./scripts/infra_utils.sh
 	case $1 in
 	    it_latest | it_latest_pt_2_4 )
             python -m coverage erase

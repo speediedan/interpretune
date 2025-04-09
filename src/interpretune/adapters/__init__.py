@@ -1,4 +1,5 @@
 import sys
+from interpretune.adapter_registry import ADAPTER_REGISTRY
 from interpretune.adapters.registration import _register_adapters, CompositionRegistry, AdapterProtocol
 from interpretune.adapters.core import CoreAdapter, ITModule
 from interpretune.adapters.lightning import LightningAdapter, LightningDataModule, LightningModule
@@ -7,7 +8,6 @@ from interpretune.adapters.transformer_lens import (ITLensModule, ITDataModule, 
 from interpretune.adapters.sae_lens import (SAELensAdapter, SAEAnalysisMixin, SAELensModule, SAELensAttributeMixin,
                                             BaseSAELensModule, InstantiatedSAE)
 
-ADAPTER_REGISTRY = CompositionRegistry()
 _register_adapters(ADAPTER_REGISTRY, "register_adapter_ctx", sys.modules[__name__], AdapterProtocol)
 
 __all__ = [

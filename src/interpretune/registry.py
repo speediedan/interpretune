@@ -10,8 +10,9 @@ from enum import Enum
 from interpretune.utils import rank_zero_debug, rank_zero_warn, instantiate_class
 from interpretune.config import ITDataModuleConfig, ITConfig
 from interpretune.base import ITDataModule
-from interpretune.adapters import ITModule, CompositionRegistry
+from interpretune.adapters import ITModule
 from interpretune.protocol import Adapter, ModuleSteppable, DataModuleInitable
+from interpretune.adapter_registry import ADAPTER_REGISTRY
 
 import yaml
 
@@ -124,7 +125,7 @@ class ModuleRegistry(dict):
         """Returns a list of registered compositions, optionally filtering by an adapter or sequence of
         adapters."""
         if adapter_filter is not None:
-            adapter_filter = CompositionRegistry.resolve_adapter_filter(adapter_filter)
+            adapter_filter = ADAPTER_REGISTRY.resolve_adapter_filter(adapter_filter)
             return {key for key in self.composition_keys() for subkey in key[3] if subkey in adapter_filter}
         return set(self.composition_keys())
 

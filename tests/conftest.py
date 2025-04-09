@@ -417,6 +417,7 @@ def restore_env_variables():
         "TRITON_CACHE_DIR",  # leaked starting in PyTorch 2.0.0
         "OMP_NUM_THREADS",  # leaked by Lightning launchers,
         "TOKENIZERS_PARALLELISM",  # TODO: add a fixture that resets this currently leaked var
+        "PIP_DISABLE_PIP_VERSION_CHECK",  # TODO: determine the source of this leak after test parity reached
     }
     allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)

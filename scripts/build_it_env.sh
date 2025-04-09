@@ -68,11 +68,8 @@ done
 # Use pip_install_flags in pip commands
 pip_install_flags=${pip_install_flags:-""}
 
-maybe_deactivate(){
-    if [ -n "$VIRTUAL_ENV" ]; then
-        deactivate
-    fi
-}
+# Source common utility functions
+source ${repo_home}/scripts/infra_utils.sh
 
 clear_activate_env(){
     $1 -m venv --clear ~/.venvs/${target_env_name}
@@ -91,7 +88,7 @@ base_env_build(){
             elif [[ $torch_test_channel -eq 1 ]]; then
                 pip install ${pip_install_flags} --pre torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/test/cu128
             else
-                pip install ${pip_install_flags} torch torchvision --index-url https://download.pytorch.org/whl/cu128
+                pip install ${pip_install_flags} torch torchvision --index-url https://download.pytorch.org/whl/cu126
             fi
             ;;
         it_latest_pt_2_4)
@@ -108,30 +105,22 @@ base_env_build(){
 it_install(){
     source ~/.venvs/${target_env_name}/bin/activate
     unset PACKAGE_NAME
+    if [[ $fts_from_source -eq 1 ]]; then
+        echo "Installing FTS from source"
+        cd ~/repos/finetuning-scheduler  # TODO: make fts source path configurable
+        python -m pip install ${pip_install_flags} -e ".[all]" -r requirements/docs.txt
+    fi
     cd ${repo_home}
 
-    if [[ $fts_from_source -eq 1 ]]; then
-        # Install FTS from source
-        echo "Installing FTS from source"
-        pip install ${pip_install_flags} -e git+https://github.com/speediedan/finetuning-scheduler.git@main#egg=finetuning-scheduler
-    else
-        # Install FTS from PyPI
-        echo "Installing FTS from PyPI"
-        pip install ${pip_install_flags} finetuning-scheduler
-    fi
-
-    # Install other dependencies and interpretune itself
-    pip install ${pip_install_flags} -e ".[dev]"
-    pip install ${pip_install_flags} pytest-cov coverage
-    pre-commit install
+    python -m pip install ${pip_install_flags} -e ".[test,examples,lightning]" -r requirements/docs.txt
+    pip install ${pip_install_flags} circuitsvis --no-deps
+    rm -rf .mypy_cache
     mypy --install-types --non-interactive
-
-    python -c "import importlib.metadata; import torch; import lightning.pytorch;
-for package in ['torch', 'lightning', 'interpretune']:
-    try:
-        print(f'{package} version: {importlib.metadata.distribution(package).version}')
-    except importlib.metadata.PackageNotFoundError:
-        print(f'{package} not installed');"
+    pre-commit install
+    git lfs install
+    python -c "import importlib.metadata; import torch; import lightning.pytorch; import transformer_lens; import finetuning_scheduler; import interpretune;
+for package in ['torch', 'lightning', 'transformer_lens', 'finetuning_scheduler', 'interpretune']:
+    print(f'{package} version: {importlib.metadata.distribution(package).version}');"
 }
 
 d=`date +%Y%m%d%H%M%S`
