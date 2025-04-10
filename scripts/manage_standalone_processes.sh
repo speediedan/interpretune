@@ -48,22 +48,25 @@ fi
 CMD="$@"
 SCRIPT_NAME="$1"
 BASE_NAME=$(basename "$SCRIPT_NAME" .sh)
-LOG_FILE="/tmp/${BASE_NAME}_${d}.log"
+WRAPPER_OUT="/tmp/${BASE_NAME}_${d}_wrapper.out"
 
 # Validate no processes are running
 validate_process_not_running
 
 echo "Starting command: $CMD"
-echo "Output will be logged to: $LOG_FILE"
+echo "Wrapper output logged to: $WRAPPER_OUT"
 
 # Check if we should use nohup (VSCode kills nohup jobs: https://github.com/microsoft/vscode/issues/231216)
 if [ "$USE_NOHUP" = true ]; then
     echo "Running in background with nohup..."
-    nohup $CMD > "$LOG_FILE" 2>&1 &
-    echo "Process started with PID: $!"
-    echo "Use 'tail -f $LOG_FILE' to monitor progress"
+    nohup $CMD > "$WRAPPER_OUT" 2>&1 &
+    echo "Wrapper process started with PID: $!"
+    echo "First 5 lines of output will be displayed in 3 seconds as a sanity check..."
+    echo `printf "%0.s-" {1..120} && printf "\n"`
+    sleep 3
+    cat "$WRAPPER_OUT" | head -n 5
 else
     echo "Running in foreground (default for VSCode compatibility)..."
-    $CMD > "$LOG_FILE" 2>&1
-    echo "Process completed, output saved to: $LOG_FILE"
+    $CMD > "$WRAPPER_OUT" 2>&1
+    echo "Wrapper process completed, wrapper output saved to: $WRAPPER_OUT"
 fi

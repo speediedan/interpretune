@@ -42,6 +42,7 @@ done
 
 d=`date +%Y%m%d%H%M%S`
 profiling_session_log="${working_dir}/update_profiling_memory_stats_${target_env_name}_${d}.log"
+echo "Use 'tail -f ${profiling_session_log}' to monitor progress"
 source ${repo_home}/scripts/infra_utils.sh
 
 update_profiling_memory_stats(){
