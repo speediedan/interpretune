@@ -387,11 +387,11 @@ def _parse_run_option(lightning_cli: bool = False) -> bool | str | None:
 def bootstrap_cli() -> Callable:
     # TODO: consider adding an env var option to control CLI selection
     # dispatch the relevant CLI, right now only `--lightning_cli` is supported beyond the default core CLI.
-    # TODO: note in the run_experiment.py documentation that we provide the --no_run flag to allow configuring the
+    # TODO: note in the interpretune cli documentation that we provide the --no_run flag to allow configuring the
     #       Lightning CLI to not run subcommands and instead return the cli with parsed/instantiated config.
     # TODO: for the core CLI only, we provide the --run_command flag option to to control which command to run,
     #       LightningCLI uses the normal LightningCLI format (passing the command as a separate arg without a flag,
-    #       e.g. `python run_experiment.py fit --config some_path/to/some_config.yaml`).
+    #       e.g. `interpretune fit --config some_path/to/some_config.yaml`).
     lightning_cli = "--lightning_cli" in sys.argv[1:]
     run_mode = None
     if lightning_cli:

@@ -22,7 +22,7 @@ Usage: $0
    [ --torch_dev_ver input ]
    [ --torch_test_channel ]
    [ --no_rebuild_base ]
-   [ --fts_from_source ]
+   [ --fts_from_source "path" ]
    [ --run_all_and_examples ]
    [ --no_export_cov_xml ]
    [ --pip_install_flags "flags" ]
@@ -43,7 +43,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torchvision_dev_ver:,torch_test_channel,no_rebuild_base,fts_from_source,run_all_and_examples,no_export_cov_xml,pip_install_flags:,self_test_only,help -- "$@")
+args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torchvision_dev_ver:,torch_test_channel,no_rebuild_base,fts_from_source:,run_all_and_examples,no_export_cov_xml,pip_install_flags:,self_test_only,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -57,7 +57,7 @@ do
     --torch_dev_ver)   torch_dev_ver=$2   ; shift 2 ;;
     --torch_test_channel)   torch_test_channel=1 ; shift  ;;
     --no_rebuild_base)   no_rebuild_base=1 ; shift  ;;
-    --fts_from_source)   fts_from_source=1 ; shift  ;;
+    --fts_from_source)   fts_from_source=$2 ; shift 2 ;;
     --run_all_and_examples)   run_all_and_examples=1 ; shift  ;;
     --no_export_cov_xml)   no_export_cov_xml=1 ; shift ;;
     --pip_install_flags)   pip_install_flags=$2 ; shift 2 ;;
@@ -93,28 +93,28 @@ env_rebuild(){
     case $1 in
         it_latest )
             if [[ -n ${torch_dev_ver} ]]; then
-                if [[ $fts_from_source -eq 1 ]]; then
-                    ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_dev_ver=${torch_dev_ver} --fts_from_source ${pip_flags_param}
+                if [[ -n ${fts_from_source} ]]; then
+                    ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_dev_ver=${torch_dev_ver} --fts_from_source="${fts_from_source}" ${pip_flags_param}
                 else
                     ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_dev_ver=${torch_dev_ver} ${pip_flags_param}
                 fi
-			elif [[ $torch_test_channel -eq 1 ]]; then
-                if [[ $fts_from_source -eq 1 ]]; then
-                    ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_test_channel --fts_from_source ${pip_flags_param}
+            elif [[ $torch_test_channel -eq 1 ]]; then
+                if [[ -n ${fts_from_source} ]]; then
+                    ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_test_channel --fts_from_source="${fts_from_source}" ${pip_flags_param}
                 else
                     ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_test_channel ${pip_flags_param}
                 fi
             else
-                if [[ $fts_from_source -eq 1 ]]; then
-                    ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --fts_from_source ${pip_flags_param}
+                if [[ -n ${fts_from_source} ]]; then
+                    ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --fts_from_source="${fts_from_source}" ${pip_flags_param}
                 else
                     ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 ${pip_flags_param}
                 fi
             fi
             ;;
         it_latest_pt_2_4 )
-            if [[ $fts_from_source -eq 1 ]]; then
-                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --fts_from_source ${pip_flags_param}
+            if [[ -n ${fts_from_source} ]]; then
+                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --fts_from_source="${fts_from_source}" ${pip_flags_param}
             else
                 ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 ${pip_flags_param}
             fi

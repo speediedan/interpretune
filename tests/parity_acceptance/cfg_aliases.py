@@ -83,7 +83,7 @@ l_tl_gpt2_fts = {**default_fts_cfg, **l_tl_gpt2_explicit_sched}
 # TODO: Use more granular composable aliases for these configs to improve efficiency
 # tests currently use only a single experiment and custom model but use a variety of configurations
 CLI_EXP = "cust_test"
-RUN_FN = "run_experiment.py"
+RUN_FN = "interpretune"
 IT_HOME = Path(os.environ.get("IT_HOME", Path(__file__).parent.parent.parent / "src" / "interpretune"))
 
 class CLI_TESTS(AutoStrEnum):

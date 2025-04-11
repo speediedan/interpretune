@@ -1,19 +1,19 @@
 [build-system]
-requires = ["setuptools"]
+# we require a setuptools version with PEP 639 support
+requires = [
+    "setuptools>=77.0.0",
+    "wheel",
+]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "interpretune"
-authors = [
-    {name = "Dan Dale", email = "danny.dale@gmail.com"},
-]
-description = "A package to support LLM reasoning and interpretability experiments at a level of abstraction that is both powerfully flexible and convenient"
-readme = "README.md"
+dynamic = ["version"]
+authors = [{name = "Daniel Dale", email = "danny.dale@gmail.com"}]
+license = "Apache-2.0"
+license-files = ["LICENSE*"]
 requires-python = ">=3.10"
 keywords = ["llm", "reasoning", "interpretability", "fine-tuning", "finetuning"]
-license = {text = "BSD-3-Clause"}
-dynamic = ["version"]
-
 classifiers = [
             "Environment :: Console",
             "Natural Language :: English",
@@ -22,29 +22,37 @@ classifiers = [
             "Topic :: Scientific/Engineering :: Artificial Intelligence",
             "Topic :: Scientific/Engineering :: Image Recognition",
             "Topic :: Scientific/Engineering :: Information Analysis",
-            "License :: OSI Approved :: Apache Software License",
             "Operating System :: OS Independent",
             "Programming Language :: Python :: 3",
             "Programming Language :: Python :: 3.10",
             "Programming Language :: Python :: 3.11",
             "Programming Language :: Python :: 3.12",
 ]
-
+description = "A package to support LLM reasoning and interpretability experiments at a level of abstraction that is both powerfully flexible and convenient"
+readme = "README.md"
 dependencies = [
     "transformer_lens",
-    "sae_lens==5.3.0", # TODO: unpin after refactor
-    "torch >= 2.2.0",
+    "sae_lens",
+    "torch >= 2.6.0",
     "tabulate >= 0.9.0",
     "jsonargparse[signatures] >= 4.35.0",  # replace this req once adding fts req
-    # "finetuning-scheduler[possible_future_it_plugin] >= 2.2.0",
-
+    # "finetuning-scheduler[possible_future_it_plugin] >= 2.5.0",
 ]
+
+[project.urls]
+"Homepage" = "https://github.com/speediedan/interpretune"
+"Bug Tracker" = "https://github.com/speediedan/interpretune/issues"
+"Documentation" = "https://interpretune.readthedocs.io/en/stable/"
+"Source Code" = "https://github.com/speediedan/interpretune"
+
+[project.entry-points."console_scripts"]
+interpretune = "interpretune.base.components.cli:bootstrap_cli"
 
 [project.optional-dependencies]
 
 lightning = [
     #"finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@4fe135a132e75575d0271d7b4e095c8f8da985cb",
-    "finetuning-scheduler[examples, cli, extra] >= 2.2.0",
+    "finetuning-scheduler[examples, cli, extra] >= 2.5.0",
     "bitsandbytes",
     "peft",
 ]
@@ -109,11 +117,11 @@ where = ["src"]
 [tool.ruff]
 line-length = 120
 # Enable Pyflakes `E` and `F` codes by default.
-select = [
+lint.select = [
     "E", "W",  # see: https://pypi.org/project/pycodestyle
     "F",  # see: https://pypi.org/project/pyflakes
 ]
-ignore = [
+lint.ignore = [
     "E731", # Do not assign a lambda expression, use a def
     "F722", # https://github.com/google/jaxtyping/blob/f18de2ce28e9e01beb1b8d4425ecb23e953075aa/docs/faq.md?plain=1#L21
 ]
@@ -126,7 +134,7 @@ exclude = [
     "build",
     "temp",
 ]
-ignore-init-module-imports = true
+lint.ignore-init-module-imports = true
 output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff release, using `output-format` instead.
 
 
@@ -144,8 +152,8 @@ order-by-type = false
 max-complexity = 10
 
 [tool.mypy]
-#files = ["src/interpretune"]  # only include one file while doing major refactor to reduce noise
-files = ["src/interpretune/run_experiment.py"]
+#files = ["src/interpretune"]  # disable while doing major refactor to reduce noise
+files = [""]
 disallow_untyped_defs = "True"
 ignore_missing_imports = "True"
 show_error_codes = "True"
@@ -185,7 +193,7 @@ omit = [
 # complexity associated with subprocess coverage (https://coverage.readthedocs.io/en/latest/subprocess.html)
 # If we use subprocesses for testing beyond merely this 3 line wrapper file, it may make sense to set
 # COVERAGE_PROCESS_START, dynamically add a sitecustomize.py etc. in the CI flow to enable subprocess coverage.
-    "src/interpretune/run_experiment.py",
+# "src/interpretune/run_experiment.py",
 ]
 
 [tool.pytest.ini_options]
@@ -201,7 +209,6 @@ norecursedirs = [
 addopts = "--strict-markers --doctest-modules --color=yes --disable-pytest-warnings --ignore-glob='tests/*_parity/*.py' --ignore-glob='src/it_examples/notebooks/**/*.py'"
 junit_duration_report = "call"
 tmp_path_retention_count = 30  # allow retention of more successful runs during profiling result generation (default 3)
-
 
 [tool.jupytext]
 notebook_metadata_filter = "-all"

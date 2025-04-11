@@ -24,7 +24,7 @@ Usage: $0
    [ --target_env_name input ]
    [ --torch_dev_ver input ]
    [ --torch_test_channel ]
-   [ --fts_from_source ]
+   [ --fts_from_source "path" ]
    [ --pip_install_flags "flags" ]
    [ --help ]
    Examples:
@@ -42,7 +42,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torch_test_channel,fts_from_source,pip_install_flags:,help -- "$@")
+args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torch_test_channel,fts_from_source:,pip_install_flags:,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -55,7 +55,7 @@ do
     --target_env_name)  target_env_name=$2  ; shift 2 ;;
     --torch_dev_ver)   torch_dev_ver=$2   ; shift 2 ;;
     --torch_test_channel)   torch_test_channel=1 ; shift  ;;
-    --fts_from_source)   fts_from_source=1 ; shift  ;;
+    --fts_from_source)   fts_from_source=$2 ; shift 2 ;;
     --pip_install_flags)   pip_install_flags=$2 ; shift 2 ;;
     --help)    usage      ; shift   ;;
     # -- means the end of the arguments; drop this, and break out of the while loop
@@ -84,9 +84,9 @@ base_env_build(){
             clear_activate_env python3.12
             if [[ -n ${torch_dev_ver} ]]; then
                 # temporarily remove torchvision until it supports cu128 in nightly binary
-                pip install ${pip_install_flags} --pre torch==2.7.0.${torch_dev_ver} --index-url https://download.pytorch.org/whl/nightly/cu128
+                pip install ${pip_install_flags} --pre torch==2.8.0.${torch_dev_ver} --index-url https://download.pytorch.org/whl/nightly/cu128
             elif [[ $torch_test_channel -eq 1 ]]; then
-                pip install ${pip_install_flags} --pre torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/test/cu128
+                pip install ${pip_install_flags} --pre torch==2.7.0 --index-url https://download.pytorch.org/whl/test/cu128
             else
                 pip install ${pip_install_flags} torch torchvision --index-url https://download.pytorch.org/whl/cu126
             fi
@@ -105,10 +105,12 @@ base_env_build(){
 it_install(){
     source ~/.venvs/${target_env_name}/bin/activate
     unset PACKAGE_NAME
-    if [[ $fts_from_source -eq 1 ]]; then
-        echo "Installing FTS from source"
-        cd ~/repos/finetuning-scheduler  # TODO: make fts source path configurable
+    if [[ -n ${fts_from_source} ]]; then
+        export USE_CI_COMMIT_PIN="1"
+        echo "Installing FTS from source at ${fts_from_source}"
+        cd ${fts_from_source}
         python -m pip install ${pip_install_flags} -e ".[all]" -r requirements/docs.txt
+        unset USE_CI_COMMIT_PIN
     fi
     cd ${repo_home}
 
