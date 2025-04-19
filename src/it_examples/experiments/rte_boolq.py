@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Optional, Tuple, List, Callable
+from typing import Any, Dict, Optional, Tuple, List, Callable, Generator
 from dataclasses import dataclass, field
 from pprint import pformat
 import logging
@@ -14,11 +14,16 @@ from transformers import PreTrainedTokenizerBase
 from datasets.arrow_dataset import LazyDict
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.config import (ITLensConfig, SAELensConfig, PromptConfig, ITDataModuleConfig, ITConfig,
-                                 GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig)
-from interpretune.base import MemProfilerHooks, ITDataModule
-from interpretune.utils import rank_zero_warn, sanitize_input_name
-from interpretune.protocol import STEP_OUTPUT
+import interpretune as it
+from interpretune import (
+    ITDataModule, MemProfilerHooks, AnalysisBatch, ITLensConfig, SAELensConfig, PromptConfig, ITDataModuleConfig,
+    ITConfig, GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig, rank_zero_warn,
+    sanitize_input_name, STEP_OUTPUT)
+# from interpretune.config import (ITLensConfig, SAELensConfig, PromptConfig, ITDataModuleConfig, ITConfig,
+#                                  GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig)
+# from interpretune.base import MemProfilerHooks, ITDataModule
+# from interpretune.utils import rank_zero_warn, sanitize_input_name
+# from interpretune.protocol import STEP_OUTPUT
 
 
 log = logging.getLogger(__name__)
@@ -198,6 +203,21 @@ class RTEBoolqSteps:
         labels = batch.pop("labels")
         outputs = self(**batch)
         return self.collect_answers(outputs, labels, mode='return')
+
+    def analysis_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0,
+                      analysis_batch: Optional[AnalysisBatch] = None) -> Generator[STEP_OUTPUT,None, None]:
+        """Run analysis operations on a batch and yield results."""
+        # Demo mixing model methods and native IT analysis ops
+        label_ids, orig_labels = self.labels_to_ids(batch.pop("labels"))
+        analysis_batch = AnalysisBatch(labels=label_ids, orig_labels=orig_labels)
+        op_kwargs = {"module": self, "batch": batch, "batch_idx": batch_idx}
+        analysis_batch = it.model_cache_forward(analysis_batch=analysis_batch, **op_kwargs)
+        analysis_batch = it.logit_diffs_cache(analysis_batch=analysis_batch, **op_kwargs)
+        analysis_batch = it.sae_correct_acts(analysis_batch=analysis_batch, **op_kwargs)
+
+        # note, there is an equivalent existing chained op for the decomposed version above:
+        # analysis_batch = it.logit_diffs_sae(**op_kwargs)
+        yield from self.analysis_cfg.save_batch(analysis_batch, batch, tokenizer=self.datamodule.tokenizer)
 
     def collect_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor, mode: str = 'log') -> Optional[Dict]:
         logits = self.standardize_logits(logits)

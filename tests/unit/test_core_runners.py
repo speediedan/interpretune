@@ -1,0 +1,255 @@
+from __future__ import annotations
+import pytest
+import torch
+from unittest.mock import MagicMock
+
+from interpretune.runners.core import (
+    core_train_loop,
+    core_test_loop
+)
+
+
+class TestCoreRunner:
+    """Tests for the core runner module."""
+
+    @pytest.fixture
+    def mock_module(self):
+        """Create a mock module for testing."""
+        module = MagicMock()
+        module.model = MagicMock()
+        module.training_step.return_value = torch.tensor(0.5)
+        module.validation_step.return_value = None
+        module.test_step.return_value = None
+        module.optimizers = [MagicMock()]
+        return module
+
+    @pytest.fixture
+    def mock_datamodule(self):
+        """Create a mock datamodule for testing."""
+        datamodule = MagicMock()
+        train_batch = {"input": torch.tensor([[1, 2], [3, 4]]), "labels": torch.tensor([0, 1])}
+        val_batch = {"input": torch.tensor([[5, 6], [7, 8]]), "labels": torch.tensor([1, 0])}
+
+        # Create mock dataloaders
+        train_dataloader = MagicMock()
+        train_dataloader.__iter__.return_value = [train_batch]
+
+        val_dataloader = MagicMock()
+        val_dataloader.__iter__.return_value = [val_batch]
+
+        # Assign dataloaders to datamodule
+        datamodule.train_dataloader.return_value = train_dataloader
+        datamodule.val_dataloader.return_value = val_dataloader
+        datamodule.test_dataloader.return_value = val_dataloader  # Use val data for test too
+
+        return datamodule
+
+    # def test_run_step(self, mock_module):
+    #     """Test the run_step function for different step types."""
+    #     # Create a test batch
+    #     batch = {"input": torch.tensor([[1, 2], [3, 4]]), "labels": torch.tensor([0, 1])}
+
+    #     # Test training step
+    #     result1 = run_step(step_fn="training_step", batch=batch, batch_idx=0,
+    #                       module=mock_module, optimizer=mock_module.optimizers[0])
+
+    #     assert torch.equal(result1, torch.tensor(0.5))
+    #     mock_module.training_step.assert_called_once_with(batch, 0)
+    #     mock_module.optimizers[0].zero_grad.assert_called_once()
+    #     mock_module.optimizers[0].step.assert_called_once()
+
+    #     # Reset mocks
+    #     mock_module.reset_mock()
+    #     mock_module.optimizers[0].reset_mock()
+
+    #     # Test validation step
+    #     result2 = run_step(step_fn="validation_step", batch=batch, batch_idx=0,
+    #                       module=mock_module, optimizer=mock_module.optimizers[0])
+
+    #     assert result2 is None
+    #     mock_module.validation_step.assert_called_once_with(batch, 0, dataloader_idx=0)
+    #     mock_module.optimizers[0].zero_grad.assert_not_called()
+    #     mock_module.optimizers[0].step.assert_not_called()
+
+    # def test_core_train_loop(self, mock_module, mock_datamodule):
+    #     """Test the core_train_loop function."""
+    #     # Call the train loop
+    #     core_train_loop(
+    #         module=mock_module,
+    #         datamodule=mock_datamodule,
+    #         limit_train_batches=1,
+    #         limit_val_batches=1,
+    #         max_epochs=2
+    #     )
+
+    #     # Verify hooks and model state changes
+    #     assert mock_module.current_epoch == 1  # Should run 2 epochs (0 and 1)
+    #     assert mock_module.on_train_epoch_start.call_count == 2
+    #     assert mock_module.on_train_epoch_end.call_count == 2
+
+    #     # Verify model mode changes
+    #     expected_calls = [
+    #         call.train(),  # Initial train mode
+    #         call.eval(),   # Switch to eval for validation
+    #         call.train(),  # Back to train after validation
+    #         call.train(),  # Beginning of second epoch
+    #         call.eval(),   # Validation in second epoch
+    #         call.train(),  # Back to train after validation
+    #     ]
+    #     assert mock_module.model.mock_calls == expected_calls
+
+    #     # Verify optimizer was used
+    #     assert mock_module.optimizers[0].zero_grad.call_count == 2  # Once per epoch
+    #     assert mock_module.optimizers[0].step.call_count == 2       # Once per epoch
+
+    #     # Verify datamodule was used correctly
+    #     mock_datamodule.train_dataloader.assert_called_once()
+    #     mock_datamodule.val_dataloader.assert_called_once()
+
+    def test_core_test_loop(self, mock_module, mock_datamodule):
+        """Test the core_test_loop function."""
+        # Call the test loop
+        core_test_loop(
+            module=mock_module,
+            datamodule=mock_datamodule,
+            limit_test_batches=1
+        )
+
+        # Verify model was set to eval mode
+        mock_module.model.eval.assert_called_once()
+
+        # Verify test_step was called
+        mock_module.test_step.assert_called_once()
+
+        # Verify datamodule was used correctly
+        mock_datamodule.test_dataloader.assert_called_once()
+
+
+class TestCoreRunnerWithInferenceMode:
+    """Tests for the core runner with inference mode context management."""
+
+    @pytest.fixture
+    def mock_module(self):
+        """Create a mock module for testing."""
+        module = MagicMock()
+        module.model = MagicMock()
+        module._it_state = MagicMock()
+        return module
+
+    @pytest.fixture
+    def mock_batch(self):
+        """Create a mock batch for testing."""
+        return {"input": torch.tensor([[1, 2], [3, 4]]), "labels": torch.tensor([0, 1])}
+
+    # def test_validation_step_with_inference_mode(self, mock_module, mock_batch, mock_datamodule):
+    #     """Test that validation steps use inference_mode."""
+    #     with patch('torch.inference_mode') as mock_inference_mode:
+    #         mock_inference_mode.return_value.__enter__.return_value = None
+    #         mock_inference_mode.return_value.__exit__.return_value = None
+
+    #         core_train_loop(
+    #             module=mock_module,
+    #             datamodule=mock_datamodule,
+    #             limit_train_batches=1,
+    #             limit_val_batches=1,
+    #             max_epochs=1
+    #         )
+
+    #         # Verify inference_mode was used for validation
+    #         mock_inference_mode.assert_called()
+
+    # def test_test_step_with_inference_mode(self, mock_module, mock_batch, mock_datamodule):
+    #     """Test that test steps use inference_mode."""
+    #     with patch('torch.inference_mode') as mock_inference_mode:
+    #         mock_inference_mode.return_value.__enter__.return_value = None
+    #         mock_inference_mode.return_value.__exit__.return_value = None
+
+    #         core_test_loop(
+    #             module=mock_module,
+    #             datamodule=mock_datamodule,
+    #             limit_test_batches=1
+    #         )
+
+    #         # Verify inference_mode was used for testing
+    #         mock_inference_mode.assert_called()
+
+
+class TestCoreRunnerEdgeCases:
+    """Tests for edge cases in the core runner."""
+
+    @pytest.fixture
+    def mock_module(self):
+        """Create a mock module for testing."""
+        module = MagicMock()
+        module.model = MagicMock()
+        module.optimizers = [MagicMock()]
+        return module
+
+    @pytest.fixture
+    def mock_datamodule_empty(self):
+        """Create a mock datamodule with empty dataloaders."""
+        datamodule = MagicMock()
+
+        # Create empty dataloaders
+        empty_dataloader = MagicMock()
+        empty_dataloader.__iter__.return_value = []
+
+        datamodule.train_dataloader.return_value = empty_dataloader
+        datamodule.val_dataloader.return_value = empty_dataloader
+        datamodule.test_dataloader.return_value = empty_dataloader
+
+        return datamodule
+
+    @pytest.fixture
+    def mock_datamodule_no_val(self):
+        """Create a mock datamodule without validation dataloader."""
+        datamodule = MagicMock()
+        train_batch = {"input": torch.tensor([[1, 2], [3, 4]]), "labels": torch.tensor([0, 1])}
+
+        # Create train dataloader
+        train_dataloader = MagicMock()
+        train_dataloader.__iter__.return_value = [train_batch]
+
+        datamodule.train_dataloader.return_value = train_dataloader
+        datamodule.val_dataloader.return_value = None
+
+        return datamodule
+
+    def test_train_loop_with_empty_dataloaders(self, mock_module, mock_datamodule_empty):
+        """Test the train loop with empty dataloaders."""
+        # This should not raise exceptions
+        core_train_loop(
+            module=mock_module,
+            datamodule=mock_datamodule_empty,
+            limit_train_batches=1,
+            limit_val_batches=1,
+            max_epochs=1
+        )
+
+        # Verify epoch hooks were still called
+        mock_module.on_train_epoch_start.assert_called_once()
+        mock_module.on_train_epoch_end.assert_called_once()
+
+        # No steps should be run
+        mock_module.training_step.assert_not_called()
+        mock_module.validation_step.assert_not_called()
+
+    def test_train_loop_without_validation(self, mock_module, mock_datamodule_no_val):
+        """Test the train loop without a validation dataloader."""
+        # This should not raise exceptions
+        core_train_loop(
+            module=mock_module,
+            datamodule=mock_datamodule_no_val,
+            limit_train_batches=1,
+            limit_val_batches=1,
+            max_epochs=1
+        )
+
+        # Training should proceed normally
+        mock_module.training_step.assert_called_once()
+
+        # No validation step should be run
+        mock_module.validation_step.assert_not_called()
+
+        # Model should not switch to eval mode for validation
+        assert mock_module.model.eval.call_count == 0

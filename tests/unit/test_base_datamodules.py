@@ -23,7 +23,8 @@ from tests.warns import CORE_CTX_WARNS, unexpected_warns
 class TestClassBaseMisc:
 
     def test_dm_attribute_access(self, get_it_session__core_cust__setup):
-        core_cust_it_dm = get_it_session__core_cust__setup.datamodule
+        fixture = get_it_session__core_cust__setup
+        core_cust_it_dm = fixture.it_session.datamodule
         assert isinstance(core_cust_it_dm.module, ITModule)
         with ablate_cls_attrs(core_cust_it_dm, "_module"), pytest.warns(UserWarning, match="Could not find module"):
             assert core_cust_it_dm.module is None
@@ -34,10 +35,12 @@ class TestClassBaseMisc:
 
     @pytest.mark.parametrize("remove_unused", [True, False], ids=['remove_unused', 'no_remove_unused'])
     def test_dm_force_prepare(self, get_it_session__core_cust_force_prepare__initonly, remove_unused):
-        datamodule = get_it_session__core_cust_force_prepare__initonly.datamodule
+        fixture = get_it_session__core_cust_force_prepare__initonly
+        it_session = fixture.it_session
+        datamodule = it_session.datamodule
         with patch.multiple(datamodule.itdm_cfg, signature_columns=[], remove_unused_columns=remove_unused):
             _call_itmodule_hook(datamodule, hook_name="prepare_data", hook_msg="Preparing data",
-                                target_model=get_it_session__core_cust_force_prepare__initonly.module.model)
+                                target_model=it_session.module.model)
 
 
     def test_m_no_before_it_cfg_init(self, recwarn, get_it_session_cfg__core_cust):

@@ -30,28 +30,9 @@ class AttrDict(dict):
 
 
 class AnalysisBatch(AttrDict):
-    """Contains all analysis results for a single batch.
-
-    Fields:
-        logit_diffs: torch.Tensor | dict[str, dict[int, torch.Tensor]]  # [batch_size]
-        answer_logits: torch.Tensor | dict[str, dict[int, torch.Tensor]]  # [batch_size, 1, num_classes]
-        loss: torch.Tensor | dict[str, dict[int, torch.Tensor]]  # [batch_size]
-        labels: torch.Tensor  # [batch_size]
-        orig_labels: torch.Tensor  # [batch_size]
-        preds: torch.Tensor | dict[str, dict[int, torch.Tensor]]  # [batch_size]
-        cache: ActivationCacheProtocol
-        grad_cache: ActivationCacheProtocol
-        answer_indices: torch.Tensor  # [batch_size]
-        alive_latents: dict[str, list[int]]
-        correct_activations: dict[str, torch.Tensor]  # [batch_size, d_sae] (for each sae)
-        attribution_values: dict[str, torch.Tensor]
-        tokens: torch.Tensor
-        prompts: list[str]
-    """
 
     def __getattr__(self, name):
-        if name not in AnalysisBatchProtocol.__annotations__:
-            raise AttributeError(f"'{name}' is not a valid AnalysisBatch attribute")
+        # Remove protocol constraint - access any attributes
         return super().__getattr__(name)
 
     def update(self, **kwargs):
@@ -163,11 +144,20 @@ def wrap_summary(analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
                  tokenizer: PreTrainedTokenizerBase | None = None,
                  save_prompts: bool = False, save_tokens: bool = False,
                  decode_kwargs: Optional[dict[str, Any]] = None) -> AnalysisBatchProtocol:
+    decode_kwargs = decode_kwargs or {}
     if save_prompts:
         assert tokenizer is not None, "Tokenizer is required to decode prompts"
         analysis_batch.prompts = tokenizer.batch_decode(batch['input'], **decode_kwargs)
+    elif hasattr(analysis_batch, 'prompts'):
+        del analysis_batch.prompts
+
     if save_tokens:
         analysis_batch.tokens = batch['input'].detach().cpu()
+    elif hasattr(analysis_batch, 'tokens'):
+        del analysis_batch.tokens
+
+    # TODO: we need to remove this cache clearing hardcoding to refer to the relevant schema configuration
+    #       and enable serialization of these fields based on the schema (on a non-default basis) in the future
     for key in ['cache', 'grad_cache']:
         if hasattr(analysis_batch, key):
             setattr(analysis_batch, key, None)

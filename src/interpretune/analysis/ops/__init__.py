@@ -8,7 +8,7 @@ dispatcher = DISPATCHER
 # Ensure all definitions are loaded immediately and instantiate all operations
 DISPATCHER.load_definitions()
 # Ensure all operations (including composite ones) are available immediately
-DISPATCHER.instantiate_all_ops()
+#DISPATCHER.instantiate_all_ops()
 
 __all__ = [
     "OpSchema",

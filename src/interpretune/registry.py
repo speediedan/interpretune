@@ -11,6 +11,7 @@ from interpretune.utils import rank_zero_debug, rank_zero_warn, instantiate_clas
 from interpretune.config import ITDataModuleConfig, ITConfig
 from interpretune.base import ITDataModule
 from interpretune.adapters import ITModule
+from interpretune.protocol import AllPhases
 from interpretune.protocol import Adapter, ModuleSteppable, DataModuleInitable
 from interpretune.adapter_registry import ADAPTER_REGISTRY
 
@@ -147,8 +148,8 @@ def instantiate_and_register(reg_key: str, rv: Dict[str, Any],
         registered_cfg, shared_cfg, itdm_cfg_defaults_fn, it_cfg_defaults_fn, datamodule_cls, module_cls)
     registered_cfg = RegisteredCfg(datamodule_cfg=datamodule_cfg, module_cfg=module_cfg,
                                       datamodule_cls=datamodule_cls, module_cls=module_cls)
-    for supported_p in reg_info.get('supported_phases', ("train", "test", "predict")):
-        reg_info['phase'] = supported_p
+    for supported_p in AllPhases:
+        reg_info['phase'] = supported_p.value
         target_registry.register(**reg_info, reg_key=reg_key, registered_cfg=registered_cfg, cfg_dict=cfg_dict)
 
 def instantiate_or_import(registered_cfg, shared_cfg, itdm_cfg_defaults_fn, it_cfg_defaults_fn, datamodule_cls,

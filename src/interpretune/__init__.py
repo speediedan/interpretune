@@ -54,20 +54,46 @@ class _AnalysisImportHook(MetaPathFinder):
             setattr(current_module, "create_op_chain", interpretune.analysis.DISPATCHER.create_chain)
             setattr(current_module, "create_op_chain_from_ops", interpretune.analysis.DISPATCHER.create_chain_from_ops)
 
-            # Register all operations by instantiating them
-            ops_dict = interpretune.analysis.DISPATCHER.instantiate_all_ops()
-            for op_name, op in ops_dict.items():
-                # Set the operation by name
-                setattr(current_module, op_name, op)
-                # Set the operation by alias if it has one
-                if hasattr(op, 'alias') and op.alias != op_name:
-                    setattr(current_module, op.alias, op)
+            # Create a special wrapper class for operations
+            class OpWrapper:
+                """A special wrapper for operations that ensures the op is instantiated when accessed directly or
+                when attributes are accessed."""
+
+                def __init__(self, op_name):
+                    self._op_name = op_name
+                    self._instantiated_op = None
+
+                def _ensure_instantiated(self):
+                    """Make sure the operation is instantiated."""
+                    if (self._instantiated_op is None or
+                        not isinstance(self._instantiated_op, interpretune.analysis.AnalysisOp)):
+                        # Get the op from the dispatcher
+                        op = interpretune.analysis.DISPATCHER.get_op(self._op_name)
+                        self._instantiated_op = op
+                    return self._instantiated_op
+
+                def __call__(self, *args, **kwargs):
+                    """When called as a function, instantiate and call the real op."""
+                    op = self._ensure_instantiated()
+                    return op(*args, **kwargs)
+
+                def __getattr__(self, name):
+                    """Forward any attribute access to the instantiated op."""
+                    op = self._ensure_instantiated()
+                    return getattr(op, name)
+
+            # Register all operations with lazy getters
+            for op_name in interpretune.analysis.DISPATCHER._op_definitions:
+                # Use lazy=True to avoid instantiation until actual use
+                interpretune.analysis.DISPATCHER.get_op(op_name, lazy=True)
+                # Create a wrapper that will instantiate the op when accessed
+                setattr(current_module, op_name, OpWrapper(op_name))
 
             # Register all aliases as well
             for op_alias, op_name in interpretune.analysis.DISPATCHER.get_op_aliases():
                 if not hasattr(current_module, op_alias):
-                    op = interpretune.analysis.DISPATCHER.get_op(op_name)
-                    setattr(current_module, op_alias, op)
+                    # Create the wrapper for aliases as well
+                    setattr(current_module, op_alias, OpWrapper(op_name))
 
             return sys.modules["interpretune.analysis"]
         finally:
@@ -84,7 +110,7 @@ from interpretune.config import (ITConfig, ITDataModuleConfig, AnalysisCfg, Anal
                                  AnalysisArtifactCfg, ITLensConfig, SAELensConfig, ITSharedConfig, PromptConfig,
                                  AutoCompConfig, HFFromPretrainedConfig, ITLensFromPretrainedNoProcessingConfig,
                                  TLensGenerationConfig, GenerativeClassificationConfig, SAELensFromPretrainedConfig,
-                                 ITSerializableCfg)
+                                 ITSerializableCfg, BaseGenerationConfig, HFGenerationConfig, CoreGenerationConfig)
 from interpretune.extensions import MemProfiler, MemProfilerCfg, DebugGeneration, DebugLMConfig
 from interpretune.utils import (MisconfigurationException, rank_zero_info, rank_zero_warn, to_device,
                                 move_data_to_device, sanitize_input_name)
@@ -141,6 +167,9 @@ __all__ = [
     "GenerativeClassificationConfig",
     "SAELensFromPretrainedConfig",
     "ITSerializableCfg",
+    "HFGenerationConfig",
+    "BaseGenerationConfig",
+    "CoreGenerationConfig",
 
     # Extensions Module
     "MemProfiler",

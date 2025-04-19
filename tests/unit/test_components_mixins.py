@@ -92,7 +92,8 @@ class TestClassMixins:
 
     @RunIf(min_cuda_gpus=1)
     def test_hf_from_pretrained_peft_init(self, get_it_session__core_gpt2_peft__initonly):
-        it_m = get_it_session__core_gpt2_peft__initonly.module
+        fixture = get_it_session__core_gpt2_peft__initonly
+        it_m = fixture.it_session.module
         assert it_m.model.transformer.h[0].attn.c_proj.weight.quant_type == 'nf4'
         assert it_m.model.transformer.h[0].attn.c_proj.base_layer.compute_dtype == torch.bfloat16
         assert getattr(it_m.model.transformer.h[0].attn.c_proj, 'lora_A', None) is not None
@@ -105,22 +106,24 @@ class TestClassMixins:
         ids=["train_genclassif", "test_genclassif", "test_no_genclassif"],
     )
     def test_peft(self, recwarn, get_it_session__core_gpt2_peft__initonly, phase, genclassif):
+        fixture = get_it_session__core_gpt2_peft__initonly
+        it_session, test_cfg = fixture.it_session, fixture.test_cfg()
         expected_warnings = CORE_CTX_WARNS
-        test_cfg = get_it_session__core_gpt2_peft__initonly.fixt_test_cfg()
         test_cfg.phase = phase
         if not genclassif:
-            with disable_genclassif(get_it_session__core_gpt2_peft__initonly):
-                run_it(it_session=get_it_session__core_gpt2_peft__initonly, test_cfg=test_cfg)
+            with disable_genclassif(it_session):
+                run_it(it_session=it_session, test_cfg=test_cfg)
         else:
-            run_it(it_session=get_it_session__core_gpt2_peft__initonly, test_cfg=test_cfg)
+            run_it(it_session=it_session, test_cfg=test_cfg)
         unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
         assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
 
     @RunIf(min_cuda_gpus=1)
     def test_peft_seq_test(self, recwarn, get_it_session__core_gpt2_peft_seq__initonly):
+        fixture = get_it_session__core_gpt2_peft_seq__initonly
+        it_session, test_cfg = fixture.it_session, fixture.test_cfg()
         expected_warnings = CORE_CTX_WARNS
-        run_it(it_session=get_it_session__core_gpt2_peft_seq__initonly,
-               test_cfg=get_it_session__core_gpt2_peft_seq__initonly.fixt_test_cfg())
+        run_it(it_session=it_session, test_cfg=test_cfg)
         unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
         assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
 
@@ -143,8 +146,9 @@ class TestClassMixins:
             ext_mixin._detect_extensions()
 
     def test_it_generate_exception_handling(self, get_it_session__core_cust__initonly):
-        core_cust_it_m = get_it_session__core_cust__initonly.module
-        test_cfg = get_it_session__core_cust__initonly.fixt_test_cfg()
+        fixture = get_it_session__core_cust__initonly
+        it_session, test_cfg = fixture.it_session, fixture.test_cfg()
+        core_cust_it_m = it_session.module
         test_cfg.phase = 'test'
         def generate(oops_no_matching_args):
             pass
@@ -152,7 +156,7 @@ class TestClassMixins:
         with mock.patch.object(core_cust_it_m.model, 'generate', generate), \
             mock.patch.object(core_cust_it_m, 'map_gen_inputs', lambda x: x):
             with pytest.warns(UserWarning, match="The following keys were found"), pytest.raises(Exception):
-                run_it(it_session=get_it_session__core_cust__initonly, test_cfg=test_cfg)
+                run_it(it_session=it_session, test_cfg=test_cfg)
 
     @pytest.mark.parametrize("tokenizer_id_overrides", [None, {'pad_token_id': 150}],
                              ids=["no_token_overrides", "new_token_overrides"],)

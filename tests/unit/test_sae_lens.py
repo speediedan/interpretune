@@ -26,12 +26,14 @@ class Counter:
 #       (keeping explicit for now given the simplicity/efficiency tradeoff)
 @pytest.fixture(scope="class")
 def sl_gpt2_w_ref_logits(get_it_session__sl_gpt2__initonly):
-    sl_test_module = get_it_session__sl_gpt2__initonly.module
+    fixture = get_it_session__sl_gpt2__initonly
+    sl_test_module = fixture.it_session.module
     return sl_test_module, TestClassSAELens.get_ref_logits(sl_test_module)
 
 @pytest.fixture(scope="class")
 def l_sl_gpt2_w_ref_logits(get_it_session__l_sl_gpt2__initonly):
-    sl_test_module = get_it_session__l_sl_gpt2__initonly.module
+    fixture = get_it_session__l_sl_gpt2__initonly
+    sl_test_module = fixture.it_session.module
     return sl_test_module, TestClassSAELens.get_ref_logits(sl_test_module)
 
 core_l_run_w_pytest_cfg = {
@@ -43,10 +45,16 @@ class TestClassSAELens:
 
     sl_tokenizer_kwargs = {"add_bos_token": True, "local_files_only": False,  "padding_side": "left",
                             "model_input_names": ['input_ids', 'attention_mask']}
-    test_sl_signature_columns = ['inputs', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
-                                     'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict']
-    test_tl_gpt2_shared_config = dict(task_name=default_test_task, tokenizer_kwargs=sl_tokenizer_kwargs,
-                                    model_name_or_path="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
+    test_sl_signature_columns = [
+        'inputs', 'attention_mask', 'position_ids', 'past_key_values', 'inputs_embeds',
+        'labels', 'use_cache', 'output_attentions', 'output_hidden_states', 'return_dict'
+    ]
+    test_tl_gpt2_shared_config = dict(
+        task_name=default_test_task,
+        tokenizer_kwargs=sl_tokenizer_kwargs,
+        model_name_or_path="gpt2",
+        tokenizer_id_overrides={"pad_token_id": 50256}
+    )
     test_tlens_gpt2 = {**test_tl_gpt2_shared_config, "tl_cfg": ITLensFromPretrainedConfig(),
                        "hf_from_pretrained_cfg": dict(
         pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"}, model_head="transformers.GPT2LMHeadModel")}
@@ -94,6 +102,8 @@ class TestClassSAELens:
     @pytest.mark.parametrize("session_fixture", **core_l_run_w_pytest_cfg)
     def test_run_with_saes_with_cache_fwd_bwd(self, request, session_fixture):
         sl_test_module, _ = request.getfixturevalue(session_fixture)
+        assert sl_test_module.model.unembed.b_U.requires_grad, \
+            "Previous fixture may have polluted this test, requires_grad should be True"
         filter_sae_acts = lambda name: "hook_sae_acts_post" in name
         cache_dict = {"fwd": {}, "bwd": {}}
         # TODO: maybe add a metric to extend test/make it more realistic
@@ -109,6 +119,9 @@ class TestClassSAELens:
             ):
                 # fill fwd/bwd cache, hooks then removed on cm exit
                 out = sl_test_module.model(TestClassSAELens.prompt)
+
+                # Verify gradients are enabled before backward pass
+                #assert out.requires_grad, "Output tensor does not have requires_grad=True"
                 out[0, -1, 42].backward()
 
         cache_dict = {k: ActivationCache(cache_dict[k], sl_test_module.model) for k in cache_dict.keys()}
@@ -151,7 +164,8 @@ class TestClassSAELens:
         assert c.count == len(sl_test_module.sae_handles)
 
     def test_sl_module_warns(self, get_it_session__l_sl_gpt2__initonly):
-        sl_test_module = get_it_session__l_sl_gpt2__initonly.module
+        fixture = get_it_session__l_sl_gpt2__initonly
+        sl_test_module = fixture.it_session.module
         with ablate_cls_attrs(sl_test_module.it_cfg, 'sae_cfgs'), pytest.warns(UserWarning, match="Could not find a"):
             _ = sl_test_module.sae_cfgs
 

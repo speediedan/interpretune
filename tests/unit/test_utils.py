@@ -137,12 +137,13 @@ class TestClassUtils:
         assert batch.device.type == "cuda"  # still on cuda because of improperly implemented `to`
 
     def test_basic_trainer_warns(self, get_it_session__core_cust__setup):
-        test_cfg = get_it_session__core_cust__setup.fixt_test_cfg()
+        fixture = get_it_session__core_cust__setup
+        it_session, test_cfg = fixture.it_session, fixture.test_cfg()
         test_cfg_overrides = {k: v for k,v in test_cfg.__dict__.items() if k in SessionRunnerCfg.__dict__.keys()}
         with pytest.raises(MisconfigurationException, match="If not providing `it_session`"):
-            _ = SessionRunnerCfg(module=get_it_session__core_cust__setup.module, datamodule=None, **test_cfg_overrides)
+            _ = SessionRunnerCfg(module=it_session.module, datamodule=None, **test_cfg_overrides)
         assert test_cfg
         with pytest.warns(UserWarning, match="should only be specified if not providing `it_session`"):
-            trainer_config = SessionRunnerCfg(module=get_it_session__core_cust__setup.module,
-                                it_session=get_it_session__core_cust__setup, **test_cfg_overrides)
+            trainer_config = SessionRunnerCfg(module=it_session.module,
+                                it_session=it_session, **test_cfg_overrides)
         assert trainer_config

@@ -74,11 +74,12 @@ class SAELensConfig(ITLensConfig):
 
     def _sync_sl_tl_default_device(self, sae_cfg_obj: SAECfgType, tl_device):
         if sae_cfg_obj.device and tl_device:
-            rank_zero_warn(
-                f"This SAEConfig's device type ('{sae_cfg_obj.device}') does not match the configured TL device "
-                f"('{tl_device}'). Setting the device type for this SAE to match the specified TL device "
-                f"('{tl_device}')."
-            )
+            if sae_cfg_obj.device != tl_device:
+                rank_zero_warn(
+                    f"This SAEConfig's device type ('{sae_cfg_obj.device}') does not match the configured TL device "
+                    f"('{tl_device}'). Setting the device type for this SAE to match the specified TL device "
+                    f"('{tl_device}')."
+                )
             setattr(sae_cfg_obj, 'device', tl_device)
         else:
             rank_zero_warn(

@@ -25,7 +25,8 @@ class TestClassTransformerLens:
     test_tlens_cust = {**test_tl_gpt2_shared_config, "tl_cfg": test_tl_cust_config}
 
     def test_tl_session_exceptions(self, get_it_session__tl_cust__setup):
-        tl_test_module = get_it_session__tl_cust__setup.module
+        fixture = get_it_session__tl_cust__setup
+        tl_test_module = fixture.it_session.module
         with ablate_cls_attrs(tl_test_module.model, 'cfg'), pytest.warns(UserWarning, match="Could not find a `Hooked"):
                 _ = tl_test_module.tl_cfg
         with ablate_cls_attrs(tl_test_module._it_state, '_device'), ablate_cls_attrs(tl_test_module.tl_cfg, 'device'):

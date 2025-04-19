@@ -57,9 +57,10 @@ class TestClassFTSExtension:
         return torch.concat([direct_attributions.unsqueeze(-1), l1_attributions, l2_attributions], dim=-1)
 
     def test_tl_direct_attr(self, get_it_session__tl_cust_mi__setup):
-        it_session = get_it_session__tl_cust_mi__setup
+        fixture = get_it_session__tl_cust_mi__setup
+        it_session = fixture.it_session
         curr_model = it_session.module.model
-        dataloader = get_it_session__tl_cust_mi__setup.datamodule.test_dataloader()
+        dataloader = it_session.datamodule.test_dataloader()
         # TODO NEXT: update this example to properly test logit attribution in the presence of MLP etc components
         tokens = torch.tensor(dataloader.dataset[0]['input']).unsqueeze(0)
         with torch.inference_mode():

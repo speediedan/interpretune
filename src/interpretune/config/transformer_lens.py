@@ -113,21 +113,23 @@ class ITLensConfig(ITConfig):
                             f" {hf_override_msg}")
 
     def _translate_tl_config(self):
+        # TODO: driving this fallback mapping from a dict
         if self._load_from_pretrained:
             self._map_tl_fallback(target_key='model_name_or_path', tl_cfg_key='tl_cfg.hf_model')
             self._map_tl_fallback(target_key='tokenizer', tl_cfg_key='tl_cfg.tokenizer')
-            self._prune_converted_keys()
+            # self._prune_converted_keys()
         else:
             self._map_tl_fallback(target_key='model_name_or_path', tl_cfg_key='tl_cfg.cfg.model_name')
             self._map_tl_fallback(target_key='tokenizer_name', tl_cfg_key='tl_cfg.cfg.tokenizer_name')
 
-    def _prune_converted_keys(self):
-        if self._load_from_pretrained:
-            for attr in ['tokenizer', 'hf_model']:
-                if hasattr(self.tl_cfg, attr):
-                    expected_none = f"{getattr(self.tl_cfg, attr)} should have been translated and set to `None`."
-                    assert getattr(self.tl_cfg, attr) is None, expected_none
-                    delattr(self.tl_cfg, attr)
+    # def _prune_converted_keys(self):
+    #     if self._load_from_pretrained:
+    #         for attr in ['tokenizer', 'hf_model']:
+    #             if attr in type(self.tl_cfg).__dict__:
+    #                 if getattr(self.tl_cfg, attr) is not None:
+    #                     expected_none = f"{getattr(self.tl_cfg, attr)} should have been translated and set to `None`."
+    #                     assert getattr(self.tl_cfg, attr) is None, expected_none
+    #                 delattr(self.tl_cfg, attr)
 
     def _disable_pretrained_model_mode(self):
         ignored_attrs = []

@@ -59,8 +59,8 @@ class BaseSAELensModule(BaseITLensModule):
         # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
         tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
         hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
-        self.model = HookedSAETransformer.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle,
-                                                          **self.it_cfg.tl_cfg.__dict__)
+        pruned_cfg = self._prune_tl_cfg_dict()  # avoid edge case where conflicting keys haven't already been pruned
+        self.model = HookedSAETransformer.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle, **pruned_cfg)
         self.model.config = hf_preconversion_config
         self.instantiate_saes()
 

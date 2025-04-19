@@ -7,6 +7,7 @@ from pathlib import Path
 from copy import copy
 
 import torch
+from torch._dynamo.utils import is_namedtuple_cls, namedtuple_fields
 import pandas as pd
 import plotly.express as px
 from tabulate import tabulate
@@ -22,18 +23,35 @@ from interpretune.analysis.ops.base import AnalysisOp, OpSchema
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.utils import rank_zero_warn, DEFAULT_DECODE_KWARGS
 
-
 class SAEAnalysisDict(dict):
     """Dictionary for SAE-specific data where values must be torch.Tensor or list[torch.Tensor]."""
 
-    def __setitem__(self, key: str, value: torch.Tensor | list[torch.Tensor]) -> None:
+    def __setitem__(self, key: str, value: torch.Tensor | Sequence[torch.Tensor] ) -> None:
+        # Handle namedtuple-like torch.return_types.<op> objects
         if not isinstance(value, (torch.Tensor, list)):
-            raise TypeError("Values must be torch.Tensor or list[torch.Tensor]")
+            if is_namedtuple_cls(type(value)):
+                # TODO: decide whether to keep these values as quasi-named tuples or continue converting to
+                # lists (we would need to serialize these quasi namedtuples later if we keep them namedtuples here)
+                # Extract tensor fields from the namedtuple
+                tensor_fields = []
+                for field_name in namedtuple_fields(type(value)):
+                    field_value = getattr(value, field_name)
+                    if isinstance(field_value, torch.Tensor):
+                        tensor_fields.append(field_value)
+                if tensor_fields:
+                    # Store the first tensor field or a list of all tensor fields
+                    value = tensor_fields[0] if len(tensor_fields) == 1 else tensor_fields
+                else:
+                    raise TypeError(f"Namedtuple {type(value).__name__} does not contain any tensor fields")
+            else:
+                raise TypeError("Values must be torch.Tensor, " \
+                "list[torch.Tensor], or namedtuple-like containing tensors")
+
         # TODO: at which point in the pipeline should we remove batches with None or empty list values?
         #       to maintain batch alignment, we keep None valued batches for now and skip them in operations that join
         #       batches
-        if isinstance(value, list) and not all(isinstance(v, torch.Tensor) for v in value
-                                               if v is not None and len(v) > 0):
+        # TODO: verify that we don't need to validate len(v) > 0 for tensors where ndim > 0
+        if isinstance(value, list) and not all(isinstance(v, torch.Tensor) for v in value if v is not None):
             raise TypeError("All list elements must be torch.Tensor")
         super().__setitem__(key, value)
 
@@ -902,6 +920,7 @@ def base_vs_sae_logit_diffs(sae: AnalysisStoreProtocol, base_ref: AnalysisStoreP
         showindex="never"
     ))
 
+# TODO: convert compute_correct to an AnalysisOp?  Assumes sae usage, need to clarify req
 def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
                     op: str | AnalysisOp | None = None) -> PredSumm:
     """Compute correct prediction statistics for a given analysis mode."""
@@ -910,17 +929,21 @@ def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
         analysis_store = analysis_obj.output_store
         op = analysis_obj.op
     else:
-        if op is None:
-            raise ValueError("op argument required when passing AnalysisStore type objects")
+        # TODO: we can assume this is None if not provided, we should really change compute_correct to have a per-latent
+        #       data structured overload
+        #if op is None:
+        #    raise ValueError("op argument required when passing AnalysisStore type objects")
         analysis_store = analysis_obj
 
     if isinstance(op, str):
         op = DISPATCHER.get_op(op) or DISPATCHER.get_by_alias(op)
 
-    batch_preds = (
-        [b.mode(dim=0).values.cpu() for b in analysis_store.by_sae('preds').batch_join(across_saes=True)]
-        if op == it.logit_diffs_attr_ablation else analysis_store.preds
-    )
+    # TODO: this is another location where we should be conditioning behavior on op functionality, not name
+    # TODO:
+    if op.alias == 'logit_diffs_attr_ablation':
+        batch_preds = [b.mode(dim=0).values.cpu() for b in analysis_store.by_sae('preds').batch_join(across_saes=True)]
+    else:
+        batch_preds = analysis_store.preds
     correct_statuses = [
         (labels == preds).nonzero().unique().size(0)
         for labels, preds in zip(analysis_store.orig_labels, batch_preds)
@@ -928,7 +951,7 @@ def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
     total_correct = sum(correct_statuses)
     percentage_correct = total_correct / (len(torch.cat(analysis_store.orig_labels))) * 100
     return PredSumm(total_correct, percentage_correct,
-                    batch_preds if op == it.logit_diffs_attr_ablation else None)
+                    batch_preds if op.alias == 'logit_diffs_attr_ablation' else None)
 
 def resolve_names_filter(names_filter: NamesFilter | None) -> Callable[[str], bool]:
     # similar to logic in `transformer_lens.hook_points.get_caching_hooks` but accessible to other functions

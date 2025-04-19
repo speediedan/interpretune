@@ -92,3 +92,40 @@ def disable_genclassif(it_session: ITSession):
         yield
     finally:
         it_session.module.it_cfg.generative_step_cfg = orig_genclassif_cfg
+
+def kwargs_from_cfg_obj(cfg_obj, source_obj, base_kwargs=None):
+    """Dynamically extract a subset of configuration parameters from a source object based on an object's
+    signature.
+
+    Args:
+        cfg_obj: The object (class or function) whose signature will be used to extract parameter names
+        source_obj: The object from which to extract attribute values
+        base_kwargs: Optional base dictionary to update with extracted values
+
+    Returns:
+        Dictionary with extracted configuration parameters
+    """
+    import inspect
+
+    # Start with base kwargs if provided
+    kwargs = base_kwargs or {}
+
+    # Determine the signature to use based on the type of cfg_obj
+    if inspect.isclass(cfg_obj):
+        param_names = [
+            param.name for param in inspect.signature(cfg_obj.__init__).parameters.values()
+            if param.name not in ('self',)  # Exclude 'self'
+        ]
+    elif inspect.isfunction(cfg_obj):
+        param_names = [
+            param.name for param in inspect.signature(cfg_obj).parameters.values()
+        ]
+    else:
+        raise TypeError("cfg_obj must be a class or a function")
+
+    # Extract matching attributes from the source object
+    for attr in param_names:
+        if hasattr(source_obj, attr):
+            kwargs[attr] = getattr(source_obj, attr)
+
+    return kwargs

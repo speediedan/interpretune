@@ -3,9 +3,10 @@ from typing import List, Optional, Tuple, Callable, Any, Dict, Sequence
 import pytest
 
 from interpretune.adapters import ADAPTER_REGISTRY
-from interpretune.config import HFFromPretrainedConfig, GenerativeClassificationConfig
+from interpretune.config import HFFromPretrainedConfig, GenerativeClassificationConfig, AutoCompConfig
 from interpretune.extensions import MemProfilerCfg, DebugLMConfig
 from interpretune.protocol import Adapter
+from interpretune.analysis import SAEAnalysisTargets
 from tests.runif import RunIf, RUNIF_ALIASES
 
 default_test_task = "rte"
@@ -80,6 +81,7 @@ class BaseCfg:
     model_cfg: Optional[Dict] = None
     tl_cfg: Optional[Dict] = None
     sae_cfgs: Optional[Dict] = None
+    auto_comp_cfg: Optional[AutoCompConfig] = None
     add_saes_on_init: bool = False
     req_grad_mask: Optional[Tuple] = None  # used to toggle requires grad for non-fts contexts
     max_epochs: Optional[int] = 1
@@ -92,3 +94,19 @@ class BaseCfg:
     def __post_init__(self):
         self.adapter_ctx = ADAPTER_REGISTRY.canonicalize_composition(self.adapter_ctx)
         self.max_steps = self.max_steps or self.limit_train_batches
+
+@dataclass(kw_only=True)
+class AnalysisBaseCfg(BaseCfg):
+    analysis_cfgs: Optional[Dict] = None
+    limit_analysis_batches: int = 2
+    cache_dir: Optional[str] = None
+    op_output_dataset_path: Optional[str] = None
+    # Add optional sae_analysis_targets as a fallback
+    sae_analysis_targets: Optional[SAEAnalysisTargets] = None
+    # Add artifact configuration
+    artifact_cfg: Optional[Dict] = None
+    # Global override for ignore_manual setting in analysis configs
+    ignore_manual: bool = False
+
+    def __post_init__(self):
+        super().__post_init__()

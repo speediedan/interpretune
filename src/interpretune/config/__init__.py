@@ -11,7 +11,7 @@ from interpretune.config.sae_lens import (SAEConfig, SAECfgType, SAELensFromPret
                                           SAELensConfig)
 from interpretune.config.analysis import (AnalysisCfg, IT_ANALYSIS_CACHE, IT_ANALYSIS_CACHE_DIR,
                                           DEFAULT_IT_ANALYSIS_CACHE, AnalysisArtifactCfg)
-from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg
+from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg, init_analysis_dirs, init_analysis_cfgs
 
 
 __all__ = [
@@ -65,5 +65,7 @@ __all__ = [
 
     # from interpretune.config.runner
     "SessionRunnerCfg",
-    "AnalysisRunnerCfg"
+    "AnalysisRunnerCfg",
+    "init_analysis_dirs",
+    "init_analysis_cfgs",
 ]

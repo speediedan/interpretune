@@ -118,6 +118,23 @@ class BaseITLensModule(BaseITModule):
         # TODO: suppress messages from tl about no tokenizer here, we're deferring the tokenizer attach until setup
         self.model = HookedTransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
 
+    def _prune_tl_cfg_dict(self) -> dict:
+        """Prunes the tl_cfg dictionary by removing 'hf_model' and 'tokenizer' keys. Asserts that these keys have
+        None values, and warns if they don't.
+
+        Returns:
+            dict: The pruned dictionary
+        """
+        pruned_dict = deepcopy(self.it_cfg.tl_cfg.__dict__)
+
+        for key in ['hf_model', 'tokenizer']:
+            if key in pruned_dict:
+                if pruned_dict[key] is not None:
+                    rank_zero_warn(f"Found non-None value for '{key}' in tl_cfg. This may cause issues.")
+                del pruned_dict[key]
+
+        return pruned_dict
+
     def _convert_hf_to_tl(self) -> None:
         # TODO: decide whether to pass remaining hf_from_pretrained_cfg args to HookedTransformer
         # (other than torch_dtype which should already have been processed and removed, device_map should also be
@@ -125,8 +142,8 @@ class BaseITLensModule(BaseITModule):
         # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
         tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
         hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
-        self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle,
-                                                       **self.it_cfg.tl_cfg.__dict__)
+        pruned_cfg = self._prune_tl_cfg_dict()  # avoid edge case where conflicting keys haven't already been pruned
+        self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle, **pruned_cfg)
         self.model.config = hf_preconversion_config
 
     def _capture_hyperparameters(self) -> None:

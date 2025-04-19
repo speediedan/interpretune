@@ -12,13 +12,18 @@
 # Initially based on https://bit.ly/3oQ8Vqf
 from pathlib import Path
 from unittest import mock
+from typing import Dict
 
 from interpretune.protocol import Adapter
 from interpretune.session import ITSessionConfig, ITSession
-from interpretune.runners import SessionRunner
-from interpretune.config.runner import SessionRunnerCfg
+from interpretune.runners import SessionRunner, AnalysisRunner, core_analysis_loop
+from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg
+from interpretune.config.analysis import AnalysisStoreProtocol
+from interpretune.config import init_analysis_cfgs
 from tests import Trainer, ModelCheckpoint
 from tests.configuration import config_modules
+from tests.base_defaults import AnalysisBaseCfg, BaseCfg
+from tests.utils import kwargs_from_cfg_obj
 
 
 ########################################################################################################################
@@ -49,22 +54,95 @@ def parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode
     else:
         run_it(it_session, test_cfg)
 
-def init_it_trainer(it_session: ITSession, test_cfg: tuple, *args, **kwargs):
+def init_it_runner(it_session: ITSession, test_cfg: BaseCfg, *args, **kwargs):
     # we allow passing unused args for parity testing, e.g. the IT module configured tmp_path is needed by some trainers
     test_cfg_overrides = {k: v for k,v in test_cfg.__dict__.items() if k in SessionRunnerCfg.__dict__.keys()}
-    trainer_config = SessionRunnerCfg(it_session=it_session, **test_cfg_overrides)
-    trainer = SessionRunner(run_cfg=trainer_config)
-    return trainer
+    runner_config = SessionRunnerCfg(it_session=it_session, **test_cfg_overrides)
+    runner = SessionRunner(run_cfg=runner_config)
+    return runner
 
-def run_it(it_session: ITSession, test_cfg: tuple):
-    trainer = init_it_trainer(it_session, test_cfg)
-    if test_cfg.phase == "test":
-        trainer.test()
-    elif test_cfg.phase == "train":
-        trainer.train()
+def run_it(it_session: ITSession, test_cfg: BaseCfg, init_only: bool = False) -> \
+    SessionRunner | AnalysisStoreProtocol | Dict[str, AnalysisStoreProtocol] | None:
+    # Check if test_cfg is an AnalysisBaseCfg and use the appropriate runner initialization
+    if isinstance(test_cfg, AnalysisBaseCfg):
+    # if hasattr(test_cfg, "__class__") and hasattr(test_cfg.__class__, "__mro__") and \
+    #       any("AnalysisBaseCfg" in cls.__name__ for cls in test_cfg.__class__.__mro__):
+        runner = init_analysis_runner(it_session, test_cfg)
     else:
-        raise ValueError("Unsupported phase type, phase must be 'test' or 'train'")
+        runner = init_it_runner(it_session, test_cfg)
 
+    if init_only:
+        # If only initializing the runner, return it without executing any phase
+        return runner
+
+    # Execute the appropriate phase
+    if test_cfg.phase == "test":
+        runner.test()
+    elif test_cfg.phase == "train":
+        runner.train()
+    elif test_cfg.phase == "analysis":
+        # If the phase is analysis, multiple analysis configurations can be passed so we orchestrate the sequence of
+        # analysis phase steps using the AnalysisRunner
+        return runner.run_analysis()
+    else:
+        raise ValueError("Unsupported phase type, phase must be 'test', 'train' or 'analysis'")
+
+
+################################################################################
+# Analysis Orchestration
+################################################################################
+
+def init_analysis_runner(it_session: ITSession, test_cfg: BaseCfg, *args, **kwargs):
+    """Initialize an AnalysisRunner with the appropriate configuration.
+
+    Args:
+        it_session: The ITSession instance to use for analysis
+        test_cfg: Test configuration dataclass with optional analysis-specific properties
+        *args, **kwargs: Additional arguments to pass to the AnalysisRunner
+
+    Returns:
+        An initialized AnalysisRunner instance
+    """
+    run_cfg_kwargs = kwargs_from_cfg_obj(AnalysisRunnerCfg, test_cfg, base_kwargs={"it_session": it_session})
+    analysis_cfg = AnalysisRunnerCfg(**run_cfg_kwargs)
+    runner = AnalysisRunner(run_cfg=analysis_cfg)
+    return runner
+
+def run_analysis_operation(it_session, use_run_cfg=True, test_cfg: BaseCfg | None = None, **kwargs):
+    """Run analysis operations either through a runner with run_config or directly via core_analysis_loop.
+
+    Args:
+        it_session: The IT session instance containing module and datamodule
+        analysis_cfgs: Analysis configuration(s) to use
+        use_run_cfg: Whether to use AnalysisRunner with run_config (True) or core_analysis_loop (False)
+        **kwargs: Additional configuration parameters
+
+    Returns:
+        Analysis results
+    """
+
+    if use_run_cfg:
+        runner = init_analysis_runner(it_session, test_cfg)
+        return runner.run_analysis()
+    else:
+        # Direct core_analysis_loop approach with a single analysis config
+        if not test_cfg.analysis_cfgs or len(test_cfg.analysis_cfgs) == 0:
+            raise ValueError("For direct core_analysis_loop, at least one analysis_cfg must be provided")
+
+        target_analysis_cfg = test_cfg.analysis_cfgs[0]
+
+        run_cfg_kwargs = kwargs_from_cfg_obj(init_analysis_cfgs, test_cfg, base_kwargs={"it_session": it_session})
+        kwargs.update(run_cfg_kwargs)
+        # Use kwargs for core_analysis_loop with the single analysis config
+        analysis_cfg_kwargs = {
+            "analysis_cfg": target_analysis_cfg,
+            "module": it_session.module,
+            "datamodule": it_session.datamodule,
+            "step_fn": target_analysis_cfg.step_fn,
+            **kwargs
+        }
+
+        return core_analysis_loop(**analysis_cfg_kwargs)
 
 
 ################################################################################

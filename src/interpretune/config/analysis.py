@@ -38,6 +38,7 @@ class AnalysisCfg(ITSerializableCfg):
     sae_analysis_targets: SAEAnalysisTargets = None
     ignore_manual: bool = False  # When True, ignore existing analysis_step and use op to generate one
     step_fn: str = "analysis_step"  # Name of the method to use/generate for analysis
+    _applied_to: dict = field(default_factory=dict)  # Dictionary tracking which modules this cfg has been applied to
 
     def __post_init__(self):
         # Check if ignore_manual is True but no op is provided
@@ -46,6 +47,7 @@ class AnalysisCfg(ITSerializableCfg):
 
         resolved_op = None
 
+        # TODO: may need to add logic to compile a schema base on a chain of ops here
         # Process output_schema first if it's an op or string
         if self.output_schema is not None and not isinstance(self.output_schema, OpSchema):
             # If output_schema is AnalysisOp-like (using this attribute as heuristic to limit expensive protocol
@@ -229,6 +231,7 @@ class AnalysisCfg(ITSerializableCfg):
             self.fwd_hooks, self.bwd_hooks = fwd_hooks, bwd_hooks
             return
 
+        # TODO: change these op-based checks to be functionally driven (e.g. uses_default_hooks attribute of ops)
         if self.op.name == 'logit_diffs_base':
             return fwd_hooks, bwd_hooks
 
@@ -237,6 +240,31 @@ class AnalysisCfg(ITSerializableCfg):
 
         if self.op.name == 'logit_diffs_attr_grad':
             self.add_default_cache_hooks()
+
+    def applied_to(self, module) -> bool:
+        """Check if this configuration has been applied to a specific module.
+
+        Args:
+            module: The module to check.
+
+        Returns:
+            bool: True if this configuration has been applied to the module, False otherwise.
+        """
+        # Use module id as key to track unique module instances
+        return id(module) in self._applied_to
+
+    def reset_applied_state(self, module=None) -> None:
+        """Reset the applied state tracking.
+
+        Args:
+            module: Optional specific module to reset. If None, reset for all modules.
+        """
+        if module is not None:
+            # Reset for specific module
+            self._applied_to.pop(id(module), None)
+        else:
+            # Reset for all modules
+            self._applied_to.clear()
 
     def apply(self, module, cache_dir: Optional[str] = None, op_output_dataset_path: Optional[str] = None,
               fallback_sae_targets: Optional[SAEAnalysisTargets] = None):
@@ -252,6 +280,11 @@ class AnalysisCfg(ITSerializableCfg):
             op_output_dataset_path: Optional output path.
             fallback_sae_targets: Optional fallback SAEAnalysisTargets to use if this config doesn't have one.
         """
+        # Short-circuit if already applied to this module (though apply should be idempotent)
+        module_id = id(module)
+        if module_id in self._applied_to:
+            return
+
         # Check if module has an analysis step method with the specified name
         has_custom_step = (hasattr(module, self.step_fn) and
                           not getattr(module, f'_generated_{self.step_fn}', False))
@@ -305,6 +338,9 @@ class AnalysisCfg(ITSerializableCfg):
 
         # Always prepare the model context to ensure names_filter is materialized
         self.prepare_model_ctx(module, fallback_sae_targets)
+
+        # Mark as applied to this specific module, storing module class name for debugging
+        self._applied_to[module_id] = module.__class__.__name__
 
 
 @dataclass(kw_only=True)

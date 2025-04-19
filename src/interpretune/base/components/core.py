@@ -16,6 +16,7 @@ from interpretune.extensions import MemProfiler
 from interpretune.utils import (rank_zero_info, rank_zero_warn, rank_zero_debug, MisconfigurationException,
                                 _resolve_torch_dtype, collect_env_info, dummy_method_warn_fingerprint)
 from interpretune.protocol import LRScheduler, Optimizable, Optimizer,LRSchedulerConfig
+from interpretune.config import init_analysis_cfgs
 
 if TYPE_CHECKING:
     from interpretune.config import ITConfig, ITState
@@ -35,7 +36,7 @@ for warnf in [f".*{dummy_method_warn_fingerprint}.*",]:
 
 def _dummy_notify(method: str, ret_callable: bool, ret_val: Any, *args, **kwargs) -> Any | None:
     rank_zero_warn(f"The `{method}` method is not defined for this module. For framework compatibility, this noop "
-                    "method will be used. This warning will only be issued once by default.")
+                  "method will be used. This warning will only be issued once by default.")
     out = lambda *args, **kwargs: ret_val if ret_callable else ret_val
     return out
 
@@ -69,7 +70,14 @@ class BaseConfigImpl:
     def _init_dirs_and_hooks(self) -> None:
         self._create_experiment_dir()
         if hasattr(self, 'analysis_run_cfg') and self.analysis_run_cfg:
-            self.analysis_run_cfg.init_analysis_cfgs(self)
+            init_analysis_cfgs(
+                module=self,
+                analysis_cfgs=self.analysis_run_cfg._processed_analysis_cfgs,
+                cache_dir=self.analysis_run_cfg.cache_dir,
+                op_output_dataset_path=self.analysis_run_cfg.op_output_dataset_path,
+                sae_analysis_targets=self.analysis_run_cfg.sae_analysis_targets,
+                ignore_manual=self.analysis_run_cfg.ignore_manual
+            )
         if self.cuda_allocator_history:
             self.memprofiler.init_cuda_snapshots_dir()
         # TODO: add save_hyperparameters/basic logging func for raw pytorch

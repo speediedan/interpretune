@@ -84,8 +84,7 @@ class TestClassCoreModule:
             _ = CoreHelperAttributes()
 
     def test_config_adapter(self, get_it_session__tl_cust__initonly):
-        it_session = get_it_session__tl_cust__initonly
-        curr_mod = it_session.module
+        curr_mod = get_it_session__tl_cust__initonly.it_session.module
         curr_config = curr_mod.it_cfg.tl_cfg.cfg
         curr_config = curr_mod._make_config_serializable(curr_config, 'dtype')
         assert isinstance(curr_config.dtype, str)

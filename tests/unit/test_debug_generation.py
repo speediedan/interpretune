@@ -20,7 +20,8 @@ class TestClassDebugGen:
 
     @pytest.mark.usefixtures("make_deterministic")
     def test_debug_session_top1(self, get_it_session__tl_gpt2_debug__setup):
-        debug_module = get_it_session__tl_gpt2_debug__setup.module.debug_lm
+        fixture = get_it_session__tl_gpt2_debug__setup
+        debug_module = fixture.it_session.module.debug_lm
         EXPECTED_DEBUG_BASIC = (0.25, 16)
         acc, correct_tokens = debug_module.top1_token_accuracy_on_sample(IT_TEST_TEXT["text"][0])
         assert_close(actual=acc.cpu().item(), expected=EXPECTED_DEBUG_BASIC[0], rtol=0.10, atol=0)
@@ -50,7 +51,8 @@ class TestClassDebugGen:
     )
     def test_debug_session_chat(self, request, session_fixture, format, pad_token, gen_kwargs, batch_mode, expected):
         it_session_fixture = request.getfixturevalue(session_fixture)
-        debug_module = it_session_fixture.module.debug_lm
+        it_module = it_session_fixture.it_session.module
+        debug_module = it_module.debug_lm
         test_seqs = debug_module.chat_debug_sequences(format=format, sequences=self.TEST_DEBUG_SEQS)
         debug_gen_fn = debug_module.debug_generate_batch if batch_mode else debug_module.debug_generate_serial
         answers, full_outputs = debug_gen_fn(test_seqs, **gen_kwargs)
@@ -67,7 +69,7 @@ class TestClassDebugGen:
         assert len(answers) == expected[0]
         assert pad_included == expected[1]
         m_prefix = "composing TestITModule with: \n  - LightningAdapter\n  - BaseITModule"
-        assert m_prefix in repr(it_session_fixture.module)
+        assert m_prefix in repr(it_module)
 
     def test_debug_generation_chat_invalid_format(self):
         with pytest.warns(UserWarning, match=r"Failed to generate chat.*"):
@@ -93,7 +95,8 @@ class TestClassDebugGen:
              "default_serial", "cust_gen_output_attr_serial", "decode_override_no_skip_special_serial"],
     )
     def test_debug_session_debug_gen(self, get_it_session__tl_gpt2_debug__setup, gen_kwargs, batch_mode, expected):
-        debug_module = get_it_session__tl_gpt2_debug__setup.module.debug_lm
+        fixture = get_it_session__tl_gpt2_debug__setup
+        debug_module = fixture.it_session.module.debug_lm
         test_seqs = debug_module.debug_sequences(self.TEST_DEBUG_SEQS)
         debug_gen_fn = debug_module.debug_generate_batch if batch_mode else debug_module.debug_generate_serial
         answers, full_outputs = debug_gen_fn(test_seqs, **gen_kwargs)
@@ -117,7 +120,8 @@ class TestClassDebugGen:
         ids=["cust_gen_output_attr_serial_config_str"],
     )
     def test_debug_session_debug_gen_str(self, get_it_session__tl_gpt2_debug__setup, gen_kwargs, expected):
-        debug_module = get_it_session__tl_gpt2_debug__setup.module.debug_lm
+        fixture = get_it_session__tl_gpt2_debug__setup
+        debug_module = fixture.it_session.module.debug_lm
         test_sequence = self.TEST_DEBUG_SEQS[1]
         test_seqs = debug_module.debug_sequences(test_sequence)
         answers, full_outputs = debug_module.debug_generate_serial(test_seqs, **gen_kwargs)
@@ -135,7 +139,8 @@ class TestClassDebugGen:
         ids=["gen_output_attr_error"],
     )
     def test_debug_session_exceptions(self, get_it_session__tl_gpt2_debug__setup, gen_kwargs, gen_error):
-        debug_module = get_it_session__tl_gpt2_debug__setup.module.debug_lm
+        fixture = get_it_session__tl_gpt2_debug__setup
+        debug_module = fixture.it_session.module.debug_lm
         test_seqs = debug_module.debug_sequences(["Hello, I'm a large language,", "The day after Tuesday"])
         if gen_error:
             from interpretune.extensions import DebugGeneration
@@ -148,7 +153,8 @@ class TestClassDebugGen:
                              ids=["wikitext", "custom"])
     def test_debug_session_perplexity(self, get_it_session__tl_gpt2_debug__setup, default, limit_chars, stride,
                                       expected):
-        debug_module = get_it_session__tl_gpt2_debug__setup.module.debug_lm
+        fixture = get_it_session__tl_gpt2_debug__setup
+        debug_module = fixture.it_session.module.debug_lm
         corpus = IT_TEST_TEXT if not default else None
         ppl = debug_module.perplexity_on_sample(corpus, limit_chars=limit_chars, stride=stride)
         assert_close(actual=ppl.cpu().item(), expected=expected, rtol=0.03, atol=0)

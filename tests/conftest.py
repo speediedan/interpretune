@@ -1,3 +1,4 @@
+from __future__ import annotations
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -13,22 +14,25 @@
 import os
 import threading
 import random
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from typing import Dict, Tuple, Type, Sequence
 from functools import partial
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
+from copy import deepcopy
 
 from unittest.mock import patch, create_autospec
 from dataclasses import dataclass, field
-from copy import deepcopy
 from enum import auto, IntEnum
 import pytest
 import yaml
 import torch.distributed
 
 from interpretune.base import _call_itmodule_hook, ITDataModule
-from interpretune.session import ITMeta
+from interpretune.runners import AnalysisRunner
+from interpretune.config.runner import AnalysisRunnerCfg
+from interpretune.analysis import AnalysisStore
+from interpretune.session import ITMeta, ITSession
 from interpretune.protocol import ModuleSteppable, DataModuleInitable
 from interpretune.utils import rank_zero_only
 from tests import _PATH_DATASETS, seed_everything, load_dotenv, FinetuningScheduler, get_fts, Trainer
@@ -39,9 +43,12 @@ from tests.parity_acceptance.test_it_cli import TEST_CONFIGS_CLI_PARITY
 from tests.base_defaults import BaseCfg
 from tests.parity_acceptance.test_it_l import CoreCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg
+from tests.utils import kwargs_from_cfg_obj
+
 from tests.unit.cfg_aliases import (TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg,
     LightningLlama3DebugCfg, LightningGemma2DebugCfg,CoreMemProfCfg, CoreGPT2PEFTCfg, CoreGPT2PEFTSeqCfg,
-    CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, CoreSLGPT2, CoreSLCust, LightningSLGPT2, TLMechInterpCfg)
+    CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, CoreSLGPT2, CoreSLGPT2Analysis, CoreSLCust, LightningSLGPT2,
+    CoreSLGPT2LogitDiffsSAE, TLMechInterpCfg)
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
 
@@ -70,9 +77,32 @@ class FixtPhase(IntEnum):
     setup: int = auto()
     configure_optimizers: int = auto()
 
+class RunPhase(IntEnum):
+    cfgonly: int = auto()
+    initrunner: int = auto()
+    runanalysis: int = auto()
+
 # we make the fixture phases an IntEnum to enable explicit definition of phase order
 # we then map the enum values to their string representations for use in generated fixture names
 PHASE_STR = {v: v.name for v in FixtPhase.__members__.values()}
+RUN_PHASE_STR = {v: v.name for v in RunPhase.__members__.values()}
+
+# Namedtuple to encapsulate both FixtPhase and RunPhase
+FixtRunPhase = namedtuple('FixtRunPhase', ['fixt_phase', 'run_phase'])
+
+# Hierarchical fixture dataclasses
+@dataclass(kw_only=True)
+class ITSessionFixture:
+    """Base dataclass for IT session fixtures."""
+    it_session: ITSession | None
+    test_cfg: BaseCfg | None
+
+@dataclass(kw_only=True)
+class AnalysisSessionFixture(ITSessionFixture):
+    """Dataclass for analysis session fixtures that extends ITSessionFixture."""
+    result: AnalysisStore | Dict[AnalysisStore]= None
+    runner: AnalysisRunner = None
+    run_config: Dict | AnalysisRunnerCfg = None
 
 # TODO: switch to namedtuple if not subclassing this in the future
 @dataclass(kw_only=True)
@@ -102,6 +132,12 @@ FIXTURE_CFGS = {
     "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function", variants={"it_session": [FixtPhase.setup]}),
     "sl_gpt2": FixtureCfg(test_cfg=CoreSLGPT2, variants={"it_session": [FixtPhase.initonly],
                                                          "it_session_cfg": [FixtPhase.cfgonly]}),
+    "sl_gpt2_analysis": FixtureCfg(test_cfg=CoreSLGPT2Analysis,
+                                   variants={"it_session": [FixtPhase.initonly, FixtPhase.setup]}),
+    "sl_gpt2_logit_diffs_sae": FixtureCfg(test_cfg=CoreSLGPT2LogitDiffsSAE,
+                                          scope="session",
+                                          variants={"analysis_session": [FixtRunPhase(FixtPhase.setup,
+                                                                                      RunPhase.runanalysis)]}),
     "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg, variants={"it_session": [FixtPhase.setup]}),
 }
 
@@ -153,39 +189,126 @@ def session_fixture_hook_exec(it_s, init_key: FixtPhase):
             _call_itmodule_hook(it_s.module, hook_name="configure_optimizers",
                                 hook_msg="initializing optimizers and schedulers", connect_output=True)
 
+def parse_phase(phase):
+    """Parse fixture and run phases from a phase object.
+
+    Args:
+        phase: Either a FixtRunPhase tuple or a FixtPhase enum
+
+    Returns:
+        Tuple of (fixt_phase, run_phase, phase_str)
+    """
+    if isinstance(phase, FixtRunPhase):
+        fixt_phase, run_phase = phase.fixt_phase, phase.run_phase
+        phase_str = f"{PHASE_STR[fixt_phase]}_{RUN_PHASE_STR[run_phase]}"
+    else:
+        fixt_phase = phase
+        run_phase = RunPhase.cfgonly
+        phase_str = PHASE_STR[fixt_phase]
+
+    return fixt_phase, run_phase, phase_str
+
+def setup_fixture_env(config_key):
+    """Setup common environment for fixtures.
+
+    Args:
+        config_key: The key to lookup in FIXTURE_CFGS
+
+    Returns:
+        The test session configuration class
+    """
+    load_dotenv()  # load env vars from .env file
+    return FIXTURE_CFGS[config_key].test_cfg
+
+def runner_fixture_init(sess_fixture, fixt_cfg, run_phase: RunPhase):
+    """Initialize the runner and optionally run analysis based on the RunPhase.
+
+    Args:
+        sess_fixture: The IT session fixture
+        fixt_cfg: The fixture configuration containing analysis parameters
+        run_phase: Phase determining what to initialize/execute
+
+    Returns:
+        Tuple of (result, runner, run_config)
+    """
+    # Extract configuration parameters
+    run_config = kwargs_from_cfg_obj(AnalysisRunnerCfg, fixt_cfg, base_kwargs={"it_session": sess_fixture})
+
+    # If we're just configuring, return the config dictionary only
+    if run_phase.value <= RunPhase.cfgonly.value:
+        return None, None, run_config
+
+    # Create runner if phase is at least initrunner
+    runner = AnalysisRunner(run_cfg=run_config)
+
+    # Run analysis if phase is at least runanalysis
+    result = None
+    if run_phase.value >= RunPhase.runanalysis.value:
+        result = runner.run_analysis()
+
+    return result, runner, run_config
+
+def analysis_session_fixture_factory(config_key, phase):
+    @pytest.fixture(scope=FIXTURE_CFGS[config_key].scope)
+    def get_analysis_session(tmp_path_factory):
+        test_sess_config = setup_fixture_env(config_key)
+
+        fixt_phase, run_phase, phase_str = parse_phase(phase)
+
+        instantiated_test_cfg = test_sess_config()
+        it_s = config_modules(instantiated_test_cfg, f"{config_key}_{phase_str}_it_session_fixture", {},
+                             tmp_path_factory.mktemp(f"{config_key}_{phase_str}_it_session_fixture"), {}, False)
+        session_fixture_hook_exec(it_s, fixt_phase)
+        result, runner, run_config = runner_fixture_init(it_s, instantiated_test_cfg, run_phase)
+
+        # note we copy a reference to the uninitialized original test session config to the fixture
+        yield AnalysisSessionFixture(result=result, it_session=it_s, runner=runner, run_config=run_config,
+                                     test_cfg=deepcopy(test_sess_config))
+    return get_analysis_session
+
 def it_session_fixture_factory(config_key, phase):
     @pytest.fixture(scope=FIXTURE_CFGS[config_key].scope)
     def get_it_session(tmp_path_factory):
-        load_dotenv()  # load env vars from .env file # TODO: make a diff fixture?
-        test_sess_config = FIXTURE_CFGS[config_key].test_cfg
-        it_s = config_modules(test_sess_config(), f"{config_key}_{PHASE_STR[phase]}_it_session_fixture", {},
-                              tmp_path_factory.mktemp(f"{config_key}_{PHASE_STR[phase]}_it_session_fixture"), {}, False)
+        test_sess_config = setup_fixture_env(config_key)
+        phase_str = PHASE_STR[phase]
+        it_s = config_modules(test_sess_config(), f"{config_key}_{phase_str}_it_session_fixture", {},
+                              tmp_path_factory.mktemp(f"{config_key}_{phase_str}_it_session_fixture"), {}, False)
         session_fixture_hook_exec(it_s, phase)
-        setattr(it_s, 'fixt_test_cfg', deepcopy(test_sess_config))
-        yield it_s
+        yield ITSessionFixture(it_session=it_s, test_cfg=deepcopy(test_sess_config))
     return get_it_session
 
 def it_session_cfg_fixture_factory(config_key):
     @pytest.fixture(scope=FIXTURE_CFGS[config_key].scope)
     def get_it_session_cfg(tmp_path_factory):
-        load_dotenv()  # load env vars from .env file # TODO: make a diff fixture?
-        test_sess_config = FIXTURE_CFGS[config_key].test_cfg
+        test_sess_config = setup_fixture_env(config_key)
         yield config_modules(test_sess_config(), f"{config_key}_it_session_cfg_fixture", {},
                              tmp_path_factory.mktemp(f"{config_key}_it_session_cfg_fixture"), {}, False, True)
     return get_it_session_cfg
 
 def gen_fixture(fixt_type, fixt_key, phase):
-    args = (fixt_key, phase)
+    if isinstance(phase, FixtRunPhase):
+        fixt_phase, run_phase = phase.fixt_phase, phase.run_phase
+        phase_str = f"{PHASE_STR[fixt_phase]}_{RUN_PHASE_STR[run_phase]}"
+    else:
+        fixt_phase = phase
+        run_phase = None
+        phase_str = PHASE_STR[fixt_phase]
+
+    args = (fixt_key, phase)  # Default args
+
     if fixt_type == "it_session":
-        name = f"get_it_session__{fixt_key}__{PHASE_STR[phase]}"
+        name = f"get_it_session__{fixt_key}__{phase_str}"
         factory = it_session_fixture_factory
     elif fixt_type == "it_module":
-        name = f"get_it_module__{fixt_key}__{PHASE_STR[phase]}"
+        name = f"get_it_module__{fixt_key}__{phase_str}"
         factory = module_fixture_factory
     elif fixt_type == "it_session_cfg":
         name = f"get_it_session_cfg__{fixt_key}"
         factory = it_session_cfg_fixture_factory
         args = (fixt_key,)
+    elif fixt_type == "analysis_session":
+        name = f"get_analysis_session__{fixt_key}__{phase_str}"
+        factory = analysis_session_fixture_factory
     else:
         raise NotImplementedError
     globals()[name] = factory(*args)
@@ -272,7 +395,8 @@ def cli_test_configs(cli_test_file_env):
     test_config_files = write_cli_config_files(test_cli_cfg_files, experiments_base)
     sess_paths = Path(experiments_base), Path(test_config_files["global_debug"])
     # we specify a set of CLI test configurations (GEN_CLI_CFGS) to drive our CLI configuration file generation
-    test_keys = ((CLI_EXP, c.alias, c.cfg.debug_mode) for cfg in GEN_CLI_CFGS for c in cfg)
+    test_keys = ((CLI_EXP, c.alias, c.cfg.debug_mode)
+                 for cfg in GEN_CLI_CFGS for c in cfg)
     EXPERIMENT_CFG_SETS = gen_experiment_cfg_sets(test_keys=test_keys, sess_paths=sess_paths)
     yield EXPERIMENT_CFG_SETS
 
@@ -322,8 +446,8 @@ def gpt2_ft_schedules(tmpdir_factory, fts_patch_env, get_it_session__l_gpt2__set
     # for simplicity, initially only running FTS non-distributed tests
     tmpdir = tmpdir_factory.mktemp("test_fts_schedules")
     rank = getattr(rank_zero_only, "rank", 0)
-    models = {"l_gpt2": deepcopy(get_it_session__l_gpt2__setup.module),
-              "l_tl_gpt2": deepcopy(get_it_session__l_tl_gpt2__setup.module)}
+    models = {"l_gpt2": deepcopy(get_it_session__l_gpt2__setup.it_session.module),
+              "l_tl_gpt2": deepcopy(get_it_session__l_tl_gpt2__setup.it_session.module)}
     test_schedules = defaultdict(dict)
     for i, (model_key, model) in enumerate(models.items()):
         trainer = Trainer(default_root_dir=tmpdir, callbacks=callbacks, devices=1)
@@ -422,6 +546,30 @@ def restore_env_variables():
     allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)
     assert not leaked_vars, f"test is leaking environment variable(s): {set(leaked_vars)}"
+
+@pytest.fixture(scope="function", autouse=True)
+def restore_grad_enabled_state():
+    """Ensures that the PyTorch grad_enabled state gets reset to its default (True) in each test.
+
+    This fixture detects and fixes "leaks" in the PyTorch gradient tracking state that might affect other tests. For
+    example, if a test calls torch.set_grad_enabled(False) without restoring it after, subsequent tests might
+    unexpectedly run without gradient tracking enabled.
+    """
+    default_grad_enabled = True  # The PyTorch default is True
+    initial_grad_enabled = torch.is_grad_enabled()
+    yield
+    final_grad_enabled = torch.is_grad_enabled()
+
+    if final_grad_enabled != initial_grad_enabled:
+        # Reset to the initial state
+        torch.set_grad_enabled(initial_grad_enabled)
+        # If the final state isn't the expected default, that's suspicious
+        if initial_grad_enabled != default_grad_enabled:
+            pytest.fail(f"Test started with non-default torch.is_grad_enabled() state: {initial_grad_enabled}")
+        else:
+            pytest.fail(f"Test is leaking torch.is_grad_enabled() state:\
+                         changed from {initial_grad_enabled} to {final_grad_enabled}")
+
 
 @pytest.fixture(scope="function", autouse=True)
 def teardown_process_group():

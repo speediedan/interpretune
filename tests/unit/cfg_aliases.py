@@ -2,11 +2,17 @@ from collections.abc import Sequence
 from copy import deepcopy
 from enum import auto
 from dataclasses import dataclass, field
+from typing import Iterable, Union
 
+import interpretune as it
 from interpretune.protocol import Adapter, AutoStrEnum
-from interpretune.config import HFFromPretrainedConfig, GenerativeClassificationConfig, ITLensCustomConfig
+from interpretune.config import (HFFromPretrainedConfig, GenerativeClassificationConfig, ITLensCustomConfig,
+                                TLensGenerationConfig, AutoCompConfig, ITLensFromPretrainedNoProcessingConfig,
+                                SAELensFromPretrainedConfig, AnalysisCfg)
 from interpretune.extensions import DebugLMConfig, MemProfilerCfg
-from tests.base_defaults import BaseAugTest, BaseCfg
+from interpretune.analysis import SAEAnalysisTargets, AnalysisOp
+from it_examples.experiments.rte_boolq import RTEBoolqEntailmentMapping
+from tests.base_defaults import BaseAugTest, BaseCfg, AnalysisBaseCfg
 from tests.parity_acceptance.cfg_aliases import parity_cli_cfgs, mod_initargs, CLI_TESTS
 from tests.parity_acceptance.test_it_tl import TLParityCfg
 from tests.parity_acceptance.test_it_cli import CLICfg
@@ -127,6 +133,55 @@ class CoreSLGPT2(BaseCfg):
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
     # force_prepare_data: Optional[bool] = True  # sometimes useful to enable for test debugging
+
+@dataclass(kw_only=True)
+class CoreSLGPT2Analysis(AnalysisBaseCfg):
+    phase: str | None = "analysis"
+    model_src_key: str | None = "gpt2"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
+    generative_step_cfg: GenerativeClassificationConfig = field(
+        default_factory=lambda: GenerativeClassificationConfig(
+            enabled=True,
+            lm_generation_cfg=TLensGenerationConfig(max_new_tokens=1)
+        )
+    )
+    sae_analysis_targets: SAEAnalysisTargets = field(
+        default_factory=lambda: SAEAnalysisTargets(
+            sae_release="gpt2-small-hook-z-kk",
+            target_layers=[9, 10]
+        )
+    )
+    hf_from_pretrained_cfg: HFFromPretrainedConfig = field(
+        default_factory=lambda: HFFromPretrainedConfig(
+            pretrained_kwargs={'torch_dtype': 'float32'},
+            model_head='transformers.GPT2LMHeadModel'
+        )
+    )
+    tl_cfg: ITLensFromPretrainedNoProcessingConfig = \
+        field(default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(model_name="gpt2-small",
+                                                                             default_padding_side='left'))
+    sae_cfgs: list = field(default_factory=lambda: [])
+    auto_comp_cfg: AutoCompConfig = field(default_factory=lambda: AutoCompConfig(
+        module_cfg_name='RTEBoolqConfig', module_cfg_mixin=RTEBoolqEntailmentMapping))
+    # analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = \
+    #       (AnalysisCfg(op=it.logit_diffs_sae, save_prompts=True, save_tokens=True),)
+    # TODO: customize these cache paths for testing efficiency
+    # cache_dir: Optional[str] = None
+    # op_output_dataset_path: Optional[str] = None
+    # force_prepare_data: Optional[bool] = True  # sometimes useful to enable for test debugging
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Dynamically generate sae_cfgs from sae_targets.sae_fqns
+        if self.sae_analysis_targets and hasattr(self.sae_analysis_targets, 'sae_fqns'):
+            self.sae_cfgs = [SAELensFromPretrainedConfig(release=sae_fqn.release, sae_id=sae_fqn.sae_id)
+                            for sae_fqn in self.sae_analysis_targets.sae_fqns]
+
+@dataclass(kw_only=True)
+class CoreSLGPT2LogitDiffsSAE(CoreSLGPT2Analysis):
+    analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = \
+          (AnalysisCfg(op=it.logit_diffs_sae, save_prompts=False, save_tokens=False),)
+
 
 @dataclass(kw_only=True)
 class CoreSLCust(BaseCfg):

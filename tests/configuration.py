@@ -40,14 +40,17 @@ def apply_itdm_test_cfg(base_itdm_cfg: ITDataModuleConfig, test_cfg: BaseCfg, **
 
 def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: Optional[StrOrPath] = None) -> ITConfig:
     test_cfg_override_attrs = ["memprofiler_cfg", "debug_lm_cfg", "cust_fwd_kwargs", "tl_cfg", "model_cfg", "sae_cfgs",
-                               "hf_from_pretrained_cfg", "generative_step_cfg", "add_saes_on_init"]
+                               "hf_from_pretrained_cfg", "generative_step_cfg", "add_saes_on_init", "auto_comp_cfg",
+                               "sae_analysis_targets", "analysis_cfgs", "sae_cfgs"]
     test_it_cfg = deepcopy(base_it_cfg)
     for attr in test_cfg_override_attrs:
-        if getattr(test_cfg, attr):
+        if hasattr(test_cfg, attr) and getattr(test_cfg, attr) is not None:
             test_it_cfg.__dict__.update({attr: getattr(test_cfg, attr)})
     if core_log_dir:
         test_it_cfg.__dict__.update({'core_log_dir': core_log_dir})
-    return configure_device_precision(test_it_cfg, test_cfg.device_type, test_cfg.precision)
+    it_cfg = configure_device_precision(test_it_cfg, test_cfg.device_type, test_cfg.precision)
+    it_cfg.__post_init__()  # re-execute post-init logic since we may have changed the constituent cfgs manually
+    return it_cfg
 
 def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> Dict[str, Any]:
     # TODO: As we accommodate many different device/precision setting sources at the moment, it may make sense
@@ -117,7 +120,7 @@ def gen_session_cfg(test_cfg, test_alias, expected_results, tmp_path, prewrapped
 
 def config_modules(test_cfg, test_alias, expected_results, tmp_path,
                    prewrapped_modules: Optional[Dict[str, Any]] = None, state_log_mode: bool = False,
-                   cfg_only: bool = False) -> ITSession:
+                   cfg_only: bool = False) -> ITSessionConfig | ITSession:
     if Adapter.lightning in test_cfg.adapter_ctx:  # allow Lightning to set env vars
         seed_everything(1, workers=True)
     cuda_reset()
