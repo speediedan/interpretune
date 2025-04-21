@@ -86,7 +86,7 @@ class BaseConfigImpl:
 
     def _create_experiment_dir(self) -> None:
         # we only want to create the core experiment-specific dir for frameworks that aren't adding their own
-        if getattr(self._it_state, '_log_dir', None):
+        if getattr(self._it_state, '_log_dir', None) is not None:
             self._it_state._log_dir = self._it_state._log_dir / self._it_state._init_hparams['experiment_id']
             self._it_state._log_dir.mkdir(exist_ok=True, parents=True)
 

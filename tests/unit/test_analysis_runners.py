@@ -18,7 +18,7 @@ class TestAnalysisRunner:
         "session_fixture, analysis_cfgs",
         [
             pytest.param("get_it_session__sl_gpt2_analysis__setup", (AnalysisCfg(output_schema=it.sae_correct_acts),)),
-            pytest.param("get_analysis_session__sl_gpt2_logit_diffs_sae__setup_runanalysis", None),
+            pytest.param("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis", None),
         ],
         ids=[#"api_generated_step",
              "manual_step",

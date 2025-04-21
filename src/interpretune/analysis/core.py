@@ -4,7 +4,7 @@ from typing import Literal, NamedTuple, Optional, Any, Callable, Sequence, Union
 from types import MappingProxyType
 import os
 from pathlib import Path
-from copy import copy
+from copy import deepcopy
 
 import torch
 from torch._dynamo.utils import is_namedtuple_cls, namedtuple_fields
@@ -27,6 +27,9 @@ class SAEAnalysisDict(dict):
     """Dictionary for SAE-specific data where values must be torch.Tensor or list[torch.Tensor]."""
 
     def __setitem__(self, key: str, value: torch.Tensor | Sequence[torch.Tensor] ) -> None:
+        if value is None:
+            super().__setitem__(key, None)
+            return
         # Handle namedtuple-like torch.return_types.<op> objects
         if not isinstance(value, (torch.Tensor, list)):
             if is_namedtuple_cls(type(value)):
@@ -297,11 +300,11 @@ class AnalysisStore:
 
         load_dataset_kwargs = dict(split=split, streaming=streaming, trust_remote_code=dataset_trust_remote_code)
 
-        if isinstance(dataset, (str, os.PathLike)):
+        if isinstance(dataset, (str, Path)):
             dataset_path = os.path.abspath(str(dataset))
             if self.op_output_dataset_path is not None:
-                op_output_abs = os.path.abspath(self.op_output_dataset_path)
-                if dataset_path == op_output_abs:  # TODO: consider conditionally allowing overlap here
+                # Only consider conflict if raw paths match
+                if str(dataset) == self.op_output_dataset_path:
                     raise ValueError("The dataset path and op_output_dataset_path must not overlap.")
             self.dataset = load_dataset(dataset_path, **load_dataset_kwargs)
         else:
@@ -358,11 +361,11 @@ class AnalysisStore:
             trust_remote_code=self.dataset_trust_remote_code
         )
 
-        if isinstance(dataset, (str, os.PathLike)):
+        if isinstance(dataset, (str, Path)):
             dataset_path = os.path.abspath(str(dataset))
             if self.op_output_dataset_path:
-                op_output_abs = os.path.abspath(self.op_output_dataset_path)
-                if dataset_path == op_output_abs:
+                # Compare raw paths to detect overlap
+                if str(dataset) == self.op_output_dataset_path:
                     raise ValueError("The dataset path and op_output_dataset_path must not overlap.")
             self.dataset = load_dataset(dataset_path, **load_dataset_kwargs)
         else:
@@ -430,10 +433,8 @@ class AnalysisStore:
         Returns:
             New AnalysisStore with only selected columns
         """
-        selected_dataset = self.dataset.select_columns(column_names)
-        new_store = copy.copy(self)
-        new_store.dataset = selected_dataset
-        return new_store
+        self.dataset = self.dataset.select_columns(column_names)
+        return self
 
     def __getattr__(self, name: str) -> Any:
         """Allow accessing dataset columns and attributes.
@@ -630,6 +631,29 @@ class AnalysisStore:
                     template="ggplot2",
                     width=1000
                 ).update_layout(showlegend=False).show()
+
+    def __deepcopy__(self, memo):
+        """Deep copy the AnalysisStore, using memo to avoid recursion and handling non-deepcopyable attributes.
+
+        Special care is taken to avoid triggering __getattr__ recursion on MagicMock or similar objects.
+        """
+        if id(self) in memo:
+            return memo[id(self)]
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            try:
+                if k == "op_output_dataset_path" and v:
+                    # Append _<objectid> to the path string
+                    new_path = f"{v}_{id(result)}"
+                    setattr(result, k, new_path)
+                else:
+                    setattr(result, k, deepcopy(v, memo))
+            except Exception:
+                rank_zero_warn(f"Failed to deepcopy attribute {k} of type {type(v).__name__}. Skipping.")
+        return result
+
 
 def default_sae_id_factory_fn(layer: int, prefix_pat: str = "blocks", suffix_pat: str = "hook_z") -> str:
     return ".".join([prefix_pat, str(layer), suffix_pat])

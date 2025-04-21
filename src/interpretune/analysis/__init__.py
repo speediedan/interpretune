@@ -3,9 +3,10 @@ from datasets.formatting import _register_formatter
 
 
 from interpretune.analysis.ops import ColCfg, OpSchema, AnalysisBatch, DISPATCHER, AnalysisOp
-from interpretune.analysis.core import (AnalysisStore, SAEAnalysisTargets, LatentMetrics, ActivationSumm,
-                                        PredSumm, compute_correct, base_vs_sae_logit_diffs, schema_to_features,
-                                        latent_metrics_scatter, _make_simple_cache_hook, resolve_names_filter)
+from interpretune.analysis.core import (AnalysisStore, SAEAnalysisTargets, SAEAnalysisDict, LatentMetrics,
+                                        ActivationSumm, PredSumm, compute_correct, base_vs_sae_logit_diffs,
+                                        schema_to_features, latent_metrics_scatter, _make_simple_cache_hook,
+                                        resolve_names_filter)
 from interpretune.analysis.formatters import ITAnalysisFormatter
 from interpretune.protocol import (SAEFqn, AnalysisBatchProtocol, AnalysisOpProtocol, AnalysisStoreProtocol,
                                    AnalysisCfgProtocol)
@@ -21,6 +22,7 @@ __all__ = [
     "schema_to_features",
     "_make_simple_cache_hook",
     "resolve_names_filter",
+    "SAEAnalysisDict",
 
     # Metric Containers
     "LatentMetrics",
