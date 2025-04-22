@@ -133,6 +133,7 @@ exclude = [
     "*.egg",
     "build",
     "temp",
+    ".github/prompts",
 ]
 
 output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff release, using `output-format` instead.

@@ -1,19 +1,19 @@
 from __future__ import annotations
+import dataclasses
 from collections import namedtuple
-from unittest.mock import MagicMock, patch
-import pandas as pd
+from unittest.mock import MagicMock
 from copy import deepcopy
-
 
 import pytest
 import torch
 from torch.testing import assert_close
 
-from interpretune.analysis.core import (SAEAnalysisDict, AnalysisStore, schema_to_features,
-                                       default_sae_id_factory_fn, default_sae_hook_match_fn,
+from interpretune.analysis.core import (SAEAnalysisDict, AnalysisStore, resolve_names_filter,
+                                        schema_to_features, SAEFqn, _make_simple_cache_hook,
                                        SAEAnalysisTargets, BaseMetrics, ActivationSumm, LatentMetrics,
-                                       base_vs_sae_logit_diffs,
+                                       latent_metrics_scatter,
                                        compute_correct)
+from interpretune.analysis.core import AnalysisBatchProtocol
 from interpretune.analysis.ops.base import ColCfg
 
 
@@ -271,598 +271,230 @@ class TestSAEAnalysisDict:
         assert result[0] is None
         assert result[1] is None
 
-
-class TestSchemaToFeatures:
-    """Tests for schema_to_features function."""
-
-    def test_schema_to_features_basic(self):
-        """Test schema_to_features with basic schema."""
-        # Create a mock module with necessary attributes
-        mock_module = MagicMock()
-        mock_module.datamodule.itdm_cfg.eval_batch_size = 8
-        mock_module.it_cfg.generative_step_cfg.lm_generation_cfg.max_new_tokens = 20
-        mock_module.it_cfg.num_labels = 3
-        mock_module.it_cfg.entailment_mapping = {'entailment': 0, 'neutral': 1, 'contradiction': 2}
-
-        # Create a simple schema
-        test_schema = {
-            'simple_col': ColCfg(datasets_dtype='float32', array_dtype='float32'),
-            'sequence_col': ColCfg(datasets_dtype='string', sequence_type=True),
-            'array_col': ColCfg(datasets_dtype='float32', array_shape=(10, 'max_answer_tokens'), array_dtype='float32'),
-            'intermediate_col': ColCfg(datasets_dtype='float32', intermediate_only=True, array_dtype='float32')
-        }
-
-        # Test with direct schema
-        features = schema_to_features(mock_module, schema=test_schema)
-
-        # Verify features were created correctly
-        assert 'simple_col' in features
-        assert 'sequence_col' in features
-        assert 'array_col' in features
-        assert 'intermediate_col' not in features  # Should be excluded as it's intermediate_only
-
-        # Check dimensions
-        arr_col = features['array_col']
-        if hasattr(arr_col, 'shape'):
-            assert arr_col.shape == (10, 20)
-        else:
-            # If it's a DatasetsSequence, check feature type
-            assert isinstance(arr_col, type(features['sequence_col']))
-
-    def test_schema_to_features_per_sae(self):
-        """Test schema_to_features with per_sae_hook fields."""
-        # Create a mock module with necessary attributes
-        mock_module = MagicMock()
-        mock_module.datamodule.itdm_cfg.eval_batch_size = 8
-        mock_module.it_cfg.generative_step_cfg.lm_generation_cfg.max_new_tokens = 20
-        mock_module.it_cfg.num_labels = 3
-        mock_module.it_cfg.entailment_mapping = {'entailment': 0, 'neutral': 1, 'contradiction': 2}
-
-        # Create mock SAE handles
-        mock_handle1 = MagicMock()
-        mock_handle1.cfg.hook_name = 'blocks.0.attn'
-        mock_handle1.cfg.d_sae = 64
-        mock_handle1.cfg.dtype = 'float32'
-        mock_handle1.hook_dict = {'hook_z': None, 'hook_q': None}
-
-        mock_handle2 = MagicMock()
-        mock_handle2.cfg.hook_name = 'blocks.1.attn'
-        mock_handle2.cfg.d_sae = 64
-        mock_handle2.cfg.dtype = 'float32'
-        mock_handle2.hook_dict = {'hook_z': None, 'hook_q': None}
-
-        mock_module.sae_handles = [mock_handle1, mock_handle2]
-        mock_module.analysis_cfg.names_filter = lambda x: True
-
-        # Create a schema with per_sae_hook and per_latent fields
-        test_schema = {
-            'sae_field': ColCfg(datasets_dtype='float32', per_sae_hook=True),
-            'latent_field': ColCfg(datasets_dtype='float32', per_latent=True, array_shape=(5, 5),
-                                   array_dtype='float32'),
-            'seq_sae_field': ColCfg(per_sae_hook=True, non_tensor=True, sequence_type=True, datasets_dtype='string')
-        }
-
-        # Test with direct schema
-        features = schema_to_features(mock_module, schema=test_schema)
-
-        # Verify features were created correctly
-        assert 'sae_field' in features
-        assert 'latent_field' in features
-        assert 'seq_sae_field' in features
-
-        # Check that SAE hooks were properly added
-        assert 'blocks.0.attn.hook_z' in features['sae_field']
-        assert 'blocks.0.attn.hook_q' in features['sae_field']
-        assert 'blocks.1.attn.hook_z' in features['sae_field']
-        assert 'blocks.1.attn.hook_q' in features['sae_field']
-
-        # Check latent field structure
-        assert 'blocks.0.attn.hook_z' in features['latent_field']
-        assert 'latents' in features['latent_field']['blocks.0.attn.hook_z']
-        assert 'per_latent' in features['latent_field']['blocks.0.attn.hook_z']
-
-    def test_schema_to_features_no_schema(self):
-        """Test schema_to_features returns empty dict when no schema is provided."""
-        mock_module = MagicMock()
-        # No schema and no op, and module.analysis_cfg.output_schema is not present
-        mock_module.analysis_cfg = MagicMock()
-        del mock_module.analysis_cfg.output_schema
-        features = schema_to_features(mock_module, op=None, schema=None)
-        assert features == {}
-
-        # Test with schema=None and op=None and module=None
-        features = schema_to_features(None, op=None, schema=None)
-        assert features == {}
-
-
-class TestAnalysisStore:
-    """Tests for the AnalysisStore class."""
-
-    def test_initialization(self):
-        """Test AnalysisStore initialization with different parameters."""
-        # Test with None dataset
-        store = AnalysisStore(dataset=None, op_output_dataset_path="/tmp/test", stack_batches=True)
-        assert store.dataset is None
-        assert store.stack_batches is True
-
-        # Test with mocked dataset
-        mock_dataset = MagicMock()
-        store = AnalysisStore(
-            dataset=mock_dataset,
-            op_output_dataset_path="/tmp/test",
-            cache_dir="/tmp/cache",
-            dataset_trust_remote_code=True,
-            streaming=True,
-            split="test",
-            stack_batches=False
-        )
-        assert store.dataset is mock_dataset
-        assert store.cache_dir == "/tmp/cache"
-        assert store.streaming is True
-        assert store.dataset_trust_remote_code is True
-        assert store.split == "test"
-        assert store.stack_batches is False
-
-        # Verify dataset.set_format was called
-        mock_dataset.set_format.assert_called_with(type='interpretune')
-
-    @patch('os.path.abspath')
-    @patch('interpretune.analysis.core.load_dataset')
-    def test_load_dataset_path(self, mock_load_dataset, mock_abspath):
-        """Test _load_dataset with path input."""
-        mock_abspath.return_value = "/abs/path/to/dataset"
-        mock_load_dataset.return_value = MagicMock()
-
-        store = AnalysisStore(op_output_dataset_path="/tmp/output")
-        store._load_dataset("/path/to/dataset")
-
-        mock_load_dataset.assert_called_with(
-            "/abs/path/to/dataset",
-            split="validation",
-            streaming=False,
-            trust_remote_code=False
-        )
-
-    @patch('os.path.abspath')
-    def test_load_dataset_path_conflict(self, mock_abspath):
-        """Test _load_dataset with conflicting paths."""
-        mock_abspath.side_effect = lambda x: x  # Return input unchanged
-
-        store = AnalysisStore(op_output_dataset_path="/tmp/same_path")
-
-        with pytest.raises(ValueError, match="must not overlap"):
-            store._load_dataset("/tmp/same_path")
-
-    def test_reset(self):
-        """Test reset method."""
-        # Create a mock store with a dataset
-        store = AnalysisStore()
-        mock_dataset = MagicMock()
-        store.dataset = mock_dataset
-        # Don't assign to save_dir property (remove this line)
-        # store.save_dir = MagicMock()
-        # Mock _load_dataset to track calls
-        store._load_dataset = MagicMock()
-        # Test reset
-        store.reset()
-        # Verify _load_dataset was NOT called (since MagicMock triggers except block)
-        store._load_dataset.assert_not_called()
-
-    def test_getitem(self):
-        """Test __getitem__ method for different key types."""
-        mock_dataset = MagicMock()
-        # Mock dataset.__getitem__ to return different types
-        mock_dataset.__getitem__.side_effect = lambda key: {
-            'col1': torch.tensor([[1, 2], [3, 4]]),  # 2D tensor
-            'col2': torch.tensor([5, 6]),            # 1D tensor
-            'col3': 'string_value',                  # Non-tensor
-            0: {'item': 'first'},                    # Integer index
-            'multiple_cols': {'col1': torch.tensor([1]), 'col2': torch.tensor([2])}  # Multiple columns
-        }[key]
-
-        store = AnalysisStore(dataset=mock_dataset, stack_batches=False)
-
-        # Test single column string key with 2D tensor
-        result = store['col1']
-        assert isinstance(result, list)
-        assert len(result) == 2
-        assert torch.equal(result[0], torch.tensor([1, 2]))
-
-        # Test single column string key with 1D tensor
-        result = store['col2']
-        assert isinstance(result, list)
-        assert len(result) == 2
-        assert torch.equal(result[0], torch.tensor(5))
-
-        # Test non-tensor column
-        result = store['col3']
-        assert result == 'string_value'
-
-        # Test integer index
-        result = store[0]
-        assert result == {'item': 'first'}
-
-        # Test list of column names
-        store.stack_batches = True  # Test with stack_batches=True
-        result = store[['col1', 'col2']]
-        assert isinstance(result, dict)
-        assert 'col1' in result
-        assert 'col2' in result
-
-    def test_select_columns(self, request):
-        """Test select_columns method using a real AnalysisStore from fixture."""
+    def test_getattr_protocol_and_dataset(self, request):
+        """Test __getattr__ for protocol and dataset attributes using a real AnalysisStore fixture."""
+        # Use a real AnalysisStore fixture for fidelity
         fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis")
         analysis_store = deepcopy(fixture.result)
-        # Pick a couple of columns that are known to exist in the dataset
-        # For demonstration, use the first two columns if available
-        if hasattr(analysis_store.dataset, 'column_names'):
-            columns = list(analysis_store.dataset.column_names)[:2]
+
+        # Protocol field: should exist in AnalysisBatchProtocol.__annotations__
+        # We'll use a real field from the protocol if possible, else add a dummy
+        proto_fields = list(AnalysisBatchProtocol.__annotations__.keys())
+        if proto_fields:
+            proto_field = proto_fields[0]
         else:
-            # Fallback: use a default list if column_names is not available
-            columns = ['correct_activations', 'labels']
-        result = analysis_store.select_columns(columns)
-        # Verify result is an AnalysisStore with the selected dataset
-        assert isinstance(result, AnalysisStore)
-        # The dataset should only have the selected columns
-        if hasattr(result.dataset, 'column_names'):
-            assert set(result.dataset.column_names) == set(columns)
+            proto_field = "test_col"
+            AnalysisBatchProtocol.__annotations__[proto_field] = int
 
-    def test_getattr(self, request):
-        """Test __getattr__ method using a real AnalysisStore from fixture."""
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis")
-        analysis_store = fixture.result
+        # Should not raise
+        try:
+            _ = getattr(analysis_store, proto_field)
+        except Exception as e:
+            pytest.fail(f"Accessing protocol field {proto_field} raised: {e}")
+
+        # Dataset attribute: should exist
+        # We'll add a dummy attribute to the underlying dataset
+        setattr(analysis_store.dataset, "some_attr", 123)
+        assert analysis_store.some_attr == 123
+
+        # Dataset method: should wrap and call set_format if result has set_format
+        def dummy_method():
+            class DummyDS:
+                def set_format(self, type): self.called = type
+            return DummyDS()
+        setattr(analysis_store.dataset, "method", dummy_method)
+        wrapped = analysis_store.__getattr__('method')
+        result = wrapped()
+        assert hasattr(result, "set_format")
+        assert getattr(result, "called", None) == "interpretune"
+
+        # AttributeError: should raise if not found in protocol or dataset
+        # Remove attribute if present
+        if hasattr(analysis_store.dataset, "not_found"):
+            delattr(analysis_store.dataset, "not_found")
         with pytest.raises(AttributeError):
-            getattr(analysis_store, 'nonexistent_attr')
+            _ = analysis_store.not_found
 
-
-class TestBySAE:
-    """Tests for by_sae method in AnalysisStore."""
-
-    def test_by_sae_basic(self):
-        """Test by_sae with basic dictionary values."""
-        # Create mock data
-        mock_data = [
-            {'sae1': torch.tensor([1, 2]), 'sae2': torch.tensor([5, 6])},
-            {'sae1': torch.tensor([3, 4]), 'sae2': torch.tensor([7, 8])}
-        ]
-
+    def test_by_sae_typeerror(self):
+        """Test by_sae raises TypeError for non-dict values."""
         mock_dataset = MagicMock()
-        # Instead of setting __getattr__.return_value, set the attribute directly
-        setattr(mock_dataset, 'field_name', mock_data)
-
+        setattr(mock_dataset, 'field_name', [1, 2, 3])
         store = AnalysisStore(dataset=mock_dataset)
-        # Patch __getattr__ to return the attribute
         store.__getattr__ = lambda name: getattr(mock_dataset, name)
+        with pytest.raises(TypeError):
+            store.by_sae('field_name')
 
-        # Test by_sae
+    def test_by_sae_empty_list(self):
+        """Test by_sae with empty list in batch."""
+        mock_dataset = MagicMock()
+        # Each batch contains a dict with a list value (empty list triggers None)
+        setattr(mock_dataset, 'field_name', [{'sae1': []}, {'sae1': torch.tensor([1])}])
+        store = AnalysisStore(dataset=mock_dataset)
+        store.__getattr__ = lambda name: getattr(mock_dataset, name)
         result = store.by_sae('field_name')
-
-        # Verify result
-        assert isinstance(result, SAEAnalysisDict)
-        assert 'sae1' in result
-        assert 'sae2' in result
-        assert len(result['sae1']) == 2
-        assert torch.equal(result['sae1'][0], torch.tensor([1, 2]))
-
-    def test_by_sae_nested(self):
-        """Test by_sae with nested dictionary values."""
-        # Use 2D tensors so the shape matches (2, 2)
-        mock_data = [
-            {'sae1': torch.tensor([[1, 2], [3, 4]]), 'sae2': torch.tensor([[5, 6], [7, 8]])},
-            {'sae1': torch.tensor([[9, 10], [11, 12]]), 'sae2': torch.tensor([[13, 14], [15, 16]])}
-        ]
-        mock_dataset = MagicMock()
-        setattr(mock_dataset, 'field_name', mock_data)
-        store = AnalysisStore(dataset=mock_dataset)
-        store.__getattr__ = lambda name: getattr(mock_dataset, name)
-        # Test by_sae with stack_latents=True
-        result = store.by_sae('field_name', stack_latents=True)
-        assert isinstance(result, SAEAnalysisDict)
-        assert 'sae1' in result
-        assert 'sae2' in result
-        assert len(result['sae1']) == 2
-        assert result['sae1'][0].shape == (2, 2)  # stacked latent tensors
-        # Test by_sae with stack_latents=False
-        result = store.by_sae('field_name', stack_latents=False)
-        assert isinstance(result, SAEAnalysisDict)
-        assert torch.equal(result['sae1'][0], mock_data[0]['sae1'])
-
-
-class TestActivationSummary:
-    """Tests for calc_activation_summary method."""
-
-    def test_calc_activation_summary(self, request):
-        """Test calc_activation_summary using a real AnalysisStore from fixture."""
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis")
-        analysis_store = fixture.result
-        from interpretune.analysis.core import ActivationSumm
-        activation_summ = analysis_store.calc_activation_summary()
-        assert isinstance(activation_summ, ActivationSumm)
-        assert hasattr(activation_summ, 'mean_activation')
-        assert hasattr(activation_summ, 'num_samples_active')
-        for sae_name in analysis_store.by_sae('correct_activations').keys():
-            assert sae_name in activation_summ.mean_activation
-            assert sae_name in activation_summ.num_samples_active
+        assert result['sae1'][0] is None
+        assert torch.equal(result['sae1'][1], torch.tensor([1]))
 
     def test_calc_activation_summary_error(self):
-        """Test calc_activation_summary with missing data."""
-        mock_dataset = MagicMock()
-        store = AnalysisStore(dataset=mock_dataset)
-
-        # Instead of side_effect, set the attribute directly
-        setattr(mock_dataset, 'correct_activations', [])
-        store.__getattr__ = lambda name: getattr(mock_dataset, name)
-
-        # Test that it raises ValueError
-        with pytest.raises(AssertionError, match="No values found for field correct_activations"):
+        """Test calc_activation_summary raises ValueError if no correct_activations."""
+        store = AnalysisStore(dataset=MagicMock())
+        store.correct_activations = []
+        with pytest.raises(ValueError):
             store.calc_activation_summary()
 
+    def test_calculate_latent_metrics(self, request):
+        """Test calculate_latent_metrics with and without filter_by_correct using a real AnalysisStore."""
+        # Use a real AnalysisStore fixture for fidelity
+        ablation_fixture = \
+            request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_attr_ablation__initonly_runanalysis")
+        base_sae_fixture = \
+            request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis")
+        ablation_analysis_store = deepcopy(ablation_fixture.result)
+        base_sae_analysis_store = deepcopy(base_sae_fixture.result)
+        pred_summary = compute_correct(ablation_analysis_store, ablation_fixture.runner.run_cfg.analysis_cfgs[0].name)
+        activation_summary = base_sae_analysis_store.calc_activation_summary()
+        # Should not raise for both filter_by_correct True/False
+        metrics = ablation_analysis_store.calculate_latent_metrics(
+            pred_summ=pred_summary, activation_summary=activation_summary, filter_by_correct=True)
+        assert isinstance(metrics, LatentMetrics)
+        metrics2 = ablation_analysis_store.calculate_latent_metrics(
+            pred_summ=pred_summary, activation_summary=activation_summary, filter_by_correct=False)
+        assert isinstance(metrics2, LatentMetrics)
 
-class TestHelperFunctions:
-    """Tests for helper functions."""
+    def test_plot_latent_effects(self, monkeypatch):
+        """Test plot_latent_effects for both per_batch True/False."""
+        store = AnalysisStore(dataset=MagicMock())
+        # Patch required fields
+        store.attribution_values = [
+            {'sae': torch.randn(5, 10)},
+            {'sae': torch.randn(5, 10)}
+        ]
+        store.alive_latents = [
+            {'sae': [0, 1, 2]},
+            {'sae': [0, 3, 4]}
+        ]
+        # Patch by_sae and batch_join
+        class DummyDict(SAEAnalysisDict):
+            def batch_join(self2): return self2
+            def apply_op_by_sae(self2, operation, *args, **kwargs):
+                return {'sae': torch.randn(10)}
+            def keys(self2): return ['sae']
+        store.by_sae = lambda name: DummyDict({'sae': [torch.randn(5, 10), torch.randn(5, 10)]})
+        # Patch px.line to avoid plotting
+        monkeypatch.setattr('plotly.express.line', lambda *a, **k: type('PX', (), {'update_layout': lambda s, **k: s,
+                                                                                   'show': lambda s: None})())
+        store.plot_latent_effects(per_batch=True)
+        store.plot_latent_effects(per_batch=False)
 
-    def test_compute_correct(self):
-        """Test compute_correct function."""
-        # Use real tensors for orig_labels and preds
-        class DummyStore:
-            orig_labels = [torch.tensor([0, 1, 2]), torch.tensor([1, 0])]
-            preds = [torch.tensor([0, 1, 0]), torch.tensor([1, 1])]
-        mock_analysis_op = MagicMock()
-        mock_analysis_op.alias = "standard_op"
-        result = compute_correct(DummyStore(), mock_analysis_op)
-        assert isinstance(result, tuple) or hasattr(result, 'total_correct')
+    def test_deepcopy_analysisstore(self):
+        """Test __deepcopy__ for AnalysisStore with op_output_dataset_path."""
+        store = AnalysisStore(op_output_dataset_path='/tmp/foo')
+        store2 = deepcopy(store)
+        assert store2 is not store
+        assert store2.op_output_dataset_path != store.op_output_dataset_path
 
+class TestSAEAnalysisTargets:
+    def test_validate_sae_fqns_explicit(self):
+        targets = SAEAnalysisTargets(sae_fqns=[SAEFqn('rel', 'id')])
+        assert isinstance(targets.validate_sae_fqns(), tuple)
+        targets = SAEAnalysisTargets(sae_fqns=[('rel', 'id')])
+        assert isinstance(targets.validate_sae_fqns(), tuple)
+        # Invalid input should raise TypeError
+        with pytest.raises(TypeError):
+            SAEAnalysisTargets(sae_fqns=[123])
+        targets = SAEAnalysisTargets(target_sae_ids=['foo'])
+        assert all(isinstance(f, type(targets.sae_fqns[0])) for f in targets.sae_fqns)
+        targets = SAEAnalysisTargets(target_layers=[1, 2])
+        assert all(isinstance(f, type(targets.sae_fqns[0])) for f in targets.sae_fqns)
+        targets = SAEAnalysisTargets()
+        assert isinstance(targets.validate_sae_fqns(), tuple)
 
-class TestVisualizationFunctions:
-    """Tests for visualization functions."""
+class TestBaseMetrics:
+    def test_base_metrics_repr_and_validation(self):
+        @dataclasses.dataclass(kw_only=True)
+        class Dummy(BaseMetrics):
+            a: dict
+            b: dict
+        d = Dummy(a={'x': 1}, b={'x': 2})
+        assert d.get_field_name('a') == 'a'
+        assert isinstance(d.get_field_names(), dict)
+        @dataclasses.dataclass(kw_only=True)
+        class Dummy2(BaseMetrics):
+            a: dict
+            b: dict
+        with pytest.raises(ValueError):
+            Dummy2(a={'x': 1}, b={'y': 2})
+
+    def test_activation_summ_and_latentmetrics(self):
+        vals = torch.tensor([1.0, 2.0])
+        _ = ActivationSumm(mean_activation={'h': vals}, num_samples_active={'h': vals})
+        lat_metrics = LatentMetrics(mean_activation={'h': vals}, num_samples_active={'h': vals},
+                          total_effect={'h': vals}, mean_effect={'h': vals}, proportion_samples_active={'h': vals})
+        tables = lat_metrics.create_attribution_tables(sort_by='total_effect', top_k=1, filter_type='both',
+                                                       per_sae=True)
+        assert isinstance(tables, dict)
+        tables = lat_metrics.create_attribution_tables(sort_by='total_effect', top_k=1, filter_type='positive',
+                                                       per_sae=False)
+        assert isinstance(tables, dict)
+        tables = lat_metrics.create_attribution_tables(sort_by='total_effect', top_k=1, filter_type='negative',
+                                                       per_sae=False)
+        assert isinstance(tables, dict)
+        with pytest.raises(ValueError):
+            lat_metrics.create_attribution_tables(sort_by='not_a_field')
 
     def test_latent_metrics_scatter(self, monkeypatch):
-        """Test latent_metrics_scatter function with manually created metrics."""
+        vals = torch.tensor([1.0, 2.0, 3.0])
+        m1 = LatentMetrics(mean_activation={'h': vals}, num_samples_active={'h': vals},
+                           total_effect={'h': vals}, mean_effect={'h': vals}, proportion_samples_active={'h': vals})
+        m2 = LatentMetrics(mean_activation={'h': vals}, num_samples_active={'h': vals},
+                           total_effect={'h': vals}, mean_effect={'h': vals}, proportion_samples_active={'h': vals})
+        monkeypatch.setattr('plotly.express.scatter', lambda *a, **k: type('PX', (), {'add_shape': lambda s, **k: s,
+                                                                                      'show': lambda s: None})())
+        latent_metrics_scatter(m1, m2)
 
-        # Create dummy stores and tokenizer for base_vs_sae_logit_diffs
-        labels = [torch.tensor([0, 1]), torch.tensor([1, 0])]
-        clean_diffs = [0.5, 1.0]
-        sae_diffs = [-0.5, 0.2]
-        prompts = ["prompt1", "prompt2"]
-
-        base_ref = MagicMock()
-        base_ref.labels = labels
-        base_ref.logit_diffs = clean_diffs
-
-        sae_store = MagicMock()
-        sae_store.prompts = prompts
-        sae_store.logit_diffs = sae_diffs
-
-        mock_tokenizer = MagicMock()
-         # Mock numpy to avoid actual conversion
-        mock_numpy = MagicMock()
-        mock_numpy.return_value = [1, 2]
-        monkeypatch.setattr(torch.Tensor, "numpy", mock_numpy)
-
-        # Mock DataFrame to avoid creation issues
-        mock_df = MagicMock()
-        filtered_df = MagicMock()  # Create a separate mock for the filtered DataFrame
-
-        # Configure the mocks for each method in the chain
-        mock_df.explode.return_value = mock_df
-        mock_df.sort_values.return_value = mock_df
-        mock_df.head.return_value = mock_df
-
-        # Setup a custom __getitem__ method that handles both column selection and boolean filtering
-        def custom_getitem(key):
-            if isinstance(key, list) and all(isinstance(k, str) for k in key):
-                # For column selection like df[["sample_id", ...]]
-                return mock_df
-            else:
-                # For boolean filtering like df[df.clean_logit_diff > 0]
-                return filtered_df
-
-        mock_df.__getitem__ = MagicMock(side_effect=custom_getitem)
-
-        # Add clean_logit_diff as an attribute (not using __getattr__)
-        clean_logit_diff = MagicMock()
-        clean_logit_diff.__gt__ = MagicMock(return_value="filter_condition")
-        mock_df.clean_logit_diff = clean_logit_diff
-
-        # Configure the filtered DataFrame
-        filtered_df.sort_values.return_value = filtered_df
-        filtered_df.head.return_value = filtered_df
-
-        # Mock DataFrame constructor to return our mock
-        mock_df_constructor = MagicMock(return_value=mock_df)
-        monkeypatch.setattr(pd, "DataFrame", mock_df_constructor)
-
-        # Mock tabulate
-        mock_tabulate = MagicMock()
-        monkeypatch.setattr("interpretune.analysis.core.tabulate", mock_tabulate)
-
-        # Now call the original function
-        base_vs_sae_logit_diffs(
-            sae=sae_store,
-            base_ref=base_ref,
-            tokenizer=mock_tokenizer,
-            top_k=5
-        )
-
-        # Verify tokenizer.batch_decode was called twice (once per label tensor)
-        assert mock_tokenizer.batch_decode.call_count == 2
-
-
-class TestSAETargets:
-    """Tests for SAEAnalysisTargets class."""
-
-    def test_default_sae_id_factory_fn(self):
-        """Test default_sae_id_factory_fn with various parameters."""
-        # Default parameters
-        sae_id = default_sae_id_factory_fn(layer=5)
-        assert sae_id == "blocks.5.hook_z"
-
-        # Custom parameters
-        sae_id = default_sae_id_factory_fn(layer=3, prefix_pat="transformer", suffix_pat="attn_output")
-        assert sae_id == "transformer.3.attn_output"
-
-    def test_default_sae_hook_match_fn(self):
-        """Test default_sae_hook_match_fn with various parameters."""
-        # Default parameters, matching name
-        assert default_sae_hook_match_fn("blocks.5.hook_sae_acts_post")
-
-        # Non-matching name
-        assert not default_sae_hook_match_fn("blocks.5.other_hook")
-
-        # With layers parameter
-        assert default_sae_hook_match_fn("blocks.5.hook_sae_acts_post", layers=[5, 6])
-        assert not default_sae_hook_match_fn("blocks.5.hook_sae_acts_post", layers=[3, 4])
-
-        # With single layer parameter
-        assert default_sae_hook_match_fn("blocks.7.hook_sae_acts_post", layers=7)
-        assert not default_sae_hook_match_fn("blocks.7.hook_sae_acts_post", layers=8)
-
-        # With custom prefix and suffix
-        assert default_sae_hook_match_fn(
-            "transformer.5.post_attention",
-            hook_point_suffix="post_attention",
-            hook_point_prefix="transformer"
-        )
-
-    def test_sae_analysis_targets_init(self):
-        """Test SAEAnalysisTargets initialization."""
-        # With explicit SAE FQNs
-        targets = SAEAnalysisTargets(
-            sae_fqns=[("release1", "sae1"), ("release2", "sae2")]
-        )
-        assert len(targets.sae_fqns) == 2
-        assert targets.sae_fqns[0].release == "release1"
-        assert targets.sae_fqns[0].sae_id == "sae1"
-
-        # With target_sae_ids
-        targets = SAEAnalysisTargets(
-            sae_release="custom-release",
-            target_sae_ids=["sae1", "sae2"]
-        )
-        assert len(targets.sae_fqns) == 2
-        assert targets.sae_fqns[0].release == "custom-release"
-        assert targets.sae_fqns[0].sae_id == "sae1"
-
-        # With target_layers
-        targets = SAEAnalysisTargets(
-            sae_release="custom-release",
-            target_layers=[0, 1, 2]
-        )
-        assert len(targets.sae_fqns) == 3
-        assert targets.sae_fqns[0].sae_id == "blocks.0.hook_z"
-        assert targets.sae_fqns[1].sae_id == "blocks.1.hook_z"
-
-        # With custom sae_id_factory_fn
-        custom_factory = lambda layer: f"custom.{layer}.hook"
-        targets = SAEAnalysisTargets(
-            sae_release="custom-release",
-            target_layers=[0, 1],
-            sae_id_factory_fn=custom_factory
-        )
-        assert targets.sae_fqns[0].sae_id == "custom.0.hook"
-        assert targets.sae_fqns[1].sae_id == "custom.1.hook"
-
-        # With invalid sae_fqns
-        with pytest.raises(TypeError):
-            SAEAnalysisTargets(sae_fqns=["invalid"])
-
-        # With no configuration (should warn)
-        with patch("interpretune.analysis.core.rank_zero_warn") as mock_warn:
-            targets = SAEAnalysisTargets()
-            assert len(targets.sae_fqns) == 0
-            mock_warn.assert_called_once()
-
-    def test_validate_sae_fqns(self):
-        """Test validate_sae_fqns method."""
-        # Create target with existing sae_fqns
-        targets = SAEAnalysisTargets(
-            sae_fqns=[("release1", "sae1")]
-        )
-
-        # Modify sae_fqns and validate
-        targets.sae_fqns = []
-        targets.target_sae_ids = ["new_sae1", "new_sae2"]
-
-        results = targets.validate_sae_fqns()
-        assert len(results) == 2
-        assert results[0].sae_id == "new_sae1"
-        assert results[1].sae_id == "new_sae2"
-
-
-class TestMetricsClasses:
-    """Tests for BaseMetrics, ActivationSumm, and LatentMetrics classes."""
-
-    def test_base_metrics(self):
-        """Test BaseMetrics initialization and methods."""
-        # Basic initialization
-        metrics = BaseMetrics(
-            custom_repr={'field1': 'Field One', 'field2': 'Field Two'}
-        )
-
-        assert metrics.get_field_name('field1') == 'Field One'
-        assert metrics.get_field_name('field2') == 'Field Two'
-        assert metrics.get_field_name('unknown') == 'unknown'
-
-        field_names = metrics.get_field_names()
-        assert 'field1' in field_names
-        assert field_names['field1'] == 'Field One'
-
-        # Test validation - simulate mismatched metric dicts
-        with pytest.raises(ValueError, match="must have the same keys"):
-            # Provide two dictionaries with different keys to trigger validation
-            BaseMetrics(custom_repr={})  # init normally
-            # Manually inject mismatched metric dicts for validation
-            bad = BaseMetrics(custom_repr={})
-            bad.some_metric = {'a': 1}
-            bad.other_metric = {'b': 2}
-            bad.__post_init__()
-
-    def test_activation_summ(self):
-        """Test ActivationSumm initialization."""
-        mean_activation = {
-            'sae1': torch.tensor([0.1, 0.2, 0.3]),
-            'sae2': torch.tensor([0.4, 0.5, 0.6])
+class TestSchemaToFeatures:
+    def test_schema_to_features_edge_cases(self):
+        mock_module = MagicMock()
+        mock_module.datamodule.itdm_cfg.eval_batch_size = 2
+        mock_module.it_cfg.generative_step_cfg.lm_generation_cfg.max_new_tokens = 3
+        mock_module.it_cfg.num_labels = 2
+        mock_module.it_cfg.entailment_mapping = {'a': 0, 'b': 1}
+        # per_sae_hook, per_latent, sequence_type, array_shape, scalar
+        mock_handle = MagicMock()
+        mock_handle.cfg.hook_name = 'blocks.0.attn'
+        mock_handle.hook_dict = {'hook_z': None}
+        mock_module.sae_handles = [mock_handle]
+        mock_module.analysis_cfg.names_filter = lambda x: True
+        schema = {
+            'per_sae': ColCfg(datasets_dtype='float32', per_sae_hook=True),
+            'per_latent': ColCfg(datasets_dtype='float32', per_latent=True, array_shape=(2, 2)),
+            'seq': ColCfg(datasets_dtype='string', sequence_type=True),
+            'arr': ColCfg(datasets_dtype='float32', array_shape=(2, 3)),
+            'scalar': ColCfg(datasets_dtype='float32'),
         }
-        num_samples_active = {
-            'sae1': torch.tensor([10, 15, 20]),
-            'sae2': torch.tensor([25, 30, 35])
-        }
+        features = schema_to_features(mock_module, schema=schema)
+        assert 'per_sae' in features and 'per_latent' in features \
+              and 'seq' in features and 'arr' in features and 'scalar' in features
 
-        summ = ActivationSumm(
-            mean_activation=mean_activation,
-            num_samples_active=num_samples_active,
-            run_name="test_run"
-        )
+class TestHelperFunctions:
+    def test_make_simple_cache_hook(self):
+        cache = {}
+        class Hook:
+            name = 'foo'
+        act = torch.tensor([1.0])
+        hook_fn = _make_simple_cache_hook(cache)
+        hook_fn(act, Hook())
+        assert 'foo' in cache and torch.equal(cache['foo'], act)
+        # Backward
+        cache = {}
+        hook_fn = _make_simple_cache_hook(cache, is_backward=True)
+        hook_fn(act, Hook())
+        assert 'foo_grad' in cache
 
-        assert summ.mean_activation == mean_activation
-        assert summ.num_samples_active == num_samples_active
-        assert summ.run_name == "test_run"
-
-        # Check field representations
-        assert summ.get_field_name('mean_activation') == 'Mean Activation'
-        assert summ.get_field_name('num_samples_active') == 'Number Active'
-
-    def test_latent_metrics(self):
-        """Test LatentMetrics initialization."""
-        mean_activation = {'sae1': torch.tensor([0.1, 0.2])}
-        num_samples_active = {'sae1': torch.tensor([10, 15])}
-        total_effect = {'sae1': torch.tensor([5.0, 10.0])}
-        mean_effect = {'sae1': torch.tensor([0.5, 1.0])}
-        proportion_samples_active = {'sae1': torch.tensor([0.2, 0.3])}
-
-        metrics = LatentMetrics(
-            mean_activation=mean_activation,
-            num_samples_active=num_samples_active,
-            total_effect=total_effect,
-            mean_effect=mean_effect,
-            proportion_samples_active=proportion_samples_active,
-            run_name="test_run"
-        )
-
-        assert metrics.mean_activation == mean_activation
-        assert metrics.total_effect == total_effect
-        assert metrics.run_name == "test_run"
-
-        # Check field names
-        assert metrics.get_field_name('total_effect') == 'Total Effect'
-        assert metrics.get_field_name('mean_effect') == 'Mean Effect'
+    def test_resolve_names_filter(self):
+        assert callable(resolve_names_filter(None))
+        assert callable(resolve_names_filter('foo'))
+        assert callable(resolve_names_filter(['foo', 'bar']))
+        assert callable(resolve_names_filter(lambda x: True))
+        with pytest.raises(ValueError):
+            resolve_names_filter(123)

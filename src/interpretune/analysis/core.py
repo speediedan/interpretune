@@ -16,7 +16,6 @@ from sae_lens.config import HfDataset
 from datasets import Features, Array2D, Value, Array3D, load_dataset
 from datasets import Sequence as DatasetsSequence
 
-import interpretune as it
 from interpretune.protocol import (AnalysisStoreProtocol, AnalysisBatchProtocol, NamesFilter, SAEFqn,
                                    AnalysisCfgProtocol)
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema
@@ -844,7 +843,7 @@ class LatentMetrics(ActivationSumm):
                         }
                         for metric_attr, display_name in metric_names.items():
                             metric_values = getattr(self, metric_attr)
-                            row[display_name] = f"{float(metric_values[hook][idx]):.4f}"
+                            row[display_name] = f"{float(metric_values[h][idx]):.4f}"
                         table_data.append(row)
 
                 if table_data:
@@ -1012,21 +1011,21 @@ def _make_simple_cache_hook(cache_dict: dict, is_backward: bool = False) -> Call
         cache_dict[hook_name] = act.detach()
     return cache_hook
 
-def validate_analysis_order(self):
-    """Validates and potentially reorders analysis operations to ensure dependencies are met.
+# def validate_analysis_order(self):
+#     """Validates and potentially reorders analysis operations to ensure dependencies are met.
 
-    Currently ensures that logit_diffs.sae comes before ablation if ablation is enabled.
-    """
-    # Check if ablation analysis is requested
-    if it.logit_diffs_attr_ablation in self.analysis_ops:
-        # Ensure logit_diffs.sae is included and comes before ablation
-        if it.logit_diffs_sae not in self.analysis_ops:
-            print("Note: Adding logit_diffs.sae op since it is required for ablation")
-            self.analysis_ops = tuple([it.logit_diffs_sae] + list(self.analysis_ops))
-        # Sort ops to ensure logit_diffs.sae comes before ablation
-        sorted_ops = sorted(self.analysis_ops,
-                          key=lambda x: (x != it.logit_diffs_sae,
-                                       x != it.logit_diffs_attr_ablation))
-        if sorted_ops != list(self.analysis_ops):
-            print("Note: Re-ordering analysis ops to ensure logit_diffs.sae runs before ablation")
-            self.analysis_ops = tuple(sorted_ops)
+#     Currently ensures that logit_diffs.sae comes before ablation if ablation is enabled.
+#     """
+#     # Check if ablation analysis is requested
+#     if it.logit_diffs_attr_ablation in self.analysis_ops:
+#         # Ensure logit_diffs.sae is included and comes before ablation
+#         if it.logit_diffs_sae not in self.analysis_ops:
+#             print("Note: Adding logit_diffs.sae op since it is required for ablation")
+#             self.analysis_ops = tuple([it.logit_diffs_sae] + list(self.analysis_ops))
+#         # Sort ops to ensure logit_diffs.sae comes before ablation
+#         sorted_ops = sorted(self.analysis_ops,
+#                           key=lambda x: (x != it.logit_diffs_sae,
+#                                        x != it.logit_diffs_attr_ablation))
+#         if sorted_ops != list(self.analysis_ops):
+#             print("Note: Re-ordering analysis ops to ensure logit_diffs.sae runs before ablation")
+#             self.analysis_ops = tuple(sorted_ops)

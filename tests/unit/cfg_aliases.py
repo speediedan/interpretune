@@ -180,8 +180,17 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
 @dataclass(kw_only=True)
 class CoreSLGPT2LogitDiffsSAE(CoreSLGPT2Analysis):
     analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = \
-          (AnalysisCfg(op=it.logit_diffs_sae, save_prompts=False, save_tokens=False),)
+          (AnalysisCfg(op=it.logit_diffs_sae, save_prompts=False, save_tokens=False, ignore_manual=True),)
 
+@dataclass(kw_only=True)
+class CoreSLGPT2LogitDiffsAttrGrad(CoreSLGPT2Analysis):
+    analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = \
+          (AnalysisCfg(op=it.logit_diffs_attr_grad, save_prompts=False, save_tokens=False, ignore_manual=True),)
+
+@dataclass(kw_only=True)
+class CoreSLGPT2LogitDiffsAttrAblation(CoreSLGPT2Analysis):
+    analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = \
+          (AnalysisCfg(op=it.logit_diffs_attr_ablation, save_prompts=False, save_tokens=False, ignore_manual=True),)
 
 @dataclass(kw_only=True)
 class CoreSLCust(BaseCfg):
