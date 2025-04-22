@@ -48,7 +48,8 @@ from tests.utils import kwargs_from_cfg_obj
 from tests.unit.cfg_aliases import (TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg,
     LightningLlama3DebugCfg, LightningGemma2DebugCfg,CoreMemProfCfg, CoreGPT2PEFTCfg, CoreGPT2PEFTSeqCfg,
     CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, CoreSLGPT2, CoreSLGPT2Analysis, CoreSLCust, LightningSLGPT2,
-    CoreSLGPT2LogitDiffsSAE, CoreSLGPT2LogitDiffsAttrGrad, TLMechInterpCfg, CoreSLGPT2LogitDiffsAttrAblation)
+    CoreSLGPT2LogitDiffsSAE, CoreSLGPT2LogitDiffsAttrGrad, CoreSLGPT2LogitDiffsBase, TLMechInterpCfg,
+    CoreSLGPT2LogitDiffsAttrAblation)
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
 
@@ -134,6 +135,10 @@ FIXTURE_CFGS = {
                                                          "it_session_cfg": [FixtPhase.cfgonly]}),
     "sl_gpt2_analysis": FixtureCfg(test_cfg=CoreSLGPT2Analysis,
                                    variants={"it_session": [FixtPhase.initonly, FixtPhase.setup]}),
+    "sl_gpt2_logit_diffs_base": FixtureCfg(test_cfg=CoreSLGPT2LogitDiffsBase,
+                                          scope="session",
+                                          variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly,
+                                                                                      RunPhase.runanalysis)]}),
     "sl_gpt2_logit_diffs_sae": FixtureCfg(test_cfg=CoreSLGPT2LogitDiffsSAE,
                                           scope="session",
                                           variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly,

@@ -178,9 +178,15 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
                             for sae_fqn in self.sae_analysis_targets.sae_fqns]
 
 @dataclass(kw_only=True)
+class CoreSLGPT2LogitDiffsBase(CoreSLGPT2Analysis):
+    analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = \
+          (AnalysisCfg(op=it.logit_diffs_base, save_prompts=False, save_tokens=False, ignore_manual=True),)
+
+
+@dataclass(kw_only=True)
 class CoreSLGPT2LogitDiffsSAE(CoreSLGPT2Analysis):
     analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = \
-          (AnalysisCfg(op=it.logit_diffs_sae, save_prompts=False, save_tokens=False, ignore_manual=True),)
+          (AnalysisCfg(op=it.logit_diffs_sae, save_prompts=True, save_tokens=True, ignore_manual=True),)
 
 @dataclass(kw_only=True)
 class CoreSLGPT2LogitDiffsAttrGrad(CoreSLGPT2Analysis):
