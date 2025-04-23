@@ -47,39 +47,6 @@ to request specific fixtures based on parameterized values). For example, see th
 request the `get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis` fixture and handle the
 #AnalysisSessionFixture artifacts.
 
-### Execution guidance (if in agent mode)
-
-To run all tests in the target test module:
-
-```bash
-cd ~/repos/interpretune && source ~/.venvs/it_latest/bin/activate && python -m pytest tests/unit/<test code module name> -v
-```
-
-If tests are failing, pause iteration and ask for user intervention to help determine why the tests are failing before trying to fix them.
-Do NOT iterate trying to fix tests, ask for user feedback before re-running the test suite.
-
-If all tests are passing, you may run the test suite and append to existing coverage with the command below.
-
-Command to append coverage and validate expected lines are hit (or find remaining set of missing lines) once tests are passing:
-
-```bash
-cd ${HOME}/repos/interpretune && source ~/.venvs/it_latest/bin/activate && python -m coverage run --append --source src/interpretune -m pytest tests/unit/<test code module name>  -v && python -m coverage report -m --include=`<source code module relative path>`.py
-```
-
-A concrete example:
-
-```bash
-cd ${HOME}/repos/interpretune && source ~/.venvs/it_latest/bin/activate && python -m coverage run --append --source src/interpretune -m pytest tests/unit/test_analysis_core.py  -v && python -m coverage report -m --include=src/interpretune/analysis/core.py
-```
-
-After collecting updated coverage, if there are no more missing coverage lines, the task is complete.
-If there are still missing coverage lines, generate another set of test module updates to cover those lines and re-run the test suite (again, pause if there are test errors and ask for feedback).
-
-### Systematic Coverage Increase Approach
-
-After your initial pass at trying to cover all lines, try updating coverage one source module function at a time.
-You should be able to append to existing coverage using only the tests you add or update in the test module which should allow more reliable iteration and enable us to validate we are making progress covering lines. For clarity, progress systematically, lowest line numbers first, source module function/method by function/method.
-
 ### Target Source and Test Modules with starting Coverage State
 
 Following this prompt, you will find the following additional information (example line numbers are below):
