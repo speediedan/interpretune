@@ -137,17 +137,17 @@ class TestSAEAnalysisDict:
 
         # Test non-tensor/list value
         with pytest.raises(TypeError, match="Values must be torch.Tensor, list"):
-            analysis_dict["sae1"] = "not a tensor"
+            analysis_dict["invalid"] = 123
 
         # Test list with non-tensor elements
         with pytest.raises(TypeError, match="All list elements must be torch.Tensor"):
-            analysis_dict["sae2"] = [torch.randn(5, 5), "not a tensor"]
+            analysis_dict["invalid_list"] = [1, 2, 3]  # Not tensors
 
         # Test namedtuple without tensor fields
         NonTensorType = namedtuple('NonTensorType', ['field1', 'field2'])
         non_tensor_val = NonTensorType(field1="string", field2=42)
         with pytest.raises(TypeError, match="does not contain any tensor fields"):
-            analysis_dict["sae3"] = non_tensor_val
+            analysis_dict["invalid_namedtuple"] = non_tensor_val
 
     def test_shapes_property(self):
         """Test the shapes property."""
@@ -562,6 +562,22 @@ class TestLatentMetricsTablesScatter:
         with pytest.raises(ValueError):
             lat_metrics.create_attribution_tables(sort_by='not_a_field')
 
+    def test_create_attribution_tables_invalid_sort_by(self):
+        """Test create_attribution_tables raises ValueError with invalid sort_by field."""
+        # Create minimal LatentMetrics with required fields
+        vals = torch.tensor([1.0, 2.0])
+        metrics = LatentMetrics(
+            mean_activation={'h': vals},
+            num_samples_active={'h': vals},
+            total_effect={'h': vals},
+            mean_effect={'h': vals},
+            proportion_samples_active={'h': vals}
+        )
+
+        # Test with invalid sort_by field - should raise ValueError
+        with pytest.raises(ValueError, match="Invalid sort_by field"):
+            metrics.create_attribution_tables(sort_by="invalid_field_name", top_k=10)
+
     def test_latent_metrics_scatter(self, monkeypatch):
         vals = torch.tensor([1.0, 2.0, 3.0])
         m1 = LatentMetrics(
@@ -613,6 +629,28 @@ class TestSchemaToFeatures:
               and 'seq' in features and 'arr' in features and 'scalar' in features
 
 
+class TestSchemaToFeaturesModuleAnalysisCfg:
+    def test_schema_from_module_analysis_cfg(self):
+        """Test schema_to_features when schema comes from module.analysis_cfg.output_schema."""
+        mock_module = MagicMock()
+        mock_module.datamodule.itdm_cfg.eval_batch_size = 2
+        mock_module.it_cfg.generative_step_cfg.lm_generation_cfg.max_new_tokens = 3
+        mock_module.it_cfg.num_labels = 2
+        mock_module.it_cfg.entailment_mapping = {'a': 0, 'b': 1}
+
+        # Create analysis_cfg with output_schema
+        mock_module.analysis_cfg = MagicMock()
+        mock_module.analysis_cfg.output_schema = {
+            'test_field': ColCfg(datasets_dtype='float32')
+        }
+
+        # Call without providing schema or op
+        features = schema_to_features(mock_module)
+
+        # Verify it used the module.analysis_cfg.output_schema
+        assert 'test_field' in features
+
+
 class TestHelperFunctions:
     def test_make_simple_cache_hook(self):
         cache = {}
@@ -634,6 +672,33 @@ class TestHelperFunctions:
         assert callable(resolve_names_filter(['foo', 'bar']))
         assert callable(resolve_names_filter(lambda x: True))
         with pytest.raises(ValueError):
+            resolve_names_filter(123)
+
+
+class TestResolveNamesFilter:
+    def test_resolve_names_filter_function(self):
+        """Test that resolve_names_filter works with callable, string, list, and None."""
+        # Test with None (default filter)
+        default_filter = resolve_names_filter(None)
+        assert default_filter("any_name") is True
+
+        # Test with string
+        string_filter = resolve_names_filter("specific_name")
+        assert string_filter("specific_name") is True
+        assert string_filter("other_name") is False
+
+        # Test with list
+        list_filter = resolve_names_filter(["name1", "name2"])
+        assert list_filter("name1") is True
+        assert list_filter("name3") is False
+
+        # Test with callable
+        callable_filter = resolve_names_filter(lambda name: name.startswith("prefix_"))
+        assert callable_filter("prefix_foo") is True
+        assert callable_filter("other_foo") is False
+
+        # Test with invalid type (not None, string, list, or callable)
+        with pytest.raises(ValueError, match="must be a string, list of strings, or function"):
             resolve_names_filter(123)
 
 
@@ -685,6 +750,30 @@ class TestAnalysisStoreFormatColumns:
         result = store._format_columns(["a", "b"], indices=[0,2])
         assert result["a"] == [0,2]
         assert result["b"] == [1,3]
+
+    def test_format_columns_with_list_indices(self):
+        """Test _format_columns with a list of indices."""
+        mock_dataset = MagicMock()
+        mock_dataset.set_format = MagicMock()
+
+        # Set up mock dataset to return different values for different indices
+        mock_dataset.__getitem__.side_effect = lambda idx: {
+            "col1": f"value_{idx}",
+            "col2": f"value_{idx+1}"
+        }
+
+        store = AnalysisStore(dataset=mock_dataset)
+        store.dataset = mock_dataset
+
+        # Test with a list of indices
+        result = store._format_columns(["col1", "col2"], indices=[0, 2, 4])
+
+        # Verify we get the expected data for each column
+        assert result["col1"] == ["value_0", "value_2", "value_4"]
+        assert result["col2"] == ["value_1", "value_3", "value_5"]
+
+        # Verify that set_format was called with interpretune type
+        mock_dataset.set_format.assert_called_with(type='interpretune', columns=["col1", "col2"])
 
 
 class TestAnalysisStoreSaveDir:
@@ -1013,7 +1102,6 @@ class TestAnalysisStoreBySae:
         assert len(result['sae1']) == 2
         assert torch.equal(result['sae1'][0], torch.tensor([1.0, 2.0]))
         assert torch.equal(result['sae1'][1], torch.tensor([3.0, 4.0]))
-
 
 class TestAnalysisStoreCalcActivationSummary:
     def test_calc_activation_summary_raises(self):
