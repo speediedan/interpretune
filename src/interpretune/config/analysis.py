@@ -15,7 +15,7 @@ from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.config import ITSerializableCfg
 from interpretune.protocol import NamesFilter, AnalysisStoreProtocol, AnalysisBatchProtocol, STEP_OUTPUT
 from interpretune.utils import DEFAULT_DECODE_KWARGS
-from interpretune.utils import rank_zero_warn
+from interpretune.utils import rank_zero_warn, rank_zero_debug
 
 IT_ANALYSIS_CACHE_DIR = "interpretune"
 DEFAULT_IT_ANALYSIS_CACHE = os.path.join(HF_CACHE_HOME, IT_ANALYSIS_CACHE_DIR)
@@ -25,7 +25,7 @@ IT_ANALYSIS_CACHE = Path(os.getenv("IT_ANALYSIS_CACHE_DIR", DEFAULT_IT_ANALYSIS_
 class AnalysisCfg(ITSerializableCfg):
     output_store: AnalysisStoreProtocol = None  # usually constructed on setup()
     input_store: AnalysisStoreProtocol | None = None  # store containing input data from previous op
-    op: Optional[Union[str, AnalysisOp, Callable, list[AnalysisOp]]] = None  # op/op chain via generated analysis step
+    target_op: Optional[Union[str, AnalysisOp, Callable, list[AnalysisOp]]] = None  # input op to be resolved
     output_schema: Optional[OpSchema | str | AnalysisOp] = None  # Schema, op, or op name to define schema
     name: Optional[str] = None  # Name for this analysis configuration
     fwd_hooks: list[tuple] = field(default_factory=list)
@@ -38,16 +38,42 @@ class AnalysisCfg(ITSerializableCfg):
     sae_analysis_targets: SAEAnalysisTargets = None
     ignore_manual: bool = False  # When True, ignore existing analysis_step and use op to generate one
     step_fn: str = "analysis_step"  # Name of the method to use/generate for analysis
+    auto_prune_batch_encoding: bool = True  # Automatically prune encoded batches to only include relevant keys
     _applied_to: dict = field(default_factory=dict)  # Dictionary tracking which modules this cfg has been applied to
+    _op: Optional[Union[str, AnalysisOp, Callable, list[AnalysisOp]]] = None  # op/op chain via generated analysis step
+
+    @property
+    def op(self) -> Optional[Union[str, AnalysisOp, Callable, list[AnalysisOp]]]:
+        """Get the operation, unwrapping any OpWrapper if present."""
+        if self._op is None:
+            return None
+
+        # Unwrap OpWrapper instances if needed
+        if hasattr(self._op, '_is_instantiated') and getattr(self._op, '_is_instantiated', False):
+            return self._op._instantiated_op
+
+        return self._op
+
+    @op.setter
+    def op(self, value: Optional[Union[str, AnalysisOp, Callable, list[AnalysisOp]]]) -> None:
+        """Set the operation value."""
+        self._op = value
 
     def __post_init__(self):
+        # Process the target_op if provided and set it as the op
+        if self.target_op is not None:
+            # TODO: consider saving the original target_op value before assigning to self.op (str, op, wrapper, etc.)
+            # and then after the op is resolved by the end of the post_init, replace self.target_op with a
+            # well-formatted string representation of the original target_op value and what it was resolved to
+            # (e.g. "target_op: 'some_op_str' -> op: {str(self.op)}")
+            self.op = self.target_op
+
         # Check if ignore_manual is True but no op is provided
         if self.ignore_manual and self.op is None:
             raise ValueError("When ignore_manual is True, an op must be provided to generate the analysis_step")
 
         resolved_op = None
 
-        # TODO: may need to add logic to compile a schema base on a chain of ops here
         # Process output_schema first if it's an op or string
         if self.output_schema is not None and not isinstance(self.output_schema, OpSchema):
             # If output_schema is AnalysisOp-like (using this attribute as heuristic to limit expensive protocol
@@ -71,7 +97,14 @@ class AnalysisCfg(ITSerializableCfg):
                     resolved_op = self.op
                 else:
                     # Create a composite operation from the list
-                    self.op = DISPATCHER.create_chain_from_ops(self.op)
+                    # Ensure each op in the list is instantiated
+                    instantiated_ops = []
+                    for op in self.op:
+                        if hasattr(op, '_ensure_instantiated'):
+                            instantiated_ops.append(op._ensure_instantiated())
+                        else:
+                            instantiated_ops.append(op)
+                    self.op = DISPATCHER.create_chain_from_ops(instantiated_ops)
                     resolved_op = self.op
             # Handle chained operations using dot notation
             elif isinstance(self.op, str):
@@ -119,7 +152,7 @@ class AnalysisCfg(ITSerializableCfg):
             return
 
         # Choose the appropriate SAEAnalysisTargets
-        sae_targets = self.sae_analysis_targets if self.sae_analysis_targets is not None else fallback_sae_targets
+        sae_targets = self.sae_analysis_targets or fallback_sae_targets
 
         if sae_targets is not None:
             target_layers = sae_targets.target_layers
@@ -141,8 +174,14 @@ class AnalysisCfg(ITSerializableCfg):
             module: The module to configure for.
             fallback_sae_targets: Optional fallback SAEAnalysisTargets to use if this config doesn't have one.
         """
-        # Always materialize names_filter - needed for both op-based and manual analysis
-        self.materialize_names_filter(module, fallback_sae_targets)
+
+        # Ensure sae_analysis_targets, fallback_sae_targets, or names_filter are set before materializing names_filter
+        if not (self.sae_analysis_targets or fallback_sae_targets or self.names_filter):
+            rank_zero_debug("None of (sae_analysis_targets, fallback_sae_targets, names_filter) are set. "
+                            "Proceeding without materializing names_filter.")
+        else:
+            # Always materialize names_filter - needed for both op-based and manual analysis
+            self.materialize_names_filter(module, fallback_sae_targets)
 
         # Set hooks based on op or manually if needed
         if self.op is not None:
@@ -160,7 +199,7 @@ class AnalysisCfg(ITSerializableCfg):
         #"""Reset analysis store, preserving configuration."""
         #self.analysis_store.reset()
 
-
+    # TODO: Add a non-generator returning save_batch method at AnalysisCfg level (users already have op-level version)?
     def save_batch(self, analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
                    tokenizer: PreTrainedTokenizerBase | None = None):
         """Process and yield analysis batch results.
@@ -235,11 +274,14 @@ class AnalysisCfg(ITSerializableCfg):
         if self.op.name == 'logit_diffs_base':
             return fwd_hooks, bwd_hooks
 
-        if self.names_filter is None:
-            raise ValueError("names_filter required for non-clean operations")
-
         if self.op.name == 'logit_diffs_attr_grad':
             self.add_default_cache_hooks()
+
+        # TODO: add in an op attribute akin to "uses_sae_hooks" to enable names_filter validation resolution etc.
+        # if self.op_name in ('logit_diffs_attr_ablation', 'logit_diffs_attr_grad') and self.names_filter is None:
+        #     raise ValueError("names_filter required for non-clean operations")
+
+
 
     def applied_to(self, module) -> bool:
         """Check if this configuration has been applied to a specific module.
@@ -306,22 +348,19 @@ class AnalysisCfg(ITSerializableCfg):
                 """Dynamically generated analysis_step method."""
                 analysis_batch = None
 
+                # TODO: move this code to a separate function to allow for reuse outside of the generated method
                 # Handle composite ops or chains
                 op = self.analysis_cfg.op
-                if hasattr(op, 'chain') and op.chain:
-                    # Execute the chain of operations
-                    for chain_op in op.chain:
-                        analysis_batch = chain_op(self, analysis_batch, batch, batch_idx)
-                else:
-                    # Handle single op case
-                    analysis_batch = op(self, analysis_batch, batch, batch_idx)
+                analysis_batch = op(self, analysis_batch, batch, batch_idx)
 
                 yield from self.analysis_cfg.save_batch(analysis_batch, batch, tokenizer=self.datamodule.tokenizer)
 
-            # Add the method to the module with the specified name
-            setattr(module, self.step_fn, generated_analysis_step.__get__(module))
-            # Mark it as generated using the step_fn name
-            setattr(module, f'_generated_{self.step_fn}', True)
+            # TODO: separate some of this more ephemeral state to an AnalysisState object
+            # Add the method to the module with a _generated version of the specified step_fn name
+            # (to avoid potentially clobbering the manual version)
+            setattr(module, f'_generated_{self.step_fn}', generated_analysis_step.__get__(module))
+            # update the analysis_cfg step_fn method name to the generated step_fn name
+            setattr(self, 'step_fn', f'_generated_{self.step_fn}')
 
         # Always set up the analysis store, even for manual analysis steps
         if not self.output_store:

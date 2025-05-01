@@ -4,6 +4,7 @@ import torch
 import numpy as np
 from datasets.formatting import TorchFormatter
 import pyarrow as pa
+from collections.abc import Mapping
 from contextlib import contextmanager
 
 from interpretune.analysis import ColCfg
@@ -59,9 +60,20 @@ class OpSchemaExt:
     def apply_dynamic_dimension(self, tensor: torch.Tensor, field_name: Optional[str]) -> torch.Tensor:
         """Apply dynamic dimension transformation if configured."""
         dyn_dim = self.dyn_dims.get(field_name)
-        if dyn_dim is not None and tensor.dim() > dyn_dim:
-            dims = list(range(tensor.dim()))
-            dims[0], dims[dyn_dim] = dims[dyn_dim], dims[0]
+        curr_tensor_dim = tensor.dim()
+        if dyn_dim is not None and curr_tensor_dim > dyn_dim:
+            if (tensor_shape := getattr(self.features[field_name], 'shape', None)) is not None:
+                if len(tensor_shape) == curr_tensor_dim - 1:
+                    # operating on all examples so dyn_dim += 1 and we swap dims[1] and dims[dyn_dim] instead of dims[0]
+                    dyn_dim += 1
+                    dims = list(range(curr_tensor_dim))
+                    dims[1], dims[dyn_dim] = dims[dyn_dim], dims[1]
+                elif len(tensor_shape) == curr_tensor_dim:
+                    dims = list(range(curr_tensor_dim))
+                    dims[0], dims[dyn_dim] = dims[dyn_dim], dims[0]
+                else:
+                    raise ValueError(f"Tensor dimension length mismatch detected during dynamic dim deserialization: "
+                                     f"tensor shape to deserialize: {tensor.shape} vs shape serialized: {tensor_shape}")
             return tensor.permute(*dims)
         return tensor
 
@@ -115,7 +127,8 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
         elif isinstance(data_struct, dict):
             result = {}
             for k, v in data_struct.items():
-                col_dict = self.dyn_dims.get(k, {})
+                dyn_dim = self.dyn_dims.get(k, None)
+                col_dict = {'dyn_dim': dyn_dim} if dyn_dim is not None else {}
                 with self.field_context((k, col_dict)):
                     result[k] = self._recursive_tensorize(v)
 
@@ -127,17 +140,47 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
                         for hook_name, hook_data in result.items()
                     }
             return result
-
-        return self._tensorize(data_struct)
+        current_field = self._field_context[-1][0] if self._field_context else None
+        return self._tensorize(data_struct, current_field)
 
     def format_column(self, pa_table: "pa.Table") -> Union[torch.Tensor, Sequence]:
         """Format a column with enhanced tensorization."""
         column = self.numpy_arrow_extractor().extract_column(pa_table)
         column = self.python_features_decoder.decode_column(column, pa_table.column_names[0])
         col_name = pa_table.column_names[0]
-        col_dict = self.dyn_dims.get(col_name, {})
+        dyn_dim = self.dyn_dims.get(col_name, None)
+        col_dict = {'dyn_dim': dyn_dim} if dyn_dim is not None else {}
         with self.field_context((col_name, col_dict)):
             column = self._recursive_tensorize(column)
         return self._consolidate(column)
 
-    # we inherit `format_row`` and `format_batch`` from `TorchFormatter`
+    def format_row(self, pa_table: pa.Table) -> Mapping:
+        """Format a row with enhanced tensorization that respects field contexts."""
+        row = self.numpy_arrow_extractor().extract_row(pa_table)
+        row = self.python_features_decoder.decode_row(row)
+
+        # Process each field with its field context
+        result = {}
+        for field_name, field_value in row.items():
+            dyn_dim = self.dyn_dims.get(field_name, None)
+            col_dict = {'dyn_dim': dyn_dim} if dyn_dim is not None else {}
+            with self.field_context((field_name, col_dict)):
+                result[field_name] = self._recursive_tensorize(field_value)
+
+        return result
+
+    def format_batch(self, pa_table: pa.Table) -> Mapping:
+        """Format a batch with enhanced tensorization that respects field contexts."""
+        batch = self.numpy_arrow_extractor().extract_batch(pa_table)
+        batch = self.python_features_decoder.decode_batch(batch)
+
+        # Process each column with its field context
+        result = {}
+        for column_name, column_values in batch.items():
+            dyn_dim = self.dyn_dims.get(column_name, None)
+            col_dict = {'dyn_dim': dyn_dim} if dyn_dim is not None else {}
+            with self.field_context((column_name, col_dict)):
+                processed_column = self._recursive_tensorize(column_values)
+                result[column_name] = self._consolidate(processed_column)
+
+        return result

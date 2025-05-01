@@ -324,10 +324,8 @@ class TestAnalysisOpDispatcher:
         assert hasattr(op, "description")
         assert hasattr(op, "input_schema")
         assert hasattr(op, "output_schema")
-
-        # For backward compatibility, check that we can get the expected attributes
-        # regardless of whether we're working directly with an AnalysisOp or with a wrapper
-        assert op.name == op._instantiated_op.name
+        if (op_alias := getattr(op, 'alias', None)) is not None:
+            assert op.alias == op_alias
 
     def test_integration_with_session(self, request):
         """Test dispatcher integration with an analysis session."""

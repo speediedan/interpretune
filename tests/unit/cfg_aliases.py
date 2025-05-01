@@ -33,15 +33,11 @@ tl_cust_mi_cfg = {"cfg":
     n_heads=12,
     n_layers=2,
     n_ctx=200,
-    #d_vocab=50278,
     act_fn="relu",
     attention_dir="causal",
-    #attn_only=True, # defaults to False
     tokenizer_name='gpt2',
     seed=1,
     use_attn_result=True,
-    #normalization_type=None, # defaults to "LN", i.e. layernorm with weights & biases
-    #positional_embedding_type="shortformer")
 )}
 
 test_tl_cust_2L_config = {"n_layers":2, "d_mlp": 10, "d_model":10, "d_head":5, "n_heads":2, "n_ctx":200,
@@ -157,14 +153,15 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
             model_head='transformers.GPT2LMHeadModel'
         )
     )
-    tl_cfg: ITLensFromPretrainedNoProcessingConfig = \
-        field(default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(model_name="gpt2-small",
-                                                                             default_padding_side='left'))
+    tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
+        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
+            model_name="gpt2-small",
+            default_padding_side='left'
+        )
+    )
     sae_cfgs: list = field(default_factory=lambda: [])
     auto_comp_cfg: AutoCompConfig = field(default_factory=lambda: AutoCompConfig(
         module_cfg_name='RTEBoolqConfig', module_cfg_mixin=RTEBoolqEntailmentMapping))
-    # analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = \
-    #       (AnalysisCfg(op=it.logit_diffs_sae, save_prompts=True, save_tokens=True),)
     # TODO: customize these cache paths for testing efficiency
     # cache_dir: Optional[str] = None
     # op_output_dataset_path: Optional[str] = None
@@ -180,23 +177,24 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
 @dataclass(kw_only=True)
 class CoreSLGPT2LogitDiffsBase(CoreSLGPT2Analysis):
     analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = \
-          (AnalysisCfg(op=it.logit_diffs_base, save_prompts=False, save_tokens=False, ignore_manual=True),)
+          (AnalysisCfg(target_op=it.logit_diffs_base, save_prompts=False, save_tokens=False, ignore_manual=True),)
 
 
 @dataclass(kw_only=True)
 class CoreSLGPT2LogitDiffsSAE(CoreSLGPT2Analysis):
     analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = \
-          (AnalysisCfg(op=it.logit_diffs_sae, save_prompts=True, save_tokens=True, ignore_manual=True),)
+          (AnalysisCfg(target_op=it.logit_diffs_sae, save_prompts=True, save_tokens=True, ignore_manual=True),)
 
 @dataclass(kw_only=True)
 class CoreSLGPT2LogitDiffsAttrGrad(CoreSLGPT2Analysis):
     analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = \
-          (AnalysisCfg(op=it.logit_diffs_attr_grad, save_prompts=False, save_tokens=False, ignore_manual=True),)
+          (AnalysisCfg(target_op=it.logit_diffs_attr_grad, save_prompts=False, save_tokens=False, ignore_manual=True),)
 
 @dataclass(kw_only=True)
 class CoreSLGPT2LogitDiffsAttrAblation(CoreSLGPT2Analysis):
     analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = \
-          (AnalysisCfg(op=it.logit_diffs_attr_ablation, save_prompts=False, save_tokens=False, ignore_manual=True),)
+          (AnalysisCfg(target_op=it.logit_diffs_attr_ablation, save_prompts=False, save_tokens=False,
+                       ignore_manual=True),)
 
 @dataclass(kw_only=True)
 class CoreSLCust(BaseCfg):

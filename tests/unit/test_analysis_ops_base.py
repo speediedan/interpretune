@@ -2,11 +2,9 @@ from __future__ import annotations
 import pytest
 import torch
 from transformers import BatchEncoding
-# Import classes from correct modules
-from interpretune.analysis.ops.base import AnalysisOp, ChainedAnalysisOp, AnalysisBatch
-from interpretune.analysis.ops.base import ColCfg, OpSchema
-from interpretune.analysis.ops.base import AttrDict, CallableAnalysisOp, wrap_summary
-# from interpretune.protocol import DIM_VAR
+from interpretune.analysis.ops.base import (AnalysisOp, ChainedAnalysisOp, AnalysisBatch, ColCfg, OpSchema, AttrDict,
+                                            wrap_summary)
+
 
 
 class TestAttrDict:
@@ -680,22 +678,6 @@ class TestAnalysisOp:
         with pytest.raises(NotImplementedError):
             op(None, None, {}, 0)
 
-    def test_callable_property(self):
-        """Test the callable property."""
-        op = AnalysisOp(
-            name="test_op",
-            description="Test op",
-            output_schema=OpSchema({})
-        )
-
-        callable_op = op.callable
-        assert isinstance(callable_op, CallableAnalysisOp)
-        assert callable_op.name == "test_op"
-        assert callable_op.description == "Test op"
-
-        # Check that calling .callable twice returns the same instance
-        callable_op2 = op.callable
-        assert callable_op is callable_op2
 
     def test_protocol_attribute_in_analysis(self):
         """Test that ops properly use protocol attributes."""
@@ -766,59 +748,6 @@ class TestAnalysisOp:
         assert result.attribution_values["hook1"]["latent1"].device.type == "cpu"
 
 
-class TestCallableAnalysisOp:
-    """Tests for the CallableAnalysisOp class."""
-
-    def test_callable_analysis_op_wrapping(self):
-        """Test that CallableAnalysisOp correctly wraps an AnalysisOp."""
-        # Create a base op
-        base_op = AnalysisOp(
-            name="test_op",
-            description="Test operation",
-            output_schema=OpSchema({"field": ColCfg(datasets_dtype="float32")})
-        )
-
-        # Create callable wrapper manually
-        callable_op = CallableAnalysisOp(base_op)
-
-        # Check properties were correctly copied
-        assert callable_op.name == "test_op"
-        assert callable_op.description == "Test operation"
-        assert callable_op.output_schema == base_op.output_schema
-        assert callable_op.input_schema == base_op.input_schema
-
-        # Check special attributes
-        assert callable_op.__name__ == "test_op"
-        assert callable_op.__module__ == "interpretune"
-        assert callable_op.__qualname__ == "test_op"
-
-    def test_callable_analysis_op_str_repr(self):
-        """Test string representation of CallableAnalysisOp."""
-        base_op = AnalysisOp(
-            name="test_op",
-            description="Test operation",
-            output_schema=OpSchema({})
-        )
-        callable_op = CallableAnalysisOp(base_op)
-
-        # Test string representations
-        assert str(callable_op) == "test_op"
-        assert "CallableAnalysisOp" in repr(callable_op)
-        assert "test_op" in repr(callable_op)
-
-    def test_callable_property_returns_self(self):
-        """Test that callable property returns self for CallableAnalysisOp."""
-        base_op = AnalysisOp(
-            name="test_op",
-            description="Test operation",
-            output_schema=OpSchema({})
-        )
-        callable_op = CallableAnalysisOp(base_op)
-
-        # callable property should return self
-        assert callable_op.callable is callable_op
-
-
 class TestChainedAnalysisOp:
     """Tests for the ChainedAnalysisOp class."""
 
@@ -845,8 +774,10 @@ class TestChainedAnalysisOp:
         assert chained_op.name == "op1.op2"
         assert "Simple operation" in chained_op.description
         assert "Another operation" in chained_op.description
-        assert chained_op.output_schema == op2.output_schema
-        assert chained_op.input_schema == op1.input_schema
+        op2_orig = op2.output_schema.copy()
+        expected_schema = op2_orig.update(op1.output_schema) or op2_orig
+        assert chained_op.output_schema == expected_schema
+        assert chained_op.input_schema == {}
 
     def test_chained_op_with_alias(self):
         """Test ChainedAnalysisOp with a custom alias."""
@@ -910,5 +841,5 @@ class TestChainedAnalysisOp:
 
     def test_empty_chain_error(self):
         """Test that an empty chain raises an error."""
-        with pytest.raises(IndexError):
+        with pytest.raises(ValueError, match="No operations provided"):
             ChainedAnalysisOp([])

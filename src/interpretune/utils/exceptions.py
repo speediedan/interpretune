@@ -78,7 +78,6 @@ def handle_exception_with_debug_dump(
                                     context_dict[f"var_{i}_{name}"] = _introspect_variable(context_data[i])
                             # Skip the generic processing below
                             debug_info.update(context_dict)
-                            return
         finally:
             del frame  # Avoid reference cycles
 
@@ -96,7 +95,7 @@ def handle_exception_with_debug_dump(
         json.dump(debug_info, f, indent=2, default=_json_serializer)
 
     log.error(f"{operation_name.capitalize()} failed: {e}. Debug info saved to {dump_file}")
-    raise  # Re-raise the original exception
+    raise e
 
 def _introspect_variable(var: Any) -> Dict[str, Any]:
     """Introspect a variable to create a detailed representation for debugging.
@@ -138,10 +137,11 @@ def _introspect_variable(var: Any) -> Dict[str, Any]:
         # Get public attributes
         attrs = {}
         for attr_name in dir(var):
-            if not attr_name.startswith("_") and not callable(getattr(var, attr_name, None)):
+            if not attr_name.startswith("_"):
                 try:
-                    attr_value = getattr(var, attr_name)
-                    attrs[attr_name] = str(attr_value)
+                    if not callable(getattr(var, attr_name, None)):
+                        attr_value = getattr(var, attr_name)
+                        attrs[attr_name] = str(attr_value)
                 except Exception:
                     attrs[attr_name] = "<error getting attribute>"
 

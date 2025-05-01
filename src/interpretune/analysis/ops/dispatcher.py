@@ -124,6 +124,7 @@ class AnalysisOpDispatcher:
             chain = op_def["chain"]
             if isinstance(chain, str):
                 chain = chain.split(".")
+            # instantiate each operation in the chain
             ops = [self.get_op(op) for op in chain]
             op = ChainedAnalysisOp(ops, alias=op_def.get("alias"))
             if "description" in op_def:
@@ -202,18 +203,35 @@ class AnalysisOpDispatcher:
 
         return ctx_dict.get(context)
 
-    def _maybe_instantiate_op(self, op_name: str, context: DispatchContext = DispatchContext()) -> AnalysisOp:
-        """Ensure an operation is instantiated, creating it if it's a factory function."""
+    def _maybe_instantiate_op(self, op_ref, context: DispatchContext = DispatchContext()) -> AnalysisOp:
+        """Ensure an operation is instantiated based on various reference types."""
+        # If it's an OpWrapper, use its _ensure_instantiated method to get the actual op
+        if hasattr(op_ref, '_ensure_instantiated') and callable(op_ref._ensure_instantiated):
+            return op_ref._ensure_instantiated()  # This now returns the actual op, not the wrapper
+
+        # If it's an AnalysisOp, get the op name
+        if isinstance(op_ref, AnalysisOp):
+            op_name = op_ref.name
+        else:
+            assert isinstance(op_ref, str), "op_ref must be an OpWrapper, AnalysisOp or a string"
+            op_name = op_ref
+
         ctx_dict = self._dispatch_table.get(op_name, {})
         op = ctx_dict.get(context)
 
-        # Check if the stored value is a factory function
+        # TODO: decide if we want to handle this edge case where the dispatch_table contains a factory function
+        #       that was not added by OpWrapper, basically custom op lazy loading
+        # Check if the stored value is a factory function or needs to be instantiated
         if callable(op) and not isinstance(op, AnalysisOp):
             # Instantiate the operation and update the dispatch table
             instantiated_op = op()
             ctx_dict[context] = instantiated_op
             return instantiated_op
-        return op
+        elif op is not None:
+            return op
+        else:
+            # Try to get the op if it's not in the dispatch table
+            return self.get_op(op_name, context)
 
     def instantiate_all_ops(self) -> Dict[str, AnalysisOp]:
         """Instantiate all operations and return them as a dictionary."""
@@ -244,12 +262,11 @@ class AnalysisOpDispatcher:
                for op_name, op in zip(op_names, ops)]
         return ChainedAnalysisOp(ops, alias=alias)
 
-    def create_chain_from_ops(self, ops: List[AnalysisOp], alias: Optional[str] = None) -> ChainedAnalysisOp:
+    def create_chain_from_ops(self, ops: List, alias: Optional[str] = None) -> ChainedAnalysisOp:
         """Create a chain from operation instances."""
-        # Ensure all ops are properly instantiated
-        ops = [op if isinstance(op, AnalysisOp) else self._maybe_instantiate_op(op)
-              for op in ops]
-        return ChainedAnalysisOp(ops, alias=alias)
+        # Ensure all ops are properly instantiated using _maybe_instantiate_op
+        instantiated_ops = [self._maybe_instantiate_op(op) for op in ops]
+        return ChainedAnalysisOp(instantiated_ops, alias=alias)
 
     def create_chain_from_string(self, chain_str: str, alias: Optional[str] = None) -> ChainedAnalysisOp:
         """Create a chain of operations from a dot-separated string.

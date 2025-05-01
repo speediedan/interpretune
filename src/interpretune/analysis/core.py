@@ -142,7 +142,7 @@ class SAEAnalysisDict(dict):
         return result
 
 
-def get_module_dims(module) -> tuple[int, int, int, tuple[int, int]]:
+def get_module_dims(module) -> tuple[int, int, int, int, int]:
     """Extract key dimensions from module state.
 
     Args:
@@ -153,7 +153,8 @@ def get_module_dims(module) -> tuple[int, int, int, tuple[int, int]]:
             batch_size: Current batch size
             max_answer_tokens: Maximum number of answer tokens
             num_classes: Number of output classes
-            tokens_shape: Tuple of (batch_size, max_seq_len)
+            vocab_size: Size of the vocabulary
+            max_seq_len: Maximum sequence length
     """
     # TODO: in the future, this will depend on our configured dataloader (e.g. for train modes etc.)
     batch_size = module.datamodule.itdm_cfg.eval_batch_size
@@ -161,10 +162,14 @@ def get_module_dims(module) -> tuple[int, int, int, tuple[int, int]]:
     max_answer_tokens = module.it_cfg.generative_step_cfg.lm_generation_cfg.max_new_tokens
     # TODO: abstract this so it's not tied to entailment use case but num_classes
     num_classes = module.it_cfg.num_labels or len(module.it_cfg.entailment_mapping)
+    vocab_size = module.model.tokenizer.vocab_size
+    max_seq_len = module.model.tokenizer.model_max_length
+    # TODO: decide if we want to expose a dict of both latent hook names and dimensions here (not just d_sae)
+    # d_saes = tuple(h.cfg.d_sae for h in module.sae_handles) if getattr(module, 'sae_handles', None) else None
     # TODO: max_seq_len not currently used, could be provided for downstream usage
     #       should be same as module.model.cfg.n_ctx, assert this here?
     # max_seq_len = module.model.tokenizer.model_max_length
-    return batch_size, max_answer_tokens, num_classes
+    return batch_size, max_answer_tokens, num_classes, vocab_size, max_seq_len
 
 def get_filtered_sae_hook_keys(handle, names_filter: Callable[[str], bool]) -> list[str]:
     """Get filtered hook keys based on names_filter.
@@ -182,6 +187,29 @@ def get_filtered_sae_hook_keys(handle, names_filter: Callable[[str], bool]) -> l
         if names_filter(f'{handle.cfg.hook_name}.{key}')
     ]
 
+def _check_names_filter_available(module, col_name: str, col_cfg) -> bool:
+    """Check if names_filter is available for column configuration.
+
+    Args:
+        module: The module being analyzed
+        col_name: Name of the column being processed
+        col_cfg: Column configuration object
+
+    Returns:
+        True if processing should continue, False if column should be skipped
+
+    Raises:
+        ValueError: If names_filter is required but not available
+    """
+    no_filter = (not hasattr(module, 'analysis_cfg') or
+                not hasattr(module.analysis_cfg, 'names_filter') or
+                module.analysis_cfg.names_filter is None)
+    if no_filter:
+        if col_cfg.required:
+            raise ValueError(f"Column '{col_name}' requires names_filter, but module.analysis_cfg.names_filter is None")
+        return False  # Skip this field if not required
+    return True
+
 def schema_to_features(module, op: str | AnalysisOp | None = None, schema: OpSchema | None = None,
                        default_dtype: str = "float32", int_dtype: str = "int64") -> Features:
     """Convert an operation schema or direct schema to features for Dataset.from_generator.
@@ -198,20 +226,23 @@ def schema_to_features(module, op: str | AnalysisOp | None = None, schema: OpSch
         op = DISPATCHER.get_op(op) or DISPATCHER.get_by_alias(op)
     if schema is None and op is not None:
         schema = op.output_schema
-    elif schema is None and module is not None and hasattr(module, 'analysis_cfg') and hasattr(module.analysis_cfg,
-                                                                                               'output_schema'):
-        schema = module.analysis_cfg.output_schema
+    elif schema is None and module is not None and hasattr(module, 'analysis_cfg'):
+        has_output_schema = hasattr(module.analysis_cfg, 'output_schema')
+        if has_output_schema:
+            schema = module.analysis_cfg.output_schema
     if not schema:
         return {}  # Return empty dict if no schema available
 
-    batch_size, max_answer_tokens, num_classes = get_module_dims(module)
+    batch_size, max_answer_tokens, num_classes, vocab_size, max_seq_len = get_module_dims(module)
     features_dict = {}
 
     # Map dimension variables to their actual values
     dim_vars = {
         'batch_size': batch_size,
         'max_answer_tokens': max_answer_tokens,
-        'num_classes': num_classes
+        'num_classes': num_classes,
+        'vocab_size': vocab_size,
+        'max_seq_len': max_seq_len,
     }
 
     for col_name, col_cfg in schema.items():
@@ -222,6 +253,11 @@ def schema_to_features(module, op: str | AnalysisOp | None = None, schema: OpSch
 
         # Handle per-SAE hook fields first
         if col_cfg.per_sae_hook:
+            # Check if names_filter is available
+            if not _check_names_filter_available(module, col_name, col_cfg):
+                features_dict[col_name] = {}  # Set to empty dict instead of skipping
+                continue
+
             sae_features = {}
             for handle in module.sae_handles:
                 for hook_key in get_filtered_sae_hook_keys(handle, module.analysis_cfg.names_filter):
@@ -235,6 +271,11 @@ def schema_to_features(module, op: str | AnalysisOp | None = None, schema: OpSch
 
         # Handle per-latent fields
         if col_cfg.per_latent:
+            # Check if names_filter is available
+            if not _check_names_filter_available(module, col_name, col_cfg):
+                features_dict[col_name] = {}  # Set to empty dict instead of skipping
+                continue
+
             sae_features = {}
             for handle in module.sae_handles:
                 for hook_key in get_filtered_sae_hook_keys(handle, module.analysis_cfg.names_filter):
@@ -288,6 +329,7 @@ class AnalysisStore:
                  dataset_trust_remote_code: bool = False,
                  streaming: bool = False,
                  split: str = "validation",
+                 it_format_kwargs: dict | None = None,
                  stack_batches: bool = False,  # Controls tensor stacking behavior
                  ) -> None:
         self.stack_batches = stack_batches
@@ -296,6 +338,7 @@ class AnalysisStore:
         self.dataset_trust_remote_code = dataset_trust_remote_code
         self.op_output_dataset_path = op_output_dataset_path
         self.split = split
+        self.it_format_kwargs = it_format_kwargs
 
         load_dataset_kwargs = dict(split=split, streaming=streaming, trust_remote_code=dataset_trust_remote_code)
 
@@ -310,8 +353,14 @@ class AnalysisStore:
             self.dataset = dataset
 
         if self.dataset is not None:
-            # Set default format as our custom analysis formatter
-            self.dataset.set_format(type='interpretune')
+            if self.it_format_kwargs is not None:
+                # Set custom format options if provided
+                self.dataset.set_format(type='interpretune', **it_format_kwargs)
+            else:
+                # check current format and set it to interpretune if not already set
+                if not hasattr(self.dataset, 'format') or self.dataset.format['type'] != 'interpretune':
+                    # Set default format as our custom analysis formatter
+                    self.dataset.set_format(type='interpretune')
 
     def _format_columns(self, cols_to_fetch: list[str], indices: Optional[Union[int, slice, list[int]]] = None) -> dict:
         """Internal helper to format specified columns into tensors with proper shape reconstruction.
@@ -352,6 +401,11 @@ class AnalysisStore:
             raise ValueError("op_output_dataset_path must be set to save datasets")
         return Path(self.op_output_dataset_path)
 
+    @save_dir.setter
+    def save_dir(self, path: str | os.PathLike) -> None:
+        """Set the directory where datasets will be saved."""
+        self.op_output_dataset_path = str(path)
+
     def _load_dataset(self, dataset: HfDataset | str | os.PathLike) -> None:
         """Load a dataset from a path or existing dataset object."""
         load_dataset_kwargs = dict(
@@ -373,6 +427,7 @@ class AnalysisStore:
         # Set default tensor format
         self.dataset.set_format(type='interpretune')
 
+    # TODO: rename this method to reset_dataset or similar
     def reset(self) -> None:
         """Reset the dataset."""
         # TODO: decide on appropriate reloading/clearing behavior
@@ -442,7 +497,7 @@ class AnalysisStore:
             name: Name of column or dataset attribute to fetch
 
         Returns:
-            Column data if name exists in AnalysisBatchProtocol annotations,
+            Column data if name exists in AnalysisBatchProtocol annotations and dataset,
             otherwise returns dataset attribute.
 
         Raises:
@@ -450,7 +505,11 @@ class AnalysisStore:
         """
         # First check if it's a protocol-defined column
         if name in AnalysisBatchProtocol.__annotations__:
-            return self[name]
+            # Check if the column actually exists in the dataset
+            if self.dataset is not None and hasattr(self.dataset, 'column_names') and name in self.dataset.column_names:
+                return self[name]
+            # Return None if column isn't available yet
+            return None
 
         # If not, try to get attribute from dataset
         if hasattr(self.dataset, name):

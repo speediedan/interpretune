@@ -15,16 +15,22 @@ from typing import Optional, Any, Union, Dict, Sequence
 from copy import deepcopy
 
 import torch
+from datasets import Dataset
+from sae_lens import SAE
+from transformers import BatchEncoding
 
-from interpretune.config.transformer_lens import ITLensFromPretrainedConfig, ITLensCustomConfig
-from interpretune.config.sae_lens import SAELensFromPretrainedConfig, SAELensCustomConfig
-from interpretune.config import ITConfig, ITDataModuleConfig
+from interpretune.config import (ITConfig, ITDataModuleConfig, AnalysisCfg, SAELensFromPretrainedConfig,
+                                 SAELensCustomConfig, ITLensFromPretrainedConfig, ITLensCustomConfig)
 from interpretune.session import ITSessionConfig, ITSession
 from interpretune.protocol import StrOrPath, Adapter
+from interpretune.analysis import AnalysisBatch, AnalysisStore
+from interpretune.runners.analysis import maybe_init_analysis_cfg
 from tests import seed_everything
+from tests.base_defaults import BaseCfg
+from tests.data_generation import gen_or_validate_input_data
+from tests.utils import get_model_input_dtype, cuda_reset
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
-from tests.utils import get_model_input_dtype
-from base_defaults import  BaseCfg
+
 
 IT_GLOBAL_STATE_LOG_MODE = os.environ.get("IT_GLOBAL_STATE_LOG_MODE", "0") == "1"
 
@@ -39,6 +45,8 @@ def apply_itdm_test_cfg(base_itdm_cfg: ITDataModuleConfig, test_cfg: BaseCfg, **
     return test_itdm_cfg
 
 def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: Optional[StrOrPath] = None) -> ITConfig:
+    # TODO: for attributes that don't actually belong to ITConfig (and existing subclasses), we should avoid adding them
+    # e.g. right now, `sae_analysis_targets` is the only one that doesn't belong to ITConfig or defined subclasses
     test_cfg_override_attrs = ["memprofiler_cfg", "debug_lm_cfg", "cust_fwd_kwargs", "tl_cfg", "model_cfg", "sae_cfgs",
                                "hf_from_pretrained_cfg", "generative_step_cfg", "add_saes_on_init", "auto_comp_cfg",
                                "sae_analysis_targets", "analysis_cfgs", "sae_cfgs"]
@@ -74,6 +82,7 @@ def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int
             for sae_cfg in cfg.sae_cfgs:
                 _update_sae_cfg_device_precision(sae_cfg, device_type, precision)
     return cfg
+
 
 def _update_tl_cfg_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> None:
         dev_prec_override = {'dtype': get_model_input_dtype(precision), 'device': device_type}
@@ -118,6 +127,133 @@ def gen_session_cfg(test_cfg, test_alias, expected_results, tmp_path, prewrapped
     it_session_cfg = config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_dir, prewrapped_modules)
     return it_session_cfg
 
+def cfg_op_env(request, session_fixture, op_to_test, input_data=None, batches=1, generate_required_only: bool = True,
+               override_req_cols: Optional[tuple] = None):
+    """Set up a test environment for an operation using a real model.
+
+    Args:
+        request: pytest request fixture
+        session_fixture: name of the session fixture to use
+        op_to_test: the operation to test (e.g., it.model_forward)
+        input_data: dictionary of input data needed for the op's input_schema
+        batches: number of batches to process (default: 1)
+        override_req_cols: Tuple of field names to override the required_only behavior
+                          (see gen_or_validate_input_data docstring)
+
+    Returns:
+        If batches=1: tuple of (it_session, batch, analysis_batch)
+        If batches>1: tuple of (it_session, [batch1, batch2, ...], [analysis_batch1, analysis_batch2, ...])
+    """
+    # Get the fixture and extract session
+    fixture = request.getfixturevalue(session_fixture)
+    it_session = get_deepcopied_session(fixture.it_session)
+
+    # Configure the analysis
+    analysis_cfg = AnalysisCfg(
+        target_op=op_to_test,
+        ignore_manual=True,
+        save_tokens=True,
+        sae_analysis_targets=fixture.test_cfg().sae_analysis_targets,
+    )
+
+    # Initialize analysis config on the module
+    maybe_init_analysis_cfg(it_session.module, analysis_cfg)
+
+    # Extract input schema
+    input_schema = getattr(analysis_cfg.op, 'input_schema', None)
+
+    # Get a sample batch to extract shapes
+    batch_shapes = {}
+    if input_schema:
+        # Create test dataloader early to inspect shapes
+        dataloader = it_session.datamodule.test_dataloader()
+        sample_batch = next(iter(dataloader))
+
+        # Extract shape information from the batch
+        if isinstance(sample_batch, (BatchEncoding, dict)):
+            for key, value in sample_batch.items():
+                if hasattr(value, 'shape'):
+                    batch_shapes[f'{key}_shape'] = value.shape
+
+            # Calculate actual sequence length if input_ids are present
+            # Determine the dynamic sequence length key dynamically
+            model_input_name = it_session.datamodule.tokenizer.model_input_names[0]
+            if model_input_name in sample_batch:
+                target_seq_len = sample_batch[model_input_name].shape[-1]
+                batch_shapes['target_seq_len'] = target_seq_len
+
+        # Build features spec for inputs and handle multiple batches
+        regular_data, intermediate_data = gen_or_validate_input_data(
+            module=it_session.module,
+            input_schema=input_schema,
+            batch_shapes=batch_shapes,
+            input_data=input_data,
+            num_batches=batches,
+            required_only=generate_required_only,
+            override_req_cols=override_req_cols,
+            predefined_indices=True  # Always use predefined indices for testing
+        )
+    else:
+        regular_data, intermediate_data = {}, {}
+
+    # Create the analysis store with regular input fields only
+    input_store = None
+    if regular_data:
+        schema_source = it_session.module.analysis_cfg.op.input_schema
+        serializable_col_cfg = {k: v.to_dict() for k, v in schema_source.items()} if schema_source else {}
+        it_format_kwargs = dict(col_cfg=serializable_col_cfg)
+        dataset = Dataset.from_dict(regular_data).with_format("interpretune", **it_format_kwargs)
+        input_store = AnalysisStore(dataset=dataset, it_format_kwargs=it_format_kwargs)
+
+    analysis_cfg.input_store = input_store
+
+    # Reset dataloader iterator to start from the beginning
+    dataloader = it_session.datamodule.test_dataloader()
+    dataloader_iter = iter(dataloader)
+
+    # If only one batch is requested (original behavior)
+    if batches == 1:
+        batch = next(dataloader_iter)
+
+        if input_store is not None:
+            analysis_batch = AnalysisBatch(input_store[0])
+        else:
+            analysis_batch = AnalysisBatch()
+
+        # Manually add intermediate_only values to the analysis batch
+        for field, values in intermediate_data.items():
+            if values and len(values) > 0:
+                setattr(analysis_batch, field, values[0])
+
+        return it_session, batch, analysis_batch
+
+    # If multiple batches are requested
+    else:
+        batch_list = []
+        analysis_batch_list = []
+
+        for i in range(batches):
+            try:
+                batch = next(dataloader_iter)
+                batch_list.append(batch)
+
+                if input_store is not None and i < len(input_store.dataset):
+                    analysis_batch = AnalysisBatch(input_store[i])
+                else:
+                    analysis_batch = AnalysisBatch()
+
+                # Manually add intermediate_only values to the analysis batch
+                for field, values in intermediate_data.items():
+                    if values and i < len(values):
+                        setattr(analysis_batch, field, values[i])
+
+                analysis_batch_list.append(analysis_batch)
+            except StopIteration:
+                # If we run out of data, break the loop
+                break
+
+        return it_session, batch_list, analysis_batch_list
+
 def config_modules(test_cfg, test_alias, expected_results, tmp_path,
                    prewrapped_modules: Optional[Dict[str, Any]] = None, state_log_mode: bool = False,
                    cfg_only: bool = False) -> ITSessionConfig | ITSession:
@@ -132,18 +268,30 @@ def config_modules(test_cfg, test_alias, expected_results, tmp_path,
     it_session = ITSession(it_session_cfg)
     return it_session
 
-################################################################################
-# CUDA utils
-################################################################################
+def get_deepcopied_session(it_session_fixt: ITSession):
+    """Deepcopy the provided ITSession fixture with potential special handling for certain attributes. This is
+    necessary in some contexts to avoid issues with shared references in the original session.
 
-def _clear_cuda_memory() -> None:
-    # strangely, the attribute function be undefined when torch.compile is used
-    if hasattr(torch._C, "_cuda_clearCublasWorkspaces"):
-        # https://github.com/pytorch/pytorch/issues/95668
-        torch._C._cuda_clearCublasWorkspaces()
-    torch.cuda.empty_cache()
+    Args:
+        it_session_fixt: The ITSession fixture to be deepcopied.
 
-def cuda_reset():
-    if torch.cuda.is_available():
-        _clear_cuda_memory()
-        torch.cuda.reset_peak_memory_stats()
+    Returns:
+        A deepcopy of the provided ITSession fixture patched to handle edge cases.
+    """
+    it_session = deepcopy(it_session_fixt)
+
+    # TODO: since there are other method-bound closures that we don't patch in it_session encapsulated objects, we
+    # should probably refactor our it_session fixture strategy and possibly create a custom __deepcopy__ method for
+    # it_session that handles all of these cases.
+    # Note: Currently, the only context that requires special handling is when SAEs have already been instantiated.
+    # This modification should be removed once the SAELens code is refactored to avoid this issue.
+    sae_handles = getattr(it_session.module, "sae_handles", None)
+    # as `reshape_fn_in` is considered an immutable, atomic object by deepcopy, we need to recreate the relevant
+    # method-bound closure `turn_on_forward_pass_hook_z_reshaping` creates to rebind it to our new SAE instance(s)
+    if sae_handles and any(isinstance(handle, SAE) for handle in sae_handles):
+        for handle in sae_handles:
+            if handle.cfg.hook_name.endswith("_z"):
+                handle.turn_on_forward_pass_hook_z_reshaping()
+            else:
+                handle.turn_off_forward_pass_hook_z_reshaping()
+    return it_session

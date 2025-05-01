@@ -2,6 +2,7 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from typing import Literal, Union, Optional, Any, Dict, Callable
 from dataclasses import dataclass, fields
+import os
 
 import torch
 from transformers import BatchEncoding, PreTrainedTokenizerBase
@@ -57,7 +58,7 @@ class AnalysisBatch(AttrDict):
             self[key] = maybe_detach(value)
 
 
-DIM_VAR = Literal['batch_size', 'max_answer_tokens', 'num_classes']
+DIM_VAR = Literal['batch_size', 'max_answer_tokens', 'num_classes', 'vocab_size', 'max_seq_len']
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class ColCfg:
     datasets_dtype: str  # Explicit datasets dtype string (e.g. "float32", "int64")
     required: bool = True
     dyn_dim: Optional[int] = None
+    dyn_dim_ceil: Optional[DIM_VAR] = None  # helper for dynamic dimension handling in some contexts
     non_tensor: bool = False
     per_latent: bool = False
     per_sae_hook: bool = False  # For fields that have per-SAE hook subfields
@@ -164,6 +166,13 @@ def wrap_summary(analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
     analysis_batch.to_cpu()
     return analysis_batch
 
+# we use this simple helper function for pickling ops of both AnalysisOp and OpWrapper
+def _reconstruct_op(cls, state):
+    """Reconstruct an operation from its class and state dictionary."""
+    obj = cls.__new__(cls)
+    obj.__dict__.update(state)
+    return obj
+
 
 class AnalysisOp:
     """Base class for analysis operations."""
@@ -184,13 +193,6 @@ class AnalysisOp:
     def alias(self) -> str:
         """Return the active alias if set, otherwise return the name."""
         return self.active_alias if self.active_alias is not None else self.name
-
-    @property
-    def callable(self) -> CallableAnalysisOp:
-        """Get callable wrapper for this operation."""
-        if self._impl is None:
-            self._impl = CallableAnalysisOp(self)
-        return self._impl
 
     def _validate_input_schema(self, analysis_batch: Optional[AnalysisBatchProtocol], batch: BatchEncoding) -> None:
         """Validate that required inputs defined in input_schema exist in analysis_batch or batch."""
@@ -239,7 +241,10 @@ class AnalysisOp:
         # First apply basic wrapping
         analysis_batch = wrap_summary(analysis_batch, batch, tokenizer, save_prompts, save_tokens,
                          decode_kwargs=decode_kwargs)
-
+        # TODO: it probably makes sense to add custom dataset builders to handle these transformations rather than
+        #       doing it here for better separation of concerns and internal consistency/api symmetry (e.g. we
+        #       have custom formatters for reading back these transformed columns and all serde logic should be
+        #       encapsulated at the same level of abstraction)
         # Process column configurations
         for col_name, col_cfg in output_schema.items():
             if (col_name not in analysis_batch.keys()):
@@ -276,6 +281,8 @@ class AnalysisOp:
 
         return analysis_batch
 
+    # TODO: Add a mode where save_batch does not apply dyn_dim serialization transformations? Would allow for
+    # wrap_summary/latent transformations to be executed but enable manual dataset construction
     def save_batch(self, analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
                   tokenizer: PreTrainedTokenizerBase | None = None, save_prompts: bool = False,
                   save_tokens: bool = False, decode_kwargs: Optional[dict[str, Any]] = None) -> AnalysisBatchProtocol:
@@ -315,11 +322,16 @@ class AnalysisOp:
         """Simple one-line description of the analysis operation."""
         return f"{self.name}: {self.description}"
 
+    def __reduce__(self):
+        # TODO: consider more robust serialization in the future
+        return (_reconstruct_op, (self.__class__, self.__dict__.copy()))
+
     def __call__(self, module, analysis_batch: Optional[AnalysisBatchProtocol],
                 batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
         """Execute the operation using the configured implementation."""
+        analysis_batch = analysis_batch or AnalysisBatch()
         # Validate input schema if provided
-        if self.input_schema is not None:
+        if self.input_schema:
             self._validate_input_schema(analysis_batch, batch)
 
         # Use the implementation function from callables if available
@@ -332,38 +344,6 @@ class AnalysisOp:
         raise NotImplementedError(f"Operation {self.name} does not have an implementation function registered")
 
 
-class CallableAnalysisOp(AnalysisOp):
-    """Wrapper to make AnalysisOp callable with the same interface as the operation."""
-    def __init__(self, op: AnalysisOp):
-        super().__init__(name=op.name,
-                         description=op.description,
-                         output_schema=op.output_schema,
-                         input_schema=op.input_schema)
-        self._op = op
-        self.__name__ = op.name
-        self.__module__ = "interpretune"
-        self.__qualname__ = op.name
-
-    def __call__(self, module, analysis_batch: Optional[AnalysisBatchProtocol],
-                batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
-        """Execute the analysis operation on the given batch by delegating to the op."""
-        return self._op(module, analysis_batch, batch, batch_idx)
-
-    def __str__(self) -> str:
-        """String representation showing the operation name."""
-        return f"{self.name}"
-
-    def __repr__(self) -> str:
-        """Detailed representation showing the wrapped operation."""
-        return f"CallableAnalysisOp(op={self._op!r})"
-
-    # Add missing method to make class compatible with modified dispatcher
-    @property
-    def callable(self):
-        """Return self since this is already a callable wrapper."""
-        return self
-
-
 class ChainedAnalysisOp(AnalysisOp):
     """A chain of analysis operations to be executed in sequence."""
 
@@ -372,12 +352,22 @@ class ChainedAnalysisOp(AnalysisOp):
         name = '.'.join(op.name for op in ops)
         description = f"Chain of operations: {' → '.join(op.description for op in ops)}"
 
-        # The output schema is the output schema of the last operation
-        output_schema = ops[-1].output_schema
-        # The input schema is the input schema of the first operation
-        input_schema = ops[0].input_schema
+        # Import here to avoid circular imports
+        from interpretune.analysis.ops.compiler.schema_compiler import jit_compile_chain_schema
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
 
-        # Use provided alias or default to the generated name
+        # Check if alias exists in dispatcher's op_definitions
+        if alias and alias in DISPATCHER._op_definitions:
+            op_def = DISPATCHER._op_definitions[alias]
+            input_schema = op_def['input_schema']
+            output_schema = op_def['output_schema']
+        else:
+            # Compile input and output schemas using the op definitions dictionary
+            input_schema, output_schema = jit_compile_chain_schema(
+                ops, DISPATCHER._op_definitions
+            )
+
+        # Use provided alias or default to the generated name  # TODO: revisit drawbacks of this aliasing scheme
         active_alias = alias or name
 
         super().__init__(name=name, description=description,
@@ -385,6 +375,7 @@ class ChainedAnalysisOp(AnalysisOp):
                          active_alias=active_alias)
         self.chain = ops
 
+        # TODO: the active op alias should be set in the dispatcher or ITmodule state
         # Set active_alias on each op in the chain
         for op in self.chain:
             op.active_alias = active_alias
@@ -396,3 +387,135 @@ class ChainedAnalysisOp(AnalysisOp):
         for op in self.chain:
             result = op(module, result, batch, batch_idx)
         return result
+
+class OpWrapper:
+    """A special wrapper for operations that ensures the op is instantiated when accessed directly or when
+    attributes are accessed."""
+
+    # Class variable to store module access info
+    _target_module = None
+    _debugger_identifier = os.environ.get('IT_ENABLE_LAZY_DEBUGGER', '')
+
+    @classmethod
+    def initialize(cls, target_module):
+        """Set the target module where operations will be registered."""
+        cls._target_module = target_module
+
+    def __init__(self, op_name):
+        self._op_name = op_name
+        self._instantiated_op = None
+        self._is_instantiated = False  # Track instantiation status separately
+
+        # Lazy import to avoid circular imports
+        self._dispatcher = None
+
+    @property
+    def _get_dispatcher(self):
+        """Lazily load the dispatcher only when needed."""
+        if self._dispatcher is None:
+            from interpretune.analysis.ops.dispatcher import DISPATCHER
+            self._dispatcher = DISPATCHER
+        return self._dispatcher
+
+    def _ensure_instantiated(self):
+        """Make sure the operation is instantiated."""
+        if not self._is_instantiated:
+            # Get the op from the dispatcher
+            op = self._get_dispatcher.get_op(self._op_name)
+            self._instantiated_op = op
+            self._is_instantiated = True
+
+            # Update module attribute to replace wrapper with actual op if target module is set
+            if self.__class__._target_module is not None:
+                if hasattr(self.__class__._target_module, self._op_name):
+                    setattr(self.__class__._target_module, self._op_name, self._instantiated_op)
+
+                # Also update any aliases that point to this wrapper
+                for alias, op_name in list(self._get_dispatcher.get_op_aliases()):
+                    if op_name == self._op_name and hasattr(self.__class__._target_module, alias):
+                        if getattr(self.__class__._target_module, alias) is self:
+                            setattr(self.__class__._target_module, alias, self._instantiated_op)
+
+            # Return the instantiated op directly
+            return self._instantiated_op
+        return self._instantiated_op
+
+    def __getattribute__(self, name):
+        """Override to monitor all attribute access."""
+        # Allow direct access to critical properties without triggering instantiation
+        if name in ('_op_name', '_instantiated_op', '_is_instantiated', '__str__', '__repr__',
+                   '__class__', '_get_dispatcher', '_dispatcher', '__reduce__', '__getstate__'):
+            return object.__getattribute__(self, name)
+
+        # Special handling for attributes commonly checked by debuggers
+        # Only do stack analysis if DEBUGGER_IDENTIFIER is set and we're checking special attrs
+        if self.__class__._debugger_identifier and name in ('__iter__', '__len__'):
+            import traceback
+
+            # Check for debugger-originated calls
+            stack = traceback.extract_stack()
+            is_debugger_inspection = any(self.__class__._debugger_identifier in frame.filename for frame in stack)
+
+            if is_debugger_inspection:
+                # Return None to make hasattr() return False during debugging
+                return None
+
+        # Normal attribute access
+        if name not in ('_ensure_instantiated', '__call__'):
+            op = self._ensure_instantiated()
+            return getattr(op, name)
+
+        return object.__getattribute__(self, name)
+
+    def __call__(self, *args, **kwargs):
+        """When called as a function, instantiate and call the real op."""
+        op = self._ensure_instantiated()
+        return op(*args, **kwargs)
+
+    def __getattr__(self, name):
+        """Forward any attribute access to the instantiated op."""
+        op = self._ensure_instantiated()
+        return getattr(op, name)
+
+    # Override special methods to avoid instantiation
+    def __str__(self):
+        """Return a string representation that indicates instantiation status."""
+        if self._is_instantiated:
+            return f"OpWrapper('{self._op_name}', instantiated)"
+        return f"OpWrapper('{self._op_name}', not instantiated)"
+
+    def __repr__(self):
+        """Return a detailed representation useful for debugging."""
+        if self._is_instantiated:
+            instantiated_op_repr = repr(self._instantiated_op) if self._is_instantiated else 'None'
+            return (
+                f"OpWrapper(name='{self._op_name}', instantiated=True, "
+                f"op={instantiated_op_repr})"
+            )
+        return f"OpWrapper(name='{self._op_name}', instantiated=False)"
+
+    # TODO: consider refactoring and simplifying this since we largely only use with pickling of OpWrapper during
+    #       dataset fingerprinting operations (we don't really need the wrapper at that point it would seem)
+    def __reduce__(self):
+        """Handle pickling by converting to the actual operation.
+
+        Instead of trying to pickle the wrapper, this returns information to rebuild the actual operation during
+        unpickling.
+        """
+        # Ensure the operation is instantiated
+        op = self._ensure_instantiated()
+
+        # Forward to the operation's own state
+        if hasattr(op, '__reduce__'):
+            return op.__reduce__()
+
+        # If the operation doesn't have __reduce__, create standard pickle data
+        # This uses the operation's class and __dict__ to ensure proper reconstruction
+        return (_reconstruct_op,(op.__class__, op.__dict__.copy()))
+
+    def __getstate__(self):
+        """Return state for pickling - delegate to the actual operation."""
+        op = self._ensure_instantiated()
+        if hasattr(op, '__getstate__'):
+            return op.__getstate__()
+        return op.__dict__.copy()

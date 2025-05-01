@@ -1,9 +1,10 @@
 from __future__ import annotations
 import os
 import inspect
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, List, Optional, Dict
 from contextlib import contextmanager
 from functools import wraps
+
 
 import torch
 from transformers import AutoConfig, PretrainedConfig
@@ -108,6 +109,19 @@ class AnalysisStepMixin:
         if not self.session_complete:
             self.on_session_end()
 
+    def model_sig_keys(self, target_method: str) -> list:
+        return [param.name for param in inspect.signature(getattr(self.model, target_method)).parameters.values()]
+
+    def auto_prune_batch(self, batch: BatchEncoding, target_method: str) -> dict[str, Any]:
+        # since we're abstracting the same generative classification logic to be used with different frameworks, models
+        # and datasets we use a mapping function to provide only data inputs a given generate function supports (for
+        # frameworks that don't handle variadic kwargs). This currently requires the user provides
+        # compatible models and dataset.
+        # TODO: consider adding further upstream configuration validation that warns the user if the provided dataset
+        # and step logic are incompatible
+        # TODO: handle regular dicts in addition to BatchEncoding?
+        return {bk: batch[bk] for bk in list(batch.data) if bk in self.model_sig_keys(target_method)}
+
 class GenerativeStepMixin:
     # Often used for n-shot classification, those contexts are only a subset of generative classification use cases
 
@@ -171,7 +185,60 @@ class GenerativeStepMixin:
             raise Exception(f"{gen_dataset_info_msg} Received the following error msg: {ge}")
         return outputs
 
+class ClassificationMixin:
+    # Default classification helper methods
 
+    def init_classification_mapping(self) -> None:
+        it_cfg, tokenizer = self.it_cfg, self.datamodule.tokenizer
+        token_ids = tokenizer.convert_tokens_to_ids(it_cfg.classification_mapping)
+        device = self.device if isinstance(self.device, torch.device) else self.output_device
+        it_cfg.classification_mapping_indices = torch.tensor(token_ids, device=device)
+
+    def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        # to support genclassif/non-genclassif configs and LM/SeqClassification heads we adhere to the following logits
+        # logical shape invariant: [batch size, positions to consider, answers to consider]
+        if isinstance(logits, tuple):
+            logits = torch.stack([out for out in logits], dim=1)
+        logits = logits.to(device=self.device)
+        if logits.ndim == 2:  # if answer logits have already been squeezed
+            logits = logits.unsqueeze(1)
+        if logits.shape[-1] != self.it_cfg.num_labels:
+            # Only use custom mapping if generative_step_cfg is enabled and indices are set
+            if (mapping_indices := self.it_cfg.classification_mapping_indices) is not None:
+                map_indices = mapping_indices
+            else:
+                raise ValueError("The logits shape does not match the expected number of labels.")
+
+            logits = torch.index_select(logits, -1, map_indices)
+            # for non-generative (standard classification), keep only the last position
+            if not self.it_cfg.generative_step_cfg.enabled:
+                logits = logits[:, -1:, :]
+        return logits
+
+    def labels_to_ids(self, labels: List[str]) -> List[int]:
+        return torch.take(self.it_cfg.classification_mapping_indices, labels), labels
+
+    def logits_and_labels(self, batch: BatchEncoding, batch_idx: int) -> torch.Tensor:
+        label_ids, labels = self.labels_to_ids(batch.pop("labels"))
+        logits = self(**batch)
+        # TODO: add another layer of abstraction here to handle different model output types? Tradeoffs to consider...
+        if not isinstance(logits, torch.Tensor):
+            logits = logits.logits
+            assert isinstance(logits, torch.Tensor), f"Expected logits to be a torch.Tensor but got {type(logits)}"
+        return torch.squeeze(logits[:, -1, :], dim=1), label_ids, labels
+
+    def collect_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor, mode: str = 'log') -> Optional[Dict]:
+        logits = self.standardize_logits(logits)
+        per_example_answers, _ = torch.max(logits, dim=-2)
+        preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
+        metric_dict = self.metric.compute(predictions=preds, references=labels)
+        # TODO: check if this type casting is still required for lightning torchmetrics, bug should be fixed now...
+        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
+                               metric_dict.items()))
+        if mode == 'log':
+            self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
+        else:
+            return metric_dict
 
 class HFFromPretrainedMixin:
     """" Barebones interface to setup optimizers and schedulers for manual optimization with core IT modules."""
@@ -297,6 +364,6 @@ class HFFromPretrainedMixin:
         self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))
 
 
-class BaseITMixins(ITStateMixin, ITExtensionsConfigMixin, HFFromPretrainedMixin, AnalysisStepMixin, GenerativeStepMixin,
-                   MemProfilerHooks):
+class BaseITMixins(ITStateMixin, ITExtensionsConfigMixin, HFFromPretrainedMixin, ClassificationMixin,
+                   AnalysisStepMixin, GenerativeStepMixin, MemProfilerHooks):
     ...

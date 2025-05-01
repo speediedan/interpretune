@@ -93,6 +93,9 @@ def disable_genclassif(it_session: ITSession):
     finally:
         it_session.module.it_cfg.generative_step_cfg = orig_genclassif_cfg
 
+def _unwrap_one(seq):
+    return seq[0] if len(seq) == 1 else seq
+
 def kwargs_from_cfg_obj(cfg_obj, source_obj, base_kwargs=None):
     """Dynamically extract a subset of configuration parameters from a source object based on an object's
     signature.
@@ -129,3 +132,20 @@ def kwargs_from_cfg_obj(cfg_obj, source_obj, base_kwargs=None):
             kwargs[attr] = getattr(source_obj, attr)
 
     return kwargs
+
+
+################################################################################
+# CUDA utils
+################################################################################
+
+def _clear_cuda_memory() -> None:
+    # strangely, the attribute function be undefined when torch.compile is used
+    if hasattr(torch._C, "_cuda_clearCublasWorkspaces"):
+        # https://github.com/pytorch/pytorch/issues/95668
+        torch._C._cuda_clearCublasWorkspaces()
+    torch.cuda.empty_cache()
+
+def cuda_reset():
+    if torch.cuda.is_available():
+        _clear_cuda_memory()
+        torch.cuda.reset_peak_memory_stats()

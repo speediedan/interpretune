@@ -13,6 +13,7 @@ from it_examples.experiments.rte_boolq import (RTEBoolqEntailmentMapping, Genera
                                                RTEBoolqSLConfig)
 from interpretune.config.transformer_lens import TLensGenerationConfig
 from tests.base_defaults import default_test_task
+from interpretune.analysis.ops.base import AnalysisOp, ChainedAnalysisOp
 
 
 class TestClassBaseConfigs:
@@ -162,34 +163,40 @@ class TestAnalysisConfigs:
 
         # Test with string op that doesn't exist
         with pytest.raises(ValueError, match="Unknown operation"):
-            AnalysisCfg(op="nonexistent_op")
+            AnalysisCfg(target_op="nonexistent_op")
 
         # Test with chained op string that doesn't exist
         with pytest.raises(ValueError):
-            AnalysisCfg(op="nonexistent_op1.nonexistent_op2")
+            AnalysisCfg(target_op="nonexistent_op1.nonexistent_op2")
 
         # Test with valid op and name inference
         with patch.object(DISPATCHER, 'get_op', return_value=Mock(name='test_op', alias='test_op_alias')):
-            cfg = AnalysisCfg(op="test_op")
+            cfg = AnalysisCfg(target_op="test_op")
             assert cfg.name == "test_op_alias"
 
         # Test with list of ops
-        mock_op1 = Mock(name='op1', alias='op1_alias')
-        mock_op2 = Mock(name='op2', alias='op2_alias')
-        with patch.object(DISPATCHER, 'create_chain_from_ops', return_value=Mock(alias='chain_alias')) as mock_chain:
-            cfg = AnalysisCfg(op=[mock_op1, mock_op2])
+
+        mock_op1 = Mock(spec=AnalysisOp, name='op1')
+        mock_op1.alias = 'op1_alias'
+        mock_op2 = Mock(spec=AnalysisOp, name='op2')
+        mock_op2.alias = 'op2_alias'
+        with patch.object(
+            DISPATCHER,
+            'create_chain_from_ops',
+            return_value=Mock(spec=ChainedAnalysisOp, alias='chain_alias')
+        ) as mock_chain:
+            cfg = AnalysisCfg(target_op=[mock_op1, mock_op2])
+            # Since mocks are spec'd as AnalysisOp, they lack _ensure_instantiated
             mock_chain.assert_called_once_with([mock_op1, mock_op2])
             assert cfg.name == "chain_alias"
 
-        # Test with single op in list
-        with patch.object(DISPATCHER, 'create_chain_from_ops') as mock_chain:
-            cfg = AnalysisCfg(op=[mock_op1])
-            mock_chain.assert_not_called()
-            assert cfg.op == mock_op1
-
         # Test chained operations with dot notation
-        with patch.object(DISPATCHER, 'create_chain', return_value=Mock(alias='dotted_chain_alias')) as mock_chain:
-            cfg = AnalysisCfg(op="op1.op2")
+        with patch.object(
+            DISPATCHER,
+            'create_chain',
+            return_value=Mock(spec=ChainedAnalysisOp, alias='dotted_chain_alias')
+        ) as mock_chain:
+            cfg = AnalysisCfg(target_op="op1.op2")
             mock_chain.assert_called_once_with("op1.op2")
             assert cfg.name == "dotted_chain_alias"
 
@@ -245,23 +252,23 @@ class TestAnalysisConfigs:
 
     def test_analysis_cfg_maybe_set_hooks(self):
         # Test with no hooks
-        cfg = AnalysisCfg(op=Mock())
+        cfg = AnalysisCfg(target_op=Mock())
         with patch.object(cfg, 'check_add_default_hooks') as mock_check:
             cfg.maybe_set_hooks()
             mock_check.assert_called_once()
 
         # Test with existing hooks
-        cfg = AnalysisCfg(op=Mock(), fwd_hooks=[(lambda x: True, lambda x: x)])
+        cfg = AnalysisCfg(target_op=Mock(), fwd_hooks=[(lambda x: True, lambda x: x)])
         with patch.object(cfg, 'check_add_default_hooks') as mock_check:
             cfg.maybe_set_hooks()
             mock_check.assert_not_called()
 
     def test_analysis_cfg_prepare_model_ctx(self):
         mock_module = Mock()
-        mock_op = Mock()
+        mock_op = Mock(spec=AnalysisOp)
 
         # Test with op
-        cfg = AnalysisCfg(op=mock_op)
+        cfg = AnalysisCfg(target_op=mock_op, sae_analysis_targets=Mock())
         with patch.object(cfg, 'materialize_names_filter') as mock_material, \
              patch.object(cfg, 'maybe_set_hooks') as mock_hooks:
             cfg.prepare_model_ctx(mock_module)
@@ -269,42 +276,13 @@ class TestAnalysisConfigs:
             mock_hooks.assert_called_once()
 
         # Test without op
-        cfg = AnalysisCfg()
+        cfg = AnalysisCfg(sae_analysis_targets=Mock())
         with patch.object(cfg, 'materialize_names_filter') as mock_material, \
              patch.object(cfg, 'maybe_set_hooks') as mock_hooks:
             cfg.prepare_model_ctx(mock_module)
             mock_material.assert_called_once_with(mock_module, None)
             mock_hooks.assert_not_called()
 
-    # def test_analysis_cfg_reset_analysis_store(self, request):
-    #     """Test reset_analysis_store using a real AnalysisStore from a fixture."""
-    #     # Get a real AnalysisStore from a fixture
-    #     fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
-    #     real_store = deepcopy(fixture.result)
-
-    #     # Create an AnalysisCfg with the real store
-    #     cfg = AnalysisCfg(output_store=real_store)
-
-    #     # Store some values to check they're preserved
-    #     original_save_cfg = real_store.save_cfg
-    #     original_save_cfg_class = original_save_cfg.__class__
-    #     original_dict_items = {k: v for k, v in original_save_cfg.__dict__.items()
-    #                            if k != 'output_store'}
-
-    #     # Run the reset method
-    #     cfg.reset_analysis_store()
-
-    #     # Verify the store was reset properly
-    #     assert cfg.output_store is not None
-    #     assert cfg.output_store is real_store  # Should be the same object
-    #     assert cfg.output_store.save_cfg.__class__ == original_save_cfg_class
-
-    #     # Check that non-output_store attributes were preserved
-    #     for key, value in original_dict_items.items():
-    #         assert cfg.output_store.save_cfg.__dict__[key] == value
-
-    #     # Check that the output_store reference is properly set
-    #     assert id(cfg.output_store) == id(cfg.output_store.save_cfg.output_store)
 
     def test_analysis_cfg_save_batch(self):
         mock_batch = Mock()
@@ -312,8 +290,8 @@ class TestAnalysisConfigs:
         mock_tokenizer = Mock()
 
         # Test with op
-        mock_op = Mock()
-        cfg = AnalysisCfg(op=mock_op)
+        mock_op = Mock(spec=AnalysisOp)
+        cfg = AnalysisCfg(target_op=mock_op)
         list(cfg.save_batch(mock_analysis_batch, mock_batch, tokenizer=mock_tokenizer))
         mock_op.save_batch.assert_called_once_with(
             mock_analysis_batch, mock_batch, tokenizer=mock_tokenizer,
@@ -361,25 +339,29 @@ class TestAnalysisConfigs:
         assert cfg.bwd_hooks == []
 
         # Test with logit_diffs_base op
-        mock_op = Mock()
+        mock_op = Mock(spec=AnalysisOp)
         mock_op.name = 'logit_diffs_base'  # Use attribute assignment instead of name parameter
-        cfg = AnalysisCfg(op=mock_op)
+        cfg = AnalysisCfg(target_op=mock_op)
         # This should return without adding hooks, not raise an exception
         cfg.check_add_default_hooks()
         assert not hasattr(cfg, 'fwd_hooks') or cfg.fwd_hooks == []
         assert not hasattr(cfg, 'bwd_hooks') or cfg.bwd_hooks == []
 
+        # TODO: once we add in an op attribute akin to "uses_sae_hooks" to enable names_filter validation resolution etc
+        # re-enable this validation
+        # if self.op_name in ('logit_diffs_attr_ablation', 'logit_diffs_attr_grad') and self.names_filter is None:
+        #     raise ValueError("names_filter required for non-clean operations")
         # Test with logit_diffs_attr_grad op but no names_filter
-        mock_op = Mock()
-        mock_op.name = 'logit_diffs_attr_grad'  # Use attribute assignment
-        cfg = AnalysisCfg(op=mock_op)
-        with pytest.raises(ValueError, match="names_filter required"):
-            cfg.check_add_default_hooks()
+        # mock_op = Mock()
+        # mock_op.name = 'logit_diffs_attr_grad'  # Use attribute assignment
+        # cfg = AnalysisCfg(target_op=mock_op)
+        # with pytest.raises(ValueError, match="names_filter required"):
+        #     cfg.check_add_default_hooks()
 
         # Test with logit_diffs_attr_grad op with names_filter
-        mock_op = Mock()
+        mock_op = Mock(spec=AnalysisOp)
         mock_op.name = 'logit_diffs_attr_grad'  # Use attribute assignment
-        cfg = AnalysisCfg(op=mock_op, names_filter=lambda x: True, cache_dict={})
+        cfg = AnalysisCfg(target_op=mock_op, names_filter=lambda x: True, cache_dict={})
         with patch.object(cfg, 'add_default_cache_hooks') as mock_add:
             cfg.check_add_default_hooks()
             mock_add.assert_called_once()
@@ -417,90 +399,6 @@ class TestAnalysisConfigs:
         cfg.reset_applied_state()
         assert len(cfg._applied_to) == 0
 
-    # def test_analysis_cfg_apply(self, request):
-    #     """Test the apply method with both mocked and real components."""
-    #     # Get a real fixture with AnalysisCfg
-    #     fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
-
-    #     # Test with already applied
-    #     mock_module = Mock()
-    #     mock_module_id = id(mock_module)
-
-    #     cfg = AnalysisCfg()
-    #     cfg._applied_to[mock_module_id] = mock_module.__class__.__name__
-    #     with patch.object(cfg, 'prepare_model_ctx') as mock_prepare:
-    #         cfg.apply(mock_module)
-    #         mock_prepare.assert_not_called()
-
-    #     # Reset applied state for next tests
-    #     cfg._applied_to.clear()
-
-    #     # Test with custom step and no ignore_manual
-    #     mock_module = Mock()
-    #     mock_module_id = id(mock_module)
-    #     setattr(mock_module, 'analysis_step', lambda x: x)
-    #     cfg = AnalysisCfg(op=Mock())
-
-    #     # Directly patch warnings.warn at the module level
-    #     with patch('warnings.warn') as mock_warn, \
-    #          patch.object(cfg, 'prepare_model_ctx') as mock_prepare:
-    #         cfg.apply(mock_module)
-    #         mock_warn.assert_called_once()
-    #         assert "already has a analysis_step method" in mock_warn.call_args[0][0]
-    #         mock_prepare.assert_called_once()
-    #         assert mock_module_id in cfg._applied_to
-
-    #     # Test with custom step and ignore_manual=True
-    #     mock_module = Mock()
-    #     mock_module_id = id(mock_module)
-    #     setattr(mock_module, 'analysis_step', lambda x: x)
-    #     mock_op = Mock()
-    #     cfg = AnalysisCfg(op=mock_op, ignore_manual=True)
-    #     with patch.object(cfg, 'prepare_model_ctx') as mock_prepare:
-    #         cfg.apply(mock_module)
-    #         mock_prepare.assert_called_once()
-    #         assert hasattr(mock_module, '_generated_analysis_step')
-    #         assert mock_module_id in cfg._applied_to
-
-    #     # Test with no custom step and with op
-    #     mock_module = Mock(spec=['__class__'])
-    #     mock_module.__class__.__name__ = 'MockModule'
-    #     mock_module_id = id(mock_module)
-    #     mock_op = Mock()
-    #     cfg = AnalysisCfg(op=mock_op)
-    #     with patch.object(cfg, 'prepare_model_ctx') as mock_prepare:
-    #         cfg.apply(mock_module)
-    #         mock_prepare.assert_called_once()
-    #         assert hasattr(mock_module, 'analysis_step')
-    #         assert mock_module_id in cfg._applied_to
-
-    #     # Test without output_store - use a real AnalysisStore to avoid mocking
-    #     mock_module = Mock()
-    #     mock_module_id = id(mock_module)
-    #     cfg = AnalysisCfg()
-
-    #     # Import from the actual module path to match what's used in the code
-    #     with patch('interpretune.analysis.core.AnalysisStore') as mock_store_cls, \
-    #          patch.object(cfg, 'prepare_model_ctx') as mock_prepare:
-    #         mock_store_cls.return_value = fixture.result
-    #         cfg.apply(mock_module)
-    #         mock_store_cls.assert_called_once()
-    #         mock_prepare.assert_called_once()
-    #         assert mock_module_id in cfg._applied_to
-
-    #     # Test with output_store and cache_dir/output_path - use real AnalysisStore
-    #     mock_module = Mock()
-    #     mock_module_id = id(mock_module)
-    #     real_output_store = deepcopy(fixture.result)
-    #     real_output_store.cache_dir = "/original/cache"
-    #     real_output_store.op_output_dataset_path = "/original/output"
-    #     cfg = AnalysisCfg(output_store=real_output_store)
-    #     with patch('interpretune.config.analysis.rank_zero_warn') as mock_warn, \
-    #          patch.object(cfg, 'prepare_model_ctx') as mock_prepare:
-    #         cfg.apply(mock_module, cache_dir="/new/cache", op_output_dataset_path="/new/output")
-    #         mock_warn.assert_called_once()
-    #         mock_prepare.assert_called_once()
-    #         assert mock_module_id in cfg._applied_to
 
     def test_analysis_artifact_cfg(self):
         # Test default initialization

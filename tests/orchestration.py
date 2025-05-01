@@ -20,10 +20,13 @@ from interpretune.runners import SessionRunner, AnalysisRunner, core_analysis_lo
 from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg
 from interpretune.config.analysis import AnalysisStoreProtocol
 from interpretune.config import init_analysis_cfgs
+from interpretune.base import _call_itmodule_hook
 from tests import Trainer, ModelCheckpoint
-from tests.configuration import config_modules
-from tests.base_defaults import AnalysisBaseCfg, BaseCfg
+from tests.configuration import config_modules, cfg_op_env
+from tests.base_defaults import AnalysisBaseCfg, BaseCfg, OpTestConfig
 from tests.utils import kwargs_from_cfg_obj
+import torch
+from interpretune.analysis.ops.base import AnalysisBatch
 
 
 ########################################################################################################################
@@ -65,8 +68,6 @@ def run_it(it_session: ITSession, test_cfg: BaseCfg, init_only: bool = False) ->
     SessionRunner | AnalysisStoreProtocol | Dict[str, AnalysisStoreProtocol] | None:
     # Check if test_cfg is an AnalysisBaseCfg and use the appropriate runner initialization
     if isinstance(test_cfg, AnalysisBaseCfg):
-    # if hasattr(test_cfg, "__class__") and hasattr(test_cfg.__class__, "__mro__") and \
-    #       any("AnalysisBaseCfg" in cls.__name__ for cls in test_cfg.__class__.__mro__):
         runner = init_analysis_runner(it_session, test_cfg)
     else:
         runner = init_it_runner(it_session, test_cfg)
@@ -144,6 +145,86 @@ def run_analysis_operation(it_session, use_run_cfg=True, test_cfg: BaseCfg | Non
 
         return core_analysis_loop(**analysis_cfg_kwargs)
 
+def run_op_with_config(request, op_cfg: OpTestConfig):
+    """Run operation and return results.
+
+    Args:
+        request: pytest request fixture
+        op_cfg: Configuration for the operation test
+
+    Returns:
+        Tuple of (it_session, batches, result_batches, pre_serialization_shapes)
+    """
+
+    # Set up the test environment
+    it_session, batches, analysis_batches = cfg_op_env(
+        request,
+        op_cfg.session_fixt,
+        op_cfg.target_op,
+        batches=op_cfg.batch_size,
+        generate_required_only=op_cfg.generate_required_only,
+        override_req_cols=op_cfg.override_req_cols,
+
+    )
+
+    # update op_cfg.resolved_op with resolved operation, this allows us to test both OpWrapper and our resolved op
+    op_cfg.resolved_op = it_session.module.analysis_cfg.op
+    # Convert to lists for consistent handling
+    batches = [batches] if op_cfg.batch_size == 1 else batches
+    analysis_batches = [analysis_batches] if op_cfg.batch_size == 1 else analysis_batches
+
+    # Results container
+    result_batches = []
+    pre_serialization_shapes = {}
+
+    _call_itmodule_hook(it_session.module, hook_name="on_analysis_start", hook_msg="Running analysis start hooks")
+
+    # Execute the operation for each batch
+    for i, (batch, analysis_batch) in enumerate(zip(batches, analysis_batches)):
+        # Run the operation
+        result = op_cfg.resolved_op(it_session.module, analysis_batch, batch, i)
+
+        # Verify result is a proper AnalysisBatch
+        assert isinstance(result, AnalysisBatch)
+
+        # Record pre-serialization shapes for all important fields
+        if i == 0:  # Only need to record shapes once
+            # Get fields from output_schema
+            for column_name, col_cfg in it_session.module.analysis_cfg.op.output_schema.items():
+                # Skip intermediate-only fields
+                if col_cfg.intermediate_only:
+                    continue
+
+                # Skip fields not present in result
+                if not hasattr(result, column_name):
+                    if col_cfg.required:
+                        raise ValueError(f"Required field {column_name} not found in result")
+                    continue
+
+                value = getattr(result, column_name)
+                if isinstance(value, torch.Tensor):
+                    pre_serialization_shapes[column_name] = value.shape
+                elif isinstance(value, dict) and value:
+                    # For dictionary columns - store shape for each key with tensor values
+                    if all(isinstance(v, torch.Tensor) for v in value.values()):
+                        # Simple dict of tensors
+                        pre_serialization_shapes[column_name] = {k: v.shape for k, v in value.items()}
+                    elif any(isinstance(v, dict) for v in value.values()):
+                        # Nested dicts (like per_latent structure)
+                        nested_shapes = {}
+                        for k, v in value.items():
+                            if isinstance(v, dict):
+                                nested_shapes[k] = {inner_k: inner_v.shape for inner_k, inner_v in v.items()
+                                                  if isinstance(inner_v, torch.Tensor)}
+                            elif isinstance(v, torch.Tensor):
+                                nested_shapes[k] = v.shape
+                        pre_serialization_shapes[column_name] = nested_shapes
+
+        result_batches.append(result)
+
+    _call_itmodule_hook(it_session.module, hook_name="on_analysis_end", hook_msg="Running analysis start hooks")
+
+    return it_session, batches, result_batches, pre_serialization_shapes
 
 ################################################################################
 # Lightning Adapter Train/Test Orchestration

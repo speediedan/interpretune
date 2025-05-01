@@ -54,33 +54,14 @@ class _AnalysisImportHook(MetaPathFinder):
             setattr(current_module, "create_op_chain", interpretune.analysis.DISPATCHER.create_chain)
             setattr(current_module, "create_op_chain_from_ops", interpretune.analysis.DISPATCHER.create_chain_from_ops)
 
-            # Create a special wrapper class for operations
-            class OpWrapper:
-                """A special wrapper for operations that ensures the op is instantiated when accessed directly or
-                when attributes are accessed."""
+            # Import OpWrapper class from base.py
+            from interpretune.analysis.ops.base import OpWrapper
 
-                def __init__(self, op_name):
-                    self._op_name = op_name
-                    self._instantiated_op = None
+            # Initialize OpWrapper with the current module
+            OpWrapper.initialize(current_module)
 
-                def _ensure_instantiated(self):
-                    """Make sure the operation is instantiated."""
-                    if (self._instantiated_op is None or
-                        not isinstance(self._instantiated_op, interpretune.analysis.AnalysisOp)):
-                        # Get the op from the dispatcher
-                        op = interpretune.analysis.DISPATCHER.get_op(self._op_name)
-                        self._instantiated_op = op
-                    return self._instantiated_op
-
-                def __call__(self, *args, **kwargs):
-                    """When called as a function, instantiate and call the real op."""
-                    op = self._ensure_instantiated()
-                    return op(*args, **kwargs)
-
-                def __getattr__(self, name):
-                    """Forward any attribute access to the instantiated op."""
-                    op = self._ensure_instantiated()
-                    return getattr(op, name)
+            # Set debugger identifier class variable directly
+            OpWrapper._debugger_identifier = os.environ.get('IT_ENABLE_LAZY_DEBUGGER', '')
 
             # Register all operations with lazy getters
             for op_name in interpretune.analysis.DISPATCHER._op_definitions:

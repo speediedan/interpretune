@@ -196,9 +196,9 @@ class AnalysisRunner(SessionRunner):
                     )
 
 
-    def _run(self, phase, loop_fn, *args: Any, **kwargs: Any) -> Any | None:
+    def _run(self, phase, loop_fn, step_fn: Optional[str] = None, *args: Any, **kwargs: Any) -> Any | None:
         self.phase = AllPhases[phase]
-        phase_artifacts = loop_fn(**self.run_cfg.__dict__)
+        phase_artifacts = loop_fn(step_fn=step_fn, **self.run_cfg.__dict__)
         self.it_session_end()
         return phase_artifacts
 

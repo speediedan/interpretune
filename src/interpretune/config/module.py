@@ -1,6 +1,6 @@
 #from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 import os
-from typing import Any, TYPE_CHECKING, Optional
+from typing import Any, TYPE_CHECKING, Optional, Tuple
 from dataclasses import dataclass, field
 
 import torch
@@ -37,6 +37,11 @@ class OptimizerSchedulerConf(ITSerializableCfg):
     pl_lrs_cfg: dict[str, Any] = field(default_factory=dict)
 
 @dataclass(kw_only=True)
+class ClassificationConf(ITSerializableCfg):
+    classification_mapping: Optional[Tuple] = None
+    classification_mapping_indices: Optional[torch.Tensor] = None
+
+@dataclass(kw_only=True)
 class MixinsConf(ITSerializableCfg):
     analysis_cfg: Optional["AnalysisCfgProtocol"] = None
     # generative_step_cfg: GenerativeClassificationConfig | None = None
@@ -60,8 +65,8 @@ class CompatConf(ITSerializableCfg):
                                                                                       'log_dict': AutoCompatConfig(),})
 
 @dataclass(kw_only=True)
-class ITConfig(ITSharedConfig, ModelConf, OptimizerSchedulerConf, MixinsConf, LoggingConf, CompatConf, AutoCompConf,
-               ExtensionConf):
+class ITConfig(ITSharedConfig, ModelConf, OptimizerSchedulerConf, ClassificationConf, MixinsConf, LoggingConf,
+               CompatConf, AutoCompConf, ExtensionConf):
     #"""Dataclass to encapsulate the ITModuleinternal state."""
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
     # dynamic fields added via ExtensionConf contingent on supported extension availability

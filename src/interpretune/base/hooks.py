@@ -26,6 +26,8 @@ class BaseITHooks:
         if datamodule := kwargs.get("datamodule", None):
             self._it_state._datamodule = datamodule
         self._init_dirs_and_hooks()
+        if self.it_cfg.classification_mapping is not None:
+            self.init_classification_mapping()
 
     def configure_optimizers(self) -> OptimizerLRScheduler | None:
         """Optional because it is not mandatory in the context of core IT modules (required for some adapter

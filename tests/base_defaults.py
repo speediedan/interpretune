@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Callable, Any, Dict, Sequence
+from typing import List, Optional, Tuple, Callable, Any, Dict, Sequence, TYPE_CHECKING
 import pytest
 
 from interpretune.adapters import ADAPTER_REGISTRY
@@ -8,6 +8,9 @@ from interpretune.extensions import MemProfilerCfg, DebugLMConfig
 from interpretune.protocol import Adapter
 from interpretune.analysis import SAEAnalysisTargets
 from tests.runif import RunIf, RUNIF_ALIASES
+
+if TYPE_CHECKING:
+    from interpretune.analysis import AnalysisOp
 
 default_test_task = "rte"
 
@@ -32,9 +35,6 @@ class BaseAugTest:
         if self.expected is None and self.result_gen is not None:
             assert callable(self.result_gen), "result_gen must be callable"
             self.expected = self.result_gen(self.alias)
-        if self.cfg is None and self.cfg_gen is not None:
-            assert callable(self.cfg_gen), "cfg_gen must be callable"
-            self.cfg = self.cfg_gen(self.alias)
         elif isinstance(self.cfg, Dict):
             self.cfg = self.cfg[self.alias]
         if self.marks or self.function_marks:
@@ -110,3 +110,13 @@ class AnalysisBaseCfg(BaseCfg):
 
     def __post_init__(self):
         super().__post_init__()
+
+@dataclass(kw_only=True)
+class OpTestConfig:
+    """Configuration for operation testing."""
+    target_op: Any  # The operation to test
+    resolved_op: Optional['AnalysisOp'] = None
+    session_fixt: str = "get_it_session__sl_gpt2_analysis__setup"
+    batch_size: int = 1
+    generate_required_only: bool = True
+    override_req_cols: Optional[tuple] = None

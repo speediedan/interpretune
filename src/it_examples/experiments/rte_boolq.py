@@ -151,17 +151,6 @@ class RTEBoolqSteps:
         # when using TransformerLens, we need to manually calculate our loss from logit output
         self.loss_fn = CrossEntropyLoss()
 
-    def labels_to_ids(self, labels: List[str]) -> List[int]:
-        return torch.take(self.it_cfg.entailment_mapping_indices, labels), labels
-
-    def logits_and_labels(self, batch: BatchEncoding, batch_idx: int) -> torch.Tensor:
-        label_ids, labels = self.labels_to_ids(batch.pop("labels"))
-        logits = self(**batch)
-        # TODO: add another layer of abstraction here to handle different model output types? Tradeoffs to consider...
-        if not isinstance(logits, torch.Tensor):
-            logits = logits.logits
-            assert isinstance(logits, torch.Tensor), f"Expected logits to be a torch.Tensor but got {type(logits)}"
-        return torch.squeeze(logits[:, -1, :], dim=1), label_ids, labels
 
     @MemProfilerHooks.memprofilable
     def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
@@ -219,33 +208,6 @@ class RTEBoolqSteps:
         # analysis_batch = it.logit_diffs_sae(**op_kwargs)
         yield from self.analysis_cfg.save_batch(analysis_batch, batch, tokenizer=self.datamodule.tokenizer)
 
-    def collect_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor, mode: str = 'log') -> Optional[Dict]:
-        logits = self.standardize_logits(logits)
-        per_example_answers, _ = torch.max(logits, dim=-2)
-        preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        # TODO: check if this type casting is still required for lightning torchmetrics, bug should be fixed now...
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        if mode == 'log':
-            self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
-        else:
-            return metric_dict
-
-    def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
-        # to support genclassif/non-genclassif configs and LM/SeqClassification heads we adhere to the following logits
-        # logical shape invariant: [batch size, positions to consider, answers to consider]
-        if isinstance(logits, tuple):
-            logits = torch.stack([out for out in logits], dim=1)
-        logits = logits.to(device=self.device)
-        if logits.ndim == 2:  # if answer logits have already been squeezed
-            logits = logits.unsqueeze(1)
-        if logits.shape[-1] != self.it_cfg.num_labels:
-            logits = torch.index_select(logits, -1, self.it_cfg.entailment_mapping_indices)
-            if not self.it_cfg.generative_step_cfg.enabled:
-                logits = logits[:, -1:, :]
-        return logits
-
 
 class RTEBoolqModuleMixin:
 
@@ -263,6 +225,25 @@ class RTEBoolqModuleMixin:
     def load_metric(self) -> None:
         self.metric = evaluate.load("super_glue", self.it_cfg.task_name,
                                     experiment_id=self._it_state._init_hparams['experiment_id'])
+
+    # we override the default labels_to_ids method to demo using our module-specific attributes/logic
+    def labels_to_ids(self, labels: List[str]) -> List[int]:
+        return torch.take(self.it_cfg.entailment_mapping_indices, labels), labels
+
+    # We override the default standardize_logits method to demo using custom attributes etc.
+    def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        # to support genclassif/non-genclassif configs and LM/SeqClassification heads we adhere to the following logits
+        # logical shape invariant: [batch size, positions to consider, answers to consider]
+        if isinstance(logits, tuple):
+            logits = torch.stack([out for out in logits], dim=1)
+        logits = logits.to(device=self.device)
+        if logits.ndim == 2:  # if answer logits have already been squeezed
+            logits = logits.unsqueeze(1)
+        if logits.shape[-1] != self.it_cfg.num_labels:
+            logits = torch.index_select(logits, -1, self.it_cfg.entailment_mapping_indices)
+            if not self.it_cfg.generative_step_cfg.enabled:
+                logits = logits[:, -1:, :]
+        return logits
 
     def _init_entailment_mapping(self) -> None:
         ent_cfg, tokenizer = self.it_cfg, self.datamodule.tokenizer

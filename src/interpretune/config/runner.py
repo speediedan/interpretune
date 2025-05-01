@@ -44,7 +44,7 @@ def to_analysis_cfgs(
 
     # Handle single AnalysisOp
     if hasattr(analysis_cfgs, 'name') and hasattr(analysis_cfgs, 'alias'):
-        processed_cfgs.append(AnalysisCfg(op=analysis_cfgs))
+        processed_cfgs.append(AnalysisCfg(target_op=analysis_cfgs))
         return processed_cfgs
 
     # Handle iterable of AnalysisCfg or AnalysisOp
@@ -53,7 +53,7 @@ def to_analysis_cfgs(
             if isinstance(cfg, AnalysisCfg):
                 processed_cfgs.append(cfg)
             elif hasattr(cfg, 'name') and hasattr(cfg, 'alias'):  # Check if it's an AnalysisOp
-                processed_cfgs.append(AnalysisCfg(op=cfg))
+                processed_cfgs.append(AnalysisCfg(target_op=cfg))
             else:
                 raise ValueError(f"Unsupported analysis configuration type: {type(cfg)}")
     except TypeError:
@@ -202,29 +202,3 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
     def _processed_analysis_cfgs(self) -> List[AnalysisCfg]:
         """Process and return the analysis_cfgs as a standardized list of AnalysisCfg objects."""
         return to_analysis_cfgs(self.analysis_cfgs)
-
-    # def init_analysis_cfgs(self, module: "SAEAnalysisProtocol") -> None:
-    #     """Initialize or reinitialize analysis configurations based on current settings."""
-    #     # Use the standalone function with the current runner configuration
-    #     init_analysis_cfgs(
-    #         module=module,
-    #         analysis_cfgs=self._processed_analysis_cfgs,
-    #         cache_dir=self.cache_dir,
-    #         op_output_dataset_path=self.op_output_dataset_path,
-    #         sae_analysis_targets=self.sae_analysis_targets,
-    #         ignore_manual=self.ignore_manual
-    #     )
-
-    # def init_analysis_dirs(self, module: "SAEAnalysisProtocol"):
-    #     """Initialize the analysis directories once a module handle is available."""
-    #     # Use the standalone function
-    #     cache_dir, op_output_dataset_path = init_analysis_dirs(
-    #         module=module,
-    #         cache_dir=self.cache_dir,
-    #         op_output_dataset_path=self.op_output_dataset_path,
-    #         analysis_cfgs=self._processed_analysis_cfgs
-    #     )
-
-    #     # Update instance attributes with the initialized paths
-    #     self.cache_dir = cache_dir
-    #     self.op_output_dataset_path = op_output_dataset_path
