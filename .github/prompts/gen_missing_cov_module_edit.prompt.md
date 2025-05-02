@@ -17,19 +17,32 @@ Some examples of generated fixtures are below (you can examine [conftest](../../
 All modules use the default #FingerprintTestITDataModule datamodule unless otherwise specified.
 
 - these fixtures return #AnalysisSessionFixture objects, which include real #AnalysisStore objects useful for many tests.
+
   - "get_analysis_session\_\_sl_gpt2_logit_diffs_base\_\_initonly_runanalysis": uses a SAELensModule composed user module with GPT2 model to run the "logit_diffs_base" composite operation
   - "get_analysis_session\_\_sl_gpt2_logit_diffs_sae\_\_initonly_runanalysis": uses a SAELensModule composed user module with GPT2 model to run the "logit_diffs_sae" composite operation
   - "get_analysis_session\_\_sl_gpt2_logit_diffs_attr_grad\_\_initonly_runanalysis": uses a SAELensModule user composed module with GPT2 model to run the "logit_diffs_attr_grad" composite operation
   - "get_analysis_session\_\_sl_gpt2_logit_diffs_attr_ablation\_\_initonly_runanalysis": uses a SAELensModule user composed module with GPT2 model to run the "logit_diffs_attr_ablation" composite operation
+
 - these fixtures return regular #ITSessionFixture objects
+
+  - "get_it_session\_\_sl_gpt2_analysis\_\_setup": This fixture is a session-scoped fixture that creates an ITSession with a SAELensModule composed user module with the GPT2 model and runs the it hooks >= #FixtPhase.setup. The ITSession is
+    preconfigured for analysis tasks (e.g. it has sae_analysis_targets defined) and is especially useful for tests that involve analysis operations. You can examine `tests/unit/test_analysis_ops_definitions.py::TestAnalysisOperationsImplementations::test_op_serialization` for example usage.
+
   - "get_it_session\_\_l_sl_gpt2\_\_initonly": Creates an ITSession with SAELensModule and LightningModule composed user module with the GPT2 model and does not run it hooks (e.g. prepare_data, setup)
+
   - "get_it_session\_\_tl_gpt2_debug\_\_setup": Creates an ITSession with an ITLensModule composed user module with the GPT2 model and runs the it hooks >= #FixtPhase.setup
+
   - "get_it_session\_\_core_cust\_\_setup": Creates an ITSession with a basic ITModule and uses a custom model and runs the it hooks >= #FixtPhase.setup
+
   - get_it_session\_\_core_cust_force_prepare\_\_initonly: Creates an ITSession basic ITModule and uses a custom model and does not run it hooks but configures the datamodule to avoid caching data
+
 - these fixtures return ITSessionCfg objects
+
   - "get_it_session_cfg\_\_tl_cust": Returns an #ITSessionCfg object only, configured for ITLensModule and custom model usage
   - "get_it_session_cfg\_\_sl_gpt2": Returns an #ITSessionCfg object only, configured for SAELensModule and GPT2 model usage
+
 - this fixtures returns an ITModule objects
+
   - "get_it_module\_\_core_cust\_\_setup": Returns an #ITModule object that has had its hooks >= #FixtPhase.setup executed
 
 Invoking these existing fixtures can be either direct or indirect (via the request fixture).
@@ -46,6 +59,8 @@ to request specific fixtures based on parameterized values). For example, see th
 `tests/unit/test_analysis_core.py::TestAnalysisStore::test_select_columns` for another example of how to properly
 request the `get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis` fixture and handle the
 #AnalysisSessionFixture artifacts.
+
+If you want to test a specific analysis operation, it's often useful to use the #run_op_with_config function to run the operation with an #OpTestConfig object. See `tests/unit/test_analysis_ops_definitions.py::TestAnalysisOperationsImplementations::test_op_serialization` for example usage on various ops defined in #SERIALIZATION_TEST_CONFIGS
 
 ### Target Source and Test Modules with starting Coverage State
 

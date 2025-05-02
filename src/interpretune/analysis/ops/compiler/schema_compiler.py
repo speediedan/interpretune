@@ -1,8 +1,10 @@
 """Schema compiler for analysis operations to maintain field propagation while minimizing schemas."""
 
 from typing import Dict, List, Tuple, Any, Union, TypeVar, Callable
+from dataclasses import replace
 
 from ..base import OpSchema, ColCfg, AnalysisOp
+from interpretune.utils.logging import rank_zero_warn
 
 
 # Type variables for schema and field definition types
@@ -85,16 +87,28 @@ def jit_compile_chain_schema(
             if 'input_schema' not in op_def or 'output_schema' not in op_def:
                 raise ValueError(f"Operation {op} is missing required schemas")
 
-            # Convert dictionary schemas to OpSchema objects if needed
+            # Convert dictionary schemas to ColCfg objects if needed
             def get_schema(schema_dict):
                 if not schema_dict:
                     return {}
                 result = {}
                 for field_name, field_def in schema_dict.items():
-                    if isinstance(field_def, dict):
-                        result[field_name] = ColCfg(**field_def)
-                    elif isinstance(field_def, ColCfg):
+                    if isinstance(field_def, ColCfg):
                         result[field_name] = field_def
+                    else:
+                        try:
+                            if isinstance(field_def, dict):
+                                result[field_name] = ColCfg(**field_def)
+                            else:
+                                # Attempt to convert to ColCfg using the constructor
+                                result[field_name] = ColCfg.from_dict(field_def.__dict__)
+                        except Exception as e:
+                            # If the field_def is not a dict or ColCfg, log a warning but allow compilation to proceed
+                            rank_zero_warn(
+                                f"Conversion to ColCfg of field {field_name} in operation {op} did not succeed. "
+                                f"Field `{field_name}` (type: {type(field_def)}) will be skipped, error: {e}"
+                            )
+
                 return result
 
             return get_schema(op_def.get('input_schema', {})), get_schema(op_def.get('output_schema', {}))
@@ -106,32 +120,14 @@ def jit_compile_chain_schema(
             raise TypeError(f"Operations must be strings or AnalysisOp instances with schemas, got {type(op)}")
 
     def is_intermediate(field_def):
-        if isinstance(field_def, dict):
-            return field_def.get('intermediate_only', False)
-        elif hasattr(field_def, 'intermediate_only'):
-            return field_def.intermediate_only
-        return False
+        return getattr(field_def, 'intermediate_only', False)
 
     def handle_object_field(field_def):
-        datasets_dtype = None
-        if isinstance(field_def, dict):
-            datasets_dtype = field_def.get('datasets_dtype')
-        elif hasattr(field_def, 'datasets_dtype'):
-            datasets_dtype = field_def.datasets_dtype
+        datasets_dtype = field_def.datasets_dtype
 
         if datasets_dtype == 'object':
-            if isinstance(field_def, dict):
-                field_def_copy = field_def.copy()
-                field_def_copy['datasets_dtype'] = 'string'
-                field_def_copy['non_tensor'] = True
-                return field_def_copy
-            elif isinstance(field_def, ColCfg):
-                # Create a modified ColCfg for object fields
-                import copy
-                field_def_copy = copy.copy(field_def)
-                field_def_copy.datasets_dtype = 'string'
-                field_def_copy.non_tensor = True
-                return field_def_copy
+            # Use replace to create a new instance instead of modifying
+            return replace(field_def, datasets_dtype='string', non_tensor=True)
         return field_def
 
     def create_schema(fields):

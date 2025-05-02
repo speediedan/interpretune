@@ -90,9 +90,7 @@ class ColCfg:
     @classmethod
     def from_dict(cls, data: dict) -> 'ColCfg':
         """Create from dict representation."""
-        if 'dtype' in data and isinstance(data['dtype'], str):
-            type_map = {'float32': float, 'int64': int, 'string': str}
-            data['dtype'] = type_map.get(data['dtype'], eval(data['dtype']))
+        # TODO: expected to add custom logic here
         return cls(**data)
 
     def __hash__(self) -> int:
