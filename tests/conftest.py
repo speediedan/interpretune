@@ -134,6 +134,7 @@ FIXTURE_CFGS = {
     "sl_gpt2": FixtureCfg(test_cfg=CoreSLGPT2, variants={"it_session": [FixtPhase.initonly],
                                                          "it_session_cfg": [FixtPhase.cfgonly]}),
     "sl_gpt2_analysis": FixtureCfg(test_cfg=CoreSLGPT2Analysis,
+                                   scope="session",
                                    variants={"it_session": [FixtPhase.initonly, FixtPhase.setup]}),
     "sl_gpt2_logit_diffs_base": FixtureCfg(test_cfg=CoreSLGPT2LogitDiffsBase,
                                           scope="session",

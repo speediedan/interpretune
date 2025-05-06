@@ -70,11 +70,11 @@ class _AnalysisImportHook(MetaPathFinder):
                 # Create a wrapper that will instantiate the op when accessed
                 setattr(current_module, op_name, OpWrapper(op_name))
 
-            # Register all aliases as well
-            for op_alias, op_name in interpretune.analysis.DISPATCHER.get_op_aliases():
-                if not hasattr(current_module, op_alias):
-                    # Create the wrapper for aliases as well
-                    setattr(current_module, op_alias, OpWrapper(op_name))
+            # # Register all aliases as well
+            # for op_alias, op_name in interpretune.analysis.DISPATCHER.get_op_aliases():
+            #     if not hasattr(current_module, op_alias):
+            #         # Create the wrapper for aliases as well
+            #         setattr(current_module, op_alias, OpWrapper(op_name))
 
             return sys.modules["interpretune.analysis"]
         finally:

@@ -127,8 +127,8 @@ def gen_session_cfg(test_cfg, test_alias, expected_results, tmp_path, prewrapped
     it_session_cfg = config_session(core_cfg, test_cfg, test_alias, expected_results, state_log_dir, prewrapped_modules)
     return it_session_cfg
 
-def cfg_op_env(request, session_fixture, op_to_test, input_data=None, batches=1, generate_required_only: bool = True,
-               override_req_cols: Optional[tuple] = None):
+def cfg_op_env(request, session_fixture, op_to_test, deepcopy_session_fixt: bool, input_data=None, batches=1,
+               generate_required_only: bool = True, override_req_cols: Optional[tuple] = None, ) -> tuple:
     """Set up a test environment for an operation using a real model.
 
     Args:
@@ -146,7 +146,7 @@ def cfg_op_env(request, session_fixture, op_to_test, input_data=None, batches=1,
     """
     # Get the fixture and extract session
     fixture = request.getfixturevalue(session_fixture)
-    it_session = get_deepcopied_session(fixture.it_session)
+    it_session = get_deepcopied_session(fixture.it_session) if deepcopy_session_fixt else fixture.it_session
 
     # Configure the analysis
     analysis_cfg = AnalysisCfg(

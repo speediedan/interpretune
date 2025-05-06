@@ -4,6 +4,7 @@ from collections import namedtuple
 from unittest.mock import MagicMock
 from copy import deepcopy
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 import torch
@@ -1174,54 +1175,6 @@ class TestAnalysisStoreBySae:
 
 
 class TestAnalysisStoreBySaeDict:
-    # def test_by_sae_with_nested_dict_and_stack_latents(self):
-    #     """Test by_sae with nested dictionaries and stack_latents=True."""
-    #     import torch
-
-    #     # Create mock dataset with nested dict structure
-    #     mock_ds = MagicMock()
-
-    #     # Create data where each batch has nested dicts
-    #     batch_data = [
-    #         {
-    #             'sae1': {
-    #                 'latent1': torch.tensor([1.0]),
-    #                 'latent2': torch.tensor([2.0])
-    #             }
-    #         },
-    #         {
-    #             'sae1': {
-    #                 'latent1': torch.tensor([3.0]),
-    #                 'latent2': torch.tensor([4.0])
-    #             }
-    #         }
-    #     ]
-
-    #     setattr(mock_ds, "field_name", batch_data)
-    #     store = AnalysisStore(dataset=mock_ds)
-    #     store.__getattr__ = lambda name: getattr(mock_ds, name)
-
-    #     # Test with stack_latents=True (default)
-    #     result = store.by_sae("field_name")
-    #     assert 'sae1' in result
-    #     assert isinstance(result['sae1'], list)
-    #     assert len(result['sae1']) == 2
-
-    #     # Each item should be a stacked tensor with shape [2, 1] or similar
-    #     # The actual shape depends on the implementation of torch.stack
-    #     assert isinstance(result['sae1'][0], torch.Tensor)
-    #     assert result['sae1'][0].ndim > 0
-    #     assert result['sae1'][0].shape[0] == 2  # Should have 2 latents stacked
-
-    #     # Test with stack_latents=False
-    #     result = store.by_sae("field_name", stack_latents=False)
-    #     assert 'sae1' in result
-    #     assert isinstance(result['sae1'], list)
-    #     assert len(result['sae1']) == 2
-
-    #     # Each item should be the original dict
-    #     assert result['sae1'][0] == batch_data[0]['sae1']
-    #     assert result['sae1'][1] == batch_data[1]['sae1']
 
     def test_by_sae_with_empty_dict_values(self):
         """Test by_sae with empty dict values."""
@@ -1343,61 +1296,102 @@ class TestAnalysisStoreDeepCopy:
         assert not hasattr(store_copy, '_non_copyable')
 
 
-# class TestCalculateLatentMetricsFilterByCorrect:
-#     def test_calculate_latent_metrics_filter_false(self):
-#         """Test calculate_latent_metrics with filter_by_correct=False."""
-#         import torch
-#         from interpretune.analysis.core import PredSumm, ActivationSumm, AnalysisStore, LatentMetrics
+class TestOpWrapperDebuggerIdentifier:
+    def test_debugger_identifier_from_env(self):
+        """Test that OpWrapper._debugger_identifier reflects the IT_ENABLE_LAZY_DEBUGGER environment variable."""
+        import os
+        import importlib
 
-#         # Create real AnalysisStore instance instead of a mock
-#         store = AnalysisStore(dataset=None)
+        # Get the OpWrapper class
+        analysis_ops_base = importlib.import_module("interpretune.analysis.ops.base")
+        OpWrapper = analysis_ops_base.OpWrapper
 
-#         # Set necessary attributes for the test
-#         store.orig_labels = [torch.tensor([0, 1]), torch.tensor([1, 0])]
-#         store.logit_diffs = [torch.tensor([0.5, -0.3]), torch.tensor([-0.1, 0.7])]
+        # Verify current value matches current environment setting
+        current_env_value = os.environ.get('IT_ENABLE_LAZY_DEBUGGER', '')
+        assert OpWrapper._debugger_identifier == current_env_value, \
+            f"OpWrapper._debugger_identifier value '{OpWrapper._debugger_identifier}' does not match environment " \
+            f"variable '{current_env_value}'"
 
-#         # Create a dictionary structure for attribution_values that matches what by_sae expects to see
-#         store.attribution_values = [
-#             {'sae1': torch.rand(2, 10), 'sae2': torch.rand(2, 10)},
-#             {'sae1': torch.rand(2, 10), 'sae2': torch.rand(2, 10)}
-#         ]
 
-#         # Add a by_sae method that returns a valid SAEAnalysisDict
-#         original_by_sae = store.by_sae
+class TestAnalysisImportHook:
+    def test_operation_aliases_registered(self):
+        """Test that operation aliases are registered in the top-level module."""
+        import interpretune
+        from interpretune.analysis import DISPATCHER
+        import importlib
+        import sys
 
-#         def mock_by_sae(field_name, stack_latents=True):
-#             if field_name == 'attribution_values':
-#                 result = SAEAnalysisDict()
-#                 result['sae1'] = torch.rand(4, 10)  # Combined batch size = 4
-#                 result['sae2'] = torch.rand(4, 10)
-#                 return result
-#             return original_by_sae(field_name, stack_latents)
+        # Save the modules we're going to modify
+        modules_to_reload = {name:module for name, module in sys.modules.items() \
+                             if name.startswith('interpretune.analysis')}
+        try:
+            # Remove analysis modules to force reload
+            for module_name in modules_to_reload.keys():
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
 
-#         # Monkeypatch the by_sae method
-#         store.by_sae = mock_by_sae
+            importlib.import_module('interpretune.analysis')
 
-#         # Create PredSumm and ActivationSumm for the test
-#         pred_summ = PredSumm(total_correct=2, percentage_correct=50.0, batch_predictions=None)
-#         activation_summary = ActivationSumm(
-#             mean_activation={'sae1': torch.rand(10), 'sae2': torch.rand(10)},
-#             num_samples_active={'sae1': torch.randint(0, 5, (10,)), 'sae2': torch.randint(0, 5, (10,))}
-#         )
+            # Get the OpWrapper class
+            analysis_ops_base = importlib.import_module("interpretune.analysis.ops.base")
+            OpWrapper = analysis_ops_base.OpWrapper
 
-#         # Test with filter_by_correct=False (line 640)
-#         metrics = store.calculate_latent_metrics(
-#             pred_summ=pred_summ,
-#             activation_summary=activation_summary,
-#             filter_by_correct=False,
-#             run_name="test_run"
-#         )
+            # Get operation aliases from the dispatcher
+            aliases = list(DISPATCHER.get_op_aliases())
 
-#         # Verify the metrics were calculated without filtering
-#         assert isinstance(metrics, LatentMetrics)
-#         assert metrics.run_name == "test_run"
-#         assert 'sae1' in metrics.total_effect
-#         assert 'sae2' in metrics.total_effect
-#         # Verify all examples were used (no filtering)
-#         assert len(torch.cat(store.orig_labels)) == 4  # Total number of examples
+            # Ensure we have some aliases to test
+            assert len(aliases) > 0, "No operation aliases found in DISPATCHER"
+
+            # Check that aliases are properly registered in the top-level module
+            for alias, op_name in aliases:
+                assert hasattr(interpretune, alias), f"Alias '{alias}' not found in top-level module"
+                wrapper = getattr(interpretune, alias)
+                assert isinstance(wrapper, OpWrapper), f"'{alias}' is not an OpWrapper instance"
+                assert wrapper._op_name == op_name, f"Alias '{alias}' points to '{wrapper.op_name}' " \
+                    f"instead of '{op_name}'"
+
+        finally:
+            for module_name, module in modules_to_reload.items():
+                # Restore the original module
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
+                sys.modules[module_name] = module
+            # # Re-import the modules to restore original state
+            # # Reload modules to restore original state
+            # for module_name, in modules_to_reload:
+            #     if module_name in sys.modules:
+            #         del sys.modules[module_name]
+            # importlib.import_module('interpretune.analysis')
+
+
+    def test_analysis_import_hook_system_modules_cache(self):
+        """Test _AnalysisImportHook returns cached module from sys.modules (line 35)."""
+        import sys
+        from interpretune import _AnalysisImportHook
+
+        # Save original module if it exists
+        original_module = sys.modules.get('interpretune.analysis')
+
+        try:
+            # Create a mock module and store it in sys.modules
+            mock_module = ModuleType('interpretune.analysis')
+            mock_module.test_marker = "This is a mock module"
+            sys.modules['interpretune.analysis'] = mock_module
+
+            # Create import hook instance
+            import_hook = _AnalysisImportHook()
+
+            # Test that load_module returns our mock from sys.modules
+            result = import_hook.load_module('interpretune.analysis')
+            assert result is mock_module, "Import hook should return the module from sys.modules"
+            assert hasattr(result, 'test_marker'), "The returned module should be our mock"
+
+        finally:
+            # Restore original module
+            if original_module:
+                sys.modules['interpretune.analysis'] = original_module
+            else:
+                sys.modules.pop('interpretune.analysis', None)
 
 
 class TestPlotLatentEffectsWithPerBatchFlag:
@@ -1467,7 +1461,7 @@ class TestLatentMetricsCreateAttributionTablesPerSae:
             proportion_samples_active={'sae1': tensor1.abs() / 10, 'sae2': tensor2.abs() / 10}
         )
 
-        # Test with per_sae=False (line 877)
+        # Test with per_sae=False
         tables = metrics.create_attribution_tables(
             sort_by='total_effect',
             top_k=3,

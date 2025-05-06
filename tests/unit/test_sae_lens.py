@@ -14,6 +14,9 @@ from interpretune.config import (SAELensFromPretrainedConfig, SAELensConfig, SAE
 from tests.utils import ablate_cls_attrs
 from tests.base_defaults import default_test_task
 
+# Add new imports for mocking
+from unittest.mock import patch, MagicMock, call
+
 # simple counter hook
 class Counter:
     def __init__(self):
@@ -227,3 +230,111 @@ class TestClassSAELens:
             it_cfg = SAELensConfig(**test_sl_cfg)
         assert isinstance(it_cfg, SAELensConfig)
         assert it_cfg.sae_cfgs[0].cfg.device == "cuda"
+
+    @patch('interpretune.adapters.sae_lens.get_pretrained_saes_directory')
+    @patch('interpretune.adapters.sae_lens.display')
+    @patch('interpretune.adapters.sae_lens.IFrame')
+    @patch('interpretune.adapters.sae_lens.print')
+    def test_display_dashboard(self, mock_print, mock_iframe, mock_display, mock_get_dir):
+        """Test the display_dashboard static method."""
+        # Setup mock directory response
+        mock_release = MagicMock()
+        mock_release.neuronpedia_id = {"blocks.9.hook_resid_pre": "test-neuronpedia-id"}
+        mock_get_dir.return_value = {"gpt2-small-res-jb": mock_release}
+
+        # Call the method with default parameters
+        from interpretune.adapters.sae_lens import SAEAnalysisMixin
+        SAEAnalysisMixin.display_dashboard()
+
+        # Verify URL construction and IFrame parameters
+        expected_url = "https://neuronpedia.org/test-neuronpedia-id/0?embed=true&embedexplanation=true&embedplots=true&embedtest=true&height=300"
+        mock_print.assert_called_with(expected_url)
+        mock_iframe.assert_called_with(expected_url, width=800, height=600)
+        mock_display.assert_called_once()
+
+        # Test with custom parameters
+        mock_print.reset_mock()
+        mock_iframe.reset_mock()
+        mock_display.reset_mock()
+
+        SAEAnalysisMixin.display_dashboard(
+            sae_release="gpt2-small-res-jb",
+            sae_id="blocks.9.hook_resid_pre",
+            latent_idx=42,
+            width=1000,
+            height=700
+        )
+
+        expected_url = "https://neuronpedia.org/test-neuronpedia-id/42?embed=true&embedexplanation=true&embedplots=true&embedtest=true&height=300"
+        mock_print.assert_called_with(expected_url)
+        mock_iframe.assert_called_with(expected_url, width=1000, height=700)
+        mock_display.assert_called_once()
+
+    @patch('interpretune.adapters.sae_lens.SAEAnalysisMixin.display_dashboard')
+    @patch('interpretune.adapters.sae_lens.print')
+    def test_display_latent_dashboards(self, mock_print, mock_display_dashboard):
+        """Test the display_latent_dashboards static method."""
+        from interpretune.adapters.sae_lens import SAEAnalysisMixin
+
+        # Create mock metrics for testing
+        mock_metrics = MagicMock()
+        mock_metrics.total_effect = {
+            'blocks.1.hook': torch.tensor([0.8, -0.5, 0.3, -0.9, 0.6]),
+            'blocks.2.hook': torch.tensor([0.4, -0.7, 0.5, -0.2, 0.1])
+        }
+        mock_metrics.num_samples_active = {
+            'blocks.1.hook': torch.tensor([10, 15, 20, 25, 30]),
+            'blocks.2.hook': torch.tensor([5, 10, 15, 20, 25])
+        }
+
+        # Test with default top_k=1
+        SAEAnalysisMixin.display_latent_dashboards(
+            metrics=mock_metrics,
+            title="Test Dashboard",
+            sae_release="test-release"
+        )
+
+        # Check expected print calls and display_dashboard calls for each hook and direction
+        expected_print_calls = [
+            call('\nTest Dashboard for blocks.1.hook:'),
+            call('\npositive:'),
+            call('#0 had total effect 0.80 and was active in 10 examples'),
+            call('\nnegative:'),
+            call('#3 had total effect -0.90 and was active in 25 examples'),
+            call('\nTest Dashboard for blocks.2.hook:'),
+            call('\npositive:'),
+            call('#2 had total effect 0.50 and was active in 15 examples'),
+            call('\nnegative:'),
+            call('#1 had total effect -0.70 and was active in 10 examples')
+        ]
+        mock_print.assert_has_calls(expected_print_calls)
+
+        # Verify display_dashboard calls
+        expected_display_calls = [
+            call(sae_release='test-release', sae_id='blocks.1.hook_z', latent_idx=0),
+            call(sae_release='test-release', sae_id='blocks.1.hook_z', latent_idx=3),
+            call(sae_release='test-release', sae_id='blocks.2.hook_z', latent_idx=2),
+            call(sae_release='test-release', sae_id='blocks.2.hook_z', latent_idx=1)
+        ]
+        mock_display_dashboard.assert_has_calls(expected_display_calls)
+
+        # Test with custom hook_to_sae_id function and top_k=2
+        mock_print.reset_mock()
+        mock_display_dashboard.reset_mock()
+
+        custom_hook_mapper = lambda hook: f"custom_mapping_for_{hook}"
+        SAEAnalysisMixin.display_latent_dashboards(
+            metrics=mock_metrics,
+            title="Custom Test",
+            sae_release="custom-release",
+            hook_to_sae_id=custom_hook_mapper,
+            top_k=2
+        )
+
+        # Verify custom mapping function was used for sae_id
+        custom_display_calls = mock_display_dashboard.call_args_list
+        assert any("custom_mapping_for_blocks.1.hook" in str(call) for call in custom_display_calls)
+        assert any("custom_mapping_for_blocks.2.hook" in str(call) for call in custom_display_calls)
+
+        # Verify top_k=2 resulted in more display calls (4 per hook: 2 positive + 2 negative)
+        assert mock_display_dashboard.call_count == 8

@@ -120,3 +120,4 @@ class OpTestConfig:
     batch_size: int = 1
     generate_required_only: bool = True
     override_req_cols: Optional[tuple] = None
+    deepcopy_session_fixt: bool = False

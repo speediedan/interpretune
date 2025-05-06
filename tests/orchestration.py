@@ -164,7 +164,7 @@ def run_op_with_config(request, op_cfg: OpTestConfig):
         batches=op_cfg.batch_size,
         generate_required_only=op_cfg.generate_required_only,
         override_req_cols=op_cfg.override_req_cols,
-
+        deepcopy_session_fixt=op_cfg.deepcopy_session_fixt,
     )
 
     # update op_cfg.resolved_op with resolved operation, this allows us to test both OpWrapper and our resolved op

@@ -68,9 +68,10 @@ class MemProfilerHooks:
 
 class AnalysisStepMixin:
     @property
-    def analysis_cfg(self) -> AnalysisCfgProtocol:
+    def analysis_cfg(self) -> Optional[AnalysisCfgProtocol]:
         if not hasattr(self.it_cfg, 'analysis_cfg') or self.it_cfg.analysis_cfg is None:
-            raise AttributeError("Analysis configuration has not been set.")
+            rank_zero_warn("Analysis configuration has not been set.")
+            return
         return self.it_cfg.analysis_cfg
 
     @analysis_cfg.setter

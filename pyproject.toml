@@ -186,7 +186,11 @@ exclude_lines = [
     "warnings",
     "pass",
     "raise NotImplementedError",
-    "except Exception"
+    "except Exception",
+]
+
+exclude_also = [
+    "if TYPE_CHECKING:",
 ]
 
 omit = [
