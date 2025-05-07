@@ -79,3 +79,25 @@ class TestClassTransformerLens:
                 _ = ITLensConfig(**test_tl_cfg)
         unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=TL_CTX_WARNS)
         assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
+
+    def test_prune_tl_cfg_dict_warns(self, monkeypatch, get_it_session__tl_cust__setup):
+        """Test that _prune_tl_cfg_dict warns when non-None values for 'hf_model' or 'tokenizer' are found."""
+        fixture = get_it_session__tl_cust__setup
+        tl_test_module = fixture.it_session.module
+
+        # Create a mock config with non-None values for keys that should be pruned
+        mock_config = deepcopy(tl_test_module.it_cfg.tl_cfg)
+        mock_config.hf_model = "some_value"  # non-None value for hf_model
+        mock_config.tokenizer = "another_value"  # non-None value for tokenizer
+
+        # Monkeypatch the it_cfg.tl_cfg to use our mock config
+        monkeypatch.setattr(tl_test_module.it_cfg, 'tl_cfg', mock_config)
+
+        # Verify warnings are raised when _prune_tl_cfg_dict is called
+        with pytest.warns(UserWarning, match="Found non-None value for 'hf_model' in tl_cfg"):
+            with pytest.warns(UserWarning, match="Found non-None value for 'tokenizer' in tl_cfg"):
+                pruned_dict = tl_test_module._prune_tl_cfg_dict()
+
+        # Verify the keys were actually removed despite having values
+        assert 'hf_model' not in pruned_dict
+        assert 'tokenizer' not in pruned_dict

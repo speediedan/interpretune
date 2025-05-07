@@ -155,7 +155,7 @@ class SAEAnalysisMixin:
 
     def construct_names_filter(
         self,
-        target_layers: list[int],
+        target_layers: int | list[int] | None,
         sae_hook_match_fn: Callable[[str, list[int] | None], bool]
     ) -> NamesFilter:
         available_hooks = {
@@ -164,7 +164,7 @@ class SAEAnalysisMixin:
         }
         names_filter = [
             hook for hook in available_hooks
-            if sae_hook_match_fn(in_name=hook, layers=target_layers if target_layers else None)
+            if sae_hook_match_fn(in_name=hook, layers=target_layers if target_layers is not None else None)
         ]
         return names_filter
 
