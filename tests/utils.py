@@ -1,4 +1,4 @@
-from typing import Tuple, List, Dict, Optional, Union, Type, Any, Callable
+from typing import Tuple, List, Dict, Optional, Union, Type, Any, Callable, NamedTuple
 import importlib
 from collections import defaultdict
 from contextlib import contextmanager
@@ -172,6 +172,12 @@ def get_super_method(cls_path_or_type: Union[str, Type], instance: Any, method_n
         return method
     except AttributeError as e:
         raise AttributeError(f"Method '{method_name}' not found in parent classes of {cls.__name__}: {str(e)}")
+
+
+class InOutComp(NamedTuple):
+    """Named tuple for more explicit input and output access in comparisons."""
+    input: Any
+    output: Any
 
 ################################################################################
 # CUDA utils

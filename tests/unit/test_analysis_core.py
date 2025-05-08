@@ -790,10 +790,6 @@ class TestSchemaToFeatures:
 
         mock_module.analysis_cfg.names_filter = None
 
-        # # test skipping basic non-required features that depend on names_filter when one is not available
-        # schema_no_req = {'scalar': ColCfg(datasets_dtype='float32', required=False)}
-        # features = schema_to_features(mock_module, schema=schema_no_req)
-
         # test skipping various non-required features that depend on names_filter when one is not available
         schema_per_no_filter = {
             'scalar': ColCfg(datasets_dtype='float32', required=False),

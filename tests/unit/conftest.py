@@ -3,8 +3,13 @@ import tempfile
 from pathlib import Path
 from datasets import Dataset
 from datetime import datetime
+from typing import Any
 
-from interpretune.runners.analysis import dataset_features_and_format
+import interpretune as it
+from tests.configuration import get_deepcopied_session
+from interpretune.config import AnalysisCfg
+from interpretune.runners.analysis import dataset_features_and_format, maybe_init_analysis_cfg
+from interpretune.analysis.core import get_module_dims
 
 
 @pytest.fixture
@@ -113,3 +118,26 @@ def op_serialization_fixt():
                 module.analysis_cfg.output_store.save_dir = original_save_dir
 
     return _op_serialization_fixt
+
+
+@pytest.fixture
+def initialized_analysis_cfg():
+    def _initialized_analysis_cfg(fixture, target_op: Any = it.logit_diffs_attr_ablation):
+        it_session = get_deepcopied_session(fixture.it_session)
+        # Configure the analysis
+        analysis_cfg = AnalysisCfg(target_op=target_op, ignore_manual=True, save_tokens=False,
+                                   sae_analysis_targets=fixture.test_cfg().sae_analysis_targets)
+        # Initialize analysis config on the module
+        maybe_init_analysis_cfg(it_session.module, analysis_cfg)
+
+        batch_size, max_answer_tokens, num_classes, vocab_size, max_seq_len = get_module_dims(it_session.module)
+        dim_vars = {
+            'batch_size': batch_size,
+            'max_answer_tokens': max_answer_tokens,
+            'num_classes': num_classes,
+            'vocab_size': vocab_size,
+            'max_seq_len': max_seq_len,
+        }
+        return it_session, dim_vars
+
+    return _initialized_analysis_cfg

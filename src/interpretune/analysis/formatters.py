@@ -105,8 +105,6 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
         if isinstance(value, (list, tuple)):
             if self.is_field_per_latent(field_name):
                 return value
-            if self.is_field_non_tensor(field_name):
-                return value
             if any(isinstance(x, (dict, list)) for x in value):
                 return [self._tensorize(x, field_name) for x in value]
 
