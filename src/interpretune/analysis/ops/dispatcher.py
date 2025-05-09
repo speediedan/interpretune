@@ -173,7 +173,8 @@ class AnalysisOpDispatcher:
                 result[field_name] = field_config
         return OpSchema(result)
 
-    def get_op(self, op_name: str, context: DispatchContext = DispatchContext(), lazy: bool = False) -> AnalysisOp:
+    def get_op(self, op_name: str, context: DispatchContext = DispatchContext(),
+               lazy: bool = False) -> AnalysisOp | Callable:
         """Get an operation by name, optionally instantiating it if needed.
 
         Args:

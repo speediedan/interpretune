@@ -66,7 +66,7 @@ class _AnalysisImportHook(MetaPathFinder):
             # Register all operations with lazy getters
             for op_name in interpretune.analysis.DISPATCHER._op_definitions:
                 # Use lazy=True to avoid instantiation until actual use
-                interpretune.analysis.DISPATCHER.get_op(op_name, lazy=True)
+                _ = interpretune.analysis.DISPATCHER.get_op(op_name, lazy=True)
                 # Create a wrapper that will instantiate the op when accessed
                 setattr(current_module, op_name, OpWrapper(op_name))
 

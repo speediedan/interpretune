@@ -96,6 +96,7 @@ class RunIf:
         max_torch: Optional[str] = None,
         min_python: Optional[str] = None,
         max_python: Optional[str] = None,
+        env_mask: Optional[str] = None,
         bf16_cuda: bool = False,
         skip_windows: bool = False,
         skip_mac_os: bool = False,
@@ -120,6 +121,7 @@ class RunIf:
             bf16_cuda: Require that CUDA device supports bf16.
             skip_windows: Skip for Windows platform.
             skip_mac_os: Skip Mac OS platform.
+            env_mask: Skip test if the specified environment variable is set.
             standalone: Mark the test as standalone, our CI will run it in a separate process.
                 This requires that the ``IT_RUN_STANDALONE_TESTS=1`` environment variable is set.
             profiling: Mark the test as profiling. It will run as a separate process and only be included in CI
@@ -188,6 +190,11 @@ class RunIf:
         if skip_mac_os:
             conditions.append(sys.platform == "darwin")
             reasons.append("unimplemented or temporarily bypassing these tests for MacOS")
+
+        if env_mask:
+            env_flag = os.getenv(env_mask, "")
+            conditions.append(env_flag != "")
+            reasons.append(f"Specified environmental variable '{env_mask}' is set (to {env_flag}) so skipping test")
 
         if standalone:
             env_flag = os.getenv("IT_RUN_STANDALONE_TESTS", "0")

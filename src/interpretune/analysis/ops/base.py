@@ -82,8 +82,6 @@ class ColCfg:
         result = {}
         for f in fields(ColCfg):
             val = getattr(self, f.name)
-            if isinstance(val, type):
-                val = val.__name__
             result[f.name] = val
         return result
 
@@ -394,6 +392,12 @@ class OpWrapper:
     _target_module = None
     _debugger_identifier = os.environ.get('IT_ENABLE_LAZY_DEBUGGER', '')
 
+    # Properties that can be accessed without instantiating the op
+    _DIRECT_ACCESS_ATTRS = ('_op_name', '_instantiated_op', '_is_instantiated', '__str__', '__repr__', '__class__',
+                            '_get_dispatcher', '_dispatcher', '__reduce__', '__reduce_ex__')
+
+    _DEBUG_OVERRIDE_ATTRS = ("__iter__", "__len__")
+
     @classmethod
     def initialize(cls, target_module):
         """Set the target module where operations will be registered."""
@@ -434,28 +438,25 @@ class OpWrapper:
                         if getattr(self.__class__._target_module, alias) is self:
                             setattr(self.__class__._target_module, alias, self._instantiated_op)
 
-            # Return the instantiated op directly
             return self._instantiated_op
         return self._instantiated_op
 
     def __getattribute__(self, name):
         """Override to monitor all attribute access."""
         # Allow direct access to critical properties without triggering instantiation
-        if name in ('_op_name', '_instantiated_op', '_is_instantiated', '__str__', '__repr__',
-                   '__class__', '_get_dispatcher', '_dispatcher', '__reduce__', '__getstate__'):
+        if name in type(self)._DIRECT_ACCESS_ATTRS:
             return object.__getattribute__(self, name)
 
         # Special handling for attributes commonly checked by debuggers
-        # Only do stack analysis if DEBUGGER_IDENTIFIER is set and we're checking special attrs
-        if self.__class__._debugger_identifier and name in ('__iter__', '__len__'):
+        if type(self)._debugger_identifier and name in type(self)._DEBUG_OVERRIDE_ATTRS:
             import traceback
 
-            # Check for debugger-originated calls
             stack = traceback.extract_stack()
-            is_debugger_inspection = any(self.__class__._debugger_identifier in frame.filename for frame in stack)
-
+            is_debugger_inspection = any(
+                type(self)._debugger_identifier in frame.filename
+                for frame in stack
+            )
             if is_debugger_inspection:
-                # Return None to make hasattr() return False during debugging
                 return None
 
         # Normal attribute access
@@ -475,7 +476,6 @@ class OpWrapper:
         op = self._ensure_instantiated()
         return getattr(op, name)
 
-    # Override special methods to avoid instantiation
     def __str__(self):
         """Return a string representation that indicates instantiation status."""
         if self._is_instantiated:
@@ -485,35 +485,16 @@ class OpWrapper:
     def __repr__(self):
         """Return a detailed representation useful for debugging."""
         if self._is_instantiated:
-            instantiated_op_repr = repr(self._instantiated_op) if self._is_instantiated else 'None'
+            instantiated_op_repr = repr(self._instantiated_op)
             return (
                 f"OpWrapper(name='{self._op_name}', instantiated=True, "
                 f"op={instantiated_op_repr})"
             )
         return f"OpWrapper(name='{self._op_name}', instantiated=False)"
 
-    # TODO: consider refactoring and simplifying this since we largely only use with pickling of OpWrapper during
-    #       dataset fingerprinting operations (we don't really need the wrapper at that point it would seem)
     def __reduce__(self):
-        """Handle pickling by converting to the actual operation.
-
-        Instead of trying to pickle the wrapper, this returns information to rebuild the actual operation during
-        unpickling.
-        """
-        # Ensure the operation is instantiated
+        """Handle pickling by converting to the actual operation."""
         op = self._ensure_instantiated()
-
-        # Forward to the operation's own state
-        if hasattr(op, '__reduce__'):
+        if getattr(op, '__reduce__', None) and callable(op.__reduce__):
             return op.__reduce__()
-
-        # If the operation doesn't have __reduce__, create standard pickle data
-        # This uses the operation's class and __dict__ to ensure proper reconstruction
-        return (_reconstruct_op,(op.__class__, op.__dict__.copy()))
-
-    def __getstate__(self):
-        """Return state for pickling - delegate to the actual operation."""
-        op = self._ensure_instantiated()
-        if hasattr(op, '__getstate__'):
-            return op.__getstate__()
-        return op.__dict__.copy()
+        return (_reconstruct_op, (op.__class__, op.__dict__.copy()))

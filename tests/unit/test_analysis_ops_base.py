@@ -2,10 +2,28 @@ from __future__ import annotations
 import pytest
 import torch
 from transformers import BatchEncoding
+import pickle
+import tempfile
+import os
+import yaml
+from unittest.mock import patch, MagicMock
+from tests.runif import RunIf
+
 from interpretune.analysis.ops.base import (AnalysisOp, ChainedAnalysisOp, AnalysisBatch, ColCfg, OpSchema, AttrDict,
-                                            wrap_summary)
+                                            wrap_summary, _reconstruct_op, OpWrapper)
+from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
 
-
+# Module-level implementation function for test operations
+def op_impl_test(module, analysis_batch, batch, batch_idx, **kwargs):
+    """Implementation function for test operations."""
+    result = analysis_batch or AnalysisBatch()
+    result.output_field = torch.tensor([42.0])
+    result.called_with = {
+        'module': module,
+        'batch_idx': batch_idx,
+        'kwargs': kwargs
+    }
+    return result
 
 class TestAttrDict:
     """Tests for the AttrDict class."""
@@ -146,6 +164,130 @@ class TestColCfg:
         # Different configurations should have different hashes
         cfg5 = ColCfg(datasets_dtype="int64")
         assert hash(cfg1) != hash(cfg5)
+
+    def test_sequence_type_attribute(self):
+        """Test the sequence_type attribute in ColCfg."""
+        # Test default value
+        cfg = ColCfg(datasets_dtype="float32")
+        assert cfg.sequence_type is True
+
+        # Test setting to False
+        cfg = ColCfg(datasets_dtype="float32", sequence_type=False)
+        assert cfg.sequence_type is False
+
+        # Test that it's included in to_dict and from_dict
+        cfg_dict = cfg.to_dict()
+        assert "sequence_type" in cfg_dict
+        assert cfg_dict["sequence_type"] is False
+
+        new_cfg = ColCfg.from_dict(cfg_dict)
+        assert new_cfg.sequence_type is False
+
+    def test_hash_includes_all_attributes(self):
+        """Test that __hash__ includes all attributes."""
+        # Create two configs with same values to verify hash equality
+        cfg1 = ColCfg(
+            datasets_dtype="float32",
+            required=False,
+            dyn_dim=1,
+            dyn_dim_ceil="batch_size",
+            non_tensor=True,
+            per_latent=True,
+            per_sae_hook=True,
+            intermediate_only=True,
+            connected_obj="datamodule",
+            array_shape=(None, 'batch_size', 10),
+            sequence_type=False,
+            array_dtype="int64"
+        )
+
+        cfg2 = ColCfg(
+            datasets_dtype="float32",
+            required=False,
+            dyn_dim=1,
+            dyn_dim_ceil="batch_size",
+            non_tensor=True,
+            per_latent=True,
+            per_sae_hook=True,
+            intermediate_only=True,
+            connected_obj="datamodule",
+            array_shape=(None, 'batch_size', 10),
+            sequence_type=False,
+            array_dtype="int64"
+        )
+
+        # Hashes should be equal
+        assert hash(cfg1) == hash(cfg2)
+
+        # Changing any attribute should change the hash
+        for attr_name in [
+            "datasets_dtype", "required", "dyn_dim", "non_tensor",
+            "per_latent", "per_sae_hook", "intermediate_only",
+            "connected_obj", "array_shape", "sequence_type", "array_dtype"
+        ]:
+            # Make a copy with one attribute changed
+            modified_dict = cfg1.to_dict()
+            if attr_name == "datasets_dtype":
+                modified_dict[attr_name] = "int32"
+            elif attr_name == "dyn_dim":
+                modified_dict[attr_name] = 2
+            elif attr_name == "array_shape":
+                modified_dict[attr_name] = (None, 'batch_size', 5)
+            elif attr_name == "connected_obj":
+                modified_dict[attr_name] = "analysis_store"
+            elif attr_name == "array_dtype":
+                modified_dict[attr_name] = "float64"
+            elif isinstance(modified_dict[attr_name], bool):
+                modified_dict[attr_name] = not modified_dict[attr_name]
+
+            modified_cfg = ColCfg.from_dict(modified_dict)
+            assert hash(cfg1) != hash(modified_cfg), f"Changing {attr_name} did not change the hash"
+
+
+class TestReconstructOp:
+    """Tests for the _reconstruct_op function."""
+
+    def test_reconstruct_op_basic(self):
+        """Test _reconstruct_op function for a basic AnalysisOp."""
+        # Create an operation
+        op = AnalysisOp(
+            name="test_op",
+            description="Test operation",
+            output_schema=OpSchema({"field": ColCfg(datasets_dtype="float32")})
+        )
+
+        # Get state dictionary
+        state = op.__dict__.copy()
+
+        # Use _reconstruct_op to recreate the operation
+        reconstructed_op = _reconstruct_op(AnalysisOp, state)
+
+        # Check equivalence
+        assert reconstructed_op.name == op.name
+        assert reconstructed_op.description == op.description
+        assert reconstructed_op.output_schema == op.output_schema
+
+    def test_pickling_analysis_op(self):
+        """Test pickling and unpickling of AnalysisOp."""
+        # Create an operation with various attributes
+        op = AnalysisOp(
+            name="test_pickle_op",
+            description="Operation for pickle testing",
+            output_schema=OpSchema({"field1": ColCfg(datasets_dtype="float32")}),
+            input_schema=OpSchema({"input_field": ColCfg(datasets_dtype="int64")}),
+            active_alias="test_alias"
+        )
+
+        # Pickle and unpickle
+        pickled_op = pickle.dumps(op)
+        unpickled_op = pickle.loads(pickled_op)
+
+        # Check equivalence
+        assert unpickled_op.name == op.name
+        assert unpickled_op.description == op.description
+        assert unpickled_op.output_schema == op.output_schema
+        assert unpickled_op.input_schema == op.input_schema
+        assert unpickled_op.active_alias == op.active_alias
 
 
 class TestOpSchema:
@@ -394,7 +536,7 @@ class TestWrapSummary:
         })()
 
         batch = BatchEncoding({"input": torch.tensor([[1, 2], [3, 4]])})
-        analysis_batch = AnalysisBatch()
+        analysis_batch = AnalysisBatch({"tokens": torch.tensor([[5, 6], [7, 8]])})
 
         # Test with save_prompts=True
         result = wrap_summary(
@@ -526,6 +668,23 @@ class TestAnalysisOp:
 
     def test_validate_input_schema(self):
         """Test input schema validation."""
+
+        # Valid inputs using protocol attributes
+        batch = AnalysisBatch()
+        batch.logit_diffs = torch.tensor([1.0, 2.0])
+
+
+        # assert that validation is skipped if input_schema is None
+        op = AnalysisOp(
+            name="test_op",
+            description="Test op with schema validation",
+            output_schema=OpSchema({}),
+            input_schema=None
+        )
+
+        op._validate_input_schema(batch, {})
+
+        # normal case
         input_schema = OpSchema({
             "logit_diffs": ColCfg(datasets_dtype="float32", required=True)
         })
@@ -535,16 +694,19 @@ class TestAnalysisOp:
             output_schema=OpSchema({}),
             input_schema=input_schema
         )
-
-        # Valid inputs using protocol attributes
-        batch = AnalysisBatch()
-        batch.logit_diffs = torch.tensor([1.0, 2.0])
         op._validate_input_schema(batch, {})
 
         # Missing required field
         batch = AnalysisBatch()
         with pytest.raises(ValueError, match="Missing required.*logit_diffs"):
             op._validate_input_schema(batch, {})
+
+
+
+
+        batch = AnalysisBatch()
+        batch.logit_diffs = torch.tensor([1.0, 2.0])
+        op._validate_input_schema(batch, {})
 
     def test_validate_input_schema_from_batch(self):
         """Test validation of inputs from batch."""
@@ -678,7 +840,6 @@ class TestAnalysisOp:
         with pytest.raises(NotImplementedError):
             op(None, None, {}, 0)
 
-
     def test_protocol_attribute_in_analysis(self):
         """Test that ops properly use protocol attributes."""
         def implementation(module, analysis_batch, batch, batch_idx, **kwargs):
@@ -746,6 +907,54 @@ class TestAnalysisOp:
         assert result.logit_diffs.device.type == "cpu"
         assert result.loss.device.type == "cpu"
         assert result.attribution_values["hook1"]["latent1"].device.type == "cpu"
+
+    def test_call_method_with_validation(self):
+        """Test the __call__ method with input schema validation."""
+        # Create a simple implementation function
+        def impl(module, analysis_batch, batch, batch_idx, **kwargs):
+            result = analysis_batch
+            result.output_field = torch.tensor([42.0])
+            return result
+
+        # Create an op with input schema
+        op = AnalysisOp(
+            name="test_call",
+            description="Test call with validation",
+            output_schema=OpSchema({"output_field": ColCfg(datasets_dtype="float32")}),
+            input_schema=OpSchema({"required_field": ColCfg(datasets_dtype="int64")}),
+            callables={"implementation": impl}
+        )
+
+        # Create analysis batch with required input
+        analysis_batch = AnalysisBatch()
+        analysis_batch.required_field = torch.tensor([1, 2, 3])
+
+        # Call should succeed
+        result = op(None, analysis_batch, {}, 0)
+        assert torch.equal(result.output_field, torch.tensor([42.0]))
+
+        # Call with missing required input should fail
+        with pytest.raises(ValueError, match="Missing required.*required_field"):
+            op(None, AnalysisBatch(), {}, 0)
+
+    def test_call_with_implementation_args(self):
+        """Test __call__ with implementation and additional arguments."""
+        # Create implementation that uses additional arguments
+        def impl(module, analysis_batch, batch, batch_idx, arg1=None, arg2=None, **kwargs):
+            result = AnalysisBatch()
+            result.output_value = torch.tensor([float(arg1 + arg2)])
+            return result
+
+        op = AnalysisOp(
+            name="test_args",
+            description="Test with args",
+            output_schema=OpSchema({"output_value": ColCfg(datasets_dtype="float32")}),
+            callables={"implementation": impl, "arg1": 10, "arg2": 20}
+        )
+
+        # Call with additional args passed through callables
+        result = op(None, None, {}, 0)
+        assert torch.equal(result.output_value, torch.tensor([30.0]))
 
 
 class TestChainedAnalysisOp:
@@ -843,3 +1052,363 @@ class TestChainedAnalysisOp:
         """Test that an empty chain raises an error."""
         with pytest.raises(ValueError, match="No operations provided"):
             ChainedAnalysisOp([])
+
+    def test_complete_chain_execution(self):
+        """Test complete execution of a chain with real implementations."""
+        # Test operations with real implementations
+        def first_impl(module, analysis_batch, batch, batch_idx, **kwargs):
+            result = AnalysisBatch() if not analysis_batch else analysis_batch
+            result.intermediate = torch.tensor([1.0, 2.0, 3.0])
+            return result
+
+        def second_impl(module, analysis_batch, batch, batch_idx, **kwargs):
+            result = AnalysisBatch() if not analysis_batch else analysis_batch
+            result = analysis_batch
+            result.output = analysis_batch.intermediate * 2
+            return result
+
+        # Create the operations
+        first_op = AnalysisOp(
+            name="first_op",
+            description="First operation",
+            input_schema=OpSchema({"existing_field": ColCfg(datasets_dtype="float32", required=False)}),
+            output_schema=OpSchema({"intermediate": ColCfg(datasets_dtype="float32")}),
+            callables={"implementation": first_impl}
+        )
+
+        second_op = AnalysisOp(
+            name="second_op",
+            description="Second operation",
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
+            input_schema=OpSchema({"intermediate": ColCfg(datasets_dtype="float32")}),
+            callables={"implementation": second_impl}
+        )
+
+        # Create and test the chain
+        chain = ChainedAnalysisOp([first_op, second_op])
+
+        # Test name generation
+        assert chain.name == "first_op.second_op"
+
+        # Test execution
+        result = chain(None, None, {}, 0)
+        assert torch.equal(result.intermediate, torch.tensor([1.0, 2.0, 3.0]))
+        assert torch.equal(result.output, torch.tensor([2.0, 4.0, 6.0]))
+
+        # Test with existing analysis batch
+        analysis_batch = AnalysisBatch()
+        analysis_batch.existing_field = torch.tensor([42.0])
+        result = chain(None, analysis_batch, {}, 0)
+        assert torch.equal(result.existing_field, torch.tensor([42.0]))
+        assert torch.equal(result.intermediate, torch.tensor([1.0, 2.0, 3.0]))
+        assert torch.equal(result.output, torch.tensor([2.0, 4.0, 6.0]))
+
+
+class TestOpWrapper:
+    """Tests for the OpWrapper class."""
+
+    @pytest.fixture
+    def test_ops_yaml(self):
+        """Create a temporary YAML file with test operation definitions."""
+        # Create test operation definitions
+        test_ops = {
+            "test_op": {
+                "description": "Test operation for wrapper testing",
+                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "aliases": ["test_alias"],
+                "output_schema": {
+                    "output_field": {
+                        "datasets_dtype": "float32"
+                    }
+                },
+                "input_schema": {
+                    "input_field": {
+                        "datasets_dtype": "int64"
+                    }
+                }
+            },
+            "another_test_op": {
+                "description": "Another test operation",
+                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "output_schema": {
+                    "another_field": {
+                        "datasets_dtype": "float32"
+                    }
+                }
+            },
+            "composite_operations": {
+                "test_chain": {
+                    "chain": "test_op.another_test_op",
+                    "alias": "chain_alias"
+                }
+            }
+        }
+
+        # Write to a temporary file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
+            yaml.dump(test_ops, tmp)
+            yaml_path = tmp.name
+
+        yield yaml_path
+
+        # Cleanup
+        os.unlink(yaml_path)
+
+    @pytest.fixture
+    def test_dispatcher(self, test_ops_yaml):
+        """Create a test dispatcher with test operation definitions."""
+        # Create a test dispatcher that loads from our test YAML
+        dispatcher = AnalysisOpDispatcher(yaml_path=test_ops_yaml)
+        dispatcher.load_definitions()
+
+        # Return the dispatcher
+        return dispatcher
+
+    @pytest.fixture
+    def target_module(self):
+        """Create a mock module to use as a target for OpWrapper."""
+        return type('MockModule', (), {})()
+
+    def test_initialize(self):
+        """Test initializing the OpWrapper class."""
+        # Create a mock module
+        mock_module = type('MockModule', (), {})()
+
+        # Initialize OpWrapper with the module
+        OpWrapper.initialize(mock_module)
+
+        # Check that the target module was set
+        assert OpWrapper._target_module is mock_module
+
+    def test_basic_properties(self):
+        """Test basic properties and string representation of OpWrapper."""
+        wrapper = OpWrapper("test_op")
+
+        # Test basic properties
+        assert wrapper._op_name == "test_op"
+        assert wrapper._is_instantiated is False
+
+        # Test string representation
+        assert "test_op" in str(wrapper)
+        assert "not instantiated" in str(wrapper)
+        assert "test_op" in repr(wrapper)
+
+    def test_real_lazy_instantiation(self, test_dispatcher, target_module, monkeypatch):
+        """Test the real lazy instantiation process with a proper dispatcher."""
+        # Set up test environment
+        OpWrapper.initialize(target_module)
+
+        # Patch the _get_dispatcher property to return our test dispatcher
+        monkeypatch.setattr(OpWrapper, "_get_dispatcher", property(lambda self: test_dispatcher))
+
+        # Patch the _import_callable method to return our test implementation
+        original_import = test_dispatcher._import_callable
+        def patched_import(path_str):
+            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
+                return op_impl_test
+            return original_import(path_str)
+        monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
+
+        # Create a wrapper and set it on the target module so it will be updated later
+        wrapper = OpWrapper("test_op")
+        setattr(target_module, "test_op", wrapper)
+
+        # Check initial state
+        assert wrapper._is_instantiated is False
+        assert wrapper._instantiated_op is None
+
+        # Access an attribute to trigger instantiation
+        description = wrapper.description
+
+        # Verify the operation was instantiated
+        assert wrapper._is_instantiated is True
+        assert wrapper._instantiated_op is not None
+        assert description == "Test operation for wrapper testing"
+
+        # Check that the operation was registered on target_module
+        assert hasattr(target_module, "test_op")
+        assert isinstance(target_module.test_op, AnalysisOp)
+        assert target_module.test_op.name == "test_op"
+
+    def test_alias_resolution(self, test_dispatcher, target_module, monkeypatch):
+        """Test that aliases are properly resolved."""
+        # Set up test environment
+        OpWrapper.initialize(target_module)
+        monkeypatch.setattr(OpWrapper, "_get_dispatcher", property(lambda self: test_dispatcher))
+
+        # Patch the _import_callable method to return our test implementation
+        original_import = test_dispatcher._import_callable
+        def patched_import(path_str):
+            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
+                return op_impl_test
+            return original_import(path_str)
+        monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
+
+        # Add the alias to test_dispatcher aliases
+        test_dispatcher._aliases["test_alias"] = "test_op"
+
+        # Create both op and its alias as wrappers
+        op_wrapper = OpWrapper("test_op")
+        alias_wrapper = OpWrapper("test_alias")
+
+        # Set the wrappers on the target module
+        setattr(target_module, "test_op", op_wrapper)
+        setattr(target_module, "test_alias", alias_wrapper)
+
+        # Access an attribute on the op to trigger instantiation
+        op_wrapper.description
+
+        # Also trigger instantiation of the alias to make sure it's replaced
+        alias_wrapper._ensure_instantiated()
+
+        # Check that both the op and its alias on the module are now the actual op
+        assert isinstance(target_module.test_op, AnalysisOp)
+        assert isinstance(target_module.test_alias, AnalysisOp)
+        assert target_module.test_alias is target_module.test_op
+
+    def test_call_with_real_dispatcher(self, test_dispatcher, target_module, monkeypatch):
+        """Test calling an operation through the wrapper."""
+        # Set up test environment
+        OpWrapper.initialize(target_module)
+        monkeypatch.setattr(OpWrapper, "_get_dispatcher", property(lambda self: test_dispatcher))
+
+        # Patch the _import_callable method to return our test implementation
+        original_import = test_dispatcher._import_callable
+        def patched_import(path_str):
+            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
+                return op_impl_test
+            return original_import(path_str)
+        monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
+
+        # Modify the input schema to make the field optional for testing
+        test_dispatcher._op_definitions["test_op"]["input_schema"]["input_field"]["required"] = False
+
+        # Create a wrapper
+        wrapper = OpWrapper("test_op")
+
+        with pytest.raises(AttributeError):
+            _ = getattr(wrapper, "oops_not_here")
+
+        str_output = str(wrapper)
+        assert str_output == "OpWrapper('test_op', instantiated)"
+
+        # Call the operation through the wrapper
+        test_module = object()
+        batch = {"input": torch.tensor([1, 2, 3])}
+        result = wrapper(test_module, None, batch, 5)
+
+        # Check that the operation was called with correct arguments
+        assert torch.equal(result.output_field, torch.tensor([42.0]))
+        assert result.called_with['module'] is test_module
+        assert result.called_with['batch_idx'] == 5
+
+    def test_pickling_with_real_op(self, test_dispatcher, target_module, monkeypatch):
+        """Test pickling and unpickling with real operations."""
+        # Set up test environment
+        OpWrapper.initialize(target_module)
+        monkeypatch.setattr(OpWrapper, "_get_dispatcher", property(lambda self: test_dispatcher))
+
+        # Patch the _import_callable method to return our test implementation
+        original_import = test_dispatcher._import_callable
+        def patched_import(path_str):
+            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
+                return op_impl_test
+            return original_import(path_str)
+        monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
+
+        # Modify the input schema to make the field optional for testing
+        test_dispatcher._op_definitions["test_op"]["input_schema"]["input_field"]["required"] = False
+
+        # Create a wrapper and set it on the target module
+        wrapper = OpWrapper("test_op")
+        setattr(target_module, "test_op", wrapper)
+
+        # Force instantiation so we can patch __reduce__ on the real op
+        instantiated_op = wrapper._ensure_instantiated()
+
+        # First pickle: simulate absence of __reduce__ on the op
+        with patch.object(instantiated_op, "__reduce__", None):
+            _ = pickle.dumps(wrapper)
+
+        # Second pickle: normal case
+        pickled_wrapper = pickle.dumps(wrapper)
+
+        # Unpickle
+        unpickled_op = pickle.loads(pickled_wrapper)
+
+        # Check that we got the actual operation, not a wrapper
+        assert isinstance(unpickled_op, AnalysisOp)
+        assert unpickled_op.name == "test_op"
+
+        # Unpickle
+        unpickled_op = pickle.loads(pickled_wrapper)
+
+        # Check that we got the actual operation, not a wrapper
+        assert isinstance(unpickled_op, AnalysisOp)
+        assert unpickled_op.name == "test_op"
+
+    # we skip this test when IT_ENABLE_LAZY_DEBUGGER is set to avoid edge case false positive error signal that can
+    # be generated contingent on the defined breakpoints
+    @RunIf(env_mask="IT_ENABLE_LAZY_DEBUGGER")
+    def test_debugger_handling(self, test_dispatcher, target_module, monkeypatch):
+        """Test special handling for debugger inspection."""
+        # Set up test environment
+        OpWrapper.initialize(target_module)
+        monkeypatch.setattr(OpWrapper, "_get_dispatcher", property(lambda self: test_dispatcher))
+
+        # Set the debugger identifier
+        old_debugger_id = OpWrapper._debugger_identifier
+        debugger_id = old_debugger_id or "debugger_file.py"
+        OpWrapper._debugger_identifier = debugger_id
+
+        try:
+            # Create a wrapper
+            wrapper = OpWrapper("test_op")
+
+            # Use a special debugger attribute - this should not instantiate the op
+            with patch("traceback.extract_stack") as mock_stack:
+                mock_frame = MagicMock()
+                mock_frame.filename = debugger_id
+                mock_stack.return_value = [mock_frame]
+
+                # Check special attributes
+                assert wrapper.__iter__ is None
+                assert wrapper.__len__ is None
+
+                # Verify op wasn't instantiated
+                assert wrapper._is_instantiated is False
+        finally:
+            # Restore the debugger identifier
+            OpWrapper._debugger_identifier = old_debugger_id
+
+    def test_ensure_instantiated(self, target_module, monkeypatch):
+        """Test _ensure_instantiated method with mocks."""
+        # Create a mock op
+        mock_op = AnalysisOp(name="mock_op", description="Mock operation", output_schema=OpSchema({}))
+
+        # Create a mock dispatcher
+        mock_dispatcher = type('MockDispatcher', (), {'get_op': lambda self, name: mock_op,
+                                                      'get_op_aliases': lambda self: [("mock_alias", "mock_op")]})()
+        current_module = target_module
+        # Create a wrapper and patch its _get_dispatcher property
+        OpWrapper.initialize(current_module)
+        wrapper = OpWrapper("mock_op")
+        monkeypatch.setattr(wrapper, "_dispatcher", mock_dispatcher)
+
+        setattr(current_module, wrapper._op_name, wrapper)
+        setattr(current_module, 'mock_alias', wrapper)
+
+        assert current_module.mock_op is wrapper
+        assert current_module.mock_alias is wrapper
+        assert isinstance(current_module.mock_op, OpWrapper)
+        assert wrapper._is_instantiated is False
+
+        # Access an op attribute which should invoke _ensure_instantiated
+        _ = wrapper.alias
+
+        # Check that our module has the instantiated mock op and alias instead of the OpWrapper now
+        assert current_module.mock_op is mock_op
+        assert current_module.mock_alias is mock_op
+        assert isinstance(current_module.mock_op, AnalysisOp)
+        assert wrapper._instantiated_op is mock_op
+        assert wrapper._is_instantiated is True
