@@ -356,8 +356,12 @@ class AnalysisOp:
         raise NotImplementedError(f"Operation {self.name} does not have an implementation function registered")
 
 
-class ChainedAnalysisOp(AnalysisOp):
-    """A chain of analysis operations to be executed in sequence."""
+# NOTE: [Composition and Compilation Limitations]
+#   - Currently only sequential composition and schema compilation is supported, but the intention
+#     is to allow DAG of ops/schemas to be compiled in the future.
+
+class CompositeAnalysisOp(AnalysisOp):
+    """A composition of analysis operations to be executed."""
 
     def __init__(self, ops: list[AnalysisOp],
                  name: Optional[str] = None,
@@ -367,11 +371,11 @@ class ChainedAnalysisOp(AnalysisOp):
 
         # Create a name that combines all operation names
         self.composition_name = '.'.join(op.name for op in ops)
-        description = description or f"Chain of operations: {' → '.join(op.description for op in ops)}"
+        description = description or f"Composition of operations: {' → '.join(op.description for op in ops)}"
         self.name = name or self.composition_name
 
         # Import here to avoid circular imports
-        from interpretune.analysis.ops.compiler.schema_compiler import jit_compile_chain_schema
+        from interpretune.analysis.ops.compiler.schema_compiler import jit_compile_composition_schema
         from interpretune.analysis.ops.dispatcher import DISPATCHER
 
         # Check if alias exists in dispatcher's op_definitions
@@ -381,7 +385,7 @@ class ChainedAnalysisOp(AnalysisOp):
             output_schema = op_def['output_schema']
         else:
             # Compile input and output schemas using the op definitions dictionary
-            input_schema, output_schema = jit_compile_chain_schema(
+            input_schema, output_schema = jit_compile_composition_schema(
                 ops, DISPATCHER._op_definitions
             )
 
@@ -389,13 +393,13 @@ class ChainedAnalysisOp(AnalysisOp):
                          output_schema=output_schema, input_schema=input_schema,
                          aliases=aliases,
                          *args, **kwargs)
-        self.chain = ops
+        self.composition = ops
 
     def __call__(self, module, analysis_batch: Optional[AnalysisBatchProtocol],
                 batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
-        """Execute each operation in the chain."""
+        """Execute each operation in the composition."""
         result = analysis_batch or AnalysisBatch()
-        for op in self.chain:
+        for op in self.composition:
             with op.active_ctx_key(self.name):
                 result = op(module, result, batch, batch_idx)
         return result
@@ -414,11 +418,6 @@ class OpWrapper:
 
     _DEBUG_OVERRIDE_ATTRS = ("__iter__", "__len__")
 
-    @classmethod
-    def initialize(cls, target_module):
-        """Set the target module where operations will be registered."""
-        cls._target_module = target_module
-
     def __init__(self, op_name):
         self._op_name = op_name
         self._instantiated_op = None
@@ -426,6 +425,37 @@ class OpWrapper:
 
         # Lazy import to avoid circular imports
         self._dispatcher = None
+
+    @classmethod
+    def initialize(cls, target_module):
+        """Set the target module where operations will be registered."""
+        cls._target_module = target_module
+
+    @classmethod
+    def register_operations(cls, module, dispatcher):
+        """Register all operations from the dispatcher to the module as lazy OpWrapper instances.
+
+        Args:
+            module: The module where operations will be registered
+            dispatcher: The operations dispatcher instance
+        """
+        # Set target module for the wrappers
+        cls.initialize(module)
+
+        # Set debugger identifier class variable
+        cls._debugger_identifier = os.environ.get('IT_ENABLE_LAZY_DEBUGGER', '')
+
+        # Register all operations with lazy getters
+        for op_name in dispatcher.registered_ops:
+            if dispatcher.resolve_alias(op_name) is not None:
+                # Skip aliases
+                continue
+            # Use lazy=True to avoid instantiation until actual use
+            _ = dispatcher.get_op(op_name, lazy=True)
+            wrapper = cls(op_name)
+            setattr(module, op_name, wrapper)
+            for alias in dispatcher.get_op_aliases(op_name):
+                setattr(module, alias, wrapper)
 
     @property
     def dispatcher(self):

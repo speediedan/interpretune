@@ -9,7 +9,7 @@ from collections import defaultdict
 
 from transformers import BatchEncoding
 
-from interpretune.analysis.ops.base import AnalysisOp, OpSchema, ChainedAnalysisOp, ColCfg
+from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, ColCfg
 from interpretune.protocol import AnalysisBatchProtocol
 
 
@@ -66,10 +66,10 @@ class AnalysisOpDispatcher:
 
             # Process composite operations with schema compilation
             if "composite_operations" in yaml_content:
-                from interpretune.analysis.ops.compiler import build_operation_chains
+                from interpretune.analysis.ops.compiler import build_operation_compositions
 
                 # Apply schema compilation for composite operations
-                compiled_ops = build_operation_chains(yaml_content)
+                compiled_ops = build_operation_compositions(yaml_content)
 
                 # Update definitions with compiled operation schemas
                 for op_name, op_def in compiled_ops.items():
@@ -133,12 +133,12 @@ class AnalysisOpDispatcher:
         if not op_def:
             raise ValueError(f"Unknown operation: {op_name}")
 
-        # Handle chained operations
-        if "chain" in op_def:
-            chain = op_def["chain"]
-            # instantiate each operation in the chain
-            ops = [self.get_op(op) for op in chain]
-            op = ChainedAnalysisOp(
+        # Handle composite operations
+        if "composition" in op_def:
+            composition = op_def["composition"]
+            # instantiate each operation in the composition
+            ops = [self.get_op(op) for op in composition]
+            op = CompositeAnalysisOp(
                 ops,
                 name=op_name,
                 aliases=op_def.get("aliases")
@@ -258,9 +258,10 @@ class AnalysisOpDispatcher:
         return result
 
     @_ensure_loaded
-    def create_chain(self, op_names: str | List[str | AnalysisOp], name: Optional[str] = None,
-                     aliases: Optional[List[str]] = None) -> ChainedAnalysisOp:
-        """Create a chain of operations from a list of operation names."""
+    def compile_ops(self, op_names: str | List[str | AnalysisOp], name: Optional[str] = None,
+                     aliases: Optional[List[str]] = None) -> CompositeAnalysisOp:
+        """Create a composition of operations from a list of operation names."""
+        # See NOTE [Composition and Compilation Limitations]
         # Support for dot-separated string format
         if isinstance(op_names, str):
             op_names = op_names.split('.')
@@ -275,15 +276,15 @@ class AnalysisOpDispatcher:
             op_names = split_names
 
         ops = [self.get_op(op_name) if isinstance(op_name, str) else op_name for op_name in op_names]
-        return ChainedAnalysisOp(ops, name=name, aliases=aliases)
+        return CompositeAnalysisOp(ops, name=name, aliases=aliases)
 
     def __call__(self, op_name: str, module, analysis_batch: Optional[AnalysisBatchProtocol],
                  batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
         """Call an operation by name."""
-        # Support for dot-separated operation names (creating chains on-demand)
+        # Support for dot-separated operation names (creating compositions on-demand)
         if '.' in op_name:
-            chain_op = self.create_chain(op_name)
-            return chain_op(
+            composite_op = self.compile_ops(op_name)
+            return composite_op(
                 module=module,
                 analysis_batch=analysis_batch,
                 batch=batch,

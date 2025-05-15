@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 
 import interpretune as it
 from interpretune.analysis.ops.dispatcher import DISPATCHER, AnalysisOpDispatcher, DispatchContext
-from interpretune.analysis.ops.base import AnalysisOp, OpSchema, ChainedAnalysisOp, AnalysisBatch, ColCfg, OpWrapper
+from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, AnalysisBatch, ColCfg, OpWrapper
 from tests.unit.test_analysis_ops_base import op_impl_test
 
 
@@ -69,13 +69,13 @@ class TestAnalysisOpDispatcher:
         assert isinstance(op, AnalysisOp)
         assert op.name == "model_forward"
 
-        # Test instantiating a chained operation
+        # Test instantiating a composite operation
         op = DISPATCHER._instantiate_op("logit_diffs_sae")
-        assert isinstance(op, ChainedAnalysisOp)
+        assert isinstance(op, CompositeAnalysisOp)
         assert op.name == "logit_diffs_sae"
         assert op.composition_name == "labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts"
         assert op.ctx_key == "logit_diffs_sae"
-        assert len(op.chain) == 4
+        assert len(op.composition) == 4
 
         # Test with unknown operation
         with pytest.raises(ValueError, match="Unknown operation:"):
@@ -88,9 +88,9 @@ class TestAnalysisOpDispatcher:
         assert isinstance(op, AnalysisOp)
         assert op.name == "model_forward"
 
-        # Test with chained op
+        # Test with composite op
         op = DISPATCHER.get_op("logit_diffs_sae")
-        assert isinstance(op, ChainedAnalysisOp)
+        assert isinstance(op, CompositeAnalysisOp)
         assert op.ctx_key == "logit_diffs_sae"
 
         # Test with unknown op
@@ -124,59 +124,59 @@ class TestAnalysisOpDispatcher:
         # Check if all returned values are AnalysisOp instances
         for name, op in all_ops.items():
             assert isinstance(op, AnalysisOp)
-            if chain := getattr(op, 'chain', []):
-                assert op.name in (name, DISPATCHER.resolve_alias(name), ".".join(o.name for o in chain))
+            if composition := getattr(op, 'composition', []):
+                assert op.name in (name, DISPATCHER.resolve_alias(name), ".".join(o.name for o in composition))
             else:
                 assert op.name == name or op.name == DISPATCHER.resolve_alias(name)
 
-    def test_create_chain(self):
-        """Test creating a chain of operations from names."""
-        # Create a chain from operation names
-        chain = DISPATCHER.create_chain(["labels_to_ids", "model_forward", "logit_diffs"])
-        assert isinstance(chain, ChainedAnalysisOp)
-        assert len(chain.chain) == 3
-        assert chain.name == "labels_to_ids.model_forward.logit_diffs"
-        assert chain.chain[0].name == "labels_to_ids"
-        assert chain.chain[1].name == "model_forward"
-        assert chain.chain[2].name == "logit_diffs"
+    def test_compile_ops(self):
+        """Test creating a composition of operations from names."""
+        # Create a composition from operation names
+        composition = DISPATCHER.compile_ops(["labels_to_ids", "model_forward", "logit_diffs"])
+        assert isinstance(composition, CompositeAnalysisOp)
+        assert len(composition.composition) == 3
+        assert composition.name == "labels_to_ids.model_forward.logit_diffs"
+        assert composition.composition[0].name == "labels_to_ids"
+        assert composition.composition[1].name == "model_forward"
+        assert composition.composition[2].name == "logit_diffs"
 
         # Test with dot notation and custom name
-        chain = DISPATCHER.create_chain("labels_to_ids.model_forward.logit_diffs", name="dot_composite")
-        assert chain.name == "dot_composite"
-        assert chain.composition_name == "labels_to_ids.model_forward.logit_diffs"
-        assert chain.ctx_key == "dot_composite"
-        assert len(chain.chain) == 3
+        composition = DISPATCHER.compile_ops("labels_to_ids.model_forward.logit_diffs", name="dot_composite")
+        assert composition.name == "dot_composite"
+        assert composition.composition_name == "labels_to_ids.model_forward.logit_diffs"
+        assert composition.ctx_key == "dot_composite"
+        assert len(composition.composition) == 3
 
         # Get individual operations
         op1 = DISPATCHER.get_op("labels_to_ids")
         op2 = DISPATCHER.get_op("model_forward")
 
-        # Create chain from mix of names and operations
-        chain = DISPATCHER.create_chain([op1, "model_forward"], name="test_mixed")
-        assert isinstance(chain, ChainedAnalysisOp)
-        assert chain.name == "test_mixed"
-        assert chain.composition_name == "labels_to_ids.model_forward"
-        assert chain.ctx_key == "test_mixed"
+        # Create composition from mix of names and operations
+        composition = DISPATCHER.compile_ops([op1, "model_forward"], name="test_mixed")
+        assert isinstance(composition, CompositeAnalysisOp)
+        assert composition.name == "test_mixed"
+        assert composition.composition_name == "labels_to_ids.model_forward"
+        assert composition.ctx_key == "test_mixed"
 
-        # Create chain from operations only
-        chain = DISPATCHER.create_chain([op1, op2], name="test_ops")
-        assert isinstance(chain, ChainedAnalysisOp)
-        assert chain.name == "test_ops"
-        assert chain.composition_name == "labels_to_ids.model_forward"
-        assert chain.ctx_key == "test_ops"
-        assert len(chain.chain) == 2
+        # Create composition from operations only
+        composition = DISPATCHER.compile_ops([op1, op2], name="test_ops")
+        assert isinstance(composition, CompositeAnalysisOp)
+        assert composition.name == "test_ops"
+        assert composition.composition_name == "labels_to_ids.model_forward"
+        assert composition.ctx_key == "test_ops"
+        assert len(composition.composition) == 2
 
         # Test with a mix of dot separated names and operations
-        chain = DISPATCHER.create_chain([op1, "model_forward.logit_diffs"], name="test_mixed_w_op")
-        assert isinstance(chain, ChainedAnalysisOp)
-        assert chain.name == "test_mixed_w_op"
-        assert chain.composition_name == "labels_to_ids.model_forward.logit_diffs"
-        assert chain.ctx_key == "test_mixed_w_op"
-        assert len(chain.chain) == 3
+        composition = DISPATCHER.compile_ops([op1, "model_forward.logit_diffs"], name="test_mixed_w_op")
+        assert isinstance(composition, CompositeAnalysisOp)
+        assert composition.name == "test_mixed_w_op"
+        assert composition.composition_name == "labels_to_ids.model_forward.logit_diffs"
+        assert composition.ctx_key == "test_mixed_w_op"
+        assert len(composition.composition) == 3
 
         # Test with invalid operation name
         with pytest.raises(ValueError):
-            DISPATCHER.create_chain(["non_existent_op"])
+            DISPATCHER.compile_ops(["non_existent_op"])
 
     def test_op_lazy_instantiation(self):
         """Test lazy operation instantiation mechanism."""
@@ -250,27 +250,27 @@ class TestAnalysisOpDispatcher:
         assert test_dispatcher._dispatch_table[op_name][context] is instantiated_op
 
     def test_call_with_dot_notation(self):
-        """Test calling operations with dot notation creates and executes a chain."""
+        """Test calling operations with dot notation creates and executes a composition."""
         # Create necessary mocks
         module_mock = MagicMock()
         batch_mock = MagicMock(spec=dict)
         analysis_batch_mock = MagicMock(spec=AnalysisBatch)
 
-        # Use patch to verify the chain creation and execution flow
-        with patch.object(DISPATCHER, 'create_chain') as mock_create_chain:
-            # Set up the chain mock without spec constraint to avoid signature issues
-            chain_mock = MagicMock()
-            mock_create_chain.return_value = chain_mock
+        # Use patch to verify the composition creation and execution flow
+        with patch.object(DISPATCHER, 'compile_ops') as mock_compile_ops:
+            # Set up the composition mock without spec constraint to avoid signature issues
+            composition_mock = MagicMock()
+            mock_compile_ops.return_value = composition_mock
 
             # Call with dot notation
             DISPATCHER("op1.op2", module=module_mock, analysis_batch=analysis_batch_mock,
                       batch=batch_mock, batch_idx=0)
 
-            # Verify chain was created with the right string
-            mock_create_chain.assert_called_once_with("op1.op2")
+            # Verify composition was created with the right string
+            mock_compile_ops.assert_called_once_with("op1.op2")
 
-            # Verify the chain was called with the expected arguments
-            chain_mock.assert_called_once_with(
+            # Verify the composition was called with the expected arguments
+            composition_mock.assert_called_once_with(
                 module=module_mock,
                 analysis_batch=analysis_batch_mock,
                 batch=batch_mock,
@@ -286,14 +286,12 @@ class TestAnalysisOpDispatcher:
         # Access an attribute to trigger instantiation
         assert it.model_forward.name == "model_forward"
 
-        # Test chained operations
+        # Test composite operations
         assert hasattr(it, "logit_diffs_sae")
 
         # Access an attribute to trigger instantiation
         assert it.logit_diffs_sae.name == "logit_diffs_sae"
 
-        # Test chain creation utilities
-        assert hasattr(it, "create_op_chain")
 
     @pytest.mark.parametrize("op_name", [
         "model_forward", "model_cache_forward", "logit_diffs", "sae_correct_acts",
@@ -369,7 +367,7 @@ class TestAnalysisOpDispatcher:
         def patched_load_definitions():
             if test_dispatcher._loading_in_progress:
                 test_dispatcher.bypassed_in_progress_loading = True
-                return None
+                #return None
             return original_load_defs()
 
         # Apply the patch so get_op will receive None from load_definitions
@@ -539,20 +537,20 @@ class TestAnalysisOpDispatcher:
             actual_name = test_dispatcher.resolve_alias("unknown_op_name")
             assert actual_name == "unknown_op_name"
 
-    def test_create_chain_with_invalid_alias(self):
-        """Test creating a chain that includes an invalid alias."""
-        # Try to create a chain with a valid op and an invalid one
+    def test_compile_ops_with_invalid_alias(self):
+        """Test creating a composition that includes an invalid alias."""
+        # Try to create a composition with a valid op and an invalid one
         with pytest.raises(ValueError, match="Unknown operation:"):
-            DISPATCHER.create_chain([
+            DISPATCHER.compile_ops([
                 "labels_to_ids",
                 "non_existent_op"
             ])
 
     def test_call_dispatcher_with_invalid_op(self, test_dispatcher):
-        """Test creating a chain that includes an invalid alias."""
+        """Test creating a composition that includes an invalid alias."""
         mock_module = MagicMock()
         batch_mock = MagicMock(spec=dict)
-        # Try to create a chain with a valid op and an invalid one
+        # Try to create a composition with a valid op and an invalid one
         with pytest.raises(ValueError, match="Unknown operation:"):
             _ = test_dispatcher("unknown_op", module=mock_module, analysis_batch=None, batch=batch_mock, batch_idx=0)
 
@@ -572,10 +570,10 @@ class TestAnalysisOpDispatcher:
         test_op_wrapper = OpWrapper("test_op")
         monkeypatch.setattr(test_op_wrapper, "_dispatcher", test_dispatcher)
 
-        # test building a chain with the wrapper
-        op = test_dispatcher.create_chain([test_op_wrapper, "another_test_op"], name="custom_chain")
-        assert isinstance(op, ChainedAnalysisOp)
-        assert op.name == 'custom_chain'
+        # test building a composition with the wrapper
+        op = test_dispatcher.compile_ops([test_op_wrapper, "another_test_op"], name="custom_composition")
+        assert isinstance(op, CompositeAnalysisOp)
+        assert op.name == 'custom_composition'
 
         # test directly instantiating the op if necessary
         op = test_dispatcher._maybe_instantiate_op(test_op_wrapper, DispatchContext())

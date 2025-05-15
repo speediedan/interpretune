@@ -1,5 +1,5 @@
 """Schema compiler for analysis operations."""
 
-from .schema_compiler import compile_operation_chain_schema, build_operation_chains
+from .schema_compiler import compile_operation_composition_schema, build_operation_compositions
 
-__all__ = ["compile_operation_chain_schema", "build_operation_chains"]
+__all__ = ["compile_operation_composition_schema", "build_operation_compositions"]

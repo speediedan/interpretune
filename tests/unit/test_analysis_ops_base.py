@@ -6,7 +6,7 @@ import pickle
 from unittest.mock import patch, MagicMock
 from tests.runif import RunIf
 
-from interpretune.analysis.ops.base import (AnalysisOp, ChainedAnalysisOp, AnalysisBatch, ColCfg, OpSchema, AttrDict,
+from interpretune.analysis.ops.base import (AnalysisOp, CompositeAnalysisOp, AnalysisBatch, ColCfg, OpSchema, AttrDict,
                                             wrap_summary, _reconstruct_op, OpWrapper)
 
 # Module-level implementation function for test operations
@@ -953,11 +953,11 @@ class TestAnalysisOp:
         assert torch.equal(result.output_value, torch.tensor([30.0]))
 
 
-class TestChainedAnalysisOp:
-    """Tests for the ChainedAnalysisOp class."""
+class TestCompositeAnalysisOp:
+    """Tests for the CompositeAnalysisOp class."""
 
-    def test_chained_analysis_op(self):
-        """Test ChainedAnalysisOp basic functionality."""
+    def test_composite_analysis_op(self):
+        """Test CompositeAnalysisOp basic functionality."""
         # Create simple ops
         op1 = AnalysisOp(
             name="op1",
@@ -972,34 +972,34 @@ class TestChainedAnalysisOp:
             input_schema=OpSchema({"result": ColCfg(datasets_dtype="float32")})
         )
 
-        # Create the chained operation
-        chained_op = ChainedAnalysisOp([op1, op2])
+        # Create the composite operation
+        composite_op = CompositeAnalysisOp([op1, op2])
 
-        # Test the chain's properties
-        assert chained_op.name == "op1.op2"
-        assert "Simple operation" in chained_op.description
-        assert "Another operation" in chained_op.description
+        # Test the composition's properties
+        assert composite_op.name == "op1.op2"
+        assert "Simple operation" in composite_op.description
+        assert "Another operation" in composite_op.description
         op2_orig = op2.output_schema.copy()
         expected_schema = op2_orig.update(op1.output_schema) or op2_orig
-        assert chained_op.output_schema == expected_schema
-        assert chained_op.input_schema == {}
+        assert composite_op.output_schema == expected_schema
+        assert composite_op.input_schema == {}
 
-    def test_chained_op_with_alias(self):
-        """Test ChainedAnalysisOp with a custom alias."""
+    def test_composite_op_with_alias(self):
+        """Test CompositeAnalysisOp with a custom alias."""
         op1 = AnalysisOp(name="op1", description="First op", output_schema=OpSchema({}))
         op2 = AnalysisOp(name="op2", description="Second op", output_schema=OpSchema({}))
 
         # Set a custom alias
-        chained_op = ChainedAnalysisOp([op1, op2], name="my_chain")
+        composite_op = CompositeAnalysisOp([op1, op2], name="my_composition")
 
         # Check the alias was set correctly
-        assert chained_op.name == "my_chain"
-        for op in chained_op.chain:
-            with op.active_ctx_key(chained_op.name):
-                assert op._ctx_key == "my_chain"
+        assert composite_op.name == "my_composition"
+        for op in composite_op.composition:
+            with op.active_ctx_key(composite_op.name):
+                assert op._ctx_key == "my_composition"
 
-    def test_chained_op_call(self):
-        """Test calling a ChainedAnalysisOp."""
+    def test_composite_op_call(self):
+        """Test calling a CompositeAnalysisOp."""
         # Create mock ops
         def impl1(module, analysis_batch, batch, batch_idx, **kwargs):
             result = analysis_batch or AnalysisBatch()
@@ -1029,26 +1029,26 @@ class TestChainedAnalysisOp:
             callables={"implementation": impl2}
         )
 
-        # Create the chain
-        chain = ChainedAnalysisOp([op1, op2])
+        # Create the composition
+        composition = CompositeAnalysisOp([op1, op2])
 
-        # Call the chain with mock data
+        # Call the composition with mock data
         module = None  # No need for a real module in this test
         batch = {"input_ids": torch.tensor([[1, 2, 3], [4, 5, 6]])}  # Mock batch
-        result = chain(module, None, batch, 0)
+        result = composition(module, None, batch, 0)
 
         # Check that both operations were executed in sequence using proper protocol attributes
         assert result.loss is not None
         assert result.logit_diffs is not None
         assert torch.equal(result.logit_diffs, torch.tensor([2.0, 4.0]))
 
-    def test_empty_chain_error(self):
-        """Test that an empty chain raises an error."""
+    def test_empty_composition_error(self):
+        """Test that an empty composition raises an error."""
         with pytest.raises(ValueError, match="No operations provided"):
-            ChainedAnalysisOp([])
+            CompositeAnalysisOp([])
 
-    def test_complete_chain_execution(self):
-        """Test complete execution of a chain with real implementations."""
+    def test_complete_composition_execution(self):
+        """Test complete execution of a composition with real implementations."""
         # Test operations with real implementations
         def first_impl(module, analysis_batch, batch, batch_idx, **kwargs):
             result = AnalysisBatch() if not analysis_batch else analysis_batch
@@ -1078,21 +1078,21 @@ class TestChainedAnalysisOp:
             callables={"implementation": second_impl}
         )
 
-        # Create and test the chain
-        chain = ChainedAnalysisOp([first_op, second_op])
+        # Create and test the composition
+        composition = CompositeAnalysisOp([first_op, second_op])
 
         # Test name generation
-        assert chain.name == "first_op.second_op"
+        assert composition.name == "first_op.second_op"
 
         # Test execution
-        result = chain(None, None, {}, 0)
+        result = composition(None, None, {}, 0)
         assert torch.equal(result.intermediate, torch.tensor([1.0, 2.0, 3.0]))
         assert torch.equal(result.output, torch.tensor([2.0, 4.0, 6.0]))
 
         # Test with existing analysis batch
         analysis_batch = AnalysisBatch()
         analysis_batch.existing_field = torch.tensor([42.0])
-        result = chain(None, analysis_batch, {}, 0)
+        result = composition(None, analysis_batch, {}, 0)
         assert torch.equal(result.existing_field, torch.tensor([42.0]))
         assert torch.equal(result.intermediate, torch.tensor([1.0, 2.0, 3.0]))
         assert torch.equal(result.output, torch.tensor([2.0, 4.0, 6.0]))

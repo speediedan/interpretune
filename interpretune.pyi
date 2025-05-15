@@ -163,7 +163,7 @@ def logit_diffs_cache(
     logit_diff_fn: Callable = "interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff",
     get_loss_preds_diffs: Callable = "interpretune.analysis.ops.definitions.get_loss_preds_diffs"
 ) -> AnalysisBatchProtocol:
-    """Clean forward pass for computing logit differences including cache activations (chained only)
+    """Clean forward pass for computing logit differences including cache activations (composition only)
 
 Input Schema:
     input (float32)
@@ -310,7 +310,8 @@ def logit_diffs_attr_ablation(
     batch,
     batch_idx: int
 ) -> AnalysisBatchProtocol:
-    """Chain of operations: labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.ablation_attribution
+    """Composition of operations: labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.\
+    ablation_attribution
     """
     ...
 
@@ -321,7 +322,7 @@ def logit_diffs_attr_grad(
     batch,
     batch_idx: int
 ) -> AnalysisBatchProtocol:
-    """Chain of operations: labels_to_ids.model_gradient.gradient_attribution
+    """Composition of operations: labels_to_ids.model_gradient.gradient_attribution
     """
     ...
 
@@ -332,7 +333,7 @@ def logit_diffs_base(
     batch,
     batch_idx: int
 ) -> AnalysisBatchProtocol:
-    """Chain of operations: labels_to_ids.model_forward.logit_diffs
+    """Composition of operations: labels_to_ids.model_forward.logit_diffs
     """
     ...
 
@@ -343,6 +344,6 @@ def logit_diffs_sae(
     batch,
     batch_idx: int
 ) -> AnalysisBatchProtocol:
-    """Chain of operations: labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts
+    """Composition of operations: labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts
     """
     ...

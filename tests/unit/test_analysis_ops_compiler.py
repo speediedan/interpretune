@@ -7,18 +7,18 @@ import tempfile
 import os
 
 from interpretune.analysis.ops.base import OpSchema, ColCfg, AnalysisOp
-from interpretune.analysis.ops.compiler.schema_compiler import (_compile_chain_schema_core,
-                                                               jit_compile_chain_schema,
-                                                               compile_operation_chain_schema,
-                                                               build_operation_chains,
+from interpretune.analysis.ops.compiler.schema_compiler import (_compile_composition_schema_core,
+                                                               jit_compile_composition_schema,
+                                                               compile_operation_composition_schema,
+                                                               build_operation_compositions,
                                                                load_and_compile_operations)
 
 
 class TestSchemaCompilerCore:
     """Tests for the core schema compilation functionality."""
 
-    def test_compile_chain_schema_core_basic(self):
-        """Test basic functionality of _compile_chain_schema_core."""
+    def test_compile_composition_schema_core_basic(self):
+        """Test basic functionality of _compile_composition_schema_core."""
         # Mock operations
         operations = ["op1", "op2"]
 
@@ -40,7 +40,7 @@ class TestSchemaCompilerCore:
             return fields
 
         # Call the function
-        input_schema, output_schema = _compile_chain_schema_core(
+        input_schema, output_schema = _compile_composition_schema_core(
             operations=operations,
             get_schemas_fn=get_schemas,
             is_intermediate_fn=is_intermediate,
@@ -54,10 +54,10 @@ class TestSchemaCompilerCore:
         assert "output1" in output_schema
         assert "output2" in output_schema
 
-    def test_compile_chain_schema_core_empty_operations(self):
-        """Test _compile_chain_schema_core with empty operations list."""
+    def test_compile_composition_schema_core_empty_operations(self):
+        """Test _compile_composition_schema_core with empty operations list."""
         with pytest.raises(ValueError, match="No operations provided"):
-            _compile_chain_schema_core(
+            _compile_composition_schema_core(
                 operations=[],
                 get_schemas_fn=lambda op: ({}, {}),
                 is_intermediate_fn=lambda f: False,
@@ -65,8 +65,8 @@ class TestSchemaCompilerCore:
                 create_schema_fn=lambda f: f
             )
 
-    def test_compile_chain_schema_core_intermediates(self):
-        """Test _compile_chain_schema_core with intermediate fields."""
+    def test_compile_composition_schema_core_intermediates(self):
+        """Test _compile_composition_schema_core with intermediate fields."""
         # Mock operations
         operations = ["op1", "op2"]
 
@@ -82,7 +82,7 @@ class TestSchemaCompilerCore:
             return field == "inter1"
 
         # Call the function
-        input_schema, output_schema = _compile_chain_schema_core(
+        input_schema, output_schema = _compile_composition_schema_core(
             operations=operations,
             get_schemas_fn=get_schemas,
             is_intermediate_fn=is_intermediate,
@@ -96,11 +96,11 @@ class TestSchemaCompilerCore:
         assert "output2" in output_schema
 
 
-class TestJitCompileChainSchema:
-    """Tests for jit_compile_chain_schema function."""
+class TestJitCompileCompositionSchema:
+    """Tests for jit_compile_composition_schema function."""
 
     def test_jit_compile_string_operations(self):
-        """Test jit_compile_chain_schema with string operations."""
+        """Test jit_compile_composition_schema with string operations."""
         # Mock operation definitions
         op_definitions = {
             "op1": {
@@ -123,7 +123,7 @@ class TestJitCompileChainSchema:
         }
 
         # Call the function with string operations
-        input_schema, output_schema = jit_compile_chain_schema(
+        input_schema, output_schema = jit_compile_composition_schema(
             operations=["op1", "op2"],
             op_definitions=op_definitions
         )
@@ -140,7 +140,7 @@ class TestJitCompileChainSchema:
         assert isinstance(output_schema["output2"], ColCfg)
 
     def test_jit_compile_analysis_op_instances(self):
-        """Test jit_compile_chain_schema with AnalysisOp instances."""
+        """Test jit_compile_composition_schema with AnalysisOp instances."""
         # Create mock AnalysisOp instances
         op1 = MagicMock(spec=AnalysisOp)
         op1.input_schema = {"input1": ColCfg(datasets_dtype="float32", required=True)}
@@ -151,7 +151,7 @@ class TestJitCompileChainSchema:
         op2.output_schema = {"output2": ColCfg(datasets_dtype="float32", required=True)}
 
         # Call the function with AnalysisOp instances
-        input_schema, output_schema = jit_compile_chain_schema(
+        input_schema, output_schema = jit_compile_composition_schema(
             operations=[op1, op2],
             op_definitions={}  # Not used for AnalysisOp instances
         )
@@ -163,32 +163,32 @@ class TestJitCompileChainSchema:
         assert "output2" in output_schema
 
     def test_jit_compile_missing_operation(self):
-        """Test jit_compile_chain_schema with missing operation."""
+        """Test jit_compile_composition_schema with missing operation."""
         with pytest.raises(ValueError, match="Operation missing_op not found"):
-            jit_compile_chain_schema(
+            jit_compile_composition_schema(
                 operations=["missing_op"],
                 op_definitions={}
             )
 
     def test_jit_compile_missing_schemas(self):
-        """Test jit_compile_chain_schema with operation missing schemas."""
+        """Test jit_compile_composition_schema with operation missing schemas."""
         # Update the test to match the actual error message from the function
         with pytest.raises(ValueError, match="Operation incomplete_op not found in definitions"):
-            jit_compile_chain_schema(
+            jit_compile_composition_schema(
                 operations=["incomplete_op"],
                 op_definitions={"incomplete_op": {}}
             )
 
     def test_jit_compile_invalid_operation_type(self):
-        """Test jit_compile_chain_schema with invalid operation type."""
+        """Test jit_compile_composition_schema with invalid operation type."""
         with pytest.raises(TypeError, match="Operations must be strings or AnalysisOp instances"):
-            jit_compile_chain_schema(
+            jit_compile_composition_schema(
                 operations=[123],  # Invalid type
                 op_definitions={}
             )
 
     def test_jit_compile_object_field_handling(self):
-        """Test jit_compile_chain_schema with object field type handling."""
+        """Test jit_compile_composition_schema with object field type handling."""
         # Mock operation definitions with object type fields
         op_definitions = {
             "op1": {
@@ -200,7 +200,7 @@ class TestJitCompileChainSchema:
         }
 
         # Call the function
-        _, output_schema = jit_compile_chain_schema(
+        _, output_schema = jit_compile_composition_schema(
             operations=["op1"],
             op_definitions=op_definitions
         )
@@ -211,7 +211,7 @@ class TestJitCompileChainSchema:
         assert output_schema["object_field"].non_tensor is True
 
     def test_jit_compile_schemas_without_output_schema(self):
-        """Test jit_compile_chain_schema with op definition that has input but not output schema."""
+        """Test jit_compile_composition_schema with op definition that has input but not output schema."""
         # Create a mock operation with input schema but no output schema
         op_definitions = {
             "partial_op": {
@@ -224,7 +224,7 @@ class TestJitCompileChainSchema:
 
         # Should raise an error about missing required schemas
         with pytest.raises(ValueError, match="Operation partial_op is missing required schemas"):
-            jit_compile_chain_schema(
+            jit_compile_composition_schema(
                 operations=["partial_op"],
                 op_definitions=op_definitions
             )
@@ -264,8 +264,8 @@ class TestJitCompileChainSchema:
         }
 
         with pytest.warns(UserWarning, match="Conversion to ColCfg"):
-            # Compile schemas for a single‐op chain
-            input_schema, output_schema = jit_compile_chain_schema(
+            # Compile schemas for a single‐op composition
+            input_schema, output_schema = jit_compile_composition_schema(
                 operations=["op1"],
                 op_definitions=op_definitions
             )
@@ -280,7 +280,7 @@ class TestJitCompileChainSchema:
         assert "out_noflag_dict" in output_schema
         assert "out_norm_colcfg" in output_schema
 
-    def test_chain_with_intermediate_passthrough(self):
+    def test_composition_with_intermediate_passthrough(self):
         """Test that an intermediate field from op1 used in op2 is filtered out correctly."""
         # op1 emits an intermediate field, op2 consumes it but it should not appear in final schemas
         op_definitions = {
@@ -297,7 +297,7 @@ class TestJitCompileChainSchema:
             }
         }
 
-        inp, out = jit_compile_chain_schema(
+        inp, out = jit_compile_composition_schema(
             operations=["op1", "op2"],
             op_definitions=op_definitions
         )
@@ -369,7 +369,7 @@ class TestJitCompileChainSchema:
             "field3": {"datasets_dtype": "string", "intermediate_only": True},
         }
 
-        # Define the schema conversion function from jit_compile_chain_schema
+        # Define the schema conversion function from jit_compile_composition_schema
         def get_schema(schema_dict):
             if not schema_dict:
                 return {}
@@ -404,11 +404,11 @@ class TestJitCompileChainSchema:
         assert empty_result == {}
 
 
-class TestCompileOperationChainSchema:
-    """Tests for compile_operation_chain_schema function."""
+class TestCompileOperationCompositionSchema:
+    """Tests for compile_operation_composition_schema function."""
 
-    def test_compile_operation_chain(self):
-        """Test compile_operation_chain_schema basic functionality."""
+    def test_compile_operation_composition(self):
+        """Test compile_operation_composition_schema basic functionality."""
         # Mock operation definitions
         all_operations_dict = {
             "op1": {
@@ -422,7 +422,7 @@ class TestCompileOperationChainSchema:
         }
 
         # Call the function
-        input_schema, output_schema = compile_operation_chain_schema(
+        input_schema, output_schema = compile_operation_composition_schema(
             operations=["op1", "op2"],
             all_operations_dict=all_operations_dict
         )
@@ -435,16 +435,16 @@ class TestCompileOperationChainSchema:
         assert "output1" in output_schema
         assert "output2" in output_schema
 
-    def test_compile_operation_chain_missing_op(self):
-        """Test compile_operation_chain_schema with missing operation."""
+    def test_compile_operation_composition_missing_op(self):
+        """Test compile_operation_composition_schema with missing operation."""
         with pytest.raises(ValueError, match="Operation missing_op not found"):
-            compile_operation_chain_schema(
+            compile_operation_composition_schema(
                 operations=["missing_op"],
                 all_operations_dict={}
             )
 
-    def test_compile_operation_chain_object_field(self):
-        """Test compile_operation_chain_schema with object field handling."""
+    def test_compile_operation_composition_object_field(self):
+        """Test compile_operation_composition_schema with object field handling."""
         # Mock operation definitions with object fields
         all_operations_dict = {
             "op1": {
@@ -456,7 +456,7 @@ class TestCompileOperationChainSchema:
         }
 
         # Call the function
-        _, output_schema = compile_operation_chain_schema(
+        _, output_schema = compile_operation_composition_schema(
             operations=["op1"],
             all_operations_dict=all_operations_dict
         )
@@ -467,11 +467,11 @@ class TestCompileOperationChainSchema:
         assert output_schema["object_field"]["non_tensor"] is True
 
 
-class TestBuildOperationChains:
-    """Tests for build_operation_chains function."""
+class TestBuildOperationCompositions:
+    """Tests for build_operation_compositions function."""
 
-    def test_build_operation_chains(self):
-        """Test build_operation_chains basic functionality."""
+    def test_build_operation_compositions(self):
+        """Test build_operation_compositions basic functionality."""
         # Mock YAML config
         yaml_config = {
             "op1": {
@@ -484,25 +484,25 @@ class TestBuildOperationChains:
             },
             "composite_operations": {
                 "composite_op": {
-                    "chain": "op1.op2",
+                    "composition": "op1.op2",
                     "aliases": ["composite_alias"]
                 }
             }
         }
 
         # Call the function
-        result = build_operation_chains(yaml_config)
+        result = build_operation_compositions(yaml_config)
 
         # Verify composite operation was created
         assert "composite_op" in result
-        assert "chain" in result["composite_op"]
-        assert result["composite_op"]["chain"] == ["op1", "op2"]
+        assert "composition" in result["composite_op"]
+        assert result["composite_op"]["composition"] == ["op1", "op2"]
         assert result["composite_op"]["aliases"] == ["composite_alias"]
         assert "input_schema" in result["composite_op"]
         assert "output_schema" in result["composite_op"]
 
-    def test_build_operation_chains_object_fields(self):
-        """Test build_operation_chains with object field conversion."""
+    def test_build_operation_compositions_object_fields(self):
+        """Test build_operation_compositions with object field conversion."""
         # Mock YAML config with object type fields
         yaml_config = {
             "op_with_object": {
@@ -514,7 +514,7 @@ class TestBuildOperationChains:
         }
 
         # Call the function
-        result = build_operation_chains(yaml_config)
+        result = build_operation_compositions(yaml_config)
 
         # Verify object field was converted
         assert result["op_with_object"]["output_schema"]["object_field"]["datasets_dtype"] == "string"
@@ -535,7 +535,7 @@ class TestLoadAndCompileOperations:
                 },
                 "composite_operations": {
                     "composite_op": {
-                        "chain": "op1",
+                        "composition": "op1",
                         "aliases": ["composite_alias"]
                     }
                 }

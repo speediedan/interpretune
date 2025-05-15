@@ -11,14 +11,14 @@ from interpretune.utils.logging import rank_zero_warn
 T_Schema = TypeVar('T_Schema')  # Schema container type (Dict or OpSchema)
 T_Field = TypeVar('T_Field')    # Field definition type (Dict or ColCfg)
 
-def _compile_chain_schema_core(
+def _compile_composition_schema_core(
     operations: List[Any],
     get_schemas_fn: Callable[[Any], Tuple[Dict[str, T_Field], Dict[str, T_Field]]],
     is_intermediate_fn: Callable[[T_Field], bool],
     handle_object_field_fn: Callable[[T_Field], T_Field],
     create_schema_fn: Callable[[Dict[str, T_Field]], T_Schema]
 ) -> Tuple[T_Schema, T_Schema]:
-    """Core logic for compiling chain schemas with customizable handling of types.
+    """Core logic for compiling composition schemas with customizable handling of types.
 
     Args:
         operations: List of operations (strings, AnalysisOp objects, etc.)
@@ -35,7 +35,7 @@ def _compile_chain_schema_core(
     intermediate_fields: Dict[str, T_Field] = {}
 
     if not operations:
-        raise ValueError("No operations provided for chain schema compilation")
+        raise ValueError("No operations provided for composite schema compilation")
 
     for op in operations:
         # Extract input and output schemas using the provided function
@@ -58,11 +58,11 @@ def _compile_chain_schema_core(
     # Create and return the final schemas using the provided function
     return create_schema_fn(input_fields), create_schema_fn(output_fields)
 
-def jit_compile_chain_schema(
+def jit_compile_composition_schema(
     operations: List[Union[str, AnalysisOp]],
     op_definitions: Dict[str, Dict]
 ) -> Tuple[OpSchema, OpSchema]:
-    """Compile the complete schema for a chain of operations using operation definitions.
+    """Compile the complete schema for a composition of operations using operation definitions.
 
     Args:
         operations: List of operation names or AnalysisOp instances
@@ -133,7 +133,7 @@ def jit_compile_chain_schema(
     def create_schema(fields):
         return OpSchema(fields)
 
-    return _compile_chain_schema_core(
+    return _compile_composition_schema_core(
         operations=operations,
         get_schemas_fn=get_schemas,
         is_intermediate_fn=is_intermediate,
@@ -141,13 +141,13 @@ def jit_compile_chain_schema(
         create_schema_fn=create_schema
     )
 
-def compile_operation_chain_schema(
+def compile_operation_composition_schema(
     operations: List[str], all_operations_dict: Dict[str, Dict]
 ) -> Tuple[Dict, Dict]:
-    """Compile the complete schema for a chain of operations.
+    """Compile the complete schema for a composition of operations.
 
     Args:
-        operations: List of operation names in the chain
+        operations: List of operation names in the composition
         all_operations_dict: Dictionary of all operation definitions
 
     Returns:
@@ -173,7 +173,7 @@ def compile_operation_chain_schema(
     def create_schema(fields):
         return fields  # Just return the dictionary directly
 
-    return _compile_chain_schema_core(
+    return _compile_composition_schema_core(
         operations=operations,
         get_schemas_fn=get_schemas,
         is_intermediate_fn=is_intermediate,
@@ -181,14 +181,14 @@ def compile_operation_chain_schema(
         create_schema_fn=create_schema
     )
 
-def build_operation_chains(yaml_config: Dict) -> Dict[str, Any]:
-    """Build operation chains with compiled schemas from YAML configuration.
+def build_operation_compositions(yaml_config: Dict) -> Dict[str, Any]:
+    """Build operation compositions with compiled schemas from YAML configuration.
 
     Args:
         yaml_config: YAML configuration dictionary
 
     Returns:
-        Updated configuration with compiled operation chains
+        Updated configuration with compiled operation compositions
     """
     ops = yaml_config.copy()
     composite_ops = ops.pop('composite_operations', {})
@@ -206,16 +206,16 @@ def build_operation_chains(yaml_config: Dict) -> Dict[str, Any]:
             all_ops_dict[k] = v
 
     # Build compiled operations
-    for name, chain_def in composite_ops.items():
-        chain = chain_def.get('chain', '').split('.')
-        aliases = chain_def.get('aliases', [])
+    for name, composition_def in composite_ops.items():
+        composition = composition_def.get('composition', '').split('.')
+        aliases = composition_def.get('aliases', [])
 
-        input_schema, output_schema = compile_operation_chain_schema(chain, all_ops_dict)
+        input_schema, output_schema = compile_operation_composition_schema(composition, all_ops_dict)
 
         # Create a new operation definition with the compiled schemas
         ops[name] = {
-            'description': f"Compiled chain: {'.'.join(chain)}",
-            'chain': chain,
+            'description': f"Compiled composition: {'.'.join(composition)}",
+            'composition': composition,
             'input_schema': input_schema,
             'output_schema': output_schema,
             'aliases': aliases
@@ -227,7 +227,7 @@ def build_operation_chains(yaml_config: Dict) -> Dict[str, Any]:
 
 
 def load_and_compile_operations(yaml_path: str) -> Dict[str, Any]:
-    """Load operations from YAML file and compile operation chains.
+    """Load operations from YAML file and compile operation compositions.
 
     Args:
         yaml_path: Path to the YAML file
@@ -240,4 +240,4 @@ def load_and_compile_operations(yaml_path: str) -> Dict[str, Any]:
     with open(yaml_path, 'r') as f:
         config = yaml.safe_load(f)
 
-    return build_operation_chains(config)
+    return build_operation_compositions(config)

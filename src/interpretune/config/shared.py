@@ -118,8 +118,6 @@ def find_adapter_subclasses(T: type, target_adapters: AdapterSeq | None = None) 
             if module_path in sys.modules:
                 candidate_modules[val] = (module_path, sys.modules[module_path])
         for adapter, (module_fqn, module) in candidate_modules.items():
-            if module is None:  # Skip if module doesn't exist in this namespace
-                continue
             for _, member in inspect.getmembers(module, inspect.isclass):
                 if member.__module__ != module_fqn:
                     continue

@@ -177,9 +177,9 @@ def test_ops_yaml():
             }
         },
         "composite_operations": {
-            "test_chain": {
-                "chain": "test_op.another_test_op",
-                "alias": "chain_alias"
+            "test_composition": {
+                "composition": "test_op.another_test_op",
+                "alias": "composition_alias"
             }
         }
     }

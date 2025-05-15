@@ -14,7 +14,7 @@ from it_examples.experiments.rte_boolq import (RTEBoolqEntailmentMapping, Genera
                                                RTEBoolqSLConfig)
 from interpretune.config.transformer_lens import TLensGenerationConfig
 from tests.base_defaults import default_test_task
-from interpretune.analysis.ops.base import AnalysisOp, ChainedAnalysisOp
+from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp
 
 
 class TestClassBaseConfigs:
@@ -154,6 +154,34 @@ class TestClassBaseConfigs:
         # with open(cfg_file, "r") as f:
         #     cfg = yaml.load(f, Loader=yaml.FullLoader)
 
+    def test_find_adapter_subclasses_with_nonexistent_module(self):
+        """find_adapter_subclasses skips adapters whose module isn't in sys.modules."""
+        from interpretune.config.shared import find_adapter_subclasses
+        from types import ModuleType
+
+        # Create two fake adapters
+        adapter1 = Mock()
+        adapter1.name = "existing_adapter"
+        adapter2 = Mock()
+        adapter2.name = "nonexistent_adapter"
+
+        # Build a real module containing one subclass of object
+        class DummySubclass:
+            pass
+        DummySubclass.__module__ = "interpretune.adapters.existing_adapter"
+        mod = ModuleType("interpretune.adapters.existing_adapter")
+        setattr(mod, "DummySubclass", DummySubclass)
+
+        # Inject only our fake module, but leave the rest of sys.modules intact
+        with patch.dict("sys.modules", {"interpretune.adapters.existing_adapter": mod}, clear=False):
+            subs, supers = find_adapter_subclasses(object, target_adapters=[adapter1, adapter2])
+
+        # Verify only adapter1 appears
+        assert adapter1 in subs
+        assert adapter2 not in subs
+        assert subs[adapter1] is DummySubclass
+        assert supers == {}
+
 
 class TestAnalysisConfigs:
 
@@ -166,7 +194,7 @@ class TestAnalysisConfigs:
         with pytest.raises(ValueError, match="Unknown operation"):
             AnalysisCfg(target_op="nonexistent_op")
 
-        # Test with chained op string that doesn't exist
+        # Test with composite op string that doesn't exist
         with pytest.raises(ValueError):
             AnalysisCfg(target_op="nonexistent_op1.nonexistent_op2")
 
@@ -182,21 +210,23 @@ class TestAnalysisConfigs:
         mock_op1 = AnalysisOp(name='op1', description='op1 desc', output_schema=test_schema, aliases=['op1_alias'])
         mock_op2 = AnalysisOp(name='op2', description='op2 desc', output_schema=test_schema, aliases=['op2_alias'])
         with patch.object(
-            DISPATCHER, 'create_chain',
-            return_value=ChainedAnalysisOp(ops=[mock_op1, mock_op2], aliases=['chain_alias'])) as mock_chain:
+            DISPATCHER, 'compile_ops',
+            return_value=CompositeAnalysisOp(ops=[mock_op1, mock_op2], aliases=['composition_alias'])) as \
+                mock_composition:
             cfg = AnalysisCfg(target_op=[mock_op1, mock_op2])
-            mock_chain.assert_called_once_with([mock_op1, mock_op2])
+            mock_composition.assert_called_once_with([mock_op1, mock_op2])
             assert cfg.name == "op1.op2"
-            assert cfg.op._aliases == ['chain_alias']
+            assert cfg.op._aliases == ['composition_alias']
 
-        # Test chained operations with dot notation
+        # Test composite operations with dot notation
         with patch.object(
-            DISPATCHER, 'create_chain',
-            return_value=ChainedAnalysisOp(ops=[mock_op1, mock_op2], aliases=['dotted_chain_alias'])) as mock_chain:
+            DISPATCHER, 'compile_ops',
+            return_value=CompositeAnalysisOp(ops=[mock_op1, mock_op2], aliases=['dotted_composition_alias'])) as \
+                mock_composition:
             cfg = AnalysisCfg(target_op="op1.op2")
-            mock_chain.assert_called_once_with("op1.op2")
+            mock_composition.assert_called_once_with("op1.op2")
             assert cfg.name == "op1.op2"
-            assert cfg.op._aliases == ['dotted_chain_alias']
+            assert cfg.op._aliases == ['dotted_composition_alias']
 
     def test_analysis_cfg_update(self):
         cfg = AnalysisCfg(name="test_analysis")

@@ -37,43 +37,13 @@ class _AnalysisImportHook(MetaPathFinder):
         # Remove ourselves temporarily from sys.meta_path to avoid infinite recursion
         sys.meta_path.remove(self)
         try:
-            # First, import just the dispatcher to avoid circular imports
-            import importlib
-            dispatcher_module = importlib.import_module("interpretune.analysis.ops.dispatcher")
-
-            # Load operation definitions but don't instantiate yet
-            dispatcher_module.DISPATCHER.load_definitions()
-
-            # Then import the rest of the analysis module
+            # Import the analysis module
             import interpretune.analysis
-
-            # Now register all operations directly to the module
+            # Get the current module
             current_module = sys.modules["interpretune"]
-
-            # Register utility functions
-            setattr(current_module, "create_op_chain", interpretune.analysis.DISPATCHER.create_chain)
-
-            # Import OpWrapper class from base.py
+            # Import OpWrapper and register operations
             from interpretune.analysis.ops.base import OpWrapper
-
-            # Initialize OpWrapper with the current module
-            OpWrapper.initialize(current_module)
-
-            # Set debugger identifier class variable directly
-            OpWrapper._debugger_identifier = os.environ.get('IT_ENABLE_LAZY_DEBUGGER', '')
-
-            # Register all operations with lazy getters
-            for op_name in interpretune.analysis.DISPATCHER.registered_ops:
-                if interpretune.analysis.DISPATCHER.resolve_alias(op_name) is not None:
-                    # Skip aliases
-                    continue
-                # Use lazy=True to avoid instantiation until actual use (triggers addition to the dispatch table)
-                _ = interpretune.analysis.DISPATCHER.get_op(op_name, lazy=True)
-                wrapper = OpWrapper(op_name)
-                setattr(current_module, op_name, wrapper)
-                for alias in interpretune.analysis.DISPATCHER.get_op_aliases(op_name):
-                    setattr(current_module, alias, wrapper)
-
+            OpWrapper.register_operations(current_module, interpretune.analysis.DISPATCHER)
             return sys.modules["interpretune.analysis"]
         finally:
             sys.meta_path.insert(0, self)

@@ -17,12 +17,14 @@ import torch
 
 from interpretune.utils import MisconfigurationException
 from interpretune.base import HFFromPretrainedMixin
+from interpretune.base import _call_itmodule_hook
 from interpretune.config import ITConfig, ITExtensionsConfigMixin, HFFromPretrainedConfig, ITExtension
 from tests.base_defaults import default_test_task
 from tests.utils import disable_genclassif, get_super_method, ablate_cls_attrs
 from tests.runif import RunIf
 from tests.warns import CORE_CTX_WARNS, unexpected_warns
 from tests.orchestration import run_it
+from it_examples.experiments.rte_boolq import RTEBoolqModuleMixin
 
 
 class TestClassMixins:
@@ -397,9 +399,9 @@ class TestGenerativeStepMixin:
 
 
 class TestClassificationMixin:
-    def test_init_classification_mapping(self, get_it_session__core_cust__setup):
+    def test_init_classification_mapping(self, get_it_session__core_cust__initonly):
         """Test the init_classification_mapping method."""
-        fixture = get_it_session__core_cust__setup
+        fixture = get_it_session__core_cust__initonly
         it_session = fixture.it_session
         module = it_session.module
 
@@ -410,7 +412,17 @@ class TestClassificationMixin:
         # Mock the tokenizer to convert tokens to IDs
         with mock.patch.object(it_session.datamodule.tokenizer, 'convert_tokens_to_ids',
                                return_value=[10, 20]) as mock_convert:
-            module.init_classification_mapping()
+
+            _call_itmodule_hook(it_session.datamodule, hook_name="prepare_data", hook_msg="Preparing data",
+                                target_model=module.model)
+            _call_itmodule_hook(it_session.datamodule, hook_name="setup", hook_msg="Setting up datamodule")
+
+            # Patch the RTEBoolqModuleMixin.setup method at the class level to ensure only the base setup() is called
+            with mock.patch(
+                'it_examples.experiments.rte_boolq.RTEBoolqModuleMixin.setup', autospec=True,
+                side_effect=lambda self, *args, **kwargs: super(RTEBoolqModuleMixin, self).setup(*args, **kwargs)):
+                _call_itmodule_hook(module, hook_name="setup", hook_msg="Setting up model",
+                                    datamodule=it_session.datamodule)
 
             # Verify tokenizer was called with the right arguments
             mock_convert.assert_called_once_with(["token1", "token2"])

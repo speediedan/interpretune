@@ -183,10 +183,10 @@ def generate_operation_stub(op_name: str, op_def: Dict[str, Any], yaml_content: 
                 f"    ...\n\n")
 
 
-def generate_chain_stub(op_name: str, op_def: Dict[str, Any]) -> str:
+def generate_composition_stub(op_name: str, op_def: Dict[str, Any]) -> str:
     """Generate type stub for a composite operation."""
-    chain = op_def.get("chain", "")
-    chain_str = chain if isinstance(chain, str) else ".".join(chain)
+    composition = op_def.get("composition", "")
+    composition_str = composition if isinstance(composition, str) else ".".join(composition)
 
     # Create a standardized signature for composite operations
     signature = wrap_signature(
@@ -199,7 +199,7 @@ def generate_chain_stub(op_name: str, op_def: Dict[str, Any]) -> str:
     )
 
     # Create docstring
-    doc = f'    """Chain of operations: {chain_str}'
+    doc = f'    """Composition of operations: {composition_str}'
     if "description" in op_def:
         doc += f"\n\n    {op_def['description']}"
     doc += '\n    """'
@@ -246,7 +246,7 @@ def generate_stubs(yaml_path: Path, output_path: Path) -> None:
         stubs.append('# Composite operations\n')
         comp_ops = yaml_content["composite_operations"]
         for op_name, op_def in sorted(comp_ops.items()):
-            op_stub = generate_chain_stub(op_name, op_def)
+            op_stub = generate_composition_stub(op_name, op_def)
             stubs.append(op_stub)
 
     # Write to output file

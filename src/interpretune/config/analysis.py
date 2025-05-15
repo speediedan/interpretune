@@ -40,7 +40,7 @@ class AnalysisCfg(ITSerializableCfg):
     step_fn: str = "analysis_step"  # Name of the method to use/generate for analysis
     auto_prune_batch_encoding: bool = True  # Automatically prune encoded batches to only include relevant keys
     _applied_to: dict = field(default_factory=dict)  # Dictionary tracking which modules this cfg has been applied to
-    _op: Optional[Union[str, AnalysisOp, Callable, list[AnalysisOp]]] = None  # op/op chain via generated analysis step
+    _op: Optional[Union[str, AnalysisOp, Callable, list[AnalysisOp]]] = None  # op via generated analysis step
 
     @property
     def op(self) -> Optional[Union[str, AnalysisOp, Callable, list[AnalysisOp]]]:
@@ -90,7 +90,7 @@ class AnalysisCfg(ITSerializableCfg):
 
         # Process the operation if provided
         if self.op is not None:
-            # Convert list of ops to chain
+            # Convert list of ops to composition
             if isinstance(self.op, list):
                 if len(self.op) == 1:
                     self.op = self.op[0]
@@ -104,14 +104,14 @@ class AnalysisCfg(ITSerializableCfg):
                             instantiated_ops.append(op._ensure_instantiated())
                         else:
                             instantiated_ops.append(op)
-                    self.op = DISPATCHER.create_chain(instantiated_ops)
+                    self.op = DISPATCHER.compile_ops(instantiated_ops)
                     resolved_op = self.op
-            # Handle chained operations using dot notation
+            # Handle composite operations using dot notation
             elif isinstance(self.op, str):
                 if '.' in self.op:
-                    # This is a chained operation
+                    # This is a composite operation
                     try:
-                        self.op = DISPATCHER.create_chain(self.op)
+                        self.op = DISPATCHER.compile_ops(self.op)
                         resolved_op = self.op
                     except ValueError as e:
                         raise e
@@ -349,7 +349,7 @@ class AnalysisCfg(ITSerializableCfg):
                 analysis_batch = None
 
                 # TODO: move this code to a separate function to allow for reuse outside of the generated method
-                # Handle composite ops or chains
+                # Handle composite ops or compositions
                 op = self.analysis_cfg.op
                 analysis_batch = op(self, analysis_batch, batch, batch_idx)
 

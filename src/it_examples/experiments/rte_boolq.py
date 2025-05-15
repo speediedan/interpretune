@@ -204,7 +204,7 @@ class RTEBoolqSteps:
         analysis_batch = it.logit_diffs_cache(analysis_batch=analysis_batch, **op_kwargs)
         analysis_batch = it.sae_correct_acts(analysis_batch=analysis_batch, **op_kwargs)
 
-        # note, there is an equivalent existing chained op for the decomposed version above:
+        # note, there is an equivalent existing composite op for the decomposed version above:
         # analysis_batch = it.logit_diffs_sae(**op_kwargs)
         yield from self.analysis_cfg.save_batch(analysis_batch, batch, tokenizer=self.datamodule.tokenizer)
 

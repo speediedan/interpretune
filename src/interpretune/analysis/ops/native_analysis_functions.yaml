@@ -259,7 +259,7 @@ logit_diffs:
       datasets_dtype: int64
 
 logit_diffs_cache:
-  description: Clean forward pass for computing logit differences including cache activations (chained only)
+  description: Clean forward pass for computing logit differences including cache activations (composition only)
   implementation: interpretune.analysis.ops.definitions.logit_diffs_impl
   function_params:
     logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
@@ -465,14 +465,14 @@ ablation_attribution:
 # Composite operations
 composite_operations:
   logit_diffs_base:
-    chain: labels_to_ids.model_forward.logit_diffs
+    composition: labels_to_ids.model_forward.logit_diffs
 
   logit_diffs_sae:
-    chain: labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts
+    composition: labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts
 
   logit_diffs_attr_grad:
-    chain: labels_to_ids.model_gradient.gradient_attribution
+    composition: labels_to_ids.model_gradient.gradient_attribution
 
   logit_diffs_attr_ablation:
-    chain: labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.ablation_attribution
+    composition: labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.ablation_attribution
     aliases: [logit_diffs_ablation]
