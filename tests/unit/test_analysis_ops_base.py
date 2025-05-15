@@ -3,15 +3,11 @@ import pytest
 import torch
 from transformers import BatchEncoding
 import pickle
-import tempfile
-import os
-import yaml
 from unittest.mock import patch, MagicMock
 from tests.runif import RunIf
 
 from interpretune.analysis.ops.base import (AnalysisOp, ChainedAnalysisOp, AnalysisBatch, ColCfg, OpSchema, AttrDict,
                                             wrap_summary, _reconstruct_op, OpWrapper)
-from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
 
 # Module-level implementation function for test operations
 def op_impl_test(module, analysis_batch, batch, batch_idx, **kwargs):
@@ -275,7 +271,7 @@ class TestReconstructOp:
             description="Operation for pickle testing",
             output_schema=OpSchema({"field1": ColCfg(datasets_dtype="float32")}),
             input_schema=OpSchema({"input_field": ColCfg(datasets_dtype="int64")}),
-            active_alias="test_alias"
+            aliases=["test_alias"]
         )
 
         # Pickle and unpickle
@@ -287,7 +283,7 @@ class TestReconstructOp:
         assert unpickled_op.description == op.description
         assert unpickled_op.output_schema == op.output_schema
         assert unpickled_op.input_schema == op.input_schema
-        assert unpickled_op.active_alias == op.active_alias
+        assert unpickled_op._aliases == op._aliases
 
 
 class TestOpSchema:
@@ -661,10 +657,10 @@ class TestAnalysisOp:
     def test_alias_property(self):
         """Test alias property."""
         op = AnalysisOp(name="test_op", description="Test", output_schema=OpSchema({}))
-        assert op.alias == "test_op"  # Default to name
+        assert op.ctx_key == "test_op"  # Default to name
 
-        op = AnalysisOp(name="test_op", description="Test", output_schema=OpSchema({}), active_alias="custom")
-        assert op.alias == "custom"  # Use active_alias if set
+        with op.active_ctx_key("custom"):
+            assert op.ctx_key == "custom"
 
     def test_validate_input_schema(self):
         """Test input schema validation."""
@@ -994,15 +990,13 @@ class TestChainedAnalysisOp:
         op2 = AnalysisOp(name="op2", description="Second op", output_schema=OpSchema({}))
 
         # Set a custom alias
-        chained_op = ChainedAnalysisOp([op1, op2], alias="my_chain")
+        chained_op = ChainedAnalysisOp([op1, op2], name="my_chain")
 
         # Check the alias was set correctly
-        assert chained_op.alias == "my_chain"
-        assert chained_op.active_alias == "my_chain"
-
-        # Check that each op in the chain also has the alias set
+        assert chained_op.name == "my_chain"
         for op in chained_op.chain:
-            assert op.active_alias == "my_chain"
+            with op.active_ctx_key(chained_op.name):
+                assert op._ctx_key == "my_chain"
 
     def test_chained_op_call(self):
         """Test calling a ChainedAnalysisOp."""
@@ -1107,79 +1101,6 @@ class TestChainedAnalysisOp:
 class TestOpWrapper:
     """Tests for the OpWrapper class."""
 
-    @pytest.fixture
-    def test_ops_yaml(self):
-        """Create a temporary YAML file with test operation definitions."""
-        # Create test operation definitions
-        test_ops = {
-            "test_op": {
-                "description": "Test operation for wrapper testing",
-                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
-                "aliases": ["test_alias"],
-                "output_schema": {
-                    "output_field": {
-                        "datasets_dtype": "float32"
-                    }
-                },
-                "input_schema": {
-                    "input_field": {
-                        "datasets_dtype": "int64"
-                    }
-                }
-            },
-            "another_test_op": {
-                "description": "Another test operation",
-                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
-                "output_schema": {
-                    "another_field": {
-                        "datasets_dtype": "float32"
-                    }
-                }
-            },
-            "composite_operations": {
-                "test_chain": {
-                    "chain": "test_op.another_test_op",
-                    "alias": "chain_alias"
-                }
-            }
-        }
-
-        # Write to a temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
-            yaml.dump(test_ops, tmp)
-            yaml_path = tmp.name
-
-        yield yaml_path
-
-        # Cleanup
-        os.unlink(yaml_path)
-
-    @pytest.fixture
-    def test_dispatcher(self, test_ops_yaml):
-        """Create a test dispatcher with test operation definitions."""
-        # Create a test dispatcher that loads from our test YAML
-        dispatcher = AnalysisOpDispatcher(yaml_path=test_ops_yaml)
-        dispatcher.load_definitions()
-
-        # Return the dispatcher
-        return dispatcher
-
-    @pytest.fixture
-    def target_module(self):
-        """Create a mock module to use as a target for OpWrapper."""
-        return type('MockModule', (), {})()
-
-    def test_initialize(self):
-        """Test initializing the OpWrapper class."""
-        # Create a mock module
-        mock_module = type('MockModule', (), {})()
-
-        # Initialize OpWrapper with the module
-        OpWrapper.initialize(mock_module)
-
-        # Check that the target module was set
-        assert OpWrapper._target_module is mock_module
-
     def test_basic_properties(self):
         """Test basic properties and string representation of OpWrapper."""
         wrapper = OpWrapper("test_op")
@@ -1198,8 +1119,8 @@ class TestOpWrapper:
         # Set up test environment
         OpWrapper.initialize(target_module)
 
-        # Patch the _get_dispatcher property to return our test dispatcher
-        monkeypatch.setattr(OpWrapper, "_get_dispatcher", property(lambda self: test_dispatcher))
+        # Patch the dispatcher property to return our test dispatcher
+        monkeypatch.setattr(OpWrapper, "dispatcher", property(lambda self: test_dispatcher))
 
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
@@ -1234,7 +1155,7 @@ class TestOpWrapper:
         """Test that aliases are properly resolved."""
         # Set up test environment
         OpWrapper.initialize(target_module)
-        monkeypatch.setattr(OpWrapper, "_get_dispatcher", property(lambda self: test_dispatcher))
+        monkeypatch.setattr(OpWrapper, "dispatcher", property(lambda self: test_dispatcher))
 
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
@@ -1245,15 +1166,18 @@ class TestOpWrapper:
         monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
 
         # Add the alias to test_dispatcher aliases
-        test_dispatcher._aliases["test_alias"] = "test_op"
+        test_dispatcher._aliases["test_alias1"] = "test_op"
+        test_dispatcher._aliases["test_alias2"] = "test_op"
+        test_dispatcher._op_to_aliases["test_op"] = ["test_alias1", "test_alias2"]
 
         # Create both op and its alias as wrappers
         op_wrapper = OpWrapper("test_op")
-        alias_wrapper = OpWrapper("test_alias")
+        alias_wrapper = op_wrapper
 
         # Set the wrappers on the target module
         setattr(target_module, "test_op", op_wrapper)
-        setattr(target_module, "test_alias", alias_wrapper)
+        setattr(target_module, "test_alias1", op_wrapper)
+        setattr(target_module, "test_alias2", op_wrapper)
 
         # Access an attribute on the op to trigger instantiation
         op_wrapper.description
@@ -1263,14 +1187,16 @@ class TestOpWrapper:
 
         # Check that both the op and its alias on the module are now the actual op
         assert isinstance(target_module.test_op, AnalysisOp)
-        assert isinstance(target_module.test_alias, AnalysisOp)
-        assert target_module.test_alias is target_module.test_op
+        assert isinstance(target_module.test_alias1, AnalysisOp)
+        assert isinstance(target_module.test_alias2, AnalysisOp)
+        assert target_module.test_alias1 is target_module.test_op
+        assert target_module.test_alias2 is target_module.test_op
 
     def test_call_with_real_dispatcher(self, test_dispatcher, target_module, monkeypatch):
         """Test calling an operation through the wrapper."""
         # Set up test environment
         OpWrapper.initialize(target_module)
-        monkeypatch.setattr(OpWrapper, "_get_dispatcher", property(lambda self: test_dispatcher))
+        monkeypatch.setattr(OpWrapper, "dispatcher", property(lambda self: test_dispatcher))
 
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
@@ -1306,7 +1232,7 @@ class TestOpWrapper:
         """Test pickling and unpickling with real operations."""
         # Set up test environment
         OpWrapper.initialize(target_module)
-        monkeypatch.setattr(OpWrapper, "_get_dispatcher", property(lambda self: test_dispatcher))
+        monkeypatch.setattr(OpWrapper, "dispatcher", property(lambda self: test_dispatcher))
 
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
@@ -1354,7 +1280,7 @@ class TestOpWrapper:
         """Test special handling for debugger inspection."""
         # Set up test environment
         OpWrapper.initialize(target_module)
-        monkeypatch.setattr(OpWrapper, "_get_dispatcher", property(lambda self: test_dispatcher))
+        monkeypatch.setattr(OpWrapper, "dispatcher", property(lambda self: test_dispatcher))
 
         # Set the debugger identifier
         old_debugger_id = OpWrapper._debugger_identifier
@@ -1388,9 +1314,10 @@ class TestOpWrapper:
 
         # Create a mock dispatcher
         mock_dispatcher = type('MockDispatcher', (), {'get_op': lambda self, name: mock_op,
-                                                      'get_op_aliases': lambda self: [("mock_alias", "mock_op")]})()
+                                                      'get_all_aliases': lambda self: [("mock_alias", "mock_op"),],
+                                                      'get_op_aliases': lambda self, name: ["mock_alias"]})()
         current_module = target_module
-        # Create a wrapper and patch its _get_dispatcher property
+        # Create a wrapper and patch its dispatcher property
         OpWrapper.initialize(current_module)
         wrapper = OpWrapper("mock_op")
         monkeypatch.setattr(wrapper, "_dispatcher", mock_dispatcher)
@@ -1404,7 +1331,7 @@ class TestOpWrapper:
         assert wrapper._is_instantiated is False
 
         # Access an op attribute which should invoke _ensure_instantiated
-        _ = wrapper.alias
+        _ = wrapper.ctx_key
 
         # Check that our module has the instantiated mock op and alias instead of the OpWrapper now
         assert current_module.mock_op is mock_op

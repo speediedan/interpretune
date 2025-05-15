@@ -223,7 +223,7 @@ def schema_to_features(module, op: str | AnalysisOp | None = None, schema: OpSch
         A features dict compatible with Dataset.from_generator
     """
     if isinstance(op, str):
-        op = DISPATCHER.get_op(op) or DISPATCHER.get_by_alias(op)
+        op = DISPATCHER.get_op(op)
     if schema is None and op is not None:
         schema = op.output_schema
     elif schema is None and module is not None and hasattr(module, 'analysis_cfg'):
@@ -1018,11 +1018,10 @@ def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
         analysis_store = analysis_obj
 
     if isinstance(op, str):
-        op = DISPATCHER.get_op(op) or DISPATCHER.get_by_alias(op)
+        op = DISPATCHER.get_op(op)
 
     # TODO: this is another location where we should be conditioning behavior on op functionality, not name
-    # TODO:
-    if op.alias == 'logit_diffs_attr_ablation':
+    if op.ctx_key == 'logit_diffs_attr_ablation':
         batch_preds = [b.mode(dim=0).values.cpu() for b in analysis_store.by_sae('preds').batch_join(across_saes=True)]
     else:
         batch_preds = analysis_store.preds
@@ -1033,7 +1032,7 @@ def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
     total_correct = sum(correct_statuses)
     percentage_correct = total_correct / (len(torch.cat(analysis_store.orig_labels))) * 100
     return PredSumm(total_correct, percentage_correct,
-                    batch_preds if op.alias == 'logit_diffs_attr_ablation' else None)
+                    batch_preds if op.ctx_key == 'logit_diffs_attr_ablation' else None)
 
 def resolve_names_filter(names_filter: NamesFilter | None) -> Callable[[str], bool]:
     # similar to logic in `transformer_lens.hook_points.get_caching_hooks` but accessible to other functions

@@ -52,7 +52,6 @@ class _AnalysisImportHook(MetaPathFinder):
 
             # Register utility functions
             setattr(current_module, "create_op_chain", interpretune.analysis.DISPATCHER.create_chain)
-            setattr(current_module, "create_op_chain_from_ops", interpretune.analysis.DISPATCHER.create_chain_from_ops)
 
             # Import OpWrapper class from base.py
             from interpretune.analysis.ops.base import OpWrapper
@@ -64,11 +63,16 @@ class _AnalysisImportHook(MetaPathFinder):
             OpWrapper._debugger_identifier = os.environ.get('IT_ENABLE_LAZY_DEBUGGER', '')
 
             # Register all operations with lazy getters
-            for op_name in interpretune.analysis.DISPATCHER._op_definitions:
-                # Use lazy=True to avoid instantiation until actual use
+            for op_name in interpretune.analysis.DISPATCHER.registered_ops:
+                if interpretune.analysis.DISPATCHER.resolve_alias(op_name) is not None:
+                    # Skip aliases
+                    continue
+                # Use lazy=True to avoid instantiation until actual use (triggers addition to the dispatch table)
                 _ = interpretune.analysis.DISPATCHER.get_op(op_name, lazy=True)
-                # Create a wrapper that will instantiate the op when accessed
-                setattr(current_module, op_name, OpWrapper(op_name))
+                wrapper = OpWrapper(op_name)
+                setattr(current_module, op_name, wrapper)
+                for alias in interpretune.analysis.DISPATCHER.get_op_aliases(op_name):
+                    setattr(current_module, alias, wrapper)
 
             return sys.modules["interpretune.analysis"]
         finally:

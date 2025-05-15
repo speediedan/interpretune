@@ -4,6 +4,8 @@ from typing import Optional, Dict, NamedTuple, List, Tuple, Iterator, Callable
 from pathlib import Path
 import yaml
 import importlib
+from functools import wraps
+from collections import defaultdict
 
 from transformers import BatchEncoding
 
@@ -23,11 +25,15 @@ class AnalysisOpDispatcher:
     are dynamically instantiated from their definitions when first accessed.
     """
 
+    # TODO:
+    #  - decide whether to make the dispatcher a singleton or not
+    #  - decide whether to make the dispatcher thread-safe
     def __init__(self, yaml_path: Optional[Path] = None):
         self.yaml_path = yaml_path or Path(__file__).parent / "native_analysis_functions.yaml"
         self._op_definitions = {}
         self._dispatch_table = {}  # {op_name: {context: instantiated_op}}
         self._aliases = {}  # {alias: op_name}
+        self._op_to_aliases = defaultdict(list)  # {op_name: [aliases]}
         self._loaded = False
         self._loading_in_progress = False
 
@@ -52,8 +58,11 @@ class AnalysisOpDispatcher:
 
                 # Register alias if provided
                 if "aliases" in op_def:
+                    self._op_to_aliases[op_name] = op_def["aliases"]
                     for alias in op_def["aliases"]:
                         self._aliases[alias] = op_name
+                        # TODO: incur added complexity of making this a weakref if we start scaling the number of ops
+                        self._op_definitions[alias] = op_def
 
             # Process composite operations with schema compilation
             if "composite_operations" in yaml_content:
@@ -75,34 +84,41 @@ class AnalysisOpDispatcher:
 
                 # Register aliases from composite operations
                 for comp_name, comp_def in yaml_content["composite_operations"].items():
-                    if "alias" in comp_def:
-                        self._aliases[comp_def["alias"]] = comp_name
-
+                    self._op_to_aliases[comp_name] = comp_def.get("aliases", [])
+                    if "aliases" in comp_def:
+                        for alias in comp_def["aliases"]:
+                            self._aliases[alias] = comp_name
             self._loaded = True
         finally:
             self._loading_in_progress = False
 
+    def _ensure_loaded(method):
+        @wraps(method)
+        def wrapper(self, *args, **kwargs):
+            if not self._loaded:
+                self.load_definitions()
+            return method(self, *args, **kwargs)
+        return wrapper
+
     @property
+    @_ensure_loaded
     def registered_ops(self) -> Dict[str, dict]:
         """Get all registered operation definitions without instantiating them."""
-        if not self._loaded:
-            self.load_definitions()
         return self._op_definitions.copy()
 
-    def get_op_aliases(self) -> Iterator[Tuple[str, str]]:
+    @_ensure_loaded
+    def resolve_alias(self, op_alias: str) -> str | None:
+        return self._aliases.get(op_alias, None)
+
+    @_ensure_loaded
+    def get_op_aliases(self, op_name: str) -> Dict[str, List[str]]:
+        return self._op_to_aliases[op_name]
+
+    @_ensure_loaded
+    def get_all_aliases(self) -> Iterator[Tuple[str, str]]:
         """Get all registered operation aliases."""
-        if not self._loaded:
-            self.load_definitions()
         for alias, op_name in self._aliases.items():
             yield (alias, op_name)
-
-    def get_by_alias(self, alias: str) -> Optional[AnalysisOp]:
-        """Get an operation by its alias."""
-        if not self._loaded:
-            self.load_definitions()
-        if alias in self._aliases:
-            return self.get_op(self._aliases[alias])
-        return None
 
     def _import_callable(self, callable_path: str) -> Callable:
         """Import a callable from a path."""
@@ -110,11 +126,9 @@ class AnalysisOpDispatcher:
         module = importlib.import_module(module_path)
         return getattr(module, func_name)
 
+    @_ensure_loaded
     def _instantiate_op(self, op_name: str) -> AnalysisOp:
         """Instantiate an operation from its definition."""
-        if not self._loaded:
-            self.load_definitions()
-
         op_def = self._op_definitions.get(op_name)
         if not op_def:
             raise ValueError(f"Unknown operation: {op_name}")
@@ -122,11 +136,13 @@ class AnalysisOpDispatcher:
         # Handle chained operations
         if "chain" in op_def:
             chain = op_def["chain"]
-            if isinstance(chain, str):
-                chain = chain.split(".")
             # instantiate each operation in the chain
             ops = [self.get_op(op) for op in chain]
-            op = ChainedAnalysisOp(ops, alias=op_def.get("alias"))
+            op = ChainedAnalysisOp(
+                ops,
+                name=op_name,
+                aliases=op_def.get("aliases")
+            )
             if "description" in op_def:
                 op.description = op_def["description"]
             if "input_schema" in op_def:
@@ -147,13 +163,13 @@ class AnalysisOpDispatcher:
         # Convert schema dictionaries to OpSchema objects with ColCfg values
         input_schema = self._convert_to_op_schema(op_def.get("input_schema", {}))
         output_schema = self._convert_to_op_schema(op_def.get("output_schema", {}))
-
+        aliases = op_def.get("aliases", None)
         op = AnalysisOp(
             name=op_name,
             description=op_def.get("description", ""),
             output_schema=output_schema,
             input_schema=input_schema,
-            active_alias=op_def.get("alias"),
+            aliases=aliases,
             callables=callables
         )
 
@@ -173,6 +189,7 @@ class AnalysisOpDispatcher:
                 result[field_name] = field_config
         return OpSchema(result)
 
+    @_ensure_loaded
     def get_op(self, op_name: str, context: DispatchContext = DispatchContext(),
                lazy: bool = False) -> AnalysisOp | Callable:
         """Get an operation by name, optionally instantiating it if needed.
@@ -185,14 +202,10 @@ class AnalysisOpDispatcher:
         Returns:
             The requested operation or None if lazy=True and the op hasn't been instantiated yet
         """
-        if not self._loaded:
-            self.load_definitions()
-
         if op_name not in self._op_definitions:
-            if op_name in self._aliases:
-                return self.get_op(self._aliases[op_name], context, lazy)
             raise ValueError(f"Unknown operation: {op_name}")
-
+        if op_name in self._aliases:  # avoid duplicate entries in dispatch table
+            return self.get_op(self._aliases[op_name], context, lazy)
         ctx_dict = self._dispatch_table.setdefault(op_name, {})
         if context not in ctx_dict or self._is_lazy_op_handle(ctx_dict[context]):
             if lazy:
@@ -234,71 +247,58 @@ class AnalysisOpDispatcher:
             # Try to get the op if it's not in the dispatch table
             return self.get_op(op_name, context)
 
+    @_ensure_loaded
     def instantiate_all_ops(self) -> Dict[str, AnalysisOp]:
         """Instantiate all operations and return them as a dictionary."""
-        if not self._loaded:
-            self.load_definitions()
-
         result = {}
         for op_name in self._op_definitions:
             # Ensure operations are actually instantiated, not just factory functions
             op = self.get_op(op_name)
-            if callable(op) and not isinstance(op, AnalysisOp):
-                op = self._maybe_instantiate_op(op_name)
             result[op_name] = op
         return result
 
-    def create_chain(self, op_names: List[str], alias: Optional[str] = None) -> ChainedAnalysisOp:
+    @_ensure_loaded
+    def create_chain(self, op_names: str | List[str | AnalysisOp], name: Optional[str] = None,
+                     aliases: Optional[List[str]] = None) -> ChainedAnalysisOp:
         """Create a chain of operations from a list of operation names."""
-        if not self._loaded:
-            self.load_definitions()
-
         # Support for dot-separated string format
-        if len(op_names) == 1 and isinstance(op_names[0], str) and '.' in op_names[0]:
-            op_names = op_names[0].split('.')
+        if isinstance(op_names, str):
+            op_names = op_names.split('.')
+        # If op_names is a list, split any string elements containing '.' into multiple op names
+        elif isinstance(op_names, list):
+            split_names = []
+            for op_name in op_names:
+                if isinstance(op_name, str) and '.' in op_name:
+                    split_names.extend(op_name.split('.'))
+                else:
+                    split_names.append(op_name)
+            op_names = split_names
 
-        ops = [self.get_op(op_name) for op_name in op_names]
-        # Ensure all ops are instantiated, not just factory functions
-        ops = [op if isinstance(op, AnalysisOp) else self._maybe_instantiate_op(op_name)
-               for op_name, op in zip(op_names, ops)]
-        return ChainedAnalysisOp(ops, alias=alias)
-
-    def create_chain_from_ops(self, ops: List, alias: Optional[str] = None) -> ChainedAnalysisOp:
-        """Create a chain from operation instances."""
-        # Ensure all ops are properly instantiated using _maybe_instantiate_op
-        instantiated_ops = [self._maybe_instantiate_op(op) for op in ops]
-        return ChainedAnalysisOp(instantiated_ops, alias=alias)
-
-    def create_chain_from_string(self, chain_str: str, alias: Optional[str] = None) -> ChainedAnalysisOp:
-        """Create a chain of operations from a dot-separated string.
-
-        Args:
-            chain_str: Dot-separated string of operation names
-            alias: Optional alias for the chain
-
-        Returns:
-            ChainedAnalysisOp instance
-        """
-        return self.create_chain(chain_str.split('.'), alias)
+        ops = [self.get_op(op_name) if isinstance(op_name, str) else op_name for op_name in op_names]
+        return ChainedAnalysisOp(ops, name=name, aliases=aliases)
 
     def __call__(self, op_name: str, module, analysis_batch: Optional[AnalysisBatchProtocol],
                  batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
         """Call an operation by name."""
         # Support for dot-separated operation names (creating chains on-demand)
         if '.' in op_name:
-            chain_op = self.create_chain_from_string(op_name)
-            return chain_op(module=module, analysis_batch=analysis_batch, batch=batch, batch_idx=batch_idx)
+            chain_op = self.create_chain(op_name)
+            return chain_op(
+                module=module,
+                analysis_batch=analysis_batch,
+                batch=batch,
+                batch_idx=batch_idx
+            )
 
         # Get the operation, instantiating it if it's a factory function
         op = self.get_op(op_name)
-        if op is None:
-            raise ValueError(f"Unknown operation: {op_name}")
 
-        # Check if the op is a factory function and instantiate it if needed
-        if callable(op) and not isinstance(op, AnalysisOp):
-            op = self._maybe_instantiate_op(op_name)
-
-        return op(module=module, analysis_batch=analysis_batch, batch=batch, batch_idx=batch_idx)
+        return op(
+            module=module,
+            analysis_batch=analysis_batch,
+            batch=batch,
+            batch_idx=batch_idx
+        )
 
 
 # Global dispatcher instance

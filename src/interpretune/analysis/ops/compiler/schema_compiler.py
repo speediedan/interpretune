@@ -208,7 +208,7 @@ def build_operation_chains(yaml_config: Dict) -> Dict[str, Any]:
     # Build compiled operations
     for name, chain_def in composite_ops.items():
         chain = chain_def.get('chain', '').split('.')
-        alias = chain_def.get('alias', name)
+        aliases = chain_def.get('aliases', [])
 
         input_schema, output_schema = compile_operation_chain_schema(chain, all_ops_dict)
 
@@ -218,8 +218,10 @@ def build_operation_chains(yaml_config: Dict) -> Dict[str, Any]:
             'chain': chain,
             'input_schema': input_schema,
             'output_schema': output_schema,
-            'alias': alias
+            'aliases': aliases
         }
+        for alias in aliases:
+            ops[alias] = ops[name]
 
     return ops
 

@@ -1,3 +1,9 @@
+---
+mode: "agent"
+tools: ["githubRepo", "codebase", "file_search", "semantic_search", "read_file", "insert_edit_into_file", "create_file"]
+description: "Generate code to add missing test coverage for a source module to a test module"
+---
+
 ### What to change
 
 - We only want to add or extend tests in the target test module to fully cover the missing lines of the current implementation of our source code module.
@@ -81,12 +87,12 @@ You should be able to append to existing coverage using only the tests you add o
 
 ### Target Source and Test Modules with starting Coverage State
 
-Following this prompt, you will find the following additional information (example line numbers are below):
+Following this prompt, the user will provide following additional information to guide the generation of the test code:
 
-- Test code module to update: `<test code module name>`.py
+- Test code module to update: `${input:test_code_module_name}`
 
-- Source code module with missing lines: `<source code module name>`.py
+- Source code module with missing lines: `${input:source_code_module_name}`
 
-- Lines that are currently missing coverage for `<source code module name>`.py:
+- List of line numbers and ranges that are currently missing coverage for `${source_code_module_name}` (e.g. 1-2, 3, 30-33):
 
-`<comma-separated list of line numbers and line number ranges>`
+`${input:missing_coverage_lines}`

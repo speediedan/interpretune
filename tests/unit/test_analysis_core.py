@@ -571,7 +571,7 @@ class TestBaseMetrics:
         mock_analysis_cfg.output_store.orig_labels = [torch.tensor([0, 1]), torch.tensor([1, 0])]
         mock_analysis_cfg.output_store.preds = [torch.tensor([0, 1]), torch.tensor([1, 0])]
         mock_analysis_cfg.op = MagicMock(spec=it.logit_diffs_sae)
-        mock_analysis_cfg.op.alias = "test_alias"
+        mock_analysis_cfg.op.aliases = ["test_alias"]
 
         # Create a mock for get_preds_summ
         from dataclasses import dataclass
@@ -596,7 +596,7 @@ class TestBaseMetrics:
         # Mock the dispatcher
         mock_dispatcher = MagicMock()
         mock_dispatcher.get_op.return_value = None
-        mock_dispatcher.get_by_alias.return_value = None
+        #mock_dispatcher.get_by_alias.return_value = None
 
         with patch('interpretune.analysis.core.PredSumm', mock_pred_summ), \
             patch('interpretune.analysis.core.DISPATCHER', mock_dispatcher):
@@ -1543,7 +1543,7 @@ class TestAnalysisImportHook:
             OpWrapper = analysis_ops_base.OpWrapper
 
             # Get operation aliases from the dispatcher
-            aliases = list(DISPATCHER.get_op_aliases())
+            aliases = list(DISPATCHER.get_all_aliases())
 
             # Ensure we have some aliases to test
             assert len(aliases) > 0, "No operation aliases found in DISPATCHER"
@@ -1553,8 +1553,8 @@ class TestAnalysisImportHook:
                 assert hasattr(interpretune, alias), f"Alias '{alias}' not found in top-level module"
                 wrapper = getattr(interpretune, alias)
                 assert isinstance(wrapper, OpWrapper), f"'{alias}' is not an OpWrapper instance"
-                assert wrapper._op_name == op_name, f"Alias '{alias}' points to '{wrapper.op_name}' " \
-                    f"instead of '{op_name}'"
+                assert DISPATCHER.get_op(wrapper._op_name).name == op_name, \
+                    f"Alias '{alias}' points to '{wrapper.op_name}' instead of '{op_name}'"
 
         finally:
             for module_name, module in modules_to_reload.items():

@@ -485,7 +485,7 @@ class TestBuildOperationChains:
             "composite_operations": {
                 "composite_op": {
                     "chain": "op1.op2",
-                    "alias": "composite_alias"
+                    "aliases": ["composite_alias"]
                 }
             }
         }
@@ -497,7 +497,7 @@ class TestBuildOperationChains:
         assert "composite_op" in result
         assert "chain" in result["composite_op"]
         assert result["composite_op"]["chain"] == ["op1", "op2"]
-        assert result["composite_op"]["alias"] == "composite_alias"
+        assert result["composite_op"]["aliases"] == ["composite_alias"]
         assert "input_schema" in result["composite_op"]
         assert "output_schema" in result["composite_op"]
 
@@ -536,7 +536,7 @@ class TestLoadAndCompileOperations:
                 "composite_operations": {
                     "composite_op": {
                         "chain": "op1",
-                        "alias": "composite_alias"
+                        "aliases": ["composite_alias"]
                     }
                 }
             }
@@ -552,7 +552,7 @@ class TestLoadAndCompileOperations:
                 # Verify results
                 assert "op1" in result
                 assert "composite_op" in result
-                assert result["composite_op"]["alias"] == "composite_alias"
+                assert result["composite_op"]["aliases"] == ["composite_alias"]
 
         finally:
             # Clean up the temporary file

@@ -1,13 +1,14 @@
 from copy import deepcopy
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
+import torch
 
 from interpretune.config import (ITDataModuleConfig, ITLensFromPretrainedConfig, ITLensConfig,
                                  SAELensFromPretrainedConfig, SAELensConfig, ITConfig, AutoCompConfig,
                                  search_candidate_subclass_attrs, HFFromPretrainedConfig, AnalysisCfg,
                                  AnalysisArtifactCfg)
-from interpretune.analysis import SAEAnalysisTargets, OpSchema
+from interpretune.analysis import SAEAnalysisTargets, OpSchema, ColCfg, AnalysisBatch
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 from it_examples.experiments.rte_boolq import (RTEBoolqEntailmentMapping, GenerativeClassificationConfig,
                                                RTEBoolqSLConfig)
@@ -169,36 +170,33 @@ class TestAnalysisConfigs:
         with pytest.raises(ValueError):
             AnalysisCfg(target_op="nonexistent_op1.nonexistent_op2")
 
+        test_schema = OpSchema({"field2": ColCfg(datasets_dtype="int64", required=False)})
+
         # Test with valid op and name inference
-        with patch.object(DISPATCHER, 'get_op', return_value=Mock(name='test_op', alias='test_op_alias')):
+        with patch.object(DISPATCHER, 'get_op',
+                          return_value=AnalysisOp(name='test_op', description='my desc', output_schema=test_schema)):
             cfg = AnalysisCfg(target_op="test_op")
-            assert cfg.name == "test_op_alias"
+            assert cfg.name == "test_op"
 
         # Test with list of ops
-
-        mock_op1 = Mock(spec=AnalysisOp, name='op1')
-        mock_op1.alias = 'op1_alias'
-        mock_op2 = Mock(spec=AnalysisOp, name='op2')
-        mock_op2.alias = 'op2_alias'
+        mock_op1 = AnalysisOp(name='op1', description='op1 desc', output_schema=test_schema, aliases=['op1_alias'])
+        mock_op2 = AnalysisOp(name='op2', description='op2 desc', output_schema=test_schema, aliases=['op2_alias'])
         with patch.object(
-            DISPATCHER,
-            'create_chain_from_ops',
-            return_value=Mock(spec=ChainedAnalysisOp, alias='chain_alias')
-        ) as mock_chain:
+            DISPATCHER, 'create_chain',
+            return_value=ChainedAnalysisOp(ops=[mock_op1, mock_op2], aliases=['chain_alias'])) as mock_chain:
             cfg = AnalysisCfg(target_op=[mock_op1, mock_op2])
-            # Since mocks are spec'd as AnalysisOp, they lack _ensure_instantiated
             mock_chain.assert_called_once_with([mock_op1, mock_op2])
-            assert cfg.name == "chain_alias"
+            assert cfg.name == "op1.op2"
+            assert cfg.op._aliases == ['chain_alias']
 
         # Test chained operations with dot notation
         with patch.object(
-            DISPATCHER,
-            'create_chain',
-            return_value=Mock(spec=ChainedAnalysisOp, alias='dotted_chain_alias')
-        ) as mock_chain:
+            DISPATCHER, 'create_chain',
+            return_value=ChainedAnalysisOp(ops=[mock_op1, mock_op2], aliases=['dotted_chain_alias'])) as mock_chain:
             cfg = AnalysisCfg(target_op="op1.op2")
             mock_chain.assert_called_once_with("op1.op2")
-            assert cfg.name == "dotted_chain_alias"
+            assert cfg.name == "op1.op2"
+            assert cfg.op._aliases == ['dotted_chain_alias']
 
     def test_analysis_cfg_update(self):
         cfg = AnalysisCfg(name="test_analysis")
@@ -265,10 +263,11 @@ class TestAnalysisConfigs:
 
     def test_analysis_cfg_prepare_model_ctx(self):
         mock_module = Mock()
-        mock_op = Mock(spec=AnalysisOp)
+        test_schema = OpSchema({"field2": ColCfg(datasets_dtype="int64", required=False)})
+        test_op = AnalysisOp(name='test_op', description='my desc', output_schema=test_schema)
 
         # Test with op
-        cfg = AnalysisCfg(target_op=mock_op, sae_analysis_targets=Mock())
+        cfg = AnalysisCfg(target_op=test_op, sae_analysis_targets=Mock())
         with patch.object(cfg, 'materialize_names_filter') as mock_material, \
              patch.object(cfg, 'maybe_set_hooks') as mock_hooks:
             cfg.prepare_model_ctx(mock_module)
@@ -286,24 +285,25 @@ class TestAnalysisConfigs:
 
     def test_analysis_cfg_save_batch(self):
         mock_batch = Mock()
-        mock_analysis_batch = Mock()
+        analysis_batch = AnalysisBatch({"tokens": torch.tensor([[5, 6], [7, 8]])})
         mock_tokenizer = Mock()
 
         # Test with op
-        mock_op = Mock(spec=AnalysisOp)
+        mock_op = MagicMock(spec=AnalysisOp)
+        mock_op.name = 'test_op'
         cfg = AnalysisCfg(target_op=mock_op)
-        list(cfg.save_batch(mock_analysis_batch, mock_batch, tokenizer=mock_tokenizer))
+        list(cfg.save_batch(analysis_batch, mock_batch, tokenizer=mock_tokenizer))
         mock_op.save_batch.assert_called_once_with(
-            mock_analysis_batch, mock_batch, tokenizer=mock_tokenizer,
+            analysis_batch, mock_batch, tokenizer=mock_tokenizer,
             save_prompts=False, save_tokens=False, decode_kwargs=cfg.decode_kwargs
         )
 
         # Test without op
         cfg = AnalysisCfg(output_schema=OpSchema({}))
         with patch('interpretune.analysis.AnalysisOp.process_batch') as mock_process:
-            list(cfg.save_batch(mock_analysis_batch, mock_batch, tokenizer=mock_tokenizer))
+            list(cfg.save_batch(analysis_batch, mock_batch, tokenizer=mock_tokenizer))
             mock_process.assert_called_once_with(
-                mock_analysis_batch, mock_batch, output_schema=cfg.output_schema,
+                analysis_batch, mock_batch, output_schema=cfg.output_schema,
                 tokenizer=mock_tokenizer, save_prompts=False, save_tokens=False,
                 decode_kwargs=cfg.decode_kwargs
             )

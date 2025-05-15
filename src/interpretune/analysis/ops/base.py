@@ -1,7 +1,8 @@
 """Base classes for analysis operations."""
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Literal, Union, Optional, Any, Dict, Callable
+from typing import Literal, Union, Optional, Any, Dict, Callable, Sequence
 from dataclasses import dataclass, fields
+from contextlib import contextmanager
 import os
 
 import torch
@@ -175,20 +176,35 @@ class AnalysisOp:
     def __init__(self, name: str, description: str,
                  output_schema: OpSchema,
                  input_schema: Optional[OpSchema] = None,
-                 active_alias: Optional[str] = None,
+                 aliases: Optional[Sequence[str]] = None,
                  callables: Optional[Dict[str, Callable]] = None) -> None:
         self.name = name
         self.description = description
         self.output_schema = output_schema
         self.input_schema = input_schema
-        self.active_alias = active_alias  # Store the active alias when op is part of a chain
+        self._ctx_key = None
+        self._aliases = aliases  # Store aliases for the operation
         self._impl = None
         self.callables = callables or {}  # Store functions for operation implementation
 
     @property
-    def alias(self) -> str:
-        """Return the active alias if set, otherwise return the name."""
-        return self.active_alias if self.active_alias is not None else self.name
+    def ctx_key(self) -> str:
+        """Return the context key if set, otherwise return the name."""
+        return self._ctx_key if self._ctx_key is not None else self.name
+
+    @contextmanager
+    def active_ctx_key(self, ctx_key):
+        """Context manager for temporarily setting the active context key.
+
+        Args:
+            ctx_key: The context key to set during the context execution
+        """
+        original_ctx_key = self._ctx_key
+        try:
+            self._ctx_key = ctx_key
+            yield
+        finally:
+            self._ctx_key = original_ctx_key
 
     def _validate_input_schema(self, analysis_batch: Optional[AnalysisBatchProtocol], batch: BatchEncoding) -> None:
         """Validate that required inputs defined in input_schema exist in analysis_batch or batch."""
@@ -343,18 +359,24 @@ class AnalysisOp:
 class ChainedAnalysisOp(AnalysisOp):
     """A chain of analysis operations to be executed in sequence."""
 
-    def __init__(self, ops: list[AnalysisOp], alias: Optional[str] = None) -> None:
+    def __init__(self, ops: list[AnalysisOp],
+                 name: Optional[str] = None,
+                 aliases: Optional[Sequence[str]] = None,
+                 description: Optional[str] = None,
+                 *args, **kwargs) -> None:
+
         # Create a name that combines all operation names
-        name = '.'.join(op.name for op in ops)
-        description = f"Chain of operations: {' → '.join(op.description for op in ops)}"
+        self.composition_name = '.'.join(op.name for op in ops)
+        description = description or f"Chain of operations: {' → '.join(op.description for op in ops)}"
+        self.name = name or self.composition_name
 
         # Import here to avoid circular imports
         from interpretune.analysis.ops.compiler.schema_compiler import jit_compile_chain_schema
         from interpretune.analysis.ops.dispatcher import DISPATCHER
 
         # Check if alias exists in dispatcher's op_definitions
-        if alias and alias in DISPATCHER._op_definitions:
-            op_def = DISPATCHER._op_definitions[alias]
+        if self.name in DISPATCHER._op_definitions:
+            op_def = DISPATCHER._op_definitions[self.name]
             input_schema = op_def['input_schema']
             output_schema = op_def['output_schema']
         else:
@@ -363,25 +385,19 @@ class ChainedAnalysisOp(AnalysisOp):
                 ops, DISPATCHER._op_definitions
             )
 
-        # Use provided alias or default to the generated name  # TODO: revisit drawbacks of this aliasing scheme
-        active_alias = alias or name
-
-        super().__init__(name=name, description=description,
+        super().__init__(name=self.name, description=description,
                          output_schema=output_schema, input_schema=input_schema,
-                         active_alias=active_alias)
+                         aliases=aliases,
+                         *args, **kwargs)
         self.chain = ops
-
-        # TODO: the active op alias should be set in the dispatcher or ITmodule state
-        # Set active_alias on each op in the chain
-        for op in self.chain:
-            op.active_alias = active_alias
 
     def __call__(self, module, analysis_batch: Optional[AnalysisBatchProtocol],
                 batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
         """Execute each operation in the chain."""
         result = analysis_batch or AnalysisBatch()
         for op in self.chain:
-            result = op(module, result, batch, batch_idx)
+            with op.active_ctx_key(self.name):
+                result = op(module, result, batch, batch_idx)
         return result
 
 class OpWrapper:
@@ -394,7 +410,7 @@ class OpWrapper:
 
     # Properties that can be accessed without instantiating the op
     _DIRECT_ACCESS_ATTRS = ('_op_name', '_instantiated_op', '_is_instantiated', '__str__', '__repr__', '__class__',
-                            '_get_dispatcher', '_dispatcher', '__reduce__', '__reduce_ex__')
+                            'dispatcher', '_dispatcher', '__reduce__', '__reduce_ex__')
 
     _DEBUG_OVERRIDE_ATTRS = ("__iter__", "__len__")
 
@@ -412,7 +428,7 @@ class OpWrapper:
         self._dispatcher = None
 
     @property
-    def _get_dispatcher(self):
+    def dispatcher(self):
         """Lazily load the dispatcher only when needed."""
         if self._dispatcher is None:
             from interpretune.analysis.ops.dispatcher import DISPATCHER
@@ -423,7 +439,7 @@ class OpWrapper:
         """Make sure the operation is instantiated."""
         if not self._is_instantiated:
             # Get the op from the dispatcher
-            op = self._get_dispatcher.get_op(self._op_name)
+            op = self.dispatcher.get_op(self._op_name)
             self._instantiated_op = op
             self._is_instantiated = True
 
@@ -433,10 +449,9 @@ class OpWrapper:
                     setattr(self.__class__._target_module, self._op_name, self._instantiated_op)
 
                 # Also update any aliases that point to this wrapper
-                for alias, op_name in list(self._get_dispatcher.get_op_aliases()):
-                    if op_name == self._op_name and hasattr(self.__class__._target_module, alias):
-                        if getattr(self.__class__._target_module, alias) is self:
-                            setattr(self.__class__._target_module, alias, self._instantiated_op)
+                for alias in self.dispatcher.get_op_aliases(self._op_name):
+                    if hasattr(self.__class__._target_module, alias):
+                        setattr(self.__class__._target_module, alias, self._instantiated_op)
 
             return self._instantiated_op
         return self._instantiated_op

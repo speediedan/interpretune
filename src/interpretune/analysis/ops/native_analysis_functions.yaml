@@ -68,7 +68,7 @@ model_forward:
 model_cache_forward:
   description: Model forward pass with cache
   implementation: interpretune.analysis.ops.definitions.model_cache_forward_impl
-  aliases: []
+  aliases: ['model_forward_cache']
   input_schema:
     cache:  # directly used
       required: false
@@ -466,16 +466,13 @@ ablation_attribution:
 composite_operations:
   logit_diffs_base:
     chain: labels_to_ids.model_forward.logit_diffs
-    alias: logit_diffs_base
 
   logit_diffs_sae:
     chain: labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts
-    alias: logit_diffs_sae
 
   logit_diffs_attr_grad:
     chain: labels_to_ids.model_gradient.gradient_attribution
-    alias: logit_diffs_attr_grad
 
   logit_diffs_attr_ablation:
     chain: labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.ablation_attribution
-    alias: logit_diffs_attr_ablation
+    aliases: [logit_diffs_ablation]

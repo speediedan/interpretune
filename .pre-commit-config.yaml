@@ -59,14 +59,15 @@ repos:
       - id: yesqa
         name: Unused noqa
 
-  - repo: https://github.com/executablebooks/mdformat
-    rev: 0.7.19
-    hooks:
-      - id: mdformat
-        additional_dependencies:
-          - mdformat-gfm
-          - mdformat_frontmatter
-        exclude: CHANGELOG.md
+  # disabled until python 3.13 is supported (to allow exclude option)
+  # - repo: https://github.com/executablebooks/mdformat
+  #   rev: 0.7.19
+  #   hooks:
+  #     - id: mdformat
+  #       additional_dependencies:
+  #         - mdformat-gfm
+  #         - mdformat_frontmatter
+  #       exclude: "CHANGELOG.md", "**/*.prompt.md"
 
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: 'v0.6.9'

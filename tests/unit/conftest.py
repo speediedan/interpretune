@@ -1,5 +1,8 @@
+from __future__ import annotations
 import pytest
 import tempfile
+import os
+import yaml
 from pathlib import Path
 from datasets import Dataset
 from datetime import datetime
@@ -10,6 +13,8 @@ from tests.configuration import get_deepcopied_session
 from interpretune.config import AnalysisCfg
 from interpretune.runners.analysis import dataset_features_and_format, maybe_init_analysis_cfg
 from interpretune.analysis.core import get_module_dims
+from interpretune.analysis.ops.base import OpWrapper
+from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
 
 
 @pytest.fixture
@@ -141,3 +146,76 @@ def initialized_analysis_cfg():
         return it_session, dim_vars
 
     return _initialized_analysis_cfg
+
+@pytest.fixture
+def test_ops_yaml():
+    """Create a temporary YAML file with test operation definitions."""
+    # Create test operation definitions
+    test_ops = {
+        "test_op": {
+            "description": "Test operation for wrapper testing",
+            "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+            "aliases": ["test_alias"],
+            "output_schema": {
+                "output_field": {
+                    "datasets_dtype": "float32"
+                }
+            },
+            "input_schema": {
+                "input_field": {
+                    "datasets_dtype": "int64"
+                }
+            }
+        },
+        "another_test_op": {
+            "description": "Another test operation",
+            "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+            "output_schema": {
+                "another_field": {
+                    "datasets_dtype": "float32"
+                }
+            }
+        },
+        "composite_operations": {
+            "test_chain": {
+                "chain": "test_op.another_test_op",
+                "alias": "chain_alias"
+            }
+        }
+    }
+
+    # Write to a temporary file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
+        yaml.dump(test_ops, tmp)
+        yaml_path = tmp.name
+
+    yield yaml_path
+
+    # Cleanup
+    os.unlink(yaml_path)
+
+@pytest.fixture
+def test_dispatcher(test_ops_yaml):
+    """Create a test dispatcher with test operation definitions."""
+    # Create a test dispatcher that loads from our test YAML
+    dispatcher = AnalysisOpDispatcher(yaml_path=test_ops_yaml)
+    dispatcher.load_definitions()
+
+    # Return the dispatcher
+    return dispatcher
+
+@pytest.fixture
+def target_module():
+    """Create a mock module to use as a target for OpWrapper."""
+    return type('MockModule', (), {})()
+
+def test_initialize():
+    """Test initializing the OpWrapper class."""
+    # Create a mock module
+    mock_module = type('MockModule', (), {})()
+
+    # Initialize OpWrapper with the module
+    OpWrapper.initialize(mock_module)
+
+    # Check that the target module was set
+    assert OpWrapper._target_module is mock_module

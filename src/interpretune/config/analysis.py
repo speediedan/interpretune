@@ -83,7 +83,7 @@ class AnalysisCfg(ITSerializableCfg):
                 self.output_schema = self.output_schema.output_schema
             # If output_schema is a string, resolve to op and extract schema
             elif isinstance(self.output_schema, str):
-                resolved_op = DISPATCHER.get_op(self.output_schema) or DISPATCHER.get_by_alias(self.output_schema)
+                resolved_op = DISPATCHER.get_op(self.output_schema)
                 if resolved_op is None:
                     raise ValueError(f"Unknown operation for schema reference: {self.output_schema}")
                 self.output_schema = resolved_op.output_schema
@@ -104,7 +104,7 @@ class AnalysisCfg(ITSerializableCfg):
                             instantiated_ops.append(op._ensure_instantiated())
                         else:
                             instantiated_ops.append(op)
-                    self.op = DISPATCHER.create_chain_from_ops(instantiated_ops)
+                    self.op = DISPATCHER.create_chain(instantiated_ops)
                     resolved_op = self.op
             # Handle chained operations using dot notation
             elif isinstance(self.op, str):
@@ -117,7 +117,7 @@ class AnalysisCfg(ITSerializableCfg):
                         raise e
                 else:
                     # Try to resolve a single op by name or alias
-                    resolved_op = DISPATCHER.get_op(self.op) or DISPATCHER.get_by_alias(self.op)
+                    resolved_op = DISPATCHER.get_op(self.op)
                     if resolved_op is None:
                         raise ValueError(f"Unknown operation: {self.op}")
                     self.op = resolved_op
@@ -126,8 +126,8 @@ class AnalysisCfg(ITSerializableCfg):
                 resolved_op = self.op
 
         # Set name from resolved op if name is not already set
-        if self.name is None and resolved_op is not None and hasattr(resolved_op, 'alias'):
-            self.name = resolved_op.alias
+        if self.name is None and resolved_op is not None:
+            self.name = resolved_op.name
 
         # If name still not set (no op was resolved), use timestamp default
         if self.name is None:
