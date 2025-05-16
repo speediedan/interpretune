@@ -418,6 +418,7 @@ class TestClassificationMixin:
             _call_itmodule_hook(it_session.datamodule, hook_name="setup", hook_msg="Setting up datamodule")
 
             # Patch the RTEBoolqModuleMixin.setup method at the class level to ensure only the base setup() is called
+            # TODO: replace use of `core_cust` fixture with a more generic one when available instead of this patch
             with mock.patch(
                 'it_examples.experiments.rte_boolq.RTEBoolqModuleMixin.setup', autospec=True,
                 side_effect=lambda self, *args, **kwargs: super(RTEBoolqModuleMixin, self).setup(*args, **kwargs)):

@@ -34,16 +34,12 @@ class _AnalysisImportHook(MetaPathFinder):
         if fullname in sys.modules:
             return sys.modules[fullname]
 
-        # Remove ourselves temporarily from sys.meta_path to avoid infinite recursion
-        sys.meta_path.remove(self)
+        sys.meta_path.remove(self)  # Remove ourselves temporarily from sys.meta_path to avoid infinite recursion
         try:
-            # Import the analysis module
             import interpretune.analysis
-            # Get the current module
-            current_module = sys.modules["interpretune"]
-            # Import OpWrapper and register operations
             from interpretune.analysis.ops.base import OpWrapper
-            OpWrapper.register_operations(current_module, interpretune.analysis.DISPATCHER)
+            # Register available op definitions with OpWrappers (definitions only, implementations lazily instantiated)
+            OpWrapper.register_operations(sys.modules["interpretune"], interpretune.analysis.DISPATCHER)
             return sys.modules["interpretune.analysis"]
         finally:
             sys.meta_path.insert(0, self)
