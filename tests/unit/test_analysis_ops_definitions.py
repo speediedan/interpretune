@@ -1178,7 +1178,7 @@ class TestAnalysisOperationsImplementations:
     @pytest.mark.parametrize(("test_alias", "test_config"), pytest_factory(SERIALIZATION_TEST_CONFIGS, unpack=False))
     def test_op_serialization(self, request, op_serialization_fixt, test_alias, test_config):
         """Test multiple operations using schema-driven column validation."""
-        # Run operation and get results - now using the standalone function
+        # Run operation and get results
         it_session, batches, result_batches, pre_serialization_shapes = run_op_with_config(request, test_config)
 
         # Test dataset serialization and loading

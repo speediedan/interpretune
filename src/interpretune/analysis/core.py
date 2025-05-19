@@ -427,8 +427,7 @@ class AnalysisStore:
         # Set default tensor format
         self.dataset.set_format(type='interpretune')
 
-    # TODO: rename this method to reset_dataset or similar
-    def reset(self) -> None:
+    def reset_dataset(self) -> None:
         """Reset the dataset."""
         # TODO: decide on appropriate reloading/clearing behavior
         if hasattr(self, 'dataset'):

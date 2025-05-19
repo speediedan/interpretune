@@ -1062,7 +1062,7 @@ class TestAnalysisStoreReset:
     def test_reset_clears_dataset(self):
         store = AnalysisStore(dataset=MagicMock())
         store.dataset = MagicMock()
-        store.reset()
+        store.reset_dataset()
         assert hasattr(store, "dataset")
 
     def test_reset_clears_settings(self, request):
@@ -1078,7 +1078,7 @@ class TestAnalysisStoreReset:
         original_dataset = store.dataset
 
         # Call reset
-        store.reset()
+        store.reset_dataset()
 
         # The custom attribute should still exist because the reset method doesn't clear attributes
         assert hasattr(store, "_custom_attr")

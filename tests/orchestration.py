@@ -12,11 +12,16 @@
 # Initially based on https://bit.ly/3oQ8Vqf
 from pathlib import Path
 from unittest import mock
-from typing import Dict
+from typing import Dict, Optional, Tuple
+
+import torch
+from datasets import Dataset
 
 from interpretune.protocol import Adapter
 from interpretune.session import ITSessionConfig, ITSession
+from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.runners import SessionRunner, AnalysisRunner, core_analysis_loop
+from interpretune.runners.analysis import dataset_features_and_format
 from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg
 from interpretune.config.analysis import AnalysisStoreProtocol
 from interpretune.config import init_analysis_cfgs
@@ -25,8 +30,6 @@ from tests import Trainer, ModelCheckpoint
 from tests.configuration import config_modules, cfg_op_env
 from tests.base_defaults import AnalysisBaseCfg, BaseCfg, OpTestConfig
 from tests.utils import kwargs_from_cfg_obj
-import torch
-from interpretune.analysis.ops.base import AnalysisBatch
 
 
 ########################################################################################################################
@@ -225,6 +228,45 @@ def run_op_with_config(request, op_cfg: OpTestConfig):
     _call_itmodule_hook(it_session.module, hook_name="on_analysis_end", hook_msg="Running analysis start hooks")
 
     return it_session, batches, result_batches, pre_serialization_shapes
+
+def save_reload_results_dataset(it_session, result_batches, batches, features_format: Optional[Tuple[Dict]] = None):
+    if features_format is not None:
+        features, it_format_kwargs = features_format
+    else:
+        features, it_format_kwargs, _ = dataset_features_and_format(it_session.module, {})
+
+    # Create a generator that yields all processed batches
+    def multi_batch_generator():
+        for i, (res_batch, input_batch) in enumerate(zip(result_batches, batches)):
+            # Process and yield the batch
+            processed_batch = it_session.module.analysis_cfg.op.save_batch(
+                res_batch,
+                input_batch,
+                tokenizer=it_session.datamodule.tokenizer,
+                save_prompts=it_session.module.analysis_cfg.save_prompts,
+                save_tokens=it_session.module.analysis_cfg.save_tokens,
+                decode_kwargs=it_session.module.analysis_cfg.decode_kwargs
+            )
+            yield processed_batch
+
+    # Create dataset from the generator
+    dataset = Dataset.from_generator(
+        generator=multi_batch_generator,
+        features=features,
+        cache_dir=it_session.module.analysis_cfg.output_store.cache_dir,
+        split='test',
+    ).with_format("interpretune", **it_format_kwargs)
+
+    # TODO: add option to attach the dataset to the current analysis_cfg?
+    # module.analysis_cfg.output_store.dataset = dataset
+    # Save the dataset
+    dataset.save_to_disk(str(it_session.module.analysis_cfg.output_store.save_dir))
+
+    # Load the dataset with our custom formatter
+    loaded_dataset = Dataset.load_from_disk(str(it_session.module.analysis_cfg.output_store.save_dir))
+    loaded_dataset = loaded_dataset.with_format("interpretune", **it_format_kwargs)
+
+    return loaded_dataset
 
 ################################################################################
 # Lightning Adapter Train/Test Orchestration

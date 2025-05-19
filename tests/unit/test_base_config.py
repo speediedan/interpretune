@@ -4,17 +4,22 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 import torch
 
+import interpretune as it
 from interpretune.config import (ITDataModuleConfig, ITLensFromPretrainedConfig, ITLensConfig,
                                  SAELensFromPretrainedConfig, SAELensConfig, ITConfig, AutoCompConfig,
                                  search_candidate_subclass_attrs, HFFromPretrainedConfig, AnalysisCfg,
                                  AnalysisArtifactCfg)
-from interpretune.analysis import SAEAnalysisTargets, OpSchema, ColCfg, AnalysisBatch
+from interpretune.analysis import SAEAnalysisTargets, OpSchema, ColCfg, AnalysisBatch, AnalysisStore
+from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp
 from interpretune.analysis.ops.dispatcher import DISPATCHER
+
 from it_examples.experiments.rte_boolq import (RTEBoolqEntailmentMapping, GenerativeClassificationConfig,
                                                RTEBoolqSLConfig)
 from interpretune.config.transformer_lens import TLensGenerationConfig
 from tests.base_defaults import default_test_task
-from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp
+from tests.utils import _unwrap_one
+from tests.base_defaults import OpTestConfig
+from tests.orchestration import run_op_with_config, save_reload_results_dataset
 
 
 class TestClassBaseConfigs:
@@ -442,3 +447,94 @@ class TestAnalysisConfigs:
             cfg = AnalysisArtifactCfg(latent_effects_graphs=False, latent_effects_graphs_per_batch=True)
             assert cfg.latent_effects_graphs is True
             mock_print.assert_called_once()
+
+    def test_analysis_cfg_ignore_manual_no_op_error(self):
+        with pytest.raises(ValueError, match="op must be provided to generate the analysis_step"):
+            _ = AnalysisCfg(ignore_manual=True)
+
+    def test_analysis_cfg_resolve_output_schema(self):
+        cfg = AnalysisCfg(output_schema='get_answer_indices')
+        assert cfg.output_schema is it.get_answer_indices.output_schema
+
+        with pytest.raises(ValueError, match="Unknown operation: nonexistent_op"):
+            AnalysisCfg(output_schema='nonexistent_op')
+
+    def test_analysis_cfg_op_resolution_single_element_list(self):
+        cfg = AnalysisCfg(target_op=['get_answer_indices'])
+        assert cfg.name == "get_answer_indices"
+
+    def test_analysis_cfg_already_applied_to_module(self):
+        mock_module = Mock()
+        mock_module.__class__.__name__ = "MockModule"
+
+        cfg = AnalysisCfg()
+        assert len(cfg._applied_to) == 0
+
+        # Use applied_to
+        assert cfg.applied_to(mock_module) is False
+
+        # Manually set the applied state for testing
+        module_id = id(mock_module)
+        cfg._applied_to[module_id] = mock_module.__class__.__name__
+
+        # Test the applied_to method
+        assert cfg.applied_to(mock_module) is True
+
+        cfg.apply(mock_module)
+
+        # Test with a different module
+        different_module = Mock()
+        assert cfg.applied_to(different_module) is False
+
+    def test_analysis_cfg_apply_warns(self):
+        mock_module = Mock()
+        mock_module.__class__.__name__ = "MockModule"
+        output_store = Mock(AnalysisStore)
+        output_store.cache_dir = '/tmp/cache'
+        output_store.op_output_dataset_path = '/tmp/output'
+        cfg = AnalysisCfg(output_store=output_store)
+        with pytest.warns(UserWarning, match=".*will be ignored in favor of the existing AnalysisStore.*"):
+            cfg.apply(mock_module, cache_dir='/tmp/some_other_path')
+
+    def run_op_on_reset_output_store(self, it_sess, batches, test_config, output_store):
+        orig_save_dir = output_store.save_dir
+        orig_cache_dir = output_store.cache_dir
+        analysis_batches = [AnalysisBatch() for _ in range(len(batches))]
+        result_batches = []
+        # Re-execute the operation for each batch
+        for i, (batch, analysis_batch) in enumerate(zip(batches, analysis_batches)):
+            # Run the operation
+            result = test_config.resolved_op(it_sess.module, analysis_batch, batch, i)
+            # Verify result is a proper AnalysisBatch
+            assert isinstance(result, AnalysisBatch)
+            result_batches.append(result)
+
+        assert it_sess.module.analysis_cfg.output_store.cache_dir == orig_cache_dir
+        assert it_sess.module.analysis_cfg.output_store.save_dir == orig_save_dir
+
+        it_sess.module.analysis_cfg.output_store.dataset = save_reload_results_dataset(it_sess, result_batches, batches)
+
+    def test_reset_output_store(self, request, op_serialization_fixt):
+        """Test multiple operations using schema-driven column validation."""
+
+        test_config = OpTestConfig(target_op=it.model_forward)
+
+        # Run operation and get results
+        it_sess, batches, result_batches, _ = run_op_with_config(request, test_config)
+        # get the output_store associated with our AnalysisCfg
+        out_store = it_sess.module.analysis_cfg.output_store
+        # serialize the results and reload the dataset
+        out_store.dataset = op_serialization_fixt(it_sess, _unwrap_one(result_batches), _unwrap_one(batches), request)
+        # check that the dataset is not None and sample the expected dimensions
+        assert out_store.dataset is not None
+        assert out_store.answer_logits[0].ndim == 3
+        # reset the output_store attached to the AnalysisCfg
+        out_store.reset_dataset()
+        assert out_store.dataset is None
+
+        # re-run the operation with the same output_store
+        self.run_op_on_reset_output_store(it_sess, batches, test_config, out_store)
+
+        # sample results
+        assert out_store.dataset is not None
+        assert out_store.answer_logits[0].ndim == 3

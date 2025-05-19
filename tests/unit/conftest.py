@@ -4,14 +4,14 @@ import tempfile
 import os
 import yaml
 from pathlib import Path
-from datasets import Dataset
 from datetime import datetime
 from typing import Any
 
 import interpretune as it
 from tests.configuration import get_deepcopied_session
+from tests.orchestration import save_reload_results_dataset
 from interpretune.config import AnalysisCfg
-from interpretune.runners.analysis import dataset_features_and_format, maybe_init_analysis_cfg
+from interpretune.runners.analysis import maybe_init_analysis_cfg
 from interpretune.analysis.core import get_module_dims
 from interpretune.analysis.ops.base import OpWrapper
 from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
@@ -22,8 +22,8 @@ def op_serialization_fixt():
     """Create a test utility for serializing and loading analysis results."""
     def _op_serialization_fixt(
         it_session,
-        result_batch,
-        batch,
+        result_batches,
+        batches,
         request=None,
     ):
         """Test serialization and loading of analysis results.
@@ -71,51 +71,19 @@ def op_serialization_fixt():
             # Set the temporary save_dir
             module.analysis_cfg.output_store.save_dir = save_dir
 
-            # Generate features and format parameters
-            features, it_format_kwargs, _ = dataset_features_and_format(module, {})
-
             # Check if we're dealing with multiple batches
-            is_multi_batch = isinstance(result_batch, list)
+            is_multi_batch = isinstance(result_batches, list)
 
             # Ensure batch is also a list if result_batch is a list
-            if is_multi_batch and not isinstance(batch, list):
+            if is_multi_batch and not isinstance(batches, list):
                 raise ValueError("If result_batch is a list, batch must also be a list")
 
             # If single batch, convert to list for uniform processing
             if not is_multi_batch:
-                result_batch = [result_batch]
-                batch = [batch]
+                result_batches = [result_batches]
+                batches = [batches]
 
-            # Create a generator that yields all processed batches
-            def multi_batch_generator():
-                for i, (res_batch, input_batch) in enumerate(zip(result_batch, batch)):
-                    # Process and yield the batch
-                    processed_batch = module.analysis_cfg.op.save_batch(
-                        res_batch,
-                        input_batch,
-                        tokenizer=it_session.datamodule.tokenizer,
-                        save_prompts=module.analysis_cfg.save_prompts,
-                        save_tokens=module.analysis_cfg.save_tokens,
-                        decode_kwargs=module.analysis_cfg.decode_kwargs
-                    )
-                    yield processed_batch
-
-            # Create dataset from the generator
-            dataset = Dataset.from_generator(
-                generator=multi_batch_generator,
-                features=features,
-                cache_dir=module.analysis_cfg.output_store.cache_dir,
-                split='test',
-            ).with_format("interpretune", **it_format_kwargs)
-
-            # Save the dataset
-            dataset.save_to_disk(str(save_dir))
-
-            # Load the dataset with our custom formatter
-            loaded_dataset = Dataset.load_from_disk(str(save_dir))
-            loaded_dataset = loaded_dataset.with_format("interpretune", **it_format_kwargs)
-
-            return loaded_dataset
+            return save_reload_results_dataset(it_session, result_batches, batches)
 
         finally:
             # Restore original save_dir if needed

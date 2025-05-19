@@ -68,69 +68,15 @@ class AnalysisCfg(ITSerializableCfg):
             # (e.g. "target_op: 'some_op_str' -> op: {str(self.op)}")
             self.op = self.target_op
 
-        # Check if ignore_manual is True but no op is provided
-        if self.ignore_manual and self.op is None:
+        if self.ignore_manual and self.op is None:  # Check if ignore_manual is True but no op is provided
             raise ValueError("When ignore_manual is True, an op must be provided to generate the analysis_step")
-
-        resolved_op = None
-
-        # Process output_schema first if it's an op or string
         if self.output_schema is not None and not isinstance(self.output_schema, OpSchema):
-            # If output_schema is AnalysisOp-like (using this attribute as heuristic to limit expensive protocol
-            # checks), extract its schema
-            if hasattr(self.output_schema, 'output_schema'):
-                resolved_op = self.output_schema
-                self.output_schema = self.output_schema.output_schema
-            # If output_schema is a string, resolve to op and extract schema
-            elif isinstance(self.output_schema, str):
-                resolved_op = DISPATCHER.get_op(self.output_schema)
-                if resolved_op is None:
-                    raise ValueError(f"Unknown operation for schema reference: {self.output_schema}")
-                self.output_schema = resolved_op.output_schema
-
-        # Process the operation if provided
-        if self.op is not None:
-            # Convert list of ops to composition
-            if isinstance(self.op, list):
-                if len(self.op) == 1:
-                    self.op = self.op[0]
-                    resolved_op = self.op
-                else:
-                    # Create a composite operation from the list
-                    # Ensure each op in the list is instantiated
-                    instantiated_ops = []
-                    for op in self.op:
-                        if hasattr(op, '_ensure_instantiated'):
-                            instantiated_ops.append(op._ensure_instantiated())
-                        else:
-                            instantiated_ops.append(op)
-                    self.op = DISPATCHER.compile_ops(instantiated_ops)
-                    resolved_op = self.op
-            # Handle composite operations using dot notation
-            elif isinstance(self.op, str):
-                if '.' in self.op:
-                    # This is a composite operation
-                    try:
-                        self.op = DISPATCHER.compile_ops(self.op)
-                        resolved_op = self.op
-                    except ValueError as e:
-                        raise e
-                else:
-                    # Try to resolve a single op by name or alias
-                    resolved_op = DISPATCHER.get_op(self.op)
-                    if resolved_op is None:
-                        raise ValueError(f"Unknown operation: {self.op}")
-                    self.op = resolved_op
-            else:
-                # If op is already an AnalysisOp or similar, use it directly
-                resolved_op = self.op
-
-        # Set name from resolved op if name is not already set
-        if self.name is None and resolved_op is not None:
-            self.name = resolved_op.name
-
-        # If name still not set (no op was resolved), use timestamp default
-        if self.name is None:
+            self.resolve_output_schema()  # Resolve the output schema if it's not already an OpSchema
+        if self.op is not None:  # Process the operation if provided
+            self.resolve_op()
+        if self.name is None and self.op is not None:  # Set name from op if name is not already set
+            self.name = self.op.name
+        if self.name is None:  # If name still not set (no op was resolved), use timestamp default
             self.name = f"default_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     def update(self, **kwargs):
@@ -138,6 +84,44 @@ class AnalysisCfg(ITSerializableCfg):
         for key, value in kwargs.items():
             if key in self.__annotations__:
                 setattr(self, key, value)
+
+    def resolve_output_schema(self) -> None:
+        # If output_schema is AnalysisOp-like (using this attribute as heuristic to limit expensive protocol
+        # checks), extract its schema
+        if hasattr(self.output_schema, 'output_schema'):
+            resolved_op = self.output_schema
+            self.output_schema = self.output_schema.output_schema
+        # If output_schema is a string, resolve to op and extract schema
+        elif isinstance(self.output_schema, str):
+            resolved_op = DISPATCHER.get_op(self.output_schema)
+            self.output_schema = resolved_op.output_schema
+
+    def resolve_op(self) -> None:
+        if isinstance(self.op, list):  # Convert list of ops to composition
+            if len(self.op) == 1:
+                self.op = self.op[0]
+                if isinstance(self.op, str):
+                    self.op = DISPATCHER.get_op(self.op)
+            else:
+                # Create a composite operation from the list, ensuring each op in the list is instantiated
+                # TODO: consider deferring instantiation of composite ops
+                instantiated_ops = []
+                for op in self.op:
+                    if hasattr(op, '_ensure_instantiated'):
+                        instantiated_ops.append(op._ensure_instantiated())
+                    else:
+                        instantiated_ops.append(op)
+                self.op = DISPATCHER.compile_ops(instantiated_ops)
+        elif isinstance(self.op, str):  # Handle composite operations using dot notation
+            if '.' in self.op:
+                # This is a composite operation
+                try:
+                    self.op = DISPATCHER.compile_ops(self.op)
+                except ValueError as e:
+                    raise e
+            else:
+                # Try to resolve a single op by name or alias
+                self.op = DISPATCHER.get_op(self.op)
 
     def materialize_names_filter(self, module, fallback_sae_targets: Optional[SAEAnalysisTargets] = None) -> None:
         """Set names_filter using sae_analysis_targets if not already set.
@@ -187,17 +171,6 @@ class AnalysisCfg(ITSerializableCfg):
         if self.op is not None:
             self.maybe_set_hooks()
 
-    def reset_analysis_store(self) -> None:
-        # TODO: May be able to refactor this out if using per-epoch op dataset subsplits
-        # Prepare a new cache for the next epoch preserving save_cfg (for multi-epoch AnalysisSessionCfg instances)
-        current_analysis_cls = self.output_store.__class__
-        current_save_cfg_cls = self.output_store.save_cfg.__class__
-        current_save_cfg = {k: v for k, v in self.output_store.save_cfg.__dict__.items() if k != 'output_store'}
-        self.output_store = current_analysis_cls(save_cfg=current_save_cfg_cls(**current_save_cfg))
-        assert id(self.output_store) == id(self.output_store.save_cfg.output_store)
-        # TODO: maybe use this approach instead of above
-        #"""Reset analysis store, preserving configuration."""
-        #self.analysis_store.reset()
 
     # TODO: Add a non-generator returning save_batch method at AnalysisCfg level (users already have op-level version)?
     def save_batch(self, analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
