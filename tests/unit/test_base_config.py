@@ -538,3 +538,260 @@ class TestAnalysisConfigs:
         # sample results
         assert out_store.dataset is not None
         assert out_store.answer_logits[0].ndim == 3
+
+
+class TestRunnerConfig:
+    """Tests for the runner configuration module."""
+
+    def test_to_analysis_cfgs(self):
+        """Test the to_analysis_cfgs function with different input types."""
+        from interpretune.config.runner import to_analysis_cfgs
+        from interpretune.analysis.ops.base import AnalysisOp
+
+        # Test with None
+        result = to_analysis_cfgs(None)
+        assert result == []
+
+        # Test with single AnalysisCfg
+        cfg = AnalysisCfg(name="test")
+        result = to_analysis_cfgs(cfg)
+        assert len(result) == 1
+        assert result[0] is cfg
+
+        # Test with single AnalysisOp
+        mock_op = Mock(spec=AnalysisOp)
+        mock_op.name = "test_op"
+        mock_op.alias = ["test_alias"]
+        result = to_analysis_cfgs(mock_op)
+        assert len(result) == 1
+        assert isinstance(result[0], AnalysisCfg)
+        assert result[0].target_op is mock_op
+
+        # Test with iterable of AnalysisCfg
+        cfgs = [AnalysisCfg(name="test1"), AnalysisCfg(name="test2")]
+        result = to_analysis_cfgs(cfgs)
+        assert len(result) == 2
+        assert result[0] is cfgs[0]
+        assert result[1] is cfgs[1]
+
+        # Test with iterable of AnalysisOp
+        ops = [Mock(spec=AnalysisOp), Mock(spec=AnalysisOp)]
+        for i, op in enumerate(ops):
+            op.name = f"op{i}"
+            op.alias = [f"alias{i}"]
+        result = to_analysis_cfgs(ops)
+        assert len(result) == 2
+        assert isinstance(result[0], AnalysisCfg)
+        assert isinstance(result[1], AnalysisCfg)
+
+        # Test with unsupported type
+        with pytest.raises(ValueError, match="Unsupported analysis configuration type"):
+            to_analysis_cfgs([42])
+
+        # Test with non-iterable, non-AnalysisCfg, non-AnalysisOp
+        with pytest.raises(ValueError, match="must be an AnalysisCfg, AnalysisOp, or an iterable"):
+            to_analysis_cfgs(42)
+
+    def test_init_analysis_dirs(self, tmp_path):
+        """Test the init_analysis_dirs function."""
+        from interpretune.config.runner import init_analysis_dirs
+        from unittest.mock import Mock
+
+        # Create mock module with required attributes
+        module = Mock()
+        module.__class__._orig_module_name = "TestModule"
+
+        # Create mock datamodule with required dataset structure
+        dataset_mock = {'validation': Mock()}
+        dataset_mock['validation'].config_name = "test_config"
+        dataset_mock['validation']._fingerprint = "123456"
+        module.datamodule = Mock(dataset=dataset_mock)
+
+        # Create mock directory for core_log_dir
+        module.core_log_dir = tmp_path / "core_log_dir"
+        module.core_log_dir.mkdir(parents=True)
+
+        # Test with default parameters
+        cache_dir, op_output_dataset_path = init_analysis_dirs(module)
+
+        # Verify paths were created
+        assert cache_dir.exists()
+        assert op_output_dataset_path.exists()
+        assert op_output_dataset_path == module.core_log_dir / "analysis_datasets"
+
+        # Test with custom paths
+        custom_cache_dir = tmp_path / "custom_cache"
+        custom_output_path = tmp_path / "custom_output"
+
+        cache_dir, op_output_dataset_path = init_analysis_dirs(
+            module,
+            cache_dir=custom_cache_dir,
+            op_output_dataset_path=custom_output_path
+        )
+
+        # Verify custom paths were created
+        assert cache_dir == custom_cache_dir
+        assert cache_dir.exists()
+        assert op_output_dataset_path == custom_output_path
+        assert op_output_dataset_path.exists()
+
+        # Test with analysis_cfgs containing an op
+        # Create a simple mock class with a name attribute
+        class MockOp:
+            @property
+            def name(self):
+                return "test_op"
+
+        mock_op = MockOp()
+        analysis_cfg = AnalysisCfg(target_op=mock_op)
+
+        cache_dir, op_output_dataset_path = init_analysis_dirs(
+            module,
+            op_output_dataset_path=custom_output_path,
+            analysis_cfgs=[analysis_cfg]
+        )
+
+        # Verify the op directory was checked
+        op_dir = op_output_dataset_path / "test_op"
+        assert not op_dir.exists()  # Should not be created yet
+
+        # Create the op dir and test the exception when it's not empty
+        op_dir.mkdir(parents=True)
+        (op_dir / "test_file.txt").write_text("test")
+
+        with pytest.raises(Exception, match="is not empty"):
+            init_analysis_dirs(module, op_output_dataset_path=custom_output_path, analysis_cfgs=[analysis_cfg])
+
+    def test_init_analysis_cfgs(self, tmp_path):
+        """Test the init_analysis_cfgs function."""
+        from interpretune.config.runner import init_analysis_cfgs
+
+        # Create mock module with required attributes
+        module = Mock()
+        module.__class__._orig_module_name = "TestModule"
+
+        # Create mock datamodule with required dataset structure
+        dataset_mock = {'validation': Mock()}
+        dataset_mock['validation'].config_name = "test_config"
+        dataset_mock['validation']._fingerprint = "123456"
+        module.datamodule = Mock(dataset=dataset_mock)
+
+        # Create mock directory for core_log_dir
+        module.core_log_dir = tmp_path / "core_log_dir"
+        module.core_log_dir.mkdir(parents=True)
+
+        # Create mock analysis cfgs
+        analysis_cfg1 = AnalysisCfg(name="test1")
+        analysis_cfg2 = AnalysisCfg(name="test2")
+
+        # Mock the apply method
+        analysis_cfg1.apply = Mock()
+        analysis_cfg2.apply = Mock()
+        analysis_cfg1.applied_to = Mock(return_value=False)
+        analysis_cfg2.applied_to = Mock(return_value=False)
+
+        # Test with ignore_manual=True
+        init_analysis_cfgs(
+            module=module,
+            analysis_cfgs=[analysis_cfg1, analysis_cfg2],
+            ignore_manual=True
+        )
+
+        # Verify ignore_manual was set
+        assert analysis_cfg1.ignore_manual is True
+        assert analysis_cfg2.ignore_manual is True
+
+        # Verify apply was called
+        analysis_cfg1.apply.assert_called_once()
+        analysis_cfg2.apply.assert_called_once()
+
+        # Test with already applied config
+        analysis_cfg1.applied_to.return_value = True
+        analysis_cfg1.apply.reset_mock()
+        analysis_cfg2.apply.reset_mock()  # Reset the second mock as well
+
+        init_analysis_cfgs(
+            module=module,
+            analysis_cfgs=[analysis_cfg1, analysis_cfg2]
+        )
+
+        # Verify apply was not called for the first config
+        analysis_cfg1.apply.assert_not_called()
+        analysis_cfg2.apply.assert_called_once()
+
+    def test_session_runner_cfg(self):
+        """Test the SessionRunnerCfg class."""
+        from interpretune.config.runner import SessionRunnerCfg
+        from interpretune.utils import MisconfigurationException
+
+        # Test with it_session
+        it_session = Mock()
+        it_session.module = Mock()
+        it_session.datamodule = Mock()
+
+        # Test with it_session
+        cfg = SessionRunnerCfg(it_session=it_session)
+        assert cfg.module is it_session.module
+        assert cfg.datamodule is it_session.datamodule
+
+        # Test with module and datamodule but without it_session
+        module = Mock()
+        datamodule = Mock()
+        cfg = SessionRunnerCfg(module=module, datamodule=datamodule)
+        assert cfg.module is module
+        assert cfg.datamodule is datamodule
+
+        # Test with incomplete configuration
+        with pytest.raises(MisconfigurationException, match="must provide both"):
+            SessionRunnerCfg(module=module)
+
+        with pytest.raises(MisconfigurationException, match="must provide both"):
+            SessionRunnerCfg(datamodule=datamodule)
+
+        with pytest.raises(MisconfigurationException, match="must provide both"):
+            SessionRunnerCfg()
+
+    def test_analysis_runner_cfg(self):
+        """Test the AnalysisRunnerCfg class."""
+        from interpretune.config.runner import AnalysisRunnerCfg
+
+        # Create mock session
+        it_session = Mock()
+        it_session.module = Mock()
+        it_session.datamodule = Mock()
+
+        # Test with analysis_cfgs
+        mock_op = Mock()
+        mock_op.name = "test_op"
+        mock_op.alias = ["test_alias"]
+
+        # Test with null analysis_cfgs
+        with patch("interpretune.config.runner.rank_zero_debug") as mock_debug:
+            cfg = AnalysisRunnerCfg(it_session=it_session, analysis_cfgs=None)
+            mock_debug.assert_called_once()
+            assert hasattr(it_session.module, "analysis_run_cfg")
+            assert it_session.module.analysis_run_cfg is cfg
+
+        # Test with Path objects for directories
+        from pathlib import Path
+        cache_dir = Path("/tmp/cache")
+        output_path = Path("/tmp/output")
+
+        cfg = AnalysisRunnerCfg(
+            it_session=it_session,
+            cache_dir=cache_dir,
+            op_output_dataset_path=output_path
+        )
+
+        # Verify Path objects were converted to strings
+        assert isinstance(cfg.cache_dir, str)
+        assert isinstance(cfg.op_output_dataset_path, str)
+        assert cfg.cache_dir == str(cache_dir)
+        assert cfg.op_output_dataset_path == str(output_path)
+
+        # Test _processed_analysis_cfgs property
+        cfg = AnalysisRunnerCfg(it_session=it_session, analysis_cfgs=[mock_op])
+        result = cfg._processed_analysis_cfgs
+        assert len(result) == 1
+        assert isinstance(result[0], AnalysisCfg)
+        assert result[0].target_op is mock_op

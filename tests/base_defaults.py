@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Callable, Any, Dict, Sequence, TYPE_CHECKING
+from typing import List, Optional, Tuple, Callable, Any, Dict, Sequence, TYPE_CHECKING, Iterable, Union
 import pytest
 
 from interpretune.adapters import ADAPTER_REGISTRY
@@ -10,7 +10,7 @@ from interpretune.analysis import SAEAnalysisTargets
 from tests.runif import RunIf, RUNIF_ALIASES
 
 if TYPE_CHECKING:
-    from interpretune.analysis import AnalysisOp
+    from interpretune.analysis import AnalysisOp, AnalysisCfg
 
 default_test_task = "rte"
 
@@ -97,7 +97,8 @@ class BaseCfg:
 
 @dataclass(kw_only=True)
 class AnalysisBaseCfg(BaseCfg):
-    analysis_cfgs: Optional[Dict] = None
+    # TODO: we may want to narrow Iterable to Sequence here
+    analysis_cfgs: Union['AnalysisCfg', 'AnalysisOp', Iterable[Union['AnalysisCfg', 'AnalysisOp']]] = None
     limit_analysis_batches: int = 2
     cache_dir: Optional[str] = None
     op_output_dataset_path: Optional[str] = None

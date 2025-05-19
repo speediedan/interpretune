@@ -139,11 +139,11 @@ def run_analysis_operation(it_session, use_run_cfg=True, test_cfg: BaseCfg | Non
         kwargs.update(run_cfg_kwargs)
         # Use kwargs for core_analysis_loop with the single analysis config
         analysis_cfg_kwargs = {
+            **kwargs,
             "analysis_cfg": target_analysis_cfg,
             "module": it_session.module,
             "datamodule": it_session.datamodule,
             "step_fn": target_analysis_cfg.step_fn,
-            **kwargs
         }
 
         return core_analysis_loop(**analysis_cfg_kwargs)

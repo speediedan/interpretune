@@ -147,6 +147,8 @@ def core_analysis_loop(module: ITModule, datamodule: ITDataModule,
     """Create dataset using the ITAnalysisFormatter for optimal handling of analysis data."""
     # Initialize analysis configuration if needed
     kwargs = maybe_init_analysis_cfg(module, analysis_cfg, **kwargs)
+    if analysis_cfg is not None:
+        step_fn = analysis_cfg.step_fn
 
     # Run analysis start hooks
     # TODO: execute on_analysis_start/end hooks toggle grad based on functional config rather than op based filter

@@ -15,25 +15,44 @@ class TestAnalysisRunner:
     """Tests for the analysis runner module."""
 
     @pytest.mark.parametrize(
-        "session_fixture, analysis_cfgs",
+        "session_fixture, test_cfg_override_kwargs",
         [
-            pytest.param("get_it_session__sl_gpt2_analysis__setup", (AnalysisCfg(output_schema=it.sae_correct_acts),)),
-            pytest.param("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis", None),
+            pytest.param("get_it_session__sl_gpt2_analysis__setup",
+                         {'analysis_cfgs': [AnalysisCfg(output_schema=it.sae_correct_acts)]}),
+            # we need to set ignore_manual=True at both the analysis_cfg and the test_cfg levels since we always want
+            # test_cfg to override nested configs (analysis_cfg here) but also want to leverage an existing
+            # fixture test_cfg in this case.
+            pytest.param("get_it_session__sl_gpt2_analysis__setup",
+                         {'analysis_cfgs': [AnalysisCfg(target_op=it.model_forward, ignore_manual=True)],
+                          'ignore_manual': True}),
+            pytest.param("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis", {}),
         ],
-        ids=[#"api_generated_step",
-             "manual_step",
+        ids=["manual_step",
+             "api_generated_step_with_op",
              "analysis_store_fixt"],
     )
-    def test_basic_runner_mode_parity(self, request, session_fixture, analysis_cfgs):
+    def test_basic_runner_mode_parity(self, request, session_fixture, test_cfg_override_kwargs):
         fixture = request.getfixturevalue(session_fixture)
         it_session, test_cfg = fixture.it_session, fixture.test_cfg()
+        # Update test_cfg with valid attributes from test_cfg_override_kwargs
+        for key, value in test_cfg_override_kwargs.items():
+            if hasattr(test_cfg, key):
+                setattr(test_cfg, key, value)
         if (analysis_result := getattr(fixture, "result", None)) is None:
-            if analysis_cfgs is not None:
-                test_cfg.analysis_cfgs = analysis_cfgs
             analysis_result = run_analysis_operation(it_session, use_run_cfg=False, test_cfg=test_cfg)
 
         # Common validation for both fixture types
         assert isinstance(analysis_result, AnalysisStore)
+
+        # For the op-based test, verify the generated analysis step was created and used
+        if test_cfg_override_kwargs.get("analysis_configs") and \
+            hasattr(test_cfg_override_kwargs["analysis_configs"][0], "target_op") and \
+                test_cfg_override_kwargs["analysis_configs"][0].target_op is not None:
+            # Verify that the dynamically generated analysis step method exists
+            assert hasattr(it_session.module, "_generated_analysis_step")
+            # Verify the analysis_cfg op was properly set
+            assert it_session.module.analysis_cfg.op is not None
+            assert it_session.module.analysis_cfg.op.name == "model_forward"
 
     @pytest.fixture
     def mock_analysis_module(self):

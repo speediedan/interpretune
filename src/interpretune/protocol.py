@@ -385,8 +385,7 @@ class SAEAnalysisProtocol(Protocol):
         self,
         target_layers: list[int],
         sae_hook_match_fn: Callable[[str, list[int] | None], bool]
-    ) -> NamesFilter:
-        ...
+    ) -> NamesFilter: ...
 
     def get_latents_and_indices(
         self,
@@ -394,8 +393,7 @@ class SAEAnalysisProtocol(Protocol):
         batch_idx: int,
         analysis_batch: AnalysisBatchProtocol | None = None,
         cache: AnalysisStoreProtocol | None = None
-    ) -> tuple[torch.Tensor, dict[str, Any]] | None:
-        ...
+    ) -> tuple[torch.Tensor, dict[str, Any]] | None: ...
 
     def run_with_ctx(
         self,
@@ -403,16 +401,14 @@ class SAEAnalysisProtocol(Protocol):
         batch: dict[str, Any],
         batch_idx: int,
         **kwargs: Any
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def loss_and_logit_diffs(
         self,
         analysis_batch: AnalysisBatchProtocol,
         batch: dict[str, Any],
         batch_idx: int
-    ) -> None:
-        ...
+    ) -> None: ...
 
 class ActivationCacheProtocol(Protocol):
     """Core activation cache protocol."""
