@@ -65,12 +65,24 @@ def handle_exception_with_debug_dump(
                 call_line = inspect.getframeinfo(frame.f_back).code_context[0].strip()
                 # Try to extract the argument name for context_data
                 if "context_data=" in call_line:
-                    # Extract the variable name from the parameter
-                    var_name = call_line.split("context_data=")[1].split(",")[0].strip()
-                    if var_name.startswith("(") and ")" in var_name:
-                        # This might be a tuple definition - try to extract variable names
-                        var_names = var_name.strip("()").split(",")
-                        var_names = [v.strip() for v in var_names]
+                    # Get the part after context_data=
+                    context_part = call_line.split("context_data=")[1]
+                    # Check if it's a tuple
+                    if context_part.strip().startswith("("):
+                        # Find the complete tuple by tracking parentheses
+                        open_count = 0
+                        tuple_str = ""
+                        for char in context_part:
+                            tuple_str += char
+                            if char == '(':
+                                open_count += 1
+                            elif char == ')':
+                                open_count -= 1
+                                if open_count == 0:
+                                    break
+
+                        # Extract variable names from the tuple
+                        var_names = [name.strip() for name in tuple_str.strip("()").split(",")]
                         if len(var_names) == len(context_data):
                             # We have matching variable names for each item in the tuple
                             for i, name in enumerate(var_names):

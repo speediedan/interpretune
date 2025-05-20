@@ -226,6 +226,27 @@ class TestClassUtils:
         assert debug_info["var_1"]["type"] == "int"
         assert debug_info["var_1"]["value"] == 123
 
+    def test_handle_exception_with_debug_dump_single_item(self, tmp_path):
+        """Test handle_exception_with_debug_dump with a single item context."""
+        test_exception = RuntimeError("Test single item context exception")
+        single_context = "single_value"
+
+        with patch("json.dump") as mock_dump, \
+             patch("os.makedirs"), \
+             patch("pathlib.Path.open"), \
+             patch("inspect.currentframe") as mock_frame, \
+             pytest.raises(RuntimeError):
+
+            # Mock the inspect frame to simulate caller context
+            mock_frame.return_value = None  # Simulate no frame info available
+            handle_exception_with_debug_dump(test_exception, single_context, debug_dir_override=tmp_path)
+
+        # Check that the single item was introspected
+        debug_info = mock_dump.call_args[0][0]
+        assert "context" in debug_info
+        assert debug_info["context"]["type"] == "str"
+        assert debug_info["context"]["value"] == "single_value"
+
     def test_handle_exception_with_debug_dump_with_frame(self, tmp_path):
         """Test handle_exception_with_debug_dump with frame information."""
         test_exception = Exception("Test frame exception")
@@ -333,6 +354,20 @@ class TestClassUtils:
             assert "problematic" in prob_result["attributes"]
             assert prob_result["attributes"]["problematic"] == "<error getting attribute>"
 
+        # Test with a type that triggers the fallback branch
+        test_set = {1, 2, 3}
+        set_result = _introspect_variable(test_set)
+        assert set_result["type"] == "set"
+        assert "repr" in set_result
+        assert set_result["repr"] == repr(test_set)
+
+        # Also test with another type that has no __dict__ but complex representation
+        test_complex = complex(3, 4)
+        complex_result = _introspect_variable(test_complex)
+        assert complex_result["type"] == "complex"
+        assert "repr" in complex_result
+        assert complex_result["repr"] == repr(test_complex)
+
     def test_json_serializer(self):
         """Test the _json_serializer function used for JSON encoding."""
         # Test with a serializable object
@@ -387,4 +422,58 @@ class TestClassUtils:
 
         assert debug_data["error"] == "Integration test exception"
         assert debug_data["test_key"] == "integration_value"
-        assert "traceback" in debug_data
+        assert debug_data["traceback"]
+
+    def test_handle_exception_with_debug_dump_default_dir(self, tmp_path, monkeypatch):
+        """Test handle_exception_with_debug_dump using the default directory path logic."""
+        test_exception = ValueError("Default dir test")
+        test_context = {"test_key": "test_value"}
+
+        # arrange a fake __file__ 4 levels deep under tmp_path
+        mock_file = tmp_path / "a" / "b" / "c" / "exceptions.py"
+        os.makedirs(mock_file.parent, exist_ok=True)
+
+        # prepare debug dir path
+        debug_dir = tmp_path / "debug"
+
+        # patch module __file__
+        import interpretune.utils.exceptions as exc_mod
+        orig_file = exc_mod.__file__
+        monkeypatch.setattr(exc_mod, "__file__", str(mock_file))
+
+        try:
+            # run under patches (no os.makedirs stub so real dir is created)
+            with patch("json.dump") as mock_dump, \
+                 patch("pathlib.Path.open", side_effect=open), \
+                 patch("datetime.datetime") as mock_datetime, \
+                 pytest.raises(ValueError):
+
+                # setup mock datetime for consistent timestamp
+                mock_dt = Mock()
+                mock_dt.strftime.return_value = "20250519_142500"
+                mock_datetime.now.return_value = mock_dt
+
+                handle_exception_with_debug_dump(test_exception, test_context, "default_dir_test")
+
+            # verify debug_dir was created
+            assert debug_dir.exists() and debug_dir.is_dir()
+
+            # glob for the single created JSON file
+            files = list(debug_dir.glob("default_dir_test_error_*.json"))
+            assert len(files) == 1, f"expected one debug file, found {files}"
+
+            # inspect the dumped data via mock_dump
+            debug_data = mock_dump.call_args[0][0]
+            assert debug_data["error"] == "Default dir test"
+            assert debug_data["test_key"] == "test_value"
+
+        finally:
+            # restore original __file__
+            monkeypatch.setattr(exc_mod, "__file__", orig_file)
+            # clean up debug files and directory
+            for f in debug_dir.glob("*.json"):
+                f.unlink()
+            try:
+                debug_dir.rmdir()
+            except OSError:
+                pass
