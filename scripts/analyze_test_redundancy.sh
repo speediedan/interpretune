@@ -28,9 +28,6 @@ unset profile_subset
 unset optional_subset
 unset mark_types_to_run
 
-# Add support for branch coverage disabling
-DISABLE_BRANCH_ANALYSIS=""
-
 usage(){
 >&2 cat << EOF
 Usage: $0
@@ -46,7 +43,6 @@ Usage: $0
                                     Default: "normal,standalone,profile_ci".
                                     If a specific subset (e.g. --profile-subset) is provided for a type
                                     not listed here, that type will still run (with a warning).
-   [ --disable-branch-analysis ]   Disable branch coverage analysis
    [ --dryrun ]                   Show commands without executing
    [ --help ]
 
@@ -66,8 +62,6 @@ Usage: $0
     # Run analysis for only normal and profile tests, with a specific profile subset:
     ./analyze_test_redundancy.sh --mark-types-to-run="normal,profile" --profile-subset="test_specific_profile"
 
-    # Disable branch coverage analysis:
-    ./analyze_test_redundancy.sh --disable-branch-analysis
 EOF
 exit 1
 }
@@ -92,7 +86,6 @@ do
     --mark-types-to-run) mark_types_to_run=$2 ; shift 2 ;;
     --dryrun)   dryrun=1 ; shift  ;;
     --help)    usage      ; shift   ;;
-    --disable-branch-analysis) DISABLE_BRANCH_ANALYSIS="--disable-branch-analysis" ; shift  ;;
     --) shift; break ;;
     *) >&2 echo Unsupported option: $1
        usage ;;
@@ -174,9 +167,7 @@ if [[ -n "${mark_types_to_run_param}" ]]; then # This param always exists due to
     cmd="${cmd} ${mark_types_to_run_param}"
 fi
 
-# Update the Python command with the branch option
-cmd="${cmd} ${DISABLE_BRANCH_ANALYSIS}"
-
+cmd="${cmd}"
 
 # Execute or show the command
 if [[ $dryrun -eq 1 ]]; then

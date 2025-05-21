@@ -175,7 +175,7 @@ show_contexts = True
             subset_cleaned = current_subset_str.strip("'\"") if current_subset_str else None
 
             # Pass the coverage data file path as an environment variable for special_tests.sh
-            env["COVERAGE_ANALYSIS_DATAFILE"] = str(self.coverage_config)
+            env["COVERAGE_ANALYSIS_CONFIG_FILE"] = str(self.coverage_config)
             cmd = ["bash", "tests/special_tests.sh", f"--mark_type={mark_type}"]
 
             # Add filter pattern if subset is specified
