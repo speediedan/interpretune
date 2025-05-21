@@ -2,7 +2,7 @@
 #
 # Utility script to run test coverage analysis and identify redundant tests
 # Uses analyze_test_coverage.py to track test coverage and find tests that can be removed
-# without affecting overall coverage.
+# without affecting overall coverage. Now analyzes both statement and branch coverage.
 #
 # Usage examples:
 # Run analysis with default settings:
@@ -15,6 +15,7 @@
 #   ./analyze_test_redundancy.sh --normal-subset="test_feature1 or test_feature2" --standalone-subset="test_standalone1"
 #
 # Author: Created by GitHub Copilot on May 20, 2025
+# Modified to support branch coverage analysis
 set -eo pipefail
 
 unset output_dir
@@ -26,6 +27,9 @@ unset profile_ci_subset
 unset profile_subset
 unset optional_subset
 unset mark_types_to_run
+
+# Add support for branch coverage disabling
+DISABLE_BRANCH_ANALYSIS=""
 
 usage(){
 >&2 cat << EOF
@@ -42,6 +46,7 @@ Usage: $0
                                     Default: "normal,standalone,profile_ci".
                                     If a specific subset (e.g. --profile-subset) is provided for a type
                                     not listed here, that type will still run (with a warning).
+   [ --disable-branch-analysis ]   Disable branch coverage analysis
    [ --dryrun ]                   Show commands without executing
    [ --help ]
 
@@ -60,6 +65,9 @@ Usage: $0
 
     # Run analysis for only normal and profile tests, with a specific profile subset:
     ./analyze_test_redundancy.sh --mark-types-to-run="normal,profile" --profile-subset="test_specific_profile"
+
+    # Disable branch coverage analysis:
+    ./analyze_test_redundancy.sh --disable-branch-analysis
 EOF
 exit 1
 }
@@ -84,6 +92,7 @@ do
     --mark-types-to-run) mark_types_to_run=$2 ; shift 2 ;;
     --dryrun)   dryrun=1 ; shift  ;;
     --help)    usage      ; shift   ;;
+    --disable-branch-analysis) DISABLE_BRANCH_ANALYSIS="--disable-branch-analysis" ; shift  ;;
     --) shift; break ;;
     *) >&2 echo Unsupported option: $1
        usage ;;
@@ -164,6 +173,9 @@ fi
 if [[ -n "${mark_types_to_run_param}" ]]; then # This param always exists due to default in python script, but user can override
     cmd="${cmd} ${mark_types_to_run_param}"
 fi
+
+# Update the Python command with the branch option
+cmd="${cmd} ${DISABLE_BRANCH_ANALYSIS}"
 
 
 # Execute or show the command

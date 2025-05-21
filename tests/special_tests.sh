@@ -129,7 +129,8 @@ define_configuration(){
 
   if [[ -n "${COVERAGE_ANALYSIS_DATAFILE}" ]]; then
     echo "Using coverage rc file: ${COVERAGE_ANALYSIS_DATAFILE}" | tee -a $special_test_session_log
-    exec_defaults="-m pytest --cov --cov-config=${COVERAGE_ANALYSIS_DATAFILE} --cov-append --cov-context=test --capture=no --no-header -v -s -rA"
+    # Updated to use --cov-branch and --cov-context for more granular test parameterization tracking
+    exec_defaults="-m pytest --cov --cov-branch --cov-config=${COVERAGE_ANALYSIS_DATAFILE} --cov-append --cov-context=test --capture=no --no-header -v -s -rA"
   fi
 
   if [ -s "${experiments_list}" ]; then

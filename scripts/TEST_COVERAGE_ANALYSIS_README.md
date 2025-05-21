@@ -4,23 +4,23 @@ This tool analyzes your test suite to identify redundant tests that can be remov
 
 ## Overview
 
-The test coverage redundancy analyzer uses coverage.py's dynamic contexts feature to track which lines of code are covered by which tests. By analyzing this data, it can:
+The test coverage redundancy analyzer uses coverage.py's dynamic contexts feature to track which lines of code and which branches are covered by which tests. By analyzing this data, it can:
 
-1. Identify "essential tests" that uniquely cover at least one line of code
-2. Find tests that only cover lines already covered by other tests
-3. Use a greedy algorithm to find a minimal set of tests that maintain full coverage
-4. Generate reports to help you decide which tests to keep or remove
+1. Identify "essential tests" (at statement and branch levels) that uniquely cover at least one line of code or one branch.
+2. Find tests that only cover lines or branches already covered by other tests.
+3. Use a greedy algorithm to find a minimal set of tests that maintain full statement and branch coverage.
+4. Generate reports to help you decide which tests to keep or remove.
 
 ## How It Works
 
 The analyzer works in several steps:
 
-1. Sets up a `.coveragerc` file configured to use dynamic contexts  (via the pytest-cov plugin)
-2. Runs your test suite (both regular pytest tests and special tests) with coverage tracking
-3. Analyzes the coverage database to extract line-to-test mappings
-4. Identifies essential tests that cannot be removed without losing coverage
-5. Ranks remaining tests by their redundancy (how much of their coverage is also provided by other tests)
-6. Uses a greedy algorithm to find a minimal test set that maintains full coverage
+1. Sets up a `.coveragerc` file configured to use dynamic contexts and collect branch coverage (via the pytest-cov plugin)
+2. Runs your test suite (both regular pytest tests and special tests) with coverage tracking (including branch coverage)
+3. Analyzes the coverage database to extract line-to-test and branch-to-test mappings
+4. Identifies essential tests (for both statement and branch coverage) that cannot be removed without losing coverage
+5. Ranks remaining tests by their redundancy (how much of their statement and branch coverage is also provided by other tests)
+6. Uses a greedy algorithm to find a minimal test set that maintains full statement and branch coverage
 7. Generates reports with findings and recommendations
 
 ## Usage
@@ -69,21 +69,26 @@ The analyzer works in several steps:
 
 After running the analysis, you'll find these files in the output directory:
 
-- `test_coverage_analysis_report.txt`: Summary report with key findings
-- `essential_tests.json`: Tests that uniquely cover at least one line
-- `removal_candidates.json`: Tests that could potentially be removed
-- `minimization_stats.json`: Results of the greedy test minimization
-- `test_to_lines.json`: Mapping of which tests cover which lines
-- `line_to_tests.json`: Mapping of which lines are covered by which tests
-- `unique_coverage.json`: Lines uniquely covered by each essential test
+- `test_coverage_analysis_report.txt`: Summary report with key findings for both statement and branch coverage.
+- `statement_level_base.json`: Tests that uniquely cover at least one line of code.
+- `statement_level_redundant.json`: Tests whose statement coverage could potentially be redundant.
+- `branch_level_base.json`: Tests that uniquely cover at least one branch.
+- `branch_level_redundant.json`: Tests whose branch coverage could potentially be redundant.
+- `minimization_stats.json`: Results of the greedy test minimization (may include separate stats for statement and branch).
+- `test_to_lines.json`: Mapping of which tests cover which lines (statements).
+- `line_to_tests.json`: Mapping of which lines (statements) are covered by which tests.
+- `unique_statement_coverage.json`: Lines uniquely covered by each statement-level essential test.
+- `test_to_branches.json`: (New) Mapping of which tests cover which branches.
+- `branch_to_tests.json`: (New) Mapping of which branches are covered by which tests.
+- `unique_branch_coverage.json`: (New) Branches uniquely covered by each branch-level essential test.
 
 ### Interpreting Results
 
 The main report (`test_coverage_analysis_report.txt`) provides:
 
-1. Statistics about your test suite
-2. A list of top candidates for removal, ranked by redundancy
-3. Results of the greedy minimization algorithm
+1. Statistics about your test suite (including statement and branch coverage metrics).
+2. Lists of top candidates for removal, ranked by redundancy (for both statement and branch coverage).
+3. Results of the greedy minimization algorithm (for both statement and branch coverage).
 4. Recommendations for next steps
 
 Tests are ranked for removal based on:
@@ -114,7 +119,7 @@ When considering test removal:
 
 ## Limitations
 
-- The analysis focuses on line coverage only, not branch coverage or assertion quality
+- The analysis focuses on line and branch coverage, not assertion quality directly.
 - Special test marker extraction might need adjustment based on your specific test organization
 - For very large test suites, the analysis may take significant time and memory
 - Some tests might still have value beyond coverage (e.g., complex state validations)
