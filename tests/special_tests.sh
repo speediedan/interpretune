@@ -127,6 +127,11 @@ define_configuration(){
       ;;
   esac
 
+  if [[ -n "${COVERAGE_ANALYSIS_DATAFILE}" ]]; then
+    echo "Using coverage rc file: ${COVERAGE_ANALYSIS_DATAFILE}" | tee -a $special_test_session_log
+    exec_defaults="-m pytest --cov --cov-config=${COVERAGE_ANALYSIS_DATAFILE} --cov-append --cov-context=test --capture=no --no-header -v -s -rA"
+  fi
+
   if [ -s "${experiments_list}" ]; then
     # toggle optional experimental patches if requested
     toggle_experimental_patches ${experiments_list} "${experiment_patch_mask[@]}"
