@@ -26,7 +26,8 @@ class TestCoverageAnalyzer:
     """Analyzes test coverage and identifies redundant tests."""
 
     def __init__(self, output_dir=None, max_candidates=None, normal_subset=None,
-                 standalone_subset=None, profile_ci_subset=None):
+                 standalone_subset=None, profile_ci_subset=None,
+                 profile_subset=None, optional_subset=None, mark_types_to_run=None):
         """Initialize the analyzer with configuration options.
 
         Args:
@@ -35,13 +36,26 @@ class TestCoverageAnalyzer:
             normal_subset: Filter expression for normal pytest tests (e.g., "test_1 or test_2")
             standalone_subset: Filter expression for standalone tests (e.g., "test_3 or test_4")
             profile_ci_subset: Filter expression for profile_ci tests (e.g., "test_5 or test_6")
+            profile_subset: Filter expression for profile tests (e.g., "test_7 or test_8")
+            optional_subset: Filter expression for optional tests (e.g., "test_9 or test_10")
+            mark_types_to_run: Comma-separated string of mark types to run (default: "normal,standalone,profile_ci")
         """
         self.output_dir = Path(output_dir or '.')
         self.max_candidates = max_candidates
         self.normal_subset = normal_subset
         self.standalone_subset = standalone_subset
         self.profile_ci_subset = profile_ci_subset
+        self.profile_subset = profile_subset
+        self.optional_subset = optional_subset
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Parse mark_types_to_run
+        # Default comes from argparse, so mark_types_to_run is always a string.
+        if mark_types_to_run and mark_types_to_run.strip():
+            self.mark_types_to_run = {s.strip() for s in mark_types_to_run.split(',') if s.strip()}
+        else: # User provided an empty string e.g. --mark-types-to-run ""
+            self.mark_types_to_run = set()
+
 
         # Set up paths for coverage data
         self.coverage_db = self.output_dir / '.coverage'
@@ -83,44 +97,90 @@ show_contexts = True
         """Run pytest with coverage to collect test-specific coverage data."""
         # Ensure coverage data file is created in the output directory
 
-        # Run regular tests with pytest-cov
-        cmd = [
-            "python", "-m", "pytest", "--cov", f"--cov-config={self.coverage_config}", "--cov-append",
-            "--cov-context=test", "tests", "-v"
-        ]
+        # Determine if normal tests should run
+        run_normal_tests = "normal" in self.mark_types_to_run
+        if self.normal_subset and "normal" not in self.mark_types_to_run:
+            print(
+                f"Warning: --normal-subset is provided, but 'normal' is not in --mark-types-to-run "
+                f"('{','.join(sorted(list(self.mark_types_to_run)))}'). "
+                "Running 'normal' tests due to the subset filter."
+            )
+            run_normal_tests = True
 
-        # Add normal subset filter if specified
-        if self.normal_subset:
-            # Remove any surrounding quotes that might have been carried over from the shell
-            normal_subset = self.normal_subset.strip("'\"")
-            # Use the filter expression directly as a pytest -k expression
-            cmd.extend(["-k", normal_subset])
+        if run_normal_tests:
+            # Run regular tests with pytest-cov
+            cmd = [
+                "python", "-m", "pytest", "--cov", f"--cov-config={self.coverage_config}", "--cov-append",
+                "--cov-context=test", "tests", "-v"
+            ]
 
-        print(f"Running command: {' '.join(cmd)}")
-        subprocess.run(cmd, check=True)
+            # Add normal subset filter if specified
+            if self.normal_subset:
+                # Remove any surrounding quotes that might have been carried over from the shell
+                normal_subset_cleaned = self.normal_subset.strip("'\"")
+                # Use the filter expression directly as a pytest -k expression
+                cmd.extend(["-k", normal_subset_cleaned])
+
+            print(f"Running command: {' '.join(cmd)}")
+            subprocess.run(cmd, check=True)
+        else:
+            print(
+                "Skipping normal tests as 'normal' is not in --mark-types-to-run and "
+                "--normal-subset is not provided."
+            )
+
 
         # Run special tests with different mark types
-        special_tests_mark_types = ["standalone", "profile_ci"]
-        for mark_type in special_tests_mark_types:
+        all_special_mark_types = ["standalone", "profile_ci", "profile", "optional"]
+
+        env_vars_config = {
+            "standalone": {"IT_RUN_STANDALONE_TESTS": "1"},
+            "profile_ci": {"IT_RUN_PROFILING_TESTS": "1"},
+            "profile": {"IT_RUN_PROFILING_TESTS": "2"},
+            "optional": {"IT_RUN_OPTIONAL_TESTS": "1"},
+        }
+
+        subset_config = {
+            "standalone": self.standalone_subset,
+            "profile_ci": self.profile_ci_subset,
+            "profile": self.profile_subset,
+            "optional": self.optional_subset,
+        }
+
+        for mark_type in all_special_mark_types:
             env = os.environ.copy()
+            current_subset_str = subset_config.get(mark_type)
+
+            run_this_mark_type = mark_type in self.mark_types_to_run
+
+            if current_subset_str and mark_type not in self.mark_types_to_run:
+                print(
+                    f"Warning: --{mark_type}-subset is provided, but '{mark_type}' is not in "
+                    f"--mark-types-to-run ('{','.join(sorted(list(self.mark_types_to_run)))}'). "
+                    f"Running '{mark_type}' tests due to the subset filter."
+                )
+                run_this_mark_type = True
+
+            if not run_this_mark_type:
+                print(
+                    f"Skipping '{mark_type}' tests as it's not in --mark-types-to-run and "
+                    f"--{mark_type}-subset is not provided."
+                )
+                continue
 
             # Set up environment variables needed by special_tests.sh
-            if mark_type == "standalone":
-                env["IT_RUN_STANDALONE_TESTS"] = "1"
-                subset = self.standalone_subset.strip("'\"") if self.standalone_subset else None
-            elif mark_type == "profile_ci":
-                env["IT_RUN_PROFILING_TESTS"] = "1"
-                subset = self.profile_ci_subset.strip("'\"") if self.profile_ci_subset else None
-            else:
-                subset = None
+            for var, value in env_vars_config.get(mark_type, {}).items():
+                env[var] = value
+
+            subset_cleaned = current_subset_str.strip("'\"") if current_subset_str else None
 
             # Pass the coverage data file path as an environment variable for special_tests.sh
             env["COVERAGE_ANALYSIS_DATAFILE"] = str(self.coverage_config)
             cmd = ["bash", "tests/special_tests.sh", f"--mark_type={mark_type}"]
 
             # Add filter pattern if subset is specified
-            if subset:
-                cmd.extend([f"--filter_pattern={subset}"])
+            if subset_cleaned:
+                cmd.extend([f"--filter_pattern={subset_cleaned}"])
 
             print(f"Running command: {' '.join(cmd)}")
             subprocess.run(cmd, env=env, check=True)
@@ -470,6 +530,23 @@ def main():
         '--profile-ci-subset',
         help='Filter expression for profile_ci tests (e.g., "test_profile1 or test_profile2")'
     )
+    parser.add_argument(
+        '--profile-subset',
+        help='Filter expression for profile tests (e.g., "test_profile_A or test_profile_B")'
+    )
+    parser.add_argument(
+        '--optional-subset',
+        help='Filter expression for optional tests (e.g., "test_optional_X or test_optional_Y")'
+    )
+    parser.add_argument(
+        '--mark-types-to-run',
+        default="normal,standalone,profile_ci",
+        help='Comma-separated list of mark types to run (e.g., "normal,standalone,profile"). '
+             'Supported types: normal, standalone, profile_ci, profile, optional. '
+             'Default: "normal,standalone,profile_ci". '
+             'If a specific subset (e.g. --profile-subset) is provided for a mark type not listed here, '
+             'that mark type will still be run with a warning.'
+    )
     args = parser.parse_args()
 
     analyzer = TestCoverageAnalyzer(
@@ -477,7 +554,10 @@ def main():
         max_candidates=args.max_candidates,
         normal_subset=args.normal_subset,
         standalone_subset=args.standalone_subset,
-        profile_ci_subset=args.profile_ci_subset
+        profile_ci_subset=args.profile_ci_subset,
+        profile_subset=args.profile_subset,
+        optional_subset=args.optional_subset,
+        mark_types_to_run=args.mark_types_to_run
     )
 
     try:

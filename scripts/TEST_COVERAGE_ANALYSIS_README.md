@@ -43,6 +43,24 @@ The analyzer works in several steps:
 # Run with complex filter patterns including brackets (make sure to quote properly)
 ./scripts/analyze_test_redundancy.sh --normal-subset="test_core[param1] or test_utils[param2]"
 
+# Run analysis for specific test subsets for different mark types
+./scripts/analyze_test_redundancy.sh \
+  --normal-subset="test_core_feature" \
+  --standalone-subset="test_standalone_utility" \
+  --profile-ci-subset="test_ci_profile_critical" \
+  --profile-subset="test_specific_profile_scenario" \
+  --optional-subset="test_optional_integration"
+
+# Specify which mark types to run (default is "normal,standalone,profile_ci")
+# This example runs only normal and profile tests:
+./scripts/analyze_test_redundancy.sh --mark-types-to-run="normal,profile"
+
+# If a subset is provided for a mark type not in --mark-types-to-run,
+# that mark type will still be run with a warning.
+# Example: only 'normal' is specified, but '--profile-subset' is also given.
+# 'profile' tests matching the subset will run.
+./scripts/analyze_test_redundancy.sh --mark-types-to-run="normal" --profile-subset="test_important_profile"
+
 # Just show what would be run (dry run)
 ./scripts/analyze_test_redundancy.sh --dryrun
 ```
