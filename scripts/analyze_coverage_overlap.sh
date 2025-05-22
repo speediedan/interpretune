@@ -6,13 +6,15 @@
 #
 # Usage examples:
 # Run analysis with default settings:
-#   ./analyze_test_redundancy.sh
+#   ./analyze_coverage_overlap.sh
 # Run analysis with custom output directory:
-#   ./analyze_test_redundancy.sh --output-dir=/path/to/output
+#   ./analyze_coverage_overlap.sh --output-dir=/path/to/output
 # Run analysis limiting to top 100 removal candidates:
-#   ./analyze_test_redundancy.sh --max-candidates=100
+#   ./analyze_coverage_overlap.sh --max-candidates=100
 # Run analysis for specific test subsets:
-#   ./analyze_test_redundancy.sh --normal-subset="test_feature1 or test_feature2" --standalone-subset="test_standalone1"
+#   ./analyze_coverage_overlap.sh --normal-subset="test_feature1 or test_feature2" --standalone-subset="test_standalone1"
+# Run analysis with branch-level coverage instead of statement-level:
+#   ./analyze_coverage_overlap.sh --branch-level
 #
 # Author: Created by GitHub Copilot on May 20, 2025
 # Modified to support branch coverage analysis
@@ -27,6 +29,7 @@ unset profile_ci_subset
 unset profile_subset
 unset optional_subset
 unset mark_types_to_run
+unset branch_level
 
 usage(){
 >&2 cat << EOF
@@ -43,31 +46,35 @@ Usage: $0
                                     Default: "normal,standalone,profile_ci".
                                     If a specific subset (e.g. --profile-subset) is provided for a type
                                     not listed here, that type will still run (with a warning).
+   [ --branch-level ]             Perform branch-level analysis instead of statement-level (default)
    [ --dryrun ]                   Show commands without executing
    [ --help ]
 
    Examples:
     # Run analysis with default settings:
-    ./analyze_test_redundancy.sh
+    ./analyze_coverage_overlap.sh
 
     # Run analysis with custom output directory:
-    ./analyze_test_redundancy.sh --output-dir=/tmp/test_analysis
+    ./analyze_coverage_overlap.sh --output-dir=/tmp/test_analysis
 
     # Run analysis limiting to top 50 removal candidates:
-    ./analyze_test_redundancy.sh --max-candidates=50
+    ./analyze_coverage_overlap.sh --max-candidates=50
 
     # Run analysis for specific test subsets:
-    ./analyze_test_redundancy.sh --normal-subset="test_feature1 or test_feature2" --standalone-subset="test_standalone1"
+    ./analyze_coverage_overlap.sh --normal-subset="test_feature1 or test_feature2" --standalone-subset="test_standalone1"
 
     # Run analysis for only normal and profile tests, with a specific profile subset:
-    ./analyze_test_redundancy.sh --mark-types-to-run="normal,profile" --profile-subset="test_specific_profile"
+    ./analyze_coverage_overlap.sh --mark-types-to-run="normal,profile" --profile-subset="test_specific_profile"
+
+    # Run analysis with branch-level coverage:
+    ./analyze_coverage_overlap.sh --branch-level
 
 EOF
 exit 1
 }
 
 args=$(getopt -o '' \
-    --long output-dir:,max-candidates:,normal-subset:,standalone-subset:,profile-ci-subset:,profile-subset:,optional-subset:,mark-types-to-run:,dryrun,help -- "$@")
+    --long output-dir:,max-candidates:,normal-subset:,standalone-subset:,profile-ci-subset:,profile-subset:,optional-subset:,mark-types-to-run:,branch-level,dryrun,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -84,6 +91,7 @@ do
     --profile-subset)  profile_subset=$2  ; shift 2 ;;
     --optional-subset)  optional_subset=$2  ; shift 2 ;;
     --mark-types-to-run) mark_types_to_run=$2 ; shift 2 ;;
+    --branch-level) branch_level=1 ; shift ;;
     --dryrun)   dryrun=1 ; shift  ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
@@ -106,6 +114,7 @@ profile_ci_subset_param=""
 profile_subset_param=""
 optional_subset_param=""
 mark_types_to_run_param=""
+branch_level_param=""
 
 if [[ -n "${max_candidates}" ]]; then
     max_candidates_param="--max-candidates=${max_candidates}"
@@ -130,6 +139,9 @@ if [[ -n "${optional_subset}" ]]; then
 fi
 if [[ -n "${mark_types_to_run}" ]]; then
     mark_types_to_run_param="--mark-types-to-run=${mark_types_to_run}"
+fi
+if [[ -n "${branch_level}" ]]; then
+    branch_level_param="--branch-level"
 fi
 
 
@@ -166,6 +178,9 @@ fi
 if [[ -n "${mark_types_to_run_param}" ]]; then # This param always exists due to default in python script, but user can override
     cmd="${cmd} ${mark_types_to_run_param}"
 fi
+if [[ -n "${branch_level_param}" ]]; then
+    cmd="${cmd} ${branch_level_param}"
+fi
 
 cmd="${cmd}"
 
@@ -181,14 +196,19 @@ else
     mkdir -p "${output_dir}"
 
     echo "Starting test coverage analysis at ${d}"
+    if [[ -n "${branch_level}" ]]; then
+        echo "Running branch-level coverage analysis"
+    else
+        echo "Running statement-level coverage analysis (default)"
+    fi
     echo "This may take a while depending on the size of your test suite..."
     echo "Log will be written to: ${analysis_log}"
 
     # Run the analysis - use eval to properly handle the quoted parameters
     eval "$cmd" 2>&1 | tee "${analysis_log}"
 
-    echo ""
-    echo "Analysis complete!"
     echo "Results are available in: ${output_dir}"
     echo "Summary report: ${output_dir}/test_coverage_analysis_report.txt"
+    echo "HTML coverage report: ${output_dir}/html_report/"
+    echo "JSON coverage report: ${output_dir}/coverage.json"
 fi

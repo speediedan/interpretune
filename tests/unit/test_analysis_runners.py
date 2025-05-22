@@ -57,10 +57,23 @@ class TestAnalysisRunner:
             assert it_session.module.analysis_cfg.op.name == "model_forward"
 
     @pytest.fixture
-    def mock_analysis_module(self):
+    def mock_analysis_module(self, tmp_path):
         """Create a mock module for analysis testing."""
+        # Use a normal MagicMock without spec for flexibility
         module = MagicMock()
-        module.analysis_step.return_value = [AnalysisBatch(logit_diffs=torch.tensor([0.5]))]
+        # Add analysis_step method
+        module.analysis_step = MagicMock(return_value=[AnalysisBatch(logit_diffs=torch.tensor([0.5]))])
+
+        # Create a real Path object in the temporary test directory
+        # This ensures any operations on core_log_dir will be confined to the pytest-managed tmp_path
+        core_log_dir = tmp_path / "core_log_dir"
+        core_log_dir.mkdir(exist_ok=True)
+        module.core_log_dir = core_log_dir
+
+        # Set name attributes
+        module.name = "mock_module"
+        module.__class__.__name__ = "MockAnalysisModule"
+
         return module
 
     @pytest.fixture
@@ -101,7 +114,7 @@ class TestAnalysisRunner:
 
     def test_maybe_init_analysis_cfg(self, mock_analysis_module):
         """Test the maybe_init_analysis_cfg function directly."""
-        analysis_cfg = AnalysisCfg(target_op=it.model_forward, ignore_manual=True)
+        analysis_cfg = AnalysisCfg(name="test_analysis_cfg_direct", target_op=it.model_forward, ignore_manual=True)
 
         # Test with extra kwargs that should be filtered
         extra_kwargs = {"cache_dir": "/tmp/test", "unknown_param": "value"}
