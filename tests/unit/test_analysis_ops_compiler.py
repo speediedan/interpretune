@@ -14,8 +14,43 @@ from interpretune.analysis.ops.compiler.schema_compiler import (_compile_composi
                                                                load_and_compile_operations)
 
 
-class TestSchemaCompilerCore:
+class TestSchemaCompilation:
     """Tests for the core schema compilation functionality."""
+
+    def test_load_and_compile_operations(self):
+        """Test load_and_compile_operations basic functionality."""
+        # Create a temporary YAML file
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.yaml') as temp:
+            yaml_content = {
+                "op1": {
+                    "input_schema": {"input1": {}},
+                    "output_schema": {"output1": {}}
+                },
+                "composite_operations": {
+                    "composite_op": {
+                        "composition": "op1",
+                        "aliases": ["composite_alias"]
+                    }
+                }
+            }
+            yaml.dump(yaml_content, temp)
+            temp_path = temp.name
+
+        try:
+            # Mock yaml.safe_load to return our content
+            with patch('yaml.safe_load', return_value=yaml_content):
+                # Call the function
+                result = load_and_compile_operations(temp_path)
+
+                # Verify results
+                assert "op1" in result
+                assert "composite_op" in result
+                assert result["composite_op"]["aliases"] == ["composite_alias"]
+
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
     def test_compile_composition_schema_core_basic(self):
         """Test basic functionality of _compile_composition_schema_core."""
@@ -94,10 +129,6 @@ class TestSchemaCompilerCore:
         assert "intermediate1" not in output_schema
         assert "output1" in output_schema
         assert "output2" in output_schema
-
-
-class TestJitCompileCompositionSchema:
-    """Tests for jit_compile_composition_schema function."""
 
     def test_jit_compile_string_operations(self):
         """Test jit_compile_composition_schema with string operations."""
@@ -403,10 +434,6 @@ class TestJitCompileCompositionSchema:
         empty_result = get_schema({})
         assert empty_result == {}
 
-
-class TestCompileOperationCompositionSchema:
-    """Tests for compile_operation_composition_schema function."""
-
     def test_compile_operation_composition(self):
         """Test compile_operation_composition_schema basic functionality."""
         # Mock operation definitions
@@ -466,7 +493,6 @@ class TestCompileOperationCompositionSchema:
         assert output_schema["object_field"]["datasets_dtype"] == "string"
         assert output_schema["object_field"]["non_tensor"] is True
 
-
 class TestBuildOperationCompositions:
     """Tests for build_operation_compositions function."""
 
@@ -519,42 +545,3 @@ class TestBuildOperationCompositions:
         # Verify object field was converted
         assert result["op_with_object"]["output_schema"]["object_field"]["datasets_dtype"] == "string"
         assert result["op_with_object"]["output_schema"]["object_field"]["non_tensor"] is True
-
-
-class TestLoadAndCompileOperations:
-    """Tests for load_and_compile_operations function."""
-
-    def test_load_and_compile_operations(self):
-        """Test load_and_compile_operations basic functionality."""
-        # Create a temporary YAML file
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.yaml') as temp:
-            yaml_content = {
-                "op1": {
-                    "input_schema": {"input1": {}},
-                    "output_schema": {"output1": {}}
-                },
-                "composite_operations": {
-                    "composite_op": {
-                        "composition": "op1",
-                        "aliases": ["composite_alias"]
-                    }
-                }
-            }
-            yaml.dump(yaml_content, temp)
-            temp_path = temp.name
-
-        try:
-            # Mock yaml.safe_load to return our content
-            with patch('yaml.safe_load', return_value=yaml_content):
-                # Call the function
-                result = load_and_compile_operations(temp_path)
-
-                # Verify results
-                assert "op1" in result
-                assert "composite_op" in result
-                assert result["composite_op"]["aliases"] == ["composite_alias"]
-
-        finally:
-            # Clean up the temporary file
-            if os.path.exists(temp_path):
-                os.remove(temp_path)

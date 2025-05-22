@@ -16,8 +16,7 @@ from tests.base_defaults import BaseAugTest, pytest_factory, OpTestConfig
 from tests.orchestration import run_op_with_config
 
 
-class TestBooleanLogitFunctions:
-    """Tests for the boolean logits utility functions."""
+class TestFunctionalOpArgs:
 
     def test_boolean_logits_to_avg_logit_diff(self):
         """Test the boolean_logits_to_avg_logit_diff function."""
@@ -79,10 +78,6 @@ class TestBooleanLogitFunctions:
         mock_module.loss_fn.assert_called_once()
         mock_module.standardize_logits.assert_called_once_with(answer_logits)
         mock_logit_diff_fn.assert_called_once()
-
-
-class TestAblationFunctions:
-    """Tests for the ablation-related functions."""
 
     def test_ablate_sae_latent(self):
         """Test the ablate_sae_latent function."""

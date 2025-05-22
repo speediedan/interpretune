@@ -240,50 +240,50 @@ class TestColCfg:
             assert hash(cfg1) != hash(modified_cfg), f"Changing {attr_name} did not change the hash"
 
 
-class TestReconstructOp:
-    """Tests for the _reconstruct_op function."""
+# class TestReconstructOp:
+#     """Tests for the _reconstruct_op function."""
 
-    def test_reconstruct_op_basic(self):
-        """Test _reconstruct_op function for a basic AnalysisOp."""
-        # Create an operation
-        op = AnalysisOp(
-            name="test_op",
-            description="Test operation",
-            output_schema=OpSchema({"field": ColCfg(datasets_dtype="float32")})
-        )
+#     def test_reconstruct_op_basic(self):
+#         """Test _reconstruct_op function for a basic AnalysisOp."""
+#         # Create an operation
+#         op = AnalysisOp(
+#             name="test_op",
+#             description="Test operation",
+#             output_schema=OpSchema({"field": ColCfg(datasets_dtype="float32")})
+#         )
 
-        # Get state dictionary
-        state = op.__dict__.copy()
+#         # Get state dictionary
+#         state = op.__dict__.copy()
 
-        # Use _reconstruct_op to recreate the operation
-        reconstructed_op = _reconstruct_op(AnalysisOp, state)
+#         # Use _reconstruct_op to recreate the operation
+#         reconstructed_op = _reconstruct_op(AnalysisOp, state)
 
-        # Check equivalence
-        assert reconstructed_op.name == op.name
-        assert reconstructed_op.description == op.description
-        assert reconstructed_op.output_schema == op.output_schema
+#         # Check equivalence
+#         assert reconstructed_op.name == op.name
+#         assert reconstructed_op.description == op.description
+#         assert reconstructed_op.output_schema == op.output_schema
 
-    def test_pickling_analysis_op(self):
-        """Test pickling and unpickling of AnalysisOp."""
-        # Create an operation with various attributes
-        op = AnalysisOp(
-            name="test_pickle_op",
-            description="Operation for pickle testing",
-            output_schema=OpSchema({"field1": ColCfg(datasets_dtype="float32")}),
-            input_schema=OpSchema({"input_field": ColCfg(datasets_dtype="int64")}),
-            aliases=["test_alias"]
-        )
+#     def test_pickling_analysis_op(self):
+#         """Test pickling and unpickling of AnalysisOp."""
+#         # Create an operation with various attributes
+#         op = AnalysisOp(
+#             name="test_pickle_op",
+#             description="Operation for pickle testing",
+#             output_schema=OpSchema({"field1": ColCfg(datasets_dtype="float32")}),
+#             input_schema=OpSchema({"input_field": ColCfg(datasets_dtype="int64")}),
+#             aliases=["test_alias"]
+#         )
 
-        # Pickle and unpickle
-        pickled_op = pickle.dumps(op)
-        unpickled_op = pickle.loads(pickled_op)
+#         # Pickle and unpickle
+#         pickled_op = pickle.dumps(op)
+#         unpickled_op = pickle.loads(pickled_op)
 
-        # Check equivalence
-        assert unpickled_op.name == op.name
-        assert unpickled_op.description == op.description
-        assert unpickled_op.output_schema == op.output_schema
-        assert unpickled_op.input_schema == op.input_schema
-        assert unpickled_op._aliases == op._aliases
+#         # Check equivalence
+#         assert unpickled_op.name == op.name
+#         assert unpickled_op.description == op.description
+#         assert unpickled_op.output_schema == op.output_schema
+#         assert unpickled_op.input_schema == op.input_schema
+#         assert unpickled_op._aliases == op._aliases
 
 
 class TestOpSchema:
@@ -1339,3 +1339,45 @@ class TestOpWrapper:
         assert isinstance(current_module.mock_op, AnalysisOp)
         assert wrapper._instantiated_op is mock_op
         assert wrapper._is_instantiated is True
+
+    def test_reconstruct_op_basic(self):
+        """Test _reconstruct_op function for a basic AnalysisOp."""
+        # Create an operation
+        op = AnalysisOp(
+            name="test_op",
+            description="Test operation",
+            output_schema=OpSchema({"field": ColCfg(datasets_dtype="float32")})
+        )
+
+        # Get state dictionary
+        state = op.__dict__.copy()
+
+        # Use _reconstruct_op to recreate the operation
+        reconstructed_op = _reconstruct_op(AnalysisOp, state)
+
+        # Check equivalence
+        assert reconstructed_op.name == op.name
+        assert reconstructed_op.description == op.description
+        assert reconstructed_op.output_schema == op.output_schema
+
+    def test_pickling_analysis_op(self):
+        """Test pickling and unpickling of AnalysisOp."""
+        # Create an operation with various attributes
+        op = AnalysisOp(
+            name="test_pickle_op",
+            description="Operation for pickle testing",
+            output_schema=OpSchema({"field1": ColCfg(datasets_dtype="float32")}),
+            input_schema=OpSchema({"input_field": ColCfg(datasets_dtype="int64")}),
+            aliases=["test_alias"]
+        )
+
+        # Pickle and unpickle
+        pickled_op = pickle.dumps(op)
+        unpickled_op = pickle.loads(pickled_op)
+
+        # Check equivalence
+        assert unpickled_op.name == op.name
+        assert unpickled_op.description == op.description
+        assert unpickled_op.output_schema == op.output_schema
+        assert unpickled_op.input_schema == op.input_schema
+        assert unpickled_op._aliases == op._aliases
