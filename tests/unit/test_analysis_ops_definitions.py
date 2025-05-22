@@ -131,9 +131,9 @@ class TestLabelsAndIndicesFunctions:
         result_batch = labels_to_ids_impl(mock_module, existing_batch, mock_batch, 0)
 
         # Verify the results
-        assert hasattr(result_batch, "labels")
+        assert hasattr(result_batch, "label_ids")
         assert hasattr(result_batch, "orig_labels")
-        assert torch.equal(result_batch.labels, torch.tensor([0, 1]))
+        assert torch.equal(result_batch.label_ids, torch.tensor([0, 1]))
         assert torch.equal(result_batch.orig_labels, torch.tensor([0, 1]))
 
     def test_get_answer_indices_impl(self):

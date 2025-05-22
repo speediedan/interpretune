@@ -843,7 +843,7 @@ class TestAnalysisOp:
             # Set multiple protocol-defined attributes
             result.logit_diffs = torch.tensor([0.5, 1.0])
             result.loss = torch.tensor([0.1, 0.2])
-            result.labels = torch.tensor([1, 0])
+            result.label_ids = torch.tensor([1, 0])
             result.answer_logits = torch.tensor([[0.3, 0.7], [0.6, 0.4]])
             return result
 
@@ -865,7 +865,7 @@ class TestAnalysisOp:
         # Check results using protocol attributes
         assert torch.equal(result.logit_diffs, torch.tensor([0.5, 1.0]))
         assert torch.equal(result.loss, torch.tensor([0.1, 0.2]))
-        assert torch.equal(result.labels, torch.tensor([1, 0]))
+        assert torch.equal(result.label_ids, torch.tensor([1, 0]))
         assert torch.equal(result.answer_logits, torch.tensor([[0.3, 0.7], [0.6, 0.4]]))
 
     def test_to_cpu_protocol_attributes(self):

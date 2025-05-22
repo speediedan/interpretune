@@ -973,7 +973,7 @@ def base_vs_sae_logit_diffs(sae: AnalysisStoreProtocol, base_ref: AnalysisStoreP
         top_k: Number of top samples to show
         max_prompt_width: Maximum width for prompt column
     """
-    translated_labels = [tokenizer.batch_decode(labels, **DEFAULT_DECODE_KWARGS) for labels in base_ref.labels]
+    translated_labels = [tokenizer.batch_decode(label_ids, **DEFAULT_DECODE_KWARGS) for label_ids in base_ref.label_ids]
 
     df = pd.DataFrame(
         {

@@ -241,7 +241,7 @@ class TestAnalysisOpDispatcher:
         assert isinstance(instantiated_op, AnalysisOp)
 
         # Verify the result came through properly
-        assert hasattr(result, 'labels')
+        assert hasattr(result, 'label_ids')
 
         # A second call should use the same instantiated op
         # Create a fresh batch dictionary since the first call pops 'labels'

@@ -198,7 +198,7 @@ class RTEBoolqSteps:
         """Run analysis operations on a batch and yield results."""
         # Demo mixing model methods and native IT analysis ops
         label_ids, orig_labels = self.labels_to_ids(batch.pop("labels"))
-        analysis_batch = AnalysisBatch(labels=label_ids, orig_labels=orig_labels)
+        analysis_batch = AnalysisBatch(label_ids=label_ids, orig_labels=orig_labels)
         op_kwargs = {"module": self, "batch": batch, "batch_idx": batch_idx}
         analysis_batch = it.model_cache_forward(analysis_batch=analysis_batch, **op_kwargs)
         analysis_batch = it.logit_diffs_cache(analysis_batch=analysis_batch, **op_kwargs)

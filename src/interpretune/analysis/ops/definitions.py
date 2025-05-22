@@ -45,7 +45,7 @@ def get_loss_preds_diffs(module: torch.nn.Module,
     Returns:
         Tuple of (loss, logit_diffs, preds, answer_logits)
     """
-    loss = module.loss_fn(answer_logits, analysis_batch.labels)
+    loss = module.loss_fn(answer_logits, analysis_batch.label_ids)
     answer_logits = module.standardize_logits(answer_logits)
     per_example_answers, _ = torch.max(answer_logits, dim=-2)
     preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
@@ -72,7 +72,7 @@ def labels_to_ids_impl(module, analysis_batch: AnalysisBatchProtocol, batch: Bat
     """Implementation for converting string labels to tensor IDs."""
     if "labels" in batch:
         label_ids, orig_labels = module.labels_to_ids(batch.pop("labels"))
-        analysis_batch.update(labels=label_ids, orig_labels=orig_labels)
+        analysis_batch.update(label_ids=label_ids, orig_labels=orig_labels)
     return analysis_batch
 
 

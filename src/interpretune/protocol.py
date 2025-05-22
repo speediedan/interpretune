@@ -458,6 +458,7 @@ class AnalysisBatchProtocol(Protocol):
     answer_logits: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
     loss: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
     preds: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
+    label_ids: Optional[torch.Tensor]
     labels: Optional[torch.Tensor]
     orig_labels: Optional[torch.Tensor]
     cache: Optional[ActivationCacheProtocol]

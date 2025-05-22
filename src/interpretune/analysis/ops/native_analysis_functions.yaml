@@ -4,8 +4,7 @@ labels_to_ids:
   implementation: interpretune.analysis.ops.definitions.labels_to_ids_impl
   aliases: []
   output_schema:
-    # TODO: this should be renamed to label_ids to avoid a name collision with common labels from datamodule
-    labels:  # directly used
+    label_ids:  # directly used
       datasets_dtype: int64
     orig_labels:  # directly used
       datasets_dtype: int64
@@ -125,7 +124,7 @@ model_ablation:
     preds:
       datasets_dtype: int64
       required: false
-    labels:
+    label_ids:
       datasets_dtype: int64
     orig_labels:
       datasets_dtype: int64
@@ -158,7 +157,7 @@ model_ablation:
     preds:
       datasets_dtype: int64
       required: false
-    labels:  # TODO: this should be renamed to label_ids to avoid a name collision with common labels from datamodule
+    label_ids:
       datasets_dtype: int64
     orig_labels:
       datasets_dtype: int64
@@ -183,7 +182,7 @@ model_gradient:
     get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
   aliases: []
   input_schema:
-    labels:  # TODO: this should be renamed to label_ids to avoid a name collision with common labels from datamodule
+    label_ids:
       datasets_dtype: int64
     orig_labels:
       datasets_dtype: int64
@@ -225,7 +224,7 @@ logit_diffs:
       sequence_type: false
     preds:  # directly used
       datasets_dtype: int64
-    labels:  # directly used
+    label_ids:  # directly used
       datasets_dtype: int64
     orig_labels:  # directly used
       datasets_dtype: int64
@@ -245,7 +244,7 @@ logit_diffs:
     input:
       datasets_dtype: float32
       connected_obj: datamodule
-    labels:  # TODO: this should be renamed to label_ids to avoid a name collision with common labels from datamodule
+    label_ids:
       datasets_dtype: int64
     orig_labels:
       datasets_dtype: int64
@@ -277,7 +276,7 @@ logit_diffs_cache:
       sequence_type: false
     preds:
       datasets_dtype: int64
-    labels:
+    label_ids:
       datasets_dtype: int64
     orig_labels:
       datasets_dtype: int64
@@ -301,9 +300,8 @@ logit_diffs_cache:
     input:
       datasets_dtype: float32
       connected_obj: datamodule
-    labels:  # TODO: this should be renamed to label_ids to avoid a name collision with common labels from datamodule
+    label_ids:
       datasets_dtype: int64
-      # connected_obj: datamodule
     orig_labels:
       datasets_dtype: int64
     answer_logits:
@@ -429,7 +427,7 @@ ablation_attribution:
     preds:
       datasets_dtype: int64
       per_latent: true
-    labels:
+    label_ids:
       datasets_dtype: int64
     orig_labels:
       datasets_dtype: int64
@@ -447,7 +445,7 @@ ablation_attribution:
       per_latent: true
       sequence_type: false
       array_shape: [batch_size, vocab_size]
-    labels:
+    label_ids:
       datasets_dtype: int64
     orig_labels:
       datasets_dtype: int64
