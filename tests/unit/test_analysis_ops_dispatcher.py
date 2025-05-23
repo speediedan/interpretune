@@ -617,3 +617,210 @@ class TestAnalysisOpDispatcher:
             assert wrapper1 == "test_op"
             assert wrapper1 != "different_op"
             assert wrapper1 != 123
+
+
+class TestRequiredOpsCompilation:
+    """Tests for required_ops schema compilation in the dispatcher."""
+
+    def test_compile_required_ops_schemas_integration(self):
+        """Test that the dispatcher correctly compiles required_ops schemas."""
+        # Create a test dispatcher with custom YAML content
+        test_dispatcher = AnalysisOpDispatcher()
+
+        # Mock YAML content with required_ops
+        yaml_content = {
+            "base_op": {
+                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "input_schema": {
+                    "base_input": {"datasets_dtype": "int64", "required": True}
+                },
+                "output_schema": {
+                    "base_output": {"datasets_dtype": "int64", "required": True}
+                }
+            },
+            "dependent_op": {
+                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "required_ops": ["base_op"],
+                "input_schema": {
+                    "dep_input": {"datasets_dtype": "float32", "required": True}
+                },
+                "output_schema": {
+                    "dep_output": {"datasets_dtype": "float32", "required": True}
+                }
+            }
+        }
+
+        # Mock the file reading
+        with patch('builtins.open'), patch('yaml.safe_load', return_value=yaml_content):
+            test_dispatcher.load_definitions()
+
+        # Check that dependent_op now includes base_op's schemas
+        dep_def = test_dispatcher._op_definitions["dependent_op"]
+
+        assert "dep_input" in dep_def["input_schema"]
+        assert "base_input" in dep_def["input_schema"]
+        assert "dep_output" in dep_def["output_schema"]
+        assert "base_output" in dep_def["output_schema"]
+
+    def test_required_ops_with_real_operations(self):
+        """Test required_ops compilation with actual operations from the YAML."""
+        # We use the real dispatcher to test with actual operation definitions
+        # DISPATCHER.load_definitions()  # note not required, definitions are loaded on import
+
+        # Check that model_forward includes get_answer_indices schemas
+        model_forward_def = DISPATCHER._op_definitions["model_forward"]
+
+        # Should have its own schemas
+        assert "input" in model_forward_def["input_schema"]
+        assert "answer_logits" in model_forward_def["output_schema"]
+
+        # Should also include get_answer_indices schemas
+        assert "answer_indices" in model_forward_def["input_schema"]
+        assert "answer_indices" in model_forward_def["output_schema"]
+        assert "tokens" in model_forward_def["output_schema"]
+
+    def test_required_ops_transitive_dependencies(self):
+        """Test that transitive dependencies are properly resolved."""
+        DISPATCHER.load_definitions()
+
+        # Check model_cache_forward which requires both get_answer_indices and get_alive_latents
+        # get_alive_latents also requires get_answer_indices
+        cache_forward_def = DISPATCHER._op_definitions["model_cache_forward"]
+
+        # Should have its own schemas
+        assert "input" in cache_forward_def["input_schema"]
+        assert "answer_logits" in cache_forward_def["output_schema"]
+        assert "cache" in cache_forward_def["output_schema"]
+
+        # Should include get_answer_indices schemas (direct and via get_alive_latents)
+        assert "answer_indices" in cache_forward_def["input_schema"]
+        assert "answer_indices" in cache_forward_def["output_schema"]
+        assert "tokens" in cache_forward_def["output_schema"]
+
+        # Should include get_alive_latents schemas
+        assert "alive_latents" in cache_forward_def["output_schema"]
+
+    def test_required_ops_precedence(self):
+        """Test that operation's own schemas take precedence over required_ops."""
+        # Create a test case where fields overlap
+        test_dispatcher = AnalysisOpDispatcher()
+
+        yaml_content = {
+            "base_op": {
+                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "input_schema": {
+                    "shared_field": {"datasets_dtype": "int64", "required": True}
+                },
+                "output_schema": {
+                    "shared_output": {"datasets_dtype": "int64", "required": True}
+                }
+            },
+            "override_op": {
+                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "required_ops": ["base_op"],
+                "input_schema": {
+                    "shared_field": {"datasets_dtype": "float32", "required": False}
+                },
+                "output_schema": {
+                    "shared_output": {"datasets_dtype": "float32", "required": False}
+                }
+            }
+        }
+
+        with patch('builtins.open'), patch('yaml.safe_load', return_value=yaml_content):
+            test_dispatcher.load_definitions()
+
+        # Check that override_op's schemas take precedence
+        override_def = test_dispatcher._op_definitions["override_op"]
+
+        assert override_def["input_schema"]["shared_field"]["datasets_dtype"] == "float32"
+        assert override_def["input_schema"]["shared_field"]["required"] is False
+        assert override_def["output_schema"]["shared_output"]["datasets_dtype"] == "float32"
+        assert override_def["output_schema"]["shared_output"]["required"] is False
+
+    def test_instantiate_op_with_compiled_schemas(self):
+        """Test that instantiated operations have the compiled schemas."""
+        DISPATCHER.load_definitions()
+
+        # Instantiate model_forward which has required_ops
+        model_forward_op = DISPATCHER._instantiate_op("model_forward")
+
+        # Check that it has compiled schemas including required ops
+        assert isinstance(model_forward_op.input_schema, OpSchema)
+        assert isinstance(model_forward_op.output_schema, OpSchema)
+
+        # Should have its own fields
+        assert "input" in model_forward_op.input_schema
+        assert "answer_logits" in model_forward_op.output_schema
+
+        # Should have required_ops fields
+        assert "answer_indices" in model_forward_op.input_schema
+        assert "answer_indices" in model_forward_op.output_schema
+        assert "tokens" in model_forward_op.output_schema
+
+    def test_required_ops_with_aliases(self):
+        """Test that required_ops compilation works correctly with aliases."""
+        DISPATCHER.load_definitions()
+
+        # Test with model_cache_forward which has an alias
+        cache_forward_def = DISPATCHER._op_definitions["model_forward_cache"]
+
+        # Should be the same as the main operation definition
+        main_def = DISPATCHER._op_definitions["model_cache_forward"]
+        assert cache_forward_def is main_def
+
+        # Should have compiled schemas
+        assert "answer_indices" in cache_forward_def["input_schema"]
+        assert "alive_latents" in cache_forward_def["output_schema"]
+
+    def test_required_ops_error_handling(self):
+        """Test error handling for invalid required_ops."""
+        test_dispatcher = AnalysisOpDispatcher()
+
+        yaml_content = {
+            "broken_op": {
+                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "required_ops": ["nonexistent_op"],
+                "input_schema": {},
+                "output_schema": {}
+            }
+        }
+
+        with patch('builtins.open'), patch('yaml.safe_load', return_value=yaml_content):
+            with pytest.raises(ValueError, match="Operation nonexistent_op not found in definitions"):
+                test_dispatcher.load_definitions()
+
+    def test_compile_required_ops_schemas_called_during_load(self):
+        """Test that _compile_required_ops_schemas is called during load_definitions."""
+        test_dispatcher = AnalysisOpDispatcher()
+
+        with patch.object(test_dispatcher, '_compile_required_ops_schemas') as mock_compile:
+            with patch('builtins.open'), patch('yaml.safe_load', return_value={}):
+                test_dispatcher.load_definitions()
+
+            mock_compile.assert_called_once()
+
+    def test_no_required_ops_doesnt_break_compilation(self):
+        """Test that operations without required_ops still work normally."""
+        test_dispatcher = AnalysisOpDispatcher()
+
+        yaml_content = {
+            "simple_op": {
+                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "input_schema": {
+                    "input1": {"datasets_dtype": "float32", "required": True}
+                },
+                "output_schema": {
+                    "output1": {"datasets_dtype": "float32", "required": True}
+                }
+                # No required_ops field
+            }
+        }
+
+        with patch('builtins.open'), patch('yaml.safe_load', return_value=yaml_content):
+            test_dispatcher.load_definitions()
+
+        # Should work without error and preserve original schemas
+        simple_def = test_dispatcher._op_definitions["simple_op"]
+        assert simple_def["input_schema"]["input1"]["datasets_dtype"] == "float32"
+        assert simple_def["output_schema"]["output1"]["datasets_dtype"] == "float32"

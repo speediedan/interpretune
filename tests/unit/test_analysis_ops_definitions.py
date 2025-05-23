@@ -1050,6 +1050,7 @@ class TestAnalysisOperationsImplementations:
             return  # Cannot test batch access with fewer than 2 batches
 
         total_batches = len(result_batches)
+        assert len(loaded_dataset) == total_batches
 
         # Test multiple batch access patterns
         access_methods = {
@@ -1062,9 +1063,18 @@ class TestAnalysisOperationsImplementations:
             # Get the dataset subset using this access pattern
             subset_dataset = loaded_dataset[access_pattern]
 
+            # TODO: update this test logic once we more elegantly account for optional global wrap_summary behavior
+            optional_global_col_offset = 0
+            for optional_col in ['tokens', 'prompts']:
+                if optional_col in op_cfg.resolved_op.output_schema:
+                    optional_global_col_offset += 1
+
             # Verify length
-            assert len(subset_dataset) == total_batches, (
-                f"{method_name} access: Expected {total_batches} items, got {len(subset_dataset)}"
+            assert len(subset_dataset) == total_batches + optional_global_col_offset, (
+                (
+                    f"{method_name} access: Expected {total_batches + optional_global_col_offset} items, "
+                    f"got {len(subset_dataset)}"
+                )
             )
 
             # Validate columns

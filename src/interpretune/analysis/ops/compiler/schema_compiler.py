@@ -240,3 +240,66 @@ def load_and_compile_operations(yaml_path: str) -> Dict[str, Any]:
         config = yaml.safe_load(f)
 
     return build_operation_compositions(config)
+
+def compile_op_schema(op_name: str, op_definitions: Dict[str, Dict], visited: set = None, compiled: set = None):
+    """Recursively compile schemas for an operation and its dependencies.
+
+    Args:
+        op_name: Name of the operation to compile
+        op_definitions: Dictionary of operation definitions
+        visited: Set of operations currently being processed (to detect cycles)
+        compiled: Set of operations that have been fully compiled
+
+    Returns:
+        None (modifies op_definitions in place)
+
+    Raises:
+        ValueError: If operation not found or circular dependency detected
+    """
+    if visited is None:
+        visited = set()
+    if compiled is None:
+        compiled = set()
+
+    if op_name in compiled or op_name in visited:
+        return
+
+    if op_name not in op_definitions:
+        raise ValueError(f"Operation {op_name} not found in definitions")
+
+    visited.add(op_name)
+    op_def = op_definitions[op_name]
+
+    # Get required operations
+    required_ops = op_def.get("required_ops", [])
+
+    # First, recursively compile all required operations
+    for req_op in required_ops:
+        compile_op_schema(req_op, op_definitions, visited.copy(), compiled)
+
+    # Now compile this operation's schema
+    if required_ops:
+        compiled_input_schema = op_def.get("input_schema", {}).copy()
+        compiled_output_schema = op_def.get("output_schema", {}).copy()
+
+        # Add schemas from required operations (don't override existing fields)
+        for req_op in required_ops:
+            req_def = op_definitions[req_op]
+
+            # Add input schema fields that don't already exist
+            req_input = req_def.get("input_schema", {})
+            for field_name, field_def in req_input.items():
+                if field_name not in compiled_input_schema:
+                    compiled_input_schema[field_name] = field_def
+
+            # Add output schema fields that don't already exist
+            req_output = req_def.get("output_schema", {})
+            for field_name, field_def in req_output.items():
+                if field_name not in compiled_output_schema:
+                    compiled_output_schema[field_name] = field_def
+
+        # Update the operation definition with compiled schemas
+        op_definitions[op_name]["input_schema"] = compiled_input_schema
+        op_definitions[op_name]["output_schema"] = compiled_output_schema
+
+    compiled.add(op_name)

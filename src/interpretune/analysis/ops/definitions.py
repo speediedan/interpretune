@@ -109,6 +109,8 @@ def get_alive_latents_impl(module, analysis_batch: AnalysisBatchProtocol,
         return analysis_batch
 
     # Check if we can get from input store
+    # TODO: remove this leaky abstraction, alive_latents should only be in analysis_batch, not accessed
+    #       via analysis_cfg.input_store at the op level
     if module.analysis_cfg.input_store and module.analysis_cfg.input_store.alive_latents is not None:
         alive_latents = module.analysis_cfg.input_store.alive_latents[batch_idx]
     elif not hasattr(analysis_batch, 'cache') or analysis_batch.cache is None:
@@ -174,6 +176,7 @@ def model_ablation_impl(module, analysis_batch: AnalysisBatchProtocol,
         analysis_batch = get_answer_indices_impl(module, analysis_batch, batch, batch_idx)
 
     if not hasattr(analysis_batch, 'alive_latents') or analysis_batch.alive_latents is None:
+        # TODO: remove this leaky abstraction, alive_latents should only be in analysis_batch
         assert module.analysis_cfg.input_store and getattr(module.analysis_cfg.input_store, 'alive_latents', None), \
             "alive_latents required for ablation op"
         analysis_batch = get_alive_latents_impl(module, analysis_batch, batch, batch_idx)

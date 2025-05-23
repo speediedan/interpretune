@@ -47,7 +47,7 @@ class AnalysisOpDispatcher:
             with open(self.yaml_path, "r") as f:
                 yaml_content = yaml.safe_load(f)
 
-            # Load individual operations
+            # First pass: Load individual operations without resolving required_ops
             for op_name, op_def in yaml_content.items():
                 # Skip composite operations section
                 if op_name == "composite_operations":
@@ -63,6 +63,9 @@ class AnalysisOpDispatcher:
                         self._aliases[alias] = op_name
                         # TODO: incur added complexity of making this a weakref if we start scaling the number of ops
                         self._op_definitions[alias] = op_def
+
+            # Second pass: Compile schemas with required_ops dependencies
+            self._compile_required_ops_schemas()
 
             # Process composite operations with schema compilation
             if "composite_operations" in yaml_content:
@@ -91,6 +94,18 @@ class AnalysisOpDispatcher:
             self._loaded = True
         finally:
             self._loading_in_progress = False
+
+    def _compile_required_ops_schemas(self):
+        """Compile schemas by recursively including required_ops dependencies."""
+        from interpretune.analysis.ops.compiler.schema_compiler import compile_op_schema
+
+        # Track which operations have been compiled to avoid infinite recursion
+        compiled = set()
+
+        # Compile all operations
+        for op_name in list(self._op_definitions.keys()):
+            if op_name not in self._aliases:  # Skip aliases to avoid duplicates
+                compile_op_schema(op_name, self._op_definitions, compiled=compiled)
 
     def _ensure_loaded(method):
         @wraps(method)

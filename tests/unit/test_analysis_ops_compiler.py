@@ -7,7 +7,8 @@ import tempfile
 import os
 
 from interpretune.analysis.ops.base import OpSchema, ColCfg, AnalysisOp
-from interpretune.analysis.ops.compiler.schema_compiler import (_compile_composition_schema_core,
+from interpretune.analysis.ops.compiler.schema_compiler import (compile_op_schema,
+                                                               _compile_composition_schema_core,
                                                                jit_compile_composition_schema,
                                                                compile_operation_composition_schema,
                                                                build_operation_compositions,
@@ -544,3 +545,235 @@ class TestBuildOperationCompositions:
         # Verify object field was converted
         assert result["op_with_object"]["output_schema"]["object_field"]["datasets_dtype"] == "string"
         assert result["op_with_object"]["output_schema"]["object_field"]["non_tensor"] is True
+
+class TestCompileOpSchema:
+    """Tests for the compile_op_schema function."""
+
+    def test_compile_op_schema_basic(self):
+        """Test basic schema compilation without dependencies."""
+        op_definitions = {
+            "simple_op": {
+                "input_schema": {"input1": {"datasets_dtype": "float32"}},
+                "output_schema": {"output1": {"datasets_dtype": "float32"}},
+            }
+        }
+
+        # Compile the operation
+        compile_op_schema("simple_op", op_definitions)
+
+        # Should remain unchanged since no required_ops
+        assert op_definitions["simple_op"]["input_schema"] == {"input1": {"datasets_dtype": "float32"}}
+        assert op_definitions["simple_op"]["output_schema"] == {"output1": {"datasets_dtype": "float32"}}
+
+    def test_compile_op_schema_with_required_ops(self):
+        """Test schema compilation with required operations."""
+        op_definitions = {
+            "base_op": {
+                "input_schema": {"base_input": {"datasets_dtype": "int64"}},
+                "output_schema": {"base_output": {"datasets_dtype": "int64"}},
+            },
+            "dependent_op": {
+                "required_ops": ["base_op"],
+                "input_schema": {"dep_input": {"datasets_dtype": "float32"}},
+                "output_schema": {"dep_output": {"datasets_dtype": "float32"}},
+            }
+        }
+
+        # Compile the dependent operation
+        compile_op_schema("dependent_op", op_definitions)
+
+        # Check that base_op schemas were merged into dependent_op
+        dep_input = op_definitions["dependent_op"]["input_schema"]
+        dep_output = op_definitions["dependent_op"]["output_schema"]
+
+        assert "dep_input" in dep_input
+        assert "base_input" in dep_input
+        assert "dep_output" in dep_output
+        assert "base_output" in dep_output
+
+    def test_compile_op_schema_precedence(self):
+        """Test that existing fields take precedence over required op fields."""
+        op_definitions = {
+            "base_op": {
+                "input_schema": {"shared_field": {"datasets_dtype": "int64"}},
+                "output_schema": {"shared_output": {"datasets_dtype": "int64"}},
+            },
+            "dependent_op": {
+                "required_ops": ["base_op"],
+                "input_schema": {"shared_field": {"datasets_dtype": "float32"}},
+                "output_schema": {"shared_output": {"datasets_dtype": "float32"}},
+            }
+        }
+
+        # Compile the dependent operation
+        compile_op_schema("dependent_op", op_definitions)
+
+        # Check that dependent_op's original fields take precedence
+        dep_input = op_definitions["dependent_op"]["input_schema"]
+        dep_output = op_definitions["dependent_op"]["output_schema"]
+
+        assert dep_input["shared_field"]["datasets_dtype"] == "float32"
+        assert dep_output["shared_output"]["datasets_dtype"] == "float32"
+
+    def test_compile_op_schema_multiple_dependencies(self):
+        """Test schema compilation with multiple required operations."""
+        op_definitions = {
+            "op1": {
+                "input_schema": {"input1": {"datasets_dtype": "int64"}},
+                "output_schema": {"output1": {"datasets_dtype": "int64"}},
+            },
+            "op2": {
+                "input_schema": {"input2": {"datasets_dtype": "float32"}},
+                "output_schema": {"output2": {"datasets_dtype": "float32"}},
+            },
+            "dependent_op": {
+                "required_ops": ["op1", "op2"],
+                "input_schema": {"dep_input": {"datasets_dtype": "string"}},
+                "output_schema": {"dep_output": {"datasets_dtype": "string"}},
+            }
+        }
+
+        # Compile the dependent operation
+        compile_op_schema("dependent_op", op_definitions)
+
+        # Check that all schemas were merged
+        dep_input = op_definitions["dependent_op"]["input_schema"]
+        dep_output = op_definitions["dependent_op"]["output_schema"]
+
+        expected_input_fields = {"dep_input", "input1", "input2"}
+        expected_output_fields = {"dep_output", "output1", "output2"}
+
+        assert set(dep_input.keys()) == expected_input_fields
+        assert set(dep_output.keys()) == expected_output_fields
+
+    def test_compile_op_schema_transitive_dependencies(self):
+        """Test schema compilation with transitive dependencies."""
+        op_definitions = {
+            "base_op": {
+                "input_schema": {"base_input": {"datasets_dtype": "int64"}},
+                "output_schema": {"base_output": {"datasets_dtype": "int64"}},
+            },
+            "middle_op": {
+                "required_ops": ["base_op"],
+                "input_schema": {"middle_input": {"datasets_dtype": "float32"}},
+                "output_schema": {"middle_output": {"datasets_dtype": "float32"}},
+            },
+            "top_op": {
+                "required_ops": ["middle_op"],
+                "input_schema": {"top_input": {"datasets_dtype": "string"}},
+                "output_schema": {"top_output": {"datasets_dtype": "string"}},
+            }
+        }
+
+        # Compile the top operation
+        compile_op_schema("top_op", op_definitions)
+
+        # Check that all transitive dependencies were included
+        top_input = op_definitions["top_op"]["input_schema"]
+        top_output = op_definitions["top_op"]["output_schema"]
+
+        expected_input_fields = {"top_input", "middle_input", "base_input"}
+        expected_output_fields = {"top_output", "middle_output", "base_output"}
+
+        assert set(top_input.keys()) == expected_input_fields
+        assert set(top_output.keys()) == expected_output_fields
+
+    def test_compile_op_schema_missing_operation(self):
+        """Test error handling for missing required operation."""
+        op_definitions = {
+            "dependent_op": {
+                "required_ops": ["missing_op"],
+                "input_schema": {},
+                "output_schema": {},
+            }
+        }
+
+        with pytest.raises(ValueError, match="Operation missing_op not found in definitions"):
+            compile_op_schema("dependent_op", op_definitions)
+
+    def test_compile_op_schema_circular_dependency(self):
+        """Test detection of circular dependencies."""
+        op_definitions = {
+            "op1": {
+                "required_ops": ["op2"],
+                "input_schema": {},
+                "output_schema": {},
+            },
+            "op2": {
+                "required_ops": ["op1"],
+                "input_schema": {},
+                "output_schema": {},
+            }
+        }
+
+        # The function should handle circular dependencies by not processing already visited ops
+        # This should not raise an error due to the visited set check
+        compile_op_schema("op1", op_definitions)
+
+        # Both operations should remain in their original state since they depend on each other
+        assert op_definitions["op1"]["required_ops"] == ["op2"]
+        assert op_definitions["op2"]["required_ops"] == ["op1"]
+
+    def test_compile_op_schema_no_required_ops(self):
+        """Test compilation of operation without required_ops field."""
+        op_definitions = {
+            "simple_op": {
+                "input_schema": {"input1": {"datasets_dtype": "float32"}},
+                "output_schema": {"output1": {"datasets_dtype": "float32"}},
+                # No required_ops field
+            }
+        }
+
+        # Should work without error
+        compile_op_schema("simple_op", op_definitions)
+
+        # Schema should remain unchanged
+        assert op_definitions["simple_op"]["input_schema"] == {"input1": {"datasets_dtype": "float32"}}
+        assert op_definitions["simple_op"]["output_schema"] == {"output1": {"datasets_dtype": "float32"}}
+
+    def test_compile_op_schema_empty_schemas(self):
+        """Test compilation with empty input/output schemas."""
+        op_definitions = {
+            "base_op": {
+                "input_schema": {"base_input": {"datasets_dtype": "int64"}},
+                "output_schema": {"base_output": {"datasets_dtype": "int64"}},
+            },
+            "empty_schema_op": {
+                "required_ops": ["base_op"],
+                # Empty or missing schemas
+            }
+        }
+
+        # Compile the operation with empty schemas
+        compile_op_schema("empty_schema_op", op_definitions)
+
+        # Should have inherited schemas from base_op
+        assert "base_input" in op_definitions["empty_schema_op"]["input_schema"]
+        assert "base_output" in op_definitions["empty_schema_op"]["output_schema"]
+
+    def test_compile_op_schema_with_compiled_set(self):
+        """Test that already compiled operations are not reprocessed."""
+        op_definitions = {
+            "base_op": {
+                "input_schema": {"base_input": {"datasets_dtype": "int64"}},
+                "output_schema": {"base_output": {"datasets_dtype": "int64"}},
+            },
+            "dependent_op": {
+                "required_ops": ["base_op"],
+                "input_schema": {"dep_input": {"datasets_dtype": "float32"}},
+                "output_schema": {"dep_output": {"datasets_dtype": "float32"}},
+            }
+        }
+
+        compiled = set()
+
+        # Compile base_op first
+        compile_op_schema("base_op", op_definitions, compiled=compiled)
+        assert "base_op" in compiled
+
+        # Now compile dependent_op - base_op should not be reprocessed
+        compile_op_schema("dependent_op", op_definitions, compiled=compiled)
+
+        # Both should be in compiled set
+        assert "base_op" in compiled
+        assert "dependent_op" in compiled
