@@ -41,10 +41,9 @@ def _compile_composition_schema_core(
         # Extract input and output schemas using the provided function
         input_schema, output_schema = get_schemas_fn(op)
 
-        # Add input fields that aren't already outputs or intermediates
+        # Add input fields
         for field_name, field_def in input_schema.items():
-            if field_name not in output_fields and field_name not in intermediate_fields:
-                input_fields[field_name] = field_def
+            input_fields[field_name] = field_def
 
         # Add output fields
         for field_name, field_def in output_schema.items():

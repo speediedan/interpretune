@@ -982,7 +982,7 @@ class TestCompositeAnalysisOp:
         op2_orig = op2.output_schema.copy()
         expected_schema = op2_orig.update(op1.output_schema) or op2_orig
         assert composite_op.output_schema == expected_schema
-        assert composite_op.input_schema == {}
+        assert composite_op.input_schema == OpSchema({"result": ColCfg(datasets_dtype="float32")})
 
     def test_composite_op_with_alias(self):
         """Test CompositeAnalysisOp with a custom alias."""

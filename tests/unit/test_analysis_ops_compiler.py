@@ -166,7 +166,7 @@ class TestSchemaCompilation:
         # Verify fields are ColCfg instances
         assert "input1" in input_schema
         assert isinstance(input_schema["input1"], ColCfg)
-        assert "output1" not in input_schema  # should not be included in input
+        assert "output1" in input_schema
         assert "output2" in output_schema
         assert isinstance(output_schema["output2"], ColCfg)
 
@@ -333,8 +333,7 @@ class TestSchemaCompilation:
             op_definitions=op_definitions
         )
 
-        # 'mid' should not be in the final input or output
-        assert "mid" not in inp
+        assert "mid" in inp
         assert "mid" not in out
 
         # 'a' and 'b' should appear in input, 'c' should appear in output
