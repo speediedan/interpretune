@@ -30,16 +30,6 @@ get_answer_indices:
   output_schema:
     answer_indices:
       datasets_dtype: int64
-    tokens:
-      datasets_dtype: int64
-      required: false
-      dyn_dim: 1
-      array_shape: [null, batch_size]
-      sequence_type: false
-    prompts:
-      datasets_dtype: string
-      required: false
-      non_tensor: true
 
 get_alive_latents:
   description: Extract alive latents from cache
@@ -135,16 +125,6 @@ model_ablation:
       per_latent: true
       sequence_type: false
       array_shape: [batch_size, vocab_size]
-    tokens:
-      datasets_dtype: int64
-      required: false
-      dyn_dim: 1
-      array_shape: [null, batch_size]
-      sequence_type: false
-    prompts:
-      datasets_dtype: string
-      required: false
-      non_tensor: true
 
 model_gradient:
   description: Model gradient-based attribution
@@ -221,16 +201,6 @@ logit_diffs:
       datasets_dtype: float32
       sequence_type: false
       array_shape: [batch_size, max_answer_tokens, num_classes]
-    tokens:
-      datasets_dtype: int64
-      required: false
-      dyn_dim: 1
-      array_shape: [null, batch_size]
-      sequence_type: false
-    prompts:
-      datasets_dtype: string
-      required: false
-      non_tensor: true
 
 logit_diffs_cache:
   description: Clean forward pass for computing logit differences including cache activations (composition only)
@@ -272,16 +242,6 @@ logit_diffs_cache:
       datasets_dtype: float32
       sequence_type: false
       array_shape: [batch_size, max_answer_tokens, num_classes]
-    tokens:
-      datasets_dtype: int64
-      required: false
-      dyn_dim: 1
-      array_shape: [null, batch_size]
-      sequence_type: false
-    prompts:
-      datasets_dtype: string
-      required: false
-      non_tensor: true
 
 sae_correct_acts:
   description: Compute correct activations from SAE cache
@@ -301,16 +261,6 @@ sae_correct_acts:
     correct_activations:
       datasets_dtype: float32
       per_sae_hook: true
-    tokens:
-      datasets_dtype: int64
-      required: false
-      dyn_dim: 1
-      array_shape: [null, batch_size]
-      sequence_type: false
-    prompts:
-      datasets_dtype: string
-      required: false
-      non_tensor: true
 
 gradient_attribution:
   description: Compute attribution values from gradients
@@ -389,16 +339,6 @@ ablation_attribution:
     preds:
       datasets_dtype: int64
       per_latent: true
-    tokens:
-      datasets_dtype: int64
-      required: false
-      dyn_dim: 1
-      array_shape: [null, batch_size]
-      sequence_type: false
-    prompts:
-      datasets_dtype: string
-      required: false
-      non_tensor: true
 
 # Composite operations
 composite_operations:

@@ -12,7 +12,6 @@ from tests.unit.test_analysis_ops_base import op_impl_test
 class TestAnalysisOpDispatcher:
     """Tests for the AnalysisOpDispatcher class."""
 
-
     def test_import_callable(self):
         """Test importing a callable from a path."""
         # Test importing a valid callable
@@ -824,3 +823,346 @@ class TestRequiredOpsCompilation:
         simple_def = test_dispatcher._op_definitions["simple_op"]
         assert simple_def["input_schema"]["input1"]["datasets_dtype"] == "float32"
         assert simple_def["output_schema"]["output1"]["datasets_dtype"] == "float32"
+
+
+    def test_optional_auto_columns_application(self):
+        """Test that optional auto-columns are correctly applied based on conditions."""
+
+        # Create a test dispatcher
+        test_dispatcher = AnalysisOpDispatcher()
+
+        # Create a mock operation definition with input column from datamodule
+        op_def = {
+            "input_schema": {
+                "input": {"datasets_dtype": "int64", "connected_obj": "datamodule"}
+            },
+            "output_schema": {
+                "answer_logits": {"datasets_dtype": "float32"}
+            }
+        }
+
+        # Apply optional auto-columns
+        test_dispatcher._apply_optional_auto_columns(op_def)
+
+        # Check that tokens and prompts were added
+        output_schema = op_def["output_schema"]
+        assert "tokens" in output_schema
+        assert "prompts" in output_schema
+        assert output_schema["tokens"]["datasets_dtype"] == "int64"
+        assert output_schema["tokens"]["required"] is False
+        assert output_schema["prompts"]["datasets_dtype"] == "string"
+        assert output_schema["prompts"]["required"] is False
+
+    def test_optional_auto_columns_no_condition_match(self):
+        """Test that auto-columns are not added when conditions are not met."""
+        test_dispatcher = AnalysisOpDispatcher()
+
+        # Operation without input from datamodule
+        op_def = {
+            "input_schema": {
+                "cache": {"datasets_dtype": "object", "connected_obj": "analysis_store"}
+            },
+            "output_schema": {
+                "result": {"datasets_dtype": "float32"}
+            }
+        }
+
+        original_output = op_def["output_schema"].copy()
+        test_dispatcher._apply_optional_auto_columns(op_def)
+
+        # Should remain unchanged
+        assert op_def["output_schema"] == original_output
+        assert "tokens" not in op_def["output_schema"]
+        assert "prompts" not in op_def["output_schema"]
+
+    def test_optional_auto_columns_existing_columns_preserved(self):
+        """Test that existing tokens/prompts columns are not overwritten."""
+        test_dispatcher = AnalysisOpDispatcher()
+
+        # Operation with existing custom tokens column
+        op_def = {
+            "input_schema": {
+                "input": {"datasets_dtype": "int64", "connected_obj": "datamodule"}
+            },
+            "output_schema": {
+                "tokens": {"datasets_dtype": "float32", "required": True},  # Custom config
+                "answer_logits": {"datasets_dtype": "float32"}
+            }
+        }
+
+        original_tokens_config = op_def["output_schema"]["tokens"].copy()
+        test_dispatcher._apply_optional_auto_columns(op_def)
+
+        # tokens should remain unchanged, prompts should be added
+        assert op_def["output_schema"]["tokens"] == original_tokens_config
+        assert "prompts" in op_def["output_schema"]
+        assert op_def["output_schema"]["prompts"]["datasets_dtype"] == "string"
+
+    def test_field_condition_matching(self):
+        """Test the FieldCondition matching functionality."""
+        from interpretune.analysis.ops.auto_columns import FieldCondition
+
+        # Create a condition for input field from datamodule
+        condition = FieldCondition(
+            field_name="input",
+            conditions={"connected_obj": "datamodule", "datasets_dtype": "int64"}
+        )
+
+        # Test matching dict config
+        dict_config = {"datasets_dtype": "int64", "connected_obj": "datamodule"}
+        assert condition.matches(dict_config)
+
+        # Test non-matching dict config
+        non_matching_dict = {"datasets_dtype": "int64", "connected_obj": "analysis_store"}
+        assert not condition.matches(non_matching_dict)
+
+        # Test matching ColCfg config
+        colcfg_config = ColCfg(datasets_dtype="int64", connected_obj="datamodule")
+        assert condition.matches(colcfg_config)
+
+        # Test non-matching ColCfg config
+        non_matching_colcfg = ColCfg(datasets_dtype="int64", connected_obj="analysis_store")
+        assert not condition.matches(non_matching_colcfg)
+
+        # Test with various invalid field config types, ensuring each raises TypeError
+        invalid_configs = [
+            "not_a_dict_or_colcfg",
+            None,
+            ["list", "of", "values"],
+            42,
+            3.14,
+            True,
+            False,
+            set(),
+            object(),
+        ]
+        for invalid_config in invalid_configs:
+            with pytest.raises(TypeError):
+                condition.matches(invalid_config)
+
+    def test_auto_column_condition_tuple_conversion(self):
+        """Test AutoColumnCondition tuple conversion in __post_init__."""
+        from interpretune.analysis.ops.auto_columns import FieldCondition, AutoColumnCondition
+
+        # Test that list of field_conditions gets converted to tuple - covers line 40
+        field_conditions_list = [
+            FieldCondition("input", {"connected_obj": "datamodule"}),
+            FieldCondition("labels", {"datasets_dtype": "string"}),
+        ]
+
+        # Create AutoColumnCondition with list (not tuple) of field_conditions
+        condition = AutoColumnCondition(
+            field_conditions=field_conditions_list,  # Pass as list
+            schema_target="input_schema",
+            auto_columns={}
+        )
+
+        # Verify that field_conditions was converted to tuple
+        assert isinstance(condition.field_conditions, tuple)
+        assert len(condition.field_conditions) == 2
+        assert condition.field_conditions[0].field_name == "input"
+        assert condition.field_conditions[1].field_name == "labels"
+
+        # Test that tuple field_conditions remains unchanged
+        field_conditions_tuple = (
+            FieldCondition("input", {"connected_obj": "datamodule"}),
+            FieldCondition("output", {"datasets_dtype": "float32"}),
+        )
+
+        condition_with_tuple = AutoColumnCondition(
+            field_conditions=field_conditions_tuple,  # Already a tuple
+            schema_target="output_schema",
+            auto_columns={}
+        )
+
+        # Verify that it remains a tuple and is the same reference
+        assert isinstance(condition_with_tuple.field_conditions, tuple)
+        assert condition_with_tuple.field_conditions is field_conditions_tuple
+        assert len(condition_with_tuple.field_conditions) == 2
+
+class TestAutoColumnsConditions:
+    """Additional tests for auto-columns conditions functionality."""
+
+    def test_field_condition_edge_cases(self):
+        """Test FieldCondition edge cases that cover missing lines."""
+        from interpretune.analysis.ops.auto_columns import FieldCondition
+        from interpretune.analysis.ops.base import ColCfg
+
+        # Test condition with empty conditions dict
+        empty_condition = FieldCondition(field_name="test", conditions={})
+
+        # Should match any field config since no conditions to check
+        assert empty_condition.matches({"any": "value"})
+        assert empty_condition.matches(ColCfg(datasets_dtype="any"))
+
+        # But should still return False for invalid types
+        with pytest.raises(TypeError):
+            assert not empty_condition.matches("invalid_type")
+        with pytest.raises(TypeError):
+            assert not empty_condition.matches([])
+
+        # Test with various invalid field config types
+        condition = FieldCondition(
+            field_name="test",
+            conditions={"attr": "value"}
+        )
+
+        invalid_types = [
+            "string",
+            123,
+            45.67,
+            True,
+            False,
+            None,
+            [],
+            set(),
+            lambda x: x,
+            object()
+        ]
+
+        for invalid_type in invalid_types:
+            with pytest.raises(TypeError):
+                condition.matches(invalid_type), f"Should not match {type(invalid_type)}"
+
+    def test_auto_column_condition_field_conditions_conversion(self):
+        """Test various input types for field_conditions conversion."""
+        from interpretune.analysis.ops.auto_columns import FieldCondition, AutoColumnCondition
+
+        # Test with generator (should be converted to tuple)
+        def field_generator():
+            yield FieldCondition("field1", {"attr": "value1"})
+            yield FieldCondition("field2", {"attr": "value2"})
+
+        condition_from_generator = AutoColumnCondition(
+            field_conditions=field_generator(),
+            auto_columns={}
+        )
+
+        assert isinstance(condition_from_generator.field_conditions, tuple)
+        assert len(condition_from_generator.field_conditions) == 2
+
+        # Test with empty list
+        condition_empty = AutoColumnCondition(
+            field_conditions=[],
+            auto_columns={}
+        )
+
+        assert isinstance(condition_empty.field_conditions, tuple)
+        assert len(condition_empty.field_conditions) == 0
+
+        # Test with single item (not iterable in normal sense)
+        single_field = FieldCondition("single", {"test": "value"})
+
+        condition_single = AutoColumnCondition(
+            field_conditions=(single_field,),  # Tuple with single item
+            auto_columns={}
+        )
+
+        assert isinstance(condition_single.field_conditions, tuple)
+        assert len(condition_single.field_conditions) == 1
+        assert condition_single.field_conditions[0] is single_field
+
+    def test_auto_column_condition_with_mixed_types(self):
+        """Test AutoColumnCondition with mixed ColCfg and dict auto_columns."""
+        from interpretune.analysis.ops.auto_columns import FieldCondition, AutoColumnCondition
+
+        # Create condition with mixed auto_columns types
+        mixed_condition = AutoColumnCondition(
+            field_conditions=(
+                FieldCondition("input", {"connected_obj": "datamodule"}),
+            ),
+            schema_target="input_schema",
+            auto_columns={
+                "tokens": {"datasets_dtype": "int64", "required": False},  # Dict
+                "metadata": ColCfg(datasets_dtype="string", required=False, non_tensor=True)  # ColCfg
+            }
+        )
+
+        test_dispatcher = AnalysisOpDispatcher()
+
+        # Mock AUTO_COLUMNS with our mixed condition
+        with patch('interpretune.analysis.ops.dispatcher.AUTO_COLUMNS', [mixed_condition]):
+            op_def = {
+                "input_schema": {
+                    "input": {"datasets_dtype": "int64", "connected_obj": "datamodule"}
+                },
+                "output_schema": {
+                    "answer_logits": {"datasets_dtype": "float32"}
+                }
+            }
+
+            test_dispatcher._apply_optional_auto_columns(op_def)
+
+            output_schema = op_def["output_schema"]
+            assert "tokens" in output_schema
+            assert "metadata" in output_schema
+
+            # Both should be dicts in the final output
+            assert isinstance(output_schema["tokens"], dict)
+            assert isinstance(output_schema["metadata"], dict)
+            assert output_schema["tokens"]["datasets_dtype"] == "int64"
+            assert output_schema["metadata"]["datasets_dtype"] == "string"
+
+    def test_apply_optional_auto_columns_with_colcfg_instances(self):
+        """Test _apply_optional_auto_columns with ColCfg instances in auto_columns."""
+        from interpretune.analysis.ops.auto_columns import FieldCondition, AutoColumnCondition
+
+        # Create condition with ColCfg instances in auto_columns to test col_cfg.to_dict() branch
+        colcfg_condition = AutoColumnCondition(
+            field_conditions=(
+                FieldCondition("input", {"connected_obj": "datamodule"}),
+            ),
+            schema_target="input_schema",
+            auto_columns={
+                "tokens_colcfg": ColCfg(
+                    datasets_dtype="int64",
+                    required=False,
+                    dyn_dim=1,
+                    array_shape=(None, "batch_size"),
+                    sequence_type=False
+                ),
+                "prompts_colcfg": ColCfg(
+                    datasets_dtype="string",
+                    required=False,
+                    non_tensor=True
+                )
+            }
+        )
+
+        test_dispatcher = AnalysisOpDispatcher()
+
+        # Mock AUTO_COLUMNS with our ColCfg condition
+        with patch('interpretune.analysis.ops.dispatcher.AUTO_COLUMNS', [colcfg_condition]):
+            op_def = {
+                "input_schema": {
+                    "input": {"datasets_dtype": "int64", "connected_obj": "datamodule"}
+                },
+                "output_schema": {
+                    "answer_logits": {"datasets_dtype": "float32"}
+                }
+            }
+
+            # Apply optional auto-columns
+            test_dispatcher._apply_optional_auto_columns(op_def)
+
+            # Check that ColCfg instances were converted to dicts via .to_dict()
+            output_schema = op_def["output_schema"]
+            assert "tokens_colcfg" in output_schema
+            assert "prompts_colcfg" in output_schema
+
+            # Verify they are stored as dicts, not ColCfg instances
+            assert isinstance(output_schema["tokens_colcfg"], dict)
+            assert isinstance(output_schema["prompts_colcfg"], dict)
+
+            # Verify the dict contains the correct data from ColCfg
+            tokens_dict = output_schema["tokens_colcfg"]
+            assert tokens_dict["datasets_dtype"] == "int64"
+            assert tokens_dict["required"] is False
+            assert tokens_dict["dyn_dim"] == 1
+            assert tokens_dict["array_shape"] == (None, "batch_size")
+            assert tokens_dict["sequence_type"] is False
+
+            prompts_dict = output_schema["prompts_colcfg"]
+            assert prompts_dict["datasets_dtype"] == "string"
+            assert prompts_dict["required"] is False
+            assert prompts_dict["non_tensor"] is True
