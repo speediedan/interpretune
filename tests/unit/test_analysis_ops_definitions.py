@@ -544,8 +544,8 @@ class TestGradientOperations:
             alive_latents={"hook1": [0, 1], "hook2": [2, 3]}
         )
 
-        with patch("interpretune.analysis.ops.definitions.get_answer_indices_impl") as mock_get_indices, \
-             patch("interpretune.analysis.ops.definitions.get_alive_latents_impl") as mock_get_alive:
+        with patch("interpretune.analysis.ops.definitions.it.get_answer_indices") as mock_get_indices, \
+             patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive:
 
             # Set up mock to return an analysis batch with answer_indices
             mock_get_indices.return_value = AnalysisBatch(
@@ -571,8 +571,8 @@ class TestGradientOperations:
         mock_module.analysis_cfg.input_store = MagicMock()
         mock_module.analysis_cfg.input_store.alive_latents = [{"hook1": [0, 1], "hook2": [2, 3]}]
 
-        with patch("interpretune.analysis.ops.definitions.get_answer_indices_impl") as mock_get_indices, \
-             patch("interpretune.analysis.ops.definitions.get_alive_latents_impl") as mock_get_alive:
+        with patch("interpretune.analysis.ops.definitions.it.get_answer_indices") as mock_get_indices, \
+             patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive:
 
             # Set up mock to return an analysis batch with alive_latents
             mock_get_alive.return_value = AnalysisBatch(
@@ -597,8 +597,8 @@ class TestGradientOperations:
         # Set up input_store with no alive_latents
         mock_module.analysis_cfg.input_store = None
 
-        with patch("interpretune.analysis.ops.definitions.get_answer_indices_impl") as mock_get_indices, \
-             patch("interpretune.analysis.ops.definitions.get_alive_latents_impl") as mock_get_alive:
+        with patch("interpretune.analysis.ops.definitions.it.get_answer_indices") as mock_get_indices, \
+             patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive:
 
             with pytest.raises(AssertionError, match="alive_latents required for ablation op"):
                 model_ablation_impl(mock_module, analysis_batch_error, mock_batch, 0)
@@ -769,7 +769,7 @@ class TestGradientOperations:
         mock_module.analysis_cfg.names_filter = lambda x: True
 
         # Create mock_get_loss_preds_diffs that returns scalar logit_diffs
-        with patch("interpretune.analysis.ops.definitions.get_alive_latents_impl") as mock_get_alive_latents_impl:
+        with patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive_latents_impl:
             mock_get_alive_latents_impl.return_value = AnalysisBatch(alive_latents={"hook1": [0, 1]})
 
             # Run the function
@@ -794,7 +794,7 @@ class TestGradientOperations:
         # Set up module's cache_dict
         mock_module.analysis_cfg.cache_dict = mock_grad_cache
 
-        with patch("interpretune.analysis.ops.definitions.get_alive_latents_impl") as mock_get_alive_latents_impl:
+        with patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive_latents_impl:
             mock_get_alive_latents_impl.return_value = AnalysisBatch(alive_latents={"hook1": [0, 1]})
             # Run the function
             result_batch = gradient_attribution_impl(mock_module, module_cache_batch, mock_batch, 0)

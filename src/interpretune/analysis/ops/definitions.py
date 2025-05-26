@@ -9,6 +9,7 @@ from transformers import BatchEncoding
 from transformer_lens.hook_points import HookPoint
 from jaxtyping import Float
 
+import interpretune as it
 from interpretune.protocol import AnalysisBatchProtocol
 from interpretune.analysis.ops.base import AnalysisBatch
 
@@ -137,7 +138,7 @@ def model_forward_impl(module, analysis_batch: AnalysisBatchProtocol,
     """Implementation for basic model forward pass."""
     # Ensure we have answer indices
     if not hasattr(analysis_batch, 'answer_indices') or analysis_batch.answer_indices is None:
-        analysis_batch = get_answer_indices_impl(module, analysis_batch, batch, batch_idx)
+        analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
 
     # Run forward pass
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
@@ -159,9 +160,9 @@ def model_cache_forward_impl(module, analysis_batch: AnalysisBatchProtocol,
     )
 
     # Get answer indices and alive latents
-    analysis_batch = get_answer_indices_impl(module, analysis_batch, batch, batch_idx)
+    analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
     analysis_batch.update(cache=cache)
-    analysis_batch = get_alive_latents_impl(module, analysis_batch, batch, batch_idx)
+    analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
 
     analysis_batch.update(answer_logits=answer_logits)
     return analysis_batch
@@ -173,13 +174,13 @@ def model_ablation_impl(module, analysis_batch: AnalysisBatchProtocol,
     """Implementation for model ablation analysis."""
     # Ensure we have answer indices and alive latents
     if not hasattr(analysis_batch, 'answer_indices') or analysis_batch.answer_indices is None:
-        analysis_batch = get_answer_indices_impl(module, analysis_batch, batch, batch_idx)
+        analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
 
     if not hasattr(analysis_batch, 'alive_latents') or analysis_batch.alive_latents is None:
         # TODO: remove this leaky abstraction, alive_latents should only be in analysis_batch
         assert module.analysis_cfg.input_store and getattr(module.analysis_cfg.input_store, 'alive_latents', None), \
             "alive_latents required for ablation op"
-        analysis_batch = get_alive_latents_impl(module, analysis_batch, batch, batch_idx)
+        analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
 
     answer_indices = analysis_batch.answer_indices
     alive_latents = analysis_batch.alive_latents
@@ -214,7 +215,7 @@ def model_gradient_impl(module, analysis_batch: AnalysisBatchProtocol,
 
     # Ensure we have answer indices
     if not hasattr(analysis_batch, 'answer_indices') or analysis_batch.answer_indices is None:
-        analysis_batch = get_answer_indices_impl(module, analysis_batch, batch, batch_idx)
+        analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
 
     answer_indices = analysis_batch.answer_indices
 
@@ -292,7 +293,7 @@ def sae_correct_acts_impl(module, analysis_batch: AnalysisBatchProtocol,
 
     # Ensure alive_latents are present
     if not hasattr(analysis_batch, 'alive_latents') or analysis_batch.alive_latents is None:
-        analysis_batch = get_alive_latents_impl(module, analysis_batch, batch, batch_idx)
+        analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
 
     # Extract correct activations for examples with positive logit differences
     correct_mask = logit_diffs > 0
@@ -354,7 +355,7 @@ def gradient_attribution_impl(module, analysis_batch: AnalysisBatchProtocol,
     )
 
     # TODO: refactor this to use the GetAliveLatentsOp? (which should then dispatch alive_latents implementation)
-    temp_batch = get_alive_latents_impl(module, temp_batch, batch, batch_idx)
+    temp_batch = it.get_alive_latents(module, temp_batch, batch, batch_idx)
     analysis_batch.alive_latents = temp_batch.alive_latents
 
     # Compute attribution values and correct activations
