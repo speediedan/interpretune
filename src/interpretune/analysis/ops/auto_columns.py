@@ -32,7 +32,7 @@ class AutoColumnCondition:
     """Represents a complete condition set for triggering auto-columns."""
     field_conditions: Tuple[FieldCondition, ...]
     auto_columns: Dict[str, Union[ColCfg, Dict[str, Any]]]
-    schema_target: Literal["input_schema", "output_schema"] = "input_schema"
+    condition_target: Literal["input_schema", "output_schema"] = "input_schema"
 
     def __post_init__(self):
         # Ensure field_conditions is a tuple for hashability
@@ -41,11 +41,11 @@ class AutoColumnCondition:
 
     def matches_schema(self, input_schema: Dict[str, Any], output_schema: Dict[str, Any] = None) -> bool:
         """Check if schemas match all field conditions."""
-        # Select the target schema based on schema_target
-        target_schema = input_schema if self.schema_target == "input_schema" else (output_schema or {})
+        # Select the schema the condition should apply to based on condition_target
+        condition_schema = input_schema if self.condition_target == "input_schema" else (output_schema or {})
 
         for field_condition in self.field_conditions:
-            field_config = target_schema.get(field_condition.field_name)
+            field_config = condition_schema.get(field_condition.field_name)
             if not field_config or not field_condition.matches(field_config):
                 return False
         return True
@@ -60,7 +60,7 @@ AUTO_COLUMNS = [
                 conditions={"connected_obj": "datamodule"}
             ),
         ),
-        schema_target="input_schema",
+        condition_target="input_schema",
         auto_columns={
             "tokens": {
                 "datasets_dtype": "int64",
@@ -77,3 +77,24 @@ AUTO_COLUMNS = [
         }
     )
 ]
+
+
+def apply_auto_columns(op_def: dict) -> None:
+    """Apply optional auto-columns based on schema conditions."""
+    input_schema = op_def.get("input_schema", {})
+    output_schema = op_def.get("output_schema", {})
+
+    # Check each condition in AUTO_COLUMNS
+    for auto_column_condition in AUTO_COLUMNS:
+        if auto_column_condition.matches_schema(input_schema, output_schema):
+            # Add auto-columns that don't already exist.
+            # We only support auto-adding columns to output_schema at this point.
+            target_schema = op_def.setdefault('output_schema', {})
+
+            for col_name, col_cfg in auto_column_condition.auto_columns.items():
+                if col_name not in target_schema:
+                    # Convert ColCfg to dict if needed
+                    if isinstance(col_cfg, ColCfg):
+                        target_schema[col_name] = col_cfg.to_dict()
+                    else:
+                        target_schema[col_name] = col_cfg.copy()

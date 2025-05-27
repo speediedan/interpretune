@@ -10,7 +10,7 @@ import yaml
 from transformers import BatchEncoding
 
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, ColCfg
-from interpretune.analysis.ops.auto_columns import AUTO_COLUMNS
+from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.protocol import AnalysisBatchProtocol
 
 
@@ -37,22 +37,6 @@ class AnalysisOpDispatcher:
         self._op_to_aliases = defaultdict(list)  # {op_name: [aliases]}
         self._loaded = False
         self._loading_in_progress = False
-
-    def _apply_optional_auto_columns(self, op_def: dict):
-        """Apply optional auto-columns based on schema conditions."""
-        input_schema = op_def.get("input_schema", {})
-        output_schema = op_def.get("output_schema", {})
-
-        # Check each condition in AUTO_COLUMNS
-        for auto_column_condition in AUTO_COLUMNS:
-            if auto_column_condition.matches_schema(input_schema, output_schema):
-                # Add auto-columns that don't already exist
-                for col_name, col_cfg in auto_column_condition.auto_columns.items():
-                    if col_name not in output_schema:
-                        if isinstance(col_cfg, ColCfg):
-                            output_schema[col_name] = col_cfg.to_dict()
-                        else:
-                            output_schema[col_name] = col_cfg
 
     def load_definitions(self):
         """Load operation definitions from YAML."""
@@ -124,7 +108,7 @@ class AnalysisOpDispatcher:
             if op_name not in self._aliases:  # Skip aliases to avoid duplicates
                 compile_op_schema(op_name, self._op_definitions, compiled=compiled)
                 # Apply optional auto-columns after compilation
-                self._apply_optional_auto_columns(self._op_definitions[op_name])
+                apply_auto_columns(self._op_definitions[op_name])
 
     def _ensure_loaded(method):
         @wraps(method)

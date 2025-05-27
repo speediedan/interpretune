@@ -7,6 +7,7 @@ import interpretune as it
 from interpretune.analysis.ops.dispatcher import DISPATCHER, AnalysisOpDispatcher, DispatchContext
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, AnalysisBatch, ColCfg, OpWrapper
 from tests.unit.test_analysis_ops_base import op_impl_test
+from interpretune.analysis.ops.auto_columns import apply_auto_columns
 
 
 class TestAnalysisOpDispatcher:
@@ -828,9 +829,6 @@ class TestRequiredOpsCompilation:
     def test_optional_auto_columns_application(self):
         """Test that optional auto-columns are correctly applied based on conditions."""
 
-        # Create a test dispatcher
-        test_dispatcher = AnalysisOpDispatcher()
-
         # Create a mock operation definition with input column from datamodule
         op_def = {
             "input_schema": {
@@ -841,8 +839,8 @@ class TestRequiredOpsCompilation:
             }
         }
 
-        # Apply optional auto-columns
-        test_dispatcher._apply_optional_auto_columns(op_def)
+        # Apply optional auto-columns using the standalone function
+        apply_auto_columns(op_def)
 
         # Check that tokens and prompts were added
         output_schema = op_def["output_schema"]
@@ -855,8 +853,6 @@ class TestRequiredOpsCompilation:
 
     def test_optional_auto_columns_no_condition_match(self):
         """Test that auto-columns are not added when conditions are not met."""
-        test_dispatcher = AnalysisOpDispatcher()
-
         # Operation without input from datamodule
         op_def = {
             "input_schema": {
@@ -868,7 +864,7 @@ class TestRequiredOpsCompilation:
         }
 
         original_output = op_def["output_schema"].copy()
-        test_dispatcher._apply_optional_auto_columns(op_def)
+        apply_auto_columns(op_def)
 
         # Should remain unchanged
         assert op_def["output_schema"] == original_output
@@ -877,21 +873,19 @@ class TestRequiredOpsCompilation:
 
     def test_optional_auto_columns_existing_columns_preserved(self):
         """Test that existing tokens/prompts columns are not overwritten."""
-        test_dispatcher = AnalysisOpDispatcher()
-
         # Operation with existing custom tokens column
         op_def = {
             "input_schema": {
                 "input": {"datasets_dtype": "int64", "connected_obj": "datamodule"}
             },
             "output_schema": {
-                "tokens": {"datasets_dtype": "float32", "required": True},  # Custom config
+                "tokens": {"datasets_dtype": "float32", "required": True},
                 "answer_logits": {"datasets_dtype": "float32"}
             }
         }
 
         original_tokens_config = op_def["output_schema"]["tokens"].copy()
-        test_dispatcher._apply_optional_auto_columns(op_def)
+        apply_auto_columns(op_def)
 
         # tokens should remain unchanged, prompts should be added
         assert op_def["output_schema"]["tokens"] == original_tokens_config
@@ -953,7 +947,7 @@ class TestRequiredOpsCompilation:
         # Create AutoColumnCondition with list (not tuple) of field_conditions
         condition = AutoColumnCondition(
             field_conditions=field_conditions_list,  # Pass as list
-            schema_target="input_schema",
+            condition_target="input_schema",
             auto_columns={}
         )
 
@@ -971,7 +965,7 @@ class TestRequiredOpsCompilation:
 
         condition_with_tuple = AutoColumnCondition(
             field_conditions=field_conditions_tuple,  # Already a tuple
-            schema_target="output_schema",
+            condition_target="output_schema",
             auto_columns={}
         )
 
@@ -1071,17 +1065,15 @@ class TestAutoColumnsConditions:
             field_conditions=(
                 FieldCondition("input", {"connected_obj": "datamodule"}),
             ),
-            schema_target="input_schema",
+            condition_target="input_schema",
             auto_columns={
                 "tokens": {"datasets_dtype": "int64", "required": False},  # Dict
                 "metadata": ColCfg(datasets_dtype="string", required=False, non_tensor=True)  # ColCfg
             }
         )
 
-        test_dispatcher = AnalysisOpDispatcher()
-
-        # Mock AUTO_COLUMNS with our mixed condition
-        with patch('interpretune.analysis.ops.dispatcher.AUTO_COLUMNS', [mixed_condition]):
+        # Mock AUTO_COLUMNS with our mixed condition - now in auto_columns module
+        with patch('interpretune.analysis.ops.auto_columns.AUTO_COLUMNS', [mixed_condition]):
             op_def = {
                 "input_schema": {
                     "input": {"datasets_dtype": "int64", "connected_obj": "datamodule"}
@@ -1091,7 +1083,7 @@ class TestAutoColumnsConditions:
                 }
             }
 
-            test_dispatcher._apply_optional_auto_columns(op_def)
+            apply_auto_columns(op_def)
 
             output_schema = op_def["output_schema"]
             assert "tokens" in output_schema
@@ -1103,8 +1095,8 @@ class TestAutoColumnsConditions:
             assert output_schema["tokens"]["datasets_dtype"] == "int64"
             assert output_schema["metadata"]["datasets_dtype"] == "string"
 
-    def test_apply_optional_auto_columns_with_colcfg_instances(self):
-        """Test _apply_optional_auto_columns with ColCfg instances in auto_columns."""
+    def test_apply_auto_columns_with_colcfg_instances(self):
+        """Test apply_auto_columns with ColCfg instances in auto_columns."""
         from interpretune.analysis.ops.auto_columns import FieldCondition, AutoColumnCondition
 
         # Create condition with ColCfg instances in auto_columns to test col_cfg.to_dict() branch
@@ -1112,7 +1104,7 @@ class TestAutoColumnsConditions:
             field_conditions=(
                 FieldCondition("input", {"connected_obj": "datamodule"}),
             ),
-            schema_target="input_schema",
+            condition_target="input_schema",
             auto_columns={
                 "tokens_colcfg": ColCfg(
                     datasets_dtype="int64",
@@ -1129,10 +1121,8 @@ class TestAutoColumnsConditions:
             }
         )
 
-        test_dispatcher = AnalysisOpDispatcher()
-
         # Mock AUTO_COLUMNS with our ColCfg condition
-        with patch('interpretune.analysis.ops.dispatcher.AUTO_COLUMNS', [colcfg_condition]):
+        with patch('interpretune.analysis.ops.auto_columns.AUTO_COLUMNS', [colcfg_condition]):
             op_def = {
                 "input_schema": {
                     "input": {"datasets_dtype": "int64", "connected_obj": "datamodule"}
@@ -1142,8 +1132,8 @@ class TestAutoColumnsConditions:
                 }
             }
 
-            # Apply optional auto-columns
-            test_dispatcher._apply_optional_auto_columns(op_def)
+            # Apply auto-columns
+            apply_auto_columns(op_def)
 
             # Check that ColCfg instances were converted to dicts via .to_dict()
             output_schema = op_def["output_schema"]
