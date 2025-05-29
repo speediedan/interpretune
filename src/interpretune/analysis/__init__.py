@@ -1,6 +1,13 @@
 """Analysis submodule."""
+import os
+from pathlib import Path
 from datasets.formatting import _register_formatter
-
+from datasets.config import HF_CACHE_HOME  # we expect to leverage the Hugging Face cache system for analysis artifacts
+# we ignore these for the entire file so that we can set the cache directory before importing analysis components
+# ruff: noqa: E402
+IT_ANALYSIS_CACHE_DIR_NAME = "interpretune"
+DEFAULT_IT_ANALYSIS_CACHE = os.path.join(HF_CACHE_HOME, IT_ANALYSIS_CACHE_DIR_NAME)
+IT_ANALYSIS_CACHE = Path(os.getenv("IT_ANALYSIS_CACHE_DIR", DEFAULT_IT_ANALYSIS_CACHE))
 
 from interpretune.analysis.ops import ColCfg, OpSchema, AnalysisBatch, DISPATCHER, AnalysisOp
 from interpretune.analysis.core import (AnalysisStore, SAEAnalysisTargets, SAEAnalysisDict, LatentMetrics,
@@ -40,6 +47,7 @@ __all__ = [
     "ColCfg",
     "OpSchema",
     "AnalysisBatch",
+    "IT_ANALYSIS_CACHE",
 
     # Formatters
     "ITAnalysisFormatter",

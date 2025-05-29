@@ -225,22 +225,6 @@ def build_operation_compositions(yaml_config: Dict) -> Dict[str, Any]:
     return ops
 
 
-def load_and_compile_operations(yaml_path: str) -> Dict[str, Any]:
-    """Load operations from YAML file and compile operation compositions.
-
-    Args:
-        yaml_path: Path to the YAML file
-
-    Returns:
-        Dictionary of operations with compiled schemas
-    """
-    import yaml
-
-    with open(yaml_path, 'r') as f:
-        config = yaml.safe_load(f)
-
-    return build_operation_compositions(config)
-
 def compile_op_schema(op_name: str, op_definitions: Dict[str, Dict], visited: set = None, compiled: set = None):
     """Recursively compile schemas for an operation and its dependencies.
 

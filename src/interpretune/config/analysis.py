@@ -1,12 +1,9 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from typing import Optional, Generator, Union, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
-import os
 import datetime
 import warnings
 
-from datasets.config import XDG_CACHE_HOME
 from transformers import BatchEncoding, PreTrainedTokenizerBase
 
 from interpretune.analysis import (SAEAnalysisTargets, resolve_names_filter, _make_simple_cache_hook, OpSchema,
@@ -17,9 +14,6 @@ from interpretune.protocol import NamesFilter, AnalysisStoreProtocol, AnalysisBa
 from interpretune.utils import DEFAULT_DECODE_KWARGS
 from interpretune.utils import rank_zero_warn, rank_zero_debug
 
-IT_ANALYSIS_CACHE_DIR = "interpretune"
-DEFAULT_IT_ANALYSIS_CACHE = os.path.join(XDG_CACHE_HOME, IT_ANALYSIS_CACHE_DIR)
-IT_ANALYSIS_CACHE = Path(os.getenv("IT_ANALYSIS_CACHE_DIR", DEFAULT_IT_ANALYSIS_CACHE))
 
 @dataclass(kw_only=True)
 class AnalysisCfg(ITSerializableCfg):

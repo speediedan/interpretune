@@ -2,16 +2,98 @@ from __future__ import annotations
 import pytest
 import torch
 from unittest.mock import patch, MagicMock
+from pathlib import Path
 
 import interpretune as it
 from interpretune.analysis.ops.dispatcher import DISPATCHER, AnalysisOpDispatcher, DispatchContext
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, AnalysisBatch, ColCfg, OpWrapper
+from interpretune.analysis.ops.compiler.cache_manager import OpDef
 from tests.unit.test_analysis_ops_base import op_impl_test
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 
 
 class TestAnalysisOpDispatcher:
-    """Tests for the AnalysisOpDispatcher class."""
+    """Tests for AnalysisOpDispatcher functionality."""
+
+    def test_dispatcher_init_with_string_path(self, test_ops_yaml):
+        """Test dispatcher initialization with a string path (covers lines 41-42)."""
+        sub_dir = test_ops_yaml['sub_dir']
+        # Convert both Path to string to test string handling
+        string_path = str(test_ops_yaml['main_file'])
+
+        # Create dispatcher with string path
+        dispatcher = AnalysisOpDispatcher(yaml_paths=[sub_dir, string_path])
+
+        # Verify the string was converted to Path
+        assert len(dispatcher.yaml_paths) == 2
+        assert isinstance(dispatcher.yaml_paths[0], Path)
+        assert Path(string_path) in dispatcher.yaml_paths
+
+    def test_dispatcher_no_yaml_files_found(self, tmp_path):
+        """Test dispatcher behavior when no YAML files are found (covers lines 76-78)."""
+        # Create empty directory with no YAML files
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+
+        # Create dispatcher pointing to empty directory
+        dispatcher = AnalysisOpDispatcher(yaml_paths=empty_dir)
+
+        # This should trigger the debug log and set _loaded to True
+        with patch('interpretune.analysis.ops.dispatcher.rank_zero_debug') as mock_debug:
+            dispatcher.load_definitions()
+
+            # Verify debug message was logged
+            mock_debug.assert_called_with("No YAML files found in the specified paths")
+
+            # Verify dispatcher is marked as loaded despite no files
+            assert dispatcher._loaded is True
+            assert len(dispatcher._op_definitions) == 0
+
+    def test_dispatcher_operation_redefinition_warning(self, tmp_path):
+        """Test dispatcher warns when operation is redefined (covers line 116)."""
+        # Create first YAML file
+        yaml1 = tmp_path / "ops1.yaml"
+        yaml1.write_text("""
+test_op:
+  implementation: tests.unit.test_analysis_ops_base.op_impl_test
+  description: First definition
+  input_schema:
+    input1:
+      datasets_dtype: float32
+  output_schema:
+    output1:
+      datasets_dtype: float32
+""")
+
+        # Create second YAML file with same operation name
+        yaml2 = tmp_path / "ops2.yaml"
+        yaml2.write_text("""
+test_op:
+  implementation: tests.unit.test_analysis_ops_base.op_impl_test
+  description: Second definition (redefinition)
+  input_schema:
+    input1:
+      datasets_dtype: int64
+  output_schema:
+    output1:
+      datasets_dtype: int64
+""")
+
+        # Create dispatcher with both files
+        dispatcher = AnalysisOpDispatcher(yaml_paths=tmp_path)
+
+        # Mock the debug function to capture the redefinition warning
+        with patch('interpretune.analysis.ops.dispatcher.rank_zero_debug') as mock_debug:
+            dispatcher.load_definitions()
+
+            # Verify the redefinition warning was logged
+            # The debug call should contain information about redefinition
+            debug_calls = [call.args[0] for call in mock_debug.call_args_list]
+            redefinition_logged = any(
+                "redefined" in msg and "test_op" in msg
+                for msg in debug_calls
+            )
+            assert redefinition_logged, f"Expected redefinition warning, got calls: {debug_calls}"
 
     def test_import_callable(self):
         """Test importing a callable from a path."""
@@ -182,7 +264,7 @@ class TestAnalysisOpDispatcher:
         """Test lazy operation instantiation mechanism."""
         # Create a fresh dispatcher to avoid affecting global state
         test_dispatcher = AnalysisOpDispatcher()
-        test_dispatcher.yaml_path = DISPATCHER.yaml_path
+        test_dispatcher.yaml_paths = DISPATCHER.yaml_paths
         test_dispatcher.load_definitions()
 
         # Get a reference to the operation without instantiating it
@@ -216,7 +298,7 @@ class TestAnalysisOpDispatcher:
         """Test that operations are instantiated on first execution."""
         # Create a fresh dispatcher for clean testing
         test_dispatcher = AnalysisOpDispatcher()
-        test_dispatcher.yaml_path = DISPATCHER.yaml_path
+        test_dispatcher.yaml_paths = DISPATCHER.yaml_paths
         test_dispatcher.load_definitions()
 
         op_name = "labels_to_ids"
@@ -374,7 +456,13 @@ class TestAnalysisOpDispatcher:
         with patch.object(test_dispatcher, 'load_definitions', patched_load_definitions):
             # Also need to patch _op_definitions to include our test op
             # This prevents ValueError when checking if op_name is in _op_definitions
-            test_dispatcher._op_definitions = {"some_op": {}}
+            test_dispatcher._op_definitions = {"some_op": OpDef(
+                name="some_op",
+                description="Test op",
+                implementation="tests.unit.test_analysis_ops_base.op_impl_test",
+                input_schema=OpSchema({}),
+                output_schema=OpSchema({})
+            )}
 
             # Ensure we're testing correct behavior when loading is already in progress
             test_dispatcher._loaded = False
@@ -405,8 +493,16 @@ class TestAnalysisOpDispatcher:
             mock_op = MagicMock(spec=AnalysisOp)
             mock_instantiate.return_value = mock_op
 
-            # Set up the op_definitions dictionary
-            test_dispatcher._op_definitions = {"test_op": {}}
+            # Set up the op_definitions dictionary with OpDef objects
+            test_dispatcher._op_definitions = {"test_op": OpDef(
+                name="test_op",
+                description="Test op",
+                implementation="tests.unit.test_analysis_ops_base.op_impl_test",
+                input_schema=OpSchema({}),
+                output_schema=OpSchema({})
+            )}
+            # Mark as loaded to avoid triggering load_definitions
+            test_dispatcher._loaded = True
 
             # Test that get_op returns the instantiated op
             op = test_dispatcher.get_op("test_op")
@@ -496,9 +592,24 @@ class TestAnalysisOpDispatcher:
             # Make it return False to bypass the call that's causing the TypeError
             mock_is_lazy.return_value = False
 
-            # Need to set up _op_definitions and create an invalid op
+            # Need to set up _op_definitions and create an invalid op with OpDef objects
             test_dispatcher._loaded = True
-            test_dispatcher._op_definitions = {"invalid_op": {}, "valid_op": {}}
+            test_dispatcher._op_definitions = {
+                "invalid_op": OpDef(
+                    name="invalid_op",
+                    description="Invalid op",
+                    implementation="invalid.path",
+                    input_schema=OpSchema({}),
+                    output_schema=OpSchema({})
+                ),
+                "valid_op": OpDef(
+                    name="valid_op",
+                    description="Valid op",
+                    implementation="tests.unit.test_analysis_ops_base.op_impl_test",
+                    input_schema=OpSchema({}),
+                    output_schema=OpSchema({})
+                )
+            }
 
             # For invalid_op, patch _instantiate_op to raise an error
             with patch.object(test_dispatcher, '_instantiate_op', side_effect=ValueError("Test error")):
@@ -618,9 +729,39 @@ class TestAnalysisOpDispatcher:
             assert wrapper1 != "different_op"
             assert wrapper1 != 123
 
+    def test_discover_yaml_files(self, test_ops_yaml):
+        """Test YAML file discovery functionality."""
+        test_dispatcher = AnalysisOpDispatcher()
 
-class TestRequiredOpsCompilation:
-    """Tests for required_ops schema compilation in the dispatcher."""
+        # Test single file discovery
+        single_file_result = test_dispatcher._discover_yaml_files([test_ops_yaml['main_file']])
+        assert len(single_file_result) == 1
+        assert test_ops_yaml['main_file'] in single_file_result
+
+        # Test directory discovery
+        dir_result = test_dispatcher._discover_yaml_files([test_ops_yaml['main_dir']])
+        assert len(dir_result) >= 3  # Should find all 3 YAML files
+        assert test_ops_yaml['main_file'] in dir_result
+
+        # Test mixed file and directory discovery
+        mixed_result = test_dispatcher._discover_yaml_files([
+            test_ops_yaml['main_file'],
+            test_ops_yaml['sub_dir']
+        ])
+        assert len(mixed_result) >= 3
+        assert test_ops_yaml['main_file'] in mixed_result
+
+    def test_multi_file_loading(self, multi_file_test_dispatcher):
+        """Test loading operations from multiple YAML files."""
+        # Should have operations from all discovered YAML files
+        assert "test_op" in multi_file_test_dispatcher._op_definitions
+        assert "another_test_op" in multi_file_test_dispatcher._op_definitions
+        assert "extra_op1" in multi_file_test_dispatcher._op_definitions
+        assert "extra_op2" in multi_file_test_dispatcher._op_definitions
+
+        # Verify aliases work
+        assert "test_alias" in multi_file_test_dispatcher._aliases
+        assert multi_file_test_dispatcher._aliases["test_alias"] == "test_op"
 
     def test_compile_required_ops_schemas_integration(self):
         """Test that the dispatcher correctly compiles required_ops schemas."""
@@ -650,17 +791,22 @@ class TestRequiredOpsCompilation:
             }
         }
 
-        # Mock the file reading
-        with patch('builtins.open'), patch('yaml.safe_load', return_value=yaml_content):
+        # Mock the file reading and caching - bypass cache manager completely
+        with patch('builtins.open'), \
+             patch('yaml.safe_load', return_value=yaml_content), \
+             patch.object(test_dispatcher, '_discover_yaml_files', return_value=[Path("fake_file.yaml")]), \
+             patch.object(test_dispatcher._cache_manager, 'add_yaml_file'), \
+             patch.object(test_dispatcher._cache_manager, 'load_cache', return_value=None), \
+             patch.object(test_dispatcher._cache_manager, 'save_cache'):
             test_dispatcher.load_definitions()
 
         # Check that dependent_op now includes base_op's schemas
         dep_def = test_dispatcher._op_definitions["dependent_op"]
 
-        assert "dep_input" in dep_def["input_schema"]
-        assert "base_input" in dep_def["input_schema"]
-        assert "dep_output" in dep_def["output_schema"]
-        assert "base_output" in dep_def["output_schema"]
+        assert "dep_input" in dep_def.input_schema
+        assert "base_input" in dep_def.input_schema
+        assert "dep_output" in dep_def.output_schema
+        assert "base_output" in dep_def.output_schema
 
     def test_required_ops_with_real_operations(self):
         """Test required_ops compilation with actual operations from the YAML."""
@@ -671,13 +817,13 @@ class TestRequiredOpsCompilation:
         model_forward_def = DISPATCHER._op_definitions["model_forward"]
 
         # Should have its own schemas
-        assert "input" in model_forward_def["input_schema"]
-        assert "answer_logits" in model_forward_def["output_schema"]
+        assert "input" in model_forward_def.input_schema
+        assert "answer_logits" in model_forward_def.output_schema
 
         # Should also include get_answer_indices schemas
-        assert "answer_indices" in model_forward_def["input_schema"]
-        assert "answer_indices" in model_forward_def["output_schema"]
-        assert "tokens" in model_forward_def["output_schema"]
+        assert "answer_indices" in model_forward_def.input_schema
+        assert "answer_indices" in model_forward_def.output_schema
+        assert "tokens" in model_forward_def.output_schema
 
     def test_required_ops_transitive_dependencies(self):
         """Test that transitive dependencies are properly resolved."""
@@ -688,17 +834,17 @@ class TestRequiredOpsCompilation:
         cache_forward_def = DISPATCHER._op_definitions["model_cache_forward"]
 
         # Should have its own schemas
-        assert "input" in cache_forward_def["input_schema"]
-        assert "answer_logits" in cache_forward_def["output_schema"]
-        assert "cache" in cache_forward_def["output_schema"]
+        assert "input" in cache_forward_def.input_schema
+        assert "answer_logits" in cache_forward_def.output_schema
+        assert "cache" in cache_forward_def.output_schema
 
         # Should include get_answer_indices schemas (direct and via get_alive_latents)
-        assert "answer_indices" in cache_forward_def["input_schema"]
-        assert "answer_indices" in cache_forward_def["output_schema"]
-        assert "tokens" in cache_forward_def["output_schema"]
+        assert "answer_indices" in cache_forward_def.input_schema
+        assert "answer_indices" in cache_forward_def.output_schema
+        assert "tokens" in cache_forward_def.output_schema
 
         # Should include get_alive_latents schemas
-        assert "alive_latents" in cache_forward_def["output_schema"]
+        assert "alive_latents" in cache_forward_def.output_schema
 
     def test_required_ops_precedence(self):
         """Test that operation's own schemas take precedence over required_ops."""
@@ -727,16 +873,21 @@ class TestRequiredOpsCompilation:
             }
         }
 
-        with patch('builtins.open'), patch('yaml.safe_load', return_value=yaml_content):
+        with patch('builtins.open'), \
+             patch('yaml.safe_load', return_value=yaml_content), \
+             patch.object(test_dispatcher, '_discover_yaml_files', return_value=[Path("fake_file.yaml")]), \
+             patch.object(test_dispatcher._cache_manager, 'add_yaml_file'), \
+             patch.object(test_dispatcher._cache_manager, 'load_cache', return_value=None), \
+             patch.object(test_dispatcher._cache_manager, 'save_cache'):
             test_dispatcher.load_definitions()
 
         # Check that override_op's schemas take precedence
         override_def = test_dispatcher._op_definitions["override_op"]
 
-        assert override_def["input_schema"]["shared_field"]["datasets_dtype"] == "float32"
-        assert override_def["input_schema"]["shared_field"]["required"] is False
-        assert override_def["output_schema"]["shared_output"]["datasets_dtype"] == "float32"
-        assert override_def["output_schema"]["shared_output"]["required"] is False
+        assert override_def.input_schema["shared_field"].datasets_dtype == "float32"
+        assert override_def.input_schema["shared_field"].required is False
+        assert override_def.output_schema["shared_output"].datasets_dtype == "float32"
+        assert override_def.output_schema["shared_output"].required is False
 
     def test_instantiate_op_with_compiled_schemas(self):
         """Test that instantiated operations have the compiled schemas."""
@@ -770,8 +921,8 @@ class TestRequiredOpsCompilation:
         assert cache_forward_def is main_def
 
         # Should have compiled schemas
-        assert "answer_indices" in cache_forward_def["input_schema"]
-        assert "alive_latents" in cache_forward_def["output_schema"]
+        assert "answer_indices" in cache_forward_def.input_schema
+        assert "alive_latents" in cache_forward_def.output_schema
 
     def test_required_ops_error_handling(self):
         """Test error handling for invalid required_ops."""
@@ -786,7 +937,11 @@ class TestRequiredOpsCompilation:
             }
         }
 
-        with patch('builtins.open'), patch('yaml.safe_load', return_value=yaml_content):
+        with patch('builtins.open'), \
+             patch('yaml.safe_load', return_value=yaml_content), \
+             patch.object(test_dispatcher, '_discover_yaml_files', return_value=[Path("fake_file.yaml")]), \
+             patch.object(test_dispatcher._cache_manager, 'add_yaml_file'), \
+             patch.object(test_dispatcher._cache_manager, 'load_cache', return_value=None):
             with pytest.raises(ValueError, match="Operation nonexistent_op not found in definitions"):
                 test_dispatcher.load_definitions()
 
@@ -794,9 +949,14 @@ class TestRequiredOpsCompilation:
         """Test that _compile_required_ops_schemas is called during load_definitions."""
         test_dispatcher = AnalysisOpDispatcher()
 
-        with patch.object(test_dispatcher, '_compile_required_ops_schemas') as mock_compile:
-            with patch('builtins.open'), patch('yaml.safe_load', return_value={}):
-                test_dispatcher.load_definitions()
+        with patch.object(test_dispatcher, '_compile_required_ops_schemas') as mock_compile, \
+             patch('builtins.open'), \
+             patch('yaml.safe_load', return_value={}), \
+             patch.object(test_dispatcher, '_discover_yaml_files', return_value=[Path("fake_file.yaml")]), \
+             patch.object(test_dispatcher._cache_manager, 'add_yaml_file'), \
+             patch.object(test_dispatcher._cache_manager, 'load_cache', return_value=None), \
+             patch.object(test_dispatcher._cache_manager, 'save_cache'):
+            test_dispatcher.load_definitions()
 
             mock_compile.assert_called_once()
 
@@ -817,14 +977,18 @@ class TestRequiredOpsCompilation:
             }
         }
 
-        with patch('builtins.open'), patch('yaml.safe_load', return_value=yaml_content):
+        with patch('builtins.open'), \
+             patch('yaml.safe_load', return_value=yaml_content), \
+             patch.object(test_dispatcher, '_discover_yaml_files', return_value=[Path("fake_file.yaml")]), \
+             patch.object(test_dispatcher._cache_manager, 'add_yaml_file'), \
+             patch.object(test_dispatcher._cache_manager, 'load_cache', return_value=None), \
+             patch.object(test_dispatcher._cache_manager, 'save_cache'):
             test_dispatcher.load_definitions()
 
         # Should work without error and preserve original schemas
         simple_def = test_dispatcher._op_definitions["simple_op"]
-        assert simple_def["input_schema"]["input1"]["datasets_dtype"] == "float32"
-        assert simple_def["output_schema"]["output1"]["datasets_dtype"] == "float32"
-
+        assert simple_def.input_schema["input1"].datasets_dtype == "float32"
+        assert simple_def.output_schema["output1"].datasets_dtype == "float32"
 
     def test_optional_auto_columns_application(self):
         """Test that optional auto-columns are correctly applied based on conditions."""

@@ -1,57 +1,24 @@
+"""Tests for analysis operations compiler functionality."""
 from __future__ import annotations
-
-import pytest
-from unittest.mock import MagicMock, patch
+import time
 import yaml
-import tempfile
-import os
+from unittest.mock import patch, MagicMock
+import pytest
 
+from interpretune.analysis.ops.compiler.cache_manager import (
+    OpDefinitionsCacheManager, OpDef, YamlFileInfo
+)
 from interpretune.analysis.ops.base import OpSchema, ColCfg, AnalysisOp
 from interpretune.analysis.ops.compiler.schema_compiler import (compile_op_schema,
                                                                _compile_composition_schema_core,
                                                                jit_compile_composition_schema,
                                                                compile_operation_composition_schema,
                                                                build_operation_compositions,
-                                                               load_and_compile_operations)
+                                                               )
 
 
 class TestSchemaCompilation:
     """Tests for the core schema compilation functionality."""
-
-    def test_load_and_compile_operations(self):
-        """Test load_and_compile_operations basic functionality."""
-        # Create a temporary YAML file
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.yaml') as temp:
-            yaml_content = {
-                "op1": {
-                    "input_schema": {"input1": {}},
-                    "output_schema": {"output1": {}}
-                },
-                "composite_operations": {
-                    "composite_op": {
-                        "composition": "op1",
-                        "aliases": ["composite_alias"]
-                    }
-                }
-            }
-            yaml.dump(yaml_content, temp)
-            temp_path = temp.name
-
-        try:
-            # Mock yaml.safe_load to return our content
-            with patch('yaml.safe_load', return_value=yaml_content):
-                # Call the function
-                result = load_and_compile_operations(temp_path)
-
-                # Verify results
-                assert "op1" in result
-                assert "composite_op" in result
-                assert result["composite_op"]["aliases"] == ["composite_alias"]
-
-        finally:
-            # Clean up the temporary file
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
 
     def test_compile_composition_schema_core_basic(self):
         """Test basic functionality of _compile_composition_schema_core."""
@@ -777,3 +744,715 @@ class TestCompileOpSchema:
         # Both should be in compiled set
         assert "base_op" in compiled
         assert "dependent_op" in compiled
+
+class TestYamlFileInfo:
+    """Tests for YamlFileInfo functionality."""
+
+    def test_from_path_valid_file(self, tmp_path):
+        """Test creating YamlFileInfo from a valid file."""
+        yaml_file = tmp_path / "test.yaml"
+        yaml_file.write_text("test: content")
+
+        file_info = YamlFileInfo.from_path(yaml_file)
+
+        assert file_info.path == yaml_file
+        assert file_info.mtime > 0
+        assert len(file_info.content_hash) == 64  # SHA256 hex digest length
+
+    def test_from_path_nonexistent_file(self, tmp_path):
+        """Test creating YamlFileInfo from non-existent file raises error."""
+        nonexistent_file = tmp_path / "nonexistent.yaml"
+
+        with pytest.raises(FileNotFoundError):
+            YamlFileInfo.from_path(nonexistent_file)
+
+    def test_content_hash_changes_with_content(self, tmp_path):
+        """Test that content hash changes when file content changes."""
+        yaml_file = tmp_path / "test.yaml"
+
+        yaml_file.write_text("content1")
+        info1 = YamlFileInfo.from_path(yaml_file)
+
+        yaml_file.write_text("content2")
+        info2 = YamlFileInfo.from_path(yaml_file)
+
+        assert info1.content_hash != info2.content_hash
+
+
+class TestOpDef:
+    """Tests for OpDef functionality."""
+
+    def test_op_def_creation(self):
+        """Test creating an OpDef with all fields."""
+        input_schema = OpSchema({"field1": ColCfg(datasets_dtype="int64")})
+        output_schema = OpSchema({"field2": ColCfg(datasets_dtype="float32")})
+
+        op_def = OpDef(
+            name="test_op",
+            description="Test operation",
+            implementation="test.module.func",
+            input_schema=input_schema,
+            output_schema=output_schema,
+            aliases=["alias1", "alias2"],
+            function_params={"param1": "value1"},
+            required_ops=["dep1", "dep2"],
+            composition=["op1", "op2"]
+        )
+
+        assert op_def.name == "test_op"
+        assert op_def.aliases == ["alias1", "alias2"]
+        assert op_def.composition == ["op1", "op2"]
+
+    def test_op_def_to_dict(self):
+        """Test converting OpDef to dictionary."""
+        input_schema = OpSchema({"field1": ColCfg(datasets_dtype="int64")})
+        output_schema = OpSchema({"field2": ColCfg(datasets_dtype="float32")})
+
+        op_def = OpDef(
+            name="test_op",
+            description="Test operation",
+            implementation="test.module.func",
+            input_schema=input_schema,
+            output_schema=output_schema
+        )
+
+        result_dict = op_def.to_dict()
+
+        assert result_dict["name"] == "test_op"
+        assert result_dict["input_schema"] == input_schema
+        assert result_dict["output_schema"] == output_schema
+        assert "composition" in result_dict  # Should be present even if None
+
+
+class TestDefinitionsCacheManager:
+    """Tests for OpDefinitionsCacheManager functionality."""
+
+    @pytest.fixture
+    def cache_manager(self, tmp_path):
+        """Create a cache manager with temporary directory."""
+        return OpDefinitionsCacheManager(cache_dir=tmp_path)
+
+    @pytest.fixture
+    def sample_yaml_file(self, tmp_path):
+        """Create a sample YAML file."""
+        yaml_file = tmp_path / "test_ops.yaml"
+        yaml_content = """
+test_op:
+  description: Test operation
+  implementation: test.module.func
+  input_schema:
+    field1:
+      datasets_dtype: int64
+  output_schema:
+    field2:
+      datasets_dtype: float32
+"""
+        yaml_file.write_text(yaml_content)
+        return yaml_file
+
+    def test_cache_manager_initialization(self, tmp_path):
+        """Test cache manager initialization."""
+        cache_manager = OpDefinitionsCacheManager(cache_dir=tmp_path)
+
+        assert cache_manager.cache_dir == tmp_path
+        assert tmp_path.exists()
+        assert cache_manager._yaml_files == []
+        assert cache_manager._fingerprint is None
+
+    def test_add_yaml_file(self, cache_manager, sample_yaml_file):
+        """Test adding a YAML file to monitoring."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        assert len(cache_manager._yaml_files) == 1
+        assert cache_manager._yaml_files[0].path == sample_yaml_file
+        assert cache_manager._fingerprint is None  # Should reset fingerprint
+
+    def test_add_yaml_file_duplicate(self, cache_manager, sample_yaml_file):
+        """Test that adding the same YAML file twice doesn't create duplicates."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        assert len(cache_manager._yaml_files) == 1
+
+    def test_fingerprint_computation(self, cache_manager, sample_yaml_file):
+        """Test fingerprint computation."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        fingerprint1 = cache_manager.fingerprint
+        fingerprint2 = cache_manager.fingerprint  # Should be cached
+
+        assert fingerprint1 == fingerprint2
+        assert len(fingerprint1) == 16  # Truncated to 16 characters
+
+    def test_fingerprint_empty(self, cache_manager):
+        """Test fingerprint with no YAML files."""
+        assert cache_manager.fingerprint == "empty"
+
+    def test_fingerprint_changes_with_content(self, cache_manager, tmp_path):
+        """Test that fingerprint changes when file content changes."""
+        yaml_file = tmp_path / "test.yaml"
+        yaml_file.write_text("content1")
+
+        cache_manager.add_yaml_file(yaml_file)
+        fingerprint1 = cache_manager.fingerprint
+
+        # Modify file and create new cache manager
+        yaml_file.write_text("content2")
+        cache_manager2 = OpDefinitionsCacheManager(cache_dir=tmp_path)
+        cache_manager2.add_yaml_file(yaml_file)
+        fingerprint2 = cache_manager2.fingerprint
+
+        assert fingerprint1 != fingerprint2
+
+    def test_cache_module_path(self, cache_manager, sample_yaml_file):
+        """Test cache module path generation."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        cache_path = cache_manager._get_cache_module_path()
+        expected_name = f"op_definitions_{cache_manager.fingerprint}.py"
+
+        assert cache_path.name == expected_name
+        assert cache_path.parent == cache_manager.cache_dir
+
+    def test_is_cache_valid_no_cache(self, cache_manager, sample_yaml_file):
+        """Test cache validation when no cache exists."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        assert not cache_manager.is_cache_valid()
+
+    def test_is_cache_valid_file_changed(self, cache_manager, sample_yaml_file):
+        """Test cache validation when source file changes."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        # Create a fake cache file
+        cache_path = cache_manager._get_cache_module_path()
+        cache_path.write_text("# fake cache")
+
+        # File should be considered valid initially
+        assert cache_manager.is_cache_valid()
+
+        # Modify the source file
+        time.sleep(0.01)  # Ensure different mtime
+        sample_yaml_file.write_text("modified content")
+
+        # Cache should now be invalid
+        assert not cache_manager.is_cache_valid()
+
+    def test_serialize_col_cfg(self, cache_manager):
+        """Test ColCfg serialization."""
+        col_cfg = ColCfg(
+            datasets_dtype="int64",
+            required=False,
+            non_tensor=True
+        )
+
+        serialized = cache_manager._serialize_col_cfg(col_cfg)
+
+        # Should always include datasets_dtype
+        assert 'datasets_dtype="int64"' in serialized
+        assert 'required=False' in serialized
+        assert 'non_tensor=True' in serialized
+        assert serialized.startswith('ColCfg(')
+        assert serialized.endswith(')')
+
+    def test_serialize_op_schema(self, cache_manager):
+        """Test OpSchema serialization."""
+        schema = OpSchema({
+            "field1": ColCfg(datasets_dtype="int64"),
+            "field2": ColCfg(datasets_dtype="float32", required=False)
+        })
+
+        serialized = cache_manager._serialize_op_schema(schema)
+
+        assert serialized.startswith('OpSchema(')
+        assert '"field1":' in serialized
+        assert '"field2":' in serialized
+        assert 'ColCfg(' in serialized
+
+    def test_serialize_op_schema_empty(self, cache_manager):
+        """Test empty OpSchema serialization."""
+        schema = OpSchema({})
+
+        serialized = cache_manager._serialize_op_schema(schema)
+
+        assert serialized == 'OpSchema({})'
+
+    def test_serialize_op_def(self, cache_manager):
+        """Test OpDef serialization."""
+        input_schema = OpSchema({"field1": ColCfg(datasets_dtype="int64")})
+        output_schema = OpSchema({"field2": ColCfg(datasets_dtype="float32")})
+
+        op_def = OpDef(
+            name="test_op",
+            description="Test operation",
+            implementation="test.module.func",
+            input_schema=input_schema,
+            output_schema=output_schema,
+            aliases=["alias1"],
+            function_params={"param1": "value1"}
+        )
+
+        serialized = cache_manager._serialize_op_def(op_def)
+
+        assert serialized.startswith('OpDef(')
+        assert 'name="test_op"' in serialized
+        assert 'aliases=[\'alias1\']' in serialized
+        assert 'function_params={\'param1\': \'value1\'}' in serialized
+
+    def test_generate_module_content(self, cache_manager, sample_yaml_file):
+        """Test module content generation."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        # Create sample op definitions
+        op_definitions = {
+            "test_op": OpDef(
+                name="test_op",
+                description="Test operation",
+                implementation="test.module.func",
+                input_schema=OpSchema({"field1": ColCfg(datasets_dtype="int64")}),
+                output_schema=OpSchema({"field2": ColCfg(datasets_dtype="float32")})
+            )
+        }
+
+        content = cache_manager._generate_module_content(op_definitions)
+
+        # Check for required content
+        assert "GENERATED FILE - DO NOT EDIT" in content
+        assert f"Fingerprint: {cache_manager.fingerprint}" in content
+        assert "OP_DEFINITIONS = {" in content
+        assert '"test_op":' in content
+        assert "OpDef(" in content
+        assert "from interpretune.analysis.ops.base import OpSchema, ColCfg" in content
+
+    def test_save_and_load_cache_cycle(self, cache_manager, sample_yaml_file):
+        """Test complete save and load cycle."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        # Create sample op definitions
+        op_definitions = {
+            "test_op": OpDef(
+                name="test_op",
+                description="Test operation",
+                implementation="test.module.func",
+                input_schema=OpSchema({"field1": ColCfg(datasets_dtype="int64")}),
+                output_schema=OpSchema({"field2": ColCfg(datasets_dtype="float32")}),
+                aliases=["alias1"]
+            )
+        }
+
+        # Save to cache
+        cache_path = cache_manager.save_cache(op_definitions)
+        assert cache_path.exists()
+
+        # Load from cache
+        loaded_definitions = cache_manager.load_cache()
+
+        assert loaded_definitions is not None
+        assert "test_op" in loaded_definitions
+        assert loaded_definitions["test_op"].name == "test_op"
+        assert loaded_definitions["test_op"].aliases == ["alias1"]
+
+    def test_load_cache_invalid(self, cache_manager, sample_yaml_file):
+        """Test loading invalid cache returns None."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        # No cache file exists
+        result = cache_manager.load_cache()
+        assert result is None
+
+    def test_cleanup_old_cache_files(self, cache_manager, sample_yaml_file):
+        """Test cleanup of old cache files."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        # Create some old cache files
+        old_cache1 = cache_manager.cache_dir / "op_definitions_old1.py"
+        old_cache2 = cache_manager.cache_dir / "op_definitions_old2.py"
+        old_cache1.write_text("# old cache 1")
+        old_cache2.write_text("# old cache 2")
+
+        # Save current cache (should trigger cleanup)
+        op_definitions = {
+            "test_op": OpDef(
+                name="test_op",
+                description="Test",
+                implementation="test.func",
+                input_schema=OpSchema({}),
+                output_schema=OpSchema({})
+            )
+        }
+        cache_manager.save_cache(op_definitions)
+
+        # Old files should be removed
+        assert not old_cache1.exists()
+        assert not old_cache2.exists()
+
+        # Current cache should still exist
+        current_cache = cache_manager._get_cache_module_path()
+        assert current_cache.exists()
+
+    @patch('interpretune.utils.logging.rank_zero_warn')
+    def test_cleanup_old_cache_files_permission_error(self, mock_warn, cache_manager, sample_yaml_file):
+        """Test cleanup when file removal fails due to permissions."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        # Create a real cache file that we'll try to delete
+        old_cache_file = cache_manager.cache_dir / "op_definitions_old_fingerprint.py"
+        old_cache_file.write_text("# old cache")
+
+        # Create a mock file that will raise OSError when unlink is called
+        mock_file = MagicMock()
+        mock_file.name = "op_definitions_old_fingerprint.py"
+        mock_file.unlink.side_effect = OSError("Permission denied")
+
+        with pytest.warns(match="Failed to remove old cache file"):
+            # Patch the pathlib.Path.glob method to return our mock file
+            with patch('pathlib.Path.glob', return_value=[mock_file]):
+                cache_manager._cleanup_old_cache_files()
+
+    def test_is_cache_valid_file_modified_time_check(self, cache_manager, tmp_path):
+        """Test cache validation when source files have been modified after cache creation."""
+        # Create a YAML file
+        yaml_file = tmp_path / "test.yaml"
+        yaml_content = {
+            "test_op": {
+                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "input_schema": {"input1": {"datasets_dtype": "float32"}},
+                "output_schema": {"output1": {"datasets_dtype": "float32"}}
+            }
+        }
+        with open(yaml_file, "w") as f:
+            yaml.dump(yaml_content, f)
+
+        cache_manager.add_yaml_file(yaml_file)
+
+        # Create a cache file
+        cache_path = cache_manager._get_cache_module_path()
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text("# cache content")
+
+        # Initially should be valid
+        assert cache_manager.is_cache_valid()
+
+        # Modify the YAML file to have a newer timestamp
+        import time
+        time.sleep(0.1)  # Ensure different timestamp
+        yaml_file.touch()  # Update modification time
+
+        # Now cache should be invalid due to newer source file
+        assert not cache_manager.is_cache_valid()
+
+    def test_load_cache_import_error_handling(self, cache_manager, sample_yaml_file):
+        """Test load_cache when import fails."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        # Create invalid cache file that will cause import error
+        cache_path = cache_manager._get_cache_module_path()
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text("invalid python syntax !!!")
+
+        # Should return None when import fails
+        result = cache_manager.load_cache()
+        assert result is None
+
+    def test_load_cache_spec_or_loader_none(self, cache_manager, sample_yaml_file):
+        """Test load_cache when spec or spec.loader is None."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        # Create a dummy cache file, its content doesn't strictly matter here
+        # as we're mocking the import mechanism before content is read.
+        cache_path = cache_manager._get_cache_module_path()
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text("FINGERPRINT = \"test\"\nOP_DEFINITIONS = {}")
+
+        # Scenario 1: spec is None
+        with patch('importlib.util.spec_from_file_location', return_value=None) as mock_spec_from_file:
+            result = cache_manager.load_cache()
+            assert result is None
+            mock_spec_from_file.assert_called_once()
+
+        # Reset mock for next scenario
+        mock_spec_from_file.reset_mock()
+
+        # Scenario 2: spec.loader is None
+        mock_spec = MagicMock()
+        mock_spec.loader = None
+        with patch('importlib.util.spec_from_file_location', return_value=mock_spec) as mock_spec_from_file:
+            result = cache_manager.load_cache()
+            assert result is None
+            mock_spec_from_file.assert_called_once()
+
+    def test_fingerprint_consistency_across_instances(self, tmp_path, sample_yaml_file):
+        """Test that fingerprint is consistent across different cache manager instances."""
+        cache_manager1 = OpDefinitionsCacheManager(cache_dir=tmp_path)
+        cache_manager1.add_yaml_file(sample_yaml_file)
+        fingerprint1 = cache_manager1.fingerprint
+
+        cache_manager2 = OpDefinitionsCacheManager(cache_dir=tmp_path)
+        cache_manager2.add_yaml_file(sample_yaml_file)
+        fingerprint2 = cache_manager2.fingerprint
+
+        assert fingerprint1 == fingerprint2
+
+    def test_fingerprint_with_missing_files(self, tmp_path):
+        """Test fingerprint computation when YAML files don't exist."""
+        cache_manager = OpDefinitionsCacheManager(cache_dir=tmp_path)
+
+        # Create a file info for a non-existent file
+        nonexistent_file = tmp_path / "nonexistent.yaml"
+        file_info = YamlFileInfo(
+            path=nonexistent_file,
+            mtime=123456.0,
+            content_hash="dummy_hash"
+        )
+        cache_manager._yaml_files = [file_info]
+
+        # This should not raise an error and should return a fingerprint
+        fingerprint = cache_manager.fingerprint
+        assert isinstance(fingerprint, str)
+        assert len(fingerprint) > 0
+
+    def test_cache_validation_with_missing_source_files(self, cache_manager, sample_yaml_file):
+        """Test cache validation when source files are missing."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        # Create a valid cache file
+        cache_path = cache_manager._get_cache_module_path()
+        cache_path.write_text('FINGERPRINT = "test"\nOP_DEFINITIONS = {}')
+
+        # Remove the source YAML file
+        sample_yaml_file.unlink()
+
+        # Cache should be invalid because source file is missing
+        assert not cache_manager.is_cache_valid()
+
+    def test_load_cache_with_import_error(self, cache_manager, sample_yaml_file):
+        """Test cache loading when module import fails."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+
+        # Create a cache file that will cause import errors
+        cache_path = cache_manager._get_cache_module_path()
+        cache_path.write_text("""
+import nonexistent_module  # This will cause an import error
+FINGERPRINT = "test"
+OP_DEFINITIONS = {}
+""")
+
+        with patch('interpretune.analysis.ops.compiler.cache_manager.rank_zero_warn') as mock_warn:
+            result = cache_manager.load_cache()
+
+            assert result is None
+            mock_warn.assert_called()
+
+    def test_serialize_col_cfg_with_non_dict_field(self, cache_manager):
+        """Test ColCfg serialization with various field types."""
+        from interpretune.analysis.ops.base import ColCfg
+
+        # Test with all types of fields including edge cases
+        col_cfg = ColCfg(
+            datasets_dtype="float32",
+            required=True,
+            non_tensor=False,
+            intermediate_only=True,
+            array_shape=(10, 20)  # Non-string, non-default value
+        )
+
+        serialized = cache_manager._serialize_col_cfg(col_cfg)
+        assert "datasets_dtype=\"float32\"" in serialized
+        assert "intermediate_only=True" in serialized
+        assert "array_shape=(10, 20)" in serialized
+        # Note: required=True might be default, so don't assert it must be present
+
+    def test_serialize_col_cfg_with_string_fields(self, cache_manager):
+        """Test ColCfg serialization with string field values."""
+        from interpretune.analysis.ops.base import ColCfg
+
+        col_cfg = ColCfg(
+            datasets_dtype="string",
+            sequence_type="custom_sequence"  # String field that's not datasets_dtype
+        )
+
+        serialized = cache_manager._serialize_col_cfg(col_cfg)
+        assert "datasets_dtype=\"string\"" in serialized
+        assert "sequence_type=\"custom_sequence\"" in serialized
+
+    def test_serialize_col_cfg_minimal_fields(self, cache_manager):
+        """Test ColCfg serialization with only required fields."""
+        from interpretune.analysis.ops.base import ColCfg
+
+        # Create ColCfg with only the required datasets_dtype
+        col_cfg = ColCfg(datasets_dtype="int64")
+
+        serialized = cache_manager._serialize_col_cfg(col_cfg)
+        assert "datasets_dtype=\"int64\"" in serialized
+        # Check that we don't include too many fields - should only include non-default values
+        # Allow for some fields that have None as non-default values
+        assert serialized.count("=") <= 6  # Reasonable upper bound for non-default fields
+
+    def test_serialize_col_cfg_default_factory_fields(self, cache_manager):
+        """Test ColCfg serialization with fields that have default factories."""
+        from interpretune.analysis.ops.base import ColCfg
+        from dataclasses import fields
+
+        # Create a ColCfg instance
+        col_cfg = ColCfg(datasets_dtype="float32")
+
+        # Find fields with default factories in ColCfg
+        col_cfg_fields = fields(ColCfg)
+        default_factory_fields = []
+
+        for field_info in col_cfg_fields:
+            # Check if field has a default factory (should be MISSING for default but callable for default_factory)
+            if (field_info.default is field_info.default_factory and
+                field_info.default_factory is not field_info.default_factory):
+                default_factory_fields.append(field_info.name)
+
+        # If there are default factory fields, test serialization
+        if default_factory_fields:
+            serialized = cache_manager._serialize_col_cfg(col_cfg)
+
+            # Should include datasets_dtype
+            assert "datasets_dtype=\"float32\"" in serialized
+
+            # Check that default factory fields are handled properly
+            # They should be included if their current value differs from factory default
+            for field_name in default_factory_fields:
+                field_value = getattr(col_cfg, field_name)
+                # If the field has a non-default value, it should be serialized
+                if field_value is not None and field_value != []:  # Common default factory values
+                    assert f"{field_name}=" in serialized
+        else:
+            # If no default factory fields exist in current ColCfg implementation,
+            # just verify basic serialization works
+            serialized = cache_manager._serialize_col_cfg(col_cfg)
+            assert "datasets_dtype=\"float32\"" in serialized
+
+    def test_serialize_col_cfg_required_fields_no_default(self, cache_manager):
+        """Test ColCfg serialization with required fields that have no default or default_factory."""
+        from interpretune.analysis.ops.base import ColCfg
+        from dataclasses import fields, MISSING
+
+        # Create a ColCfg instance
+        col_cfg = ColCfg(datasets_dtype="string", required=True)
+
+        # Find fields that are truly required (no default and no default_factory)
+        col_cfg_fields = fields(ColCfg)
+        required_fields = []
+
+        for field_info in col_cfg_fields:
+            # Field is required if both default and default_factory are MISSING
+            if (field_info.default is MISSING and
+                field_info.default_factory is MISSING):
+                required_fields.append(field_info.name)
+
+        serialized = cache_manager._serialize_col_cfg(col_cfg)
+
+        # Should always include datasets_dtype
+        assert "datasets_dtype=\"string\"" in serialized
+
+        # For truly required fields (if any exist), their values should be included
+        # since they must be explicitly set
+        for field_name in required_fields:
+            field_value = getattr(col_cfg, field_name)
+            if field_value is not None:
+                # Required fields with non-None values should be serialized
+                assert f"{field_name}=" in serialized
+
+
+    def test_serialize_col_cfg_explicit_none_values(self, cache_manager):
+        """Test ColCfg serialization when fields are explicitly set to None."""
+        from interpretune.analysis.ops.base import ColCfg
+
+        # Create ColCfg with some fields explicitly set to None
+        col_cfg = ColCfg(
+            datasets_dtype="int32",
+            array_shape=None,  # Explicitly None
+            sequence_type=None  # Explicitly None
+        )
+
+        serialized = cache_manager._serialize_col_cfg(col_cfg)
+
+        # Should include datasets_dtype
+        assert "datasets_dtype=\"int32\"" in serialized
+
+        # Fields explicitly set to None should be included if None is not the default
+        # This tests the else branch where fields might not have defaults
+
+    def test_serialize_col_cfg_different_field_types(self, cache_manager):
+        """Test ColCfg serialization with various field value types."""
+        from interpretune.analysis.ops.base import ColCfg
+
+        # Test with different types of values
+        col_cfg = ColCfg(
+            datasets_dtype="bool",
+            required=False,  # Boolean field
+            array_shape=[1, 2, 3],  # List field
+            dyn_dim=5,  # Integer field
+            non_tensor=True  # Boolean field
+        )
+
+        serialized = cache_manager._serialize_col_cfg(col_cfg)
+
+        # Verify different value types are handled correctly
+        assert "datasets_dtype=\"bool\"" in serialized
+        assert "array_shape=[1, 2, 3]" in serialized
+        assert "dyn_dim=5" in serialized
+
+        # Boolean fields should be serialized without quotes
+        if "required=False" in serialized:
+            assert "required=\"False\"" not in serialized  # Should not be quoted
+        if "non_tensor=True" in serialized:
+            assert "non_tensor=\"True\"" not in serialized  # Should not be quoted
+
+    def test_serialize_col_cfg_empty_collections(self, cache_manager):
+        """Test ColCfg serialization with empty collections as values."""
+        from interpretune.analysis.ops.base import ColCfg
+
+        # Test with empty collections which might be default factory values
+        col_cfg = ColCfg(
+            datasets_dtype="float64",
+            array_shape=[],  # Empty list
+        )
+
+        serialized = cache_manager._serialize_col_cfg(col_cfg)
+
+        # Should include datasets_dtype
+        assert "datasets_dtype=\"float64\"" in serialized
+
+        # Empty list should be handled correctly (tests default factory branch)
+        # Whether it's included depends on if [] is the default factory value
+
+    def test_load_cache_fingerprint_mismatch_and_missing_op_definitions(self, cache_manager, sample_yaml_file):
+        """Test load_cache for fingerprint mismatch and missing OP_DEFINITIONS."""
+        cache_manager.add_yaml_file(sample_yaml_file)
+        op_definitions = {
+            "test_op": OpDef(
+                name="test_op",
+                description="desc",
+                implementation="impl",
+                input_schema=OpSchema({"f": ColCfg(datasets_dtype="int64")}),
+                output_schema=OpSchema({"g": ColCfg(datasets_dtype="float32")}),
+            )
+        }
+        # Save a valid cache
+        cache_path = cache_manager.save_cache(op_definitions)
+        # --- Fingerprint mismatch ---
+        orig = cache_path.read_text()
+        wrong_fp = orig.replace(
+            f'FINGERPRINT = "{cache_manager.fingerprint}"',
+            'FINGERPRINT = "not_the_real_fp"'
+        )
+        cache_path.write_text(wrong_fp)
+        with pytest.warns(match="Cache fingerprint mismatch, invalidating cache"):
+            # Should warn and return None
+            assert cache_manager.load_cache() is None
+        assert cache_manager.load_cache() is None
+
+        # --- OP_DEFINITIONS missing ---
+        cache_manager.save_cache(op_definitions)  # restore valid cache
+        valid = cache_path.read_text()
+        # Remove OP_DEFINITIONS by overwriting it at the end of the file
+        missing_defs = valid + "\nOP_DEFINITIONS = {}\n"
+        cache_path.write_text(missing_defs)
+        with pytest.warns(match="No operation definitions found in cache"):
+            # Should warn and return None
+            assert cache_manager.load_cache() is None

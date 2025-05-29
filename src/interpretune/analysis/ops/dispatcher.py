@@ -1,6 +1,6 @@
 """Dispatcher for analysis operations."""
 from __future__ import annotations
-from typing import Optional, Dict, NamedTuple, List, Tuple, Iterator, Callable
+from typing import Optional, Dict, NamedTuple, List, Tuple, Iterator, Callable, Union
 from pathlib import Path
 from functools import wraps
 from collections import defaultdict
@@ -11,7 +11,9 @@ from transformers import BatchEncoding
 
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, ColCfg
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
+from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
 from interpretune.protocol import AnalysisBatchProtocol
+from interpretune.utils.logging import rank_zero_debug
 
 
 class DispatchContext(NamedTuple):
@@ -29,74 +31,126 @@ class AnalysisOpDispatcher:
     # TODO:
     #  - decide whether to make the dispatcher a singleton or not
     #  - decide whether to make the dispatcher thread-safe
-    def __init__(self, yaml_path: Optional[Path] = None):
-        self.yaml_path = yaml_path or Path(__file__).parent / "native_analysis_functions.yaml"
-        self._op_definitions = {}
+    def __init__(self, yaml_paths: Optional[Union[Path, List[Path]]] = None):
+        if yaml_paths is None:
+            self.yaml_paths = [Path(__file__).parent / "native_analysis_functions.yaml"]
+        elif isinstance(yaml_paths, (Path, str)):
+            self.yaml_paths = [Path(yaml_paths)]
+        else:
+            # Handle list/iterable of paths (convert strings to Path objects)
+            self.yaml_paths = [Path(p) for p in yaml_paths]
+            assert all(isinstance(p, Path) for p in self.yaml_paths), \
+                "yaml_paths must be a Path, string, or a list of Paths/strings"
+
+        self._op_definitions: Dict[str, OpDef] = {}
         self._dispatch_table = {}  # {op_name: {context: instantiated_op}}
         self._aliases = {}  # {alias: op_name}
         self._op_to_aliases = defaultdict(list)  # {op_name: [aliases]}
         self._loaded = False
         self._loading_in_progress = False
+        self._cache_manager = OpDefinitionsCacheManager()
+
+    def _discover_yaml_files(self, paths: List[Path]) -> List[Path]:
+        """Discover all YAML files from the given paths (files or directories)."""
+        yaml_files = []
+        for path in paths:
+            if path.is_file() and path.suffix.lower() in ('.yaml', '.yml'):
+                yaml_files.append(path)
+            elif path.is_dir():
+                # Recursively find all YAML files in the directory
+                yaml_files.extend(path.glob('**/*.yaml'))
+                yaml_files.extend(path.glob('**/*.yml'))
+        return sorted(set(yaml_files))  # Remove duplicates and sort for consistency
 
     def load_definitions(self):
-        """Load operation definitions from YAML."""
+        """Load operation definitions from YAML or cache."""
         if self._loaded or self._loading_in_progress:
             return
 
         try:
             self._loading_in_progress = True
-            with open(self.yaml_path, "r") as f:
-                yaml_content = yaml.safe_load(f)
 
-            # First pass: Load individual operations without resolving required_ops
-            for op_name, op_def in yaml_content.items():
-                # Skip composite operations section
-                if op_name == "composite_operations":
-                    continue
+            # Discover all YAML files from the configured paths
+            yaml_files = self._discover_yaml_files(self.yaml_paths)
+            if not yaml_files:
+                rank_zero_debug("No YAML files found in the specified paths")
+                self._loaded = True
+                return
 
-                # Store the operation definition
-                self._op_definitions[op_name] = op_def
+            # Set up cache manager with discovered YAML files
+            for yaml_file in yaml_files:
+                self._cache_manager.add_yaml_file(yaml_file)
 
-                # Register alias if provided
-                if "aliases" in op_def:
-                    self._op_to_aliases[op_name] = op_def["aliases"]
-                    for alias in op_def["aliases"]:
-                        self._aliases[alias] = op_name
-                        # TODO: incur added complexity of making this a weakref if we start scaling the number of ops
-                        self._op_definitions[alias] = op_def
+            # Try to load from cache first
+            cached_definitions = self._cache_manager.load_cache()
+            if cached_definitions is not None:
+                self._op_definitions = cached_definitions
+                self._populate_aliases_from_definitions()
+                rank_zero_debug(f"Loaded {len(self._op_definitions)} operations from cache")
+                self._loaded = True
+                return
 
-            # Second pass: Compile schemas with required_ops dependencies
-            self._compile_required_ops_schemas()
+            # Cache miss or invalid - load from YAML and compile
+            rank_zero_debug("Cache miss or invalid, loading from YAML and compiling")
+            self._load_from_yaml_and_compile(yaml_files)
 
-            # Process composite operations with schema compilation
-            if "composite_operations" in yaml_content:
-                from interpretune.analysis.ops.compiler import build_operation_compositions
-
-                # Apply schema compilation for composite operations
-                compiled_ops = build_operation_compositions(yaml_content)
-
-                # Update definitions with compiled operation schemas
-                for op_name, op_def in compiled_ops.items():
-                    if op_name not in self._op_definitions:
-                        self._op_definitions[op_name] = op_def
-                    else:
-                        # Update existing definition with compiled schemas
-                        if "input_schema" in op_def:
-                            self._op_definitions[op_name]["input_schema"] = op_def["input_schema"]
-                        if "output_schema" in op_def:
-                            self._op_definitions[op_name]["output_schema"] = op_def["output_schema"]
-
-                # Register aliases from composite operations
-                for comp_name, comp_def in yaml_content["composite_operations"].items():
-                    self._op_to_aliases[comp_name] = comp_def.get("aliases", [])
-                    if "aliases" in comp_def:
-                        for alias in comp_def["aliases"]:
-                            self._aliases[alias] = comp_name
-            self._loaded = True
         finally:
             self._loading_in_progress = False
 
-    def _compile_required_ops_schemas(self):
+    def _load_from_yaml_and_compile(self, yaml_files: List[Path]):
+        """Load from YAML files and compile to cache."""
+        # Load and merge all YAML files
+        raw_definitions = {}
+        composite_operations = {}
+
+        for yaml_file in yaml_files:
+            with open(yaml_file, "r") as f:
+                yaml_content = yaml.safe_load(f)
+
+            # Separate composite operations from regular operations
+            for key, value in yaml_content.items():
+                if key == "composite_operations":
+                    composite_operations.update(value)
+                else:
+                    if key in raw_definitions:
+                        rank_zero_debug(f"Operation '{key}' redefined in {yaml_file}, using latest definition")
+                    raw_definitions[key] = value
+
+        # Second pass: Compile schemas with required_ops dependencies
+        self._compile_required_ops_schemas(raw_definitions)
+
+        # Process composite operations with schema compilation
+        if composite_operations:
+            from interpretune.analysis.ops.compiler.schema_compiler import build_operation_compositions
+
+            # Create a complete YAML structure for build_operation_compositions
+            complete_yaml = raw_definitions.copy()
+            complete_yaml["composite_operations"] = composite_operations
+
+            # Apply schema compilation for composite operations
+            compiled_ops = build_operation_compositions(complete_yaml)
+
+            # Update definitions with compiled operation schemas
+            for op_name, op_def in compiled_ops.items():
+                if op_name not in raw_definitions:
+                    raw_definitions[op_name] = op_def
+                else:
+                    # Update existing definition with compiled schemas
+                    if "input_schema" in op_def:
+                        raw_definitions[op_name]["input_schema"] = op_def["input_schema"]
+                    if "output_schema" in op_def:
+                        raw_definitions[op_name]["output_schema"] = op_def["output_schema"]
+
+        # Convert raw definitions to OpDef objects
+        self._convert_raw_definitions_to_opdefs(raw_definitions)
+        self._populate_aliases_from_definitions()
+
+        # Save to cache for next time
+        self._cache_manager.save_cache(self._op_definitions)
+
+        self._loaded = True
+
+    def _compile_required_ops_schemas(self, raw_definitions: Dict[str, Dict]):
         """Compile schemas by recursively including required_ops dependencies."""
         from interpretune.analysis.ops.compiler.schema_compiler import compile_op_schema
 
@@ -104,11 +158,52 @@ class AnalysisOpDispatcher:
         compiled = set()
 
         # Compile all operations
-        for op_name in list(self._op_definitions.keys()):
-            if op_name not in self._aliases:  # Skip aliases to avoid duplicates
-                compile_op_schema(op_name, self._op_definitions, compiled=compiled)
-                # Apply optional auto-columns after compilation
-                apply_auto_columns(self._op_definitions[op_name])
+        for op_name in list(raw_definitions.keys()):
+            compile_op_schema(op_name, raw_definitions, compiled=compiled)
+            # Apply optional auto-columns after compilation
+            apply_auto_columns(raw_definitions[op_name])
+
+    def _convert_raw_definitions_to_opdefs(self, raw_definitions: Dict[str, Dict]):
+        """Convert raw dictionary definitions to OpDef objects."""
+        for op_name, op_def in raw_definitions.items():
+            # Convert schemas to OpSchema objects
+            input_schema = self._convert_to_op_schema(op_def.get("input_schema", {}))
+            output_schema = self._convert_to_op_schema(op_def.get("output_schema", {}))
+
+            # Create OpDef
+            op_def_obj = OpDef(
+                name=op_name,
+                description=op_def.get("description", ""),
+                implementation=op_def.get("implementation", ""),
+                input_schema=input_schema,
+                output_schema=output_schema,
+                aliases=op_def.get("aliases", []),
+                function_params=op_def.get("function_params", {}),
+                required_ops=op_def.get("required_ops", []),
+                composition=op_def.get("composition", None)
+            )
+
+            self._op_definitions[op_name] = op_def_obj
+
+    def _populate_aliases_from_definitions(self):
+        """Populate alias mappings from loaded definitions."""
+        self._aliases.clear()
+        self._op_to_aliases.clear()
+
+        # Create a copy of the keys to avoid "dictionary changed size during iteration" error
+        op_names = list(self._op_definitions.keys())
+
+        for op_name in op_names:
+            op_def = self._op_definitions[op_name]
+            # Skip aliases to avoid duplicates
+            if op_name in [alias for aliases in self._op_to_aliases.values() for alias in aliases]:
+                continue
+
+            self._op_to_aliases[op_name] = op_def.aliases
+            for alias in op_def.aliases:
+                self._aliases[alias] = op_name
+                # Add alias reference to definitions
+                self._op_definitions[alias] = op_def
 
     def _ensure_loaded(method):
         @wraps(method)
@@ -120,9 +215,9 @@ class AnalysisOpDispatcher:
 
     @property
     @_ensure_loaded
-    def registered_ops(self) -> Dict[str, dict]:
+    def registered_ops(self) -> Dict[str, OpDef]:
         """Get all registered operation definitions without instantiating them."""
-        return self._op_definitions.copy()
+        return {name: op_def for name, op_def in self._op_definitions.items()}
 
     @_ensure_loaded
     def resolve_alias(self, op_alias: str) -> str | None:
@@ -152,42 +247,34 @@ class AnalysisOpDispatcher:
             raise ValueError(f"Unknown operation: {op_name}")
 
         # Handle composite operations
-        if "composition" in op_def:
-            composition = op_def["composition"]
+        if op_def.composition is not None:
+            composition = op_def.composition
             # instantiate each operation in the composition
             ops = [self.get_op(op) for op in composition]
             op = CompositeAnalysisOp(
                 ops,
                 name=op_name,
-                aliases=op_def.get("aliases")
+                aliases=op_def.aliases
             )
-            if "description" in op_def:
-                op.description = op_def["description"]
-            if "input_schema" in op_def:
-                op.input_schema = self._convert_to_op_schema(op_def["input_schema"])
-            if "output_schema" in op_def:
-                op.output_schema = self._convert_to_op_schema(op_def["output_schema"])
+            op.description = op_def.description
+            op.input_schema = op_def.input_schema
+            op.output_schema = op_def.output_schema
             return op
 
         # Handle regular operations
-        implementation = self._import_callable(op_def["implementation"])
+        implementation = self._import_callable(op_def.implementation)
         callables = {"implementation": implementation}
 
         # Import any additional functions specified in function_params
-        if "function_params" in op_def:
-            for param_name, param_path in op_def["function_params"].items():
-                callables[param_name] = self._import_callable(param_path)
+        for param_name, param_path in op_def.function_params.items():
+            callables[param_name] = self._import_callable(param_path)
 
-        # Convert schema dictionaries to OpSchema objects with ColCfg values
-        input_schema = self._convert_to_op_schema(op_def.get("input_schema", {}))
-        output_schema = self._convert_to_op_schema(op_def.get("output_schema", {}))
-        aliases = op_def.get("aliases", None)
         op = AnalysisOp(
             name=op_name,
-            description=op_def.get("description", ""),
-            output_schema=output_schema,
-            input_schema=input_schema,
-            aliases=aliases,
+            description=op_def.description,
+            output_schema=op_def.output_schema,
+            input_schema=op_def.input_schema,
+            aliases=op_def.aliases,
             callables=callables
         )
 

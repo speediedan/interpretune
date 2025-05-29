@@ -381,8 +381,8 @@ class CompositeAnalysisOp(AnalysisOp):
         # Check if alias exists in dispatcher's op_definitions
         if self.name in DISPATCHER._op_definitions:
             op_def = DISPATCHER._op_definitions[self.name]
-            input_schema = op_def['input_schema']
-            output_schema = op_def['output_schema']
+            input_schema = op_def.input_schema
+            output_schema = op_def.output_schema
         else:
             # Compile input and output schemas using the op definitions dictionary
             input_schema, output_schema = jit_compile_composition_schema(

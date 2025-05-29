@@ -1,8 +1,6 @@
 from __future__ import annotations
 import pytest
 import tempfile
-import os
-import yaml
 from pathlib import Path
 from datetime import datetime
 from typing import Any
@@ -116,60 +114,106 @@ def initialized_analysis_cfg():
     return _initialized_analysis_cfg
 
 @pytest.fixture
-def test_ops_yaml():
+def test_ops_yaml(tmp_path):
     """Create a temporary YAML file with test operation definitions."""
-    # Create test operation definitions
-    test_ops = {
-        "test_op": {
-            "description": "Test operation for wrapper testing",
-            "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
-            "aliases": ["test_alias"],
-            "output_schema": {
-                "output_field": {
-                    "datasets_dtype": "float32"
-                }
-            },
-            "input_schema": {
-                "input_field": {
-                    "datasets_dtype": "int64"
-                }
-            }
-        },
-        "another_test_op": {
-            "description": "Another test operation",
-            "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
-            "output_schema": {
-                "another_field": {
-                    "datasets_dtype": "float32"
-                }
-            }
-        },
-        "composite_operations": {
-            "test_composition": {
-                "composition": "test_op.another_test_op",
-                "alias": "composition_alias"
-            }
-        }
+    # Create main YAML file with primary test operations
+    main_yaml_content = """
+test_op:
+  implementation: tests.unit.test_analysis_ops_base.op_impl_test
+  description: A test operation for unit tests
+  input_schema:
+    input1:
+      datasets_dtype: float32
+      required: true
+  output_schema:
+    output1:
+      datasets_dtype: float32
+      required: true
+  aliases:
+    - test_alias
+
+another_test_op:
+  implementation: tests.unit.test_analysis_ops_base.op_impl_test
+  description: Another test operation
+  input_schema:
+    input2:
+      datasets_dtype: int64
+      required: true
+  output_schema:
+    output2:
+      datasets_dtype: int64
+      required: true
+"""
+
+    # Create a subdirectory for additional YAML files
+    sub_dir = tmp_path / "sub_ops"
+    sub_dir.mkdir()
+
+    # Create additional YAML files in subdirectory
+    extra_yaml1_content = """
+extra_op1:
+  implementation: tests.unit.test_analysis_ops_base.op_impl_test
+  description: Extra operation 1
+  input_schema:
+    extra_input1:
+      datasets_dtype: string
+      required: false
+  output_schema:
+    extra_output1:
+      datasets_dtype: string
+      required: false
+"""
+
+    extra_yaml2_content = """
+extra_op2:
+  implementation: tests.unit.test_analysis_ops_base.op_impl_test
+  description: Extra operation 2
+  input_schema:
+    extra_input2:
+      datasets_dtype: bool
+      required: true
+  output_schema:
+    extra_output2:
+      datasets_dtype: bool
+      required: true
+"""
+
+    # Write the main YAML file
+    main_yaml_file = tmp_path / "test_ops.yaml"
+    with open(main_yaml_file, "w") as f:
+        f.write(main_yaml_content)
+
+    # Write additional YAML files in subdirectory
+    extra_yaml1_file = sub_dir / "extra_ops1.yaml"
+    with open(extra_yaml1_file, "w") as f:
+        f.write(extra_yaml1_content)
+
+    extra_yaml2_file = sub_dir / "extra_ops2.yaml"
+    with open(extra_yaml2_file, "w") as f:
+        f.write(extra_yaml2_content)
+
+    # Return a structure containing paths for different test scenarios
+    return {
+        'main_file': main_yaml_file,
+        'sub_dir': sub_dir,
+        'all_files': [main_yaml_file, extra_yaml1_file, extra_yaml2_file],
+        'main_dir': tmp_path
     }
-
-    # Write to a temporary file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
-        yaml.dump(test_ops, tmp)
-        yaml_path = tmp.name
-
-    yield yaml_path
-
-    # Cleanup
-    os.unlink(yaml_path)
 
 @pytest.fixture
 def test_dispatcher(test_ops_yaml):
     """Create a test dispatcher with test operation definitions."""
-    # Create a test dispatcher that loads from our test YAML
-    dispatcher = AnalysisOpDispatcher(yaml_path=test_ops_yaml)
+    # Create a test dispatcher that loads from our test YAML main file
+    dispatcher = AnalysisOpDispatcher(yaml_paths=test_ops_yaml['main_file'])
     dispatcher.load_definitions()
+    return dispatcher
 
-    # Return the dispatcher
+@pytest.fixture
+def multi_file_test_dispatcher(test_ops_yaml):
+    """Create a test dispatcher that discovers YAML files from a directory."""
+    # Create a dispatcher that discovers all YAML files in the directory
+    dispatcher = AnalysisOpDispatcher(yaml_paths=test_ops_yaml['main_dir'])
+    dispatcher.load_definitions()
     return dispatcher
 
 @pytest.fixture

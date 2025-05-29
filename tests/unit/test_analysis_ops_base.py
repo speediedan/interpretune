@@ -1,8 +1,9 @@
 from __future__ import annotations
 import pytest
 import torch
-from transformers import BatchEncoding
 import pickle
+from dataclasses import replace
+from transformers import BatchEncoding
 from unittest.mock import patch, MagicMock
 from tests.runif import RunIf
 
@@ -1101,6 +1102,35 @@ class TestCompositeAnalysisOp:
 class TestOpWrapper:
     """Tests for the OpWrapper class."""
 
+    @pytest.fixture
+    def setup_test_op_with_optional_inputs(self, test_dispatcher, monkeypatch):
+        """Fixture to set up test_op with optional input fields and patched implementation."""
+        # Patch the _import_callable method to return our test implementation
+        original_import = test_dispatcher._import_callable
+        def patched_import(path_str):
+            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
+                return op_impl_test
+            return original_import(path_str)
+        monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
+
+        # Check what fields are actually available in the test operation definition
+        test_op_def = test_dispatcher._op_definitions["test_op"]
+        # Make any required input fields optional for testing by creating new OpSchema
+        # Since ColCfg is frozen, we need to create new instances with replace()
+        new_input_schema_dict = {}
+        for field_name, field_cfg in test_op_def.input_schema.items():
+            new_input_schema_dict[field_name] = replace(field_cfg, required=False)
+
+        # Create a new OpSchema with the modified ColCfg instances
+        from interpretune.analysis.ops.base import OpSchema
+        new_input_schema = OpSchema(new_input_schema_dict)
+
+        # Replace the input schema in the OpDef (also frozen, so use replace)
+        modified_op_def = replace(test_op_def, input_schema=new_input_schema)
+        test_dispatcher._op_definitions["test_op"] = modified_op_def
+
+        return test_dispatcher
+
     def test_basic_properties(self):
         """Test basic properties and string representation of OpWrapper."""
         wrapper = OpWrapper("test_op")
@@ -1144,7 +1174,7 @@ class TestOpWrapper:
         # Verify the operation was instantiated
         assert wrapper._is_instantiated is True
         assert wrapper._instantiated_op is not None
-        assert description == "Test operation for wrapper testing"
+        assert description == "A test operation for unit tests"
 
         # Check that the operation was registered on target_module
         assert hasattr(target_module, "test_op")
@@ -1192,22 +1222,13 @@ class TestOpWrapper:
         assert target_module.test_alias1 is target_module.test_op
         assert target_module.test_alias2 is target_module.test_op
 
-    def test_call_with_real_dispatcher(self, test_dispatcher, target_module, monkeypatch):
+    def test_call_with_real_dispatcher(self, setup_test_op_with_optional_inputs, target_module, monkeypatch):
         """Test calling an operation through the wrapper."""
+        test_dispatcher = setup_test_op_with_optional_inputs
+
         # Set up test environment
         OpWrapper.initialize(target_module)
         monkeypatch.setattr(OpWrapper, "dispatcher", property(lambda self: test_dispatcher))
-
-        # Patch the _import_callable method to return our test implementation
-        original_import = test_dispatcher._import_callable
-        def patched_import(path_str):
-            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
-                return op_impl_test
-            return original_import(path_str)
-        monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
-
-        # Modify the input schema to make the field optional for testing
-        test_dispatcher._op_definitions["test_op"]["input_schema"]["input_field"]["required"] = False
 
         # Create a wrapper
         wrapper = OpWrapper("test_op")
@@ -1228,22 +1249,13 @@ class TestOpWrapper:
         assert result.called_with['module'] is test_module
         assert result.called_with['batch_idx'] == 5
 
-    def test_pickling_with_real_op(self, test_dispatcher, target_module, monkeypatch):
+    def test_pickling_with_real_op(self, setup_test_op_with_optional_inputs, target_module, monkeypatch):
         """Test pickling and unpickling with real operations."""
+        test_dispatcher = setup_test_op_with_optional_inputs
+
         # Set up test environment
         OpWrapper.initialize(target_module)
         monkeypatch.setattr(OpWrapper, "dispatcher", property(lambda self: test_dispatcher))
-
-        # Patch the _import_callable method to return our test implementation
-        original_import = test_dispatcher._import_callable
-        def patched_import(path_str):
-            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
-                return op_impl_test
-            return original_import(path_str)
-        monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
-
-        # Modify the input schema to make the field optional for testing
-        test_dispatcher._op_definitions["test_op"]["input_schema"]["input_field"]["required"] = False
 
         # Create a wrapper and set it on the target module
         wrapper = OpWrapper("test_op")

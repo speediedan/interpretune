@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from interpretune.utils import rank_zero_warn, rank_zero_debug, MisconfigurationException
-from interpretune.config.analysis import IT_ANALYSIS_CACHE, AnalysisCfg, AnalysisArtifactCfg
+from interpretune.analysis import IT_ANALYSIS_CACHE
+from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg
 
 if TYPE_CHECKING:
     from interpretune.session import ITSession
