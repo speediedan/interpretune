@@ -1,6 +1,7 @@
 from __future__ import annotations
 import pytest
 import tempfile
+import os
 from pathlib import Path
 from datetime import datetime
 from typing import Any
@@ -119,7 +120,7 @@ def test_ops_yaml(tmp_path):
     # Create main YAML file with primary test operations
     main_yaml_content = """
 test_op:
-  implementation: tests.unit.test_analysis_ops_base.op_impl_test
+  implementation: tests.core.test_analysis_ops_base.op_impl_test
   description: A test operation for unit tests
   input_schema:
     input1:
@@ -133,7 +134,7 @@ test_op:
     - test_alias
 
 another_test_op:
-  implementation: tests.unit.test_analysis_ops_base.op_impl_test
+  implementation: tests.core.test_analysis_ops_base.op_impl_test
   description: Another test operation
   input_schema:
     input2:
@@ -152,7 +153,7 @@ another_test_op:
     # Create additional YAML files in subdirectory
     extra_yaml1_content = """
 extra_op1:
-  implementation: tests.unit.test_analysis_ops_base.op_impl_test
+  implementation: tests.core.test_analysis_ops_base.op_impl_test
   description: Extra operation 1
   input_schema:
     extra_input1:
@@ -166,7 +167,7 @@ extra_op1:
 
     extra_yaml2_content = """
 extra_op2:
-  implementation: tests.unit.test_analysis_ops_base.op_impl_test
+  implementation: tests.core.test_analysis_ops_base.op_impl_test
   description: Extra operation 2
   input_schema:
     extra_input2:
@@ -201,20 +202,56 @@ extra_op2:
     }
 
 @pytest.fixture
-def test_dispatcher(test_ops_yaml):
+def test_dispatcher(test_ops_yaml, tmp_path):
     """Create a test dispatcher with test operation definitions."""
-    # Create a test dispatcher that loads from our test YAML main file
-    dispatcher = AnalysisOpDispatcher(yaml_paths=test_ops_yaml['main_file'])
-    dispatcher.load_definitions()
-    return dispatcher
+    # Set up isolated cache directory for testing
+    test_cache_dir = tmp_path / "test_cache"
+    test_cache_dir.mkdir(exist_ok=True)
+
+    # Store original environment variable
+    original_cache_dir = os.environ.get("IT_ANALYSIS_CACHE")
+
+    try:
+        # Set test cache directory
+        os.environ["IT_ANALYSIS_CACHE"] = str(test_cache_dir)
+
+        # Create a test dispatcher that loads from our test YAML main file
+        dispatcher = AnalysisOpDispatcher(yaml_paths=test_ops_yaml['main_file'])
+        dispatcher.load_definitions()
+        yield dispatcher
+
+    finally:
+        # Restore original environment variable
+        if original_cache_dir is not None:
+            os.environ["IT_ANALYSIS_CACHE"] = original_cache_dir
+        else:
+            os.environ.pop("IT_ANALYSIS_CACHE", None)
 
 @pytest.fixture
-def multi_file_test_dispatcher(test_ops_yaml):
+def multi_file_test_dispatcher(test_ops_yaml, tmp_path):
     """Create a test dispatcher that discovers YAML files from a directory."""
-    # Create a dispatcher that discovers all YAML files in the directory
-    dispatcher = AnalysisOpDispatcher(yaml_paths=test_ops_yaml['main_dir'])
-    dispatcher.load_definitions()
-    return dispatcher
+    # Set up isolated cache directory for testing
+    test_cache_dir = tmp_path / "test_cache"
+    test_cache_dir.mkdir(exist_ok=True)
+
+    # Store original environment variable
+    original_cache_dir = os.environ.get("IT_ANALYSIS_CACHE")
+
+    try:
+        # Set test cache directory
+        os.environ["IT_ANALYSIS_CACHE"] = str(test_cache_dir)
+
+        # Create a test dispatcher that discovers from directory
+        dispatcher = AnalysisOpDispatcher(yaml_paths=test_ops_yaml['main_dir'])
+        dispatcher.load_definitions()
+        yield dispatcher
+
+    finally:
+        # Restore original environment variable
+        if original_cache_dir is not None:
+            os.environ["IT_ANALYSIS_CACHE"] = original_cache_dir
+        else:
+            os.environ.pop("IT_ANALYSIS_CACHE", None)
 
 @pytest.fixture
 def target_module():

@@ -117,9 +117,10 @@ def gen_cli_args(
     return cli_main, cli_args, cli_main_kwargs
 
 
+@pytest.mark.usefixtures("make_deterministic")
 @RunIf(min_cuda_gpus=1, skip_windows=True)
 @pytest.mark.parametrize("test_alias, cli_cfg", pytest_factory(TEST_CONFIGS_CLI_PARITY, unpack=False))
-def test_cli_configs(recwarn, make_deterministic, clean_cli_env, cli_test_configs, test_alias, cli_cfg):
+def test_cli_configs(recwarn, clean_cli_env, cli_test_configs, test_alias, cli_cfg):
     expected_warnings = CLI_EXPECTED_WARNS[(cli_cfg.cli_adapter, *cli_cfg.adapter_ctx)]
     cfg_files = cli_test_configs[(CLI_EXP, test_alias, cli_cfg.debug_mode)]
     cli_main, cli_args, main_kwargs = gen_cli_args(

@@ -2,6 +2,7 @@
 from __future__ import annotations
 import time
 import yaml
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -9,7 +10,7 @@ from interpretune.analysis.ops.compiler.cache_manager import (
     OpDefinitionsCacheManager, OpDef, YamlFileInfo
 )
 from interpretune.analysis.ops.base import OpSchema, ColCfg, AnalysisOp
-from interpretune.analysis.ops.compiler.schema_compiler import (compile_op_schema,
+from interpretune.analysis.ops.compiler.schema_compiler import (
                                                                _compile_composition_schema_core,
                                                                jit_compile_composition_schema,
                                                                compile_operation_composition_schema,
@@ -513,237 +514,6 @@ class TestBuildOperationCompositions:
         assert result["op_with_object"]["output_schema"]["object_field"]["datasets_dtype"] == "string"
         assert result["op_with_object"]["output_schema"]["object_field"]["non_tensor"] is True
 
-class TestCompileOpSchema:
-    """Tests for the compile_op_schema function."""
-
-    def test_compile_op_schema_basic(self):
-        """Test basic schema compilation without dependencies."""
-        op_definitions = {
-            "simple_op": {
-                "input_schema": {"input1": {"datasets_dtype": "float32"}},
-                "output_schema": {"output1": {"datasets_dtype": "float32"}},
-            }
-        }
-
-        # Compile the operation
-        compile_op_schema("simple_op", op_definitions)
-
-        # Should remain unchanged since no required_ops
-        assert op_definitions["simple_op"]["input_schema"] == {"input1": {"datasets_dtype": "float32"}}
-        assert op_definitions["simple_op"]["output_schema"] == {"output1": {"datasets_dtype": "float32"}}
-
-    def test_compile_op_schema_with_required_ops(self):
-        """Test schema compilation with required operations."""
-        op_definitions = {
-            "base_op": {
-                "input_schema": {"base_input": {"datasets_dtype": "int64"}},
-                "output_schema": {"base_output": {"datasets_dtype": "int64"}},
-            },
-            "dependent_op": {
-                "required_ops": ["base_op"],
-                "input_schema": {"dep_input": {"datasets_dtype": "float32"}},
-                "output_schema": {"dep_output": {"datasets_dtype": "float32"}},
-            }
-        }
-
-        # Compile the dependent operation
-        compile_op_schema("dependent_op", op_definitions)
-
-        # Check that base_op schemas were merged into dependent_op
-        dep_input = op_definitions["dependent_op"]["input_schema"]
-        dep_output = op_definitions["dependent_op"]["output_schema"]
-
-        assert "dep_input" in dep_input
-        assert "base_input" in dep_input
-        assert "dep_output" in dep_output
-        assert "base_output" in dep_output
-
-    def test_compile_op_schema_precedence(self):
-        """Test that existing fields take precedence over required op fields."""
-        op_definitions = {
-            "base_op": {
-                "input_schema": {"shared_field": {"datasets_dtype": "int64"}},
-                "output_schema": {"shared_output": {"datasets_dtype": "int64"}},
-            },
-            "dependent_op": {
-                "required_ops": ["base_op"],
-                "input_schema": {"shared_field": {"datasets_dtype": "float32"}},
-                "output_schema": {"shared_output": {"datasets_dtype": "float32"}},
-            }
-        }
-
-        # Compile the dependent operation
-        compile_op_schema("dependent_op", op_definitions)
-
-        # Check that dependent_op's original fields take precedence
-        dep_input = op_definitions["dependent_op"]["input_schema"]
-        dep_output = op_definitions["dependent_op"]["output_schema"]
-
-        assert dep_input["shared_field"]["datasets_dtype"] == "float32"
-        assert dep_output["shared_output"]["datasets_dtype"] == "float32"
-
-    def test_compile_op_schema_multiple_dependencies(self):
-        """Test schema compilation with multiple required operations."""
-        op_definitions = {
-            "op1": {
-                "input_schema": {"input1": {"datasets_dtype": "int64"}},
-                "output_schema": {"output1": {"datasets_dtype": "int64"}},
-            },
-            "op2": {
-                "input_schema": {"input2": {"datasets_dtype": "float32"}},
-                "output_schema": {"output2": {"datasets_dtype": "float32"}},
-            },
-            "dependent_op": {
-                "required_ops": ["op1", "op2"],
-                "input_schema": {"dep_input": {"datasets_dtype": "string"}},
-                "output_schema": {"dep_output": {"datasets_dtype": "string"}},
-            }
-        }
-
-        # Compile the dependent operation
-        compile_op_schema("dependent_op", op_definitions)
-
-        # Check that all schemas were merged
-        dep_input = op_definitions["dependent_op"]["input_schema"]
-        dep_output = op_definitions["dependent_op"]["output_schema"]
-
-        expected_input_fields = {"dep_input", "input1", "input2"}
-        expected_output_fields = {"dep_output", "output1", "output2"}
-
-        assert set(dep_input.keys()) == expected_input_fields
-        assert set(dep_output.keys()) == expected_output_fields
-
-    def test_compile_op_schema_transitive_dependencies(self):
-        """Test schema compilation with transitive dependencies."""
-        op_definitions = {
-            "base_op": {
-                "input_schema": {"base_input": {"datasets_dtype": "int64"}},
-                "output_schema": {"base_output": {"datasets_dtype": "int64"}},
-            },
-            "middle_op": {
-                "required_ops": ["base_op"],
-                "input_schema": {"middle_input": {"datasets_dtype": "float32"}},
-                "output_schema": {"middle_output": {"datasets_dtype": "float32"}},
-            },
-            "top_op": {
-                "required_ops": ["middle_op"],
-                "input_schema": {"top_input": {"datasets_dtype": "string"}},
-                "output_schema": {"top_output": {"datasets_dtype": "string"}},
-            }
-        }
-
-        # Compile the top operation
-        compile_op_schema("top_op", op_definitions)
-
-        # Check that all transitive dependencies were included
-        top_input = op_definitions["top_op"]["input_schema"]
-        top_output = op_definitions["top_op"]["output_schema"]
-
-        expected_input_fields = {"top_input", "middle_input", "base_input"}
-        expected_output_fields = {"top_output", "middle_output", "base_output"}
-
-        assert set(top_input.keys()) == expected_input_fields
-        assert set(top_output.keys()) == expected_output_fields
-
-    def test_compile_op_schema_missing_operation(self):
-        """Test error handling for missing required operation."""
-        op_definitions = {
-            "dependent_op": {
-                "required_ops": ["missing_op"],
-                "input_schema": {},
-                "output_schema": {},
-            }
-        }
-
-        with pytest.raises(ValueError, match="Operation missing_op not found in definitions"):
-            compile_op_schema("dependent_op", op_definitions)
-
-    def test_compile_op_schema_circular_dependency(self):
-        """Test detection of circular dependencies."""
-        op_definitions = {
-            "op1": {
-                "required_ops": ["op2"],
-                "input_schema": {},
-                "output_schema": {},
-            },
-            "op2": {
-                "required_ops": ["op1"],
-                "input_schema": {},
-                "output_schema": {},
-            }
-        }
-
-        # The function should handle circular dependencies by not processing already visited ops
-        # This should not raise an error due to the visited set check
-        compile_op_schema("op1", op_definitions)
-
-        # Both operations should remain in their original state since they depend on each other
-        assert op_definitions["op1"]["required_ops"] == ["op2"]
-        assert op_definitions["op2"]["required_ops"] == ["op1"]
-
-    def test_compile_op_schema_no_required_ops(self):
-        """Test compilation of operation without required_ops field."""
-        op_definitions = {
-            "simple_op": {
-                "input_schema": {"input1": {"datasets_dtype": "float32"}},
-                "output_schema": {"output1": {"datasets_dtype": "float32"}},
-                # No required_ops field
-            }
-        }
-
-        # Should work without error
-        compile_op_schema("simple_op", op_definitions)
-
-        # Schema should remain unchanged
-        assert op_definitions["simple_op"]["input_schema"] == {"input1": {"datasets_dtype": "float32"}}
-        assert op_definitions["simple_op"]["output_schema"] == {"output1": {"datasets_dtype": "float32"}}
-
-    def test_compile_op_schema_empty_schemas(self):
-        """Test compilation with empty input/output schemas."""
-        op_definitions = {
-            "base_op": {
-                "input_schema": {"base_input": {"datasets_dtype": "int64"}},
-                "output_schema": {"base_output": {"datasets_dtype": "int64"}},
-            },
-            "empty_schema_op": {
-                "required_ops": ["base_op"],
-                # Empty or missing schemas
-            }
-        }
-
-        # Compile the operation with empty schemas
-        compile_op_schema("empty_schema_op", op_definitions)
-
-        # Should have inherited schemas from base_op
-        assert "base_input" in op_definitions["empty_schema_op"]["input_schema"]
-        assert "base_output" in op_definitions["empty_schema_op"]["output_schema"]
-
-    def test_compile_op_schema_with_compiled_set(self):
-        """Test that already compiled operations are not reprocessed."""
-        op_definitions = {
-            "base_op": {
-                "input_schema": {"base_input": {"datasets_dtype": "int64"}},
-                "output_schema": {"base_output": {"datasets_dtype": "int64"}},
-            },
-            "dependent_op": {
-                "required_ops": ["base_op"],
-                "input_schema": {"dep_input": {"datasets_dtype": "float32"}},
-                "output_schema": {"dep_output": {"datasets_dtype": "float32"}},
-            }
-        }
-
-        compiled = set()
-
-        # Compile base_op first
-        compile_op_schema("base_op", op_definitions, compiled=compiled)
-        assert "base_op" in compiled
-
-        # Now compile dependent_op - base_op should not be reprocessed
-        compile_op_schema("dependent_op", op_definitions, compiled=compiled)
-
-        # Both should be in compiled set
-        assert "base_op" in compiled
-        assert "dependent_op" in compiled
 
 class TestYamlFileInfo:
     """Tests for YamlFileInfo functionality."""
@@ -1028,10 +798,19 @@ test_op:
         """Test complete save and load cycle."""
         cache_manager.add_yaml_file(sample_yaml_file)
 
-        # Create sample op definitions
+        # Create sample op definitions with both unique ops and aliases
         op_definitions = {
             "test_op": OpDef(
                 name="test_op",
+                description="Test operation",
+                implementation="test.module.func",
+                input_schema=OpSchema({"field1": ColCfg(datasets_dtype="int64")}),
+                output_schema=OpSchema({"field2": ColCfg(datasets_dtype="float32")}),
+                aliases=["alias1"]
+            ),
+            # This alias entry should be filtered out during save
+            "alias1": OpDef(
+                name="test_op",  # Points to the canonical name
                 description="Test operation",
                 implementation="test.module.func",
                 input_schema=OpSchema({"field1": ColCfg(datasets_dtype="int64")}),
@@ -1115,7 +894,7 @@ test_op:
         yaml_file = tmp_path / "test.yaml"
         yaml_content = {
             "test_op": {
-                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "implementation": "tests.core.test_analysis_ops_base.op_impl_test",
                 "input_schema": {"input1": {"datasets_dtype": "float32"}},
                 "output_schema": {"output1": {"datasets_dtype": "float32"}}
             }
@@ -1456,3 +1235,274 @@ OP_DEFINITIONS = {}
         with pytest.warns(match="No operation definitions found in cache"):
             # Should warn and return None
             assert cache_manager.load_cache() is None
+
+class TestCacheManagerHubFunctionality:
+    """Test cases for cache manager hub functionality."""
+
+    def test_get_hub_namespace_from_hub_cache(self, tmp_path):
+        """Test extracting namespace from hub cache file paths."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+
+        hub_cache = tmp_path / "hub_cache"
+
+        # Test various hub cache patterns
+        test_cases = [
+            (
+                hub_cache / "models--username--some_repo" / "snapshots" / "abc" / "ops.yaml",
+                "username.some_repo"
+            ),
+            (
+                hub_cache / "models--speediedan--nlp-tasks" / "snapshots" / "def" / "operations.yml",
+                "speediedan.nlp-tasks"
+            ),
+            (
+                hub_cache / "models--org--core" / "snapshots" / "ghi" / "core.yaml",
+                "org.core"
+            ),
+        ]
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+            for file_path, expected_namespace in test_cases:
+                namespace = cache_manager.get_hub_namespace(file_path)
+                assert namespace == expected_namespace
+
+    def test_get_hub_namespace_from_user_path(self, tmp_path):
+        """Test extracting namespace from user-defined paths."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+
+        # Files not in hub cache should get empty namespace
+        user_files = [
+            tmp_path / "custom_ops" / "my_ops.yaml",
+            tmp_path / "some_other_path" / "operations.yml",
+            Path("/completely/different/path/ops.yaml")
+        ]
+
+        for user_file in user_files:
+            namespace = cache_manager.get_hub_namespace(user_file)
+            assert namespace == ""
+
+    def test_get_hub_namespace_edge_cases(self, tmp_path):
+        """Test edge cases for hub namespace extraction."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+
+        hub_cache = tmp_path / "hub_cache"
+
+        # Test malformed hub cache paths
+        malformed_paths = [
+            hub_cache / "models--single-dash" / "snapshots" / "abc" / "ops.yaml",
+            hub_cache / "models--too--many--dashes--here" / "snapshots" / "abc" / "ops.yaml",
+            hub_cache / "not-models--user--repo" / "snapshots" / "abc" / "ops.yaml",
+        ]
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+            for malformed_path in malformed_paths:
+                # Should fall back to empty namespace for malformed paths
+                namespace = cache_manager.get_hub_namespace(malformed_path)
+                assert namespace == ""
+
+    def test_discover_hub_yaml_files_basic(self, tmp_path):
+        """Test basic hub YAML file discovery."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+
+        # Create hub cache structure
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+
+        # Create multiple repositories
+        repos = [
+            "models--user1--some_repo",
+            "models--user2--nlp",
+            "models--org--core"
+        ]
+
+        expected_files = []
+        for repo in repos:
+            repo_dir = hub_cache / repo / "snapshots" / "abc123"
+            repo_dir.mkdir(parents=True)
+
+            # Create YAML files
+            ops_yaml = repo_dir / "ops.yaml"
+            ops_yaml.write_text("test_op: {}")
+            expected_files.append(ops_yaml)
+
+            # Also test .yml extension
+            if repo == repos[0]:
+                ops_yml = repo_dir / "operations.yml"
+                ops_yml.write_text("another_op: {}")
+                expected_files.append(ops_yml)
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+            discovered_files = cache_manager.discover_hub_yaml_files()
+
+            # Should find all YAML files
+            assert len(discovered_files) == len(expected_files)
+            for expected_file in expected_files:
+                assert expected_file in discovered_files
+
+    def test_discover_hub_yaml_files_empty_cache(self, tmp_path):
+        """Test hub YAML discovery with empty cache directory."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+
+        # Create empty hub cache
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+            discovered_files = cache_manager.discover_hub_yaml_files()
+            assert discovered_files == []
+
+    def test_discover_hub_yaml_files_no_cache_dir(self, tmp_path):
+        """Test hub YAML discovery when cache directory doesn't exist."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+
+        # Point to non-existent hub cache
+        hub_cache = tmp_path / "nonexistent_hub_cache"
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+            discovered_files = cache_manager.discover_hub_yaml_files()
+            assert discovered_files == []
+
+    def test_discover_hub_yaml_files_nested_structure(self, tmp_path):
+        """Test hub YAML discovery with complex nested structure."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+
+        # Create complex hub cache structure
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+
+        # Create repository with multiple snapshots
+        repo_dir = hub_cache / "models--testuser--complex"
+        snapshots_dir = repo_dir / "snapshots"
+
+        # Multiple snapshots with different files
+        snapshot1 = snapshots_dir / "snapshot1"
+        snapshot1.mkdir(parents=True)
+        (snapshot1 / "ops.yaml").write_text("op1: {}")
+        subfolder = snapshot1 / "subfolder"
+        subfolder.mkdir(parents=True)
+        (subfolder / "more_ops.yml").write_text("op2: {}")
+
+        snapshot2 = snapshots_dir / "snapshot2"
+        snapshot2.mkdir(parents=True)
+        (snapshot2 / "operations.yaml").write_text("op3: {}")
+
+        # Should find YAML files in all snapshots and subdirectories
+        expected_files = [
+            snapshot1 / "ops.yaml",
+            snapshot1 / "subfolder" / "more_ops.yml",
+            snapshot2 / "operations.yaml"
+        ]
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+            discovered_files = cache_manager.discover_hub_yaml_files()
+
+            assert len(discovered_files) == len(expected_files)
+            for expected_file in expected_files:
+                assert expected_file in discovered_files
+
+    def test_discover_hub_yaml_files_mixed_content(self, tmp_path):
+        """Test hub YAML discovery ignores non-YAML files."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+
+        # Create hub cache with mixed content
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+
+        repo_dir = hub_cache / "models--user--mixed" / "snapshots" / "abc"
+        repo_dir.mkdir(parents=True)
+
+        # Create various file types
+        (repo_dir / "ops.yaml").write_text("valid_op: {}")
+        (repo_dir / "operations.yml").write_text("another_op: {}")
+        (repo_dir / "readme.txt").write_text("This is a readme")
+        (repo_dir / "config.json").write_text('{"key": "value"}')
+        (repo_dir / "script.py").write_text("print('hello')")
+        (repo_dir / "data.csv").write_text("col1,col2\n1,2")
+
+        # Should only find YAML files
+        expected_yaml_files = [
+            repo_dir / "ops.yaml",
+            repo_dir / "operations.yml"
+        ]
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+            discovered_files = cache_manager.discover_hub_yaml_files()
+
+            assert len(discovered_files) == 2
+            for expected_file in expected_yaml_files:
+                assert expected_file in discovered_files
+
+            # Ensure non-YAML files are not included
+            for discovered_file in discovered_files:
+                assert discovered_file.suffix in ['.yaml', '.yml']
+
+    def test_discover_hub_yaml_files_invalid_repo_names(self, tmp_path):
+        """Test hub YAML discovery ignores repositories with invalid names."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+
+        # Create hub cache with various repository names
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+
+        # Valid repository
+        valid_repo = hub_cache / "models--user--valid" / "snapshots" / "abc"
+        valid_repo.mkdir(parents=True)
+        (valid_repo / "ops.yaml").write_text("valid_op: {}")
+
+        # Invalid repository names (should be ignored)
+        invalid_repos = [
+            "not-models--user--test",  # Wrong prefix
+            "models--user--too--many--dashes",  # Wrong ops prefix
+            "random-directory",  # Completely wrong format
+        ]
+
+        for invalid_repo in invalid_repos:
+            invalid_dir = hub_cache / invalid_repo / "snapshots" / "abc"
+            invalid_dir.mkdir(parents=True)
+            (invalid_dir / "ops.yaml").write_text("invalid_op: {}")
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+            discovered_files = cache_manager.discover_hub_yaml_files()
+
+            # Should only find the valid repository's YAML file
+            assert len(discovered_files) == 1
+            assert discovered_files[0] == valid_repo / "ops.yaml"
+
+    def test_discover_hub_yaml_files_symlinks_and_permissions(self, tmp_path):
+        """Test hub YAML discovery handles symlinks and permission issues gracefully."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+
+        # Create hub cache structure
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+
+        # Create valid repository
+        repo_dir = hub_cache / "models--user--test" / "snapshots" / "abc"
+        repo_dir.mkdir(parents=True)
+        valid_yaml = repo_dir / "ops.yaml"
+        valid_yaml.write_text("test_op: {}")
+
+        # Create a symlink to a YAML file (if supported by the OS)
+        try:
+            symlink_target = tmp_path / "external_ops.yaml"
+            symlink_target.write_text("external_op: {}")
+            symlink_yaml = repo_dir / "symlink_ops.yaml"
+            symlink_yaml.symlink_to(symlink_target)
+            expects_symlink = True
+        except (OSError, NotImplementedError):
+            # Symlinks not supported on this system
+            expects_symlink = False
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+            discovered_files = cache_manager.discover_hub_yaml_files()
+
+            # Should find at least the regular YAML file
+            assert valid_yaml in discovered_files
+
+            if expects_symlink:
+                # Should also find the symlinked YAML file
+                assert len(discovered_files) >= 2
+                assert any(f.name == "symlink_ops.yaml" for f in discovered_files)
+            else:
+                # Should find only the regular file
+                assert len(discovered_files) == 1

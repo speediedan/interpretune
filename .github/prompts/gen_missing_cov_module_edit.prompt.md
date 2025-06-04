@@ -31,7 +31,7 @@ All modules use the default #FingerprintTestITDataModule datamodule unless other
 - these fixtures return regular #ITSessionFixture objects
 
   - "get_it_session\_\_sl_gpt2_analysis\_\_setup": This fixture is a session-scoped fixture that creates an ITSession with a SAELensModule composed user module with the GPT2 model and runs the it hooks >= #FixtPhase.setup. The ITSession is
-    preconfigured for analysis tasks (e.g. it has sae_analysis_targets defined) and is especially useful for tests that involve analysis operations. You can examine `tests/unit/test_analysis_ops_definitions.py::TestAnalysisOperationsImplementations::test_op_serialization` for example usage.
+    preconfigured for analysis tasks (e.g. it has sae_analysis_targets defined) and is especially useful for tests that involve analysis operations. You can examine `tests/core/test_analysis_ops_definitions.py::TestAnalysisOperationsImplementations::test_op_serialization` for example usage.
 
   - "get_it_session\_\_l_sl_gpt2\_\_initonly": Creates an ITSession with SAELensModule and LightningModule composed user module with the GPT2 model and does not run it hooks (e.g. prepare_data, setup)
 
@@ -53,7 +53,7 @@ All modules use the default #FingerprintTestITDataModule datamodule unless other
 Invoking these existing fixtures can be either direct or indirect (via the request fixture).
 
 For instance, the test
-`tests/unit/test_analysis_core.py::TestSAEAnalysisDict::test_core_sae_analysis_dict[sl_gpt2_logit_diffs_sae]`
+`tests/core/test_analysis_core.py::TestSAEAnalysisDict::test_core_sae_analysis_dict[sl_gpt2_logit_diffs_sae]`
 uses a parameterized fixture (`get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis`,
 requested via the `request` fixture) that is a session-scoped fixture and returns a #AnalysisStore object. For
 session-level fixtures like these, we may want to `deepcopy` the #AnalysisStore that is returned
@@ -61,11 +61,11 @@ by the fixture so we don't interfere with other tests.
 
 You can also use these session-level fixtures directly (e.g. for tests that all use the same fixture so don't need
 to request specific fixtures based on parameterized values). For example, see the test
-`tests/unit/test_analysis_core.py::TestAnalysisStore::test_select_columns` for another example of how to properly
+`tests/core/test_analysis_core.py::TestAnalysisStore::test_select_columns` for another example of how to properly
 request the `get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis` fixture and handle the
 #AnalysisSessionFixture artifacts.
 
-If you want to test a specific analysis operation, it's often useful to use the #run_op_with_config function to run the operation with an #OpTestConfig object. See `tests/unit/test_analysis_ops_definitions.py::TestAnalysisOperationsImplementations::test_op_serialization` for example usage on various ops defined in #SERIALIZATION_TEST_CONFIGS
+If you want to test a specific analysis operation, it's often useful to use the #run_op_with_config function to run the operation with an #OpTestConfig object. See `tests/core/test_analysis_ops_definitions.py::TestAnalysisOperationsImplementations::test_op_serialization` for example usage on various ops defined in #SERIALIZATION_TEST_CONFIGS
 
 ### Target Source and Test Modules with starting Coverage State
 

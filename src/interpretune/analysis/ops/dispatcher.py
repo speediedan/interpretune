@@ -1,6 +1,6 @@
 """Dispatcher for analysis operations."""
 from __future__ import annotations
-from typing import Optional, Dict, NamedTuple, List, Tuple, Iterator, Callable, Union
+from typing import Optional, Dict, NamedTuple, List, Tuple, Iterator, Callable, Union, Any
 from pathlib import Path
 from functools import wraps
 from collections import defaultdict
@@ -9,11 +9,22 @@ import yaml
 
 from transformers import BatchEncoding
 
+from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, ColCfg
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
 from interpretune.protocol import AnalysisBatchProtocol
-from interpretune.utils.logging import rank_zero_debug
+from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
+
+
+def _ensure_loaded(func):
+    """Decorator to ensure operations are loaded before access."""
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        if not self._loaded:
+            self.load_definitions()
+        return func(self, *args, **kwargs)
+    return wrapper
 
 
 class DispatchContext(NamedTuple):
@@ -31,24 +42,27 @@ class AnalysisOpDispatcher:
     # TODO:
     #  - decide whether to make the dispatcher a singleton or not
     #  - decide whether to make the dispatcher thread-safe
-    def __init__(self, yaml_paths: Optional[Union[Path, List[Path]]] = None):
+    def __init__(self, yaml_paths: Optional[Union[Path, List[Path]]] = None, enable_hub_ops: bool = True):
+        # always add paths in IT_ANALYSIS_OP_PATHS to the search paths
+        self.yaml_paths = [Path(p) for p in IT_ANALYSIS_OP_PATHS]
         if yaml_paths is None:
-            self.yaml_paths = [Path(__file__).parent / "native_analysis_functions.yaml"]
+            self.yaml_paths.append(Path(__file__).parent / "native_analysis_functions.yaml")
         elif isinstance(yaml_paths, (Path, str)):
-            self.yaml_paths = [Path(yaml_paths)]
+            self.yaml_paths.append(Path(yaml_paths))
         else:
             # Handle list/iterable of paths (convert strings to Path objects)
-            self.yaml_paths = [Path(p) for p in yaml_paths]
+            self.yaml_paths.extend(Path(p) for p in yaml_paths)
             assert all(isinstance(p, Path) for p in self.yaml_paths), \
                 "yaml_paths must be a Path, string, or a list of Paths/strings"
 
+        self.enable_hub_ops = enable_hub_ops
         self._op_definitions: Dict[str, OpDef] = {}
         self._dispatch_table = {}  # {op_name: {context: instantiated_op}}
         self._aliases = {}  # {alias: op_name}
         self._op_to_aliases = defaultdict(list)  # {op_name: [aliases]}
         self._loaded = False
         self._loading_in_progress = False
-        self._cache_manager = OpDefinitionsCacheManager()
+        self._cache_manager = OpDefinitionsCacheManager(IT_ANALYSIS_CACHE)
 
     def _discover_yaml_files(self, paths: List[Path]) -> List[Path]:
         """Discover all YAML files from the given paths (files or directories)."""
@@ -62,38 +76,51 @@ class AnalysisOpDispatcher:
                 yaml_files.extend(path.glob('**/*.yml'))
         return sorted(set(yaml_files))  # Remove duplicates and sort for consistency
 
-    def load_definitions(self):
-        """Load operation definitions from YAML or cache."""
+    def load_definitions(self) -> None:
+        """Load operation definitions from YAML files."""
         if self._loaded or self._loading_in_progress:
             return
 
+        self._loading_in_progress = True
         try:
-            self._loading_in_progress = True
-
             # Discover all YAML files from the configured paths
             yaml_files = self._discover_yaml_files(self.yaml_paths)
+
+            # Add hub operations if enabled
+            if self.enable_hub_ops:
+                hub_yaml_files = self._cache_manager.add_hub_yaml_files()
+                yaml_files.extend(hub_yaml_files)
+
             if not yaml_files:
                 rank_zero_debug("No YAML files found in the specified paths")
                 self._loaded = True
                 return
 
-            # Set up cache manager with discovered YAML files
+            # Set up cache manager with discovered YAML files # TODO: might be able to remove since we already discover
             for yaml_file in yaml_files:
-                self._cache_manager.add_yaml_file(yaml_file)
+                if yaml_file not in [info.path for info in self._cache_manager._yaml_files]:
+                    self._cache_manager.add_yaml_file(yaml_file)
 
             # Try to load from cache first
             cached_definitions = self._cache_manager.load_cache()
             if cached_definitions is not None:
                 self._op_definitions = cached_definitions
+                self._set_default_hub_op_aliases()
+
+                # Build aliases mapping
                 self._populate_aliases_from_definitions()
-                rank_zero_debug(f"Loaded {len(self._op_definitions)} operations from cache")
+
                 self._loaded = True
+                rank_zero_debug(f"Loaded {len(self._op_definitions)} operation definitions")
                 return
 
             # Cache miss or invalid - load from YAML and compile
             rank_zero_debug("Cache miss or invalid, loading from YAML and compiling")
             self._load_from_yaml_and_compile(yaml_files)
 
+        except Exception as e:
+            rank_zero_warn(f"Failed to load operation definitions: {e}")
+            raise
         finally:
             self._loading_in_progress = False
 
@@ -104,17 +131,31 @@ class AnalysisOpDispatcher:
         composite_operations = {}
 
         for yaml_file in yaml_files:
-            with open(yaml_file, "r") as f:
-                yaml_content = yaml.safe_load(f)
+            try:
+                with open(yaml_file, "r") as f:
+                    yaml_content = yaml.safe_load(f)
 
-            # Separate composite operations from regular operations
-            for key, value in yaml_content.items():
-                if key == "composite_operations":
-                    composite_operations.update(value)
-                else:
-                    if key in raw_definitions:
-                        rank_zero_debug(f"Operation '{key}' redefined in {yaml_file}, using latest definition")
-                    raw_definitions[key] = value
+                if not yaml_content:
+                    rank_zero_debug(f"Empty YAML file: {yaml_file}")
+                    continue
+
+                # Apply namespace prefixes for hub operations
+                namespaced_content = self._apply_hub_namespacing(yaml_content, yaml_file)
+
+                # Separate composite operations from regular operations
+                for key, value in namespaced_content.items():
+                    if key == "composite_operations":
+                        composite_operations.update(value)
+                    else:
+                        if key in raw_definitions:
+                            rank_zero_debug(f"Operation '{key}' redefined in {yaml_file}, using latest definition")
+                        raw_definitions[key] = value
+
+            except Exception as e:
+                rank_zero_debug(f"Failed to load YAML file {yaml_file}: {e}")
+                # Continue processing other files rather than failing completely
+                continue
+
 
         # Second pass: Compile schemas with required_ops dependencies
         self._compile_required_ops_schemas(raw_definitions)
@@ -143,6 +184,8 @@ class AnalysisOpDispatcher:
 
         # Convert raw definitions to OpDef objects
         self._convert_raw_definitions_to_opdefs(raw_definitions)
+        self._set_default_hub_op_aliases()
+        # Build aliases mapping
         self._populate_aliases_from_definitions()
 
         # Save to cache for next time
@@ -150,18 +193,22 @@ class AnalysisOpDispatcher:
 
         self._loaded = True
 
-    def _compile_required_ops_schemas(self, raw_definitions: Dict[str, Dict]):
+    def _compile_required_ops_schemas(self, definitions_to_compile: Dict[str, Dict]):
         """Compile schemas by recursively including required_ops dependencies."""
         from interpretune.analysis.ops.compiler.schema_compiler import compile_op_schema
 
-        # Track which operations have been compiled to avoid infinite recursion
-        compiled = set()
-
+        # TODO: consider moving this compilation to schema_compiler.py, we're keeping this here for now because
+        #       applying auto-columns should not be part of schema_compiler.py
         # Compile all operations
-        for op_name in list(raw_definitions.keys()):
-            compile_op_schema(op_name, raw_definitions, compiled=compiled)
-            # Apply optional auto-columns after compilation
-            apply_auto_columns(raw_definitions[op_name])
+        for op_name in list(definitions_to_compile.keys()):
+            try:
+                compile_op_schema(op_name, definitions_to_compile)
+                # Apply optional auto-columns after compilation
+                apply_auto_columns(definitions_to_compile[op_name])
+            except ValueError as e:
+                rank_zero_warn(f"Failed to compile operation '{op_name}': {e}")
+                # Remove the operation if it fails to compile
+                definitions_to_compile.pop(op_name, None)
 
     def _convert_raw_definitions_to_opdefs(self, raw_definitions: Dict[str, Dict]):
         """Convert raw dictionary definitions to OpDef objects."""
@@ -185,38 +232,104 @@ class AnalysisOpDispatcher:
 
             self._op_definitions[op_name] = op_def_obj
 
+    def _apply_hub_namespacing(self, yaml_content: Dict[str, Any], yaml_file: Path) -> Dict[str, Any]:
+        """Apply hub namespacing to operations from hub files."""
+        # Get namespace for this file
+        namespace = self._cache_manager.get_hub_namespace(yaml_file)
+
+        # If it's a top-level namespace (non-hub), return unchanged
+        if "." not in namespace:
+            return yaml_content
+
+        # Apply namespacing to hub operations
+        namespaced_content = {}
+
+        for op_name, op_config in yaml_content.items():
+            if op_name == "composite_operations":
+                # Handle composite operations separately - namespace the compositions
+                namespaced_composites = {}
+                for comp_name, comp_config in op_config.items():
+                    namespaced_comp_name = f"{namespace}.{comp_name}"
+                    namespaced_composites[namespaced_comp_name] = comp_config.copy()
+
+                    # Also namespace any aliases
+                    if "aliases" in comp_config:
+                        namespaced_aliases = []
+                        for alias in comp_config["aliases"]:
+                            namespaced_aliases.append(f"{namespace}.{alias}")
+                        namespaced_composites[namespaced_comp_name]["aliases"] = namespaced_aliases
+
+                namespaced_content["composite_operations"] = namespaced_composites
+                continue
+
+            # Add namespace prefix to operation name
+            namespaced_name = f"{namespace}.{op_name}"
+            namespaced_content[namespaced_name] = op_config.copy()
+
+            # Also namespace any aliases
+            if "aliases" in op_config:
+                namespaced_aliases = []
+                for alias in op_config["aliases"]:
+                    namespaced_aliases.append(f"{namespace}.{alias}")
+                namespaced_content[namespaced_name]["aliases"] = namespaced_aliases
+
+        return namespaced_content
+
     def _populate_aliases_from_definitions(self):
-        """Populate alias mappings from loaded definitions."""
+        """Build alias mappings from operation definitions."""
+        # Clear existing mappings
         self._aliases.clear()
         self._op_to_aliases.clear()
 
-        # Create a copy of the keys to avoid "dictionary changed size during iteration" error
-        op_names = list(self._op_definitions.keys())
+        op_definitions = self._op_definitions.copy()
 
-        for op_name in op_names:
-            op_def = self._op_definitions[op_name]
-            # Skip aliases to avoid duplicates
-            if op_name in [alias for aliases in self._op_to_aliases.values() for alias in aliases]:
-                continue
-
-            self._op_to_aliases[op_name] = op_def.aliases
+        for op_name, op_def in op_definitions.items():
+            # Build mapping for each alias
             for alias in op_def.aliases:
-                self._aliases[alias] = op_name
-                # Add alias reference to definitions
-                self._op_definitions[alias] = op_def
+                # Prevent self-referencing aliases
+                if alias == op_name:
+                    continue
 
-    def _ensure_loaded(method):
-        @wraps(method)
-        def wrapper(self, *args, **kwargs):
-            if not self._loaded:
-                self.load_definitions()
-            return method(self, *args, **kwargs)
-        return wrapper
+                # Prevent circular alias references
+                if alias in self._aliases and self._aliases[alias] == op_name:
+                    continue
+
+                self._aliases[alias] = op_name
+                self._op_to_aliases[op_name].append(alias)
+                # Add alias reference to definitions
+                if alias not in self._op_definitions:
+                    self._op_definitions[alias] = op_def
+
+                # For namespaced operations, also add non-namespaced convenience alias mapping
+                # This allows "test_hub_op" to resolve to "testuser.test.test_hub_op"
+                if "." in op_name:
+                    # Extract the original (non-namespaced) alias
+                    original_alias = alias.split(".", 3)[-1] if alias.count('.') >= 3 else alias.split('.')[-1]
+                    if original_alias in self._aliases:
+                        # If the original alias already exists, ensure it points to the same op_name
+                        if self._aliases[original_alias] != op_name:
+                            rank_zero_warn(f"The name '{original_alias}' already exists for a different operation. "
+                                           f"The fully-qualified alias name ({alias}) has been added as an alias "
+                                           f"for {op_name}.")
+                    else:
+                        if self._aliases and original_alias != op_name:
+                            self._aliases[original_alias] = op_name
+                            self._op_to_aliases[op_name].append(alias)
+
+    @_ensure_loaded
+    def list_operations(self) -> List[str]:
+        """Get a list of all available operation names.
+
+        Returns:
+            List of operation names including both native and hub operations
+        """
+        return list(self._op_definitions.keys())
 
     @property
     @_ensure_loaded
     def registered_ops(self) -> Dict[str, OpDef]:
         """Get all registered operation definitions without instantiating them."""
+        # TODO: return a generator here instead of a dict? May be better to provide a separate method for that
         return {name: op_def for name, op_def in self._op_definitions.items()}
 
     @_ensure_loaded
@@ -232,6 +345,76 @@ class AnalysisOpDispatcher:
         """Get all registered operation aliases."""
         for alias, op_name in self._aliases.items():
             yield (alias, op_name)
+
+    def _resolve_name_safe(self, op_name: str, visited: Optional[set] = None) -> str:
+        """Safely resolve names with cycle detection."""
+        if visited is None:
+            visited = set()
+
+        if op_name in visited:
+            # Cycle detected, return the original name
+            return op_name
+
+        if op_name not in self._aliases:
+            return op_name
+
+        visited.add(op_name)
+        resolved = self._resolve_name_safe(self._aliases[op_name], visited)
+        visited.remove(op_name)
+
+        return resolved
+
+    def _set_default_hub_op_aliases(self) -> None:
+        """Ensure operations are accessible both with and without namespaces."""
+        # Use existing definitions if no raw definitions provided
+        target_ops = self._op_definitions
+        current_ops = dict(self._op_definitions)
+
+        for op_name, op_def in current_ops.items():
+            # If this is a namespaced operation, also add it without namespace
+            if '.' in op_name:
+                # Extract the base name (last part after final dot)
+                base_name = op_name.split('.')[-1]
+
+                # Only add if there's no existing operation with that base name
+                # and it's not a self-reference
+                if base_name in target_ops:
+                    # If the base name already exists, ensure it points to the same OpDef
+                    if target_ops[base_name] != target_ops[op_name]:
+                        rank_zero_warn(f"Base name '{base_name}' already has an assigned op or alias so '{op_name}' "
+                                       "cannot be mapped to it. The fully-qualified name will need to be "
+                                       "used unless another alias is provided.")
+                else:
+                    if base_name != op_name:
+                        target_ops[base_name] = target_ops[op_name]
+
+            # # Handle aliases - ensure they point to the same OpDef
+            for alias in op_def.aliases:
+                # Skip self-referencing aliases
+                if alias == op_name:
+                    continue
+
+                if alias in target_ops:
+                    # If alias already exists, ensure it points to the same OpDef
+                    if target_ops[alias] != target_ops[op_name]:
+                        rank_zero_warn(f"Alias '{alias}' already has an assigned op or alias so the "
+                                       f"alias specified by '{op_name}' cannot be mapped to it")
+                else:
+                    target_ops[alias] = target_ops[op_name]
+
+                # Extract base alias name if it's namespaced
+                if '.' in alias:
+                    base_alias = alias.split('.')[-1]
+                    if base_alias in target_ops:
+                        # If base alias already exists, ensure it points to the same OpDef
+                        if target_ops[base_alias] != target_ops[op_name]:
+                            rank_zero_warn(f"Base alias '{base_alias}' already has an assigned op or alias so the alias"
+                                           f" specified by '{alias}' cannot be mapped to it. The fully-qualified "
+                                           " name will need to be used unless another alias is provided.")
+                    else:
+                        if base_alias != op_name and base_alias != alias:
+                            target_ops[base_alias] = target_ops[op_name]
+        return target_ops
 
     def _import_callable(self, callable_path: str) -> Callable:
         """Import a callable from a path."""
@@ -280,9 +463,9 @@ class AnalysisOpDispatcher:
 
         return op
 
-    def _is_lazy_op_handle(self, op_handle) -> bool:
-        """Check if the given operation handle is a lazy operation handle."""
-        return callable(op_handle) and not isinstance(op_handle, AnalysisOp)
+    def _is_lazy_op_handle(self, obj) -> bool:
+        """Check if an object is a lazy operation handle (factory function)."""
+        return callable(obj) and not isinstance(obj, AnalysisOp)
 
     def _convert_to_op_schema(self, schema_dict: Dict) -> OpSchema:
         """Convert a schema dictionary to an OpSchema object with ColCfg values."""
@@ -295,7 +478,7 @@ class AnalysisOpDispatcher:
         return OpSchema(result)
 
     @_ensure_loaded
-    def get_op(self, op_name: str, context: DispatchContext = DispatchContext(),
+    def get_op(self, op_name: str, context: Optional[DispatchContext] = None,
                lazy: bool = False) -> AnalysisOp | Callable:
         """Get an operation by name, optionally instantiating it if needed.
 
@@ -307,20 +490,44 @@ class AnalysisOpDispatcher:
         Returns:
             The requested operation or None if lazy=True and the op hasn't been instantiated yet
         """
-        if op_name not in self._op_definitions:
-            raise ValueError(f"Unknown operation: {op_name}")
-        if op_name in self._aliases:  # avoid duplicate entries in dispatch table
-            return self.get_op(self._aliases[op_name], context, lazy)
-        ctx_dict = self._dispatch_table.setdefault(op_name, {})
-        if context not in ctx_dict or self._is_lazy_op_handle(ctx_dict[context]):
-            if lazy:
-                # Store a factory function that will instantiate the op when needed
-                ctx_dict[context] = lambda: self._instantiate_op(op_name)
-            else:
-                # Eagerly instantiate the operation
-                ctx_dict[context] = self._instantiate_op(op_name)
+        if context is None:
+            context = DispatchContext()
 
-        return ctx_dict.get(context)
+        # Resolve names with cycle detection
+        resolved_name = self._resolve_name_safe(op_name)
+
+        # Check if operation exists
+        if resolved_name not in self._op_definitions:
+            raise ValueError(f"Unknown operation: {op_name}")
+
+        # Get or create dispatch table entry for this operation
+        if resolved_name not in self._dispatch_table:
+            self._dispatch_table[resolved_name] = {}
+
+        ctx_dict = self._dispatch_table[resolved_name]
+
+        # Check if we already have an entry for this context
+        if context in ctx_dict:
+            existing = ctx_dict[context]
+            if lazy:
+                # For lazy requests, return whatever we have (factory or instance)
+                return existing
+            elif self._is_lazy_op_handle(existing):
+                # We have a factory function but need an instance
+                ctx_dict[context] = self._instantiate_op(resolved_name)
+                return ctx_dict[context]
+            else:
+                # We already have an instantiated operation
+                return existing
+
+        # No entry for this context yet
+        if lazy:
+            # Store a factory function that will instantiate the op when needed
+            ctx_dict[context] = lambda: self._instantiate_op(resolved_name)
+        else:
+            # Eagerly instantiate the operation
+            ctx_dict[context] = self._instantiate_op(resolved_name)
+        return ctx_dict[context]
 
     def _maybe_instantiate_op(self, op_ref, context: DispatchContext = DispatchContext()) -> AnalysisOp:
         """Ensure an operation is instantiated based on various reference types."""
@@ -354,13 +561,24 @@ class AnalysisOpDispatcher:
 
     @_ensure_loaded
     def instantiate_all_ops(self) -> Dict[str, AnalysisOp]:
-        """Instantiate all operations and return them as a dictionary."""
-        result = {}
+        """Get all operations as instantiated AnalysisOp objects."""
+        instantiated_ops = {}
+
+        # Only instantiate operations that are not aliases pointing to other operations
         for op_name in self._op_definitions:
-            # Ensure operations are actually instantiated, not just factory functions
-            op = self.get_op(op_name)
-            result[op_name] = op
-        return result
+            # Skip if this is an alias that points to a different operation
+            if op_name in self._aliases and self._aliases[op_name] != op_name:
+                continue
+
+            try:
+                op = self.get_op(op_name)
+                if isinstance(op, AnalysisOp):
+                    instantiated_ops[op_name] = op
+            except Exception as e:
+                rank_zero_warn(f"Failed to instantiate operation '{op_name}': {e}")
+                continue
+
+        return instantiated_ops
 
     @_ensure_loaded
     def compile_ops(self, op_names: str | List[str | AnalysisOp], name: Optional[str] = None,

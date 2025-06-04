@@ -170,6 +170,9 @@ class TestAnalysisStore:
             _ = store.save_dir
 
     def test_load_dataset_str_path(self, request, tmp_path, monkeypatch):
+        # Import the module to find the correct patch location
+        from interpretune.analysis import core
+
         # Get a real dataset from the fixture
         fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
         real_dataset = deepcopy(fixture.result.dataset)
@@ -177,8 +180,8 @@ class TestAnalysisStore:
         # Create a mock for load_dataset that returns our real dataset
         mock_load_dataset = MagicMock(return_value=real_dataset)
 
-        # Patch the load_dataset function
-        monkeypatch.setattr('interpretune.analysis.core.load_dataset', mock_load_dataset)
+        # Patch the load_dataset function at the module level where it's used
+        monkeypatch.setattr(core, 'load_dataset', mock_load_dataset)
 
         # Create a new store and call _load_dataset
         store = AnalysisStore()
@@ -754,12 +757,17 @@ class TestCoreFunctionality:
 
     def test_init_with_overlapping_paths(self, tmp_path, monkeypatch):
         """Test that overlapping paths in __init__ raises ValueError."""
+        # Import the module to find the correct patch location
+        from interpretune.analysis import core
+
         # Create a temporary path to use for both dataset and output
         path_str = str(tmp_path / "overlap")
 
         # Mock load_dataset to avoid actual loading
         mock_load_dataset = MagicMock()
-        monkeypatch.setattr('interpretune.analysis.core.load_dataset', mock_load_dataset)
+
+        # Patch the load_dataset function at the module level where it's used
+        monkeypatch.setattr(core, 'load_dataset', mock_load_dataset)
 
         # Should raise ValueError when paths overlap
         with pytest.raises(ValueError, match="must not overlap"):
@@ -771,12 +779,17 @@ class TestCoreFunctionality:
 
     def test_load_dataset_with_overlapping_paths(self, tmp_path, monkeypatch):
         """Test that overlapping paths in _load_dataset raises ValueError."""
+        # Import the module to find the correct patch location
+        from interpretune.analysis import core
+
         # Create a temporary path to use for both dataset and output
         path_str = str(tmp_path / "overlap")
 
         # Mock load_dataset to avoid actual loading
         mock_load_dataset = MagicMock()
-        monkeypatch.setattr('interpretune.analysis.core.load_dataset', mock_load_dataset)
+
+        # Patch the load_dataset function at the module level where it's used
+        monkeypatch.setattr(core, 'load_dataset', mock_load_dataset)
 
         # Create store with output path
         store = AnalysisStore(op_output_dataset_path=path_str)

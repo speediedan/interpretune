@@ -391,7 +391,7 @@ show_contexts = True
         if match:
             return match.group(2)
 
-        # Example: tests/unit/test_analysis_core.py::TestSAEAnalysisDict::test_core_sae_analysis_dict
+        # Example: tests/core/test_analysis_core.py::TestSAEAnalysisDict::test_core_sae_analysis_dict
         match = re.match(r'(tests/.*?::.*?)(?:\[|$)', context)
         if match:
             return match.group(1)

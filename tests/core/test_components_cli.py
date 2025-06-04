@@ -1,18 +1,17 @@
-import pytest
 from unittest.mock import patch
 import os
 import shutil
 from copy import deepcopy
 
+import pytest
 from jsonargparse import Namespace, ArgumentError
 
 from interpretune.base import LightningCLIAdapter, bootstrap_cli
 from tests.runif import RunIf
 from tests.warns import unexpected_warns, CLI_EXPECTED_WARNS
-from tests.conftest import make_deterministic  # noqa: F401
 from tests.base_defaults import pytest_factory
 from tests.parity_acceptance.cfg_aliases import RUN_FN, CLI_EXP
-from tests.unit.cfg_aliases import TEST_CONFIGS_CLI_UNIT, EXPECTED_RESULTS_CLI_UNIT
+from tests.core.cfg_aliases import TEST_CONFIGS_CLI_UNIT, EXPECTED_RESULTS_CLI_UNIT
 from tests.parity_acceptance.test_it_cli import gen_cli_args
 
 

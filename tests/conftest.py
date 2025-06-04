@@ -45,7 +45,7 @@ from tests.parity_acceptance.test_it_l import CoreCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg
 from tests.utils import kwargs_from_cfg_obj
 
-from tests.unit.cfg_aliases import (TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg,
+from tests.core.cfg_aliases import (TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg,
     LightningLlama3DebugCfg, LightningGemma2DebugCfg,CoreMemProfCfg, CoreGPT2PEFTCfg, CoreGPT2PEFTSeqCfg,
     CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, CoreSLGPT2, CoreSLGPT2Analysis, CoreSLCust, LightningSLGPT2,
     CoreSLGPT2LogitDiffsSAE, CoreSLGPT2LogitDiffsAttrGrad, CoreSLGPT2LogitDiffsBase, TLMechInterpCfg,
@@ -481,18 +481,15 @@ def gpt2_ft_schedules(tmpdir_factory, fts_patch_env, get_it_session__l_gpt2__set
 # Misc Training Fixtures
 #################################
 
-@pytest.fixture(scope="function")
-def reset_deterministic_algorithm():
-    """Ensures that torch determinism settings are reset before the next test runs."""
-    yield
-    os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
-    torch.use_deterministic_algorithms(False)
-
-
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def make_deterministic(warn_only=False, fill_uninitialized_memory=True):
     # https://pytorch.org/docs/2.3/notes/randomness.html#reproducibility
     # https://docs.nvidia.com/cuda/cublas/index.html#results-reproducibility
+    # Store the original state
+    original_cublas_config = os.environ.get("CUBLAS_WORKSPACE_CONFIG")
+    original_deterministic = torch.are_deterministic_algorithms_enabled()
+    original_cudnn_benchmark = torch.backends.cudnn.benchmark
+
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     torch.use_deterministic_algorithms(True, warn_only=warn_only)
     torch._C._set_deterministic_fill_uninitialized_memory(fill_uninitialized_memory)
@@ -500,9 +497,16 @@ def make_deterministic(warn_only=False, fill_uninitialized_memory=True):
     random.seed(1)
     torch.manual_seed(1)
     torch.cuda.manual_seed(1)
+
     yield
-    os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
-    torch.use_deterministic_algorithms(False)
+    # Restore original state instead of completely removing
+    if original_cublas_config is not None:
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = original_cublas_config
+    else:
+        os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
+
+    torch.use_deterministic_algorithms(original_deterministic)
+    torch.backends.cudnn.benchmark = original_cudnn_benchmark
 
 
 @pytest.fixture(scope="session")
@@ -533,7 +537,7 @@ def restore_env_variables():
     os.environ.update(env_backup)
     # these are currently known leakers - ideally these would not be allowed
     allowlist = {
-        "CUBLAS_WORKSPACE_CONFIG",  # enabled with deterministic flag
+        # "CUBLAS_WORKSPACE_CONFIG",  # enabled with deterministic flag
         "CUDA_DEVICE_ORDER",
         "LOCAL_RANK",
         "NODE_RANK",

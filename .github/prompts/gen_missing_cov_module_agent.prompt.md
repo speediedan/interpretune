@@ -41,7 +41,7 @@ All modules use the default #FingerprintTestITDataModule datamodule unless other
 Invoking these existing fixtures can be either direct or indirect (via the request fixture).
 
 For instance, the test
-`tests/unit/test_analysis_core.py::TestSAEAnalysisDict::test_core_sae_analysis_dict[sl_gpt2_logit_diffs_sae]`
+`tests/core/test_analysis_core.py::TestSAEAnalysisDict::test_core_sae_analysis_dict[sl_gpt2_logit_diffs_sae]`
 uses a parameterized fixture (`get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis`,
 requested via the `request` fixture) that is a session-scoped fixture and returns a #AnalysisStore object. For
 session-level fixtures like these, we may want to `deepcopy` the #AnalysisStore that is returned
@@ -49,7 +49,7 @@ by the fixture so we don't interfere with other tests.
 
 You can also use these session-level fixtures directly (e.g. for tests that all use the same fixture so don't need
 to request specific fixtures based on parameterized values). For example, see the test
-`tests/unit/test_analysis_core.py::TestAnalysisStore::test_select_columns` for another example of how to properly
+`tests/core/test_analysis_core.py::TestAnalysisStore::test_select_columns` for another example of how to properly
 request the `get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis` fixture and handle the
 #AnalysisSessionFixture artifacts.
 
@@ -58,7 +58,7 @@ request the `get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis
 To run all tests in the target test module:
 
 ```bash
-cd ~/repos/interpretune && source ~/.venvs/it_latest/bin/activate && python -m pytest tests/unit/<test code module name> -v
+cd ~/repos/interpretune && source ~/.venvs/it_latest/bin/activate && python -m pytest tests/core/<test code module name> -v
 ```
 
 If tests are failing, try to determine why the tests are failing, pausing if the issue would seem to require changes to the implementation code.
@@ -68,13 +68,13 @@ Once all tests are passing, you may run the test suite and append to existing co
 Command to append coverage and validate expected lines are hit (or find remaining set of missing lines) once tests are passing:
 
 ```bash
-cd ${HOME}/repos/interpretune && source ~/.venvs/it_latest/bin/activate && python -m coverage run --append --source src/interpretune -m pytest tests/unit/<test code module name>  -v && python -m coverage report -m --include=`<source code module relative path>`.py
+cd ${HOME}/repos/interpretune && source ~/.venvs/it_latest/bin/activate && python -m coverage run --append --source src/interpretune -m pytest tests/core/<test code module name>  -v && python -m coverage report -m --include=`<source code module relative path>`.py
 ```
 
 A concrete example:
 
 ```bash
-cd ${HOME}/repos/interpretune && source ~/.venvs/it_latest/bin/activate && python -m coverage run --append --source src/interpretune -m pytest tests/unit/test_analysis_core.py  -v && python -m coverage report -m --include=src/interpretune/analysis/core.py
+cd ${HOME}/repos/interpretune && source ~/.venvs/it_latest/bin/activate && python -m coverage run --append --source src/interpretune -m pytest tests/core/test_analysis_core.py  -v && python -m coverage report -m --include=src/interpretune/analysis/core.py
 ```
 
 After collecting updated coverage, if there are no more missing coverage lines, the task is complete.

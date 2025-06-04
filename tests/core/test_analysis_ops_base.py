@@ -1108,7 +1108,7 @@ class TestOpWrapper:
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
         def patched_import(path_str):
-            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
+            if path_str == "tests.core.test_analysis_ops_base.op_impl_test":
                 return op_impl_test
             return original_import(path_str)
         monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
@@ -1155,7 +1155,7 @@ class TestOpWrapper:
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
         def patched_import(path_str):
-            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
+            if path_str == "tests.core.test_analysis_ops_base.op_impl_test":
                 return op_impl_test
             return original_import(path_str)
         monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
@@ -1190,7 +1190,7 @@ class TestOpWrapper:
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
         def patched_import(path_str):
-            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
+            if path_str == "tests.core.test_analysis_ops_base.op_impl_test":
                 return op_impl_test
             return original_import(path_str)
         monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)

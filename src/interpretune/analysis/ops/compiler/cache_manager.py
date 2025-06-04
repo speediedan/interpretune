@@ -1,13 +1,12 @@
 """Cache manager for pre-compiled operation definitions."""
 from __future__ import annotations
+import re
 import hashlib
 import importlib.util
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from dataclasses import dataclass, field, fields
-import datetime
+from dataclasses import dataclass, field
 
-from interpretune.analysis import IT_ANALYSIS_CACHE
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 from interpretune.analysis.ops.base import OpSchema, ColCfg
 
@@ -41,238 +40,291 @@ class OpDef:
         return result
 
 
-@dataclass
 class YamlFileInfo:
-    """Information about a YAML file for cache management."""
-    path: Path
-    mtime: float
-    content_hash: str
+    """Information about a YAML file for caching purposes."""
+
+    def __init__(self, path: Path, mtime: float, content_hash: str):
+        self.path = path
+        self.mtime = mtime
+        self.content_hash = content_hash
 
     @classmethod
     def from_path(cls, path: Path) -> 'YamlFileInfo':
         """Create YamlFileInfo from a file path."""
-        if not path.exists():
-            raise FileNotFoundError(f"YAML file not found: {path}")
-
         stat = path.stat()
-        with open(path, 'rb') as f:
-            content_hash = hashlib.sha256(f.read()).hexdigest()
-
-        return cls(
-            path=path,
-            mtime=stat.st_mtime,
-            content_hash=content_hash
-        )
+        content = path.read_bytes()
+        content_hash = hashlib.sha256(content).hexdigest()
+        return cls(path, stat.st_mtime, content_hash)
 
 
 class OpDefinitionsCacheManager:
-    """Manages pre-compiled operation definitions cache."""
+    """Manages caching of compiled operation definitions."""
 
-    def __init__(self, cache_dir: Optional[Path] = None):
-        self.cache_dir = cache_dir or IT_ANALYSIS_CACHE
+    def __init__(self, cache_dir: Path):
+        self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._yaml_files: List[YamlFileInfo] = []
         self._fingerprint: Optional[str] = None
 
-    def add_yaml_file(self, yaml_path: Path) -> None:
+    def add_yaml_file(self, yaml_file: Path) -> None:
         """Add a YAML file to be monitored for changes."""
-        file_info = YamlFileInfo.from_path(yaml_path)
         # Avoid duplicates
-        if not any(info.path == yaml_path for info in self._yaml_files):
+        if any(info.path == yaml_file for info in self._yaml_files):
+            return
+
+        try:
+            file_info = YamlFileInfo.from_path(yaml_file)
             self._yaml_files.append(file_info)
-            self._fingerprint = None  # Reset fingerprint
+            self._fingerprint = None  # Reset fingerprint when files change
+        except FileNotFoundError:
+            # Skip files that don't exist anymore
+            pass
 
-    def _compute_fingerprint(self) -> str:
-        """Compute fingerprint based on all monitored YAML files."""
-        if not self._yaml_files:
-            return "empty"
+    def add_hub_yaml_files(self) -> None:
+        """Add hub YAML files to monitoring."""
+        try:
+            hub_yaml_files = self.discover_hub_yaml_files()
+            for yaml_file in hub_yaml_files:
+                self.add_yaml_file(yaml_file)
+        except Exception as e:
+            rank_zero_warn(f"Error discovering hub YAML files: {e}")
+        return hub_yaml_files
 
-        # Sort by path to ensure consistent ordering
-        sorted_files = sorted(self._yaml_files, key=lambda x: str(x.path))
+    def discover_hub_yaml_files(self) -> List[Path]:
+        """Discover YAML files from hub cache."""
+        yaml_files = []
 
-        # Combine all file hashes and modification times
-        combined = ""
-        for file_info in sorted_files:
-            combined += f"{file_info.path}:{file_info.mtime}:{file_info.content_hash}:"
+        # Import here to avoid circular imports
+        from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
 
-        return hashlib.sha256(combined.encode()).hexdigest()[:16]
+        # Discover from hub cache
+        if IT_ANALYSIS_HUB_CACHE.exists():
+            for yaml_file in IT_ANALYSIS_HUB_CACHE.rglob("*.yaml"):
+                if self._is_hub_ops_file(yaml_file):
+                    yaml_files.append(yaml_file)
+            for yaml_file in IT_ANALYSIS_HUB_CACHE.rglob("*.yml"):
+                if self._is_hub_ops_file(yaml_file):
+                    yaml_files.append(yaml_file)
+
+        return yaml_files
+
+    def _parse_hub_file_path(self, yaml_file: Path) -> tuple[bool, str]:
+        """Parse a file path to determine if it's a hub ops file and extract namespace.
+
+        Args:
+            yaml_file: Path to the YAML file to analyze
+
+        Returns:
+            Tuple of (is_hub_file, namespace) where:
+            - is_hub_file: True if this is a hub operations file
+            - namespace: The extracted namespace (empty string if not a hub file)
+        """
+        from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
+
+        # Check if file is in hub cache
+        try:
+            relative_path = yaml_file.relative_to(IT_ANALYSIS_HUB_CACHE)
+            parts = relative_path.parts
+
+            # Look for models-- pattern and snapshots directory
+            for i, part in enumerate(parts):
+                if part.startswith("models--") and "snapshots" in parts[i:]:
+                    # Use regex to properly extract user and repo parts
+                    # Only match exactly two sets of '--' (models--user--repo)
+                    match = re.match(r"models--([^-]+(?:-[^-]+)*)--([^-]+(?:-[^-]+)*)$", part)
+                    if match:
+                        user, repo = match.groups()
+                        # Return namespace without top-level package name
+                        return True, f"{user}.{repo}"
+                    break
+        except ValueError:
+            pass
+
+        # Not a hub file
+        return False, ""
+
+    def _is_hub_ops_file(self, yaml_file: Path) -> bool:
+        """Check if a YAML file is in a hub operations repository."""
+        is_hub_file, _ = self._parse_hub_file_path(yaml_file)
+        return is_hub_file
+
+    def get_hub_namespace(self, yaml_file: Path) -> str:
+        """Extract namespace from hub file path."""
+        _, namespace = self._parse_hub_file_path(yaml_file)
+        return namespace
 
     @property
     def fingerprint(self) -> str:
-        """Get the current fingerprint for all monitored files."""
+        """Get a fingerprint representing the current state of all YAML files."""
         if self._fingerprint is None:
-            self._fingerprint = self._compute_fingerprint()
+            if not self._yaml_files:
+                self._fingerprint = "empty"
+            else:
+                # Create a combined hash of all file information
+                combined_info = []
+                for file_info in self._yaml_files:
+                    # Include path, mtime, and content hash
+                    combined_info.append(f"{file_info.path}:{file_info.mtime}:{file_info.content_hash}")
+
+                combined_str = "|".join(sorted(combined_info))
+                full_hash = hashlib.sha256(combined_str.encode()).hexdigest()
+                self._fingerprint = full_hash[:16]  # Truncate for readability
+
         return self._fingerprint
 
     def _get_cache_module_path(self) -> Path:
-        """Get the path for the cached module."""
+        """Get the path for the cache module file."""
         return self.cache_dir / f"op_definitions_{self.fingerprint}.py"
 
     def _cleanup_old_cache_files(self) -> None:
-        """Remove old cache files with different fingerprints."""
+        """Remove old cache files."""
         pattern = "op_definitions_*.py"
-        current_file = self._get_cache_module_path().name
+        current_file = f"op_definitions_{self.fingerprint}.py"
 
-        for cache_file in self.cache_dir.glob(pattern):
-            if cache_file.name != current_file:
+        for old_file in self.cache_dir.glob(pattern):
+            if old_file.name != current_file:
                 try:
-                    cache_file.unlink()
-                    rank_zero_debug(f"Removed old cache file: {cache_file}")
+                    old_file.unlink()
+                    rank_zero_debug(f"Removed old cache file: {old_file}")
                 except OSError as e:
-                    rank_zero_warn(f"Failed to remove old cache file {cache_file}: {e}")
-
+                    rank_zero_warn(f"Failed to remove old cache file {old_file}: {e}")
     def is_cache_valid(self) -> bool:
         """Check if the current cache is valid."""
         cache_path = self._get_cache_module_path()
         if not cache_path.exists():
             return False
 
-        # Check if any source files have been modified
+        cache_mtime = cache_path.stat().st_mtime
+
+        # Check if any source files are newer than cache
         for file_info in self._yaml_files:
             if not file_info.path.exists():
                 return False
-
-            current_info = YamlFileInfo.from_path(file_info.path)
-            if (current_info.mtime != file_info.mtime or
-                current_info.content_hash != file_info.content_hash):
+            if file_info.path.stat().st_mtime > cache_mtime:
                 return False
 
         return True
 
     def _generate_module_content(self, op_definitions: Dict[str, OpDef]) -> str:
-        """Generate the content for the cache module."""
-        timestamp = datetime.datetime.now().isoformat()
-        source_files = [str(f.path) for f in self._yaml_files]
-        source_names = [f.path.name for f in self._yaml_files]
+        """Generate Python module content for the cache."""
+        lines = [
+            "# GENERATED FILE - DO NOT EDIT",
+            "# This file contains cached operation definitions",
+            f"# Fingerprint: {self.fingerprint}",
+            "",
+            "from interpretune.analysis.ops.base import OpSchema, ColCfg",
+            "from interpretune.analysis.ops.compiler.cache_manager import OpDef",
+            "",
+            f'FINGERPRINT = "{self.fingerprint}"',
+            "",
+            "OP_DEFINITIONS = {",
+        ]
 
-        content = f'''"""
-GENERATED FILE - DO NOT EDIT
-Edit the canonical YAML files instead: {', '.join(source_names)}
-Generated at: {timestamp}
-Fingerprint: {self.fingerprint}
-Source files: {source_files}
-"""
-from interpretune.analysis.ops.base import OpSchema, ColCfg
-from interpretune.analysis.ops.compiler.cache_manager import OpDef
+        # Filter out alias entries - only serialize canonical operation definitions
+        # Aliases will be reconstructed from the dispatcher's _aliases mapping
+        canonical_ops = {}
+        for name, op_def in op_definitions.items():
+            # Only include operations where the name matches the canonical name
+            if op_def.name == name:
+                canonical_ops[name] = op_def
 
-# Metadata
-FINGERPRINT = "{self.fingerprint}"
-GENERATED_AT = "{timestamp}"
-SOURCE_FILES = {source_files!r}
+        for name, op_def in canonical_ops.items():
+            op_def_str = self._serialize_op_def(op_def)
+            lines.append(f'    "{name}": {op_def_str},')
 
-# Pre-compiled operation definitions
-OP_DEFINITIONS = {{
-'''
+        lines.append("}")
 
-        for op_name, op_def in op_definitions.items():
-            content += f'    "{op_name}": {self._serialize_op_def(op_def)},\n'
-
-        content += '}\n'
-        return content
+        return "\n".join(lines)
 
     def _serialize_op_def(self, op_def: OpDef) -> str:
         """Serialize an OpDef to Python code."""
-        # Serialize input_schema
-        input_schema_code = self._serialize_op_schema(op_def.input_schema)
-        output_schema_code = self._serialize_op_schema(op_def.output_schema)
+        fields = []
 
-        # Build the OpDef constructor call
-        args = [
-            f'name="{op_def.name}"',
-            f'description={op_def.description!r}',
-            f'implementation="{op_def.implementation}"',
-            f'input_schema={input_schema_code}',
-            f'output_schema={output_schema_code}',
-        ]
+        # Always include required fields
+        fields.append(f'name="{op_def.name}"')
+        fields.append(f'description="{op_def.description}"')
+        fields.append(f'implementation="{op_def.implementation}"')
+        fields.append(f'input_schema={self._serialize_op_schema(op_def.input_schema)}')
+        fields.append(f'output_schema={self._serialize_op_schema(op_def.output_schema)}')
 
+        # Include optional fields that have values
         if op_def.aliases:
-            args.append(f'aliases={op_def.aliases!r}')
-
+            fields.append(f'aliases={op_def.aliases!r}')
         if op_def.function_params:
-            args.append(f'function_params={op_def.function_params!r}')
-
+            fields.append(f'function_params={op_def.function_params!r}')
         if op_def.required_ops:
-            args.append(f'required_ops={op_def.required_ops!r}')
+            fields.append(f'required_ops={op_def.required_ops!r}')
+        if op_def.composition:
+            fields.append(f'composition={op_def.composition!r}')
 
-        if op_def.composition is not None:
-            args.append(f'composition={op_def.composition!r}')
-
-        return f'OpDef({", ".join(args)})'
+        return f"OpDef({', '.join(fields)})"
 
     def _serialize_op_schema(self, schema: OpSchema) -> str:
         """Serialize an OpSchema to Python code."""
         if not schema:
-            return 'OpSchema({})'
+            return "OpSchema({})"
 
-        schema_dict_parts = []
+        fields = []
         for field_name, col_cfg in schema.items():
-            col_cfg_code = self._serialize_col_cfg(col_cfg)
-            schema_dict_parts.append(f'"{field_name}": {col_cfg_code}')
+            fields.append(f'"{field_name}": {self._serialize_col_cfg(col_cfg)}')
 
-        schema_dict_code = '{' + ', '.join(schema_dict_parts) + '}'
-        return f'OpSchema({schema_dict_code})'
+        return f"OpSchema({{{', '.join(fields)}}})"
 
     def _serialize_col_cfg(self, col_cfg: ColCfg) -> str:
         """Serialize a ColCfg to Python code."""
-        # Get field information from dataclass
-        col_cfg_fields = fields(ColCfg)
+        from dataclasses import fields, MISSING
 
+        # Get all fields of ColCfg
+        cfg_fields = fields(ColCfg)
         args = []
 
-        # Always include datasets_dtype since it's required
+        # Always include datasets_dtype as it's required
         args.append(f'datasets_dtype="{col_cfg.datasets_dtype}"')
 
-        # Get all field values from the ColCfg instance and include non-default values
-        for field_info in col_cfg_fields:
-            field_name = field_info.name
+        # Include other fields only if they differ from defaults
+        for field_info in cfg_fields:
+            if field_info.name == 'datasets_dtype':
+                continue  # Already handled
 
-            # Skip datasets_dtype since we already handled it
-            if field_name == 'datasets_dtype':
-                continue
+            value = getattr(col_cfg, field_info.name)
 
-            value = getattr(col_cfg, field_name)
+            # Check if this field has a default value
+            has_default = field_info.default is not MISSING
 
-            # Determine the default value for this field
-            if field_info.default is not field_info.default_factory:
-                # Field has an explicit default value
+            if has_default:
                 default_value = field_info.default
-                has_default = True
+                if value != default_value:
+                    if isinstance(value, str):
+                        args.append(f'{field_info.name}="{value}"')
+                    else:
+                        args.append(f'{field_info.name}={value!r}')
 
-            # Include field if it has no default or if the value differs from default
-            if not has_default or value != default_value:
-                if isinstance(value, str):
-                    args.append(f'{field_name}="{value}"')
-                else:
-                    args.append(f'{field_name}={value!r}')
-
-        return f'ColCfg({", ".join(args)})'
-
+        return f"ColCfg({', '.join(args)})"
     def save_cache(self, op_definitions: Dict[str, OpDef]) -> Path:
-        """Save operation definitions to cache module."""
+        """Save operation definitions to cache."""
         cache_path = self._get_cache_module_path()
-        content = self._generate_module_content(op_definitions)
 
-        # Write the module
-        with open(cache_path, 'w') as f:
-            f.write(content)
-
-        # Cleanup old cache files
+        # Clean up old cache files first
         self._cleanup_old_cache_files()
 
-        rank_zero_debug(f"Saved operation definitions cache to: {cache_path}")
+        # Generate module content
+        content = self._generate_module_content(op_definitions)
+
+        # Write to cache file
+        cache_path.write_text(content)
+
         return cache_path
 
     def load_cache(self) -> Optional[Dict[str, OpDef]]:
-        """Load operation definitions from cache if valid."""
+        """Load operation definitions from cache."""
         if not self.is_cache_valid():
             return None
 
         cache_path = self._get_cache_module_path()
-        module_name = f"op_definitions_{self.fingerprint}"
 
         try:
-            # Import the cached module
-            spec = importlib.util.spec_from_file_location(module_name, cache_path)
+            # Import the cache module dynamically
+            spec = importlib.util.spec_from_file_location("op_definitions_cache", cache_path)
             if spec is None or spec.loader is None:
                 return None
 
@@ -280,19 +332,19 @@ OP_DEFINITIONS = {{
             spec.loader.exec_module(module)
 
             # Verify fingerprint matches
-            if getattr(module, 'FINGERPRINT', None) != self.fingerprint:
+            if hasattr(module, 'FINGERPRINT') and module.FINGERPRINT != self.fingerprint:
                 rank_zero_warn("Cache fingerprint mismatch, invalidating cache")
                 return None
 
-            op_definitions = getattr(module, 'OP_DEFINITIONS', None)
-            if op_definitions is None or (isinstance(op_definitions, dict) and len(op_definitions) == 0):
-                rank_zero_warn(f"No operation definitions found in cache at {cache_path} associated with source "
-                               f"files: {self._yaml_files}")
-                return None
-
-            rank_zero_debug(f"Loaded {len(op_definitions)} operation definitions from cache")
-            return op_definitions
+            # Return the operations
+            if hasattr(module, 'OP_DEFINITIONS'):
+                op_definitions = module.OP_DEFINITIONS
+                if not op_definitions:
+                    rank_zero_warn("No operation definitions found in cache")
+                    return None
+                return op_definitions
 
         except Exception as e:
             rank_zero_warn(f"Failed to load cache: {e}")
-            return None
+
+        return None

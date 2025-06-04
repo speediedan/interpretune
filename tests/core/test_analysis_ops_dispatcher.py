@@ -3,12 +3,13 @@ import pytest
 import torch
 from unittest.mock import patch, MagicMock
 from pathlib import Path
+import os
 
 import interpretune as it
 from interpretune.analysis.ops.dispatcher import DISPATCHER, AnalysisOpDispatcher, DispatchContext
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, AnalysisBatch, ColCfg, OpWrapper
 from interpretune.analysis.ops.compiler.cache_manager import OpDef
-from tests.unit.test_analysis_ops_base import op_impl_test
+from tests.core.test_analysis_ops_base import op_impl_test
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 
 
@@ -55,7 +56,7 @@ class TestAnalysisOpDispatcher:
         yaml1 = tmp_path / "ops1.yaml"
         yaml1.write_text("""
 test_op:
-  implementation: tests.unit.test_analysis_ops_base.op_impl_test
+  implementation: tests.core.test_analysis_ops_base.op_impl_test
   description: First definition
   input_schema:
     input1:
@@ -69,7 +70,7 @@ test_op:
         yaml2 = tmp_path / "ops2.yaml"
         yaml2.write_text("""
 test_op:
-  implementation: tests.unit.test_analysis_ops_base.op_impl_test
+  implementation: tests.core.test_analysis_ops_base.op_impl_test
   description: Second definition (redefinition)
   input_schema:
     input1:
@@ -140,7 +141,7 @@ test_op:
         assert op_schema["tensor_field"].dyn_dim == 1
 
 
-    # NOTE: Our fixtures that specify AnalysisCfg may trigger the instantiation of ops (e.g. tests/unit/cfg_aliases.py)
+    # NOTE: Our fixtures that specify AnalysisCfg may trigger the instantiation of ops (e.g. tests/core/cfg_aliases.py)
     #       via op resolution attribute access they do when configuring the test session. This could
     #       be refactored in the future if it leads to dispatcher testing confusion.
 
@@ -459,7 +460,7 @@ test_op:
             test_dispatcher._op_definitions = {"some_op": OpDef(
                 name="some_op",
                 description="Test op",
-                implementation="tests.unit.test_analysis_ops_base.op_impl_test",
+                implementation="tests.core.test_analysis_ops_base.op_impl_test",
                 input_schema=OpSchema({}),
                 output_schema=OpSchema({})
             )}
@@ -497,7 +498,7 @@ test_op:
             test_dispatcher._op_definitions = {"test_op": OpDef(
                 name="test_op",
                 description="Test op",
-                implementation="tests.unit.test_analysis_ops_base.op_impl_test",
+                implementation="tests.core.test_analysis_ops_base.op_impl_test",
                 input_schema=OpSchema({}),
                 output_schema=OpSchema({})
             )}
@@ -514,7 +515,7 @@ test_op:
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
         def patched_import(path_str):
-            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
+            if path_str == "tests.core.test_analysis_ops_base.op_impl_test":
                 return op_impl_test
             return original_import(path_str)
         monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
@@ -572,7 +573,7 @@ test_op:
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
         def patched_import(path_str):
-            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
+            if path_str == "tests.core.test_analysis_ops_base.op_impl_test":
                 return op_impl_test
             return original_import(path_str)
         monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
@@ -605,7 +606,7 @@ test_op:
                 "valid_op": OpDef(
                     name="valid_op",
                     description="Valid op",
-                    implementation="tests.unit.test_analysis_ops_base.op_impl_test",
+                    implementation="tests.core.test_analysis_ops_base.op_impl_test",
                     input_schema=OpSchema({}),
                     output_schema=OpSchema({})
                 )
@@ -670,7 +671,7 @@ test_op:
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
         def patched_import(path_str):
-            if path_str == "tests.unit.test_analysis_ops_base.op_impl_test":
+            if path_str == "tests.core.test_analysis_ops_base.op_impl_test":
                 return op_impl_test
             return original_import(path_str)
         monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
@@ -771,7 +772,7 @@ test_op:
         # Mock YAML content with required_ops
         yaml_content = {
             "base_op": {
-                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "implementation": "tests.core.test_analysis_ops_base.op_impl_test",
                 "input_schema": {
                     "base_input": {"datasets_dtype": "int64", "required": True}
                 },
@@ -780,7 +781,7 @@ test_op:
                 }
             },
             "dependent_op": {
-                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "implementation": "tests.core.test_analysis_ops_base.op_impl_test",
                 "required_ops": ["base_op"],
                 "input_schema": {
                     "dep_input": {"datasets_dtype": "float32", "required": True}
@@ -797,8 +798,11 @@ test_op:
              patch.object(test_dispatcher, '_discover_yaml_files', return_value=[Path("fake_file.yaml")]), \
              patch.object(test_dispatcher._cache_manager, 'add_yaml_file'), \
              patch.object(test_dispatcher._cache_manager, 'load_cache', return_value=None), \
-             patch.object(test_dispatcher._cache_manager, 'save_cache'):
+             patch.object(test_dispatcher._cache_manager, 'save_cache') as mock_save:
             test_dispatcher.load_definitions()
+
+            # Verify save_cache was called (indicating definitions were processed)
+            mock_save.assert_called_once()
 
         # Check that dependent_op now includes base_op's schemas
         dep_def = test_dispatcher._op_definitions["dependent_op"]
@@ -853,7 +857,7 @@ test_op:
 
         yaml_content = {
             "base_op": {
-                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "implementation": "tests.core.test_analysis_ops_base.op_impl_test",
                 "input_schema": {
                     "shared_field": {"datasets_dtype": "int64", "required": True}
                 },
@@ -862,7 +866,7 @@ test_op:
                 }
             },
             "override_op": {
-                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "implementation": "tests.core.test_analysis_ops_base.op_impl_test",
                 "required_ops": ["base_op"],
                 "input_schema": {
                     "shared_field": {"datasets_dtype": "float32", "required": False}
@@ -930,7 +934,7 @@ test_op:
 
         yaml_content = {
             "broken_op": {
-                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "implementation": "tests.core.test_analysis_ops_base.op_impl_test",
                 "required_ops": ["nonexistent_op"],
                 "input_schema": {},
                 "output_schema": {}
@@ -942,7 +946,7 @@ test_op:
              patch.object(test_dispatcher, '_discover_yaml_files', return_value=[Path("fake_file.yaml")]), \
              patch.object(test_dispatcher._cache_manager, 'add_yaml_file'), \
              patch.object(test_dispatcher._cache_manager, 'load_cache', return_value=None):
-            with pytest.raises(ValueError, match="Operation nonexistent_op not found in definitions"):
+            with pytest.warns(match="Required operation 'nonexistent_op' not found for operation 'broken_op'"):
                 test_dispatcher.load_definitions()
 
     def test_compile_required_ops_schemas_called_during_load(self):
@@ -966,7 +970,7 @@ test_op:
 
         yaml_content = {
             "simple_op": {
-                "implementation": "tests.unit.test_analysis_ops_base.op_impl_test",
+                "implementation": "tests.core.test_analysis_ops_base.op_impl_test",
                 "input_schema": {
                     "input1": {"datasets_dtype": "float32", "required": True}
                 },
@@ -1320,3 +1324,206 @@ class TestAutoColumnsConditions:
             assert prompts_dict["datasets_dtype"] == "string"
             assert prompts_dict["required"] is False
             assert prompts_dict["non_tensor"] is True
+
+
+class TestAnalysisOpDispatcherHubIntegration:
+    """Integration tests for dispatcher hub functionality with existing tests."""
+
+    def test_dispatcher_hub_initialization(self, tmp_path):
+        """Test dispatcher initialization with hub functionality."""
+        # Set up isolated cache for this test
+        test_cache_dir = tmp_path / "hub_test_cache"
+        test_cache_dir.mkdir()
+
+        original_cache_dir = os.environ.get("IT_ANALYSIS_CACHE")
+        try:
+            os.environ["IT_ANALYSIS_CACHE"] = str(test_cache_dir)
+
+            # Create hub-style directory structure
+            hub_cache = tmp_path / "hub_cache"
+            hub_cache.mkdir()
+
+            repo_dir = hub_cache / "models--testuser--test" / "snapshots" / "abc"
+            repo_dir.mkdir(parents=True)
+
+            ops_file = repo_dir / "ops.yaml"
+            ops_file.write_text("""
+test_hub_op:
+  implementation: tests.core.test_analysis_ops_base.op_impl_test
+  description: Test hub operation
+  input_schema:
+    input1:
+      datasets_dtype: float32
+  output_schema:
+    output1:
+      datasets_dtype: float32
+""")
+
+            with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+                dispatcher = AnalysisOpDispatcher()
+                dispatcher.load_definitions()
+
+                # Should have discovered the hub operation
+                assert "test_hub_op" in dispatcher._op_definitions
+
+        finally:
+            if original_cache_dir is not None:
+                os.environ["IT_ANALYSIS_CACHE"] = original_cache_dir
+            else:
+                os.environ.pop("IT_ANALYSIS_CACHE", None)
+
+    def test_dispatcher_hub_namespace_handling(self, tmp_path):
+        """Test proper namespace handling for different import scenarios."""
+        # Create hub structure
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+        repo_dir = hub_cache / "models--user1--nlp"
+        snapshot_dir = repo_dir / "snapshots" / "def456"
+        snapshot_dir.mkdir(parents=True)
+
+        hub_yaml = snapshot_dir / "ops.yaml"
+        hub_yaml.write_text("""
+text_processor:
+  description: Process text data
+  implementation: nlp.process
+  aliases: ['process_text']
+  input_schema:
+    text:
+      datasets_dtype: string
+  output_schema:
+    tokens:
+      datasets_dtype: int64
+""")
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
+             patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
+
+            dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
+            dispatcher.load_definitions()
+
+            # Operation should be stored with namespace but without top-level package name
+            assert "user1.nlp.text_processor" in dispatcher._op_definitions
+            assert "user1.nlp.process_text" in dispatcher._aliases
+
+            # Should be able to resolve both namespaced and short names
+            # assert dispatcher.resolve_operation_name("user1.nlp.text_processor") == "user1.nlp.text_processor"
+            # assert dispatcher.resolve_operation_name("text_processor") == "user1.nlp.text_processor"
+
+    def test_dispatcher_mixed_native_and_hub_ops(self, tmp_path):
+        """Test dispatcher with both native and hub operations."""
+        # Create native ops file
+        native_yaml = tmp_path / "native_ops.yaml"
+        native_yaml.write_text("""
+native_op:
+  description: A native operation
+  implementation: native.module.func
+  aliases: ['native_alias']
+  input_schema:
+    data:
+      datasets_dtype: float32
+  output_schema:
+    result:
+      datasets_dtype: float32
+""")
+
+        # Create hub structure
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+        repo_dir = hub_cache / "models--hubuser--special"
+        snapshot_dir = repo_dir / "snapshots" / "xyz789"
+        snapshot_dir.mkdir(parents=True)
+
+        hub_yaml = snapshot_dir / "ops.yaml"
+        hub_yaml.write_text("""
+hub_special_op:
+  description: A special hub operation
+  implementation: special.module.func
+  aliases: ['special_alias']
+  input_schema:
+    special_data:
+      datasets_dtype: string
+  output_schema:
+    special_result:
+      datasets_dtype: string
+""")
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
+             patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
+
+            dispatcher = AnalysisOpDispatcher(yaml_paths=native_yaml, enable_hub_ops=True)
+            dispatcher.load_definitions()
+
+            # Native op should be stored without namespace
+            assert "native_op" in dispatcher._op_definitions
+            assert "native_alias" in dispatcher._aliases
+
+            # Hub op should be stored with namespace
+            assert "hubuser.special.hub_special_op" in dispatcher._op_definitions
+            assert "hubuser.special.special_alias" in dispatcher._aliases
+
+
+    def test_dispatcher_hub_dependencies(self, tmp_path):
+        """Test hub operations with dependencies get properly namespaced."""
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+        repo_dir = hub_cache / "models--testuser--deps"
+        snapshot_dir = repo_dir / "snapshots" / "abc123"
+        snapshot_dir.mkdir(parents=True)
+
+        hub_yaml = snapshot_dir / "ops.yaml"
+        hub_yaml.write_text("""
+base_op:
+  description: Base operation
+  implementation: tests.core.test_analysis_ops_base.op_impl_test
+  input_schema:
+    input1:
+      datasets_dtype: float32
+  output_schema:
+    output1:
+      datasets_dtype: float32
+
+dependent_op:
+  description: Dependent operation
+  implementation: tests.core.test_analysis_ops_base.op_impl_test
+  required_ops: ['base_op']
+  input_schema:
+    input2:
+      datasets_dtype: int64
+  output_schema:
+    output2:
+      datasets_dtype: int64
+""")
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
+             patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
+
+            dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
+            dispatcher.load_definitions()
+
+            # Both operations should be namespaced
+            assert "testuser.deps.base_op" in dispatcher._op_definitions
+            assert "testuser.deps.dependent_op" in dispatcher._op_definitions
+
+            # Dependencies should be properly namespaced
+            dep_def = dispatcher._op_definitions["testuser.deps.dependent_op"]
+            assert dep_def.required_ops == ["testuser.deps.base_op"]
+
+
+    def test_dispatcher_compatibility_with_existing_ops(self):
+        """Test that hub functionality doesn't break existing operations."""
+        # Test with the global dispatcher that has existing operations
+        dispatcher = DISPATCHER
+
+        # Should still have all existing operations
+        assert "model_forward" in dispatcher._op_definitions
+        assert "labels_to_ids" in dispatcher._op_definitions
+
+        # Test instantiation still works
+        op = dispatcher.get_op("model_forward")
+        assert isinstance(op, AnalysisOp)
+        assert op.name == "model_forward"
+
+        # Test composition still works
+        composition = dispatcher.compile_ops(["labels_to_ids", "model_forward"])
+        assert isinstance(composition, CompositeAnalysisOp)
+        assert len(composition.composition) == 2
