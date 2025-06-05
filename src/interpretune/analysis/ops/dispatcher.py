@@ -290,18 +290,18 @@ class AnalysisOpDispatcher:
                 if alias == op_name:
                     continue
 
-                # Prevent circular alias references
-                if alias in self._aliases and self._aliases[alias] == op_name:
-                    continue
-
-                self._aliases[alias] = op_name
-                self._op_to_aliases[op_name].append(alias)
-                # Add alias reference to definitions
+                # Add alias reference to definitions if not already present (normally should be already present)
                 if alias not in self._op_definitions:
                     self._op_definitions[alias] = op_def
-
+                if self._op_definitions[alias] == op_def:
+                    self._aliases[alias] = op_name
+                    self._op_to_aliases[op_name].append(alias)
+                else:
+                    rank_zero_warn(
+                        f"The alias '{alias}' is already associated with different operation "
+                        f"({self._op_definitions[alias]}) so will not be added.")
                 # For namespaced operations, also add non-namespaced convenience alias mapping
-                # This allows "test_hub_op" to resolve to "testuser.test.test_hub_op"
+                # This allows "test_hub_alias" to resolve to "testuser.test.test_op"
                 if "." in op_name:
                     # Extract the original (non-namespaced) alias
                     original_alias = alias.split(".", 3)[-1] if alias.count('.') >= 3 else alias.split('.')[-1]
@@ -403,6 +403,7 @@ class AnalysisOpDispatcher:
                     target_ops[alias] = target_ops[op_name]
 
                 # Extract base alias name if it's namespaced
+                # This allows "test_hub_op" to resolve to "testuser.test.test_hub_op"
                 if '.' in alias:
                     base_alias = alias.split('.')[-1]
                     if base_alias in target_ops:
