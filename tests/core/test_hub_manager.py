@@ -110,6 +110,69 @@ class TestHubAnalysisOpManager:
         with pytest.raises(ValueError, match="Invalid repo_id format"):
             self.manager.upload_ops(test_dir, "invalid-repo-id")
 
+    def test_upload_operation_nonexistent_file(self):
+        """Test upload_operation with non-existent file."""
+        with pytest.raises(ValueError, match="Local file does not exist"):
+            self.manager.upload_operation(Path("/nonexistent/file.yaml"), "username/test-ops")
+
+    def test_upload_operation_invalid_repo_id(self):
+        """Test upload_operation with invalid repo_id."""
+        test_file = self.temp_dir / "test_op.yaml"
+        test_file.write_text("test: {}")
+
+        with pytest.raises(ValueError, match="Invalid repo_id format"):
+            self.manager.upload_operation(test_file, "invalid-repo-id")
+
+    @patch('interpretune.analysis.ops.hub_manager.upload_file')
+    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    def test_upload_operation_success_new_repo(self, mock_hf_api_class, mock_upload_file):
+        """Test successful upload_operation creating new repository."""
+        # Create test file
+        test_file = self.temp_dir / "test_op.yaml"
+        test_file.write_text("test: {}")
+
+        # Mock API
+        mock_api = Mock()
+        mock_commit_info = Mock()
+        mock_commit_info.oid = "def456"
+        mock_upload_file.return_value = mock_commit_info
+        mock_api.repo_info.side_effect = RepositoryNotFoundError("Not found")
+        mock_hf_api_class.return_value = mock_api
+
+        manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
+        commit_sha = manager.upload_operation(test_file, "username/test-ops")
+
+        assert commit_sha == "def456"
+        mock_api.create_repo.assert_called_once_with(
+            repo_id="username/test-ops",
+            repo_type="model",
+            private=False
+        )
+        mock_upload_file.assert_called_once()
+
+    @patch('interpretune.analysis.ops.hub_manager.upload_file')
+    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    def test_upload_operation_success_existing_repo(self, mock_hf_api_class, mock_upload_file):
+        """Test successful upload_operation to existing repository."""
+        # Create test file
+        test_file = self.temp_dir / "test_op.yaml"
+        test_file.write_text("test: {}")
+
+        # Mock API
+        mock_api = Mock()
+        mock_commit_info = Mock()
+        mock_commit_info.oid = "ghi789"
+        mock_upload_file.return_value = mock_commit_info
+        mock_api.repo_info.return_value = Mock()  # Repo exists
+        mock_hf_api_class.return_value = mock_api
+
+        manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
+        commit_sha = manager.upload_operation(test_file, "username/test-ops")
+
+        assert commit_sha == "ghi789"
+        mock_api.create_repo.assert_not_called()  # Should not create repo
+        mock_upload_file.assert_called_once()
+
     @patch('interpretune.analysis.ops.hub_manager.HfApi')
     def test_list_available_collections(self, mock_hf_api_class):
         """Test listing available collections."""
@@ -131,9 +194,39 @@ class TestHubAnalysisOpManager:
         assert "user2/nlp" in collections
         assert "user1/not-ops" in collections  # Actually included by search
 
+    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    def test_list_available_collections_with_username_filter(self, mock_hf_api_class):
+        """Test listing available collections with username filter."""
+        mock_api = Mock()
+        mock_model1 = Mock()
+        mock_model1.modelId = "user1/some_repo"
+        mock_model2 = Mock()
+        mock_model2.modelId = "user2/nlp"
+        mock_model3 = Mock()
+        mock_model3.modelId = "user1/another_repo"
+
+        mock_api.list_models.return_value = [mock_model1, mock_model2, mock_model3]
+        mock_hf_api_class.return_value = mock_api
+
+        manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
+        collections = manager.list_available_collections(username="user1")
+
+        assert "user1/some_repo" in collections
+        assert "user1/another_repo" in collections
+        assert "user2/nlp" not in collections  # Should be filtered out
+
     def test_get_cached_collections_empty(self):
         """Test getting cached collections when cache is empty."""
         collections = self.manager.get_cached_collections()
+        assert collections == []
+
+    def test_get_cached_collections_nonexistent_cache_dir(self):
+        """Test getting cached collections when cache directory doesn't exist."""
+        # Use a non-existent cache directory
+        nonexistent_cache = self.temp_dir / "nonexistent_cache"
+        manager = HubAnalysisOpManager(cache_dir=nonexistent_cache)
+
+        collections = manager.get_cached_collections()
         assert collections == []
 
     def test_get_cached_collections_with_cache(self):
@@ -177,6 +270,15 @@ class TestHubAnalysisOpManager:
         snapshot_dir = snapshots_dir / "abc123"
         snapshot_dir.mkdir()
         (snapshot_dir / "README.md").write_text("No ops here")
+
+        assert self.manager._has_op_definitions(repo_dir) is False
+
+    def test_has_op_definitions_no_snapshots_dir(self):
+        """Test _has_op_definitions returns False when snapshots directory doesn't exist."""
+        # Create fake repo structure without snapshots directory
+        repo_dir = self.temp_dir / "models--username--test-ops"
+        repo_dir.mkdir(parents=True)
+        # Do not create snapshots directory
 
         assert self.manager._has_op_definitions(repo_dir) is False
 
