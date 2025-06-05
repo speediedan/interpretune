@@ -10,7 +10,7 @@ from interpretune.analysis import (SAEAnalysisTargets, resolve_names_filter, _ma
                                    AnalysisOp)
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.config import ITSerializableCfg
-from interpretune.protocol import NamesFilter, AnalysisStoreProtocol, AnalysisBatchProtocol, STEP_OUTPUT
+from interpretune.protocol import NamesFilter, AnalysisStoreProtocol, DefaultAnalysisBatchProtocol, STEP_OUTPUT
 from interpretune.utils import DEFAULT_DECODE_KWARGS
 from interpretune.utils import rank_zero_warn, rank_zero_debug
 
@@ -167,7 +167,7 @@ class AnalysisCfg(ITSerializableCfg):
 
 
     # TODO: Add a non-generator returning save_batch method at AnalysisCfg level (users already have op-level version)?
-    def save_batch(self, analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
+    def save_batch(self, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding,
                    tokenizer: PreTrainedTokenizerBase | None = None):
         """Process and yield analysis batch results.
 

@@ -15,7 +15,7 @@ from interpretune.analysis.core import (SAEAnalysisDict, AnalysisStore, resolve_
                                         schema_to_features, SAEFqn, _make_simple_cache_hook,
                                        SAEAnalysisTargets, BaseMetrics, ActivationSumm, LatentMetrics,
                                        latent_metrics_scatter, base_vs_sae_logit_diffs,
-                                       compute_correct, AnalysisBatchProtocol)
+                                       compute_correct, DefaultAnalysisBatchProtocol)
 from interpretune.analysis.ops.base import ColCfg
 from interpretune.config import AnalysisCfg
 
@@ -358,7 +358,7 @@ class TestAnalysisStore:
         store_unstacked.stack_batches = False
 
         # Find an existing column that's in the protocol
-        protocol_fields = [field for field in AnalysisBatchProtocol.__annotations__
+        protocol_fields = [field for field in DefaultAnalysisBatchProtocol.__annotations__
                           if field in store_unstacked.dataset.column_names]
 
         # Use an existing protocol field
@@ -415,8 +415,8 @@ class TestAnalysisStore:
         nonexistent_attr = "definitely_not_a_real_attribute_name_xyz123"
 
         # Make sure it's not in the protocol
-        if nonexistent_attr in AnalysisBatchProtocol.__annotations__:
-            del AnalysisBatchProtocol.__annotations__[nonexistent_attr]
+        if nonexistent_attr in DefaultAnalysisBatchProtocol.__annotations__:
+            del DefaultAnalysisBatchProtocol.__annotations__[nonexistent_attr]
 
         # Make sure it's not in the dataset
         if hasattr(store.dataset, nonexistent_attr):
@@ -574,6 +574,88 @@ class TestAnalysisStore:
         store2 = deepcopy(store)
         assert store2 is not store
         assert store2.op_output_dataset_path != store.op_output_dataset_path
+
+    def test_custom_protocol_cls(self):
+        """Test AnalysisStore with custom protocol class."""
+        from interpretune.protocol import BaseAnalysisBatchProtocol
+
+        # Define a custom protocol with additional fields
+        class CustomAnalysisProtocol(BaseAnalysisBatchProtocol):
+            custom_field: torch.Tensor
+            another_custom_field: list[str]
+
+        # Create mock dataset
+        mock_ds = MagicMock()
+        mock_ds.column_names = ['custom_field', 'another_custom_field', 'logit_diffs']
+        mock_ds.__getitem__ = MagicMock(return_value={'custom_field': torch.tensor([1, 2])})
+
+        # Test default behavior (should use DefaultAnalysisBatchProtocol)
+        store_default = AnalysisStore(dataset=mock_ds)
+
+        # custom_field should not be recognized by default protocol
+        # but logit_diffs should be
+        assert hasattr(store_default, '_protocol_cls')
+        assert store_default._protocol_cls == DefaultAnalysisBatchProtocol
+        assert 'logit_diffs' in store_default._protocol_cls.__annotations__
+        assert 'custom_field' not in store_default._protocol_cls.__annotations__
+
+        # Test with custom protocol
+        store_custom = AnalysisStore(dataset=mock_ds, protocol_cls=CustomAnalysisProtocol)
+
+        # Verify custom protocol is stored
+        assert store_custom._protocol_cls == CustomAnalysisProtocol
+        assert 'custom_field' in store_custom._protocol_cls.__annotations__
+        assert 'another_custom_field' in store_custom._protocol_cls.__annotations__
+
+        # Test __getattr__ behavior with custom protocol
+        # Should return data for custom_field since it's in custom protocol annotations
+        result = store_custom.custom_field
+        assert result is not None  # Should get mock data, not None
+
+        # Test field not in custom protocol should raise AttributeError
+        nonexistent_field = "definitely_not_in_protocol"
+        assert nonexistent_field not in store_custom._protocol_cls.__annotations__
+        # Ensure the field is not in the dataset either
+        if hasattr(mock_ds, nonexistent_field):
+            delattr(mock_ds, nonexistent_field)
+
+        with pytest.raises(AttributeError):
+            getattr(store_custom, nonexistent_field)
+
+    def test_custom_protocol_cls_backward_compatibility(self, request):
+        """Test that existing code works with default protocol_cls parameter."""
+        # Use real fixture to ensure backward compatibility
+        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        original_store = fixture.result
+
+        # Create new store without protocol_cls parameter (should use default)
+        new_store = AnalysisStore(
+            dataset=original_store.dataset,
+            op_output_dataset_path=original_store.op_output_dataset_path,
+            cache_dir=original_store.cache_dir,
+            stack_batches=original_store.stack_batches
+        )
+
+        # Should have default protocol class
+        assert new_store._protocol_cls == DefaultAnalysisBatchProtocol
+
+        # Should work exactly the same as original store
+        # Test accessing a known protocol field
+        protocol_fields = [field for field in DefaultAnalysisBatchProtocol.__annotations__
+                          if field in new_store.dataset.column_names]
+
+        if protocol_fields:
+            test_field = protocol_fields[0]
+            original_value = getattr(original_store, test_field)
+            new_value = getattr(new_store, test_field)
+
+            # Values should be equivalent (but might be different objects due to dataset access)
+            if isinstance(original_value, torch.Tensor) and isinstance(new_value, torch.Tensor):
+                assert torch.equal(original_value, new_value)
+            elif isinstance(original_value, list) and isinstance(new_value, list):
+                assert len(original_value) == len(new_value)
+            else:
+                assert original_value == new_value
 
 
 class TestCoreFunctionality:
@@ -1556,14 +1638,14 @@ class TestSAEAnalysisDict:
         fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
         analysis_store = deepcopy(fixture.result)
 
-        # Protocol field: should exist in AnalysisBatchProtocol.__annotations__
+        # Protocol field: should exist in DefaultAnalysisBatchProtocol.__annotations__
         # We'll use a real field from the protocol if possible, else add a dummy
-        proto_fields = list(AnalysisBatchProtocol.__annotations__.keys())
+        proto_fields = list(DefaultAnalysisBatchProtocol.__annotations__.keys())
         if proto_fields:
             proto_field = proto_fields[0]
         else:
             proto_field = "test_col"
-            AnalysisBatchProtocol.__annotations__[proto_field] = int
+            DefaultAnalysisBatchProtocol.__annotations__[proto_field] = int
 
         # Should not raise
         try:

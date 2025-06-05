@@ -10,7 +10,7 @@ from transformer_lens.hook_points import HookPoint
 from jaxtyping import Float
 
 import interpretune as it
-from interpretune.protocol import AnalysisBatchProtocol
+from interpretune.protocol import DefaultAnalysisBatchProtocol
 from interpretune.analysis.ops.base import AnalysisBatch
 
 
@@ -31,7 +31,7 @@ def boolean_logits_to_avg_logit_diff(
 
 
 def get_loss_preds_diffs(module: torch.nn.Module,
-                         analysis_batch: AnalysisBatchProtocol,
+                         analysis_batch: DefaultAnalysisBatchProtocol,
                          answer_logits: torch.Tensor,
                          logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff) -> tuple[
                              torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -68,8 +68,8 @@ def ablate_sae_latent(
     return sae_acts
 
 
-def labels_to_ids_impl(module, analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
-                       batch_idx: int) -> AnalysisBatchProtocol:
+def labels_to_ids_impl(module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding,
+                       batch_idx: int) -> DefaultAnalysisBatchProtocol:
     """Implementation for converting string labels to tensor IDs."""
     if "labels" in batch:
         label_ids, orig_labels = module.labels_to_ids(batch.pop("labels"))
@@ -77,8 +77,8 @@ def labels_to_ids_impl(module, analysis_batch: AnalysisBatchProtocol, batch: Bat
     return analysis_batch
 
 
-def get_answer_indices_impl(module, analysis_batch: AnalysisBatchProtocol,
-                          batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
+def get_answer_indices_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
+                          batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
     """Implementation for extracting answer indices from batch."""
 
     # Check if answer_indices already exist
@@ -102,8 +102,8 @@ def get_answer_indices_impl(module, analysis_batch: AnalysisBatchProtocol,
     return analysis_batch
 
 
-def get_alive_latents_impl(module, analysis_batch: AnalysisBatchProtocol,
-                           batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
+def get_alive_latents_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
+                           batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
     """Implementation for extracting alive latents from cache."""
     # Check if alive_latents already exist
     if hasattr(analysis_batch, 'alive_latents') and analysis_batch.alive_latents is not None:
@@ -133,8 +133,8 @@ def get_alive_latents_impl(module, analysis_batch: AnalysisBatchProtocol,
     return analysis_batch
 
 
-def model_forward_impl(module, analysis_batch: AnalysisBatchProtocol,
-                     batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
+def model_forward_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
+                     batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
     """Implementation for basic model forward pass."""
     # Ensure we have answer indices
     if not hasattr(analysis_batch, 'answer_indices') or analysis_batch.answer_indices is None:
@@ -148,8 +148,8 @@ def model_forward_impl(module, analysis_batch: AnalysisBatchProtocol,
     return analysis_batch
 
 
-def model_cache_forward_impl(module, analysis_batch: AnalysisBatchProtocol,
-                           batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
+def model_cache_forward_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
+                           batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
     """Implementation for forward pass with cache."""
     # Run with cache and SAEs
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
@@ -168,9 +168,9 @@ def model_cache_forward_impl(module, analysis_batch: AnalysisBatchProtocol,
     return analysis_batch
 
 
-def model_ablation_impl(module, analysis_batch: AnalysisBatchProtocol,
+def model_ablation_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
                       batch: BatchEncoding, batch_idx: int,
-                      ablate_latent_fn: Callable = ablate_sae_latent) -> AnalysisBatchProtocol:
+                      ablate_latent_fn: Callable = ablate_sae_latent) -> DefaultAnalysisBatchProtocol:
     """Implementation for model ablation analysis."""
     # Ensure we have answer indices and alive latents
     if not hasattr(analysis_batch, 'answer_indices') or analysis_batch.answer_indices is None:
@@ -207,10 +207,10 @@ def model_ablation_impl(module, analysis_batch: AnalysisBatchProtocol,
     return analysis_batch
 
 
-def model_gradient_impl(module, analysis_batch: AnalysisBatchProtocol,
+def model_gradient_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
                       batch: BatchEncoding, batch_idx: int,
                       logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
-                      get_loss_preds_diffs: Callable = get_loss_preds_diffs) -> AnalysisBatchProtocol:
+                      get_loss_preds_diffs: Callable = get_loss_preds_diffs) -> DefaultAnalysisBatchProtocol:
     """Implementation for gradient-based attribution."""
 
     # Ensure we have answer indices
@@ -260,10 +260,10 @@ def model_gradient_impl(module, analysis_batch: AnalysisBatchProtocol,
     return analysis_batch
 
 
-def logit_diffs_impl(module: torch.nn.Module, analysis_batch: AnalysisBatchProtocol,
+def logit_diffs_impl(module: torch.nn.Module, analysis_batch: DefaultAnalysisBatchProtocol,
                    batch: BatchEncoding, batch_idx: int,
                    logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
-                   get_loss_preds_diffs: Callable = get_loss_preds_diffs) -> AnalysisBatchProtocol:
+                   get_loss_preds_diffs: Callable = get_loss_preds_diffs) -> DefaultAnalysisBatchProtocol:
     """Implementation for computing logit differences."""
 
     logits, indices = analysis_batch.answer_logits, analysis_batch.answer_indices
@@ -277,8 +277,8 @@ def logit_diffs_impl(module: torch.nn.Module, analysis_batch: AnalysisBatchProto
     return analysis_batch
 
 
-def sae_correct_acts_impl(module, analysis_batch: AnalysisBatchProtocol,
-                        batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
+def sae_correct_acts_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
+                        batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
     """Implementation for computing correct activations from SAE outputs."""
     # Validate required inputs # TODO: refactor all required input checks to use shared AnalysisOp or Dispatcher logic
     required_inputs = ['logit_diffs', 'answer_indices', 'cache']
@@ -317,8 +317,8 @@ def sae_correct_acts_impl(module, analysis_batch: AnalysisBatchProtocol,
     return analysis_batch
 
 
-def gradient_attribution_impl(module, analysis_batch: AnalysisBatchProtocol,
-                            batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
+def gradient_attribution_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
+                            batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
     """Implementation for computing attribution values from gradients."""
     # TODO: change this to use shared superclass required input validation
     # Ensure required inputs exist
@@ -403,10 +403,10 @@ def gradient_attribution_impl(module, analysis_batch: AnalysisBatchProtocol,
     return analysis_batch
 
 
-def ablation_attribution_impl(module, analysis_batch: AnalysisBatchProtocol,
+def ablation_attribution_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
                             batch: BatchEncoding, batch_idx: int,
                             logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
-                            get_loss_preds_diffs: Callable = get_loss_preds_diffs) -> AnalysisBatchProtocol:
+                            get_loss_preds_diffs: Callable = get_loss_preds_diffs) -> DefaultAnalysisBatchProtocol:
     """Implementation for computing attribution values using latent ablation."""
     # Ensure we have required inputs
     required_inputs = ['answer_logits', 'alive_latents', 'logit_diffs']

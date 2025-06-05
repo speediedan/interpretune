@@ -8,7 +8,7 @@ import os
 import torch
 from transformers import BatchEncoding, PreTrainedTokenizerBase
 
-from interpretune.protocol import AnalysisBatchProtocol
+from interpretune.protocol import DefaultAnalysisBatchProtocol
 
 
 class AttrDict(dict):
@@ -34,7 +34,6 @@ class AttrDict(dict):
 class AnalysisBatch(AttrDict):
 
     def __getattr__(self, name):
-        # Remove protocol constraint - access any attributes
         return super().__getattr__(name)
 
     def update(self, **kwargs):
@@ -139,10 +138,10 @@ class OpSchema(dict):
         return frozenset(self.items()) == frozenset(other.items())
 
 
-def wrap_summary(analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
+def wrap_summary(analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding,
                  tokenizer: PreTrainedTokenizerBase | None = None,
                  save_prompts: bool = False, save_tokens: bool = False,
-                 decode_kwargs: Optional[dict[str, Any]] = None) -> AnalysisBatchProtocol:
+                 decode_kwargs: Optional[dict[str, Any]] = None) -> DefaultAnalysisBatchProtocol:
     decode_kwargs = decode_kwargs or {}
     if save_prompts:
         assert tokenizer is not None, "Tokenizer is required to decode prompts"
@@ -206,7 +205,8 @@ class AnalysisOp:
         finally:
             self._ctx_key = original_ctx_key
 
-    def _validate_input_schema(self, analysis_batch: Optional[AnalysisBatchProtocol], batch: BatchEncoding) -> None:
+    def _validate_input_schema(self, analysis_batch: Optional[DefaultAnalysisBatchProtocol],
+                               batch: BatchEncoding) -> None:
         """Validate that required inputs defined in input_schema exist in analysis_batch or batch."""
         if self.input_schema is None:
             return
@@ -229,10 +229,10 @@ class AnalysisOp:
                     raise ValueError(f"Missing required analysis input '{key}' for {self.name} operation")
 
     @staticmethod
-    def process_batch(analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
+    def process_batch(analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding,
                       output_schema: OpSchema, tokenizer: PreTrainedTokenizerBase | None = None,
                       save_prompts: bool = False, save_tokens: bool = False,
-                      decode_kwargs: Optional[dict[str, Any]] = None) -> AnalysisBatchProtocol:
+                      decode_kwargs: Optional[dict[str, Any]] = None) -> DefaultAnalysisBatchProtocol:
         """Process analysis batch using provided output schema.
 
         This static method handles the common processing logic for analysis batches,
@@ -295,9 +295,10 @@ class AnalysisOp:
 
     # TODO: Add a mode where save_batch does not apply dyn_dim serialization transformations? Would allow for
     # wrap_summary/latent transformations to be executed but enable manual dataset construction
-    def save_batch(self, analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
+    def save_batch(self, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding,
                   tokenizer: PreTrainedTokenizerBase | None = None, save_prompts: bool = False,
-                  save_tokens: bool = False, decode_kwargs: Optional[dict[str, Any]] = None) -> AnalysisBatchProtocol:
+                  save_tokens: bool = False,
+                  decode_kwargs: Optional[dict[str, Any]] = None) -> DefaultAnalysisBatchProtocol:
         """Save analysis batch using process_batch static method."""
         return self.process_batch(
             analysis_batch=analysis_batch,
@@ -338,8 +339,8 @@ class AnalysisOp:
         # TODO: consider more robust serialization in the future
         return (_reconstruct_op, (self.__class__, self.__dict__.copy()))
 
-    def __call__(self, module, analysis_batch: Optional[AnalysisBatchProtocol],
-                batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
+    def __call__(self, module, analysis_batch: Optional[DefaultAnalysisBatchProtocol],
+                batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
         """Execute the operation using the configured implementation."""
         analysis_batch = analysis_batch or AnalysisBatch()
         # Validate input schema if provided
@@ -395,8 +396,8 @@ class CompositeAnalysisOp(AnalysisOp):
                          *args, **kwargs)
         self.composition = ops
 
-    def __call__(self, module, analysis_batch: Optional[AnalysisBatchProtocol],
-                batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
+    def __call__(self, module, analysis_batch: Optional[DefaultAnalysisBatchProtocol],
+                batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
         """Execute each operation in the composition."""
         result = analysis_batch or AnalysisBatch()
         for op in self.composition:

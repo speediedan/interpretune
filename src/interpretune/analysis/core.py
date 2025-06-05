@@ -1,6 +1,6 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from dataclasses import dataclass, field
-from typing import Literal, NamedTuple, Optional, Any, Callable, Sequence, Union, List, Dict
+from typing import Literal, NamedTuple, Optional, Any, Callable, Sequence, Union, List, Dict, Type
 from types import MappingProxyType
 import os
 from pathlib import Path
@@ -16,8 +16,8 @@ from sae_lens.config import HfDataset
 from datasets import Features, Array2D, Value, Array3D, load_dataset
 from datasets import Sequence as DatasetsSequence
 
-from interpretune.protocol import (AnalysisStoreProtocol, AnalysisBatchProtocol, NamesFilter, SAEFqn,
-                                   AnalysisCfgProtocol)
+from interpretune.protocol import (AnalysisStoreProtocol, DefaultAnalysisBatchProtocol, BaseAnalysisBatchProtocol,
+                                   NamesFilter, SAEFqn, AnalysisCfgProtocol)
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.utils import rank_zero_warn, DEFAULT_DECODE_KWARGS
@@ -331,6 +331,7 @@ class AnalysisStore:
                  split: str = "validation",
                  it_format_kwargs: dict | None = None,
                  stack_batches: bool = False,  # Controls tensor stacking behavior
+                 protocol_cls: Type[BaseAnalysisBatchProtocol] = DefaultAnalysisBatchProtocol,
                  ) -> None:
         self.stack_batches = stack_batches
         self.cache_dir = cache_dir
@@ -339,6 +340,7 @@ class AnalysisStore:
         self.op_output_dataset_path = op_output_dataset_path
         self.split = split
         self.it_format_kwargs = it_format_kwargs
+        self._protocol_cls = protocol_cls
 
         load_dataset_kwargs = dict(split=split, streaming=streaming, trust_remote_code=dataset_trust_remote_code)
 
@@ -496,14 +498,14 @@ class AnalysisStore:
             name: Name of column or dataset attribute to fetch
 
         Returns:
-            Column data if name exists in AnalysisBatchProtocol annotations and dataset,
+            Column data if name exists in protocol annotations and dataset,
             otherwise returns dataset attribute.
 
         Raises:
             AttributeError: If name doesn't exist in protocol annotations or dataset attributes
         """
         # First check if it's a protocol-defined column
-        if name in AnalysisBatchProtocol.__annotations__:
+        if name in self._protocol_cls.__annotations__:
             # Check if the column actually exists in the dataset
             if self.dataset is not None and hasattr(self.dataset, 'column_names') and name in self.dataset.column_names:
                 return self[name]

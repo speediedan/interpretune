@@ -13,7 +13,7 @@ from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, ColCfg
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
-from interpretune.protocol import AnalysisBatchProtocol
+from interpretune.protocol import DefaultAnalysisBatchProtocol
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 
 
@@ -602,8 +602,8 @@ class AnalysisOpDispatcher:
         ops = [self.get_op(op_name) if isinstance(op_name, str) else op_name for op_name in op_names]
         return CompositeAnalysisOp(ops, name=name, aliases=aliases)
 
-    def __call__(self, op_name: str, module, analysis_batch: Optional[AnalysisBatchProtocol],
-                 batch: BatchEncoding, batch_idx: int) -> AnalysisBatchProtocol:
+    def __call__(self, op_name: str, module, analysis_batch: Optional[DefaultAnalysisBatchProtocol],
+                 batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
         """Call an operation by name."""
         # Support for dot-separated operation names (creating compositions on-demand)
         if '.' in op_name:

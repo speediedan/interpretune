@@ -330,10 +330,10 @@ class AnalysisOpProtocol(Protocol):
     output_schema: dict
     input_schema: Optional[dict]
 
-    def save_batch(self, analysis_batch: AnalysisBatchProtocol, batch: BatchEncoding,
+    def save_batch(self, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding,
                   tokenizer: PreTrainedTokenizerBase | None = None,
                   save_prompts: bool = False, save_tokens: bool = False,
-                  decode_kwargs: Optional[dict] = None) -> AnalysisBatchProtocol: ...
+                  decode_kwargs: Optional[dict] = None) -> DefaultAnalysisBatchProtocol: ...
 
 class SAEDictProtocol(Protocol):
     """Protocol for SAE analysis dictionary operations."""
@@ -391,13 +391,13 @@ class SAEAnalysisProtocol(Protocol):
         self,
         batch: dict[str, Any],
         batch_idx: int,
-        analysis_batch: AnalysisBatchProtocol | None = None,
+        analysis_batch: DefaultAnalysisBatchProtocol | None = None,
         cache: AnalysisStoreProtocol | None = None
     ) -> tuple[torch.Tensor, dict[str, Any]] | None: ...
 
     def run_with_ctx(
         self,
-        analysis_batch: AnalysisBatchProtocol,
+        analysis_batch: DefaultAnalysisBatchProtocol,
         batch: dict[str, Any],
         batch_idx: int,
         **kwargs: Any
@@ -405,7 +405,7 @@ class SAEAnalysisProtocol(Protocol):
 
     def loss_and_logit_diffs(
         self,
-        analysis_batch: AnalysisBatchProtocol,
+        analysis_batch: DefaultAnalysisBatchProtocol,
         batch: dict[str, Any],
         batch_idx: int
     ) -> None: ...
@@ -421,8 +421,19 @@ class ActivationCacheProtocol(Protocol):
     def stack_activation(self, activation_name: str, layer: int = -1,
                         sublayer_type: str | None = None) -> torch.Tensor: ...
 
-class AnalysisBatchProtocol(Protocol):
-    """Core analysis batch protocol defining attributes/methods required for analysis operations.
+class BaseAnalysisBatchProtocol(Protocol):
+    """Base protocol defining methods all analysis batches should implement.
+
+    Subclasses should define which dataset columns will have attribute-based access enabled for associated AnalysisStore
+    objects.
+    """
+    def update(self, **kwargs) -> None: ...
+    def to_cpu(self) -> None: ...
+
+class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):
+    """Default analysis batch protocol defining which dataset columns should have attribute-based access enabled
+    for AnalysisStore objects. Subclasses can extend this protocol (or the base one) to add additional attributes
+    or change existing attributes as needed.
 
     Attributes:
         logit_diffs (Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]):
@@ -469,6 +480,3 @@ class AnalysisBatchProtocol(Protocol):
     attribution_values: Optional[dict[str, torch.Tensor]]
     tokens: Optional[torch.Tensor]
     prompts: Optional[list[str]]
-
-    def update(self, **kwargs) -> None: ...
-    def to_cpu(self) -> None: ...

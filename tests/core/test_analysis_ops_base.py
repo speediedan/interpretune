@@ -358,7 +358,7 @@ class TestAnalysisBatch:
 
     def test_init_and_access(self):
         """Test initialization and protocol attribute access."""
-        # Initialize with dictionaries using valid AnalysisBatchProtocol attributes
+        # Initialize with dictionaries using valid DefaultAnalysisBatchProtocol attributes
         batch = AnalysisBatch()
         batch.logit_diffs = torch.tensor([0.5, 1.0])
         batch.answer_logits = torch.tensor([[0.7, 0.3], [0.2, 0.8]])
