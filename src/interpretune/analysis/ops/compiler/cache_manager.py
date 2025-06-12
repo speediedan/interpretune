@@ -3,9 +3,12 @@ from __future__ import annotations
 import re
 import hashlib
 import importlib.util
+from typing import List, Dict, Any, Optional
 from pathlib import Path
-from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
+
+from huggingface_hub import scan_cache_dir
+from huggingface_hub.utils import CachedRepoInfo, CachedRevisionInfo
 
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 from interpretune.analysis.ops.base import OpSchema, ColCfg
@@ -56,6 +59,25 @@ class YamlFileInfo:
         content_hash = hashlib.sha256(content).hexdigest()
         return cls(path, stat.st_mtime, content_hash)
 
+def _get_latest_revision(repo: CachedRepoInfo) -> Optional[CachedRevisionInfo]:
+    """Get the latest revision for a repository, preferring 'main' ref.
+
+    Args:
+        repo: CachedRepoInfo object from the cache scanner
+
+    Returns:
+        CachedRevisionInfo for the latest revision, or None if no revisions found
+    """
+    if not repo.revisions:
+        return None
+
+    # First, try to find revision referenced by 'main'
+    main_revision = repo.refs.get('main')
+    if main_revision is not None:
+        return main_revision
+
+    # Fallback: get the most recently modified revision
+    return max(repo.revisions, key=lambda rev: rev.last_modified)
 
 class OpDefinitionsCacheManager:
     """Manages caching of compiled operation definitions."""
@@ -91,20 +113,44 @@ class OpDefinitionsCacheManager:
         return hub_yaml_files
 
     def discover_hub_yaml_files(self) -> List[Path]:
-        """Discover YAML files from hub cache."""
+        """Discover YAML files from the most recent revision of each hub repository.
+
+        Uses HuggingFace's cache manager to efficiently find YAML files only from
+        the latest revision (preferring 'main' ref) of each cached model repository.
+
+        Returns:
+            List of Path objects pointing to YAML files from latest revisions only.
+        """
+        from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
         yaml_files = []
 
-        # Import here to avoid circular imports
-        from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
+        if not IT_ANALYSIS_HUB_CACHE.exists():
+            return yaml_files
 
-        # Discover from hub cache
-        if IT_ANALYSIS_HUB_CACHE.exists():
-            for yaml_file in IT_ANALYSIS_HUB_CACHE.rglob("*.yaml"):
-                if self._is_hub_ops_file(yaml_file):
-                    yaml_files.append(yaml_file)
-            for yaml_file in IT_ANALYSIS_HUB_CACHE.rglob("*.yml"):
-                if self._is_hub_ops_file(yaml_file):
-                    yaml_files.append(yaml_file)
+        # Use HuggingFace cache manager
+        if scan_cache_dir is not None:
+            try:
+                cache_info = scan_cache_dir(IT_ANALYSIS_HUB_CACHE)
+
+                for repo in cache_info.repos:
+                    # Only consider model repositories
+                    if repo.repo_type != "model":
+                        continue
+
+                    # Find the latest revision for this repo
+                    latest_revision = _get_latest_revision(repo)
+                    if latest_revision is None:
+                        continue
+
+                    # Collect YAML files from the latest revision only
+                    for file_info in latest_revision.files:
+                        if file_info.file_name.endswith(('.yaml', '.yml')):
+                            yaml_files.append(file_info.file_path)
+
+            except Exception as e:
+                # Fallback to manual discovery if cache scanning fails
+                rank_zero_warn(f"Hub cache scanning for current IT_ANALYSIS_HUB_CACHE ({IT_ANALYSIS_HUB_CACHE}) "
+                               f"failed with: {e}")
 
         return yaml_files
 
@@ -188,6 +234,7 @@ class OpDefinitionsCacheManager:
                     rank_zero_debug(f"Removed old cache file: {old_file}")
                 except OSError as e:
                     rank_zero_warn(f"Failed to remove old cache file {old_file}: {e}")
+
     def is_cache_valid(self) -> bool:
         """Check if the current cache is valid."""
         cache_path = self._get_cache_module_path()
@@ -300,6 +347,7 @@ class OpDefinitionsCacheManager:
                         args.append(f'{field_info.name}={value!r}')
 
         return f"ColCfg({', '.join(args)})"
+
     def save_cache(self, op_definitions: Dict[str, OpDef]) -> Path:
         """Save operation definitions to cache."""
         cache_path = self._get_cache_module_path()

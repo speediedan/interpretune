@@ -7,13 +7,15 @@ from collections import defaultdict
 import importlib
 import yaml
 
+import torch
 from transformers import BatchEncoding
 
 from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, ColCfg
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
-from interpretune.protocol import DefaultAnalysisBatchProtocol
+from interpretune.analysis.ops.dynamic_module_utils import ensure_op_paths_in_syspath
+from interpretune.protocol import DefaultAnalysisBatchProtocol, BaseAnalysisBatchProtocol
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 
 
@@ -43,17 +45,21 @@ class AnalysisOpDispatcher:
     #  - decide whether to make the dispatcher a singleton or not
     #  - decide whether to make the dispatcher thread-safe
     def __init__(self, yaml_paths: Optional[Union[Path, List[Path]]] = None, enable_hub_ops: bool = True):
-        # always add paths in IT_ANALYSIS_OP_PATHS to the search paths
-        self.yaml_paths = [Path(p) for p in IT_ANALYSIS_OP_PATHS]
-        if yaml_paths is None:
-            self.yaml_paths.append(Path(__file__).parent / "native_analysis_functions.yaml")
-        elif isinstance(yaml_paths, (Path, str)):
-            self.yaml_paths.append(Path(yaml_paths))
-        else:
-            # Handle list/iterable of paths (convert strings to Path objects)
-            self.yaml_paths.extend(Path(p) for p in yaml_paths)
-            assert all(isinstance(p, Path) for p in self.yaml_paths), \
-                "yaml_paths must be a Path, string, or a list of Paths/strings"
+        # Initialize yaml_paths
+        self.yaml_paths = [Path(p.strip()) for p in IT_ANALYSIS_OP_PATHS]  # Start with op_paths
+
+        # Always include the default built-in analysis ops yaml
+        self.yaml_paths.append(Path(__file__).parent / "native_analysis_functions.yaml")
+
+        # Handle user-provided yaml_paths
+        if yaml_paths:  # otherwise use only use the default
+            if isinstance(yaml_paths, (Path, str)):
+                self.yaml_paths.append(Path(yaml_paths))
+            else:
+                # Handle list/iterable of paths (convert strings to Path objects)
+                self.yaml_paths.extend(Path(p) for p in yaml_paths)
+                assert all(isinstance(p, Path) for p in self.yaml_paths), \
+                    "yaml_paths must be a Path, string, or a list of Paths/strings"
 
         self.enable_hub_ops = enable_hub_ops
         self._op_definitions: Dict[str, OpDef] = {}
@@ -62,7 +68,14 @@ class AnalysisOpDispatcher:
         self._op_to_aliases = defaultdict(list)  # {op_name: [aliases]}
         self._loaded = False
         self._loading_in_progress = False
+        # resolve op_paths from yaml_paths
+        self.op_paths = []
+        # Resolve op_paths from yaml_paths
+        self._resolve_op_paths_from_yaml_paths()
+        # Ensure op_paths are in sys.path
+        ensure_op_paths_in_syspath(self.op_paths)
         self._cache_manager = OpDefinitionsCacheManager(IT_ANALYSIS_CACHE)
+
 
     def _discover_yaml_files(self, paths: List[Path]) -> List[Path]:
         """Discover all YAML files from the given paths (files or directories)."""
@@ -420,8 +433,63 @@ class AnalysisOpDispatcher:
     def _import_callable(self, callable_path: str) -> Callable:
         """Import a callable from a path."""
         module_path, func_name = callable_path.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        return getattr(module, func_name)
+        try:
+            module = importlib.import_module(module_path)
+            imported_fn = getattr(module, func_name)
+        except Exception as e:
+            raise ValueError(f"Import of the specified function {func_name} from {module_path} (specified callable "
+                             f"path {callable_path}) failed with the following exception: {e}")
+        return imported_fn
+
+    def _import_hub_callable(self, op_name: str, op_def: OpDef) -> Callable:
+        """Import a callable from a hub path."""
+        rank_zero_debug(f"Attempting dynamic loading for namespaced operation: {op_name}")
+        # Try to load the function dynamically from hub cache
+        from interpretune.analysis.ops.dynamic_module_utils import get_function_from_dynamic_module
+
+        # Extract repo name from the operation name and module/function from implementation field
+        # Format of op_name: "repo_name.function_name" or "user.repo.function_name"
+        parts = op_name.split('.')
+        if len(parts) >= 3:
+            # Take the first two parts as repo identifier
+            repo_name = '.'.join(parts[:2])
+        else:
+            raise ValueError(f"Invalid namespaced operation format: {op_name}. Expected 'user.repo.function_name'")
+
+        # Extract module and function names from implementation field
+        if not op_def.implementation:
+            raise ValueError(f"No implementation specified for hub operation: {op_name}")
+
+        implementation_parts = op_def.implementation.split('.')
+        if len(implementation_parts) < 2:
+            raise ValueError(f"Invalid implementation format: {op_def.implementation}. Expected 'module.function'")
+
+        # Last part is function name, everything before is module path
+        function_name = implementation_parts[-1]
+        module_name = '.'.join(implementation_parts[:-1])
+
+        function_reference = f"{module_name}.{function_name}"
+
+        implementation = get_function_from_dynamic_module(
+            function_reference=function_reference,
+            op_repo_name_or_path=repo_name
+        )
+        rank_zero_debug(f"Successfully loaded dynamic operation: {op_name}")
+        return implementation
+
+    @staticmethod
+    def _function_param_from_hub_module(param_path: str, implementation: Callable) -> Optional[Callable]:
+        # Try to use the dynamically loaded module if module names match
+        func_name = param_path.rsplit('.', 1)[-1]
+        param_module = param_path.rsplit('.', 1)[0]
+        imported_module_name = implementation.__module__.split('.')[-1]
+        if param_module == imported_module_name:
+            resolved_fn_param = None
+            try:
+                resolved_fn_param = getattr(implementation.__module__, func_name)
+            except Exception:
+                pass
+        return resolved_fn_param
 
     @_ensure_loaded
     def _instantiate_op(self, op_name: str) -> AnalysisOp:
@@ -444,14 +512,23 @@ class AnalysisOpDispatcher:
             op.input_schema = op_def.input_schema
             op.output_schema = op_def.output_schema
             return op
+        # Check if this is a namespaced operation that needs dynamic loading
+        if _is_hub_op := ('.' in op_def.name and self.enable_hub_ops):
+            implementation = self._import_hub_callable(op_def.name, op_def)
+        else:
+            # Handle regular operations
+            implementation = self._import_callable(op_def.implementation)
 
-        # Handle regular operations
-        implementation = self._import_callable(op_def.implementation)
         callables = {"implementation": implementation}
 
         # Import any additional functions specified in function_params
         for param_name, param_path in op_def.function_params.items():
-            callables[param_name] = self._import_callable(param_path)
+            resolved_fn_param = None
+            if _is_hub_op:
+                resolved_fn_param = AnalysisOpDispatcher._function_param_from_hub_module(param_path, implementation)
+            if not resolved_fn_param:
+                resolved_fn_param = self._import_callable(param_path)
+            callables[param_name] = resolved_fn_param
 
         op = AnalysisOp(
             name=op_name,
@@ -602,8 +679,9 @@ class AnalysisOpDispatcher:
         ops = [self.get_op(op_name) if isinstance(op_name, str) else op_name for op_name in op_names]
         return CompositeAnalysisOp(ops, name=name, aliases=aliases)
 
-    def __call__(self, op_name: str, module, analysis_batch: Optional[DefaultAnalysisBatchProtocol],
-                 batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
+    def __call__(self, op_name: str, module: Optional[torch.nn.Module] = None,
+                 analysis_batch: Optional[DefaultAnalysisBatchProtocol] = None,
+                 batch: Optional[BatchEncoding] = None, batch_idx: Optional[int] = None) -> BaseAnalysisBatchProtocol:
         """Call an operation by name."""
         # Support for dot-separated operation names (creating compositions on-demand)
         if '.' in op_name:
@@ -625,6 +703,24 @@ class AnalysisOpDispatcher:
             batch_idx=batch_idx
         )
 
+    def _resolve_op_paths_from_yaml_paths(self):
+        """Resolve op_paths from yaml_paths.
+
+        For directories in yaml_paths, add the yaml_path to op_paths. For yaml files, add the direct parent directory of
+        the yaml file to op_paths.
+        """
+        for yaml_path in self.yaml_paths:
+            yaml_path = Path(yaml_path).resolve()
+
+            if yaml_path.is_dir():
+                # Add directory to op_paths if not already present
+                if yaml_path not in self.op_paths:
+                    self.op_paths.append(yaml_path)
+            elif yaml_path.is_file():
+                # Add parent directory of yaml file to op_paths if not already present
+                parent_dir = yaml_path.parent
+                if parent_dir not in self.op_paths:
+                    self.op_paths.append(parent_dir)
 
 # Global dispatcher instance
 DISPATCHER = AnalysisOpDispatcher()

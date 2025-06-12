@@ -16,7 +16,7 @@ from importlib.machinery import ModuleSpec
 # https://github.com/pytorch/pytorch/issues/83973
 os.environ["PYTORCH_NVML_BASED_CUDA_CHECK"] = "1"
 
-from interpretune.__about__ import *  # noqa: F401, F403
+from interpretune.__about__ import __version__ as version  # noqa: E402
 from interpretune.protocol import (ITModuleProtocol, ITDataModuleProtocol, Adapter, STEP_OUTPUT,
                                    CorePhases, CoreSteps, AllPhases, AllSteps, AnalysisStoreProtocol,
                                    DefaultAnalysisBatchProtocol, AnalysisOpProtocol)
@@ -67,6 +67,9 @@ from interpretune.base import ITDataModule, MemProfilerHooks, ITCLI, it_init, IT
 
 
 __all__ = [
+    # About Module
+    "version",
+
     # Protocol Module
     "ITModuleProtocol",
     "ITDataModuleProtocol",

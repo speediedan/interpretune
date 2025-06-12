@@ -128,8 +128,9 @@ test_op:
         dispatcher = AnalysisOpDispatcher(yaml_paths=[empty_yaml])
         dispatcher.load_definitions()
 
-        # Should handle empty file gracefully
-        assert len(dispatcher._op_definitions) == 0
+        # Should handle empty file gracefully but still load built-in operations
+        # The dispatcher now always includes the built-in YAML file
+        assert len(dispatcher._op_definitions) > 0  # Built-in operations are loaded
 
 
 class TestOpDefinitionsCacheManagerHub:

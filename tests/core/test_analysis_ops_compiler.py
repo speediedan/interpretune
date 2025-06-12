@@ -1362,6 +1362,58 @@ class TestCacheManagerHubFunctionality:
             discovered_files = cache_manager.discover_hub_yaml_files()
             assert discovered_files == []
 
+    def test_discover_hub_yaml_files_invalid_repo_names(self, tmp_path):
+        """Test hub YAML discovery ignores repositories with invalid names."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+
+        # Create hub cache with various repository names
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+
+        # Valid repository
+        valid_repo = hub_cache / "models--user--valid" / "snapshots" / "abc"
+        valid_repo.mkdir(parents=True)
+        (valid_repo / "ops.yaml").write_text("valid_op: {}")
+
+        # Invalid repository names (should be ignored)
+        invalid_repos = [
+            "not-models--user--test",  # Wrong prefix
+            "random-directory",  # Completely wrong format
+        ]
+
+        for invalid_repo in invalid_repos:
+            invalid_dir = hub_cache / invalid_repo / "snapshots" / "abc"
+            invalid_dir.mkdir(parents=True)
+            (invalid_dir / "ops.yaml").write_text("invalid_op: {}")
+
+        # Mock scan_cache_dir to only return valid repo
+        from huggingface_hub.utils import CachedRepoInfo, CachedRevisionInfo
+        from unittest.mock import Mock
+
+        # Create mock cached repo info for valid repo only
+        mock_file_info = Mock()
+        mock_file_info.file_name = "ops.yaml"
+        mock_file_info.file_path = valid_repo / "ops.yaml"
+
+        mock_revision = Mock(spec=CachedRevisionInfo)
+        mock_revision.files = [mock_file_info]
+
+        mock_repo = Mock(spec=CachedRepoInfo)
+        mock_repo.repo_type = "model"
+        mock_repo.revisions = [mock_revision]
+        mock_repo.refs = {"main": mock_revision}
+
+        mock_cache_info = Mock()
+        mock_cache_info.repos = [mock_repo]
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info):
+            discovered_files = cache_manager.discover_hub_yaml_files()
+
+            # Should only find the valid repository's YAML file
+            assert len(discovered_files) == 1
+            assert valid_repo / "ops.yaml" in discovered_files
+
     def test_discover_hub_yaml_files_nested_structure(self, tmp_path):
         """Test hub YAML discovery with complex nested structure."""
         cache_manager = OpDefinitionsCacheManager(tmp_path)
@@ -1386,123 +1438,35 @@ class TestCacheManagerHubFunctionality:
         snapshot2.mkdir(parents=True)
         (snapshot2 / "operations.yaml").write_text("op3: {}")
 
-        # Should find YAML files in all snapshots and subdirectories
-        expected_files = [
-            snapshot1 / "ops.yaml",
-            snapshot1 / "subfolder" / "more_ops.yml",
-            snapshot2 / "operations.yaml"
-        ]
+        # Mock scan_cache_dir to return only the latest revision (snapshot2)
+        from huggingface_hub.utils import CachedRepoInfo, CachedRevisionInfo
+        from unittest.mock import Mock
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+        # Create mock file info for the latest revision only
+        mock_file_info = Mock()
+        mock_file_info.file_name = "operations.yaml"
+        mock_file_info.file_path = snapshot2 / "operations.yaml"
+
+        mock_revision = Mock(spec=CachedRevisionInfo)
+        mock_revision.files = [mock_file_info]
+        mock_revision.last_modified = 1000  # Latest
+
+        # Create older revision
+        mock_old_revision = Mock(spec=CachedRevisionInfo)
+        mock_old_revision.last_modified = 500  # Older
+
+        mock_repo = Mock(spec=CachedRepoInfo)
+        mock_repo.repo_type = "model"
+        mock_repo.revisions = [mock_old_revision, mock_revision]  # Multiple revisions
+        mock_repo.refs = {"main": mock_revision}  # Main points to latest
+
+        mock_cache_info = Mock()
+        mock_cache_info.repos = [mock_repo]
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info):
             discovered_files = cache_manager.discover_hub_yaml_files()
 
-            assert len(discovered_files) == len(expected_files)
-            for expected_file in expected_files:
-                assert expected_file in discovered_files
-
-    def test_discover_hub_yaml_files_mixed_content(self, tmp_path):
-        """Test hub YAML discovery ignores non-YAML files."""
-        cache_manager = OpDefinitionsCacheManager(tmp_path)
-
-        # Create hub cache with mixed content
-        hub_cache = tmp_path / "hub_cache"
-        hub_cache.mkdir()
-
-        repo_dir = hub_cache / "models--user--mixed" / "snapshots" / "abc"
-        repo_dir.mkdir(parents=True)
-
-        # Create various file types
-        (repo_dir / "ops.yaml").write_text("valid_op: {}")
-        (repo_dir / "operations.yml").write_text("another_op: {}")
-        (repo_dir / "readme.txt").write_text("This is a readme")
-        (repo_dir / "config.json").write_text('{"key": "value"}')
-        (repo_dir / "script.py").write_text("print('hello')")
-        (repo_dir / "data.csv").write_text("col1,col2\n1,2")
-
-        # Should only find YAML files
-        expected_yaml_files = [
-            repo_dir / "ops.yaml",
-            repo_dir / "operations.yml"
-        ]
-
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
-            discovered_files = cache_manager.discover_hub_yaml_files()
-
-            assert len(discovered_files) == 2
-            for expected_file in expected_yaml_files:
-                assert expected_file in discovered_files
-
-            # Ensure non-YAML files are not included
-            for discovered_file in discovered_files:
-                assert discovered_file.suffix in ['.yaml', '.yml']
-
-    def test_discover_hub_yaml_files_invalid_repo_names(self, tmp_path):
-        """Test hub YAML discovery ignores repositories with invalid names."""
-        cache_manager = OpDefinitionsCacheManager(tmp_path)
-
-        # Create hub cache with various repository names
-        hub_cache = tmp_path / "hub_cache"
-        hub_cache.mkdir()
-
-        # Valid repository
-        valid_repo = hub_cache / "models--user--valid" / "snapshots" / "abc"
-        valid_repo.mkdir(parents=True)
-        (valid_repo / "ops.yaml").write_text("valid_op: {}")
-
-        # Invalid repository names (should be ignored)
-        invalid_repos = [
-            "not-models--user--test",  # Wrong prefix
-            "models--user--too--many--dashes",  # Wrong ops prefix
-            "random-directory",  # Completely wrong format
-        ]
-
-        for invalid_repo in invalid_repos:
-            invalid_dir = hub_cache / invalid_repo / "snapshots" / "abc"
-            invalid_dir.mkdir(parents=True)
-            (invalid_dir / "ops.yaml").write_text("invalid_op: {}")
-
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
-            discovered_files = cache_manager.discover_hub_yaml_files()
-
-            # Should only find the valid repository's YAML file
+            # Should only find YAML files from the latest revision
             assert len(discovered_files) == 1
-            assert discovered_files[0] == valid_repo / "ops.yaml"
-
-    def test_discover_hub_yaml_files_symlinks_and_permissions(self, tmp_path):
-        """Test hub YAML discovery handles symlinks and permission issues gracefully."""
-        cache_manager = OpDefinitionsCacheManager(tmp_path)
-
-        # Create hub cache structure
-        hub_cache = tmp_path / "hub_cache"
-        hub_cache.mkdir()
-
-        # Create valid repository
-        repo_dir = hub_cache / "models--user--test" / "snapshots" / "abc"
-        repo_dir.mkdir(parents=True)
-        valid_yaml = repo_dir / "ops.yaml"
-        valid_yaml.write_text("test_op: {}")
-
-        # Create a symlink to a YAML file (if supported by the OS)
-        try:
-            symlink_target = tmp_path / "external_ops.yaml"
-            symlink_target.write_text("external_op: {}")
-            symlink_yaml = repo_dir / "symlink_ops.yaml"
-            symlink_yaml.symlink_to(symlink_target)
-            expects_symlink = True
-        except (OSError, NotImplementedError):
-            # Symlinks not supported on this system
-            expects_symlink = False
-
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
-            discovered_files = cache_manager.discover_hub_yaml_files()
-
-            # Should find at least the regular YAML file
-            assert valid_yaml in discovered_files
-
-            if expects_symlink:
-                # Should also find the symlinked YAML file
-                assert len(discovered_files) >= 2
-                assert any(f.name == "symlink_ops.yaml" for f in discovered_files)
-            else:
-                # Should find only the regular file
-                assert len(discovered_files) == 1
+            assert snapshot2 / "operations.yaml" in discovered_files

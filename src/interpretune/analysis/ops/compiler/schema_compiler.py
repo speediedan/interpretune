@@ -3,6 +3,7 @@
 from typing import Dict, List, Tuple, Any, Union, TypeVar, Callable, Set
 from dataclasses import replace
 from copy import deepcopy
+import re
 
 from ..base import OpSchema, ColCfg, AnalysisOp
 from interpretune.utils.logging import rank_zero_warn
@@ -156,7 +157,30 @@ def compile_operation_composition_schema(
     def get_schemas(op_name):
         op_def = all_operations_dict.get(op_name)
         if not op_def:
-            raise ValueError(f"Operation {op_name} not found")
+            # Search for namespaced versions of the operation
+            matching_ops = []
+            for full_op_name in all_operations_dict.keys():
+                # Check if the full name ends with the requested op_name
+                # Format: namespace.collection.op_name
+                if '.' in full_op_name and full_op_name.split('.')[-1] == op_name:
+                    matching_ops.append(full_op_name)
+
+            if not matching_ops:
+                raise ValueError(f"Operation {op_name} not found")
+            elif len(matching_ops) > 1:
+                # Multiple matches found - issue warning and use first one
+                resolved_op_name = matching_ops[0]
+                rank_zero_warn(
+                    f"Multiple operations matching '{op_name}' were found: {matching_ops}. "
+                    f"Using '{resolved_op_name}'. Consider using the fully-qualified operation name "
+                    f"in your composition definition to avoid ambiguity.",
+                    stacklevel=3
+                )
+                op_def = all_operations_dict[resolved_op_name]
+            else:
+                # Single match found - use it
+                op_def = all_operations_dict[matching_ops[0]]
+
         return op_def.get('input_schema', {}), op_def.get('output_schema', {})
 
     def is_intermediate(field_def):
@@ -263,10 +287,17 @@ def build_operation_compositions(yaml_config: Dict) -> Dict[str, Any]:
 
     # Build compiled operations
     for name, composition_def in composite_ops.items():
-        composition = composition_def.get('composition', '').split('.')
+        composition_str = composition_def.get('composition', '')
         aliases = composition_def.get('aliases', [])
 
-        input_schema, output_schema = compile_operation_composition_schema(composition, all_ops_dict)
+        # Parse composition string to handle parentheses-wrapped namespaced operations
+        composition = _parse_composition_string(composition_str)
+
+        try:
+            input_schema, output_schema = compile_operation_composition_schema(composition, all_ops_dict)
+        except Exception as e:
+            rank_zero_warn(f"Failed to compile operation '{name}' with composition {composition}: {e}")
+            continue
 
         # Create a new operation definition with the compiled schemas
         ops[name] = {
@@ -278,6 +309,45 @@ def build_operation_compositions(yaml_config: Dict) -> Dict[str, Any]:
         }
 
     return ops
+
+def _parse_composition_string(composition_str: str) -> List[str]:
+    """Parse composition string to handle parentheses-wrapped namespaced operations.
+
+    Examples:
+        "op1.op2.op3" -> ["op1", "op2", "op3"]
+        "op1.(namespace.op2).op3" -> ["op1", "namespace.op2", "op3"]
+        "trivial_local_test_op.(speediedan.trivial_op_repo.trivial_test_op)" ->
+            ["trivial_local_test_op", "speediedan.trivial_op_repo.trivial_test_op"]
+
+    Args:
+        composition_str: Dot-separated composition string with optional parentheses-wrapped operations
+
+    Returns:
+        List of operation names, with parentheses-wrapped operations resolved to their full names
+    """
+    if not composition_str:
+        return []
+
+    # Check for unbalanced parentheses
+    open_count = composition_str.count('(')
+    close_count = composition_str.count(')')
+    if open_count != close_count:
+        raise ValueError(f"Unbalanced parentheses in composition string: '{composition_str}'")
+
+    # Pattern to match either:
+    # 1. Parentheses-wrapped operations: (content) -> `\(([^)]+)\)`
+    # 2. Regular operation names (sequences of non-dot, non-paren chars) -> `([^.()]+)`
+    # Split by dots, but treat parentheses-wrapped content as single units
+    pattern = r'\(([^)]+)\)|([^.()]+)'
+
+    operations = []
+    for match in re.finditer(pattern, composition_str):
+        if match.group(1):  # Parentheses-wrapped operation
+            operations.append(match.group(1))
+        elif match.group(2) and match.group(2).strip():  # Regular operation (non-empty)
+            operations.append(match.group(2).strip())
+
+    return operations
 
 def compile_op_schema(op_name: str, op_definitions: Dict[str, Dict[str, Any]],
                       _processing: Set[str] = None) -> Dict[str, Any]:

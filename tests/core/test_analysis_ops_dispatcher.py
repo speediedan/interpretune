@@ -28,8 +28,11 @@ class TestAnalysisOpDispatcher:
         dispatcher = AnalysisOpDispatcher(yaml_paths=[sub_dir, string_path])
 
         # Verify the string was converted to Path
-        assert len(dispatcher.yaml_paths) == 2
-        assert isinstance(dispatcher.yaml_paths[0], Path)
+        # The dispatcher now always includes the built-in YAML file, so expect 3 paths
+        rel_native_yaml_path =  "src/interpretune/analysis/ops/native_analysis_functions.yaml"
+        assert len(dispatcher.yaml_paths) == 3
+        assert Path(__file__).parent.parent.parent / rel_native_yaml_path in dispatcher.yaml_paths
+        assert sub_dir in dispatcher.yaml_paths
         assert Path(string_path) in dispatcher.yaml_paths
 
     def test_dispatcher_no_yaml_files_found(self, tmp_path):
@@ -40,20 +43,11 @@ class TestAnalysisOpDispatcher:
 
         # Create dispatcher pointing to empty directory
         dispatcher = AnalysisOpDispatcher(yaml_paths=empty_dir)
-
-        # This should trigger the debug log and set _loaded to True
-        with patch('interpretune.analysis.ops.dispatcher.rank_zero_debug') as mock_debug:
-            dispatcher.load_definitions()
-
-            # Verify debug message was logged
-            mock_debug.assert_called_with("No YAML files found in the specified paths")
-
-            # Verify dispatcher is marked as loaded despite no files
-            assert dispatcher._loaded is True
-            assert len(dispatcher._op_definitions) == 0
+        dispatcher.load_definitions()
+        assert len(dispatcher._op_definitions) > 0
 
     def test_dispatcher_operation_redefinition_warning(self, tmp_path):
-        """Test dispatcher warns when operation is redefined (covers line 116)."""
+        """Test dispatcher warns when operation is redefined."""
         # Create first YAML file
         yaml1 = tmp_path / "ops1.yaml"
         yaml1.write_text("""
@@ -105,12 +99,12 @@ test_op:
         assert callable(callable_obj)
         assert callable_obj.__name__ == "labels_to_ids_impl"
 
-        # Test importing a non-existent callable
-        with pytest.raises(ImportError):
+        # Test importing a non-existent callable - now raises ValueError instead of ImportError
+        with pytest.raises(ValueError, match="Import of the specified function"):
             DISPATCHER._import_callable("non_existent_module.non_existent_function")
 
         # Test importing from existing module but non-existent function
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValueError, match="Import of the specified function"):
             DISPATCHER._import_callable("interpretune.analysis.ops.definitions.non_existent_function")
 
     def test_convert_to_op_schema(self):

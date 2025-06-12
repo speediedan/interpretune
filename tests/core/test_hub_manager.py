@@ -110,68 +110,6 @@ class TestHubAnalysisOpManager:
         with pytest.raises(ValueError, match="Invalid repo_id format"):
             self.manager.upload_ops(test_dir, "invalid-repo-id")
 
-    def test_upload_operation_nonexistent_file(self):
-        """Test upload_operation with non-existent file."""
-        with pytest.raises(ValueError, match="Local file does not exist"):
-            self.manager.upload_operation(Path("/nonexistent/file.yaml"), "username/test-ops")
-
-    def test_upload_operation_invalid_repo_id(self):
-        """Test upload_operation with invalid repo_id."""
-        test_file = self.temp_dir / "test_op.yaml"
-        test_file.write_text("test: {}")
-
-        with pytest.raises(ValueError, match="Invalid repo_id format"):
-            self.manager.upload_operation(test_file, "invalid-repo-id")
-
-    @patch('interpretune.analysis.ops.hub_manager.upload_file')
-    @patch('interpretune.analysis.ops.hub_manager.HfApi')
-    def test_upload_operation_success_new_repo(self, mock_hf_api_class, mock_upload_file):
-        """Test successful upload_operation creating new repository."""
-        # Create test file
-        test_file = self.temp_dir / "test_op.yaml"
-        test_file.write_text("test: {}")
-
-        # Mock API
-        mock_api = Mock()
-        mock_commit_info = Mock()
-        mock_commit_info.oid = "def456"
-        mock_upload_file.return_value = mock_commit_info
-        mock_api.repo_info.side_effect = RepositoryNotFoundError("Not found")
-        mock_hf_api_class.return_value = mock_api
-
-        manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
-        commit_sha = manager.upload_operation(test_file, "username/test-ops")
-
-        assert commit_sha == "def456"
-        mock_api.create_repo.assert_called_once_with(
-            repo_id="username/test-ops",
-            repo_type="model",
-            private=False
-        )
-        mock_upload_file.assert_called_once()
-
-    @patch('interpretune.analysis.ops.hub_manager.upload_file')
-    @patch('interpretune.analysis.ops.hub_manager.HfApi')
-    def test_upload_operation_success_existing_repo(self, mock_hf_api_class, mock_upload_file):
-        """Test successful upload_operation to existing repository."""
-        # Create test file
-        test_file = self.temp_dir / "test_op.yaml"
-        test_file.write_text("test: {}")
-
-        # Mock API
-        mock_api = Mock()
-        mock_commit_info = Mock()
-        mock_commit_info.oid = "ghi789"
-        mock_upload_file.return_value = mock_commit_info
-        mock_api.repo_info.return_value = Mock()  # Repo exists
-        mock_hf_api_class.return_value = mock_api
-
-        manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
-        commit_sha = manager.upload_operation(test_file, "username/test-ops")
-
-        assert commit_sha == "ghi789"
-        mock_api.create_repo.assert_not_called()  # Should not create repo
-        mock_upload_file.assert_called_once()
 
     @patch('interpretune.analysis.ops.hub_manager.HfApi')
     def test_list_available_collections(self, mock_hf_api_class):
@@ -363,3 +301,181 @@ class TestHubAnalysisOpManagerIntegration:
             sys.modules['interpretune.analysis'] = original_mod
         else:
             sys.modules.pop('interpretune.analysis', None)
+
+
+class TestDynamicModuleUtils:
+    """Test cases for dynamic module utilities."""
+
+    def setup_method(self):
+        """Set up test environment before each test."""
+        self.temp_dir = Path(tempfile.mkdtemp())
+
+    def teardown_method(self):
+        """Clean up test environment after each test."""
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    @patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it')
+    @patch('interpretune.analysis.ops.dynamic_module_utils.get_function_in_module')
+    def test_get_function_from_dynamic_module_success(self, mock_get_function, mock_get_file):
+        """Test successful dynamic function loading."""
+        from interpretune.analysis.ops.dynamic_module_utils import get_function_from_dynamic_module
+
+        # Mock the dependencies
+        mock_get_file.return_value = "fake_module_file.py"
+        mock_function = Mock()
+        mock_get_function.return_value = mock_function
+
+        # Test the function
+        result = get_function_from_dynamic_module(
+            function_reference="__init__.test_function",
+            op_repo_name_or_path="test_user.test_repo"
+        )
+
+        # Verify calls
+        mock_get_file.assert_called_once_with(
+            "test_user.test_repo",
+            "__init__.py",
+            cache_dir=None,
+            force_download=False,
+            resume_download=None,
+            proxies=None,
+            token=None,
+            revision=None,
+            local_files_only=False,
+            repo_type=None,
+        )
+        mock_get_function.assert_called_once_with("test_function", "fake_module_file.py", force_reload=False)
+
+        assert result == mock_function
+
+    @patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it')
+    def test_get_function_from_dynamic_module_file_not_found(self, mock_get_file):
+        """Test dynamic function loading when module file is not found."""
+        from interpretune.analysis.ops.dynamic_module_utils import get_function_from_dynamic_module
+
+        # Mock file not found
+        mock_get_file.return_value = None
+
+        # Test should raise a OSError when None is passed to get_function_in_module
+        with pytest.raises(OSError):
+            get_function_from_dynamic_module(
+                function_reference="__init__.test_function",
+                op_repo_name_or_path="test_user.test_repo"
+            )
+
+    def test_init_it_modules(self):
+        """Test initialization of interpretune modules cache."""
+        from interpretune.analysis.ops.dynamic_module_utils import init_it_modules
+
+        with patch('interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE', str(self.temp_dir)), \
+             patch('interpretune.analysis.ops.dynamic_module_utils.IT_DYNAMIC_MODULE_NAME', "interpretune_modules"):
+            init_it_modules()
+            # The function creates the cache dir but not the dynamic modules subdir
+            assert self.temp_dir.exists()
+            init_file = self.temp_dir / "__init__.py"
+            assert init_file.exists()
+
+    def test_create_dynamic_module_it(self):
+        """Test creation of dynamic module directories."""
+        from interpretune.analysis.ops.dynamic_module_utils import create_dynamic_module_it
+
+        with patch('interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE', str(self.temp_dir)), \
+             patch('interpretune.analysis.ops.dynamic_module_utils.IT_DYNAMIC_MODULE_NAME', "interpretune_modules"):
+            # Create test module file
+            test_file = self.temp_dir / "test_module.py"
+            test_file.write_text("def test_func(): pass")
+
+            # The function takes only name parameter (no module_files)
+            create_dynamic_module_it(name="test_module")
+
+            # Check that module directory was created in the cache directory
+            module_dir = self.temp_dir / "test_module"
+            assert module_dir.exists()
+
+    def test_get_function_in_module(self):
+        """Test getting function from module."""
+        from interpretune.analysis.ops.dynamic_module_utils import get_function_in_module
+
+        with patch('interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE', str(self.temp_dir)):
+            # Create a test module
+            module_dir = self.temp_dir / "test_module"
+            module_dir.mkdir(parents=True)
+            module_file = module_dir / "test_func.py"
+            module_file.write_text("def my_function():\n    return 'test_result'")
+
+            # Get the function
+            func = get_function_in_module("my_function", "test_module/test_func.py")
+            assert callable(func)
+            assert func() == "test_result"
+
+    def test_get_cached_module_file_it_with_hub_manager(self):
+        """Test getting cached module file with hub manager."""
+        from interpretune.analysis.ops.dynamic_module_utils import get_cached_module_file_it
+
+        # Create a test file in temp directory
+        test_file = self.temp_dir / "__init__.py"
+        test_file.write_text("# test init file")
+
+        # Mock all the HuggingFace Hub API functions to prevent external calls
+        with patch('interpretune.analysis.ops.dynamic_module_utils.cached_file') as mock_cached_file, \
+             patch('interpretune.analysis.ops.dynamic_module_utils.try_to_load_from_cache') as mock_try_load, \
+             patch('interpretune.analysis.ops.dynamic_module_utils.check_imports') as mock_check_imports, \
+             patch('interpretune.analysis.ops.dynamic_module_utils.extract_commit_hash') as mock_extract_hash, \
+             patch('interpretune.analysis.ops.dynamic_module_utils.HubAnalysisOpManager') as mock_manager_class:
+
+            # Mock the cached_file to return our test file path
+            mock_cached_file.return_value = str(test_file)
+
+            # Mock other hub functions
+            mock_try_load.return_value = None
+            mock_check_imports.return_value = []
+            mock_extract_hash.return_value = "test_commit_hash"
+
+            # Mock the HubAnalysisOpManager
+            mock_manager = Mock()
+            mock_collection = Mock()
+            mock_collection.local_path = self.temp_dir
+            mock_manager.download_ops.return_value = mock_collection
+            mock_manager_class.return_value = mock_manager
+            mock_manager.cache_dir = self.temp_dir
+
+            result = get_cached_module_file_it(
+                op_repo_name_or_path="test_user.test_repo",
+                module_file="__init__.py"
+            )
+
+            assert result is not None
+            # Verify that cached_file was called with the correct repo_id (with slash)
+            mock_cached_file.assert_called_once()
+            call_args = mock_cached_file.call_args
+            assert call_args[0][0] == "test_user/test_repo"  # repo_id with slash
+            assert call_args[0][1] == "__init__.py"  # module_file
+
+    def test_get_cached_module_file_it_file_not_exists(self):
+        """Test getting cached module file when file doesn't exist."""
+        from interpretune.analysis.ops.dynamic_module_utils import get_cached_module_file_it
+
+        # Mock all the HuggingFace Hub API functions to raise OSError (simulating file not found)
+        with patch('interpretune.analysis.ops.dynamic_module_utils.cached_file') as mock_cached_file, \
+             patch('interpretune.analysis.ops.dynamic_module_utils.try_to_load_from_cache') as mock_try_load, \
+             patch('interpretune.analysis.ops.dynamic_module_utils.HubAnalysisOpManager') as mock_manager_class:
+
+            # Mock cached_file to raise OSError
+            mock_cached_file.side_effect = OSError("File not found")
+            mock_try_load.return_value = None
+
+            # Mock the HubAnalysisOpManager
+            mock_manager = Mock()
+            mock_collection = Mock()
+            mock_collection.local_path = self.temp_dir  # No nonexistent.py file created
+            mock_manager.download_ops.return_value = mock_collection
+            mock_manager_class.return_value = mock_manager
+            # Mock the cache_dir attribute to return a string path
+            mock_manager.cache_dir = self.temp_dir
+
+            with pytest.raises(OSError):
+                get_cached_module_file_it(
+                    op_repo_name_or_path="test_user.test_repo",
+                    module_file="nonexistent.py"
+                )

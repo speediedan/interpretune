@@ -8,7 +8,7 @@ import os
 import torch
 from transformers import BatchEncoding, PreTrainedTokenizerBase
 
-from interpretune.protocol import DefaultAnalysisBatchProtocol
+from interpretune.protocol import DefaultAnalysisBatchProtocol, BaseAnalysisBatchProtocol
 
 
 class AttrDict(dict):
@@ -35,6 +35,38 @@ class AnalysisBatch(AttrDict):
 
     def __getattr__(self, name):
         return super().__getattr__(name)
+
+    def __eq__(self, other):
+        """Compare AnalysisBatch objects, using torch.equal for tensor values."""
+        if not isinstance(other, (AnalysisBatch, dict)):
+            return False
+
+        # Check if both have the same keys
+        if set(self.keys()) != set(other.keys()):
+            return False
+
+        # Compare each value
+        for key in self.keys():
+            val1 = self[key]
+            val2 = other[key]
+
+            # Handle tensor comparison
+            if hasattr(val1, 'dtype') and hasattr(val1, 'shape') and hasattr(val2, 'dtype') and hasattr(val2, 'shape'):
+                # Both are tensor-like objects, use torch.equal
+                try:
+                    import torch
+                    if not torch.equal(val1, val2):
+                        return False
+                except (RuntimeError, TypeError):
+                    # Fallback to regular comparison if torch.equal fails
+                    if val1 != val2:
+                        return False
+            else:
+                # Regular comparison for non-tensor values
+                if val1 != val2:
+                    return False
+
+        return True
 
     def update(self, **kwargs):
         for key, value in kwargs.items():
@@ -206,7 +238,7 @@ class AnalysisOp:
             self._ctx_key = original_ctx_key
 
     def _validate_input_schema(self, analysis_batch: Optional[DefaultAnalysisBatchProtocol],
-                               batch: BatchEncoding) -> None:
+                               batch: Optional[BatchEncoding]) -> None:
         """Validate that required inputs defined in input_schema exist in analysis_batch or batch."""
         if self.input_schema is None:
             return
@@ -339,8 +371,9 @@ class AnalysisOp:
         # TODO: consider more robust serialization in the future
         return (_reconstruct_op, (self.__class__, self.__dict__.copy()))
 
-    def __call__(self, module, analysis_batch: Optional[DefaultAnalysisBatchProtocol],
-                batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
+    def __call__(self, module: Optional[torch.nn.Module] = None,
+                 analysis_batch: Optional[DefaultAnalysisBatchProtocol] = None,
+                 batch: Optional[BatchEncoding] = None, batch_idx: Optional[int] = None) -> BaseAnalysisBatchProtocol:
         """Execute the operation using the configured implementation."""
         analysis_batch = analysis_batch or AnalysisBatch()
         # Validate input schema if provided
@@ -396,8 +429,9 @@ class CompositeAnalysisOp(AnalysisOp):
                          *args, **kwargs)
         self.composition = ops
 
-    def __call__(self, module, analysis_batch: Optional[DefaultAnalysisBatchProtocol],
-                batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
+    def __call__(self, module: Optional[torch.nn.Module] = None,
+                 analysis_batch: Optional[BaseAnalysisBatchProtocol] = None,
+                 batch: Optional[BatchEncoding] = None, batch_idx: Optional[int] = None) -> BaseAnalysisBatchProtocol:
         """Execute each operation in the composition."""
         result = analysis_batch or AnalysisBatch()
         for op in self.composition:

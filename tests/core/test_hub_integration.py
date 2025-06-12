@@ -6,7 +6,6 @@ from unittest.mock import Mock, patch
 import os
 
 from tests.warns import unmatched_warns
-from interpretune.analysis.ops.hub_manager import HubAnalysisOpManager
 from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
 
@@ -75,51 +74,6 @@ custom_op:
         """Clean up test environment after each test."""
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def test_end_to_end_hub_download_and_discovery(self):
-        """Test complete workflow: download from hub, discover, and load operations."""
-
-        # Mock HfApi for download
-        mock_hf_api = Mock()
-        mock_snapshot_download = Mock(return_value=str(self.snapshot_dir))
-
-        with patch('interpretune.analysis.ops.hub_manager.HfApi', return_value=mock_hf_api), \
-             patch('interpretune.analysis.ops.hub_manager.snapshot_download', mock_snapshot_download), \
-             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
-             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
-             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_OP_PATHS', [str(self.custom_ops_dir)]):
-
-            # Step 1: Download operation from hub
-            hub_manager = HubAnalysisOpManager()
-            result = hub_manager.download_operation("testuser/test")
-
-            assert result is not None
-            assert result.exists()
-            mock_snapshot_download.assert_called_once()
-
-            # Step 2: Create dispatcher and load all operations
-            dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
-            dispatcher.load_definitions()
-
-            # Should have discovered both hub and custom ops
-            all_ops = dispatcher.list_operations()
-
-            # Hub operations should be namespaced
-            assert "testuser.test.test_hub_op" in all_ops
-            assert "testuser.test.another_op" in all_ops
-
-            # Custom operations should not be namespaced
-            assert "custom_op" in all_ops
-
-            # # Test operation info
-            # info = dispatcher.get_operation_info()
-            # hub_op_info = info["it.testuser.test.test_hub_op"]
-            # assert hub_op_info["is_hub_operation"] is True
-            # assert hub_op_info["namespace"] == "it.testuser.test"
-            # assert hub_op_info["description"] == "A test operation from hub"
-
-            # custom_op_info = info["it.user.custom_op"]
-            # assert custom_op_info["is_hub_operation"] is True  # From custom path, treated as hub
-            # assert custom_op_info["namespace"] == "it.user"
 
     def test_namespace_collision_handling(self, recwarn):
         """Test handling of namespace collisions between operations."""
@@ -149,7 +103,6 @@ test_hub_op:
 
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
 
-            #with pytest.warns(UserWarning, match="The fully-qualified name will need"):
             dispatcher.load_definitions()
 
             all_ops = dispatcher.list_operations()
@@ -188,56 +141,6 @@ test_hub_op:
             # Dependencies should be properly namespaced
             assert another_op_def.required_ops == ["testuser.test.test_hub_op"]
 
-    def test_upload_and_download_roundtrip(self):
-        """Test uploading an operation and then downloading it."""
-
-        # Create a local operation definition file
-        local_ops_file = self.temp_dir / "upload_test.yaml"
-        local_ops_file.write_text("""
-upload_test_op:
-  description: Operation for upload testing
-  implementation: upload_test.test_function
-  input_schema:
-    input_data:
-      datasets_dtype: string
-  output_schema:
-    output_data:
-      datasets_dtype: string
-""")
-
-        mock_hf_api = Mock()
-        mock_upload_file = Mock()
-        mock_snapshot_download = Mock(return_value=str(self.snapshot_dir))
-
-        with patch('interpretune.analysis.ops.hub_manager.HfApi', return_value=mock_hf_api), \
-             patch('interpretune.analysis.ops.hub_manager.upload_file', mock_upload_file), \
-             patch('interpretune.analysis.ops.hub_manager.snapshot_download', mock_snapshot_download):
-
-            hub_manager = HubAnalysisOpManager()
-
-            # Upload operation
-            hub_manager.upload_operation(
-                local_ops_file,
-                "testuser/upload-test",
-                commit_message="Test upload"
-            )
-
-            # Verify upload was called correctly
-            mock_upload_file.assert_called_once()
-            upload_args = mock_upload_file.call_args
-            assert upload_args[1]['repo_id'] == "testuser/upload-test"
-            assert upload_args[1]['repo_type'] == "model"
-            assert upload_args[1]['commit_message'] == "Test upload"
-
-            # Download operation
-            downloaded_path = hub_manager.download_operation("testuser/upload-test")
-
-            # Verify download was called correctly
-            assert downloaded_path is not None
-            mock_snapshot_download.assert_called_once()
-            download_args = mock_snapshot_download.call_args
-            assert download_args[1]['repo_id'] == "testuser/upload-test"
-            assert download_args[1]['repo_type'] == "model"
 
     def test_error_handling_invalid_yaml(self):
         """Test graceful handling of invalid YAML files."""
@@ -345,3 +248,177 @@ op_{i}:
             for i in range(10):
                 expected_op = f"user{i}.repo{i}.op_{i}"
                 assert expected_op in all_ops
+
+
+class TestDynamicModuleIntegration:
+    """Integration tests for dynamic module loading with dispatcher."""
+
+    def setup_method(self):
+        """Set up test environment before each test."""
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.cache_dir = self.temp_dir / "cache"
+        self.cache_dir.mkdir()
+
+    def teardown_method(self):
+        """Clean up test environment after each test."""
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_dispatcher_dynamic_loading_integration(self):
+        """Test complete integration of dispatcher with dynamic module loading."""
+        # Set up mock hub repository structure
+        repo_cache = self.cache_dir / "models--testuser--test_repo"
+        snapshot_dir = repo_cache / "snapshots" / "abc123"
+        snapshot_dir.mkdir(parents=True)
+
+        # Create test function file
+        test_module = snapshot_dir / "__init__.py"
+        test_module.write_text('''
+def test_dynamic_function(module, analysis_batch, batch, batch_idx):
+    """A test function for dynamic loading."""
+    from interpretune.analysis.ops.base import AnalysisBatch
+
+    if analysis_batch is None:
+        analysis_batch = AnalysisBatch()
+
+    # Add some test data
+    analysis_batch["test_result"] = "dynamic_success"
+    return analysis_batch
+
+def another_dynamic_function(module, analysis_batch, batch, batch_idx):
+    """Another test function for dynamic loading."""
+    from interpretune.analysis.ops.base import AnalysisBatch
+
+    if analysis_batch is None:
+        analysis_batch = AnalysisBatch()
+
+    analysis_batch["another_result"] = "another_dynamic_success"
+    return analysis_batch
+''')
+
+        # Create a YAML file to define the operation
+        ops_yaml = snapshot_dir / "ops.yaml"
+        ops_yaml.write_text('''
+test_dynamic_function:
+  description: A dynamically loaded test function
+  implementation: __init__.test_dynamic_function
+  input_schema: {}
+  output_schema: {}
+''')
+
+        # Mock all hub and dynamic module interactions to avoid HTTP calls
+        with patch('interpretune.analysis.ops.hub_manager.snapshot_download', return_value=str(snapshot_dir)), \
+             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.cache_dir), \
+             patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it',
+                   return_value=str(test_module)), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir') as mock_scan:
+
+            # Mock scan_cache_dir to return our test repository
+            from huggingface_hub.utils import CachedRepoInfo, CachedRevisionInfo
+
+            mock_file_info = Mock()
+            mock_file_info.file_name = "ops.yaml"
+            mock_file_info.file_path = ops_yaml
+
+            mock_revision = Mock(spec=CachedRevisionInfo)
+            mock_revision.files = [mock_file_info]
+
+            mock_repo = Mock(spec=CachedRepoInfo)
+            mock_repo.repo_type = "model"
+            mock_repo.revisions = [mock_revision]
+            mock_repo.refs = {"main": mock_revision}
+
+            mock_cache_info = Mock()
+            mock_cache_info.repos = [mock_repo]
+            mock_scan.return_value = mock_cache_info
+
+            # Create dispatcher with hub ops enabled
+            dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
+            dispatcher.load_definitions()
+
+            # Test dynamic loading of namespaced operation
+            op_name = "testuser.test_repo.test_dynamic_function"
+
+            # The operation should be available in the dispatcher
+            assert op_name in dispatcher._op_definitions
+
+            op = dispatcher.get_op(op_name)
+
+            # Verify the operation was dynamically loaded
+            assert op.name == op_name
+            assert callable(op)
+
+            # Test execution of dynamically loaded operation
+            from interpretune.analysis.ops.base import AnalysisBatch
+            from transformers import BatchEncoding
+
+            module_mock = Mock()
+            batch = BatchEncoding({"input_ids": [[1, 2, 3]]})
+
+            result = op(module_mock, None, batch, 0)
+            assert isinstance(result, AnalysisBatch)
+            assert result["test_result"] == "dynamic_success"
+
+    def test_dynamic_loading_with_caching(self):
+        """Test that dynamic loading works with dispatcher caching."""
+        # Set up mock hub repository
+        repo_cache = self.cache_dir / "models--testuser--test_repo"
+        snapshot_dir = repo_cache / "snapshots" / "abc123"
+        snapshot_dir.mkdir(parents=True)
+
+        test_module = snapshot_dir / "__init__.py"
+        test_module.write_text('''
+def cached_dynamic_function(module, analysis_batch, batch, batch_idx):
+    from interpretune.analysis.ops.base import AnalysisBatch
+    if analysis_batch is None:
+        analysis_batch = AnalysisBatch()
+    analysis_batch["cached_result"] = "cached_success"
+    return analysis_batch
+''')
+
+        # Create a YAML file to define the operation
+        ops_yaml = snapshot_dir / "ops.yaml"
+        ops_yaml.write_text('''
+cached_dynamic_function:
+  description: A cached dynamic function
+  implementation: __init__.cached_dynamic_function
+  input_schema: {}
+  output_schema: {}
+''')
+
+        # Mock all hub and dynamic module interactions to avoid HTTP calls
+        with patch('interpretune.analysis.ops.hub_manager.snapshot_download', return_value=str(snapshot_dir)), \
+             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.cache_dir), \
+             patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it',
+                   return_value=str(test_module)), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir') as mock_scan:
+
+            # Mock scan_cache_dir to return our test repository
+            from huggingface_hub.utils import CachedRepoInfo, CachedRevisionInfo
+
+            mock_file_info = Mock()
+            mock_file_info.file_name = "ops.yaml"
+            mock_file_info.file_path = ops_yaml
+
+            mock_revision = Mock(spec=CachedRevisionInfo)
+            mock_revision.files = [mock_file_info]
+
+            mock_repo = Mock(spec=CachedRepoInfo)
+            mock_repo.repo_type = "model"
+            mock_repo.revisions = [mock_revision]
+            mock_repo.refs = {"main": mock_revision}
+
+            mock_cache_info = Mock()
+            mock_cache_info.repos = [mock_repo]
+            mock_scan.return_value = mock_cache_info
+
+            dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
+            dispatcher.load_definitions()
+
+            # Get operation multiple times to test caching
+            op_name = "testuser.test_repo.cached_dynamic_function"
+            op_first = dispatcher.get_op(op_name)
+            op_second = dispatcher.get_op(op_name)
+
+            # Assert that the operation is callable and the same object (cached)
+            assert callable(op_first)
+            assert op_first is op_second

@@ -442,10 +442,10 @@ class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):
             Model output logits with shape [batch_size, 1, num_classes]
         loss (Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]):
             Loss values with shape [batch_size]
-        labels (Optional[torch.Tensor]):
-            Ground truth labels with shape [batch_size]
+        label_ids (Optional[torch.Tensor]):
+            Input labels translated to token ids with shape [batch_size] (if labels provided & translation is needed)
         orig_labels (Optional[torch.Tensor]):
-            Original unmodified labels with shape [batch_size]
+            Ground truth unmodified labels with shape [batch_size]
         preds (Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]):
             Model predictions with shape [batch_size]
         cache (Optional[ActivationCacheProtocol]):
@@ -470,6 +470,7 @@ class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):
     loss: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
     preds: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
     label_ids: Optional[torch.Tensor]
+    # TODO: should be able to comment out this labels attribute now that we've disambiguated label_ids and orig_labels
     labels: Optional[torch.Tensor]
     orig_labels: Optional[torch.Tensor]
     cache: Optional[ActivationCacheProtocol]

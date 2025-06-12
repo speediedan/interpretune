@@ -9,6 +9,9 @@ IT_ANALYSIS_CACHE_DIR_NAME = "interpretune"
 DEFAULT_IT_ANALYSIS_CACHE = os.path.join(HF_CACHE_HOME, IT_ANALYSIS_CACHE_DIR_NAME)
 IT_ANALYSIS_CACHE = Path(os.getenv("IT_ANALYSIS_CACHE", DEFAULT_IT_ANALYSIS_CACHE))
 
+IT_MODULES_CACHE = os.getenv("IT_MODULES_CACHE", os.path.join(IT_ANALYSIS_CACHE, "modules"))
+IT_DYNAMIC_MODULE_NAME = "interpretune_modules"
+
 # Hub cache configuration
 IT_ANALYSIS_HUB_CACHE_DIR_NAME = "interpretune_ops"
 DEFAULT_IT_ANALYSIS_HUB_CACHE = Path(os.path.join(HF_CACHE_HOME, "hub")) / IT_ANALYSIS_HUB_CACHE_DIR_NAME
@@ -26,8 +29,6 @@ from interpretune.analysis.core import (AnalysisStore, SAEAnalysisTargets, SAEAn
 from interpretune.analysis.formatters import ITAnalysisFormatter
 from interpretune.protocol import (SAEFqn, DefaultAnalysisBatchProtocol, AnalysisOpProtocol, AnalysisStoreProtocol,
                                    AnalysisCfgProtocol)
-
-
 # Register the custom formatter
 _register_formatter(ITAnalysisFormatter, "interpretune", aliases=["it", "itanalysis"])
 

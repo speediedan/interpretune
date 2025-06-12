@@ -1,15 +1,15 @@
 """Hub manager for downloading and uploading analysis operation definitions."""
 from __future__ import annotations
-import re
 from pathlib import Path
 from typing import Optional, List
 from dataclasses import dataclass
 
-from huggingface_hub import HfApi, snapshot_download, upload_file
+from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.utils import RepositoryNotFoundError
 from huggingface_hub.constants import REPO_TYPE_MODEL
 
 from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
+from interpretune.analysis.ops.compiler.cache_manager import _get_latest_revision
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn, rank_zero_info
 
 
@@ -106,137 +106,108 @@ class HubAnalysisOpManager:
         commit_message: str = "Upload analysis operations",
         revision: str = "main",
         create_pr: bool = False,
-        private: bool = False
+        private: bool = False,
+        clean_existing: bool = False,
+        delete_patterns: Optional[List[str]] = None
     ) -> str:
-        """Upload analysis operations to HF Hub.
+        """Upload analysis operations to HuggingFace Hub.
 
         Args:
-            local_dir: Local directory containing operation YAML files and implementations
-            repo_id: Repository ID in format 'username/repo-name'
+            local_dir: Local directory containing operations to upload
+            repo_id: Repository ID on HuggingFace Hub
             commit_message: Commit message for the upload
-            revision: Target branch (default: "main")
-            create_pr: Whether to create a pull request instead of direct push
-            private: Whether to create a private repository
+            revision: Git revision/branch to upload to
+            create_pr: Whether to create a pull request
+            private: Whether the repository should be private
+            clean_existing: Whether to remove existing operation files before upload
+            delete_patterns: Custom patterns for files to delete (overrides default when clean_existing=True)
 
         Returns:
-            Commit SHA of the upload
-
-        Raises:
-            ValueError: If local_dir doesn't exist or repo_id format is invalid
+            Commit URL or PR URL if create_pr=True
         """
-        if not local_dir.exists():
-            raise ValueError(f"Local directory does not exist: {local_dir}")
-
+        # Validation
         if "/" not in repo_id:
             raise ValueError(f"Invalid repo_id format: {repo_id}. Expected 'username/repo-name'")
 
-        rank_zero_info(f"Uploading analysis ops from {local_dir} to {repo_id}")
+        if not local_dir.exists():
+            raise ValueError(f"Local directory does not exist: {local_dir}")
+
+        # Check if repository exists and create if it doesn't
+        repo_exists = False
+        initial_repo_sha = None
+        files_to_delete = []
 
         try:
-            # Create repository if it doesn't exist
+            repo_info = self.api.repo_info(repo_id, repo_type=REPO_TYPE_MODEL)
+            repo_exists = True
+            initial_repo_sha = repo_info.sha  # Get current commit hash
+            rank_zero_debug(f"Repository {repo_id} already exists")
+        except RepositoryNotFoundError:
+            rank_zero_info(f"Creating new repository: {repo_id}")
+            self.api.create_repo(
+                repo_id=repo_id,
+                repo_type=REPO_TYPE_MODEL,
+                private=private
+            )
+            repo_exists = False  # Just created, so no existing files to worry about
+
+        # Default delete pattern for operation files
+        DEFAULT_DELETE_PATTERNS = ["*.py", "*.yaml"]
+
+        delete_patterns_to_use = None
+        if clean_existing and repo_exists:  # Only check for existing files if repo already existed
+            delete_patterns_to_use = delete_patterns if delete_patterns is not None else DEFAULT_DELETE_PATTERNS
+
+            # Check for existing files that would be deleted and store for potential warning
             try:
-                self.api.repo_info(repo_id, repo_type=REPO_TYPE_MODEL)
-            except RepositoryNotFoundError:
-                rank_zero_info(f"Creating new repository: {repo_id}")
-                self.api.create_repo(
+                existing_files = self.api.list_repo_files(
                     repo_id=repo_id,
                     repo_type=REPO_TYPE_MODEL,
-                    private=private
+                    revision=revision
                 )
 
-            # Upload the folder
+                # Filter files that match delete patterns
+                import fnmatch
+                for file_path in existing_files:
+                    for pattern in delete_patterns_to_use:
+                        if fnmatch.fnmatch(file_path, pattern):
+                            files_to_delete.append(file_path)
+                            break
+
+            except Exception:
+                # If we can't check existing files, that's fine - upload_folder will handle it
+                pass
+        elif clean_existing and not repo_exists:
+            # Repository was just created, so we can still set delete patterns if provided
+            delete_patterns_to_use = delete_patterns if delete_patterns is not None else DEFAULT_DELETE_PATTERNS
+
+        try:
+            rank_zero_debug(f"Uploading analysis ops from {local_dir} to {repo_id}")
             commit_info = self.api.upload_folder(
                 folder_path=str(local_dir),
                 repo_id=repo_id,
                 repo_type=REPO_TYPE_MODEL,
                 commit_message=commit_message,
                 revision=revision,
-                create_pr=create_pr
+                create_pr=create_pr,
+                delete_patterns=delete_patterns_to_use
             )
 
-            rank_zero_info(f"Successfully uploaded to {repo_id}, commit: {commit_info.oid}")
-            return commit_info.oid
-
-        except Exception as e:
-            rank_zero_warn(f"Failed to upload to {repo_id}: {e}")
-            raise
-
-    def download_operation(self, repo_id: str, revision: str = "main", force_download: bool = False) -> Path:
-        """Download analysis operation from HF Hub (single operation interface).
-
-        Args:
-            repo_id: Repository ID in format 'username/repo-name'
-            revision: Git revision to download (default: "main")
-            force_download: Whether to force re-download even if cached
-
-        Returns:
-            Path to the downloaded operation files
-
-        Raises:
-            RepositoryNotFoundError: If the repository doesn't exist
-            ValueError: If repo_id format is invalid
-        """
-        collection = self.download_ops(repo_id, revision, force_download)
-        return collection.local_path
-
-    def upload_operation(
-        self,
-        local_file: Path,
-        repo_id: str,
-        commit_message: str = "Upload analysis operation",
-        revision: str = "main",
-        create_pr: bool = False,
-        private: bool = False
-    ) -> str:
-        """Upload a single analysis operation file to HF Hub.
-
-        Args:
-            local_file: Local YAML file containing operation definition
-            repo_id: Repository ID in format 'username/repo-name'
-            commit_message: Commit message for the upload
-            revision: Target branch (default: "main")
-            create_pr: Whether to create a pull request instead of direct push
-            private: Whether to create a private repository
-
-        Returns:
-            Commit SHA of the upload
-
-        Raises:
-            ValueError: If local_file doesn't exist or repo_id format is invalid
-        """
-        if not local_file.exists():
-            raise ValueError(f"Local file does not exist: {local_file}")
-
-        if "/" not in repo_id:
-            raise ValueError(f"Invalid repo_id format: {repo_id}. Expected 'username/repo-name'")
-
-        rank_zero_info(f"Uploading analysis operation from {local_file} to {repo_id}")
-
-        try:
-            # Create repository if it doesn't exist
-            try:
-                self.api.repo_info(repo_id, repo_type=REPO_TYPE_MODEL)
-            except RepositoryNotFoundError:
-                rank_zero_info(f"Creating new repository: {repo_id}")
-                self.api.create_repo(
-                    repo_id=repo_id,
-                    repo_type=REPO_TYPE_MODEL,
-                    private=private
+            commit_issued = all((initial_repo_sha, hasattr(commit_info, 'oid'), commit_info.oid != initial_repo_sha))
+            # Only issue the warning if files were actually deleted (commit hash changed) and files were identified for
+            # deletion
+            if files_to_delete and commit_issued:
+                rank_zero_warn(
+                    f"clean_existing=True removed {len(files_to_delete)} existing files "
+                    f"matching patterns {delete_patterns_to_use} from repository '{repo_id}'. "
+                    f"Files removed: {files_to_delete[:10]}"
+                    f"{'...' if len(files_to_delete) > 10 else ''}",
+                    stacklevel=2
                 )
 
-            # Upload the single file
-            commit_info = upload_file(
-                path_or_fileobj=str(local_file),
-                path_in_repo=local_file.name,
-                repo_id=repo_id,
-                repo_type=REPO_TYPE_MODEL,
-                commit_message=commit_message,
-                revision=revision,
-                create_pr=create_pr,
-                token=self.api.token
-            )
-
-            rank_zero_info(f"Successfully uploaded to {repo_id}, commit: {commit_info.oid}")
+            if commit_issued:
+                rank_zero_info(f"Successfully uploaded to {repo_id}, previous sha: {initial_repo_sha}, "
+                               f"new sha: {commit_info.oid}")
             return commit_info.oid
 
         except Exception as e:
@@ -318,28 +289,39 @@ class HubAnalysisOpManager:
         if not self.cache_dir.exists():
             return collections
 
-        # Look for cached model repositories
-        for item in self.cache_dir.iterdir():
-            if item.is_dir() and item.name.startswith("models--"):
-                # Parse the directory name: models--username--repo-name
-                match = re.match(r"models--([^-]+)--(.+)", item.name)
-                if match:
-                    username, repo_name = match.groups()
-                    repo_id = f"{username}/{repo_name}"
+        # Use HuggingFace cache manager for robust scanning
+        try:
+            from huggingface_hub.utils import scan_cache_dir
 
-                    # Check if this looks like an interpretune ops repository
-                    if self._has_op_definitions(item):
-                        # Find the latest snapshot
-                        snapshots_dir = item / "snapshots"
-                        if snapshots_dir.exists():
-                            snapshots = [d for d in snapshots_dir.iterdir() if d.is_dir()]
-                            if snapshots:
-                                # Use the most recently modified snapshot
-                                latest_snapshot = max(snapshots, key=lambda x: x.stat().st_mtime)
-                                collection = HubOpCollection.from_repo_id(
-                                    repo_id, latest_snapshot, revision=latest_snapshot.name
-                                )
-                                collections.append(collection)
+            cache_info = scan_cache_dir(self.cache_dir)
+
+            for repo in cache_info.repos:
+                # Only consider model repositories
+                if repo.repo_type != "model":
+                    continue
+
+                # Find the latest revision for this repo (preferring 'main' ref)
+                latest_revision = _get_latest_revision(repo)
+                if latest_revision is None:
+                    continue
+
+                # Check if this revision has any YAML files (operation definitions)
+                has_yaml_files = any(
+                    file_info.file_name.endswith(('.yaml', '.yml'))
+                    for file_info in latest_revision.files
+                )
+
+                if has_yaml_files:
+                    # Create HubOpCollection from the repo info
+                    collection = HubOpCollection.from_repo_id(
+                        repo.repo_id,
+                        latest_revision.snapshot_path,
+                        revision=latest_revision.commit_hash
+                    )
+                    collections.append(collection)
+
+        except Exception as e:
+            rank_zero_warn(f"Failed to scan hub cache using scan_cache_dir: {e}")
 
         rank_zero_debug(f"Found {len(collections)} cached hub collections")
         return collections
