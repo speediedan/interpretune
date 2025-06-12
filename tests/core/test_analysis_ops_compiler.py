@@ -463,6 +463,7 @@ class TestSchemaCompilation:
         assert output_schema["object_field"]["datasets_dtype"] == "string"
         assert output_schema["object_field"]["non_tensor"] is True
 
+
 class TestBuildOperationCompositions:
     """Tests for build_operation_compositions function."""
 
@@ -1370,7 +1371,7 @@ class TestCacheManagerHubFunctionality:
 
         # Create hub cache with various repository names
         hub_cache = tmp_path / "hub_cache"
-        hub_cache.mkdir()
+        hub_cache.mkdir(parents=True)
 
         # Valid repository
         valid_repo = hub_cache / "models--user--valid" / "snapshots" / "abc"
@@ -1523,3 +1524,157 @@ class TestCacheManagerHubFunctionality:
             discovered_files = cache_manager.discover_hub_yaml_files()
             assert discovered_files == []
             # The test passes because the repository without revisions is skipped by the continue statement
+
+class TestCompileOperationCompositionSchema:
+    """Test the compile_operation_composition_schema function's handling of namespaced operations."""
+
+    def test_namespaced_operation_resolution_single_match(self):
+        """Test that namespaced operation resolution works with a single match."""
+        # Define operations dictionary with a namespaced operation
+        ops_dict = {
+            "namespace.collection.my_op": {
+                "input_schema": {"input1": {"datasets_dtype": "float32"}},
+                "output_schema": {"output1": {"datasets_dtype": "float32"}}
+            }
+        }
+
+        # Call with just the operation name (not fully qualified)
+        input_schema, output_schema = compile_operation_composition_schema(
+            operations=["my_op"],
+            all_operations_dict=ops_dict
+        )
+
+        # Should successfully resolve to the namespaced version
+        assert "input1" in input_schema
+        assert "output1" in output_schema
+
+    def test_namespaced_operation_resolution_multiple_matches(self):
+        """Test that namespaced operation resolution with multiple matches uses the first one and warns."""
+        # Define operations dictionary with multiple namespaced versions of the same operation
+        ops_dict = {
+            "namespace1.collection.my_op": {
+                "input_schema": {"input1": {"datasets_dtype": "float32"}},
+                "output_schema": {"output1": {"datasets_dtype": "float32"}}
+            },
+            "namespace2.collection.my_op": {
+                "input_schema": {"input2": {"datasets_dtype": "int64"}},
+                "output_schema": {"output2": {"datasets_dtype": "int64"}}
+            }
+        }
+
+        # Should warn about multiple matches and use the first alphabetically
+        with patch('interpretune.analysis.ops.compiler.schema_compiler.rank_zero_warn') as mock_warn:
+            input_schema, output_schema = compile_operation_composition_schema(
+                operations=["my_op"],
+                all_operations_dict=ops_dict
+            )
+
+            # Should use the first match alphabetically (namespace1)
+            assert "input1" in input_schema
+            assert "output1" in output_schema
+            assert "input2" not in input_schema
+            assert "output2" not in output_schema
+
+            # Should have warned about multiple matches
+            mock_warn.assert_called_once()
+            warning_msg = mock_warn.call_args[0][0]
+            assert "Multiple operations matching" in warning_msg
+            assert "Consider using the fully-qualified operation name" in warning_msg
+
+    def test_namespaced_operation_resolution_no_matches(self):
+        """Test that operation resolution fails correctly when no matches are found."""
+        # Define operations dictionary with no matching operations
+        ops_dict = {
+            "namespace.collection.different_op": {
+                "input_schema": {"input1": {}},
+                "output_schema": {"output1": {}}
+            }
+        }
+
+        # Should raise ValueError for no matches
+        with pytest.raises(ValueError, match="Operation non_existent_op not found"):
+            compile_operation_composition_schema(
+                operations=["non_existent_op"],
+                all_operations_dict=ops_dict
+            )
+
+class TestParseCompositionString:
+    """Test the _parse_composition_string function for parsing operation composition strings."""
+
+    def test_empty_string(self):
+        """Test parsing empty string returns empty list."""
+        from interpretune.analysis.ops.compiler.schema_compiler import _parse_composition_string
+        result = _parse_composition_string("")
+        assert result == []
+
+    def test_unbalanced_parentheses(self):
+        """Test that unbalanced parentheses raise ValueError."""
+        from interpretune.analysis.ops.compiler.schema_compiler import _parse_composition_string
+
+        unbalanced_strings = [
+            "op1.(namespace.op2",      # missing closing parenthesis
+            "op1.namespace.op2)",      # missing opening parenthesis
+            "op1.((namespace.op2)",   # extra opening parenthesis
+            "op1.(namespace.op2))",    # extra closing parenthesis
+        ]
+
+        for unbalanced_str in unbalanced_strings:
+            with pytest.raises(ValueError, match="Unbalanced parentheses in composition string"):
+                _parse_composition_string(unbalanced_str)
+
+    def test_simple_composition(self):
+        """Test parsing a simple dot-separated composition string without parentheses."""
+        from interpretune.analysis.ops.compiler.schema_compiler import _parse_composition_string
+
+        result = _parse_composition_string("op1.op2.op3")
+        assert result == ["op1", "op2", "op3"]
+
+    def test_namespaced_composition(self):
+        """Test parsing composition string with parentheses-wrapped namespaced operations."""
+        from interpretune.analysis.ops.compiler.schema_compiler import _parse_composition_string
+
+        result = _parse_composition_string("op1.(namespace.op2).op3")
+        assert result == ["op1", "namespace.op2", "op3"]
+
+    def test_complex_composition(self):
+        """Test parsing a complex composition with multiple namespaced operations."""
+        from interpretune.analysis.ops.compiler.schema_compiler import _parse_composition_string
+
+        complex_str = "local_op.(user.repo.op1).(org.collection.op2).final_op"
+        result = _parse_composition_string(complex_str)
+        assert result == ["local_op", "user.repo.op1", "org.collection.op2", "final_op"]
+
+    def test_consecutive_parentheses_operations(self):
+        """Test parsing consecutive parentheses-wrapped operations."""
+        from interpretune.analysis.ops.compiler.schema_compiler import _parse_composition_string
+
+        result = _parse_composition_string("(ns1.op1).(ns2.op2)")
+        assert result == ["ns1.op1", "ns2.op2"]
+
+    def test_whitespace_handling(self):
+        """Test that whitespace is properly handled in operation names."""
+        from interpretune.analysis.ops.compiler.schema_compiler import _parse_composition_string
+
+        result = _parse_composition_string("  op1  .  op2  .(  ns.op3  ).  op4  ")
+        assert result == ["op1", "op2", "ns.op3", "op4"]
+
+    def test_example_from_docstring(self):
+        """Test the specific example provided in the function's docstring."""
+        from interpretune.analysis.ops.compiler.schema_compiler import _parse_composition_string
+
+        example = "trivial_local_test_op.(speediedan.trivial_op_repo.trivial_test_op)"
+        result = _parse_composition_string(example)
+        assert result == ["trivial_local_test_op", "speediedan.trivial_op_repo.trivial_test_op"]
+
+    def test_nested_parentheses_handling(self):
+        """Test that the function correctly handles nested parentheses."""
+        from interpretune.analysis.ops.compiler.schema_compiler import _parse_composition_string
+
+        # The current implementation doesn't support true nested parentheses
+        # This test verifies the current behavior for documentation purposes
+        nested_str = "op1.(namespace.(inner).op2).op3"
+
+        # Current behavior will not correctly parse this - just documenting it
+        result = _parse_composition_string(nested_str)
+        assert "inner" not in result  # The inner content won't be properly extracted
+        assert "namespace" in result[1]  # The outer parenthesized content will be extracted

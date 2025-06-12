@@ -343,7 +343,7 @@ def _parse_composition_string(composition_str: str) -> List[str]:
     operations = []
     for match in re.finditer(pattern, composition_str):
         if match.group(1):  # Parentheses-wrapped operation
-            operations.append(match.group(1))
+            operations.append(match.group(1).strip())
         elif match.group(2) and match.group(2).strip():  # Regular operation (non-empty)
             operations.append(match.group(2).strip())
 
