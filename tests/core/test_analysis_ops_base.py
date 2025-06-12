@@ -521,6 +521,178 @@ class TestAnalysisBatch:
             # Should not raise AttributeError when getting attribute (might be None)
             _ = getattr(batch, attr, None)
 
+    def test_equality_comparison(self):
+        """Test the __eq__ method comprehensively."""
+        # Test comparison with non-AnalysisBatch/dict objects
+        batch1 = AnalysisBatch()
+        batch1.logit_diffs = torch.tensor([1.0, 2.0])
+
+        assert batch1 != "not a batch"
+        assert batch1 != 42
+        assert batch1 is not None
+
+        # Test comparison with different keys
+        batch2 = AnalysisBatch()
+        batch2.answer_logits = torch.tensor([[0.1, 0.9]])
+
+        assert batch1 != batch2  # Different keys
+
+        # Test tensor comparison with torch.equal - same values
+        batch3 = AnalysisBatch()
+        batch3.logit_diffs = torch.tensor([1.0, 2.0])
+
+        batch4 = AnalysisBatch()
+        batch4.logit_diffs = torch.tensor([1.0, 2.0])
+
+        assert batch3 == batch4  # Same tensor values
+
+        # Test tensor comparison with torch.equal - different values
+        batch5 = AnalysisBatch()
+        batch5.logit_diffs = torch.tensor([1.0, 3.0])  # Different values
+
+        # Use explicit inequality check instead of direct assertion to avoid tensor boolean evaluation
+        are_equal = batch3 == batch5
+        assert not are_equal
+
+        # Test fallback when torch.equal fails with RuntimeError
+        with patch('torch.equal', side_effect=RuntimeError("Mock error")):
+            batch6 = AnalysisBatch()
+            batch6.tensor_field = torch.tensor([1.0, 2.0])
+
+            batch7 = AnalysisBatch()
+            batch7.tensor_field = torch.tensor([1.0, 2.0])
+
+            # Should fallback to element-wise comparison
+            assert batch6 == batch7
+
+            # Test with different tensor values in RuntimeError fallback
+            batch8 = AnalysisBatch()
+            batch8.tensor_field = torch.tensor([1.0, 3.0])
+
+            are_equal = batch6 == batch8
+            assert not are_equal
+
+        # Test fallback when torch.equal fails with TypeError
+        with patch('torch.equal', side_effect=TypeError("Mock error")):
+            batch9 = AnalysisBatch()
+            batch9.tensor_field = torch.tensor([1.0, 2.0])
+
+            batch10 = AnalysisBatch()
+            batch10.tensor_field = torch.tensor([1.0, 2.0])
+
+            # Should fallback to element-wise comparison
+            assert batch9 == batch10
+
+        # Test when both torch.equal and element-wise comparison fail
+        class UncomparableTensor:
+            def __init__(self, value):
+                self.dtype = torch.float32
+                self.shape = (2,)
+                self.value = value
+
+            def __eq__(self, other):
+                raise RuntimeError("Cannot compare")
+
+            def all(self):
+                raise RuntimeError("Cannot call all")
+
+        with patch('torch.equal', side_effect=RuntimeError("Mock error")):
+            batch11 = AnalysisBatch()
+            batch11.uncomparable = UncomparableTensor(1)
+
+            batch12 = AnalysisBatch()
+            batch12.uncomparable = batch11.uncomparable  # Same object reference
+
+            # Should return True because they are the same torch tensor-like (but non-torch) object
+            assert batch11 == batch12
+
+            # Test with different object references
+            batch13 = AnalysisBatch()
+            batch13.uncomparable = UncomparableTensor(1)  # Different object
+
+            are_equal = batch11 == batch13
+            assert not are_equal
+
+        # Test fallback when torch.equal fails for mock tensor objects
+        class MockTensor:
+            def __init__(self, value):
+                self.dtype = torch.float32
+                self.shape = (2,)
+                self.value = value
+
+            def __eq__(self, other):
+                return hasattr(other, 'value') and self.value == other.value
+
+        batch14 = AnalysisBatch()
+        batch14.mock_tensor = MockTensor(5)
+
+        batch15 = AnalysisBatch()
+        batch15.mock_tensor = MockTensor(5)
+
+        # This should use fallback comparison since torch.equal will fail
+        assert batch14 == batch15
+
+        # Test fallback with different mock tensor values
+        batch16 = AnalysisBatch()
+        batch16.mock_tensor = MockTensor(10)
+
+        are_equal = batch14 == batch16
+        assert not are_equal
+
+        # Test regular non-tensor comparison
+        batch17 = AnalysisBatch()
+        batch17.prompts = ["hello", "world"]
+        batch17.labels = [1, 2, 3]
+
+        batch18 = AnalysisBatch()
+        batch18.prompts = ["hello", "world"]
+        batch18.labels = [1, 2, 3]
+
+        assert batch17 == batch18
+
+        # Test regular comparison with different values
+        batch19 = AnalysisBatch()
+        batch19.prompts = ["hello", "world"]
+        batch19.labels = [1, 2, 4]  # Different value
+
+        are_equal = batch17 == batch19
+        assert not are_equal
+
+        # Test mixed tensor and non-tensor values
+        batch20 = AnalysisBatch()
+        batch20.logit_diffs = torch.tensor([1.0, 2.0])
+        batch20.prompts = ["test"]
+
+        batch21 = AnalysisBatch()
+        batch21.logit_diffs = torch.tensor([1.0, 2.0])
+        batch21.prompts = ["test"]
+
+        assert batch20 == batch21
+
+        # Test comparison with regular dict
+        regular_dict = {
+            "logit_diffs": torch.tensor([1.0, 2.0]),
+            "prompts": ["test"]
+        }
+
+        assert batch20 == regular_dict
+
+        batch_a = AnalysisBatch()
+        batch_a.x = 1
+        assert not batch_a == '12345'  # not AnalysisBatch or dict
+
+        batch_b = AnalysisBatch()
+        batch_b.x = 1
+        batch_c = AnalysisBatch()
+        batch_c.y = 1
+        assert not batch_b == batch_c  # different keys
+
+        # Also test with dicts of different keys
+        dict1 = {"x": 1}
+        dict2 = {"y": 1}
+        assert not batch_b == dict2
+        assert not batch_c == dict1
+
 
 class TestWrapSummary:
     """Tests for the wrap_summary function."""

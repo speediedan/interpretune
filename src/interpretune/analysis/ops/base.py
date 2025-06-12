@@ -37,7 +37,11 @@ class AnalysisBatch(AttrDict):
         return super().__getattr__(name)
 
     def __eq__(self, other):
-        """Compare AnalysisBatch objects, using torch.equal for tensor values."""
+        """Compare AnalysisBatch objects, using torch.equal for tensor values.
+
+        N.B. this comparison is not exhaustive and may not work for all objects/edge cases. Its semantics should be
+        considered provisional and may change in the future as usage patterns/requirements become clearer.
+        """
         if not isinstance(other, (AnalysisBatch, dict)):
             return False
 
@@ -55,12 +59,29 @@ class AnalysisBatch(AttrDict):
                 # Both are tensor-like objects, use torch.equal
                 try:
                     import torch
-                    if not torch.equal(val1, val2):
-                        return False
+                    if torch.is_tensor(val1) and torch.is_tensor(val2):
+                        if not torch.equal(val1, val2):
+                            return False
+                    else:
+                        raise TypeError # catch this to handle objects that are torch tensor-like but not torch tensors
+                        #return False  # If they are not both tensors, return False
                 except (RuntimeError, TypeError):
                     # Fallback to regular comparison if torch.equal fails
-                    if val1 != val2:
-                        return False
+                    # For tensors, try element-wise comparison if possible
+                    try:
+                        comparison_result = (val1 == val2)
+                        # Check if the result has an .all() method (actual tensor comparison)
+                        if hasattr(comparison_result, 'all'):
+                            if not comparison_result.all():
+                                return False
+                        else:
+                            # For non-tensor objects that return boolean directly
+                            if not comparison_result:
+                                return False
+                    except (RuntimeError, TypeError, AttributeError):
+                        # Final fallback for non-comparable objects
+                        if val1 is not val2:
+                            return False
             else:
                 # Regular comparison for non-tensor values
                 if val1 != val2:
