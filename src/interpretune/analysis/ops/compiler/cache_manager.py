@@ -189,11 +189,6 @@ class OpDefinitionsCacheManager:
         # Not a hub file
         return False, ""
 
-    def _is_hub_ops_file(self, yaml_file: Path) -> bool:
-        """Check if a YAML file is in a hub operations repository."""
-        is_hub_file, _ = self._parse_hub_file_path(yaml_file)
-        return is_hub_file
-
     def get_hub_namespace(self, yaml_file: Path) -> str:
         """Extract namespace from hub file path."""
         _, namespace = self._parse_hub_file_path(yaml_file)

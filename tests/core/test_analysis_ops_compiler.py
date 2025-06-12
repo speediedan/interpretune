@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
 
+from huggingface_hub import CachedRepoInfo
+
 from interpretune.analysis.ops.compiler.cache_manager import (
     OpDefinitionsCacheManager, OpDef, YamlFileInfo
 )
@@ -1470,3 +1472,54 @@ class TestCacheManagerHubFunctionality:
             # Should only find YAML files from the latest revision
             assert len(discovered_files) == 1
             assert snapshot2 / "operations.yaml" in discovered_files
+
+    def test_get_latest_revision_empty_revisions(self):
+        """Test _get_latest_revision returns None when repo.revisions is empty."""
+        from interpretune.analysis.ops.compiler.cache_manager import _get_latest_revision
+        class DummyRepo:
+            revisions = []
+            refs = {}
+        repo = DummyRepo()
+        assert _get_latest_revision(repo) is None
+
+    def test_discover_hub_yaml_files_skips_non_model_repos(self, tmp_path):
+        """Test that discover_hub_yaml_files skips non-model repositories."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir(parents=True, exist_ok=True)
+
+        # Create mock cache info with a non-model repository
+        mock_repo = MagicMock(spec=CachedRepoInfo)
+        mock_repo.repo_type = "dataset"  # Not a model repository
+
+        mock_cache_info = MagicMock()
+        mock_cache_info.repos = [mock_repo]
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info):
+            # This should skip the non-model repository
+            discovered_files = cache_manager.discover_hub_yaml_files()
+            assert discovered_files == []
+            # The test passes because the non-model repository is skipped by the continue statement
+
+    def test_discover_hub_yaml_files_skips_repos_without_revisions(self, tmp_path):
+        """Test that discover_hub_yaml_files skips repositories where _get_latest_revision returns None."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir(parents=True, exist_ok=True)
+
+        # Create mock cache info with a model repository that has no latest revision
+        mock_repo = MagicMock(spec=CachedRepoInfo)
+        mock_repo.repo_type = "model"
+        mock_repo.revisions = []  # This will cause _get_latest_revision to return None
+        mock_repo.refs = {}
+
+        mock_cache_info = MagicMock()
+        mock_cache_info.repos = [mock_repo]
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info):
+            # This should skip the repository with no revisions
+            discovered_files = cache_manager.discover_hub_yaml_files()
+            assert discovered_files == []
+            # The test passes because the repository without revisions is skipped by the continue statement
