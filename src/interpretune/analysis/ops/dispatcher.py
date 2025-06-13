@@ -14,7 +14,7 @@ from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, ColCfg
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
-from interpretune.analysis.ops.dynamic_module_utils import ensure_op_paths_in_syspath
+from interpretune.analysis.ops.dynamic_module_utils import ensure_op_paths_in_syspath, get_function_from_dynamic_module
 from interpretune.protocol import DefaultAnalysisBatchProtocol, BaseAnalysisBatchProtocol
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 
@@ -103,11 +103,6 @@ class AnalysisOpDispatcher:
             if self.enable_hub_ops:
                 hub_yaml_files = self._cache_manager.add_hub_yaml_files()
                 yaml_files.extend(hub_yaml_files)
-
-            if not yaml_files:
-                rank_zero_debug("No YAML files found in the specified paths")
-                self._loaded = True
-                return
 
             # Set up cache manager with discovered YAML files # TODO: might be able to remove since we already discover
             for yaml_file in yaml_files:
@@ -444,8 +439,6 @@ class AnalysisOpDispatcher:
     def _import_hub_callable(self, op_name: str, op_def: OpDef) -> Callable:
         """Import a callable from a hub path."""
         rank_zero_debug(f"Attempting dynamic loading for namespaced operation: {op_name}")
-        # Try to load the function dynamically from hub cache
-        from interpretune.analysis.ops.dynamic_module_utils import get_function_from_dynamic_module
 
         # Extract repo name from the operation name and module/function from implementation field
         # Format of op_name: "repo_name.function_name" or "user.repo.function_name"
@@ -483,12 +476,14 @@ class AnalysisOpDispatcher:
         func_name = param_path.rsplit('.', 1)[-1]
         param_module = param_path.rsplit('.', 1)[0]
         imported_module_name = implementation.__module__.split('.')[-1]
+        resolved_fn_param = None
+
         if param_module == imported_module_name:
-            resolved_fn_param = None
-            try:
-                resolved_fn_param = getattr(implementation.__module__, func_name)
-            except Exception:
-                pass
+                # Get the module object from the implementation function
+                import sys
+                module_obj = sys.modules.get(implementation.__module__)
+                if module_obj is not None:
+                    resolved_fn_param = getattr(module_obj, func_name, None)
         return resolved_fn_param
 
     @_ensure_loaded
@@ -528,6 +523,13 @@ class AnalysisOpDispatcher:
                 resolved_fn_param = AnalysisOpDispatcher._function_param_from_hub_module(param_path, implementation)
             if not resolved_fn_param:
                 resolved_fn_param = self._import_callable(param_path)
+            if resolved_fn_param is None:
+                rank_zero_warn(f"Function parameter '{param_name}' in operation '{op_name}' could not be resolved: "
+                                 f"{param_path}. It will not be available in the operation.")
+                continue
+            if not callable(resolved_fn_param):
+                rank_zero_warn(f"Function parameter '{param_name}' in operation '{op_name}' is not callable: "
+                                 f"{resolved_fn_param}")
             callables[param_name] = resolved_fn_param
 
         op = AnalysisOp(

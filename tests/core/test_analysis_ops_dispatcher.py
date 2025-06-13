@@ -4,6 +4,7 @@ import torch
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 import os
+import sys
 from collections import defaultdict
 
 from tests.warns import unmatched_warns
@@ -17,6 +18,9 @@ from interpretune.analysis.ops.auto_columns import apply_auto_columns
 
 class TestAnalysisOpDispatcher:
     """Tests for AnalysisOpDispatcher functionality."""
+    @pytest.fixture
+    def dispatcher(self):
+        return AnalysisOpDispatcher()
 
     def test_dispatcher_init_with_string_path(self, test_ops_yaml):
         """Test dispatcher initialization with a string path."""
@@ -1174,6 +1178,236 @@ test_op:
         assert condition_with_tuple.field_conditions is field_conditions_tuple
         assert len(condition_with_tuple.field_conditions) == 2
 
+    @patch("interpretune.analysis.ops.dispatcher.get_function_from_dynamic_module")
+    def test_import_hub_callable_success(self, mock_get_function, dispatcher):
+        # Setup
+        op_name = "user.repo.function_name"
+        op_def = OpDef(
+            name=op_name,
+            implementation="module.submodule.function_name",
+            description="",
+            input_schema={},
+            output_schema={},
+            aliases=[],
+            function_params={},
+            required_ops=[],
+            composition=None
+        )
+
+        mock_function = MagicMock()
+        mock_get_function.return_value = mock_function
+
+        # Execute
+        result = dispatcher._import_hub_callable(op_name, op_def)
+
+        # Verify
+        assert result == mock_function
+        mock_get_function.assert_called_once_with(
+            function_reference="module.submodule.function_name",
+            op_repo_name_or_path="user.repo"
+        )
+
+    @patch("interpretune.analysis.ops.dispatcher.rank_zero_debug")
+    def test_import_hub_callable_invalid_format(self, mock_debug, dispatcher):
+        # Setup - invalid format (missing third part)
+        op_name = "user.repo"
+        op_def = OpDef(
+            name=op_name,
+            implementation="module.function_name",
+            description="",
+            input_schema={},
+            output_schema={},
+            aliases=[],
+            function_params={},
+            required_ops=[],
+            composition=None
+        )
+
+        # Execute and verify raises error
+        with pytest.raises(ValueError, match="Invalid namespaced operation format"):
+            dispatcher._import_hub_callable(op_name, op_def)
+
+    def test_import_hub_callable_missing_implementation(self, dispatcher):
+        # Setup - missing implementation
+        op_name = "user.repo.function_name"
+        op_def = OpDef(
+            name=op_name,
+            implementation="",  # Empty implementation
+            description="",
+            input_schema={},
+            output_schema={},
+            aliases=[],
+            function_params={},
+            required_ops=[],
+            composition=None
+        )
+
+        # Execute and verify raises error
+        with pytest.raises(ValueError, match="No implementation specified for hub operation"):
+            dispatcher._import_hub_callable(op_name, op_def)
+
+    def test_import_hub_callable_invalid_implementation_format(self, dispatcher):
+        # Setup - invalid implementation format (not module.function)
+        op_name = "user.repo.function_name"
+        op_def = OpDef(
+            name=op_name,
+            implementation="just_function",  # Missing module part
+            description="",
+            input_schema={},
+            output_schema={},
+            aliases=[],
+            function_params={},
+            required_ops=[],
+            composition=None
+        )
+
+        # Execute and verify raises error
+        with pytest.raises(ValueError, match="Invalid implementation format"):
+            dispatcher._import_hub_callable(op_name, op_def)
+
+    @patch("interpretune.analysis.ops.dispatcher.get_function_from_dynamic_module")
+    @patch("interpretune.analysis.ops.dispatcher.rank_zero_debug")
+    def test_import_hub_callable_debug_messages(self, mock_debug, mock_get_function, dispatcher):
+        # Setup
+        op_name = "user.repo.function_name"
+        op_def = OpDef(
+            name=op_name,
+            implementation="module.function_name",
+            description="",
+            input_schema={},
+            output_schema={},
+            aliases=[],
+            function_params={},
+            required_ops=[],
+            composition=None
+        )
+
+        mock_function = MagicMock()
+        mock_get_function.return_value = mock_function
+
+        # Execute
+        dispatcher._import_hub_callable(op_name, op_def)
+
+        # Verify debug messages
+        assert mock_debug.call_count == 2
+        mock_debug.assert_any_call(f"Attempting dynamic loading for namespaced operation: {op_name}")
+        mock_debug.assert_any_call(f"Successfully loaded dynamic operation: {op_name}")
+
+
+    def test_function_param_from_hub_module_success(self):
+        """Test successful function parameter resolution from hub module."""
+        # Create a mock implementation function with a module
+        mock_implementation = MagicMock()
+        mock_implementation.__module__ = "test_module.submodule"
+
+        # Create a mock for sys.modules with our test module
+        mock_module = MagicMock()
+        mock_module.test_function = MagicMock(return_value="test_result")
+
+        with patch.dict(sys.modules, {"test_module.submodule": mock_module}):
+            # Test the method with matching module name
+            result = AnalysisOpDispatcher._function_param_from_hub_module(
+                "submodule.test_function",
+                mock_implementation
+            )
+
+            # Verify result is the mock function
+            assert result is mock_module.test_function
+
+
+    def test_function_param_from_hub_module_module_mismatch(self):
+        """Test when module names don't match."""
+        # Create a mock implementation function with a module
+        mock_implementation = MagicMock()
+        mock_implementation.__module__ = "test_module.submodule"
+
+        # Test with non-matching module name
+        result = AnalysisOpDispatcher._function_param_from_hub_module(
+            "different_module.test_function",
+            mock_implementation
+        )
+
+        # Should return None when module names don't match
+        assert result is None
+
+
+    def test_function_param_from_hub_module_module_not_found(self):
+        """Test when module isn't found in sys.modules."""
+        # Create a mock implementation function with a module
+        mock_implementation = MagicMock()
+        mock_implementation.__module__ = "test_module.submodule"
+
+        # Instead of clearing all modules, just ensure the specific module doesn't exist
+        with patch.dict(sys.modules, {"test_module.submodule": None}, clear=False):
+            # Remove the specific module if it exists
+            sys.modules.pop("test_module.submodule", None)
+
+            result = AnalysisOpDispatcher._function_param_from_hub_module(
+                "submodule.test_function",
+                mock_implementation
+            )
+
+            # Should return None when module isn't found
+            assert result is None
+
+
+    def test_function_param_from_hub_module_attribute_error(self):
+        """Test when getattr raises AttributeError."""
+        # Create a mock implementation function with a module
+        mock_implementation = MagicMock()
+        mock_implementation.__module__ = "test_module.submodule"
+
+        # We'll patch the getattr function directly to ensure it raises AttributeError
+        with patch('builtins.getattr', side_effect=AttributeError("Function not found")):
+            result = AnalysisOpDispatcher._function_param_from_hub_module(
+                "submodule.test_function",
+                mock_implementation
+            )
+
+            # Should return None when AttributeError is raised
+            assert result is None
+
+
+    def test_function_param_from_hub_module_key_error(self):
+        """Test when accessing sys.modules raises KeyError."""
+        # Create a mock implementation function with a module
+        mock_implementation = MagicMock()
+        mock_implementation.__module__ = "test_module.submodule"
+
+        # Create an empty modules dictionary to ensure KeyError when accessing any module
+        mock_modules_dict = {}
+
+        # Patch sys.modules with our empty dictionary to cause KeyError
+        with patch.object(sys, 'modules', mock_modules_dict):
+            result = AnalysisOpDispatcher._function_param_from_hub_module(
+                "submodule.test_function",
+                mock_implementation
+            )
+
+            # Should return None when KeyError is raised
+            assert result is None
+
+
+    def test_function_param_module_name_extraction(self):
+        """Test that the module name is correctly extracted from the param_path."""
+        # Create a mock implementation function with a module
+        mock_implementation = MagicMock()
+        mock_implementation.__module__ = "long.path.test_module.submodule"
+
+        # Create a mock module
+        mock_module = MagicMock()
+        mock_module.test_function = MagicMock(return_value="test_result")
+
+        with patch.dict(sys.modules, {"long.path.test_module.submodule": mock_module}):
+            # Test with different param_path formats
+            result = AnalysisOpDispatcher._function_param_from_hub_module(
+                "submodule.test_function",
+                mock_implementation
+            )
+
+            # Should correctly match the last part of the module path
+            assert result is mock_module.test_function
+
 class TestAutoColumnsConditions:
     """Additional tests for auto-columns conditions functionality."""
 
@@ -2275,3 +2509,199 @@ dependent_op:
             "edge_op", "ns.valid_alias", "valid_alias",
             "simple_alias", "deep.nested.alias", "alias"
         ])
+
+    def test_set_default_hub_op_aliases_warning_for_conflicting_aliases(self):
+        """Test warning when setting default hub op aliases for conflicting aliases."""
+        dispatcher = AnalysisOpDispatcher()
+
+        # Create operations with conflicting aliases
+        op_def1 = OpDef(
+            name="test_op",
+            description="Test operation",
+            implementation="tests.core.test_analysis_ops_base.op_impl_test",
+            input_schema=OpSchema({}),
+            output_schema=OpSchema({}),
+            aliases=["conflict_alias"]
+        )
+
+        op_def2 = OpDef(
+            name="another_test_op",
+            description="Another test operation",
+            implementation="tests.core.test_analysis_ops_base.op_impl_test",
+            input_schema=OpSchema({}),
+            output_schema=OpSchema({}),
+            aliases=["conflict_alias"]  # Same alias as op_def1
+        )
+
+        dispatcher._op_definitions = {
+            "test_op": op_def1,
+            "another_test_op": op_def2
+        }
+
+        with patch('interpretune.analysis.ops.dispatcher.rank_zero_warn') as mock_warn:
+            # This should trigger the warning for conflicting aliases
+            dispatcher._set_default_hub_op_aliases()
+
+            # Should warn about the alias conflict
+            mock_warn.assert_called_with(
+                "Alias 'conflict_alias' already has an assigned op or alias so the "
+                "alias specified by 'another_test_op' cannot be mapped to it"
+            )
+
+    def test_instantiate_op_function_params_hub_module_resolution(self, tmp_path):
+        """Test function parameter resolution from hub module in _instantiate_op."""
+        dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
+
+        # Create a mock OpDef for a hub operation with function_params
+        op_def = OpDef(
+            name="testuser.repo.test_op",
+            description="Test hub operation with function params",
+            implementation="module.test_func",
+            input_schema=OpSchema({}),
+            output_schema=OpSchema({}),
+            function_params={"helper_func": "module.helper"}
+        )
+
+        dispatcher._op_definitions = {"testuser.repo.test_op": op_def}
+        dispatcher._loaded = True
+
+        # Mock the hub callable import
+        mock_implementation = MagicMock()
+        mock_implementation.__module__ = "dynamic.module"
+
+        # Mock the helper function that should be resolved from hub module
+        mock_helper = MagicMock()
+
+        with patch.object(dispatcher, '_import_hub_callable', return_value=mock_implementation), \
+             patch.object(AnalysisOpDispatcher, '_function_param_from_hub_module',
+                          return_value=mock_helper) as mock_hub_param, \
+             patch.object(dispatcher, '_import_callable') as mock_import_callable:
+
+            # Instantiate the operation
+            op = dispatcher._instantiate_op("testuser.repo.test_op")
+
+            # Verify _function_param_from_hub_module was called
+            mock_hub_param.assert_called_once_with("module.helper", mock_implementation)
+
+            # Verify _import_callable was not called since hub resolution succeeded
+            mock_import_callable.assert_not_called()
+
+            # Verify the helper function was added to callables
+            assert "helper_func" in op.callables
+            assert op.callables["helper_func"] is mock_helper
+
+    def test_instantiate_op_function_params_unresolvable_warning(self):
+        """Test warning when function parameter cannot be resolved."""
+        dispatcher = AnalysisOpDispatcher()
+
+        # Create a mock OpDef with unresolvable function parameter
+        op_def = OpDef(
+            name="test_op",
+            description="Test operation",
+            implementation="tests.core.test_analysis_ops_base.op_impl_test",
+            input_schema=OpSchema({}),
+            output_schema=OpSchema({}),
+            function_params={"bad_param": "nonexistent.module.func"}
+        )
+
+        dispatcher._op_definitions = {"test_op": op_def}
+        dispatcher._loaded = True
+
+        # Mock _import_callable to return None for the bad parameter
+        original_import = dispatcher._import_callable
+        def mock_import_callable(path):
+            if path == "nonexistent.module.func":
+                return None
+            return original_import(path)
+
+        with patch.object(dispatcher, '_import_callable', side_effect=mock_import_callable), \
+             patch('interpretune.analysis.ops.dispatcher.rank_zero_warn') as mock_warn:
+
+            # Instantiate the operation
+            op = dispatcher._instantiate_op("test_op")
+
+            # Verify warning was issued
+            mock_warn.assert_called_with(
+                "Function parameter 'bad_param' in operation 'test_op' could not be resolved: "
+                "nonexistent.module.func. It will not be available in the operation."
+            )
+
+            # Verify the bad parameter was not added to callables
+            assert "bad_param" not in op.callables
+            assert "implementation" in op.callables  # Should still have the main implementation
+
+    def test_instantiate_op_function_params_not_callable_warning(self):
+        """Test warning when function parameter is not callable."""
+        dispatcher = AnalysisOpDispatcher()
+
+        # Create a mock OpDef with non-callable function parameter
+        op_def = OpDef(
+            name="test_op",
+            description="Test operation",
+            implementation="tests.core.test_analysis_ops_base.op_impl_test",
+            input_schema=OpSchema({}),
+            output_schema=OpSchema({}),
+            function_params={"not_callable_param": "test.module.value"}
+        )
+
+        dispatcher._op_definitions = {"test_op": op_def}
+        dispatcher._loaded = True
+
+        # Mock _import_callable to return a non-callable value
+        non_callable_value = "not_a_function"
+        original_import = dispatcher._import_callable
+        def mock_import_callable(path):
+            if path == "test.module.value":
+                return non_callable_value
+            return original_import(path)
+
+        with patch.object(dispatcher, '_import_callable', side_effect=mock_import_callable), \
+             patch('interpretune.analysis.ops.dispatcher.rank_zero_warn') as mock_warn:
+
+            # Instantiate the operation
+            op = dispatcher._instantiate_op("test_op")
+
+            # Verify warning was issued
+            mock_warn.assert_called_with(
+                "Function parameter 'not_callable_param' in operation 'test_op' is not callable: "
+                "not_a_function"
+            )
+
+            # Verify the parameter was still added despite not being callable
+            assert "not_callable_param" in op.callables
+            assert op.callables["not_callable_param"] == non_callable_value
+
+    def test_instantiate_op_function_params_hub_fallback_to_regular_import(self):
+        """Test fallback to regular import when hub module resolution fails."""
+        dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
+
+        # Create a mock OpDef for a hub operation
+        op_def = OpDef(
+            name="testuser.repo.test_op",
+            description="Test hub operation",
+            implementation="module.test_func",
+            input_schema=OpSchema({}),
+            output_schema=OpSchema({}),
+            function_params={"helper_func": "other_module.helper"}
+        )
+
+        dispatcher._op_definitions = {"testuser.repo.test_op": op_def}
+        dispatcher._loaded = True
+
+        # Mock the hub callable import
+        mock_implementation = MagicMock()
+        mock_helper = MagicMock()
+
+        with patch.object(dispatcher, '_import_hub_callable', return_value=mock_implementation), \
+             patch.object(AnalysisOpDispatcher, '_function_param_from_hub_module', return_value=None), \
+             patch.object(dispatcher, '_import_callable', return_value=mock_helper) as mock_import_callable:
+
+            # Instantiate the operation
+            op = dispatcher._instantiate_op("testuser.repo.test_op")
+
+            # Verify fallback to _import_callable was used
+            mock_import_callable.assert_called_with("other_module.helper")
+
+            # Verify the helper function was added to callables
+            assert "helper_func" in op.callables
+            assert op.callables["helper_func"] is mock_helper
