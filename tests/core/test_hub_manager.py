@@ -185,6 +185,86 @@ class TestHubAnalysisOpManager:
         assert collections[0].username == "username"
         assert collections[0].repo_name == "some_repo"
 
+    @patch('huggingface_hub.utils.scan_cache_dir')
+    @patch('interpretune.analysis.ops.hub_manager._get_latest_revision')
+    def test_get_cached_collections_skips_non_model_repos(self, mock_get_latest_revision, mock_scan_cache_dir):
+        """Test that get_cached_collections skips non-model repositories."""
+        from unittest.mock import Mock
+
+        # Create mock cache info with mixed repo types
+        mock_cache_info = Mock()
+        mock_model_repo = Mock()
+        mock_model_repo.repo_type = "model"
+        mock_model_repo.repo_id = "username/model-repo"
+
+        mock_dataset_repo = Mock()
+        mock_dataset_repo.repo_type = "dataset"
+        mock_dataset_repo.repo_id = "username/dataset-repo"
+
+        mock_cache_info.repos = [mock_model_repo, mock_dataset_repo]
+        mock_scan_cache_dir.return_value = mock_cache_info
+
+        # Mock latest revision for model repo
+        mock_revision = Mock()
+        mock_revision.commit_hash = "abc123"
+        mock_revision.snapshot_path = Path("/fake/path")
+        mock_file_info = Mock()
+        mock_file_info.file_name = "operations.yaml"
+        mock_revision.files = [mock_file_info]
+        mock_get_latest_revision.return_value = mock_revision
+
+        collections = self.manager.get_cached_collections()
+
+        # Should only get collections from model repos, not dataset repos
+        assert len(collections) == 1
+        assert collections[0].repo_id == "username/model-repo"
+
+        # Verify _get_latest_revision was only called for model repo
+        mock_get_latest_revision.assert_called_once_with(mock_model_repo)
+
+    @patch('huggingface_hub.utils.scan_cache_dir')
+    @patch('interpretune.analysis.ops.hub_manager._get_latest_revision')
+    def test_get_cached_collections_skips_repos_with_no_revision(self, mock_get_latest_revision, mock_scan_cache_dir):
+        """Test that get_cached_collections skips repos when _get_latest_revision returns None."""
+        from unittest.mock import Mock
+
+        # Create mock cache info with model repos
+        mock_cache_info = Mock()
+        mock_repo1 = Mock()
+        mock_repo1.repo_type = "model"
+        mock_repo1.repo_id = "username/repo-with-revision"
+
+        mock_repo2 = Mock()
+        mock_repo2.repo_type = "model"
+        mock_repo2.repo_id = "username/repo-without-revision"
+
+        mock_cache_info.repos = [mock_repo1, mock_repo2]
+        mock_scan_cache_dir.return_value = mock_cache_info
+
+        # Mock _get_latest_revision to return valid revision for first repo, None for second
+        def mock_revision_side_effect(repo):
+            if repo.repo_id == "username/repo-with-revision":
+                mock_revision = Mock()
+                mock_revision.commit_hash = "abc123"
+                mock_revision.snapshot_path = Path("/fake/path")
+                mock_file_info = Mock()
+                mock_file_info.file_name = "operations.yaml"
+                mock_revision.files = [mock_file_info]
+                return mock_revision
+            else:
+                return None
+
+        mock_get_latest_revision.side_effect = mock_revision_side_effect
+
+        collections = self.manager.get_cached_collections()
+
+        # Should only get collections from repos with valid revisions
+        assert len(collections) == 1
+        assert collections[0].repo_id == "username/repo-with-revision"
+
+        # Verify _get_latest_revision was called for both repos
+        assert mock_get_latest_revision.call_count == 2
+
     def test_has_op_definitions_true(self):
         """Test _has_op_definitions returns True for directories with YAML."""
         # Create fake repo structure with YAML files
@@ -479,3 +559,215 @@ class TestDynamicModuleUtils:
                     op_repo_name_or_path="test_user.test_repo",
                     module_file="nonexistent.py"
                 )
+
+    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    def test_upload_ops_existing_repo_with_clean_existing(self, mock_hf_api_class):
+        """Test upload to existing repository with clean_existing=True."""
+        # Create test files
+        test_dir = self.temp_dir / "test_ops"
+        test_dir.mkdir()
+        (test_dir / "test_ops.yaml").write_text("test: {}")
+
+        # Mock API for existing repository
+        mock_api = Mock()
+        mock_repo_info = Mock()
+        mock_repo_info.sha = "initial_sha"
+        mock_api.repo_info.return_value = mock_repo_info
+
+        # Mock existing files that match delete patterns
+        mock_api.list_repo_files.return_value = ["old_ops.py", "config.yaml", "README.md"]
+
+        mock_commit_info = Mock()
+        mock_commit_info.oid = "new_sha"
+        mock_api.upload_folder.return_value = mock_commit_info
+        mock_hf_api_class.return_value = mock_api
+
+        manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
+
+        with patch('interpretune.analysis.ops.hub_manager.rank_zero_warn') as mock_warn, \
+             patch('interpretune.analysis.ops.hub_manager.rank_zero_info') as mock_info, \
+             patch('interpretune.analysis.ops.hub_manager.rank_zero_debug') as mock_debug:
+
+            commit_sha = manager.upload_ops(test_dir, "username/test-ops", clean_existing=True)
+
+            assert commit_sha == "new_sha"
+            # Verify repository exists check was logged
+            mock_debug.assert_any_call("Repository username/test-ops already exists")
+            # Verify warning about deleted files
+            mock_warn.assert_called_once()
+            warning_call = mock_warn.call_args[0][0]
+            assert "clean_existing=True removed 2 existing files" in warning_call
+            assert "old_ops.py" in warning_call or "config.yaml" in warning_call
+            # Verify success logging
+            mock_info.assert_any_call("Successfully uploaded to username/test-ops, previous sha: initial_sha, " \
+            "new sha: new_sha")
+
+    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    def test_upload_ops_existing_repo_clean_existing_custom_patterns(self, mock_hf_api_class):
+        """Test upload with custom delete patterns."""
+        # Create test files
+        test_dir = self.temp_dir / "test_ops"
+        test_dir.mkdir()
+        (test_dir / "test_ops.yaml").write_text("test: {}")
+
+        # Mock API for existing repository
+        mock_api = Mock()
+        mock_repo_info = Mock()
+        mock_repo_info.sha = "initial_sha"
+        mock_api.repo_info.return_value = mock_repo_info
+
+        # Mock existing files
+        mock_api.list_repo_files.return_value = ["old_ops.py", "config.yaml", "data.txt", "README.md"]
+
+        mock_commit_info = Mock()
+        mock_commit_info.oid = "new_sha"
+        mock_api.upload_folder.return_value = mock_commit_info
+        mock_hf_api_class.return_value = mock_api
+
+        manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
+
+        with patch('interpretune.analysis.ops.hub_manager.rank_zero_warn') as mock_warn:
+            commit_sha = manager.upload_ops(
+                test_dir,
+                "username/test-ops",
+                clean_existing=True,
+                delete_patterns=["*.txt"]
+            )
+
+            assert commit_sha == "new_sha"
+            # Should only warn about .txt files being deleted
+            mock_warn.assert_called_once()
+            warning_call = mock_warn.call_args[0][0]
+            assert "clean_existing=True removed 1 existing files" in warning_call
+            assert "data.txt" in warning_call
+
+    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    def test_upload_ops_new_repo_clean_existing_with_patterns(self, mock_hf_api_class):
+        """Test upload to new repository with clean_existing and custom patterns."""
+        # Create test files
+        test_dir = self.temp_dir / "test_ops"
+        test_dir.mkdir()
+        (test_dir / "test_ops.yaml").write_text("test: {}")
+
+        # Mock API for new repository
+        mock_api = Mock()
+        mock_api.repo_info.side_effect = RepositoryNotFoundError("Not found")
+
+        mock_commit_info = Mock()
+        mock_commit_info.oid = "abc123"
+        mock_api.upload_folder.return_value = mock_commit_info
+        mock_hf_api_class.return_value = mock_api
+
+        manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
+
+        commit_sha = manager.upload_ops(
+            test_dir,
+            "username/test-ops",
+            clean_existing=True,
+            delete_patterns=["*.old"]
+        )
+
+        assert commit_sha == "abc123"
+        # Verify upload_folder was called with custom delete patterns
+        upload_call = mock_api.upload_folder.call_args
+        assert upload_call[1]['delete_patterns'] == ["*.old"]
+
+    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    def test_upload_ops_existing_repo_list_files_error(self, mock_hf_api_class):
+        """Test upload when listing existing files fails."""
+        # Create test files
+        test_dir = self.temp_dir / "test_ops"
+        test_dir.mkdir()
+        (test_dir / "test_ops.yaml").write_text("test: {}")
+
+        # Mock API for existing repository
+        mock_api = Mock()
+        mock_repo_info = Mock()
+        mock_repo_info.sha = "initial_sha"
+        mock_api.repo_info.return_value = mock_repo_info
+
+        # Mock list_repo_files to raise an exception
+        mock_api.list_repo_files.side_effect = Exception("API Error")
+
+        mock_commit_info = Mock()
+        mock_commit_info.oid = "new_sha"
+        mock_api.upload_folder.return_value = mock_commit_info
+        mock_hf_api_class.return_value = mock_api
+
+        manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
+
+        # Should not raise exception despite list_repo_files error
+        commit_sha = manager.upload_ops(test_dir, "username/test-ops", clean_existing=True)
+        assert commit_sha == "new_sha"
+
+    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    def test_upload_ops_no_commit_issued(self, mock_hf_api_class):
+        """Test upload when no actual commit is made (same SHA)."""
+        # Create test files
+        test_dir = self.temp_dir / "test_ops"
+        test_dir.mkdir()
+        (test_dir / "test_ops.yaml").write_text("test: {}")
+
+        # Mock API for existing repository
+        mock_api = Mock()
+        mock_repo_info = Mock()
+        mock_repo_info.sha = "same_sha"
+        mock_api.repo_info.return_value = mock_repo_info
+
+        mock_api.list_repo_files.return_value = ["old_ops.py"]
+
+        # Return same SHA (no changes)
+        mock_commit_info = Mock()
+        mock_commit_info.oid = "same_sha"
+        mock_api.upload_folder.return_value = mock_commit_info
+        mock_hf_api_class.return_value = mock_api
+
+        manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
+
+        with patch('interpretune.analysis.ops.hub_manager.rank_zero_warn') as mock_warn, \
+             patch('interpretune.analysis.ops.hub_manager.rank_zero_info') as mock_info:
+
+            commit_sha = manager.upload_ops(test_dir, "username/test-ops", clean_existing=True)
+
+            assert commit_sha == "same_sha"
+            # No warning should be issued since no commit was made
+            mock_warn.assert_not_called()
+            # No success info should be logged since no commit was made
+            success_calls = [call for call in mock_info.call_args_list
+                           if "Successfully uploaded" in str(call)]
+            assert len(success_calls) == 0
+
+    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    def test_upload_ops_many_files_deleted_truncation(self, mock_hf_api_class):
+        """Test warning message truncation when many files are deleted."""
+        # Create test files
+        test_dir = self.temp_dir / "test_ops"
+        test_dir.mkdir()
+        (test_dir / "test_ops.yaml").write_text("test: {}")
+
+        # Mock API for existing repository
+        mock_api = Mock()
+        mock_repo_info = Mock()
+        mock_repo_info.sha = "initial_sha"
+        mock_api.repo_info.return_value = mock_repo_info
+
+        # Mock many existing files that match delete patterns
+        many_files = [f"file_{i}.py" for i in range(15)]
+        mock_api.list_repo_files.return_value = many_files
+
+        mock_commit_info = Mock()
+        mock_commit_info.oid = "new_sha"
+        mock_api.upload_folder.return_value = mock_commit_info
+        mock_hf_api_class.return_value = mock_api
+
+        manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
+
+        with patch('interpretune.analysis.ops.hub_manager.rank_zero_warn') as mock_warn:
+            commit_sha = manager.upload_ops(test_dir, "username/test-ops", clean_existing=True)
+
+            assert commit_sha == "new_sha"
+            # Verify warning includes truncation indicator
+            mock_warn.assert_called_once()
+            warning_call = mock_warn.call_args[0][0]
+            assert "clean_existing=True removed 15 existing files" in warning_call
+            assert "..." in warning_call  # Truncation indicator
