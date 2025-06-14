@@ -9,9 +9,11 @@ from dataclasses import dataclass, field
 
 from huggingface_hub import scan_cache_dir
 from huggingface_hub.utils import CachedRepoInfo, CachedRevisionInfo
+from transformers.dynamic_module_utils import resolve_trust_remote_code
 
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 from interpretune.analysis.ops.base import OpSchema, ColCfg
+from interpretune.analysis import IT_TRUST_REMOTE_CODE
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,10 @@ def _get_latest_revision(repo: CachedRepoInfo) -> Optional[CachedRevisionInfo]:
 class OpDefinitionsCacheManager:
     """Manages caching of compiled operation definitions."""
 
+    _it_trust_remote_code_warning = ("The environmental variable IT_TRUST_REMOTE_CODE is not currently set. In order "
+    "to load analysis operations from previously downloaded op collection modules without being re-prompted repository "
+    "by repository, you can set the environmental variable IT_TRUST_REMOTE_CODE to ('1', 'yes' or 'true')")
+
     def __init__(self, cache_dir: Path):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -105,6 +111,9 @@ class OpDefinitionsCacheManager:
     def add_hub_yaml_files(self) -> None:
         """Add hub YAML files to monitoring."""
         try:
+            if IT_TRUST_REMOTE_CODE is False:
+                rank_zero_warn("Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`.")
+                return
             hub_yaml_files = self.discover_hub_yaml_files()
             for yaml_file in hub_yaml_files:
                 self.add_yaml_file(yaml_file)
@@ -124,35 +133,57 @@ class OpDefinitionsCacheManager:
         from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
         yaml_files = []
 
+        # we can short-circuit if IT_TRUST_REMOTE_CODE is explicitly set to False
+        if IT_TRUST_REMOTE_CODE is False:
+            # If IT_TRUST_REMOTE_CODE is explicitly set to False, we skip loading ops from hub repositories
+            rank_zero_warn("Skipping loading ops from hub cache due to IT_TRUST_REMOTE_CODE being `False`.")
+            return yaml_files
+
         if not IT_ANALYSIS_HUB_CACHE.exists():
             return yaml_files
 
-        # Use HuggingFace cache manager
-        if scan_cache_dir is not None:
-            try:
-                cache_info = scan_cache_dir(IT_ANALYSIS_HUB_CACHE)
+        try:
+            # Use HuggingFace cache manager
+            cache_info = scan_cache_dir(IT_ANALYSIS_HUB_CACHE)
 
-                for repo in cache_info.repos:
-                    # Only consider model repositories
-                    if repo.repo_type != "model":
-                        continue
+            if len(cache_info.repos) > 0 and IT_TRUST_REMOTE_CODE is None:
+                rank_zero_warn(OpDefinitionsCacheManager._it_trust_remote_code_warning)
 
-                    # Find the latest revision for this repo
-                    latest_revision = _get_latest_revision(repo)
-                    if latest_revision is None:
-                        continue
+            # Sort repos by repo_id for deterministic ordering
+            sorted_repos = sorted(cache_info.repos, key=lambda repo: repo.repo_id)
 
-                    # Collect YAML files from the latest revision only
-                    for file_info in latest_revision.files:
-                        if file_info.file_name.endswith(('.yaml', '.yml')):
-                            yaml_files.append(file_info.file_path)
+            for repo in sorted_repos:
+                trust_remote_code = IT_TRUST_REMOTE_CODE or resolve_trust_remote_code(
+                    IT_TRUST_REMOTE_CODE, repo.repo_id, False, True)
+                if not trust_remote_code:
+                    rank_zero_warn(f"Skipping loading ops from repository {repo.repo_id} due to trust_remote_code "
+                                    "being `False`.")
+                    continue
+                # Only consider model repositories
+                if repo.repo_type != "model":
+                    continue
 
-            except Exception as e:
-                # Fallback to manual discovery if cache scanning fails
-                rank_zero_warn(f"Hub cache scanning for current IT_ANALYSIS_HUB_CACHE ({IT_ANALYSIS_HUB_CACHE}) "
-                               f"failed with: {e}")
+                # Find the latest revision for this repo (preferring 'main' ref)
+                latest_revision = _get_latest_revision(repo)
+                if latest_revision is None:
+                    continue
 
-        return yaml_files
+                # Check for YAML files in this revision
+                for file_info in latest_revision.files:
+                    if file_info.file_name.endswith(('.yaml', '.yml')):
+                        # use file_path if available, otherwise construct path
+                        if hasattr(file_info, 'file_path') and file_info.file_path is not None:
+                            yaml_path = Path(file_info.file_path)
+                        else:
+                            yaml_path = latest_revision.snapshot_path / file_info.file_name
+
+                        if yaml_path.exists():
+                            yaml_files.append(yaml_path)
+
+        except Exception as e:
+            rank_zero_warn(f"Failed to discover hub YAML files: {e}")
+
+        return sorted(yaml_files)  # Sort for deterministic results
 
     def _parse_hub_file_path(self, yaml_file: Path) -> tuple[bool, str]:
         """Parse a file path to determine if it's a hub ops file and extract namespace.

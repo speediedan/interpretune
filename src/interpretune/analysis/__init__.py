@@ -13,6 +13,10 @@ IT_MODULES_CACHE = os.getenv("IT_MODULES_CACHE", os.path.join(IT_ANALYSIS_CACHE,
 IT_DYNAMIC_MODULE_NAME = "interpretune_modules"
 
 # Hub cache configuration
+IT_TRUST_REMOTE_CODE_ENV = os.getenv("IT_TRUST_REMOTE_CODE", "true")  # TODO: make this None by default before release
+IT_TRUST_REMOTE_CODE = IT_TRUST_REMOTE_CODE_ENV.lower() in ("true", "1", "yes") \
+    if IT_TRUST_REMOTE_CODE_ENV is not None else None
+
 IT_ANALYSIS_HUB_CACHE_DIR_NAME = "interpretune_ops"
 DEFAULT_IT_ANALYSIS_HUB_CACHE = Path(os.path.join(HF_CACHE_HOME, "hub")) / IT_ANALYSIS_HUB_CACHE_DIR_NAME
 IT_ANALYSIS_HUB_CACHE = Path(os.getenv("IT_ANALYSIS_HUB_CACHE", DEFAULT_IT_ANALYSIS_HUB_CACHE))

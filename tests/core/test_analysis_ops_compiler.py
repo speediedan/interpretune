@@ -1376,7 +1376,8 @@ class TestCacheManagerHubFunctionality:
         # Valid repository
         valid_repo = hub_cache / "models--user--valid" / "snapshots" / "abc"
         valid_repo.mkdir(parents=True)
-        (valid_repo / "ops.yaml").write_text("valid_op: {}")
+        ops_yaml_file = valid_repo / "ops.yaml"
+        ops_yaml_file.write_text("valid_op: {}")
 
         # Invalid repository names (should be ignored)
         invalid_repos = [
@@ -1396,13 +1397,15 @@ class TestCacheManagerHubFunctionality:
         # Create mock cached repo info for valid repo only
         mock_file_info = Mock()
         mock_file_info.file_name = "ops.yaml"
-        mock_file_info.file_path = valid_repo / "ops.yaml"
+        mock_file_info.file_path = ops_yaml_file  # Ensure file_path points to actual file
 
         mock_revision = Mock(spec=CachedRevisionInfo)
         mock_revision.files = [mock_file_info]
+        mock_revision.snapshot_path = valid_repo  # Add snapshot_path for fallback
 
         mock_repo = Mock(spec=CachedRepoInfo)
         mock_repo.repo_type = "model"
+        mock_repo.repo_id = "user/valid"  # Add repo_id for sorting
         mock_repo.revisions = [mock_revision]
         mock_repo.refs = {"main": mock_revision}
 
@@ -1415,7 +1418,7 @@ class TestCacheManagerHubFunctionality:
 
             # Should only find the valid repository's YAML file
             assert len(discovered_files) == 1
-            assert valid_repo / "ops.yaml" in discovered_files
+            assert discovered_files[0] == ops_yaml_file
 
     def test_discover_hub_yaml_files_nested_structure(self, tmp_path):
         """Test hub YAML discovery with complex nested structure."""
@@ -1439,7 +1442,8 @@ class TestCacheManagerHubFunctionality:
 
         snapshot2 = snapshots_dir / "snapshot2"
         snapshot2.mkdir(parents=True)
-        (snapshot2 / "operations.yaml").write_text("op3: {}")
+        operations_yaml_file = snapshot2 / "operations.yaml"
+        operations_yaml_file.write_text("op3: {}")
 
         # Mock scan_cache_dir to return only the latest revision (snapshot2)
         from huggingface_hub.utils import CachedRepoInfo, CachedRevisionInfo
@@ -1448,18 +1452,21 @@ class TestCacheManagerHubFunctionality:
         # Create mock file info for the latest revision only
         mock_file_info = Mock()
         mock_file_info.file_name = "operations.yaml"
-        mock_file_info.file_path = snapshot2 / "operations.yaml"
+        mock_file_info.file_path = operations_yaml_file  # Ensure file_path points to actual file
 
         mock_revision = Mock(spec=CachedRevisionInfo)
         mock_revision.files = [mock_file_info]
+        mock_revision.snapshot_path = snapshot2  # Add snapshot_path for fallback
         mock_revision.last_modified = 1000  # Latest
 
         # Create older revision
         mock_old_revision = Mock(spec=CachedRevisionInfo)
         mock_old_revision.last_modified = 500  # Older
+        mock_old_revision.files = []  # No files to ensure it's skipped
 
         mock_repo = Mock(spec=CachedRepoInfo)
         mock_repo.repo_type = "model"
+        mock_repo.repo_id = "testuser/complex"  # Add repo_id for sorting
         mock_repo.revisions = [mock_old_revision, mock_revision]  # Multiple revisions
         mock_repo.refs = {"main": mock_revision}  # Main points to latest
 
@@ -1472,6 +1479,7 @@ class TestCacheManagerHubFunctionality:
 
             # Should only find YAML files from the latest revision
             assert len(discovered_files) == 1
+            assert discovered_files[0] == operations_yaml_file
             assert snapshot2 / "operations.yaml" in discovered_files
 
     def test_get_latest_revision_empty_revisions(self):

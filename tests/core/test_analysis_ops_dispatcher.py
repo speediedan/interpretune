@@ -1197,14 +1197,17 @@ test_op:
         mock_function = MagicMock()
         mock_get_function.return_value = mock_function
 
-        # Execute
-        result = dispatcher._import_hub_callable(op_name, op_def)
+        custom_cache_path = Path("/tmp/custom_cache_path")
+        with patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_HUB_CACHE', custom_cache_path):
+            # Execute
+            result = dispatcher._import_hub_callable(op_name, op_def)
 
         # Verify
         assert result == mock_function
         mock_get_function.assert_called_once_with(
             function_reference="module.submodule.function_name",
-            op_repo_name_or_path="user.repo"
+            op_repo_name_or_path="user.repo",
+            cache_dir=custom_cache_path,
         )
 
     @patch("interpretune.analysis.ops.dispatcher.rank_zero_debug")

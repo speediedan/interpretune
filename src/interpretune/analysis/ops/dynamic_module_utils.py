@@ -18,7 +18,6 @@ from transformers.dynamic_module_utils import get_relative_import_files, check_i
 from transformers.utils import cached_file, extract_commit_hash, is_offline_mode, logging
 
 from interpretune.analysis import IT_MODULES_CACHE, IT_DYNAMIC_MODULE_NAME
-from interpretune.analysis.ops.hub_manager import HubAnalysisOpManager
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 
 # Track paths we've added to sys.path to avoid duplicates
@@ -27,6 +26,11 @@ _added_op_paths: Set[str] = set()
 logger = logging.get_logger(__name__)
 _IT_REMOTE_CODE_LOCK = threading.Lock()
 
+# Note: This module is initially a customization of a subset of functions from HuggingFace Transformers
+# dynamic_module_utils.py (at this sha https://bit.ly/orig_transformers_dyn_mod_utils). In the future, it is hoped we
+# can dynamically create patched versions of functions like get_cached_module_file and create_dynamic_module with our
+# relevant env var patches to avoid this substantial HF code duplication/maintenance (or even convince HF to refactor
+# these functions to support the custom patterns we require).
 
 def init_it_modules() -> None:
     """Creates the cache directory for interpretune modules with an init, and adds it to the Python path."""
@@ -34,7 +38,6 @@ def init_it_modules() -> None:
     if IT_MODULES_CACHE in sys.path:
         return
 
-    #sys.path.append(IT_MODULES_CACHE)
     ensure_op_paths_in_syspath([IT_MODULES_CACHE])
     os.makedirs(IT_MODULES_CACHE, exist_ok=True)
     init_path = Path(IT_MODULES_CACHE) / "__init__.py"
@@ -178,68 +181,36 @@ def get_cached_module_file_it(
     # Download and cache module_file from the repo `op_repo_name_or_path` or grab it if it's a local file.
     op_repo_name_or_path = str(op_repo_name_or_path)
     is_local = os.path.isdir(op_repo_name_or_path)
-
-    new_files = []
     if is_local:
         submodule = os.path.basename(op_repo_name_or_path)
-        resolved_module_file = os.path.join(op_repo_name_or_path, module_file)
-        if not os.path.exists(resolved_module_file):
-            return None
     else:
-        hub_manager = HubAnalysisOpManager(cache_dir=cache_dir, token=token)
         # Replace '.' with '/' for repo names to support HuggingFace repo conventions
         op_repo_name_or_path = op_repo_name_or_path.replace(".", "/")
         submodule = op_repo_name_or_path.replace("/", os.path.sep)
-        cached_module = try_to_load_from_cache(op_repo_name_or_path, module_file, cache_dir=hub_manager.cache_dir,
+        cached_module = try_to_load_from_cache(op_repo_name_or_path, module_file, cache_dir=cache_dir,
                                                revision=_commit_hash, repo_type=repo_type)
-        # new_files = []
-        try:
-            # Load from URL or cache if already cached
-            resolved_module_file = cached_file(
-                op_repo_name_or_path,
-                module_file,
-                cache_dir=hub_manager.cache_dir,
-                force_download=force_download,
-                proxies=proxies,
-                resume_download=resume_download,
-                local_files_only=local_files_only,
-                token=token,
-                revision=revision,
-                repo_type=repo_type,
-                _commit_hash=_commit_hash,
-            )
-            if not is_local and cached_module != resolved_module_file:
-                new_files.append(module_file)
-            # For hub repos, use existing hub infrastructure
-            # Download the repo using existing hub manager
-            # collection = hub_manager.download_ops(
-            #     op_repo_name_or_path,
-            #     revision=revision,
-            #     force_download=force_download
-            # )
-            # Use the hub cache path as the source
-            #hub_cache_path = collection.local_path
-            #submodule = op_repo_name_or_path.replace("/", os.path.sep)
-        except Exception as e:
-            logger.error(f"Could not download operations repo {op_repo_name_or_path}: {e}")
-            raise
-
-    # new_files = []
-    # try:
-    #     if is_local:
-    #         resolved_module_file = os.path.join(op_repo_name_or_path, module_file)
-    #         if not os.path.exists(resolved_module_file):
-    #             raise OSError(f"Could not locate the {module_file} inside {op_repo_name_or_path}.")
-    #     else:
-    #         # For hub repos, look in the downloaded hub cache
-    #         resolved_module_file = hub_cache_path / module_file
-    #         if not resolved_module_file.exists():
-    #             raise OSError(f"Could not locate the {module_file} inside {op_repo_name_or_path}.")
-    #         resolved_module_file = str(resolved_module_file)
-
-    # except OSError:
-    #     logger.info(f"Could not locate the {module_file} inside {op_repo_name_or_path}.")
-    #     raise
+    new_files = []
+    try:
+        # Load from URL or cache if already cached
+        resolved_module_file = cached_file(
+            op_repo_name_or_path,
+            module_file,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            proxies=proxies,
+            resume_download=resume_download,
+            local_files_only=local_files_only,
+            token=token,
+            revision=revision,
+            repo_type=repo_type,
+            _commit_hash=_commit_hash,
+        )
+        if not is_local and cached_module != resolved_module_file:
+            new_files.append(module_file)
+    except Exception as e:
+        logger.error(f"Could not locate or download module file `{module_file}` using the provided repo"
+                     f" {op_repo_name_or_path}: {e}")
+        raise
 
     # Check we have all the requirements in our environment
     modules_needed = check_imports(resolved_module_file)
@@ -248,8 +219,7 @@ def get_cached_module_file_it(
     full_submodule = IT_DYNAMIC_MODULE_NAME + os.path.sep + submodule
     create_dynamic_module_it(full_submodule)
     submodule_path = Path(IT_MODULES_CACHE) / full_submodule
-
-    if is_local or submodule == os.path.basename(op_repo_name_or_path):
+    if submodule == os.path.basename(op_repo_name_or_path):
         # We copy local files to avoid putting too many folders in sys.path
         if not (submodule_path / module_file).exists() or not filecmp.cmp(
             resolved_module_file, str(submodule_path / module_file)
@@ -258,22 +228,18 @@ def get_cached_module_file_it(
             importlib.invalidate_caches()
         for module_needed in modules_needed:
             module_needed = f"{module_needed}.py"
-            if is_local:
-                module_needed_file = os.path.join(op_repo_name_or_path, module_needed)
-            else:
-                hub_cache_path = hub_manager.cache_dir / op_repo_name_or_path
-                module_needed_file = hub_cache_path / module_needed
-                module_needed_file = str(module_needed_file)
+            module_needed_file = os.path.join(op_repo_name_or_path, module_needed)
             if not (submodule_path / module_needed).exists() or not filecmp.cmp(
                 module_needed_file, str(submodule_path / module_needed)
             ):
                 shutil.copy(module_needed_file, submodule_path / module_needed)
                 importlib.invalidate_caches()
     else:
-        # For remote repos, handle versioning with commit hash
-        if not is_local:
-            commit_hash = extract_commit_hash(resolved_module_file, _commit_hash)
-        else:
+        commit_hash = extract_commit_hash(resolved_module_file, _commit_hash)
+
+        # TODO: might be able to remove this fallback
+        if commit_hash is None:
+            # If we cannot extract the commit hash, we assume it's a local module
             commit_hash = "local"
 
         # The module file will end up being placed in a subfolder with the git hash of the repo
@@ -288,13 +254,18 @@ def get_cached_module_file_it(
         # Make sure we also have every file with relative imports
         for module_needed in modules_needed:
             if not (submodule_path / f"{module_needed}.py").exists():
-                if is_local:
-                    needed_path = os.path.join(op_repo_name_or_path, f"{module_needed}.py")
-                else:
-                    needed_path = hub_cache_path / f"{module_needed}.py"
-                    needed_path = str(needed_path)
-                shutil.copy(needed_path, submodule_path / f"{module_needed}.py")
-                importlib.invalidate_caches()
+                get_cached_module_file_it(
+                    op_repo_name_or_path,
+                    f"{module_needed}.py",
+                    cache_dir=cache_dir,
+                    force_download=force_download,
+                    resume_download=resume_download,
+                    proxies=proxies,
+                    token=token,
+                    revision=revision,
+                    local_files_only=local_files_only,
+                    _commit_hash=commit_hash,
+                )
                 new_files.append(f"{module_needed}.py")
 
     if len(new_files) > 0 and revision is None:
@@ -306,7 +277,7 @@ def get_cached_module_file_it(
             f"To avoid downloading new versions of the code file, you can pin a revision."
         )
 
-    return str(submodule_path / module_file)
+    return os.path.join(full_submodule, module_file)
 
 
 def get_function_from_dynamic_module(
@@ -321,7 +292,6 @@ def get_function_from_dynamic_module(
     local_files_only: bool = False,
     repo_type: Optional[str] = None,
     code_revision: Optional[str] = None,
-    trust_remote_code: Optional[bool] = None,
     **kwargs,
 ) -> Callable:
     """Extracts a function from a module file, present in the local folder or repository of an operations repo.
@@ -364,8 +334,6 @@ def get_function_from_dynamic_module(
         code_revision (`str`, *optional*, defaults to `"main"`):
             The specific revision to use for the code on the Hub, if the code lives in a different repository than the
             rest of the operations.
-        trust_remote_code (`bool`, *optional*):
-            Whether or not to allow for custom code defined on the Hub in the operations repository.
 
     <Tip>
 

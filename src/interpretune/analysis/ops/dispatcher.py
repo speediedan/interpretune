@@ -10,7 +10,7 @@ import yaml
 import torch
 from transformers import BatchEncoding
 
-from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS
+from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS, IT_ANALYSIS_HUB_CACHE
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, ColCfg
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
@@ -465,7 +465,8 @@ class AnalysisOpDispatcher:
 
         implementation = get_function_from_dynamic_module(
             function_reference=function_reference,
-            op_repo_name_or_path=repo_name
+            op_repo_name_or_path=repo_name,
+            cache_dir=IT_ANALYSIS_HUB_CACHE,
         )
         rank_zero_debug(f"Successfully loaded dynamic operation: {op_name}")
         return implementation
