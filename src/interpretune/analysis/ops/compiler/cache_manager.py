@@ -87,6 +87,7 @@ class OpDefinitionsCacheManager:
     _it_trust_remote_code_warning = ("The environmental variable IT_TRUST_REMOTE_CODE is not currently set. In order "
     "to load analysis operations from previously downloaded op collection modules without being re-prompted repository "
     "by repository, you can set the environmental variable IT_TRUST_REMOTE_CODE to ('1', 'yes' or 'true')")
+    _it_trust_false_skipping = "Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`."
 
     def __init__(self, cache_dir: Path):
         self.cache_dir = Path(cache_dir)
@@ -108,12 +109,13 @@ class OpDefinitionsCacheManager:
             # Skip files that don't exist anymore
             pass
 
-    def add_hub_yaml_files(self) -> None:
+    def add_hub_yaml_files(self) -> List[Optional[Path]]:
         """Add hub YAML files to monitoring."""
         try:
+            # we can short-circuit if IT_TRUST_REMOTE_CODE is explicitly set to False
             if IT_TRUST_REMOTE_CODE is False:
-                rank_zero_warn("Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`.")
-                return
+                rank_zero_warn(OpDefinitionsCacheManager._it_trust_false_skipping)
+                return []
             hub_yaml_files = self.discover_hub_yaml_files()
             for yaml_file in hub_yaml_files:
                 self.add_yaml_file(yaml_file)
@@ -133,10 +135,10 @@ class OpDefinitionsCacheManager:
         from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
         yaml_files = []
 
-        # we can short-circuit if IT_TRUST_REMOTE_CODE is explicitly set to False
+        # in case this method is called directly, short-circuit if IT_TRUST_REMOTE_CODE is explicitly set to False
         if IT_TRUST_REMOTE_CODE is False:
             # If IT_TRUST_REMOTE_CODE is explicitly set to False, we skip loading ops from hub repositories
-            rank_zero_warn("Skipping loading ops from hub cache due to IT_TRUST_REMOTE_CODE being `False`.")
+            rank_zero_warn(OpDefinitionsCacheManager._it_trust_false_skipping)
             return yaml_files
 
         if not IT_ANALYSIS_HUB_CACHE.exists():

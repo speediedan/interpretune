@@ -3,10 +3,10 @@ from __future__ import annotations
 import time
 import yaml
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, Mock
 import pytest
 
-from huggingface_hub import CachedRepoInfo
+from huggingface_hub import CachedRepoInfo, CachedRevisionInfo
 
 from interpretune.analysis.ops.compiler.cache_manager import (
     OpDefinitionsCacheManager, OpDef, YamlFileInfo
@@ -1491,6 +1491,30 @@ class TestCacheManagerHubFunctionality:
         repo = DummyRepo()
         assert _get_latest_revision(repo) is None
 
+    def test_discover_hub_yaml_files_trust_remote_code_false(self, tmp_path):
+        """Test that discover_hub_yaml_files returns early when IT_TRUST_REMOTE_CODE is False."""
+        from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
+        cache_manager = OpDefinitionsCacheManager(Path("/tmp/test_cache"))
+
+        with patch('interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE', False), \
+            pytest.warns(match="Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`"):
+
+            result = cache_manager.discover_hub_yaml_files()
+
+            assert result == []  # Early return should not return hub_yaml_files
+
+    def test_add_hub_yaml_files_trust_remote_code_false(self, tmp_path):
+        """Test that discover_hub_yaml_files returns early when IT_TRUST_REMOTE_CODE is False."""
+        from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
+        cache_manager = OpDefinitionsCacheManager(Path("/tmp/test_cache"))
+
+        with patch('interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE', False), \
+            pytest.warns(match="Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`"):
+
+            result = cache_manager.add_hub_yaml_files()
+
+            assert result == []  # Early return should not return hub_yaml_files
+
     def test_discover_hub_yaml_files_skips_non_model_repos(self, tmp_path):
         """Test that discover_hub_yaml_files skips non-model repositories."""
         cache_manager = OpDefinitionsCacheManager(tmp_path)
@@ -1511,28 +1535,212 @@ class TestCacheManagerHubFunctionality:
             assert discovered_files == []
             # The test passes because the non-model repository is skipped by the continue statement
 
-    def test_discover_hub_yaml_files_skips_repos_without_revisions(self, tmp_path):
-        """Test that discover_hub_yaml_files skips repositories where _get_latest_revision returns None."""
-        cache_manager = OpDefinitionsCacheManager(tmp_path)
-        hub_cache = tmp_path / "hub_cache"
-        hub_cache.mkdir(parents=True, exist_ok=True)
+    def test_discover_hub_yaml_files_trust_remote_code_none_with_repos(self, tmp_path):
+        """Test warning when IT_TRUST_REMOTE_CODE is None and repos exist."""
+        from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
 
-        # Create mock cache info with a model repository that has no latest revision
-        mock_repo = MagicMock(spec=CachedRepoInfo)
+        # Create hub cache with mock structure
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+
+        cache_manager = OpDefinitionsCacheManager(Path("/tmp/test_cache"))
+
+        # Mock cache_info with repos
+        mock_repo = Mock()
+        mock_repo.repo_id = "test/repo"
         mock_repo.repo_type = "model"
-        mock_repo.revisions = []  # This will cause _get_latest_revision to return None
+        mock_repo.revisions = []
         mock_repo.refs = {}
 
-        mock_cache_info = MagicMock()
+        mock_cache_info = Mock()
+        mock_cache_info.repos = [mock_repo]
+
+        with patch('interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE', None), \
+             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.resolve_trust_remote_code', return_value=False), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.rank_zero_warn') as mock_warn:
+
+            cache_manager.discover_hub_yaml_files()
+
+            # Should warn about IT_TRUST_REMOTE_CODE being None
+            mock_warn.assert_any_call(OpDefinitionsCacheManager._it_trust_remote_code_warning)
+
+    def test_discover_hub_yaml_files_skip_untrusted_repo(self, tmp_path):
+        """Test skipping repos when trust_remote_code is False."""
+        from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
+
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+
+        cache_manager = OpDefinitionsCacheManager(Path("/tmp/test_cache"))
+
+        # Mock repo that should be skipped
+        mock_repo = Mock()
+        mock_repo.repo_id = "untrusted/repo"
+        mock_repo.repo_type = "model"
+        mock_repo.revisions = []
+        mock_repo.refs = {}
+
+        mock_cache_info = Mock()
+        mock_cache_info.repos = [mock_repo]
+
+        with patch('interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE', None), \
+             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.resolve_trust_remote_code', return_value=False), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.rank_zero_warn') as mock_warn:
+
+            result = cache_manager.discover_hub_yaml_files()
+
+            # Should skip the untrusted repo and warn
+            assert result == []
+            mock_warn.assert_any_call(
+                f"Skipping loading ops from repository {mock_repo.repo_id} due to trust_remote_code being `False`."
+            )
+
+    def test_discover_hub_yaml_files_skip_non_model_repos(self, tmp_path):
+        """Test that non-model repositories are skipped."""
+        from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
+
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+
+        cache_manager = OpDefinitionsCacheManager(Path("/tmp/test_cache"))
+
+        # Mock dataset repo (should be skipped)
+        mock_dataset_repo = Mock()
+        mock_dataset_repo.repo_id = "test/dataset"
+        mock_dataset_repo.repo_type = "dataset"  # Not "model"
+
+        # Mock model repo (should be processed)
+        mock_model_repo = Mock()
+        mock_model_repo.repo_id = "test/model"
+        mock_model_repo.repo_type = "model"
+        mock_model_repo.revisions = []
+        mock_model_repo.refs = {}
+
+        mock_cache_info = Mock()
+        mock_cache_info.repos = [mock_dataset_repo, mock_model_repo]
+
+        with patch('interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE', True), \
+             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info), \
+             patch('interpretune.analysis.ops.compiler.cache_manager._get_latest_revision', return_value=None):
+
+            result = cache_manager.discover_hub_yaml_files()
+
+            # Should process only the model repo, skip dataset repo
+            assert result == []  # Empty because _get_latest_revision returns None
+
+    def test_discover_hub_yaml_files_skip_repos_without_latest_revision(self, tmp_path):
+        """Test that repos without a latest revision are skipped."""
+        from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
+
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir()
+
+        cache_manager = OpDefinitionsCacheManager(Path("/tmp/test_cache"))
+
+        # Mock repo without revisions
+        mock_repo = Mock()
+        mock_repo.repo_id = "test/empty-repo"
+        mock_repo.repo_type = "model"
+        mock_repo.revisions = []
+        mock_repo.refs = {}
+
+        mock_cache_info = Mock()
+        mock_cache_info.repos = [mock_repo]
+
+        with patch('interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE', True), \
+             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info), \
+             patch('interpretune.analysis.ops.compiler.cache_manager._get_latest_revision', return_value=None):
+
+            result = cache_manager.discover_hub_yaml_files()
+
+            # Should skip repo without latest revision
+            assert result == []
+
+    def test_discover_hub_yaml_files_fallback_path_construction(self, tmp_path):
+        """Test hub YAML discovery when file_info lacks file_path and uses snapshot_path fallback."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir(parents=True)
+
+        # Create actual YAML file in expected location
+        snapshot_dir = hub_cache / "models--testuser--repo" / "snapshots" / "abc123"
+        snapshot_dir.mkdir(parents=True)
+        yaml_file = snapshot_dir / "ops.yaml"
+        yaml_file.write_text("test_op: {}")
+
+        # Create mock file info WITHOUT file_path attribute
+        # We need to create a custom object that actually lacks the file_path attribute
+        class MockFileInfo:
+            def __init__(self, file_name):
+                self.file_name = file_name
+                # Explicitly do NOT set file_path attribute
+
+        mock_file_info = MockFileInfo("ops.yaml")
+
+        mock_revision = Mock(spec=CachedRevisionInfo)
+        mock_revision.files = [mock_file_info]
+        mock_revision.snapshot_path = snapshot_dir  # This will be used in fallback
+
+        mock_repo = Mock(spec=CachedRepoInfo)
+        mock_repo.repo_type = "model"
+        mock_repo.repo_id = "testuser/repo"
+        mock_repo.revisions = [mock_revision]
+        mock_repo.refs = {"main": mock_revision}
+
+        mock_cache_info = Mock()
         mock_cache_info.repos = [mock_repo]
 
         with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
              patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info):
-            # This should skip the repository with no revisions
             discovered_files = cache_manager.discover_hub_yaml_files()
-            assert discovered_files == []
-            # The test passes because the repository without revisions is skipped by the continue statement
 
+            # Should find the YAML file using fallback path construction
+            assert len(discovered_files) == 1
+            assert discovered_files[0] == yaml_file
+
+    def test_discover_hub_yaml_files_fallback_path_construction_file_path_none(self, tmp_path):
+        """Test hub YAML discovery when file_info.file_path is explicitly None."""
+        cache_manager = OpDefinitionsCacheManager(tmp_path)
+        hub_cache = tmp_path / "hub_cache"
+        hub_cache.mkdir(parents=True)
+
+        # Create actual YAML file in expected location
+        snapshot_dir = hub_cache / "models--testuser--repo" / "snapshots" / "abc123"
+        snapshot_dir.mkdir(parents=True)
+        yaml_file = snapshot_dir / "operations.yml"
+        yaml_file.write_text("another_op: {}")
+
+        # Create mock file info WITH file_path attribute set to None
+        mock_file_info = Mock()
+        mock_file_info.file_name = "operations.yml"
+        mock_file_info.file_path = None  # Explicitly set to None to trigger fallback
+
+        mock_revision = Mock(spec=CachedRevisionInfo)
+        mock_revision.files = [mock_file_info]
+        mock_revision.snapshot_path = snapshot_dir  # This will be used in fallback
+
+        mock_repo = Mock(spec=CachedRepoInfo)
+        mock_repo.repo_type = "model"
+        mock_repo.repo_id = "testuser/repo"
+        mock_repo.revisions = [mock_revision]
+        mock_repo.refs = {"main": mock_revision}
+
+        mock_cache_info = Mock()
+        mock_cache_info.repos = [mock_repo]
+
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
+             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info):
+            discovered_files = cache_manager.discover_hub_yaml_files()
+
+            # Should find the YAML file using fallback path construction
+            assert len(discovered_files) == 1
+            assert discovered_files[0] == yaml_file
 class TestCompileOperationCompositionSchema:
     """Test the compile_operation_composition_schema function's handling of namespaced operations."""
 

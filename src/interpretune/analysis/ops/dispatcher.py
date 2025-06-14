@@ -102,7 +102,7 @@ class AnalysisOpDispatcher:
             # Add hub operations if enabled
             if self.enable_hub_ops:
                 hub_yaml_files = self._cache_manager.add_hub_yaml_files()
-                yaml_files.extend(hub_yaml_files)
+                yaml_files.extend(hub_yaml_files or [])
 
             # Set up cache manager with discovered YAML files # TODO: might be able to remove since we already discover
             for yaml_file in yaml_files:
