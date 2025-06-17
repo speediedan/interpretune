@@ -4,7 +4,7 @@
 from typing import Callable, Optional
 import torch
 from transformers import BatchEncoding
-from interpretune.protocol import DefaultAnalysisBatchProtocol
+from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatchProtocol
 
 # Basic operations
 
@@ -276,10 +276,10 @@ Output Schema:
 
 def logit_diffs_attr_ablation(
     module,
-    analysis_batch: Optional[DefaultAnalysisBatchProtocol],
+    analysis_batch: Optional[BaseAnalysisBatchProtocol],
     batch,
     batch_idx: int
-) -> DefaultAnalysisBatchProtocol:
+) -> BaseAnalysisBatchProtocol:
     """Composition of operations:
     labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.ablation_attribution
     """
@@ -288,10 +288,10 @@ def logit_diffs_attr_ablation(
 
 def logit_diffs_attr_grad(
     module,
-    analysis_batch: Optional[DefaultAnalysisBatchProtocol],
+    analysis_batch: Optional[BaseAnalysisBatchProtocol],
     batch,
     batch_idx: int
-) -> DefaultAnalysisBatchProtocol:
+) -> BaseAnalysisBatchProtocol:
     """Composition of operations: labels_to_ids.model_gradient.gradient_attribution
     """
     ...
@@ -299,10 +299,10 @@ def logit_diffs_attr_grad(
 
 def logit_diffs_base(
     module,
-    analysis_batch: Optional[DefaultAnalysisBatchProtocol],
+    analysis_batch: Optional[BaseAnalysisBatchProtocol],
     batch,
     batch_idx: int
-) -> DefaultAnalysisBatchProtocol:
+) -> BaseAnalysisBatchProtocol:
     """Composition of operations: labels_to_ids.model_forward.logit_diffs
     """
     ...
@@ -310,10 +310,10 @@ def logit_diffs_base(
 
 def logit_diffs_sae(
     module,
-    analysis_batch: Optional[DefaultAnalysisBatchProtocol],
+    analysis_batch: Optional[BaseAnalysisBatchProtocol],
     batch,
     batch_idx: int
-) -> DefaultAnalysisBatchProtocol:
+) -> BaseAnalysisBatchProtocol:
     """Composition of operations: labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts
     """
     ...

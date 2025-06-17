@@ -31,8 +31,8 @@ from interpretune.analysis.core import (AnalysisStore, SAEAnalysisTargets, SAEAn
                                         schema_to_features, latent_metrics_scatter, _make_simple_cache_hook,
                                         resolve_names_filter)
 from interpretune.analysis.formatters import ITAnalysisFormatter
-from interpretune.protocol import (SAEFqn, DefaultAnalysisBatchProtocol, AnalysisOpProtocol, AnalysisStoreProtocol,
-                                   AnalysisCfgProtocol)
+from interpretune.protocol import (SAEFqn, DefaultAnalysisBatchProtocol, BaseAnalysisBatchProtocol, AnalysisOpProtocol,
+                                   AnalysisStoreProtocol, AnalysisCfgProtocol)
 # Register the custom formatter
 _register_formatter(ITAnalysisFormatter, "interpretune", aliases=["it", "itanalysis"])
 
@@ -74,6 +74,7 @@ __all__ = [
     # Protocol Definitions
     "SAEFqn",
     "DefaultAnalysisBatchProtocol",
+    "BaseAnalysisBatchProtocol",
     "AnalysisOpProtocol",
     "AnalysisStoreProtocol",
     "AnalysisCfgProtocol",

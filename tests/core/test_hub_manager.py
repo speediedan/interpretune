@@ -265,40 +265,6 @@ class TestHubAnalysisOpManager:
         # Verify _get_latest_revision was called for both repos
         assert mock_get_latest_revision.call_count == 2
 
-    def test_has_op_definitions_true(self):
-        """Test _has_op_definitions returns True for directories with YAML."""
-        # Create fake repo structure with YAML files
-        repo_dir = self.temp_dir / "models--username--test-ops"
-        repo_dir.mkdir(parents=True)
-        snapshots_dir = repo_dir / "snapshots"
-        snapshots_dir.mkdir()
-        snapshot_dir = snapshots_dir / "abc123"
-        snapshot_dir.mkdir()
-        (snapshot_dir / "operations.yaml").write_text("test: {}")
-
-        assert self.manager._has_op_definitions(repo_dir) is True
-
-    def test_has_op_definitions_false(self):
-        """Test _has_op_definitions returns False for directories without YAML."""
-        # Create fake repo structure without YAML files
-        repo_dir = self.temp_dir / "models--username--test-ops"
-        repo_dir.mkdir(parents=True)
-        snapshots_dir = repo_dir / "snapshots"
-        snapshots_dir.mkdir()
-        snapshot_dir = snapshots_dir / "abc123"
-        snapshot_dir.mkdir()
-        (snapshot_dir / "README.md").write_text("No ops here")
-
-        assert self.manager._has_op_definitions(repo_dir) is False
-
-    def test_has_op_definitions_no_snapshots_dir(self):
-        """Test _has_op_definitions returns False when snapshots directory doesn't exist."""
-        # Create fake repo structure without snapshots directory
-        repo_dir = self.temp_dir / "models--username--test-ops"
-        repo_dir.mkdir(parents=True)
-        # Do not create snapshots directory
-
-        assert self.manager._has_op_definitions(repo_dir) is False
 
     @patch('interpretune.analysis.ops.hub_manager.HubAnalysisOpManager.download_ops')
     @patch('interpretune.analysis.ops.hub_manager.HubAnalysisOpManager.list_available_collections')

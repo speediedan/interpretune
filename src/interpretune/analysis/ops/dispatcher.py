@@ -15,7 +15,7 @@ from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalys
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
 from interpretune.analysis.ops.dynamic_module_utils import ensure_op_paths_in_syspath, get_function_from_dynamic_module
-from interpretune.protocol import DefaultAnalysisBatchProtocol, BaseAnalysisBatchProtocol
+from interpretune.protocol import BaseAnalysisBatchProtocol
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 
 
@@ -683,7 +683,7 @@ class AnalysisOpDispatcher:
         return CompositeAnalysisOp(ops, name=name, aliases=aliases)
 
     def __call__(self, op_name: str, module: Optional[torch.nn.Module] = None,
-                 analysis_batch: Optional[DefaultAnalysisBatchProtocol] = None,
+                 analysis_batch: Optional[BaseAnalysisBatchProtocol] = None,
                  batch: Optional[BatchEncoding] = None, batch_idx: Optional[int] = None) -> BaseAnalysisBatchProtocol:
         """Call an operation by name."""
         # Support for dot-separated operation names (creating compositions on-demand)

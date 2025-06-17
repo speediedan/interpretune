@@ -19,7 +19,7 @@ os.environ["PYTORCH_NVML_BASED_CUDA_CHECK"] = "1"
 from interpretune.__about__ import __version__ as version  # noqa: E402
 from interpretune.protocol import (ITModuleProtocol, ITDataModuleProtocol, Adapter, STEP_OUTPUT,
                                    CorePhases, CoreSteps, AllPhases, AllSteps, AnalysisStoreProtocol,
-                                   DefaultAnalysisBatchProtocol, AnalysisOpProtocol)
+                                   DefaultAnalysisBatchProtocol, BaseAnalysisBatchProtocol, AnalysisOpProtocol)
 
 
 class _AnalysisImportHook(MetaPathFinder):
@@ -81,6 +81,7 @@ __all__ = [
     "AllSteps",
     "AnalysisStoreProtocol",
     "DefaultAnalysisBatchProtocol",
+    "BaseAnalysisBatchProtocol",
     "AnalysisOpProtocol",
 
     # Adapters Module

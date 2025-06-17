@@ -330,10 +330,10 @@ class AnalysisOpProtocol(Protocol):
     output_schema: dict
     input_schema: Optional[dict]
 
-    def save_batch(self, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding,
+    def save_batch(self, analysis_batch: BaseAnalysisBatchProtocol, batch: BatchEncoding,
                   tokenizer: PreTrainedTokenizerBase | None = None,
                   save_prompts: bool = False, save_tokens: bool = False,
-                  decode_kwargs: Optional[dict] = None) -> DefaultAnalysisBatchProtocol: ...
+                  decode_kwargs: Optional[dict] = None) -> BaseAnalysisBatchProtocol: ...
 
 class SAEDictProtocol(Protocol):
     """Protocol for SAE analysis dictionary operations."""
@@ -386,29 +386,6 @@ class SAEAnalysisProtocol(Protocol):
         target_layers: list[int],
         sae_hook_match_fn: Callable[[str, list[int] | None], bool]
     ) -> NamesFilter: ...
-
-    def get_latents_and_indices(
-        self,
-        batch: dict[str, Any],
-        batch_idx: int,
-        analysis_batch: DefaultAnalysisBatchProtocol | None = None,
-        cache: AnalysisStoreProtocol | None = None
-    ) -> tuple[torch.Tensor, dict[str, Any]] | None: ...
-
-    def run_with_ctx(
-        self,
-        analysis_batch: DefaultAnalysisBatchProtocol,
-        batch: dict[str, Any],
-        batch_idx: int,
-        **kwargs: Any
-    ) -> None: ...
-
-    def loss_and_logit_diffs(
-        self,
-        analysis_batch: DefaultAnalysisBatchProtocol,
-        batch: dict[str, Any],
-        batch_idx: int
-    ) -> None: ...
 
 class ActivationCacheProtocol(Protocol):
     """Core activation cache protocol."""
@@ -470,8 +447,6 @@ class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):
     loss: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
     preds: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
     label_ids: Optional[torch.Tensor]
-    # TODO: should be able to comment out this labels attribute now that we've disambiguated label_ids and orig_labels
-    labels: Optional[torch.Tensor]
     orig_labels: Optional[torch.Tensor]
     cache: Optional[ActivationCacheProtocol]
     grad_cache: Optional[ActivationCacheProtocol]

@@ -325,18 +325,3 @@ class HubAnalysisOpManager:
 
         rank_zero_debug(f"Found {len(collections)} cached hub collections")
         return collections
-
-    def _has_op_definitions(self, repo_dir: Path) -> bool:
-        """Check if a cached repository contains operation definitions."""
-        snapshots_dir = repo_dir / "snapshots"
-        if not snapshots_dir.exists():
-            return False
-
-        for snapshot_dir in snapshots_dir.iterdir():
-            if snapshot_dir.is_dir():
-                # Look for YAML files that might contain operation definitions
-                yaml_files = list(snapshot_dir.glob("*.yaml")) + list(snapshot_dir.glob("*.yml"))
-                if yaml_files:
-                    return True
-
-        return False

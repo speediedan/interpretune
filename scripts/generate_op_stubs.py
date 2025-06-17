@@ -177,8 +177,8 @@ def generate_operation_stub(op_name: str, op_def: Dict[str, Any], yaml_content: 
     except (ImportError, AttributeError) as e:
         print(f"Error generating stub for {op_name}: {e}")
         # Fallback to a basic stub
-        return (f"def {op_name}(module, analysis_batch: Optional[DefaultAnalysisBatchProtocol], batch, "
-                f"batch_idx: int) -> DefaultAnalysisBatchProtocol:\n"
+        return (f"def {op_name}(module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, "
+                f"batch_idx: int) -> BaseAnalysisBatchProtocol:\n"
                 f"    \"\"\"Operation {op_name} (import failed: {e})\"\"\"\n"
                 f"    ...\n\n")
 
@@ -192,10 +192,10 @@ def generate_composition_stub(op_name: str, op_def: Dict[str, Any]) -> str:
     signature = wrap_signature(
         op_name,
         ["module",
-         "analysis_batch: Optional[DefaultAnalysisBatchProtocol]",
+         "analysis_batch: Optional[BaseAnalysisBatchProtocol]",
          "batch",
          "batch_idx: int"],
-        "DefaultAnalysisBatchProtocol"
+        "BaseAnalysisBatchProtocol"
     )
 
     # Create docstring
@@ -226,7 +226,7 @@ def generate_stubs(yaml_path: Path, output_path: Path) -> None:
         'from typing import Any, Callable, Dict, List, Optional, Union, Tuple, Sequence, Literal',
         'import torch',
         'from transformers import BatchEncoding',
-        'from interpretune.protocol import DefaultAnalysisBatchProtocol',
+        'from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatchProtocol',
         '',
         '# Basic operations',
         ''
