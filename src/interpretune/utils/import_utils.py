@@ -7,7 +7,7 @@ import torch
 import pkg_resources
 from packaging.version import Version
 
-from interpretune.utils.exceptions import MisconfigurationException
+from interpretune.utils import MisconfigurationException
 
 
 def instantiate_class(init: Dict[str, Any],
@@ -157,3 +157,4 @@ _DOTENV_AVAILABLE = module_available("dotenv")
 _LIGHTNING_AVAILABLE = package_available("lightning")
 _FTS_AVAILABLE = module_available("finetuning_scheduler")
 _BNB_AVAILABLE = package_available("bitsandbytes")
+_SL_AVAILABLE = module_available("sae_lens")

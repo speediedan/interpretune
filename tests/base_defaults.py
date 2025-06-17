@@ -1,13 +1,16 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Callable, Any, Dict, Sequence
+from typing import List, Optional, Tuple, Callable, Any, Dict, Sequence, TYPE_CHECKING, Iterable, Union
 import pytest
 
 from interpretune.adapters import ADAPTER_REGISTRY
-from interpretune.base.config.shared import Adapter
-from interpretune.base.config.mixins import HFFromPretrainedConfig, GenerativeClassificationConfig
-from interpretune.extensions.memprofiler import MemProfilerCfg
-from interpretune.extensions.debug_generation import DebugLMConfig
+from interpretune.config import HFFromPretrainedConfig, GenerativeClassificationConfig, AutoCompConfig
+from interpretune.extensions import MemProfilerCfg, DebugLMConfig
+from interpretune.protocol import Adapter
+from interpretune.analysis import SAEAnalysisTargets
 from tests.runif import RunIf, RUNIF_ALIASES
+
+if TYPE_CHECKING:
+    from interpretune.analysis import AnalysisOp, AnalysisCfg
 
 default_test_task = "rte"
 
@@ -32,9 +35,6 @@ class BaseAugTest:
         if self.expected is None and self.result_gen is not None:
             assert callable(self.result_gen), "result_gen must be callable"
             self.expected = self.result_gen(self.alias)
-        if self.cfg is None and self.cfg_gen is not None:
-            assert callable(self.cfg_gen), "cfg_gen must be callable"
-            self.cfg = self.cfg_gen(self.alias)
         elif isinstance(self.cfg, Dict):
             self.cfg = self.cfg[self.alias]
         if self.marks or self.function_marks:
@@ -81,6 +81,7 @@ class BaseCfg:
     model_cfg: Optional[Dict] = None
     tl_cfg: Optional[Dict] = None
     sae_cfgs: Optional[Dict] = None
+    auto_comp_cfg: Optional[AutoCompConfig] = None
     add_saes_on_init: bool = False
     req_grad_mask: Optional[Tuple] = None  # used to toggle requires grad for non-fts contexts
     max_epochs: Optional[int] = 1
@@ -93,3 +94,31 @@ class BaseCfg:
     def __post_init__(self):
         self.adapter_ctx = ADAPTER_REGISTRY.canonicalize_composition(self.adapter_ctx)
         self.max_steps = self.max_steps or self.limit_train_batches
+
+@dataclass(kw_only=True)
+class AnalysisBaseCfg(BaseCfg):
+    # TODO: we may want to narrow Iterable to Sequence here
+    analysis_cfgs: Union['AnalysisCfg', 'AnalysisOp', Iterable[Union['AnalysisCfg', 'AnalysisOp']]] = None
+    limit_analysis_batches: int = 2
+    cache_dir: Optional[str] = None
+    op_output_dataset_path: Optional[str] = None
+    # Add optional sae_analysis_targets as a fallback
+    sae_analysis_targets: Optional[SAEAnalysisTargets] = None
+    # Add artifact configuration
+    artifact_cfg: Optional[Dict] = None
+    # Global override for ignore_manual setting in analysis configs
+    ignore_manual: bool = False
+
+    def __post_init__(self):
+        super().__post_init__()
+
+@dataclass(kw_only=True)
+class OpTestConfig:
+    """Configuration for operation testing."""
+    target_op: Any  # The operation to test
+    resolved_op: Optional['AnalysisOp'] = None
+    session_fixt: str = "get_it_session__sl_gpt2_analysis__setup"
+    batch_size: int = 1
+    generate_required_only: bool = True
+    override_req_cols: Optional[tuple] = None
+    deepcopy_session_fixt: bool = False

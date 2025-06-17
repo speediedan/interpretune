@@ -3,7 +3,7 @@ session_cfg:
   datamodule_cls: it_examples.experiments.rte_boolq.RTEBoolqDataModule
   module_cls: it_examples.experiments.rte_boolq.RTEBoolqModule
   datamodule_cfg:
-    class_path: interpretune.base.config.datamodule.ITDataModuleConfig
+    class_path: interpretune.config.datamodule.ITDataModuleConfig
     init_args:
       model_name_or_path: google/gemma-2-2b-it
       task_name: rte
@@ -35,7 +35,7 @@ session_cfg:
       model_cfg:
         _attn_implementation: eager
       tl_cfg:
-        class_path: interpretune.adapters.transformer_lens.ITLensFromPretrainedNoProcessingConfig
+        class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
         init_args:
           model_name: gemma-2-2b-it
           device: cuda
@@ -43,7 +43,7 @@ session_cfg:
           #default_padding_side: right  # to pad on right
           default_padding_side: left  # to pad on left
       sae_cfgs:
-        class_path: interpretune.adapters.sae_lens.SAELensFromPretrainedConfig
+        class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
         init_args:
           release: gemma-scope-2b-pt-res-canonical
           sae_id: layer_25/width_16k/canonical
@@ -54,7 +54,7 @@ session_cfg:
         init_args:
           enabled: true
           lm_generation_cfg:
-            class_path: interpretune.adapters.transformer_lens.TLensGenerationConfig
+            class_path: interpretune.config.transformer_lens.TLensGenerationConfig
             init_args:
               ###################### to pad on left
               padding_side: left
@@ -66,7 +66,7 @@ session_cfg:
               use_past_kv_cache: false  # there was a dtype issue when using cache + bfloat16
               max_new_tokens: 5
       hf_from_pretrained_cfg:
-        class_path: interpretune.base.config.module.HFFromPretrainedConfig
+        class_path: interpretune.config.module.HFFromPretrainedConfig
         init_args:
           use_model_cache: false
           model_head: transformers.Gemma2ForCausalLM

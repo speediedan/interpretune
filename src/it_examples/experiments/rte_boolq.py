@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Optional, Tuple, List, Callable
+from typing import Any, Dict, Optional, Tuple, List, Callable, Generator
 from dataclasses import dataclass, field
 from pprint import pformat
 import logging
@@ -14,16 +14,16 @@ from transformers import PreTrainedTokenizerBase
 from datasets.arrow_dataset import LazyDict
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.adapters.transformer_lens import ITLensConfig
-from interpretune.adapters.sae_lens import SAELensConfig
-from interpretune.base.config.datamodule import PromptConfig, ITDataModuleConfig
-from interpretune.base.config.module import ITConfig
-from interpretune.base.config.mixins import GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig
-from interpretune.base.components.mixins import ProfilerHooksMixin
-from interpretune.base.datamodules import ITDataModule
-from interpretune.utils.logging import rank_zero_warn
-from interpretune.utils.types import STEP_OUTPUT
-from interpretune.utils.tokenization import _sanitize_input_name
+import interpretune as it
+from interpretune import (
+    ITDataModule, MemProfilerHooks, AnalysisBatch, ITLensConfig, SAELensConfig, PromptConfig, ITDataModuleConfig,
+    ITConfig, GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig, rank_zero_warn,
+    sanitize_input_name, STEP_OUTPUT)
+# from interpretune.config import (ITLensConfig, SAELensConfig, PromptConfig, ITDataModuleConfig, ITConfig,
+#                                  GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig)
+# from interpretune.base import MemProfilerHooks, ITDataModule
+# from interpretune.utils import rank_zero_warn, sanitize_input_name
+# from interpretune.protocol import STEP_OUTPUT
 
 
 log = logging.getLogger(__name__)
@@ -141,7 +141,7 @@ class RTEBoolqDataModule(ITDataModule):
         features = tokenizer.batch_encode_plus(example_batch["sequences"], padding="longest",
                                                padding_side=tokenizer.padding_side)
         features["labels"] = example_batch["label"]  # Rename label to labels, easier to pass to model forward
-        features = _sanitize_input_name(tokenizer.model_input_names, features)
+        features = sanitize_input_name(tokenizer.model_input_names, features)
         return features
 
 class RTEBoolqSteps:
@@ -151,19 +151,8 @@ class RTEBoolqSteps:
         # when using TransformerLens, we need to manually calculate our loss from logit output
         self.loss_fn = CrossEntropyLoss()
 
-    def labels_to_ids(self, labels: List[str]) -> List[int]:
-        return torch.take(self.it_cfg.entailment_mapping_indices, labels), labels
 
-    def logits_and_labels(self, batch: BatchEncoding, batch_idx: int) -> torch.Tensor:
-        label_ids, labels = self.labels_to_ids(batch.pop("labels"))
-        logits = self(**batch)
-        # TODO: add another layer of abstraction here to handle different model output types? Tradeoffs to consider...
-        if not isinstance(logits, torch.Tensor):
-            logits = logits.logits
-            assert isinstance(logits, torch.Tensor), f"Expected logits to be a torch.Tensor but got {type(logits)}"
-        return torch.squeeze(logits[:, -1, :], dim=1), label_ids, labels
-
-    @ProfilerHooksMixin.memprofilable
+    @MemProfilerHooks.memprofilable
     def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
         # TODO: need to be explicit about the compatibility constraints/contract
         # TODO: note that this example uses generative_step_cfg and lm_head except for the test_step where we demo how
@@ -174,14 +163,14 @@ class RTEBoolqSteps:
         self.log("train_loss", loss, sync_dist=True)
         return loss
 
-    @ProfilerHooksMixin.memprofilable
+    @MemProfilerHooks.memprofilable
     def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         answer_logits, labels, orig_labels = self.logits_and_labels(batch, batch_idx)
         val_loss = self.loss_fn(answer_logits, labels)
         self.log("val_loss", val_loss, prog_bar=True, sync_dist=True)
         self.collect_answers(answer_logits, orig_labels)
 
-    @ProfilerHooksMixin.memprofilable
+    @MemProfilerHooks.memprofilable
     def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         if self.it_cfg.generative_step_cfg.enabled:
             self.generative_classification_test_step(batch, batch_idx, dataloader_idx=dataloader_idx)
@@ -204,32 +193,20 @@ class RTEBoolqSteps:
         outputs = self(**batch)
         return self.collect_answers(outputs, labels, mode='return')
 
-    def collect_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor, mode: str = 'log') -> Optional[Dict]:
-        logits = self.standardize_logits(logits)
-        per_example_answers, _ = torch.max(logits, dim=-2)
-        preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
-        metric_dict = self.metric.compute(predictions=preds, references=labels)
-        # TODO: check if this type casting is still required for lightning torchmetrics, bug should be fixed now...
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        if mode == 'log':
-            self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
-        else:
-            return metric_dict
+    def analysis_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0,
+                      analysis_batch: Optional[AnalysisBatch] = None) -> Generator[STEP_OUTPUT,None, None]:
+        """Run analysis operations on a batch and yield results."""
+        # Demo mixing model methods and native IT analysis ops
+        label_ids, orig_labels = self.labels_to_ids(batch.pop("labels"))
+        analysis_batch = AnalysisBatch(label_ids=label_ids, orig_labels=orig_labels)
+        op_kwargs = {"module": self, "batch": batch, "batch_idx": batch_idx}
+        analysis_batch = it.model_cache_forward(analysis_batch=analysis_batch, **op_kwargs)
+        analysis_batch = it.logit_diffs_cache(analysis_batch=analysis_batch, **op_kwargs)
+        analysis_batch = it.sae_correct_acts(analysis_batch=analysis_batch, **op_kwargs)
 
-    def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
-        # to support genclassif/non-genclassif configs and LM/SeqClassification heads we adhere to the following logits
-        # logical shape invariant: [batch size, positions to consider, answers to consider]
-        if isinstance(logits, tuple):
-            logits = torch.stack([out for out in logits], dim=1)
-        logits = logits.to(device=self.device)
-        if logits.ndim == 2:  # if answer logits have already been squeezed
-            logits = logits.unsqueeze(1)
-        if logits.shape[-1] != self.it_cfg.num_labels:
-            logits = torch.index_select(logits, -1, self.it_cfg.entailment_mapping_indices)
-            if not self.it_cfg.generative_step_cfg.enabled:
-                logits = logits[:, -1:, :]
-        return logits
+        # note, there is an equivalent existing composite op for the decomposed version above:
+        # analysis_batch = it.logit_diffs_sae(**op_kwargs)
+        yield from self.analysis_cfg.save_batch(analysis_batch, batch, tokenizer=self.datamodule.tokenizer)
 
 
 class RTEBoolqModuleMixin:
@@ -248,6 +225,25 @@ class RTEBoolqModuleMixin:
     def load_metric(self) -> None:
         self.metric = evaluate.load("super_glue", self.it_cfg.task_name,
                                     experiment_id=self._it_state._init_hparams['experiment_id'])
+
+    # we override the default labels_to_ids method to demo using our module-specific attributes/logic
+    def labels_to_ids(self, labels: List[str]) -> List[int]:
+        return torch.take(self.it_cfg.entailment_mapping_indices, labels), labels
+
+    # We override the default standardize_logits method to demo using custom attributes etc.
+    def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        # to support genclassif/non-genclassif configs and LM/SeqClassification heads we adhere to the following logits
+        # logical shape invariant: [batch size, positions to consider, answers to consider]
+        if isinstance(logits, tuple):
+            logits = torch.stack([out for out in logits], dim=1)
+        logits = logits.to(device=self.device)
+        if logits.ndim == 2:  # if answer logits have already been squeezed
+            logits = logits.unsqueeze(1)
+        if logits.shape[-1] != self.it_cfg.num_labels:
+            logits = torch.index_select(logits, -1, self.it_cfg.entailment_mapping_indices)
+            if not self.it_cfg.generative_step_cfg.enabled:
+                logits = logits[:, -1:, :]
+        return logits
 
     def _init_entailment_mapping(self) -> None:
         ent_cfg, tokenizer = self.it_cfg, self.datamodule.tokenizer

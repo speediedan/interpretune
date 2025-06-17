@@ -22,7 +22,7 @@ ci:
 exclude: 'tests/(ioi_parity|mech_interp_parity)/.*'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: v5.0.0
     hooks:
       - id: end-of-file-fixer
       - id: trailing-whitespace
@@ -39,12 +39,13 @@ repos:
             )$
       - id: detect-private-key
 
-  - repo: https://github.com/asottile/pyupgrade
-    rev: v3.3.1
-    hooks:
-      - id: pyupgrade
-        args: [--py37-plus]
-        name: Upgrade code
+  # temporarily disabling until the pre-commit hook allows per-line ignores to avoid certain errors with jaxtyping
+  # - repo: https://github.com/asottile/pyupgrade
+  #   rev: v3.19.1
+  #   hooks:
+  #     - id: pyupgrade
+  #       args: [--py310-plus]
+  #       name: Upgrade code
 
   - repo: https://github.com/myint/docformatter
     rev: 06907d0267368b49b9180eed423fae5697c1e909 # todo: fix for docformatter after 1.7.6+ released rather than pinning
@@ -53,22 +54,23 @@ repos:
         args: [--in-place, --wrap-summaries=115, --wrap-descriptions=120]
 
   - repo: https://github.com/asottile/yesqa
-    rev: v1.4.0
+    rev: v1.5.0
     hooks:
       - id: yesqa
         name: Unused noqa
 
-  - repo: https://github.com/executablebooks/mdformat
-    rev: 0.7.19
-    hooks:
-      - id: mdformat
-        additional_dependencies:
-          - mdformat-gfm
-          - mdformat_frontmatter
-        exclude: CHANGELOG.md
+  # disabled until python 3.13 is supported (to allow exclude option)
+  # - repo: https://github.com/executablebooks/mdformat
+  #   rev: 0.7.19
+  #   hooks:
+  #     - id: mdformat
+  #       additional_dependencies:
+  #         - mdformat-gfm
+  #         - mdformat_frontmatter
+  #       exclude: "CHANGELOG.md", "**/*.prompt.md"
 
   - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: 'v0.0.291'
+    rev: 'v0.6.9'
     hooks:
       - id: ruff
         # Respect `exclude` and `extend-exclude` settings.

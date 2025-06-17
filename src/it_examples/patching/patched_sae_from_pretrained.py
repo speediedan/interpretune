@@ -9,26 +9,28 @@ if lwt_compare_version("sae_lens", operator.ge, "4.4.1"):
     globals().update(_prepare_module_ctx('sae_lens.sae', globals()))
 
 
-    # Orig: https://github.com/jbloomAus/SAELens/blob/8b36ec374ea711765731e504d7c7dc0416f303e9/sae_lens/sae.py#L553-L639
+    # Orig: https://github.com/jbloomAus/SAELens/blob/fc322bd574bceb77a81dacc594c76eebcd79404c/sae_lens/sae.py#L567-L658
     @classmethod
     def from_pretrained(
         cls,
         release: str,
         sae_id: str,
         device: str = "cpu",
+        force_download: bool = False,
+        converter: PretrainedSaeHuggingfaceLoader | None = None,
         ############ PATCH ######################
         dtype: str | None = None,
         #########################################
-    ) -> Tuple["SAE", dict[str, Any], Optional[torch.Tensor]]:
+    ) -> tuple["SAE", dict[str, Any], torch.Tensor | None]:
         """Load a pretrained SAE from the Hugging Face model hub.
 
         Args:
             release: The release name. This will be mapped to a huggingface repo id based on the pretrained_saes.yaml
-            file.
+                file.
             id: The id of the SAE to load. This will be mapped to a path in the huggingface repo.
             device: The device to load the SAE on.
             return_sparsity_if_present: If True, will return the log sparsity tensor if it is present in the model
-            directory in the Hugging Face model hub.
+                directory in the Hugging Face model hub.
         """
 
         # get sae directory
@@ -73,24 +75,34 @@ if lwt_compare_version("sae_lens", operator.ge, "4.4.1"):
                 f"ID {sae_id} not found in release {release}. Valid IDs are {str_valid_ids}."
                 + value_suffix
             )
-        sae_info = sae_directory.get(release, None)
-        config_overrides = sae_info.config_overrides if sae_info is not None else None
+
+        #sae_info = sae_directory.get(release, None)
+        #config_overrides = sae_info.config_overrides if sae_info is not None else None
+        # conversion_loader_name = get_conversion_loader_name(sae_info)
+        # conversion_loader = NAMED_PRETRAINED_SAE_LOADERS[conversion_loader_name]
+
+        conversion_loader = (
+            converter
+            or NAMED_PRETRAINED_SAE_LOADERS[get_conversion_loader_name(release)]
+        )
+        repo_id, folder_name = get_repo_id_and_folder_name(release, sae_id)
+        config_overrides = get_config_overrides(release, sae_id)
         ############ PATCH ######################
         if dtype is not None:
-            config_overrides = config_overrides or {}
+            # config_overrides = config_overrides or {}
             config_overrides["dtype"] = dtype
         #########################################
-        conversion_loader_name = get_conversion_loader_name(sae_info)
-        conversion_loader = NAMED_PRETRAINED_SAE_LOADERS[conversion_loader_name]
+        config_overrides["device"] = device
 
         cfg_dict, state_dict, log_sparsities = conversion_loader(
-            release,
-            sae_id=sae_id,
+            repo_id=repo_id,
+            folder_name=folder_name,
             device=device,
-            force_download=False,
+            force_download=force_download,
             cfg_overrides=config_overrides,
         )
 
+        cfg_dict = handle_config_defaulting(cfg_dict)
         sae = cls(SAEConfig.from_dict(cfg_dict))
         sae.process_state_dict_for_loading(state_dict)
         sae.load_state_dict(state_dict)

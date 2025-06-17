@@ -1,8 +1,9 @@
+from __future__ import annotations
 import tempfile
 import os
 import warnings
 from datetime import datetime
-from typing import Any, Dict, List, Union, Tuple, Optional
+from typing import Any, Union, TYPE_CHECKING
 from functools import reduce, partial
 from pathlib import Path
 from copy import deepcopy
@@ -10,15 +11,15 @@ import inspect
 
 import torch
 
-from interpretune.base.config.module import ITConfig, ITState
-from interpretune.base.components.mixins import ITStateMixin
-from interpretune.base.datamodules import ITDataModule
-from interpretune.extensions.memprofiler import MemProfiler
-from interpretune.utils.logging import rank_zero_info, rank_zero_warn, collect_env_info, rank_zero_debug
-from interpretune.utils.exceptions import MisconfigurationException
-from interpretune.utils.import_utils import _resolve_torch_dtype
-from interpretune.utils.types import LRSchedulerConfig, Optimizer, Optimizable, LRScheduler
-from interpretune.utils.warnings import dummy_method_warn_fingerprint
+from interpretune.base import ITStateMixin, ITDataModule
+from interpretune.extensions import MemProfiler
+from interpretune.utils import (rank_zero_info, rank_zero_warn, rank_zero_debug, MisconfigurationException,
+                                _resolve_torch_dtype, collect_env_info, dummy_method_warn_fingerprint)
+from interpretune.protocol import LRScheduler, Optimizable, Optimizer,LRSchedulerConfig
+from interpretune.config import init_analysis_cfgs
+
+if TYPE_CHECKING:
+    from interpretune.config import ITConfig, ITState
 
 
 # TODO: add core helper log/log_dict methods for core context usage
@@ -33,9 +34,9 @@ for warnf in [f".*{dummy_method_warn_fingerprint}.*",]:
 # code to be reused for maximally flexible interactive experimentation and interleaved framework-based tuning, testing
 # and prediction/interpretation tasks.
 
-def _dummy_notify(method: str, ret_callable: bool, ret_val: Any, *args, **kwargs) -> Optional[Any]:
+def _dummy_notify(method: str, ret_callable: bool, ret_val: Any, *args, **kwargs) -> Any | None:
     rank_zero_warn(f"The `{method}` method is not defined for this module. For framework compatibility, this noop "
-                    "method will be used. This warning will only be issued once by default.")
+                  "method will be used. This warning will only be issued once by default.")
     out = lambda *args, **kwargs: ret_val if ret_callable else ret_val
     return out
 
@@ -53,7 +54,7 @@ class BaseConfigImpl:
     _it_state: ITState
 
     @staticmethod
-    def _make_config_serializable(config_to_clean: Any, target_keys: Union[str, List]) -> Dict:
+    def _make_config_serializable(config_to_clean: Any, target_keys: str | list) -> dict:
         serial_cfg = deepcopy(config_to_clean)
         if isinstance(target_keys, str):
             target_keys = [target_keys]
@@ -68,6 +69,15 @@ class BaseConfigImpl:
 
     def _init_dirs_and_hooks(self) -> None:
         self._create_experiment_dir()
+        if hasattr(self, 'analysis_run_cfg') and self.analysis_run_cfg:
+            init_analysis_cfgs(
+                module=self,
+                analysis_cfgs=self.analysis_run_cfg._processed_analysis_cfgs,
+                cache_dir=self.analysis_run_cfg.cache_dir,
+                op_output_dataset_path=self.analysis_run_cfg.op_output_dataset_path,
+                sae_analysis_targets=self.analysis_run_cfg.sae_analysis_targets,
+                ignore_manual=self.analysis_run_cfg.ignore_manual
+            )
         if self.cuda_allocator_history:
             self.memprofiler.init_cuda_snapshots_dir()
         # TODO: add save_hyperparameters/basic logging func for raw pytorch
@@ -76,7 +86,7 @@ class BaseConfigImpl:
 
     def _create_experiment_dir(self) -> None:
         # we only want to create the core experiment-specific dir for frameworks that aren't adding their own
-        if getattr(self._it_state, '_log_dir', None):
+        if getattr(self._it_state, '_log_dir', None) is not None:
             self._it_state._log_dir = self._it_state._log_dir / self._it_state._init_hparams['experiment_id']
             self._it_state._log_dir.mkdir(exist_ok=True, parents=True)
 
@@ -116,15 +126,14 @@ class PropertyDispatcher:
     # functionality can be disabled on a property basis by setting `enabled=False` at the cost of potentially reduced
     # compatbility because IT will not dispatch to the adapter's implementation of the IT-enhanced property.
     PROPERTY_COMPOSITION = {}
-
-    """property dispatcher"""
+    """Property dispatcher."""
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._cached_mro = inspect.getmro(type(self))
         self._enabled_overrides = [p for p, cfg in self.PROPERTY_COMPOSITION.items() if cfg['enabled']
                                    and cfg['target'] in self._cached_mro]
 
-    def _maybe_dispatch(self, non_dispatch_val: Optional[Any] = None) -> Optional[Any]:
+    def _maybe_dispatch(self, non_dispatch_val: Any | None = None) -> Any | None:
         """_summary_
 
         Args:
@@ -149,11 +158,11 @@ class PropertyDispatcher:
         return attr_val
 
     @property
-    def core_log_dir(self) -> Optional[str | os.PathLike]:
+    def core_log_dir(self) -> str | os.PathLike | None:
         return self._core_or_framework(c2f_map_key="_log_dir")
 
     @property
-    def datamodule(self) -> Optional[ITDataModule]:
+    def datamodule(self) -> ITDataModule | None:
         return self._core_or_framework(c2f_map_key="_datamodule")
 
     @property
@@ -165,7 +174,7 @@ class PropertyDispatcher:
         return self.it_cfg.memprofiler_cfg.enabled and self.it_cfg.memprofiler_cfg.cuda_allocator_history
 
     @property
-    def torch_dtype(self) -> Optional[Union[torch.dtype, 'str']]:
+    def torch_dtype(self) -> Union[torch.dtype, 'str'] | None:
         try:
             if dtype := getattr(self.it_cfg, "_torch_dtype", None):
                 return dtype
@@ -176,7 +185,7 @@ class PropertyDispatcher:
         return dtype
 
     @property
-    def device(self) -> Optional[torch.device]:
+    def device(self) -> torch.device | None:
         try:
             if self._it_state._device is not None:
                 # dispatch a framework's property implementation if appropriate, otherwise use `self._it_state._device`
@@ -190,13 +199,13 @@ class PropertyDispatcher:
         return device
 
     @device.setter
-    def device(self, value: Optional[str | torch.device]) -> None:
+    def device(self, value: str | torch.device | None) -> None:
         if value is not None and not isinstance(value, torch.device):
             value = torch.device(value)
         self._it_state._device = value
 
     @torch_dtype.setter
-    def torch_dtype(self, value: Optional[Union[torch.dtype, 'str']]) -> None:
+    def torch_dtype(self, value: Union[torch.dtype, 'str'] | None) -> None:
         if value is not None and not isinstance(value, torch.dtype):
             value = _resolve_torch_dtype(value)
         self.it_cfg._torch_dtype = value
@@ -208,7 +217,6 @@ class PropertyDispatcher:
             rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
 class CoreHelperAttributes:
-
     """Mixin class for adding arbitrary core helper attributes to core (non-framework adapted) IT classes."""
     def __init__(self, *args, **kwargs) -> None:
         # we need to initialize internal state before `ITStateMixin`'s __init__ is invoked so use this static method
@@ -240,15 +248,15 @@ class CoreHelperAttributes:
         return self._core_or_framework(c2f_map_key="_current_epoch")
 
     @property
-    def optimizers(self) -> Optional[str | os.PathLike]:
+    def optimizers(self) -> str | os.PathLike | None:
         return self._core_or_framework(c2f_map_key="_it_optimizers")
 
     @property
-    def lr_scheduler_configs(self) -> Optional[str | os.PathLike]:
+    def lr_scheduler_configs(self) -> str | os.PathLike | None:
         return self._core_or_framework(c2f_map_key="_it_lr_scheduler_configs")
 
     @property
-    def lr_schedulers(self) -> Union[None, List[LRScheduler], LRScheduler]:
+    def lr_schedulers(self) -> None | list[LRScheduler] | LRScheduler:
         """Returns the learning rate scheduler(s) that are being used during training. Useful for manual
         optimization.
 
@@ -259,7 +267,7 @@ class CoreHelperAttributes:
         if not self.lr_scheduler_configs:
             return None
 
-        lr_schedulers: List[LRScheduler] = [config.scheduler for config in self.lr_scheduler_configs]
+        lr_schedulers: list[LRScheduler] = [config.scheduler for config in self.lr_scheduler_configs]
         if len(lr_schedulers) == 1:
             return lr_schedulers[0]
 
@@ -289,7 +297,7 @@ class OptimizerScheduler:
     # proper initialization of these variables should be done in the child class
     _it_state: ITState
 
-    def _it_init_optimizers_and_schedulers(self, optim_conf: Union[Dict[str, Any], List, Optimizer, Tuple]) -> None:
+    def _it_init_optimizers_and_schedulers(self, optim_conf: dict[str, Any] | list | Optimizer | tuple) -> None:
 
         if optim_conf is None:
             rank_zero_info(  # TODO: maybe set a debug level instead?
@@ -302,7 +310,7 @@ class OptimizerScheduler:
         self._it_state._it_optimizers, self._it_state._it_lr_scheduler_configs = optims, lrs_configs
 
     @staticmethod
-    def _configure_schedulers_manual_opt(schedulers: list) -> List[LRSchedulerConfig]:
+    def _configure_schedulers_manual_opt(schedulers: list) -> list[LRSchedulerConfig]:
         """Convert each scheduler into `LRSchedulerConfig` structure with relevant information, when using manual
         optimization."""
         lr_scheduler_configs = []
@@ -320,8 +328,8 @@ class OptimizerScheduler:
 
     @staticmethod
     def _configure_optimizers(
-        optim_conf: Union[Dict[str, Any], List, Optimizer, Tuple]
-    ) -> Tuple[List, List]:
+        optim_conf: dict[str, Any] | list | Optimizer | tuple
+    ) -> tuple[list, list]:
         # for basic optimizer/scheduler init, the proposed IT protocol uses the convenient Lightning optimizer/scheduler
         # formats. Note we do not subject configuration to Lightning validation constraints to increase flexibility.
         optimizers, lr_schedulers = [], []
@@ -369,7 +377,6 @@ class OptimizerScheduler:
                 ' * {"optimizer": `Optimizer`, (optional) "lr_scheduler": `LRScheduler`}\n'
             )
         return optimizers, lr_schedulers
-
 
 class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler):
     ...

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import warnings
 import os
 import sys
@@ -6,7 +7,8 @@ import random
 import logging
 import weakref
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Tuple, Callable, Type, Sequence
+from typing import Any, Union, TYPE_CHECKING
+from collections.abc import Callable, Sequence
 from typing_extensions import override
 from functools import reduce
 
@@ -14,16 +16,17 @@ import torch
 from transformers import logging as transformers_logging
 from jsonargparse import ActionConfigFile, ArgumentParser, Namespace
 
-from interpretune.base.config.shared import ITSharedConfig
-from interpretune.base.datamodules import ITDataModule
-from interpretune.adapters.core import ITModule
-from interpretune.base.contract.protocol import InterpretunableType
-from interpretune.base.contract.session import ITSession, ITSessionConfig
-from interpretune.utils.basic_trainer import BasicTrainer, BasicTrainerCfg
-from interpretune.utils.logging import rank_zero_info, rank_zero_warn
-from interpretune.utils.import_utils import _DOTENV_AVAILABLE, _LIGHTNING_AVAILABLE
-from interpretune.utils.types import ArgsType
+from interpretune.config import ITSharedConfig, SessionRunnerCfg
+from interpretune.base import ITDataModule
+from interpretune.protocol import InterpretunableType
+from interpretune.session import ITSession, ITSessionConfig
 
+from interpretune.runners import SessionRunner
+from interpretune.utils import rank_zero_info, rank_zero_warn, _DOTENV_AVAILABLE, _LIGHTNING_AVAILABLE
+from interpretune.protocol import ArgsType
+
+if TYPE_CHECKING:
+    from interpretune.adapters import ITModule
 
 max_seed_value = np.iinfo(np.uint32).max
 min_seed_value = np.iinfo(np.uint32).min
@@ -62,10 +65,12 @@ class ITSessionMixin:
         parser.add_class_arguments(ITSessionConfig, "session_cfg", instantiate=True, sub_configs=True)
         self.add_base_args(parser)
 
-    def _get(self, config: Namespace, key: str, default: Optional[Any] = None) -> Any:
+    def _get(self, config: Namespace, key: str, default: Any | None = None) -> Any:
         """Utility to get a config value which might be inside a subcommand."""
         return config.get(str(getattr(self, 'subcommand', None)), config).get(key, default)
 
+# TODO: update trainer/trainer_cfg references in ITCLI to more abstract runner references when running tests wrt
+#       integrating new analysis sessionrunner
 
 class ITCLI(ITSessionMixin):
     """To maximize compatibility, the core ITCLI was originally adapted from https://bit.ly/lightning_cli."""
@@ -73,12 +78,12 @@ class ITCLI(ITSessionMixin):
         self,
         module_class: ITModule = None,
         datamodule_class: ITDataModule = None,
-        parser_kwargs: Optional[Union[Dict[str, Any], Dict[str, Dict[str, Any]]]] = None,
+        parser_kwargs: dict[str, Any] | dict[str, dict[str, Any]] | None = None,
         args: ArgsType = None,
-        seed_everything_default: Union[bool, int] = True,
-        run_command: Optional[str] = "test",
-        trainer_class: Union[Type[BasicTrainer], Callable[..., BasicTrainer]] = BasicTrainer,
-        trainer_cfg: Union[Type[BasicTrainerCfg], Dict[str, Any]] = BasicTrainerCfg,
+        seed_everything_default: bool | int = True,
+        run_command: str | None = "test",
+        runner_class: type[SessionRunner] | Callable[..., SessionRunner] = SessionRunner,
+        run_cfg: type[SessionRunnerCfg] | dict[str, Any] = SessionRunnerCfg,
     ) -> None:
         """fill in
             seed_everything_default: Number for the :func:`~interpretune.base.cli.seed_everything`
@@ -91,16 +96,16 @@ class ITCLI(ITSessionMixin):
         self.parser_kwargs = parser_kwargs or {}  # type: ignore[var-annotated]  # github.com/python/mypy/issues/6463
         self.module_class = module_class
         self.datamodule_class = datamodule_class
-        self.trainer_class = trainer_class
-        self._supported_run_commands = getattr(self.trainer_class, "supported_commands", None) or (None, "train",
+        self.runner_class = runner_class
+        self._supported_run_commands = getattr(self.runner_class, "supported_commands", None) or (None, "train",
                                                                                                    "test")
-        self.trainer_cfg = trainer_cfg
+        self.run_cfg = run_cfg
         self.setup_parser(parser_kwargs)
         self.parse_arguments(self.parser, args)
 
         self.run_command = run_command
         assert self.run_command in self._supported_run_commands, \
-              f"`{self.trainer_class}` only supports the following commands: {self._supported_run_commands}"
+              f"`{self.runner_class}` only supports the following commands: {self._supported_run_commands}"
 
         self._set_seed()
 
@@ -108,10 +113,10 @@ class ITCLI(ITSessionMixin):
         self.instantiate_classes()
 
         if self.run_command:
-            getattr(self.trainer, self.run_command)()
+            getattr(self.runner, self.run_command)()
 
     def setup_parser(
-        self, main_kwargs: Dict[str, Any]) -> None:
+        self, main_kwargs: dict[str, Any]) -> None:
         """Initialize and setup the parser, subcommands, and arguments."""
         self.parser = self.init_parser(**main_kwargs)
         self._add_arguments(self.parser)
@@ -132,7 +137,7 @@ class ITCLI(ITSessionMixin):
             rank_zero_info(f"Invalid seed found: {repr(seed_in)}, seed set to {seed}")
         return seed
 
-    def seed_everything(self, seed: Optional[int] = None, workers: bool = False) -> int:
+    def seed_everything(self, seed: int | None = None, workers: bool = False) -> int:
         r""""""
         if seed is None:
             env_seed = os.environ.get("IT_GLOBAL_SEED")
@@ -173,10 +178,10 @@ class ITCLI(ITSessionMixin):
     def add_base_args(self, parser: ArgumentParser) -> None:
         """Adds core arguments to the parser."""
         super().add_base_args(parser)
-        parser.add_class_arguments(self.trainer_class, "trainer", instantiate=True, sub_configs=True,)
-        parser.add_class_arguments(self.trainer_cfg, "trainer_cfg", instantiate=True, sub_configs=True)
-        parser.link_arguments("it_session", "trainer_cfg.it_session", apply_on="instantiate")
-        parser.link_arguments("trainer_cfg", "trainer.trainer_cfg", apply_on="instantiate")
+        parser.add_class_arguments(self.runner_class, "runner", instantiate=True, sub_configs=True,)
+        parser.add_class_arguments(self.run_cfg, "run_cfg", instantiate=True, sub_configs=True)
+        parser.link_arguments("it_session", "run_cfg.it_session", apply_on="instantiate")
+        parser.link_arguments("run_cfg", "runner.run_cfg", apply_on="instantiate")
 
     def parse_arguments(self, parser: ArgumentParser, args: ArgsType) -> None:
         """Parses command line arguments and stores it in ``self.config``."""
@@ -211,7 +216,7 @@ class ITCLI(ITSessionMixin):
         self.config_init = self.parser.instantiate_classes(self.config)
         self.datamodule = self._get(self.config_init.it_session, "datamodule")
         self.module = self._get(self.config_init.it_session, "module")
-        self.trainer =  self._get(self.config_init, "trainer")
+        self.runner = self._get(self.config_init, "runner")
 
 
 def env_setup() -> None:
@@ -226,7 +231,7 @@ def env_setup() -> None:
                   r"\n.*Unable to serialize.*\n"]:
         warnings.filterwarnings("ignore", warnf)
 
-def enumerate_config_files(folder: Union[Path, str]) -> List:
+def enumerate_config_files(folder: Path | str) -> list:
     if not isinstance(folder, Path):
         folder = Path(folder)
     files = [fp for fp in folder.glob("*.yaml") if fp.is_file()]
@@ -235,7 +240,7 @@ def enumerate_config_files(folder: Union[Path, str]) -> List:
         raise ValueError(f"Non-YAML files found in directory: {non_yaml_files}")
     return files
 
-def compose_config(config_files: Sequence[str]) -> List:
+def compose_config(config_files: Sequence[str]) -> list:
     # TODO: consider deprecating `compose_config` for simplicity and subsequently removing this path if not widely used
     args = []
     config_file_paths = []
@@ -267,12 +272,12 @@ def compose_config(config_files: Sequence[str]) -> List:
         args.extend(["--config", str(config)])
     return args
 
-def configure_cli(shared_config_dir: Union[Path, str]) -> Tuple[bool, List]:
+def configure_cli(shared_config_dir: Path | str) -> tuple[bool, list]:
     env_setup()
     shared_config_files = enumerate_config_files(shared_config_dir)
     return shared_config_files
 
-def core_cli_main(run_mode: Optional[str | bool] = None , args: ArgsType = None) -> Optional[ITCLI]:
+def core_cli_main(run_mode: str | bool | None = None , args: ArgsType = None) -> ITCLI | None:
     # note deferred resolution
     default_config_dir = os.environ.get("IT_CONFIG_DEFAULTS", IT_CONFIG_GLOBAL / "defaults" )
     default_config_files = configure_cli(default_config_dir)
@@ -293,7 +298,7 @@ def core_cli_main(run_mode: Optional[str | bool] = None , args: ArgsType = None)
 ##########################################################################
 
 if _LIGHTNING_AVAILABLE:
-    from lightning.pytorch.cli import LightningCLI, LightningArgumentParser, ArgsType
+    from lightning.pytorch.cli import LightningCLI, LightningArgumentParser
 
     class LightningCLIAdapter:
         core_to_lightning_cli_map = {"data": "it_session.datamodule", "model": "it_session.module"}
@@ -303,14 +308,14 @@ if _LIGHTNING_AVAILABLE:
             # create a convenient alias for the lightning model attribute that uses a standard `module` reference
             self.module = weakref.proxy(self.model)
 
-        def _it_session_cfg(self, config, key) -> Optional[InterpretunableType]:
+        def _it_session_cfg(self, config, key) -> InterpretunableType | None:
             try:
                 attr_val = reduce(getattr, key.split("."), config)
             except AttributeError:
                 attr_val = None
             return attr_val
 
-        def _get(self, config: Namespace, key: str, default: Optional[Any] = None) -> Any:
+        def _get(self, config: Namespace, key: str, default: Any | None = None) -> Any:
             """Utility to get a config value which might be inside a subcommand."""
             if target_key := self.core_to_lightning_cli_map.get(key, None):
                 return self._it_session_cfg(config.get(str(self.subcommand), config), target_key)
@@ -332,7 +337,7 @@ if _LIGHTNING_AVAILABLE:
             parser.set_defaults(trainer_defaults)
 
 
-    def l_cli_main(run_mode: bool = True, args: ArgsType = None) -> Optional[LightningITCLI]:
+    def l_cli_main(run_mode: bool = True, args: ArgsType = None) -> LightningITCLI | None:
         # note deferred resolution
         default_config_dir = os.environ.get("IT_CONFIG_DEFAULTS", IT_CONFIG_GLOBAL / "defaults" )
         default_config_files = configure_cli(default_config_dir)
@@ -357,8 +362,10 @@ if _LIGHTNING_AVAILABLE:
 
 else:
     l_cli_main = object
+    LightningCLIAdapter = object
+    LightningITCLI = object
 
-def _parse_run_option(lightning_cli: bool = False) -> Optional[bool | str]:
+def _parse_run_option(lightning_cli: bool = False) -> bool | str | None:
     run_mode = None
     if lightning_cli:
         sys.argv.pop(sys.argv.index("--lightning_cli"))
@@ -380,11 +387,11 @@ def _parse_run_option(lightning_cli: bool = False) -> Optional[bool | str]:
 def bootstrap_cli() -> Callable:
     # TODO: consider adding an env var option to control CLI selection
     # dispatch the relevant CLI, right now only `--lightning_cli` is supported beyond the default core CLI.
-    # TODO: note in the run_experiment.py documentation that we provide the --no_run flag to allow configuring the
+    # TODO: note in the interpretune cli documentation that we provide the --no_run flag to allow configuring the
     #       Lightning CLI to not run subcommands and instead return the cli with parsed/instantiated config.
     # TODO: for the core CLI only, we provide the --run_command flag option to to control which command to run,
     #       LightningCLI uses the normal LightningCLI format (passing the command as a separate arg without a flag,
-    #       e.g. `python run_experiment.py fit --config some_path/to/some_config.yaml`).
+    #       e.g. `interpretune fit --config some_path/to/some_config.yaml`).
     lightning_cli = "--lightning_cli" in sys.argv[1:]
     run_mode = None
     if lightning_cli:

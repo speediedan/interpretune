@@ -5,8 +5,8 @@ from warnings import WarningMessage
 from packaging.version import Version
 from pkg_resources import get_distribution
 
-from interpretune.base.config.shared import Adapter
-from interpretune.utils.warnings import dummy_method_warn_fingerprint
+from interpretune.utils import dummy_method_warn_fingerprint
+from interpretune.protocol import Adapter
 from tests.runif import EXTENDED_VER_PAT
 
 

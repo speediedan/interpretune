@@ -3,9 +3,9 @@ from copy import deepcopy
 from enum import auto
 from pathlib import Path
 
-from interpretune.base.config.module import HFFromPretrainedConfig
-from interpretune.base.config.shared import AutoStrEnum, Adapter
-from interpretune.extensions.memprofiler import MemProfilerCfg, MemProfilerSchedule
+from interpretune.config import HFFromPretrainedConfig
+from interpretune.protocol import AutoStrEnum, Adapter
+from interpretune.extensions import MemProfilerCfg, MemProfilerSchedule
 from it_examples.example_module_registry import (MODULE_EXAMPLE_REGISTRY, example_datamodule_defaults,
                                                  example_itmodule_defaults)
 from base_defaults import default_prof_bs
@@ -83,7 +83,7 @@ l_tl_gpt2_fts = {**default_fts_cfg, **l_tl_gpt2_explicit_sched}
 # TODO: Use more granular composable aliases for these configs to improve efficiency
 # tests currently use only a single experiment and custom model but use a variety of configurations
 CLI_EXP = "cust_test"
-RUN_FN = "run_experiment.py"
+RUN_FN = "interpretune"
 IT_HOME = Path(os.environ.get("IT_HOME", Path(__file__).parent.parent.parent / "src" / "interpretune"))
 
 class CLI_TESTS(AutoStrEnum):
@@ -124,9 +124,9 @@ default_seed_cfg = {"seed_everything": 42}
 # note we use the same datamodule and module cls for all test contexts
 default_session_cfg = {
     "datamodule_cls": "tests.modules.TestITDataModule",
-    "datamodule_cfg": {"class_path": "interpretune.base.config.datamodule.ITDataModuleConfig"},
+    "datamodule_cfg": {"class_path": "interpretune.config.datamodule.ITDataModuleConfig"},
     "module_cls": "tests.modules.TestITModule",
-    "module_cfg": {"class_path": "interpretune.base.config.module.ITConfig"}
+    "module_cfg": {"class_path": "interpretune.config.module.ITConfig"}
 }
 
 core_cust_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY['cust.rte']['cfg_dict'])
@@ -189,7 +189,7 @@ get_nested(parity_cli_cfgs["global_debug"], "session_cfg.module_cfg.init_args")[
 core_optim_train = deepcopy(default_cfg)
 core_optim_train["session_cfg"]["datamodule_cfg"].update(base_cust_rte_cfg["session_cfg"]["datamodule_cfg"])
 core_optim_train["session_cfg"]["module_cfg"].update(base_cust_rte_cfg["session_cfg"]["module_cfg"])
-core_optim_train["trainer_cfg"] = deepcopy(default_trainer_kwargs)
+core_optim_train["run_cfg"] = deepcopy(default_trainer_kwargs)
 get_nested(core_optim_train, mod_cfg)["init_args"].update({"experiment_tag": CLI_TESTS.core_optim_train.value,
                                                            **example_itmodule_defaults})
 parity_cli_cfgs["exp_cfgs"][CLI_TESTS.core_optim_train] = core_optim_train
@@ -201,7 +201,7 @@ parity_cli_cfgs["exp_cfgs"][CLI_TESTS.core_optim_train] = core_optim_train
 core_tl_test = deepcopy(default_cfg)
 core_tl_test["session_cfg"]["datamodule_cfg"].update(base_tl_cust_model_cfg["session_cfg"]["datamodule_cfg"])
 core_tl_test["session_cfg"]["module_cfg"].update(base_tl_cust_model_cfg["session_cfg"]["module_cfg"])
-core_tl_test["trainer_cfg"] = deepcopy(default_trainer_kwargs)
+core_tl_test["run_cfg"] = deepcopy(default_trainer_kwargs)
 core_tl_test["session_cfg"]["adapter_ctx"] = core_tl_cust_cfg["reg_info"]["adapter_combinations"][0]
 get_nested(core_tl_test, f"{mod_initargs}.tl_cfg.init_args")["cfg"].update({"dtype": "float32", "device": "cuda"})
 get_nested(core_tl_test, mod_initargs)["experiment_tag"] = CLI_TESTS.core_tl_test.value
@@ -221,7 +221,7 @@ parity_cli_cfgs["exp_cfgs"][CLI_TESTS.core_tl_test_noharness] = core_tl_test_noh
 ################################################################################
 
 l_tl_test = deepcopy(core_tl_test)
-l_tl_test.pop("trainer_cfg")
+l_tl_test.pop("run_cfg")
 get_nested(l_tl_test, "session_cfg")["adapter_ctx"] = ["lightning", "transformer_lens"]
 get_nested(l_tl_test, tl_cfg_initargs)["cfg"].update({'device': 'cuda', 'dtype': 'bfloat16'})
 get_nested(l_tl_test, mod_initargs)["experiment_tag"] = CLI_TESTS.l_tl_test.value
@@ -235,7 +235,7 @@ parity_cli_cfgs["exp_cfgs"][CLI_TESTS.l_tl_test] = l_tl_test
 ################################################################################
 
 l_optim_fit = deepcopy(core_optim_train)
-l_optim_fit.pop("trainer_cfg")
+l_optim_fit.pop("run_cfg")
 get_nested(l_optim_fit, "session_cfg")["adapter_ctx"] = ["lightning"]
 l_optim_fit["trainer"] = deepcopy(l_tl_test["trainer"])
 l_optim_fit["trainer"]["logger"]["init_args"]["name"] = CLI_TESTS.l_optim_fit.value

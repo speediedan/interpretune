@@ -1,19 +1,23 @@
+from __future__ import annotations
 import os
 import inspect
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, TYPE_CHECKING, List, Optional, Dict
 from contextlib import contextmanager
 from functools import wraps
+
 
 import torch
 from transformers import AutoConfig, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.utils.logging import rank_zero_warn
-from interpretune.base.config.mixins import HFFromPretrainedConfig, HFGenerationConfig, BaseGenerationConfig
-from interpretune.base.config.module import ITConfig, ITState
-from interpretune.base.config.extensions import ITExtensionsConfigMixin
-from interpretune.utils.import_utils import _import_class, _BNB_AVAILABLE
+import interpretune as it
+from interpretune.utils import rank_zero_warn, _import_class, _BNB_AVAILABLE
+from interpretune.config import (HFFromPretrainedConfig, HFGenerationConfig, BaseGenerationConfig, ITConfig, ITState,
+                                 ITExtensionsConfigMixin)
+
+if TYPE_CHECKING:
+    from interpretune.protocol import AnalysisCfgProtocol
 
 
 class ITStateMixin:
@@ -30,11 +34,11 @@ class ITStateMixin:
             obj._it_state = ITState()
 
 
-class ProfilerHooksMixin:
+class MemProfilerHooks:
 
     @contextmanager
     @staticmethod
-    def memprofile_ctx(memprofiler, phase: str, epoch_idx: Optional[int] = None, step_idx: Optional[int] = None):
+    def memprofile_ctx(memprofiler, phase: str, epoch_idx: int | None = None, step_idx: int | None = None):
         try:
             memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="start")
             yield
@@ -51,7 +55,7 @@ class ProfilerHooksMixin:
             # for increased generality, we derive a profile `step_idx` based on a profiler snap counter rather than
             # parsing `args` if a `batch_idx` kwarg isn't found
             step_idx = kwargs.get("batch_idx", None)
-            with ProfilerHooksMixin.memprofile_ctx(self.memprofiler, phase=phase, step_idx=step_idx):
+            with MemProfilerHooks.memprofile_ctx(self.memprofiler, phase=phase, step_idx=step_idx):
                 if self.memprofiler.memprofiler_cfg.enable_saved_tensors_hooks and \
                     self.memprofiler._enabled[(phase, 'start')]:
                     with torch.autograd.graph.saved_tensors_hooks(*self.memprofiler._saved_tensors_funcs):
@@ -61,24 +65,82 @@ class ProfilerHooksMixin:
         return wrapper
 
 
+
+class AnalysisStepMixin:
+    @property
+    def analysis_cfg(self) -> Optional[AnalysisCfgProtocol]:
+        if not hasattr(self.it_cfg, 'analysis_cfg') or self.it_cfg.analysis_cfg is None:
+            rank_zero_warn("Analysis configuration has not been set.")
+            return
+        return self.it_cfg.analysis_cfg
+
+    @analysis_cfg.setter
+    def analysis_cfg(self, cfg: AnalysisCfgProtocol) -> None:
+        self.it_cfg.analysis_cfg = cfg
+
+    def on_analysis_start(self) -> Any | None:
+        """Optionally execute some post-interpretune session steps if the session is not complete."""
+        # TODO: we plan to avoid op-specific conditioning of this behavior, should be functionally specified in config,
+        #       we should also narrow the scope if possible to a context manager around the relevant ops themselves
+        if self.analysis_cfg.op == it.logit_diffs_attr_grad:
+            torch.set_grad_enabled(True)
+        else:
+            torch.set_grad_enabled(False)
+
+
+    def on_analysis_epoch_end(self) -> Any | None:
+        pass
+        # TODO: maybe reintroduce logic here if we decide to keep per-epoch versions or perform other caching
+        # Create a shallow copy from the current analysis cache
+        #cache_copy = self.analysis_cfg.analysis_store
+        #self._analysis_stores.append(cache_copy)
+        # TODO: we don't want to reset the analysis store but rather ensure we flush the current epoch
+        #self.analysis_cfg.reset_analysis_store()  # Prepare a new instance for the next epoch, preserving save_cfg
+
+    def on_analysis_end(self) -> Any | None:
+        """Optionally execute some post-interpretune session steps if the session is not complete."""
+        # reset internal cache list (TODO: maybe keep this around and reset only on session start?)
+        # TODO: we can avoid this analysis_stores reset if we make dataset per-epoch subsplits
+        # TODO: flip back to the default if we disabled grad in on_analysis_start, again, this is terrible and should
+        # be handled more narrowly and functionally rather than op conditioned
+        # self._analysis_stores = []  # uncomment if we re-enable the reset of the analysis stores
+        if self.analysis_cfg.op != it.logit_diffs_attr_grad:
+            torch.set_grad_enabled(True)
+            #torch.set_grad_enabled(False)  # to detect leak
+        if not self.session_complete:
+            self.on_session_end()
+
+    def model_sig_keys(self, target_method: str) -> list:
+        return [param.name for param in inspect.signature(getattr(self.model, target_method)).parameters.values()]
+
+    def auto_prune_batch(self, batch: BatchEncoding, target_method: str) -> dict[str, Any]:
+        # since we're abstracting the same generative classification logic to be used with different frameworks, models
+        # and datasets we use a mapping function to provide only data inputs a given generate function supports (for
+        # frameworks that don't handle variadic kwargs). This currently requires the user provides
+        # compatible models and dataset.
+        # TODO: consider adding further upstream configuration validation that warns the user if the provided dataset
+        # and step logic are incompatible
+        # TODO: handle regular dicts in addition to BatchEncoding?
+        return {bk: batch[bk] for bk in list(batch.data) if bk in self.model_sig_keys(target_method)}
+
 class GenerativeStepMixin:
     # Often used for n-shot classification, those contexts are only a subset of generative classification use cases
 
-    _gen_sig_keys: Optional[List] = None
-    GEN_PREPARES_INPUTS_SIGS: Tuple = ("_prepare_model_inputs",)
+    _gen_sig_keys: list | None = None
+    GEN_PREPARES_INPUTS_SIGS: tuple = ("_prepare_model_inputs",)
 
     @property
-    def generation_cfg(self) -> Optional[BaseGenerationConfig]:
+    def generation_cfg(self) -> BaseGenerationConfig | None:
         return self.it_cfg.generative_step_cfg.lm_generation_cfg
 
     @property
-    def gen_sig_keys(self) -> List:
+    def gen_sig_keys(self) -> list:
         if not self._gen_sig_keys:
             generate_signature = inspect.signature(self.model.generate)
             self._gen_sig_keys = list(generate_signature.parameters.keys())
         return self._gen_sig_keys
 
-    def map_gen_inputs(self, batch) -> Dict[str, Any]:
+    def map_gen_inputs(self, batch) -> dict[str, Any]:
         # since we're abstracting the same generative classification logic to be used with different frameworks, models
         # and datasets we use a mapping function to provide only data inputs a given generate function supports (for
         # frameworks that don't handle variadic kwargs). This currently requires the user provides
@@ -87,7 +149,7 @@ class GenerativeStepMixin:
         # and step logic are incompatible
         return {bk: batch[bk] for bk in list(batch.data) if bk in self.gen_sig_keys}
 
-    def map_gen_kwargs(self, kwargs: Dict) -> Dict[str, Any]:
+    def map_gen_kwargs(self, kwargs: dict) -> dict[str, Any]:
         # we use a mapping function to provide only generate kwargs a given generate function supports (for
         # frameworks that don't support variadic kwargs).
         return {k: v for k, v in kwargs.items() if k in self.gen_sig_keys}
@@ -124,7 +186,60 @@ class GenerativeStepMixin:
             raise Exception(f"{gen_dataset_info_msg} Received the following error msg: {ge}")
         return outputs
 
+class ClassificationMixin:
+    # Default classification helper methods
 
+    def init_classification_mapping(self) -> None:
+        it_cfg, tokenizer = self.it_cfg, self.datamodule.tokenizer
+        token_ids = tokenizer.convert_tokens_to_ids(it_cfg.classification_mapping)
+        device = self.device if isinstance(self.device, torch.device) else self.output_device
+        it_cfg.classification_mapping_indices = torch.tensor(token_ids, device=device)
+
+    def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        # to support genclassif/non-genclassif configs and LM/SeqClassification heads we adhere to the following logits
+        # logical shape invariant: [batch size, positions to consider, answers to consider]
+        if isinstance(logits, tuple):
+            logits = torch.stack([out for out in logits], dim=1)
+        logits = logits.to(device=self.device)
+        if logits.ndim == 2:  # if answer logits have already been squeezed
+            logits = logits.unsqueeze(1)
+        if logits.shape[-1] != self.it_cfg.num_labels:
+            # Only use custom mapping if generative_step_cfg is enabled and indices are set
+            if (mapping_indices := self.it_cfg.classification_mapping_indices) is not None:
+                map_indices = mapping_indices
+            else:
+                raise ValueError("The logits shape does not match the expected number of labels.")
+
+            logits = torch.index_select(logits, -1, map_indices)
+            # for non-generative (standard classification), keep only the last position
+            if not self.it_cfg.generative_step_cfg.enabled:
+                logits = logits[:, -1:, :]
+        return logits
+
+    def labels_to_ids(self, labels: List[str]) -> List[int]:
+        return torch.take(self.it_cfg.classification_mapping_indices, labels), labels
+
+    def logits_and_labels(self, batch: BatchEncoding, batch_idx: int) -> torch.Tensor:
+        label_ids, labels = self.labels_to_ids(batch.pop("labels"))
+        logits = self(**batch)
+        # TODO: add another layer of abstraction here to handle different model output types? Tradeoffs to consider...
+        if not isinstance(logits, torch.Tensor):
+            logits = logits.logits
+            assert isinstance(logits, torch.Tensor), f"Expected logits to be a torch.Tensor but got {type(logits)}"
+        return torch.squeeze(logits[:, -1, :], dim=1), label_ids, labels
+
+    def collect_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor, mode: str = 'log') -> Optional[Dict]:
+        logits = self.standardize_logits(logits)
+        per_example_answers, _ = torch.max(logits, dim=-2)
+        preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
+        metric_dict = self.metric.compute(predictions=preds, references=labels)
+        # TODO: check if this type casting is still required for lightning torchmetrics, bug should be fixed now...
+        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
+                               metric_dict.items()))
+        if mode == 'log':
+            self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
+        else:
+            return metric_dict
 
 class HFFromPretrainedMixin:
     """" Barebones interface to setup optimizers and schedulers for manual optimization with core IT modules."""
@@ -134,7 +249,7 @@ class HFFromPretrainedMixin:
     model: torch.nn.Module
 
     @property
-    def hf_cfg(self) -> Optional[HFFromPretrainedConfig]:
+    def hf_cfg(self) -> HFFromPretrainedConfig | None:
         return self.it_cfg.hf_from_pretrained_cfg
 
     def hf_pretrained_model_init(self) -> None:
@@ -153,7 +268,7 @@ class HFFromPretrainedMixin:
         if self.hf_cfg and self.hf_cfg.enable_input_require_grads:
             self.model.enable_input_require_grads()
 
-    def _hf_configure_quantization(self) -> Optional[Any]:
+    def _hf_configure_quantization(self) -> Any | None:
         if self.hf_cfg.bitsandbytesconfig and _BNB_AVAILABLE:
             from transformers import BitsAndBytesConfig
             quantization_config = BitsAndBytesConfig(**self.hf_cfg.bitsandbytesconfig)
@@ -161,14 +276,14 @@ class HFFromPretrainedMixin:
             quantization_config = None
         return quantization_config
 
-    def _update_hf_pretrained_cfg(self, quantization_config: Optional[Dict[str, Any]] = None) -> None:
+    def _update_hf_pretrained_cfg(self, quantization_config: dict[str, Any] | None = None) -> None:
         additional_from_pretrained_kwargs = {"pretrained_model_name_or_path": self.it_cfg.model_name_or_path,
                                             "quantization_config": quantization_config,
                                             "torch_dtype": self.torch_dtype,
                                             }
         self.hf_cfg.pretrained_kwargs.update(additional_from_pretrained_kwargs)
 
-    def _hf_gen_cust_config(self, access_token: Optional[str] = None) -> Tuple[PretrainedConfig, Dict]:
+    def _hf_gen_cust_config(self, access_token: str | None = None) -> tuple[PretrainedConfig, dict]:
         if self.hf_cfg.model_head:
             self.it_cfg.model_class = _import_class(self.hf_cfg.model_head)
             cust_config = AutoConfig.from_pretrained(**self.hf_cfg.pretrained_kwargs, token=access_token)
@@ -190,7 +305,7 @@ class HFFromPretrainedMixin:
         cust_config.update(self.it_cfg.model_cfg)  # apply pre-init model config overrides
         return cust_config, unused_kwargs
 
-    def hf_configured_model_init(self, cust_config: PretrainedConfig, access_token: Optional[str] = None) \
+    def hf_configured_model_init(self, cust_config: PretrainedConfig, access_token: str | None = None) \
         -> torch.nn.Module:
         cust_config.num_labels = self.it_cfg.num_labels
         head_configured = self.hf_cfg.model_head or self.hf_cfg.dynamic_module_cfg
@@ -250,6 +365,6 @@ class HFFromPretrainedMixin:
         self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))
 
 
-class BaseITMixins(ITStateMixin, ITExtensionsConfigMixin, HFFromPretrainedMixin, GenerativeStepMixin,
-                   ProfilerHooksMixin):
+class BaseITMixins(ITStateMixin, ITExtensionsConfigMixin, HFFromPretrainedMixin, ClassificationMixin,
+                   AnalysisStepMixin, GenerativeStepMixin, MemProfilerHooks):
     ...

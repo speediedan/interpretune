@@ -2,10 +2,8 @@ from typing import Any, Optional
 
 import torch
 
-from interpretune.base.config.module import ITConfig
-from interpretune.base.hooks import BaseITHooks
-from interpretune.base.components.core import BaseITComponents
-from interpretune.base.components.mixins import BaseITMixins
+from interpretune.config import ITConfig
+from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
 
 # # TODO: add core helper log/log_dict methods for core context usage
 # for warnf in [".*For framework compatibility, this noop .*",]:

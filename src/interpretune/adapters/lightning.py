@@ -1,10 +1,9 @@
 from typing_extensions import override
 
-from interpretune.base.datamodules import ITDataModule
-from interpretune.base.modules import BaseITModule
-from interpretune.utils.import_utils import  _LIGHTNING_AVAILABLE
-from interpretune.base.config.shared import Adapter
-from interpretune.adapters.registration import CompositionRegistry
+from interpretune.base import ITDataModule, BaseITModule
+from interpretune.utils import  _LIGHTNING_AVAILABLE
+from interpretune.protocol import Adapter
+from interpretune.adapters import CompositionRegistry
 
 
 if _LIGHTNING_AVAILABLE:

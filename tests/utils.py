@@ -1,4 +1,4 @@
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict, Optional, Union, Type, Any, Callable, NamedTuple
 import importlib
 from collections import defaultdict
 from contextlib import contextmanager
@@ -7,8 +7,8 @@ from functools import reduce
 
 import torch
 
-from interpretune.base.contract.session import ITSession
-from interpretune.base.config.mixins import GenerativeClassificationConfig, CoreGenerationConfig
+from interpretune.session import ITSession
+from interpretune.config import GenerativeClassificationConfig, CoreGenerationConfig
 
 ################################################################################
 # Test Utility Functions
@@ -92,3 +92,105 @@ def disable_genclassif(it_session: ITSession):
         yield
     finally:
         it_session.module.it_cfg.generative_step_cfg = orig_genclassif_cfg
+
+def _unwrap_one(seq):
+    return seq[0] if len(seq) == 1 else seq
+
+def kwargs_from_cfg_obj(cfg_obj, source_obj, base_kwargs=None):
+    """Dynamically extract a subset of configuration parameters from a source object based on an object's
+    signature.
+
+    Args:
+        cfg_obj: The object (class or function) whose signature will be used to extract parameter names
+        source_obj: The object from which to extract attribute values
+        base_kwargs: Optional base dictionary to update with extracted values
+
+    Returns:
+        Dictionary with extracted configuration parameters
+    """
+    import inspect
+
+    # Start with base kwargs if provided
+    kwargs = base_kwargs or {}
+
+    # Determine the signature to use based on the type of cfg_obj
+    if inspect.isclass(cfg_obj):
+        param_names = [
+            param.name for param in inspect.signature(cfg_obj.__init__).parameters.values()
+            if param.name not in ('self',)  # Exclude 'self'
+        ]
+    elif inspect.isfunction(cfg_obj):
+        param_names = [
+            param.name for param in inspect.signature(cfg_obj).parameters.values()
+        ]
+    else:
+        raise TypeError("cfg_obj must be a class or a function")
+
+    # Extract matching attributes from the source object
+    for attr in param_names:
+        if hasattr(source_obj, attr):
+            kwargs[attr] = getattr(source_obj, attr)
+
+    return kwargs
+
+def get_super_method(cls_path_or_type: Union[str, Type], instance: Any, method_name: str) -> Callable:
+    """Retrieves a method from a parent class by using standard super() resolution.
+
+    This is useful for testing specific implementations of methods that might be overridden in subclasses.
+
+    Args:
+        cls_path_or_type: Either a fully-qualified dot-separated string path to a class or the class type itself
+        instance: An instantiated object from which to fetch the method
+        method_name: The name of the method to retrieve
+
+    Returns:
+        A handle on the target method found in the parent class
+
+    Example:
+        ```python
+        from it_examples.experiments.rte_boolq import RTEBoolqModuleMixin
+
+        # Get the BaseITModule version of standardize_logits
+        base_standardize_logits = get_super_method(RTEBoolqModuleMixin, module, "standardize_logits")
+        result = base_standardize_logits(logits)
+        ```
+    """
+    try:
+        # If cls_path_or_type is a string, import the class
+        if isinstance(cls_path_or_type, str):
+            try:
+                module_path, class_name = cls_path_or_type.rsplit('.', 1)
+                module = importlib.import_module(module_path)
+                cls = getattr(module, class_name)
+            except (ImportError, AttributeError) as e:
+                raise ImportError(f"Failed to import {cls_path_or_type}: {str(e)}")
+        else:
+            cls = cls_path_or_type
+
+        # Use standard super() resolution
+        method = getattr(super(cls, instance), method_name)
+        return method
+    except AttributeError as e:
+        raise AttributeError(f"Method '{method_name}' not found in parent classes of {cls.__name__}: {str(e)}")
+
+
+class InOutComp(NamedTuple):
+    """Named tuple for more explicit input and output access in comparisons."""
+    input: Any
+    output: Any
+
+################################################################################
+# CUDA utils
+################################################################################
+
+def _clear_cuda_memory() -> None:
+    # strangely, the attribute function be undefined when torch.compile is used
+    if hasattr(torch._C, "_cuda_clearCublasWorkspaces"):
+        # https://github.com/pytorch/pytorch/issues/95668
+        torch._C._cuda_clearCublasWorkspaces()
+    torch.cuda.empty_cache()
+
+def cuda_reset():
+    if torch.cuda.is_available():
+        _clear_cuda_memory()
+        torch.cuda.reset_peak_memory_stats()

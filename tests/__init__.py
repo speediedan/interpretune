@@ -14,13 +14,13 @@ import os
 
 import numpy as np
 
-from interpretune.utils.import_utils import _LIGHTNING_AVAILABLE, _FTS_AVAILABLE, _DOTENV_AVAILABLE
+from interpretune.utils import _LIGHTNING_AVAILABLE, _FTS_AVAILABLE, _DOTENV_AVAILABLE
 
 if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import seed_everything
     from lightning.pytorch import Trainer, Callback
     from lightning.pytorch.callbacks import ModelCheckpoint
-    from interpretune.base.components.cli import l_cli_main
+    from interpretune.base import l_cli_main
 else:
     seed_everything = object
     l_cli_main = None

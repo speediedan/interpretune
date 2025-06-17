@@ -17,7 +17,7 @@ from functools import partial
 
 import pytest
 
-from interpretune.base.config.shared import Adapter
+from interpretune.protocol import Adapter
 from tests.base_defaults import BaseAugTest, BaseCfg, pytest_factory
 from tests.configuration import IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test

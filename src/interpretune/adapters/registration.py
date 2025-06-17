@@ -2,13 +2,10 @@ from typing import Any, Dict, Optional, Tuple, Callable, Type, Protocol, Set, ru
 from inspect import getmembers, isclass
 from typing_extensions import override
 from types import ModuleType
-
 from pprint import pformat
 
-from interpretune.base.config.shared import Adapter
-from interpretune.utils.logging import rank_zero_warn
-
-
+from interpretune.utils import rank_zero_warn
+from interpretune.protocol import Adapter
 
 class CompositionRegistry(dict):
     # TODO: if this experimental compositional utility and protocol gains traction with external users:

@@ -2,7 +2,6 @@ import warnings
 from typing import Optional, Union, Type
 from pathlib import Path
 
-
 _default_format_warning = warnings.formatwarning
 
 def _is_path_in_interpretune(path: Path) -> bool:

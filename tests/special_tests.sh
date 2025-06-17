@@ -24,7 +24,7 @@ unset IT_RUN_PROFILING_TESTS
 unset IT_RUN_STANDALONE_TESTS
 unset IT_EXPERIMENTAL_PATCH_TESTS
 
-source $(dirname "$0")/infra_utils.sh
+source $(dirname "$0")/test_utils.sh
 
 usage(){
 >&2 cat << EOF
@@ -126,6 +126,12 @@ define_configuration(){
       exit 1
       ;;
   esac
+
+  if [[ -n "${COVERAGE_ANALYSIS_CONFIG_FILE}" ]]; then
+    echo "Using coverage rc file: ${COVERAGE_ANALYSIS_CONFIG_FILE}" | tee -a $special_test_session_log
+    # Updated to use --cov-branch and --cov-context for more granular test parameterization tracking
+    exec_defaults="-m pytest --cov --cov-config=${COVERAGE_ANALYSIS_CONFIG_FILE} --cov-append --cov-context=test --cov-report= --capture=no --no-header -v -s -rA"
+  fi
 
   if [ -s "${experiments_list}" ]; then
     # toggle optional experimental patches if requested

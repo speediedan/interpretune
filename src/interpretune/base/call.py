@@ -1,11 +1,9 @@
 import logging
-from typing import Any, Union, Optional
-from enum import Enum
+from typing import Any, Union
 
-from interpretune.base.datamodules import ITDataModule
-from interpretune.base.modules import BaseITModule
-from interpretune.base.config.shared import CorePhase
-from interpretune.utils.logging import rank_zero_info
+from interpretune.base import ITDataModule, BaseITModule
+from interpretune.utils import rank_zero_info
+from interpretune.protocol import AllPhases, CorePhases
 
 log = logging.getLogger(__name__)
 
@@ -19,7 +17,7 @@ def it_init(module, datamodule, *args, **kwargs):
         _call_itmodule_hook(module, hook_name="configure_optimizers", hook_msg="initializing optimizers and schedulers",
                             connect_output=True)
 
-def it_session_end(module, datamodule, session_type: Enum = CorePhase.train, *args, **kwargs):
+def it_session_end(module, datamodule, session_type: AllPhases = CorePhases.train, *args, **kwargs):
     # dispatch the appropriate stage-specific `end` hook upon completion of the session
     hook_name = f"on_{session_type.name}_end"
     _call_itmodule_hook(module, hook_name=hook_name, hook_msg="Running stage end hooks on IT module")
@@ -50,11 +48,11 @@ class _hookNameContextManager:
 def _call_itmodule_hook(
     hookable_module: HOOKABLE_ITMODULE,
     hook_name: str,
-    hook_msg: Optional[str] = None,
+    hook_msg: str | None = None,
     connect_output: bool = False,
     *args: Any,
     **kwargs: Any,
-) -> Optional[Any]:
+) -> Any | None:
 
     hook_msg = hook_msg + ": " if hook_msg else ""
 

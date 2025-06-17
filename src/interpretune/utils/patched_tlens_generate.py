@@ -2,11 +2,10 @@
 
 The Hooked Transformer is the core part of TransformerLens.
 
-In common PyTorch model implementations (e.g. ones from HuggingFace) it's fairly easy to extract
-model weights, but much harder to extract activations. TransformerLens aims to simplify this task by
-attaching hooks to every notable activation within the model. This enables the inspection and/or
-alteration of activations in individual components like attention heads and MLP layers, facilitating
-a deeper understanding of the internal workings of transformers like GPT-2.
+In common PyTorch model implementations (e.g. ones from HuggingFace) it's fairly easy to extract model weights, but much
+harder to extract activations. TransformerLens aims to simplify this task by attaching hooks to every notable activation
+within the model. This enables the inspection and/or alteration of activations in individual components like attention
+heads and MLP layers, facilitating a deeper understanding of the internal workings of transformers like GPT-2.
 """
 from typing import NamedTuple, Optional, Union
 

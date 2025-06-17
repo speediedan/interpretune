@@ -15,7 +15,7 @@ from functools import partial
 
 import pytest
 
-from interpretune.base.config.shared import Adapter
+from interpretune.protocol import Adapter
 from tests.base_defaults import BaseAugTest, BaseCfg, pytest_factory
 from tests.configuration import IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
@@ -32,6 +32,7 @@ class SLParityCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
     model_src_key: Optional[str] = "cust"
     add_saes_on_init: bool = True
+    force_prepare_data: bool = True # TODO: remove after debugging
 
 @dataclass
 class SLParityTest(BaseAugTest):

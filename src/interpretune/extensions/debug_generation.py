@@ -7,9 +7,8 @@ from datasets import load_dataset, Dataset
 import numpy as np
 from torch.nn import CrossEntropyLoss
 
-from interpretune.utils.logging import rank_zero_warn
-from interpretune.base.config.shared import ITSerializableCfg
-from interpretune.utils.tokenization import _sanitize_input_name
+from interpretune.config import ITSerializableCfg
+from interpretune.utils import rank_zero_warn, sanitize_input_name, DEFAULT_DECODE_KWARGS
 
 
 @dataclass(kw_only=True)
@@ -38,7 +37,6 @@ class DebugGeneration:
     #   including `output_attentions` and `output_hidden_states` etc.
     DEFAULT_OUTPUT_ATTRS = ("sequences", "tokens")
     DEFAULT_MODEL_CONFIG_ATTRS = ("cfg", "config")
-    DEFAULT_DECODE_KWARGS = dict(skip_special_tokens=True, clean_up_tokenization_spaces=True)
 
     def __init__(
         self,
@@ -141,7 +139,7 @@ class DebugGeneration:
         corpus_raw = "\n\n".join(corpus["text"])
         corpus_max_idx = limit_chars or len(corpus_raw)
         encoded_corpus = self.phandle.datamodule.tokenizer(corpus_raw[:corpus_max_idx], return_tensors="pt")
-        encoded_corpus = _sanitize_input_name(self.model_input_names, encoded_corpus)
+        encoded_corpus = sanitize_input_name(self.model_input_names, encoded_corpus)
         return self.naive_perplexity(encoded_corpus, stride=stride)
 
     def top1_token_accuracy_on_sample(self, sample: str) -> Tuple[float, List[str]]:
@@ -189,7 +187,7 @@ class DebugGeneration:
     def sanitize_gen_output(self, outputs: Any, gen_output_attr: Optional[str] = None,
                               decode_cfg_override: Optional[Dict] = None) -> Tuple[Any, Dict]:
         decode_target = self.sanitize_model_output(outputs, gen_output_attr)
-        decode_kwargs = deepcopy(self.DEFAULT_DECODE_KWARGS)
+        decode_kwargs = deepcopy(DEFAULT_DECODE_KWARGS)
         if decode_cfg_override:
             decode_kwargs.update(decode_cfg_override)
         return decode_target, decode_kwargs
@@ -202,7 +200,7 @@ class DebugGeneration:
         if gen_output_attr:
             return getattr(output, gen_output_attr)
         for output_attr in self.DEFAULT_OUTPUT_ATTRS:
-            if hasattr(type(output), output_attr):
+            if hasattr(output, output_attr):
                 return getattr(output, output_attr)
         raise ValueError(f"No compatible default output attribute found for type: {type(output)}, if the"
                             " generate method attached to your model is not returning a supported output attribute"
@@ -219,7 +217,7 @@ class DebugGeneration:
                              gen_kwargs_override: Optional[Dict] = None,
                              decode_cfg_override: Optional[Dict] = None) -> Tuple[List, List]:
         test_input_ids = self.phandle.datamodule.tokenizer.batch_encode_plus(sequences)
-        test_input_ids = _sanitize_input_name(self.model_input_names, test_input_ids)
+        test_input_ids = sanitize_input_name(self.model_input_names, test_input_ids)
         test_input_ids = self.phandle.datamodule.data_collator(test_input_ids)
         test_input_ids = test_input_ids.to(self.phandle.device)
         outputs = self._debug_generate(inputs=test_input_ids[self.model_input_names[0]],
@@ -242,7 +240,7 @@ class DebugGeneration:
                                           gen_kwargs_override=gen_kwargs_override)
             decode_target, decode_kwargs = self.sanitize_gen_output(output, gen_output_attr, decode_cfg_override)
             sequences = decode_target.unbind()
-            decode_kwargs = deepcopy(self.DEFAULT_DECODE_KWARGS)
+            decode_kwargs = deepcopy(DEFAULT_DECODE_KWARGS)
             if decode_cfg_override:
                 decode_kwargs.update(decode_cfg_override)
             for seq in sequences:  # in case num_return_sequences > 1
