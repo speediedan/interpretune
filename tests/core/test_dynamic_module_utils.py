@@ -221,7 +221,8 @@ class TestGetCachedModuleFileIt:
     @patch('interpretune.analysis.ops.dynamic_module_utils.check_imports')
     @patch('interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it')
     @patch('interpretune.analysis.ops.dynamic_module_utils.extract_commit_hash')
-    def test_commit_hash_fallback_to_local(self, mock_extract, mock_create, mock_check, mock_try_load, mock_cached):
+    def test_commit_hash_fallback_to_local(self, mock_extract, mock_create, mock_check, mock_try_load, mock_cached,
+    mock_it_modules_cache):
         """Test fallback to 'local' when commit hash extraction fails."""
         mock_cached.return_value = "/cache/path/module.py"
         mock_try_load.return_value = "/old/cache/module.py"
@@ -230,7 +231,7 @@ class TestGetCachedModuleFileIt:
 
         with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.isdir', return_value=False):
             with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.basename',
-                       return_value='user--remote-repo'):
+                        return_value='user--remote-repo'):
                 with patch('interpretune.analysis.ops.dynamic_module_utils.shutil.copy'):
                     with patch('interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches'):
                         _ = get_cached_module_file_it(
@@ -289,9 +290,10 @@ class TestGetCachedModuleFileIt:
         mock_extract.return_value = "abc123"
 
         # Create actual files in the temporary cache
-        main_file = Path(mock_it_modules_cache) / "module.py"
-        helper1_file = Path(mock_it_modules_cache) / "helper1.py"
-        helper2_file = Path(mock_it_modules_cache) / "helper2.py"
+        mock_it_modules_cache = Path(mock_it_modules_cache)
+        main_file = mock_it_modules_cache / "module.py"
+        helper1_file = mock_it_modules_cache / "helper1.py"
+        helper2_file = mock_it_modules_cache / "helper2.py"
 
         main_file.write_text("# main module")
         helper1_file.write_text("# helper1 module")
@@ -318,10 +320,11 @@ class TestGetCachedModuleFileIt:
         mock_cached.side_effect = side_effect_cached_file
 
         # Mock create_dynamic_module_it to actually create directories
-        def mock_create_dirs(path):
-            Path(path).mkdir(parents=True, exist_ok=True)
+        def mock_create_dynamic_module_it_dirs(path):
+            mock_module_cache_full_submodule_path = mock_it_modules_cache / path
+            mock_module_cache_full_submodule_path.mkdir(parents=True, exist_ok=True)
 
-        mock_create.side_effect = mock_create_dirs
+        mock_create.side_effect = mock_create_dynamic_module_it_dirs
 
         # Mock check_imports to prevent infinite recursion
         def side_effect_check_imports(file_path):

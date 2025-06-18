@@ -8,8 +8,8 @@ lightning_logs/
 tb_logs/
 .vscode/
 debug/
-.github/instructions/*
-.github/prompts/*
+.github/instructions/
+.github/prompts/
 # ignore ipynb files themselves since we want to only store the source *.py
 #*.ipynb
 
