@@ -7,7 +7,6 @@ from interpretune.adapters.transformer_lens import (ITLensModule, ITDataModule, 
                                                     TransformerLensAdapter)
 from interpretune.adapters.sae_lens import (SAELensAdapter, SAEAnalysisMixin, SAELensModule, SAELensAttributeMixin,
                                             BaseSAELensModule, InstantiatedSAE)
-
 _register_adapters(ADAPTER_REGISTRY, "register_adapter_ctx", sys.modules[__name__], AdapterProtocol)
 
 __all__ = [

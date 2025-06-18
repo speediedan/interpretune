@@ -22,7 +22,6 @@ classifiers = [
             "Topic :: Scientific/Engineering :: Artificial Intelligence",
             "Topic :: Scientific/Engineering :: Image Recognition",
             "Topic :: Scientific/Engineering :: Information Analysis",
-            "License :: OSI Approved :: Apache Software License",
             "Operating System :: OS Independent",
             "Programming Language :: Python :: 3",
             "Programming Language :: Python :: 3.10",
@@ -96,7 +95,7 @@ test = [
 "pytest >= 6.0",
 "pytest-rerunfailures >= 10.2",
 "twine == 3.2",
-"mypy >= 0.920",
+"pyright >= 1.1.365",
 "pre-commit >= 1.0",
 ]
 
@@ -154,30 +153,26 @@ order-by-type = false
 # Unlike Flake8, default to a complexity level of 10.
 max-complexity = 10
 
-[tool.mypy]
-#files = ["src/interpretune"]  # disable while doing major refactor to reduce noise
-files = [""]
-disallow_untyped_defs = "True"
-ignore_missing_imports = "True"
-show_error_codes = "True"
-warn_redundant_casts = "True"
-warn_unused_configs = "True"
-warn_unused_ignores = "False"
-allow_redefinition = "True"
-# disable this rule as the PL Trainer attributes are defined in the connectors, not in its __init__
-disable_error_code = "attr-defined"
-# style choices
-warn_no_return = "False"
-exclude = ['tests/.*']
-
-# Ignore mypy errors for these files
-# TODO: the goal is for this to be empty
-#[[tool.mypy.overrides]]
-# the list can be generated with:
-# mypy | tr ':' ' ' |  awk '{print $1}' | sort | uniq | sed 's/\.py//g' | sed 's|\/|\.|g' | xargs -I {} echo '"{}",'
-# module = []
-# ignore_errors = "True"
-
+[tool.pyright]
+include = ["src/interpretune/adapters/lightning.py"]
+reportMissingTypeStubs = false
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownVariableType = "none"
+reportUntypedFunctionDecorator = "none"
+reportUnnecessaryIsInstance = "none"
+reportUnnecessaryComparison = "none"
+reportConstantRedefinition = "none"
+reportUnknownLambdaType = "none"
+reportPrivateUsage = "none"
+reportDeprecated = "none"
+reportPrivateImportUsage = "none"
+reportAttributeAccessIssue = "none"
+reportUnusedImport = "none"
+reportUnusedVariable = "none"
+reportImplicitOverride = "none"
+reportNoReturnInFunction = "none"
+reportMissingImports = false
 
 [tool.coverage.run]
 source = ["src/interpretune"]

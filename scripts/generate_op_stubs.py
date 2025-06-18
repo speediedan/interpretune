@@ -259,6 +259,6 @@ def generate_stubs(yaml_path: Path, output_path: Path) -> None:
 
 if __name__ == "__main__":
     yaml_path = project_root / "src" / "interpretune" / "analysis" / "ops" / "native_analysis_functions.yaml"
-    output_path = project_root / "interpretune.pyi"
+    output_path = project_root / "src" / "interpretune" / "__init__.pyi"
 
     generate_stubs(yaml_path, output_path)

@@ -560,6 +560,9 @@ def restore_env_variables():
         "OMP_NUM_THREADS",  # leaked by Lightning launchers,
         "TOKENIZERS_PARALLELISM",  # TODO: add a fixture that resets this currently leaked var
         "PIP_DISABLE_PIP_VERSION_CHECK",  # TODO: determine the source of this leak after test parity reached
+        "DISABLE_CUPTI_LAZY_REINIT",  # introduced with PyTorch 2.7 and cuda 12.8
+        "TEARDOWN_CUPTI",  # introduced with PyTorch 2.7 and cuda 12.8
+        "TORCHINDUCTOR_CACHE_DIR"  # introduced with PyTorch 2.7 and cuda 12.8
     }
     allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)

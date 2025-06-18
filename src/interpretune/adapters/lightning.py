@@ -1,5 +1,3 @@
-from typing_extensions import override
-
 from interpretune.base import ITDataModule, BaseITModule
 from interpretune.utils import  _LIGHTNING_AVAILABLE
 from interpretune.protocol import Adapter
@@ -34,7 +32,6 @@ if _LIGHTNING_AVAILABLE:
             return super().on_train_start()
 
         @classmethod
-        @override
         def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
             adapter_ctx_registry.register(Adapter.lightning, component_key = "datamodule",
                                           adapter_combination=(Adapter.lightning,),
@@ -49,4 +46,4 @@ if _LIGHTNING_AVAILABLE:
 else:
     LightningDataModule = object
     LightningModule = object
-    LightningAdapter = object
+    LightningAdapter = object  # type: ignore[assignment]

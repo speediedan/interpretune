@@ -86,9 +86,9 @@ base_env_build(){
                 # temporarily remove torchvision until it supports cu128 in nightly binary
                 pip install ${pip_install_flags} --pre torch==2.8.0.${torch_dev_ver} --index-url https://download.pytorch.org/whl/nightly/cu128
             elif [[ $torch_test_channel -eq 1 ]]; then
-                pip install ${pip_install_flags} --pre torch==2.7.0 --index-url https://download.pytorch.org/whl/test/cu128
+                pip install ${pip_install_flags} --pre torch==2.8.0 --index-url https://download.pytorch.org/whl/test/cu128
             else
-                pip install ${pip_install_flags} torch torchvision --index-url https://download.pytorch.org/whl/cu126
+                pip install ${pip_install_flags} torch torchvision --index-url https://download.pytorch.org/whl/cu128
             fi
             ;;
         it_latest_pt_2_4)
@@ -116,8 +116,7 @@ it_install(){
 
     python -m pip install ${pip_install_flags} -e ".[test,examples,lightning]" -r requirements/docs.txt
     pip install ${pip_install_flags} circuitsvis --no-deps
-    rm -rf .mypy_cache
-    mypy --install-types --non-interactive
+    pyright -p pyproject.toml
     pre-commit install
     git lfs install
     python -c "import importlib.metadata; import torch; import lightning.pytorch; import transformer_lens; import finetuning_scheduler; import interpretune;

@@ -15,8 +15,8 @@ class CompositionRegistry(dict):
         self,
         lead_adapter: Adapter,
         component_key: str,
-        adapter_combination: Tuple[Adapter| str],
-        composition_classes: Tuple[Callable],
+        adapter_combination: Tuple[Adapter | str],
+        composition_classes: Tuple[Callable[..., Any], ...],
         description: Optional[str] = None,
     ) -> None:
         """Registers valid component + adapter compositions mapped to composition keys with required metadata.
@@ -25,10 +25,10 @@ class CompositionRegistry(dict):
             lead_adapter: The adapter registering this set of valid compositions (e.g. LightningAdapter)
             component_key: The name of the component (e.g. "datamodule")
             adapter_combination: tuple identifying the valid adapter composition
-            composition_classes: Tuple[Callable],
+            composition_classes: Tuple[Callable, ...],
             description : composition description
         """
-        supported_composition: Dict[str | Adapter | Tuple[Adapter | str], Tuple[Callable]] = {}
+        supported_composition: Dict[str | Adapter | Tuple[Adapter | str], Tuple[Callable[..., Any], ...]] = {}
         composition_key = (component_key,) + self.canonicalize_composition(adapter_combination)
         supported_composition[composition_key] = composition_classes
         supported_composition['lead_adapter'] = Adapter[lead_adapter] if isinstance(lead_adapter, str) else lead_adapter

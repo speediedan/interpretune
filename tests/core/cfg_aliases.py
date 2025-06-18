@@ -4,6 +4,7 @@ from enum import auto
 from dataclasses import dataclass, field
 from typing import Iterable, Union
 
+
 import interpretune as it
 from interpretune.protocol import Adapter, AutoStrEnum
 from interpretune.config import (HFFromPretrainedConfig, GenerativeClassificationConfig, ITLensCustomConfig,
@@ -24,6 +25,7 @@ nf4_bnb_config = {"load_in_4bit": True, "bnb_4bit_use_double_quant": True, "bnb_
 base_lora_cfg = {"r": 8, "lora_alpha": 32, "lora_dropout": 0.05, "bias": "none", "task_type": "CAUSAL_LM"}
 gpt2_lora_cfg = {"target_modules": ["c_attn", "c_proj"], **base_lora_cfg}
 gpt2_hf_bnb_lora_cfg = {"bitsandbytesconfig": nf4_bnb_config, "lora_cfg": gpt2_lora_cfg}
+gpt2_hf_bnb_lora_cfg_seq = {"bitsandbytesconfig": nf4_bnb_config, "lora_cfg": {**gpt2_lora_cfg, "task_type": "SEQ_CLS"}}
 gpt2_seq_hf_from_pretrained_kwargs = {"pretrained_kwargs": {"device_map": "cpu", "torch_dtype": "float32"},
                                       "model_head": "transformers.AutoModelForSequenceClassification"}
 tl_cust_mi_cfg = {"cfg":
@@ -80,8 +82,7 @@ class CoreGPT2PEFTSeqCfg(CoreGPT2PEFTCfg):
     generative_step_cfg: GenerativeClassificationConfig | None = \
         field(default_factory=lambda: GenerativeClassificationConfig(enabled=False))
     hf_from_pretrained_cfg: HFFromPretrainedConfig | None = field(default_factory=lambda: HFFromPretrainedConfig(
-        **gpt2_hf_bnb_lora_cfg, **gpt2_seq_hf_from_pretrained_kwargs, activation_checkpointing=True))
-
+        **gpt2_hf_bnb_lora_cfg_seq, **gpt2_seq_hf_from_pretrained_kwargs, activation_checkpointing=True))
 
 @dataclass(kw_only=True)
 class CoreMemProfCfg(BaseCfg):

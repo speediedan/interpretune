@@ -4,7 +4,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import reduce
 from copy import deepcopy
-from typing_extensions import override
 
 from IPython.display import IFrame, display
 from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
@@ -96,7 +95,6 @@ class BaseSAELensModule(BaseITLensModule):
 class SAELensAdapter(SAELensAttributeMixin):
 
     @classmethod
-    @override
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
         adapter_ctx_registry.register(
             Adapter.sae_lens,

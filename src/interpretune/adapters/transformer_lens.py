@@ -2,7 +2,6 @@ import os
 from typing import Optional
 from functools import reduce
 from copy import deepcopy
-from typing_extensions import override
 
 import torch
 from transformers import PretrainedConfig
@@ -174,7 +173,6 @@ class BaseITLensModule(BaseITModule):
 class TransformerLensAdapter(TLensAttributeMixin):
 
     @classmethod
-    @override
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
         adapter_ctx_registry.register(Adapter.transformer_lens, component_key = "datamodule",
                                         adapter_combination=( Adapter.core, Adapter.transformer_lens),

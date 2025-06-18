@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from typing_extensions import override
 
 from transformers.tokenization_utils_base import BatchEncoding
 
@@ -14,7 +13,6 @@ if TYPE_CHECKING:
 
 class CoreAdapter(CoreHelperAttributes):
     @classmethod
-    @override
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
         adapter_ctx_registry.register(
                 Adapter.core,
@@ -31,7 +29,7 @@ class CoreAdapter(CoreHelperAttributes):
                 description="core adapter to be used with native PyTorch",
             )
 
-    def batch_to_device(self, batch) -> BatchEncoding:
+    def batch_to_device(self, batch: BatchEncoding) -> BatchEncoding:
         # TODO: switch to move_data_to_device
         #move_data_to_device(batch, self.device)
         to_device(self.device, batch)
