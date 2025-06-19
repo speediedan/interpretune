@@ -14,8 +14,8 @@ from interpretune.utils import rank_zero_warn, sanitize_input_name, DEFAULT_DECO
 @dataclass(kw_only=True)
 class DebugLMConfig(ITSerializableCfg):
     enabled: bool = False
-    debug_raw_preds: np.ndarray = field(default_factory=lambda: np.array([]))
-    debug_raw_labels: np.ndarray = field(default_factory=lambda: np.array([]))
+    debug_raw_preds: Optional[np.ndarray] = None  # field(default_factory=lambda: np.array([]))
+    debug_raw_labels: Optional[np.ndarray] = None  # field(default_factory=lambda: np.array([]))
     debug_raw_sequences: Optional[List[str]] = None
     raw_debug_sequences: List = field(default_factory=list)
 

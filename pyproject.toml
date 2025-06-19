@@ -31,7 +31,7 @@ classifiers = [
 description = "A package to support LLM reasoning and interpretability experiments at a level of abstraction that is both powerfully flexible and convenient"
 readme = "README.md"
 dependencies = [
-    "transformer_lens",
+    "transformer_lens >= 2.15.4",
     "sae_lens",
     "torch >= 2.6.0",
     "tabulate >= 0.9.0",
@@ -69,6 +69,9 @@ examples = [
 "gdown",
 "evaluate",
 "scikit-learn",
+# "safetensors >= 0.5.0",  # for circuit-tracer
+# "numpy >= 2.0.0",  # for circuit-tracer
+#"circuit-tracer@git+https://github.com/safety-research/circuit-tracer.git@d797c824c0ffe3a0274071e32d92962a36656212",
 #"circuitsvis",
 #"circuitsvis @ git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python"
 ]

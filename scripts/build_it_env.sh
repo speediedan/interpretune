@@ -35,7 +35,7 @@ Usage: $0
     # build latest with torch test channel:
     #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --torch_test_channel
     # build latest with FTS from source:
-    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --fts_from_source
+    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --fts_from_source=${HOME}/repos/finetuning-scheduler
     # build latest with no cache directory:
     #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --pip_install_flags="--no-cache-dir"
 EOF
@@ -115,7 +115,9 @@ it_install(){
     cd ${repo_home}
 
     python -m pip install ${pip_install_flags} -e ".[test,examples,lightning]" -r requirements/docs.txt
-    pip install ${pip_install_flags} circuitsvis --no-deps
+    python -m pip install ${pip_install_flags} safetensors==0.5.3 numpy==2.3.0 --ignore-requires-python
+    python -m pip install ${pip_install_flags} --no-deps circuitsvis \
+    circuit-tracer@git+https://github.com/safety-research/circuit-tracer.git@d797c824c0ffe3a0274071e32d92962a36656212
     pyright -p pyproject.toml
     pre-commit install
     git lfs install
