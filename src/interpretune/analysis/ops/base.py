@@ -231,7 +231,8 @@ class AnalysisOp:
                  output_schema: OpSchema,
                  input_schema: Optional[OpSchema] = None,
                  aliases: Optional[Sequence[str]] = None,
-                 callables: Optional[Dict[str, Callable]] = None) -> None:
+                 impl_args: Optional[Dict[str, Any]] = None,
+                 auto_defaults: bool = True) -> None:
         self.name = name
         self.description = description
         self.output_schema = output_schema
@@ -239,7 +240,8 @@ class AnalysisOp:
         self._ctx_key = None
         self._aliases = aliases  # Store aliases for the operation
         self._impl = None
-        self.callables = callables or {}  # Store functions for operation implementation
+        self.auto_defaults = auto_defaults
+        self.impl_args = impl_args or {}
 
     @property
     def ctx_key(self) -> str:
@@ -394,23 +396,69 @@ class AnalysisOp:
         # TODO: consider more robust serialization in the future
         return (_reconstruct_op, (self.__class__, self.__dict__.copy()))
 
+    @property
+    def impl(self) -> Optional[Callable]:
+        """Get the implementation function."""
+        return self._impl
+
+    def _resolve_call_params(self, impl_func: Callable, module, analysis_batch,
+                            batch, batch_idx, **kwargs) -> Dict[str, Any]:
+        """Resolve parameters to pass to the implementation function using smart parameter detection."""
+        import inspect
+
+        # Get function signature
+        available_defaults = {
+            'module': module,
+            'analysis_batch': analysis_batch,
+            'batch': batch,
+            'batch_idx': batch_idx
+        }
+        try:
+            sig = inspect.signature(impl_func)
+        except (ValueError, TypeError):
+            # If we can't get signature, fall back to passing all defaults
+            call_args = dict(available_defaults)
+            call_args.update(self.impl_args)
+            call_args.update(kwargs)
+            return call_args
+
+        call_args = {}
+
+        if self.auto_defaults:
+            # Only pass defaults that the function accepts
+            for param_name, param_value in available_defaults.items():
+                if param_name in sig.parameters:
+                    call_args[param_name] = param_value
+        else:
+            # Pass all defaults (original behavior)
+            call_args.update(available_defaults)
+
+        # Add impl_args and user kwargs
+        call_args.update(self.impl_args)
+        call_args.update(kwargs)
+
+        return call_args
+
     def __call__(self, module: Optional[torch.nn.Module] = None,
                  analysis_batch: Optional[BaseAnalysisBatchProtocol] = None,
-                 batch: Optional[BatchEncoding] = None, batch_idx: Optional[int] = None) -> BaseAnalysisBatchProtocol:
+                 batch: Optional[BatchEncoding] = None, batch_idx: Optional[int] = None,
+                 **kwargs) -> BaseAnalysisBatchProtocol:
         """Execute the operation using the configured implementation."""
         analysis_batch = analysis_batch or AnalysisBatch()
+
         # Validate input schema if provided
         if self.input_schema:
             self._validate_input_schema(analysis_batch, batch)
 
-        # Use the implementation function from callables if available
-        if "implementation" in self.callables:
-            return self.callables["implementation"](module, analysis_batch, batch, batch_idx, **{
-                k: v for k, v in self.callables.items() if k != "implementation"
-            })
+        # Get implementation function
+        impl_func = self.impl
+        if impl_func is None:
+            raise NotImplementedError(f"Operation {self.name} does not have an implementation function registered")
 
-        # Fallback to direct invocation if no implementation is registered
-        raise NotImplementedError(f"Operation {self.name} does not have an implementation function registered")
+        # Resolve parameters to pass to the implementation
+        call_args = self._resolve_call_params(impl_func, module, analysis_batch, batch, batch_idx, **kwargs)
+
+        return impl_func(**call_args)
 
 
 # NOTE: [Composition and Compilation Limitations]

@@ -987,8 +987,9 @@ class TestAnalysisOp:
             name="test_op",
             description="Test op with implementation",
             output_schema=OpSchema({"loss": ColCfg(datasets_dtype="float32")}),
-            callables={"implementation": implementation, "extra_arg": 42}
+            impl_args={"extra_arg": 42}
         )
+        op._impl = implementation
 
         # Call the operation
         result = op(None, None, {}, 0)
@@ -1028,9 +1029,9 @@ class TestAnalysisOp:
                 "loss": ColCfg(datasets_dtype="float32"),
                 "labels": ColCfg(datasets_dtype="int64"),
                 "answer_logits": ColCfg(datasets_dtype="float32")
-            }),
-            callables={"implementation": implementation}
+            })
         )
+        op._impl = implementation
 
         # Call the operation
         result = op(None, None, {}, 0)
@@ -1062,9 +1063,9 @@ class TestAnalysisOp:
                 "logit_diffs": ColCfg(datasets_dtype="float32"),
                 "loss": ColCfg(datasets_dtype="float32"),
                 "attribution_values": ColCfg(datasets_dtype="float32", per_latent=True)
-            }),
-            callables={"implementation": implementation}
+            })
         )
+        op._impl = implementation
 
         # Call the operation
         result = op(None, None, {}, 0)
@@ -1090,9 +1091,9 @@ class TestAnalysisOp:
             name="test_call",
             description="Test call with validation",
             output_schema=OpSchema({"output_field": ColCfg(datasets_dtype="float32")}),
-            input_schema=OpSchema({"required_field": ColCfg(datasets_dtype="int64")}),
-            callables={"implementation": impl}
+            input_schema=OpSchema({"required_field": ColCfg(datasets_dtype="int64")})
         )
+        op._impl = impl
 
         # Create analysis batch with required input
         analysis_batch = AnalysisBatch()
@@ -1118,10 +1119,11 @@ class TestAnalysisOp:
             name="test_args",
             description="Test with args",
             output_schema=OpSchema({"output_value": ColCfg(datasets_dtype="float32")}),
-            callables={"implementation": impl, "arg1": 10, "arg2": 20}
+            impl_args={"arg1": 10, "arg2": 20}
         )
+        op._impl = impl
 
-        # Call with additional args passed through callables
+        # Call with additional args passed through impl_args
         result = op(None, None, {}, 0)
         assert torch.equal(result.output_value, torch.tensor([30.0]))
 
@@ -1191,16 +1193,16 @@ class TestCompositeAnalysisOp:
         op1 = AnalysisOp(
             name="first",
             description="First operation",
-            output_schema=OpSchema({"loss": ColCfg(datasets_dtype="float32")}),
-            callables={"implementation": impl1}
+            output_schema=OpSchema({"loss": ColCfg(datasets_dtype="float32")})
         )
+        op1._impl = impl1
+
         op2 = AnalysisOp(
             name="second",
             description="Second operation",
-            output_schema=OpSchema({"logit_diffs": ColCfg(datasets_dtype="float32")}),
-            input_schema=OpSchema({"loss": ColCfg(datasets_dtype="float32")}),
-            callables={"implementation": impl2}
+            output_schema=OpSchema({"logit_diffs": ColCfg(datasets_dtype="float32")})
         )
+        op2._impl = impl2
 
         # Create the composition
         composition = CompositeAnalysisOp([op1, op2])
@@ -1239,17 +1241,17 @@ class TestCompositeAnalysisOp:
             name="first_op",
             description="First operation",
             input_schema=OpSchema({"existing_field": ColCfg(datasets_dtype="float32", required=False)}),
-            output_schema=OpSchema({"intermediate": ColCfg(datasets_dtype="float32")}),
-            callables={"implementation": first_impl}
+            output_schema=OpSchema({"intermediate": ColCfg(datasets_dtype="float32")})
         )
+        first_op._impl = first_impl
 
         second_op = AnalysisOp(
             name="second_op",
             description="Second operation",
-            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
             input_schema=OpSchema({"intermediate": ColCfg(datasets_dtype="float32")}),
-            callables={"implementation": second_impl}
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")})
         )
+        second_op._impl = second_impl
 
         # Create and test the composition
         composition = CompositeAnalysisOp([first_op, second_op])
@@ -1523,6 +1525,166 @@ class TestOpWrapper:
         assert isinstance(current_module.mock_op, AnalysisOp)
         assert wrapper._instantiated_op is mock_op
         assert wrapper._is_instantiated is True
+
+    def test_resolve_call_params_signature_exception(self):
+        """Test _resolve_call_params when inspect.signature fails."""
+        from unittest.mock import patch, MagicMock
+
+        # Create an AnalysisOp instance
+        op = AnalysisOp(
+            name="test_op",
+            description="Test operation",
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
+            impl_args={"custom_param": "custom_value"},
+            auto_defaults=True
+        )
+
+        # Create a mock implementation function
+        mock_impl_func = MagicMock()
+
+        # Test with ValueError
+        with patch('inspect.signature', side_effect=ValueError("Cannot get signature")):
+            result = op._resolve_call_params(
+                impl_func=mock_impl_func,
+                module="test_module",
+                analysis_batch="test_batch",
+                batch="test_batch_data",
+                batch_idx=5,
+                extra_kwarg="extra_value"
+            )
+
+            # Verify fallback behavior - should include all defaults, impl_args, and kwargs
+            expected = {
+                'module': "test_module",
+                'analysis_batch': "test_batch",
+                'batch': "test_batch_data",
+                'batch_idx': 5,
+                'custom_param': "custom_value",
+                'extra_kwarg': "extra_value"
+            }
+            assert result == expected
+
+        # Test with TypeError
+        with patch('inspect.signature', side_effect=TypeError("Cannot get signature")):
+            result = op._resolve_call_params(
+                impl_func=mock_impl_func,
+                module="test_module2",
+                analysis_batch="test_batch2",
+                batch="test_batch_data2",
+                batch_idx=10,
+                another_kwarg="another_value"
+            )
+
+            # Verify fallback behavior works the same way
+            expected = {
+                'module': "test_module2",
+                'analysis_batch': "test_batch2",
+                'batch': "test_batch_data2",
+                'batch_idx': 10,
+                'custom_param': "custom_value",
+                'another_kwarg': "another_value"
+            }
+            assert result == expected
+
+    def test_resolve_call_params_auto_defaults_false(self):
+        """Test _resolve_call_params when auto_defaults=False passes all defaults."""
+        from unittest.mock import MagicMock
+
+        # Create an AnalysisOp instance with auto_defaults=False
+        op = AnalysisOp(
+            name="test_op",
+            description="Test operation",
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
+            impl_args={"custom_param": "custom_value"},
+            auto_defaults=False  # This triggers the missing line
+        )
+
+        # Create a mock implementation function that only accepts some of the available defaults
+        mock_impl_func = MagicMock()
+        mock_sig = MagicMock()
+        mock_sig.parameters = {"module": MagicMock(), "batch_idx": MagicMock()}  # Only accepts 2 of 4 defaults
+
+        with patch('inspect.signature', return_value=mock_sig):
+            result = op._resolve_call_params(
+                impl_func=mock_impl_func,
+                module="test_module",
+                analysis_batch="test_batch",
+                batch="test_batch_data",
+                batch_idx=5,
+                extra_kwarg="extra_value"
+            )
+
+            # When auto_defaults=False, should include ALL available defaults
+            # regardless of function signature (this exercises the missing line)
+            expected = {
+                'module': "test_module",
+                'analysis_batch': "test_batch",
+                'batch': "test_batch_data",
+                'batch_idx': 5,
+                'custom_param': "custom_value",
+                'extra_kwarg': "extra_value"
+            }
+            assert result == expected
+
+            # Verify all 4 defaults are present even though function only accepts 2
+            assert "analysis_batch" in result  # This wouldn't be there with auto_defaults=True
+            assert "batch" in result  # This wouldn't be there with auto_defaults=True
+
+    def test_resolve_call_params_auto_defaults_true_vs_false(self):
+        """Test the difference between auto_defaults=True and auto_defaults=False."""
+        from unittest.mock import MagicMock
+
+        # Create a mock implementation function that only accepts some parameters
+        mock_impl_func = MagicMock()
+        mock_sig = MagicMock()
+        mock_sig.parameters = {"module": MagicMock()}  # Only accepts module parameter
+
+        # Test with auto_defaults=True
+        op_true = AnalysisOp(
+            name="test_op_true",
+            description="Test operation",
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
+            auto_defaults=True
+        )
+
+        # Test with auto_defaults=False
+        op_false = AnalysisOp(
+            name="test_op_false",
+            description="Test operation",
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
+            auto_defaults=False
+        )
+
+        with patch('inspect.signature', return_value=mock_sig):
+            # auto_defaults=True should only pass parameters the function accepts
+            result_true = op_true._resolve_call_params(
+                impl_func=mock_impl_func,
+                module="test_module",
+                analysis_batch="test_batch",
+                batch="test_batch_data",
+                batch_idx=5
+            )
+
+            # auto_defaults=False should pass all defaults (exercises missing line)
+            result_false = op_false._resolve_call_params(
+                impl_func=mock_impl_func,
+                module="test_module",
+                analysis_batch="test_batch",
+                batch="test_batch_data",
+                batch_idx=5
+            )
+
+            # With auto_defaults=True, only 'module' should be in the result
+            assert "module" in result_true
+            assert "analysis_batch" not in result_true
+            assert "batch" not in result_true
+            assert "batch_idx" not in result_true
+
+            # With auto_defaults=False, ALL defaults should be in the result
+            assert "module" in result_false
+            assert "analysis_batch" in result_false  # This exercises the missing line
+            assert "batch" in result_false  # This exercises the missing line
+            assert "batch_idx" in result_false  # This exercises the missing line
 
     def test_reconstruct_op_basic(self):
         """Test _reconstruct_op function for a basic AnalysisOp."""

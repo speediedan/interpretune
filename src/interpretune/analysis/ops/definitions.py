@@ -15,7 +15,7 @@ from interpretune.analysis.ops.base import AnalysisBatch
 
 
 def boolean_logits_to_avg_logit_diff(
-    logits: Float[torch.Tensor, "batch seq 2"],
+    logits: Float[torch.Tensor, "batch seq 2"],  # type: ignore
     target_indices: torch.Tensor,
     reduction: Literal["mean", "sum"] | None = None,
     keep_as_tensor: bool = True,

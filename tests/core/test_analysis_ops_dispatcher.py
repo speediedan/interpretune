@@ -1189,7 +1189,7 @@ test_op:
             input_schema={},
             output_schema={},
             aliases=[],
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -1221,7 +1221,7 @@ test_op:
             input_schema={},
             output_schema={},
             aliases=[],
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -1237,10 +1237,10 @@ test_op:
             name=op_name,
             implementation="",  # Empty implementation
             description="",
-            input_schema={},
-            output_schema={},
+            input_schema=OpSchema({}),
+            output_schema=OpSchema({}),
             aliases=[],
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -1256,10 +1256,10 @@ test_op:
             name=op_name,
             implementation="just_function",  # Missing module part
             description="",
-            input_schema={},
-            output_schema={},
+            input_schema=OpSchema({}),
+            output_schema=OpSchema({}),
             aliases=[],
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -1277,10 +1277,10 @@ test_op:
             name=op_name,
             implementation="module.function_name",
             description="",
-            input_schema={},
-            output_schema={},
+            input_schema=OpSchema({}),
+            output_schema=OpSchema({}),
             aliases=[],
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -1611,7 +1611,7 @@ class TestPopulateAliasesFromDefinitions:
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
             aliases=["op2"],  # op1 has alias "op2"
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -1623,7 +1623,7 @@ class TestPopulateAliasesFromDefinitions:
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
             aliases=["op1", "op2"],  # op2 has alias "op1" - this should be prevented
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -1658,7 +1658,7 @@ class TestPopulateAliasesFromDefinitions:
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
             aliases=["new_alias"],
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -1683,7 +1683,7 @@ class TestPopulateAliasesFromDefinitions:
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
             aliases=['existing_alias'],
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -1695,7 +1695,7 @@ class TestPopulateAliasesFromDefinitions:
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
             aliases=["namespace.existing_alias"],
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -1720,7 +1720,7 @@ class TestPopulateAliasesFromDefinitions:
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
             aliases=["namespace.test_alias"],
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -1745,7 +1745,7 @@ class TestPopulateAliasesFromDefinitions:
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
             aliases=["test_op"],  # Self-referencing alias
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -1768,7 +1768,7 @@ class TestPopulateAliasesFromDefinitions:
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
             aliases=["ns1.ns2.ns3.deep_alias"],
-            function_params={},
+            importable_params={},
             required_ops=[],
             composition=None
         )
@@ -2555,14 +2555,14 @@ dependent_op:
         """Test function parameter resolution from hub module in _instantiate_op."""
         dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
 
-        # Create a mock OpDef for a hub operation with function_params
+        # Create a mock OpDef for a hub operation with importable_params
         op_def = OpDef(
             name="testuser.repo.test_op",
             description="Test hub operation with function params",
             implementation="module.test_func",
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
-            function_params={"helper_func": "module.helper"}
+            importable_params={"helper_func": "module.helper"}
         )
 
         dispatcher._op_definitions = {"testuser.repo.test_op": op_def}
@@ -2589,9 +2589,9 @@ dependent_op:
             # Verify _import_callable was not called since hub resolution succeeded
             mock_import_callable.assert_not_called()
 
-            # Verify the helper function was added to callables
-            assert "helper_func" in op.callables
-            assert op.callables["helper_func"] is mock_helper
+            # Verify the helper function was added to impl_args
+            assert "helper_func" in op.impl_args
+            assert op.impl_args["helper_func"] is mock_helper
 
     def test_instantiate_op_function_params_unresolvable_warning(self):
         """Test warning when function parameter cannot be resolved."""
@@ -2604,7 +2604,7 @@ dependent_op:
             implementation="tests.core.test_analysis_ops_base.op_impl_test",
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
-            function_params={"bad_param": "nonexistent.module.func"}
+            importable_params={"bad_param": "nonexistent.module.func"}
         )
 
         dispatcher._op_definitions = {"test_op": op_def}
@@ -2625,13 +2625,12 @@ dependent_op:
 
             # Verify warning was issued
             mock_warn.assert_called_with(
-                "Function parameter 'bad_param' in operation 'test_op' could not be resolved: "
+                "Importable parameter 'bad_param' in operation 'test_op' could not be resolved: "
                 "nonexistent.module.func. It will not be available in the operation."
             )
 
-            # Verify the bad parameter was not added to callables
-            assert "bad_param" not in op.callables
-            assert "implementation" in op.callables  # Should still have the main implementation
+            # Verify the bad parameter was not added to impl_args
+            assert "bad_param" not in op.impl_args
 
     def test_instantiate_op_function_params_not_callable_warning(self):
         """Test warning when function parameter is not callable."""
@@ -2644,7 +2643,7 @@ dependent_op:
             implementation="tests.core.test_analysis_ops_base.op_impl_test",
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
-            function_params={"not_callable_param": "test.module.value"}
+            importable_params={"not_callable_param": "test.module.value"}
         )
 
         dispatcher._op_definitions = {"test_op": op_def}
@@ -2658,21 +2657,13 @@ dependent_op:
                 return non_callable_value
             return original_import(path)
 
-        with patch.object(dispatcher, '_import_callable', side_effect=mock_import_callable), \
-             patch('interpretune.analysis.ops.dispatcher.rank_zero_warn') as mock_warn:
-
+        with patch.object(dispatcher, '_import_callable', side_effect=mock_import_callable):
             # Instantiate the operation
             op = dispatcher._instantiate_op("test_op")
 
-            # Verify warning was issued
-            mock_warn.assert_called_with(
-                "Function parameter 'not_callable_param' in operation 'test_op' is not callable: "
-                "not_a_function"
-            )
-
-            # Verify the parameter was still added despite not being callable
-            assert "not_callable_param" in op.callables
-            assert op.callables["not_callable_param"] == non_callable_value
+            # Verify the parameter was still added to impl_args
+            assert "not_callable_param" in op.impl_args
+            assert op.impl_args["not_callable_param"] == non_callable_value
 
     def test_instantiate_op_function_params_hub_fallback_to_regular_import(self):
         """Test fallback to regular import when hub module resolution fails."""
@@ -2685,7 +2676,7 @@ dependent_op:
             implementation="module.test_func",
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
-            function_params={"helper_func": "other_module.helper"}
+            importable_params={"helper_func": "other_module.helper"}
         )
 
         dispatcher._op_definitions = {"testuser.repo.test_op": op_def}
@@ -2705,6 +2696,15 @@ dependent_op:
             # Verify fallback to _import_callable was used
             mock_import_callable.assert_called_with("other_module.helper")
 
-            # Verify the helper function was added to callables
-            assert "helper_func" in op.callables
-            assert op.callables["helper_func"] is mock_helper
+            # Verify the helper function was added to impl_args
+            assert "helper_func" in op.impl_args
+            assert op.impl_args["helper_func"] is mock_helper
+            # Instantiate the operation
+            op = dispatcher._instantiate_op("testuser.repo.test_op")
+
+            # Verify fallback to _import_callable was used
+            mock_import_callable.assert_called_with("other_module.helper")
+
+            # Verify the helper function was added to impl_args
+            assert "helper_func" in op.impl_args
+            assert op.impl_args["helper_func"] is mock_helper

@@ -25,7 +25,9 @@ class OpDef:
     input_schema: OpSchema
     output_schema: OpSchema
     aliases: List[str] = field(default_factory=list)
-    function_params: Dict[str, str] = field(default_factory=dict)
+    importable_params: Dict[str, str] = field(default_factory=dict)
+    normal_params: Dict[str, Any] = field(default_factory=dict)
+    auto_defaults: bool = True
     required_ops: List[str] = field(default_factory=list)
     composition: Optional[List[str]] = None
 
@@ -38,7 +40,9 @@ class OpDef:
             'input_schema': self.input_schema,
             'output_schema': self.output_schema,
             'aliases': self.aliases,
-            'function_params': self.function_params,
+            'importable_params': self.importable_params,
+            'normal_params': self.normal_params,
+            'auto_defaults': self.auto_defaults,
             'required_ops': self.required_ops,
             'composition': self.composition
         }
@@ -325,8 +329,12 @@ class OpDefinitionsCacheManager:
         # Include optional fields that have values
         if op_def.aliases:
             fields.append(f'aliases={op_def.aliases!r}')
-        if op_def.function_params:
-            fields.append(f'function_params={op_def.function_params!r}')
+        if op_def.importable_params:
+            fields.append(f'importable_params={op_def.importable_params!r}')
+        if op_def.normal_params:
+            fields.append(f'normal_params={op_def.normal_params!r}')
+        if not op_def.auto_defaults:  # Only include if different from default
+            fields.append(f'auto_defaults={op_def.auto_defaults!r}')
         if op_def.required_ops:
             fields.append(f'required_ops={op_def.required_ops!r}')
         if op_def.composition:

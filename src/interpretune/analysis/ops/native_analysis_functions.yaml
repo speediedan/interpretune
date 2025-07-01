@@ -104,7 +104,7 @@ model_cache_forward:
 model_ablation:
   description: Model ablation analysis
   implementation: interpretune.analysis.ops.definitions.model_ablation_impl
-  function_params:
+  importable_params:
     ablate_latent_fn: interpretune.analysis.ops.definitions.ablate_sae_latent
   required_ops: [get_answer_indices, get_alive_latents]
   aliases: []
@@ -129,7 +129,7 @@ model_ablation:
 model_gradient:
   description: Model gradient-based attribution
   implementation: interpretune.analysis.ops.definitions.model_gradient_impl
-  function_params:
+  importable_params:
     logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
     get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
   required_ops: [get_answer_indices]
@@ -168,7 +168,7 @@ model_gradient:
 logit_diffs:
   description: Clean forward pass for computing logit differences
   implementation: interpretune.analysis.ops.definitions.logit_diffs_impl
-  function_params:
+  importable_params:
     logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
     get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
   aliases: []
@@ -205,7 +205,7 @@ logit_diffs:
 logit_diffs_cache:
   description: Clean forward pass for computing logit differences including cache activations (composition only)
   implementation: interpretune.analysis.ops.definitions.logit_diffs_impl
-  function_params:
+  importable_params:
     logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
     get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
   aliases: []
@@ -294,7 +294,7 @@ gradient_attribution:
 ablation_attribution:
   description: Compute attribution values from ablation
   implementation: interpretune.analysis.ops.definitions.ablation_attribution_impl
-  function_params:
+  importable_params:
     logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
     get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
   aliases: []

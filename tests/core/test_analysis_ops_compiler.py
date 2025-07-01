@@ -567,13 +567,23 @@ class TestOpDef:
             input_schema=input_schema,
             output_schema=output_schema,
             aliases=["alias1", "alias2"],
-            function_params={"param1": "value1"},
+            importable_params={"param1": "test.module.param1"},
+            normal_params={"threshold": 0.5},
+            auto_defaults=False,
             required_ops=["dep1", "dep2"],
             composition=["op1", "op2"]
         )
 
         assert op_def.name == "test_op"
+        assert op_def.description == "Test operation"
+        assert op_def.implementation == "test.module.func"
+        assert op_def.input_schema == input_schema
+        assert op_def.output_schema == output_schema
         assert op_def.aliases == ["alias1", "alias2"]
+        assert op_def.importable_params == {"param1": "test.module.param1"}
+        assert op_def.normal_params == {"threshold": 0.5}
+        assert op_def.auto_defaults is False
+        assert op_def.required_ops == ["dep1", "dep2"]
         assert op_def.composition == ["op1", "op2"]
 
     def test_op_def_to_dict(self):
@@ -596,6 +606,53 @@ class TestOpDef:
         assert result_dict["output_schema"] == output_schema
         assert "composition" in result_dict  # Should be present even if None
 
+    def test_serialize_op_def(self):
+        """Test OpDef serialization."""
+        input_schema = OpSchema({"input_field": ColCfg(datasets_dtype="int64")})
+        output_schema = OpSchema({"output_field": ColCfg(datasets_dtype="float32")})
+
+        op_def = OpDef(
+            name="test_op",
+            description="Test operation",
+            implementation="my.module.func",
+            input_schema=input_schema,
+            output_schema=output_schema,
+            importable_params={"param1": "my.module.param1"},
+            normal_params={"threshold": 0.5}
+        )
+
+        cache_manager = OpDefinitionsCacheManager(Path("/tmp"))
+        serialized = cache_manager._serialize_op_def(op_def)
+
+        # Check that the serialized string contains the expected fields
+        assert 'name="test_op"' in serialized
+        assert 'description="Test operation"' in serialized
+        assert 'implementation="my.module.func"' in serialized
+        assert 'importable_params=' in serialized
+        assert 'normal_params=' in serialized
+        assert 'OpDef(' in serialized
+
+    def test_serialize_op_def_with_auto_defaults_false(self):
+        """Test OpDef serialization when auto_defaults is False."""
+        input_schema = OpSchema({"input_field": ColCfg(datasets_dtype="int64")})
+        output_schema = OpSchema({"output_field": ColCfg(datasets_dtype="float32")})
+
+        op_def = OpDef(
+            name="test_op_no_auto",
+            description="Test operation with auto_defaults False",
+            implementation="my.module.func",
+            input_schema=input_schema,
+            output_schema=output_schema,
+            auto_defaults=False  # This should trigger the missing line
+        )
+
+        cache_manager = OpDefinitionsCacheManager(Path("/tmp"))
+        serialized = cache_manager._serialize_op_def(op_def)
+
+        # Check that auto_defaults=False is included in serialization
+        assert 'auto_defaults=False' in serialized
+        assert 'name="test_op_no_auto"' in serialized
+        assert 'OpDef(' in serialized
 
 class TestDefinitionsCacheManager:
     """Tests for OpDefinitionsCacheManager functionality."""
@@ -752,25 +809,51 @@ test_op:
 
     def test_serialize_op_def(self, cache_manager):
         """Test OpDef serialization."""
-        input_schema = OpSchema({"field1": ColCfg(datasets_dtype="int64")})
-        output_schema = OpSchema({"field2": ColCfg(datasets_dtype="float32")})
+        input_schema = OpSchema({"input_field": ColCfg(datasets_dtype="int64")})
+        output_schema = OpSchema({"output_field": ColCfg(datasets_dtype="float32")})
 
         op_def = OpDef(
             name="test_op",
             description="Test operation",
-            implementation="test.module.func",
+            implementation="my.module.func",
             input_schema=input_schema,
             output_schema=output_schema,
-            aliases=["alias1"],
-            function_params={"param1": "value1"}
+            importable_params={"param1": "my.module.param1"},
+            normal_params={"threshold": 0.5}
         )
 
+        cache_manager = OpDefinitionsCacheManager(Path("/tmp"))
         serialized = cache_manager._serialize_op_def(op_def)
 
-        assert serialized.startswith('OpDef(')
+        # Check that the serialized string contains the expected fields
         assert 'name="test_op"' in serialized
-        assert 'aliases=[\'alias1\']' in serialized
-        assert 'function_params={\'param1\': \'value1\'}' in serialized
+        assert 'description="Test operation"' in serialized
+        assert 'implementation="my.module.func"' in serialized
+        assert 'importable_params=' in serialized
+        assert 'normal_params=' in serialized
+        assert 'OpDef(' in serialized
+
+    def test_serialize_op_def_with_auto_defaults_false(self):
+        """Test OpDef serialization when auto_defaults is False."""
+        input_schema = OpSchema({"input_field": ColCfg(datasets_dtype="int64")})
+        output_schema = OpSchema({"output_field": ColCfg(datasets_dtype="float32")})
+
+        op_def = OpDef(
+            name="test_op_no_auto",
+            description="Test operation with auto_defaults False",
+            implementation="my.module.func",
+            input_schema=input_schema,
+            output_schema=output_schema,
+            auto_defaults=False  # This should trigger the missing line
+        )
+
+        cache_manager = OpDefinitionsCacheManager(Path("/tmp"))
+        serialized = cache_manager._serialize_op_def(op_def)
+
+        # Check that auto_defaults=False is included in serialization
+        assert 'auto_defaults=False' in serialized
+        assert 'name="test_op_no_auto"' in serialized
+        assert 'OpDef(' in serialized
 
     def test_generate_module_content(self, cache_manager, sample_yaml_file):
         """Test module content generation."""
@@ -1426,7 +1509,7 @@ class TestCacheManagerHubFunctionality:
 
         # Create complex hub cache structure
         hub_cache = tmp_path / "hub_cache"
-        hub_cache.mkdir()
+        hub_cache.mkdir(parents=True)
 
         # Create repository with multiple snapshots
         repo_dir = hub_cache / "models--testuser--complex"

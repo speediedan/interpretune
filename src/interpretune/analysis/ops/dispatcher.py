@@ -225,6 +225,8 @@ class AnalysisOpDispatcher:
             input_schema = self._convert_to_op_schema(op_def.get("input_schema", {}))
             output_schema = self._convert_to_op_schema(op_def.get("output_schema", {}))
 
+            importable_params = op_def.get("importable_params", {})
+
             # Create OpDef
             op_def_obj = OpDef(
                 name=op_name,
@@ -233,7 +235,9 @@ class AnalysisOpDispatcher:
                 input_schema=input_schema,
                 output_schema=output_schema,
                 aliases=op_def.get("aliases", []),
-                function_params=op_def.get("function_params", {}),
+                importable_params=importable_params,
+                normal_params=op_def.get("normal_params", {}),
+                auto_defaults=op_def.get("auto_defaults", True),
                 required_ops=op_def.get("required_ops", []),
                 composition=op_def.get("composition", None)
             )
@@ -508,6 +512,7 @@ class AnalysisOpDispatcher:
             op.input_schema = op_def.input_schema
             op.output_schema = op_def.output_schema
             return op
+
         # Check if this is a namespaced operation that needs dynamic loading
         if _is_hub_op := ('.' in op_def.name and self.enable_hub_ops):
             implementation = self._import_hub_callable(op_def.name, op_def)
@@ -515,23 +520,24 @@ class AnalysisOpDispatcher:
             # Handle regular operations
             implementation = self._import_callable(op_def.implementation)
 
-        callables = {"implementation": implementation}
+        # Build impl_args from importable_params and normal_params
+        impl_args = {}
 
-        # Import any additional functions specified in function_params
-        for param_name, param_path in op_def.function_params.items():
+        # Import any additional functions specified in importable_params
+        for param_name, param_path in op_def.importable_params.items():
             resolved_fn_param = None
             if _is_hub_op:
                 resolved_fn_param = AnalysisOpDispatcher._function_param_from_hub_module(param_path, implementation)
             if not resolved_fn_param:
                 resolved_fn_param = self._import_callable(param_path)
             if resolved_fn_param is None:
-                rank_zero_warn(f"Function parameter '{param_name}' in operation '{op_name}' could not be resolved: "
+                rank_zero_warn(f"Importable parameter '{param_name}' in operation '{op_name}' could not be resolved: "
                                  f"{param_path}. It will not be available in the operation.")
                 continue
-            if not callable(resolved_fn_param):
-                rank_zero_warn(f"Function parameter '{param_name}' in operation '{op_name}' is not callable: "
-                                 f"{resolved_fn_param}")
-            callables[param_name] = resolved_fn_param
+            impl_args[param_name] = resolved_fn_param
+
+        # Add normal parameters
+        impl_args.update(op_def.normal_params)
 
         op = AnalysisOp(
             name=op_name,
@@ -539,8 +545,12 @@ class AnalysisOpDispatcher:
             output_schema=op_def.output_schema,
             input_schema=op_def.input_schema,
             aliases=op_def.aliases,
-            callables=callables
+            impl_args=impl_args,
+            auto_defaults=op_def.auto_defaults
         )
+
+        # Set the implementation
+        op._impl = implementation
 
         return op
 
