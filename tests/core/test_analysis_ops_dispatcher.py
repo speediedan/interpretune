@@ -20,6 +20,7 @@ class TestAnalysisOpDispatcher:
     """Tests for AnalysisOpDispatcher functionality."""
     @pytest.fixture
     def dispatcher(self):
+        """Create a test dispatcher."""
         return AnalysisOpDispatcher()
 
     def test_dispatcher_init_with_string_path(self, test_ops_yaml):
@@ -2589,9 +2590,9 @@ dependent_op:
             # Verify _import_callable was not called since hub resolution succeeded
             mock_import_callable.assert_not_called()
 
-            # Verify the helper function was added to impl_args
-            assert "helper_func" in op.impl_args
-            assert op.impl_args["helper_func"] is mock_helper
+            # Verify the helper function was added to impl_params
+            assert "helper_func" in op.impl_params
+            assert op.impl_params["helper_func"] is mock_helper
 
     def test_instantiate_op_function_params_unresolvable_warning(self):
         """Test warning when function parameter cannot be resolved."""
@@ -2604,7 +2605,7 @@ dependent_op:
             implementation="tests.core.test_analysis_ops_base.op_impl_test",
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
-            importable_params={"bad_param": "nonexistent.module.func"}
+            importable_params={"bad_param": "module.nonexistent_func"}
         )
 
         dispatcher._op_definitions = {"test_op": op_def}
@@ -2613,7 +2614,7 @@ dependent_op:
         # Mock _import_callable to return None for the bad parameter
         original_import = dispatcher._import_callable
         def mock_import_callable(path):
-            if path == "nonexistent.module.func":
+            if path == "module.nonexistent_func":
                 return None
             return original_import(path)
 
@@ -2626,11 +2627,11 @@ dependent_op:
             # Verify warning was issued
             mock_warn.assert_called_with(
                 "Importable parameter 'bad_param' in operation 'test_op' could not be resolved: "
-                "nonexistent.module.func. It will not be available in the operation."
+                "module.nonexistent_func. It will not be available in the operation."
             )
 
-            # Verify the bad parameter was not added to impl_args
-            assert "bad_param" not in op.impl_args
+            # Verify the bad parameter was not added to impl_params
+            assert "bad_param" not in op.impl_params
 
     def test_instantiate_op_function_params_not_callable_warning(self):
         """Test warning when function parameter is not callable."""
@@ -2661,9 +2662,9 @@ dependent_op:
             # Instantiate the operation
             op = dispatcher._instantiate_op("test_op")
 
-            # Verify the parameter was still added to impl_args
-            assert "not_callable_param" in op.impl_args
-            assert op.impl_args["not_callable_param"] == non_callable_value
+            # Verify the parameter was still added to impl_params
+            assert "not_callable_param" in op.impl_params
+            assert op.impl_params["not_callable_param"] == non_callable_value
 
     def test_instantiate_op_function_params_hub_fallback_to_regular_import(self):
         """Test fallback to regular import when hub module resolution fails."""
@@ -2696,15 +2697,12 @@ dependent_op:
             # Verify fallback to _import_callable was used
             mock_import_callable.assert_called_with("other_module.helper")
 
-            # Verify the helper function was added to impl_args
-            assert "helper_func" in op.impl_args
-            assert op.impl_args["helper_func"] is mock_helper
-            # Instantiate the operation
-            op = dispatcher._instantiate_op("testuser.repo.test_op")
-
+            # Verify the helper function was added to impl_params
+            assert "helper_func" in op.impl_params
+            assert op.impl_params["helper_func"] is mock_helper
             # Verify fallback to _import_callable was used
             mock_import_callable.assert_called_with("other_module.helper")
 
-            # Verify the helper function was added to impl_args
-            assert "helper_func" in op.impl_args
-            assert op.impl_args["helper_func"] is mock_helper
+            # Verify the helper function was added to impl_params
+            assert "helper_func" in op.impl_params
+            assert op.impl_params["helper_func"] is mock_helper

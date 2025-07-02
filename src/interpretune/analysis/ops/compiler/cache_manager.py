@@ -27,7 +27,6 @@ class OpDef:
     aliases: List[str] = field(default_factory=list)
     importable_params: Dict[str, str] = field(default_factory=dict)
     normal_params: Dict[str, Any] = field(default_factory=dict)
-    auto_defaults: bool = True
     required_ops: List[str] = field(default_factory=list)
     composition: Optional[List[str]] = None
 
@@ -42,7 +41,6 @@ class OpDef:
             'aliases': self.aliases,
             'importable_params': self.importable_params,
             'normal_params': self.normal_params,
-            'auto_defaults': self.auto_defaults,
             'required_ops': self.required_ops,
             'composition': self.composition
         }
@@ -333,8 +331,6 @@ class OpDefinitionsCacheManager:
             fields.append(f'importable_params={op_def.importable_params!r}')
         if op_def.normal_params:
             fields.append(f'normal_params={op_def.normal_params!r}')
-        if not op_def.auto_defaults:  # Only include if different from default
-            fields.append(f'auto_defaults={op_def.auto_defaults!r}')
         if op_def.required_ops:
             fields.append(f'required_ops={op_def.required_ops!r}')
         if op_def.composition:

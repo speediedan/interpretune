@@ -128,7 +128,7 @@ class TestLabelsAndIndicesFunctions:
         # Test with existing analysis_batch
         existing_batch = AnalysisBatch()
         mock_batch = {"labels": ["label1", "label2"]}
-        result_batch = labels_to_ids_impl(mock_module, existing_batch, mock_batch, 0)
+        result_batch = labels_to_ids_impl(mock_module, existing_batch, mock_batch)
 
         # Verify the results
         assert hasattr(result_batch, "label_ids")
@@ -224,14 +224,11 @@ class TestLabelsAndIndicesFunctions:
             answer_indices=torch.tensor([2, 3])  # Answer positions for batch examples
         )
 
-        # Create mock batch
-        mock_batch = {"input": torch.ones(2, 4)}
-
         # Import function under test
         from interpretune.analysis.ops.definitions import get_alive_latents_impl
 
         # Run the function
-        result_batch = get_alive_latents_impl(mock_module, analysis_batch, mock_batch, 0)
+        result_batch = get_alive_latents_impl(mock_module, analysis_batch, 0)
 
         assert isinstance(result_batch, AnalysisBatch)
         assert result_batch.alive_latents == {}
@@ -254,7 +251,7 @@ class TestLabelsAndIndicesFunctions:
         )
 
         # Run the function
-        result_batch = get_alive_latents_impl(mock_module, analysis_batch, mock_batch, 0)
+        result_batch = get_alive_latents_impl(mock_module, analysis_batch, 0)
 
         # Verify the results
         assert hasattr(result_batch, "alive_latents")
@@ -279,7 +276,7 @@ class TestLabelsAndIndicesFunctions:
         )
 
         # Run the function
-        result_batch = get_alive_latents_impl(mock_module, analysis_batch, mock_batch, 0)
+        result_batch = get_alive_latents_impl(mock_module, analysis_batch, 0)
 
     def test_get_alive_latents_impl_with_input_store(self):
         """Test get_alive_latents_impl with alive_latents from input_store."""
@@ -288,15 +285,12 @@ class TestLabelsAndIndicesFunctions:
         mock_module.analysis_cfg.input_store = MagicMock()
         mock_module.analysis_cfg.input_store.alive_latents = [{"hook1": [0, 1], "hook2": [2, 3]}]
 
-        # Create mock batch
-        mock_batch = {"input": torch.ones(2, 4)}
-
         # Import function under test
         from interpretune.analysis.ops.definitions import get_alive_latents_impl
 
         existing_batch = AnalysisBatch()
         # Test with batch_idx=0
-        result_batch = get_alive_latents_impl(mock_module, existing_batch, mock_batch, 0)
+        result_batch = get_alive_latents_impl(mock_module, existing_batch, 0)
 
         # Verify that alive_latents were taken from input_store
         assert hasattr(result_batch, "alive_latents")
@@ -313,14 +307,11 @@ class TestLabelsAndIndicesFunctions:
         existing_alive_latents = {"hook1": [0, 1], "hook2": [2, 3]}
         analysis_batch = AnalysisBatch(alive_latents=existing_alive_latents)
 
-        # Create mock batch
-        mock_batch = {"input": torch.ones(2, 4)}
-
         # Import function under test
         from interpretune.analysis.ops.definitions import get_alive_latents_impl
 
         # Run the function
-        result_batch = get_alive_latents_impl(mock_module, analysis_batch, mock_batch, 0)
+        result_batch = get_alive_latents_impl(mock_module, analysis_batch, 0)
 
         # Verify the existing alive_latents were preserved
         assert hasattr(result_batch, "alive_latents")

@@ -10,6 +10,43 @@ from transformers import BatchEncoding, PreTrainedTokenizerBase
 
 from interpretune.protocol import BaseAnalysisBatchProtocol
 
+# Module-level constants for default operation parameters
+DEFAULT_OP_PARAMS = {
+    'module': None,
+    'analysis_batch': None,
+    'batch': None,
+    'batch_idx': None
+}
+
+DEFAULT_OP_PARAM_NAMES = frozenset(DEFAULT_OP_PARAMS.keys())
+
+
+def build_call_args(module, analysis_batch, batch, batch_idx,
+                   impl_params=None, **kwargs):
+    """Build arguments for operation calls.
+
+    Args:
+        module: The module instance
+        analysis_batch: The analysis batch
+        batch: The input batch
+        batch_idx: The batch index
+        impl_params: Implementation-specific parameters
+        **kwargs: Additional keyword arguments
+
+    Returns:
+        Dictionary of arguments for the operation call
+    """
+    args = {
+        'module': module,
+        'analysis_batch': analysis_batch,
+        'batch': batch,
+        'batch_idx': batch_idx
+    }
+    if impl_params:
+        args.update(impl_params)
+    args.update(kwargs)
+    return args
+
 
 class AttrDict(dict):
     def __init__(self, *args, **kwargs):
@@ -231,8 +268,7 @@ class AnalysisOp:
                  output_schema: OpSchema,
                  input_schema: Optional[OpSchema] = None,
                  aliases: Optional[Sequence[str]] = None,
-                 impl_args: Optional[Dict[str, Any]] = None,
-                 auto_defaults: bool = True) -> None:
+                 impl_params: Optional[Dict[str, Any]] = None) -> None:
         self.name = name
         self.description = description
         self.output_schema = output_schema
@@ -240,8 +276,7 @@ class AnalysisOp:
         self._ctx_key = None
         self._aliases = aliases  # Store aliases for the operation
         self._impl = None
-        self.auto_defaults = auto_defaults
-        self.impl_args = impl_args or {}
+        self.impl_params = impl_params or {}
 
     @property
     def ctx_key(self) -> str:
@@ -406,38 +441,42 @@ class AnalysisOp:
         """Resolve parameters to pass to the implementation function using smart parameter detection."""
         import inspect
 
-        # Get function signature
-        available_defaults = {
-            'module': module,
-            'analysis_batch': analysis_batch,
-            'batch': batch,
-            'batch_idx': batch_idx
-        }
+        # Use centralized parameter building
+        available_defaults = build_call_args(
+            module, analysis_batch, batch, batch_idx,
+            impl_params=self.impl_params, **kwargs
+        )
+
         try:
             sig = inspect.signature(impl_func)
         except (ValueError, TypeError):
             # If we can't get signature, fall back to passing all defaults
-            call_args = dict(available_defaults)
-            call_args.update(self.impl_args)
-            call_args.update(kwargs)
-            return call_args
+            return available_defaults
 
         call_args = {}
 
-        if self.auto_defaults:
-            # Only pass defaults that the function accepts
-            for param_name, param_value in available_defaults.items():
-                if param_name in sig.parameters:
-                    call_args[param_name] = param_value
-        else:
-            # Pass all defaults (original behavior)
-            call_args.update(available_defaults)
-
-        # Add impl_args and user kwargs
-        call_args.update(self.impl_args)
-        call_args.update(kwargs)
+        # Only pass parameters that the function accepts
+        for param_name, param_value in available_defaults.items():
+            if param_name in sig.parameters:
+                call_args[param_name] = param_value
 
         return call_args
+
+    def _call_with_resolved_params(self, module, analysis_batch, batch, batch_idx, **kwargs):
+        """Unified call method that handles parameter resolution."""
+        if self._impl is None:
+            raise NotImplementedError(f"Operation {self.name} has no implementation")
+
+        # Use centralized parameter building
+        all_params = build_call_args(
+            module, analysis_batch, batch, batch_idx,
+            impl_params=self.impl_params, **kwargs
+        )
+
+        # Resolve parameters for this specific implementation
+        resolved_params = self._resolve_call_params(self._impl, **all_params)
+
+        return self._impl(**resolved_params)
 
     def __call__(self, module: Optional[torch.nn.Module] = None,
                  analysis_batch: Optional[BaseAnalysisBatchProtocol] = None,
@@ -450,15 +489,9 @@ class AnalysisOp:
         if self.input_schema:
             self._validate_input_schema(analysis_batch, batch)
 
-        # Get implementation function
-        impl_func = self.impl
-        if impl_func is None:
-            raise NotImplementedError(f"Operation {self.name} does not have an implementation function registered")
-
-        # Resolve parameters to pass to the implementation
-        call_args = self._resolve_call_params(impl_func, module, analysis_batch, batch, batch_idx, **kwargs)
-
-        return impl_func(**call_args)
+        # Use unified call interface
+        result = self._call_with_resolved_params(module, analysis_batch, batch, batch_idx, **kwargs)
+        return result
 
 
 # NOTE: [Composition and Compilation Limitations]
@@ -502,13 +535,19 @@ class CompositeAnalysisOp(AnalysisOp):
 
     def __call__(self, module: Optional[torch.nn.Module] = None,
                  analysis_batch: Optional[BaseAnalysisBatchProtocol] = None,
-                 batch: Optional[BatchEncoding] = None, batch_idx: Optional[int] = None) -> BaseAnalysisBatchProtocol:
-        """Execute each operation in the composition."""
-        result = analysis_batch or AnalysisBatch()
+                 batch: Optional[BatchEncoding] = None, batch_idx: Optional[int] = None,
+                 **kwargs) -> BaseAnalysisBatchProtocol:
+        """Execute all operations in sequence with automatic parameter resolution."""
+        current_batch = analysis_batch or AnalysisBatch()
+
         for op in self.composition:
             with op.active_ctx_key(self.name):
-                result = op(module, result, batch, batch_idx)
-        return result
+                # Use centralized parameter building and resolution
+                current_batch = op._call_with_resolved_params(
+                    module, current_batch, batch, batch_idx, **kwargs
+                )
+
+        return current_batch
 
 class OpWrapper:
     """A special wrapper for operations that ensures the op is instantiated when accessed directly or when

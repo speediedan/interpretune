@@ -974,20 +974,44 @@ class TestAnalysisOp:
         # Check that dimensions were swapped
         assert torch.equal(result.logit_diffs, torch.tensor([[1.0, 3.0], [2.0, 4.0]]))
 
+    def test_impl_property_access(self):
+        """Test that the impl property properly returns the implementation function."""
+        # Test op without implementation
+        op_without_impl = AnalysisOp(
+            name="test_op_no_impl",
+            description="Test operation without implementation",
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")})
+        )
+
+        assert op_without_impl.impl is None
+
+        # Test op with implementation
+        def test_implementation():
+            return "test_result"
+
+        op_with_impl = AnalysisOp(
+            name="test_op_with_impl",
+            description="Test operation with implementation",
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")})
+        )
+        op_with_impl._impl = test_implementation
+
+        assert op_with_impl.impl is test_implementation
+        assert op_with_impl.impl() == "test_result"
+
     def test_callable_implementation(self):
         """Test calling an op with an implementation function."""
         def implementation(module, analysis_batch, batch, batch_idx, extra_arg=None, **kwargs):
             result = analysis_batch or AnalysisBatch()
             result.loss = torch.tensor(10.0)
-            if extra_arg:
-                result.logit_diffs = torch.tensor(extra_arg)
+            result.logit_diffs = torch.tensor(extra_arg)
             return result
 
         op = AnalysisOp(
             name="test_op",
             description="Test op with implementation",
             output_schema=OpSchema({"loss": ColCfg(datasets_dtype="float32")}),
-            impl_args={"extra_arg": 42}
+            impl_params={"extra_arg": 42}
         )
         op._impl = implementation
 
@@ -1111,21 +1135,88 @@ class TestAnalysisOp:
         """Test __call__ with implementation and additional arguments."""
         # Create implementation that uses additional arguments
         def impl(module, analysis_batch, batch, batch_idx, arg1=None, arg2=None, **kwargs):
-            result = AnalysisBatch()
-            result.output_value = torch.tensor([float(arg1 + arg2)])
+            result = analysis_batch or AnalysisBatch()
+            result.output_value = torch.tensor([arg1 + arg2])
             return result
 
         op = AnalysisOp(
             name="test_args",
             description="Test with args",
             output_schema=OpSchema({"output_value": ColCfg(datasets_dtype="float32")}),
-            impl_args={"arg1": 10, "arg2": 20}
+            impl_params={"arg1": 10, "arg2": 20}
         )
         op._impl = impl
 
-        # Call with additional args passed through impl_args
+        # Call with additional args passed through impl_params
         result = op(None, None, {}, 0)
         assert torch.equal(result.output_value, torch.tensor([30.0]))
+
+    def test_resolve_call_params_signature_exception(self):
+        """Test _resolve_call_params when inspect.signature fails."""
+        from unittest.mock import patch, MagicMock
+
+        # Create an AnalysisOp instance
+        op = AnalysisOp(
+            name="test_op",
+            description="Test operation",
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
+            impl_params={"custom_param": "custom_value"}
+        )
+
+        # Create a mock implementation function
+        mock_impl_func = MagicMock()
+
+        # Test with ValueError
+        with patch('inspect.signature', side_effect=ValueError("Cannot get signature")):
+            resolved = op._resolve_call_params(
+                mock_impl_func, "module", "batch", {}, 0, extra_kwarg="value"
+            )
+            # Should include all default parameters plus impl_params
+            assert "module" in resolved
+            assert "analysis_batch" in resolved
+            assert "batch" in resolved
+            assert "batch_idx" in resolved
+            assert resolved["custom_param"] == "custom_value"
+            assert resolved["extra_kwarg"] == "value"
+
+        # Test with TypeError
+        with patch('inspect.signature', side_effect=TypeError("Cannot get signature")):
+            resolved = op._resolve_call_params(
+                mock_impl_func, "module", "batch", {}, 0, extra_kwarg="value"
+            )
+            # Should include all default parameters plus impl_params
+            assert "module" in resolved
+            assert resolved["custom_param"] == "custom_value"
+
+    def test_resolve_call_params_smart_filtering(self):
+        """Test _resolve_call_params smart parameter filtering."""
+        from unittest.mock import MagicMock
+
+        # Create an AnalysisOp instance
+        op = AnalysisOp(
+            name="test_op",
+            description="Test operation",
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
+            impl_params={"custom_param": "custom_value"}
+        )
+
+        # Create a mock implementation function that only accepts some parameters
+        mock_impl_func = MagicMock()
+        mock_sig = MagicMock()
+        # Include custom_param in the accepted parameters to test impl_params filtering
+        mock_sig.parameters = {"module": MagicMock(), "batch_idx": MagicMock(), "custom_param": MagicMock()}
+
+        with patch('inspect.signature', return_value=mock_sig):
+            resolved = op._resolve_call_params(
+                mock_impl_func, "module", "batch", {}, 0, extra_kwarg="value"
+            )
+            # Should only include parameters that the function accepts
+            assert "module" in resolved
+            assert "batch_idx" in resolved
+            assert "analysis_batch" not in resolved  # Function doesn't accept this
+            assert "batch" not in resolved  # Function doesn't accept this
+            assert "custom_param" in resolved  # From impl_params - function accepts this
+            assert "extra_kwarg" not in resolved  # Function doesn't accept this
 
 
 class TestCompositeAnalysisOp:
@@ -1171,7 +1262,7 @@ class TestCompositeAnalysisOp:
         assert composite_op.name == "my_composition"
         for op in composite_op.composition:
             with op.active_ctx_key(composite_op.name):
-                assert op._ctx_key == "my_composition"
+                assert op.ctx_key == "my_composition"
 
     def test_composite_op_call(self):
         """Test calling a CompositeAnalysisOp."""
@@ -1253,25 +1344,29 @@ class TestCompositeAnalysisOp:
         )
         second_op._impl = second_impl
 
-        # Create and test the composition
-        composition = CompositeAnalysisOp([first_op, second_op])
+        # Mock the dispatcher to avoid circular imports in test
+        with patch('interpretune.analysis.ops.compiler.schema_compiler.jit_compile_composition_schema') as mock_compile:
+            # Mock the compilation to return empty schemas
+            mock_compile.return_value = (OpSchema({}), OpSchema({}))
 
-        # Test name generation
-        assert composition.name == "first_op.second_op"
+            # Create and test the composition
+            composition = CompositeAnalysisOp([first_op, second_op])
 
-        # Test execution
-        result = composition(None, None, {}, 0)
-        assert torch.equal(result.intermediate, torch.tensor([1.0, 2.0, 3.0]))
-        assert torch.equal(result.output, torch.tensor([2.0, 4.0, 6.0]))
+            # Test name generation
+            assert composition.name == "first_op.second_op"
 
-        # Test with existing analysis batch
-        analysis_batch = AnalysisBatch()
-        analysis_batch.existing_field = torch.tensor([42.0])
-        result = composition(None, analysis_batch, {}, 0)
-        assert torch.equal(result.existing_field, torch.tensor([42.0]))
-        assert torch.equal(result.intermediate, torch.tensor([1.0, 2.0, 3.0]))
-        assert torch.equal(result.output, torch.tensor([2.0, 4.0, 6.0]))
+            # Test execution
+            result = composition(None, None, {}, 0)
+            assert torch.equal(result.intermediate, torch.tensor([1.0, 2.0, 3.0]))
+            assert torch.equal(result.output, torch.tensor([2.0, 4.0, 6.0]))
 
+            # Test with existing analysis batch
+            analysis_batch = AnalysisBatch()
+            analysis_batch.existing_field = torch.tensor([42.0])
+            result = composition(None, analysis_batch, {}, 0)
+            assert torch.equal(result.existing_field, torch.tensor([42.0]))
+            assert torch.equal(result.intermediate, torch.tensor([1.0, 2.0, 3.0]))
+            assert torch.equal(result.output, torch.tensor([2.0, 4.0, 6.0]))
 
 class TestOpWrapper:
     """Tests for the OpWrapper class."""
@@ -1535,8 +1630,7 @@ class TestOpWrapper:
             name="test_op",
             description="Test operation",
             output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
-            impl_args={"custom_param": "custom_value"},
-            auto_defaults=True
+            impl_params={"custom_param": "custom_value"}
         )
 
         # Create a mock implementation function
@@ -1553,7 +1647,7 @@ class TestOpWrapper:
                 extra_kwarg="extra_value"
             )
 
-            # Verify fallback behavior - should include all defaults, impl_args, and kwargs
+            # Verify fallback behavior - should include all defaults, impl_params, and kwargs
             expected = {
                 'module': "test_module",
                 'analysis_batch': "test_batch",
@@ -1586,23 +1680,23 @@ class TestOpWrapper:
             }
             assert result == expected
 
-    def test_resolve_call_params_auto_defaults_false(self):
-        """Test _resolve_call_params when auto_defaults=False passes all defaults."""
+    def test_resolve_call_params_smart_filtering(self):
+        """Test _resolve_call_params smart parameter filtering."""
         from unittest.mock import MagicMock
 
-        # Create an AnalysisOp instance with auto_defaults=False
+        # Create an AnalysisOp instance
         op = AnalysisOp(
             name="test_op",
             description="Test operation",
             output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
-            impl_args={"custom_param": "custom_value"},
-            auto_defaults=False  # This triggers the missing line
+            impl_params={"custom_param": "custom_value"}
         )
 
-        # Create a mock implementation function that only accepts some of the available defaults
+        # Create a mock implementation function that only accepts some parameters
         mock_impl_func = MagicMock()
         mock_sig = MagicMock()
-        mock_sig.parameters = {"module": MagicMock(), "batch_idx": MagicMock()}  # Only accepts 2 of 4 defaults
+        # Include custom_param in the accepted parameters to test impl_params filtering
+        mock_sig.parameters = {"module": MagicMock(), "batch_idx": MagicMock(), "custom_param": MagicMock()}
 
         with patch('inspect.signature', return_value=mock_sig):
             result = op._resolve_call_params(
@@ -1614,77 +1708,13 @@ class TestOpWrapper:
                 extra_kwarg="extra_value"
             )
 
-            # When auto_defaults=False, should include ALL available defaults
-            # regardless of function signature (this exercises the missing line)
-            expected = {
-                'module': "test_module",
-                'analysis_batch': "test_batch",
-                'batch': "test_batch_data",
-                'batch_idx': 5,
-                'custom_param': "custom_value",
-                'extra_kwarg': "extra_value"
-            }
-            assert result == expected
-
-            # Verify all 4 defaults are present even though function only accepts 2
-            assert "analysis_batch" in result  # This wouldn't be there with auto_defaults=True
-            assert "batch" in result  # This wouldn't be there with auto_defaults=True
-
-    def test_resolve_call_params_auto_defaults_true_vs_false(self):
-        """Test the difference between auto_defaults=True and auto_defaults=False."""
-        from unittest.mock import MagicMock
-
-        # Create a mock implementation function that only accepts some parameters
-        mock_impl_func = MagicMock()
-        mock_sig = MagicMock()
-        mock_sig.parameters = {"module": MagicMock()}  # Only accepts module parameter
-
-        # Test with auto_defaults=True
-        op_true = AnalysisOp(
-            name="test_op_true",
-            description="Test operation",
-            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
-            auto_defaults=True
-        )
-
-        # Test with auto_defaults=False
-        op_false = AnalysisOp(
-            name="test_op_false",
-            description="Test operation",
-            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
-            auto_defaults=False
-        )
-
-        with patch('inspect.signature', return_value=mock_sig):
-            # auto_defaults=True should only pass parameters the function accepts
-            result_true = op_true._resolve_call_params(
-                impl_func=mock_impl_func,
-                module="test_module",
-                analysis_batch="test_batch",
-                batch="test_batch_data",
-                batch_idx=5
-            )
-
-            # auto_defaults=False should pass all defaults (exercises missing line)
-            result_false = op_false._resolve_call_params(
-                impl_func=mock_impl_func,
-                module="test_module",
-                analysis_batch="test_batch",
-                batch="test_batch_data",
-                batch_idx=5
-            )
-
-            # With auto_defaults=True, only 'module' should be in the result
-            assert "module" in result_true
-            assert "analysis_batch" not in result_true
-            assert "batch" not in result_true
-            assert "batch_idx" not in result_true
-
-            # With auto_defaults=False, ALL defaults should be in the result
-            assert "module" in result_false
-            assert "analysis_batch" in result_false  # This exercises the missing line
-            assert "batch" in result_false  # This exercises the missing line
-            assert "batch_idx" in result_false  # This exercises the missing line
+            # Should only include parameters that the function accepts
+            assert "module" in result
+            assert "batch_idx" in result
+            assert "analysis_batch" not in result  # Function doesn't accept this
+            assert "batch" not in result  # Function doesn't accept this
+            assert "custom_param" in result  # From impl_params - function accepts this
+            assert "extra_kwarg" not in result  # Function doesn't accept this
 
     def test_reconstruct_op_basic(self):
         """Test _reconstruct_op function for a basic AnalysisOp."""
@@ -1717,7 +1747,7 @@ class TestOpWrapper:
             aliases=["test_alias"]
         )
 
-        # Pickle and unpickle
+        # Pickle and unpickled
         pickled_op = pickle.dumps(op)
         unpickled_op = pickle.loads(pickled_op)
 

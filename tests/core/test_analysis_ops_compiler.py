@@ -551,7 +551,6 @@ class TestYamlFileInfo:
 
         assert info1.content_hash != info2.content_hash
 
-
 class TestOpDef:
     """Tests for OpDef functionality."""
 
@@ -569,7 +568,6 @@ class TestOpDef:
             aliases=["alias1", "alias2"],
             importable_params={"param1": "test.module.param1"},
             normal_params={"threshold": 0.5},
-            auto_defaults=False,
             required_ops=["dep1", "dep2"],
             composition=["op1", "op2"]
         )
@@ -582,7 +580,6 @@ class TestOpDef:
         assert op_def.aliases == ["alias1", "alias2"]
         assert op_def.importable_params == {"param1": "test.module.param1"}
         assert op_def.normal_params == {"threshold": 0.5}
-        assert op_def.auto_defaults is False
         assert op_def.required_ops == ["dep1", "dep2"]
         assert op_def.composition == ["op1", "op2"]
 
@@ -632,26 +629,26 @@ class TestOpDef:
         assert 'normal_params=' in serialized
         assert 'OpDef(' in serialized
 
-    def test_serialize_op_def_with_auto_defaults_false(self):
-        """Test OpDef serialization when auto_defaults is False."""
+    def test_serialize_op_def_with_minimal_fields(self):
+        """Test OpDef serialization with minimal required fields."""
         input_schema = OpSchema({"input_field": ColCfg(datasets_dtype="int64")})
         output_schema = OpSchema({"output_field": ColCfg(datasets_dtype="float32")})
 
         op_def = OpDef(
-            name="test_op_no_auto",
-            description="Test operation with auto_defaults False",
+            name="test_op_minimal",
+            description="Test operation with minimal fields",
             implementation="my.module.func",
             input_schema=input_schema,
-            output_schema=output_schema,
-            auto_defaults=False  # This should trigger the missing line
+            output_schema=output_schema
         )
 
         cache_manager = OpDefinitionsCacheManager(Path("/tmp"))
         serialized = cache_manager._serialize_op_def(op_def)
 
-        # Check that auto_defaults=False is included in serialization
-        assert 'auto_defaults=False' in serialized
-        assert 'name="test_op_no_auto"' in serialized
+        # Check that the serialized string contains the expected fields
+        assert 'name="test_op_minimal"' in serialized
+        assert 'description="Test operation with minimal fields"' in serialized
+        assert 'implementation="my.module.func"' in serialized
         assert 'OpDef(' in serialized
 
 class TestDefinitionsCacheManager:
@@ -833,26 +830,26 @@ test_op:
         assert 'normal_params=' in serialized
         assert 'OpDef(' in serialized
 
-    def test_serialize_op_def_with_auto_defaults_false(self):
-        """Test OpDef serialization when auto_defaults is False."""
+    def test_serialize_op_def_with_minimal_fields(self):
+        """Test OpDef serialization with minimal required fields."""
         input_schema = OpSchema({"input_field": ColCfg(datasets_dtype="int64")})
         output_schema = OpSchema({"output_field": ColCfg(datasets_dtype="float32")})
 
         op_def = OpDef(
-            name="test_op_no_auto",
-            description="Test operation with auto_defaults False",
+            name="test_op_minimal",
+            description="Test operation with minimal fields",
             implementation="my.module.func",
             input_schema=input_schema,
-            output_schema=output_schema,
-            auto_defaults=False  # This should trigger the missing line
+            output_schema=output_schema
         )
 
         cache_manager = OpDefinitionsCacheManager(Path("/tmp"))
         serialized = cache_manager._serialize_op_def(op_def)
 
-        # Check that auto_defaults=False is included in serialization
-        assert 'auto_defaults=False' in serialized
-        assert 'name="test_op_no_auto"' in serialized
+        # Check that the serialized string contains the expected fields
+        assert 'name="test_op_minimal"' in serialized
+        assert 'description="Test operation with minimal fields"' in serialized
+        assert 'implementation="my.module.func"' in serialized
         assert 'OpDef(' in serialized
 
     def test_generate_module_content(self, cache_manager, sample_yaml_file):
@@ -1824,6 +1821,7 @@ class TestCacheManagerHubFunctionality:
             # Should find the YAML file using fallback path construction
             assert len(discovered_files) == 1
             assert discovered_files[0] == yaml_file
+
 class TestCompileOperationCompositionSchema:
     """Test the compile_operation_composition_schema function's handling of namespaced operations."""
 

@@ -11,7 +11,7 @@ import torch
 from transformers import BatchEncoding
 
 from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS, IT_ANALYSIS_HUB_CACHE
-from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, ColCfg
+from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
 from interpretune.analysis.ops.dynamic_module_utils import ensure_op_paths_in_syspath, get_function_from_dynamic_module
@@ -35,7 +35,7 @@ class DispatchContext(NamedTuple):
 
 
 class AnalysisOpDispatcher:
-    """Dispatcher for analysis operations.
+    """Dispatcher for analysis operations with lazy loading and caching.
 
     This class handles loading operation definitions from YAML and dispatching them based on a given context. Operations
     are dynamically instantiated from their definitions when first accessed.
@@ -237,7 +237,6 @@ class AnalysisOpDispatcher:
                 aliases=op_def.get("aliases", []),
                 importable_params=importable_params,
                 normal_params=op_def.get("normal_params", {}),
-                auto_defaults=op_def.get("auto_defaults", True),
                 required_ops=op_def.get("required_ops", []),
                 composition=op_def.get("composition", None)
             )
@@ -520,8 +519,8 @@ class AnalysisOpDispatcher:
             # Handle regular operations
             implementation = self._import_callable(op_def.implementation)
 
-        # Build impl_args from importable_params and normal_params
-        impl_args = {}
+        # Build impl_params from importable_params and normal_params
+        impl_params = {}
 
         # Import any additional functions specified in importable_params
         for param_name, param_path in op_def.importable_params.items():
@@ -534,10 +533,10 @@ class AnalysisOpDispatcher:
                 rank_zero_warn(f"Importable parameter '{param_name}' in operation '{op_name}' could not be resolved: "
                                  f"{param_path}. It will not be available in the operation.")
                 continue
-            impl_args[param_name] = resolved_fn_param
+            impl_params[param_name] = resolved_fn_param
 
         # Add normal parameters
-        impl_args.update(op_def.normal_params)
+        impl_params.update(op_def.normal_params)
 
         op = AnalysisOp(
             name=op_name,
@@ -545,8 +544,7 @@ class AnalysisOpDispatcher:
             output_schema=op_def.output_schema,
             input_schema=op_def.input_schema,
             aliases=op_def.aliases,
-            impl_args=impl_args,
-            auto_defaults=op_def.auto_defaults
+            impl_params=impl_params,
         )
 
         # Set the implementation
