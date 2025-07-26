@@ -15,6 +15,7 @@ unset target_env_name
 unset torch_dev_ver
 unset torch_test_channel
 unset fts_from_source
+unset ct_from_source
 unset pip_install_flags
 
 usage(){
@@ -25,6 +26,7 @@ Usage: $0
    [ --torch_dev_ver input ]
    [ --torch_test_channel ]
    [ --fts_from_source "path" ]
+   [ --ct_from_source "path" ]
    [ --pip_install_flags "flags" ]
    [ --help ]
    Examples:
@@ -36,13 +38,15 @@ Usage: $0
     #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --torch_test_channel
     # build latest with FTS from source:
     #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --fts_from_source=${HOME}/repos/finetuning-scheduler
+    # build latest with circuit-tracer from source:
+    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --ct_from_source=${HOME}/repos/circuit-tracer
     # build latest with no cache directory:
     #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --pip_install_flags="--no-cache-dir"
 EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torch_test_channel,fts_from_source:,pip_install_flags:,help -- "$@")
+args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torch_test_channel,fts_from_source:,ct_from_source:,pip_install_flags:,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -56,6 +60,7 @@ do
     --torch_dev_ver)   torch_dev_ver=$2   ; shift 2 ;;
     --torch_test_channel)   torch_test_channel=1 ; shift  ;;
     --fts_from_source)   fts_from_source=$2 ; shift 2 ;;
+    --ct_from_source)   ct_from_source=$2 ; shift 2 ;;
     --pip_install_flags)   pip_install_flags=$2 ; shift 2 ;;
     --help)    usage      ; shift   ;;
     # -- means the end of the arguments; drop this, and break out of the while loop
@@ -116,8 +121,15 @@ it_install(){
 
     python -m pip install ${pip_install_flags} -e ".[test,examples,lightning]" -r requirements/docs.txt
     python -m pip install ${pip_install_flags} safetensors==0.5.3 numpy==2.3.0 --ignore-requires-python
-    python -m pip install ${pip_install_flags} --no-deps circuitsvis \
-    circuit-tracer@git+https://github.com/safety-research/circuit-tracer.git@d797c824c0ffe3a0274071e32d92962a36656212
+
+    if [[ -n ${ct_from_source} ]]; then
+        echo "Installing circuit-tracer from source at ${ct_from_source}"
+        cd ${ct_from_source}
+        python -m pip install ${pip_install_flags} --no-deps -e .
+    else
+        python -m pip install ${pip_install_flags} --no-deps circuit-tracer@git+https://github.com/safety-research/circuit-tracer.git@d797c824c0ffe3a0274071e32d92962a36656212
+    fi
+    cd ${repo_home}
     pyright -p pyproject.toml
     pre-commit install
     git lfs install

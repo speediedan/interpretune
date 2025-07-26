@@ -52,11 +52,13 @@ from interpretune.adapters import (ITModule, LightningDataModule, LightningModul
                                    ADAPTER_REGISTRY, CompositionRegistry)
 from interpretune.analysis import AnalysisStore, AnalysisBatch, DISPATCHER, SAEAnalysisTargets
 from interpretune.config import (ITConfig, ITDataModuleConfig, AnalysisCfg, AnalysisRunnerCfg,
-                                 AnalysisArtifactCfg, ITLensConfig, SAELensConfig, ITSharedConfig, PromptConfig,
+                                 AnalysisArtifactCfg, ITLensConfig, SAELensConfig, CircuitTracerConfig,
+                                 CircuitTracerITLensConfig, ITSharedConfig, PromptConfig,
                                  AutoCompConfig, HFFromPretrainedConfig, ITLensFromPretrainedNoProcessingConfig,
                                  TLensGenerationConfig, GenerativeClassificationConfig, SAELensFromPretrainedConfig,
                                  ITSerializableCfg, BaseGenerationConfig, HFGenerationConfig, CoreGenerationConfig)
-from interpretune.extensions import MemProfiler, MemProfilerCfg, DebugGeneration, DebugLMConfig
+from interpretune.extensions import (MemProfiler, MemProfilerCfg, DebugGeneration, DebugLMConfig,
+                                     NeuronpediaIntegration, NeuronpediaConfig)
 from interpretune.utils import (MisconfigurationException, rank_zero_info, rank_zero_warn, to_device,
                                 move_data_to_device, sanitize_input_name)
 
@@ -107,6 +109,8 @@ __all__ = [
     "AnalysisArtifactCfg",
     "ITLensConfig",
     "SAELensConfig",
+    "CircuitTracerConfig",
+    "CircuitTracerITLensConfig",
     "ITSharedConfig",
     "PromptConfig",
     "AutoCompConfig",
@@ -125,6 +129,8 @@ __all__ = [
     "MemProfilerCfg",
     "DebugGeneration",
     "DebugLMConfig",
+    "NeuronpediaIntegration",
+    "NeuronpediaConfig",
 
     # Utils Module
     "MisconfigurationException",

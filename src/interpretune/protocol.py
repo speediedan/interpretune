@@ -49,6 +49,9 @@ class Adapter(AutoStrEnum):
     # SAE_LENS: The provided module and datamodule will be prepared for use with the SAELens adapter in
     #                  in combination with any supported and specified adapter.
     sae_lens = auto()
+    # CIRCUIT_TRACER: The provided module and datamodule will be prepared for use with the Circuit Tracer adapter in
+    #                  in combination with any supported and specified adapter.
+    circuit_tracer = auto()
 
     def __lt__(self, other: 'Adapter') -> bool:
         return self.value < other.value
@@ -456,3 +459,24 @@ class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):
     attribution_values: Optional[dict[str, torch.Tensor]]
     tokens: Optional[torch.Tensor]
     prompts: Optional[list[str]]
+
+
+class CircuitAnalysisBatchProtocol(DefaultAnalysisBatchProtocol):
+    """Circuit analysis batch protocol defining additional attributes for circuit tracer operations.
+
+    Extends the default protocol with circuit tracing specific attributes.
+
+    Attributes:
+        attribution_graphs (Optional[list]):
+            Generated attribution graphs for each prompt in the batch
+        graph_metadata (Optional[list[dict]]):
+            Metadata for each generated graph including parameters used
+        graph_paths (Optional[list[str]]):
+            File paths where graphs are saved (if saved)
+        circuit_prompts (Optional[list[str]]):
+            Prompts used for circuit attribution (may differ from input prompts)
+    """
+    attribution_graphs: Optional[list]
+    graph_metadata: Optional[list[dict]]
+    graph_paths: Optional[list[str]]
+    circuit_prompts: Optional[list[str]]

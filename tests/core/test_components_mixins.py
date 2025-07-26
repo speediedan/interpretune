@@ -141,10 +141,11 @@ class TestClassMixins:
         hf_from_pretrained_mixin._hf_gen_cust_config()
 
     def test_degen_it_extension(self):
+        """Test handling of invalid extensions in the updated extensions_context."""
         degen_ext = ITExtension("not_here", "oops.not_found", "oops.I.did.it.again")
         ext_mixin = ITExtensionsConfigMixin()
-        ext_mixin.DEFAULT_EXTENSIONS = (degen_ext,)
-        with pytest.raises(MisconfigurationException):
+        ext_mixin.extensions_context.DEFAULT_EXTENSIONS = (degen_ext,)
+        with pytest.raises(MisconfigurationException, match="Unable to import and resolve specified extension"):
             ext_mixin._detect_extensions()
 
     def test_it_generate_exception_handling(self, get_it_session__core_cust__initonly):

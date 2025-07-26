@@ -155,6 +155,8 @@ def compare_version(package: str, op: Callable, version: str, use_base_version: 
 _TORCH_GREATER_EQUAL_2_2 = compare_version("torch", operator.ge, "2.2.0", use_base_version=True)
 _DOTENV_AVAILABLE = module_available("dotenv")
 _LIGHTNING_AVAILABLE = package_available("lightning")
+_NEURONPEDIA_AVAILABLE = package_available("neuronpedia")
+_CT_AVAILABLE = package_available("circuit_tracer")
 _FTS_AVAILABLE = module_available("finetuning_scheduler")
 _BNB_AVAILABLE = package_available("bitsandbytes")
 _SL_AVAILABLE = module_available("sae_lens")

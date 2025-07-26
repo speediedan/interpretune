@@ -2,6 +2,8 @@
 from interpretune.extensions.debug_generation import DebugGeneration, DebugLMConfig
 from interpretune.extensions.memprofiler import (MemProfiler, MemProfilerCfg, MemProfilerHooks, MemProfilerFuncs,
                                                  MemProfilerSchedule, DefaultMemHooks)
+from interpretune.extensions.neuronpedia import NeuronpediaIntegration, NeuronpediaConfig
+
 __all__ = [
     # from debug_generation
     'DebugGeneration',
@@ -12,5 +14,8 @@ __all__ = [
     'MemProfilerHooks',
     'MemProfilerFuncs',
     'MemProfilerSchedule',
-    'DefaultMemHooks'
+    'DefaultMemHooks',
+    # from neuronpedia
+    'NeuronpediaIntegration',
+    'NeuronpediaConfig',
 ]

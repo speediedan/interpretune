@@ -124,7 +124,8 @@ class PropertyDispatcher:
     # where one doesn't exist in a given adapter implementation) while still maximizing compatibility in
     # deferring to the adapter property implementation in contexts where it would be supported. This
     # functionality can be disabled on a property basis by setting `enabled=False` at the cost of potentially reduced
-    # compatbility because IT will not dispatch to the adapter's implementation of the IT-enhanced property.
+    # compatibility because IT will not dispatch to the adapter's implementation of the IT-enhanced property.
+
     PROPERTY_COMPOSITION = {}
     """Property dispatcher."""
     def __init__(self, *args, **kwargs) -> None:

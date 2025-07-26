@@ -95,7 +95,7 @@ class ModuleRegistry(dict):
         return {key for key in self.keys() if isinstance(key, tuple)}
 
     @override
-    def get(self, target: Tuple| str) -> Any:
+    def get(self, target: Tuple| str | RegKeyQueryable) -> Any:
         if not isinstance(target, (tuple, str)):
             assert isinstance(target, RegKeyQueryable), (
                 f"Non-string/non-tuple keys must be `RegKeyQueryable` (i.e. an object "

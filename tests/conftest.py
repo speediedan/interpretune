@@ -562,7 +562,11 @@ def restore_env_variables():
         "PIP_DISABLE_PIP_VERSION_CHECK",  # TODO: determine the source of this leak after test parity reached
         "DISABLE_CUPTI_LAZY_REINIT",  # introduced with PyTorch 2.7 and cuda 12.8
         "TEARDOWN_CUPTI",  # introduced with PyTorch 2.7 and cuda 12.8
-        "TORCHINDUCTOR_CACHE_DIR"  # introduced with PyTorch 2.7 and cuda 12.8
+        "TORCHINDUCTOR_CACHE_DIR",  # introduced with PyTorch 2.7 and cuda 12.8
+        # next 3 leak after neuronpedia dev env variables were added for integration tests/examples
+        "DEV_NEURONPEDIA_API_KEY",
+        "NEURONPEDIA_API_KEY",
+        "USE_LOCALHOST",
     }
     allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)

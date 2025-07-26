@@ -9,6 +9,7 @@ from interpretune.config.transformer_lens import (ITLensConfig, ITLensCustomConf
                                                   ITLensFromPretrainedNoProcessingConfig, TLensGenerationConfig)
 from interpretune.config.sae_lens import (SAEConfig, SAECfgType, SAELensFromPretrainedConfig, SAELensCustomConfig,
                                           SAELensConfig)
+from interpretune.config.circuit_tracer import CircuitTracerConfig, CircuitTracerITLensConfig
 from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg
 from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg, init_analysis_dirs, init_analysis_cfgs
 
@@ -54,6 +55,10 @@ __all__ = [
     "SAELensFromPretrainedConfig",
     "SAELensCustomConfig",
     "SAELensConfig",
+
+    # from interpretune.config.circuit_tracer
+    "CircuitTracerConfig",
+    "CircuitTracerITLensConfig",
 
     # from interpretune.config.analysis
     "AnalysisCfg",

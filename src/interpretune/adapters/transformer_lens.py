@@ -117,16 +117,17 @@ class BaseITLensModule(BaseITModule):
         # TODO: suppress messages from tl about no tokenizer here, we're deferring the tokenizer attach until setup
         self.model = HookedTransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
 
-    def _prune_tl_cfg_dict(self) -> dict:
+    def _prune_tl_cfg_dict(self, prune_list: list = None) -> dict:
         """Prunes the tl_cfg dictionary by removing 'hf_model' and 'tokenizer' keys. Asserts that these keys have
         None values, and warns if they don't.
 
         Returns:
             dict: The pruned dictionary
         """
+        prune_list = prune_list or  ['hf_model', 'tokenizer']
         pruned_dict = deepcopy(self.it_cfg.tl_cfg.__dict__)
 
-        for key in ['hf_model', 'tokenizer']:
+        for key in prune_list:
             if key in pruned_dict:
                 if pruned_dict[key] is not None:
                     rank_zero_warn(f"Found non-None value for '{key}' in tl_cfg. This may cause issues.")
@@ -153,12 +154,12 @@ class BaseITLensModule(BaseITModule):
         # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
         # TODO: serialize tl_config
         if self.it_cfg.hf_from_pretrained_cfg:
-            self._it_state._init_hparams = {"tl_cfg": self._make_config_serializable(self.it_cfg.tl_cfg, ['device',
-                                                                                                          'dtype']),}
+            self._it_state._init_hparams.update({"tl_cfg": self._make_config_serializable(self.it_cfg.tl_cfg, ['device',
+                                                                                                          'dtype']),})
         else:
             serializable_tl_cfg = deepcopy(self.it_cfg.tl_cfg)
             serializable_tl_cfg.cfg = self._make_config_serializable(self.it_cfg.tl_cfg.cfg, ['device', 'dtype'])
-            self._it_state._init_hparams = {"tl_cfg": serializable_tl_cfg}
+            self._it_state._init_hparams.update({"tl_cfg": serializable_tl_cfg})
         super()._capture_hyperparameters()
 
     def set_input_require_grads(self) -> None:
@@ -175,7 +176,7 @@ class TransformerLensAdapter(TLensAttributeMixin):
     @classmethod
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
         adapter_ctx_registry.register(Adapter.transformer_lens, component_key = "datamodule",
-                                        adapter_combination=( Adapter.core, Adapter.transformer_lens),
+                                        adapter_combination=(Adapter.core, Adapter.transformer_lens),
                                         composition_classes=(ITDataModule,),
                                         description="Transformer Lens adapter that can be composed with core and l...",
         )

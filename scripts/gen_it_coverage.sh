@@ -129,10 +129,10 @@ env_rebuild(){
 
 collect_env_coverage(){
     temp_special_log="${tmp_coverage_dir}/special_test_output_$1_${d}.log"
+    cd ${repo_home}
     source ./scripts/infra_utils.sh
     maybe_deactivate
     source ~/.venvs/$1/bin/activate
-    cd ${repo_home}
 	case $1 in
 	    it_latest | it_latest_pt_2_4 )
             check_self_test_only "Skipping all tests and examples." && return

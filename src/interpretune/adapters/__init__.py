@@ -7,6 +7,8 @@ from interpretune.adapters.transformer_lens import (ITLensModule, ITDataModule, 
                                                     TransformerLensAdapter)
 from interpretune.adapters.sae_lens import (SAELensAdapter, SAEAnalysisMixin, SAELensModule, SAELensAttributeMixin,
                                             BaseSAELensModule, InstantiatedSAE)
+from interpretune.adapters.circuit_tracer import (CircuitTracerAdapter, CircuitTracerAttributeMixin,
+                                                  BaseCircuitTracerModule)
 _register_adapters(ADAPTER_REGISTRY, "register_adapter_ctx", sys.modules[__name__], AdapterProtocol)
 
 __all__ = [
@@ -39,4 +41,9 @@ __all__ = [
     "SAELensAttributeMixin",   # from .sae_lens
     "BaseSAELensModule",       # from .sae_lens
     "InstantiatedSAE",         # from .sae_lens
+
+    # Circuit Tracer Adapters
+    "CircuitTracerAdapter",    # from .circuit_tracer
+    "CircuitTracerAttributeMixin",  # from .circuit_tracer
+    "BaseCircuitTracerModule",  # from .circuit_tracer
 ]

@@ -4,6 +4,9 @@ from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import reduce
+import os
+import psycopg
+from dotenv import load_dotenv
 
 import torch
 
@@ -194,3 +197,85 @@ def cuda_reset():
     if torch.cuda.is_available():
         _clear_cuda_memory()
         torch.cuda.reset_peak_memory_stats()
+
+def sync_dev_graph_metadata():
+    """Sync graph metadata from Neuronpedia production service to a local dev database.
+
+    Args:
+        model_id (str): The model ID associated with the graph.
+        slug (str): The unique slug for the graph.
+        username (str): The username to associate the graph metadata with in the local database.
+    """
+    model_id = os.environ.get("MODEL_ID")
+    slug = os.environ.get("SLUG")
+    username = os.environ.get("USERNAME")
+    np_s3_user_graph_prefix = os.environ.get("NP_S3_USER_GRAPH_PREFIX")
+
+    if not all([model_id, slug, username, np_s3_user_graph_prefix]):
+        raise ValueError("One or more required environment variables are missing.")
+
+    import neuronpedia
+    from neuronpedia.np_graph_metadata import NPGraphMetadata
+    # Load environment variables
+    load_dotenv(".env.localhost_np")
+
+    # Get Neuronpedia API key
+    public_api_key = os.environ.get("NEURONPEDIA_API_KEY")
+    if not public_api_key:
+        raise ValueError("NEURONPEDIA_API_KEY is not set in the environment.")
+
+    # Fetch graph metadata from Neuronpedia
+    with neuronpedia.api_key(public_api_key):
+        graph_metadata = NPGraphMetadata.get(model_id, slug)
+
+    # Connect to the local PostgreSQL database
+    conn = psycopg.connect(
+        dbname=os.environ.get("POSTGRES_DB"),
+        user=os.environ.get("POSTGRES_USER"),
+        password=os.environ.get("POSTGRES_PASSWORD"),
+        host="localhost",
+        port=5432
+    )
+
+    try:
+        with conn.cursor() as cursor:
+            # Get user ID from username
+            cursor.execute("SELECT id FROM \"User\" WHERE name=%s;", (username,))
+            user_id = cursor.fetchone()
+            if not user_id:
+                raise ValueError(f"User '{username}' not found in the database.")
+
+            user_id = user_id[0]
+
+            s3_url = f"{np_s3_user_graph_prefix}/{user_id}/{slug}.json"
+
+            # Insert graph metadata into the GraphMetadata table
+            cursor.execute(
+                """
+                INSERT INTO public."GraphMetadata" (
+                    id, "modelId", slug, "promptTokens", prompt, "titlePrefix", url, "userId", "createdAt", "updatedAt",
+                    "isFeatured") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, current_timestamp(3), current_timestamp(3),
+                    FALSE)
+                ON CONFLICT (id) DO NOTHING;
+                """,
+                (
+                    graph_metadata.id,
+                    graph_metadata.model_id,
+                    graph_metadata.slug,
+                    graph_metadata.prompt_tokens,
+                    graph_metadata.prompt,
+                    graph_metadata.title_prefix,
+                    s3_url,
+                    user_id
+                )
+            )
+
+            conn.commit()
+            print(f"Graph metadata for slug '{slug}' synced successfully to local dev database.")
+
+    except Exception as e:
+        conn.rollback()
+        print(f"Error syncing graph metadata: {e}")
+
+    finally:
+        conn.close()
