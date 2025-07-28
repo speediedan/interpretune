@@ -32,8 +32,8 @@ description = "A package to support LLM reasoning and interpretability experimen
 readme = "README.md"
 dependencies = [
     "transformer_lens >= 2.15.4",
-    "sae_lens >=5.10.2,<6.0.0",  # align with temporarily neuronpedia limitations until >=6.0 supported
-    "torch >= 2.6.0",
+    "sae_lens >= 6.3.1",  # use new sae_lens API
+    "torch >= 2.7.1",
     "tabulate >= 0.9.0",
     "jsonargparse[signatures] >= 4.35.0",  # replace this req once adding fts req
     # "finetuning-scheduler[possible_future_it_plugin] >= 2.5.0",
@@ -159,7 +159,11 @@ order-by-type = false
 max-complexity = 10
 
 [tool.pyright]
-include = ["src/interpretune/adapters/lightning.py"]
+include = [
+    "src/interpretune/adapters/lightning.py",
+#    "src",
+#    "tests"
+]
 reportMissingTypeStubs = false
 reportUnknownMemberType = "none"
 reportUnknownArgumentType = "none"

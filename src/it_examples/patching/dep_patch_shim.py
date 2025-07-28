@@ -32,9 +32,10 @@ DependencyPatch.__repr__ = _dep_patch_repr
 # after those calling modules have already secured the original (unpatched) references.
 
 def _patch_sae_from_pretrained():
-    from it_examples.patching.patched_sae_from_pretrained import from_pretrained
-    target_mod = 'sae_lens.sae'
-    sys.modules.get(target_mod).__dict__.get('SAE').from_pretrained = from_pretrained
+    from it_examples.patching.patched_sae_from_pretrained import from_pretrained_with_cfg_and_sparsity
+    target_mod = 'sae_lens.saes.sae'
+    sys.modules.get(target_mod).__dict__.get('SAE').from_pretrained_with_cfg_and_sparsity \
+        = from_pretrained_with_cfg_and_sparsity
 
 
 sae_from_pretrained_patch = DependencyPatch(

@@ -290,7 +290,7 @@ def get_deepcopied_session(it_session_fixt: ITSession):
     # method-bound closure `turn_on_forward_pass_hook_z_reshaping` creates to rebind it to our new SAE instance(s)
     if sae_handles and any(isinstance(handle, SAE) for handle in sae_handles):
         for handle in sae_handles:
-            if handle.cfg.hook_name.endswith("_z"):
+            if handle.cfg.metadata.hook_name.endswith("_z"):
                 handle.turn_on_forward_pass_hook_z_reshaping()
             else:
                 handle.turn_off_forward_pass_hook_z_reshaping()

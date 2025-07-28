@@ -182,9 +182,9 @@ def get_filtered_sae_hook_keys(handle, names_filter: Callable[[str], bool]) -> l
         List of filtered hook keys
     """
     return [
-        f'{handle.cfg.hook_name}.{key}'
+        f'{handle.cfg.metadata.hook_name}.{key}'
         for key in handle.hook_dict.keys()
-        if names_filter(f'{handle.cfg.hook_name}.{key}')
+        if names_filter(f'{handle.cfg.metadata.hook_name}.{key}')
     ]
 
 def _check_names_filter_available(module, col_name: str, col_cfg) -> bool:

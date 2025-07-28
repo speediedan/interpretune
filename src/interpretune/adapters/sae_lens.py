@@ -6,8 +6,9 @@ from functools import reduce
 from copy import deepcopy
 
 from IPython.display import IFrame, display
-from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
-from sae_lens.sae import SAE, SAEConfig
+from sae_lens.loading.pretrained_saes_directory import get_pretrained_saes_directory
+from sae_lens.saes.sae import SAE, SAEConfig
+from sae_lens.saes.standard_sae import StandardSAE
 from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer
 from transformer_lens.hook_points import NamesFilter
 from transformers.tokenization_utils_base import BatchEncoding
@@ -68,9 +69,10 @@ class BaseSAELensModule(BaseITLensModule):
             assert isinstance(sae_cfg, (SAELensFromPretrainedConfig, SAELensCustomConfig))
             original_cfg, sparsity = None, None
             if isinstance(sae_cfg, SAELensFromPretrainedConfig):
-                handle, original_cfg, sparsity = SAE.from_pretrained(**sae_cfg.__dict__)
+                handle, original_cfg, sparsity = SAE.from_pretrained_with_cfg_and_sparsity(**sae_cfg.__dict__)
             else:
-                handle = SAE(cfg=sae_cfg.cfg)
+                # TODO: enable configuration of SAE subclass to use
+                handle = StandardSAE(cfg=sae_cfg.cfg)
             self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))
             if self.it_cfg.add_saes_on_init:
                 self.model.add_sae(added_sae.handle)
@@ -157,7 +159,7 @@ class SAEAnalysisMixin:
         sae_hook_match_fn: Callable[[str, list[int] | None], bool]
     ) -> NamesFilter:
         available_hooks = {
-            f'{handle.cfg.hook_name}.{key}' for handle in self.sae_handles
+            f'{handle.cfg.metadata.hook_name}.{key}' for handle in self.sae_handles
             for key in handle.hook_dict.keys()
         }
         names_filter = [

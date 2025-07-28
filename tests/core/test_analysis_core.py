@@ -668,7 +668,7 @@ class TestCoreFunctionality:
         mock_module.it_cfg.entailment_mapping = {'a': 0, 'b': 1}
         # per_sae_hook, per_latent, sequence_type, array_shape, scalar
         mock_handle = MagicMock()
-        mock_handle.cfg.hook_name = 'blocks.0.attn'
+        mock_handle.cfg.metadata.hook_name = 'blocks.0.attn'
         mock_handle.hook_dict = {'hook_z': None}
         mock_module.sae_handles = [mock_handle]
         mock_module.analysis_cfg.names_filter = lambda x: True

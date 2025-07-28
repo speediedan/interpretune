@@ -6,6 +6,7 @@ import pytest
 import torch
 from transformer_lens.ActivationCache import ActivationCache
 from transformer_lens.utils import get_device as tl_get_device
+from sae_lens.saes.sae import SAEMetadata
 
 from interpretune.utils import MisconfigurationException
 from interpretune.session import ITSession
@@ -67,25 +68,16 @@ class TestClassSAELens:
     test_tl_cust_config = {"n_layers":1, "d_mlp": 10, "d_model":10, "d_head":5, "n_heads":2, "n_ctx":200,
                         "act_fn":'relu', "tokenizer_name": 'gpt2'}
 
+    test_sae_metadata = SAEMetadata(model_name="cust", hook_name="blocks.0.hook_resid_pre", hook_head_index=None,
+                                    context_size=200, prepend_bos=True)
     test_sae_cust_config = dict(
         architecture="standard",
         d_in=10,
         d_sae=10 * 2,
         dtype="float32",
         device="cpu",
-        model_name="cust",
-        hook_name="blocks.0.hook_resid_pre",
-        hook_layer=0,
-        hook_head_index=None,
-        activation_fn_str="relu",
-        prepend_bos=True,
-        context_size=200,
-        dataset_path="test",
-        dataset_trust_remote_code=True,
-        apply_b_dec_to_input=False,
-        finetuning_scaling_factor=False,
-        sae_lens_training_version=None,
         normalize_activations="none",
+        metadata=test_sae_metadata,
     )
     test_sl_cust_config = SAELensCustomConfig(cfg=test_sae_cust_config)
     test_sl_gpt2 = {**test_tl_gpt2_shared_config, **test_tlens_gpt2, "sae_cfgs": test_sl_from_pretrained}
@@ -160,7 +152,7 @@ class TestClassSAELens:
         logits_with_saes = sl_test_module.model.run_with_hooks_with_saes(
             TestClassSAELens.prompt,
             saes=sl_test_module.sae_handles,
-            fwd_hooks=[(sae_handle.cfg.hook_name + ".hook_sae_acts_post", c.inc)
+            fwd_hooks=[(sae_handle.cfg.metadata.hook_name + ".hook_sae_acts_post", c.inc)
                        for sae_handle in sl_test_module.sae_handles],
         )
         assert not torch.allclose(logits_with_saes, original_logits)

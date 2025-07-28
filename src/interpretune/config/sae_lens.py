@@ -2,7 +2,8 @@ from typing import Any, TypeAlias
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sae_lens.sae import SAEConfig
+from sae_lens.saes.sae import SAEConfig
+from sae_lens.saes.standard_sae import StandardSAEConfig
 from transformer_lens.utils import get_device as tl_get_device
 
 from interpretune.config import ITLensConfig, ITSerializableCfg
@@ -33,7 +34,8 @@ class SAELensCustomConfig(ITSerializableCfg):
             # ensure the user provided a valid dtype (should be handled by SAEConfig ideally)
             # if self.cfg.get('dtype', None) and not isinstance(self.cfg['dtype'], torch.dtype):
             #     self.cfg['dtype'] = _resolve_torch_dtype(self.cfg['dtype'])
-            self.cfg = SAEConfig.from_dict(self.cfg)
+            # TODO: enable configuration/introspection of custom SAE subclasses here
+            self.cfg = StandardSAEConfig.from_dict(self.cfg)
 
 SAECfgType: TypeAlias = SAELensFromPretrainedConfig | SAELensCustomConfig
 
@@ -50,7 +52,7 @@ class SAELensConfig(ITLensConfig):
             if isinstance(sae_cfg, SAELensFromPretrainedConfig):
                 normalized_names.append(sae_cfg.sae_id)
             elif isinstance(sae_cfg, SAELensCustomConfig):
-                normalized_names.append(sae_cfg.cfg.hook_name)
+                normalized_names.append(sae_cfg.cfg.metadata.hook_name)
         return normalized_names
 
     def __post_init__(self) -> None:

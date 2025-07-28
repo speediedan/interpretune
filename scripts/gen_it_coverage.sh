@@ -9,6 +9,7 @@ unset torch_dev_ver
 unset torch_test_channel
 unset no_rebuild_base
 unset fts_from_source
+unset ct_from_source
 unset run_all_and_examples
 unset no_export_cov_xml
 unset pip_install_flags
@@ -23,18 +24,21 @@ Usage: $0
    [ --torch_test_channel ]
    [ --no_rebuild_base ]
    [ --fts_from_source "path" ]
+   [ --ct_from_source "path" ]
    [ --run_all_and_examples ]
    [ --no_export_cov_xml ]
    [ --pip_install_flags "flags" ]
    [ --self_test_only ]
    [ --help ]
    Examples:
-	# generate it_latest coverage without rebuilding the it_latest base environment:
-	#   ./gen_it_coverage.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --no_rebuild_base
-	# generate it_latest coverage with a given torch_dev_version, rebuilding base it_latest and with FTS from source:
-	#   ./gen_it_coverage.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --torch_dev_ver=dev20240201 --fts_from_source
+    # generate it_latest coverage without rebuilding the it_latest base environment:
+    #   ./gen_it_coverage.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --no_rebuild_base
+    # generate it_latest coverage with a given torch_dev_version, rebuilding base it_latest and with FTS from source:
+    #   ./gen_it_coverage.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --torch_dev_ver=dev20240201 --fts_from_source=${HOME}/repos/finetuning-scheduler
     # generate it_latest coverage, rebuilding base it_latest with PyTorch test channel and FTS from source:
-    #   ./gen_it_coverage.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --torch_test_channel --fts_from_source
+    #   ./gen_it_coverage.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --torch_test_channel --fts_from_source=${HOME}/repos/finetuning-scheduler
+    # generate it_latest coverage with circuit-tracer from source:
+    #   ./gen_it_coverage.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --ct_from_source=${HOME}/repos/circuit-tracer
     # generate it_latest coverage with no pip cache:
     #   ./gen_it_coverage.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --pip_install_flags="--no-cache-dir"
     # generate it_latest coverage with self_test_only:
@@ -43,7 +47,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torchvision_dev_ver:,torch_test_channel,no_rebuild_base,fts_from_source:,run_all_and_examples,no_export_cov_xml,pip_install_flags:,self_test_only,help -- "$@")
+args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torchvision_dev_ver:,torch_test_channel,no_rebuild_base,fts_from_source:,ct_from_source:,run_all_and_examples,no_export_cov_xml,pip_install_flags:,self_test_only,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -58,6 +62,7 @@ do
     --torch_test_channel)   torch_test_channel=1 ; shift  ;;
     --no_rebuild_base)   no_rebuild_base=1 ; shift  ;;
     --fts_from_source)   fts_from_source=$2 ; shift 2 ;;
+    --ct_from_source)   ct_from_source=$2 ; shift 2 ;;
     --run_all_and_examples)   run_all_and_examples=1 ; shift  ;;
     --no_export_cov_xml)   no_export_cov_xml=1 ; shift ;;
     --pip_install_flags)   pip_install_flags=$2 ; shift 2 ;;
@@ -73,6 +78,23 @@ d=`date +%Y%m%d%H%M%S`
 tmp_coverage_dir="/tmp"
 coverage_session_log="${tmp_coverage_dir}/gen_it_coverage_${target_env_name}_${d}.log"
 echo "Use 'tail -f ${coverage_session_log}' to monitor progress"
+
+# Robustness: strip leading/trailing quotes from path variables if present
+strip_quotes() {
+    # Remove both single and double quotes from start/end
+    local val="$1"
+    val="${val%\' }"; val="${val#\' }"
+    val="${val%\"}"; val="${val#\"}"
+    echo "$val"
+}
+
+# Only strip if set
+if [[ -n "${ct_from_source}" ]]; then
+    ct_from_source=$(strip_quotes "$ct_from_source")
+fi
+if [[ -n "${fts_from_source}" ]]; then
+    fts_from_source=$(strip_quotes "$fts_from_source")
+fi
 
 check_self_test_only(){
     local message=$1
@@ -90,34 +112,28 @@ env_rebuild(){
         pip_flags_param="--pip_install_flags=\"${pip_install_flags}\""
     fi
 
+    fts_from_source_param=""
+    if [[ -n "${fts_from_source}" ]]; then
+        fts_from_source_param="--fts_from_source=${fts_from_source}"
+    fi
+
+    ct_from_source_param=""
+    if [[ -n "${ct_from_source}" ]]; then
+        ct_from_source_param="--ct_from_source=${ct_from_source}"
+    fi
+
     case $1 in
         it_latest )
             if [[ -n ${torch_dev_ver} ]]; then
-                if [[ -n ${fts_from_source} ]]; then
-                    ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_dev_ver=${torch_dev_ver} --fts_from_source="${fts_from_source}" ${pip_flags_param}
-                else
-                    ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_dev_ver=${torch_dev_ver} ${pip_flags_param}
-                fi
+                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_dev_ver=${torch_dev_ver} ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param}
             elif [[ $torch_test_channel -eq 1 ]]; then
-                if [[ -n ${fts_from_source} ]]; then
-                    ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_test_channel --fts_from_source="${fts_from_source}" ${pip_flags_param}
-                else
-                    ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_test_channel ${pip_flags_param}
-                fi
+                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_test_channel  ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param}
             else
-                if [[ -n ${fts_from_source} ]]; then
-                    ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --fts_from_source="${fts_from_source}" ${pip_flags_param}
-                else
-                    ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 ${pip_flags_param}
-                fi
+                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param}
             fi
             ;;
         it_latest_pt_2_4 )
-            if [[ -n ${fts_from_source} ]]; then
-                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --fts_from_source="${fts_from_source}" ${pip_flags_param}
-            else
-                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 ${pip_flags_param}
-            fi
+            ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param}
             ;;
         *)
             echo "no matching environment found, exiting..." >> $coverage_session_log
@@ -133,8 +149,8 @@ collect_env_coverage(){
     source ./scripts/infra_utils.sh
     maybe_deactivate
     source ~/.venvs/$1/bin/activate
-	case $1 in
-	    it_latest | it_latest_pt_2_4 )
+    case $1 in
+        it_latest | it_latest_pt_2_4 )
             check_self_test_only "Skipping all tests and examples." && return
             python -m coverage erase
             if [[ $run_all_and_examples -eq 1 ]]; then
@@ -153,25 +169,25 @@ collect_env_coverage(){
                 (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
                 (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
             fi
-	        ;;
-	    *)
-	        echo "no matching environment found, exiting..."  >> $coverage_session_log
-	        exit 1
-	        ;;
-	esac
+            ;;
+        *)
+            echo "no matching environment found, exiting..."  >> $coverage_session_log
+            exit 1
+            ;;
+    esac
 }
 
 env_rebuild_collect(){
     if [[ $no_rebuild_base -eq 1 ]]; then
-		echo "Skipping rebuild of the base IT env ${target_env_name}" >> $coverage_session_log
-	else
-		echo "Beginning IT env rebuild for $1" >> $coverage_session_log
+        echo "Skipping rebuild of the base IT env ${target_env_name}" >> $coverage_session_log
+    else
+        echo "Beginning IT env rebuild for $1" >> $coverage_session_log
         check_self_test_only "Skipping all tests and examples." && return
-		# if check_self_test_only "Skipping rebuild."; then
+        # if check_self_test_only "Skipping rebuild."; then
         #     return
         # fi
         env_rebuild "$1"
-	fi
+    fi
     echo "Collecting coverage for the IT env $1" >> $coverage_session_log
     printf "\n"  >> $coverage_session_log
     collect_env_coverage "$1"
