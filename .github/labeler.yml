@@ -1,0 +1,208 @@
+# Interpretune Auto-Labeler Configuration
+# Compatible with actions/labeler@v5
+# Automatically applies labels based on changed files in PRs
+
+# High-level module labels for interpretune core folders
+"module: adapters":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/interpretune/adapters/**'
+    - '**/adapter*.py'
+
+"module: analysis":
+- changed-files:
+  - any-glob-to-any-file: 'src/interpretune/analysis/**'
+
+"module: base":
+- changed-files:
+  - any-glob-to-any-file: 'src/interpretune/base/**'
+
+"module: config":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/interpretune/config/**'
+    - '**/config*.py'
+    - '**/config*.yaml'
+    - '**/config*.json'
+
+"module: extensions":
+- changed-files:
+  - any-glob-to-any-file: 'src/interpretune/extensions/**'
+
+# Specific extensions
+"extension: debug_generation":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/interpretune/extensions/debug_generation.py'
+    - '**/debug_generation*.py'
+
+"extension: memprofiler":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/interpretune/extensions/memprofiler.py'
+    - '**/memprofiler*.py'
+    - '**/memory_profil*.py'
+
+"extension: neuronpedia":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/interpretune/extensions/neuronpedia.py'
+    - '**/neuronpedia*.py'
+    - '**/neuron_pedia*.py'
+
+# Specific adapters
+"adapter: circuit_tracer":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/interpretune/adapters/circuit_tracer.py'
+    - '**/circuit_tracer*.py'
+    - '**/circuit-tracer*.py'
+
+"adapter: sae_lens":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/interpretune/adapters/sae_lens.py'
+    - '**/sae_lens*.py'
+    - '**/sae-lens*.py'
+
+"adapter: lightning":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/interpretune/adapters/lightning.py'
+    - '**/lightning*.py'
+
+"adapter: transformer_lens":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/interpretune/adapters/transformer_lens.py'
+    - '**/transformer_lens*.py'
+    - '**/transformer-lens*.py'
+
+"adapter: core":
+- changed-files:
+  - any-glob-to-any-file: 'src/interpretune/adapters/core.py'
+
+"adapter: registration":
+- changed-files:
+  - any-glob-to-any-file: 'src/interpretune/adapters/registration.py'
+
+"module: runners":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/interpretune/runners/**'
+    - '**/runner*.py'
+
+"module: utils":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/interpretune/utils/**'
+    - '**/util*.py'
+
+# Special file: protocol.py
+"module: protocol":
+- changed-files:
+  - any-glob-to-any-file: 'src/interpretune/protocol.py'
+
+# Registry and session files
+"module: registry":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/interpretune/registry.py'
+    - 'src/interpretune/adapter_registry.py'
+    - 'src/interpretune/module_registry.yaml'
+    - '**/registry*.py'
+    - '**/registry*.yaml'
+
+"module: session":
+- changed-files:
+  - any-glob-to-any-file: 'src/interpretune/session.py'
+
+# Examples and experiments
+"area: examples":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/it_examples/**'
+    - 'examples/**'
+    - '**/example*.py'
+
+"area: experiments":
+- changed-files:
+  - any-glob-to-any-file: 'src/it_examples/experiments/**'
+
+"area: notebooks":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/it_examples/notebooks/**'
+    - '**/*.ipynb'
+
+"area: patching":
+- changed-files:
+  - any-glob-to-any-file: 'src/it_examples/patching/**'
+
+# Testing
+"area: tests":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'tests/**'
+    - 'test/**'
+    - '**/test_*.py'
+    - '**/*_test.py'
+
+# Documentation and configuration files
+"area: docs":
+- changed-files:
+  - any-glob-to-any-file:
+    - '**/*.md'
+    - '**/*.rst'
+    - 'docs/**'
+    - '**/*.txt'
+    - 'README*'
+    - 'CHANGELOG*'
+    - 'CONTRIBUTING*'
+
+"area: ci":
+- changed-files:
+  - any-glob-to-any-file:
+    - '.github/**'
+    - '.pre-commit-config.yaml'
+    - '**/.github/**'
+
+"area: build":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'pyproject.toml'
+    - 'setup.py'
+    - 'setup.cfg'
+    - 'MANIFEST.in'
+    - 'requirements.txt'
+    - 'requirements/**'
+
+"area: scripts":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'scripts/**'
+    - '**/*.sh'
+    - '**/*.bat'
+
+# Dependencies and environment
+"dependencies":
+- changed-files:
+  - any-glob-to-any-file:
+    - 'requirements.txt'
+    - 'requirements/**'
+    - 'pyproject.toml'
+    - 'setup.py'
+    - 'poetry.lock'
+    - 'Pipfile*'
+
+# Configuration files
+"config":
+- changed-files:
+  - any-glob-to-any-file:
+    - '**/*.yaml'
+    - '**/*.yml'
+    - '**/*.json'
+    - '**/*.toml'
+    - '**/*.cfg'
+    - '**/*.ini'
+    - '.env*'

@@ -5,6 +5,8 @@ from pathlib import Path
 from copy import deepcopy
 from datetime import datetime
 
+import torch
+
 from circuit_tracer import ReplacementModel, Graph, attribute
 from circuit_tracer.utils import create_graph_files
 from transformers.tokenization_utils_base import BatchEncoding
@@ -103,17 +105,57 @@ class BaseCircuitTracerModule(BaseITLensModule):
         # Circuit tracer handles gradient requirements internally
         rank_zero_info("Input gradient requirements handled by circuit tracer internally.")
 
-    def generate_attribution_graph(self, prompt: str, analyze_specific_logits: bool = False, **kwargs) -> Graph:
+    def _get_analysis_target_indices(self) -> Optional[torch.Tensor]:
+        """Determine the value for compute_specific_logits based on CircuitTracerConfig.
+
+        Returns a 1D tensor of token ids, or None.
+        """
+        cfg = self.circuit_tracer_cfg
+        if not cfg:
+            return None
+
+        # If analysis_target_tokens is set, tokenize them
+        if cfg.analysis_target_tokens is not None:
+            tokenizer = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
+            # Tokenize and flatten to 1D tensor of token ids
+            token_ids = []
+            for token in cfg.analysis_target_tokens:
+                ids = tokenizer.encode(token, add_special_tokens=False)
+                token_ids.extend(ids)
+            if token_ids:
+                return torch.tensor(token_ids, dtype=torch.long)
+            else:
+                return None
+
+        # If target_token_ids is set
+        if cfg.target_token_ids is not None:
+            ids = cfg.target_token_ids
+            if isinstance(ids, torch.Tensor):
+                return ids
+            elif isinstance(ids, list):
+                return torch.tensor(ids, dtype=torch.long)
+            elif isinstance(ids, str):
+                # Try to get attribute from self.it_cfg
+                attr = getattr(self.it_cfg, ids, None)
+                if isinstance(attr, torch.Tensor):
+                    return attr
+                else:
+                    return None
+            else:
+                return None
+
+        # If neither is set, return None
+        return None
+
+    def generate_attribution_graph(self, prompt: str, **kwargs) -> Graph:
         """Generate attribution graph for a given prompt."""
         if not self.replacement_model:
             raise ValueError("ReplacementModel not loaded. Call _load_replacement_model() first.")
 
         cfg = self.circuit_tracer_cfg
 
-        entailment_indices = None
-
-        if analyze_specific_logits:
-            entailment_indices = getattr(self.it_cfg, 'entailment_mapping_indices', None)
+        # Determine compute_specific_logits using the new method
+        analysis_target_indices = self._get_analysis_target_indices()
 
         # Set default attribution parameters
         attribution_kwargs = {
@@ -123,7 +165,7 @@ class BaseCircuitTracerModule(BaseITLensModule):
             'max_feature_nodes': cfg.max_feature_nodes if cfg else None,
             'offload': cfg.offload if cfg else None,
             'verbose': cfg.verbose if cfg else True,
-            'entailment_indices': entailment_indices,
+            'analysis_target_indices': analysis_target_indices,
         }
 
         # Override with any provided kwargs
@@ -288,10 +330,15 @@ class CircuitTracerAnalysisMixin:
                  use_neuronpedia: Optional[bool] = None,
                  **generation_kwargs) -> Tuple[Graph, Path, Any]:
         """Generate attribution graph and optionally upload to Neuronpedia."""
-        if not hasattr(self, 'neuronpedia') or not self.neuronpedia:
-            raise RuntimeError(
-                "Neuronpedia extension not available. Enable it in your configuration."
-            )
+        if use_neuronpedia is None:
+            use_neuronpedia = self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg \
+                else False
+
+        if use_neuronpedia:
+            if not hasattr(self, 'neuronpedia') or not self.neuronpedia:
+                raise RuntimeError(
+                    "Neuronpedia extension not available. Enable it in your configuration."
+                )
 
         # Generate the attribution graph
         graph = self.generate_attribution_graph(prompt, **generation_kwargs)
@@ -314,9 +361,9 @@ class CircuitTracerAnalysisMixin:
         )
 
         # Determine whether to upload to Neuronpedia
-        if use_neuronpedia is None:
-            use_neuronpedia = self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg \
-                else False
+        # if use_neuronpedia is None:
+        #     use_neuronpedia = self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg \
+        #         else False
 
         if upload_to_np and use_neuronpedia:
             neuronpedia_metadata = self.neuronpedia.upload_graph_to_neuronpedia(graph_path)

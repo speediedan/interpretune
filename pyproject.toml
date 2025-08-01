@@ -47,6 +47,7 @@ dependencies = [
 
 [project.entry-points."console_scripts"]
 interpretune = "interpretune.base.components.cli:bootstrap_cli"
+interpretune-install-circuit-tracer = "interpretune.tools.install_circuit_tracer:main"
 
 [project.optional-dependencies]
 
@@ -70,11 +71,6 @@ examples = [
 "evaluate",
 "scikit-learn",
 "neuronpedia",
-# "safetensors >= 0.5.0",  # for circuit-tracer
-# "numpy >= 2.0.0",  # for circuit-tracer
-#"circuit-tracer@git+https://github.com/safety-research/circuit-tracer.git@d797c824c0ffe3a0274071e32d92962a36656212",
-#"circuitsvis",
-#"circuitsvis @ git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python"
 ]
 
 docs = [

@@ -17,6 +17,7 @@ unset torch_test_channel
 unset fts_from_source
 unset ct_from_source
 unset pip_install_flags
+unset no_commit_pin
 
 usage(){
 >&2 cat << EOF
@@ -28,6 +29,7 @@ Usage: $0
    [ --fts_from_source "path" ]
    [ --ct_from_source "path" ]
    [ --pip_install_flags "flags" ]
+   [ --no_commit_pin ]
    [ --help ]
    Examples:
     # build latest:
@@ -42,11 +44,13 @@ Usage: $0
     #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --ct_from_source=${HOME}/repos/circuit-tracer
     # build latest with no cache directory:
     #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --pip_install_flags="--no-cache-dir"
+    # build latest without using CI commit pinning:
+    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --no_commit_pin
 EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torch_test_channel,fts_from_source:,ct_from_source:,pip_install_flags:,help -- "$@")
+args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torch_test_channel,fts_from_source:,ct_from_source:,pip_install_flags:,no_commit_pin,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -62,6 +66,7 @@ do
     --fts_from_source)   fts_from_source=$2 ; shift 2 ;;
     --ct_from_source)   ct_from_source=$2 ; shift 2 ;;
     --pip_install_flags)   pip_install_flags=$2 ; shift 2 ;;
+    --no_commit_pin)   no_commit_pin=1 ; shift  ;;
     --help)    usage      ; shift   ;;
     # -- means the end of the arguments; drop this, and break out of the while loop
     --) shift; break ;;
@@ -119,15 +124,31 @@ it_install(){
     fi
     cd ${repo_home}
 
+    # Set IT_USE_CT_COMMIT_PIN by default, unless --no_commit_pin is specified
+    if [[ -z ${no_commit_pin} ]]; then
+        export IT_USE_CT_COMMIT_PIN="1"
+        echo "Using IT_USE_CT_COMMIT_PIN for circuit-tracer installation"
+    else
+        unset IT_USE_CT_COMMIT_PIN
+        echo "Using version-based circuit-tracer installation"
+    fi
+
     python -m pip install ${pip_install_flags} -e ".[test,examples,lightning]" -r requirements/docs.txt
-    python -m pip install ${pip_install_flags} safetensors==0.5.3 numpy==2.3.0 --ignore-requires-python
 
     if [[ -n ${ct_from_source} ]]; then
         echo "Installing circuit-tracer from source at ${ct_from_source}"
+        # Install circuit-tracer dependencies from requirements file
+        python -m pip install ${pip_install_flags} -r requirements/ct_deps.txt --ignore-requires-python
         cd ${ct_from_source}
         python -m pip install ${pip_install_flags} --no-deps -e .
     else
-        python -m pip install ${pip_install_flags} --no-deps circuit-tracer@git+https://github.com/safety-research/circuit-tracer.git@d797c824c0ffe3a0274071e32d92962a36656212
+        echo "Installing circuit-tracer via interpretune CLI tool"
+        # Use the interpretune CLI tool to install circuit-tracer
+        if [[ -n ${IT_USE_CT_COMMIT_PIN} ]]; then
+            python -m interpretune.tools.install_circuit_tracer
+        else
+            python -m interpretune.tools.install_circuit_tracer --no-commit-pin
+        fi
     fi
     cd ${repo_home}
     pyright -p pyproject.toml

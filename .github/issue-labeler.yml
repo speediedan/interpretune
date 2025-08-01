@@ -1,0 +1,129 @@
+# Issue Labeler Configuration
+# Automatically labels issues based on title and body content
+
+# Type detection based on keywords
+bug:
+  - '\b(bug|error|issue|problem|broken|fail|crash|exception)\b'
+  - '\b(not working|doesn''t work|does not work)\b'
+
+feature:
+  - '\b(feature|enhancement|improve|add|implement|support)\b'
+  - '\b(would like|could we|can we|request)\b'
+
+documentation:
+  - '\b(documentation|docs|readme|guide|tutorial|example)\b'
+  - '\b(unclear|confusing|missing docs)\b'
+
+question:
+  - '\b(question|how to|how do|help|unclear)\b'
+  - '\?'
+
+# Module detection based on keywords
+"module: adapters":
+  - '\b(adapter|adapters)\b'
+
+"module: analysis":
+  - '\b(analysis|analyze|interpret)\b'
+
+"module: base":
+  - '\b(base|core|foundation)\b'
+
+"module: config":
+  - '\b(config|configuration|settings)\b'
+
+"module: extensions":
+  - '\b(extension|extensions|plugin)\b'
+
+"module: runners":
+  - '\b(runner|runners|execution)\b'
+
+"module: utils":
+  - '\b(util|utils|utility|helper)\b'
+
+"module: protocol":
+  - '\b(protocol)\b'
+
+"module: registry":
+  - '\b(registry|register)\b'
+
+"module: session":
+  - '\b(session)\b'
+
+# Specific extension detection
+"extension: debug_generation":
+  - '\b(debug_generation|debug generation|debug-generation)\b'
+  - '\b(debug.*generat)\b'
+
+"extension: memprofiler":
+  - '\b(memprofiler|mem profiler|mem-profiler|memory profiler|memory profiling)\b'
+  - '\b(memory.*profil)\b'
+
+"extension: neuronpedia":
+  - '\b(neuronpedia|neuron-pedia|np)\b'
+  - '\b(neuron.*pedia)\b'
+
+# Specific adapter detection
+"adapter: circuit_tracer":
+  - '\b(circuit_tracer|circuit tracer|circuit-tracer)\b'
+  - '\b(circuit.*trac)\b'
+
+"adapter: sae_lens":
+  - '\b(sae_lens|sae lens|sae-lens|saelens)\b'
+  - '\b(sae.*lens)\b'
+
+"adapter: lightning":
+  - '\b(lightning|pytorch lightning|pytorch-lightning)\b'
+
+"adapter: transformer_lens":
+  - '\b(transformer_lens|transformer lens|transformer-lens|transformerlens)\b'
+  - '\b(transformer.*lens)\b'
+
+"adapter: core":
+  - '\b(adapter.*core|core.*adapter)\b'
+
+"adapter: registration":
+  - '\b(adapter.*registration|registration.*adapter)\b'
+
+# Area detection
+"area: examples":
+  - '\b(example|examples|demo|sample)\b'
+
+"area: experiments":
+  - '\b(experiment|experimental)\b'
+
+"area: notebooks":
+  - '\b(notebook|jupyter|ipynb)\b'
+
+"area: tests":
+  - '\b(test|testing|unittest|pytest)\b'
+
+"area: docs":
+  - '\b(documentation|docs|readme)\b'
+
+"area: ci":
+  - '\b(ci|continuous integration|github actions|workflow)\b'
+
+"area: build":
+  - '\b(build|setup|packaging|install)\b'
+
+# Priority indicators
+"priority: high":
+  - '\b(urgent|critical|important|asap|blocking)\b'
+  - '\b(production|prod|live)\b'
+
+"priority: low":
+  - '\b(nice to have|when possible|future|someday)\b'
+  - '\b(low priority|minor)\b'
+
+# Special labels
+"good first issue":
+  - '\b(beginner|newcomer|easy|simple|starter)\b'
+  - '\b(good first issue)\b'
+
+"help wanted":
+  - '\b(help wanted|help needed|looking for help)\b'
+  - '\b(volunteer|contribute)\b'
+
+dependencies:
+  - '\b(dependency|dependencies|requirement|version)\b'
+  - '\b(upgrade|update|bump)\b'

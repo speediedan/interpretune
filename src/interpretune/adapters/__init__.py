@@ -7,8 +7,20 @@ from interpretune.adapters.transformer_lens import (ITLensModule, ITDataModule, 
                                                     TransformerLensAdapter)
 from interpretune.adapters.sae_lens import (SAELensAdapter, SAEAnalysisMixin, SAELensModule, SAELensAttributeMixin,
                                             BaseSAELensModule, InstantiatedSAE)
-from interpretune.adapters.circuit_tracer import (CircuitTracerAdapter, CircuitTracerAttributeMixin,
-                                                  BaseCircuitTracerModule)
+
+# TODO: we can remove this logic once a fork of circuit-tracer is available on PyPI and custom import tools are
+# no longer needed
+# Conditionally import circuit_tracer adapter
+try:
+    from interpretune.adapters.circuit_tracer import (CircuitTracerAdapter, CircuitTracerAttributeMixin,
+                                                      BaseCircuitTracerModule)
+    _circuit_tracer_available = True
+except ImportError:
+    # circuit_tracer not available, define placeholder classes to avoid import errors
+    CircuitTracerAdapter = None
+    CircuitTracerAttributeMixin = None
+    BaseCircuitTracerModule = None
+    _circuit_tracer_available = False
 _register_adapters(ADAPTER_REGISTRY, "register_adapter_ctx", sys.modules[__name__], AdapterProtocol)
 
 __all__ = [
@@ -41,9 +53,12 @@ __all__ = [
     "SAELensAttributeMixin",   # from .sae_lens
     "BaseSAELensModule",       # from .sae_lens
     "InstantiatedSAE",         # from .sae_lens
-
-    # Circuit Tracer Adapters
-    "CircuitTracerAdapter",    # from .circuit_tracer
-    "CircuitTracerAttributeMixin",  # from .circuit_tracer
-    "BaseCircuitTracerModule",  # from .circuit_tracer
 ]
+
+# Add circuit_tracer adapters only if available
+if _circuit_tracer_available:
+    __all__.extend([
+        "CircuitTracerAdapter",    # from .circuit_tracer
+        "CircuitTracerAttributeMixin",  # from .circuit_tracer
+        "BaseCircuitTracerModule",  # from .circuit_tracer
+    ])

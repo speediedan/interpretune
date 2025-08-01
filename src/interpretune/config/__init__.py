@@ -9,7 +9,17 @@ from interpretune.config.transformer_lens import (ITLensConfig, ITLensCustomConf
                                                   ITLensFromPretrainedNoProcessingConfig, TLensGenerationConfig)
 from interpretune.config.sae_lens import (SAEConfig, SAECfgType, SAELensFromPretrainedConfig, SAELensCustomConfig,
                                           SAELensConfig)
-from interpretune.config.circuit_tracer import CircuitTracerConfig, CircuitTracerITLensConfig
+
+# Conditionally import circuit_tracer configs
+try:
+    from interpretune.config.circuit_tracer import CircuitTracerConfig, CircuitTracerITLensConfig
+    _circuit_tracer_config_available = True
+except ImportError:
+    # circuit_tracer not available, define placeholder classes
+    CircuitTracerConfig = None
+    CircuitTracerITLensConfig = None
+    _circuit_tracer_config_available = False
+
 from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg
 from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg, init_analysis_dirs, init_analysis_cfgs
 
@@ -56,10 +66,6 @@ __all__ = [
     "SAELensCustomConfig",
     "SAELensConfig",
 
-    # from interpretune.config.circuit_tracer
-    "CircuitTracerConfig",
-    "CircuitTracerITLensConfig",
-
     # from interpretune.config.analysis
     "AnalysisCfg",
     "AnalysisArtifactCfg",
@@ -70,3 +76,10 @@ __all__ = [
     "init_analysis_dirs",
     "init_analysis_cfgs",
 ]
+
+# Add circuit_tracer configs only if available
+if _circuit_tracer_config_available:
+    __all__.extend([
+        "CircuitTracerConfig",
+        "CircuitTracerITLensConfig",
+    ])

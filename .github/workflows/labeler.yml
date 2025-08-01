@@ -1,0 +1,42 @@
+name: "Auto Labeler"
+
+on:
+  # Label PRs based on changed files
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  # Label issues based on content (requires separate action)
+  issues:
+    types: [opened, edited]
+  # Also run on pull request reviews
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  # Label PRs based on file changes
+  label-pr:
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
+    runs-on: ubuntu-latest
+    name: Label PRs
+    steps:
+    - uses: actions/labeler@v5
+      with:
+        configuration-path: .github/labeler.yml
+        repo-token: "${{ secrets.GITHUB_TOKEN }}"
+
+  # Label issues based on content/title keywords
+  label-issue:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    name: Label Issues
+    steps:
+    - name: Label issues based on content
+      uses: github/issue-labeler@v3.4
+      with:
+        repo-token: "${{ secrets.GITHUB_TOKEN }}"
+        configuration-path: .github/issue-labeler.yml
+        enable-versioned-regex: 0

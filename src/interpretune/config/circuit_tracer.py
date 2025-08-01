@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional
+from typing import List, Optional
 from dataclasses import dataclass
 import torch
 
@@ -39,8 +39,6 @@ class CircuitTracerConfig(ITSerializableCfg):
     offload: Optional[str] = None
     """Whether to display detailed progress information."""
     verbose: bool = True
-    """Whether to prepare graphs for Neuronpedia graph storage and analysis."""
-    use_neuronpedia: bool = False
 
     # Graph visualization settings
     """Default threshold for node pruning in visualization."""
@@ -51,11 +49,17 @@ class CircuitTracerConfig(ITSerializableCfg):
     # Output settings
     """Whether to automatically save generated graphs."""
     save_graphs: bool = True
-    """Directory to save attribution graphs.
-
-    If None, uses analysis output directory.
-    """
+    """Directory to save attribution graphs.If None, uses analysis output directory."""
     graph_output_dir: Optional[str] = None
+
+    # Interpretune CT enhancement settings
+    """ Specific tokens to analyze, will use tokens associated with top `max_n_logits` if `None`."""
+    analysis_target_tokens: Optional[List[str]] = None
+    """A tensor of pre-tokenized target token IDs for analysis or a module attribute to be used as a source for
+    them."""
+    target_token_ids: Optional[List[int] | torch.Tensor | str] = None
+    """Whether to prepare graphs for Neuronpedia graph storage and analysis."""
+    use_neuronpedia: bool = False
 
 
 # Add configuration mixins that extend existing configs
