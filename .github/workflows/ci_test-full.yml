@@ -1,0 +1,128 @@
+name: Test full
+
+on:
+  push:
+    branches: [main, "release/*"]
+    paths:
+      - "setup.*"
+      - "requirements.txt"
+      - "pyproject.toml"
+      - ".codecov.yml"
+      - "tests/**"
+      - "src/**"
+      - "requirements/**"
+      - ".github/workflows/ci_test-full.yml"
+      - ".actions/**"
+      # Exclude documentation-only files from triggering
+      - "!docs/**"
+      - "!**/*.md"
+      - "!**/*.rst"
+      - "!mkdocs.yml"
+      - "!**/CHANGELOG.md"
+      - "!**/CODE_OF_CONDUCT.md"
+      - "!**/CONTRIBUTING.md"
+      - "!**/LICENSE*"
+  pull_request:
+    branches: [main, "release/*"]
+    types: [opened, reopened, ready_for_review, synchronize]
+    paths:
+      - "setup.*"
+      - "requirements.txt"
+      - "pyproject.toml"
+      - ".codecov.yml"
+      - "tests/**"
+      - "src/**"
+      - "requirements/**"
+      - ".github/workflows/ci_test-full.yml"
+      - ".actions/**"
+      # Exclude documentation-only files from triggering
+      - "!docs/**"
+      - "!**/*.md"
+      - "!**/*.rst"
+      - "!mkdocs.yml"
+      - "!**/CHANGELOG.md"
+      - "!**/CODE_OF_CONDUCT.md"
+      - "!**/CONTRIBUTING.md"
+      - "!**/LICENSE*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref }}
+  cancel-in-progress: ${{ ! (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) }}
+
+jobs:
+  cpu:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022, macos-14]
+        python-version: ["3.12"]
+    timeout-minutes: 90
+    env:
+      IT_USE_CT_COMMIT_PIN: "1"
+      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+      HF_GATED_PUBLIC_REPO_AUTH_KEY: ${{ secrets.HF_GATED_PUBLIC_REPO_AUTH_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Upgrade pip, setuptools, wheel in system Python
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+      - name: Set up venv and install dependencies (all OS)
+        shell: bash
+        # env:
+        #   IT_USE_CT_COMMIT_PIN: "1"
+        run: |
+          #   set -x  # Enable bash debug output
+          #   echo "==== ENVIRONMENT VARIABLES ===="
+          #   env | sort
+          #   echo "==== SYSTEM INFO ===="
+          #   uname -a
+          #   which python
+          #   python --version
+          #   which pip
+          #   pip --version
+          #   echo "==== DISK USAGE ===="
+          #   df -h
+          #   echo "==== MEMORY USAGE ===="
+          #   free -h || true
+          #   echo "==== DIRECTORY STRUCTURE ===="
+          #   ls -alh
+          python -m venv ~/.venvs/it_dev
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            . ~/.venvs/it_dev/Scripts/activate
+          else
+            source ~/.venvs/it_dev/bin/activate
+          fi
+          pip install --upgrade pip setuptools wheel build
+          python -c "import setuptools; print('setuptools version:', setuptools.__version__)"
+          python -c "import setuptools; assert tuple(map(int, setuptools.__version__.split('.'))) >= (77,0,0), 'setuptools >= 77.0.0 required'"
+          pip install -e .[lightning,examples,test]
+          python -m interpretune.tools.install_circuit_tracer
+          pip list
+      - name: Run tests and coverage
+        shell: bash
+        run: |
+          # set -x  # Enable bash debug output
+          source ~/.venvs/it_dev/bin/activate
+          # echo "==== PYTHON PACKAGES ===="
+          pip list
+          #echo "==== RUNNING TESTS ===="
+          coverage run --append --source src/interpretune -m pytest tests -v --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml
+          #echo "==== COVERAGE FILES ===="
+          #ls -lh . coverage.xml || true
+      - name: Upload pytest results
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results-${{ runner.os }}-${{ matrix.python-version }}
+          path: junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml
+        if: failure()
+      - name: Statistics
+        if: success()
+        run: |
+          # source ~/.venvs/it_latest/bin/activate
+          coverage report
+          coverage xml

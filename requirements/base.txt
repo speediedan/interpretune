@@ -1,6 +1,6 @@
 # the below is uncommented when main is targeting a specific fts dev master commit
 # git+https://github.com/speediedan/finetuning-scheduler.git@4fe135a132e75575d0271d7b4e095c8f8da985cb#egg=finetuning-scheduler
-finetuning-scheduler[examples, cli, extra]>=2.2.0
+finetuning-scheduler[examples, cli, extra]>=2.5.0
 bitsandbytes
 peft
 tabulate>=0.9.0
