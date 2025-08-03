@@ -1,0 +1,3 @@
+finetuning-scheduler >= 2.5.0
+bitsandbytes
+peft

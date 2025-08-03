@@ -6,3 +6,6 @@
 
 # install all extra dependencies for running examples
 -r ./examples.txt
+
+# install lightning adapter additional deps
+-r ./lightning.txt

@@ -1,13 +1,12 @@
-wandb  # for wandb logging
-torch-tb-profiler  # for profiling
-# additional packages required for automated ipynb example tests
+wandb
+torch-tb-profiler
 ipython[notebook]
-jupytext>=1.10  # converting notebook source .py to .ipynb
-nbval>=0.9.6  # testing the notebook
-python-dotenv  # to load various private API keys from a .env file
-transformer_lens # for mech interp example/testing
-sae-lens # for additional mech interp example/testing
+ipywidgets
+jupytext >= 1.10
+nbval >= 0.9.6
+python-dotenv
 plotly
 gdown
 evaluate
-#git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python
+scikit-learn
+neuronpedia

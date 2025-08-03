@@ -137,10 +137,8 @@ it_install(){
 
     if [[ -n ${ct_from_source} ]]; then
         echo "Installing circuit-tracer from source at ${ct_from_source}"
-        # Install circuit-tracer dependencies from requirements file
-        python -m pip install ${pip_install_flags} -r requirements/ct_deps.txt --ignore-requires-python
         cd ${ct_from_source}
-        python -m pip install ${pip_install_flags} --no-deps -e .
+        python -m pip install ${pip_install_flags} -e .
     else
         echo "Installing circuit-tracer via interpretune CLI tool"
         # Use the interpretune CLI tool to install circuit-tracer

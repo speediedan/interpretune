@@ -60,6 +60,7 @@ jobs:
     timeout-minutes: 90
     env:
       IT_USE_CT_COMMIT_PIN: "1"
+      USE_CT_COMMIT_PIN: "1"
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       HF_GATED_PUBLIC_REPO_AUTH_KEY: ${{ secrets.HF_GATED_PUBLIC_REPO_AUTH_KEY }}
     steps:
@@ -73,34 +74,21 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
       - name: Set up venv and install dependencies (all OS)
         shell: bash
-        # env:
-        #   IT_USE_CT_COMMIT_PIN: "1"
         run: |
-          #   set -x  # Enable bash debug output
-          #   echo "==== ENVIRONMENT VARIABLES ===="
-          #   env | sort
-          #   echo "==== SYSTEM INFO ===="
-          #   uname -a
-          #   which python
-          #   python --version
-          #   which pip
-          #   pip --version
-          #   echo "==== DISK USAGE ===="
-          #   df -h
-          #   echo "==== MEMORY USAGE ===="
-          #   free -h || true
-          #   echo "==== DIRECTORY STRUCTURE ===="
-          #   ls -alh
           python -m venv ~/.venvs/it_dev
           if [ "$RUNNER_OS" == "Windows" ]; then
-            . ~/.venvs/it_dev/Scripts/activate
+            source ~/.venvs/it_dev/Scripts/activate
+            python -m pip install --upgrade pip setuptools wheel build
           else
             source ~/.venvs/it_dev/bin/activate
+            pip install --upgrade pip setuptools wheel build
           fi
-          pip install --upgrade pip setuptools wheel build
-          python -c "import setuptools; print('setuptools version:', setuptools.__version__)"
-          python -c "import setuptools; assert tuple(map(int, setuptools.__version__.split('.'))) >= (77,0,0), 'setuptools >= 77.0.0 required'"
-          pip install -e .[lightning,examples,test]
+          pip install ".[test,examples,lightning]"
+          # python -c "import setuptools; print('setuptools version:', setuptools.__version__)"
+          # python -c "import setuptools; assert tuple(map(int, setuptools.__version__.split('.'))) >= (77,0,0), 'setuptools >= 77.0.0 required'"
+          #pip install pip-tools
+          #pip-compile requirements/ci_reqs.in --output-file=requirements/ci_reqs.txt
+          #pip install -r requirements/ci_reqs.txt
           python -m interpretune.tools.install_circuit_tracer
           pip list
       - name: Run tests and coverage

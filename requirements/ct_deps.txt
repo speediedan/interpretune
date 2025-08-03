@@ -1,4 +1,0 @@
-# Circuit-tracer dependencies with specific versions that may conflict with other packages
-# These are installed separately to avoid dependency resolution conflicts
-safetensors>=0.5.0
-numpy>=2.0.0

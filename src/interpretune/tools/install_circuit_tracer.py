@@ -14,16 +14,6 @@ def install_circuit_tracer(use_commit_pin: bool = True, verbose: bool = False):
         """Check if we should use commit pin based on environment variable."""
         return os.getenv('IT_USE_CT_COMMIT_PIN', '').lower() in ['true', '1', 'yes']
 
-    def get_circuit_tracer_deps():
-        """Get circuit-tracer dependency requirements from file."""
-        repo_root = Path(__file__).parent.parent.parent.parent
-        deps_file = repo_root / 'requirements' / 'ct_deps.txt'
-
-        if deps_file.exists():
-            with open(deps_file, 'r') as f:
-                return [line.strip() for line in f if line.strip() and not line.startswith('#')]
-        return []
-
     def get_circuit_tracer_commit():
         """Get the pinned circuit-tracer commit hash."""
         repo_root = Path(__file__).parent.parent.parent.parent
@@ -35,7 +25,7 @@ def install_circuit_tracer(use_commit_pin: bool = True, verbose: bool = False):
                     line = line.strip()
                     if line and not line.startswith('#'):
                         return line
-        return "6a05a1612f6eea60e3acf51b8e10a205ce9e8650"  # fallback
+        return "6c74ea291c410bb3391e572cd6a8d020be714922"  # fallback
 
     # Determine installation mode
     if use_commit_pin is None:
@@ -46,14 +36,11 @@ def install_circuit_tracer(use_commit_pin: bool = True, verbose: bool = False):
     # Build requirements list
     requirements = []
 
-    # Add conflicting dependencies first
-    requirements.extend(get_circuit_tracer_deps())
-
     # Add circuit-tracer itself
     if use_commit_pin:
         commit_hash = get_circuit_tracer_commit()
         circuit_tracer_url = f"git+https://github.com/speediedan/circuit-tracer.git@{commit_hash}"
-        requirements.append(f"{circuit_tracer_url} --no-deps")
+        requirements.append(f"{circuit_tracer_url}")
     else:
         requirements.append("circuit-tracer")
 
