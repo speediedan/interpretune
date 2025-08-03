@@ -1,0 +1,4 @@
+# Pin datasets to 2.21.0 for old sae_lens requirement
+# This is necessary until sae_lens is updated to support newer datasets versions
+
+datasets==2.21.0

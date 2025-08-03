@@ -83,7 +83,7 @@ jobs:
             source ~/.venvs/it_dev/bin/activate
             pip install --upgrade pip setuptools wheel build
           fi
-          pip install -r requirements/ci_reqs.txt
+          pip install .[test,examples,lightning] -c requirements/ci_constraints.txt
           pip list
       - name: Run tests and coverage
         shell: bash
