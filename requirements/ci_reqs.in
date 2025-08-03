@@ -1,0 +1,8 @@
+# This file is intended for use with pip-compile to generate ci_reqs.txt
+# It includes all optional and base requirements for CI, except documentation deps.
+
+-r ./base.txt
+-r ./devel.txt
+-r ./examples.txt
+-r ./lightning.txt
+-r ./test.txt

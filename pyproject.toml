@@ -74,6 +74,7 @@ examples = [
 "evaluate",
 "scikit-learn",
 "neuronpedia",
+"circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6c74ea291c410bb3391e572cd6a8d020be714922",
 ]
 
 docs = [
@@ -101,7 +102,8 @@ test = [
 "pyright >= 1.1.365",
 "pre-commit >= 1.0",
 "psycopg",
-"toml"
+"toml",
+"pip-tools"
 ]
 
 

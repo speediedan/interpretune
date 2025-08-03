@@ -69,6 +69,15 @@ repos:
   #         - mdformat_frontmatter
   #       exclude: "CHANGELOG.md", "**/*.prompt.md"
 
+  # TODO: remove this deprecated/experimental hook before public MVP
+  # - repo: local
+  #   hooks:
+  #     - id: pip-compile-ci-reqs
+  #       name: Recompile ci_reqs.txt
+  #       entry: bash -c 'pip-compile requirements/ci_reqs.in --output-file=requirements/ci_reqs.txt -v && git add requirements/ci_reqs.txt'
+  #       language: system
+  #       files: ^requirements/ci_reqs.in$
+
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: 'v0.6.9'
     hooks:
