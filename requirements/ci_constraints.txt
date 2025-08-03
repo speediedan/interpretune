@@ -1,3 +1,5 @@
+# TODO: the need for this file should be obviated by sae_lens bumping datasets support to a modern version
+#       remove this file when sae_lens is updated
 # Pin datasets to 2.21.0 for old sae_lens requirement
 # This is necessary until sae_lens is updated to support newer datasets versions
 
