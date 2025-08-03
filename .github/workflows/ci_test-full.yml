@@ -76,34 +76,14 @@ jobs:
           brew link --force libpq
       - name: Set up venv and install dependencies (all OS)
         shell: bash
-        # may switch to using venv for azure/gpu test parity in the future (where that approach is used)
         run: |
-          # python -m venv ~/.venvs/it_dev
-          # if [ "$RUNNER_OS" == "Windows" ]; then
-          #   source ~/.venvs/it_dev/Scripts/activate
-          #   python -m pip install --upgrade pip setuptools wheel build
-          # else
-          #   source ~/.venvs/it_dev/bin/activate
-          #   pip install --upgrade pip setuptools wheel build
-          # fi
-          pip install --upgrade pip setuptools wheel build
-          pip install .[test,examples,lightning] -c requirements/ci_constraints.txt
+          python -m pip install --upgrade pip setuptools wheel build
+          python -m pip install .[test,examples,lightning] -c requirements/ci_constraints.txt
           pip list
       - name: Run tests and coverage
         shell: bash
         run: |
-          # set -x  # Enable bash debug output
-          # if [ "$RUNNER_OS" == "Windows" ]; then
-          #   source ~/.venvs/it_dev/Scripts/activate
-          # else
-          #   source ~/.venvs/it_dev/bin/activate
-          # fi
-          # echo "==== PYTHON PACKAGES ===="
-          # pip list
-          #echo "==== RUNNING TESTS ===="
           coverage run --append --source src/interpretune -m pytest tests -v --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml
-          #echo "==== COVERAGE FILES ===="
-          #ls -lh . coverage.xml || true
       - name: Upload pytest results
         uses: actions/upload-artifact@v4
         with:
@@ -113,6 +93,5 @@ jobs:
       - name: Statistics
         if: success()
         run: |
-          # source ~/.venvs/it_latest/bin/activate
           coverage report
           coverage xml
