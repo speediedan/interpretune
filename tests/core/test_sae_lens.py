@@ -14,6 +14,7 @@ from interpretune.config import (SAELensFromPretrainedConfig, SAELensConfig, SAE
                                  ITLensFromPretrainedConfig, ITLensCustomConfig)
 from tests.utils import ablate_cls_attrs
 from tests.base_defaults import default_test_task
+from tests.runif import RunIf
 
 # Add new imports for mocking
 from unittest.mock import patch, MagicMock, call
@@ -94,6 +95,7 @@ class TestClassSAELens:
                                                               sae_id="blocks.0.hook_resid_pre", device=None)
         assert test_sl_from_pretrained.device == str(tl_get_device())
 
+    @RunIf(min_cuda_gpus=1)  # not technically required, but runs causes issues with cpu-only GHA runner
     @pytest.mark.parametrize("session_fixture", **core_l_run_w_pytest_cfg)
     def test_run_with_saes_with_cache_fwd_bwd(self, request, session_fixture):
         sl_test_module, _ = request.getfixturevalue(session_fixture)
