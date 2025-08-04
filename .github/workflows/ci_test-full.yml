@@ -80,10 +80,16 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel build
           python -m pip install .[test,examples,lightning] -c requirements/ci_constraints.txt
           pip list
-      - name: Run tests and coverage
+      - name: Run tests, coverage, and resource monitor
         shell: bash
+        env:
+          CI_RESOURCE_MONITOR: ${{ env.CI_RESOURCE_MONITOR || '1' }}
         run: |
+          chmod +x ./scripts/ci_resource_monitor.sh
+          ./scripts/ci_resource_monitor.sh &
+          monitor_pid=$!
           coverage run --append --source src/interpretune -m pytest tests -v --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml
+          kill $monitor_pid || true
       - name: Upload pytest results
         uses: actions/upload-artifact@v4
         with:

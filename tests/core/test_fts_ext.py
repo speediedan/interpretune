@@ -13,12 +13,14 @@
 # TODO: move these ruff exceptions for jaxtyping to module level config instead of file level
 # ruff: noqa: F722, F821
 
+import pytest
 import torch
 from torch import Tensor
 from torch.testing import assert_close
 
 import einops
 from jaxtyping import Int, Float
+import os
 
 
 class TestClassFTSExtension:
@@ -56,6 +58,7 @@ class TestClassFTSExtension:
         l2_attributions = einops.einsum(W_U_correct_tokens, l2_results[:-1], "emb seq, seq nhead emb -> seq nhead")
         return torch.concat([direct_attributions.unsqueeze(-1), l1_attributions, l2_attributions], dim=-1)
 
+    @pytest.mark.usefixtures("make_deterministic")
     def test_tl_direct_attr(self, get_it_session__tl_cust_mi__setup):
         fixture = get_it_session__tl_cust_mi__setup
         it_session = fixture.it_session
@@ -63,6 +66,8 @@ class TestClassFTSExtension:
         dataloader = it_session.datamodule.test_dataloader()
         # TODO NEXT: update this example to properly test logit attribution in the presence of MLP etc components
         tokens = torch.tensor(dataloader.dataset[0]['input']).unsqueeze(0)
+        if os.environ.get("CI_RESOURCE_MONITOR") == "1":
+            print("Used tokens:", it_session.datamodule.tokenizer.convert_ids_to_tokens(tokens.squeeze()))
         with torch.inference_mode():
             logits, cache = curr_model.run_with_cache(tokens, remove_batch_dim=True)
             embed = cache["embed"]
