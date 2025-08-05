@@ -85,11 +85,15 @@ jobs:
         env:
           CI_RESOURCE_MONITOR: ${{ env.CI_RESOURCE_MONITOR || '1' }}
         run: |
-          chmod +x ./scripts/ci_resource_monitor.sh
-          ./scripts/ci_resource_monitor.sh &
-          monitor_pid=$!
-          coverage run --append --source src/interpretune -m pytest tests -v --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml
-          kill $monitor_pid || true
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            chmod +x ./scripts/ci_resource_monitor.sh
+            ./scripts/ci_resource_monitor.sh &
+            monitor_pid=$!
+            coverage run --append --source src/interpretune -m pytest tests -v --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml
+            kill $monitor_pid || true
+          else
+            coverage run --append --source src/interpretune -m pytest tests -v --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml
+          fi
       - name: Upload pytest results
         uses: actions/upload-artifact@v4
         with:

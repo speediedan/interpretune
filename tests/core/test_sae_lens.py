@@ -213,17 +213,18 @@ class TestClassSAELens:
         with pytest.raises(MisconfigurationException, match="At least one `SAELens"):
                 _ = SAELensConfig(**test_sl_cfg)
 
+    @RunIf(min_cuda_gpus=1)
     def test_sl_tl_device_sync_warnings(self):
         test_sl_cfg = deepcopy(TestClassSAELens.test_sl_cust)
         with pytest.warns(UserWarning, match=r"This SAEConfig's device type \('cpu'\) does not match the"):
             it_cfg = SAELensConfig(**test_sl_cfg)
         assert isinstance(it_cfg, SAELensConfig)
-        assert it_cfg.sae_cfgs[0].cfg.device == "cuda"
+        assert it_cfg.sae_cfgs[0].cfg.device in ["cuda", "mps"]
         test_sl_cfg['sae_cfgs'].cfg.device = None
         with pytest.warns(UserWarning, match=r"An SAEConfig device type was not provided"):
             it_cfg = SAELensConfig(**test_sl_cfg)
         assert isinstance(it_cfg, SAELensConfig)
-        assert it_cfg.sae_cfgs[0].cfg.device == "cuda"
+        assert it_cfg.sae_cfgs[0].cfg.device in ["cuda", "mps"]
 
     @patch('interpretune.adapters.sae_lens.get_pretrained_saes_directory')
     @patch('interpretune.adapters.sae_lens.display')

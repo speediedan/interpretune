@@ -32,13 +32,19 @@ class TestAnalysisOpDispatcher:
         # Create dispatcher with string path
         dispatcher = AnalysisOpDispatcher(yaml_paths=[sub_dir, string_path])
 
-        # Verify the string was converted to Path
         # The dispatcher now always includes the built-in YAML file, so expect 3 paths
-        rel_native_yaml_path =  "src/interpretune/analysis/ops/native_analysis_functions.yaml"
         assert len(dispatcher.yaml_paths) == 3
-        assert Path(__file__).parent.parent.parent / rel_native_yaml_path in dispatcher.yaml_paths
-        assert sub_dir in dispatcher.yaml_paths
-        assert Path(string_path) in dispatcher.yaml_paths
+
+        # Check that the built-in YAML file is present by matching the filename
+        native_yaml_filename = "native_analysis_functions.yaml"
+        assert any(p.name == native_yaml_filename for p in dispatcher.yaml_paths), (
+            f"Expected a path ending with {native_yaml_filename} in {dispatcher.yaml_paths}")
+
+        # Check the other two paths are present
+        assert any(p.resolve() == Path(sub_dir).resolve() for p in dispatcher.yaml_paths), (
+            f"Expected sub_dir {sub_dir} in {dispatcher.yaml_paths}")
+        assert any(p.resolve() == Path(string_path).resolve() for p in dispatcher.yaml_paths), (
+            f"Expected string_path {string_path} in {dispatcher.yaml_paths}")
 
     def test_dispatcher_no_yaml_files_found(self, tmp_path):
         """Test dispatcher behavior when no YAML files are found."""

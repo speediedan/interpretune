@@ -28,7 +28,9 @@ gpt2_hf_bnb_lora_cfg = {"bitsandbytesconfig": nf4_bnb_config, "lora_cfg": gpt2_l
 gpt2_hf_bnb_lora_cfg_seq = {"bitsandbytesconfig": nf4_bnb_config, "lora_cfg": {**gpt2_lora_cfg, "task_type": "SEQ_CLS"}}
 gpt2_seq_hf_from_pretrained_kwargs = {"pretrained_kwargs": {"device_map": "cpu", "torch_dtype": "float32"},
                                       "model_head": "transformers.AutoModelForSequenceClassification"}
-tl_cust_mi_cfg = {"cfg":
+tl_cust_mi_cfg = {
+    "default_padding_side":"left",
+    "cfg":
     dict(
     d_model=768,
     d_head=64,
@@ -56,7 +58,10 @@ class CoreCfgForcePrepare(BaseCfg):
 class TLMechInterpCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.transformer_lens)
     model_src_key: str | None = "cust"
+    force_prepare_data: bool | None = True
     tl_cfg: dict | None = field(default_factory=lambda: ITLensCustomConfig(**tl_cust_mi_cfg))
+    dm_override_cfg: dict | None = field(default_factory=lambda: {'tokenizer_kwargs': {
+        'padding_side': 'right', 'model_input_names': ['input']}})
 
 @dataclass(kw_only=True)
 class TLDebugCfg(TLParityCfg):
