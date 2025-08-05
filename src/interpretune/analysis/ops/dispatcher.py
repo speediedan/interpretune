@@ -76,6 +76,9 @@ class AnalysisOpDispatcher:
         ensure_op_paths_in_syspath(self.op_paths)
         self._cache_manager = OpDefinitionsCacheManager(IT_ANALYSIS_CACHE)
 
+    def _normalize_op_name(self, name: str) -> str:
+        # Normalize operation names for consistent lookup (case-insensitive, cross-platform)
+        return name.replace("/", ".").replace("-", "_").lower()
 
     def _discover_yaml_files(self, paths: List[Path]) -> List[Path]:
         """Discover all YAML files from the given paths (files or directories)."""
@@ -221,6 +224,7 @@ class AnalysisOpDispatcher:
     def _convert_raw_definitions_to_opdefs(self, raw_definitions: Dict[str, Dict]):
         """Convert raw dictionary definitions to OpDef objects."""
         for op_name, op_def in raw_definitions.items():
+            op_name = self._normalize_op_name(op_name)
             # Convert schemas to OpSchema objects
             input_schema = self._convert_to_op_schema(op_def.get("input_schema", {}))
             output_schema = self._convert_to_op_schema(op_def.get("output_schema", {}))
@@ -295,37 +299,43 @@ class AnalysisOpDispatcher:
         op_definitions = self._op_definitions.copy()
 
         for op_name, op_def in op_definitions.items():
+            op_name_norm = self._normalize_op_name(op_name)
             # Build mapping for each alias
             for alias in op_def.aliases:
+                alias_norm = self._normalize_op_name(alias)
                 # Prevent self-referencing aliases
-                if alias == op_name:
+                if alias_norm == op_name_norm:
                     continue
 
                 # Add alias reference to definitions if not already present (normally should be already present)
-                if alias not in self._op_definitions:
-                    self._op_definitions[alias] = op_def
-                if self._op_definitions[alias] == op_def:
-                    self._aliases[alias] = op_name
-                    self._op_to_aliases[op_name].append(alias)
+                if alias_norm not in self._op_definitions:
+                    self._op_definitions[alias_norm] = op_def
+                if self._op_definitions[alias_norm] == op_def:
+                    self._aliases[alias_norm] = op_name_norm
+                    self._op_to_aliases[op_name_norm].append(alias_norm)
                 else:
                     rank_zero_warn(
                         f"The alias '{alias}' is already associated with different operation "
-                        f"({self._op_definitions[alias]}) so will not be added.")
+                        f"({self._op_definitions[alias_norm]}) so will not be added.")
                 # For namespaced operations, also add non-namespaced convenience alias mapping
                 # This allows "test_hub_alias" to resolve to "testuser.test.test_op"
-                if "." in op_name:
+                if "." in op_name_norm:
                     # Extract the original (non-namespaced) alias
-                    original_alias = alias.split(".", 3)[-1] if alias.count('.') >= 3 else alias.split('.')[-1]
+                    original_alias = (
+                        alias_norm.split(".", 3)[-1]
+                        if alias_norm.count('.') >= 3
+                        else alias_norm.split('.')[-1]
+                    )
                     if original_alias in self._aliases:
                         # If the original alias already exists, ensure it points to the same op_name
-                        if self._aliases[original_alias] != op_name:
+                        if self._aliases[original_alias] != op_name_norm:
                             rank_zero_warn(f"The name '{original_alias}' already exists for a different operation. "
-                                           f"The fully-qualified alias name ({alias}) has been added as an alias "
-                                           f"for {op_name}.")
+                                           f"The fully-qualified alias name ({alias_norm}) has been added as an alias "
+                                           f"for {op_name_norm}.")
                     else:
-                        if self._aliases and original_alias != op_name:
-                            self._aliases[original_alias] = op_name
-                            self._op_to_aliases[op_name].append(alias)
+                        if self._aliases and original_alias != op_name_norm:
+                            self._aliases[original_alias] = op_name_norm
+                            self._op_to_aliases[op_name_norm].append(alias_norm)
 
     @_ensure_loaded
     def list_operations(self) -> List[str]:
