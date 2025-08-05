@@ -1,10 +1,10 @@
-import os
 from typing import Optional, Any, Dict, Tuple, List
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from interpretune.config import ITSerializableCfg, ITSharedConfig
-from interpretune.utils import rank_zero_warn
+from interpretune.utils import rank_zero_warn, rank_zero_debug
 
 
 log = logging.getLogger(__name__)
@@ -59,8 +59,24 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
         }
         if not self.data_collator_cfg:
             self.data_collator_cfg = {"collator_class": "transformers.DataCollatorWithPadding"}
-        default_dataset_save_path = f"{os.environ['HOME']}/.cache/huggingface/datasets/{self.task_name}"
-        self.dataset_path = self.dataset_path or default_dataset_save_path
+
+        # Use pathlib for cross-platform path handling and sanitize task name for Windows compatibility
+        sanitized_task_name = self.task_name.replace(':', '_').replace('|', '_')
+        rank_zero_debug(f"[DATAMODULE_CONFIG] Sanitized task name: '{sanitized_task_name}'")
+
+        # Use Path.home() for cross-platform home directory detection
+        cache_home = Path.home() / ".cache" / "huggingface" / "datasets"
+        default_dataset_save_path = cache_home / sanitized_task_name
+        rank_zero_debug(f"[DATAMODULE_CONFIG] Default dataset path: {default_dataset_save_path}")
+        rank_zero_debug(f"[DATAMODULE_CONFIG] Original dataset_path: {self.dataset_path}")
+
+        # Ensure proper platform-specific path separators for Windows compatibility
+        if self.dataset_path is None:
+            self.dataset_path = str(default_dataset_save_path.resolve())
+        else:
+            # Convert existing path to use proper separators
+            self.dataset_path = str(Path(self.dataset_path).resolve())
+        rank_zero_debug(f"[DATAMODULE_CONFIG] Final dataset_path: {self.dataset_path}")
 
     def _cross_validate(self, it_cfg: ITSerializableCfg) -> None:
         # inspect tokenizer, tokenizer_name, model_name_or_path here, updating datamodule config before instantiation

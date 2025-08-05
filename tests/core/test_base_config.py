@@ -125,7 +125,11 @@ class TestClassBaseConfigs:
                 assert set(expected_composition_classes) == set(cfg._composed_classes)
                 full_composition_classes += [c.__name__ for c in cfg._composed_classes]
             expected_repr = TestClassBaseConfigs.expected_composition_states[tuple(sorted(full_composition_classes))]
-            assert platform_normalize_str(repr(cfg)).startswith(platform_normalize_str(expected_repr))
+            # Normalize line endings for cross-platform compatibility
+            actual_repr = repr(cfg)
+            expected_repr_norm = platform_normalize_str(expected_repr)
+            actual_repr_norm = platform_normalize_str(actual_repr)
+            assert actual_repr_norm.startswith(expected_repr_norm)
 
     def test_search_candidate_subclass_equal_candidates(self):
         module1 = Mock(name='Module1')

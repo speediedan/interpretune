@@ -164,7 +164,9 @@ def core_analysis_loop(module: ITModule, datamodule: ITDataModule,
     # Generate the dataset
     dataset = generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, **kwargs)
 
-    dataset.save_to_disk(str(module.analysis_cfg.output_store.save_dir))
+
+    save_dir = Path(module.analysis_cfg.output_store.save_dir)
+    dataset.save_to_disk(save_dir)
     # Assign dataset to analysis store
     module.analysis_cfg.output_store.dataset = dataset
 

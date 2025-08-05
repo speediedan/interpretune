@@ -101,33 +101,40 @@ class AnalysisOpDispatcher:
         try:
             # Discover all YAML files from the configured paths
             yaml_files = self._discover_yaml_files(self.yaml_paths)
+            rank_zero_debug(f"[DISPATCHER] Discovered {len(yaml_files)} local YAML files")
 
             # Add hub operations if enabled
             if self.enable_hub_ops:
+                rank_zero_debug("[DISPATCHER] Hub ops enabled, adding hub YAML files")
                 hub_yaml_files = self._cache_manager.add_hub_yaml_files()
                 yaml_files.extend(hub_yaml_files or [])
+                rank_zero_debug(f"[DISPATCHER] Total YAML files after hub: {len(yaml_files)}")
+            else:
+                rank_zero_debug("[DISPATCHER] Hub ops disabled")
 
             # Set up cache manager with discovered YAML files # TODO: might be able to remove since we already discover
             for yaml_file in yaml_files:
                 if yaml_file not in [info.path for info in self._cache_manager._yaml_files]:
                     self._cache_manager.add_yaml_file(yaml_file)
 
+            rank_zero_debug("[DISPATCHER] Attempting to load from cache")
             # Try to load from cache first
             cached_definitions = self._cache_manager.load_cache()
             if cached_definitions is not None:
+                rank_zero_debug(f"[DISPATCHER] Cache HIT: Loaded {len(cached_definitions)} definitions from cache")
                 self._op_definitions = cached_definitions
                 self._set_default_hub_op_aliases()
+            else:
+                rank_zero_debug("[DISPATCHER] Cache MISS: Compiling from source")
+                # Cache miss or invalid - load from YAML and compile
+                rank_zero_debug("Cache miss or invalid, loading from YAML and compiling")
+                self._load_from_yaml_and_compile(yaml_files)
 
-                # Build aliases mapping
-                self._populate_aliases_from_definitions()
+            # Build aliases mapping
+            self._populate_aliases_from_definitions()
 
-                self._loaded = True
-                rank_zero_debug(f"Loaded {len(self._op_definitions)} operation definitions")
-                return
-
-            # Cache miss or invalid - load from YAML and compile
-            rank_zero_debug("Cache miss or invalid, loading from YAML and compiling")
-            self._load_from_yaml_and_compile(yaml_files)
+            self._loaded = True
+            rank_zero_debug(f"[DISPATCHER] Loaded {len(self._op_definitions)} operation definitions")
 
         except Exception as e:
             rank_zero_warn(f"Failed to load operation definitions: {e}")
@@ -249,12 +256,18 @@ class AnalysisOpDispatcher:
 
     def _apply_hub_namespacing(self, yaml_content: Dict[str, Any], yaml_file: Path) -> Dict[str, Any]:
         """Apply hub namespacing to operations from hub files."""
+        rank_zero_debug(f"[DISPATCHER] Processing yaml_file: {yaml_file}")
+
         # Get namespace for this file
         namespace = self._cache_manager.get_hub_namespace(yaml_file)
+        rank_zero_debug(f"[DISPATCHER] Retrieved namespace: '{namespace}'")
 
         # If it's a top-level namespace (non-hub), return unchanged
         if "." not in namespace:
+            rank_zero_debug(f"[DISPATCHER] No dots in namespace '{namespace}' - returning unchanged")
             return yaml_content
+
+        rank_zero_debug(f"[DISPATCHER] Applying namespace '{namespace}' to operations: {list(yaml_content.keys())}")
 
         # Apply namespacing to hub operations
         namespaced_content = {}
@@ -279,15 +292,19 @@ class AnalysisOpDispatcher:
 
             # Add namespace prefix to operation name
             namespaced_name = f"{namespace}.{op_name}"
+            rank_zero_debug(f"[DISPATCHER] Namespacing '{op_name}' -> '{namespaced_name}'")
             namespaced_content[namespaced_name] = op_config.copy()
 
             # Also namespace any aliases
             if "aliases" in op_config:
                 namespaced_aliases = []
                 for alias in op_config["aliases"]:
-                    namespaced_aliases.append(f"{namespace}.{alias}")
+                    namespaced_alias = f"{namespace}.{alias}"
+                    rank_zero_debug(f"[DISPATCHER] Namespacing alias '{alias}' -> '{namespaced_alias}'")
+                    namespaced_aliases.append(namespaced_alias)
                 namespaced_content[namespaced_name]["aliases"] = namespaced_aliases
 
+        rank_zero_debug(f"[DISPATCHER] Final namespaced operations: {list(namespaced_content.keys())}")
         return namespaced_content
 
     def _populate_aliases_from_definitions(self):

@@ -260,7 +260,9 @@ def save_reload_results_dataset(it_session, result_batches, batches, features_fo
     # TODO: add option to attach the dataset to the current analysis_cfg?
     # module.analysis_cfg.output_store.dataset = dataset
     # Save the dataset
-    dataset.save_to_disk(str(it_session.module.analysis_cfg.output_store.save_dir))
+
+    save_dir = Path(it_session.module.analysis_cfg.output_store.save_dir)
+    dataset.save_to_disk(save_dir)
 
     # Load the dataset with our custom formatter
     loaded_dataset = Dataset.load_from_disk(str(it_session.module.analysis_cfg.output_store.save_dir))

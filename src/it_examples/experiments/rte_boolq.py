@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pprint import pformat
 import logging
 from functools import partial
+from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
@@ -94,11 +95,14 @@ class RTEBoolqDataModule(ITDataModule):
             template_fn=self.itdm_cfg.prompt_cfg.model_chat_template_fn,
             tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern,
         )
-        dataset = datasets.load_dataset("super_glue", self.itdm_cfg.task_name, trust_remote_code=True)
+        dataset = datasets.load_dataset("aps/super_glue", self.itdm_cfg.task_name)
         for split in dataset.keys():
             dataset[split] = dataset[split].map(tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
             dataset[split] = self._remove_unused_columns(dataset[split], target_model)
-        dataset.save_to_disk(self.itdm_cfg.dataset_path)
+
+
+        save_path = Path(self.itdm_cfg.dataset_path)
+        dataset.save_to_disk(save_path)
 
     def dataloader_factory(self, split: str, use_train_batch_size: bool = False) -> DataLoader:
         dataloader_kwargs = {"dataset": self.dataset[split], "collate_fn":self.data_collator,

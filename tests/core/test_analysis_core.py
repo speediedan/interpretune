@@ -9,6 +9,7 @@ from types import ModuleType
 import pytest
 import torch
 from torch.testing import assert_close
+from datasets import Column
 
 import interpretune as it
 from interpretune.analysis.core import (SAEAnalysisDict, AnalysisStore, resolve_names_filter,
@@ -187,7 +188,6 @@ class TestAnalysisStore:
         store = AnalysisStore()
         store.split = "validation"
         store.streaming = False
-        store.dataset_trust_remote_code = False
         store._load_dataset(str(tmp_path))
 
         # Verify the dataset was loaded and is the expected one
@@ -346,7 +346,7 @@ class TestAnalysisStore:
         assert all(isinstance(element, torch.Tensor) for element in column_subset.answer_logits)
 
         assert column_subset.logit_diffs is None
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError):
             _ = column_subset['logit_diffs']
 
     def test_getattr_protocol(self, request):
@@ -380,17 +380,21 @@ class TestAnalysisStore:
 
         # Verify behavior:
 
-        # 1. Direct dataset access should always return stacked batches
-        assert isinstance(dataset_value, torch.Tensor)
+        # 1. Direct dataset access should (with Datasets >= 4.0) return a Column object
+        assert isinstance(dataset_value, Column)
 
         # 2. With stack_batches=False, __getattr__ should return a list of tensors
         assert isinstance(unstacked_value, list)
         if len(unstacked_value) > 0:
             assert all(isinstance(t, torch.Tensor) for t in unstacked_value)
 
-        # 3. With stack_batches=True, __getattr__ should return the same as stacked dataset access
+        # 3. With stack_batches=True, __getattr__ should return a stacked tensor that when unstacked matches
+        # the Column representation (which is unstacked)
         assert isinstance(stacked_value, torch.Tensor)
-        assert torch.equal(stacked_value, dataset_value)
+        # Unstack the stacked_value (torch.Tensor) along the first dimension
+        unstacked = list(stacked_value.unbind(0))
+        # Compare the list of tensors to dataset_value (which should be a list of tensors)
+        assert all(torch.equal(u,v) for u, v in zip(unstacked, dataset_value))
 
     def test_getattr_dataset_attr(self, request):
         # Use real fixture

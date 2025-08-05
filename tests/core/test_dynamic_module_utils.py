@@ -471,7 +471,10 @@ class TestOpPathMgmt:
             mock_warn.assert_called_once()
             warning_msg = mock_warn.call_args[0][0]
             assert "Operation path does not exist" in warning_msg
-            assert nonexistent_path in warning_msg
+            # Normalize both paths for cross-platform assertion
+            norm_expected = os.path.normpath(nonexistent_path)
+            norm_actual = os.path.normpath(warning_msg.split(":", 1)[-1].strip()) if ":" in warning_msg else warning_msg
+            assert norm_expected in norm_actual or norm_actual in norm_expected
 
     def test_ensure_op_paths_file_instead_of_directory(self):
         """Test handling of file paths instead of directory paths."""

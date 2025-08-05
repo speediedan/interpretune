@@ -13,7 +13,7 @@ import plotly.express as px
 from tabulate import tabulate
 from transformers import PreTrainedTokenizerBase
 from sae_lens.config import HfDataset
-from datasets import Features, Array2D, Value, Array3D, load_dataset
+from datasets import Features, Array2D, Value, Array3D, load_dataset, Column
 from datasets import Sequence as DatasetsSequence
 
 from interpretune.protocol import (AnalysisStoreProtocol, DefaultAnalysisBatchProtocol, BaseAnalysisBatchProtocol,
@@ -326,7 +326,6 @@ class AnalysisStore:
                  dataset: HfDataset | str | os.PathLike | None = None,
                  op_output_dataset_path: str | None = None,
                  cache_dir: str | None = None,
-                 dataset_trust_remote_code: bool = False,
                  streaming: bool = False,
                  split: str = "validation",
                  it_format_kwargs: dict | None = None,
@@ -336,13 +335,12 @@ class AnalysisStore:
         self.stack_batches = stack_batches
         self.cache_dir = cache_dir
         self.streaming = streaming
-        self.dataset_trust_remote_code = dataset_trust_remote_code
         self.op_output_dataset_path = op_output_dataset_path
         self.split = split
         self.it_format_kwargs = it_format_kwargs
         self._protocol_cls = protocol_cls
 
-        load_dataset_kwargs = dict(split=split, streaming=streaming, trust_remote_code=dataset_trust_remote_code)
+        load_dataset_kwargs = dict(split=split, streaming=streaming)
 
         if isinstance(dataset, (str, Path)):
             dataset_path = os.path.abspath(str(dataset))
@@ -413,7 +411,6 @@ class AnalysisStore:
         load_dataset_kwargs = dict(
             split=self.split,
             streaming=self.streaming,
-            trust_remote_code=self.dataset_trust_remote_code
         )
 
         if isinstance(dataset, (str, Path)):
@@ -439,6 +436,14 @@ class AnalysisStore:
             except Exception:
                 self.dataset = None
 
+    def _is_tensor_seq(self, data) -> bool:
+        """Check if data is a Datasets Column, sequence of torch.Tensors or a single torch.Tensor."""
+        return (
+            isinstance(data, Column) and isinstance(data[0], torch.Tensor)) or \
+            isinstance(data, torch.Tensor) or \
+            (isinstance(data, list) and all(isinstance(x, torch.Tensor) for x in data)
+        )
+
     def __getitem__(self, key: Union[str, List[str], int, slice]) -> Union[List, Dict]:
         """Enable direct column/row access similar to HF Dataset.
 
@@ -453,9 +458,15 @@ class AnalysisStore:
         if isinstance(key, str):
             # Single column access
             data = self.dataset[key]
-            # If tensor data, optionally split into individual tensors
-            if isinstance(data, torch.Tensor) and not self.stack_batches:
-                if data.dim() > 1:
+
+            # now that Datasets >= 4.0 has introduced the Column class, we need to refactor AnalysisStore
+            # methods accordingly (since we are pre-MVP, we can start with the Datasets 4.0 API w/o bc concerns)
+            # TODO: For the time-being, we will return the underlying tensor data for columns directly, but
+            # a future refactor (or subclass of Column) that allows our stacking behavior might make more sense
+            if self._is_tensor_seq(data):
+                if self.stack_batches:
+                    return torch.stack([t for t in data])
+                if data[0].dim() > 1:
                     return [t for t in data]
                 # Split 1D tensors into scalar tensors
                 return [torch.tensor(x) for x in data]
@@ -465,9 +476,11 @@ class AnalysisStore:
             result = {}
             for col in key:
                 data = self.dataset[col]
-                # If tensor data, optionally split into individual tensors
-                if isinstance(data, torch.Tensor) and not self.stack_batches:
-                    if data.dim() > 1:
+                # If tensor data, optionally stack individual tensors
+                if self._is_tensor_seq(data):
+                    if self.stack_batches:
+                        result[col] = torch.stack([t for t in data])
+                    elif data[0].dim() > 1:
                         result[col] = [t for t in data]
                     else:
                         # Split 1D tensors into scalar tensors

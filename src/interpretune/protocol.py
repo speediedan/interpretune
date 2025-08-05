@@ -352,7 +352,6 @@ class AnalysisStoreProtocol(Protocol):
     streaming: bool
     cache_dir: str | None
     save_dir: StrOrPath
-    dataset_trust_remote_code: bool
     stack_batches: bool
     split: str
     op_output_dataset_path: str | None

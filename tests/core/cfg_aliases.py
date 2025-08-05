@@ -52,7 +52,7 @@ class CoreCfgForcePrepare(BaseCfg):
     model_src_key: str | None = "cust"
     force_prepare_data: bool | None = True
     dm_override_cfg: dict | None = field(default_factory=lambda: {'enable_datasets_cache': False,
-                                                                     'dataset_path': '/tmp/force_prepare_tests_ds'})
+                                                                  'dataset_path': '/tmp/force_prepare_tests_ds'})
 
 @dataclass(kw_only=True)
 class TLMechInterpCfg(BaseCfg):
@@ -60,7 +60,7 @@ class TLMechInterpCfg(BaseCfg):
     model_src_key: str | None = "cust"
     force_prepare_data: bool | None = True
     tl_cfg: dict | None = field(default_factory=lambda: ITLensCustomConfig(**tl_cust_mi_cfg))
-    dm_override_cfg: dict | None = field(default_factory=lambda: {'tokenizer_kwargs': {
+    dm_override_cfg: dict | None = field(default_factory=lambda: {'enable_datasets_cache': False, 'tokenizer_kwargs': {
         'padding_side': 'right', 'model_input_names': ['input']}})
 
 @dataclass(kw_only=True)

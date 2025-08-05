@@ -8,6 +8,7 @@ import os
 from tests.warns import unmatched_warns
 from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
+from interpretune.utils import rank_zero_debug
 
 
 class TestHubIntegration:
@@ -15,17 +16,27 @@ class TestHubIntegration:
 
     def setup_method(self):
         """Set up test environment before each test."""
+        rank_zero_debug(f"[HUB_INTEGRATION_SETUP] Working directory: {os.getcwd()}")
+        rank_zero_debug(f"[HUB_INTEGRATION_SETUP] TEMP environment: {os.environ.get('TEMP', 'not set')}")
+        rank_zero_debug(f"[HUB_INTEGRATION_SETUP] TMP environment: {os.environ.get('TMP', 'not set')}")
+
         self.temp_dir = Path(tempfile.mkdtemp())
         self.hub_cache = self.temp_dir / "hub_cache"
         self.hub_cache.mkdir()
 
         self.cache_dir = Path(tempfile.mkdtemp())
 
-        # Create mock hub structure
+        rank_zero_debug(f"[HUB_INTEGRATION_SETUP] Created temp_dir: {self.temp_dir}")
+        rank_zero_debug(f"[HUB_INTEGRATION_SETUP] Created hub_cache: {self.hub_cache}")
+        rank_zero_debug(f"[HUB_INTEGRATION_SETUP] Created cache_dir: {self.cache_dir}")
+
+        # Create mock hub structure with explicit path resolution for cross-platform compatibility
         self.repo_cache = self.hub_cache / "models--testuser--test"
         self.snapshots_dir = self.repo_cache / "snapshots"
         self.snapshot_dir = self.snapshots_dir / "abc123def456"
         self.snapshot_dir.mkdir(parents=True)
+
+        rank_zero_debug(f"[HUB_INTEGRATION_SETUP] Created snapshot structure: {self.snapshot_dir}")
 
         # Create test operation definition
         self.test_ops_yaml = self.snapshot_dir / "ops.yaml"
@@ -53,6 +64,10 @@ another_op:
       datasets_dtype: string
 """)
 
+        rank_zero_debug(f"[HUB_INTEGRATION_SETUP] Created ops.yaml: {self.test_ops_yaml}")
+        rank_zero_debug(f"[HUB_INTEGRATION_SETUP] ops.yaml exists: {self.test_ops_yaml.exists()}")
+        rank_zero_debug(f"[HUB_INTEGRATION_SETUP] ops.yaml size: {self.test_ops_yaml.stat().st_size} bytes")
+
         # Create additional ops path
         self.custom_ops_root_dir = Path(tempfile.mkdtemp())
         self.custom_ops_dir = self.custom_ops_root_dir / "custom_ops"
@@ -75,7 +90,7 @@ custom_op:
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
 
-    def test_namespace_collision_handling(self, recwarn):
+    def test_namespace_collision_handling(self, recwarn, huggingface_env):
         """Test handling of namespace collisions between operations."""
 
         # Create another operation with same name but different namespace
@@ -97,9 +112,9 @@ test_hub_op:
       datasets_dtype: string
 """)
 
-
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
-             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', str(self.hub_cache)), \
+             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', str(self.cache_dir)), \
+             patch('interpretune.analysis.IT_ANALYSIS_CACHE', str(self.cache_dir)), \
              patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
 
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
@@ -126,10 +141,11 @@ test_hub_op:
             unmatched = unmatched_warns(rec_warns=recwarn.list, expected_warns=w_expected)
             assert not unmatched
 
-    def test_operation_with_dependencies(self):
+    def test_operation_with_dependencies(self, huggingface_env):
         """Test loading operations with dependencies."""
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
-             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', str(self.hub_cache)), \
+             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', str(self.cache_dir)), \
+             patch('interpretune.analysis.IT_ANALYSIS_CACHE', str(self.cache_dir)), \
              patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
 
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
@@ -143,7 +159,7 @@ test_hub_op:
             assert another_op_def.required_ops == ["testuser.test.test_hub_op"]
 
 
-    def test_error_handling_invalid_yaml(self):
+    def test_error_handling_invalid_yaml(self, huggingface_env):
         """Test graceful handling of invalid YAML files."""
 
         # Create invalid YAML file
@@ -151,8 +167,9 @@ test_hub_op:
         invalid_yaml.write_text("invalid: yaml: content: [")
 
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
-             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', str(self.hub_cache)), \
+             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', str(self.cache_dir)), \
+             patch('interpretune.analysis.IT_ANALYSIS_CACHE', str(self.cache_dir)), \
              patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
 
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
@@ -164,7 +181,7 @@ test_hub_op:
             all_ops = dispatcher.list_operations()
             assert "testuser.test.test_hub_op" in all_ops
 
-    def test_error_handling_missing_implementation(self):
+    def test_error_handling_missing_implementation(self, huggingface_env):
         """Test handling of operations with missing implementation."""
 
         # Create operation with missing implementation
@@ -181,8 +198,9 @@ incomplete_op:
 """)
 
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
-             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', str(self.hub_cache)), \
+             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', str(self.cache_dir)), \
+             patch('interpretune.analysis.IT_ANALYSIS_CACHE', str(self.cache_dir)), \
              patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
 
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
@@ -194,15 +212,16 @@ incomplete_op:
             # Valid operations should still be loaded
             assert "testuser.test.test_hub_op" in all_ops
 
-    def test_environment_variable_configuration(self):
+    def test_environment_variable_configuration(self, huggingface_env):
         """Test configuration via environment variables."""
         with patch.dict(os.environ, {
             'IT_ANALYSIS_HUB_CACHE': str(self.hub_cache),
             'IT_ANALYSIS_OP_PATHS': '',
             'IT_ANALYSIS_CACHE': str(self.cache_dir),
         }), \
-        patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
-        patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
+        patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', str(self.hub_cache)), \
+        patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', str(self.cache_dir)), \
+        patch('interpretune.analysis.IT_ANALYSIS_CACHE', str(self.cache_dir)), \
         patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
 
             cache_manager = OpDefinitionsCacheManager(self.cache_dir)
@@ -214,7 +233,7 @@ incomplete_op:
             yaml_names = [f.name for f in yaml_files]
             assert "ops.yaml" in yaml_names
 
-    def test_performance_with_large_cache(self):
+    def test_performance_with_large_cache(self, huggingface_env):
         """Test performance characteristics with many cached repositories."""
 
         # Create multiple fake repositories
@@ -237,8 +256,9 @@ op_{i}:
 """)
 
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
-             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
+        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', str(self.hub_cache)), \
+             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', str(self.cache_dir)), \
+             patch('interpretune.analysis.IT_ANALYSIS_CACHE', str(self.cache_dir)), \
              patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
 
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
@@ -319,7 +339,7 @@ test_dynamic_function:
 
         # Mock all hub and dynamic module interactions to avoid HTTP calls
         with patch('interpretune.analysis.ops.hub_manager.snapshot_download', return_value=str(snapshot_dir)), \
-             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.cache_dir), \
+             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', str(self.cache_dir)), \
              patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it',
                    return_value=str(test_module)), \
              patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir') as mock_scan:
@@ -384,7 +404,7 @@ cached_dynamic_function:
 
         # Mock all hub and dynamic module interactions to avoid HTTP calls
         with patch('interpretune.analysis.ops.hub_manager.snapshot_download', return_value=str(snapshot_dir)), \
-             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.cache_dir), \
+             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', str(self.cache_dir)), \
              patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it',
                    return_value=str(test_module)), \
              patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir') as mock_scan:

@@ -19,7 +19,7 @@ from interpretune.config import ITSharedConfig
 from interpretune.session import ITSession, ITMeta, ITSessionConfig
 from interpretune.protocol import ITDataModuleProtocol, ITModuleProtocol
 from tests.warns import CORE_CTX_WARNS, unexpected_warns, unmatched_warns
-from tests.utils import ablate_cls_attrs
+from tests.utils import ablate_cls_attrs, platform_normalize_str
 
 
 class TestClassContract:
@@ -111,8 +111,13 @@ class TestClassContract:
         assert len(it_session) == 2
         m_prefix = "Original module: TestITModule \nNow InterpretunableModule composing TestITModule with: \n  - ITLe"
         dm_prefix = "Original module: FingerprintTestITDataModule \nNow InterpretunableDataModule composing"
-        assert repr(it_session.module).startswith(m_prefix)
-        assert dm_prefix in repr(it_session.datamodule)
+        # Normalize line endings for cross-platform compatibility
+        actual_module_repr = platform_normalize_str(repr(it_session.module))
+        expected_module_prefix = platform_normalize_str(m_prefix)
+        assert actual_module_repr.startswith(expected_module_prefix)
+        actual_dm_repr = platform_normalize_str(repr(it_session.datamodule))
+        expected_dm_prefix = platform_normalize_str(dm_prefix)
+        assert expected_dm_prefix in actual_dm_repr
         it_session.datamodule._module = None
         dm_no_attach_prefix = "Attached module: No module yet attached"
         assert dm_no_attach_prefix in repr(it_session.datamodule)

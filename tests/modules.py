@@ -48,6 +48,8 @@ class BaseTestDataModule:
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""
 
+        from interpretune.utils import rank_zero_debug
+
         tokenization_func = partial(
             self.encode_for_rteboolq,
             tokenizer=self.tokenizer,
@@ -56,21 +58,35 @@ class BaseTestDataModule:
             template_fn=self.itdm_cfg.prompt_cfg.model_chat_template_fn,
             tokenization_pattern=self.itdm_cfg.cust_tokenization_pattern,
         )
-        dataset_path = Path(self.itdm_cfg.dataset_path)
+        dataset_path = Path(self.itdm_cfg.dataset_path).resolve()
+
+        rank_zero_debug(f"[PREPARE_DATA] itdm_cfg.dataset_path: {self.itdm_cfg.dataset_path}")
+        rank_zero_debug(f"[PREPARE_DATA] resolved dataset_path: {dataset_path}")
+        rank_zero_debug(
+            f"[PREPARE_DATA] Tokenizer config in prepare_data: "
+            f"{self.tokenizer.__class__.__name__}, "
+            f"padding_side={getattr(self.tokenizer, 'padding_side', None)}, "
+            f"model_input_names={getattr(self.tokenizer, 'model_input_names', None)}"
+        )
+
         # rebuild the test dataset if it does not exist in the test environment
         if not dataset_path.exists() or self.force_prepare_data:
             # regen a cached 'pytest_{default_test_task}_{hf,pt,tl}' subset of the default test task for testing with
             # a given model
-            dataset = datasets.load_dataset("super_glue", default_test_task, trust_remote_code=True)
+            dataset = datasets.load_dataset("aps/super_glue", default_test_task)
             for split in dataset.keys():
                 dataset[split] = dataset[split].select(range(10))
                 dataset[split] = dataset[split].map(tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
                 dataset[split] = self._remove_unused_columns(dataset[split])
-            # TODO: remove below temporary workaround (converting Path to str) once upstream issue resolved
-            # looks like https://github.com/huggingface/datasets/pull/6704 broke `save_to_disk` method for
-            # Path objects https://bit.ly/datasets_save_to_disk_blame
-            dataset.save_to_disk(str(dataset_path))
-            #dataset.save_to_disk(dataset_path)
+            dataset_path = dataset_path.resolve()
+            rank_zero_debug(f"[PREPARE_DATA] Calling save_to_disk with: {dataset_path}")
+            import traceback
+            try:
+                dataset.save_to_disk(dataset_path)
+                rank_zero_debug("[PREPARE_DATA] save_to_disk: SUCCESS")
+            except Exception as e:
+                rank_zero_debug(f"[PREPARE_DATA] save_to_disk: FAILED ({e})")
+                traceback.print_exc()
 
 class TestITDataModule(BaseTestDataModule, RTEBoolqDataModule):
     ...

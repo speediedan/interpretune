@@ -178,8 +178,12 @@ def get_super_method(cls_path_or_type: Union[str, Type], instance: Any, method_n
 
 # Platform-independent string normalization for line endings
 def platform_normalize_str(s):
+    """Normalize line endings to '\n' for cross-platform string comparison.
+
+    Also normalizes Windows/Mac/Unix line endings.
+    """
     if isinstance(s, str):
-        return s.replace('\r\n', '\n')
+        return s.replace('\r\n', '\n').replace('\r', '\n')
     return s
 
 class InOutComp(NamedTuple):

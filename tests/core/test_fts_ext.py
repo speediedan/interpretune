@@ -20,6 +20,7 @@ from torch.testing import assert_close
 import einops
 from jaxtyping import Int, Float
 
+from tests.runif import RunIf
 
 class TestClassFTSExtension:
 
@@ -56,16 +57,22 @@ class TestClassFTSExtension:
         l2_attributions = einops.einsum(W_U_correct_tokens, l2_results[:-1], "emb seq, seq nhead emb -> seq nhead")
         return torch.concat([direct_attributions.unsqueeze(-1), l1_attributions, l2_attributions], dim=-1)
 
-    # @pytest.mark.usefixtures("make_deterministic")
-    def test_tl_direct_attr(self, get_it_session__tl_cust_mi__setup, tmp_path, huggingface_env):
+    # TODO: re-enable this test on windows once a windows-specific OSError ([22]) is resolved.
+    @RunIf(skip_windows=True)
+    def test_tl_direct_attr(self, get_it_session__tl_cust_mi__setup, tmp_path):
         fixture = get_it_session__tl_cust_mi__setup
         it_session = fixture.it_session
         curr_model = it_session.module.model
         dataloader = it_session.datamodule.test_dataloader()
-        # TODO NEXT: update this example to properly test logit attribution in the presence of MLP etc components
+        # Assert that tokenizer padding_side is 'right' as expected by the test and TLMechInterpCfg
+        tokenizer = getattr(it_session.datamodule, 'tokenizer', None)
+        assert tokenizer is not None, "Tokenizer not found on datamodule."
+        assert getattr(tokenizer, 'padding_side', None) == 'right', (
+            f"Expected tokenizer.padding_side == 'right', got '{getattr(tokenizer, 'padding_side', None)}'. "
+            "This test expects right-padding to match TLMechInterpCfg. "
+        )
+        # TODO: update this example to properly test logit attribution in the presence of MLP etc components
         tokens = torch.tensor(dataloader.dataset[0]['input']).unsqueeze(0)
-        #if os.environ.get("CI_RESOURCE_MONITOR") == "1":
-        #   print("Used tokens:", it_session.datamodule.tokenizer.convert_ids_to_tokens(tokens.squeeze()))
         with torch.inference_mode():
             logits, cache = curr_model.run_with_cache(tokens, remove_batch_dim=True)
             embed = cache["embed"]

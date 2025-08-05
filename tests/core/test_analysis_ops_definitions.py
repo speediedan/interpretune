@@ -3,7 +3,7 @@ import pytest
 import torch
 from unittest.mock import MagicMock, patch
 
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Optional
 from transformers import BatchEncoding
 from torch.testing import assert_close
 
@@ -953,7 +953,7 @@ class TestAnalysisOperationsImplementations:
     """Tests for the core analysis operation implementation functions."""
 
     def _validate_column_shape(self, column_name: str, shape_info: torch.Size, loaded_column: torch.Tensor,
-                             col_cfg, batch_count: int, context: str = "") -> None:
+                             col_cfg, batch_count: Optional[int] = None, context: str = "") -> None:
         """Helper to validate column shape based on config and expected shape.
 
         Args:
@@ -969,22 +969,22 @@ class TestAnalysisOperationsImplementations:
         # For columns with dynamic dimensions
         if col_cfg.dyn_dim is not None:
             # First dimension should be the dataset size (number of batches)
-            assert loaded_column.shape[0] == batch_count, (
+            assert loaded_column[0].shape[0] == batch_count, (
                 f"{context_prefix}Expected column {column_name} to have {batch_count} batches, "
-                f"got {loaded_column.shape[0]}"
+                f"got {loaded_column[0].shape[0]}"
             )
 
             # The rest of the shape should match original shape
-            assert shape_info == loaded_column.shape[1:], (
+            assert shape_info[1:] == loaded_column[0].shape[1:], (
                 f"{context_prefix}Shape mismatch for column {column_name}: "
-                f"expected {shape_info}, got {loaded_column.shape[1:]}"
+                f"expected {shape_info[1:]}, got {loaded_column[0].shape[1:]}"
             )
         else:
             # Standard column - should have batch dimension added
-            expected_shape = (batch_count,) + tuple(shape_info)
-            assert loaded_column.shape == expected_shape, (
+            expected_shape = tuple(shape_info)
+            assert loaded_column[0].shape == expected_shape, (
                 f"{context_prefix}Shape mismatch for column {column_name}: "
-                f"expected {expected_shape}, got {loaded_column.shape}"
+                f"expected {expected_shape}, got {loaded_column[0].shape}"
             )
 
     def _should_validate_column(self, column_name: str, shape_info: Any, op_cfg: OpTestConfig) -> bool:
@@ -1024,13 +1024,19 @@ class TestAnalysisOperationsImplementations:
                 # Test direct column access
                 loaded_column = loaded_dataset[column_name]
 
+                if col_cfg.dyn_dim is not None:
+                    expected_batch_cnt = result_batches[0][column_name].shape[col_cfg.dyn_dim]
+                elif result_batches[0][column_name].ndim > 0:
+                    expected_batch_cnt = result_batches[0][column_name].shape[0]
+                else:
+                    expected_batch_cnt = None
                 # Validate column shape
                 self._validate_column_shape(
                     column_name,
                     shape_info,
                     loaded_column,
                     col_cfg,
-                    len(result_batches)
+                    expected_batch_cnt
                 )
             except (KeyError, ValueError, AssertionError) as e:
                 print(f"Warning: Column access validation failed for '{column_name}': {e}")

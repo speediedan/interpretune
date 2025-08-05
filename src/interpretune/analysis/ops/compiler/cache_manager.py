@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 from dataclasses import dataclass, field
 
+
 from huggingface_hub import scan_cache_dir
 from huggingface_hub.utils import CachedRepoInfo, CachedRevisionInfo
 from transformers.dynamic_module_utils import resolve_trust_remote_code
@@ -113,16 +114,28 @@ class OpDefinitionsCacheManager:
 
     def add_hub_yaml_files(self) -> List[Optional[Path]]:
         """Add hub YAML files to monitoring."""
+        hub_yaml_files = []
         try:
             # we can short-circuit if IT_TRUST_REMOTE_CODE is explicitly set to False
             if IT_TRUST_REMOTE_CODE is False:
                 rank_zero_warn(OpDefinitionsCacheManager._it_trust_false_skipping)
+                rank_zero_debug("[ANALYSIS_HUB_CACHE] Returning early due to IT_TRUST_REMOTE_CODE=False")
                 return []
+
             hub_yaml_files = self.discover_hub_yaml_files()
+            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Discovered {len(hub_yaml_files)} YAML files")
+
             for yaml_file in hub_yaml_files:
+                rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Adding YAML file: {yaml_file}")
                 self.add_yaml_file(yaml_file)
+
         except Exception as e:
             rank_zero_warn(f"Error discovering hub YAML files: {e}")
+            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Exception details: {type(e).__name__}: {str(e)}")
+            import traceback
+            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Traceback: {traceback.format_exc()}")
+
+        rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Returning {len(hub_yaml_files)} YAML files")
         return hub_yaml_files
 
     def discover_hub_yaml_files(self) -> List[Path]:
@@ -143,12 +156,14 @@ class OpDefinitionsCacheManager:
             rank_zero_warn(OpDefinitionsCacheManager._it_trust_false_skipping)
             return yaml_files
 
-        if not IT_ANALYSIS_HUB_CACHE.exists():
+        # Convert to Path object for consistent handling
+        hub_cache_path = Path(IT_ANALYSIS_HUB_CACHE)
+        if not hub_cache_path.exists():
             return yaml_files
 
         try:
             # Use HuggingFace cache manager
-            cache_info = scan_cache_dir(IT_ANALYSIS_HUB_CACHE)
+            cache_info = scan_cache_dir(hub_cache_path)
 
             if len(cache_info.repos) > 0 and IT_TRUST_REMOTE_CODE is None:
                 rank_zero_warn(OpDefinitionsCacheManager._it_trust_remote_code_warning)
@@ -159,6 +174,7 @@ class OpDefinitionsCacheManager:
             for repo in sorted_repos:
                 trust_remote_code = IT_TRUST_REMOTE_CODE or resolve_trust_remote_code(
                     IT_TRUST_REMOTE_CODE, repo.repo_id, False, True)
+
                 if not trust_remote_code:
                     rank_zero_warn(f"Skipping loading ops from repository {repo.repo_id} due to trust_remote_code "
                                     "being `False`.")
@@ -201,32 +217,57 @@ class OpDefinitionsCacheManager:
             - namespace: The extracted namespace (empty string if not a hub file)
         """
         from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
+        rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Input yaml_file: {yaml_file}")
+        rank_zero_debug(f"[ANALYSIS_HUB_CACHE] IT_ANALYSIS_HUB_CACHE: {IT_ANALYSIS_HUB_CACHE}")
 
         # Check if file is in hub cache
         try:
-            relative_path = yaml_file.relative_to(IT_ANALYSIS_HUB_CACHE)
+            # Resolve both paths to handle symlinks (especially on macOS where /tmp -> /private/tmp)
+            resolved_yaml_file = yaml_file.resolve()
+            resolved_hub_cache = Path(IT_ANALYSIS_HUB_CACHE).resolve()
+
+            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Resolved yaml_file: {resolved_yaml_file}")
+            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Resolved hub_cache: {resolved_hub_cache}")
+
+            relative_path = resolved_yaml_file.relative_to(resolved_hub_cache)
+            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Relative path: {relative_path}")
             parts = relative_path.parts
 
             # Look for models-- pattern and snapshots directory
             for i, part in enumerate(parts):
-                if part.startswith("models--") and "snapshots" in parts[i:]:
-                    # Use regex to properly extract user and repo parts
-                    # Only match exactly two sets of '--' (models--user--repo)
-                    match = re.match(r"models--([^-]+(?:-[^-]+)*)--([^-]+(?:-[^-]+)*)$", part)
-                    if match:
-                        user, repo = match.groups()
-                        # Return namespace without top-level package name
-                        return True, f"{user}.{repo}"
+                rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Checking part {i}: '{part}'")
+                if part.startswith("models--"):
+
+                    if "snapshots" in parts[i:]:
+                        # Use regex to properly extract user and repo parts
+                        # Only match exactly two sets of '--' (models--user--repo)
+                        regex_pattern = r"models--([^-]+(?:-[^-]+)*)--([^-]+(?:-[^-]+)*)$"
+                        match = re.match(regex_pattern, part)
+
+                        if match:
+                            user, repo = match.groups()
+                            namespace = f"{user}.{repo}"
+                            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] REGEX MATCH SUCCESS: user='{user}', "
+                                          f"repo='{repo}', namespace='{namespace}'")
+                            # Return namespace without top-level package name
+                            return True, namespace
                     break
-        except ValueError:
+        except ValueError as e:
+            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] ValueError in relative_to: {e}")
             pass
 
         # Not a hub file
+        rank_zero_debug("[ANALYSIS_HUB_CACHE] NOT A HUB FILE - returning (False, '')")
         return False, ""
 
     def get_hub_namespace(self, yaml_file: Path) -> str:
         """Extract namespace from hub file path."""
-        _, namespace = self._parse_hub_file_path(yaml_file)
+        rank_zero_debug(f"[ANALYSIS_HUB_CACHE] get_hub_namespace input: {yaml_file}")
+
+        is_hub_file, namespace = self._parse_hub_file_path(yaml_file)
+
+        rank_zero_debug(f"[ANALYSIS_HUB_CACHE] get_hub_namespace result: is_hub_file={is_hub_file}, "
+                       f"namespace='{namespace}'")
         return namespace
 
     @property
@@ -267,19 +308,32 @@ class OpDefinitionsCacheManager:
 
     def is_cache_valid(self) -> bool:
         """Check if the current cache is valid."""
+
         cache_path = self._get_cache_module_path()
+        rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Cache path: {cache_path}")
+
         if not cache_path.exists():
+            rank_zero_debug("[ANALYSIS_HUB_CACHE] Cache invalid: file does not exist")
             return False
 
         cache_mtime = cache_path.stat().st_mtime
+        rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Cache mtime: {cache_mtime}")
+        rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Checking {len(self._yaml_files)} source files")
 
         # Check if any source files are newer than cache
         for file_info in self._yaml_files:
+            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Checking source file: {file_info.path}")
             if not file_info.path.exists():
-                return False
-            if file_info.path.stat().st_mtime > cache_mtime:
+                rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Cache invalid: source file missing {file_info.path}")
                 return False
 
+            source_mtime = file_info.path.stat().st_mtime
+            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Source mtime: {source_mtime} vs cache: {cache_mtime}")
+            if source_mtime > cache_mtime:
+                rank_zero_debug("[ANALYSIS_HUB_CACHE] Cache invalid: source newer than cache")
+                return False
+
+        rank_zero_debug("[ANALYSIS_HUB_CACHE] Cache is valid")
         return True
 
     def _generate_module_content(self, op_definitions: Dict[str, OpDef]) -> str:

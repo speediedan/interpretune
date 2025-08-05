@@ -48,6 +48,11 @@ class ITDataModule:
             self.save_hyperparameters()
         os.environ["TOKENIZERS_PARALLELISM"] = "true" if self.itdm_cfg.tokenizers_parallelism else "false"
         self.tokenizer = self.configure_tokenizer()
+        log.debug(
+            f"[ITDataModule.__init__] Tokenizer initialized: {self.tokenizer.__class__.__name__}, "
+            f"padding_side={getattr(self.tokenizer, 'padding_side', None)}, "
+            f"model_input_names={getattr(self.tokenizer, 'model_input_names', None)}"
+        )
         collator_kwargs = self.itdm_cfg.data_collator_cfg.get('collator_kwargs', None) or {}
         collator_class = _import_class(self.itdm_cfg.data_collator_cfg["collator_class"])
         self.data_collator = collator_class(self.tokenizer, **collator_kwargs)
@@ -79,21 +84,40 @@ class ITDataModule:
     def configure_tokenizer(self) -> PreTrainedTokenizerBase:
         access_token = os.environ[self.itdm_cfg.os_env_model_auth_key.upper()] if self.itdm_cfg.os_env_model_auth_key \
               else None
+        # DEBUG: Log config before tokenizer creation
+        log.debug(f"[configure_tokenizer] itdm_cfg.tokenizer: {self.itdm_cfg.tokenizer}")
+        log.debug(f"[configure_tokenizer] itdm_cfg.tokenizer_name: {self.itdm_cfg.tokenizer_name}")
+        log.debug(f"[configure_tokenizer] itdm_cfg.model_name_or_path: {self.itdm_cfg.model_name_or_path}")
+        log.debug(f"[configure_tokenizer] itdm_cfg.tokenizer_kwargs: {self.itdm_cfg.tokenizer_kwargs}")
+        log.debug(f"[configure_tokenizer] itdm_cfg.special_tokens_dict: {self.itdm_cfg.special_tokens_dict}")
+        log.debug(f"[configure_tokenizer] itdm_cfg.tokenizer_id_overrides: {self.itdm_cfg.tokenizer_id_overrides}")
         ### tokenizer config precedence: pre-configured > pretrained tokenizer name -> model name
         if self.itdm_cfg.tokenizer:
             tokenizer = self.itdm_cfg.tokenizer
+            log.debug(f"[configure_tokenizer] Using pre-configured tokenizer: {tokenizer.__class__.__name__}")
         elif self.itdm_cfg.tokenizer_name:
             tokenizer = AutoTokenizer.from_pretrained(
                 self.itdm_cfg.tokenizer_name, token=access_token, **self.itdm_cfg.tokenizer_kwargs
             )
+            log.debug(f"[configure_tokenizer] Loaded tokenizer from name: {self.itdm_cfg.tokenizer_name}")
         else:
             tokenizer = AutoTokenizer.from_pretrained(
                 self.itdm_cfg.model_name_or_path, token=access_token, **self.itdm_cfg.tokenizer_kwargs
+            )
+            log.debug(
+                f"[configure_tokenizer] Loaded tokenizer from model_name_or_path: "
+                f"{self.itdm_cfg.model_name_or_path}"
             )
         _ = tokenizer.add_special_tokens(self.itdm_cfg.special_tokens_dict)
         if self.itdm_cfg.tokenizer_id_overrides:
             for k, v in self.itdm_cfg.tokenizer_id_overrides.items():
                 setattr(tokenizer, k, v)
+                log.debug(f"[configure_tokenizer] Overriding tokenizer attribute: {k}={v}")
+        log.debug(
+            f"[configure_tokenizer] Final tokenizer config: "
+            f"padding_side={getattr(tokenizer, 'padding_side', None)}, "
+            f"model_input_names={getattr(tokenizer, 'model_input_names', None)}"
+        )
         return tokenizer
 
     # adapted from HF native trainer
