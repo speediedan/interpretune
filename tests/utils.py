@@ -176,6 +176,11 @@ def get_super_method(cls_path_or_type: Union[str, Type], instance: Any, method_n
     except AttributeError as e:
         raise AttributeError(f"Method '{method_name}' not found in parent classes of {cls.__name__}: {str(e)}")
 
+# Platform-independent string normalization for line endings
+def platform_normalize_str(s):
+    if isinstance(s, str):
+        return s.replace('\r\n', '\n')
+    return s
 
 class InOutComp(NamedTuple):
     """Named tuple for more explicit input and output access in comparisons."""

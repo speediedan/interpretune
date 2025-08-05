@@ -663,6 +663,31 @@ def pytest_collection_modifyitems(items):
             if marker.name == "skipif" and marker.kwargs.get("optional")
         ]
 
+# Fixture to set and restore HuggingFace cache env vars for cross-platform compatibility
+@pytest.fixture(scope="function")
+def huggingface_env(tmp_path):
+    orig_hf_datasets_cache = os.environ.get("HF_DATASETS_CACHE")
+    orig_hf_home = os.environ.get("HF_HOME")
+    orig_hf_hub_cache = os.environ.get("HUGGINGFACE_HUB_CACHE") if os.name == "nt" else None
+    os.environ["HF_DATASETS_CACHE"] = str(tmp_path / "hf_datasets_cache")
+    os.environ["HF_HOME"] = str(tmp_path / "hf_home")
+    if os.name == "nt":
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(tmp_path / "hf_hub_cache")
+    yield
+    if orig_hf_datasets_cache is not None:
+        os.environ["HF_DATASETS_CACHE"] = orig_hf_datasets_cache
+    else:
+        os.environ.pop("HF_DATASETS_CACHE", None)
+    if orig_hf_home is not None:
+        os.environ["HF_HOME"] = orig_hf_home
+    else:
+        os.environ.pop("HF_HOME", None)
+    if os.name == "nt":
+        if orig_hf_hub_cache is not None:
+            os.environ["HUGGINGFACE_HUB_CACHE"] = orig_hf_hub_cache
+        else:
+            os.environ.pop("HUGGINGFACE_HUB_CACHE", None)
+
 @pytest.fixture(scope="function")
 def mock_analysis_store():
     """Create a mock AnalysisStore with common test data."""

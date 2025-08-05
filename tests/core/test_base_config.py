@@ -20,6 +20,7 @@ from tests.base_defaults import default_test_task
 from tests.utils import _unwrap_one
 from tests.base_defaults import OpTestConfig
 from tests.orchestration import run_op_with_config, save_reload_results_dataset
+from tests.utils import platform_normalize_str
 
 
 class TestClassBaseConfigs:
@@ -124,7 +125,7 @@ class TestClassBaseConfigs:
                 assert set(expected_composition_classes) == set(cfg._composed_classes)
                 full_composition_classes += [c.__name__ for c in cfg._composed_classes]
             expected_repr = TestClassBaseConfigs.expected_composition_states[tuple(sorted(full_composition_classes))]
-            assert repr(cfg).startswith(expected_repr)
+            assert platform_normalize_str(repr(cfg)).startswith(platform_normalize_str(expected_repr))
 
     def test_search_candidate_subclass_equal_candidates(self):
         module1 = Mock(name='Module1')

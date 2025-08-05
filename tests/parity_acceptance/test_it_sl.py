@@ -51,7 +51,7 @@ EXPECTED_PARITY_SL = {cfg.alias: cfg.expected for cfg in PARITY_SL_CONFIGS}
 
 @pytest.mark.usefixtures("make_deterministic")
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(PARITY_SL_CONFIGS, unpack=False))
-def test_parity_sl(recwarn, tmp_path, test_alias, test_cfg):
+def test_parity_sl(recwarn, tmp_path, test_alias, test_cfg, huggingface_env):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PARITY_SL[test_alias] or {}
     expected_warnings = SL_LIGHTNING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else SL_CTX_WARNS

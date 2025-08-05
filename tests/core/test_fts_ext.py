@@ -13,10 +13,10 @@
 # TODO: move these ruff exceptions for jaxtyping to module level config instead of file level
 # ruff: noqa: F722, F821
 
+
 import torch
 from torch import Tensor
 from torch.testing import assert_close
-
 import einops
 from jaxtyping import Int, Float
 
@@ -57,7 +57,7 @@ class TestClassFTSExtension:
         return torch.concat([direct_attributions.unsqueeze(-1), l1_attributions, l2_attributions], dim=-1)
 
     # @pytest.mark.usefixtures("make_deterministic")
-    def test_tl_direct_attr(self, get_it_session__tl_cust_mi__setup):
+    def test_tl_direct_attr(self, get_it_session__tl_cust_mi__setup, tmp_path, huggingface_env):
         fixture = get_it_session__tl_cust_mi__setup
         it_session = fixture.it_session
         curr_model = it_session.module.model
@@ -65,19 +65,14 @@ class TestClassFTSExtension:
         # TODO NEXT: update this example to properly test logit attribution in the presence of MLP etc components
         tokens = torch.tensor(dataloader.dataset[0]['input']).unsqueeze(0)
         #if os.environ.get("CI_RESOURCE_MONITOR") == "1":
-        print("Used tokens:", it_session.datamodule.tokenizer.convert_ids_to_tokens(tokens.squeeze()))
+        #   print("Used tokens:", it_session.datamodule.tokenizer.convert_ids_to_tokens(tokens.squeeze()))
         with torch.inference_mode():
             logits, cache = curr_model.run_with_cache(tokens, remove_batch_dim=True)
             embed = cache["embed"]
             l1_results = cache["result", 0]
             l2_results = cache["result", 1]
-            TestClassFTSExtension.logit_attribution(embed, l1_results, l2_results, curr_model.W_U,
-                                                                 tokens[0])
-            # get a len(tokens[0])-1 length tensor so the kth entry is the predicted logit for the correct k+1th token
+            TestClassFTSExtension.logit_attribution(embed, l1_results, l2_results, curr_model.W_U, tokens[0])
             logits[0, torch.arange(len(tokens[0]) - 1), tokens[0, 1:]]
-            #assert_close(logit_attr.sum(1), correct_token_logits, atol=1e-3, rtol=0)
-        # tokenizer = get_it_session__tl_cust_mi__setup.datamodule.tokenizer
-        # target_tokens = tokenizer.convert_ids_to_tokens(tokens[0, 17:19])  # ["lung", "cancer"]
         correct_logits = logits[0, 17:19, 18:20][:,1]  # predicted logits for "lung"/"cancer" respectively at pos 18, 19
         expected_correct_logits = torch.tensor([0.071049094200, 0.685997366905])
         assert_close(expected_correct_logits, correct_logits, atol=1e-3, rtol=0)
