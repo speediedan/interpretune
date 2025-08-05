@@ -140,7 +140,7 @@ class AnalysisOpDispatcher:
 
         for yaml_file in yaml_files:
             try:
-                with open(yaml_file, "r") as f:
+                with open(yaml_file, 'r', encoding='utf-8') as f:
                     yaml_content = yaml.safe_load(f)
 
                 if not yaml_content:

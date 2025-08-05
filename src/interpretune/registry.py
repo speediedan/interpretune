@@ -164,7 +164,7 @@ def instantiate_or_import(registered_cfg, shared_cfg, itdm_cfg_defaults_fn, it_c
 
 def gen_module_registry(yaml_reg_path: Path = DEFAULT_MODULE_REGISTRY_PATH,
                         register_func: Callable = instantiate_and_register) -> None:
-    with open(yaml_reg_path) as file:
+    with open(yaml_reg_path, encoding='utf-8') as file:
       # Load the YAML file content
       data = yaml.safe_load(file)
       if not data:

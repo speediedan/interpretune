@@ -169,7 +169,7 @@ def collect_results(result_map: Dict[str, Tuple], test_alias: str, normalize: bo
 MEMORY_FOOTPRINTS_PATH = Path(__file__).parent / "parity_acceptance" / "profile_memory_footprints.yaml"
 
 def load_memory_footprint_results() -> Dict:
-    with open(MEMORY_FOOTPRINTS_PATH) as file:
+    with open(MEMORY_FOOTPRINTS_PATH, encoding='utf-8') as file:
         # Load the YAML file content
         data = yaml.safe_load(file)
         mem_footprint = {}

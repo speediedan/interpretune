@@ -215,7 +215,7 @@ def generate_composition_stub(op_name: str, op_def: Dict[str, Any]) -> str:
 def generate_stubs(yaml_path: Path, output_path: Path) -> None:
     """Generate type stubs for all operations in the YAML file."""
     # Load YAML definitions
-    with open(yaml_path, "r") as f:
+    with open(yaml_path, 'r', encoding='utf-8') as f:
         yaml_content = yaml.safe_load(f)
 
     # Start with header
