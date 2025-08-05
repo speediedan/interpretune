@@ -97,6 +97,7 @@ test_hub_op:
       datasets_dtype: string
 """)
 
+
         with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
              patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
              patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
@@ -127,8 +128,8 @@ test_hub_op:
 
     def test_operation_with_dependencies(self):
         """Test loading operations with dependencies."""
-
         with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
+             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
              patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
 
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
@@ -149,7 +150,9 @@ test_hub_op:
         invalid_yaml = self.snapshot_dir / "invalid.yaml"
         invalid_yaml.write_text("invalid: yaml: content: [")
 
+
         with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
+             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
              patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
 
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
@@ -177,7 +180,9 @@ incomplete_op:
       datasets_dtype: string
 """)
 
+
         with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
+             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
              patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
 
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
@@ -191,9 +196,14 @@ incomplete_op:
 
     def test_environment_variable_configuration(self):
         """Test configuration via environment variables."""
-
-        with patch.dict(os.environ, {'IT_ANALYSIS_HUB_CACHE': str(self.hub_cache)}), \
-        patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache):
+        with patch.dict(os.environ, {
+            'IT_ANALYSIS_HUB_CACHE': str(self.hub_cache),
+            'IT_ANALYSIS_OP_PATHS': '',
+            'IT_ANALYSIS_CACHE': str(self.cache_dir),
+        }), \
+        patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
+        patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
+        patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
 
             cache_manager = OpDefinitionsCacheManager(self.cache_dir)
 
@@ -226,7 +236,9 @@ op_{i}:
       datasets_dtype: string
 """)
 
+
         with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', self.hub_cache), \
+             patch('interpretune.analysis.ops.dispatcher.IT_ANALYSIS_CACHE', self.cache_dir), \
              patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
 
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
