@@ -59,7 +59,9 @@ jobs:
         python-version: ["3.12"]
     timeout-minutes: 90
     env:
-      IT_CI_LOG_LEVEL: "DEBUG"
+      # uncomment to enable more granular logging for this workflow
+      # IT_CI_LOG_LEVEL: "DEBUG"
+      # CI_RESOURCE_MONITOR: "1"
       IT_USE_CT_COMMIT_PIN: "1"
       USE_CT_COMMIT_PIN: "1"
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
@@ -86,10 +88,11 @@ jobs:
       - name: Run tests, coverage, and resource monitor
         shell: bash
         env:
-          CI_RESOURCE_MONITOR: ${{ env.CI_RESOURCE_MONITOR || '1' }}
+          # Make CI resource monitor configurable via CI_RESOURCE_MONITOR (repo default: '0')
+          CI_RESOURCE_MONITOR: ${{ env.CI_RESOURCE_MONITOR }}
           PYTHONPATH: ${{ github.workspace }}/src
-          # Make log level configurable via IT_CI_LOG_LEVEL (default: INFO)
-          PYTEST_ADDOPTS: "--log-cli-level=${{ env.IT_CI_LOG_LEVEL || 'INFO' }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"
+          # Make log level configurable via IT_CI_LOG_LEVEL (repo default: 'INFO')
+          PYTEST_ADDOPTS: "--log-cli-level=${{ env.IT_CI_LOG_LEVEL }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
             chmod +x ./scripts/ci_resource_monitor.sh
