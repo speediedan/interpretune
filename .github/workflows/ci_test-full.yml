@@ -1,6 +1,21 @@
 name: Test full
 
 on:
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'
+        required: false
+        default: 'INFO'
+        type: choice
+        options:
+        - 'INFO'
+        - 'DEBUG'
+      run_resource_monitor:
+        description: 'Run CI resource monitor'
+        required: false
+        default: '0'
+        type: string
   push:
     branches: [main, "release/*", "bugfix/*"]
     paths:
@@ -50,7 +65,21 @@ concurrency:
   cancel-in-progress: ${{ ! (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) }}
 
 jobs:
+  # this job allows us to set the log level and resource monitor with the following precedence:
+  # workflow_dispatch inputs -> repository variable defaults -> fallback defaults
+  log-dispatch-inputs:
+    runs-on: ubuntu-latest
+    outputs:
+      log_level: ${{ steps.resolve_dispatch_vars.outputs.log_level }}
+      run_resource_monitor: ${{ steps.resolve_dispatch_vars.outputs.run_resource_monitor }}
+    steps:
+      - name: Resolve workflow dispatch inputs
+        id: resolve_dispatch_vars
+        run: |
+          echo "log_level=${{ inputs.logLevel || vars.IT_CI_LOG_LEVEL || 'INFO'  }}" >> $GITHUB_OUTPUT
+          echo "run_resource_monitor=${{ inputs.run_resource_monitor || vars.CI_RESOURCE_MONITOR || '0' }}" >> $GITHUB_OUTPUT
   cpu:
+    needs: log-dispatch-inputs
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -63,11 +92,9 @@ jobs:
         python-version: ["3.12"]
     timeout-minutes: 90
     env:
-      # uncomment to enable more granular logging for this workflow
-      # IT_CI_LOG_LEVEL: "DEBUG"
-      # CI_RESOURCE_MONITOR: "1"
+      IT_CI_LOG_LEVEL: ${{ needs.log-dispatch-inputs.outputs.log_level }}
+      CI_RESOURCE_MONITOR: ${{ needs.log-dispatch-inputs.outputs.run_resource_monitor }}
       IT_USE_CT_COMMIT_PIN: "1"
-      USE_CT_COMMIT_PIN: "1"
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       HF_GATED_PUBLIC_REPO_AUTH_KEY: ${{ secrets.HF_GATED_PUBLIC_REPO_AUTH_KEY }}
     steps:
@@ -92,8 +119,10 @@ jobs:
       - name: Run tests, coverage, and resource monitor
         shell: bash
         env:
-          # Make CI resource monitor configurable via CI_RESOURCE_MONITOR (repo default: '0')
-          CI_RESOURCE_MONITOR: ${{ env.CI_RESOURCE_MONITOR }}
+          # uncomment these at the step level here to force more granular logging for this workflow without manual
+          # dispatch or repository override
+          # IT_CI_LOG_LEVEL: "DEBUG"
+          # CI_RESOURCE_MONITOR: "1"
           PYTHONPATH: ${{ github.workspace }}/src
           # Make log level configurable via IT_CI_LOG_LEVEL (repo default: 'INFO')
           PYTEST_ADDOPTS: "--log-cli-level=${{ env.IT_CI_LOG_LEVEL }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"

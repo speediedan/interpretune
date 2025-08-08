@@ -149,6 +149,10 @@ it_install(){
         fi
     fi
     cd ${repo_home}
+    echo "Forcing upgrade of datasets and fsspec to latest versions"
+    # while we wait for sae-lens to support the datasets >= 4.0, we upgrade after installing our other deps
+    pip install --upgrade datasets
+    pip install --upgrade fsspec
     pyright -p pyproject.toml
     pre-commit install
     git lfs install

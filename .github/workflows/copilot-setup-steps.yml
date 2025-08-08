@@ -1,0 +1,51 @@
+name: "Copilot Setup Steps"
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    environment: copilot
+    env:
+      # IT_CI_LOG_LEVEL: ${{ vars.IT_CI_LOG_LEVEL || 'INFO' }}
+      # CI_RESOURCE_MONITOR: ${{ vars.CI_RESOURCE_MONITOR || '0' }}
+      IT_USE_CT_COMMIT_PIN: "1"
+      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+      HF_GATED_PUBLIC_REPO_AUTH_KEY: ${{ secrets.HF_GATED_PUBLIC_REPO_AUTH_KEY }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set up venv and install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip setuptools wheel build
+          python -m pip install '.[test,examples,lightning]' -c requirements/ci_constraints.txt
+          pip install --upgrade datasets
+          pip install --upgrade fsspec
+          pip list
+      - name: Setup pyright, precommit and git lfs
+        shell: bash
+        run: |
+          # Install pyright, pre-commit, and git-lfs
+          pip install --upgrade pyright pre-commit git-lfs
+          pyright -p pyproject.toml
+          pre-commit install
+          git lfs install
+      - name: Run Copilot setup steps
+        run: echo "Copilot setup steps completed successfully."
