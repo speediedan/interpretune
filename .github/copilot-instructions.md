@@ -12,6 +12,17 @@
 
 **Repository Size:** ~200 files, primarily Python, with YAML configs and shell scripts
 
+## Code Standards
+
+### Required Before Each Commit
+- Ensure all pre-commit hooks pass.
+
+### Requirement for Each Pull Request
+- All pull requests must pass the CI checks.
+- Ensure that the code is well-documented, with docstrings for all public functions and classes.
+- Write unit tests for new functionality and ensure existing tests pass.
+- Ensure the cpu coverage reported by our `ci_test-full.yml` workflow is >= the existing coverage.
+
 ## Build and Validation Commands
 
 ### Environment Setup
