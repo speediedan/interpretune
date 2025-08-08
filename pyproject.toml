@@ -103,7 +103,8 @@ test = [
 "pre-commit >= 1.0",
 "psycopg",
 "toml",
-"pip-tools"
+"pip-tools",
+"huggingface_hub[hf_xet]",  # for improved performance
 ]
 
 
