@@ -20,7 +20,6 @@ from torch.testing import assert_close
 import einops
 from jaxtyping import Int, Float
 
-from tests.runif import RunIf
 
 class TestClassFTSExtension:
 
@@ -58,7 +57,7 @@ class TestClassFTSExtension:
         return torch.concat([direct_attributions.unsqueeze(-1), l1_attributions, l2_attributions], dim=-1)
 
     # TODO: re-enable this test on windows once a windows-specific OSError ([22]) is resolved.
-    @RunIf(skip_windows=True)
+    #@RunIf(skip_windows=True)
     def test_tl_direct_attr(self, get_it_session__tl_cust_mi__setup, tmp_path):
         fixture = get_it_session__tl_cust_mi__setup
         it_session = fixture.it_session
