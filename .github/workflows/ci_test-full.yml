@@ -55,7 +55,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-2022, macos-14]
+        os: [
+          ubuntu-22.04,
+          windows-2022,
+          macos-14
+          ]
         python-version: ["3.12"]
     timeout-minutes: 90
     env:
@@ -93,15 +97,23 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/src
           # Make log level configurable via IT_CI_LOG_LEVEL (repo default: 'INFO')
           PYTEST_ADDOPTS: "--log-cli-level=${{ env.IT_CI_LOG_LEVEL }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"
+          # Optional: filter pattern for pytest (-k), disables coverage if set
+          PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || '' }}
         run: |
+          if [ -n "$PYTEST_FILTER_PATTERN" ]; then
+            echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."
+            PYTEST_CMD="pytest src/interpretune tests -v --import-mode=importlib --durations=50 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml"
+          else
+            PYTEST_CMD="coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml"
+          fi
           if [ "${{ runner.os }}" = "Linux" ]; then
             chmod +x ./scripts/ci_resource_monitor.sh
             ./scripts/ci_resource_monitor.sh &
             monitor_pid=$!
-            coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml
+            eval $PYTEST_CMD
             kill $monitor_pid || true
           else
-            coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml
+            eval $PYTEST_CMD
           fi
       - name: Upload pytest results
         uses: actions/upload-artifact@v4
