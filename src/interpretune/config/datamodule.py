@@ -64,8 +64,14 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
         sanitized_task_name = self.task_name.replace(':', '_').replace('|', '_')
         rank_zero_debug(f"[DATAMODULE_CONFIG] Sanitized task name: '{sanitized_task_name}'")
 
-        # Use Path.home() for cross-platform home directory detection
-        cache_home = Path.home() / ".cache" / "huggingface" / "datasets"
+        # Respect HF_DATASETS_CACHE environment variable for cross-platform compatibility
+        import os
+        hf_datasets_cache = os.environ.get("HF_DATASETS_CACHE")
+        if hf_datasets_cache:
+            cache_home = Path(hf_datasets_cache)
+        else:
+            # Use Path.home() for cross-platform home directory detection
+            cache_home = Path.home() / ".cache" / "huggingface" / "datasets"
         default_dataset_save_path = cache_home / sanitized_task_name
         rank_zero_debug(f"[DATAMODULE_CONFIG] Default dataset path: {default_dataset_save_path}")
         rank_zero_debug(f"[DATAMODULE_CONFIG] Original dataset_path: {self.dataset_path}")
