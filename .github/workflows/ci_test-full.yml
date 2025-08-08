@@ -2,7 +2,7 @@ name: Test full
 
 on:
   push:
-    branches: [main, "release/*"]
+    branches: [main, "release/*", "bugfix/*"]
     paths:
       - "setup.*"
       - "requirements.txt"
@@ -23,7 +23,7 @@ on:
       - "!**/CONTRIBUTING.md"
       - "!**/LICENSE*"
   pull_request:
-    branches: [main, "release/*"]
+    branches: [main, "release/*", "bugfix/*"]
     types: [opened, reopened, ready_for_review, synchronize]
     paths:
       - "setup.*"
