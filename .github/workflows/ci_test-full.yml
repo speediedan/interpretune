@@ -128,7 +128,7 @@ jobs:
           PYTEST_ADDOPTS: "--log-cli-level=${{ env.IT_CI_LOG_LEVEL }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"
           # Optional: filter pattern for pytest (-k), disables coverage if set
           # PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || '' }}
-          PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || 'test_format_columns_all_indices or test_tl_direct_attr' }}
+          PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || 'test_tl_direct_attr' }}
         run: |
           if [ -n "$PYTEST_FILTER_PATTERN" ]; then
             echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."

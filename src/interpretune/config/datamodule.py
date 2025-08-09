@@ -66,12 +66,21 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
 
         # Respect HF_DATASETS_CACHE environment variable for cross-platform compatibility
         import os
+        import platform
+        rank_zero_debug(f"[DATAMODULE_CONFIG] Platform: {platform.system()}")
+        rank_zero_debug(f"[DATAMODULE_CONFIG] OS name: {os.name}")
+
         hf_datasets_cache = os.environ.get("HF_DATASETS_CACHE")
+        rank_zero_debug(f"[DATAMODULE_CONFIG] HF_DATASETS_CACHE env var: {hf_datasets_cache}")
+
         if hf_datasets_cache:
             cache_home = Path(hf_datasets_cache)
+            rank_zero_debug(f"[DATAMODULE_CONFIG] Using HF_DATASETS_CACHE: {cache_home}")
         else:
             # Use Path.home() for cross-platform home directory detection
             cache_home = Path.home() / ".cache" / "huggingface" / "datasets"
+            rank_zero_debug(f"[DATAMODULE_CONFIG] Using default cache path: {cache_home}")
+
         default_dataset_save_path = cache_home / sanitized_task_name
         rank_zero_debug(f"[DATAMODULE_CONFIG] Default dataset path: {default_dataset_save_path}")
         rank_zero_debug(f"[DATAMODULE_CONFIG] Original dataset_path: {self.dataset_path}")
@@ -83,6 +92,13 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
             # Convert existing path to use proper separators
             self.dataset_path = str(Path(self.dataset_path).resolve())
         rank_zero_debug(f"[DATAMODULE_CONFIG] Final dataset_path: {self.dataset_path}")
+
+        # Additional debugging for Windows
+        if os.name == "nt":
+            rank_zero_debug("[DATAMODULE_CONFIG] Windows-specific debugging:")
+            rank_zero_debug(f"[DATAMODULE_CONFIG]   Path.resolve(): {Path(self.dataset_path).resolve()}")
+            rank_zero_debug(f"[DATAMODULE_CONFIG]   Path.as_posix(): {Path(self.dataset_path).as_posix()}")
+            rank_zero_debug(f"[DATAMODULE_CONFIG]   enable_datasets_cache: {self.enable_datasets_cache}")
 
     def _cross_validate(self, it_cfg: ITSerializableCfg) -> None:
         # inspect tokenizer, tokenizer_name, model_name_or_path here, updating datamodule config before instantiation
