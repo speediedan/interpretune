@@ -103,6 +103,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Reset caching
+        id: set_time_period
+        run: |
+          python -c "import time; days = time.time() / 60 / 60 / 24; print(f'TIME_PERIOD=d{int(days / 2) * 2}')" >> $GITHUB_OUTPUT
+
       - name: Install libpq (macOS only)
         if: runner.os == 'macOS'
         run: |
@@ -116,6 +122,48 @@ jobs:
           pip install --upgrade datasets
           pip install --upgrade fsspec
           pip list
+
+      # Note: This uses an internal pip API and may not always work
+      # https://github.com/actions/cache/blob/master/examples.md#multiple-oss-in-a-workflow
+      # sadly, this env var is not properly abstracted over OS platforms so we set it twice, the second time for windows
+      - name: Get pip cache dir windows
+        id: pip-cache
+        run: |
+          echo "PIP_CACHE_DIR=$(pip cache dir)" >> $GITHUB_OUTPUT
+          echo "PIP_CACHE_DIR=$(pip cache dir)" >> $env:GITHUB_OUTPUT
+
+      - name: pip cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pip-cache.outputs.PIP_CACHE_DIR }}
+          key: ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-${{ hashFiles('requirements/base.txt') }}-${{ hashFiles('requirements/test.txt') }}-${{ hashFiles('requirements/examples.txt') }}-${{ hashFiles('requirements/lightning.txt') }}-${{ hashFiles('requirements/circuit_tracer_pin.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-
+
+      - name: Install wtrace (Windows only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install wtrace -y
+          Write-Host "wtrace installed via Chocolatey"
+
+
+      - name: Start wtrace session (Windows only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $outputEtl = "$env:TEMP\filesystem_errors.etl"
+          $outputTxt = "$env:TEMP\filesystem_errors.txt"
+          # Start wtrace with handlers and filters for file I/O errors (FileIO/Write and FileIO/Create)
+          Start-Process -FilePath "wtrace" -ArgumentList @(
+            'start',
+            '--handlers', 'file',
+            '-f', 'name >= FileIO/Write',
+            '-f', 'name >= FileIO/Create',
+            '-o', $outputEtl
+          ) -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+
       - name: Run tests, coverage, and resource monitor
         shell: bash
         env:
@@ -128,14 +176,13 @@ jobs:
           PYTEST_ADDOPTS: "--log-cli-level=${{ env.IT_CI_LOG_LEVEL }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"
           # Optional: filter pattern for pytest (-k), disables coverage if set
           # PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || '' }}
-          # PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || 'test_tl_direct_attr or test_format_columns_all_indices' }}
+          PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || 'test_tl_direct_attr or test_format_columns_all_indices' }}
         run: |
-          PYTEST_CMD="pytest -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml tests/core/test_fts_ext.py::TestClassFTSExtension::test_tl_direct_attr tests/core/test_analysis_core.py::TestAnalysisStore::test_format_columns_all_indices"
-          # if [ -n "$PYTEST_FILTER_PATTERN" ]; then
-          #   echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."
-          #   PYTEST_CMD="pytest src/interpretune tests -v --import-mode=importlib --durations=50 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml"
-          # else
-          #   PYTEST_CMD="coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml"
+          if [ -n "$PYTEST_FILTER_PATTERN" ]; then
+            echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."
+            PYTEST_CMD="pytest src/interpretune tests -v --import-mode=importlib --durations=50 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml"
+          else
+            PYTEST_CMD="coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml"
           fi
           if [ "${{ runner.os }}" = "Linux" ]; then
             chmod +x ./scripts/ci_resource_monitor.sh
@@ -146,6 +193,27 @@ jobs:
           else
             eval $PYTEST_CMD
           fi
+
+      - name: Stop wtrace session and convert trace (Windows only)
+        if: runner.os == 'Windows'
+        id: wtrace_convert
+        shell: pwsh
+        run: |
+          $outputEtl = "$env:TEMP\filesystem_errors.etl"
+          $outputTxt = "$env:TEMP\filesystem_errors.txt"
+          # Stop the wtrace session
+          wtrace stop
+          # Convert the ETL file to text
+          wtrace convert -i $outputEtl -f text -o $outputTxt
+          Write-Host "wtrace trace converted to $outputTxt"
+          echo "wtrace_txt_path=$outputTxt" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload wtrace output (Windows only)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wtrace-filesystem-errors-${{ runner.os }}-${{ matrix.python-version }}
+          path: ${{ env.wtrace_txt_path }}
       - name: Upload pytest results
         uses: actions/upload-artifact@v4
         with:
