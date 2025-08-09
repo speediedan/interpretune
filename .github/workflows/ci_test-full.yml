@@ -79,21 +79,21 @@ jobs:
           echo "log_level=${{ inputs.logLevel || vars.IT_CI_LOG_LEVEL || 'INFO'  }}" >> $GITHUB_OUTPUT
           echo "run_resource_monitor=${{ inputs.run_resource_monitor || vars.CI_RESOURCE_MONITOR || '0' }}" >> $GITHUB_OUTPUT
   cpu:
-    needs: log-dispatch-inputs
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [
-          ubuntu-22.04,
+          # ubuntu-22.04,
           windows-2022,
-          macos-14
+          # macos-14
           ]
         python-version: ["3.12"]
     timeout-minutes: 90
     env:
-      IT_CI_LOG_LEVEL: ${{ needs.log-dispatch-inputs.outputs.log_level }}
-      CI_RESOURCE_MONITOR: ${{ needs.log-dispatch-inputs.outputs.run_resource_monitor }}
+      # uncomment to enable more granular logging for this workflow
+      IT_CI_LOG_LEVEL: "DEBUG"
+      # CI_RESOURCE_MONITOR: "1"
       IT_USE_CT_COMMIT_PIN: "1"
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       HF_GATED_PUBLIC_REPO_AUTH_KEY: ${{ secrets.HF_GATED_PUBLIC_REPO_AUTH_KEY }}
@@ -103,6 +103,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Reset caching
+        id: set_time_period
+        run: |
+          python -c "import time; days = time.time() / 60 / 60 / 24; print(f'TIME_PERIOD=d{int(days / 2) * 2}')" >> $GITHUB_OUTPUT
+
       - name: Install libpq (macOS only)
         if: runner.os == 'macOS'
         run: |
@@ -116,18 +122,61 @@ jobs:
           pip install --upgrade datasets
           pip install --upgrade fsspec
           pip list
+
+      # Note: This uses an internal pip API and may not always work
+      # https://github.com/actions/cache/blob/master/examples.md#multiple-oss-in-a-workflow
+      # sadly, this env var is not properly abstracted over OS platforms so we set it twice, the second time for windows
+      - name: Get pip cache dir windows
+        id: pip-cache
+        run: |
+          echo "PIP_CACHE_DIR=$(pip cache dir)" >> $GITHUB_OUTPUT
+          echo "PIP_CACHE_DIR=$(pip cache dir)" >> $env:GITHUB_OUTPUT
+
+      - name: pip cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pip-cache.outputs.PIP_CACHE_DIR }}
+          key: ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-${{ hashFiles('requirements/base.txt') }}-${{ hashFiles('requirements/test.txt') }}-${{ hashFiles('requirements/examples.txt') }}-${{ hashFiles('requirements/lightning.txt') }}-${{ hashFiles('requirements/circuit_tracer_pin.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-
+
+      - name: Install wtrace (Windows only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install wtrace -y
+          Write-Host "wtrace installed via Chocolatey"
+
+
+      - name: Start wtrace session (Windows only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $outputEtl = "$env:TEMP\filesystem_errors.etl"
+          $outputTxt = "$env:TEMP\filesystem_errors.txt"
+          # Start wtrace with handlers and filters for file I/O errors (FileIO/Write and FileIO/Create)
+          Start-Process -FilePath "wtrace" -ArgumentList @(
+            'start',
+            '--handlers', 'file',
+            '-f', 'name >= FileIO/Write',
+            '-f', 'name >= FileIO/Create',
+            '-o', $outputEtl
+          ) -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+
       - name: Run tests, coverage, and resource monitor
         shell: bash
         env:
           # uncomment these at the step level here to force more granular logging for this workflow without manual
           # dispatch or repository override
-          # IT_CI_LOG_LEVEL: "DEBUG"
+          IT_CI_LOG_LEVEL: "DEBUG"
           # CI_RESOURCE_MONITOR: "1"
           PYTHONPATH: ${{ github.workspace }}/src
           # Make log level configurable via IT_CI_LOG_LEVEL (repo default: 'INFO')
           PYTEST_ADDOPTS: "--log-cli-level=${{ env.IT_CI_LOG_LEVEL }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"
           # Optional: filter pattern for pytest (-k), disables coverage if set
-          PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || '' }}
+          # PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || '' }}
+          PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || 'test_tl_direct_attr or test_format_columns_all_indices' }}
         run: |
           if [ -n "$PYTEST_FILTER_PATTERN" ]; then
             echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."
@@ -144,6 +193,27 @@ jobs:
           else
             eval $PYTEST_CMD
           fi
+
+      - name: Stop wtrace session and convert trace (Windows only)
+        if: runner.os == 'Windows'
+        id: wtrace_convert
+        shell: pwsh
+        run: |
+          $outputEtl = "$env:TEMP\filesystem_errors.etl"
+          $outputTxt = "$env:TEMP\filesystem_errors.txt"
+          # Stop the wtrace session
+          wtrace stop
+          # Convert the ETL file to text
+          wtrace convert -i $outputEtl -f text -o $outputTxt
+          Write-Host "wtrace trace converted to $outputTxt"
+          echo "wtrace_txt_path=$outputTxt" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload wtrace output (Windows only)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wtrace-filesystem-errors-${{ runner.os }}-${{ matrix.python-version }}
+          path: ${{ env.wtrace_txt_path }}
       - name: Upload pytest results
         uses: actions/upload-artifact@v4
         with:
