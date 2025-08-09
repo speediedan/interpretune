@@ -1,0 +1,136 @@
+name: 'Run Pytest Coverage with Configured Instrumentation'
+description: 'Runs pytest with coverage and optional wtrace instrumentation on Windows.'
+inputs:
+  pytest_filter_pattern:
+    description: 'Pytest filter pattern (optional)'
+    required: false
+    default: ''
+  python_version:
+    description: 'Python version (for artifact naming)'
+    required: true
+  runner_os:
+    description: 'Runner OS (for artifact naming)'
+    required: true
+  it_ci_log_level:
+    description: 'IT_CI_LOG_LEVEL env value'
+    required: false
+    default: 'DEBUG'
+  workspace:
+    description: 'Workspace path for PYTHONPATH'
+    required: true
+  enable_os_trace:
+    description: 'Enable OS-level tracing (Windows only currently)'
+    required: false
+    default: '0'
+  run_resource_monitor:
+    description: 'Run CI resource monitor (env value)'
+    required: false
+    default: ''
+runs:
+  using: 'composite'
+  steps:
+    - name: Start CI resource monitor (Linux only)
+      if: runner.os == 'Linux' && inputs.run_resource_monitor == '1'
+      id: start_resource_monitor
+      shell: bash
+      run: |
+        chmod +x ./scripts/ci_resource_monitor.sh
+        ./scripts/ci_resource_monitor.sh > /tmp/ci_resource_monitor.log 2>&1 &
+        echo $! > /tmp/ci_resource_monitor.pid
+        echo "[ci_resource_monitor] Started with PID $(cat /tmp/ci_resource_monitor.pid)"
+
+    - name: Install wtrace (Windows only)
+      if: runner.os == 'Windows' && inputs.enable_os_trace == '1'
+      shell: pwsh
+      run: |
+        choco install wtrace -y
+        Write-Host "wtrace installed via Chocolatey"
+
+    - name: Start wtrace session (Windows only)
+      if: runner.os == 'Windows' && inputs.enable_os_trace == '1'
+      shell: pwsh
+      run: |
+        $wtraceLog = Join-Path "${{ runner.temp }}" "wtrace_output.log"
+        Write-Host "[wtrace] Intended log output: $wtraceLog"
+        Write-Host "[wtrace] Directory contents before starting wtrace:"
+        Get-ChildItem -Path (Split-Path $wtraceLog) | Write-Host
+        # Start wtrace in the background and redirect all output to the log file
+        $wtraceArgs = @('--handlers', 'tcp,file,registry', '-v')
+        $wtraceCmd = 'wtrace ' + ($wtraceArgs -join ' ') + ' > "' + $wtraceLog + '" 2>&1'
+        Write-Host "[wtrace] Running: $wtraceCmd"
+        $process = Start-Process -FilePath "cmd.exe" -ArgumentList @('/c', $wtraceCmd) -WindowStyle Hidden -PassThru
+        $processId = $process.Id
+        Write-Host "[wtrace] Started wtrace with PID $processId"
+        # Save log path and PID for later steps
+        echo "wtrace_log_path=$wtraceLog" | Out-File -FilePath $env:GITHUB_ENV -Append
+        echo "wtrace_pid=$processId" | Out-File -FilePath $env:GITHUB_ENV -Append
+        Start-Sleep -Seconds 2
+        Write-Host "[wtrace] Directory contents after starting wtrace:"
+        Get-ChildItem -Path (Split-Path $wtraceLog) | Write-Host
+
+    - name: Run tests and coverage
+      shell: bash
+      continue-on-error: true
+      env:
+        IT_CI_LOG_LEVEL: ${{ inputs.it_ci_log_level }}
+        PYTHONPATH: ${{ inputs.workspace }}/src
+        PYTEST_ADDOPTS: "--log-cli-level=${{ inputs.it_ci_log_level }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"
+        PYTEST_FILTER_PATTERN: ${{ inputs.pytest_filter_pattern }}
+        PIP_CACHE_DIR: ${{ inputs.pip_cache_dir }}
+      run: |
+        if [ -n "$PYTEST_FILTER_PATTERN" ]; then
+          echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."
+          PYTEST_CMD="pytest src/interpretune tests -v --import-mode=importlib --durations=50 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
+        else
+          PYTEST_CMD="coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
+        fi
+        eval $PYTEST_CMD
+
+    - name: Stop CI resource monitor (Linux only)
+      if: runner.os == 'Linux' && inputs.run_resource_monitor == '1'
+      shell: bash
+      run: |
+        if [ -f /tmp/ci_resource_monitor.pid ]; then
+          kill $(cat /tmp/ci_resource_monitor.pid) || true
+          echo "[ci_resource_monitor] Stopped PID $(cat /tmp/ci_resource_monitor.pid)"
+        fi
+
+    - name: Stop wtrace session (Windows only)
+      if: runner.os == 'Windows' && inputs.enable_os_trace == '1'
+      id: wtrace_stop
+      shell: pwsh
+      continue-on-error: true
+      run: |
+        $wtraceLog = "${env:wtrace_log_path}"
+        $wtracePid = "${env:wtrace_pid}"
+        Write-Host "[wtrace] Stopping wtrace session..."
+        if ($wtracePid -and ($wtracePid -match '^[0-9]+$')) {
+          try {
+            Stop-Process -Id $wtracePid -Force
+            Write-Host "[wtrace] Killed wtrace process with PID $wtracePid"
+          } catch {
+            Write-Host "[wtrace] WARNING: Failed to kill wtrace process: $_"
+          }
+        } else {
+          Write-Host "[wtrace] WARNING: No valid wtrace PID found, attempting 'wtrace stop' command."
+          try {
+            wtrace stop
+          } catch {
+            Write-Host "[wtrace] WARNING: wtrace stop failed: $_"
+          }
+        }
+        Write-Host "[wtrace] Directory contents after stopping wtrace:"
+        Get-ChildItem -Path (Split-Path $wtraceLog) | Write-Host
+        # Check if log file exists before setting output
+        if (Test-Path $wtraceLog) {
+          Write-Host "[wtrace] Log file exists at $wtraceLog"
+          echo "wtrace_log_path=$wtraceLog" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        } else {
+          Write-Host "[wtrace] WARNING: Log file not found at $wtraceLog"
+          echo "wtrace_log_path=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        }
+
+outputs:
+  wtrace_log_path:
+    description: 'Path to the wtrace log output file (if generated)'
+    value: ${{ steps.wtrace_stop.outputs.wtrace_log_path }}

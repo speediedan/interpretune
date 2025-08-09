@@ -1,16 +1,8 @@
 #!/usr/bin/env bash
 
 INTERVAL="${CI_RESOURCE_MONITOR_INTERVAL:-5}"
-ENABLED="${CI_RESOURCE_MONITOR:-1}"
-
-if [[ "$ENABLED" != "1" ]]; then
-  echo "[ci_resource_monitor] Monitoring disabled (CI_RESOURCE_MONITOR=$ENABLED)"
-  exit 0
-fi
-
-echo "[ci_resource_monitor] Starting resource monitor (interval: ${INTERVAL}s)"
 while true; do
-  echo "==== [$(date)] Resource Usage ===="
+  echo "==== [$(date '+%Y-%m-%d %H:%M:%S.%3N')] Resource Usage ===="
   echo "-- Disk Usage --"
   df -h /
   echo "-- Memory Usage --"

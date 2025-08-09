@@ -28,9 +28,7 @@ gpt2_hf_bnb_lora_cfg = {"bitsandbytesconfig": nf4_bnb_config, "lora_cfg": gpt2_l
 gpt2_hf_bnb_lora_cfg_seq = {"bitsandbytesconfig": nf4_bnb_config, "lora_cfg": {**gpt2_lora_cfg, "task_type": "SEQ_CLS"}}
 gpt2_seq_hf_from_pretrained_kwargs = {"pretrained_kwargs": {"device_map": "cpu", "torch_dtype": "float32"},
                                       "model_head": "transformers.AutoModelForSequenceClassification"}
-tl_cust_mi_cfg = {
-    "default_padding_side":"left",
-    "cfg":
+tl_cust_mi_cfg = {"cfg":
     dict(
     d_model=768,
     d_head=64,
@@ -60,8 +58,11 @@ class TLMechInterpCfg(BaseCfg):
     model_src_key: str | None = "cust"
     force_prepare_data: bool | None = True
     tl_cfg: dict | None = field(default_factory=lambda: ITLensCustomConfig(**tl_cust_mi_cfg))
-    dm_override_cfg: dict | None = field(default_factory=lambda: {'enable_datasets_cache': False, 'tokenizer_kwargs': {
-        'padding_side': 'right', 'model_input_names': ['input']}})
+    dm_override_cfg: dict | None = field(default_factory=lambda: {
+        'enable_datasets_cache': False,
+        'tokenizer_kwargs': {'padding_side': 'right', 'model_input_names': ['input']},
+        'dataset_path': '/tmp/tl_cust_mi_force_prepare_ds'
+        })
 
 @dataclass(kw_only=True)
 class TLDebugCfg(TLParityCfg):

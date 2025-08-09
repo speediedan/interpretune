@@ -57,43 +57,8 @@ class TestClassFTSExtension:
         return torch.concat([direct_attributions.unsqueeze(-1), l1_attributions, l2_attributions], dim=-1)
 
     def test_tl_direct_attr(self, get_it_session__tl_cust_mi__setup, huggingface_env):
-        # import os
-        # from interpretune.utils import rank_zero_debug
-
         fixture = get_it_session__tl_cust_mi__setup
         it_session = fixture.it_session
-
-        # # For Windows, override the dataset path and re-prepare data
-        # if os.name == "nt":  # Windows
-        #     try:
-        #         # Create a safe Windows-compatible path in the temp directory
-        #         windows_safe_dataset_path = tmp_path / "pytest_rte_tl_dataset"
-        #         windows_safe_dataset_path.mkdir(parents=True, exist_ok=True)
-        #         rank_zero_debug(f"[TEST] Windows detected, forcing dataset path to: {windows_safe_dataset_path}")
-
-        #         # Override the dataset path and force re-preparation
-        #         original_dataset_path = it_session.datamodule.itdm_cfg.dataset_path
-        #         it_session.datamodule.itdm_cfg.dataset_path = str(windows_safe_dataset_path)
-        #         rank_zero_debug(
-        #             f"[TEST] Overrode dataset path from {original_dataset_path} to "
-        #             f"{it_session.datamodule.itdm_cfg.dataset_path}"
-        #         )
-
-        #         # Re-prepare the data with the new path
-        #         rank_zero_debug("[TEST] Re-preparing data with Windows-safe path...")
-        #         it_session.datamodule.prepare_data(target_model=it_session.module.model)
-
-        #         # Re-setup the datamodule to use the new dataset
-        #         rank_zero_debug("[TEST] Re-setting up datamodule...")
-        #         it_session.datamodule.setup(module=it_session.module)
-        #         rank_zero_debug("[TEST] Windows path override and data preparation completed successfully")
-
-        #     except Exception as e:
-        #         rank_zero_debug(f"[TEST] Error during Windows path override: {e}")
-        #         raise
-        # else:
-        #     rank_zero_debug(f"[TEST] Non-Windows platform ({os.name}), using original dataset")
-
         curr_model = it_session.module.model
         dataloader = it_session.datamodule.test_dataloader()
         # Assert that tokenizer padding_side is 'right' as expected by the test and TLMechInterpCfg
