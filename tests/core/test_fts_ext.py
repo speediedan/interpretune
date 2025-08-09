@@ -56,7 +56,7 @@ class TestClassFTSExtension:
         l2_attributions = einops.einsum(W_U_correct_tokens, l2_results[:-1], "emb seq, seq nhead emb -> seq nhead")
         return torch.concat([direct_attributions.unsqueeze(-1), l1_attributions, l2_attributions], dim=-1)
 
-    def test_tl_direct_attr(self, get_it_session__tl_cust_mi__setup, tmp_path, huggingface_env):
+    def test_tl_direct_attr(self, get_it_session__tl_cust_mi__setup, huggingface_env):
         # import os
         # from interpretune.utils import rank_zero_debug
 

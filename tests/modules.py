@@ -120,7 +120,13 @@ class BaseTestDataModule:
                 # Enhanced error information for Windows debugging
                 if os.name == "nt":
                     import errno
+                    # Cross-platform error code
                     rank_zero_debug(f"[PREPARE_DATA] Error number: {getattr(e, 'errno', 'N/A')}")
+                    # Windows-specific error code
+                    rank_zero_debug(f"[PREPARE_DATA] Windows Error Code: {getattr(e, 'winerror', 'N/A')}")
+                    # File path involved in the error
+                    rank_zero_debug(f"[PREPARE_DATA] Filename: {getattr(e, 'filename', 'N/A')}")
+
                     if hasattr(e, 'errno') and e.errno == errno.EINVAL:
                         rank_zero_debug("[PREPARE_DATA] This is errno 22 (EINVAL) - Invalid argument")
 
@@ -137,6 +143,28 @@ class BaseTestDataModule:
                             rank_zero_debug("[PREPARE_DATA] Basic file operations work in target directory")
                         except Exception as debug_e:
                             rank_zero_debug(f"[PREPARE_DATA] Basic file operations failed: {debug_e}")
+
+                        # Try opening the problematic path in read-only mode
+                        try:
+                            rank_zero_debug(f"[PREPARE_DATA] Attempting to open {dataset_path} in read-only mode...")
+                            with open(dataset_path, 'r') as f:
+                                f.read(1)
+                            rank_zero_debug(f"[PREPARE_DATA] Successfully opened {dataset_path} in read-only mode.")
+                        except Exception as ro_e:
+                            rank_zero_debug(f"[PREPARE_DATA] Failed to open {dataset_path} in read-only mode: {ro_e}")
+
+                        # Try opening the problematic path in write-binary mode (Windows path format)
+                        try:
+                            win_path = str(dataset_path)
+                            rank_zero_debug(
+                                f"[PREPARE_DATA] Attempting to open {win_path} in write-binary mode (wb)..."
+                            )
+                            with open(win_path, 'wb') as f:
+                                f.write(b'interpretune test')
+                            os.remove(win_path)
+                            rank_zero_debug(f"[PREPARE_DATA] Successfully opened and wrote to {win_path} in wb mode.")
+                        except Exception as wb_e:
+                            rank_zero_debug(f"[PREPARE_DATA] Failed to open {win_path} in wb mode: {wb_e}")
 
                 traceback.print_exc()
 

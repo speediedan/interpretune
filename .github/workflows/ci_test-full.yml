@@ -128,13 +128,14 @@ jobs:
           PYTEST_ADDOPTS: "--log-cli-level=${{ env.IT_CI_LOG_LEVEL }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"
           # Optional: filter pattern for pytest (-k), disables coverage if set
           # PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || '' }}
-          PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || 'test_format_columns_all_indices or test_tl_direct_attr' }}
+          # PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || 'test_tl_direct_attr or test_format_columns_all_indices' }}
         run: |
-          if [ -n "$PYTEST_FILTER_PATTERN" ]; then
-            echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."
-            PYTEST_CMD="pytest src/interpretune tests -v --import-mode=importlib --durations=50 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml"
-          else
-            PYTEST_CMD="coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml"
+          PYTEST_CMD="pytest -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml tests/core/test_fts_ext.py::TestClassFTSExtension::test_tl_direct_attr tests/core/test_analysis_core.py::TestAnalysisStore::test_format_columns_all_indices"
+          # if [ -n "$PYTEST_FILTER_PATTERN" ]; then
+          #   echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."
+          #   PYTEST_CMD="pytest src/interpretune tests -v --import-mode=importlib --durations=50 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml"
+          # else
+          #   PYTEST_CMD="coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml"
           fi
           if [ "${{ runner.os }}" = "Linux" ]; then
             chmod +x ./scripts/ci_resource_monitor.sh
