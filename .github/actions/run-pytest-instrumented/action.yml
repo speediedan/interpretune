@@ -52,8 +52,6 @@ runs:
       run: |
         $wtraceLog = Join-Path "${{ runner.temp }}" "wtrace_output.log"
         Write-Host "[wtrace] Intended log output: $wtraceLog"
-        Write-Host "[wtrace] Directory contents before starting wtrace:"
-        Get-ChildItem -Path (Split-Path $wtraceLog) | Write-Host
         # Start wtrace in the background and redirect all output to the log file
         $wtraceArgs = @('--handlers', 'tcp,file,registry', '-v')
         $wtraceCmd = 'wtrace ' + ($wtraceArgs -join ' ') + ' > "' + $wtraceLog + '" 2>&1'
@@ -65,8 +63,6 @@ runs:
         echo "wtrace_log_path=$wtraceLog" | Out-File -FilePath $env:GITHUB_ENV -Append
         echo "wtrace_pid=$processId" | Out-File -FilePath $env:GITHUB_ENV -Append
         Start-Sleep -Seconds 2
-        Write-Host "[wtrace] Directory contents after starting wtrace:"
-        Get-ChildItem -Path (Split-Path $wtraceLog) | Write-Host
 
     - name: Run tests and coverage
       shell: bash

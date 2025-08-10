@@ -95,8 +95,8 @@ jobs:
           CI_RESOURCE_MONITOR: "1"
           # ENABLE_OS_TRACE: "0"
           ENABLE_OS_TRACE: "1"
-          # PYTEST_FILTER_PATTERN: ""
-          PYTEST_FILTER_PATTERN: "test_tl_direct_attr or test_format_columns_all_indices"
+          PYTEST_FILTER_PATTERN: ""
+          # PYTEST_FILTER_PATTERN: "test_tl_direct_attr or test_format_columns_all_indices"
         run: |
           echo "IT_CI_LOG_LEVEL=${{ env.IT_CI_LOG_LEVEL || 'INFO' }}" >> $GITHUB_OUTPUT
           echo "CI_RESOURCE_MONITOR=${{ env.CI_RESOURCE_MONITOR || '0' }}" >> $GITHUB_OUTPUT
@@ -116,9 +116,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [
-          # ubuntu-22.04,
+          ubuntu-22.04,
           windows-2022,
-          # macos-14
+          macos-14
           ]
         python-version: ["3.12"]
     timeout-minutes: 90
