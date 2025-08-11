@@ -1,0 +1,165 @@
+name: 'Run grafana alloy github/unix prometheus exporter'
+description: 'Sets up and runs Grafana Alloy with GitHub and Unix Prometheus exporters.'
+inputs:
+  IT_GRAFANA_GITHUB_TOKEN:
+    description: 'GitHub token for Grafana exporter'
+    required: true
+  PROM_PUSH_URL:
+    description: 'Grafana Cloud Prometheus remote_write URL'
+    required: true
+  GHA_GRAFANA_USER_ID:
+    description: 'Grafana Cloud user ID'
+    required: true
+  GHA_ALLOY_WRITE_TOKEN:
+    description: 'Grafana Cloud Alloy write token'
+    required: true
+  GITHUB_RUN_ID:
+    description: 'GitHub run id'
+    required: true
+  GITHUB_WORKFLOW:
+    description: 'GitHub workflow name'
+    required: true
+  GITHUB_RUN_NUMBER:
+    description: 'GitHub run number'
+    required: true
+  GITHUB_RUN_ATTEMPT:
+    description: 'GitHub run attempt'
+    required: true
+  REPO:
+    description: 'Repository name (org/repo)'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - name: Download Grafana Alloy
+      shell: bash
+      run: |
+        curl -fsSL -o alloy.zip https://github.com/grafana/alloy/releases/latest/download/alloy-linux-amd64.zip
+        unzip alloy.zip
+        chmod +x alloy-linux-amd64
+        mkdir /tmp/alloy_data
+        echo "ALLOY_HOSTNAME=$(hostname)" >> $GITHUB_ENV
+
+    - name: Write Alloy config for GitHub Actions
+      shell: bash
+      env:
+        IT_GRAFANA_GITHUB_TOKEN: ${{ inputs.IT_GRAFANA_GITHUB_TOKEN }}
+        PROM_PUSH_URL: ${{ inputs.PROM_PUSH_URL }}
+        GHA_GRAFANA_USER_ID: ${{ inputs.GHA_GRAFANA_USER_ID }}
+        GHA_ALLOY_WRITE_TOKEN: ${{ inputs.GHA_ALLOY_WRITE_TOKEN }}
+        GITHUB_RUN_ID: ${{ inputs.GITHUB_RUN_ID }}
+        GITHUB_WORKFLOW: ${{ inputs.GITHUB_WORKFLOW }}
+        GITHUB_RUN_NUMBER: ${{ inputs.GITHUB_RUN_NUMBER }}
+        GITHUB_RUN_ATTEMPT: ${{ inputs.GITHUB_RUN_ATTEMPT }}
+        ALLOY_HOSTNAME: ${{ env.ALLOY_HOSTNAME }}
+        REPO: ${{ inputs.REPO }}
+      run: |
+        cat <<EOF > /tmp/config.alloy
+        logging {
+          level  = "info"
+          format = "json"
+        }
+        prometheus.exporter.github "integrations_github_exporter" {
+          repositories = ["$REPO"]
+          api_token    = "$IT_GRAFANA_GITHUB_TOKEN"
+        }
+
+        discovery.relabel "integrations_github_exporter" {
+          targets = prometheus.exporter.github.integrations_github_exporter.targets
+
+          rule {
+            target_label = "instance"
+            replacement  = "$GITHUB_WORKFLOW.$GITHUB_RUN_ID.$ALLOY_HOSTNAME"
+          }
+
+          rule {
+            target_label = "job"
+            replacement  = "integrations/github_exporter"
+          }
+        }
+
+        prometheus.scrape "integrations_github_exporter" {
+          targets    = discovery.relabel.integrations_github_exporter.output
+          forward_to = [prometheus.relabel.integrations_github_exporter.receiver]
+          job_name   = "integrations/github_exporter"
+        }
+
+        prometheus.relabel "integrations_github_exporter" {
+          forward_to = [prometheus.remote_write.grafanacloud.receiver]
+
+          rule {
+            source_labels = ["__name__"]
+            regex         = "up|github_rate_limit|github_rate_remaining|github_repo_forks|github_repo_open_issues|github_repo_pull_request_count|github_repo_size_kb|github_repo_stars|github_repo_watchers"
+            action        = "keep"
+          }
+        }
+
+        prometheus.exporter.unix "integrations_node_exporter" {
+          disable_collectors = ["ipvs", "btrfs", "infiniband", "xfs", "zfs"]
+
+          enable_collectors = ["diskstats", "filesystem", "loadavg", "meminfo"]
+
+          filesystem {
+            fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|tmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
+            mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+)($|/)"
+            mount_timeout        = "5s"
+          }
+
+          netclass {
+            ignored_devices = "^(veth.*|cali.*|[a-f0-9]{15})$"
+          }
+
+          netdev {
+            device_exclude = "^(veth.*|cali.*|[a-f0-9]{15})$"
+          }
+        }
+
+        discovery.relabel "integrations_node_exporter" {
+          targets = prometheus.exporter.unix.integrations_node_exporter.targets
+
+          rule {
+            target_label = "instance"
+            replacement  = "$GITHUB_RUN_ID.$GITHUB_WORKFLOW.$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT"
+          }
+
+          rule {
+            target_label = "job"
+            replacement = "integrations/node_exporter"
+          }
+        }
+
+        prometheus.scrape "integrations_node_exporter" {
+          targets    = discovery.relabel.integrations_node_exporter.output
+          forward_to = [prometheus.relabel.integrations_node_exporter.receiver]
+          scrape_interval = "5s"
+          scrape_timeout  = "3s"
+        }
+
+        prometheus.relabel "integrations_node_exporter" {
+          forward_to = [prometheus.remote_write.grafanacloud.receiver]
+
+          rule {
+            source_labels = ["__name__"]
+            regex         = "up|node_arp_entries|node_boot_time_seconds|node_context_switches_total|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_io_time_weighted_seconds_total|node_disk_read_bytes_total|node_disk_read_time_seconds_total|node_disk_reads_completed_total|node_disk_write_time_seconds_total|node_disk_writes_completed_total|node_disk_written_bytes_total|node_filefd_allocated|node_filefd_maximum|node_filesystem_avail_bytes|node_filesystem_device_error|node_filesystem_files|node_filesystem_files_free|node_filesystem_readonly|node_filesystem_size_bytes|node_intr_total|node_load1|node_load15|node_load5|node_md_disks|node_md_disks_required|node_memory_Active_anon_bytes|node_memory_Active_bytes|node_memory_Active_file_bytes|node_memory_AnonHugePages_bytes|node_memory_AnonPages_bytes|node_memory_Bounce_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_CommitLimit_bytes|node_memory_Committed_AS_bytes|node_memory_DirectMap1G_bytes|node_memory_DirectMap2M_bytes|node_memory_DirectMap4k_bytes|node_memory_Dirty_bytes|node_memory_HugePages_Free|node_memory_HugePages_Rsvd|node_memory_HugePages_Surp|node_memory_HugePages_Total|node_memory_Hugepagesize_bytes|node_memory_Inactive_anon_bytes|node_memory_Inactive_bytes|node_memory_Inactive_file_bytes|node_memory_Mapped_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_memory_MemTotal_bytes|node_memory_SReclaimable_bytes|node_memory_SUnreclaim_bytes|node_memory_ShmemHugePages_bytes|node_memory_ShmemPmdMapped_bytes|node_memory_Shmem_bytes|node_memory_Slab_bytes|node_memory_SwapTotal_bytes|node_memory_VmallocChunk_bytes|node_memory_VmallocTotal_bytes|node_memory_VmallocUsed_bytes|node_memory_WritebackTmp_bytes|node_memory_Writeback_bytes|node_netstat_Icmp6_InErrors|node_netstat_Icmp6_InMsgs|node_netstat_Icmp6_OutMsgs|node_netstat_Icmp_InErrors|node_netstat_Icmp_InMsgs|node_netstat_Icmp_OutMsgs|node_netstat_IpExt_InOctets|node_netstat_IpExt_OutOctets|node_netstat_TcpExt_ListenDrops|node_netstat_TcpExt_ListenOverflows|node_netstat_TcpExt_TCPSynRetrans|node_netstat_Tcp_InErrs|node_netstat_Tcp_InSegs|node_netstat_Tcp_OutRsts|node_netstat_Tcp_OutSegs|node_netstat_Tcp_RetransSegs|node_netstat_Udp6_InDatagrams|node_netstat_Udp6_InErrors|node_netstat_Udp6_NoPorts|node_netstat_Udp6_OutDatagrams|node_netstat_Udp6_RcvbufErrors|node_netstat_Udp6_SndbufErrors|node_netstat_UdpLite_InErrors|node_netstat_Udp_InDatagrams|node_netstat_Udp_InErrors|node_netstat_Udp_NoPorts|node_netstat_Udp_OutDatagrams|node_netstat_Udp_RcvbufErrors|node_netstat_Udp_SndbufErrors|node_network_carrier|node_network_info|node_network_mtu_bytes|node_network_receive_bytes_total|node_network_receive_compressed_total|node_network_receive_drop_total|node_network_receive_errs_total|node_network_receive_fifo_total|node_network_receive_multicast_total|node_network_receive_packets_total|node_network_speed_bytes|node_network_transmit_bytes_total|node_network_transmit_compressed_total|node_network_transmit_drop_total|node_network_transmit_errs_total|node_network_transmit_fifo_total|node_network_transmit_multicast_total|node_network_transmit_packets_total|node_network_transmit_queue_length|node_network_up|node_nf_conntrack_entries|node_nf_conntrack_entries_limit|node_os_info|node_sockstat_FRAG6_inuse|node_sockstat_FRAG_inuse|node_sockstat_RAW6_inuse|node_sockstat_RAW_inuse|node_sockstat_TCP6_inuse|node_sockstat_TCP_alloc|node_sockstat_TCP_inuse|node_sockstat_TCP_mem|node_sockstat_TCP_mem_bytes|node_sockstat_TCP_orphan|node_sockstat_TCP_tw|node_sockstat_UDP6_inuse|node_sockstat_UDPLITE6_inuse|node_sockstat_UDPLITE_inuse|node_sockstat_UDP_inuse|node_sockstat_UDP_mem|node_sockstat_UDP_mem_bytes|node_sockstat_sockets_used|node_softnet_dropped_total|node_softnet_processed_total|node_softnet_times_squeezed_total|node_systemd_unit_state|node_textfile_scrape_error|node_time_zone_offset_seconds|node_timex_estimated_error_seconds|node_timex_maxerror_seconds|node_timex_offset_seconds|node_timex_sync_status|node_uname_info|node_vmstat_oom_kill|node_vmstat_pgfault|node_vmstat_pgmajfault|node_vmstat_pgpgin|node_vmstat_pgpgout|node_vmstat_pswpin|node_vmstat_pswpout|process_max_fds|process_open_fds"
+            action        = "keep"
+          }
+        }
+
+        prometheus.remote_write "grafanacloud" {
+        endpoint {
+            name = "hosted-prometheus"
+            url  = "$PROM_PUSH_URL"
+
+            basic_auth {
+              username = "$GHA_GRAFANA_USER_ID"
+              password = "$GHA_ALLOY_WRITE_TOKEN"
+            }
+        }
+        }
+
+        EOF
+
+    - name: Start Grafana Alloy
+      shell: bash
+      run: |
+        nohup ./alloy-linux-amd64 run /tmp/config.alloy --storage.path=/tmp/alloy_data > /tmp/alloy.log 2>&1 &

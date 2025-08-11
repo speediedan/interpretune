@@ -1,5 +1,5 @@
 name: 'Run Pytest Coverage with Configured Instrumentation'
-description: 'Runs pytest with coverage and optional wtrace instrumentation on Windows.'
+description: 'Runs pytest and configured instrumentation (usually coverage, sometimes grafana metrics etc.).'
 inputs:
   pytest_filter_pattern:
     description: 'Pytest filter pattern (optional)'
@@ -26,6 +26,10 @@ inputs:
     description: 'Run CI resource monitor (env value)'
     required: false
     default: ''
+  run_w_grafana:
+    description: 'Run Grafana Alloy resource monitoring (Linux only)'
+    required: false
+    default: '0'
 runs:
   using: 'composite'
   steps:
@@ -64,6 +68,20 @@ runs:
         echo "wtrace_pid=$processId" | Out-File -FilePath $env:GITHUB_ENV -Append
         Start-Sleep -Seconds 2
 
+    - name: Run grafana alloy github/unix prometheus exporter (Linux only)
+      if: runner.os == 'Linux' && inputs.run_w_grafana == '1'
+      uses: ./.github/actions/run-grafana-alloy-exporter
+      with:
+        IT_GRAFANA_GITHUB_TOKEN: ${{ env.IT_GRAFANA_GITHUB_TOKEN }}
+        PROM_PUSH_URL: ${{ env.PROM_PUSH_URL }}
+        GHA_GRAFANA_USER_ID: ${{ env.GHA_GRAFANA_USER_ID }}
+        GHA_ALLOY_WRITE_TOKEN: ${{ env.GHA_ALLOY_WRITE_TOKEN }}
+        GITHUB_RUN_ID: ${{ github.run_id }}
+        GITHUB_WORKFLOW: ${{ github.workflow }}
+        GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        REPO: speediedan/interpretune
+
     - name: Run tests and coverage
       shell: bash
       continue-on-error: true
@@ -81,6 +99,15 @@ runs:
           PYTEST_CMD="coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
         fi
         eval $PYTEST_CMD
+
+        # Check the exit code of the pytest command
+        EXIT_CODE=$?
+        if [ $EXIT_CODE -ne 0 ]; then
+          echo "Pytest failed with exit code $EXIT_CODE."
+          echo "error=true" >> $GITHUB_ENV
+        else
+          echo "error=false" >> $GITHUB_ENV
+        fi
 
     - name: Stop CI resource monitor (Linux only)
       if: runner.os == 'Linux' && inputs.run_resource_monitor == '1'

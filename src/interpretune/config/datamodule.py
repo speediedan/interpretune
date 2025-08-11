@@ -1,5 +1,6 @@
 from typing import Optional, Any, Dict, Tuple, List
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,7 +34,7 @@ class TokenizationConfig(ITSerializableCfg):
 class DatasetProcessingConfig(ITSerializableCfg):
     remove_unused_columns: bool = True
     text_fields: Optional[Tuple] = None
-    dataset_path: Optional[str] = None
+    dataset_path: Optional[os.PathLike] = None
     enable_datasets_cache: Optional[bool] = False  # disable caching unless explicitly set to improve reproducibility
     data_collator_cfg: Dict[str, Any] = field(default_factory=dict)
     signature_columns: Optional[List] = field(default_factory=list)
@@ -63,15 +64,7 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
         # Use pathlib for cross-platform path handling and sanitize task name for Windows compatibility
         sanitized_task_name = self.task_name.replace(':', '_').replace('|', '_')
         rank_zero_debug(f"[DATAMODULE_CONFIG] Sanitized task name: '{sanitized_task_name}'")
-
-        # Respect HF_DATASETS_CACHE environment variable for cross-platform compatibility
-        import os
-        import platform
-        rank_zero_debug(f"[DATAMODULE_CONFIG] Platform: {platform.system()}")
-        rank_zero_debug(f"[DATAMODULE_CONFIG] OS name: {os.name}")
-
         hf_datasets_cache = os.environ.get("HF_DATASETS_CACHE")
-        rank_zero_debug(f"[DATAMODULE_CONFIG] HF_DATASETS_CACHE env var: {hf_datasets_cache}")
 
         if hf_datasets_cache:
             cache_home = Path(hf_datasets_cache)
@@ -83,22 +76,14 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
 
         default_dataset_save_path = cache_home / sanitized_task_name
         rank_zero_debug(f"[DATAMODULE_CONFIG] Default dataset path: {default_dataset_save_path}")
-        rank_zero_debug(f"[DATAMODULE_CONFIG] Original dataset_path: {self.dataset_path}")
 
-        # Ensure proper platform-specific path separators for Windows compatibility
+        # Ensure proper platform-specific path separators
         if self.dataset_path is None:
-            self.dataset_path = str(default_dataset_save_path.resolve())
+            self.dataset_path = default_dataset_save_path.resolve()
         else:
             # Convert existing path to use proper separators
-            self.dataset_path = str(Path(self.dataset_path).resolve())
+            self.dataset_path = Path(self.dataset_path).resolve()
         rank_zero_debug(f"[DATAMODULE_CONFIG] Final dataset_path: {self.dataset_path}")
-
-        # Additional debugging for Windows
-        if os.name == "nt":
-            rank_zero_debug("[DATAMODULE_CONFIG] Windows-specific debugging:")
-            rank_zero_debug(f"[DATAMODULE_CONFIG]   Path.resolve(): {Path(self.dataset_path).resolve()}")
-            rank_zero_debug(f"[DATAMODULE_CONFIG]   Path.as_posix(): {Path(self.dataset_path).as_posix()}")
-            rank_zero_debug(f"[DATAMODULE_CONFIG]   enable_datasets_cache: {self.enable_datasets_cache}")
 
     def _cross_validate(self, it_cfg: ITSerializableCfg) -> None:
         # inspect tokenizer, tokenizer_name, model_name_or_path here, updating datamodule config before instantiation

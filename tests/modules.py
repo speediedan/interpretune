@@ -17,7 +17,7 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.protocol import ITModuleProtocol, STEP_OUTPUT
 from interpretune.config import ITDataModuleConfig, ITConfig
-from interpretune.utils import rank_zero_only
+from interpretune.utils import rank_zero_only, rank_zero_debug
 from it_examples.experiments.rte_boolq import RTEBoolqDataModule, RTEBoolqModuleMixin, RTEBoolqSteps
 from tests import FinetuningScheduler
 from tests.base_defaults import default_test_task
@@ -48,10 +48,6 @@ class BaseTestDataModule:
     def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
         """Load the SuperGLUE dataset."""
 
-        from interpretune.utils import rank_zero_debug
-        import os
-        import platform
-
         tokenization_func = partial(
             self.encode_for_rteboolq,
             tokenizer=self.tokenizer,
@@ -62,9 +58,6 @@ class BaseTestDataModule:
         )
         dataset_path = Path(self.itdm_cfg.dataset_path).resolve()
 
-        # Enhanced debugging for Windows path issues
-        rank_zero_debug(f"[PREPARE_DATA] Platform: {platform.system()}")
-        rank_zero_debug(f"[PREPARE_DATA] OS name: {os.name}")
         rank_zero_debug("[PREPARE_DATA] Environment variables:")
         for env_var in ["HF_DATASETS_CACHE", "HF_HOME", "HUGGINGFACE_HUB_CACHE"]:
             rank_zero_debug(f"[PREPARE_DATA]   {env_var}={os.environ.get(env_var, 'NOT_SET')}")
@@ -90,24 +83,7 @@ class BaseTestDataModule:
                 dataset[split] = dataset[split].select(range(10))
                 dataset[split] = dataset[split].map(tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
                 dataset[split] = self._remove_unused_columns(dataset[split])
-            dataset_path = dataset_path.resolve()
             rank_zero_debug(f"[PREPARE_DATA] Final dataset_path before save_to_disk: {dataset_path}")
-            rank_zero_debug(f"[PREPARE_DATA] dataset_path parent exists: {dataset_path.parent.exists()}")
-
-            # Additional path debugging for Windows
-            if os.name == "nt":
-                rank_zero_debug("[PREPARE_DATA] Windows path details:")
-                rank_zero_debug(f"[PREPARE_DATA]   dataset_path.as_posix(): {dataset_path.as_posix()}")
-                rank_zero_debug(f"[PREPARE_DATA]   str(dataset_path): {str(dataset_path)}")
-                rank_zero_debug(f"[PREPARE_DATA]   Path parts: {dataset_path.parts}")
-
-                # Check if parent directories can be created
-                try:
-                    dataset_path.parent.mkdir(parents=True, exist_ok=True)
-                    rank_zero_debug(f"[PREPARE_DATA] Successfully created parent directory: {dataset_path.parent}")
-                except Exception as pe:
-                    rank_zero_debug(f"[PREPARE_DATA] Failed to create parent directory: {pe}")
-
             rank_zero_debug(f"[PREPARE_DATA] Calling save_to_disk with: {dataset_path}")
             import traceback
             try:
@@ -116,56 +92,6 @@ class BaseTestDataModule:
             except Exception as e:
                 rank_zero_debug(f"[PREPARE_DATA] save_to_disk: FAILED ({e})")
                 rank_zero_debug(f"[PREPARE_DATA] Exception type: {type(e).__name__}")
-
-                # Enhanced error information for Windows debugging
-                if os.name == "nt":
-                    import errno
-                    # Cross-platform error code
-                    rank_zero_debug(f"[PREPARE_DATA] Error number: {getattr(e, 'errno', 'N/A')}")
-                    # Windows-specific error code
-                    rank_zero_debug(f"[PREPARE_DATA] Windows Error Code: {getattr(e, 'winerror', 'N/A')}")
-                    # File path involved in the error
-                    rank_zero_debug(f"[PREPARE_DATA] Filename: {getattr(e, 'filename', 'N/A')}")
-
-                    if hasattr(e, 'errno') and e.errno == errno.EINVAL:
-                        rank_zero_debug("[PREPARE_DATA] This is errno 22 (EINVAL) - Invalid argument")
-
-                        # Try to understand what path is causing the issue
-                        try:
-                            # Let's see what fsspec is trying to open
-                            rank_zero_debug("[PREPARE_DATA] Attempting to debug fsspec path handling...")
-
-                            # Check if we can create a simple file in the directory
-                            test_file_path = dataset_path.parent / "test_file.txt"
-                            with open(test_file_path, 'w') as f:
-                                f.write("test")
-                            test_file_path.unlink()  # Remove test file
-                            rank_zero_debug("[PREPARE_DATA] Basic file operations work in target directory")
-                        except Exception as debug_e:
-                            rank_zero_debug(f"[PREPARE_DATA] Basic file operations failed: {debug_e}")
-
-                        # Try opening the problematic path in read-only mode
-                        try:
-                            rank_zero_debug(f"[PREPARE_DATA] Attempting to open {dataset_path} in read-only mode...")
-                            with open(dataset_path, 'r') as f:
-                                f.read(1)
-                            rank_zero_debug(f"[PREPARE_DATA] Successfully opened {dataset_path} in read-only mode.")
-                        except Exception as ro_e:
-                            rank_zero_debug(f"[PREPARE_DATA] Failed to open {dataset_path} in read-only mode: {ro_e}")
-
-                        # Try opening the problematic path in write-binary mode (Windows path format)
-                        try:
-                            win_path = str(dataset_path)
-                            rank_zero_debug(
-                                f"[PREPARE_DATA] Attempting to open {win_path} in write-binary mode (wb)..."
-                            )
-                            with open(win_path, 'wb') as f:
-                                f.write(b'interpretune test')
-                            os.remove(win_path)
-                            rank_zero_debug(f"[PREPARE_DATA] Successfully opened and wrote to {win_path} in wb mode.")
-                        except Exception as wb_e:
-                            rank_zero_debug(f"[PREPARE_DATA] Failed to open {win_path} in wb mode: {wb_e}")
-
                 traceback.print_exc()
 
 class TestITDataModule(BaseTestDataModule, RTEBoolqDataModule):
