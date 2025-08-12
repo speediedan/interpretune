@@ -61,7 +61,7 @@ class TLMechInterpCfg(BaseCfg):
     dm_override_cfg: dict | None = field(default_factory=lambda: {
         'enable_datasets_cache': False,
         'tokenizer_kwargs': {'padding_side': 'right', 'model_input_names': ['input']},
-        'dataset_path': '/tmp/tl_cust_mi_force_prepare_ds'
+        'dataset_path': os.path.join(tempfile.gettempdir(), 'tl_cust_mi_force_prepare_ds')
         })
 
 @dataclass(kw_only=True)
