@@ -153,11 +153,11 @@ jobs:
         run: |
           python -c "import time; days = time.time() / 60 / 60 / 24; print(f'TIME_PERIOD=d{int(days / 2) * 2}')" >> $GITHUB_OUTPUT
 
-      - name: Install libpq (macOS only)
-        if: runner.os == 'macOS'
-        run: |
-          brew reinstall libpq
-          brew link --force libpq
+      # - name: Install libpq (macOS only)
+      #   if: runner.os == 'macOS'
+      #   run: |
+      #     brew reinstall libpq
+      #     brew link --force libpq
 
       # Note: This uses an internal pip API and may not always work
       # https://github.com/actions/cache/blob/master/examples.md#multiple-oss-in-a-workflow
@@ -197,13 +197,13 @@ jobs:
           run_resource_monitor: ${{ needs.log-dispatch-inputs.outputs.run_resource_monitor }}
           run_w_grafana: ${{ needs.log-dispatch-inputs.outputs.run_w_grafana }}
 
-      # we add this step to address edge cases where the pytest step in our composite action will error (which is reported)
-      # but still be marked as "green" in the UI
-      - name: Explicitly raise pytest error status (if present)
-        if: steps.run-pytest-coverage.outputs.error_occurred == 'true'
-        run: |
-          echo "The pytest run exited non-zero, see provided logs."
-          exit 1
+      # # we add this step to address edge cases where the pytest step in our composite action will error (which is reported)
+      # # but still be marked as "green" in the UI
+      # - name: Explicitly raise pytest error status (if present)
+      #   if: steps.run-pytest-coverage.outputs.error_occurred == 'true'
+      #   run: |
+      #     echo "The pytest run exited non-zero, see provided logs."
+      #     exit 1
 
       - name: Upload pytest results
         uses: actions/upload-artifact@v4
@@ -213,14 +213,14 @@ jobs:
         if: failure()
 
       - name: Upload wtrace output (if present)
-        if: runner.os == 'Windows' && needs.log-dispatch-inputs.outputs.enable_os_trace == '1' && steps.run-pytest-coverage.outputs.wtrace_log_path != ''
+        if: always() && runner.os == 'Windows' && needs.log-dispatch-inputs.outputs.enable_os_trace == '1' && steps.run-pytest-coverage.outputs.wtrace_log_path != ''
         uses: actions/upload-artifact@v4
         with:
           name: wtrace-filesystem-errors-${{ runner.os }}-${{ matrix.python-version }}
           path: ${{ steps.run-pytest-coverage.outputs.wtrace_log_path }}
 
       - name: Upload CI resource monitor log (if present)
-        if: runner.os == 'Linux' && needs.log-dispatch-inputs.outputs.run_resource_monitor == '1'
+        if: always() && runner.os == 'Linux' && needs.log-dispatch-inputs.outputs.run_resource_monitor == '1'
         uses: actions/upload-artifact@v4
         with:
           name: ci_resource_monitor-log-${{ runner.os }}-${{ matrix.python-version }}
@@ -229,7 +229,7 @@ jobs:
 
       - name: Prepare Alloy log (if present)
         id: prepare-alloy-log
-        if: runner.os == 'Linux' && needs.log-dispatch-inputs.outputs.run_w_grafana == '1'
+        if: always() && runner.os == 'Linux' && needs.log-dispatch-inputs.outputs.run_w_grafana == '1'
         shell: bash
         run: |
           if [ -f /tmp/alloy.log ]; then
@@ -243,7 +243,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload Alloy log artifact
-        if: runner.os == 'Linux' && needs.log-dispatch-inputs.outputs.run_w_grafana == '1' && steps.prepare-alloy-log.outputs.file_exists == 'true'
+        if: always() && runner.os == 'Linux' && needs.log-dispatch-inputs.outputs.run_w_grafana == '1' && steps.prepare-alloy-log.outputs.file_exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: alloy-log-${{ runner.os }}-${{ matrix.python-version }}

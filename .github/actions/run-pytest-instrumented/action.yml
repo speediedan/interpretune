@@ -84,7 +84,6 @@ runs:
 
     - name: Run tests and coverage
       shell: bash
-      continue-on-error: true
       env:
         IT_CI_LOG_LEVEL: ${{ inputs.it_ci_log_level }}
         PYTHONPATH: ${{ inputs.workspace }}/src
@@ -101,16 +100,17 @@ runs:
         eval $PYTEST_CMD
 
         # Check the exit code of the pytest command
-        EXIT_CODE=$?
-        if [ $EXIT_CODE -ne 0 ]; then
-          echo "Pytest failed with exit code $EXIT_CODE."
-          echo "error=true" >> $GITHUB_ENV
-        else
-          echo "error=false" >> $GITHUB_ENV
-        fi
+        # EXIT_CODE=$?
+        # if [ $EXIT_CODE -ne 0 ]; then
+        #   echo "Pytest failed with exit code $EXIT_CODE."
+        #   echo "error=true" >> $GITHUB_ENV
+        #   exit $EXIT_CODE
+        # else
+        #   echo "error=false" >> $GITHUB_ENV
+        # fi
 
     - name: Stop CI resource monitor (Linux only)
-      if: runner.os == 'Linux' && inputs.run_resource_monitor == '1'
+      if: always() && runner.os == 'Linux' && inputs.run_resource_monitor == '1'
       shell: bash
       run: |
         if [ -f /tmp/ci_resource_monitor.pid ]; then
@@ -119,7 +119,7 @@ runs:
         fi
 
     - name: Stop wtrace session (Windows only)
-      if: runner.os == 'Windows' && inputs.enable_os_trace == '1'
+      if: always() && runner.os == 'Windows' && inputs.enable_os_trace == '1'
       id: wtrace_stop
       shell: pwsh
       continue-on-error: true
