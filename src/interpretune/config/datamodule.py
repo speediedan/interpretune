@@ -34,7 +34,7 @@ class TokenizationConfig(ITSerializableCfg):
 class DatasetProcessingConfig(ITSerializableCfg):
     remove_unused_columns: bool = True
     text_fields: Optional[Tuple] = None
-    dataset_path: Optional[os.PathLike] = None
+    dataset_path: Optional[Union[str, os.PathLike]] = None
     enable_datasets_cache: Optional[bool] = False  # disable caching unless explicitly set to improve reproducibility
     data_collator_cfg: Dict[str, Any] = field(default_factory=dict)
     signature_columns: Optional[List] = field(default_factory=list)
