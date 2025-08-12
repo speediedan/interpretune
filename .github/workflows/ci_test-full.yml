@@ -16,6 +16,21 @@ on:
         required: false
         default: '0'
         type: string
+      enable_os_trace:
+        description: 'Enable OS-level tracing (Windows only currently)'
+        required: false
+        default: '0'
+        type: string
+      pytest_filter_pattern:
+        description: 'Pytest filter pattern (optional)'
+        required: false
+        default: ''
+        type: string
+      run_w_grafana:
+        description: 'Run Grafana Alloy resource monitoring (Linux only)'
+        required: false
+        default: '0'
+        type: string
   push:
     branches: [main, "release/*", "bugfix/*"]
     paths:
@@ -65,19 +80,45 @@ concurrency:
   cancel-in-progress: ${{ ! (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) }}
 
 jobs:
-  # this job allows us to set the log level and resource monitor with the following precedence:
-  # workflow_dispatch inputs -> repository variable defaults -> fallback defaults
+  # this job allows us to set CI test filters, log level, resource monitor and os tracing, test with precedence:
+  # workflow_dispatch inputs -> manual workflow overrides -> repository variable defaults -> fallback defaults
   log-dispatch-inputs:
     runs-on: ubuntu-latest
     outputs:
       log_level: ${{ steps.resolve_dispatch_vars.outputs.log_level }}
       run_resource_monitor: ${{ steps.resolve_dispatch_vars.outputs.run_resource_monitor }}
+      enable_os_trace: ${{ steps.resolve_dispatch_vars.outputs.enable_os_trace }}
+      pytest_filter_pattern: ${{ steps.resolve_dispatch_vars.outputs.pytest_filter_pattern }}
+      run_w_grafana: ${{ steps.resolve_dispatch_vars.outputs.run_w_grafana }}
     steps:
+      - name: Capture manual workflow overrides
+        id: capture-manual-overrides
+        env:
+          # toggle comments here as desired to force more granular logging for this workflow
+          IT_CI_LOG_LEVEL: ${{ vars.IT_CI_LOG_LEVEL || 'INFO' }}
+          # IT_CI_LOG_LEVEL: "DEBUG"
+          CI_RESOURCE_MONITOR: ${{ vars.CI_RESOURCE_MONITOR || '0' }}
+          # CI_RESOURCE_MONITOR: "1"
+          ENABLE_OS_TRACE: "0"
+          # ENABLE_OS_TRACE: "1"
+          PYTEST_FILTER_PATTERN: ""
+          # PYTEST_FILTER_PATTERN: "test_format_columns_all_indices or test_run_with_saes_with_cache_fwd_bwd"
+          RUN_W_GRAFANA: ${{ vars.RUN_W_GRAFANA || '0' }}
+          # RUN_W_GRAFANA: "1"
+        run: |
+          echo "IT_CI_LOG_LEVEL=${{ env.IT_CI_LOG_LEVEL || 'INFO' }}" >> $GITHUB_OUTPUT
+          echo "CI_RESOURCE_MONITOR=${{ env.CI_RESOURCE_MONITOR || '0' }}" >> $GITHUB_OUTPUT
+          echo "ENABLE_OS_TRACE=${{ env.ENABLE_OS_TRACE }}" >> $GITHUB_OUTPUT
+          echo "PYTEST_FILTER_PATTERN=${{ env.PYTEST_FILTER_PATTERN }}" >> $GITHUB_OUTPUT
+          echo "RUN_W_GRAFANA=${{ env.RUN_W_GRAFANA || '0' }}" >> $GITHUB_OUTPUT
       - name: Resolve workflow dispatch inputs
         id: resolve_dispatch_vars
         run: |
-          echo "log_level=${{ inputs.logLevel || vars.IT_CI_LOG_LEVEL || 'INFO'  }}" >> $GITHUB_OUTPUT
-          echo "run_resource_monitor=${{ inputs.run_resource_monitor || vars.CI_RESOURCE_MONITOR || '0' }}" >> $GITHUB_OUTPUT
+          echo "log_level=${{ inputs.logLevel != '' && inputs.logLevel || steps.capture-manual-overrides.outputs.IT_CI_LOG_LEVEL }}" >> $GITHUB_OUTPUT
+          echo "run_resource_monitor=${{ inputs.run_resource_monitor != '' && inputs.run_resource_monitor || steps.capture-manual-overrides.outputs.CI_RESOURCE_MONITOR }}" >> $GITHUB_OUTPUT
+          echo "enable_os_trace=${{ inputs.enable_os_trace != '' && inputs.enable_os_trace || steps.capture-manual-overrides.outputs.ENABLE_OS_TRACE }}" >> $GITHUB_OUTPUT
+          echo "pytest_filter_pattern=${{ inputs.pytest_filter_pattern != '' && inputs.pytest_filter_pattern || steps.capture-manual-overrides.outputs.PYTEST_FILTER_PATTERN }}" >> $GITHUB_OUTPUT
+          echo "run_w_grafana=${{ inputs.run_w_grafana != '' && inputs.run_w_grafana || steps.capture-manual-overrides.outputs.RUN_W_GRAFANA || '1' }}" >> $GITHUB_OUTPUT
   cpu:
     needs: log-dispatch-inputs
     runs-on: ${{ matrix.os }}
@@ -92,66 +133,122 @@ jobs:
         python-version: ["3.12"]
     timeout-minutes: 90
     env:
-      IT_CI_LOG_LEVEL: ${{ needs.log-dispatch-inputs.outputs.log_level }}
-      CI_RESOURCE_MONITOR: ${{ needs.log-dispatch-inputs.outputs.run_resource_monitor }}
       IT_USE_CT_COMMIT_PIN: "1"
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       HF_GATED_PUBLIC_REPO_AUTH_KEY: ${{ secrets.HF_GATED_PUBLIC_REPO_AUTH_KEY }}
+      ### we need to set the below secrets/vars for Grafana Alloy monitoring in our composite action (which doesn't have direct access to those workflow inputs)
+      IT_GRAFANA_GITHUB_TOKEN: ${{ secrets.IT_GRAFANA_GITHUB_TOKEN }}
+      PROM_PUSH_URL: ${{ vars.PROM_PUSH_URL }}
+      GHA_GRAFANA_USER_ID: ${{ secrets.GHA_GRAFANA_USER_ID }}
+      GHA_ALLOY_WRITE_TOKEN: ${{ secrets.GHA_ALLOY_WRITE_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Reset caching
+        id: set_time_period
+        run: |
+          python -c "import time; days = time.time() / 60 / 60 / 24; print(f'TIME_PERIOD=d{int(days / 2) * 2}')" >> $GITHUB_OUTPUT
+
       - name: Install libpq (macOS only)
         if: runner.os == 'macOS'
         run: |
-          brew install libpq
+          brew reinstall libpq
           brew link --force libpq
+
+      # Note: This uses an internal pip API and may not always work
+      # https://github.com/actions/cache/blob/master/examples.md#multiple-oss-in-a-workflow
+      - name: Get pip cache dir
+        id: pip-cache
+        shell: bash
+        run: |
+          echo "PIP_CACHE_DIR=$(pip cache dir)" >> $GITHUB_ENV
+
+      - name: pip cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PIP_CACHE_DIR }}
+          key: ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-${{ hashFiles('requirements/base.txt') }}-${{ hashFiles('requirements/test.txt') }}-${{ hashFiles('requirements/examples.txt') }}-${{ hashFiles('requirements/lightning.txt') }}-${{ hashFiles('requirements/circuit_tracer_pin.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-
+
       - name: Set up venv and install dependencies (all OS)
         shell: bash
         run: |
-          python -m pip install --upgrade pip setuptools wheel build
-          python -m pip install '.[test,examples,lightning]' -c requirements/ci_constraints.txt
-          pip install --upgrade datasets
-          pip install --upgrade fsspec
+          python -m pip install --upgrade pip setuptools wheel build --cache-dir "$PIP_CACHE_DIR"
+          python -m pip install '.[test,examples,lightning]' -c requirements/ci_constraints.txt --cache-dir "$PIP_CACHE_DIR"
+          pip install --upgrade datasets --cache-dir "$PIP_CACHE_DIR"
+          pip install --upgrade fsspec --cache-dir "$PIP_CACHE_DIR"
           pip list
-      - name: Run tests, coverage, and resource monitor
-        shell: bash
-        env:
-          # uncomment these at the step level here to force more granular logging for this workflow without manual
-          # dispatch or repository override
-          # IT_CI_LOG_LEVEL: "DEBUG"
-          # CI_RESOURCE_MONITOR: "1"
-          PYTHONPATH: ${{ github.workspace }}/src
-          # Make log level configurable via IT_CI_LOG_LEVEL (repo default: 'INFO')
-          PYTEST_ADDOPTS: "--log-cli-level=${{ env.IT_CI_LOG_LEVEL }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"
-          # Optional: filter pattern for pytest (-k), disables coverage if set
-          PYTEST_FILTER_PATTERN: ${{ env.PYTEST_FILTER_PATTERN || '' }}
-        run: |
-          if [ -n "$PYTEST_FILTER_PATTERN" ]; then
-            echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."
-            PYTEST_CMD="pytest src/interpretune tests -v --import-mode=importlib --durations=50 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml"
-          else
-            PYTEST_CMD="coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml"
-          fi
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            chmod +x ./scripts/ci_resource_monitor.sh
-            ./scripts/ci_resource_monitor.sh &
-            monitor_pid=$!
-            eval $PYTEST_CMD
-            kill $monitor_pid || true
-          else
-            eval $PYTEST_CMD
-          fi
+
+      - name: Run pytest coverage w/ configured instrumentation
+        id: run-pytest-coverage
+        uses: ./.github/actions/run-pytest-instrumented
+        with:
+          pytest_filter_pattern: ${{ needs.log-dispatch-inputs.outputs.pytest_filter_pattern }}
+          python_version: ${{ matrix.python-version }}
+          runner_os: ${{ runner.os }}
+          it_ci_log_level: ${{ needs.log-dispatch-inputs.outputs.log_level }}
+          workspace: ${{ github.workspace }}
+          enable_os_trace: ${{ needs.log-dispatch-inputs.outputs.enable_os_trace }}
+          run_resource_monitor: ${{ needs.log-dispatch-inputs.outputs.run_resource_monitor }}
+          run_w_grafana: ${{ needs.log-dispatch-inputs.outputs.run_w_grafana }}
+
       - name: Upload pytest results
         uses: actions/upload-artifact@v4
         with:
           name: pytest-results-${{ runner.os }}-${{ matrix.python-version }}
           path: junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml
         if: failure()
+
+      - name: Upload wtrace output (if present)
+        if: always() && runner.os == 'Windows' && needs.log-dispatch-inputs.outputs.enable_os_trace == '1' && steps.run-pytest-coverage.outputs.wtrace_log_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: wtrace-filesystem-errors-${{ runner.os }}-${{ matrix.python-version }}
+          path: ${{ steps.run-pytest-coverage.outputs.wtrace_log_path }}
+
+      - name: Upload CI resource monitor log (if present)
+        if: always() && runner.os == 'Linux' && needs.log-dispatch-inputs.outputs.run_resource_monitor == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci_resource_monitor-log-${{ runner.os }}-${{ matrix.python-version }}
+          path: /tmp/ci_resource_monitor.log
+        continue-on-error: true
+
+      - name: Prepare Alloy log (if present)
+        id: prepare-alloy-log
+        if: always() && runner.os == 'Linux' && needs.log-dispatch-inputs.outputs.run_w_grafana == '1'
+        shell: bash
+        run: |
+          if [ -f /tmp/alloy.log ]; then
+            echo "Uploading /tmp/alloy.log as artifact."
+            tar -czf /tmp/alloy-log-${{ runner.os }}-${{ matrix.python-version }}.tar.gz -C /tmp alloy.log
+            echo "file_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "/tmp/alloy.log not found, skipping upload."
+            echo "file_exists=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      - name: Upload Alloy log artifact
+        if: always() && runner.os == 'Linux' && needs.log-dispatch-inputs.outputs.run_w_grafana == '1' && steps.prepare-alloy-log.outputs.file_exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: alloy-log-${{ runner.os }}-${{ matrix.python-version }}
+          path: /tmp/alloy-log-${{ runner.os }}-${{ matrix.python-version }}.tar.gz
+        continue-on-error: true
+
       - name: Statistics
         if: success()
+        shell: bash
         run: |
-          coverage report
-          coverage xml
+          if [ -f .coverage ]; then
+            coverage report
+            coverage xml
+          else
+            echo "No coverage data to report."
+          fi

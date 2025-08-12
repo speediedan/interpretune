@@ -20,7 +20,6 @@ from torch.testing import assert_close
 import einops
 from jaxtyping import Int, Float
 
-from tests.runif import RunIf
 
 class TestClassFTSExtension:
 
@@ -57,9 +56,7 @@ class TestClassFTSExtension:
         l2_attributions = einops.einsum(W_U_correct_tokens, l2_results[:-1], "emb seq, seq nhead emb -> seq nhead")
         return torch.concat([direct_attributions.unsqueeze(-1), l1_attributions, l2_attributions], dim=-1)
 
-    # TODO: re-enable this test on windows once a windows-specific OSError ([22]) is resolved.
-    @RunIf(skip_windows=True)
-    def test_tl_direct_attr(self, get_it_session__tl_cust_mi__setup, tmp_path):
+    def test_tl_direct_attr(self, get_it_session__tl_cust_mi__setup, huggingface_env):
         fixture = get_it_session__tl_cust_mi__setup
         it_session = fixture.it_session
         curr_model = it_session.module.model

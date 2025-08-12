@@ -668,11 +668,19 @@ def pytest_collection_modifyitems(items):
 def huggingface_env(tmp_path):
     orig_hf_datasets_cache = os.environ.get("HF_DATASETS_CACHE")
     orig_hf_home = os.environ.get("HF_HOME")
-    orig_hf_hub_cache = os.environ.get("HUGGINGFACE_HUB_CACHE") if os.name == "nt" else None
-    os.environ["HF_DATASETS_CACHE"] = str(tmp_path / "hf_datasets_cache")
-    os.environ["HF_HOME"] = str(tmp_path / "hf_home")
-    if os.name == "nt":
-        os.environ["HUGGINGFACE_HUB_CACHE"] = str(tmp_path / "hf_hub_cache")
+    orig_hf_hub_cache = os.environ.get("HUGGINGFACE_HUB_CACHE")
+
+    # Create the temporary cache directories
+    hf_datasets_cache_dir = tmp_path / "hf_datasets_cache"
+    hf_home_dir = tmp_path / "hf_home"
+    hf_hub_cache_dir = tmp_path / "hf_hub_cache"
+    hf_datasets_cache_dir.mkdir(parents=True, exist_ok=True)
+    hf_home_dir.mkdir(parents=True, exist_ok=True)
+    hf_hub_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    os.environ["HF_DATASETS_CACHE"] = str(hf_datasets_cache_dir)
+    os.environ["HF_HOME"] = str(hf_home_dir)
+    os.environ["HUGGINGFACE_HUB_CACHE"] = str(hf_hub_cache_dir)
     yield
     if orig_hf_datasets_cache is not None:
         os.environ["HF_DATASETS_CACHE"] = orig_hf_datasets_cache
@@ -682,11 +690,10 @@ def huggingface_env(tmp_path):
         os.environ["HF_HOME"] = orig_hf_home
     else:
         os.environ.pop("HF_HOME", None)
-    if os.name == "nt":
-        if orig_hf_hub_cache is not None:
-            os.environ["HUGGINGFACE_HUB_CACHE"] = orig_hf_hub_cache
-        else:
-            os.environ.pop("HUGGINGFACE_HUB_CACHE", None)
+    if orig_hf_hub_cache is not None:
+        os.environ["HUGGINGFACE_HUB_CACHE"] = orig_hf_hub_cache
+    else:
+        os.environ.pop("HUGGINGFACE_HUB_CACHE", None)
 
 @pytest.fixture(scope="function")
 def mock_analysis_store():

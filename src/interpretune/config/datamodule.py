@@ -1,5 +1,6 @@
-from typing import Optional, Any, Dict, Tuple, List
+from typing import Optional, Any, Dict, Tuple, List, Union
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,7 +34,7 @@ class TokenizationConfig(ITSerializableCfg):
 class DatasetProcessingConfig(ITSerializableCfg):
     remove_unused_columns: bool = True
     text_fields: Optional[Tuple] = None
-    dataset_path: Optional[str] = None
+    dataset_path: Optional[Union[str, os.PathLike]] = None
     enable_datasets_cache: Optional[bool] = False  # disable caching unless explicitly set to improve reproducibility
     data_collator_cfg: Dict[str, Any] = field(default_factory=dict)
     signature_columns: Optional[List] = field(default_factory=list)
@@ -63,19 +64,25 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
         # Use pathlib for cross-platform path handling and sanitize task name for Windows compatibility
         sanitized_task_name = self.task_name.replace(':', '_').replace('|', '_')
         rank_zero_debug(f"[DATAMODULE_CONFIG] Sanitized task name: '{sanitized_task_name}'")
+        hf_datasets_cache = os.environ.get("HF_DATASETS_CACHE")
 
-        # Use Path.home() for cross-platform home directory detection
-        cache_home = Path.home() / ".cache" / "huggingface" / "datasets"
+        if hf_datasets_cache:
+            cache_home = Path(hf_datasets_cache)
+            rank_zero_debug(f"[DATAMODULE_CONFIG] Using HF_DATASETS_CACHE: {cache_home}")
+        else:
+            # Use Path.home() for cross-platform home directory detection
+            cache_home = Path.home() / ".cache" / "huggingface" / "datasets"
+            rank_zero_debug(f"[DATAMODULE_CONFIG] Using default cache path: {cache_home}")
+
         default_dataset_save_path = cache_home / sanitized_task_name
         rank_zero_debug(f"[DATAMODULE_CONFIG] Default dataset path: {default_dataset_save_path}")
-        rank_zero_debug(f"[DATAMODULE_CONFIG] Original dataset_path: {self.dataset_path}")
 
-        # Ensure proper platform-specific path separators for Windows compatibility
+        # Ensure proper platform-specific path separators
         if self.dataset_path is None:
-            self.dataset_path = str(default_dataset_save_path.resolve())
+            self.dataset_path = default_dataset_save_path.resolve()
         else:
             # Convert existing path to use proper separators
-            self.dataset_path = str(Path(self.dataset_path).resolve())
+            self.dataset_path = Path(self.dataset_path).resolve()
         rank_zero_debug(f"[DATAMODULE_CONFIG] Final dataset_path: {self.dataset_path}")
 
     def _cross_validate(self, it_cfg: ITSerializableCfg) -> None:

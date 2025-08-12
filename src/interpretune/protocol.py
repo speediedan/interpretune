@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 # Interpretune helper types
 ################################################################################
 
+# TODO: remove this type in favor using PathLike alone now that the type resolution issue should be fixed
 StrOrPath: TypeAlias = Union[str, PathLike]
 
 ################################################################################
