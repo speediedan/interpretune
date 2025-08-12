@@ -99,16 +99,6 @@ runs:
         fi
         eval $PYTEST_CMD
 
-        # Check the exit code of the pytest command
-        # EXIT_CODE=$?
-        # if [ $EXIT_CODE -ne 0 ]; then
-        #   echo "Pytest failed with exit code $EXIT_CODE."
-        #   echo "error=true" >> $GITHUB_ENV
-        #   exit $EXIT_CODE
-        # else
-        #   echo "error=false" >> $GITHUB_ENV
-        # fi
-
     - name: Stop CI resource monitor (Linux only)
       if: always() && runner.os == 'Linux' && inputs.run_resource_monitor == '1'
       shell: bash
