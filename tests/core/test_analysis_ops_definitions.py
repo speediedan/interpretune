@@ -1173,7 +1173,6 @@ class TestAnalysisOperationsImplementations:
         # Validate row-by-row access (format_row path)
         self._validate_format_row_path(op_cfg, result_batches, loaded_dataset)
 
-    # @RunIf(min_cuda_gpus=1)  # not technically required, but runs causes issues with cpu-only GHA runner
     @pytest.mark.parametrize(("test_alias", "test_config"), pytest_factory(SERIALIZATION_TEST_CONFIGS, unpack=False))
     def test_op_serialization(self, request, op_serialization_fixt, test_alias, test_config):
         """Test multiple operations using schema-driven column validation."""
