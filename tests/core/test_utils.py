@@ -10,12 +10,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from copy import deepcopy
+from pathlib import Path
 from unittest.mock import patch, Mock
 import operator
 import os
 import sys
 from typing import Any
 import json
+import tempfile
 
 import pytest
 import torch
@@ -30,7 +32,8 @@ from interpretune.utils import (
 from interpretune.config import ITExtension, SessionRunnerCfg
 from interpretune.extensions import MemProfilerHooks, DefaultMemHooks
 from interpretune.utils.exceptions import (
-    handle_exception_with_debug_dump, _introspect_variable, _json_serializer, MisconfigurationException
+    handle_exception_with_debug_dump, _introspect_variable, _json_serializer, MisconfigurationException,
+    IT_ANALYSIS_DUMP_DIR_NAME
 )
 
 
@@ -426,54 +429,45 @@ class TestClassUtils:
 
     def test_handle_exception_with_debug_dump_default_dir(self, tmp_path, monkeypatch):
         """Test handle_exception_with_debug_dump using the default directory path logic."""
+        import datetime
         test_exception = ValueError("Default dir test")
         test_context = {"test_key": "test_value"}
 
-        # arrange a fake __file__ 4 levels deep under tmp_path
-        mock_file = tmp_path / "a" / "b" / "c" / "exceptions.py"
-        os.makedirs(mock_file.parent, exist_ok=True)
+        # Patch IT_ANALYSIS_DUMP_DIR_NAME to include a datetime stamp for test isolation
+        dt_stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        patched_dir_name = f"{IT_ANALYSIS_DUMP_DIR_NAME}_{dt_stamp}"
+        monkeypatch.setattr("interpretune.utils.exceptions.IT_ANALYSIS_DUMP_DIR_NAME", patched_dir_name)
+        debug_dir = Path(tempfile.gettempdir()) / patched_dir_name
 
-        # prepare debug dir path
-        debug_dir = tmp_path / "debug"
+        # run under patches (no os.makedirs stub so real dir is created)
+        with patch("json.dump") as mock_dump, \
+             patch("pathlib.Path.open", side_effect=open), \
+             patch("datetime.datetime") as mock_datetime, \
+             pytest.raises(ValueError):
 
-        # patch module __file__
-        import interpretune.utils.exceptions as exc_mod
-        orig_file = exc_mod.__file__
-        monkeypatch.setattr(exc_mod, "__file__", str(mock_file))
+            # setup mock datetime for consistent timestamp
+            mock_dt = Mock()
+            mock_dt.strftime.return_value = "20250519_142500"
+            mock_datetime.now.return_value = mock_dt
 
+            handle_exception_with_debug_dump(test_exception, test_context, "default_dir_test")
+
+        # verify debug_dir was created
+        assert debug_dir.exists() and debug_dir.is_dir()
+
+        # glob for the single created JSON file (to enforce test isolation)
+        files = list(debug_dir.glob("default_dir_test_error_*.json"))
+        assert len(files) == 1, f"expected one debug file, found {files}"
+
+        # inspect the dumped data via mock_dump
+        debug_data = mock_dump.call_args[0][0]
+        assert debug_data["error"] == "Default dir test"
+        assert debug_data["test_key"] == "test_value"
+
+        # clean up debug files and directory
+        for f in debug_dir.glob("*.json"):
+            f.unlink()
         try:
-            # run under patches (no os.makedirs stub so real dir is created)
-            with patch("json.dump") as mock_dump, \
-                 patch("pathlib.Path.open", side_effect=open), \
-                 patch("datetime.datetime") as mock_datetime, \
-                 pytest.raises(ValueError):
-
-                # setup mock datetime for consistent timestamp
-                mock_dt = Mock()
-                mock_dt.strftime.return_value = "20250519_142500"
-                mock_datetime.now.return_value = mock_dt
-
-                handle_exception_with_debug_dump(test_exception, test_context, "default_dir_test")
-
-            # verify debug_dir was created
-            assert debug_dir.exists() and debug_dir.is_dir()
-
-            # glob for the single created JSON file
-            files = list(debug_dir.glob("default_dir_test_error_*.json"))
-            assert len(files) == 1, f"expected one debug file, found {files}"
-
-            # inspect the dumped data via mock_dump
-            debug_data = mock_dump.call_args[0][0]
-            assert debug_data["error"] == "Default dir test"
-            assert debug_data["test_key"] == "test_value"
-
-        finally:
-            # restore original __file__
-            monkeypatch.setattr(exc_mod, "__file__", orig_file)
-            # clean up debug files and directory
-            for f in debug_dir.glob("*.json"):
-                f.unlink()
-            try:
-                debug_dir.rmdir()
-            except OSError:
-                pass
+            debug_dir.rmdir()
+        except OSError:
+            pass

@@ -3,11 +3,15 @@ import json
 import traceback
 import logging
 import inspect
+import tempfile
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional, Union, Sequence
 
 log = logging.getLogger(__name__)
+
+
+IT_ANALYSIS_DUMP_DIR_NAME = "it_analysis_debug_dump"
 
 class MisconfigurationException(Exception):
     """Exception used to inform users of misuse with interpretune."""
@@ -31,13 +35,8 @@ def handle_exception_with_debug_dump(
         The original exception after creating the debug dump
     """
     # Create debug dump file
-    if debug_dir_override:
-        debug_dir = Path(debug_dir_override)
-    else:
-        # Find the project root directory (typically 3 levels up from utils/exceptions.py)
-        current_file = Path(__file__)
-        project_root = current_file.parent.parent.parent.parent
-        debug_dir = project_root / "debug"
+    debug_dir = Path(debug_dir_override) if debug_dir_override else \
+        Path(tempfile.gettempdir()) / IT_ANALYSIS_DUMP_DIR_NAME
 
     os.makedirs(debug_dir, exist_ok=True)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

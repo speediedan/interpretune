@@ -126,7 +126,7 @@ def get_alive_latents_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
         alive_latents = {}
         for name, acts in filtered_acts.items():
             alive = (acts[torch.arange(acts.size(0)),
-                          answer_indices, :] > 0).any(dim=0).nonzero().squeeze().tolist()
+                                 answer_indices, :] > 0).any(dim=0).nonzero().squeeze(1).tolist()
             alive_latents[name] = alive
 
     analysis_batch.update(alive_latents=alive_latents)

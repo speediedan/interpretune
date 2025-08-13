@@ -32,7 +32,7 @@ on:
         default: '0'
         type: string
   push:
-    branches: [main, "release/*", "bugfix/*"]
+    branches: [main, "release/*", "bugfix/*", "feature/*"]
     paths:
       - "setup.*"
       - "requirements.txt"
@@ -53,7 +53,7 @@ on:
       - "!**/CONTRIBUTING.md"
       - "!**/LICENSE*"
   pull_request:
-    branches: [main, "release/*", "bugfix/*"]
+    branches: [main, "release/*", "bugfix/*", "feature/*"]
     types: [opened, reopened, ready_for_review, synchronize]
     paths:
       - "setup.*"
@@ -203,6 +203,23 @@ jobs:
           name: pytest-results-${{ runner.os }}-${{ matrix.python-version }}
           path: junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml
         if: failure()
+
+      - name: Load analysis debug dump directory path (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          DEBUG_DUMP_DIR="$(python -c 'import tempfile; from interpretune.utils.exceptions import IT_ANALYSIS_DUMP_DIR_NAME; from pathlib import Path; print(Path(tempfile.gettempdir()) / IT_ANALYSIS_DUMP_DIR_NAME)')"
+          if [ -d "$DEBUG_DUMP_DIR" ]; then
+            echo "DEBUG_DUMP_DIR=$DEBUG_DUMP_DIR" >> $GITHUB_ENV
+          fi
+
+      - name: Upload analysis debug dump artifact (if present)
+        if: failure() && ${{ env.DEBUG_DUMP_DIR != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-debug-dump-files-${{ runner.os }}-${{ matrix.python-version }}
+          path: ${{ env.DEBUG_DUMP_DIR }}
+        continue-on-error: true
 
       - name: Upload wtrace output (if present)
         if: always() && runner.os == 'Windows' && needs.log-dispatch-inputs.outputs.enable_os_trace == '1' && steps.run-pytest-coverage.outputs.wtrace_log_path != ''

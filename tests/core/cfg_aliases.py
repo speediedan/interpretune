@@ -2,8 +2,8 @@ from collections.abc import Sequence
 from copy import deepcopy
 from enum import auto
 from dataclasses import dataclass, field
-from typing import Iterable, Union
-import os
+from typing import Iterable, Union, Optional
+from pathlib import Path
 import tempfile
 
 
@@ -20,6 +20,7 @@ from tests.parity_acceptance.cfg_aliases import parity_cli_cfgs, mod_initargs, C
 from tests.parity_acceptance.test_it_tl import TLParityCfg
 from tests.parity_acceptance.test_it_cli import CLICfg
 from tests.utils import get_nested
+
 
 
 nf4_bnb_config = {"load_in_4bit": True, "bnb_4bit_use_double_quant": True, "bnb_4bit_quant_type": "nf4",
@@ -63,7 +64,7 @@ class TLMechInterpCfg(BaseCfg):
     dm_override_cfg: dict | None = field(default_factory=lambda: {
         'enable_datasets_cache': False,
         'tokenizer_kwargs': {'padding_side': 'right', 'model_input_names': ['input']},
-        'dataset_path': os.path.join(tempfile.gettempdir(), 'tl_cust_mi_force_prepare_ds')
+        'dataset_path': str(Path(tempfile.gettempdir()) / 'tl_cust_mi_force_prepare_ds')
         })
 
 @dataclass(kw_only=True)
@@ -174,7 +175,12 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
     # TODO: customize these cache paths for testing efficiency
     # cache_dir: Optional[str] = None
     # op_output_dataset_path: Optional[str] = None
-    # force_prepare_data: Optional[bool] = True  # sometimes useful to enable for test debugging
+    # important for ephemeral CI runner alignment
+    force_prepare_data: Optional[bool] = True
+    dm_override_cfg: dict | None = field(default_factory=lambda: {
+        'enable_datasets_cache': False,
+        'dataset_path': str(Path(tempfile.gettempdir()) / 'force_prepare_analysis_ds')
+    })
 
     def __post_init__(self):
         super().__post_init__()
