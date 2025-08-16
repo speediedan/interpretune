@@ -1,1 +1,3 @@
 bitsandbytes
+nvidia-cublas-cu12
+nvidia-nccl-cu12

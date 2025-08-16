@@ -248,7 +248,8 @@ strict = ["torch"]
 
 # packages with platform-dependent versions that should be excluded from pinning
 # these will be installed separately with flexible constraints to allow platform-specific resolution
-platform_dependent = ["bitsandbytes"]
+# supports glob patterns like "nvidia-*" to match multiple packages
+platform_dependent = ["bitsandbytes", "nvidia-*"]
 
 # packages that should be applied as post-upgrades (package -> desired_version)
 [tool.ci_pinning.post_upgrades]

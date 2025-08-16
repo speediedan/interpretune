@@ -1,4 +1,5 @@
 import argparse
+import fnmatch
 import os
 import shlex
 import subprocess
@@ -84,8 +85,8 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
             if pkg_name in post_upgrades:
                 continue
 
-            # separate platform-dependent packages for special handling
-            if pkg_name in platform_dependent:
+            # separate platform-dependent packages for special handling (supports glob patterns)
+            if any(fnmatch.fnmatch(pkg_name, pattern) for pattern in platform_dependent):
                 platform_dependent_lines.append(r)
                 continue
 
@@ -127,6 +128,62 @@ def run_pip_compile(req_in_path, output_path):
     return True
 
 
+def post_process_pinned_requirements(requirements_path, platform_dependent_path, platform_patterns):
+    """Post-process the pinned requirements to move platform-dependent packages to separate file.
+
+    This handles cases where transitive dependencies (like nvidia-* packages) get pinned but should be treated as
+    platform-dependent.
+    """
+    if not os.path.exists(requirements_path):
+        return
+
+    with open(requirements_path, 'r') as f:
+        lines = f.readlines()
+
+    requirements_lines = []
+    platform_dependent_lines = []
+
+    # Load existing platform-dependent packages
+    existing_platform_deps = []
+    if os.path.exists(platform_dependent_path):
+        with open(platform_dependent_path, 'r') as f:
+            existing_platform_deps = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            requirements_lines.append(line)
+            continue
+
+        # Extract package name from pinned requirement (e.g., "nvidia-cublas-cu12==12.8.4.1")
+        parts = re.split(r'[=<>!;]', line)
+        pkg_name = parts[0].strip().lower() if parts else ""
+
+        # Check if this package matches any platform-dependent pattern
+        is_platform_dependent = any(fnmatch.fnmatch(pkg_name, pattern) for pattern in platform_patterns)
+
+        if is_platform_dependent:
+            # Convert pinned requirement back to flexible constraint
+            # e.g., "nvidia-cublas-cu12==12.8.4.1" -> "nvidia-cublas-cu12"
+            flexible_req = pkg_name
+            platform_dependent_lines.append(flexible_req)
+        else:
+            requirements_lines.append(line)
+
+    # Write back the filtered requirements.txt
+    with open(requirements_path, 'w') as f:
+        for line in requirements_lines:
+            f.write(line.rstrip() + '\n')
+
+    # Update platform_dependent.txt with both existing and newly found packages
+    all_platform_deps = list(set(existing_platform_deps + platform_dependent_lines))
+    all_platform_deps.sort()  # Keep consistent ordering
+
+    with open(platform_dependent_path, 'w') as f:
+        for pkg in all_platform_deps:
+            f.write(pkg.rstrip() + '\n')
+
+
 def main():
     parser = argparse.ArgumentParser(description="Regenerate requirements files from pyproject.toml")
     parser.add_argument("--mode", choices=["top-level", "pip-compile"], default="top-level")
@@ -144,7 +201,15 @@ def main():
         out_path = os.path.join(args.ci_output_dir, "requirements.txt")
         try:
             success = run_pip_compile(in_path, out_path)
-            if not success:
+            if success:
+                # Post-process to move platform-dependent packages from pinned requirements
+                tool_cfg = pyproject.get("tool", {}).get("ci_pinning", {})
+                platform_dependent = tool_cfg.get("platform_dependent", []) or []
+                post_process_pinned_requirements(out_path, platform_path, platform_dependent)
+                print(f"Generated pinned requirements at {out_path}")
+                print(f"Generated post-upgrades at {post_path}")
+                print(f"Generated platform-dependent packages at {platform_path}")
+            else:
                 print(f"Generated {in_path}, {post_path}, and {platform_path}.")
                 print("To create a pinned requirements.txt, install pip-tools and run:")
                 print(f"  pip-compile {in_path} --output-file {out_path}")
