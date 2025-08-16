@@ -1,2 +1,2 @@
 datasets==4.0.0
-fsspec==2025.7.0
+fsspec==2025.3.0

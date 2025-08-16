@@ -92,10 +92,51 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
 
             req_in_lines.append(r)
 
+    # Only include direct dependencies that we want to constrain
+    # Core dependencies - always include these as they are our main requirements
     add_lines_from(project.get("dependencies", []))
+
+    # Only include specific optional dependencies that we want to constrain
+    # Rather than including all optional dependencies, only include key packages
+    # that we want to have stable/consistent versions across platforms
     opt_deps = project.get("optional-dependencies", {})
+
+    # Key packages from optional dependencies that we want to constrain
+    key_packages_to_constrain = [
+        # From lightning group - these are important ML packages we want stable
+        "finetuning-scheduler",
+        "bitsandbytes",  # will be moved to platform_dependent
+        "peft",
+
+        # From examples group - key packages for functionality
+        # Note: we exclude many examples packages to avoid constraining transitive deps
+        # like triton that cause platform issues
+    ]
+
+    # Only add specific packages from optional dependencies
     for group, reqs in opt_deps.items():
-        add_lines_from(reqs)
+        if reqs:
+            for req in reqs:
+                # Extract package name
+                parts = re.split(r"[\s\[\]=<>!;@]", req)
+                pkg_name = parts[0].lower() if parts and parts[0] else ""
+
+                # Only include if it's in our key packages list
+                if pkg_name in [p.lower() for p in key_packages_to_constrain]:
+                    # Use the original req format with package name handling
+                    parts = re.split(r"[\s\[\]=<>!;@]", req)
+                    pkg_name = parts[0].lower() if parts and parts[0] else ""
+
+                    # skip any packages that are declared in post_upgrades mapping
+                    if pkg_name in post_upgrades:
+                        continue
+
+                    # separate platform-dependent packages for special handling (supports glob patterns)
+                    if any(fnmatch.fnmatch(pkg_name, pattern) for pattern in platform_dependent):
+                        platform_dependent_lines.append(req)
+                        continue
+
+                    req_in_lines.append(req)
 
     # include circuit-tracer pin(s) if present
     req_in_lines.extend(convert_circuit_tracer_pin())
@@ -205,7 +246,10 @@ def main():
                 # Post-process to move platform-dependent packages from pinned requirements
                 tool_cfg = pyproject.get("tool", {}).get("ci_pinning", {})
                 platform_dependent = tool_cfg.get("platform_dependent", []) or []
-                post_process_pinned_requirements(out_path, platform_path, platform_dependent)
+                transitive_platform_issues = tool_cfg.get("transitive_platform_issues", []) or []
+                # Combine both types of problematic packages for post-processing
+                all_platform_patterns = platform_dependent + transitive_platform_issues
+                post_process_pinned_requirements(out_path, platform_path, all_platform_patterns)
                 print(f"Generated pinned requirements at {out_path}")
                 print(f"Generated post-upgrades at {post_path}")
                 print(f"Generated platform-dependent packages at {platform_path}")
