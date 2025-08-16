@@ -18,6 +18,8 @@ unset fts_from_source
 unset ct_from_source
 unset pip_install_flags
 unset no_commit_pin
+unset regen_with_pip_compile
+unset apply_post_upgrades
 
 usage(){
 >&2 cat << EOF
@@ -50,7 +52,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torch_test_channel,fts_from_source:,ct_from_source:,pip_install_flags:,no_commit_pin,help -- "$@")
+args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torch_test_channel,fts_from_source:,ct_from_source:,pip_install_flags:,no_commit_pin,regen_with_pip_compile,apply_post_upgrades,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -67,6 +69,8 @@ do
     --ct_from_source)   ct_from_source=$2 ; shift 2 ;;
     --pip_install_flags)   pip_install_flags=$2 ; shift 2 ;;
     --no_commit_pin)   no_commit_pin=1 ; shift  ;;
+    --regen_with_pip_compile) regen_with_pip_compile=1 ; shift ;;
+    --apply_post_upgrades) apply_post_upgrades=1 ; shift ;;
     --help)    usage      ; shift   ;;
     # -- means the end of the arguments; drop this, and break out of the while loop
     --) shift; break ;;
@@ -94,17 +98,17 @@ base_env_build(){
             clear_activate_env python3.12
             if [[ -n ${torch_dev_ver} ]]; then
                 # temporarily remove torchvision until it supports cu128 in nightly binary
-                pip install ${pip_install_flags} --pre torch==2.8.0.${torch_dev_ver} --index-url https://download.pytorch.org/whl/nightly/cu128
+                pip install ${pip_install_flags} --pre torch==2.9.0.${torch_dev_ver} --index-url https://download.pytorch.org/whl/nightly/cu128
             elif [[ $torch_test_channel -eq 1 ]]; then
-                pip install ${pip_install_flags} --pre torch==2.8.0 --index-url https://download.pytorch.org/whl/test/cu128
+                pip install ${pip_install_flags} --pre torch==2.9.0 --index-url https://download.pytorch.org/whl/test/cu128
             else
                 pip install ${pip_install_flags} torch torchvision --index-url https://download.pytorch.org/whl/cu128
             fi
             ;;
-        it_latest_pt_2_4)
-            clear_activate_env python3.11
-            pip install ${pip_install_flags} torch==2.4.1 torchvision --index-url https://download.pytorch.org/whl/cu118
-            ;;
+        # it_latest_pt_2_4)
+        #     clear_activate_env python3.11
+        #     pip install ${pip_install_flags} torch==2.4.1 torchvision --index-url https://download.pytorch.org/whl/cu118
+        #     ;;
         *)
             echo "no matching environment found, exiting..."
             exit 1
@@ -124,6 +128,12 @@ it_install(){
     fi
     cd ${repo_home}
 
+    # Optionally regenerate CI pinned requirements (pip-compile mode) if requested
+    if [[ -n ${regen_with_pip_compile} ]]; then
+        echo "Regenerating CI pinned requirements (pip-compile mode)"
+        python ${repo_home}/requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci || true
+    fi
+
     # Set IT_USE_CT_COMMIT_PIN by default, unless --no_commit_pin is specified
     if [[ -z ${no_commit_pin} ]]; then
         export IT_USE_CT_COMMIT_PIN="1"
@@ -133,7 +143,21 @@ it_install(){
         echo "Using version-based circuit-tracer installation"
     fi
 
-    python -m pip install ${pip_install_flags} -e ".[test,examples,lightning]" -r requirements/docs.txt
+    # Install project and extras; prefer CI pinned requirements if available
+    if [[ -f ${repo_home}/requirements/ci/requirements.txt ]]; then
+        python -m pip install ${pip_install_flags} -r ${repo_home}/requirements/ci/requirements.txt -r requirements/docs.txt || true
+    else
+        python -m pip install ${pip_install_flags} -e ".[test,examples,lightning]" -r requirements/docs.txt
+    fi
+
+    cd ${repo_home}
+    # Optionally apply post-upgrades if requested and file exists
+    if [[ -n ${apply_post_upgrades} ]] && [[ -s ${repo_home}/requirements/post_upgrades.txt ]]; then
+        echo "Applying post-upgrades from requirements/post_upgrades.txt"
+        pip install --upgrade -r ${repo_home}/requirements/post_upgrades.txt || true
+    else
+        echo "Skipping post-upgrades (flag not set or file empty)."
+    fi
 
     if [[ -n ${ct_from_source} ]]; then
         echo "Installing circuit-tracer from source at ${ct_from_source}"
@@ -148,17 +172,16 @@ it_install(){
             python -m interpretune.tools.install_circuit_tracer --no-commit-pin
         fi
     fi
-    cd ${repo_home}
-    echo "Forcing upgrade of datasets and fsspec to latest versions"
-    # while we wait for sae-lens to support the datasets >= 4.0, we upgrade after installing our other deps
-    pip install --upgrade datasets
-    pip install --upgrade fsspec
+
     pyright -p pyproject.toml
     pre-commit install
     git lfs install
-    python -c "import importlib.metadata; import torch; import lightning.pytorch; import transformer_lens; import finetuning_scheduler; import interpretune;
-for package in ['torch', 'lightning', 'transformer_lens', 'finetuning_scheduler', 'interpretune']:
-    print(f'{package} version: {importlib.metadata.distribution(package).version}');"
+    python -c "import importlib.metadata; import torch; import lightning.pytorch; import transformer_lens; import sae_lens; import finetuning_scheduler; import interpretune; import datasets;
+for package in ['torch', 'lightning', 'transformer_lens', 'sae_lens', 'finetuning_scheduler', 'interpretune', 'datasets']:
+    try:
+        print(f'{package} version: {importlib.metadata.distribution(package).version}')
+    except Exception as e:
+        print(f'{package} version: not found ({e})')"
 }
 
 d=`date +%Y%m%d%H%M%S`

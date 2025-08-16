@@ -119,6 +119,27 @@ jobs:
           echo "enable_os_trace=${{ inputs.enable_os_trace != '' && inputs.enable_os_trace || steps.capture-manual-overrides.outputs.ENABLE_OS_TRACE }}" >> $GITHUB_OUTPUT
           echo "pytest_filter_pattern=${{ inputs.pytest_filter_pattern != '' && inputs.pytest_filter_pattern || steps.capture-manual-overrides.outputs.PYTEST_FILTER_PATTERN }}" >> $GITHUB_OUTPUT
           echo "run_w_grafana=${{ inputs.run_w_grafana != '' && inputs.run_w_grafana || steps.capture-manual-overrides.outputs.RUN_W_GRAFANA || '1' }}" >> $GITHUB_OUTPUT
+  regen-check:
+    needs: log-dispatch-inputs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install regen deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pip-tools toml
+      - name: Run regen (pip-compile)
+        run: |
+          python requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir=requirements/ci
+      - name: Check committed pins are up-to-date
+        run: |
+          git --no-pager diff --exit-code requirements/ci/requirements.txt requirements/post_upgrades.txt || (
+            echo "Generated pinned requirement files differ from committed versions. Run requirements/regen_reqfiles.py --mode pip-compile locally and commit the changes." && exit 1
+          )
   cpu:
     needs: log-dispatch-inputs
     runs-on: ${{ matrix.os }}
@@ -179,10 +200,27 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip setuptools wheel build --cache-dir "$PIP_CACHE_DIR"
-          python -m pip install '.[test,examples,lightning]' -c requirements/ci_constraints.txt --cache-dir "$PIP_CACHE_DIR"
-          pip install --upgrade datasets --cache-dir "$PIP_CACHE_DIR"
-          pip install --upgrade fsspec --cache-dir "$PIP_CACHE_DIR"
+          # Prefer CI pinned requirements if present
+          if [ -f requirements/ci/requirements.txt ]; then
+            python -m pip install --upgrade pip setuptools wheel build --cache-dir "$PIP_CACHE_DIR"
+            pip install --no-deps -r requirements/ci/requirements.txt --cache-dir "$PIP_CACHE_DIR"
+          else
+            python -m pip install '.[test,examples,lightning]' -c requirements/ci_constraints.txt --cache-dir "$PIP_CACHE_DIR"
+          fi
           pip list
+
+      - name: Optional post-upgrades (datasets/fsspec etc)
+        shell: bash
+        env:
+          APPLY_POST_UPGRADES: ${{ vars.APPLY_POST_UPGRADES || '1' }}
+        run: |
+          if [ "${APPLY_POST_UPGRADES}" = "1" ] && [ -s requirements/post_upgrades.txt ]; then
+            echo "Applying post-upgrades..."
+            python -m pip install --upgrade -r requirements/post_upgrades.txt --cache-dir "$PIP_CACHE_DIR"
+            pip list
+          else
+            echo "Skipping post-upgrades (either disabled or file empty)."
+          fi
 
       - name: Run pytest coverage w/ configured instrumentation
         id: run-pytest-coverage

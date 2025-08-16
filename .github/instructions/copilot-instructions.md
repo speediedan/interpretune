@@ -27,24 +27,37 @@
 
 ### Environment Setup
 
-Always install dependencies in order to avoid conflicts. **After installing dependencies, always upgrade `datasets` and `fsspec` to the latest versions, as required for compatibility (see CI):**
+Always install dependencies in order to avoid conflicts. We now maintain optional, committed CI pinned requirements and a small helper to generate them; follow the flow below depending on whether you want a standard developer install or to reproduce CI pinned installs.
 
+Developer (default, fast): install from `pyproject.toml` / editable install
 
 ```bash
 # Basic development setup
 python -m pip install --upgrade pip setuptools wheel build
-python -m pip install '.[test]' -c requirements/ci_constraints.txt
-pip install --upgrade datasets
-pip install --upgrade fsspec
+python -m pip install -e '.[test]'
 
 # Full development with examples (may fail due to circuit-tracer dependency)
-python -m pip install '.[test,examples,lightning]' -c requirements/ci_constraints.txt
-pip install --upgrade datasets
-pip install --upgrade fsspec
+python -m pip install -e '.[test,examples,lightning]'
 
 # If circuit-tracer install fails, use the built-in tool after basic install:
 pip install interpretune[examples]
 interpretune-install-circuit-tracer
+```
+
+Reproducible CI-style install (preferred for CI or to reproduce pinned builds):
+
+```bash
+# (1) Regenerate pinned inputs on a canonical builder (requires pip-tools to run pip-compile):
+# python -m pip install pip-tools toml
+# python requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir=requirements/ci
+# or locally: pip-compile requirements/ci/requirements.in --output-file requirements/ci/requirements.txt
+
+# (2) Install from the generated pinned file
+pip install -r requirements/ci/requirements.txt
+
+# (3) Optionally apply post-upgrades (controlled by repo vars / env), see below
+export APPLY_POST_UPGRADES=1
+pip install --upgrade -r requirements/post_upgrades.txt
 ```
 
 **⚠️ Known Issue:** Full dependency install may timeout due to large ML packages. Install basic deps first, then add extras incrementally.
