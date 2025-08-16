@@ -39,7 +39,16 @@ def test_generate_pip_compile_inputs_writes_files(tmp_path):
     ci_out = tmp_path / "ci"
     ci_out.mkdir()
 
-    req_in_path, post_path, platform_path = regen.generate_pip_compile_inputs(pyproject, str(ci_out))
+    req_in_path, post_path, platform_path, direct_packages = regen.generate_pip_compile_inputs(pyproject, str(ci_out))
+
+    # Check that direct_packages contains the expected packages
+    assert "packagea" in direct_packages  # core dependency (normalized to lowercase)
+    assert "peft" in direct_packages  # key package from lightning group
+    assert "finetuning-scheduler" in direct_packages  # key package from lightning group
+    assert "bitsandbytes" in direct_packages  # platform-dependent but still tracked as direct
+    # packages excluded due to post_upgrades should not be in direct_packages
+    assert "datasets" not in direct_packages
+    assert "fsspec" not in direct_packages
 
     # requirements.in should be created and should contain core deps and key optional deps
     req_in = (ci_out / "requirements.in").read_text()
@@ -66,17 +75,23 @@ def test_generate_pip_compile_inputs_writes_files(tmp_path):
 def test_post_process_pinned_requirements(tmp_path):
     regen = load_regen_module()
 
-    # Create a mock requirements.txt with only the packages we actually pin
-    # Since we no longer include nvidia packages in requirements.in,
-    # they shouldn't appear in the pinned output
+    # Create a mock requirements.txt with direct dependencies and transitive dependencies
     requirements_path = tmp_path / "requirements.txt"
     requirements_content = """# This is a generated file
 absl-py==2.3.1
-torch==2.8.0
     # via transformers
+torch==2.8.0
+    # via -r requirements.in
 transformers==4.55.2
+    # via -r requirements.in
 peft==0.17.0
     # via -r requirements.in
+aiosignal==1.4.0
+    # via aiohttp
+aiohttp==3.12.15
+    # via boostedblob
+numpy==1.26.4
+    # via torch
 """
     requirements_path.write_text(requirements_content)
 
@@ -87,14 +102,23 @@ peft==0.17.0
     # Platform patterns to match
     platform_patterns = ["bitsandbytes"]
 
-    # Run post-processing
-    regen.post_process_pinned_requirements(str(requirements_path), str(platform_path), platform_patterns)
+    # Direct packages list (only the packages we explicitly specify)
+    direct_packages = ["torch", "transformers", "peft"]
 
-    # Check that requirements.txt remains unchanged since no platform-dependent packages were pinned
+    # Run post-processing
+    regen.post_process_pinned_requirements(str(requirements_path), str(platform_path), platform_patterns, direct_packages)
+
+    # Check that only direct dependencies remain in requirements.txt
     requirements_final = requirements_path.read_text()
-    assert "torch==2.8.0" in requirements_final  # should remain
-    assert "transformers==4.55.2" in requirements_final  # should remain
-    assert "peft==0.17.0" in requirements_final  # should remain
+    assert "torch==2.8.0" in requirements_final  # direct dependency should remain
+    assert "transformers==4.55.2" in requirements_final  # direct dependency should remain
+    assert "peft==0.17.0" in requirements_final  # direct dependency should remain
+
+    # Transitive dependencies should be removed
+    assert "absl-py==2.3.1" not in requirements_final  # transitive dependency should be removed
+    assert "aiosignal==1.4.0" not in requirements_final  # transitive dependency should be removed
+    assert "aiohttp==3.12.15" not in requirements_final  # transitive dependency should be removed
+    assert "numpy==1.26.4" not in requirements_final  # transitive dependency should be removed
 
     # Check that platform_dependent.txt still contains bitsandbytes
     platform_final = platform_path.read_text()

@@ -72,6 +72,11 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
     # Build requirements.in lines from top-level dependencies and optional groups
     req_in_lines = []
     platform_dependent_lines = []
+    direct_packages = []  # Track all direct packages we're including
+
+    def normalize_package_name(name):
+        """Normalize package names to handle underscores vs dashes."""
+        return name.lower().replace('_', '-')
 
     def add_lines_from(list_or_none):
         if not list_or_none:
@@ -82,15 +87,17 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
             pkg_name = parts[0].lower() if parts and parts[0] else ""
 
             # skip any packages that are declared in post_upgrades mapping
-            if pkg_name in post_upgrades:
+            if normalize_package_name(pkg_name) in {normalize_package_name(k) for k in post_upgrades}:
                 continue
 
             # separate platform-dependent packages for special handling (supports glob patterns)
-            if any(fnmatch.fnmatch(pkg_name, pattern) for pattern in platform_dependent):
+            if any(fnmatch.fnmatch(normalize_package_name(pkg_name), normalize_package_name(pattern)) for pattern in platform_dependent):
                 platform_dependent_lines.append(r)
+                direct_packages.append(pkg_name)  # Still track as direct package
                 continue
 
             req_in_lines.append(r)
+            direct_packages.append(pkg_name)  # Track as direct package
 
     # Only include direct dependencies that we want to constrain
     # Core dependencies - always include these as they are our main requirements
@@ -122,24 +129,31 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
                 pkg_name = parts[0].lower() if parts and parts[0] else ""
 
                 # Only include if it's in our key packages list
-                if pkg_name in [p.lower() for p in key_packages_to_constrain]:
+                if normalize_package_name(pkg_name) in [normalize_package_name(p) for p in key_packages_to_constrain]:
                     # Use the original req format with package name handling
                     parts = re.split(r"[\s\[\]=<>!;@]", req)
                     pkg_name = parts[0].lower() if parts and parts[0] else ""
 
                     # skip any packages that are declared in post_upgrades mapping
-                    if pkg_name in post_upgrades:
+                    if normalize_package_name(pkg_name) in {normalize_package_name(k) for k in post_upgrades}:
                         continue
 
                     # separate platform-dependent packages for special handling (supports glob patterns)
-                    if any(fnmatch.fnmatch(pkg_name, pattern) for pattern in platform_dependent):
+                    if any(fnmatch.fnmatch(normalize_package_name(pkg_name), normalize_package_name(pattern)) for pattern in platform_dependent):
                         platform_dependent_lines.append(req)
+                        direct_packages.append(pkg_name)  # Still track as direct package
                         continue
 
                     req_in_lines.append(req)
+                    direct_packages.append(pkg_name)  # Track as direct package
 
     # include circuit-tracer pin(s) if present
-    req_in_lines.extend(convert_circuit_tracer_pin())
+    circuit_tracer_lines = convert_circuit_tracer_pin()
+    req_in_lines.extend(circuit_tracer_lines)
+    # Add circuit-tracer to direct packages
+    for line in circuit_tracer_lines:
+        if "circuit-tracer" in line or "circuit_tracer" in line:
+            direct_packages.append("circuit-tracer")
 
     # write requirements.in
     in_path = os.path.join(ci_output_dir, "requirements.in")
@@ -155,7 +169,7 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
     platform_path = os.path.join(REQ_DIR, "platform_dependent.txt")
     write_file(platform_path, platform_dependent_lines)
 
-    return in_path, POST_UPGRADES_PATH, platform_path
+    return in_path, POST_UPGRADES_PATH, platform_path, direct_packages
 
 
 def run_pip_compile(req_in_path, output_path):
@@ -169,11 +183,13 @@ def run_pip_compile(req_in_path, output_path):
     return True
 
 
-def post_process_pinned_requirements(requirements_path, platform_dependent_path, platform_patterns):
-    """Post-process the pinned requirements to move platform-dependent packages to separate file.
+def post_process_pinned_requirements(requirements_path, platform_dependent_path, platform_patterns, direct_packages):
+    """Post-process the pinned requirements to move platform-dependent packages to separate file and filter out
+    transitive dependencies to only keep direct dependencies.
 
-    This handles cases where transitive dependencies (like nvidia-* packages) get pinned but should be treated as
-    platform-dependent.
+    This handles cases where:
+    1. Transitive dependencies (like nvidia-* packages) get pinned but should be treated as platform-dependent
+    2. Many transitive dependencies get pinned but we only want to constrain direct dependencies
     """
     if not os.path.exists(requirements_path):
         return
@@ -190,26 +206,69 @@ def post_process_pinned_requirements(requirements_path, platform_dependent_path,
         with open(platform_dependent_path, 'r') as f:
             existing_platform_deps = [line.strip() for line in f if line.strip() and not line.startswith('#')]
 
-    for line in lines:
-        line = line.strip()
+    # Convert direct packages to normalized form (lowercase, replace underscores with dashes)
+    # This handles the fact that pip normalizes package names
+    def normalize_package_name(name):
+        return name.lower().replace('_', '-')
+
+    direct_packages_normalized = {normalize_package_name(pkg) for pkg in direct_packages}
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # Always include header comments and empty lines
         if not line or line.startswith('#'):
-            requirements_lines.append(line)
+            requirements_lines.append(lines[i])
+            i += 1
             continue
 
-        # Extract package name from pinned requirement (e.g., "nvidia-cublas-cu12==12.8.4.1")
-        parts = re.split(r'[=<>!;]', line)
-        pkg_name = parts[0].strip().lower() if parts else ""
+        # This is a package line (e.g., "accelerate==1.10.0")
+        # Extract package name from pinned requirement
+
+        # Handle special cases like git packages first
+        if ' @ ' in line:
+            # For git packages like "circuit-tracer @ git+...", extract the package name
+            pkg_name = line.split(' @ ')[0].strip().lower()
+        else:
+            # For regular packages, extract name before any extras, version specifiers, etc.
+            # Handle extras like "jsonargparse[signatures,typing-extensions]==4.40.2"
+            parts = re.split(r'[\[\]=<>!;]', line)
+            pkg_name = parts[0].strip().lower() if parts else ""
+
+        # Normalize package name for comparison
+        pkg_name_normalized = normalize_package_name(pkg_name)
 
         # Check if this package matches any platform-dependent pattern
-        is_platform_dependent = any(fnmatch.fnmatch(pkg_name, pattern) for pattern in platform_patterns)
+        is_platform_dependent = any(fnmatch.fnmatch(pkg_name_normalized, pattern.replace('_', '-')) for pattern in platform_patterns)
+
+        # Check if this is a direct dependency we want to constrain
+        is_direct_dependency = pkg_name_normalized in direct_packages_normalized
 
         if is_platform_dependent:
             # Convert pinned requirement back to flexible constraint
             # e.g., "nvidia-cublas-cu12==12.8.4.1" -> "nvidia-cublas-cu12"
-            flexible_req = pkg_name
+            flexible_req = pkg_name_normalized
             platform_dependent_lines.append(flexible_req)
+            # Skip this package and its associated comment lines
+            i += 1
+            # Skip subsequent comment lines that belong to this package
+            while i < len(lines) and lines[i].strip().startswith('#'):
+                i += 1
+        elif is_direct_dependency:
+            # Keep direct dependencies that we explicitly want to constrain
+            requirements_lines.append(lines[i])
+            i += 1
+            # Keep the associated comment lines too
+            while i < len(lines) and lines[i].strip().startswith('#'):
+                requirements_lines.append(lines[i])
+                i += 1
         else:
-            requirements_lines.append(line)
+            # Skip transitive dependencies that we don't want to constrain
+            i += 1
+            # Skip subsequent comment lines that belong to this package
+            while i < len(lines) and lines[i].strip().startswith('#'):
+                i += 1
 
     # Write back the filtered requirements.txt
     with open(requirements_path, 'w') as f:
@@ -237,19 +296,20 @@ def main():
     generate_top_level_files(pyproject)
 
     if args.mode == "pip-compile":
-        in_path, post_path, platform_path = generate_pip_compile_inputs(pyproject, args.ci_output_dir)
+        in_path, post_path, platform_path, direct_packages = generate_pip_compile_inputs(pyproject, args.ci_output_dir)
         # attempt to run pip-compile to produce a fully pinned requirements.txt
         out_path = os.path.join(args.ci_output_dir, "requirements.txt")
         try:
             success = run_pip_compile(in_path, out_path)
             if success:
                 # Post-process to move platform-dependent packages from pinned requirements
+                # and filter out transitive dependencies to only keep direct dependencies
                 tool_cfg = pyproject.get("tool", {}).get("ci_pinning", {})
                 platform_dependent = tool_cfg.get("platform_dependent", []) or []
                 transitive_platform_issues = tool_cfg.get("transitive_platform_issues", []) or []
                 # Combine both types of problematic packages for post-processing
                 all_platform_patterns = platform_dependent + transitive_platform_issues
-                post_process_pinned_requirements(out_path, platform_path, all_platform_patterns)
+                post_process_pinned_requirements(out_path, platform_path, all_platform_patterns, direct_packages)
                 print(f"Generated pinned requirements at {out_path}")
                 print(f"Generated post-upgrades at {post_path}")
                 print(f"Generated platform-dependent packages at {platform_path}")
