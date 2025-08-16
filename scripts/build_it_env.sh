@@ -32,6 +32,8 @@ Usage: $0
    [ --ct_from_source "path" ]
    [ --pip_install_flags "flags" ]
    [ --no_commit_pin ]
+   [ --regen_with_pip_compile ]
+   [ --apply_post_upgrades ]
    [ --help ]
    Examples:
     # build latest:
@@ -48,6 +50,10 @@ Usage: $0
     #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --pip_install_flags="--no-cache-dir"
     # build latest without using CI commit pinning:
     #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --no_commit_pin
+    # build latest and regenerate CI pinned requirements:
+    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --regen_with_pip_compile
+    # build latest and apply post-upgrades:
+    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --apply_post_upgrades
 EOF
 exit 1
 }
