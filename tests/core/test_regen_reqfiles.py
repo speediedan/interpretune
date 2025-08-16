@@ -106,7 +106,9 @@ numpy==1.26.4
     direct_packages = ["torch", "transformers", "peft"]
 
     # Run post-processing
-    regen.post_process_pinned_requirements(str(requirements_path), str(platform_path), platform_patterns, direct_packages)
+    regen.post_process_pinned_requirements(
+        str(requirements_path), str(platform_path), platform_patterns, direct_packages
+    )
 
     # Check that only direct dependencies remain in requirements.txt
     requirements_final = requirements_path.read_text()

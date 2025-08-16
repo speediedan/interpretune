@@ -314,8 +314,8 @@ jobs:
         shell: bash
         run: |
           if [ -f .coverage ]; then
-            coverage report
-            coverage xml
+            python -m coverage report
+            python -m coverage xml
           else
             echo "No coverage data to report."
           fi

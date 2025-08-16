@@ -91,7 +91,11 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
                 continue
 
             # separate platform-dependent packages for special handling (supports glob patterns)
-            if any(fnmatch.fnmatch(normalize_package_name(pkg_name), normalize_package_name(pattern)) for pattern in platform_dependent):
+            is_platform_pkg = any(
+                fnmatch.fnmatch(normalize_package_name(pkg_name), normalize_package_name(pattern))
+                for pattern in platform_dependent
+            )
+            if is_platform_pkg:
                 platform_dependent_lines.append(r)
                 direct_packages.append(pkg_name)  # Still track as direct package
                 continue
@@ -135,11 +139,16 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
                     pkg_name = parts[0].lower() if parts and parts[0] else ""
 
                     # skip any packages that are declared in post_upgrades mapping
-                    if normalize_package_name(pkg_name) in {normalize_package_name(k) for k in post_upgrades}:
+                    post_upgrade_names = {normalize_package_name(k) for k in post_upgrades}
+                    if normalize_package_name(pkg_name) in post_upgrade_names:
                         continue
 
                     # separate platform-dependent packages for special handling (supports glob patterns)
-                    if any(fnmatch.fnmatch(normalize_package_name(pkg_name), normalize_package_name(pattern)) for pattern in platform_dependent):
+                    is_platform_pkg = any(
+                        fnmatch.fnmatch(normalize_package_name(pkg_name), normalize_package_name(pattern))
+                        for pattern in platform_dependent
+                    )
+                    if is_platform_pkg:
                         platform_dependent_lines.append(req)
                         direct_packages.append(pkg_name)  # Still track as direct package
                         continue
@@ -188,8 +197,8 @@ def post_process_pinned_requirements(requirements_path, platform_dependent_path,
     transitive dependencies to only keep direct dependencies.
 
     This handles cases where:
-    1. Transitive dependencies (like nvidia-* packages) get pinned but should be treated as platform-dependent
-    2. Many transitive dependencies get pinned but we only want to constrain direct dependencies
+    1. Platform-dependent direct dependencies need to be moved to separate file for flexible installation
+    2. Transitive dependencies get pinned but we only want to constrain direct dependencies
     """
     if not os.path.exists(requirements_path):
         return
@@ -240,7 +249,10 @@ def post_process_pinned_requirements(requirements_path, platform_dependent_path,
         pkg_name_normalized = normalize_package_name(pkg_name)
 
         # Check if this package matches any platform-dependent pattern
-        is_platform_dependent = any(fnmatch.fnmatch(pkg_name_normalized, pattern.replace('_', '-')) for pattern in platform_patterns)
+        is_platform_dependent = any(
+            fnmatch.fnmatch(pkg_name_normalized, pattern.replace('_', '-'))
+            for pattern in platform_patterns
+        )
 
         # Check if this is a direct dependency we want to constrain
         is_direct_dependency = pkg_name_normalized in direct_packages_normalized
@@ -306,10 +318,7 @@ def main():
                 # and filter out transitive dependencies to only keep direct dependencies
                 tool_cfg = pyproject.get("tool", {}).get("ci_pinning", {})
                 platform_dependent = tool_cfg.get("platform_dependent", []) or []
-                transitive_platform_issues = tool_cfg.get("transitive_platform_issues", []) or []
-                # Combine both types of problematic packages for post-processing
-                all_platform_patterns = platform_dependent + transitive_platform_issues
-                post_process_pinned_requirements(out_path, platform_path, all_platform_patterns, direct_packages)
+                post_process_pinned_requirements(out_path, platform_path, platform_dependent, direct_packages)
                 print(f"Generated pinned requirements at {out_path}")
                 print(f"Generated post-upgrades at {post_path}")
                 print(f"Generated platform-dependent packages at {platform_path}")

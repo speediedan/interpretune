@@ -248,13 +248,8 @@ strict = ["torch"]
 
 # packages with platform-dependent versions that should be excluded from pinning
 # these will be installed separately with flexible constraints to allow platform-specific resolution
-# only applies to direct dependencies we specify in pyproject.toml, but also includes
-# problematic transitive dependencies that cause cross-platform issues
+# only applies to direct dependencies we specify in pyproject.toml
 platform_dependent = ["bitsandbytes"]
-
-# transitive dependencies that cause platform issues and should not be pinned
-# these packages have different availability across platforms and should be resolved naturally by pip
-transitive_platform_issues = ["triton", "nvidia-*"]
 
 # packages that should be applied as post-upgrades (package -> desired_version)
 [tool.ci_pinning.post_upgrades]
