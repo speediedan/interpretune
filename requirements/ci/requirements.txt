@@ -45,8 +45,6 @@ beautifulsoup4==4.13.4
     #   nbconvert
 better-abc==0.0.3
     # via transformer-lens
-bitsandbytes==0.47.0
-    # via -r requirements/ci/requirements.in
 bleach[css]==6.2.0
     # via nbconvert
 blobfile==2.1.1
@@ -367,7 +365,6 @@ numpy==1.26.4
     # via
     #   accelerate
     #   automated-interpretability
-    #   bitsandbytes
     #   circuit-tracer
     #   contourpy
     #   datasets
@@ -746,7 +743,6 @@ torch==2.8.0
     # via
     #   -r requirements/ci/requirements.in
     #   accelerate
-    #   bitsandbytes
     #   circuit-tracer
     #   finetuning-scheduler
     #   lightning

@@ -137,7 +137,7 @@ jobs:
           python requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir=requirements/ci
       - name: Check committed pins are up-to-date
         run: |
-          git --no-pager diff --exit-code requirements/ci/requirements.txt requirements/post_upgrades.txt || (
+          git --no-pager diff --exit-code requirements/ci/requirements.txt requirements/post_upgrades.txt requirements/platform_dependent.txt || (
             echo "Generated pinned requirement files differ from committed versions. Run requirements/regen_reqfiles.py --mode pip-compile locally and commit the changes." && exit 1
           )
   cpu:
@@ -208,6 +208,17 @@ jobs:
             python -m pip install '.[test,examples,lightning]' -c requirements/ci_constraints.txt --cache-dir "$PIP_CACHE_DIR"
           fi
           pip list
+
+      - name: Install platform-dependent packages
+        shell: bash
+        run: |
+          # Install platform-dependent packages with flexible constraints to allow platform-specific resolution
+          if [ -f requirements/platform_dependent.txt ] && [ -s requirements/platform_dependent.txt ]; then
+            echo "Installing platform-dependent packages..."
+            python -m pip install -r requirements/platform_dependent.txt --cache-dir "$PIP_CACHE_DIR" || echo "Some platform-dependent packages may not be available on this platform, continuing..."
+          else
+            echo "No platform-dependent packages to install."
+          fi
 
       - name: Optional post-upgrades (datasets/fsspec etc)
         shell: bash

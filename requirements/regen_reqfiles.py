@@ -66,19 +66,29 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
     project = pyproject.get("project", {})
     tool_cfg = pyproject.get("tool", {}).get("ci_pinning", {})
     post_upgrades = tool_cfg.get("post_upgrades", {}) or {}
+    platform_dependent = tool_cfg.get("platform_dependent", []) or []
 
     # Build requirements.in lines from top-level dependencies and optional groups
     req_in_lines = []
+    platform_dependent_lines = []
+
     def add_lines_from(list_or_none):
         if not list_or_none:
             return
         for r in list_or_none:
-            # skip any packages that are declared in post_upgrades mapping
             # extract an approximate package name (handles extras and simple specifiers)
             parts = re.split(r"[\s\[\]=<>!;@]", r)
             pkg_name = parts[0].lower() if parts and parts[0] else ""
+
+            # skip any packages that are declared in post_upgrades mapping
             if pkg_name in post_upgrades:
                 continue
+
+            # separate platform-dependent packages for special handling
+            if pkg_name in platform_dependent:
+                platform_dependent_lines.append(r)
+                continue
+
             req_in_lines.append(r)
 
     add_lines_from(project.get("dependencies", []))
@@ -99,7 +109,11 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
         post_lines.append(f"{pkg}=={ver}")
     write_file(POST_UPGRADES_PATH, post_lines)
 
-    return in_path, POST_UPGRADES_PATH
+    # write platform_dependent.txt with flexible constraints
+    platform_path = os.path.join(REQ_DIR, "platform_dependent.txt")
+    write_file(platform_path, platform_dependent_lines)
+
+    return in_path, POST_UPGRADES_PATH, platform_path
 
 
 def run_pip_compile(req_in_path, output_path):
@@ -125,18 +139,19 @@ def main():
     generate_top_level_files(pyproject)
 
     if args.mode == "pip-compile":
-        in_path, post_path = generate_pip_compile_inputs(pyproject, args.ci_output_dir)
+        in_path, post_path, platform_path = generate_pip_compile_inputs(pyproject, args.ci_output_dir)
         # attempt to run pip-compile to produce a fully pinned requirements.txt
         out_path = os.path.join(args.ci_output_dir, "requirements.txt")
         try:
             success = run_pip_compile(in_path, out_path)
             if not success:
-                print(f"Generated {in_path} and {post_path}.")
+                print(f"Generated {in_path}, {post_path}, and {platform_path}.")
                 print("To create a pinned requirements.txt, install pip-tools and run:")
                 print(f"  pip-compile {in_path} --output-file {out_path}")
         except subprocess.CalledProcessError as e:
             print("pip-compile failed:", e)
-            print(f"Generated inputs at {in_path} and post-upgrades at {post_path}")
+            print(f"Generated inputs at {in_path}, post-upgrades at {post_path}, "
+                  f"and platform-dependent at {platform_path}")
     else:
         print("Wrote top-level base and optional group requirement files in requirements/ (no pip-compile run).")
 
