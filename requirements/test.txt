@@ -5,3 +5,6 @@ twine >= 3.2
 pyright >= 1.1.365
 pre-commit >= 1.0
 psycopg
+toml
+pip-tools
+huggingface_hub[hf_xet]
