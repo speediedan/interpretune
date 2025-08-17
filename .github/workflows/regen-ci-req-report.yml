@@ -101,12 +101,18 @@ jobs:
             const bodyText = `${marker}\n**regen-check** detected changes to pinned requirements and uploaded a patch artifact named 'regen-pins-diff'.\n\nPlease review the artifact and CI results. This workflow is report-only and will not open a PR; the scheduled regen workflow will open PRs automatically.`;
             const pr = context.payload.pull_request && context.payload.pull_request.number;
             const headFullName = context.payload.pull_request && context.payload.pull_request.head && context.payload.pull_request.head.repo && context.payload.pull_request.head.repo.full_name;
+            const baseFullName = context.payload.repository && context.payload.repository.full_name;
             if (!pr) {
               console.log('No pull_request payload found; skipping comment.');
               return;
             }
-            if (headFullName !== github.repository) {
-              console.log(`PR head repo (${headFullName}) differs from base repo (${github.repository}); skipping comment to avoid permission errors.`);
+            console.log(`PR head repo: ${headFullName}; base repo from payload: ${baseFullName}`);
+            if (!baseFullName) {
+              console.log('Base repository not found in payload; skipping comment to be safe.');
+              return;
+            }
+            if (headFullName !== baseFullName) {
+              console.log(`PR head repo (${headFullName}) differs from base repo (${baseFullName}); skipping comment to avoid permission errors.`);
               return;
             }
             try {
