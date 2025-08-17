@@ -89,7 +89,7 @@ jobs:
           path: regen_diff.patch
 
       - name: Create or update PR comment (single-comment)
-        if: ${{ github.event_name == 'pull_request' && steps.diffs.outputs.changed == 'true' }}
+        if: ${{ github.event_name == 'pull_request' && steps.diffs.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository }}
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -97,14 +97,20 @@ jobs:
             const pr = context.payload.pull_request.number;
             const marker = '<!-- regen-check-pins -->';
             const bodyText = `${marker}\n**regen-check** detected changes to pinned requirements and uploaded a patch artifact named 'regen-pins-diff'.\n\nPlease review the artifact and CI results. This workflow is report-only and will not open a PR; the scheduled regen workflow will open PRs automatically.`;
-
-            // list comments and try to find an existing one with the marker (use github.rest)
-            const { data: comments } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: pr });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body: bodyText });
-            } else {
-              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: pr, body: bodyText });
+            try {
+              // list comments and try to find an existing one with the marker (use github.rest)
+              const { data: comments } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: pr });
+              const existing = comments.find(c => c.body && c.body.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body: bodyText });
+              } else {
+                await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: pr, body: bodyText });
+              }
+            } catch (err) {
+              // If commenting fails (e.g., fork PRs or limited permissions), log the error but don't fail the workflow
+              core = require('@actions/core');
+              core.warning(`Failed to create/update PR comment: ${err.message}`);
+              console.log(err);
             }
 
       - name: Log summary
