@@ -74,15 +74,27 @@ jobs:
       - name: Check for diffs and write patch
         id: diffs
         run: |
-          set -euo pipefail
-          # create a patch into a file if anything differs; do not treat 'diff' non-zero as an error
-          git --no-pager diff --exit-code requirements/ci/requirements.txt requirements/post_upgrades.txt requirements/platform_dependent.txt > regen_diff.patch || true
-          if [ -s regen_diff.patch ]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-            echo "Patch size: $(wc -c < regen_diff.patch) bytes"
-          else
+          set -e
+          # create a patch into a file if anything differs
+          # git diff exits with 0 when no differences, 1 when differences, >1 on error.
+          rc=0
+          git --no-pager diff --exit-code requirements/ci/requirements.txt requirements/post_upgrades.txt requirements/platform_dependent.txt > regen_diff.patch 2> regen_diff.err || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            # no changes
             echo "changed=false" >> $GITHUB_OUTPUT
             echo "No changes"
+            rm -f regen_diff.err || true
+          elif [ "$rc" -eq 1 ]; then
+            # differences found
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Patch size: $(wc -c < regen_diff.patch) bytes"
+            rm -f regen_diff.err || true
+          else
+            # an actual error occurred while generating the diff; surface the error and fail the job
+            echo "git diff failed with exit code $rc" >&2
+            echo "--- git diff stderr ---" >&2
+            cat regen_diff.err >&2 || true
+            exit $rc
           fi
 
       - name: Upload regen diff (if present)
