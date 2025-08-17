@@ -126,8 +126,7 @@ jobs:
               }
             } catch (err) {
               // If commenting fails (e.g., fork PRs or limited permissions), log the error but don't fail the workflow
-              const core = require('@actions/core');
-              core.warning(`Failed to create/update PR comment: ${err.message}`);
+              console.warn(`Failed to create/update PR comment: ${err && err.message ? err.message : String(err)}`);
               console.log(err);
             }
 
