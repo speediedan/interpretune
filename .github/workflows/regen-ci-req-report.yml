@@ -99,7 +99,52 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const marker = '<!-- regen-check-pins -->';
-            const bodyText = `${marker}\n**regen-check** detected changes to pinned requirements and uploaded a patch artifact named 'regen-pins-diff'.\n\nPlease review the artifact and CI results. This workflow is report-only and will not open a PR; the scheduled regen workflow will open PRs automatically.`;
+            // attempt to extract a short top-5 package-change summary from regen_diff.patch
+            let summary = '';
+            try {
+              const fs = require('fs');
+              const patchPath = 'regen_diff.patch';
+              if (fs.existsSync(patchPath)) {
+                const data = fs.readFileSync(patchPath, 'utf8');
+                const added = {};
+                const removed = {};
+                const lines = data.split('\n');
+                for (const l of lines) {
+                  if (!l) continue;
+                  if (l.startsWith('+++') || l.startsWith('---') || l.startsWith('diff ') || l.startsWith('index ') || l.startsWith('@@')) continue;
+                  if (l.startsWith('+')) {
+                    const m = l.match(/^\+\s*([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?\s*(==|>=|<=|~=|!=|>|<)\s*(\S+)/);
+                    if (m) { added[m[1]] = m[2] + m[3]; continue; }
+                    const m2 = l.match(/^\+\s*([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?\s*$/);
+                    if (m2) added[m2[1]] = '';
+                  } else if (l.startsWith('-')) {
+                    const m = l.match(/^-\s*([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?\s*(==|>=|<=|~=|!=|>|<)\s*(\S+)/);
+                    if (m) { removed[m[1]] = m[2] + m[3]; continue; }
+                    const m2 = l.match(/^-\s*([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?\s*$/);
+                    if (m2) removed[m2[1]] = '';
+                  }
+                }
+                const all = Array.from(new Set([...Object.keys(added), ...Object.keys(removed)]));
+                const changes = [];
+                for (const name of all) {
+                  const a = Object.prototype.hasOwnProperty.call(added, name) ? added[name] : null;
+                  const r = Object.prototype.hasOwnProperty.call(removed, name) ? removed[name] : null;
+                  if (r && a) {
+                    changes.push(`${name}: ${r} → ${a}`);
+                  } else if (a && !r) {
+                    changes.push(`${name}: added ${a || ''}`);
+                  } else if (r && !a) {
+                    changes.push(`${name}: removed ${r || ''}`);
+                  }
+                }
+                if (changes.length) {
+                  summary = 'Top changes:\n' + changes.slice(0,5).map((s,i)=>`${i+1}. ${s}`).join('\n');
+                }
+              }
+            } catch (e) {
+              console.warn('Failed to parse regen_diff.patch for summary:', e && e.message ? e.message : String(e));
+            }
+            const bodyText = `${marker}\n**regen-check** detected changes to pinned requirements and uploaded a patch artifact named 'regen-pins-diff'.\n\n${summary ? summary + '\n\n' : ''}Please review the artifact and CI results. This workflow is report-only and will not open a PR; the scheduled regen workflow will open PRs automatically.`;
             const pr = context.payload.pull_request && context.payload.pull_request.number;
             const headFullName = context.payload.pull_request && context.payload.pull_request.head && context.payload.pull_request.head.repo && context.payload.pull_request.head.repo.full_name;
             const baseFullName = context.payload.repository && context.payload.repository.full_name;
