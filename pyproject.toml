@@ -64,7 +64,8 @@ lightning = [
 examples = [
 "wandb",
 "torch-tb-profiler",
-"ipython[notebook]",
+"notebook",
+"jupyterlab",
 "ipywidgets",
 "jupytext >= 1.10",  # converting notebook source .py to .ipynb
 "nbval >= 0.9.6",  # testing the notebook

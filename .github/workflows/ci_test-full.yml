@@ -119,8 +119,6 @@ jobs:
           echo "enable_os_trace=${{ inputs.enable_os_trace != '' && inputs.enable_os_trace || steps.capture-manual-overrides.outputs.ENABLE_OS_TRACE }}" >> $GITHUB_OUTPUT
           echo "pytest_filter_pattern=${{ inputs.pytest_filter_pattern != '' && inputs.pytest_filter_pattern || steps.capture-manual-overrides.outputs.PYTEST_FILTER_PATTERN }}" >> $GITHUB_OUTPUT
           echo "run_w_grafana=${{ inputs.run_w_grafana != '' && inputs.run_w_grafana || steps.capture-manual-overrides.outputs.RUN_W_GRAFANA || '1' }}" >> $GITHUB_OUTPUT
-  # regen-check moved to a scheduled workflow (.github/workflows/regen-check.yml)
-  # The scheduled workflow will run periodically and open an automated PR when pins change.
   cpu:
     needs: log-dispatch-inputs
     runs-on: ${{ matrix.os }}
