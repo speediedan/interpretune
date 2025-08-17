@@ -1,0 +1,127 @@
+name: regen-check (report-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'
+        required: false
+        default: 'INFO'
+        type: choice
+        options:
+        - 'INFO'
+        - 'DEBUG'
+      run_resource_monitor:
+        description: 'Run CI resource monitor'
+        required: false
+        default: '0'
+        type: string
+      enable_os_trace:
+        description: 'Enable OS-level tracing (Windows only currently)'
+        required: false
+        default: '0'
+        type: string
+      pytest_filter_pattern:
+        description: 'Pytest filter pattern (optional)'
+        required: false
+        default: ''
+        type: string
+      run_w_grafana:
+        description: 'Run Grafana Alloy resource monitoring (Linux only)'
+        required: false
+        default: '0'
+        type: string
+  push:
+    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    paths:
+      - "setup.*"
+      - "requirements.txt"
+      - "pyproject.toml"
+      - ".codecov.yml"
+      - "tests/**"
+      - "src/**"
+      - "requirements/**"
+      - ".github/workflows/ci_test-full.yml"
+      - ".actions/**"
+      # Exclude documentation-only files from triggering
+      - "!docs/**"
+      - "!**/*.md"
+      - "!**/*.rst"
+      - "!mkdocs.yml"
+      - "!**/CHANGELOG.md"
+      - "!**/CODE_OF_CONDUCT.md"
+      - "!**/CONTRIBUTING.md"
+      - "!**/LICENSE*"
+  pull_request:
+    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    types: [opened, reopened, ready_for_review, synchronize]
+    paths:
+      - "setup.*"
+      - "requirements.txt"
+      - "pyproject.toml"
+      - ".codecov.yml"
+      - "tests/**"
+      - "src/**"
+      - "requirements/**"
+      - ".github/workflows/ci_test-full.yml"
+      - ".actions/**"
+      # Exclude documentation-only files from triggering
+      - "!docs/**"
+      - "!**/*.md"
+      - "!**/*.rst"
+      - "!mkdocs.yml"
+      - "!**/CHANGELOG.md"
+      - "!**/CODE_OF_CONDUCT.md"
+      - "!**/CONTRIBUTING.md"
+      - "!**/LICENSE*"
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install regen deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pip-tools toml
+
+      - name: Run regen (pip-compile)
+        run: |
+          # Run regen to generate the CI input and post-upgrade files
+          python requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir=requirements/ci || true
+
+      - name: Check for diffs and write patch
+        id: diffs
+        run: |
+          set -e
+          # create a patch into a file if anything differs; do not fail the job
+          git --no-pager --no-color diff --exit-code requirements/ci/requirements.txt requirements/post_upgrades.txt requirements/platform_dependent.txt > regen_diff.patch || true
+          if [ -s regen_diff.patch ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Patch size: $(wc -c < regen_diff.patch) bytes"
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No changes"
+          fi
+
+      - name: Upload regen diff (if present)
+        if: steps.diffs.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: regen-pins-diff
+          path: regen_diff.patch
+
+      - name: Log summary
+        run: |
+          if [ "${{ steps.diffs.outputs.changed }}" = "true" ]; then
+            echo "Regen-check detected changes to pinned requirements. A patch artifact was uploaded as 'regen-pins-diff'."
+            echo "This workflow is report-only and will not open a PR; the scheduled regen workflow will open PRs automatically."
+          else
+            echo "Regen-check found no pin changes."
+          fi
