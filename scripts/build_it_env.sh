@@ -20,6 +20,7 @@ unset pip_install_flags
 unset no_commit_pin
 unset regen_with_pip_compile
 unset apply_post_upgrades
+unset no_ci_reqs
 
 usage(){
 >&2 cat << EOF
@@ -32,6 +33,7 @@ Usage: $0
    [ --ct_from_source "path" ]
    [ --pip_install_flags "flags" ]
    [ --no_commit_pin ]
+   [ --no-ci-reqs ]
    [ --regen_with_pip_compile ]
    [ --apply_post_upgrades ]
    [ --help ]
@@ -58,7 +60,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torch_test_channel,fts_from_source:,ct_from_source:,pip_install_flags:,no_commit_pin,regen_with_pip_compile,apply_post_upgrades,help -- "$@")
+args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torch_test_channel,fts_from_source:,ct_from_source:,pip_install_flags:,no_commit_pin,no-ci-reqs,regen_with_pip_compile,apply_post_upgrades,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -75,6 +77,7 @@ do
     --ct_from_source)   ct_from_source=$2 ; shift 2 ;;
     --pip_install_flags)   pip_install_flags=$2 ; shift 2 ;;
     --no_commit_pin)   no_commit_pin=1 ; shift  ;;
+    --no-ci-reqs)      no_ci_reqs=1 ; shift ;;
     --regen_with_pip_compile) regen_with_pip_compile=1 ; shift ;;
     --apply_post_upgrades) apply_post_upgrades=1 ; shift ;;
     --help)    usage      ; shift   ;;
@@ -140,6 +143,12 @@ it_install(){
         python ${repo_home}/requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci || true
     fi
 
+    # If CI pinned requirements don't exist and user did not disable ci-reqs, regenerate them
+    if [[ -z ${no_ci_reqs} ]] && [[ ! -f ${repo_home}/requirements/ci/requirements.txt ]]; then
+        echo "CI pinned requirements not found; regenerating requirements.in and post_upgrades."
+        python ${repo_home}/requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci || true
+    fi
+
     # Set IT_USE_CT_COMMIT_PIN by default, unless --no_commit_pin is specified
     if [[ -z ${no_commit_pin} ]]; then
         export IT_USE_CT_COMMIT_PIN="1"
@@ -150,8 +159,11 @@ it_install(){
     fi
 
     # Install project and extras; prefer CI pinned requirements if available
-    if [[ -f ${repo_home}/requirements/ci/requirements.txt ]]; then
+    if [[ -f ${repo_home}/requirements/ci/requirements.txt ]] && [[ -z ${no_ci_reqs} ]]; then
+        # Install pinned requirements, then install editable package so CLI modules (interpretune.*) are importable
         python -m pip install ${pip_install_flags} -r ${repo_home}/requirements/ci/requirements.txt -r requirements/docs.txt || true
+        # Ensure interpretune package is installed (editable install recommended during dev)
+        python -m pip install ${pip_install_flags} -e ".[test,examples,lightning]" || true
     else
         python -m pip install ${pip_install_flags} -e ".[test,examples,lightning]" -r requirements/docs.txt
     fi

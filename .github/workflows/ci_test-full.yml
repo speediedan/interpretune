@@ -192,18 +192,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.PIP_CACHE_DIR }}
-          key: ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-${{ hashFiles('requirements/base.txt') }}-${{ hashFiles('requirements/test.txt') }}-${{ hashFiles('requirements/examples.txt') }}-${{ hashFiles('requirements/lightning.txt') }}-${{ hashFiles('requirements/circuit_tracer_pin.txt') }}
+          key: ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-${{ hashFiles('requirements/ci/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-
 
-      - name: Set up venv and install dependencies (all OS)
+      - name: Set up venv and install ci dependencies (all OS)
         shell: bash
         run: |
           python -m pip install --upgrade pip setuptools wheel build --cache-dir "$PIP_CACHE_DIR"
           # Prefer CI pinned requirements if present
           if [ -f requirements/ci/requirements.txt ]; then
-            python -m pip install --upgrade pip setuptools wheel build --cache-dir "$PIP_CACHE_DIR"
-            pip install --no-deps -r requirements/ci/requirements.txt --cache-dir "$PIP_CACHE_DIR"
+            pip install -r requirements/ci/requirements.txt --cache-dir "$PIP_CACHE_DIR"
+            python -m pip install '.[test,examples,lightning]' --cache-dir "$PIP_CACHE_DIR"
           else
             python -m pip install '.[test,examples,lightning]' -c requirements/ci_constraints.txt --cache-dir "$PIP_CACHE_DIR"
           fi

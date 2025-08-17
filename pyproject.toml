@@ -253,5 +253,5 @@ platform_dependent = ["bitsandbytes"]
 
 # packages that should be applied as post-upgrades (package -> desired_version)
 [tool.ci_pinning.post_upgrades]
-datasets = "4.0.0"
-fsspec = "2025.7.0"
+datasets = "==4.0.0"
+fsspec = ">=2025.3.0"

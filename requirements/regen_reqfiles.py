@@ -110,16 +110,8 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
     # Include specific optional dependencies that we want to constrain for CI
     opt_deps = project.get("optional-dependencies", {})
 
-    # Groups we want to include completely for CI (test and examples are needed for CI functionality)
-    groups_to_include_completely = ["test", "examples"]
-
-    # Key packages from other optional dependencies that we want to constrain
-    key_packages_to_constrain = [
-        # From lightning group - these are important ML packages we want stable
-        "finetuning-scheduler",
-        "bitsandbytes",  # will be moved to platform_dependent
-        "peft",
-    ]
+    # Groups we want to include completely for CI (test, examples, and lightning are needed for CI functionality)
+    groups_to_include_completely = ["test", "examples", "lightning"]
 
     # Process optional dependencies
     for group, reqs in opt_deps.items():
@@ -130,35 +122,29 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
             # Include all packages from test and examples groups
             add_lines_from(reqs)
         else:
-            # For other groups, only include specific key packages
+            # For other groups, only include packages that are explicitly listed in post_upgrades or are
+            # platform-dependent; otherwise skip to avoid pulling in large optional groups transitively.
             for req in reqs:
-                # Extract package name
                 parts = re.split(r"[\s\[\]=<>!;@]", req)
                 pkg_name = parts[0].lower() if parts and parts[0] else ""
 
-                # Only include if it's in our key packages list
-                if normalize_package_name(pkg_name) in [normalize_package_name(p) for p in key_packages_to_constrain]:
-                    # Use the original req format with package name handling
-                    parts = re.split(r"[\s\[\]=<>!;@]", req)
-                    pkg_name = parts[0].lower() if parts and parts[0] else ""
+                # skip any packages that are declared in post_upgrades mapping
+                post_upgrade_names = {normalize_package_name(k) for k in post_upgrades}
+                if normalize_package_name(pkg_name) in post_upgrade_names:
+                    continue
 
-                    # skip any packages that are declared in post_upgrades mapping
-                    post_upgrade_names = {normalize_package_name(k) for k in post_upgrades}
-                    if normalize_package_name(pkg_name) in post_upgrade_names:
-                        continue
+                # separate platform-dependent packages for special handling (supports glob patterns)
+                is_platform_pkg = any(
+                    fnmatch.fnmatch(normalize_package_name(pkg_name), normalize_package_name(pattern))
+                    for pattern in platform_dependent
+                )
+                if is_platform_pkg:
+                    platform_dependent_lines.append(req)
+                    direct_packages.append(pkg_name)  # Still track as direct package
+                    continue
 
-                    # separate platform-dependent packages for special handling (supports glob patterns)
-                    is_platform_pkg = any(
-                        fnmatch.fnmatch(normalize_package_name(pkg_name), normalize_package_name(pattern))
-                        for pattern in platform_dependent
-                    )
-                    if is_platform_pkg:
-                        platform_dependent_lines.append(req)
-                        direct_packages.append(pkg_name)  # Still track as direct package
-                        continue
-
-                    req_in_lines.append(req)
-                    direct_packages.append(pkg_name)  # Track as direct package
+                # otherwise skip: don't include other group's packages unless listed in groups_to_include_completely
+                continue
 
     # include circuit-tracer pin(s) if present
     circuit_tracer_lines = convert_circuit_tracer_pin()
@@ -172,10 +158,17 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
     in_path = os.path.join(ci_output_dir, "requirements.in")
     write_file(in_path, req_in_lines)
 
-    # write post_upgrades.txt as exact pins
+    # write post_upgrades.txt using the version specifiers provided in pyproject
+    # pyproject may specify exact pins like '==4.0.0' or ranges like '>=2025.3.0'
     post_lines = []
-    for pkg, ver in post_upgrades.items():
-        post_lines.append(f"{pkg}=={ver}")
+    for pkg, spec in post_upgrades.items():
+        spec_str = spec.strip()
+        # If the spec doesn't start with a comparator, assume exact match
+        if re.match(r"^[<>=!].+", spec_str):
+            post_lines.append(f"{pkg}{spec_str}")
+        else:
+            # treat bare version as exact
+            post_lines.append(f"{pkg}=={spec_str}")
     write_file(POST_UPGRADES_PATH, post_lines)
 
     # write platform_dependent.txt with flexible constraints

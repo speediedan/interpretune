@@ -132,3 +132,37 @@ numpy==1.26.4
     # Check that platform_dependent.txt still contains bitsandbytes
     platform_final = platform_path.read_text()
     assert "bitsandbytes" in platform_final  # existing package should remain
+
+
+def test_post_upgrades_comparators_and_malformed(tmp_path):
+    regen = load_regen_module()
+
+    pyproject = {
+        "project": {
+            "dependencies": [
+                "packageA >=1.0",
+            ],
+            "optional-dependencies": {
+                "lightning": ["bitsandbytes", "peft", "finetuning-scheduler >= 2.5.0"],
+            },
+        },
+        "tool": {
+            "ci_pinning": {
+                # comparator-style specs and one malformed spec
+                "post_upgrades": {"datasets": "==4.0.0", "fsspec": ">=2025.3.0", "weirdpkg": "=>1.2.3"},
+                "platform_dependent": ["bitsandbytes"],
+            }
+        },
+    }
+
+    ci_out = tmp_path / "ci"
+    ci_out.mkdir()
+
+    req_in_path, post_path, platform_path, direct_packages = regen.generate_pip_compile_inputs(pyproject, str(ci_out))
+
+    post_lines = Path(post_path).read_text().splitlines()
+    # comparator-style specs should be written verbatim
+    assert "datasets==4.0.0" in post_lines
+    assert "fsspec>=2025.3.0" in post_lines
+    # malformed spec should be preserved as-is (regenerator does not validate comparator syntax)
+    assert "weirdpkg=>1.2.3" in post_lines

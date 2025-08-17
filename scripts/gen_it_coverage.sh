@@ -15,6 +15,7 @@ unset no_export_cov_xml
 unset pip_install_flags
 unset self_test_only
 unset no_commit_pin
+unset apply_post_upgrades
 
 usage(){
 >&2 cat << EOF
@@ -31,6 +32,7 @@ Usage: $0
    [ --pip_install_flags "flags" ]
    [ --self_test_only ]
    [ --no_commit_pin ]
+    [ --apply_post_upgrades ]
    [ --help ]
    Examples:
     # generate it_latest coverage without rebuilding the it_latest base environment:
@@ -51,7 +53,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torchvision_dev_ver:,torch_test_channel,no_rebuild_base,fts_from_source:,ct_from_source:,run_all_and_examples,no_export_cov_xml,pip_install_flags:,self_test_only,no_commit_pin,help -- "$@")
+args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torchvision_dev_ver:,torch_test_channel,no_rebuild_base,fts_from_source:,ct_from_source:,run_all_and_examples,no_export_cov_xml,pip_install_flags:,self_test_only,no_commit_pin,apply_post_upgrades,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -72,6 +74,7 @@ do
     --pip_install_flags)   pip_install_flags=$2 ; shift 2 ;;
     --self_test_only)   self_test_only=1 ; shift ;;
     --no_commit_pin)   no_commit_pin=1 ; shift ;;
+    --apply_post_upgrades)   apply_post_upgrades=1 ; shift ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
     *) >&2 echo Unsupported option: $1
@@ -132,18 +135,23 @@ env_rebuild(){
         no_commit_pin_param="--no_commit_pin"
     fi
 
+    apply_post_upgrades_param=""
+    if [[ -n "${apply_post_upgrades}" ]]; then
+        apply_post_upgrades_param="--apply_post_upgrades"
+    fi
+
     case $1 in
         it_latest )
             if [[ -n ${torch_dev_ver} ]]; then
-                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_dev_ver=${torch_dev_ver} ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${no_commit_pin_param}
+                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_dev_ver=${torch_dev_ver} ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${no_commit_pin_param} ${apply_post_upgrades_param}
             elif [[ $torch_test_channel -eq 1 ]]; then
-                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_test_channel  ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${no_commit_pin_param}
+                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 --torch_test_channel  ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${no_commit_pin_param} ${apply_post_upgrades_param}
             else
-                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${no_commit_pin_param}
+                ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${no_commit_pin_param} ${apply_post_upgrades_param}
             fi
             ;;
         it_latest_pt_2_4 )
-            ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${no_commit_pin_param}
+            ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${no_commit_pin_param} ${apply_post_upgrades_param}
             ;;
         *)
             echo "no matching environment found, exiting..." >> $coverage_session_log
