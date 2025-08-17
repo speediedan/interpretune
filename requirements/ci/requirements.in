@@ -5,4 +5,27 @@ tabulate >= 0.9.0
 jsonargparse[signatures] >= 4.35.0
 finetuning-scheduler >= 2.5.0
 peft
+wandb
+torch-tb-profiler
+ipython[notebook]
+ipywidgets
+jupytext >= 1.10
+nbval >= 0.9.6
+python-dotenv
+plotly
+gdown
+evaluate
+scikit-learn
+neuronpedia
+circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6c74ea291c410bb3391e572cd6a8d020be714922
+coverage >= 6.4
+pytest >= 6.0
+pytest-rerunfailures >= 10.2
+twine >= 3.2
+pyright >= 1.1.365
+pre-commit >= 1.0
+psycopg
+toml
+pip-tools
+huggingface_hub[hf_xet]
 git+https://github.com/speediedan/circuit-tracer.git@6c74ea291c410bb3391e572cd6a8d020be714922#egg=circuit-tracer

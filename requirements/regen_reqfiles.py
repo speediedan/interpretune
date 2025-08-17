@@ -107,26 +107,30 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
     # Core dependencies - always include these as they are our main requirements
     add_lines_from(project.get("dependencies", []))
 
-    # Only include specific optional dependencies that we want to constrain
-    # Rather than including all optional dependencies, only include key packages
-    # that we want to have stable/consistent versions across platforms
+    # Include specific optional dependencies that we want to constrain for CI
     opt_deps = project.get("optional-dependencies", {})
 
-    # Key packages from optional dependencies that we want to constrain
+    # Groups we want to include completely for CI (test and examples are needed for CI functionality)
+    groups_to_include_completely = ["test", "examples"]
+
+    # Key packages from other optional dependencies that we want to constrain
     key_packages_to_constrain = [
         # From lightning group - these are important ML packages we want stable
         "finetuning-scheduler",
         "bitsandbytes",  # will be moved to platform_dependent
         "peft",
-
-        # From examples group - key packages for functionality
-        # Note: we exclude many examples packages to avoid constraining transitive deps
-        # like triton that cause platform issues
     ]
 
-    # Only add specific packages from optional dependencies
+    # Process optional dependencies
     for group, reqs in opt_deps.items():
-        if reqs:
+        if not reqs:
+            continue
+
+        if group in groups_to_include_completely:
+            # Include all packages from test and examples groups
+            add_lines_from(reqs)
+        else:
+            # For other groups, only include specific key packages
             for req in reqs:
                 # Extract package name
                 parts = re.split(r"[\s\[\]=<>!;@]", req)

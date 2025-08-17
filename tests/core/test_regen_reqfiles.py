@@ -25,6 +25,7 @@ def test_generate_pip_compile_inputs_writes_files(tmp_path):
             ],
             "optional-dependencies": {
                 "examples": ["example_pkg >=0.1", "datasets >= 2.0", "some_transitive_dep"],
+                "test": ["test_pkg >=1.0", "coverage >= 6.0"],
                 "lightning": ["bitsandbytes", "peft", "finetuning-scheduler >= 2.5.0"]
             },
         },
@@ -46,6 +47,10 @@ def test_generate_pip_compile_inputs_writes_files(tmp_path):
     assert "peft" in direct_packages  # key package from lightning group
     assert "finetuning-scheduler" in direct_packages  # key package from lightning group
     assert "bitsandbytes" in direct_packages  # platform-dependent but still tracked as direct
+    assert "example_pkg" in direct_packages  # from examples group (included completely)
+    assert "some_transitive_dep" in direct_packages  # from examples group (included completely)
+    assert "test_pkg" in direct_packages  # from test group (included completely)
+    assert "coverage" in direct_packages  # from test group (included completely)
     # packages excluded due to post_upgrades should not be in direct_packages
     assert "datasets" not in direct_packages
     assert "fsspec" not in direct_packages
@@ -58,9 +63,11 @@ def test_generate_pip_compile_inputs_writes_files(tmp_path):
     assert "datasets" not in req_in  # excluded as post_upgrade
     assert "fsspec" not in req_in    # excluded as post_upgrade
     assert "bitsandbytes" not in req_in  # excluded as platform_dependent
-    # Non-key packages from optional dependencies should NOT be included
-    assert "example_pkg" not in req_in  # not in key packages list
-    assert "some_transitive_dep" not in req_in  # not in key packages list
+    # All packages from examples and test groups should be included (test and examples are included completely)
+    assert "example_pkg" in req_in  # from examples group (included completely)
+    assert "some_transitive_dep" in req_in  # from examples group (included completely)
+    assert "test_pkg" in req_in  # from test group (included completely)
+    assert "coverage" in req_in  # from test group (included completely)
 
     # post_upgrades.txt should exist and pin the specified versions
     post_text = Path(post_path).read_text()
