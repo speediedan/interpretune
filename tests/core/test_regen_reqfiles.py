@@ -40,6 +40,12 @@ def test_generate_pip_compile_inputs_writes_files(tmp_path):
     ci_out = tmp_path / "ci"
     ci_out.mkdir()
 
+    # Redirect regen module file outputs to tmp paths so tests don't modify repo files
+    regen.REQ_DIR = str(tmp_path)
+    regen.CI_REQ_DIR = str(ci_out)
+    regen.POST_UPGRADES_PATH = str(tmp_path / "post_upgrades.txt")
+    regen.CIRCUIT_TRACER_PIN = str(tmp_path / "circuit_tracer_pin.txt")
+
     req_in_path, post_path, platform_path, direct_packages = regen.generate_pip_compile_inputs(pyproject, str(ci_out))
 
     # Check that direct_packages contains the expected packages
@@ -111,8 +117,12 @@ numpy==1.26.4
 
     # Direct packages list (only the packages we explicitly specify)
     direct_packages = ["torch", "transformers", "peft"]
+    # Redirect regen module file outputs to tmp paths so tests don't modify repo files
+    regen.REQ_DIR = str(tmp_path)
+    regen.POST_UPGRADES_PATH = str(tmp_path / "post_upgrades.txt")
+    regen.CIRCUIT_TRACER_PIN = str(tmp_path / "circuit_tracer_pin.txt")
 
-    # Run post-processing
+    # Run post-processing using the direct_packages defined above
     regen.post_process_pinned_requirements(
         str(requirements_path), str(platform_path), platform_patterns, direct_packages
     )
@@ -157,6 +167,12 @@ def test_post_upgrades_comparators_and_malformed(tmp_path):
 
     ci_out = tmp_path / "ci"
     ci_out.mkdir()
+
+    # Redirect regen module file outputs to tmp paths so tests don't modify repo files
+    regen.REQ_DIR = str(tmp_path)
+    regen.CI_REQ_DIR = str(ci_out)
+    regen.POST_UPGRADES_PATH = str(tmp_path / "post_upgrades.txt")
+    regen.CIRCUIT_TRACER_PIN = str(tmp_path / "circuit_tracer_pin.txt")
 
     req_in_path, post_path, platform_path, direct_packages = regen.generate_pip_compile_inputs(pyproject, str(ci_out))
 
