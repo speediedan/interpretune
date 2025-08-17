@@ -91,76 +91,11 @@ jobs:
         with:
           name: regen-pins-diff
           path: regen_diff.patch
+
       - name: Compute top-5 package-change summary
         if: steps.diffs.outputs.changed == 'true'
         run: |
-          python - <<'PY'
-          import re
-          from pathlib import Path
-          patch = Path('regen_diff.patch')
-          out = Path('regen_summary.txt')
-          if not patch.exists() or patch.stat().st_size == 0:
-              out.write_text('')
-              print('No patch to summarize')
-              raise SystemExit(0)
-
-          def parse_req(line):
-              # strip leading +/- and whitespace
-              s = line[1:].strip()
-              # remove inline comments
-              s = re.sub(r"\s+#.*$", "", s).strip()
-              # If it's a VCS or URL spec, return the whole spec as the name for now
-              if s.startswith('git+') or s.startswith('http://') or s.startswith('https://') or 'egg=' in s:
-              # try to extract egg name
-              m = re.search(r'egg=([^&\n]+)', s)
-              if m:
-                  return m.group(1), s
-              return s, s
-              # Match name[extras] optional comparator
-              m = re.match(r"^([A-Za-z0-9._+\-]+)(?:\[[^\]]+\])?\s*(?:([<>!=~]{1,2})\s*(\S+))?", s)
-              if m:
-              name = m.group(1)
-              op = m.group(2) or ''
-              ver = m.group(3) or ''
-              spec = (op + ver).strip()
-              return name, spec
-              return s, ''
-
-          added = {}
-          removed = {}
-          for ln in patch.read_text().splitlines():
-              if not ln:
-              continue
-              if ln.startswith(('+++', '---', 'diff ', 'index ', '@@')):
-              continue
-              if ln.startswith('+'):
-              name, spec = parse_req(ln)
-              added[name] = spec
-              elif ln.startswith('-'):
-              name, spec = parse_req(ln)
-              removed[name] = spec
-
-          keys = sorted(set(list(added.keys()) + list(removed.keys())))
-          changes = []
-          for k in keys:
-              a = added.get(k)
-              r = removed.get(k)
-              if r and a:
-              changes.append(f"{k}: {r or '<unspecified>'} → {a or '<unspecified>'}")
-              elif a and not r:
-              changes.append(f"{k}: added {a or ''}")
-              elif r and not a:
-              changes.append(f"{k}: removed {r or ''}")
-
-          if changes:
-              keep = changes[:5]
-              content = 'Top changes:\n' + '\n'.join(f"{i+1}. {s}" for i,s in enumerate(keep))
-              out.write_text(content)
-              print(content)
-          else:
-              out.write_text('')
-              print('No package-like changes found in patch')
-          PY
+          python scripts/regen_summary.py regen_diff.patch regen_summary.txt
 
 
       - name: Create or update PR comment (single-comment)
