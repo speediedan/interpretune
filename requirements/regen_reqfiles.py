@@ -72,7 +72,7 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
     # Build requirements.in lines from top-level dependencies and optional groups
     req_in_lines = []
     platform_dependent_lines = []
-    direct_packages = []  # Track all direct packages we're including
+    direct_packages = []
 
     def normalize_package_name(name):
         """Normalize package names to handle underscores vs dashes."""
