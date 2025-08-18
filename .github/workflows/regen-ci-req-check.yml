@@ -13,6 +13,8 @@ jobs:
       issues: write
       pull-requests: write
     steps:
+      - uses: actions/checkout@v4
+
       - name: Run regen and compute patch
         uses: ./.github/actions/regen-ci-reqs
         id: regen_ci_reqs
