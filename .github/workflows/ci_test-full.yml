@@ -171,7 +171,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.PIP_CACHE_DIR }}
-          key: ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-${{ hashFiles('requirements/ci/requirements.txt') }}
+          key: ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-${{ hashFiles('requirements/ci/requirements.txt') }}-${{ hashFiles('requirements/post_upgrades.txt') }}-${{ hashFiles('requirements/platform_dependent.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-
 

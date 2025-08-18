@@ -13,32 +13,17 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Run regen and compute patch
+        uses: ./.github/actions/regen-ci-reqs
+        id: regen_ci_reqs
         with:
-          python-version: '3.12'
-
-      - name: Install regen deps
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pip-tools toml
-
-      - name: Run regen (pip-compile)
-        run: |
-          python requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir=requirements/ci
-
-      - name: Check for diffs
-        id: diffs
-        run: |
-          set -euo pipefail
-          changed=false
-          # portable git diff invocation (do not use --no-color)
-          git --no-pager diff --quiet --exit-code requirements/ci/requirements.txt requirements/post_upgrades.txt requirements/platform_dependent.txt || changed=true
-          echo "changed=$changed" >> $GITHUB_OUTPUT
+          python_version: '3.12'
+          ci_output_dir: requirements/ci
+          compare_paths: "requirements/ci/requirements.txt requirements/post_upgrades.txt requirements/platform_dependent.txt"
+          patch_path: regen_diff.patch
 
       - name: Create PR with updated pins
-        if: steps.diffs.outputs.changed == 'true'
+        if: steps.regen_ci_reqs.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -46,11 +31,11 @@ jobs:
           commit-message: "Auto-regenerate pinned requirements via scheduled regen-check"
           branch: regen/pinned-requirements-${{ github.run_id }}
           body: |
-            This PR was opened by the scheduled regen-check workflow. It contains regenerated pinned requirement files.
+            This PR was opened by the scheduled regen-ci-req-check workflow. It contains regenerated pinned requirement files.
             Please review tests and CI results before merging.
           labels: automated, dependencies
 
       - name: Report no changes
-        if: ${{ steps.diffs.outputs.changed == 'false' }}
+        if: ${{ steps.regen_ci_reqs.outputs.changed == 'false' }}
         run: |
-          echo "No pin file changes detected by regen-check."
+          echo "No CI pin file changes detected by regen-ci-req-check."

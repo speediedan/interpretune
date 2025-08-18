@@ -26,20 +26,21 @@ huggingface-hub[hf-xet]==0.34.4
     #   peft
     #   tokenizers
     #   transformers
-ipython[notebook]==9.4.0
-    # via
-    #   -r requirements/ci/requirements.in
-    #   ipykernel
-    #   ipywidgets
 ipywidgets==8.1.7
     # via -r requirements/ci/requirements.in
 jsonargparse[signatures,typing-extensions]==4.40.2
     # via -r requirements/ci/requirements.in
+jupyterlab==4.4.6
+    # via
+    #   -r requirements/ci/requirements.in
+    #   notebook
 jupytext==1.17.2
     # via -r requirements/ci/requirements.in
 nbval==0.11.0
     # via -r requirements/ci/requirements.in
 neuronpedia==1.0.22
+    # via -r requirements/ci/requirements.in
+notebook==7.4.5
     # via -r requirements/ci/requirements.in
 peft==0.17.0
     # via -r requirements/ci/requirements.in

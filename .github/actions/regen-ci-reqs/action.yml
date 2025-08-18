@@ -1,0 +1,70 @@
+name: Regen CI reqs runner
+description: Install regen deps, run regen (pip-compile), and produce a patch if pins differ. Also performs checkout and Python setup.
+inputs:
+  python_version:
+    description: 'Python version to setup'
+    required: false
+    default: '3.12'
+  ci_output_dir:
+    description: Directory where regen writes CI output (defaults to requirements/ci)
+    required: false
+    default: requirements/ci
+  compare_paths:
+    description: Space-separated list of files/paths to compare with git diff
+    required: false
+    default: "requirements/ci/requirements.txt requirements/post_upgrades.txt requirements/platform_dependent.txt"
+  patch_path:
+    description: Path to write the patch file
+    required: false
+    default: regen_diff.patch
+runs:
+  using: composite
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Install regen deps
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install pip-tools toml
+
+    - name: Run regen (pip-compile)
+      shell: bash
+      run: |
+        python requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir=${{ inputs.ci_output_dir }}
+
+    - id: check
+      name: Check for diffs and write patch
+      shell: bash
+      run: |
+        set -e
+        rc=0
+        git --no-pager diff --exit-code ${{ inputs.compare_paths }} > ${{ inputs.patch_path }} 2> regen_diff.err || rc=$?
+        if [ "$rc" -eq 0 ]; then
+          echo "changed=false" >> $GITHUB_OUTPUT
+          rm -f regen_diff.err || true
+        elif [ "$rc" -eq 1 ]; then
+          echo "changed=true" >> $GITHUB_OUTPUT
+          echo "Patch size: $(wc -c < ${{ inputs.patch_path }}) bytes"
+          rm -f regen_diff.err || true
+        else
+          echo "git diff failed with exit code $rc" >&2
+          echo "--- git diff stderr ---" >&2
+          cat regen_diff.err >&2 || true
+          exit $rc
+        fi
+        echo "patch_path=${{ inputs.patch_path }}" >> $GITHUB_OUTPUT
+
+outputs:
+  changed:
+    description: 'true if files differ'
+    value: ${{ steps.check.outputs.changed }}
+  patch_path:
+    description: 'path to generated patch file'
+    value: ${{ steps.check.outputs.patch_path }}

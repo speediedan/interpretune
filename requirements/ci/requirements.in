@@ -7,7 +7,8 @@ finetuning-scheduler >= 2.5.0
 peft
 wandb
 torch-tb-profiler
-ipython[notebook]
+notebook
+jupyterlab
 ipywidgets
 jupytext >= 1.10
 nbval >= 0.9.6
