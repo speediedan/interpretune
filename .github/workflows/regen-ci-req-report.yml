@@ -1,0 +1,145 @@
+name: regen-ci-req-report (report-only)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    paths:
+      - "setup.*"
+      - "requirements.txt"
+      - "pyproject.toml"
+      - ".codecov.yml"
+      - "tests/**"
+      - "src/**"
+      - "requirements/**"
+      - ".github/workflows/ci_test-full.yml"
+      - ".actions/**"
+      # Exclude documentation-only files from triggering
+      - "!docs/**"
+      - "!**/*.md"
+      - "!**/*.rst"
+      - "!mkdocs.yml"
+      - "!**/CHANGELOG.md"
+      - "!**/CODE_OF_CONDUCT.md"
+      - "!**/CONTRIBUTING.md"
+      - "!**/LICENSE*"
+  pull_request:
+    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    types: [opened, reopened, ready_for_review, synchronize]
+    paths:
+      - "setup.*"
+      - "requirements.txt"
+      - "pyproject.toml"
+      - ".codecov.yml"
+      - "tests/**"
+      - "src/**"
+      - "requirements/**"
+      - ".github/workflows/ci_test-full.yml"
+      - ".actions/**"
+      # Exclude documentation-only files from triggering
+      - "!docs/**"
+      - "!**/*.md"
+      - "!**/*.rst"
+      - "!mkdocs.yml"
+      - "!**/CHANGELOG.md"
+      - "!**/CODE_OF_CONDUCT.md"
+      - "!**/CONTRIBUTING.md"
+      - "!**/LICENSE*"
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run regen and compute patch
+        uses: ./.github/actions/regen-ci-reqs
+        id: regen_ci_reqs
+        with:
+          python_version: '3.12'
+          ci_output_dir: requirements/ci
+          compare_paths: "requirements/ci/requirements.txt requirements/post_upgrades.txt requirements/platform_dependent.txt"
+          patch_path: regen_diff.patch
+
+      - name: Upload regen diff (if present)
+        if: steps.regen_ci_reqs.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: regen-pins-diff
+          path: regen_diff.patch
+
+      - name: Compute top-5 package-change summary
+        if: steps.regen_ci_reqs.outputs.changed == 'true'
+        run: |
+          python scripts/regen_summary.py regen_diff.patch regen_summary.txt
+
+
+      - name: Create or update PR comment (single-comment)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        env:
+          CHANGED: ${{ steps.regen_ci_reqs.outputs.changed }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const marker = '<!-- regen-check-pins -->';
+            let summary = '';
+            try {
+              const fs = require('fs');
+              const sumPath = 'regen_summary.txt';
+              if (fs.existsSync(sumPath)) {
+                summary = fs.readFileSync(sumPath, 'utf8').trim();
+              }
+            } catch (e) {
+              console.warn('Failed to read regen_summary.txt for summary:', e && e.message ? e.message : String(e));
+            }
+            const changed = process.env.CHANGED || 'false';
+            let bodyText = '';
+            if (changed === 'true') {
+              bodyText = `${marker}\n**regen-ci-req-check** detected changes to pinned CI requirements and uploaded a patch artifact named 'regen-pins-diff'.\n\n${summary ? summary + '\n\n' : ''}Please review the artifact and CI results. This workflow is report-only and will not open a PR; the scheduled regen workflow will open PRs automatically.`;
+            } else {
+              bodyText = `${marker}\nNo CI pin file changes detected by regen-ci-req-check.`;
+            }
+            const pr = context.payload.pull_request && context.payload.pull_request.number;
+            const headFullName = context.payload.pull_request && context.payload.pull_request.head && context.payload.pull_request.head.repo && context.payload.pull_request.head.repo.full_name;
+            const baseFullName = context.payload.repository && context.payload.repository.full_name;
+            if (!pr) {
+              console.log('No pull_request payload found; skipping comment.');
+              return;
+            }
+            console.log(`PR head repo: ${headFullName}; base repo from payload: ${baseFullName}`);
+            if (!baseFullName) {
+              console.log('Base repository not found in payload; skipping comment to be safe.');
+              return;
+            }
+            if (headFullName !== baseFullName) {
+              console.log(`PR head repo (${headFullName}) differs from base repo (${baseFullName}); skipping comment to avoid permission errors.`);
+              return;
+            }
+            try {
+              // list comments and try to find an existing one with the marker (use github.rest)
+              const { data: comments } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: pr });
+              const existing = comments.find(c => c.body && c.body.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body: bodyText });
+              } else {
+                await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: pr, body: bodyText });
+              }
+            } catch (err) {
+              // If commenting fails (e.g., fork PRs or limited permissions), log the error but don't fail the workflow
+              console.warn(`Failed to create/update PR comment: ${err && err.message ? err.message : String(err)}`);
+              console.log(err);
+            }
+
+      - name: Log summary
+        run: |
+          if [ "${{ steps.regen_ci_reqs.outputs.changed }}" = "true" ]; then
+            echo "Regen-check detected changes to pinned requirements. A patch artifact was uploaded as 'regen-pins-diff'."
+            echo "This workflow is report-only and will not open a PR; the scheduled regen workflow will open PRs automatically."
+          else
+            echo "Regen-check found no pin changes."
+          fi

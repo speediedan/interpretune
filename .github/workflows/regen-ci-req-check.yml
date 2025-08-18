@@ -1,0 +1,43 @@
+name: regen-ci-req-check (scheduled)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 1,15 * *'  # run 00:00 UTC on 1st and 15th of each month
+
+jobs:
+  regen:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run regen and compute patch
+        uses: ./.github/actions/regen-ci-reqs
+        id: regen_ci_reqs
+        with:
+          python_version: '3.12'
+          ci_output_dir: requirements/ci
+          compare_paths: "requirements/ci/requirements.txt requirements/post_upgrades.txt requirements/platform_dependent.txt"
+          patch_path: regen_diff.patch
+
+      - name: Create PR with updated pins
+        if: steps.regen_ci_reqs.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: "[auto] regen pinned requirements"
+          commit-message: "Auto-regenerate pinned requirements via scheduled regen-check"
+          branch: regen/pinned-requirements-${{ github.run_id }}
+          body: |
+            This PR was opened by the scheduled regen-ci-req-check workflow. It contains regenerated pinned requirement files.
+            Please review tests and CI results before merging.
+          labels: automated, dependencies
+
+      - name: Report no changes
+        if: ${{ steps.regen_ci_reqs.outputs.changed == 'false' }}
+        run: |
+          echo "No CI pin file changes detected by regen-ci-req-check."

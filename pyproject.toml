@@ -33,7 +33,7 @@ readme = "README.md"
 dependencies = [
     "transformer_lens >= 2.15.4",
     "sae_lens >= 6.3.1",  # use new sae_lens API
-    "torch >=2.7.1,< 2.8.0", # pin for CI until we test locally with 2.8.0
+    "torch >=2.7.1",
     "tabulate >= 0.9.0",
     "datasets >= 2.2.0",
     "jsonargparse[signatures] >= 4.35.0",  # replace this req once adding fts req
@@ -64,7 +64,8 @@ lightning = [
 examples = [
 "wandb",
 "torch-tb-profiler",
-"ipython[notebook]",
+"notebook",
+"jupyterlab",
 "ipywidgets",
 "jupytext >= 1.10",  # converting notebook source .py to .ipynb
 "nbval >= 0.9.6",  # testing the notebook
@@ -74,7 +75,9 @@ examples = [
 "evaluate",
 "scikit-learn",
 "neuronpedia",
-"circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6c74ea291c410bb3391e572cd6a8d020be714922",
+# TODO: add our packaged circuit-tracer dep (either origin or fork) once it is available and remove the
+#       `install_circuit_tracer` tool
+# "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6c74ea291c410bb3391e572cd6a8d020be714922",
 ]
 
 docs = [
@@ -89,7 +92,7 @@ docs = [
 "sphinx-paramlinks >= 0.5.1",
 "sphinx-togglebutton >= 0.2",
 "sphinx-copybutton >= 0.3",
-"typing-extensions",  # already in `base.txt` but the docs CI job does not install it
+"typing-extensions",
 "jinja2 >= 3.0.0,<3.1.0",
 "pt_lightning_sphinx_theme @ git+https://github.com/speediedan/lightning_sphinx_theme.git@057f4c3e669948bc618eec1688b016f07140cc0d",
 ]
@@ -104,7 +107,7 @@ test = [
 "psycopg",
 "toml",
 "pip-tools",
-"huggingface_hub[hf_xet]",  # for improved performance
+"huggingface_hub[hf_xet]",
 ]
 
 
@@ -238,3 +241,20 @@ notebook_metadata_filter = "-all"
 [tool.jupytext.formats]
 "notebooks/" = "ipynb"
 "scripts/" = "py"
+
+[tool.ci_pinning]
+# default pinning behavior for packages not listed explicitly: "major", "minor", "exact", or "none"
+default = "major"
+
+# packages to never relax (keep exact/strict behavior)
+strict = ["torch"]
+
+# packages with platform-dependent versions that should be excluded from pinning
+# these will be installed separately with flexible constraints to allow platform-specific resolution
+# only applies to direct dependencies we specify in pyproject.toml
+platform_dependent = ["bitsandbytes"]
+
+# packages that should be applied as post-upgrades (package -> desired_version)
+[tool.ci_pinning.post_upgrades]
+datasets = "==4.0.0"
+fsspec = ">=2025.3.0"

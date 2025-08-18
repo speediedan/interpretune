@@ -35,10 +35,18 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip setuptools wheel build
-          python -m pip install '.[test,examples,lightning]' -c requirements/ci_constraints.txt
-          pip install --upgrade datasets
-          pip install --upgrade fsspec
+          # Prefer pinned CI requirements if present
+          if [ -f requirements/ci/requirements.txt ]; then
+            pip install --no-deps -r requirements/ci/requirements.txt
+          else
+            python -m pip install '.[test,examples,lightning]' -c requirements/ci_constraints.txt
+          fi
+          # Optional post-upgrades (disabled by default)
+          if [ "${APPLY_POST_UPGRADES:-1}" = "1" ] && [ -s requirements/post_upgrades.txt ]; then
+            pip install --upgrade -r requirements/post_upgrades.txt
+          fi
           pip list
+      # No env injection here; the shell uses ${APPLY_POST_UPGRADES:-1} to default when unset.
       - name: Setup pyright, precommit and git lfs
         shell: bash
         run: |
@@ -47,5 +55,50 @@ jobs:
           pyright -p pyproject.toml
           pre-commit install
           git lfs install
+      - name: Network & firewall diagnostics (largely diagnostics for firewall)
+        if: always()
+        shell: bash
+        run: |
+          if [ "${COLLECT_NETWORK_DIAG:-0}" != "1" ]; then
+            echo "Skipping network diagnostics (COLLECT_NETWORK_DIAG != 1)"
+            exit 0
+          fi
+          echo "Collecting network diagnostics for debugging firewall issues..."
+          uname -a > /tmp/ci_net_diag.txt || true
+          if command -v nft >/dev/null 2>&1; then
+            sudo nft list ruleset > /tmp/nft_rules.txt 2>/dev/null || true
+          else
+            sudo iptables-save > /tmp/iptables_save.txt 2>/dev/null || true
+          fi
+          ss -tunlp > /tmp/ss_list.txt 2>/dev/null || true
+          curl -v --connect-timeout 10 https://pypi.org/simple/ > /tmp/pypi_simple.txt 2>&1 || true
+          git ls-remote https://github.com/python-poetry/poetry.git > /tmp/git_ls_remote.txt 2>&1 || true
+          # Only include files that actually exist when creating the tarball
+          files_to_archive=""
+          for f in /tmp/nft_rules.txt /tmp/iptables_save.txt /tmp/ss_list.txt /tmp/pypi_simple.txt /tmp/git_ls_remote.txt; do
+            if [ -f "$f" ]; then
+              files_to_archive="$files_to_archive $f"
+            fi
+          done
+          if [ -n "$files_to_archive" ]; then
+            tar -czf /tmp/network-diagnostics.tar.gz $files_to_archive || true
+          else
+            echo "No network diagnostic files collected; skipping tarball creation"
+          fi
+      - name: Check network diagnostics tar
+        id: check_net_diag
+        run: |
+          if [ -f /tmp/network-diagnostics.tar.gz ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload network diagnostics artifact
+        if: steps.check_net_diag.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-diagnostics
+          path: /tmp/network-diagnostics.tar.gz
       - name: Run Copilot setup steps
         run: echo "Copilot setup steps completed successfully."
