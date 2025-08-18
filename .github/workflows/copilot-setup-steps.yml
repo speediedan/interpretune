@@ -55,7 +55,7 @@ jobs:
           pyright -p pyproject.toml
           pre-commit install
           git lfs install
-      - name: Network & firewall diagnostics (helpful when firewall is re-enabled)
+      - name: Network & firewall diagnostics (largely diagnostics for firewall)
         if: always()
         shell: bash
         run: |
