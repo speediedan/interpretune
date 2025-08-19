@@ -38,12 +38,6 @@ jobs:
     variables:
       HF_CACHE_BASE: '/opt/az_pipeline_agent/_work/hf_cache'
       RESET_HF_CACHE: 'false'
-    env:
-      HF_HOME: /opt/interpretune/hf_cache
-      HF_DATASETS_CACHE: /opt/interpretune/hf_cache/datasets
-      HF_HUB_CACHE: /opt/interpretune/hf_cache/hub
-      TRANSFORMERS_CACHE: /opt/interpretune/hf_cache/transformers
-      XDG_CACHE_HOME: /opt/interpretune/hf_cache
     strategy:
       matrix:
         PyTorch_latest:
@@ -62,6 +56,12 @@ jobs:
         - /var/run/user/998/docker.sock:/var/run/docker.sock
         - $(HF_CACHE_BASE)/$(Agent.Name):/opt/interpretune/hf_cache
       options: --gpus all --shm-size=512m
+      env:
+        HF_HOME: /opt/interpretune/hf_cache
+        HF_DATASETS_CACHE: /opt/interpretune/hf_cache/datasets
+        HF_HUB_CACHE: /opt/interpretune/hf_cache/hub
+        TRANSFORMERS_CACHE: /opt/interpretune/hf_cache/transformers
+        XDG_CACHE_HOME: /opt/interpretune/hf_cache
 
     workspace:
       clean: outputs
