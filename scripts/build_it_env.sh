@@ -194,12 +194,9 @@ it_install(){
     pyright -p pyproject.toml
     pre-commit install
     git lfs install
-    python -c "import importlib.metadata; import torch; import lightning.pytorch; import transformer_lens; import sae_lens; import finetuning_scheduler; import interpretune; import datasets;
-for package in ['torch', 'lightning', 'transformer_lens', 'sae_lens', 'finetuning_scheduler', 'interpretune', 'datasets']:
-    try:
-        print(f'{package} version: {importlib.metadata.distribution(package).version}')
-    except Exception as e:
-        print(f'{package} version: not found ({e})')"
+    python ${repo_home}/requirements/collect_env_details.py
+    # Print environment/package diagnostics using the CI helper script
+    python ${repo_home}/scripts/ci_print_env_versions.py ${repo_home}
 }
 
 d=`date +%Y%m%d%H%M%S`

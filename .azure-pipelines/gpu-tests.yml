@@ -1,0 +1,151 @@
+trigger:
+  branches:
+    include:
+      - main
+      - release/*
+      - refs/tags/*
+      - bugfix/test_it_azpl*
+  paths:
+    include:
+      - setup.*
+      - requirements.txt
+      - pyproject.toml
+      - .codecov.yml
+      - tests/**
+      - src/**
+      - requirements/**
+      - .azure-pipelines/**
+
+pr:
+  branches:
+    include:
+      - main
+      - release/*
+  paths:
+    include:
+      - setup.*
+      - requirements.txt
+      - pyproject.toml
+      - .codecov.yml
+      - tests/**
+      - src/**
+      - requirements/**
+      - .azure-pipelines/**
+  drafts: false  # Only run for PRs that are "ready for review"
+
+jobs:
+  - job: pytest
+    variables:
+      HF_CACHE_BASE: '/opt/az_pipeline_agent/_work/hf_cache'
+      RESET_HF_CACHE: 'false'
+    env:
+      HF_HOME: /opt/interpretune/hf_cache
+      HF_DATASETS_CACHE: /opt/interpretune/hf_cache/datasets
+      HF_HUB_CACHE: /opt/interpretune/hf_cache/hub
+      TRANSFORMERS_CACHE: /opt/interpretune/hf_cache/transformers
+      XDG_CACHE_HOME: /opt/interpretune/hf_cache
+    strategy:
+      matrix:
+        PyTorch_latest:
+          image: speediedan/interpretune:py3.12-pt2.8.0-azpl-init
+          scope: ""
+    timeoutInMinutes: 100
+    cancelTimeoutInMinutes: 2
+
+    pool:
+      name: default
+
+    container:
+      image: $(image)
+      mapDockerSocket: false
+      volumes:
+        - /var/run/user/998/docker.sock:/var/run/docker.sock
+        - $(HF_CACHE_BASE)/$(Agent.Name):/opt/interpretune/hf_cache
+      options: --gpus all --shm-size=512m
+
+    workspace:
+      clean: outputs
+
+    steps:
+      - bash: |
+          set -euo pipefail
+          echo "Preparing per-agent HF cache mount: ${HF_CACHE_BASE}/$(Agent.Name) -> /opt/interpretune/hf_cache"
+          mkdir -p /opt/interpretune/hf_cache
+          chmod 0777 /opt/interpretune/hf_cache || true
+
+          if [ "${RESET_HF_CACHE}" = "true" ]; then
+            echo "RESET_HF_CACHE=true — clearing /opt/interpretune/hf_cache"
+            rm -rf /opt/interpretune/hf_cache/* || true
+          fi
+        displayName: 'Prepare per-agent HF cache (mount + optional reset)'
+        env:
+          HF_CACHE_BASE: $(HF_CACHE_BASE)
+          RESET_HF_CACHE: $(RESET_HF_CACHE)
+
+      - bash: |
+          . /tmp/venvs/it_dev/bin/activate
+          python -m pip install --upgrade pip setuptools wheel build
+          python -m pip install -r requirements/ci/requirements.txt -r requirements/platform_dependent.txt --no-warn-script-location
+          python -m pip install -e '.[test,examples,lightning]'  --no-warn-script-location
+          python -m pip install --upgrade -r requirements/post_upgrades.txt  --no-warn-script-location
+        displayName: 'Install dependencies'
+
+      - bash: |
+          . /tmp/venvs/it_dev/bin/activate
+          python requirements/collect_env_details.py
+          python scripts/ci_print_env_versions.py
+        displayName: 'Env details and package versions'
+
+      - bash: |
+          . /tmp/venvs/it_dev/bin/activate
+          python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --junitxml=$(Build.Repository.LocalPath)/test-results.xml --durations=50
+        displayName: 'Testing: standard'
+
+      - bash: |
+          . /tmp/venvs/it_dev/bin/activate
+          export HF_GATED_PUBLIC_REPO_AUTH_KEY=$HF_GATED_PUBLIC_REPO_AUTH_KEY
+          bash ./tests/special_tests.sh --mark_type=standalone
+        displayName: 'Testing: standalone gpu'
+        env:
+          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+
+      - bash: |
+          . /tmp/venvs/it_dev/bin/activate
+          bash ./tests/special_tests.sh --mark_type=profile_ci
+        displayName: 'Testing: CI Profiling'
+
+      - bash: |
+          . /tmp/venvs/it_dev/bin/activate
+          python -m coverage report
+          python -m coverage xml
+          python -m coverage html
+
+          curl https://keybase.io/codecovsecurity/pgp_keys.asc | gpg --no-default-keyring --keyring trustedkeys.gpg --import
+          curl -Os https://cli.codecov.io/latest/linux/codecov
+          curl -Os https://cli.codecov.io/latest/linux/codecov.SHA256SUM
+          curl -Os https://cli.codecov.io/latest/linux/codecov.SHA256SUM.sig
+          gpg --no-default-keyring --keyring trustedkeys.gpg --verify codecov.SHA256SUM.sig codecov.SHA256SUM
+          shasum -a 256 -c codecov.SHA256SUM
+          chmod +x codecov
+          ./codecov --token= $CODECOV_TOK --commit=$(Build.SourceVersion) --flags=gpu,pytest --name="GPU-coverage" --env=linux,azure
+        displayName: 'Statistics'
+        env:
+          CODECOV_TOK: $(CODECOV_TOKEN)
+
+    # - bash: |
+    #     set -e
+    #     . /tmp/venvs/it_dev/bin/activate
+    #     python -m coverage run --append --source src/interpretune -m pytest src/it_examples -v
+    #   # condition: notIn(variables['scope'], '2.0.1')
+    #   displayName: 'Testing: Examples'
+
+
+    # - bash: |
+    #     . /tmp/venvs/it_dev/bin/activate
+    #     mkdir -p /__w/_temp/kernel_cache
+    #     bash ./tests/special_tests.sh --mark_type=profile
+    #     bash ./tests/special_tests.sh --mark_type=optional
+    #   # condition: notIn(variables['scope'], '2.0.1')
+    #   env:
+    #     PYTORCH_KERNEL_CACHE_PATH: "/__w/_temp/kernel_cache"
+    #   displayName: 'Testing: Extended profile and optional tests'

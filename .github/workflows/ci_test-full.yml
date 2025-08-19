@@ -151,7 +151,7 @@ jobs:
       - name: Reset caching
         id: set_time_period
         run: |
-          python -c "import time; days = time.time() / 60 / 60 / 24; print(f'TIME_PERIOD=d{int(days / 2) * 2}')" >> $GITHUB_OUTPUT
+          python -c "import time; days = time.time() / 60 / 60 / 24; print(f'TIME_PERIOD=d{int(days / 7) * 7}')" >> $GITHUB_OUTPUT
 
       - name: Install libpq (macOS only)
         if: runner.os == 'macOS'
@@ -170,10 +170,10 @@ jobs:
       - name: pip cache
         uses: actions/cache@v4
         with:
-          path: ${{ env.PIP_CACHE_DIR }}
-          key: ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-${{ hashFiles('requirements/ci/requirements.txt') }}-${{ hashFiles('requirements/post_upgrades.txt') }}-${{ hashFiles('requirements/platform_dependent.txt') }}
+          path: ${{ env.PIP_CACHE_DIR }}/wheels
+          key: ${{ runner.os }}-pip-wheels-${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-${{ hashFiles('requirements/ci/requirements.txt') }}-${{ hashFiles('requirements/post_upgrades.txt') }}-${{ hashFiles('requirements/platform_dependent.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-td${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-
+            ${{ runner.os }}-pip-wheels-${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-
 
       - name: Set up venv and install ci dependencies (all OS)
         shell: bash
@@ -298,3 +298,14 @@ jobs:
           else
             echo "No coverage data to report."
           fi
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          file: coverage.xml
+          flags: cpu,pytest,python${{ matrix.python-version }}
+          name: CPU-coverage
+          fail_ci_if_error: false
+          verbose: true # optional (default = false)
