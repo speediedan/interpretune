@@ -54,7 +54,7 @@ jobs:
       mapDockerSocket: false
       volumes:
         - /var/run/user/998/docker.sock:/var/run/docker.sock
-        - /opt/az_pipeline_agent/_work/hf_cache/$(Agent.Name):/opt/interpretune/hf_cache
+        - /opt/az_pipeline_agent/_work/hf_cache/$(Agent.Name):/opt/interpretune/hf_cache:rw
       options: --gpus all --shm-size=512m
       env:
         HF_HOME: /opt/interpretune/hf_cache
@@ -75,6 +75,20 @@ jobs:
         displayName: 'Prepare per-agent HF cache (mount + optional reset)'
         env:
           RESET_HF_CACHE: $(RESET_HF_CACHE)
+
+      - bash: |
+          # Diagnostics: print identity, mount ownership and try a write to the HF cache
+          echo "=== identity ==="
+          id || true
+          groups || true
+          echo "=== mount/dir status ==="
+          ls -ld /opt/interpretune /opt/interpretune/hf_cache 2>/dev/null || true
+          stat -c "%n -> %U:%G %a" /opt/interpretune /opt/interpretune/hf_cache 2>/dev/null || true
+          echo "=== touch test (attempt as current user) ==="
+          touch /opt/interpretune/hf_cache/.write_test 2>/dev/null && echo WRITE_OK || echo WRITE_FAIL
+          echo "=== mount options ==="
+          grep '/opt/interpretune/hf_cache' /proc/mounts || mount | grep /opt/interpretune/hf_cache || true
+        displayName: 'Diagnostics: check mount & user permissions'
 
       - bash: |
           . /tmp/venvs/it_dev/bin/activate
