@@ -68,18 +68,12 @@ jobs:
 
     steps:
       - bash: |
-          set -euo pipefail
-          echo "Preparing per-agent HF cache mount: ${HF_CACHE_BASE}/$(Agent.Name) -> /opt/interpretune/hf_cache"
-          mkdir -p /opt/interpretune/hf_cache
-          chmod 0777 /opt/interpretune/hf_cache || true
-
           if [ "${RESET_HF_CACHE}" = "true" ]; then
             echo "RESET_HF_CACHE=true — clearing /opt/interpretune/hf_cache"
             rm -rf /opt/interpretune/hf_cache/* || true
           fi
         displayName: 'Prepare per-agent HF cache (mount + optional reset)'
         env:
-          HF_CACHE_BASE: $(HF_CACHE_BASE)
           RESET_HF_CACHE: $(RESET_HF_CACHE)
 
       - bash: |
