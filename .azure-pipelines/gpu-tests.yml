@@ -36,7 +36,7 @@ pr:
 jobs:
   - job: pytest
     variables:
-      HF_CACHE_BASE: '/opt/az_pipeline_agent/_work/hf_cache'
+      # HF_CACHE_BASE: '/opt/az_pipeline_agent/_work/hf_cache'
       RESET_HF_CACHE: 'false'
     strategy:
       matrix:
@@ -54,7 +54,7 @@ jobs:
       mapDockerSocket: false
       volumes:
         - /var/run/user/998/docker.sock:/var/run/docker.sock
-        - $(HF_CACHE_BASE)/$(Agent.Name):/opt/interpretune/hf_cache
+        - /opt/az_pipeline_agent/_work/hf_cache/$(Agent.Name):/opt/interpretune/hf_cache
       options: --gpus all --shm-size=512m
       env:
         HF_HOME: /opt/interpretune/hf_cache
