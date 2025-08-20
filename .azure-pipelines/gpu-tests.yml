@@ -68,27 +68,30 @@ jobs:
 
     steps:
       - bash: |
-          if [ "${RESET_HF_CACHE}" = "true" ]; then
-            echo "RESET_HF_CACHE=true — clearing /opt/interpretune/hf_cache"
-            rm -rf /opt/interpretune/hf_cache/* || true
-          fi
-        displayName: 'Prepare per-agent HF cache (mount + optional reset)'
-        env:
-          RESET_HF_CACHE: $(RESET_HF_CACHE)
-
-      - bash: |
-          # Diagnostics: print identity, mount ownership and try a write to the HF cache
           echo "=== identity ==="
           id || true
           groups || true
           echo "=== mount/dir status ==="
           ls -ld /opt/interpretune /opt/interpretune/hf_cache 2>/dev/null || true
           stat -c "%n -> %U:%G %a" /opt/interpretune /opt/interpretune/hf_cache 2>/dev/null || true
-          echo "=== touch test (attempt as current user) ==="
-          touch /opt/interpretune/hf_cache/.write_test 2>/dev/null && echo WRITE_OK || echo WRITE_FAIL
-          echo "=== mount options ==="
-          grep '/opt/interpretune/hf_cache' /proc/mounts || mount | grep /opt/interpretune/hf_cache || true
-        displayName: 'Diagnostics: check mount & user permissions'
+          echo "=== touch test  ==="
+          if touch /opt/interpretune/hf_cache/.write_test 2>/dev/null; then
+            echo WRITE_OK
+          else
+            echo WRITE_FAIL
+            echo "ERROR: Unable to write to /opt/interpretune/hf_cache"
+            exit 1
+          fi
+        displayName: 'Verify runner hf_cache mount & permissions'
+
+      - bash: |
+          if [ "${RESET_HF_CACHE}" = "true" ]; then
+            echo "RESET_HF_CACHE=true — clearing /opt/interpretune/hf_cache"
+            rm -rf /opt/interpretune/hf_cache/* || true
+          fi
+        displayName: 'Maybe reset HF cache'
+        env:
+          RESET_HF_CACHE: $(RESET_HF_CACHE)
 
       - bash: |
           . /tmp/venvs/it_dev/bin/activate
@@ -135,7 +138,7 @@ jobs:
           gpg --no-default-keyring --keyring trustedkeys.gpg --verify codecov.SHA256SUM.sig codecov.SHA256SUM
           shasum -a 256 -c codecov.SHA256SUM
           chmod +x codecov
-          ./codecov --token= $CODECOV_TOK --commit=$(Build.SourceVersion) --flags=gpu,pytest --name="GPU-coverage" --env=linux,azure
+          ./codecov -t $CODECOV_TOK --commit=$(Build.SourceVersion) --flags=gpu,pytest --name="GPU-coverage" --env=linux,azure
         displayName: 'Statistics'
         env:
           CODECOV_TOK: $(CODECOV_TOKEN)
