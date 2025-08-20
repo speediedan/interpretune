@@ -138,8 +138,8 @@ jobs:
           gpg --no-default-keyring --keyring trustedkeys.gpg --verify codecov.SHA256SUM.sig codecov.SHA256SUM
           shasum -a 256 -c codecov.SHA256SUM
           chmod +x codecov
-          ./codecov -t $CODECOV_TOK --commit=$(Build.SourceVersion) --flags=gpu,pytest --name="GPU-coverage" --env=linux,azure
-        displayName: 'Statistics'
+          ./codecov upload-process --verbose --disable-search -t $CODECOV_TOK --commit-sha $(Build.SourceVersion) -n "GPU-coverage" -F 'gpu,pytest' --env 'linux,azure' -f 'coverage.xml'
+        displayName: 'Upload Coverage to Codecov'
         env:
           CODECOV_TOK: $(CODECOV_TOKEN)
 
