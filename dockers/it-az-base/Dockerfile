@@ -18,6 +18,9 @@ FROM speediedan/interpretune:base-${CUST_BASE}py${PYTHON_VERSION}-pt${PYTORCH_VE
 
 LABEL maintainer="Dan Dale <https://github.com/speediedan>"
 
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends sudo \
+ && rm -rf /var/lib/apt/lists/*
 RUN useradd -c 'azpl_init user' -d /home/azpl_init -m -k /etc/skel -s /bin/bash -ou 0 -g 0 azpl_init
 
 COPY dockers/it-az-base/.bashrc /home/azpl_init/.bashrc

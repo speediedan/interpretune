@@ -116,7 +116,6 @@ jobs:
       - bash: |
           . /tmp/venvs/it_dev/bin/activate
           export HF_GATED_PUBLIC_REPO_AUTH_KEY=$HF_GATED_PUBLIC_REPO_AUTH_KEY
-          umask 0002
           bash ./tests/special_tests.sh --mark_type=standalone
         displayName: 'Testing: standalone gpu'
         env:
@@ -124,7 +123,6 @@ jobs:
 
       - bash: |
           . /tmp/venvs/it_dev/bin/activate
-          umask 0002
           bash ./tests/special_tests.sh --mark_type=profile_ci
         displayName: 'Testing: CI Profiling'
 
@@ -145,20 +143,29 @@ jobs:
         displayName: 'Upload Coverage to Codecov'
         env:
           CODECOV_TOK: $(CODECOV_TOKEN)
-    # - bash: |
-    #     set -e
-    #     . /tmp/venvs/it_dev/bin/activate
-    #     python -m coverage run --append --source src/interpretune -m pytest src/it_examples -v
-    #   # condition: notIn(variables['scope'], '2.0.1')
-    #   displayName: 'Testing: Examples'
+      # - bash: |
+      #     set -e
+      #     . /tmp/venvs/it_dev/bin/activate
+      #     python -m coverage run --append --source src/interpretune -m pytest src/it_examples -v
+      #   # condition: notIn(variables['scope'], '2.0.1')
+      #   displayName: 'Testing: Examples'
 
 
-    # - bash: |
-    #     . /tmp/venvs/it_dev/bin/activate
-    #     mkdir -p /__w/_temp/kernel_cache
-    #     bash ./tests/special_tests.sh --mark_type=profile
-    #     bash ./tests/special_tests.sh --mark_type=optional
-    #   # condition: notIn(variables['scope'], '2.0.1')
-    #   env:
-    #     PYTORCH_KERNEL_CACHE_PATH: "/__w/_temp/kernel_cache"
-    #   displayName: 'Testing: Extended profile and optional tests'
+      # - bash: |
+      #     . /tmp/venvs/it_dev/bin/activate
+      #     mkdir -p /__w/_temp/kernel_cache
+      #     bash ./tests/special_tests.sh --mark_type=profile
+      #     bash ./tests/special_tests.sh --mark_type=optional
+      #   # condition: notIn(variables['scope'], '2.0.1')
+      #   env:
+      #     PYTORCH_KERNEL_CACHE_PATH: "/__w/_temp/kernel_cache"
+      #   displayName: 'Testing: Extended profile and optional tests'
+      - bash: |
+          echo 'Validating ownership/permissions for the workspace'
+          # since we use rootless docker and userns-remapping, we need to ensure all files/directories in previous
+          # steps that may have been written with Azure's `az_pipeline_agent_azpcontainer` user (100997 in the host
+          # subuid range) are chmod'd to allow group write so the next run has permission to clean them up as needed
+          echo "Adjusting ownership/permissions..."
+          sudo chmod -R 775 /__w/2/s || true
+          echo 'Permissions clean-up step completed'
+        displayName: 'Cleanup: Validating permissions on workspace'
