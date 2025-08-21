@@ -166,8 +166,8 @@ jobs:
           # steps that may have been written with Azure's `az_pipeline_agent_azpcontainer` user (100997 in the host
           # subuid range) are chmod'd to allow group write so the next run has permission to clean them up as needed
           echo "Adjusting ownership/permissions..."
-          sudo chown root:root /__w/2/s || true
           sudo chmod -R 775 /__w/2/s || true
+          sudo rm -rf /__w/2/s/.pytest_cache || true
           echo 'Permissions clean-up step completed'
         condition: always()
         displayName: 'Cleanup: Validating permissions on workspace'
