@@ -110,13 +110,13 @@ jobs:
 
       - bash: |
           . /tmp/venvs/it_dev/bin/activate
-          sudo umask 0002
           python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --junitxml=$(Build.Repository.LocalPath)/test-results.xml --durations=50
         displayName: 'Testing: standard'
 
       - bash: |
           . /tmp/venvs/it_dev/bin/activate
           export HF_GATED_PUBLIC_REPO_AUTH_KEY=$HF_GATED_PUBLIC_REPO_AUTH_KEY
+          umask 0002
           bash ./tests/special_tests.sh --mark_type=standalone
         displayName: 'Testing: standalone gpu'
         env:
@@ -124,6 +124,7 @@ jobs:
 
       - bash: |
           . /tmp/venvs/it_dev/bin/activate
+          umask 0002
           bash ./tests/special_tests.sh --mark_type=profile_ci
         displayName: 'Testing: CI Profiling'
 
@@ -140,32 +141,10 @@ jobs:
           gpg --no-default-keyring --keyring trustedkeys.gpg --verify codecov.SHA256SUM.sig codecov.SHA256SUM
           shasum -a 256 -c codecov.SHA256SUM
           chmod +x codecov
-          ./codecov upload-process --disable-search -t $CODECOV_TOK --commit-sha $(Build.SourceVersion) -n "GPU-coverage" -F 'gpu,pytest' --env 'linux,azure' -f 'coverage.xml'
+          ./codecov upload-process --disable-search -t $CODECOV_TOK --commit-sha $(Build.SourceVersion) --git-service 'github' -n "GPU-coverage" -F 'gpu,pytest' --env 'linux,azure' -f 'coverage.xml'
         displayName: 'Upload Coverage to Codecov'
         env:
           CODECOV_TOK: $(CODECOV_TOKEN)
-
-      - bash: |
-          echo 'Validating ownership/permissions for the workspace'
-          # Check current numeric owner, group and mode (octal)
-          if info=$(stat -c "%u %g %a" /__w/2/s 2>/dev/null); then
-            read uid gid mode <<< "$info"
-            echo "Current: uid=$uid gid=$gid mode=$mode"
-            # If owner==998 and group==996 and mode begins with '77' (owner+group rwx), assume good
-            if [ "$uid" = "998" ] && [ "$gid" = "996" ] && [[ "$mode" =~ ^77[0-7]$ ]]; then
-              echo "Permissions already set: owner=$uid, group=$gid, mode=$mode"
-              exit 0
-            fi
-          else
-            echo 'Unable to stat the workspace (/__w/2/s); will attempt to set permissions.'
-          fi
-
-          echo "Adjusting ownership/permissions..."
-          sudo chown -R 998:996 /__w/2/s || true
-          sudo chmod -R 775 /__w/2/s || true
-          echo 'Permissions clean-up step completed'
-        displayName: 'Cleanup: validating permissions on workspace'
-
     # - bash: |
     #     set -e
     #     . /tmp/venvs/it_dev/bin/activate
