@@ -4,7 +4,6 @@ trigger:
       - main
       - release/*
       - refs/tags/*
-      - bugfix/test_it_azpl*
   paths:
     include:
       - setup.*
@@ -161,13 +160,16 @@ jobs:
       #     PYTORCH_KERNEL_CACHE_PATH: "/__w/_temp/kernel_cache"
       #   displayName: 'Testing: Extended profile and optional tests'
       - bash: |
-          echo 'Validating ownership/permissions for the workspace'
           # since we use rootless docker and userns-remapping, we need to ensure all files/directories in previous
           # steps that may have been written with Azure's `az_pipeline_agent_azpcontainer` user (100997 in the host
-          # subuid range) are chmod'd to allow group write so the next run has permission to clean them up as needed
+          # subuid range) are chmod'd or removed
+          # some directories created by the userns-remapped container uids are removed by the agent at the beginning
+          # of every run (in a step we don't control) so we proactively clean those up in this step (`.pytest_cache`
+          # is the only folder in this category currently)
           echo "Adjusting ownership/permissions..."
           sudo chmod -R 775 /__w/2/s || true
+          echo "cleaning up ephemeral directories..."
           sudo rm -rf /__w/2/s/.pytest_cache || true
-          echo 'Permissions clean-up step completed'
+          echo 'Agent working directory clean-up step completed'
         condition: always()
-        displayName: 'Cleanup: Validating permissions on workspace'
+        displayName: 'Cleaning up agent workspace'
