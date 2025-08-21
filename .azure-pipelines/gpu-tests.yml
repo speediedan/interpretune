@@ -33,11 +33,14 @@ pr:
       - .azure-pipelines/**
   drafts: false  # Only run for PRs that are "ready for review"
 
+parameters:
+  - name: reset_hf_cache
+    displayName: Reset HF Cache
+    type: boolean
+    default: false
+
 jobs:
   - job: pytest
-    variables:
-      # HF_CACHE_BASE: '/opt/az_pipeline_agent/_work/hf_cache'
-      RESET_HF_CACHE: 'false'
     strategy:
       matrix:
         PyTorch_latest:
@@ -86,13 +89,10 @@ jobs:
         displayName: 'Verify runner hf_cache mount & permissions'
 
       - bash: |
-          if [ "${RESET_HF_CACHE}" = "true" ]; then
-            echo "RESET_HF_CACHE=true — clearing /opt/interpretune/hf_cache"
-            rm -rf /opt/interpretune/hf_cache/* || true
-          fi
+          echo "RESET_HF_CACHE=true — clearing /opt/interpretune/hf_cache"
+          rm -rf /opt/interpretune/hf_cache/* || true
+        condition: eq(${{ parameters.reset_hf_cache }}, true)
         displayName: 'Maybe reset HF cache'
-        env:
-          RESET_HF_CACHE: $(RESET_HF_CACHE)
 
       - bash: |
           . /tmp/venvs/it_dev/bin/activate
