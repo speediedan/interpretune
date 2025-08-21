@@ -139,7 +139,7 @@ jobs:
           gpg --no-default-keyring --keyring trustedkeys.gpg --verify codecov.SHA256SUM.sig codecov.SHA256SUM
           shasum -a 256 -c codecov.SHA256SUM
           chmod +x codecov
-          ./codecov upload-process --disable-search -t $CODECOV_TOK --commit-sha $(Build.SourceVersion) --git-service 'github' -n "GPU-coverage" -F 'gpu,pytest' --env 'linux,azure' -f 'coverage.xml'
+          ./codecov upload-process --disable-search --slug 'speediedan/interpretune' -t $CODECOV_TOK --commit-sha $(Build.SourceVersion) --git-service 'github' -n "GPU-coverage" -F 'gpu,pytest' --env 'linux,azure' -f 'coverage.xml'
         displayName: 'Upload Coverage to Codecov'
         env:
           CODECOV_TOK: $(CODECOV_TOKEN)
@@ -166,6 +166,8 @@ jobs:
           # steps that may have been written with Azure's `az_pipeline_agent_azpcontainer` user (100997 in the host
           # subuid range) are chmod'd to allow group write so the next run has permission to clean them up as needed
           echo "Adjusting ownership/permissions..."
+          sudo chown root:root /__w/2/s || true
           sudo chmod -R 775 /__w/2/s || true
           echo 'Permissions clean-up step completed'
+        condition: always()
         displayName: 'Cleanup: Validating permissions on workspace'
