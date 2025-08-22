@@ -158,12 +158,12 @@ class ITSession(Mapping):
         if session_cfg.datamodule_cls:  # 2.1 Compose datamodule if necessary
             dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input=session_cfg.datamodule_cls,
                             ctx=session_cfg.adapter_ctx)
-            self.datamodule = dm_cls(session_cfg.datamodule_cfg, *session_cfg.dm_args, **session_cfg.dm_kwargs)  # type: ignore
+            self.datamodule = dm_cls(itdm_cfg=session_cfg.datamodule_cfg, *session_cfg.dm_args, **session_cfg.dm_kwargs)  # type: ignore[call-arg]
         self._set_dm_handles_for_instantiation(session_cfg)
         if session_cfg.module_cls:  # 2.2 Compose module if necessary
             m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=session_cfg.module_cls,
                            ctx=session_cfg.adapter_ctx)
-            self.module = m_cls(session_cfg.module_cfg, *session_cfg.module_args, **session_cfg.module_kwargs)  # type: ignore
+            self.module = m_cls(it_cfg=session_cfg.module_cfg, *session_cfg.module_args, **session_cfg.module_kwargs)  # type: ignore[call-arg]
         self._set_model_handles_for_instantiation()
         self._validate_session(dm_cls, m_cls, session_cfg)
 
