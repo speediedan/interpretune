@@ -350,7 +350,7 @@ def _parse_composition_string(composition_str: str) -> List[str]:
     return operations
 
 def compile_op_schema(op_name: str, op_definitions: Dict[str, Dict[str, Any]],
-                      _processing: Set[str] = None) -> Dict[str, Any]:
+                      _processing: Set[str] = None) -> Dict[str, Any]:  # type: ignore[assignment]
     """Compile operation schema by merging schemas from required operations.
 
     Args:

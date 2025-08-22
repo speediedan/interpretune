@@ -10,7 +10,7 @@ from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
 #     warnings.filterwarnings("once", warnf)
 
 
-class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):
+class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):  # type: ignore[misc]
 
     def __init__(
         self,

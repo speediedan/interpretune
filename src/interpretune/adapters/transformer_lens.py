@@ -28,7 +28,7 @@ class TLensAttributeMixin:
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a `HookedTransformerConfig` reference (has it been set yet?): {ae}")
             cfg = None
-        return cfg
+        return cfg  # type: ignore[return-value]
 
     # TODO: we aren't using IT's Property Composition feature for TLens yet, but might be worth enabling it
     @property

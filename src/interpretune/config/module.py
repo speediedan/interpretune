@@ -90,8 +90,8 @@ class ITConfig(ITSharedConfig, ModelConf, OptimizerSchedulerConf, Classification
 @dataclass
 class ITState:
     """Dataclass to encapsulate the ITModule internal state and keep top-level namespace as clean as possible."""
-    _it_lr_scheduler_configs: list[LRSchedulerConfig] = None
-    _it_optimizers: list[Optimizable] = None  # initialized via core IT module `configure_optimizers` hook
+    _it_lr_scheduler_configs: list[LRSchedulerConfig] = field(default_factory=list)
+    _it_optimizers: list[Optimizable] = field(default_factory=list)  # initialized via core IT module `configure_optimizers` hook
     _datamodule: Optional["ITDataModule"] = None  # datamodule handle attached after init
     _device: torch.device | None = None  # root device (sometimes used if not handled by Lightning)
     _extensions: dict[str, Any] = field(default_factory=dict)

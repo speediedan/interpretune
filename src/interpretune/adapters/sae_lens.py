@@ -41,7 +41,7 @@ class SAELensAttributeMixin(TLensAttributeMixin):
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a `SAEConfig` reference (has it been set yet?): {ae}")
             cfg = None
-        return cfg
+        return cfg  # type: ignore[return-value]
 
     @property
     def sae_handles(self) -> list[SAE]:
