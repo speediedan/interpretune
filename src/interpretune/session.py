@@ -26,12 +26,12 @@ class ITMeta(type):
     supported_component_keys = ('datamodule', 'dm', 'module', 'm')
 
     def __new__(mcs, name, bases, classdict, **kwargs):
-        component, input, ctx = mcs._validate_build_ctx(kwargs)
+        component, input_cls, ctx = mcs._validate_build_ctx(kwargs)
         # TODO: add runtime checks for adherence to IT protocol here?
         composition_classes = mcs._map_composition_target(component, ctx)
-        bases = (NamedWrapper, input, *composition_classes)
-        built_class = super().__new__(mcs, name, bases, classdict)
-        built_class._orig_module_name = input.__qualname__
+        new_bases: Tuple[type, ...] = (NamedWrapper, input_cls, *composition_classes)  # type: ignore[misc]
+        built_class = super().__new__(mcs, name, new_bases, classdict)
+        built_class._orig_module_name = input_cls.__qualname__
         built_class._composed_classes = composition_classes
         return built_class
 
@@ -158,12 +158,12 @@ class ITSession(Mapping):
         if session_cfg.datamodule_cls:  # 2.1 Compose datamodule if necessary
             dm_cls = ITMeta('InterpretunableDataModule', (), {}, component='dm', input=session_cfg.datamodule_cls,
                             ctx=session_cfg.adapter_ctx)
-            self.datamodule = dm_cls(itdm_cfg=session_cfg.datamodule_cfg, *session_cfg.dm_args, **session_cfg.dm_kwargs)
+            self.datamodule = dm_cls(session_cfg.datamodule_cfg, *session_cfg.dm_args, **session_cfg.dm_kwargs)  # type: ignore
         self._set_dm_handles_for_instantiation(session_cfg)
         if session_cfg.module_cls:  # 2.2 Compose module if necessary
             m_cls = ITMeta('InterpretunableModule', (), {}, component='m', input=session_cfg.module_cls,
                            ctx=session_cfg.adapter_ctx)
-            self.module = m_cls(it_cfg=session_cfg.module_cfg, *session_cfg.module_args, **session_cfg.module_kwargs)
+            self.module = m_cls(session_cfg.module_cfg, *session_cfg.module_args, **session_cfg.module_kwargs)  # type: ignore
         self._set_model_handles_for_instantiation()
         self._validate_session(dm_cls, m_cls, session_cfg)
 

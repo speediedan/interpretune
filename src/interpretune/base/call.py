@@ -40,10 +40,10 @@ class _hookNameContextManager:
 
     def __enter__(self) -> None:
         self.previous_fx_name = self._module_ref._current_fx_name
-        self._module_ref._current_fx_name = self._hook_name
+        self._module_ref._current_fx_name = self._hook_name  # type: ignore[assignment]
 
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
-        self._module_ref._current_fx_name = self.previous_fx_name
+        self._module_ref._current_fx_name = self.previous_fx_name  # type: ignore[assignment]
 
 def _call_itmodule_hook(
     hookable_module: HOOKABLE_ITMODULE,
