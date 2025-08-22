@@ -66,6 +66,7 @@ def test_parity_l(recwarn, tmp_path, test_alias, test_cfg):
 @dataclass(kw_only=True)
 class ProfParityCfg(BaseCfg):
     model_src_key: Optional[str] = "gpt2"
+    force_prepare_data: bool = True  # force data preparation for profiling and CI runner cache reproduction
 
 @dataclass
 class ProfilingTest(BaseAugTest):

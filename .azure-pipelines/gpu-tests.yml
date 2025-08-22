@@ -1,0 +1,175 @@
+trigger:
+  branches:
+    include:
+      - main
+      - release/*
+      - refs/tags/*
+  paths:
+    include:
+      - setup.*
+      - requirements.txt
+      - pyproject.toml
+      - .codecov.yml
+      - tests/**
+      - src/**
+      - requirements/**
+      - .azure-pipelines/**
+
+pr:
+  branches:
+    include:
+      - main
+      - release/*
+  paths:
+    include:
+      - setup.*
+      - requirements.txt
+      - pyproject.toml
+      - .codecov.yml
+      - tests/**
+      - src/**
+      - requirements/**
+      - .azure-pipelines/**
+  drafts: false  # Only run for PRs that are "ready for review"
+
+parameters:
+  - name: reset_hf_cache
+    displayName: Reset HF Cache
+    type: boolean
+    default: false
+
+jobs:
+  - job: pytest
+    strategy:
+      matrix:
+        PyTorch_latest:
+          image: speediedan/interpretune:py3.12-pt2.8.0-azpl-init
+          scope: ""
+    timeoutInMinutes: 100
+    cancelTimeoutInMinutes: 2
+
+    pool:
+      name: default
+
+    container:
+      image: $(image)
+      mapDockerSocket: false
+      volumes:
+        - /var/run/user/998/docker.sock:/var/run/docker.sock
+        - /opt/az_pipeline_agent/_work/hf_cache/$(Agent.Name):/opt/interpretune/hf_cache:rw
+      options: --gpus all --shm-size=512m
+      env:
+        HF_HOME: /opt/interpretune/hf_cache
+        HF_DATASETS_CACHE: /opt/interpretune/hf_cache/datasets
+        HF_HUB_CACHE: /opt/interpretune/hf_cache/hub
+        TRANSFORMERS_CACHE: /opt/interpretune/hf_cache/transformers
+        XDG_CACHE_HOME: /opt/interpretune/hf_cache
+
+    workspace:
+      clean: outputs
+
+    steps:
+      - bash: |
+          echo "=== identity ==="
+          id || true
+          groups || true
+          echo "=== mount/dir status ==="
+          ls -ld /opt/interpretune /opt/interpretune/hf_cache 2>/dev/null || true
+          stat -c "%n -> %U:%G %a" /opt/interpretune /opt/interpretune/hf_cache 2>/dev/null || true
+          echo "=== touch test  ==="
+          if touch /opt/interpretune/hf_cache/.write_test 2>/dev/null; then
+            echo WRITE_OK
+          else
+            echo WRITE_FAIL
+            echo "ERROR: Unable to write to /opt/interpretune/hf_cache"
+            exit 1
+          fi
+
+        displayName: 'Verify runner hf_cache mount & permissions'
+
+      - bash: |
+          echo "RESET_HF_CACHE=true — clearing /opt/interpretune/hf_cache"
+          rm -rf /opt/interpretune/hf_cache/* || true
+        condition: eq(${{ parameters.reset_hf_cache }}, true)
+        displayName: 'Maybe reset HF cache'
+
+      - bash: |
+          . /tmp/venvs/it_dev/bin/activate
+          python -m pip install --upgrade pip setuptools wheel build
+          python -m pip install -r requirements/ci/requirements.txt -r requirements/platform_dependent.txt --no-warn-script-location
+          python -m pip install -e '.[test,examples,lightning]'  --no-warn-script-location
+          python -m pip install --upgrade -r requirements/post_upgrades.txt  --no-warn-script-location
+        displayName: 'Install dependencies'
+
+      - bash: |
+          . /tmp/venvs/it_dev/bin/activate
+          python requirements/collect_env_details.py
+          python scripts/ci_print_env_versions.py
+        displayName: 'Env details and package versions'
+
+      - bash: |
+          . /tmp/venvs/it_dev/bin/activate
+          python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --junitxml=$(Build.Repository.LocalPath)/test-results.xml --durations=50
+        displayName: 'Testing: standard'
+
+      - bash: |
+          . /tmp/venvs/it_dev/bin/activate
+          export HF_GATED_PUBLIC_REPO_AUTH_KEY=$HF_GATED_PUBLIC_REPO_AUTH_KEY
+          bash ./tests/special_tests.sh --mark_type=standalone
+        displayName: 'Testing: standalone gpu'
+        env:
+          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+
+      - bash: |
+          . /tmp/venvs/it_dev/bin/activate
+          bash ./tests/special_tests.sh --mark_type=profile_ci
+        displayName: 'Testing: CI Profiling'
+
+      - bash: |
+          . /tmp/venvs/it_dev/bin/activate
+          python -m coverage report
+          python -m coverage xml
+          python -m coverage html
+
+          curl https://keybase.io/codecovsecurity/pgp_keys.asc | gpg --no-default-keyring --keyring trustedkeys.gpg --import
+          curl -Os https://cli.codecov.io/latest/linux/codecov
+          curl -Os https://cli.codecov.io/latest/linux/codecov.SHA256SUM
+          curl -Os https://cli.codecov.io/latest/linux/codecov.SHA256SUM.sig
+          gpg --no-default-keyring --keyring trustedkeys.gpg --verify codecov.SHA256SUM.sig codecov.SHA256SUM
+          shasum -a 256 -c codecov.SHA256SUM
+          chmod +x codecov
+          ./codecov upload-process --slug 'speediedan/interpretune' -t $CODECOV_TOK --commit-sha $(Build.SourceVersion) --git-service 'github' -n "GPU-coverage" -F 'gpu,pytest' --env 'linux,azure' -f 'coverage.xml'
+        displayName: 'Upload Coverage to Codecov'
+        env:
+          CODECOV_TOK: $(CODECOV_TOKEN)
+      # - bash: |
+      #     set -e
+      #     . /tmp/venvs/it_dev/bin/activate
+      #     python -m coverage run --append --source src/interpretune -m pytest src/it_examples -v
+      #   # condition: notIn(variables['scope'], '2.0.1')
+      #   displayName: 'Testing: Examples'
+
+
+      # - bash: |
+      #     . /tmp/venvs/it_dev/bin/activate
+      #     mkdir -p /__w/_temp/kernel_cache
+      #     bash ./tests/special_tests.sh --mark_type=profile
+      #     bash ./tests/special_tests.sh --mark_type=optional
+      #   # condition: notIn(variables['scope'], '2.0.1')
+      #   env:
+      #     PYTORCH_KERNEL_CACHE_PATH: "/__w/_temp/kernel_cache"
+      #   displayName: 'Testing: Extended profile and optional tests'
+      - bash: |
+          # since we use rootless docker and userns-remapping, we need to ensure all files/directories in previous
+          # steps that may have been written with Azure's `az_pipeline_agent_azpcontainer` user (100997 in the host
+          # subuid range) are chmod'd or removed
+          # some directories created by the userns-remapped container uids are removed by the agent at the beginning
+          # of every run (in a step we don't control) so we proactively clean those up in this step (`.pytest_cache`
+          # is the only folder in this category currently)
+          echo "Adjusting ownership/permissions..."
+          sudo chmod -R 775 /__w/2/s || true
+          echo "cleaning up ephemeral directories..."
+          sudo rm -rf /__w/2/s/.pytest_cache || true
+          echo 'Agent working directory clean-up step completed'
+        condition: always()
+        displayName: 'Cleaning up agent workspace'
