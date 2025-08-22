@@ -187,8 +187,7 @@ include = [
     "src/interpretune/adapters/__init__.py",
     "src/interpretune/base/components/__init__.py",
     "src/interpretune/config/__init__.py",
-    "src/interpretune/tools/__init__.py",
-    "src/interpretune/tools/install_circuit_tracer.py",
+    "src/interpretune/tools/",  # Use folder wildcard - all files pass
     # Phase 2 batch 2 - additional 10 clean files with 0 errors
     "src/interpretune/utils/__init__.py",
     "src/interpretune/extensions/__init__.py",
@@ -200,6 +199,13 @@ include = [
     "src/interpretune/adapters/registration.py",
     "src/interpretune/config/datamodule.py",
     "src/interpretune/config/extensions.py",
+    # Phase 2 batch 3 - additional files expanding to 35+ total files
+    "src/interpretune/config/mixins.py",
+    "src/interpretune/config/circuit_tracer.py",
+    "src/interpretune/analysis/ops/hub_manager.py",
+    # Phase 1 fixed files now passing
+    "src/interpretune/session.py",
+    "src/interpretune/base/call.py",
 #    "src",
 #    "tests"
 ]
