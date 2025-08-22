@@ -182,6 +182,13 @@ include = [
     "src/interpretune/utils/exceptions.py",
     "src/interpretune/utils/warnings.py",
     "src/interpretune/utils/schema_validation.py",
+    # Phase 2 additions - clean files with no type errors
+    "src/interpretune/__about__.py",
+    "src/interpretune/adapters/__init__.py",
+    "src/interpretune/base/components/__init__.py",
+    "src/interpretune/config/__init__.py",
+    "src/interpretune/tools/__init__.py",
+    "src/interpretune/tools/install_circuit_tracer.py",
 #    "src",
 #    "tests"
 ]
