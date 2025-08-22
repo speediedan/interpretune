@@ -1,10 +1,9 @@
 trigger:
   branches:
     include:
-      - '*'  # testing all branches that are ready for review (may revert to below if resource constraints dictate)
-      # - main
-      # - release/*
-      # - refs/tags/*
+      - main
+      - release/*
+      - refs/tags/*
   paths:
     include:
       - setup.*
@@ -19,8 +18,9 @@ trigger:
 pr:
   branches:
     include:
-      - main
-      - release/*
+      - '*'  # testing all branches that are ready for review (may revert to below if resource constraints dictate)
+      # - main
+      # - release/*
   paths:
     include:
       - setup.*
