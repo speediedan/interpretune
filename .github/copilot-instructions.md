@@ -69,7 +69,7 @@ pre-commit run --all-files
 **Expected Ruff Issues:** The `tests/*_parity/` directories contain imported research code with many linting violations - these are intentionally excluded from pre-commit checks.
 
 ### Testing
-**Test command:** 
+**Test command:**
 ```bash
 # Basic test run (requires full dependencies)
 pytest src/interpretune tests -v
@@ -148,6 +148,14 @@ src/it_examples/            # Example experiments
 - `CI_RESOURCE_MONITOR` - Set to "1" to enable resource logging
 - `IT_USE_CT_COMMIT_PIN` - Controls circuit-tracer installation method
 
+### Azure self-hosted GPU pipeline (new)
+
+We now have a separate Azure DevOps pipeline that runs GPU/standalone tests on a self-hosted runner: `.azure-pipelines/gpu-tests.yml`.
+- This pipeline is intentionally restrictive: it only triggers for PRs that are marked "ready for review" and must be explicitly approved by a repository administrator before the self-hosted GPU job will run (currently: speediedan).
+- Because self-hosted GPU capacity is limited, aim to rely on feedback from the normal GitHub Actions CPU CI workflow for as long as possible while iterating on an issue. Defer switching the PR to "ready for review" until you believe GPU testing is necessary. Copilot should prefer this conservative approach when suggesting CI runs or opening PRs.
+
+Note: the GPU pipeline runs only when a PR is ready for review and an admin approves the run — do not expect it to run automatically for draft PRs or early-stage work.
+
 ### Manual Validation Steps
 ```bash
 # Lint check
@@ -160,6 +168,24 @@ pyright src/interpretune/adapters/lightning.py
 ./scripts/ci_resource_monitor.sh &
 pytest src/interpretune tests -v
 ```
+
+### Regenerating stable CI dependency pins
+
+When updating top-level requirements or periodically refreshing CI pins, use the repository helper to regenerate and compile the CI requirement files. This workflow updates `requirements/*` and writes compiled CI pins to `requirements/ci`.
+
+Run these commands from your repo home after activating ensuring you've activated any relevant venv (e.g. `source ~/.venvs/${target_env_name}/bin/activate`):
+
+```bash
+python requirements/regen_reqfiles.py && \
+python requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir=requirements/ci
+```
+
+Notes:
+- Regenerating pins may change CI dependency resolution — run the full CI (or at least the CPU GitHub Actions CI) after updating pins to validate. Don't update pins aggressively, this is done periodically anyway, focus mostly on the issue at hand without changing the CI pins unless you think it is related to the issue.
+
+### Type-checking caveat
+
+Full repository type-checking is a work in progress. Current local checks may only include a subset of files (for example, `src/interpretune/adapters/lightning.py`). Expect that type-checking will cover most files in future updates; don't assume exhaustive static type guarantees yet.
 
 ## Special Dependencies and Known Issues
 

@@ -20,12 +20,14 @@ CUDA_MAY_BE_INIT_MSG = "Unable to patch `get_cuda_module_loading_config`, CUDA m
 # generalizing this context manager in case we need to patch other env logging functions
 @contextmanager
 def patch_torch_env_logging_fn(module_name: str, fn_name: str, warn_msg: str):
+    orig_fn = None
     try:
         orig_fn = sys.modules[module_name].__dict__.pop(fn_name, None)
         sys.modules[module_name].__dict__[fn_name] = lambda : "not inspected"
         yield
     finally:
-        sys.modules[module_name].__dict__[fn_name] = orig_fn
+        if orig_fn is not None:
+            sys.modules[module_name].__dict__[fn_name] = orig_fn
 
 def maybe_patched_get_env_info(module_name: str, fn_name: str, warn_msg: str):
     try:
@@ -94,7 +96,8 @@ def rank_zero_only(fn: Callable[P, T], default: Optional[T] = None) -> Callable[
     return wrapped_fn
 
 # add the attribute to the function but don't overwrite if it already exists
-rank_zero_only.rank = getattr(rank_zero_only, "rank", _get_rank() or 0)
+# type: ignore[attr-defined] - we're deliberately adding an attribute to a function
+rank_zero_only.rank = getattr(rank_zero_only, "rank", _get_rank() or 0)  # type: ignore[attr-defined]
 
 def _debug(*args: Any, stacklevel: int = 2, **kwargs: Any) -> None:
     kwargs["stacklevel"] = stacklevel

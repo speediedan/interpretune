@@ -43,7 +43,7 @@ def handle_exception_with_debug_dump(
     dump_file = debug_dir / f"{operation_name}_error_{timestamp}.json"
 
     # Add exception information to debug data
-    debug_info = {
+    debug_info: Dict[str, Any] = {
         "error": str(e),
         "traceback": traceback.format_exc(),
     }
@@ -61,34 +61,36 @@ def handle_exception_with_debug_dump(
         try:
             if frame and frame.f_back:
                 # Get the line of code that called this function
-                call_line = inspect.getframeinfo(frame.f_back).code_context[0].strip()
-                # Try to extract the argument name for context_data
-                if "context_data=" in call_line:
-                    # Get the part after context_data=
-                    context_part = call_line.split("context_data=")[1]
-                    # Check if it's a tuple
-                    if context_part.strip().startswith("("):
-                        # Find the complete tuple by tracking parentheses
-                        open_count = 0
-                        tuple_str = ""
-                        for char in context_part:
-                            tuple_str += char
-                            if char == '(':
-                                open_count += 1
-                            elif char == ')':
-                                open_count -= 1
-                                if open_count == 0:
-                                    break
+                frame_info = inspect.getframeinfo(frame.f_back)
+                if frame_info.code_context:
+                    call_line = frame_info.code_context[0].strip()
+                    # Try to extract the argument name for context_data
+                    if "context_data=" in call_line:
+                        # Get the part after context_data=
+                        context_part = call_line.split("context_data=")[1]
+                        # Check if it's a tuple
+                        if context_part.strip().startswith("("):
+                            # Find the complete tuple by tracking parentheses
+                            open_count = 0
+                            tuple_str = ""
+                            for char in context_part:
+                                tuple_str += char
+                                if char == '(':
+                                    open_count += 1
+                                elif char == ')':
+                                    open_count -= 1
+                                    if open_count == 0:
+                                        break
 
-                        # Extract variable names from the tuple
-                        var_names = [name.strip() for name in tuple_str.strip("()").split(",")]
-                        if len(var_names) == len(context_data):
-                            # We have matching variable names for each item in the tuple
-                            for i, name in enumerate(var_names):
-                                if i < len(context_data):
-                                    context_dict[f"var_{i}_{name}"] = _introspect_variable(context_data[i])
-                            # Skip the generic processing below
-                            debug_info.update(context_dict)
+                            # Extract variable names from the tuple
+                            var_names = [name.strip() for name in tuple_str.strip("()").split(",")]
+                            if len(var_names) == len(context_data):
+                                # We have matching variable names for each item in the tuple
+                                for i, name in enumerate(var_names):
+                                    if i < len(context_data):
+                                        context_dict[f"var_{i}_{name}"] = _introspect_variable(context_data[i])
+                                # Skip the generic processing below
+                                debug_info.update(context_dict)
         finally:
             del frame  # Avoid reference cycles
 
@@ -117,7 +119,7 @@ def _introspect_variable(var: Any) -> Dict[str, Any]:
     Returns:
         A dictionary with detailed information about the variable
     """
-    result = {
+    result: Dict[str, Any] = {
         "type": str(type(var).__name__),
     }
 
