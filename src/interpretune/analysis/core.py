@@ -16,16 +16,23 @@ from sae_lens.config import HfDataset
 from datasets import Features, Array2D, Value, Array3D, load_dataset, Column
 from datasets import Sequence as DatasetsSequence
 
-from interpretune.protocol import (AnalysisStoreProtocol, DefaultAnalysisBatchProtocol, BaseAnalysisBatchProtocol,
-                                   NamesFilter, SAEFqn, AnalysisCfgProtocol)
+from interpretune.protocol import (
+    AnalysisStoreProtocol,
+    DefaultAnalysisBatchProtocol,
+    BaseAnalysisBatchProtocol,
+    NamesFilter,
+    SAEFqn,
+    AnalysisCfgProtocol,
+)
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.utils import rank_zero_warn, DEFAULT_DECODE_KWARGS
 
+
 class SAEAnalysisDict(dict):
     """Dictionary for SAE-specific data where values must be torch.Tensor or list[torch.Tensor]."""
 
-    def __setitem__(self, key: str, value: torch.Tensor | Sequence[torch.Tensor] ) -> None:
+    def __setitem__(self, key: str, value: torch.Tensor | Sequence[torch.Tensor]) -> None:
         if value is None:
             super().__setitem__(key, None)
             return
@@ -46,8 +53,9 @@ class SAEAnalysisDict(dict):
                 else:
                     raise TypeError(f"Namedtuple {type(value).__name__} does not contain any tensor fields")
             else:
-                raise TypeError("Values must be torch.Tensor, " \
-                "list[torch.Tensor], or namedtuple-like containing tensors")
+                raise TypeError(
+                    "Values must be torch.Tensor, list[torch.Tensor], or namedtuple-like containing tensors"
+                )
 
         # TODO: at which point in the pipeline should we remove batches with None or empty list values?
         #       to maintain batch alignment, we keep None valued batches for now and skip them in operations that join
@@ -72,8 +80,9 @@ class SAEAnalysisDict(dict):
                 shapes[sae] = [t.shape for t in values]
         return shapes
 
-    def batch_join(self, across_saes: bool = False, join_fn: Callable = torch.cat
-                   ) -> SAEAnalysisDict | list[torch.Tensor]:
+    def batch_join(
+        self, across_saes: bool = False, join_fn: Callable = torch.cat
+    ) -> SAEAnalysisDict | list[torch.Tensor]:
         """Join field values either by SAE or across SAEs.
 
         Args:
@@ -113,8 +122,7 @@ class SAEAnalysisDict(dict):
                     result[k] = None
             return result
 
-    def apply_op_by_sae(self, operation: Callable | str,
-                        *args, **kwargs) -> SAEAnalysisDict:
+    def apply_op_by_sae(self, operation: Callable | str, *args, **kwargs) -> SAEAnalysisDict:
         """Apply an operation to each tensor value while preserving SAE keys.
 
         Args:
@@ -171,6 +179,7 @@ def get_module_dims(module) -> tuple[int, int, int, int, int]:
     # max_seq_len = module.model.tokenizer.model_max_length
     return batch_size, max_answer_tokens, num_classes, vocab_size, max_seq_len
 
+
 def get_filtered_sae_hook_keys(handle, names_filter: Callable[[str], bool]) -> list[str]:
     """Get filtered hook keys based on names_filter.
 
@@ -182,10 +191,11 @@ def get_filtered_sae_hook_keys(handle, names_filter: Callable[[str], bool]) -> l
         List of filtered hook keys
     """
     return [
-        f'{handle.cfg.metadata.hook_name}.{key}'
+        f"{handle.cfg.metadata.hook_name}.{key}"
         for key in handle.hook_dict.keys()
-        if names_filter(f'{handle.cfg.metadata.hook_name}.{key}')
+        if names_filter(f"{handle.cfg.metadata.hook_name}.{key}")
     ]
+
 
 def _check_names_filter_available(module, col_name: str, col_cfg) -> bool:
     """Check if names_filter is available for column configuration.
@@ -201,17 +211,25 @@ def _check_names_filter_available(module, col_name: str, col_cfg) -> bool:
     Raises:
         ValueError: If names_filter is required but not available
     """
-    no_filter = (not hasattr(module, 'analysis_cfg') or
-                not hasattr(module.analysis_cfg, 'names_filter') or
-                module.analysis_cfg.names_filter is None)
+    no_filter = (
+        not hasattr(module, "analysis_cfg")
+        or not hasattr(module.analysis_cfg, "names_filter")
+        or module.analysis_cfg.names_filter is None
+    )
     if no_filter:
         if col_cfg.required:
             raise ValueError(f"Column '{col_name}' requires names_filter, but module.analysis_cfg.names_filter is None")
         return False  # Skip this field if not required
     return True
 
-def schema_to_features(module, op: str | AnalysisOp | None = None, schema: OpSchema | None = None,
-                       default_dtype: str = "float32", int_dtype: str = "int64") -> Features:
+
+def schema_to_features(
+    module,
+    op: str | AnalysisOp | None = None,
+    schema: OpSchema | None = None,
+    default_dtype: str = "float32",
+    int_dtype: str = "int64",
+) -> Features:
     """Convert an operation schema or direct schema to features for Dataset.from_generator.
 
     Args:
@@ -226,8 +244,8 @@ def schema_to_features(module, op: str | AnalysisOp | None = None, schema: OpSch
         op = DISPATCHER.get_op(op)
     if schema is None and op is not None:
         schema = op.output_schema
-    elif schema is None and module is not None and hasattr(module, 'analysis_cfg'):
-        has_output_schema = hasattr(module.analysis_cfg, 'output_schema')
+    elif schema is None and module is not None and hasattr(module, "analysis_cfg"):
+        has_output_schema = hasattr(module.analysis_cfg, "output_schema")
         if has_output_schema:
             schema = module.analysis_cfg.output_schema
     if not schema:
@@ -238,11 +256,11 @@ def schema_to_features(module, op: str | AnalysisOp | None = None, schema: OpSch
 
     # Map dimension variables to their actual values
     dim_vars = {
-        'batch_size': batch_size,
-        'max_answer_tokens': max_answer_tokens,
-        'num_classes': num_classes,
-        'vocab_size': vocab_size,
-        'max_seq_len': max_seq_len,
+        "batch_size": batch_size,
+        "max_answer_tokens": max_answer_tokens,
+        "num_classes": num_classes,
+        "vocab_size": vocab_size,
+        "max_seq_len": max_seq_len,
     }
 
     for col_name, col_cfg in schema.items():
@@ -264,8 +282,9 @@ def schema_to_features(module, op: str | AnalysisOp | None = None, schema: OpSch
                     if col_cfg.non_tensor and col_cfg.sequence_type:
                         sae_features[hook_key] = DatasetsSequence(Value(dtype=dtype))
                     else:
-                        sae_features[hook_key] = Array2D(shape=(None, handle.cfg.d_sae),
-                                                       dtype=handle.cfg.dtype or default_dtype)
+                        sae_features[hook_key] = Array2D(
+                            shape=(None, handle.cfg.d_sae), dtype=handle.cfg.dtype or default_dtype
+                        )
             features_dict[col_name] = sae_features
             continue
 
@@ -293,8 +312,8 @@ def schema_to_features(module, op: str | AnalysisOp | None = None, schema: OpSch
                         base_feature = Value(dtype=dtype)
 
                     sae_features[hook_key] = {
-                        'latents': DatasetsSequence(Value(int_dtype)),
-                        'per_latent': DatasetsSequence(base_feature)
+                        "latents": DatasetsSequence(Value(int_dtype)),
+                        "per_latent": DatasetsSequence(base_feature),
                     }
             features_dict[col_name] = sae_features
             continue
@@ -320,18 +339,20 @@ def schema_to_features(module, op: str | AnalysisOp | None = None, schema: OpSch
 
     return Features(features_dict)
 
+
 class AnalysisStore:
-    def __init__(self,
-                 # dataset: can be a path or a loaded Hugging Face dataset
-                 dataset: HfDataset | str | os.PathLike | None = None,
-                 op_output_dataset_path: str | None = None,
-                 cache_dir: str | None = None,
-                 streaming: bool = False,
-                 split: str = "validation",
-                 it_format_kwargs: dict | None = None,
-                 stack_batches: bool = False,  # Controls tensor stacking behavior
-                 protocol_cls: Type[BaseAnalysisBatchProtocol] = DefaultAnalysisBatchProtocol,
-                 ) -> None:
+    def __init__(
+        self,
+        # dataset: can be a path or a loaded Hugging Face dataset
+        dataset: HfDataset | str | os.PathLike | None = None,
+        op_output_dataset_path: str | None = None,
+        cache_dir: str | None = None,
+        streaming: bool = False,
+        split: str = "validation",
+        it_format_kwargs: dict | None = None,
+        stack_batches: bool = False,  # Controls tensor stacking behavior
+        protocol_cls: Type[BaseAnalysisBatchProtocol] = DefaultAnalysisBatchProtocol,
+    ) -> None:
         self.stack_batches = stack_batches
         self.cache_dir = cache_dir
         self.streaming = streaming
@@ -355,12 +376,12 @@ class AnalysisStore:
         if self.dataset is not None:
             if self.it_format_kwargs is not None:
                 # Set custom format options if provided
-                self.dataset.set_format(type='interpretune', **it_format_kwargs)
+                self.dataset.set_format(type="interpretune", **it_format_kwargs)
             else:
                 # check current format and set it to interpretune if not already set
-                if not hasattr(self.dataset, 'format') or self.dataset.format['type'] != 'interpretune':
+                if not hasattr(self.dataset, "format") or self.dataset.format["type"] != "interpretune":
                     # Set default format as our custom analysis formatter
-                    self.dataset.set_format(type='interpretune')
+                    self.dataset.set_format(type="interpretune")
 
     def _format_columns(self, cols_to_fetch: list[str], indices: Optional[Union[int, slice, list[int]]] = None) -> dict:
         """Internal helper to format specified columns into tensors with proper shape reconstruction.
@@ -370,7 +391,7 @@ class AnalysisStore:
             indices: Optional index, slice or list of indices to select. If None, fetch all rows.
         """
         # Let the dataset handle the formatting using our registered ITAnalysisFormatter
-        self.dataset.set_format(type='interpretune', columns=cols_to_fetch)
+        self.dataset.set_format(type="interpretune", columns=cols_to_fetch)
 
         # Handle different types of indexing to get examples
         if indices is None:
@@ -424,12 +445,12 @@ class AnalysisStore:
             self.dataset = dataset
 
         # Set default tensor format
-        self.dataset.set_format(type='interpretune')
+        self.dataset.set_format(type="interpretune")
 
     def reset_dataset(self) -> None:
         """Reset the dataset."""
         # TODO: decide on appropriate reloading/clearing behavior
-        if hasattr(self, 'dataset'):
+        if hasattr(self, "dataset"):
             # Reload dataset from disk if available
             try:
                 self._load_dataset(self.save_dir)
@@ -439,9 +460,9 @@ class AnalysisStore:
     def _is_tensor_seq(self, data) -> bool:
         """Check if data is a Datasets Column, sequence of torch.Tensors or a single torch.Tensor."""
         return (
-            isinstance(data, Column) and isinstance(data[0], torch.Tensor)) or \
-            isinstance(data, torch.Tensor) or \
-            (isinstance(data, list) and all(isinstance(x, torch.Tensor) for x in data)
+            (isinstance(data, Column) and isinstance(data[0], torch.Tensor))
+            or isinstance(data, torch.Tensor)
+            or (isinstance(data, list) and all(isinstance(x, torch.Tensor) for x in data))
         )
 
     def __getitem__(self, key: Union[str, List[str], int, slice]) -> Union[List, Dict]:
@@ -520,7 +541,7 @@ class AnalysisStore:
         # First check if it's a protocol-defined column
         if name in self._protocol_cls.__annotations__:
             # Check if the column actually exists in the dataset
-            if self.dataset is not None and hasattr(self.dataset, 'column_names') and name in self.dataset.column_names:
+            if self.dataset is not None and hasattr(self.dataset, "column_names") and name in self.dataset.column_names:
                 return self[name]
             # Return None if column isn't available yet
             return None
@@ -530,12 +551,14 @@ class AnalysisStore:
             attr = getattr(self.dataset, name)
             # Handle callable attributes (e.g. dataset methods)
             if callable(attr):
+
                 def _caller(*args, **kwargs):
                     result = attr(*args, **kwargs)
                     # If the result is a Dataset, ensure it maintains the interpretune format
-                    if hasattr(result, 'set_format'):
-                        result.set_format(type='interpretune')
+                    if hasattr(result, "set_format"):
+                        result.set_format(type="interpretune")
                     return result
+
                 return _caller
             return attr
 
@@ -574,10 +597,8 @@ class AnalysisStore:
             else:
                 # Handle both non-nested and non-stacked nested cases
                 result[sae] = [
-                    None if isinstance(batch[sae], list) and not batch[sae]
-                    else batch[sae]
-                    for batch in values
-            ]
+                    None if isinstance(batch[sae], list) and not batch[sae] else batch[sae] for batch in values
+                ]
         return result
 
     def calc_activation_summary(self) -> ActivationSumm:
@@ -597,8 +618,8 @@ class AnalysisStore:
         if not self.correct_activations:
             raise ValueError("Analysis cache requires 'correct_activations' data to calculate per-SAE activation stats")
 
-        sae_data = self.by_sae('correct_activations').batch_join()
-        mean_activation = sae_data.apply_op_by_sae(operation='mean', dim=0)
+        sae_data = self.by_sae("correct_activations").batch_join()
+        mean_activation = sae_data.apply_op_by_sae(operation="mean", dim=0)
         num_samples_active = sae_data.apply_op_by_sae(operation=torch.count_nonzero, dim=0)
 
         return ActivationSumm(mean_activation=mean_activation, num_samples_active=num_samples_active)
@@ -608,7 +629,7 @@ class AnalysisStore:
         pred_summ: PredSumm,
         activation_summary: ActivationSumm | None = None,
         filter_by_correct: bool = True,
-        run_name: str | None = None
+        run_name: str | None = None,
     ) -> LatentMetrics:
         """Calculate latent metrics from analysis cache.
 
@@ -629,23 +650,22 @@ class AnalysisStore:
         correct_mask = None
         if filter_by_correct:
             if pred_summ.batch_predictions is not None:
-                correct_mask = torch.cat([
-                    (labels == preds) for labels, preds in
-                    zip(self.orig_labels, pred_summ.batch_predictions)
-                ])
+                correct_mask = torch.cat(
+                    [(labels == preds) for labels, preds in zip(self.orig_labels, pred_summ.batch_predictions)]
+                )
             else:
                 correct_mask = torch.cat([(diffs > 0) for diffs in self.logit_diffs])
             total_examples = correct_mask.sum()
 
-        proportion_samples_active = activation_summary.num_samples_active.apply_op_by_sae(operation=torch.div,
-                                                                                    other=total_examples)
+        proportion_samples_active = activation_summary.num_samples_active.apply_op_by_sae(
+            operation=torch.div, other=total_examples
+        )
 
-        attribution_values = self.by_sae('attribution_values').batch_join()
+        attribution_values = self.by_sae("attribution_values").batch_join()
 
         if filter_by_correct:
             per_example_latent_effects = attribution_values.apply_op_by_sae(
-                operation=lambda x, mask: x[mask],
-                mask=correct_mask
+                operation=lambda x, mask: x[mask], mask=correct_mask
             )
         else:
             per_example_latent_effects = attribution_values
@@ -660,7 +680,7 @@ class AnalysisStore:
             proportion_samples_active=proportion_samples_active,
             mean_activation=activation_summary.mean_activation,
             num_samples_active=activation_summary.num_samples_active,
-            run_name=run_name
+            run_name=run_name,
         )
 
     def plot_latent_effects(self, per_batch: bool | None = False, title_prefix="Latent effects of"):
@@ -683,25 +703,28 @@ class AnalysisStore:
                         title=f"{title_prefix} {act_name} latent effect on logit diff of batch {i} ({len_alive} alive)",
                         labels={"index": "Latent", "value": "Latent effect on logit diff"},
                         template="ggplot2",
-                        width=1000
+                        width=1000,
                     ).update_layout(showlegend=False).show()
         else:
             # Aggregate across all batches using SAEAnalysisDict operations
-            stacked_values = self.by_sae('attribution_values').batch_join()
-            len_alives = {act_name: len({latent for batch in self.alive_latents
-                                          for latent in batch.get(act_name, [])})
-                          for act_name in stacked_values.keys()}
+            stacked_values = self.by_sae("attribution_values").batch_join()
+            len_alives = {
+                act_name: len({latent for batch in self.alive_latents for latent in batch.get(act_name, [])})
+                for act_name in stacked_values.keys()
+            }
 
-            mean_effects = stacked_values.apply_op_by_sae(operation='mean', dim=0)
+            mean_effects = stacked_values.apply_op_by_sae(operation="mean", dim=0)
 
             for act_name, effects in mean_effects.items():
                 px.line(
                     effects.cpu().numpy(),
-                    title=(f"{title_prefix} ({act_name}) Latent effect on logit diff "
-                           f"(aggregated, {len_alives[act_name]} alive)"),
+                    title=(
+                        f"{title_prefix} ({act_name}) Latent effect on logit diff "
+                        f"(aggregated, {len_alives[act_name]} alive)"
+                    ),
                     labels={"index": "Latent", "value": "Latent effect on logit diff"},
                     template="ggplot2",
-                    width=1000
+                    width=1000,
                 ).update_layout(showlegend=False).show()
 
     def __deepcopy__(self, memo):
@@ -730,9 +753,13 @@ class AnalysisStore:
 def default_sae_id_factory_fn(layer: int, prefix_pat: str = "blocks", suffix_pat: str = "hook_z") -> str:
     return ".".join([prefix_pat, str(layer), suffix_pat])
 
-def default_sae_hook_match_fn(in_name: str, hook_point_suffix: str = "hook_sae_acts_post",
-                              hook_point_prefix: str = 'blocks',
-                              layers: int | Sequence[int] | None = None) -> bool:
+
+def default_sae_hook_match_fn(
+    in_name: str,
+    hook_point_suffix: str = "hook_sae_acts_post",
+    hook_point_prefix: str = "blocks",
+    layers: int | Sequence[int] | None = None,
+) -> bool:
     suffix_matched = in_name.endswith(f"{hook_point_suffix}")
     if suffix_matched and layers is not None:
         if isinstance(layers, int):
@@ -740,13 +767,15 @@ def default_sae_hook_match_fn(in_name: str, hook_point_suffix: str = "hook_sae_a
         return any(in_name.startswith(f"{hook_point_prefix}.{layer}.") for layer in layers)
     return suffix_matched
 
+
 @dataclass
 class SAEAnalysisTargets:
     """Encapsulation of SAE IDs and specific hooks involved in an SAE-mediated analysis, along with helper
     functions for explicit or pattern based matching by name and/or layer."""
+
     sae_fqns: list[SAEFqn] = field(default_factory=list)
     sae_release: str = "gpt2-small-hook-z-kk"
-    target_sae_ids: Sequence[str] = field(default_factory=list) # explicit sae_id list
+    target_sae_ids: Sequence[str] = field(default_factory=list)  # explicit sae_id list
     sae_id_factory_fn: Callable = default_sae_id_factory_fn  # function to generate sae_ids based on layer
     target_layers: list[int] = field(default_factory=list)
     # don't want to overload "hook_pattern" term, used with or without target layers to filter desired hooks
@@ -769,20 +798,22 @@ class SAEAnalysisTargets:
             self.sae_fqns = tuple(new_sae_fqns)
         else:
             if self.target_sae_ids:
-                self.sae_fqns = tuple(
-                    SAEFqn(release=self.sae_release, sae_id=s) for s in self.target_sae_ids
-                )
+                self.sae_fqns = tuple(SAEFqn(release=self.sae_release, sae_id=s) for s in self.target_sae_ids)
             elif self.target_layers:
-                self.sae_fqns = tuple(SAEFqn(release=self.sae_release, sae_id=self.sae_id_factory_fn(layer))
-                                      for layer in self.target_layers)
+                self.sae_fqns = tuple(
+                    SAEFqn(release=self.sae_release, sae_id=self.sae_id_factory_fn(layer))
+                    for layer in self.target_layers
+                )
             else:
                 rank_zero_warn("SAEFqns could not be resolved based on provided configuration")
                 self.sae_fqns = tuple()
         return self.sae_fqns
 
+
 @dataclass(kw_only=True)
 class BaseMetrics:
     """Base class for all latent metrics containers."""
+
     custom_repr: dict[str, str] = field(default_factory=dict)
     run_name: str | None = None
 
@@ -790,7 +821,8 @@ class BaseMetrics:
         self._set_field_repr()
         # Validation of metric dictionaries
         metric_dicts = [
-            value for value in self.__dict__.values()
+            value
+            for value in self.__dict__.values()
             if isinstance(value, dict) and value not in (self.custom_repr, self._field_repr)
         ]
 
@@ -806,7 +838,7 @@ class BaseMetrics:
     def _set_field_repr(self, default_field_repr: dict | None = None) -> None:
         """Update field representations with defaults and custom values."""
         # Initialize field_repr if not already done
-        if not hasattr(self, '_field_repr'):
+        if not hasattr(self, "_field_repr"):
             self._field_repr = {}
         default_values = default_field_repr or {}
         self._field_repr.update({**default_values, **self.custom_repr})
@@ -820,22 +852,27 @@ class BaseMetrics:
         Returns:
             Dict mapping field names to their display representations
         """
-        return {f: r for f, r in self._field_repr.items() if f != 'custom_repr' and
-               (not dict_only or isinstance(getattr(self, f), dict))}
+        return {
+            f: r
+            for f, r in self._field_repr.items()
+            if f != "custom_repr" and (not dict_only or isinstance(getattr(self, f), dict))
+        }
+
 
 @dataclass(kw_only=True)
 class ActivationSumm(BaseMetrics):
     """Container for activation summary metrics."""
+
     mean_activation: dict[str, torch.Tensor]
     num_samples_active: dict[str, torch.Tensor]
 
     def __post_init__(self):
-        _default_field_repr = MappingProxyType({
-            'mean_activation': 'Mean Activation',
-            'num_samples_active': 'Number Active'
-        })
+        _default_field_repr = MappingProxyType(
+            {"mean_activation": "Mean Activation", "num_samples_active": "Number Active"}
+        )
         self._set_field_repr(_default_field_repr)
         super().__post_init__()
+
 
 @dataclass(kw_only=True)
 class LatentMetrics(ActivationSumm):
@@ -843,22 +880,30 @@ class LatentMetrics(ActivationSumm):
 
     Each metric maps sae names to tensors of latent-level statistics.
     """
+
     total_effect: dict[str, torch.Tensor]
     mean_effect: dict[str, torch.Tensor]
     proportion_samples_active: dict[str, torch.Tensor]
 
     def __post_init__(self):
-        _default_field_repr = MappingProxyType({'total_effect': 'Total Effect', 'mean_effect': 'Mean Effect',
-                                                'proportion_samples_active': 'Proportion Active'})
+        _default_field_repr = MappingProxyType(
+            {
+                "total_effect": "Total Effect",
+                "mean_effect": "Mean Effect",
+                "proportion_samples_active": "Proportion Active",
+            }
+        )
         self._set_field_repr(_default_field_repr)
         super().__post_init__()
 
     # TODO: decompose this function into smaller, more testable parts
-    def create_attribution_tables(self,
-                                sort_by: str = 'total_effect',
-                                top_k: int = 10,
-                                filter_type: Literal['positive', 'negative', 'both'] = 'both',
-                                per_sae: bool | None = False) -> dict[str, str]:
+    def create_attribution_tables(
+        self,
+        sort_by: str = "total_effect",
+        top_k: int = 10,
+        filter_type: Literal["positive", "negative", "both"] = "both",
+        per_sae: bool | None = False,
+    ) -> dict[str, str]:
         """Creates formatted tables of attribution metrics.
 
         Args:
@@ -870,19 +915,19 @@ class LatentMetrics(ActivationSumm):
         """
         # Validate sort_by attribute exists
         if not hasattr(self, sort_by):
-            valid_attrs = [attr for attr in dir(self) if not attr.startswith('_')]
+            valid_attrs = [attr for attr in dir(self) if not attr.startswith("_")]
             raise ValueError(f"Invalid sort_by field '{sort_by}'. Must be one of: {valid_attrs}")
 
         sort_metric = getattr(self, sort_by)
         tables = {}
-        hooks = list(sort_metric.keys()) if per_sae else ['all']
+        hooks = list(sort_metric.keys()) if per_sae else ["all"]
 
         # Get metric names and their display representations
         metric_names = self.get_field_names(dict_only=True)
 
         for hook in hooks:
-            for sign in (['positive', 'negative'] if filter_type == 'both' else [filter_type]):
-                largest = (sign == 'positive')
+            for sign in ["positive", "negative"] if filter_type == "both" else [filter_type]:
+                largest = sign == "positive"
                 if per_sae:
                     values = sort_metric[hook]
                     topk_values, indices = torch.topk(values, min(top_k, len(values)), largest=largest)
@@ -890,8 +935,8 @@ class LatentMetrics(ActivationSumm):
                     for idx, val in zip(indices, topk_values):
                         if (largest and val > 0) or (not largest and val < 0):
                             row = {
-                                'Hook': hook,
-                                'Latent Index': idx.item(),
+                                "Hook": hook,
+                                "Latent Index": idx.item(),
                             }
                             for metric_attr, display_name in metric_names.items():
                                 metric_values = getattr(self, metric_attr)
@@ -911,8 +956,8 @@ class LatentMetrics(ActivationSumm):
                     table_data = []
                     for h, idx, _ in all_values[:top_k]:
                         row = {
-                            'Hook': h,
-                            'Latent Index': idx.item(),
+                            "Hook": h,
+                            "Latent Index": idx.item(),
                         }
                         for metric_attr, display_name in metric_names.items():
                             metric_values = getattr(self, metric_attr)
@@ -922,19 +967,26 @@ class LatentMetrics(ActivationSumm):
                 if table_data:
                     title = f"Top {top_k} {sign} {sort_by} "
                     title += f"for {hook}" if per_sae else "across all hooks"
-                    tables[title] = tabulate(table_data, headers='keys', tablefmt='pipe')
+                    tables[title] = tabulate(table_data, headers="keys", tablefmt="pipe")
 
         return tables
+
 
 class PredSumm(NamedTuple):
     total_correct: int
     percentage_correct: float
     batch_predictions: list | None
 
-def latent_metrics_scatter(metrics1: LatentMetrics, metrics2: LatentMetrics,
-                            metric_field: str = 'total_effect',
-                            label1: str = "Metrics 1", label2: str = "Metrics 2",
-                            width: int = 800, height: int = 600) -> None:
+
+def latent_metrics_scatter(
+    metrics1: LatentMetrics,
+    metrics2: LatentMetrics,
+    metric_field: str = "total_effect",
+    label1: str = "Metrics 1",
+    label2: str = "Metrics 2",
+    width: int = 800,
+    height: int = 600,
+) -> None:
     """Create scatter plots comparing two sets of LatentMetrics.
 
     Args:
@@ -953,11 +1005,13 @@ def latent_metrics_scatter(metrics1: LatentMetrics, metrics2: LatentMetrics,
     metrics2_data = getattr(metrics2, metric_field)
 
     for hook_name in metrics1_data.keys():
-        df = pd.DataFrame({
-            label1: metrics1_data[hook_name].numpy(),
-            label2: metrics2_data[hook_name].numpy(),
-            "Latent": torch.arange(metrics2_data[hook_name].size(0)).numpy(),
-        })
+        df = pd.DataFrame(
+            {
+                label1: metrics1_data[hook_name].numpy(),
+                label2: metrics2_data[hook_name].numpy(),
+                "Latent": torch.arange(metrics2_data[hook_name].size(0)).numpy(),
+            }
+        )
 
         px.scatter(
             df,
@@ -977,8 +1031,14 @@ def latent_metrics_scatter(metrics1: LatentMetrics, metrics2: LatentMetrics,
             line=dict(color="red", width=2, dash="dash"),
         ).show()
 
-def base_vs_sae_logit_diffs(sae: AnalysisStoreProtocol, base_ref: AnalysisStoreProtocol,
-                            tokenizer: PreTrainedTokenizerBase, top_k: int = 10, max_prompt_width: int = 80) -> None:
+
+def base_vs_sae_logit_diffs(
+    sae: AnalysisStoreProtocol,
+    base_ref: AnalysisStoreProtocol,
+    tokenizer: PreTrainedTokenizerBase,
+    top_k: int = 10,
+    max_prompt_width: int = 80,
+) -> None:
     """Display a table comparing reference vs SAE logit differences.
 
     Args:
@@ -1006,28 +1066,32 @@ def base_vs_sae_logit_diffs(sae: AnalysisStoreProtocol, base_ref: AnalysisStoreP
     max_samples = min(top_k, len(df))
     df = df.head(max_samples)
 
-    print(tabulate(
-        df,
-        headers=["Sample ID", "Prompt", "Answer", "Clean Logit Diff", "SAE Logit Diff"],
-        maxcolwidths=[None, max_prompt_width, None, None, None],
-        tablefmt="grid",
-        numalign="left",
-        floatfmt="+.3f",
-        showindex="never"
-    ))
+    print(
+        tabulate(
+            df,
+            headers=["Sample ID", "Prompt", "Answer", "Clean Logit Diff", "SAE Logit Diff"],
+            maxcolwidths=[None, max_prompt_width, None, None, None],
+            tablefmt="grid",
+            numalign="left",
+            floatfmt="+.3f",
+            showindex="never",
+        )
+    )
+
 
 # TODO: convert compute_correct to an AnalysisOp?  Assumes sae usage, need to clarify req
-def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
-                    op: str | AnalysisOp | None = None) -> PredSumm:
+def compute_correct(
+    analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol, op: str | AnalysisOp | None = None
+) -> PredSumm:
     """Compute correct prediction statistics for a given analysis mode."""
     # Handle input type and get op and analysis_store
-    if hasattr(analysis_obj, 'output_store') and hasattr(analysis_obj, 'op'):
+    if hasattr(analysis_obj, "output_store") and hasattr(analysis_obj, "op"):
         analysis_store = analysis_obj.output_store
         op = analysis_obj.op
     else:
         # TODO: we can assume this is None if not provided, we should really change compute_correct to have a per-latent
         #       data structured overload
-        #if op is None:
+        # if op is None:
         #    raise ValueError("op argument required when passing AnalysisStore type objects")
         analysis_store = analysis_obj
 
@@ -1035,18 +1099,19 @@ def compute_correct(analysis_obj: AnalysisStoreProtocol | AnalysisCfgProtocol,
         op = DISPATCHER.get_op(op)
 
     # TODO: this is another location where we should be conditioning behavior on op functionality, not name
-    if op.ctx_key == 'logit_diffs_attr_ablation':
-        batch_preds = [b.mode(dim=0).values.cpu() for b in analysis_store.by_sae('preds').batch_join(across_saes=True)]
+    if op.ctx_key == "logit_diffs_attr_ablation":
+        batch_preds = [b.mode(dim=0).values.cpu() for b in analysis_store.by_sae("preds").batch_join(across_saes=True)]
     else:
         batch_preds = analysis_store.preds
     correct_statuses = [
-        (labels == preds).nonzero().unique().size(0)
-        for labels, preds in zip(analysis_store.orig_labels, batch_preds)
+        (labels == preds).nonzero().unique().size(0) for labels, preds in zip(analysis_store.orig_labels, batch_preds)
     ]
     total_correct = sum(correct_statuses)
     percentage_correct = total_correct / (len(torch.cat(analysis_store.orig_labels))) * 100
-    return PredSumm(total_correct, percentage_correct,
-                    batch_preds if op.ctx_key == 'logit_diffs_attr_ablation' else None)
+    return PredSumm(
+        total_correct, percentage_correct, batch_preds if op.ctx_key == "logit_diffs_attr_ablation" else None
+    )
+
 
 def resolve_names_filter(names_filter: NamesFilter | None) -> Callable[[str], bool]:
     # similar to logic in `transformer_lens.hook_points.get_caching_hooks` but accessible to other functions
@@ -1065,6 +1130,7 @@ def resolve_names_filter(names_filter: NamesFilter | None) -> Callable[[str], bo
     assert callable(names_filter)
     return names_filter
 
+
 def _make_simple_cache_hook(cache_dict: dict, is_backward: bool = False) -> Callable:
     """Create a hook function that caches activations.
 
@@ -1075,13 +1141,16 @@ def _make_simple_cache_hook(cache_dict: dict, is_backward: bool = False) -> Call
     Returns:
         Callable: Hook function that caches activations
     """
+
     def cache_hook(act, hook):
         assert hook.name is not None
         hook_name = hook.name
         if is_backward:
             hook_name += "_grad"
         cache_dict[hook_name] = act.detach()
+
     return cache_hook
+
 
 # def validate_analysis_order(self):
 #     """Validates and potentially reorders analysis operations to ensure dependencies are met.

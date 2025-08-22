@@ -43,7 +43,6 @@ def _select_seed_randomly(min_seed_value: int = min_seed_value, max_seed_value: 
 
 
 class ITSessionMixin:
-
     def add_base_args(self, parser: ArgumentParser) -> None:
         """Add and link args to the parser."""
         # NOTE [Interpretune Dataclass-Oriented Configuration]:
@@ -67,13 +66,16 @@ class ITSessionMixin:
 
     def _get(self, config: Namespace, key: str, default: Any | None = None) -> Any:
         """Utility to get a config value which might be inside a subcommand."""
-        return config.get(str(getattr(self, 'subcommand', None)), config).get(key, default)
+        return config.get(str(getattr(self, "subcommand", None)), config).get(key, default)
+
 
 # TODO: update trainer/trainer_cfg references in ITCLI to more abstract runner references when running tests wrt
 #       integrating new analysis sessionrunner
 
+
 class ITCLI(ITSessionMixin):
     """To maximize compatibility, the core ITCLI was originally adapted from https://bit.ly/lightning_cli."""
+
     def __init__(
         self,
         module_class: ITModule = None,
@@ -97,15 +99,15 @@ class ITCLI(ITSessionMixin):
         self.module_class = module_class
         self.datamodule_class = datamodule_class
         self.runner_class = runner_class
-        self._supported_run_commands = getattr(self.runner_class, "supported_commands", None) or (None, "train",
-                                                                                                   "test")
+        self._supported_run_commands = getattr(self.runner_class, "supported_commands", None) or (None, "train", "test")
         self.run_cfg = run_cfg
         self.setup_parser(parser_kwargs)
         self.parse_arguments(self.parser, args)
 
         self.run_command = run_command
-        assert self.run_command in self._supported_run_commands, \
-              f"`{self.runner_class}` only supports the following commands: {self._supported_run_commands}"
+        assert self.run_command in self._supported_run_commands, (
+            f"`{self.runner_class}` only supports the following commands: {self._supported_run_commands}"
+        )
 
         self._set_seed()
 
@@ -115,8 +117,7 @@ class ITCLI(ITSessionMixin):
         if self.run_command:
             getattr(self.runner, self.run_command)()
 
-    def setup_parser(
-        self, main_kwargs: dict[str, Any]) -> None:
+    def setup_parser(self, main_kwargs: dict[str, Any]) -> None:
         """Initialize and setup the parser, subcommands, and arguments."""
         self.parser = self.init_parser(**main_kwargs)
         self._add_arguments(self.parser)
@@ -164,21 +165,26 @@ class ITCLI(ITSessionMixin):
         self.add_arguments_to_parser(parser)
 
     def add_default_arguments_to_parser(self, parser: ArgumentParser) -> None:
-            """Adds default arguments to the parser."""
-            parser.add_argument(
-                "--seed_everything",
-                type=Union[bool, int, str, float],
-                default=self.seed_everything_default,
-                help=(
-                    "Set to an int to run seed_everything with this value before classes instantiation."
-                    "Set to True to use a random seed."
-                ),
-            )
+        """Adds default arguments to the parser."""
+        parser.add_argument(
+            "--seed_everything",
+            type=Union[bool, int, str, float],
+            default=self.seed_everything_default,
+            help=(
+                "Set to an int to run seed_everything with this value before classes instantiation."
+                "Set to True to use a random seed."
+            ),
+        )
 
     def add_base_args(self, parser: ArgumentParser) -> None:
         """Adds core arguments to the parser."""
         super().add_base_args(parser)
-        parser.add_class_arguments(self.runner_class, "runner", instantiate=True, sub_configs=True,)
+        parser.add_class_arguments(
+            self.runner_class,
+            "runner",
+            instantiate=True,
+            sub_configs=True,
+        )
         parser.add_class_arguments(self.run_cfg, "run_cfg", instantiate=True, sub_configs=True)
         parser.link_arguments("it_session", "run_cfg.it_session", apply_on="instantiate")
         parser.link_arguments("run_cfg", "runner.run_cfg", apply_on="instantiate")
@@ -222,14 +228,19 @@ class ITCLI(ITSessionMixin):
 def env_setup() -> None:
     if _DOTENV_AVAILABLE:
         from dotenv import load_dotenv
+
         # set WandB API Key if desired, load HF_GATED_PUBLIC_REPO_AUTH_KEY if it exists
         load_dotenv()
     transformers_logging.set_verbosity_error()
     # ignore warnings related tokenizers_parallelism/DataLoader parallelism tradeoff and
     #  expected logging behavior (e.g. we don't depend on jsonargparse config serialization)
-    for warnf in [".*does not have many workers*", ".*The number of training samples.*",
-                  r"\n.*Unable to serialize.*\n"]:
+    for warnf in [
+        ".*does not have many workers*",
+        ".*The number of training samples.*",
+        r"\n.*Unable to serialize.*\n",
+    ]:
         warnings.filterwarnings("ignore", warnf)
+
 
 def enumerate_config_files(folder: Path | str) -> list:
     if not isinstance(folder, Path):
@@ -240,16 +251,18 @@ def enumerate_config_files(folder: Path | str) -> list:
         raise ValueError(f"Non-YAML files found in directory: {non_yaml_files}")
     return files
 
+
 def compose_config(config_files: Sequence[str]) -> list:
     # TODO: consider deprecating `compose_config` for simplicity and subsequently removing this path if not widely used
     args = []
     config_file_paths = []
 
-
     def raise_fnf(p: Path):
-        raise FileNotFoundError(f"Could not find configuration file path: {p}. Please provide file paths relative to"
-                                f" the interpretune config base directory {IT_CONFIG_BASE} or provide a valid"
-                                " absolute path.")
+        raise FileNotFoundError(
+            f"Could not find configuration file path: {p}. Please provide file paths relative to"
+            f" the interpretune config base directory {IT_CONFIG_BASE} or provide a valid"
+            " absolute path."
+        )
 
     for p in config_files:
         p = Path(p)
@@ -263,8 +276,10 @@ def compose_config(config_files: Sequence[str]) -> list:
                 config_file_paths.append(p_cfg_base_found)
             elif (p_base_found := sorted(IT_BASE.rglob(p.name))) and p_base_found[0].exists():  # more expansive search
                 if p_base_found[0].exists():
-                    rank_zero_warn(f"Could not find explicit path for config file: `{IT_CONFIG_BASE / p}`. Glob"
-                                   f" search within `{IT_BASE}` found `{p_base_found[0]}` which will be used instead.")
+                    rank_zero_warn(
+                        f"Could not find explicit path for config file: `{IT_CONFIG_BASE / p}`. Glob"
+                        f" search within `{IT_BASE}` found `{p_base_found[0]}` which will be used instead."
+                    )
                     config_file_paths.append(p_base_found[0])
             else:
                 raise_fnf(p)
@@ -272,14 +287,16 @@ def compose_config(config_files: Sequence[str]) -> list:
         args.extend(["--config", str(config)])
     return args
 
+
 def configure_cli(shared_config_dir: Path | str) -> tuple[bool, list]:
     env_setup()
     shared_config_files = enumerate_config_files(shared_config_dir)
     return shared_config_files
 
-def core_cli_main(run_mode: str | bool | None = None , args: ArgsType = None) -> ITCLI | None:
+
+def core_cli_main(run_mode: str | bool | None = None, args: ArgsType = None) -> ITCLI | None:
     # note deferred resolution
-    default_config_dir = os.environ.get("IT_CONFIG_DEFAULTS", IT_CONFIG_GLOBAL / "defaults" )
+    default_config_dir = os.environ.get("IT_CONFIG_DEFAULTS", IT_CONFIG_GLOBAL / "defaults")
     default_config_files = configure_cli(default_config_dir)
     parser_kwargs = {"default_config_files": default_config_files}
     default_run_command = "test"
@@ -321,7 +338,6 @@ if _LIGHTNING_AVAILABLE:
                 return self._it_session_cfg(config.get(str(self.subcommand), config), target_key)
             return config.get(str(self.subcommand), config).get(key, default)
 
-
     class LightningITCLI(LightningCLIAdapter, ITSessionMixin, LightningCLI):
         """Customize the :class:`~lightning.pytorch.cli.LightningCLI` to ensure the
         :class:`~pytorch_lighting.core.LightningDataModule` and
@@ -336,16 +352,20 @@ if _LIGHTNING_AVAILABLE:
             trainer_defaults = {"trainer." + k: v for k, v in self.trainer_defaults.items() if k != "callbacks"}
             parser.set_defaults(trainer_defaults)
 
-
     def l_cli_main(run_mode: bool = True, args: ArgsType = None) -> LightningITCLI | None:
         # note deferred resolution
-        default_config_dir = os.environ.get("IT_CONFIG_DEFAULTS", IT_CONFIG_GLOBAL / "defaults" )
+        default_config_dir = os.environ.get("IT_CONFIG_DEFAULTS", IT_CONFIG_GLOBAL / "defaults")
         default_config_files = configure_cli(default_config_dir)
         # currently, share config files for each subcommand but leave separate for future customization
-        parser_kwargs = {"default_config_files": default_config_files} if not run_mode else \
-            {"fit": {"default_config_files": default_config_files},
-            "test": {"default_config_files": default_config_files},
-            "predict": {"default_config_files": default_config_files},}
+        parser_kwargs = (
+            {"default_config_files": default_config_files}
+            if not run_mode
+            else {
+                "fit": {"default_config_files": default_config_files},
+                "test": {"default_config_files": default_config_files},
+                "predict": {"default_config_files": default_config_files},
+            }
+        )
         cli = LightningITCLI(
             datamodule_class=ITDataModule,
             # N.B. we can provide a regular PyTorch module as we're wrapping it as necessary
@@ -365,6 +385,7 @@ else:
     LightningCLIAdapter = object
     LightningITCLI = object
 
+
 def _parse_run_option(lightning_cli: bool = False) -> bool | str | None:
     run_mode = None
     if lightning_cli:
@@ -383,6 +404,7 @@ def _parse_run_option(lightning_cli: bool = False) -> bool | str | None:
                 sys.argv.pop(i)
     # core CLI's string `run_mode` controls both the command to run and if not provided, invokes parse/instantiate only
     return run_mode
+
 
 def bootstrap_cli() -> Callable:
     # TODO: consider adding an env var option to control CLI selection

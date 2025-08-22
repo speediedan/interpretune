@@ -6,8 +6,11 @@ from pathlib import Path
 from interpretune.config import HFFromPretrainedConfig
 from interpretune.protocol import AutoStrEnum, Adapter
 from interpretune.extensions import MemProfilerCfg, MemProfilerSchedule
-from it_examples.example_module_registry import (MODULE_EXAMPLE_REGISTRY, example_datamodule_defaults,
-                                                 example_itmodule_defaults)
+from it_examples.example_module_registry import (
+    MODULE_EXAMPLE_REGISTRY,
+    example_datamodule_defaults,
+    example_itmodule_defaults,
+)
 from base_defaults import default_prof_bs
 from tests.modules import TestFTS
 from tests.utils import get_nested, set_nested
@@ -33,20 +36,25 @@ cuda_bf16_l = {**cuda, **bf16, **w_lit}
 # Extension cfg aliases
 ################################################################################
 enable_memprofiler_kwargs = {"enabled": True, "cuda_allocator_history": True}
-bs_override = {'train_batch_size': default_prof_bs, 'eval_batch_size': default_prof_bs}
+bs_override = {"train_batch_size": default_prof_bs, "eval_batch_size": default_prof_bs}
 memprofiler_cfg = MemProfilerCfg(**enable_memprofiler_kwargs)
 no_savedt_memprofiler_cfg = MemProfilerCfg(**enable_memprofiler_kwargs, enable_saved_tensors_hooks=False)
-warm_maxstep_memprof_cfg = MemProfilerCfg(**enable_memprofiler_kwargs,
-                                      **{"schedule": MemProfilerSchedule(warmup_steps=2, max_step=4)})
-nowarm_maxstep_memprof_cfg = MemProfilerCfg(**enable_memprofiler_kwargs,
-                                                 **{"schedule": MemProfilerSchedule(max_step=4)})
-nowarm_maxstep_hk_memprof_cfg = MemProfilerCfg(retain_hooks_for_funcs=["training_step"], **enable_memprofiler_kwargs,
-                                                 **{"schedule": MemProfilerSchedule(max_step=4)})
+warm_maxstep_memprof_cfg = MemProfilerCfg(
+    **enable_memprofiler_kwargs, **{"schedule": MemProfilerSchedule(warmup_steps=2, max_step=4)}
+)
+nowarm_maxstep_memprof_cfg = MemProfilerCfg(
+    **enable_memprofiler_kwargs, **{"schedule": MemProfilerSchedule(max_step=4)}
+)
+nowarm_maxstep_hk_memprof_cfg = MemProfilerCfg(
+    retain_hooks_for_funcs=["training_step"],
+    **enable_memprofiler_kwargs,
+    **{"schedule": MemProfilerSchedule(max_step=4)},
+)
 memprof_steps = {"limit_train_batches": 5, "limit_val_batches": 3}
 bs1_memprof_steps = {"dm_override_cfg": bs_override, **memprof_steps}
 test_bs1_mem = {"phase": "test", "dm_override_cfg": bs_override, "memprofiler_cfg": memprofiler_cfg}
 test_bs1_mem_nosavedt = {**test_bs1_mem, "memprofiler_cfg": no_savedt_memprofiler_cfg}
-bs1_warm_mem = {**bs1_memprof_steps,  "memprofiler_cfg": warm_maxstep_memprof_cfg}
+bs1_warm_mem = {**bs1_memprof_steps, "memprofiler_cfg": warm_maxstep_memprof_cfg}
 bs1_nowarm_mem = {**bs1_memprof_steps, "memprofiler_cfg": nowarm_maxstep_memprof_cfg}
 bs1_nowarm_hk_mem = {**bs1_memprof_steps, "memprofiler_cfg": nowarm_maxstep_hk_memprof_cfg}
 
@@ -55,11 +63,20 @@ bs1_nowarm_hk_mem = {**bs1_memprof_steps, "memprofiler_cfg": nowarm_maxstep_hk_m
 ################################################################################
 act_ckpt = {
     "hf_from_pretrained_cfg": HFFromPretrainedConfig(
-        pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"}, model_head="transformers.GPT2LMHeadModel",
-        activation_checkpointing=True)}
+        pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"},
+        model_head="transformers.GPT2LMHeadModel",
+        activation_checkpointing=True,
+    )
+}
 cuda_act = {**cuda, **act_ckpt}
-cust_no_sae_grad = {"req_grad_mask": {'blocks.0.hook_resid_pre.b_enc': False, 'blocks.0.hook_resid_pre.W_dec': False,
-                                      'blocks.0.hook_resid_pre.W_enc': False, 'blocks.0.hook_resid_pre.b_dec': False}}
+cust_no_sae_grad = {
+    "req_grad_mask": {
+        "blocks.0.hook_resid_pre.b_enc": False,
+        "blocks.0.hook_resid_pre.W_dec": False,
+        "blocks.0.hook_resid_pre.W_enc": False,
+        "blocks.0.hook_resid_pre.b_dec": False,
+    }
+}
 
 ##################################
 # FTS config aliases
@@ -86,6 +103,7 @@ CLI_EXP = "cust_test"
 RUN_FN = "interpretune"
 IT_HOME = Path(os.environ.get("IT_HOME", Path(__file__).parent.parent.parent / "src" / "interpretune"))
 
+
 class CLI_TESTS(AutoStrEnum):
     core_tl_test = auto()
     core_tl_test_noharness = auto()
@@ -95,6 +113,7 @@ class CLI_TESTS(AutoStrEnum):
     l_tl_norun = auto()
     l_tl_norun_noharness = auto()
     l_optim_fit = auto()
+
 
 ################################################################################
 # CLI config definitions
@@ -126,23 +145,33 @@ default_session_cfg = {
     "datamodule_cls": "tests.modules.TestITDataModule",
     "datamodule_cfg": {"class_path": "interpretune.config.datamodule.ITDataModuleConfig"},
     "module_cls": "tests.modules.TestITModule",
-    "module_cfg": {"class_path": "interpretune.config.module.ITConfig"}
+    "module_cfg": {"class_path": "interpretune.config.module.ITConfig"},
 }
 
-core_cust_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY['cust.rte']['cfg_dict'])
+core_cust_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY["cust.rte"]["cfg_dict"])
 base_cust_rte_cfg = {
     "session_cfg": {
-        "datamodule_cfg": {"init_args": {**example_datamodule_defaults, **core_cust_cfg['shared_config'],
-                                         **core_cust_cfg['registered_cfg']['datamodule_cfg']}},
-        "module_cfg": core_cust_cfg['registered_cfg']['module_cfg']
+        "datamodule_cfg": {
+            "init_args": {
+                **example_datamodule_defaults,
+                **core_cust_cfg["shared_config"],
+                **core_cust_cfg["registered_cfg"]["datamodule_cfg"],
+            }
+        },
+        "module_cfg": core_cust_cfg["registered_cfg"]["module_cfg"],
     }
 }
 
-core_tl_cust_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY['cust.rte.transformer_lens']['cfg_dict'])
+core_tl_cust_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY["cust.rte.transformer_lens"]["cfg_dict"])
 base_tl_cust_model_cfg = {
     "session_cfg": {
-        "datamodule_cfg": {"init_args": {**example_datamodule_defaults, **core_tl_cust_cfg["shared_config"],
-                                         **core_tl_cust_cfg["registered_cfg"]["datamodule_cfg"]}},
+        "datamodule_cfg": {
+            "init_args": {
+                **example_datamodule_defaults,
+                **core_tl_cust_cfg["shared_config"],
+                **core_tl_cust_cfg["registered_cfg"]["datamodule_cfg"],
+            }
+        },
         "module_cfg": core_tl_cust_cfg["registered_cfg"]["module_cfg"],
     },
 }
@@ -164,9 +193,10 @@ base_lightning_trainer_cfg = {
 # global default cfg file
 ################################################################################
 
-default_cfg = {** default_seed_cfg,
+default_cfg = {
+    **default_seed_cfg,
     "session_cfg": {**default_session_cfg},
-    }
+}
 
 # note while we define global defaults, we explicitly set defaults in tests rather than inherit them clarity
 parity_cli_cfgs["global_defaults"] = default_cfg
@@ -179,7 +209,13 @@ parity_cli_cfgs["global_debug"] = set_nested("session_cfg.module_cfg.init_args")
 
 get_nested(parity_cli_cfgs["global_debug"], "session_cfg.module_cfg.init_args")["debug_lm_cfg"] = {
     "class_path": "interpretune.extensions.debug_generation.DebugLMConfig",
-    "init_args": {"enabled": True, "raw_debug_sequences": ["How many days in a week?", "How old is Barack Obama?",],},
+    "init_args": {
+        "enabled": True,
+        "raw_debug_sequences": [
+            "How many days in a week?",
+            "How old is Barack Obama?",
+        ],
+    },
 }
 
 ################################################################################
@@ -190,8 +226,9 @@ core_optim_train = deepcopy(default_cfg)
 core_optim_train["session_cfg"]["datamodule_cfg"].update(base_cust_rte_cfg["session_cfg"]["datamodule_cfg"])
 core_optim_train["session_cfg"]["module_cfg"].update(base_cust_rte_cfg["session_cfg"]["module_cfg"])
 core_optim_train["run_cfg"] = deepcopy(default_trainer_kwargs)
-get_nested(core_optim_train, mod_cfg)["init_args"].update({"experiment_tag": CLI_TESTS.core_optim_train.value,
-                                                           **example_itmodule_defaults})
+get_nested(core_optim_train, mod_cfg)["init_args"].update(
+    {"experiment_tag": CLI_TESTS.core_optim_train.value, **example_itmodule_defaults}
+)
 parity_cli_cfgs["exp_cfgs"][CLI_TESTS.core_optim_train] = core_optim_train
 
 ################################################################################
@@ -223,7 +260,7 @@ parity_cli_cfgs["exp_cfgs"][CLI_TESTS.core_tl_test_noharness] = core_tl_test_noh
 l_tl_test = deepcopy(core_tl_test)
 l_tl_test.pop("run_cfg")
 get_nested(l_tl_test, "session_cfg")["adapter_ctx"] = ["lightning", "transformer_lens"]
-get_nested(l_tl_test, tl_cfg_initargs)["cfg"].update({'device': 'cuda', 'dtype': 'bfloat16'})
+get_nested(l_tl_test, tl_cfg_initargs)["cfg"].update({"device": "cuda", "dtype": "bfloat16"})
 get_nested(l_tl_test, mod_initargs)["experiment_tag"] = CLI_TESTS.l_tl_test.value
 l_tl_test.update(deepcopy(base_lightning_trainer_cfg))
 l_tl_test["trainer"].update({"precision": "bf16-true", "accumulate_grad_batches": 1, "num_sanity_val_steps": 0})
@@ -239,7 +276,7 @@ l_optim_fit.pop("run_cfg")
 get_nested(l_optim_fit, "session_cfg")["adapter_ctx"] = ["lightning"]
 l_optim_fit["trainer"] = deepcopy(l_tl_test["trainer"])
 l_optim_fit["trainer"]["logger"]["init_args"]["name"] = CLI_TESTS.l_optim_fit.value
-get_nested(l_optim_fit, mod_initargs)["model_cfg"].update({'device': 'cuda', 'dtype': 'bfloat16'})
+get_nested(l_optim_fit, mod_initargs)["model_cfg"].update({"device": "cuda", "dtype": "bfloat16"})
 parity_cli_cfgs["exp_cfgs"][CLI_TESTS.l_optim_fit] = l_optim_fit
 
 ################################################################################

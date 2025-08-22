@@ -7,20 +7,27 @@ from transformers import BatchEncoding
 from unittest.mock import patch, MagicMock
 from tests.runif import RunIf
 
-from interpretune.analysis.ops.base import (AnalysisOp, CompositeAnalysisOp, AnalysisBatch, ColCfg, OpSchema, AttrDict,
-                                            wrap_summary, _reconstruct_op, OpWrapper)
+from interpretune.analysis.ops.base import (
+    AnalysisOp,
+    CompositeAnalysisOp,
+    AnalysisBatch,
+    ColCfg,
+    OpSchema,
+    AttrDict,
+    wrap_summary,
+    _reconstruct_op,
+    OpWrapper,
+)
+
 
 # Module-level implementation function for test operations
 def op_impl_test(module, analysis_batch, batch, batch_idx, **kwargs):
     """Implementation function for test operations."""
     result = analysis_batch or AnalysisBatch()
     result.output_field = torch.tensor([42.0])
-    result.called_with = {
-        'module': module,
-        'batch_idx': batch_idx,
-        'kwargs': kwargs
-    }
+    result.called_with = {"module": module, "batch_idx": batch_idx, "kwargs": kwargs}
     return result
+
 
 class TestAttrDict:
     """Tests for the AttrDict class."""
@@ -84,7 +91,7 @@ class TestColCfg:
         assert cfg.per_latent is False
         assert cfg.per_sae_hook is False
         assert cfg.intermediate_only is False
-        assert cfg.connected_obj == 'analysis_store'
+        assert cfg.connected_obj == "analysis_store"
         assert cfg.array_shape is None
         assert cfg.sequence_type is True
         assert cfg.array_dtype is None
@@ -99,10 +106,10 @@ class TestColCfg:
             per_latent=True,
             per_sae_hook=True,
             intermediate_only=True,
-            connected_obj='datamodule',
-            array_shape=(None, 'batch_size', 10),
+            connected_obj="datamodule",
+            array_shape=(None, "batch_size", 10),
             sequence_type=False,
-            array_dtype="float32"
+            array_dtype="float32",
         )
 
         assert cfg.datasets_dtype == "int64"
@@ -112,8 +119,8 @@ class TestColCfg:
         assert cfg.per_latent is True
         assert cfg.per_sae_hook is True
         assert cfg.intermediate_only is True
-        assert cfg.connected_obj == 'datamodule'
-        assert cfg.array_shape == (None, 'batch_size', 10)
+        assert cfg.connected_obj == "datamodule"
+        assert cfg.array_shape == (None, "batch_size", 10)
         assert cfg.sequence_type is False
         assert cfg.array_dtype == "float32"
 
@@ -122,14 +129,14 @@ class TestColCfg:
         cfg = ColCfg(
             datasets_dtype="float32",
             dyn_dim=2,
-            array_shape=(None, 'batch_size'),
+            array_shape=(None, "batch_size"),
         )
 
         result = cfg.to_dict()
         assert isinstance(result, dict)
         assert result["datasets_dtype"] == "float32"
         assert result["dyn_dim"] == 2
-        assert result["array_shape"] == (None, 'batch_size')
+        assert result["array_shape"] == (None, "batch_size")
 
     def test_from_dict_method(self):
         """Test the from_dict method."""
@@ -154,8 +161,8 @@ class TestColCfg:
         assert hash(cfg1) == hash(cfg2)
 
         # Test with array_shape containing dimensions
-        cfg3 = ColCfg(datasets_dtype="float32", array_shape=(None, 'batch_size', 10))
-        cfg4 = ColCfg(datasets_dtype="float32", array_shape=(None, 'batch_size', 10))
+        cfg3 = ColCfg(datasets_dtype="float32", array_shape=(None, "batch_size", 10))
+        cfg4 = ColCfg(datasets_dtype="float32", array_shape=(None, "batch_size", 10))
         assert hash(cfg3) == hash(cfg4)
 
         # Different configurations should have different hashes
@@ -193,9 +200,9 @@ class TestColCfg:
             per_sae_hook=True,
             intermediate_only=True,
             connected_obj="datamodule",
-            array_shape=(None, 'batch_size', 10),
+            array_shape=(None, "batch_size", 10),
             sequence_type=False,
-            array_dtype="int64"
+            array_dtype="int64",
         )
 
         cfg2 = ColCfg(
@@ -208,9 +215,9 @@ class TestColCfg:
             per_sae_hook=True,
             intermediate_only=True,
             connected_obj="datamodule",
-            array_shape=(None, 'batch_size', 10),
+            array_shape=(None, "batch_size", 10),
             sequence_type=False,
-            array_dtype="int64"
+            array_dtype="int64",
         )
 
         # Hashes should be equal
@@ -218,9 +225,17 @@ class TestColCfg:
 
         # Changing any attribute should change the hash
         for attr_name in [
-            "datasets_dtype", "required", "dyn_dim", "non_tensor",
-            "per_latent", "per_sae_hook", "intermediate_only",
-            "connected_obj", "array_shape", "sequence_type", "array_dtype"
+            "datasets_dtype",
+            "required",
+            "dyn_dim",
+            "non_tensor",
+            "per_latent",
+            "per_sae_hook",
+            "intermediate_only",
+            "connected_obj",
+            "array_shape",
+            "sequence_type",
+            "array_dtype",
         ]:
             # Make a copy with one attribute changed
             modified_dict = cfg1.to_dict()
@@ -229,7 +244,7 @@ class TestColCfg:
             elif attr_name == "dyn_dim":
                 modified_dict[attr_name] = 2
             elif attr_name == "array_shape":
-                modified_dict[attr_name] = (None, 'batch_size', 5)
+                modified_dict[attr_name] = (None, "batch_size", 5)
             elif attr_name == "connected_obj":
                 modified_dict[attr_name] = "analysis_store"
             elif attr_name == "array_dtype":
@@ -292,10 +307,9 @@ class TestOpSchema:
 
     def test_init_and_getitem(self):
         """Test initialization and getting items."""
-        schema = OpSchema({
-            "field1": ColCfg(datasets_dtype="float32"),
-            "field2": ColCfg(datasets_dtype="int64", required=False)
-        })
+        schema = OpSchema(
+            {"field1": ColCfg(datasets_dtype="float32"), "field2": ColCfg(datasets_dtype="int64", required=False)}
+        )
 
         assert "field1" in schema
         assert "field2" in schema
@@ -305,10 +319,7 @@ class TestOpSchema:
 
     def test_items_keys_values(self):
         """Test dictionary-like methods."""
-        schema = OpSchema({
-            "field1": ColCfg(datasets_dtype="float32"),
-            "field2": ColCfg(datasets_dtype="int64")
-        })
+        schema = OpSchema({"field1": ColCfg(datasets_dtype="float32"), "field2": ColCfg(datasets_dtype="int64")})
 
         assert set(schema.keys()) == {"field1", "field2"}
         assert len(schema.values()) == 2
@@ -326,25 +337,16 @@ class TestOpSchema:
 
     def test_hash_and_equality(self):
         """Test the __hash__ and __eq__ methods."""
-        schema1 = OpSchema({
-            "field1": ColCfg(datasets_dtype="float32"),
-            "field2": ColCfg(datasets_dtype="int64")
-        })
+        schema1 = OpSchema({"field1": ColCfg(datasets_dtype="float32"), "field2": ColCfg(datasets_dtype="int64")})
 
-        schema2 = OpSchema({
-            "field1": ColCfg(datasets_dtype="float32"),
-            "field2": ColCfg(datasets_dtype="int64")
-        })
+        schema2 = OpSchema({"field1": ColCfg(datasets_dtype="float32"), "field2": ColCfg(datasets_dtype="int64")})
 
         # Same schemas should have same hash
         assert hash(schema1) == hash(schema2)
         assert schema1 == schema2
 
         # Different schemas should have different hashes
-        schema3 = OpSchema({
-            "field1": ColCfg(datasets_dtype="float32"),
-            "field3": ColCfg(datasets_dtype="int64")
-        })
+        schema3 = OpSchema({"field1": ColCfg(datasets_dtype="float32"), "field3": ColCfg(datasets_dtype="int64")})
 
         assert hash(schema1) != hash(schema3)
         assert schema1 != schema3
@@ -395,7 +397,7 @@ class TestAnalysisBatch:
         batch.update(
             logit_diffs=torch.tensor([0.1, 0.2]),
             loss=torch.tensor([0.3, 0.4]),
-            prompts=["test prompt 1", "test prompt 2"]
+            prompts=["test prompt 1", "test prompt 2"],
         )
 
         # Check that attributes were updated
@@ -452,7 +454,7 @@ class TestAnalysisBatch:
         # Create nested attribute structure common in SAE analysis
         hook_dict = {
             "hook1": {"latent1": torch.tensor([1.0, 2.0]), "latent2": torch.tensor([3.0, 4.0])},
-            "hook2": {"latent1": torch.tensor([5.0, 6.0]), "latent2": torch.tensor([7.0, 8.0])}
+            "hook2": {"latent1": torch.tensor([5.0, 6.0]), "latent2": torch.tensor([7.0, 8.0])},
         }
         batch.attribution_values = hook_dict
 
@@ -513,10 +515,20 @@ class TestAnalysisBatch:
 
         # All valid attributes from protocol should be accessible
         for attr in [
-            "logit_diffs", "answer_logits", "loss", "preds", "labels",
-            "orig_labels", "cache", "grad_cache", "answer_indices",
-            "alive_latents", "correct_activations", "attribution_values",
-            "tokens", "prompts"
+            "logit_diffs",
+            "answer_logits",
+            "loss",
+            "preds",
+            "labels",
+            "orig_labels",
+            "cache",
+            "grad_cache",
+            "answer_indices",
+            "alive_latents",
+            "correct_activations",
+            "attribution_values",
+            "tokens",
+            "prompts",
         ]:
             # Should not raise AttributeError when getting attribute (might be None)
             _ = getattr(batch, attr, None)
@@ -555,7 +567,7 @@ class TestAnalysisBatch:
         assert not are_equal
 
         # Test fallback when torch.equal fails with RuntimeError
-        with patch('torch.equal', side_effect=RuntimeError("Mock error")):
+        with patch("torch.equal", side_effect=RuntimeError("Mock error")):
             batch6 = AnalysisBatch()
             batch6.tensor_field = torch.tensor([1.0, 2.0])
 
@@ -573,7 +585,7 @@ class TestAnalysisBatch:
             assert not are_equal
 
         # Test fallback when torch.equal fails with TypeError
-        with patch('torch.equal', side_effect=TypeError("Mock error")):
+        with patch("torch.equal", side_effect=TypeError("Mock error")):
             batch9 = AnalysisBatch()
             batch9.tensor_field = torch.tensor([1.0, 2.0])
 
@@ -596,7 +608,7 @@ class TestAnalysisBatch:
             def all(self):
                 raise RuntimeError("Cannot call all")
 
-        with patch('torch.equal', side_effect=RuntimeError("Mock error")):
+        with patch("torch.equal", side_effect=RuntimeError("Mock error")):
             batch11 = AnalysisBatch()
             batch11.uncomparable = UncomparableTensor(1)
 
@@ -621,7 +633,7 @@ class TestAnalysisBatch:
                 self.value = value
 
             def __eq__(self, other):
-                return hasattr(other, 'value') and self.value == other.value
+                return hasattr(other, "value") and self.value == other.value
 
         batch14 = AnalysisBatch()
         batch14.mock_tensor = MockTensor(5)
@@ -670,16 +682,13 @@ class TestAnalysisBatch:
         assert batch20 == batch21
 
         # Test comparison with regular dict
-        regular_dict = {
-            "logit_diffs": torch.tensor([1.0, 2.0]),
-            "prompts": ["test"]
-        }
+        regular_dict = {"logit_diffs": torch.tensor([1.0, 2.0]), "prompts": ["test"]}
 
         assert batch20 == regular_dict
 
         batch_a = AnalysisBatch()
         batch_a.x = 1
-        assert not batch_a == '12345'  # not AnalysisBatch or dict
+        assert not batch_a == "12345"  # not AnalysisBatch or dict
 
         batch_b = AnalysisBatch()
         batch_b.x = 1
@@ -700,33 +709,23 @@ class TestWrapSummary:
     def test_wrap_summary_with_tokenizer(self):
         """Test wrap_summary with tokenizer."""
         # Create mock tokenizer and batch
-        mock_tokenizer = type('MockTokenizer', (), {
-            'batch_decode': lambda self, input_ids, **kwargs: [f"Text {i}" for i in range(len(input_ids))]
-        })()
+        mock_tokenizer = type(
+            "MockTokenizer",
+            (),
+            {"batch_decode": lambda self, input_ids, **kwargs: [f"Text {i}" for i in range(len(input_ids))]},
+        )()
 
         batch = BatchEncoding({"input": torch.tensor([[1, 2], [3, 4]])})
         analysis_batch = AnalysisBatch({"tokens": torch.tensor([[5, 6], [7, 8]])})
 
         # Test with save_prompts=True
-        result = wrap_summary(
-            analysis_batch,
-            batch,
-            tokenizer=mock_tokenizer,
-            save_prompts=True,
-            save_tokens=False
-        )
+        result = wrap_summary(analysis_batch, batch, tokenizer=mock_tokenizer, save_prompts=True, save_tokens=False)
 
         assert result.prompts == ["Text 0", "Text 1"]
         assert not hasattr(result, "tokens") or result.tokens is None
 
         # Test with save_tokens=True
-        result = wrap_summary(
-            analysis_batch,
-            batch,
-            tokenizer=mock_tokenizer,
-            save_prompts=False,
-            save_tokens=True
-        )
+        result = wrap_summary(analysis_batch, batch, tokenizer=mock_tokenizer, save_prompts=False, save_tokens=True)
 
         assert not hasattr(result, "prompts") or result.prompts is None
         assert torch.equal(result.tokens, batch["input"].cpu())
@@ -764,7 +763,7 @@ class TestAnalysisOp:
             name="test_op",
             description="Test operation",
             output_schema=OpSchema({"field": ColCfg(datasets_dtype="float32")}),
-            input_schema=OpSchema({"input_field": ColCfg(datasets_dtype="int64")})
+            input_schema=OpSchema({"input_field": ColCfg(datasets_dtype="int64")}),
         )
 
         # Check properties
@@ -781,10 +780,7 @@ class TestAnalysisOp:
 
         # Initialize the operation
         op = AnalysisOp(
-            name="test_op",
-            description="Test operation",
-            input_schema=input_schema,
-            output_schema=output_schema
+            name="test_op", description="Test operation", input_schema=input_schema, output_schema=output_schema
         )
 
         # Check schemas were properly set
@@ -810,10 +806,10 @@ class TestAnalysisOp:
         output_schema = OpSchema({"field": ColCfg(datasets_dtype="float32")})
         input_schema = OpSchema({"input": ColCfg(datasets_dtype="int64")})
 
-        op1 = AnalysisOp(name="op1", description="Operation 1",
-                         output_schema=output_schema, input_schema=input_schema)
-        op2 = AnalysisOp(name="op1", description="Different description",
-                         output_schema=output_schema, input_schema=input_schema)
+        op1 = AnalysisOp(name="op1", description="Operation 1", output_schema=output_schema, input_schema=input_schema)
+        op2 = AnalysisOp(
+            name="op1", description="Different description", output_schema=output_schema, input_schema=input_schema
+        )
 
         # Hash should be based on name, output_schema, and input_schema
         assert hash(op1) == hash(op2)
@@ -842,26 +838,20 @@ class TestAnalysisOp:
         batch = AnalysisBatch()
         batch.logit_diffs = torch.tensor([1.0, 2.0])
 
-
         # assert that validation is skipped if input_schema is None
         op = AnalysisOp(
-            name="test_op",
-            description="Test op with schema validation",
-            output_schema=OpSchema({}),
-            input_schema=None
+            name="test_op", description="Test op with schema validation", output_schema=OpSchema({}), input_schema=None
         )
 
         op._validate_input_schema(batch, {})
 
         # normal case
-        input_schema = OpSchema({
-            "logit_diffs": ColCfg(datasets_dtype="float32", required=True)
-        })
+        input_schema = OpSchema({"logit_diffs": ColCfg(datasets_dtype="float32", required=True)})
         op = AnalysisOp(
             name="test_op",
             description="Test op with schema validation",
             output_schema=OpSchema({}),
-            input_schema=input_schema
+            input_schema=input_schema,
         )
         op._validate_input_schema(batch, {})
 
@@ -870,23 +860,20 @@ class TestAnalysisOp:
         with pytest.raises(ValueError, match="Missing required.*logit_diffs"):
             op._validate_input_schema(batch, {})
 
-
-
-
         batch = AnalysisBatch()
         batch.logit_diffs = torch.tensor([1.0, 2.0])
         op._validate_input_schema(batch, {})
 
     def test_validate_input_schema_from_batch(self):
         """Test validation of inputs from batch."""
-        input_schema = OpSchema({
-            "batch_field": ColCfg(datasets_dtype="float32", required=True, connected_obj="datamodule")
-        })
+        input_schema = OpSchema(
+            {"batch_field": ColCfg(datasets_dtype="float32", required=True, connected_obj="datamodule")}
+        )
         op = AnalysisOp(
             name="test_op",
             description="Test op with batch validation",
             output_schema=OpSchema({}),
-            input_schema=input_schema
+            input_schema=input_schema,
         )
 
         # Valid batch
@@ -902,13 +889,15 @@ class TestAnalysisOp:
         # Create a batch with valid protocol attributes
         batch = AnalysisBatch()
         batch.logit_diffs = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
-        batch.alive_latents = {'hook1': [0, 1, 2]}
+        batch.alive_latents = {"hook1": [0, 1, 2]}
 
         # Create an output schema with dynamic dimension
-        output_schema = OpSchema({
-            "logit_diffs": ColCfg(datasets_dtype="float32", dyn_dim=1),
-            "alive_latents": ColCfg(datasets_dtype="int32", per_latent=True)
-        })
+        output_schema = OpSchema(
+            {
+                "logit_diffs": ColCfg(datasets_dtype="float32", dyn_dim=1),
+                "alive_latents": ColCfg(datasets_dtype="int32", per_latent=True),
+            }
+        )
 
         # Process the batch
         result = AnalysisOp.process_batch(
@@ -917,7 +906,7 @@ class TestAnalysisOp:
             output_schema=output_schema,
             tokenizer=None,
             save_prompts=False,
-            save_tokens=False
+            save_tokens=False,
         )
 
         # Check that dimensions were swapped
@@ -927,41 +916,29 @@ class TestAnalysisOp:
         """Test the process_batch method with per_latent serialization."""
         # Create a batch with per_latent data structure
         batch = AnalysisBatch()
-        latent_dict = {
-            'hook1': {
-                0: torch.tensor([0.1, 0.2]),
-                1: torch.tensor([0.3, 0.4]),
-                2: torch.tensor([0.5, 0.6])
-            }
-        }
+        latent_dict = {"hook1": {0: torch.tensor([0.1, 0.2]), 1: torch.tensor([0.3, 0.4]), 2: torch.tensor([0.5, 0.6])}}
         batch.attribution_values = latent_dict
 
         # Create output schema with per_latent flag
-        output_schema = OpSchema({
-            "attribution_values": ColCfg(datasets_dtype="float32", per_latent=True)
-        })
+        output_schema = OpSchema({"attribution_values": ColCfg(datasets_dtype="float32", per_latent=True)})
 
         # Process the batch
-        result = AnalysisOp.process_batch(
-            analysis_batch=batch,
-            batch={},
-            output_schema=output_schema
-        )
+        result = AnalysisOp.process_batch(analysis_batch=batch, batch={}, output_schema=output_schema)
 
         # Check the serialized structure
-        assert 'hook1' in result.attribution_values
-        assert 'latents' in result.attribution_values['hook1']
-        assert 'per_latent' in result.attribution_values['hook1']
-        assert result.attribution_values['hook1']['latents'] == [0, 1, 2]
-        assert len(result.attribution_values['hook1']['per_latent']) == 3
-        assert torch.equal(result.attribution_values['hook1']['per_latent'][0], torch.tensor([0.1, 0.2]))
+        assert "hook1" in result.attribution_values
+        assert "latents" in result.attribution_values["hook1"]
+        assert "per_latent" in result.attribution_values["hook1"]
+        assert result.attribution_values["hook1"]["latents"] == [0, 1, 2]
+        assert len(result.attribution_values["hook1"]["per_latent"]) == 3
+        assert torch.equal(result.attribution_values["hook1"]["per_latent"][0], torch.tensor([0.1, 0.2]))
 
     def test_save_batch(self):
         """Test the save_batch method."""
         op = AnalysisOp(
             name="test_op",
             description="Test op",
-            output_schema=OpSchema({"logit_diffs": ColCfg(datasets_dtype="float32", dyn_dim=1)})
+            output_schema=OpSchema({"logit_diffs": ColCfg(datasets_dtype="float32", dyn_dim=1)}),
         )
 
         # Create a batch with valid protocol attributes
@@ -980,7 +957,7 @@ class TestAnalysisOp:
         op_without_impl = AnalysisOp(
             name="test_op_no_impl",
             description="Test operation without implementation",
-            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")})
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
         )
 
         assert op_without_impl.impl is None
@@ -992,7 +969,7 @@ class TestAnalysisOp:
         op_with_impl = AnalysisOp(
             name="test_op_with_impl",
             description="Test operation with implementation",
-            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")})
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
         )
         op_with_impl._impl = test_implementation
 
@@ -1001,6 +978,7 @@ class TestAnalysisOp:
 
     def test_callable_implementation(self):
         """Test calling an op with an implementation function."""
+
         def implementation(module, analysis_batch, batch, batch_idx, extra_arg=None, **kwargs):
             result = analysis_batch or AnalysisBatch()
             result.loss = torch.tensor(10.0)
@@ -1011,7 +989,7 @@ class TestAnalysisOp:
             name="test_op",
             description="Test op with implementation",
             output_schema=OpSchema({"loss": ColCfg(datasets_dtype="float32")}),
-            impl_params={"extra_arg": 42}
+            impl_params={"extra_arg": 42},
         )
         op._impl = implementation
 
@@ -1024,11 +1002,7 @@ class TestAnalysisOp:
 
     def test_no_implementation(self):
         """Test calling an op with no implementation."""
-        op = AnalysisOp(
-            name="test_op",
-            description="Test op without implementation",
-            output_schema=OpSchema({})
-        )
+        op = AnalysisOp(name="test_op", description="Test op without implementation", output_schema=OpSchema({}))
 
         # Should raise NotImplementedError
         with pytest.raises(NotImplementedError):
@@ -1036,6 +1010,7 @@ class TestAnalysisOp:
 
     def test_protocol_attribute_in_analysis(self):
         """Test that ops properly use protocol attributes."""
+
         def implementation(module, analysis_batch, batch, batch_idx, **kwargs):
             result = analysis_batch or AnalysisBatch()
             # Set multiple protocol-defined attributes
@@ -1048,12 +1023,14 @@ class TestAnalysisOp:
         op = AnalysisOp(
             name="test_op",
             description="Test with protocol attributes",
-            output_schema=OpSchema({
-                "logit_diffs": ColCfg(datasets_dtype="float32"),
-                "loss": ColCfg(datasets_dtype="float32"),
-                "labels": ColCfg(datasets_dtype="int64"),
-                "answer_logits": ColCfg(datasets_dtype="float32")
-            })
+            output_schema=OpSchema(
+                {
+                    "logit_diffs": ColCfg(datasets_dtype="float32"),
+                    "loss": ColCfg(datasets_dtype="float32"),
+                    "labels": ColCfg(datasets_dtype="int64"),
+                    "answer_logits": ColCfg(datasets_dtype="float32"),
+                }
+            ),
         )
         op._impl = implementation
 
@@ -1068,6 +1045,7 @@ class TestAnalysisOp:
 
     def test_to_cpu_protocol_attributes(self):
         """Test that to_cpu properly handles protocol attributes."""
+
         # Create an implementation that sets protocol attributes
         def implementation(module, analysis_batch, batch, batch_idx, **kwargs):
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -1075,19 +1053,19 @@ class TestAnalysisOp:
             result.logit_diffs = torch.tensor([1.0, 2.0], device=device)
             result.loss = torch.tensor([0.1, 0.2], device=device)
             # Add a nested structure
-            result.attribution_values = {
-                "hook1": {"latent1": torch.tensor([0.5, 0.6], device=device)}
-            }
+            result.attribution_values = {"hook1": {"latent1": torch.tensor([0.5, 0.6], device=device)}}
             return result
 
         op = AnalysisOp(
             name="test_op",
             description="Test with protocol attributes",
-            output_schema=OpSchema({
-                "logit_diffs": ColCfg(datasets_dtype="float32"),
-                "loss": ColCfg(datasets_dtype="float32"),
-                "attribution_values": ColCfg(datasets_dtype="float32", per_latent=True)
-            })
+            output_schema=OpSchema(
+                {
+                    "logit_diffs": ColCfg(datasets_dtype="float32"),
+                    "loss": ColCfg(datasets_dtype="float32"),
+                    "attribution_values": ColCfg(datasets_dtype="float32", per_latent=True),
+                }
+            ),
         )
         op._impl = implementation
 
@@ -1104,6 +1082,7 @@ class TestAnalysisOp:
 
     def test_call_method_with_validation(self):
         """Test the __call__ method with input schema validation."""
+
         # Create a simple implementation function
         def impl(module, analysis_batch, batch, batch_idx, **kwargs):
             result = analysis_batch
@@ -1115,7 +1094,7 @@ class TestAnalysisOp:
             name="test_call",
             description="Test call with validation",
             output_schema=OpSchema({"output_field": ColCfg(datasets_dtype="float32")}),
-            input_schema=OpSchema({"required_field": ColCfg(datasets_dtype="int64")})
+            input_schema=OpSchema({"required_field": ColCfg(datasets_dtype="int64")}),
         )
         op._impl = impl
 
@@ -1133,6 +1112,7 @@ class TestAnalysisOp:
 
     def test_call_with_implementation_args(self):
         """Test __call__ with implementation and additional arguments."""
+
         # Create implementation that uses additional arguments
         def impl(module, analysis_batch, batch, batch_idx, arg1=None, arg2=None, **kwargs):
             result = analysis_batch or AnalysisBatch()
@@ -1143,7 +1123,7 @@ class TestAnalysisOp:
             name="test_args",
             description="Test with args",
             output_schema=OpSchema({"output_value": ColCfg(datasets_dtype="float32")}),
-            impl_params={"arg1": 10, "arg2": 20}
+            impl_params={"arg1": 10, "arg2": 20},
         )
         op._impl = impl
 
@@ -1160,17 +1140,15 @@ class TestAnalysisOp:
             name="test_op",
             description="Test operation",
             output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
-            impl_params={"custom_param": "custom_value"}
+            impl_params={"custom_param": "custom_value"},
         )
 
         # Create a mock implementation function
         mock_impl_func = MagicMock()
 
         # Test with ValueError
-        with patch('inspect.signature', side_effect=ValueError("Cannot get signature")):
-            resolved = op._resolve_call_params(
-                mock_impl_func, "module", "batch", {}, 0, extra_kwarg="value"
-            )
+        with patch("inspect.signature", side_effect=ValueError("Cannot get signature")):
+            resolved = op._resolve_call_params(mock_impl_func, "module", "batch", {}, 0, extra_kwarg="value")
             # Should include all default parameters plus impl_params
             assert "module" in resolved
             assert "analysis_batch" in resolved
@@ -1180,10 +1158,8 @@ class TestAnalysisOp:
             assert resolved["extra_kwarg"] == "value"
 
         # Test with TypeError
-        with patch('inspect.signature', side_effect=TypeError("Cannot get signature")):
-            resolved = op._resolve_call_params(
-                mock_impl_func, "module", "batch", {}, 0, extra_kwarg="value"
-            )
+        with patch("inspect.signature", side_effect=TypeError("Cannot get signature")):
+            resolved = op._resolve_call_params(mock_impl_func, "module", "batch", {}, 0, extra_kwarg="value")
             # Should include all default parameters plus impl_params
             assert "module" in resolved
             assert resolved["custom_param"] == "custom_value"
@@ -1197,7 +1173,7 @@ class TestAnalysisOp:
             name="test_op",
             description="Test operation",
             output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
-            impl_params={"custom_param": "custom_value"}
+            impl_params={"custom_param": "custom_value"},
         )
 
         # Create a mock implementation function that only accepts some parameters
@@ -1206,10 +1182,8 @@ class TestAnalysisOp:
         # Include custom_param in the accepted parameters to test impl_params filtering
         mock_sig.parameters = {"module": MagicMock(), "batch_idx": MagicMock(), "custom_param": MagicMock()}
 
-        with patch('inspect.signature', return_value=mock_sig):
-            resolved = op._resolve_call_params(
-                mock_impl_func, "module", "batch", {}, 0, extra_kwarg="value"
-            )
+        with patch("inspect.signature", return_value=mock_sig):
+            resolved = op._resolve_call_params(mock_impl_func, "module", "batch", {}, 0, extra_kwarg="value")
             # Should only include parameters that the function accepts
             assert "module" in resolved
             assert "batch_idx" in resolved
@@ -1228,14 +1202,14 @@ class TestCompositeAnalysisOp:
         op1 = AnalysisOp(
             name="op1",
             description="Simple operation",
-            output_schema=OpSchema({"result": ColCfg(datasets_dtype="float32")})
+            output_schema=OpSchema({"result": ColCfg(datasets_dtype="float32")}),
         )
 
         op2 = AnalysisOp(
             name="op2",
             description="Another operation",
             output_schema=OpSchema({"final": ColCfg(datasets_dtype="float32")}),
-            input_schema=OpSchema({"result": ColCfg(datasets_dtype="float32")})
+            input_schema=OpSchema({"result": ColCfg(datasets_dtype="float32")}),
         )
 
         # Create the composite operation
@@ -1266,6 +1240,7 @@ class TestCompositeAnalysisOp:
 
     def test_composite_op_call(self):
         """Test calling a CompositeAnalysisOp."""
+
         # Create mock ops
         def impl1(module, analysis_batch, batch, batch_idx, **kwargs):
             result = analysis_batch or AnalysisBatch()
@@ -1284,14 +1259,14 @@ class TestCompositeAnalysisOp:
         op1 = AnalysisOp(
             name="first",
             description="First operation",
-            output_schema=OpSchema({"loss": ColCfg(datasets_dtype="float32")})
+            output_schema=OpSchema({"loss": ColCfg(datasets_dtype="float32")}),
         )
         op1._impl = impl1
 
         op2 = AnalysisOp(
             name="second",
             description="Second operation",
-            output_schema=OpSchema({"logit_diffs": ColCfg(datasets_dtype="float32")})
+            output_schema=OpSchema({"logit_diffs": ColCfg(datasets_dtype="float32")}),
         )
         op2._impl = impl2
 
@@ -1315,6 +1290,7 @@ class TestCompositeAnalysisOp:
 
     def test_complete_composition_execution(self):
         """Test complete execution of a composition with real implementations."""
+
         # Test operations with real implementations
         def first_impl(module, analysis_batch, batch, batch_idx, **kwargs):
             result = AnalysisBatch() if not analysis_batch else analysis_batch
@@ -1332,7 +1308,7 @@ class TestCompositeAnalysisOp:
             name="first_op",
             description="First operation",
             input_schema=OpSchema({"existing_field": ColCfg(datasets_dtype="float32", required=False)}),
-            output_schema=OpSchema({"intermediate": ColCfg(datasets_dtype="float32")})
+            output_schema=OpSchema({"intermediate": ColCfg(datasets_dtype="float32")}),
         )
         first_op._impl = first_impl
 
@@ -1340,12 +1316,12 @@ class TestCompositeAnalysisOp:
             name="second_op",
             description="Second operation",
             input_schema=OpSchema({"intermediate": ColCfg(datasets_dtype="float32")}),
-            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")})
+            output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
         )
         second_op._impl = second_impl
 
         # Mock the dispatcher to avoid circular imports in test
-        with patch('interpretune.analysis.ops.compiler.schema_compiler.jit_compile_composition_schema') as mock_compile:
+        with patch("interpretune.analysis.ops.compiler.schema_compiler.jit_compile_composition_schema") as mock_compile:
             # Mock the compilation to return empty schemas
             mock_compile.return_value = (OpSchema({}), OpSchema({}))
 
@@ -1368,6 +1344,7 @@ class TestCompositeAnalysisOp:
             assert torch.equal(result.intermediate, torch.tensor([1.0, 2.0, 3.0]))
             assert torch.equal(result.output, torch.tensor([2.0, 4.0, 6.0]))
 
+
 class TestOpWrapper:
     """Tests for the OpWrapper class."""
 
@@ -1376,10 +1353,12 @@ class TestOpWrapper:
         """Fixture to set up test_op with optional input fields and patched implementation."""
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
+
         def patched_import(path_str):
             if path_str == "tests.core.test_analysis_ops_base.op_impl_test":
                 return op_impl_test
             return original_import(path_str)
+
         monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
 
         # Check what fields are actually available in the test operation definition
@@ -1392,6 +1371,7 @@ class TestOpWrapper:
 
         # Create a new OpSchema with the modified ColCfg instances
         from interpretune.analysis.ops.base import OpSchema
+
         new_input_schema = OpSchema(new_input_schema_dict)
 
         # Replace the input schema in the OpDef (also frozen, so use replace)
@@ -1423,10 +1403,12 @@ class TestOpWrapper:
 
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
+
         def patched_import(path_str):
             if path_str == "tests.core.test_analysis_ops_base.op_impl_test":
                 return op_impl_test
             return original_import(path_str)
+
         monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
 
         # Create a wrapper and set it on the target module so it will be updated later
@@ -1458,10 +1440,12 @@ class TestOpWrapper:
 
         # Patch the _import_callable method to return our test implementation
         original_import = test_dispatcher._import_callable
+
         def patched_import(path_str):
             if path_str == "tests.core.test_analysis_ops_base.op_impl_test":
                 return op_impl_test
             return original_import(path_str)
+
         monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
 
         # Add the alias to test_dispatcher aliases
@@ -1515,8 +1499,8 @@ class TestOpWrapper:
 
         # Check that the operation was called with correct arguments
         assert torch.equal(result.output_field, torch.tensor([42.0]))
-        assert result.called_with['module'] is test_module
-        assert result.called_with['batch_idx'] == 5
+        assert result.called_with["module"] is test_module
+        assert result.called_with["batch_idx"] == 5
 
     def test_pickling_with_real_op(self, setup_test_op_with_optional_inputs, target_module, monkeypatch):
         """Test pickling and unpickling with real operations."""
@@ -1594,9 +1578,17 @@ class TestOpWrapper:
         mock_op = AnalysisOp(name="mock_op", description="Mock operation", output_schema=OpSchema({}))
 
         # Create a mock dispatcher
-        mock_dispatcher = type('MockDispatcher', (), {'get_op': lambda self, name: mock_op,
-                                                      'get_all_aliases': lambda self: [("mock_alias", "mock_op"),],
-                                                      'get_op_aliases': lambda self, name: ["mock_alias"]})()
+        mock_dispatcher = type(
+            "MockDispatcher",
+            (),
+            {
+                "get_op": lambda self, name: mock_op,
+                "get_all_aliases": lambda self: [
+                    ("mock_alias", "mock_op"),
+                ],
+                "get_op_aliases": lambda self, name: ["mock_alias"],
+            },
+        )()
         current_module = target_module
         # Create a wrapper and patch its dispatcher property
         OpWrapper.initialize(current_module)
@@ -1604,7 +1596,7 @@ class TestOpWrapper:
         monkeypatch.setattr(wrapper, "_dispatcher", mock_dispatcher)
 
         setattr(current_module, wrapper._op_name, wrapper)
-        setattr(current_module, 'mock_alias', wrapper)
+        setattr(current_module, "mock_alias", wrapper)
 
         assert current_module.mock_op is wrapper
         assert current_module.mock_alias is wrapper
@@ -1630,53 +1622,53 @@ class TestOpWrapper:
             name="test_op",
             description="Test operation",
             output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
-            impl_params={"custom_param": "custom_value"}
+            impl_params={"custom_param": "custom_value"},
         )
 
         # Create a mock implementation function
         mock_impl_func = MagicMock()
 
         # Test with ValueError
-        with patch('inspect.signature', side_effect=ValueError("Cannot get signature")):
+        with patch("inspect.signature", side_effect=ValueError("Cannot get signature")):
             result = op._resolve_call_params(
                 impl_func=mock_impl_func,
                 module="test_module",
                 analysis_batch="test_batch",
                 batch="test_batch_data",
                 batch_idx=5,
-                extra_kwarg="extra_value"
+                extra_kwarg="extra_value",
             )
 
             # Verify fallback behavior - should include all defaults, impl_params, and kwargs
             expected = {
-                'module': "test_module",
-                'analysis_batch': "test_batch",
-                'batch': "test_batch_data",
-                'batch_idx': 5,
-                'custom_param': "custom_value",
-                'extra_kwarg': "extra_value"
+                "module": "test_module",
+                "analysis_batch": "test_batch",
+                "batch": "test_batch_data",
+                "batch_idx": 5,
+                "custom_param": "custom_value",
+                "extra_kwarg": "extra_value",
             }
             assert result == expected
 
         # Test with TypeError
-        with patch('inspect.signature', side_effect=TypeError("Cannot get signature")):
+        with patch("inspect.signature", side_effect=TypeError("Cannot get signature")):
             result = op._resolve_call_params(
                 impl_func=mock_impl_func,
                 module="test_module2",
                 analysis_batch="test_batch2",
                 batch="test_batch_data2",
                 batch_idx=10,
-                another_kwarg="another_value"
+                another_kwarg="another_value",
             )
 
             # Verify fallback behavior works the same way
             expected = {
-                'module': "test_module2",
-                'analysis_batch': "test_batch2",
-                'batch': "test_batch_data2",
-                'batch_idx': 10,
-                'custom_param': "custom_value",
-                'another_kwarg': "another_value"
+                "module": "test_module2",
+                "analysis_batch": "test_batch2",
+                "batch": "test_batch_data2",
+                "batch_idx": 10,
+                "custom_param": "custom_value",
+                "another_kwarg": "another_value",
             }
             assert result == expected
 
@@ -1689,7 +1681,7 @@ class TestOpWrapper:
             name="test_op",
             description="Test operation",
             output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
-            impl_params={"custom_param": "custom_value"}
+            impl_params={"custom_param": "custom_value"},
         )
 
         # Create a mock implementation function that only accepts some parameters
@@ -1698,14 +1690,14 @@ class TestOpWrapper:
         # Include custom_param in the accepted parameters to test impl_params filtering
         mock_sig.parameters = {"module": MagicMock(), "batch_idx": MagicMock(), "custom_param": MagicMock()}
 
-        with patch('inspect.signature', return_value=mock_sig):
+        with patch("inspect.signature", return_value=mock_sig):
             result = op._resolve_call_params(
                 impl_func=mock_impl_func,
                 module="test_module",
                 analysis_batch="test_batch",
                 batch="test_batch_data",
                 batch_idx=5,
-                extra_kwarg="extra_value"
+                extra_kwarg="extra_value",
             )
 
             # Should only include parameters that the function accepts
@@ -1722,7 +1714,7 @@ class TestOpWrapper:
         op = AnalysisOp(
             name="test_op",
             description="Test operation",
-            output_schema=OpSchema({"field": ColCfg(datasets_dtype="float32")})
+            output_schema=OpSchema({"field": ColCfg(datasets_dtype="float32")}),
         )
 
         # Get state dictionary
@@ -1744,7 +1736,7 @@ class TestOpWrapper:
             description="Operation for pickle testing",
             output_schema=OpSchema({"field1": ColCfg(datasets_dtype="float32")}),
             input_schema=OpSchema({"input_field": ColCfg(datasets_dtype="int64")}),
-            aliases=["test_alias"]
+            aliases=["test_alias"],
         )
 
         # Pickle and unpickled

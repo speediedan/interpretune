@@ -19,18 +19,20 @@ from interpretune.protocol import Adapter
 from tests.base_defaults import default_test_task
 from base_defaults import BaseCfg
 
+
 class TestClassModuleRegistration:
     @dataclass(kw_only=True)
     class DegenRegKeyObj:
         phase: str = "train"
         device_type: str = "cpu"
-        model_key: str = 'rte'
+        model_key: str = "rte"
 
     def test_it_cfg_factory_direct(self):
         from interpretune.config import ITConfig
-        cfg = MODULE_EXAMPLE_REGISTRY.get('cust.rte')
+
+        cfg = MODULE_EXAMPLE_REGISTRY.get("cust.rte")
         orig_cfg = cfg.module_cfg.__dict__
-        for k in ('entailment_mapping_indices', 'entailment_mapping'):
+        for k in ("entailment_mapping_indices", "entailment_mapping"):
             del orig_cfg[k]
         cfg = it_cfg_factory(cfg=orig_cfg)
         assert isinstance(cfg, ITConfig)
@@ -44,36 +46,40 @@ class TestClassModuleRegistration:
             task_name=default_test_task,
             adapter_combinations=(Adapter.core,),
             registered_cfg=MagicMock(spec=RegisteredCfg),
-            description="Testing example registration by both key and composition"
+            description="Testing example registration by both key and composition",
         )
         registry.register(
             reg_key="cust.test_example.transformer_lens",
             phase="test",
             model_src_key="cust",
             task_name=default_test_task,
-            adapter_combinations=[(Adapter.core, Adapter.transformer_lens),
-                                  (Adapter.lightning, Adapter.transformer_lens)],
+            adapter_combinations=[
+                (Adapter.core, Adapter.transformer_lens),
+                (Adapter.lightning, Adapter.transformer_lens),
+            ],
             registered_cfg=MagicMock(spec=RegisteredCfg),
             cfg_dict={"orig": "cfg"},
-            description="Testing example registration"
+            description="Testing example registration",
         )
 
         registry.get(("cust", default_test_task, "train", (Adapter.core,)))
         registry.get("cust.test_example.transformer_lens")
 
         available_set = registry.available_compositions(adapter_filter="core")
-        assert available_set == {('cust', 'rte', 'train', (Adapter.core,)),
-                                 ('cust', 'rte', 'test', (Adapter.core, Adapter.transformer_lens))}
-        assert registry['cust.test_example.transformer_lens']['cfg_dict'] == {"orig": "cfg"}
+        assert available_set == {
+            ("cust", "rte", "train", (Adapter.core,)),
+            ("cust", "rte", "test", (Adapter.core, Adapter.transformer_lens)),
+        }
+        assert registry["cust.test_example.transformer_lens"]["cfg_dict"] == {"orig": "cfg"}
 
         assert str(registry).startswith("Registered Modules: dict_keys(['cust.test_example', ('c")
         superset = registry.available_compositions()
-        assert superset == available_set | {('cust', 'rte', 'test', (Adapter.lightning, Adapter.transformer_lens))}
+        assert superset == available_set | {("cust", "rte", "test", (Adapter.lightning, Adapter.transformer_lens))}
 
-        registry.get(BaseCfg(model_src_key='cust', model_key='rte', phase='train', adapter_ctx=(Adapter.core,)))
+        registry.get(BaseCfg(model_src_key="cust", model_key="rte", phase="train", adapter_ctx=(Adapter.core,)))
 
         with pytest.raises(AssertionError, match="Non-string/non-tuple keys must be `RegKeyQueryable`"):
-            registry.get(TestClassModuleRegistration.DegenRegKeyObj(model_key='rte', phase='train'))
+            registry.get(TestClassModuleRegistration.DegenRegKeyObj(model_key="rte", phase="train"))
 
         with pytest.raises(KeyError, match="was not found in the registry"):
             registry.get(("cust", default_test_task, "train", (Adapter.lightning, Adapter.sae_lens)))
@@ -84,7 +90,7 @@ class TestClassModuleRegistration:
         expected_composed_available = {
             RegKeyType.STRING: "cust.test_example                   Testing",
             RegKeyType.TUPLE: "('cust', 'rte', 'train', (<Adapter.core: 'core'>,)) ",
-            RegKeyType.COMBO: "e'>, <Adapter.transformer_lens: 'transformer_lens'>))            Testing"
+            RegKeyType.COMBO: "e'>, <Adapter.transformer_lens: 'transformer_lens'>))            Testing",
         }
 
         for key_type in RegKeyType:

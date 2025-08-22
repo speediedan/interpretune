@@ -18,16 +18,13 @@ def unpack_objs_from_pt_dict(tensor_dict):
         locals()[key] = value
     return locals()
 
+
 def load_graph_json(json_path):
     with open(json_path, "r") as f:
         return json.load(f)
 
-def get_topk_edges_for_node_range(
-    node_range: tuple,
-    adjacency_matrix: torch.Tensor,
-    topk: int = 5,
-    dim: int = 0
-):
+
+def get_topk_edges_for_node_range(node_range: tuple, adjacency_matrix: torch.Tensor, topk: int = 5, dim: int = 0):
     """Returns the topk edge values and indices for the specified node_range along the given dimension.
 
     Args:
@@ -44,6 +41,7 @@ def get_topk_edges_for_node_range(
     selected = adjacency_matrix[idxs, :] if dim == 0 else adjacency_matrix[:, idxs]
     topk_vals, topk_indices = torch.topk(selected, topk, dim=1 if dim == 0 else 0)
     return topk_vals, topk_indices
+
 
 def get_logit_indices_for_tokens(
     graph,
@@ -80,9 +78,8 @@ def get_logit_indices_for_tokens(
     final_logit_idxs = adj_offset + indices
     return final_logit_idxs, indices
 
-def generate_topk_node_mapping(
-    graph, node_mask, topk_feats_to_translate=None, cumulative_scores=None, tokenizer=None
-):
+
+def generate_topk_node_mapping(graph, node_mask, topk_feats_to_translate=None, cumulative_scores=None, tokenizer=None):
     """Returns a dict mapping node_idx to node_id string for the specified number of features, and also returns the
     calculated node index ranges for feature, error, token, and logit nodes.
 
@@ -153,6 +150,7 @@ def generate_topk_node_mapping(
             node_ids[node_idx] = node_id
     return node_ids, node_ranges
 
+
 def get_node_ids_for_adj_matrix_indices(adj_indices, node_mapping):
     """Returns the node_ids for all adjacency_matrix target nodes provided.
 
@@ -170,10 +168,7 @@ def get_node_ids_for_adj_matrix_indices(adj_indices, node_mapping):
             return [node_mapping.get(idx, None) for idx in indices]
         elif adj_indices.dim() > 1:
             # Return a tuple of lists, one for each dim 0 entry
-            return tuple(
-                [node_mapping.get(idx, None) for idx in row.tolist()]
-                for row in adj_indices
-            )
+            return tuple([node_mapping.get(idx, None) for idx in row.tolist()] for row in adj_indices)
     elif isinstance(adj_indices, (list, tuple, int)):
         # Convert to list if it's a single integer
         if isinstance(adj_indices, int):
@@ -182,6 +177,7 @@ def get_node_ids_for_adj_matrix_indices(adj_indices, node_mapping):
         return [node_mapping.get(idx, None) for idx in adj_indices]
     else:
         raise TypeError("adj_indices must be an int, 1D list/tuple or torch.Tensor")
+
 
 @dataclass
 class RawGraphOverview:
@@ -213,7 +209,6 @@ class RawGraphOverview:
     @property
     def adj_matrix_target_logit_node_ids(self):
         return self.node_ids_for(self.adj_matrix_target_logit_idxs)
-
 
 
 def gen_raw_graph_overview(
@@ -274,7 +269,7 @@ def gen_raw_graph_overview(
     safe_indices = first_order_indices.clone()
     safe_indices[~adj_mask] = 0  # Replace invalid indices with a dummy row (e.g., 0)
     selected_rows = adjacency_matrix[safe_indices]
-    selected_rows[~adj_mask] = float('-inf')  # Mask out invalid rows
+    selected_rows[~adj_mask] = float("-inf")  # Mask out invalid rows
     flat_rows = selected_rows.view(-1, adjacency_matrix.shape[1])
     second_order_values, second_order_indices = torch.topk(flat_rows, k, dim=1)
     second_order_values = second_order_values.view(*selected_rows.shape[:2], k)
@@ -298,9 +293,9 @@ OS_HOME = os.environ.get("HOME")
 
 
 local_np_graph_data = Path(OS_HOME) / "repos" / "local_np_graph_data"
-target_example_dir = 'circuit_tracer_demo_specific_gradient_flow_attribution_example_orig'
-target_example_raw_data_file = 'attribution_graph_ex_0.pt'
-target_example_graph_file = 'ex-0.json'
+target_example_dir = "circuit_tracer_demo_specific_gradient_flow_attribution_example_orig"
+target_example_raw_data_file = "attribution_graph_ex_0.pt"
+target_example_graph_file = "ex-0.json"
 raw_graph_inspect = local_np_graph_data / target_example_dir / target_example_raw_data_file
 raw_graph_data = torch.load(raw_graph_inspect, weights_only=False, map_location="cpu")
 graph_json_path = local_np_graph_data / target_example_dir / target_example_graph_file
@@ -310,11 +305,8 @@ locals().update(unpack_objs_from_pt_dict(raw_graph_data))
 graph = Graph.from_pt(raw_graph_inspect)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 graph.to(device)
-node_mask, edge_mask, cumulative_scores = (
-    el.cpu() for el in prune_graph(graph, node_threshold, edge_threshold)
-)
+node_mask, edge_mask, cumulative_scores = (el.cpu() for el in prune_graph(graph, node_threshold, edge_threshold))
 graph.to("cpu")
-
 
 
 # Examining logit node edges in the adjacency matrix directly
@@ -347,8 +339,9 @@ topk_logit_vals, topk_logit_indices = get_topk_edges_for_node_range(node_ranges[
 adj_matrix_target_logit_idxs, target_logit_vec_idxs = get_logit_indices_for_tokens(graph, target_token_ids)
 
 # Gather our target logit topk edge values using the full adj_matrix logit indices
-target_topk_logit_vals = torch.gather(graph.adjacency_matrix[adj_matrix_target_logit_idxs], 1,
-                                      topk_logit_indices[target_logit_vec_idxs])
+target_topk_logit_vals = torch.gather(
+    graph.adjacency_matrix[adj_matrix_target_logit_idxs], 1, topk_logit_indices[target_logit_vec_idxs]
+)
 
 # Get node_ids for the target logit indices in the adjacency matrix
 node_ids_for_target_logit_nodes = get_node_ids_for_adj_matrix_indices(adj_matrix_target_logit_idxs, node_mapping)
@@ -359,8 +352,7 @@ node_ids_for_target_logit_nodes = get_node_ids_for_adj_matrix_indices(adj_matrix
 
 # Get the node_ids for the topk edges for our target logit nodes
 node_ids_for_topk_edges_of_target_logit_nodes = get_node_ids_for_adj_matrix_indices(
-    topk_logit_indices[target_logit_vec_idxs],
-    node_mapping
+    topk_logit_indices[target_logit_vec_idxs], node_mapping
 )
 
 # Example output:

@@ -76,7 +76,7 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
 
     def normalize_package_name(name):
         """Normalize package names to handle underscores vs dashes."""
-        return name.lower().replace('_', '-')
+        return name.lower().replace("_", "-")
 
     def add_lines_from(list_or_none):
         if not list_or_none:
@@ -200,7 +200,7 @@ def post_process_pinned_requirements(requirements_path, platform_dependent_path,
     if not os.path.exists(requirements_path):
         return
 
-    with open(requirements_path, 'r') as f:
+    with open(requirements_path, "r") as f:
         lines = f.readlines()
 
     requirements_lines = []
@@ -209,13 +209,13 @@ def post_process_pinned_requirements(requirements_path, platform_dependent_path,
     # Load existing platform-dependent packages
     existing_platform_deps = []
     if os.path.exists(platform_dependent_path):
-        with open(platform_dependent_path, 'r') as f:
-            existing_platform_deps = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        with open(platform_dependent_path, "r") as f:
+            existing_platform_deps = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
     # Convert direct packages to normalized form (lowercase, replace underscores with dashes)
     # This handles the fact that pip normalizes package names
     def normalize_package_name(name):
-        return name.lower().replace('_', '-')
+        return name.lower().replace("_", "-")
 
     direct_packages_normalized = {normalize_package_name(pkg) for pkg in direct_packages}
 
@@ -224,7 +224,7 @@ def post_process_pinned_requirements(requirements_path, platform_dependent_path,
         line = lines[i].strip()
 
         # Always include header comments and empty lines
-        if not line or line.startswith('#'):
+        if not line or line.startswith("#"):
             requirements_lines.append(lines[i])
             i += 1
             continue
@@ -233,13 +233,13 @@ def post_process_pinned_requirements(requirements_path, platform_dependent_path,
         # Extract package name from pinned requirement
 
         # Handle special cases like git packages first
-        if ' @ ' in line:
+        if " @ " in line:
             # For git packages like "circuit-tracer @ git+...", extract the package name
-            pkg_name = line.split(' @ ')[0].strip().lower()
+            pkg_name = line.split(" @ ")[0].strip().lower()
         else:
             # For regular packages, extract name before any extras, version specifiers, etc.
             # Handle extras like "jsonargparse[signatures,typing-extensions]==4.40.2"
-            parts = re.split(r'[\[\]=<>!;]', line)
+            parts = re.split(r"[\[\]=<>!;]", line)
             pkg_name = parts[0].strip().lower() if parts else ""
 
         # Normalize package name for comparison
@@ -247,8 +247,7 @@ def post_process_pinned_requirements(requirements_path, platform_dependent_path,
 
         # Check if this package matches any platform-dependent pattern
         is_platform_dependent = any(
-            fnmatch.fnmatch(pkg_name_normalized, pattern.replace('_', '-'))
-            for pattern in platform_patterns
+            fnmatch.fnmatch(pkg_name_normalized, pattern.replace("_", "-")) for pattern in platform_patterns
         )
 
         # Check if this is a direct dependency we want to constrain
@@ -262,35 +261,35 @@ def post_process_pinned_requirements(requirements_path, platform_dependent_path,
             # Skip this package and its associated comment lines
             i += 1
             # Skip subsequent comment lines that belong to this package
-            while i < len(lines) and lines[i].strip().startswith('#'):
+            while i < len(lines) and lines[i].strip().startswith("#"):
                 i += 1
         elif is_direct_dependency:
             # Keep direct dependencies that we explicitly want to constrain
             requirements_lines.append(lines[i])
             i += 1
             # Keep the associated comment lines too
-            while i < len(lines) and lines[i].strip().startswith('#'):
+            while i < len(lines) and lines[i].strip().startswith("#"):
                 requirements_lines.append(lines[i])
                 i += 1
         else:
             # Skip transitive dependencies that we don't want to constrain
             i += 1
             # Skip subsequent comment lines that belong to this package
-            while i < len(lines) and lines[i].strip().startswith('#'):
+            while i < len(lines) and lines[i].strip().startswith("#"):
                 i += 1
 
     # Write back the filtered requirements.txt
-    with open(requirements_path, 'w') as f:
+    with open(requirements_path, "w") as f:
         for line in requirements_lines:
-            f.write(line.rstrip() + '\n')
+            f.write(line.rstrip() + "\n")
 
     # Update platform_dependent.txt with both existing and newly found packages
     all_platform_deps = list(set(existing_platform_deps + platform_dependent_lines))
     all_platform_deps.sort()  # Keep consistent ordering
 
-    with open(platform_dependent_path, 'w') as f:
+    with open(platform_dependent_path, "w") as f:
         for pkg in all_platform_deps:
-            f.write(pkg.rstrip() + '\n')
+            f.write(pkg.rstrip() + "\n")
 
 
 def main():
@@ -325,8 +324,10 @@ def main():
                 print(f"  pip-compile {in_path} --output-file {out_path}")
         except subprocess.CalledProcessError as e:
             print("pip-compile failed:", e)
-            print(f"Generated inputs at {in_path}, post-upgrades at {post_path}, "
-                  f"and platform-dependent at {platform_path}")
+            print(
+                f"Generated inputs at {in_path}, post-upgrades at {post_path}, "
+                f"and platform-dependent at {platform_path}"
+            )
     else:
         print("Wrote top-level base and optional group requirement files in requirements/ (no pip-compile run).")
 

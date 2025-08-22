@@ -49,19 +49,32 @@ deterministic_token_ids = {
     ("rte", "GPT2TokenizerFast"): [5674, 24140, 373, 666, 2233, 303, 783, 783, 2055, 319, 373, 910, 17074, 284, 6108]
 }
 
+
 def get_exp_token_ids(ds_cfg: str, task_name: str, tokenizer_cls_name: str):
     expected_token_ids = deterministic_token_ids[(task_name, tokenizer_cls_name)]
     match ds_cfg:
         case "no_sample":
             return ([], [])
         case "train":
-            return (expected_token_ids, expected_token_ids[:default_test_bs],)
+            return (
+                expected_token_ids,
+                expected_token_ids[:default_test_bs],
+            )
         case "train_prof":
-            return (expected_token_ids, expected_token_ids[:default_prof_bs],)
+            return (
+                expected_token_ids,
+                expected_token_ids[:default_prof_bs],
+            )
         case "test":
-            return (expected_token_ids, expected_token_ids[NUM_SAMPLE_ROWS:(NUM_SAMPLE_ROWS+default_test_bs)],)
+            return (
+                expected_token_ids,
+                expected_token_ids[NUM_SAMPLE_ROWS : (NUM_SAMPLE_ROWS + default_test_bs)],
+            )
         case "test_prof":
-            return (expected_token_ids, expected_token_ids[NUM_SAMPLE_ROWS:(NUM_SAMPLE_ROWS+default_prof_bs)],)
+            return (
+                expected_token_ids,
+                expected_token_ids[NUM_SAMPLE_ROWS : (NUM_SAMPLE_ROWS + default_prof_bs)],
+            )
 
 
 # TODO: add current dataloader kwargs to the fingerprint above? May be an excessively rigid check. Consider associating
@@ -78,15 +91,22 @@ class MemProfResult(NamedTuple):
     rank = 0
     default_step = 0
     cuda_train_step = 3
-    cuda_mem_keys = ('allocated_bytes.all.current', 'allocated_bytes.all.peak', 'reserved_bytes.all.peak', 'npp_diff')
-    cpu_mem_keys = {"test": ('rss_diff',), "train": ('rss_diff', 'npp_diff'),}
-    test_key = f'{rank}.test_step.{epoch}.{default_step}.end'
-    train_keys = {"cuda": f'{rank}.training_step.{epoch}.{cuda_train_step}.end',
-                  "cpu": f'{rank}.training_step.{epoch}.{default_step}.end'}
+    cuda_mem_keys = ("allocated_bytes.all.current", "allocated_bytes.all.peak", "reserved_bytes.all.peak", "npp_diff")
+    cpu_mem_keys = {
+        "test": ("rss_diff",),
+        "train": ("rss_diff", "npp_diff"),
+    }
+    test_key = f"{rank}.test_step.{epoch}.{default_step}.end"
+    train_keys = {
+        "cuda": f"{rank}.training_step.{epoch}.{cuda_train_step}.end",
+        "cpu": f"{rank}.training_step.{epoch}.{default_step}.end",
+    }
+
 
 ################################################################################
 # Expected result generation and encapsulation
 ################################################################################
+
 
 class TestResult(NamedTuple):
     result_alias: Optional[str] = None  # N.B. diff test aliases may map to the same result alias (e.g. parity tests)
@@ -102,11 +122,12 @@ def mem_results(results: Dict, test_alias: str):
     # See NOTE [Memprofiler Key Format]
     # snap keys are rank.phase.epoch_idx.step_idx.step_ctx
     expected_results = results[test_alias]
-    src, phase, expected_mem = expected_results['src'], expected_results['phase'], expected_results['expected_mem']
-    step_key = f'{MemProfResult.train_keys[src]}' if phase == 'train' else f'{MemProfResult.test_key}'
+    src, phase, expected_mem = expected_results["src"], expected_results["phase"], expected_results["expected_mem"]
+    step_key = f"{MemProfResult.train_keys[src]}" if phase == "train" else f"{MemProfResult.test_key}"
     # default tolerance of rtol=0.1, atol=0 for all keys unless overridden with an explicit `tolerance_map`
-    tolerance_map = {'tolerance_map': {k: (0.1, 0) for k in expected_mem.keys()}}
-    return {**tolerance_map, 'expected_memstats': (step_key, expected_mem)}
+    tolerance_map = {"tolerance_map": {k: (0.1, 0) for k in expected_mem.keys()}}
+    return {**tolerance_map, "expected_memstats": (step_key, expected_mem)}
+
 
 def close_results(close_map: Tuple, test_alias: Optional[str] = None):
     """Result generation function that packages expected close results with a provided tolerance dict or generates
@@ -116,28 +137,43 @@ def close_results(close_map: Tuple, test_alias: Optional[str] = None):
     for e, k, v in close_map:
         expected_close[e][k] = v
         close_keys.add(k)
-    closestats_tol = {'tolerance_map': {k: (0.1, 0) for k in close_keys}}
-    return {**closestats_tol, 'expected_close': expected_close}
+    closestats_tol = {"tolerance_map": {k: (0.1, 0) for k in close_keys}}
+    return {**closestats_tol, "expected_close": expected_close}
+
 
 def exact_results(expected_exact: Tuple, test_alias: Optional[str] = None):
     """Result generation function that packages."""
-    return {'expected_exact': expected_exact}
+    return {"expected_exact": expected_exact}
+
 
 def callback_results(callback_results: Dict, test_alias: Optional[str] = None):
     """Result generation function that packages."""
-    return {'callback_results': callback_results}
+    return {"callback_results": callback_results}
+
 
 class DatasetState(NamedTuple):
     tokenizer_name: str
     deterministic_token_ids: List[int]
     expected_first_fwd_ids: List
 
-def def_results(device_type: str, precision: Union[int, str], ds_cfg: str = "no_sample",
-                task_name: str = default_test_task, tokenizer_cls_name: str = "GPT2TokenizerFast"):
+
+def def_results(
+    device_type: str,
+    precision: Union[int, str],
+    ds_cfg: str = "no_sample",
+    task_name: str = default_test_task,
+    tokenizer_cls_name: str = "GPT2TokenizerFast",
+):
     test_dataset_state = DatasetState(tokenizer_cls_name, *get_exp_token_ids(ds_cfg, task_name, tokenizer_cls_name))
     # wrap result dict such that only the first epoch is checked
-    return {0: {"device_type": device_type, "precision": get_model_input_dtype(precision),
-                "dataset_state": test_dataset_state}}
+    return {
+        0: {
+            "device_type": device_type,
+            "precision": get_model_input_dtype(precision),
+            "dataset_state": test_dataset_state,
+        }
+    }
+
 
 RESULT_TYPE_MAPPING = {
     "exact_results": exact_results,
@@ -146,13 +182,15 @@ RESULT_TYPE_MAPPING = {
     "callback_results": callback_results,
 }
 
+
 def parity_normalize(test_alias) -> str:
     parity_suffixes = ("_l",)
     for ps in parity_suffixes:
         if test_alias.endswith(ps):
-            test_alias = test_alias[:-len(ps)]
+            test_alias = test_alias[: -len(ps)]
             break
     return test_alias
+
 
 def collect_results(result_map: Dict[str, Tuple], test_alias: str, normalize: bool = True):
     if normalize:
@@ -163,13 +201,15 @@ def collect_results(result_map: Dict[str, Tuple], test_alias: str, normalize: bo
         if rattr := getattr(test_result, rtype):
             collected_results.update(rfunc(rattr, test_alias=test_alias))
     if exp_tol := test_result.tolerance_map:
-        collected_results['tolerance_map'].update(exp_tol)
+        collected_results["tolerance_map"].update(exp_tol)
     return collected_results
+
 
 MEMORY_FOOTPRINTS_PATH = Path(__file__).parent / "parity_acceptance" / "profile_memory_footprints.yaml"
 
+
 def load_memory_footprint_results() -> Dict:
-    with open(MEMORY_FOOTPRINTS_PATH, encoding='utf-8') as file:
+    with open(MEMORY_FOOTPRINTS_PATH, encoding="utf-8") as file:
         # Load the YAML file content
         data = yaml.safe_load(file)
         mem_footprint = {}
@@ -177,6 +217,7 @@ def load_memory_footprint_results() -> Dict:
             # TODO: structured this way to allow us to serialize other result types in the future
             mem_footprint[fq_alias] = rv["mem_results"]
     return mem_footprint
+
 
 def save_memory_footprint_results(results: Dict):
     mem_footprint = {}

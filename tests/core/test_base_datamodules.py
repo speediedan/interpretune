@@ -21,7 +21,6 @@ from tests.warns import CORE_CTX_WARNS, unexpected_warns
 
 
 class TestClassBaseMisc:
-
     def test_dm_attribute_access(self, get_it_session__core_cust__setup):
         fixture = get_it_session__core_cust__setup
         core_cust_it_dm = fixture.it_session.datamodule
@@ -29,25 +28,30 @@ class TestClassBaseMisc:
         with ablate_cls_attrs(core_cust_it_dm, "_module"), pytest.warns(UserWarning, match="Could not find module"):
             assert core_cust_it_dm.module is None
         with pytest.warns(UserWarning, match="Output received for hook"):
-            _call_itmodule_hook(core_cust_it_dm, hook_name="setup",
-                                hook_msg="warning on setup hook that does not support connected output",
-                                connect_output=True)
+            _call_itmodule_hook(
+                core_cust_it_dm,
+                hook_name="setup",
+                hook_msg="warning on setup hook that does not support connected output",
+                connect_output=True,
+            )
 
-    @pytest.mark.parametrize("remove_unused", [True, False], ids=['remove_unused', 'no_remove_unused'])
+    @pytest.mark.parametrize("remove_unused", [True, False], ids=["remove_unused", "no_remove_unused"])
     def test_dm_force_prepare(self, get_it_session__core_cust_force_prepare__initonly, remove_unused):
         fixture = get_it_session__core_cust_force_prepare__initonly
         it_session = fixture.it_session
         datamodule = it_session.datamodule
         with patch.multiple(datamodule.itdm_cfg, signature_columns=[], remove_unused_columns=remove_unused):
-            _call_itmodule_hook(datamodule, hook_name="prepare_data", hook_msg="Preparing data",
-                                target_model=it_session.module.model)
-
+            _call_itmodule_hook(
+                datamodule, hook_name="prepare_data", hook_msg="Preparing data", target_model=it_session.module.model
+            )
 
     def test_m_no_before_it_cfg_init(self, recwarn, get_it_session_cfg__core_cust):
         sess_cfg = deepcopy(get_it_session_cfg__core_cust)
         # we ablate _before_it_cfg_init twich to walk up the object hierarchy to the default BaseITModule version
-        with ablate_cls_attrs(sess_cfg.module_cls, '_before_it_cfg_init'), \
-            ablate_cls_attrs(sess_cfg.module_cls, '_before_it_cfg_init'):
+        with (
+            ablate_cls_attrs(sess_cfg.module_cls, "_before_it_cfg_init"),
+            ablate_cls_attrs(sess_cfg.module_cls, "_before_it_cfg_init"),
+        ):
             _ = ITSession(sess_cfg)
         unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=CORE_CTX_WARNS)
         assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)

@@ -1,4 +1,5 @@
 """Tests for analysis operations compiler functionality."""
+
 from __future__ import annotations
 import time
 import yaml
@@ -8,16 +9,14 @@ import pytest
 
 from huggingface_hub import CachedRepoInfo, CachedRevisionInfo
 
-from interpretune.analysis.ops.compiler.cache_manager import (
-    OpDefinitionsCacheManager, OpDef, YamlFileInfo
-)
+from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef, YamlFileInfo
 from interpretune.analysis.ops.base import OpSchema, ColCfg, AnalysisOp
 from interpretune.analysis.ops.compiler.schema_compiler import (
-                                                               _compile_composition_schema_core,
-                                                               jit_compile_composition_schema,
-                                                               compile_operation_composition_schema,
-                                                               build_operation_compositions,
-                                                               )
+    _compile_composition_schema_core,
+    jit_compile_composition_schema,
+    compile_operation_composition_schema,
+    build_operation_compositions,
+)
 
 
 class TestSchemaCompilation:
@@ -51,7 +50,7 @@ class TestSchemaCompilation:
             get_schemas_fn=get_schemas,
             is_intermediate_fn=is_intermediate,
             handle_object_field_fn=handle_object_field,
-            create_schema_fn=create_schema
+            create_schema_fn=create_schema,
         )
 
         # Verify results
@@ -68,7 +67,7 @@ class TestSchemaCompilation:
                 get_schemas_fn=lambda op: ({}, {}),
                 is_intermediate_fn=lambda f: False,
                 handle_object_field_fn=lambda f: f,
-                create_schema_fn=lambda f: f
+                create_schema_fn=lambda f: f,
             )
 
     def test_compile_composition_schema_core_intermediates(self):
@@ -93,7 +92,7 @@ class TestSchemaCompilation:
             get_schemas_fn=get_schemas,
             is_intermediate_fn=is_intermediate,
             handle_object_field_fn=lambda f: f,
-            create_schema_fn=lambda f: f
+            create_schema_fn=lambda f: f,
         )
 
         # Verify intermediate field handling
@@ -106,28 +105,21 @@ class TestSchemaCompilation:
         # Mock operation definitions
         op_definitions = {
             "op1": {
-                "input_schema": {
-                    "input1": {"datasets_dtype": "float32", "required": True}
-                },
-                "output_schema": {
-                    "output1": {"datasets_dtype": "float32", "required": True}
-                }
+                "input_schema": {"input1": {"datasets_dtype": "float32", "required": True}},
+                "output_schema": {"output1": {"datasets_dtype": "float32", "required": True}},
             },
             "op2": {
                 "input_schema": {
                     "input2": {"datasets_dtype": "float32", "required": True},
-                    "output1": {"datasets_dtype": "float32", "required": True}
+                    "output1": {"datasets_dtype": "float32", "required": True},
                 },
-                "output_schema": {
-                    "output2": {"datasets_dtype": "float32", "required": True}
-                }
-            }
+                "output_schema": {"output2": {"datasets_dtype": "float32", "required": True}},
+            },
         }
 
         # Call the function with string operations
         input_schema, output_schema = jit_compile_composition_schema(
-            operations=["op1", "op2"],
-            op_definitions=op_definitions
+            operations=["op1", "op2"], op_definitions=op_definitions
         )
 
         # Verify results are OpSchema instances
@@ -155,7 +147,7 @@ class TestSchemaCompilation:
         # Call the function with AnalysisOp instances
         input_schema, output_schema = jit_compile_composition_schema(
             operations=[op1, op2],
-            op_definitions={}  # Not used for AnalysisOp instances
+            op_definitions={},  # Not used for AnalysisOp instances
         )
 
         # Verify results
@@ -167,45 +159,29 @@ class TestSchemaCompilation:
     def test_jit_compile_missing_operation(self):
         """Test jit_compile_composition_schema with missing operation."""
         with pytest.raises(ValueError, match="Operation missing_op not found"):
-            jit_compile_composition_schema(
-                operations=["missing_op"],
-                op_definitions={}
-            )
+            jit_compile_composition_schema(operations=["missing_op"], op_definitions={})
 
     def test_jit_compile_missing_schemas(self):
         """Test jit_compile_composition_schema with operation missing schemas."""
         # Update the test to match the actual error message from the function
         with pytest.raises(ValueError, match="Operation incomplete_op not found in definitions"):
-            jit_compile_composition_schema(
-                operations=["incomplete_op"],
-                op_definitions={"incomplete_op": {}}
-            )
+            jit_compile_composition_schema(operations=["incomplete_op"], op_definitions={"incomplete_op": {}})
 
     def test_jit_compile_invalid_operation_type(self):
         """Test jit_compile_composition_schema with invalid operation type."""
         with pytest.raises(TypeError, match="Operations must be strings or AnalysisOp instances"):
             jit_compile_composition_schema(
                 operations=[123],  # Invalid type
-                op_definitions={}
+                op_definitions={},
             )
 
     def test_jit_compile_object_field_handling(self):
         """Test jit_compile_composition_schema with object field type handling."""
         # Mock operation definitions with object type fields
-        op_definitions = {
-            "op1": {
-                "input_schema": {},
-                "output_schema": {
-                    "object_field": {"datasets_dtype": "object"}
-                }
-            }
-        }
+        op_definitions = {"op1": {"input_schema": {}, "output_schema": {"object_field": {"datasets_dtype": "object"}}}}
 
         # Call the function
-        _, output_schema = jit_compile_composition_schema(
-            operations=["op1"],
-            op_definitions=op_definitions
-        )
+        _, output_schema = jit_compile_composition_schema(operations=["op1"], op_definitions=op_definitions)
 
         # Verify object field was converted properly
         assert "object_field" in output_schema
@@ -217,22 +193,18 @@ class TestSchemaCompilation:
         # Create a mock operation with input schema but no output schema
         op_definitions = {
             "partial_op": {
-                "input_schema": {
-                    "input1": {"datasets_dtype": "float32", "required": True}
-                }
+                "input_schema": {"input1": {"datasets_dtype": "float32", "required": True}}
                 # No output_schema provided
             }
         }
 
         # Should raise an error about missing required schemas
         with pytest.raises(ValueError, match="Operation partial_op is missing required schemas"):
-            jit_compile_composition_schema(
-                operations=["partial_op"],
-                op_definitions=op_definitions
-            )
+            jit_compile_composition_schema(operations=["partial_op"], op_definitions=op_definitions)
 
     def test_field_conversion_warn(self):
         from dataclasses import field, make_dataclass
+
         # Define dict‐based field variants
         dict_field_intermediate = {"datasets_dtype": "float32", "intermediate_only": True}
         dict_field_normal = {"datasets_dtype": "float32", "intermediate_only": False}
@@ -241,8 +213,7 @@ class TestSchemaCompilation:
         # Define ColCfg‐based field variants
         colcfg_field_intermediate = ColCfg(datasets_dtype="float32", intermediate_only=True)
         colcfg_field_normal = ColCfg(datasets_dtype="float32", intermediate_only=False)
-        degen_colcfg_field = make_dataclass('degen_colcfg', [('wrong_field_name', str, field(default="float32"))])
-
+        degen_colcfg_field = make_dataclass("degen_colcfg", [("wrong_field_name", str, field(default="float32"))])
 
         # Build op definitions including both dict and ColCfg variants
         op_definitions = {
@@ -260,16 +231,15 @@ class TestSchemaCompilation:
                     "out_norm_dict": dict_field_normal,
                     "out_noflag_dict": dict_field_no_flag,
                     "out_inter_colcfg": colcfg_field_intermediate,
-                    "out_norm_colcfg": colcfg_field_normal
-                }
+                    "out_norm_colcfg": colcfg_field_normal,
+                },
             }
         }
 
         with pytest.warns(UserWarning, match="Conversion to ColCfg"):
             # Compile schemas for a single‐op composition
             input_schema, output_schema = jit_compile_composition_schema(
-                operations=["op1"],
-                op_definitions=op_definitions
+                operations=["op1"], op_definitions=op_definitions
             )
 
         # Assert normal and no_flag fields remain in input
@@ -288,21 +258,18 @@ class TestSchemaCompilation:
         op_definitions = {
             "op1": {
                 "input_schema": {"a": {"datasets_dtype": "int32", "required": True}},
-                "output_schema": {"mid": {"datasets_dtype": "float32", "intermediate_only": True}}
+                "output_schema": {"mid": {"datasets_dtype": "float32", "intermediate_only": True}},
             },
             "op2": {
                 "input_schema": {
                     "mid": {"datasets_dtype": "float32", "required": True},
-                    "b": {"datasets_dtype": "int64", "required": True}
+                    "b": {"datasets_dtype": "int64", "required": True},
                 },
-                "output_schema": {"c": {"datasets_dtype": "string", "required": False}}
-            }
+                "output_schema": {"c": {"datasets_dtype": "string", "required": False}},
+            },
         }
 
-        inp, out = jit_compile_composition_schema(
-            operations=["op1", "op2"],
-            op_definitions=op_definitions
-        )
+        inp, out = jit_compile_composition_schema(operations=["op1", "op2"], op_definitions=op_definitions)
 
         assert "mid" in inp
         assert "mid" not in out
@@ -323,26 +290,28 @@ class TestSchemaCompilation:
         # Create a custom object that doesn't have datasets_dtype attribute
         class CustomField:
             pass
+
         custom_field = CustomField()
 
         # Use the handle_object_field function directly
         def handle_object_field(field_def):
             datasets_dtype = None
             if isinstance(field_def, dict):
-                datasets_dtype = field_def.get('datasets_dtype')
-            elif hasattr(field_def, 'datasets_dtype'):
+                datasets_dtype = field_def.get("datasets_dtype")
+            elif hasattr(field_def, "datasets_dtype"):
                 datasets_dtype = field_def.datasets_dtype
 
-            if datasets_dtype == 'object':
+            if datasets_dtype == "object":
                 if isinstance(field_def, dict):
                     field_def_copy = field_def.copy()
-                    field_def_copy['datasets_dtype'] = 'string'
-                    field_def_copy['non_tensor'] = True
+                    field_def_copy["datasets_dtype"] = "string"
+                    field_def_copy["non_tensor"] = True
                     return field_def_copy
                 elif isinstance(field_def, ColCfg):
                     # Create a modified ColCfg for object fields
                     from dataclasses import replace
-                    field_def_copy = replace(field_def, datasets_dtype='string', non_tensor=True)
+
+                    field_def_copy = replace(field_def, datasets_dtype="string", non_tensor=True)
                     return field_def_copy
             return field_def
 
@@ -410,18 +379,17 @@ class TestSchemaCompilation:
         all_operations_dict = {
             "op1": {
                 "input_schema": {"input1": {"datasets_dtype": "float32", "required": True}},
-                "output_schema": {"output1": {"datasets_dtype": "float32", "required": True}}
+                "output_schema": {"output1": {"datasets_dtype": "float32", "required": True}},
             },
             "op2": {
                 "input_schema": {"input2": {"datasets_dtype": "float32", "required": True}},
-                "output_schema": {"output2": {"datasets_dtype": "float32", "required": True}}
-            }
+                "output_schema": {"output2": {"datasets_dtype": "float32", "required": True}},
+            },
         }
 
         # Call the function
         input_schema, output_schema = compile_operation_composition_schema(
-            operations=["op1", "op2"],
-            all_operations_dict=all_operations_dict
+            operations=["op1", "op2"], all_operations_dict=all_operations_dict
         )
 
         # Verify results (dictionaries, not OpSchema)
@@ -435,27 +403,18 @@ class TestSchemaCompilation:
     def test_compile_operation_composition_missing_op(self):
         """Test compile_operation_composition_schema with missing operation."""
         with pytest.raises(ValueError, match="Operation missing_op not found"):
-            compile_operation_composition_schema(
-                operations=["missing_op"],
-                all_operations_dict={}
-            )
+            compile_operation_composition_schema(operations=["missing_op"], all_operations_dict={})
 
     def test_compile_operation_composition_object_field(self):
         """Test compile_operation_composition_schema with object field handling."""
         # Mock operation definitions with object fields
         all_operations_dict = {
-            "op1": {
-                "input_schema": {},
-                "output_schema": {
-                    "object_field": {"datasets_dtype": "object"}
-                }
-            }
+            "op1": {"input_schema": {}, "output_schema": {"object_field": {"datasets_dtype": "object"}}}
         }
 
         # Call the function
         _, output_schema = compile_operation_composition_schema(
-            operations=["op1"],
-            all_operations_dict=all_operations_dict
+            operations=["op1"], all_operations_dict=all_operations_dict
         )
 
         # Verify object field conversion
@@ -471,20 +430,9 @@ class TestBuildOperationCompositions:
         """Test build_operation_compositions basic functionality."""
         # Mock YAML config
         yaml_config = {
-            "op1": {
-                "input_schema": {"input1": {}},
-                "output_schema": {"output1": {}}
-            },
-            "op2": {
-                "input_schema": {"input2": {}},
-                "output_schema": {"output2": {}}
-            },
-            "composite_operations": {
-                "composite_op": {
-                    "composition": "op1.op2",
-                    "aliases": ["composite_alias"]
-                }
-            }
+            "op1": {"input_schema": {"input1": {}}, "output_schema": {"output1": {}}},
+            "op2": {"input_schema": {"input2": {}}, "output_schema": {"output2": {}}},
+            "composite_operations": {"composite_op": {"composition": "op1.op2", "aliases": ["composite_alias"]}},
         }
 
         # Call the function
@@ -502,12 +450,7 @@ class TestBuildOperationCompositions:
         """Test build_operation_compositions with object field conversion."""
         # Mock YAML config with object type fields
         yaml_config = {
-            "op_with_object": {
-                "input_schema": {},
-                "output_schema": {
-                    "object_field": {"datasets_dtype": "object"}
-                }
-            }
+            "op_with_object": {"input_schema": {}, "output_schema": {"object_field": {"datasets_dtype": "object"}}}
         }
 
         # Call the function
@@ -551,6 +494,7 @@ class TestYamlFileInfo:
 
         assert info1.content_hash != info2.content_hash
 
+
 class TestOpDef:
     """Tests for OpDef functionality."""
 
@@ -569,7 +513,7 @@ class TestOpDef:
             importable_params={"param1": "test.module.param1"},
             normal_params={"threshold": 0.5},
             required_ops=["dep1", "dep2"],
-            composition=["op1", "op2"]
+            composition=["op1", "op2"],
         )
 
         assert op_def.name == "test_op"
@@ -593,7 +537,7 @@ class TestOpDef:
             description="Test operation",
             implementation="test.module.func",
             input_schema=input_schema,
-            output_schema=output_schema
+            output_schema=output_schema,
         )
 
         result_dict = op_def.to_dict()
@@ -615,7 +559,7 @@ class TestOpDef:
             input_schema=input_schema,
             output_schema=output_schema,
             importable_params={"param1": "my.module.param1"},
-            normal_params={"threshold": 0.5}
+            normal_params={"threshold": 0.5},
         )
 
         cache_manager = OpDefinitionsCacheManager(Path("/tmp"))
@@ -625,9 +569,9 @@ class TestOpDef:
         assert 'name="test_op"' in serialized
         assert 'description="Test operation"' in serialized
         assert 'implementation="my.module.func"' in serialized
-        assert 'importable_params=' in serialized
-        assert 'normal_params=' in serialized
-        assert 'OpDef(' in serialized
+        assert "importable_params=" in serialized
+        assert "normal_params=" in serialized
+        assert "OpDef(" in serialized
 
     def test_serialize_op_def_with_minimal_fields(self):
         """Test OpDef serialization with minimal required fields."""
@@ -639,7 +583,7 @@ class TestOpDef:
             description="Test operation with minimal fields",
             implementation="my.module.func",
             input_schema=input_schema,
-            output_schema=output_schema
+            output_schema=output_schema,
         )
 
         cache_manager = OpDefinitionsCacheManager(Path("/tmp"))
@@ -649,7 +593,8 @@ class TestOpDef:
         assert 'name="test_op_minimal"' in serialized
         assert 'description="Test operation with minimal fields"' in serialized
         assert 'implementation="my.module.func"' in serialized
-        assert 'OpDef(' in serialized
+        assert "OpDef(" in serialized
+
 
 class TestDefinitionsCacheManager:
     """Tests for OpDefinitionsCacheManager functionality."""
@@ -767,34 +712,29 @@ test_op:
 
     def test_serialize_col_cfg(self, cache_manager):
         """Test ColCfg serialization."""
-        col_cfg = ColCfg(
-            datasets_dtype="int64",
-            required=False,
-            non_tensor=True
-        )
+        col_cfg = ColCfg(datasets_dtype="int64", required=False, non_tensor=True)
 
         serialized = cache_manager._serialize_col_cfg(col_cfg)
 
         # Should always include datasets_dtype
         assert 'datasets_dtype="int64"' in serialized
-        assert 'required=False' in serialized
-        assert 'non_tensor=True' in serialized
-        assert serialized.startswith('ColCfg(')
-        assert serialized.endswith(')')
+        assert "required=False" in serialized
+        assert "non_tensor=True" in serialized
+        assert serialized.startswith("ColCfg(")
+        assert serialized.endswith(")")
 
     def test_serialize_op_schema(self, cache_manager):
         """Test OpSchema serialization."""
-        schema = OpSchema({
-            "field1": ColCfg(datasets_dtype="int64"),
-            "field2": ColCfg(datasets_dtype="float32", required=False)
-        })
+        schema = OpSchema(
+            {"field1": ColCfg(datasets_dtype="int64"), "field2": ColCfg(datasets_dtype="float32", required=False)}
+        )
 
         serialized = cache_manager._serialize_op_schema(schema)
 
-        assert serialized.startswith('OpSchema(')
+        assert serialized.startswith("OpSchema(")
         assert '"field1":' in serialized
         assert '"field2":' in serialized
-        assert 'ColCfg(' in serialized
+        assert "ColCfg(" in serialized
 
     def test_serialize_op_schema_empty(self, cache_manager):
         """Test empty OpSchema serialization."""
@@ -802,7 +742,7 @@ test_op:
 
         serialized = cache_manager._serialize_op_schema(schema)
 
-        assert serialized == 'OpSchema({})'
+        assert serialized == "OpSchema({})"
 
     def test_serialize_op_def(self, cache_manager):
         """Test OpDef serialization."""
@@ -816,7 +756,7 @@ test_op:
             input_schema=input_schema,
             output_schema=output_schema,
             importable_params={"param1": "my.module.param1"},
-            normal_params={"threshold": 0.5}
+            normal_params={"threshold": 0.5},
         )
 
         cache_manager = OpDefinitionsCacheManager(Path("/tmp"))
@@ -826,9 +766,9 @@ test_op:
         assert 'name="test_op"' in serialized
         assert 'description="Test operation"' in serialized
         assert 'implementation="my.module.func"' in serialized
-        assert 'importable_params=' in serialized
-        assert 'normal_params=' in serialized
-        assert 'OpDef(' in serialized
+        assert "importable_params=" in serialized
+        assert "normal_params=" in serialized
+        assert "OpDef(" in serialized
 
     def test_serialize_op_def_with_minimal_fields(self):
         """Test OpDef serialization with minimal required fields."""
@@ -840,7 +780,7 @@ test_op:
             description="Test operation with minimal fields",
             implementation="my.module.func",
             input_schema=input_schema,
-            output_schema=output_schema
+            output_schema=output_schema,
         )
 
         cache_manager = OpDefinitionsCacheManager(Path("/tmp"))
@@ -850,7 +790,7 @@ test_op:
         assert 'name="test_op_minimal"' in serialized
         assert 'description="Test operation with minimal fields"' in serialized
         assert 'implementation="my.module.func"' in serialized
-        assert 'OpDef(' in serialized
+        assert "OpDef(" in serialized
 
     def test_generate_module_content(self, cache_manager, sample_yaml_file):
         """Test module content generation."""
@@ -863,7 +803,7 @@ test_op:
                 description="Test operation",
                 implementation="test.module.func",
                 input_schema=OpSchema({"field1": ColCfg(datasets_dtype="int64")}),
-                output_schema=OpSchema({"field2": ColCfg(datasets_dtype="float32")})
+                output_schema=OpSchema({"field2": ColCfg(datasets_dtype="float32")}),
             )
         }
 
@@ -889,7 +829,7 @@ test_op:
                 implementation="test.module.func",
                 input_schema=OpSchema({"field1": ColCfg(datasets_dtype="int64")}),
                 output_schema=OpSchema({"field2": ColCfg(datasets_dtype="float32")}),
-                aliases=["alias1"]
+                aliases=["alias1"],
             ),
             # This alias entry should be filtered out during save
             "alias1": OpDef(
@@ -898,8 +838,8 @@ test_op:
                 implementation="test.module.func",
                 input_schema=OpSchema({"field1": ColCfg(datasets_dtype="int64")}),
                 output_schema=OpSchema({"field2": ColCfg(datasets_dtype="float32")}),
-                aliases=["alias1"]
-            )
+                aliases=["alias1"],
+            ),
         }
 
         # Save to cache
@@ -939,7 +879,7 @@ test_op:
                 description="Test",
                 implementation="test.func",
                 input_schema=OpSchema({}),
-                output_schema=OpSchema({})
+                output_schema=OpSchema({}),
             )
         }
         cache_manager.save_cache(op_definitions)
@@ -952,7 +892,7 @@ test_op:
         current_cache = cache_manager._get_cache_module_path()
         assert current_cache.exists()
 
-    @patch('interpretune.utils.logging.rank_zero_warn')
+    @patch("interpretune.utils.logging.rank_zero_warn")
     def test_cleanup_old_cache_files_permission_error(self, mock_warn, cache_manager, sample_yaml_file):
         """Test cleanup when file removal fails due to permissions."""
         cache_manager.add_yaml_file(sample_yaml_file)
@@ -968,7 +908,7 @@ test_op:
 
         with pytest.warns(match="Failed to remove old cache file"):
             # Patch the pathlib.Path.glob method to return our mock file
-            with patch('pathlib.Path.glob', return_value=[mock_file]):
+            with patch("pathlib.Path.glob", return_value=[mock_file]):
                 cache_manager._cleanup_old_cache_files()
 
     def test_is_cache_valid_file_modified_time_check(self, cache_manager, tmp_path):
@@ -979,7 +919,7 @@ test_op:
             "test_op": {
                 "implementation": "tests.core.test_analysis_ops_base.op_impl_test",
                 "input_schema": {"input1": {"datasets_dtype": "float32"}},
-                "output_schema": {"output1": {"datasets_dtype": "float32"}}
+                "output_schema": {"output1": {"datasets_dtype": "float32"}},
             }
         }
         with open(yaml_file, "w") as f:
@@ -997,6 +937,7 @@ test_op:
 
         # Modify the YAML file to have a newer timestamp
         import time
+
         time.sleep(0.1)  # Ensure different timestamp
         yaml_file.touch()  # Update modification time
 
@@ -1024,10 +965,10 @@ test_op:
         # as we're mocking the import mechanism before content is read.
         cache_path = cache_manager._get_cache_module_path()
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text("FINGERPRINT = \"test\"\nOP_DEFINITIONS = {}")
+        cache_path.write_text('FINGERPRINT = "test"\nOP_DEFINITIONS = {}')
 
         # Scenario 1: spec is None
-        with patch('importlib.util.spec_from_file_location', return_value=None) as mock_spec_from_file:
+        with patch("importlib.util.spec_from_file_location", return_value=None) as mock_spec_from_file:
             result = cache_manager.load_cache()
             assert result is None
             mock_spec_from_file.assert_called_once()
@@ -1038,7 +979,7 @@ test_op:
         # Scenario 2: spec.loader is None
         mock_spec = MagicMock()
         mock_spec.loader = None
-        with patch('importlib.util.spec_from_file_location', return_value=mock_spec) as mock_spec_from_file:
+        with patch("importlib.util.spec_from_file_location", return_value=mock_spec) as mock_spec_from_file:
             result = cache_manager.load_cache()
             assert result is None
             mock_spec_from_file.assert_called_once()
@@ -1061,11 +1002,7 @@ test_op:
 
         # Create a file info for a non-existent file
         nonexistent_file = tmp_path / "nonexistent.yaml"
-        file_info = YamlFileInfo(
-            path=nonexistent_file,
-            mtime=123456.0,
-            content_hash="dummy_hash"
-        )
+        file_info = YamlFileInfo(path=nonexistent_file, mtime=123456.0, content_hash="dummy_hash")
         cache_manager._yaml_files = [file_info]
 
         # This should not raise an error and should return a fingerprint
@@ -1099,7 +1036,7 @@ FINGERPRINT = "test"
 OP_DEFINITIONS = {}
 """)
 
-        with patch('interpretune.analysis.ops.compiler.cache_manager.rank_zero_warn') as mock_warn:
+        with patch("interpretune.analysis.ops.compiler.cache_manager.rank_zero_warn") as mock_warn:
             result = cache_manager.load_cache()
 
             assert result is None
@@ -1115,11 +1052,11 @@ OP_DEFINITIONS = {}
             required=True,
             non_tensor=False,
             intermediate_only=True,
-            array_shape=(10, 20)  # Non-string, non-default value
+            array_shape=(10, 20),  # Non-string, non-default value
         )
 
         serialized = cache_manager._serialize_col_cfg(col_cfg)
-        assert "datasets_dtype=\"float32\"" in serialized
+        assert 'datasets_dtype="float32"' in serialized
         assert "intermediate_only=True" in serialized
         assert "array_shape=(10, 20)" in serialized
         # Note: required=True might be default, so don't assert it must be present
@@ -1130,12 +1067,12 @@ OP_DEFINITIONS = {}
 
         col_cfg = ColCfg(
             datasets_dtype="string",
-            sequence_type="custom_sequence"  # String field that's not datasets_dtype
+            sequence_type="custom_sequence",  # String field that's not datasets_dtype
         )
 
         serialized = cache_manager._serialize_col_cfg(col_cfg)
-        assert "datasets_dtype=\"string\"" in serialized
-        assert "sequence_type=\"custom_sequence\"" in serialized
+        assert 'datasets_dtype="string"' in serialized
+        assert 'sequence_type="custom_sequence"' in serialized
 
     def test_serialize_col_cfg_minimal_fields(self, cache_manager):
         """Test ColCfg serialization with only required fields."""
@@ -1145,7 +1082,7 @@ OP_DEFINITIONS = {}
         col_cfg = ColCfg(datasets_dtype="int64")
 
         serialized = cache_manager._serialize_col_cfg(col_cfg)
-        assert "datasets_dtype=\"int64\"" in serialized
+        assert 'datasets_dtype="int64"' in serialized
         # Check that we don't include too many fields - should only include non-default values
         # Allow for some fields that have None as non-default values
         assert serialized.count("=") <= 6  # Reasonable upper bound for non-default fields
@@ -1164,8 +1101,10 @@ OP_DEFINITIONS = {}
 
         for field_info in col_cfg_fields:
             # Check if field has a default factory (should be MISSING for default but callable for default_factory)
-            if (field_info.default is field_info.default_factory and
-                field_info.default_factory is not field_info.default_factory):
+            if (
+                field_info.default is field_info.default_factory
+                and field_info.default_factory is not field_info.default_factory
+            ):
                 default_factory_fields.append(field_info.name)
 
         # If there are default factory fields, test serialization
@@ -1173,7 +1112,7 @@ OP_DEFINITIONS = {}
             serialized = cache_manager._serialize_col_cfg(col_cfg)
 
             # Should include datasets_dtype
-            assert "datasets_dtype=\"float32\"" in serialized
+            assert 'datasets_dtype="float32"' in serialized
 
             # Check that default factory fields are handled properly
             # They should be included if their current value differs from factory default
@@ -1186,7 +1125,7 @@ OP_DEFINITIONS = {}
             # If no default factory fields exist in current ColCfg implementation,
             # just verify basic serialization works
             serialized = cache_manager._serialize_col_cfg(col_cfg)
-            assert "datasets_dtype=\"float32\"" in serialized
+            assert 'datasets_dtype="float32"' in serialized
 
     def test_serialize_col_cfg_required_fields_no_default(self, cache_manager):
         """Test ColCfg serialization with required fields that have no default or default_factory."""
@@ -1202,14 +1141,13 @@ OP_DEFINITIONS = {}
 
         for field_info in col_cfg_fields:
             # Field is required if both default and default_factory are MISSING
-            if (field_info.default is MISSING and
-                field_info.default_factory is MISSING):
+            if field_info.default is MISSING and field_info.default_factory is MISSING:
                 required_fields.append(field_info.name)
 
         serialized = cache_manager._serialize_col_cfg(col_cfg)
 
         # Should always include datasets_dtype
-        assert "datasets_dtype=\"string\"" in serialized
+        assert 'datasets_dtype="string"' in serialized
 
         # For truly required fields (if any exist), their values should be included
         # since they must be explicitly set
@@ -1219,7 +1157,6 @@ OP_DEFINITIONS = {}
                 # Required fields with non-None values should be serialized
                 assert f"{field_name}=" in serialized
 
-
     def test_serialize_col_cfg_explicit_none_values(self, cache_manager):
         """Test ColCfg serialization when fields are explicitly set to None."""
         from interpretune.analysis.ops.base import ColCfg
@@ -1228,13 +1165,13 @@ OP_DEFINITIONS = {}
         col_cfg = ColCfg(
             datasets_dtype="int32",
             array_shape=None,  # Explicitly None
-            sequence_type=None  # Explicitly None
+            sequence_type=None,  # Explicitly None
         )
 
         serialized = cache_manager._serialize_col_cfg(col_cfg)
 
         # Should include datasets_dtype
-        assert "datasets_dtype=\"int32\"" in serialized
+        assert 'datasets_dtype="int32"' in serialized
 
         # Fields explicitly set to None should be included if None is not the default
         # This tests the else branch where fields might not have defaults
@@ -1249,21 +1186,21 @@ OP_DEFINITIONS = {}
             required=False,  # Boolean field
             array_shape=[1, 2, 3],  # List field
             dyn_dim=5,  # Integer field
-            non_tensor=True  # Boolean field
+            non_tensor=True,  # Boolean field
         )
 
         serialized = cache_manager._serialize_col_cfg(col_cfg)
 
         # Verify different value types are handled correctly
-        assert "datasets_dtype=\"bool\"" in serialized
+        assert 'datasets_dtype="bool"' in serialized
         assert "array_shape=[1, 2, 3]" in serialized
         assert "dyn_dim=5" in serialized
 
         # Boolean fields should be serialized without quotes
         if "required=False" in serialized:
-            assert "required=\"False\"" not in serialized  # Should not be quoted
+            assert 'required="False"' not in serialized  # Should not be quoted
         if "non_tensor=True" in serialized:
-            assert "non_tensor=\"True\"" not in serialized  # Should not be quoted
+            assert 'non_tensor="True"' not in serialized  # Should not be quoted
 
     def test_serialize_col_cfg_empty_collections(self, cache_manager):
         """Test ColCfg serialization with empty collections as values."""
@@ -1278,7 +1215,7 @@ OP_DEFINITIONS = {}
         serialized = cache_manager._serialize_col_cfg(col_cfg)
 
         # Should include datasets_dtype
-        assert "datasets_dtype=\"float64\"" in serialized
+        assert 'datasets_dtype="float64"' in serialized
 
         # Empty list should be handled correctly (tests default factory branch)
         # Whether it's included depends on if [] is the default factory value
@@ -1299,10 +1236,7 @@ OP_DEFINITIONS = {}
         cache_path = cache_manager.save_cache(op_definitions)
         # --- Fingerprint mismatch ---
         orig = cache_path.read_text()
-        wrong_fp = orig.replace(
-            f'FINGERPRINT = "{cache_manager.fingerprint}"',
-            'FINGERPRINT = "not_the_real_fp"'
-        )
+        wrong_fp = orig.replace(f'FINGERPRINT = "{cache_manager.fingerprint}"', 'FINGERPRINT = "not_the_real_fp"')
         cache_path.write_text(wrong_fp)
         with pytest.warns(match="Cache fingerprint mismatch, invalidating cache"):
             # Should warn and return None
@@ -1319,6 +1253,7 @@ OP_DEFINITIONS = {}
             # Should warn and return None
             assert cache_manager.load_cache() is None
 
+
 class TestCacheManagerHubFunctionality:
     """Test cases for cache manager hub functionality."""
 
@@ -1330,21 +1265,15 @@ class TestCacheManagerHubFunctionality:
 
         # Test various hub cache patterns
         test_cases = [
-            (
-                hub_cache / "models--username--some_repo" / "snapshots" / "abc" / "ops.yaml",
-                "username.some_repo"
-            ),
+            (hub_cache / "models--username--some_repo" / "snapshots" / "abc" / "ops.yaml", "username.some_repo"),
             (
                 hub_cache / "models--speediedan--nlp-tasks" / "snapshots" / "def" / "operations.yml",
-                "speediedan.nlp-tasks"
+                "speediedan.nlp-tasks",
             ),
-            (
-                hub_cache / "models--org--core" / "snapshots" / "ghi" / "core.yaml",
-                "org.core"
-            ),
+            (hub_cache / "models--org--core" / "snapshots" / "ghi" / "core.yaml", "org.core"),
         ]
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+        with patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache):
             for file_path, expected_namespace in test_cases:
                 namespace = cache_manager.get_hub_namespace(file_path)
                 assert namespace == expected_namespace
@@ -1357,7 +1286,7 @@ class TestCacheManagerHubFunctionality:
         user_files = [
             tmp_path / "custom_ops" / "my_ops.yaml",
             tmp_path / "some_other_path" / "operations.yml",
-            Path("/completely/different/path/ops.yaml")
+            Path("/completely/different/path/ops.yaml"),
         ]
 
         for user_file in user_files:
@@ -1377,7 +1306,7 @@ class TestCacheManagerHubFunctionality:
             hub_cache / "not-models--user--repo" / "snapshots" / "abc" / "ops.yaml",
         ]
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+        with patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache):
             for malformed_path in malformed_paths:
                 # Should fall back to empty namespace for malformed paths
                 namespace = cache_manager.get_hub_namespace(malformed_path)
@@ -1392,11 +1321,7 @@ class TestCacheManagerHubFunctionality:
         hub_cache.mkdir()
 
         # Create multiple repositories
-        repos = [
-            "models--user1--some_repo",
-            "models--user2--nlp",
-            "models--org--core"
-        ]
+        repos = ["models--user1--some_repo", "models--user2--nlp", "models--org--core"]
 
         expected_files = []
         for repo in repos:
@@ -1414,7 +1339,7 @@ class TestCacheManagerHubFunctionality:
                 ops_yml.write_text("another_op: {}")
                 expected_files.append(ops_yml)
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+        with patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache):
             discovered_files = cache_manager.discover_hub_yaml_files()
 
             # Should find all YAML files
@@ -1430,7 +1355,7 @@ class TestCacheManagerHubFunctionality:
         hub_cache = tmp_path / "hub_cache"
         hub_cache.mkdir()
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+        with patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache):
             discovered_files = cache_manager.discover_hub_yaml_files()
             assert discovered_files == []
 
@@ -1441,7 +1366,7 @@ class TestCacheManagerHubFunctionality:
         # Point to non-existent hub cache
         hub_cache = tmp_path / "nonexistent_hub_cache"
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache):
+        with patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache):
             discovered_files = cache_manager.discover_hub_yaml_files()
             assert discovered_files == []
 
@@ -1492,8 +1417,10 @@ class TestCacheManagerHubFunctionality:
         mock_cache_info = Mock()
         mock_cache_info.repos = [mock_repo]
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info):
+        with (
+            patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
+            patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
+        ):
             discovered_files = cache_manager.discover_hub_yaml_files()
 
             # Should only find the valid repository's YAML file
@@ -1553,8 +1480,10 @@ class TestCacheManagerHubFunctionality:
         mock_cache_info = Mock()
         mock_cache_info.repos = [mock_repo]
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info):
+        with (
+            patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
+            patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
+        ):
             discovered_files = cache_manager.discover_hub_yaml_files()
 
             # Should only find YAML files from the latest revision
@@ -1565,20 +1494,24 @@ class TestCacheManagerHubFunctionality:
     def test_get_latest_revision_empty_revisions(self):
         """Test _get_latest_revision returns None when repo.revisions is empty."""
         from interpretune.analysis.ops.compiler.cache_manager import _get_latest_revision
+
         class DummyRepo:
             revisions = []
             refs = {}
+
         repo = DummyRepo()
         assert _get_latest_revision(repo) is None
 
     def test_discover_hub_yaml_files_trust_remote_code_false(self, tmp_path):
         """Test that discover_hub_yaml_files returns early when IT_TRUST_REMOTE_CODE is False."""
         from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
+
         cache_manager = OpDefinitionsCacheManager(Path("/tmp/test_cache"))
 
-        with patch('interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE', False), \
-            pytest.warns(match="Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`"):
-
+        with (
+            patch("interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE", False),
+            pytest.warns(match="Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`"),
+        ):
             result = cache_manager.discover_hub_yaml_files()
 
             assert result == []  # Early return should not return hub_yaml_files
@@ -1586,11 +1519,13 @@ class TestCacheManagerHubFunctionality:
     def test_add_hub_yaml_files_trust_remote_code_false(self, tmp_path):
         """Test that discover_hub_yaml_files returns early when IT_TRUST_REMOTE_CODE is False."""
         from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
+
         cache_manager = OpDefinitionsCacheManager(Path("/tmp/test_cache"))
 
-        with patch('interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE', False), \
-            pytest.warns(match="Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`"):
-
+        with (
+            patch("interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE", False),
+            pytest.warns(match="Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`"),
+        ):
             result = cache_manager.add_hub_yaml_files()
 
             assert result == []  # Early return should not return hub_yaml_files
@@ -1608,8 +1543,10 @@ class TestCacheManagerHubFunctionality:
         mock_cache_info = MagicMock()
         mock_cache_info.repos = [mock_repo]
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info):
+        with (
+            patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
+            patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
+        ):
             # This should skip the non-model repository
             discovered_files = cache_manager.discover_hub_yaml_files()
             assert discovered_files == []
@@ -1635,12 +1572,13 @@ class TestCacheManagerHubFunctionality:
         mock_cache_info = Mock()
         mock_cache_info.repos = [mock_repo]
 
-        with patch('interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE', None), \
-             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.resolve_trust_remote_code', return_value=False), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.rank_zero_warn') as mock_warn:
-
+        with (
+            patch("interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE", None),
+            patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
+            patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
+            patch("interpretune.analysis.ops.compiler.cache_manager.resolve_trust_remote_code", return_value=False),
+            patch("interpretune.analysis.ops.compiler.cache_manager.rank_zero_warn") as mock_warn,
+        ):
             cache_manager.discover_hub_yaml_files()
 
             # Should warn about IT_TRUST_REMOTE_CODE being None
@@ -1665,12 +1603,13 @@ class TestCacheManagerHubFunctionality:
         mock_cache_info = Mock()
         mock_cache_info.repos = [mock_repo]
 
-        with patch('interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE', None), \
-             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.resolve_trust_remote_code', return_value=False), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.rank_zero_warn') as mock_warn:
-
+        with (
+            patch("interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE", None),
+            patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
+            patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
+            patch("interpretune.analysis.ops.compiler.cache_manager.resolve_trust_remote_code", return_value=False),
+            patch("interpretune.analysis.ops.compiler.cache_manager.rank_zero_warn") as mock_warn,
+        ):
             result = cache_manager.discover_hub_yaml_files()
 
             # Should skip the untrusted repo and warn
@@ -1703,11 +1642,12 @@ class TestCacheManagerHubFunctionality:
         mock_cache_info = Mock()
         mock_cache_info.repos = [mock_dataset_repo, mock_model_repo]
 
-        with patch('interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE', True), \
-             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info), \
-             patch('interpretune.analysis.ops.compiler.cache_manager._get_latest_revision', return_value=None):
-
+        with (
+            patch("interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE", True),
+            patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
+            patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
+            patch("interpretune.analysis.ops.compiler.cache_manager._get_latest_revision", return_value=None),
+        ):
             result = cache_manager.discover_hub_yaml_files()
 
             # Should process only the model repo, skip dataset repo
@@ -1732,11 +1672,12 @@ class TestCacheManagerHubFunctionality:
         mock_cache_info = Mock()
         mock_cache_info.repos = [mock_repo]
 
-        with patch('interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE', True), \
-             patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info), \
-             patch('interpretune.analysis.ops.compiler.cache_manager._get_latest_revision', return_value=None):
-
+        with (
+            patch("interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE", True),
+            patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
+            patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
+            patch("interpretune.analysis.ops.compiler.cache_manager._get_latest_revision", return_value=None),
+        ):
             result = cache_manager.discover_hub_yaml_files()
 
             # Should skip repo without latest revision
@@ -1776,8 +1717,10 @@ class TestCacheManagerHubFunctionality:
         mock_cache_info = Mock()
         mock_cache_info.repos = [mock_repo]
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info):
+        with (
+            patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
+            patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
+        ):
             discovered_files = cache_manager.discover_hub_yaml_files()
 
             # Should find the YAML file using fallback path construction
@@ -1814,13 +1757,16 @@ class TestCacheManagerHubFunctionality:
         mock_cache_info = Mock()
         mock_cache_info.repos = [mock_repo]
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
-             patch('interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir', return_value=mock_cache_info):
+        with (
+            patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
+            patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
+        ):
             discovered_files = cache_manager.discover_hub_yaml_files()
 
             # Should find the YAML file using fallback path construction
             assert len(discovered_files) == 1
             assert discovered_files[0] == yaml_file
+
 
 class TestCompileOperationCompositionSchema:
     """Test the compile_operation_composition_schema function's handling of namespaced operations."""
@@ -1831,14 +1777,13 @@ class TestCompileOperationCompositionSchema:
         ops_dict = {
             "namespace.collection.my_op": {
                 "input_schema": {"input1": {"datasets_dtype": "float32"}},
-                "output_schema": {"output1": {"datasets_dtype": "float32"}}
+                "output_schema": {"output1": {"datasets_dtype": "float32"}},
             }
         }
 
         # Call with just the operation name (not fully qualified)
         input_schema, output_schema = compile_operation_composition_schema(
-            operations=["my_op"],
-            all_operations_dict=ops_dict
+            operations=["my_op"], all_operations_dict=ops_dict
         )
 
         # Should successfully resolve to the namespaced version
@@ -1851,19 +1796,18 @@ class TestCompileOperationCompositionSchema:
         ops_dict = {
             "namespace1.collection.my_op": {
                 "input_schema": {"input1": {"datasets_dtype": "float32"}},
-                "output_schema": {"output1": {"datasets_dtype": "float32"}}
+                "output_schema": {"output1": {"datasets_dtype": "float32"}},
             },
             "namespace2.collection.my_op": {
                 "input_schema": {"input2": {"datasets_dtype": "int64"}},
-                "output_schema": {"output2": {"datasets_dtype": "int64"}}
-            }
+                "output_schema": {"output2": {"datasets_dtype": "int64"}},
+            },
         }
 
         # Should warn about multiple matches and use the first alphabetically
-        with patch('interpretune.analysis.ops.compiler.schema_compiler.rank_zero_warn') as mock_warn:
+        with patch("interpretune.analysis.ops.compiler.schema_compiler.rank_zero_warn") as mock_warn:
             input_schema, output_schema = compile_operation_composition_schema(
-                operations=["my_op"],
-                all_operations_dict=ops_dict
+                operations=["my_op"], all_operations_dict=ops_dict
             )
 
             # Should use the first match alphabetically (namespace1)
@@ -1882,18 +1826,13 @@ class TestCompileOperationCompositionSchema:
         """Test that operation resolution fails correctly when no matches are found."""
         # Define operations dictionary with no matching operations
         ops_dict = {
-            "namespace.collection.different_op": {
-                "input_schema": {"input1": {}},
-                "output_schema": {"output1": {}}
-            }
+            "namespace.collection.different_op": {"input_schema": {"input1": {}}, "output_schema": {"output1": {}}}
         }
 
         # Should raise ValueError for no matches
         with pytest.raises(ValueError, match="Operation non_existent_op not found"):
-            compile_operation_composition_schema(
-                operations=["non_existent_op"],
-                all_operations_dict=ops_dict
-            )
+            compile_operation_composition_schema(operations=["non_existent_op"], all_operations_dict=ops_dict)
+
 
 class TestParseCompositionString:
     """Test the _parse_composition_string function for parsing operation composition strings."""
@@ -1901,6 +1840,7 @@ class TestParseCompositionString:
     def test_empty_string(self):
         """Test parsing empty string returns empty list."""
         from interpretune.analysis.ops.compiler.schema_compiler import _parse_composition_string
+
         result = _parse_composition_string("")
         assert result == []
 
@@ -1909,10 +1849,10 @@ class TestParseCompositionString:
         from interpretune.analysis.ops.compiler.schema_compiler import _parse_composition_string
 
         unbalanced_strings = [
-            "op1.(namespace.op2",      # missing closing parenthesis
-            "op1.namespace.op2)",      # missing opening parenthesis
-            "op1.((namespace.op2)",   # extra opening parenthesis
-            "op1.(namespace.op2))",    # extra closing parenthesis
+            "op1.(namespace.op2",  # missing closing parenthesis
+            "op1.namespace.op2)",  # missing opening parenthesis
+            "op1.((namespace.op2)",  # extra opening parenthesis
+            "op1.(namespace.op2))",  # extra closing parenthesis
         ]
 
         for unbalanced_str in unbalanced_strings:

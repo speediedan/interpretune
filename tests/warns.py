@@ -23,15 +23,23 @@ HF_EXPECTED_WARNS = [
     "The `use_auth_token` argument is deprecated",  # TODO: need to use `token` instead of `use_auth_token`
 ]
 
-CORE_CTX_WARNS =  EXPECTED_WARNS + HF_EXPECTED_WARNS + [
-    dummy_method_warn_fingerprint,  # expected in a core context with modules that use dummy log methods
-]
+CORE_CTX_WARNS = (
+    EXPECTED_WARNS
+    + HF_EXPECTED_WARNS
+    + [
+        dummy_method_warn_fingerprint,  # expected in a core context with modules that use dummy log methods
+    ]
+)
 
-LIGHTING_CTX_WARNS = HF_EXPECTED_WARNS + EXPECTED_WARNS + [
-    "does not have many workers",
-    "GPU available but",
-    "is smaller than the logging interval",
-]
+LIGHTING_CTX_WARNS = (
+    HF_EXPECTED_WARNS
+    + EXPECTED_WARNS
+    + [
+        "does not have many workers",
+        "GPU available but",
+        "is smaller than the logging interval",
+    ]
+)
 
 TL_EXPECTED_WARNS = [
     "to transform pretrained weights on cpu",  # to support transforming weights on cpu prior to loading to device
@@ -54,7 +62,10 @@ SL_EXPECTED_WARNS = [
 SL_CTX_WARNS = SL_EXPECTED_WARNS + CORE_CTX_WARNS
 SL_LIGHTNING_CTX_WARNS = SL_CTX_WARNS + LIGHTING_CTX_WARNS
 
-FTS_CTX_WARNS = [".*currently depends upon.*", "No monitor metric specified for.*",]
+FTS_CTX_WARNS = [
+    ".*currently depends upon.*",
+    "No monitor metric specified for.*",
+]
 
 EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS + TL_EXPECTED_WARNS
 
@@ -63,15 +74,13 @@ CLI_EXPECTED_WARNS = {
     (Adapter.core, Adapter.core): CORE_CTX_WARNS,
     (Adapter.lightning, Adapter.lightning): LIGHTING_CTX_WARNS,
     (Adapter.lightning, Adapter.lightning, Adapter.transformer_lens): TL_LIGHTNING_CTX_WARNS,
-    (Adapter.core, Adapter.core, Adapter.transformer_lens): TL_CTX_WARNS
+    (Adapter.core, Adapter.core, Adapter.transformer_lens): TL_CTX_WARNS,
 }
 
 MIN_VERSION_WARNS = "2.2"
 MAX_VERSION_WARNS = "2.5"
 # torch version-specific warns go here
-EXPECTED_VERSION_WARNS = {MIN_VERSION_WARNS: [],
-                          MAX_VERSION_WARNS: [
-                              ]}
+EXPECTED_VERSION_WARNS = {MIN_VERSION_WARNS: [], MAX_VERSION_WARNS: []}
 torch_version = get_distribution("torch").version
 extended_torch_ver = EXTENDED_VER_PAT.match(torch_version).group() or torch_version
 if Version(extended_torch_ver) < Version(MAX_VERSION_WARNS):

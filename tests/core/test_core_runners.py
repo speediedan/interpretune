@@ -3,10 +3,7 @@ import pytest
 import torch
 from unittest.mock import MagicMock
 
-from interpretune.runners.core import (
-    core_train_loop,
-    core_test_loop
-)
+from interpretune.runners.core import core_train_loop, core_test_loop
 
 
 class TestCoreRunner:
@@ -47,11 +44,7 @@ class TestCoreRunner:
     def test_core_test_loop(self, mock_module, mock_datamodule):
         """Test the core_test_loop function."""
         # Call the test loop
-        core_test_loop(
-            module=mock_module,
-            datamodule=mock_datamodule,
-            limit_test_batches=1
-        )
+        core_test_loop(module=mock_module, datamodule=mock_datamodule, limit_test_batches=1)
 
         # Verify model was set to eval mode
         mock_module.model.eval.assert_called_once()
@@ -61,6 +54,7 @@ class TestCoreRunner:
 
         # Verify datamodule was used correctly
         mock_datamodule.test_dataloader.assert_called_once()
+
 
 class TestCoreRunnerEdgeCases:
     """Tests for edge cases in the core runner."""
@@ -111,7 +105,7 @@ class TestCoreRunnerEdgeCases:
             datamodule=mock_datamodule_empty,
             limit_train_batches=1,
             limit_val_batches=1,
-            max_epochs=1
+            max_epochs=1,
         )
 
         # Verify epoch hooks were still called
@@ -130,7 +124,7 @@ class TestCoreRunnerEdgeCases:
             datamodule=mock_datamodule_no_val,
             limit_train_batches=1,
             limit_val_batches=1,
-            max_epochs=1
+            max_epochs=1,
         )
 
         # Training should proceed normally

@@ -14,8 +14,9 @@ if TYPE_CHECKING:
 
 # Standalone functions for analysis initialization
 
+
 def to_analysis_cfgs(
-    analysis_cfgs: Optional[Union[AnalysisCfg, "AnalysisOp", Iterable[Union[AnalysisCfg, "AnalysisOp"]]]]
+    analysis_cfgs: Optional[Union[AnalysisCfg, "AnalysisOp", Iterable[Union[AnalysisCfg, "AnalysisOp"]]]],
 ) -> List[AnalysisCfg]:
     """Convert various input formats to a list of AnalysisCfg objects.
 
@@ -44,7 +45,7 @@ def to_analysis_cfgs(
         return processed_cfgs
 
     # Handle single AnalysisOp
-    if hasattr(analysis_cfgs, 'name') and hasattr(analysis_cfgs, 'alias'):
+    if hasattr(analysis_cfgs, "name") and hasattr(analysis_cfgs, "alias"):
         processed_cfgs.append(AnalysisCfg(target_op=analysis_cfgs))
         return processed_cfgs
 
@@ -53,22 +54,25 @@ def to_analysis_cfgs(
         for cfg in analysis_cfgs:
             if isinstance(cfg, AnalysisCfg):
                 processed_cfgs.append(cfg)
-            elif hasattr(cfg, 'name') and hasattr(cfg, 'alias'):  # Check if it's an AnalysisOp
+            elif hasattr(cfg, "name") and hasattr(cfg, "alias"):  # Check if it's an AnalysisOp
                 processed_cfgs.append(AnalysisCfg(target_op=cfg))
             else:
                 raise ValueError(f"Unsupported analysis configuration type: {type(cfg)}")
     except TypeError:
         # If analysis_cfgs is not iterable
-        raise ValueError(f"analysis_cfgs must be an AnalysisCfg, AnalysisOp, or an iterable of these types, "
-                         f"but got {type(analysis_cfgs)}")
+        raise ValueError(
+            f"analysis_cfgs must be an AnalysisCfg, AnalysisOp, or an iterable of these types, "
+            f"but got {type(analysis_cfgs)}"
+        )
 
     return processed_cfgs
+
 
 def init_analysis_dirs(
     module: "SAEAnalysisProtocol",
     cache_dir: Optional[Union[str, Path]] = None,
     op_output_dataset_path: Optional[Union[str, Path]] = None,
-    analysis_cfgs: Optional[List[AnalysisCfg]] = None
+    analysis_cfgs: Optional[List[AnalysisCfg]] = None,
 ) -> tuple[Path, Path]:
     """Initialize the analysis directories for the given module and analysis configurations.
 
@@ -83,10 +87,12 @@ def init_analysis_dirs(
     """
     # Setup cache directory
     if cache_dir is None:
-        cache_dir = (Path(IT_ANALYSIS_CACHE) /
-                      module.datamodule.dataset['validation'].config_name /
-                      module.datamodule.dataset['validation']._fingerprint /
-                      module.__class__._orig_module_name)
+        cache_dir = (
+            Path(IT_ANALYSIS_CACHE)
+            / module.datamodule.dataset["validation"].config_name
+            / module.datamodule.dataset["validation"]._fingerprint
+            / module.__class__._orig_module_name
+        )
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(exist_ok=True, parents=True)
 
@@ -109,13 +115,14 @@ def init_analysis_dirs(
 
     return cache_dir, op_output_dataset_path
 
+
 def init_analysis_cfgs(
     module: "SAEAnalysisProtocol",
     analysis_cfgs: List[AnalysisCfg],
     cache_dir: Optional[Union[str, Path]] = None,
     op_output_dataset_path: Optional[Union[str, Path]] = None,
     sae_analysis_targets: Optional["SAEAnalysisTargets"] = None,
-    ignore_manual: bool = False
+    ignore_manual: bool = False,
 ) -> None:
     """Initialize analysis configurations for the given module.
 
@@ -128,9 +135,7 @@ def init_analysis_cfgs(
         ignore_manual: Whether to ignore existing manual analysis steps
     """
     # Initialize directories
-    cache_dir, op_output_dataset_path = init_analysis_dirs(
-        module, cache_dir, op_output_dataset_path, analysis_cfgs
-    )
+    cache_dir, op_output_dataset_path = init_analysis_dirs(module, cache_dir, op_output_dataset_path, analysis_cfgs)
 
     # Apply ignore_manual setting if specified
     if ignore_manual:
@@ -159,13 +164,16 @@ class SessionRunnerCfg:
             self._session_validation()
         else:
             if not all((self.module, self.datamodule)):
-                raise MisconfigurationException("If not providing `it_session`, must provide both a `datamodule` and"
-                                                " `module`")
+                raise MisconfigurationException(
+                    "If not providing `it_session`, must provide both a `datamodule` and `module`"
+                )
 
     def _session_validation(self):
         if any((self.module, self.datamodule)):
-            rank_zero_warn("`module`/`datamodule` should only be specified if not providing `it_session`. Attempting to"
-                           " use the `module`/`datamodule` handles from `it_session`.")
+            rank_zero_warn(
+                "`module`/`datamodule` should only be specified if not providing `it_session`. Attempting to"
+                " use the `module`/`datamodule` handles from `it_session`."
+            )
         self.module = self.it_session.module
         self.datamodule = self.it_session.datamodule
 
@@ -190,8 +198,10 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
 
         # No need to call _process_analysis_cfgs() as it's now a property
         if self.analysis_cfgs is None:
-            rank_zero_debug("No analysis_cfgs provided on runner initialization, expecting one to be passed with"
-                           " run_analysis invocation")
+            rank_zero_debug(
+                "No analysis_cfgs provided on runner initialization, expecting one to be passed with"
+                " run_analysis invocation"
+            )
 
         # Convert Path objects to strings if provided
         if isinstance(self.cache_dir, Path):

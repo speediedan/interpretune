@@ -13,14 +13,16 @@ log = logging.getLogger(__name__)
 
 IT_ANALYSIS_DUMP_DIR_NAME = "it_analysis_debug_dump"
 
+
 class MisconfigurationException(Exception):
     """Exception used to inform users of misuse with interpretune."""
+
 
 def handle_exception_with_debug_dump(
     e: Exception,
     context_data: Union[Dict[str, Any], Sequence[Any]],
     operation_name: str = "operation",
-    debug_dir_override: Optional[Union[str, Path]] = None
+    debug_dir_override: Optional[Union[str, Path]] = None,
 ) -> None:
     """Handle an exception by creating a detailed debug dump file and re-raising the exception.
 
@@ -35,11 +37,12 @@ def handle_exception_with_debug_dump(
         The original exception after creating the debug dump
     """
     # Create debug dump file
-    debug_dir = Path(debug_dir_override) if debug_dir_override else \
-        Path(tempfile.gettempdir()) / IT_ANALYSIS_DUMP_DIR_NAME
+    debug_dir = (
+        Path(debug_dir_override) if debug_dir_override else Path(tempfile.gettempdir()) / IT_ANALYSIS_DUMP_DIR_NAME
+    )
 
     os.makedirs(debug_dir, exist_ok=True)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     dump_file = debug_dir / f"{operation_name}_error_{timestamp}.json"
 
     # Add exception information to debug data
@@ -75,9 +78,9 @@ def handle_exception_with_debug_dump(
                             tuple_str = ""
                             for char in context_part:
                                 tuple_str += char
-                                if char == '(':
+                                if char == "(":
                                     open_count += 1
-                                elif char == ')':
+                                elif char == ")":
                                     open_count -= 1
                                     if open_count == 0:
                                         break
@@ -104,11 +107,12 @@ def handle_exception_with_debug_dump(
         debug_info["context"] = _introspect_variable(context_data)
 
     # Save debug info to file
-    with open(dump_file, 'w') as f:
+    with open(dump_file, "w") as f:
         json.dump(debug_info, f, indent=2, default=_json_serializer)
 
     log.error(f"{operation_name.capitalize()} failed: {e}. Debug info saved to {dump_file}")
     raise e
+
 
 def _introspect_variable(var: Any) -> Dict[str, Any]:
     """Introspect a variable to create a detailed representation for debugging.
@@ -165,6 +169,7 @@ def _introspect_variable(var: Any) -> Dict[str, Any]:
         result["repr"] = repr(var)
 
     return result
+
 
 def _json_serializer(obj):
     """Custom JSON serializer for objects not serializable by default json code."""

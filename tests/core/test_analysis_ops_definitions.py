@@ -8,8 +8,11 @@ from transformers import BatchEncoding
 from torch.testing import assert_close
 
 import interpretune as it
-from interpretune.analysis.ops.definitions import (get_loss_preds_diffs, ablate_sae_latent,
-                                                   boolean_logits_to_avg_logit_diff)
+from interpretune.analysis.ops.definitions import (
+    get_loss_preds_diffs,
+    ablate_sae_latent,
+    boolean_logits_to_avg_logit_diff,
+)
 from interpretune.analysis.ops.base import AnalysisBatch
 from tests.utils import _unwrap_one
 from tests.base_defaults import BaseAugTest, pytest_factory, OpTestConfig
@@ -17,7 +20,6 @@ from tests.orchestration import run_op_with_config
 
 
 class TestFunctionalOpArgs:
-
     def test_boolean_logits_to_avg_logit_diff(self):
         """Test the boolean_logits_to_avg_logit_diff function."""
         # Create test data: batch_size=3, seq_len=1, num_classes=2
@@ -221,7 +223,7 @@ class TestLabelsAndIndicesFunctions:
         # Create analysis batch with empty cache and answer_indices
         analysis_batch = AnalysisBatch(
             cache=mock_cache,
-            answer_indices=torch.tensor([2, 3])  # Answer positions for batch examples
+            answer_indices=torch.tensor([2, 3]),  # Answer positions for batch examples
         )
 
         # Import function under test
@@ -236,7 +238,7 @@ class TestLabelsAndIndicesFunctions:
         # Create mock cache with activations
         mock_cache = {
             "hook1": torch.zeros(2, 4, 5),  # batch_size=2, seq_len=4, d_hidden=5
-            "hook2": torch.zeros(2, 4, 5)
+            "hook2": torch.zeros(2, 4, 5),
         }
         # Set some activations to be "alive"
         mock_cache["hook1"][0, 2, 1] = 1.0  # Example 0, seq_pos 2, latent 1
@@ -247,7 +249,7 @@ class TestLabelsAndIndicesFunctions:
         # Create analysis batch with non-empty cache and answer_indices
         analysis_batch = AnalysisBatch(
             cache=mock_cache,
-            answer_indices=torch.tensor([2, 3])  # Answer positions for batch examples
+            answer_indices=torch.tensor([2, 3]),  # Answer positions for batch examples
         )
 
         # Run the function
@@ -272,7 +274,7 @@ class TestLabelsAndIndicesFunctions:
         # Create analysis batch with non-empty cache and answer_indices
         analysis_batch = AnalysisBatch(
             cache=mock_cache,
-            answer_indices=torch.tensor([2, 3])  # Answer positions for batch examples
+            answer_indices=torch.tensor([2, 3]),  # Answer positions for batch examples
         )
 
         # Run the function
@@ -342,10 +344,10 @@ class TestGradientOperations:
         # Create mock_get_loss_preds_diffs that returns scalar logit_diffs
         with patch("interpretune.analysis.ops.definitions.get_loss_preds_diffs") as mock_get_loss_preds_diffs:
             mock_get_loss_preds_diffs.return_value = (
-                torch.tensor(0.2),       # loss (scalar)
-                scalar_logit_diff,       # logit_diffs (scalar tensor)
-                torch.tensor([0]),       # preds
-                torch.tensor([[1.0, 0.0]])  # answer_logits
+                torch.tensor(0.2),  # loss (scalar)
+                scalar_logit_diff,  # logit_diffs (scalar tensor)
+                torch.tensor([0]),  # preds
+                torch.tensor([[1.0, 0.0]]),  # answer_logits
             )
             yield mock_get_loss_preds_diffs, scalar_logit_diff
 
@@ -389,22 +391,24 @@ class TestGradientOperations:
 
         # Create mock batch with BatchEncoding
         from transformers import BatchEncoding
+
         mock_batch = BatchEncoding({"input": torch.ones(1, 5)})  # Single example batch
 
         # Create analysis batch with required attributes
         analysis_batch = AnalysisBatch(
             answer_indices=torch.tensor([2]),  # Single example, answer at position 2
-            labels=torch.tensor([0]),          # Required for get_loss_preds_diffs
-            orig_labels=torch.tensor([0])      # Required for get_loss_preds_diffs
+            labels=torch.tensor([0]),  # Required for get_loss_preds_diffs
+            orig_labels=torch.tensor([0]),  # Required for get_loss_preds_diffs
         )
 
         # Import the function to be tested
         from interpretune.analysis.ops.definitions import model_gradient_impl
 
         # Run the function with appropriate mocks
-        with patch("torch.set_grad_enabled") as mock_grad_enabled, \
-             patch.object(torch.Tensor, "backward") as mock_backward:
-
+        with (
+            patch("torch.set_grad_enabled") as mock_grad_enabled,
+            patch.object(torch.Tensor, "backward") as mock_backward,
+        ):
             # Configure context manager mocks
             mock_grad_enabled.return_value.__enter__.return_value = None
             mock_grad_enabled.return_value.__exit__.return_value = None
@@ -420,8 +424,9 @@ class TestGradientOperations:
             mock_module.model.return_value = mock_logits
 
             # Run the function
-            result_batch = model_gradient_impl(mock_module, analysis_batch, mock_batch, 0,
-                                               get_loss_preds_diffs=mock_get_loss_preds_diffs)
+            result_batch = model_gradient_impl(
+                mock_module, analysis_batch, mock_batch, 0, get_loss_preds_diffs=mock_get_loss_preds_diffs
+            )
 
             # Verify backward was called on the scalar tensor
             mock_backward.assert_called_once()
@@ -453,17 +458,18 @@ class TestGradientOperations:
         # Create analysis batch with required inputs for logit_diffs_impl
         analysis_batch = AnalysisBatch(
             answer_logits=torch.tensor([[[0.9, 0.1]]]),  # Single example logits
-            answer_indices=torch.tensor([0]),            # Answer index
-            labels=torch.tensor([0]),                    # For loss computation
-            orig_labels=torch.tensor([0])                # For logit diff computation
+            answer_indices=torch.tensor([0]),  # Answer index
+            labels=torch.tensor([0]),  # For loss computation
+            orig_labels=torch.tensor([0]),  # For logit diff computation
         )
 
         # Import the function to be tested
         from interpretune.analysis.ops.definitions import logit_diffs_impl
 
         # Run the function - this will use our mocked get_loss_preds_diffs
-        result_batch = logit_diffs_impl(mock_module, analysis_batch, mock_batch, 0,
-                                        get_loss_preds_diffs=mock_get_loss_preds_diffs)
+        result_batch = logit_diffs_impl(
+            mock_module, analysis_batch, mock_batch, 0, get_loss_preds_diffs=mock_get_loss_preds_diffs
+        )
 
         # Verify the key edge case: scalar logit_diffs should be unsqueezed to 1D tensor
         assert result_batch.logit_diffs.dim() == 1, "Scalar logit_diffs should be unsqueezed to 1D"
@@ -505,13 +511,13 @@ class TestGradientOperations:
 
         # Test case 1: Analysis batch already has both answer_indices and alive_latents
         analysis_batch_complete = AnalysisBatch(
-            answer_indices=torch.tensor([5, 6]),
-            alive_latents={"hook1": [0, 1], "hook2": [2, 3]}
+            answer_indices=torch.tensor([5, 6]), alive_latents={"hook1": [0, 1], "hook2": [2, 3]}
         )
 
-        with patch("interpretune.analysis.ops.definitions.get_answer_indices_impl") as mock_get_indices, \
-             patch("interpretune.analysis.ops.definitions.get_alive_latents_impl") as mock_get_alive:
-
+        with (
+            patch("interpretune.analysis.ops.definitions.get_answer_indices_impl") as mock_get_indices,
+            patch("interpretune.analysis.ops.definitions.get_alive_latents_impl") as mock_get_alive,
+        ):
             result_batch = model_ablation_impl(mock_module, analysis_batch_complete, mock_batch, 0)
 
             # Verify neither helper function was called
@@ -519,7 +525,7 @@ class TestGradientOperations:
             mock_get_alive.assert_not_called()
 
             # Verify auto_prune_batch was called
-            mock_module.auto_prune_batch.assert_called_once_with(mock_batch, 'forward')
+            mock_module.auto_prune_batch.assert_called_once_with(mock_batch, "forward")
 
             # Verify run_with_hooks_with_saes was called for each latent (2 hooks × 2 latents each)
             assert mock_module.model.run_with_hooks_with_saes.call_count == 4
@@ -531,17 +537,15 @@ class TestGradientOperations:
             assert "hook2" in result_batch.answer_logits
 
         # Test case 2: Analysis batch missing answer_indices
-        analysis_batch_no_indices = AnalysisBatch(
-            alive_latents={"hook1": [0, 1], "hook2": [2, 3]}
-        )
+        analysis_batch_no_indices = AnalysisBatch(alive_latents={"hook1": [0, 1], "hook2": [2, 3]})
 
-        with patch("interpretune.analysis.ops.definitions.it.get_answer_indices") as mock_get_indices, \
-             patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive:
-
+        with (
+            patch("interpretune.analysis.ops.definitions.it.get_answer_indices") as mock_get_indices,
+            patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive,
+        ):
             # Set up mock to return an analysis batch with answer_indices
             mock_get_indices.return_value = AnalysisBatch(
-                answer_indices=torch.tensor([5, 6]),
-                alive_latents={"hook1": [0, 1], "hook2": [2, 3]}
+                answer_indices=torch.tensor([5, 6]), alive_latents={"hook1": [0, 1], "hook2": [2, 3]}
             )
 
             mock_module.model.run_with_hooks_with_saes.reset_mock()
@@ -554,21 +558,19 @@ class TestGradientOperations:
             mock_get_alive.assert_not_called()
 
         # Test case 3: Analysis batch missing alive_latents, can retrieve from input_store
-        analysis_batch_no_alive = AnalysisBatch(
-            answer_indices=torch.tensor([5, 6])
-        )
+        analysis_batch_no_alive = AnalysisBatch(answer_indices=torch.tensor([5, 6]))
 
         # Set up input_store with alive_latents
         mock_module.analysis_cfg.input_store = MagicMock()
         mock_module.analysis_cfg.input_store.alive_latents = [{"hook1": [0, 1], "hook2": [2, 3]}]
 
-        with patch("interpretune.analysis.ops.definitions.it.get_answer_indices") as mock_get_indices, \
-             patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive:
-
+        with (
+            patch("interpretune.analysis.ops.definitions.it.get_answer_indices") as mock_get_indices,
+            patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive,
+        ):
             # Set up mock to return an analysis batch with alive_latents
             mock_get_alive.return_value = AnalysisBatch(
-                answer_indices=torch.tensor([5, 6]),
-                alive_latents={"hook1": [0, 1], "hook2": [2, 3]}
+                answer_indices=torch.tensor([5, 6]), alive_latents={"hook1": [0, 1], "hook2": [2, 3]}
             )
 
             mock_module.model.run_with_hooks_with_saes.reset_mock()
@@ -581,16 +583,15 @@ class TestGradientOperations:
             mock_get_alive.assert_called_once()
 
         # Test case 4: Analysis batch missing alive_latents, input_store has none (should raise AssertionError)
-        analysis_batch_error = AnalysisBatch(
-            answer_indices=torch.tensor([5, 6])
-        )
+        analysis_batch_error = AnalysisBatch(answer_indices=torch.tensor([5, 6]))
 
         # Set up input_store with no alive_latents
         mock_module.analysis_cfg.input_store = None
 
-        with patch("interpretune.analysis.ops.definitions.it.get_answer_indices") as mock_get_indices, \
-             patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive:
-
+        with (
+            patch("interpretune.analysis.ops.definitions.it.get_answer_indices") as mock_get_indices,
+            patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive,
+        ):
             with pytest.raises(AssertionError, match="alive_latents required for ablation op"):
                 model_ablation_impl(mock_module, analysis_batch_error, mock_batch, 0)
 
@@ -622,7 +623,7 @@ class TestGradientOperations:
         incomplete_batch_2 = AnalysisBatch(
             # Missing cache
             logit_diffs=torch.tensor(0.5),
-            answer_indices=torch.tensor([2])
+            answer_indices=torch.tensor([2]),
         )
 
         with pytest.raises(ValueError, match="Missing required input 'cache' for TestModule.sae_correct_acts"):
@@ -636,7 +637,7 @@ class TestGradientOperations:
         # Create a mock cache
         mock_cache = {
             "hook1": torch.zeros(1, 5, 4),  # [batch_size=1, seq_len=5, features=4]
-            "no_match": torch.zeros(1, 5, 4)  # Another hook for testing unmatched filter
+            "no_match": torch.zeros(1, 5, 4),  # Another hook for testing unmatched filter
         }
         # Set some activations to be analyzed
         mock_cache["hook1"][0, 2, 1] = 1.0  # Example 0, seq_pos 2, latent 1
@@ -646,12 +647,12 @@ class TestGradientOperations:
         analysis_batch = AnalysisBatch(
             logit_diffs=scalar_logit_diff,  # Scalar tensor
             answer_indices=torch.tensor([2]),
-            cache=mock_cache
+            cache=mock_cache,
         )
 
         # Set up names_filter to accept all hooks
-        #mock_module.analysis_cfg.names_filter = lambda x: True
-        mock_module.analysis_cfg.names_filter = lambda x : True if x != 'no_match' else False
+        # mock_module.analysis_cfg.names_filter = lambda x: True
+        mock_module.analysis_cfg.names_filter = lambda x: True if x != "no_match" else False
         # Run the function
         result_batch = sae_correct_acts_impl(mock_module, analysis_batch, mock_batch, 0)
 
@@ -715,10 +716,7 @@ class TestGradientOperations:
 
         # Test 3: Missing cache (both grad_cache and cache_dict)
         # Create a batch with required inputs but no cache
-        no_cache_batch = AnalysisBatch(
-            answer_indices=torch.tensor([2]),
-            logit_diffs=torch.tensor([0.5])
-        )
+        no_cache_batch = AnalysisBatch(answer_indices=torch.tensor([2]), logit_diffs=torch.tensor([0.5]))
 
         # Make sure module has no cache_dict
         mock_module.analysis_cfg.cache_dict = None
@@ -737,7 +735,7 @@ class TestGradientOperations:
             "hook1": torch.zeros(batch_size, seq_len, d_sae),
             "hook1_grad": torch.zeros(batch_size, seq_len, d_sae),
             "hook2": torch.zeros(batch_size, seq_len, d_sae),  # Non-grad hook
-            "no_grad_hook": torch.zeros(batch_size, seq_len, d_sae)  # Hook without grad
+            "no_grad_hook": torch.zeros(batch_size, seq_len, d_sae),  # Hook without grad
         }
 
         # Set up some mock activations and gradients
@@ -746,9 +744,7 @@ class TestGradientOperations:
 
         # Create a batch with grad_cache
         grad_cache_batch = AnalysisBatch(
-            answer_indices=torch.tensor([2]),
-            logit_diffs=torch.tensor([0.5]),
-            grad_cache=mock_grad_cache
+            answer_indices=torch.tensor([2]), logit_diffs=torch.tensor([0.5]), grad_cache=mock_grad_cache
         )
 
         # Set up SAE handles
@@ -777,10 +773,7 @@ class TestGradientOperations:
 
         # Test 5: Using module.analysis_cfg.cache_dict (second branch)
         # Create a batch without grad_cache
-        module_cache_batch = AnalysisBatch(
-            answer_indices=torch.tensor([2]),
-            logit_diffs=torch.tensor([0.5])
-        )
+        module_cache_batch = AnalysisBatch(answer_indices=torch.tensor([2]), logit_diffs=torch.tensor([0.5]))
 
         # Set up module's cache_dict
         mock_module.analysis_cfg.cache_dict = mock_grad_cache
@@ -819,12 +812,12 @@ class TestGradientOperations:
         from interpretune.analysis.ops.definitions import ablation_attribution_impl
 
         # Test 1: Missing required inputs (answer_logits, alive_latents, logit_diffs)
-        for missing_key in ['answer_logits', 'alive_latents', 'logit_diffs']:
+        for missing_key in ["answer_logits", "alive_latents", "logit_diffs"]:
             # Create a batch with all required inputs except the one we're testing
             batch_args = {
-                'answer_logits': {"hook1": {0: torch.tensor([[1.0, 0.0]])}},
-                'alive_latents': {"hook1": [0]},
-                'logit_diffs': torch.tensor([0.5])
+                "answer_logits": {"hook1": {0: torch.tensor([[1.0, 0.0]])}},
+                "alive_latents": {"hook1": [0]},
+                "logit_diffs": torch.tensor([0.5]),
             }
             # Remove the key we want to test is missing
             batch_args.pop(missing_key)
@@ -845,10 +838,10 @@ class TestGradientOperations:
         assert scalar_result.dim() == 0, "Setup requires a scalar tensor"
 
         mock_get_loss_preds_diffs.return_value = (
-            torch.tensor(0.5),     # loss
-            scalar_result,         # logit_diffs (scalar)
-            torch.tensor(0),       # preds (scalar)
-            torch.tensor([[0.6, 0.4]])  # answer_logits
+            torch.tensor(0.5),  # loss
+            scalar_result,  # logit_diffs (scalar)
+            torch.tensor(0),  # preds (scalar)
+            torch.tensor([[0.6, 0.4]]),  # answer_logits
         )
 
         # Create analysis batch with scalar logit_diffs
@@ -857,7 +850,7 @@ class TestGradientOperations:
             answer_logits={"hook1": {0: torch.tensor([[0.6, 0.4]])}},
             alive_latents={"hook1": [0]},
             # Use a scalar tensor for logit_diffs to trigger the unsqueeze_ logic
-            logit_diffs=torch.tensor(0.3)  # Scalar positive value -> attribution should be calculated
+            logit_diffs=torch.tensor(0.3),  # Scalar positive value -> attribution should be calculated
         )
         assert scalar_batch.logit_diffs.dim() == 0, "Test requires a scalar logit_diffs"
 
@@ -873,8 +866,7 @@ class TestGradientOperations:
         with patch.object(torch.Tensor, "unsqueeze_", spy_unsqueeze_):
             # Run the function
             result_batch = ablation_attribution_impl(
-                mock_module, scalar_batch, mock_batch, 0,
-                get_loss_preds_diffs=mock_get_loss_preds_diffs
+                mock_module, scalar_batch, mock_batch, 0, get_loss_preds_diffs=mock_get_loss_preds_diffs
             )
 
         # Verify that at least one scalar tensor was unsqueezed
@@ -902,22 +894,21 @@ class TestGradientOperations:
         negative_scalar_batch = AnalysisBatch(
             answer_logits={"hook1": {0: torch.tensor([[0.6, 0.4]])}},
             alive_latents={"hook1": [0]},
-            logit_diffs=torch.tensor(-0.3)  # Negative scalar
+            logit_diffs=torch.tensor(-0.3),  # Negative scalar
         )
         assert negative_scalar_batch.logit_diffs.dim() == 0, "Test requires a scalar logit_diffs"
 
         # Return a negative scalar result to ensure no attributions are calculated
         mock_get_loss_preds_diffs.return_value = (
-            torch.tensor(0.5),     # loss
-            torch.tensor(-0.1),    # negative logit_diffs (scalar)
-            torch.tensor(0),       # preds
-            torch.tensor([[0.4, 0.6]])  # answer_logits
+            torch.tensor(0.5),  # loss
+            torch.tensor(-0.1),  # negative logit_diffs (scalar)
+            torch.tensor(0),  # preds
+            torch.tensor([[0.4, 0.6]]),  # answer_logits
         )
 
         # Run the function again with negative scalar
         result_batch = ablation_attribution_impl(
-            mock_module, negative_scalar_batch, mock_batch, 0,
-            get_loss_preds_diffs=mock_get_loss_preds_diffs
+            mock_module, negative_scalar_batch, mock_batch, 0, get_loss_preds_diffs=mock_get_loss_preds_diffs
         )
 
         # Verify that attribution values for negative logit_diffs are zero
@@ -932,27 +923,42 @@ SERIALIZATION_TEST_CONFIGS = (
     BaseAugTest(alias="model_forward_multi_batch", cfg=OpTestConfig(target_op=it.model_forward, batch_size=2)),
     BaseAugTest(alias="labels_to_ids", cfg=OpTestConfig(target_op=it.labels_to_ids)),
     BaseAugTest(alias="get_answer_indices", cfg=OpTestConfig(target_op=it.get_answer_indices)),
-    BaseAugTest(alias="get_alive_latents", cfg=OpTestConfig(target_op=it.get_alive_latents,
-                                                            # TODO: we could just set generate_required_only=False
-                                                            override_req_cols=("cache", "answer_indices"))),
+    BaseAugTest(
+        alias="get_alive_latents",
+        cfg=OpTestConfig(
+            target_op=it.get_alive_latents,
+            # TODO: we could just set generate_required_only=False
+            override_req_cols=("cache", "answer_indices"),
+        ),
+    ),
     BaseAugTest(alias="model_cache_forward", cfg=OpTestConfig(target_op=it.model_cache_forward)),
     BaseAugTest(alias="model_ablation", cfg=OpTestConfig(target_op=it.model_ablation)),
     BaseAugTest(alias="model_gradient", cfg=OpTestConfig(target_op=it.model_gradient)),
     BaseAugTest(alias="logit_diffs", cfg=OpTestConfig(target_op=it.logit_diffs)),
     BaseAugTest(alias="logit_diffs_cache", cfg=OpTestConfig(target_op=it.logit_diffs_cache)),
-    BaseAugTest(alias="model_cache_forward.logit_diffs_cache", cfg=OpTestConfig(target_op=[it.model_cache_forward,
-                                                                                           it.logit_diffs_cache])),
+    BaseAugTest(
+        alias="model_cache_forward.logit_diffs_cache",
+        cfg=OpTestConfig(target_op=[it.model_cache_forward, it.logit_diffs_cache]),
+    ),
     BaseAugTest(alias="sae_correct_acts", cfg=OpTestConfig(target_op=it.sae_correct_acts)),
     BaseAugTest(alias="ablation_attribution", cfg=OpTestConfig(target_op=it.ablation_attribution)),
     BaseAugTest(alias="gradient_attribution", cfg=OpTestConfig(target_op=it.gradient_attribution)),
     BaseAugTest(alias="logit_diffs_attr_ablation", cfg=OpTestConfig(target_op=it.logit_diffs_attr_ablation)),
 )
 
+
 class TestAnalysisOperationsImplementations:
     """Tests for the core analysis operation implementation functions."""
 
-    def _validate_column_shape(self, column_name: str, shape_info: torch.Size, loaded_column: torch.Tensor,
-                             col_cfg, batch_count: Optional[int] = None, context: str = "") -> None:
+    def _validate_column_shape(
+        self,
+        column_name: str,
+        shape_info: torch.Size,
+        loaded_column: torch.Tensor,
+        col_cfg,
+        batch_count: Optional[int] = None,
+        context: str = "",
+    ) -> None:
         """Helper to validate column shape based on config and expected shape.
 
         Args:
@@ -1005,8 +1011,9 @@ class TestAnalysisOperationsImplementations:
         col_cfg = op_cfg.resolved_op.output_schema.get(column_name)
         return col_cfg is not None
 
-    def _validate_format_column_path(self, op_cfg: OpTestConfig, result_batches: List[AnalysisBatch],
-                                   loaded_dataset, pre_serialization_shapes: Dict) -> None:
+    def _validate_format_column_path(
+        self, op_cfg: OpTestConfig, result_batches: List[AnalysisBatch], loaded_dataset, pre_serialization_shapes: Dict
+    ) -> None:
         """Validate loaded dataset using direct column access (format_column path)."""
         if not pre_serialization_shapes:
             return
@@ -1030,18 +1037,13 @@ class TestAnalysisOperationsImplementations:
                 else:
                     expected_batch_cnt = None
                 # Validate column shape
-                self._validate_column_shape(
-                    column_name,
-                    shape_info,
-                    loaded_column,
-                    col_cfg,
-                    expected_batch_cnt
-                )
+                self._validate_column_shape(column_name, shape_info, loaded_column, col_cfg, expected_batch_cnt)
             except (KeyError, ValueError, AssertionError) as e:
                 print(f"Warning: Column access validation failed for '{column_name}': {e}")
 
-    def _validate_format_batch_path(self, op_cfg: OpTestConfig, result_batches: List[AnalysisBatch],
-                                  loaded_dataset, pre_serialization_shapes: Dict) -> None:
+    def _validate_format_batch_path(
+        self, op_cfg: OpTestConfig, result_batches: List[AnalysisBatch], loaded_dataset, pre_serialization_shapes: Dict
+    ) -> None:
         """Validate loaded dataset using batch access (format_batch path)."""
         if not pre_serialization_shapes or len(result_batches) <= 1:
             return  # Cannot test batch access with fewer than 2 batches
@@ -1053,7 +1055,7 @@ class TestAnalysisOperationsImplementations:
         access_methods = {
             "range": range(0, total_batches),
             "slice": slice(0, total_batches),
-            "list": [i for i in range(total_batches)]
+            "list": [i for i in range(total_batches)],
         }
 
         for method_name, access_pattern in access_methods.items():
@@ -1064,10 +1066,7 @@ class TestAnalysisOperationsImplementations:
             sample_key = next(iter(pre_serialization_shapes))
             # Verify length
             assert len(subset_dataset[sample_key]) == total_batches, (
-                (
-                    f"{method_name} access: Expected {total_batches} items, "
-                    f"got {len(subset_dataset[sample_key])}"
-                )
+                f"{method_name} access: Expected {total_batches} items, got {len(subset_dataset[sample_key])}"
             )
 
             # Validate columns
@@ -1085,18 +1084,14 @@ class TestAnalysisOperationsImplementations:
 
                     # Validate column shape with access method context
                     self._validate_column_shape(
-                        column_name,
-                        shape_info,
-                        loaded_column,
-                        col_cfg,
-                        total_batches,
-                        f"{method_name} access:"
+                        column_name, shape_info, loaded_column, col_cfg, total_batches, f"{method_name} access:"
                     )
                 except (KeyError, ValueError, AssertionError) as e:
                     print(f"Warning: {method_name} access validation failed for '{column_name}': {e}")
 
-    def _validate_format_row_path(self, op_cfg: OpTestConfig, result_batches: List[AnalysisBatch],
-                                loaded_dataset) -> None:
+    def _validate_format_row_path(
+        self, op_cfg: OpTestConfig, result_batches: List[AnalysisBatch], loaded_dataset
+    ) -> None:
         """Validate loaded dataset using row-by-row access (format_row path)."""
         for i, original_result in enumerate(result_batches):
             loaded_batch = AnalysisBatch(loaded_dataset[i])
@@ -1152,8 +1147,13 @@ class TestAnalysisOperationsImplementations:
                     # Check keys match
                     assert set(value.keys()) == set(loaded_value.keys()), f"Key mismatch for {column_name}"
 
-    def validate_loaded_dataset(self, op_cfg: OpTestConfig, result_batches: List[AnalysisBatch],
-                               loaded_dataset, pre_serialization_shapes: Dict = None) -> None:
+    def validate_loaded_dataset(
+        self,
+        op_cfg: OpTestConfig,
+        result_batches: List[AnalysisBatch],
+        loaded_dataset,
+        pre_serialization_shapes: Dict = None,
+    ) -> None:
         """Validate loaded dataset against original results.
 
         Args:

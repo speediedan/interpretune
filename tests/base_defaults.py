@@ -22,6 +22,7 @@ default_prof_bs = 1
 # Core test generation and encapsulation
 ################################################################################
 
+
 @dataclass(kw_only=True)
 class BaseAugTest:
     alias: str
@@ -52,8 +53,10 @@ class BaseAugTest:
         if function_marks:
             return RunIf(**function_marks)
 
+
 def pytest_factory(test_configs: List[BaseAugTest], unpack: bool = True, fq_alias: bool = False) -> List:
-    return [pytest.param(
+    return [
+        pytest.param(
             config.alias,
             *config.cfg if unpack else (config.cfg,),
             id=config.alias if not fq_alias else config.alias.split(".")[-1],
@@ -61,6 +64,7 @@ def pytest_factory(test_configs: List[BaseAugTest], unpack: bool = True, fq_alia
         )
         for config in test_configs
     ]
+
 
 @dataclass(kw_only=True)
 class BaseCfg:
@@ -95,10 +99,11 @@ class BaseCfg:
         self.adapter_ctx = ADAPTER_REGISTRY.canonicalize_composition(self.adapter_ctx)
         self.max_steps = self.max_steps or self.limit_train_batches
 
+
 @dataclass(kw_only=True)
 class AnalysisBaseCfg(BaseCfg):
     # TODO: we may want to narrow Iterable to Sequence here
-    analysis_cfgs: Union['AnalysisCfg', 'AnalysisOp', Iterable[Union['AnalysisCfg', 'AnalysisOp']]] = None
+    analysis_cfgs: Union["AnalysisCfg", "AnalysisOp", Iterable[Union["AnalysisCfg", "AnalysisOp"]]] = None
     limit_analysis_batches: int = 2
     cache_dir: Optional[str] = None
     op_output_dataset_path: Optional[str] = None
@@ -112,11 +117,13 @@ class AnalysisBaseCfg(BaseCfg):
     def __post_init__(self):
         super().__post_init__()
 
+
 @dataclass(kw_only=True)
 class OpTestConfig:
     """Configuration for operation testing."""
+
     target_op: Any  # The operation to test
-    resolved_op: Optional['AnalysisOp'] = None
+    resolved_op: Optional["AnalysisOp"] = None
     session_fixt: str = "get_it_session__sl_gpt2_analysis__setup"
     batch_size: int = 1
     generate_required_only: bool = True

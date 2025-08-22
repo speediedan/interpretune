@@ -20,13 +20,14 @@ from interpretune.protocol import Adapter
 from tests.base_defaults import BaseAugTest, BaseCfg, pytest_factory
 from tests.configuration import IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
-from tests.parity_acceptance.cfg_aliases import (cuda,test_bs1_mem, test_bs1_mem_nosavedt, bs1_warm_mem, w_l_tl)
+from tests.parity_acceptance.cfg_aliases import cuda, test_bs1_mem, test_bs1_mem_nosavedt, bs1_warm_mem, w_l_tl
 from tests.parity_acceptance.expected import tl_parity_results, profiling_results
 from tests.results import collect_results
 from tests.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS
 
 # TODO: add tl and tl_profiling bf16 tests if/when support vetted
 # TODO: add tl activation checkpointing tests if/when support vetted
+
 
 @dataclass(kw_only=True)
 class TLParityCfg(BaseCfg):
@@ -41,7 +42,14 @@ class TLParityTest(BaseAugTest):
 
 PARITY_TL_CONFIGS = (
     TLParityTest(alias="test_cpu_32", cfg=TLParityCfg(phase="test", model_src_key="gpt2")),
-    TLParityTest(alias="test_cpu_32_l", cfg=TLParityCfg(phase="test", **w_l_tl,), marks="lightning"),
+    TLParityTest(
+        alias="test_cpu_32_l",
+        cfg=TLParityCfg(
+            phase="test",
+            **w_l_tl,
+        ),
+        marks="lightning",
+    ),
     TLParityTest(alias="test_cuda_32", cfg=TLParityCfg(phase="test", **cuda), marks="cuda"),
     TLParityTest(alias="test_cuda_32_l", cfg=TLParityCfg(phase="test", **cuda, **w_l_tl), marks="cuda_l"),
     TLParityTest(alias="train_cpu_32", cfg=TLParityCfg()),
@@ -51,6 +59,7 @@ PARITY_TL_CONFIGS = (
 )
 
 EXPECTED_PARITY_TL = {cfg.alias: cfg.expected for cfg in PARITY_TL_CONFIGS}
+
 
 @pytest.mark.usefixtures("make_deterministic")
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(PARITY_TL_CONFIGS, unpack=False))
@@ -67,28 +76,36 @@ def test_parity_tl(recwarn, tmp_path, test_alias, test_cfg):
 class ProfilingTest(BaseAugTest):
     result_gen: Optional[Callable] = partial(collect_results, profiling_results)
 
+
 @dataclass(kw_only=True)
 class TLProfileCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.transformer_lens)
     model_src_key: Optional[str] = "gpt2"
 
+
 TL_PROFILING_CONFIGS = (
     ProfilingTest(alias="test_tl_profiling.test_cpu_32", cfg=TLProfileCfg(**test_bs1_mem_nosavedt), marks="optional"),
-    ProfilingTest(alias="test_tl_profiling.test_cpu_32_l",
-                  cfg=TLProfileCfg(**w_l_tl, **test_bs1_mem_nosavedt), marks="l_optional"),
+    ProfilingTest(
+        alias="test_tl_profiling.test_cpu_32_l", cfg=TLProfileCfg(**w_l_tl, **test_bs1_mem_nosavedt), marks="l_optional"
+    ),
     ProfilingTest(alias="test_tl_profiling.test_cuda_32", cfg=TLProfileCfg(**cuda, **test_bs1_mem), marks="cuda_prof"),
-    ProfilingTest(alias="test_tl_profiling.test_cuda_32_l",
-                  cfg=TLProfileCfg(**cuda, **w_l_tl, **test_bs1_mem), marks="cuda_l_prof"),
+    ProfilingTest(
+        alias="test_tl_profiling.test_cuda_32_l",
+        cfg=TLProfileCfg(**cuda, **w_l_tl, **test_bs1_mem),
+        marks="cuda_l_prof",
+    ),
     # See NOTE [Transformer Lens Profiling Parity Differences], temporarily disabled
-    #ProfilingTest(alias="test_tl_profiling.train_cpu_32", cfg=TLProfileCfg(**bs1_nowarm_hk_mem), marks="optional"),
-    ProfilingTest(alias="test_tl_profiling.train_cuda_32",
-                  cfg=TLProfileCfg(**cuda, **bs1_warm_mem), marks="cuda_profci"),
+    # ProfilingTest(alias="test_tl_profiling.train_cpu_32", cfg=TLProfileCfg(**bs1_nowarm_hk_mem), marks="optional"),
+    ProfilingTest(
+        alias="test_tl_profiling.train_cuda_32", cfg=TLProfileCfg(**cuda, **bs1_warm_mem), marks="cuda_profci"
+    ),
     # See NOTE [Transformer Lens Profiling Parity Differences], temporarily disabled
     # ProfilingTest(alias="test_tl_profiling.train_cuda_32_l",
     #               cfg=TLProfileCfg(**cuda, **w_l_tl, **bs1_warm_mem), marks="cuda_l_optional"),
 )
 
 EXPECTED_PARITY_TL_PROFILING = {cfg.alias: cfg.expected for cfg in TL_PROFILING_CONFIGS}
+
 
 @pytest.mark.usefixtures("make_deterministic")
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(TL_PROFILING_CONFIGS, unpack=False, fq_alias=True))

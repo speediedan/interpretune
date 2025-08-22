@@ -13,8 +13,14 @@ from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer
 from transformer_lens.hook_points import NamesFilter
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.adapters import (CompositionRegistry, LightningDataModule, LightningModule, LightningAdapter,
-                                   BaseITLensModule, TLensAttributeMixin)
+from interpretune.adapters import (
+    CompositionRegistry,
+    LightningDataModule,
+    LightningModule,
+    LightningAdapter,
+    BaseITLensModule,
+    TLensAttributeMixin,
+)
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import SAELensFromPretrainedConfig, SAELensCustomConfig, SAELensConfig
 from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info, patched_generate
@@ -27,9 +33,11 @@ class InstantiatedSAE:
     original_cfg: dict[str, Any] = field(default_factory=dict)
     sparsity: dict[str, Any] = field(default_factory=dict)
 
+
 ################################################################################
 # Mixins to support SAE Lens in different adapter contexts
 ################################################################################
+
 
 class SAELensAttributeMixin(TLensAttributeMixin):
     @property
@@ -94,8 +102,8 @@ class BaseSAELensModule(BaseITLensModule):
 # SAE Lens Module Composition
 ################################################################################
 
-class SAELensAdapter(SAELensAttributeMixin):
 
+class SAELensAdapter(SAELensAttributeMixin):
     @classmethod
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
         adapter_ctx_registry.register(
@@ -151,49 +159,55 @@ class SAELensAdapter(SAELensAttributeMixin):
         move_data_to_device(batch, self.input_device)
         return batch
 
-class SAEAnalysisMixin:
 
+class SAEAnalysisMixin:
     def construct_names_filter(
-        self,
-        target_layers: int | list[int] | None,
-        sae_hook_match_fn: Callable[[str, list[int] | None], bool]
+        self, target_layers: int | list[int] | None, sae_hook_match_fn: Callable[[str, list[int] | None], bool]
     ) -> NamesFilter:
         available_hooks = {
-            f'{handle.cfg.metadata.hook_name}.{key}' for handle in self.sae_handles
-            for key in handle.hook_dict.keys()
+            f"{handle.cfg.metadata.hook_name}.{key}" for handle in self.sae_handles for key in handle.hook_dict.keys()
         }
         names_filter = [
-            hook for hook in available_hooks
+            hook
+            for hook in available_hooks
             if sae_hook_match_fn(in_name=hook, layers=target_layers if target_layers is not None else None)
         ]
         return names_filter
 
     @staticmethod
     def display_latent_dashboards(
-            metrics: Any, title: str, sae_release: str,
-            hook_to_sae_id: Callable[[str], str] = lambda hook: f"blocks.{hook.split('.')[1]}.hook_z",
-            top_k: int = 1) -> None:
+        metrics: Any,
+        title: str,
+        sae_release: str,
+        hook_to_sae_id: Callable[[str], str] = lambda hook: f"blocks.{hook.split('.')[1]}.hook_z",
+        top_k: int = 1,
+    ) -> None:
         """Print top positive and negative latent dashboards for all hooks in metrics."""
         analysis_dict = metrics.total_effect
         activation_counts = metrics.num_samples_active
         for hook_name, total_values in analysis_dict.items():
             print(f"\n{title} for {hook_name}:")
-            directions = {"positive": total_values.topk(top_k),
-                          "negative": total_values.topk(top_k, largest=False)}
+            directions = {"positive": total_values.topk(top_k), "negative": total_values.topk(top_k, largest=False)}
             for direction, (values, indices) in directions.items():
                 print(f"\n{direction}:")
                 for value, idx in zip(values, indices):
-                    effect_str = (f"#{idx} had total effect {value:.2f} and was active in "
-                                  f"{activation_counts[hook_name][idx]} examples")
+                    effect_str = (
+                        f"#{idx} had total effect {value:.2f} and was active in "
+                        f"{activation_counts[hook_name][idx]} examples"
+                    )
                     print(effect_str)
                     SAEAnalysisMixin.display_dashboard(
-                        sae_release=sae_release,
-                        sae_id=hook_to_sae_id(hook_name),
-                        latent_idx=int(idx)
+                        sae_release=sae_release, sae_id=hook_to_sae_id(hook_name), latent_idx=int(idx)
                     )
+
     @staticmethod
-    def display_dashboard(sae_release: str = "gpt2-small-res-jb", sae_id: str = "blocks.9.hook_resid_pre",
-                          latent_idx: int = 0, width: int = 800, height: int = 600) -> None:
+    def display_dashboard(
+        sae_release: str = "gpt2-small-res-jb",
+        sae_id: str = "blocks.9.hook_resid_pre",
+        latent_idx: int = 0,
+        width: int = 800,
+        height: int = 600,
+    ) -> None:
         release = get_pretrained_saes_directory()[sae_release]
         neuronpedia_id = release.neuronpedia_id[sae_id]
         embed_cfg = "embed=true&embedexplanation=true&embedplots=true&embedtest=true"
@@ -201,5 +215,5 @@ class SAEAnalysisMixin:
         print(url)
         display(IFrame(url, width=width, height=height))
 
-class SAELensModule(SAEAnalysisMixin, SAELensAdapter, CoreHelperAttributes, BaseSAELensModule):
-    ...
+
+class SAELensModule(SAEAnalysisMixin, SAELensAdapter, CoreHelperAttributes, BaseSAELensModule): ...

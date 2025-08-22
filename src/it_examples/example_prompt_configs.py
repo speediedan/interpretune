@@ -8,6 +8,7 @@ from it_examples.experiments.rte_boolq import RTEBoolqPromptConfig
 # TODO: add option for using HF `tokenizer.apply_chat_template` api?
 #       We usually want full control so lower priority atm, but will likely be valuable in the future.
 
+
 @dataclass(kw_only=True)
 class Gemma2PromptConfig:
     # see https://huggingface.co/google/gemma-2-2b-it for more details
@@ -27,18 +28,20 @@ class Gemma2PromptConfig:
             sequence = task_prompt.strip()
         return sequence
 
+
 @dataclass(kw_only=True)
-class RTEBoolqGemma2PromptConfig(Gemma2PromptConfig, RTEBoolqPromptConfig):
-    ...
+class RTEBoolqGemma2PromptConfig(Gemma2PromptConfig, RTEBoolqPromptConfig): ...
+
 
 ####################################
 # Llama3
 ####################################
 
+
 @dataclass(kw_only=True)
 class Llama3PromptConfig:
     # see https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/prompt_format.md for more details
-    sys_prompt: str = ("You are a helpful assistant.")
+    sys_prompt: str = "You are a helpful assistant."
     B_TEXT: str = "<|begin_of_text|>"
     E_TEXT: str = "<|end_of_text|>"
     B_HEADER: str = "<|start_header_id|>"
@@ -57,8 +60,9 @@ class Llama3PromptConfig:
         self.SYS_ROLE_HEADER = self.B_HEADER + self.SYS_ROLE + self.E_HEADER
         self.USER_ROLE_HEADER = self.B_HEADER + self.USER_ROLE + self.E_HEADER
         self.ASSISTANT_ROLE_HEADER = self.B_HEADER + self.ASSISTANT_ROLE + self.E_HEADER
-        self.SYS_ROLE_START = self.B_TEXT + self.SYS_ROLE_HEADER + "\n" + self.sys_prompt + self.E_TURN + \
-            self.USER_ROLE_HEADER + "\n"
+        self.SYS_ROLE_START = (
+            self.B_TEXT + self.SYS_ROLE_HEADER + "\n" + self.sys_prompt + self.E_TURN + self.USER_ROLE_HEADER + "\n"
+        )
         self.USER_ROLE_END = self.E_TURN + self.ASSISTANT_ROLE_HEADER + "\n"
 
     def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: Optional[str] = None) -> str:
@@ -70,5 +74,4 @@ class Llama3PromptConfig:
 
 
 @dataclass(kw_only=True)
-class RTEBoolqLlama3PromptConfig(Llama3PromptConfig, RTEBoolqPromptConfig):
-    ...
+class RTEBoolqLlama3PromptConfig(Llama3PromptConfig, RTEBoolqPromptConfig): ...

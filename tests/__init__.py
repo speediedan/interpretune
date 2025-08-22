@@ -56,7 +56,7 @@ _PATH_DATASETS = os.path.join(_PROJECT_ROOT, "Datasets")
 # TODO: this setting `PYTHONPATH` may not be used by other envs like Conda for import packages
 if _PROJECT_ROOT not in os.getenv("PYTHONPATH", ""):
     splitter = ":" if os.environ.get("PYTHONPATH", "") else ""
-    os.environ["PYTHONPATH"] = f'{_PROJECT_ROOT}{splitter}{os.environ.get("PYTHONPATH", "")}'
+    os.environ["PYTHONPATH"] = f"{_PROJECT_ROOT}{splitter}{os.environ.get('PYTHONPATH', '')}"
 
 # generate a list of random seeds for each test
 RANDOM_PORTS = list(np.random.randint(12000, 19000, 1000))

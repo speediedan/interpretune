@@ -1,4 +1,5 @@
 """Auto-columns system for analysis operations."""
+
 from __future__ import annotations
 from typing import Dict, Any, Union, Literal, Tuple
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ from interpretune.analysis.ops.base import ColCfg
 @dataclass(frozen=True)
 class FieldCondition:
     """Represents a condition for a field in a schema."""
+
     field_name: str
     conditions: Dict[str, Any] = field(default_factory=dict)
 
@@ -30,6 +32,7 @@ class FieldCondition:
 @dataclass(frozen=True)
 class AutoColumnCondition:
     """Represents a complete condition set for triggering auto-columns."""
+
     field_conditions: Tuple[FieldCondition, ...]
     auto_columns: Dict[str, Union[ColCfg, Dict[str, Any]]]
     condition_target: Literal["input_schema", "output_schema"] = "input_schema"
@@ -37,7 +40,7 @@ class AutoColumnCondition:
     def __post_init__(self):
         # Ensure field_conditions is a tuple for hashability
         if not isinstance(self.field_conditions, tuple):
-            object.__setattr__(self, 'field_conditions', tuple(self.field_conditions))
+            object.__setattr__(self, "field_conditions", tuple(self.field_conditions))
 
     def matches_schema(self, input_schema: Dict[str, Any], output_schema: Dict[str, Any] = None) -> bool:  # type: ignore[assignment]
         """Check if schemas match all field conditions."""
@@ -54,12 +57,7 @@ class AutoColumnCondition:
 # Auto-columns mapping: conditions that trigger automatic column addition
 AUTO_COLUMNS = [
     AutoColumnCondition(
-        field_conditions=(
-            FieldCondition(
-                field_name="input",
-                conditions={"connected_obj": "datamodule"}
-            ),
-        ),
+        field_conditions=(FieldCondition(field_name="input", conditions={"connected_obj": "datamodule"}),),
         condition_target="input_schema",
         auto_columns={
             "tokens": {
@@ -67,14 +65,10 @@ AUTO_COLUMNS = [
                 "required": False,
                 "dyn_dim": 1,
                 "array_shape": (None, "batch_size"),
-                "sequence_type": False
+                "sequence_type": False,
             },
-            "prompts": {
-                "datasets_dtype": "string",
-                "required": False,
-                "non_tensor": True
-            }
-        }
+            "prompts": {"datasets_dtype": "string", "required": False, "non_tensor": True},
+        },
     )
 ]
 
@@ -89,7 +83,7 @@ def apply_auto_columns(op_def: dict) -> None:
         if auto_column_condition.matches_schema(input_schema, output_schema):
             # Add auto-columns that don't already exist.
             # We only support auto-adding columns to output_schema at this point.
-            target_schema = op_def.setdefault('output_schema', {})
+            target_schema = op_def.setdefault("output_schema", {})
 
             for col_name, col_cfg in auto_column_condition.auto_columns.items():
                 if col_name not in target_schema:

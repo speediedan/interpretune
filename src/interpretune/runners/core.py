@@ -14,8 +14,16 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-def core_train_loop(module: ITModule, datamodule: ITDataModule, limit_train_batches: int, limit_val_batches: int,
-    max_epochs: int, *args, **kwargs):
+
+def core_train_loop(
+    module: ITModule,
+    datamodule: ITDataModule,
+    limit_train_batches: int,
+    limit_val_batches: int,
+    max_epochs: int,
+    *args,
+    **kwargs,
+):
     train_dataloader = datamodule.train_dataloader()
     val_dataloader = datamodule.val_dataloader()
     # TODO: add optimizers property setter to corehelperattributes
@@ -39,6 +47,7 @@ def core_train_loop(module: ITModule, datamodule: ITDataModule, limit_train_batc
         module.model.train()
         _call_itmodule_hook(module, hook_name="on_train_epoch_end", hook_msg="Running train epoch end hooks")
 
+
 def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batches: int, *args, **kwargs):
     dataloader = datamodule.test_dataloader()
     test_ctx = {"module": module}
@@ -50,6 +59,7 @@ def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batche
                 break
             run_step(step_fn="test_step", batch=batch, batch_idx=batch_idx, **test_ctx)
     _call_itmodule_hook(module, hook_name="on_test_epoch_end", hook_msg="Running test epoch end hooks")
+
 
 def run_step(step_fn, module, batch, batch_idx, optimizer: Optimizable | None = None, as_generator: bool = False):
     batch = module.batch_to_device(batch)
@@ -70,23 +80,32 @@ def run_step(step_fn, module, batch, batch_idx, optimizer: Optimizable | None = 
     else:
         output = step_func(batch, batch_idx)
     if step_fn == "training_step" and optimizer is not None:
-        _call_itmodule_hook(module, hook_name="on_train_batch_end", hook_msg="Running custom on_train_batch end hook",
-                            outputs=output, batch=batch, batch_idx=batch_idx)
+        _call_itmodule_hook(
+            module,
+            hook_name="on_train_batch_end",
+            hook_msg="Running custom on_train_batch end hook",
+            outputs=output,
+            batch=batch,
+            batch_idx=batch_idx,
+        )
         output.backward()
         optimizer.step()
     module.global_step += 1
 
     if as_generator:
-        #yield from output
+        # yield from output
         def generator():
             yield from output
+
         return generator()  # Return a generator object
     else:
         return output
 
+
 class SessionRunner:
     """A barebones trainer that can be used to orchestrate training when no adapter is specified during ITSession
     composition."""
+
     def __init__(self, run_cfg: SessionRunnerCfg | dict[str, Any], *args: Any, **kwargs: Any) -> Any:
         super().__init__(*args, **kwargs)
         self.run_cfg = run_cfg if isinstance(run_cfg, SessionRunnerCfg) else SessionRunnerCfg(**run_cfg)

@@ -1,4 +1,5 @@
 """Utilities to dynamically load functions from Hub-downloaded modules."""
+
 from __future__ import annotations
 import os
 import sys
@@ -31,6 +32,7 @@ _IT_REMOTE_CODE_LOCK = threading.Lock()
 # can dynamically create patched versions of functions like get_cached_module_file and create_dynamic_module with our
 # relevant env var patches to avoid this substantial HF code duplication/maintenance (or even convince HF to refactor
 # these functions to support the custom patterns we require).
+
 
 def init_it_modules() -> None:
     """Creates the cache directory for interpretune modules with an init, and adds it to the Python path."""
@@ -187,8 +189,9 @@ def get_cached_module_file_it(
         # Replace '.' with '/' for repo names to support HuggingFace repo conventions
         op_repo_name_or_path = op_repo_name_or_path.replace(".", "/")
         submodule = op_repo_name_or_path.replace("/", os.path.sep)
-        cached_module = try_to_load_from_cache(op_repo_name_or_path, module_file, cache_dir=cache_dir,
-                                               revision=_commit_hash, repo_type=repo_type)
+        cached_module = try_to_load_from_cache(
+            op_repo_name_or_path, module_file, cache_dir=cache_dir, revision=_commit_hash, repo_type=repo_type
+        )
     new_files = []
     try:
         # Load from URL or cache if already cached
@@ -208,8 +211,10 @@ def get_cached_module_file_it(
         if not is_local and cached_module != resolved_module_file:
             new_files.append(module_file)
     except Exception as e:
-        logger.error(f"Could not locate or download module file `{module_file}` using the provided repo"
-                     f" {op_repo_name_or_path}: {e}")
+        logger.error(
+            f"Could not locate or download module file `{module_file}` using the provided repo"
+            f" {op_repo_name_or_path}: {e}"
+        )
         raise
 
     # Check we have all the requirements in our environment

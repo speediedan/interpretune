@@ -28,15 +28,24 @@ from it_examples.experiments.rte_boolq import RTEBoolqModuleMixin
 
 
 class TestClassMixins:
+    core_gpt2_shared_config = dict(
+        task_name=default_test_task,
+        tokenizer_kwargs={
+            "add_bos_token": True,
+            "local_files_only": False,
+            "padding_side": "left",
+            "model_input_names": ["input_ids", "attention_mask"],
+        },
+        model_name_or_path="gpt2",
+        tokenizer_id_overrides={"pad_token_id": 50256},
+    )
 
-    core_gpt2_shared_config = dict(task_name=default_test_task,
-        tokenizer_kwargs={"add_bos_token": True, "local_files_only": False, "padding_side": "left",
-                          "model_input_names": ["input_ids", "attention_mask"]},
-        model_name_or_path="gpt2", tokenizer_id_overrides={"pad_token_id": 50256})
-
-    test_core_gpt2 = {**core_gpt2_shared_config,
-                      "hf_from_pretrained_cfg": HFFromPretrainedConfig(pretrained_kwargs={
-                          "device_map": "cpu", "torch_dtype": "float32"}, model_head="transformers.GPT2LMHeadModel")}
+    test_core_gpt2 = {
+        **core_gpt2_shared_config,
+        "hf_from_pretrained_cfg": HFFromPretrainedConfig(
+            pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
+        ),
+    }
 
     @staticmethod
     def _get_hf_from_pretrained_mixin(test_it_cfg):
@@ -49,28 +58,30 @@ class TestClassMixins:
         return hf_from_pretrained_mixin
 
     def test_hf_from_pretrained_config_clean(self):
-        pretrained_kwargs = {"pretrained_kwargs":{"device_map": "cpu", "token": "strip-me"}}
+        pretrained_kwargs = {"pretrained_kwargs": {"device_map": "cpu", "token": "strip-me"}}
         from_pretrained_cfg = HFFromPretrainedConfig(**pretrained_kwargs, model_head="transformers.GPT2LMHeadModel")
-        assert from_pretrained_cfg.pretrained_kwargs.get('token', None) is None
+        assert from_pretrained_cfg.pretrained_kwargs.get("token", None) is None
 
     @pytest.mark.parametrize(
         "return_unused, tie_word_embeddings",
         [pytest.param(True, False)],
-        ids=["return_unused_no_tie_embeddings",],
+        ids=[
+            "return_unused_no_tie_embeddings",
+        ],
     )
     def test_hf_from_pretrained_hf_cust_config(self, return_unused, tie_word_embeddings):
         access_token = None
         test_it_cfg = deepcopy(TestClassMixins.test_core_gpt2)
-        test_it_cfg['hf_from_pretrained_cfg'].pretrained_kwargs['return_unused_kwargs'] = return_unused
-        test_it_cfg['model_cfg'] = {'tie_word_embeddings': tie_word_embeddings}
+        test_it_cfg["hf_from_pretrained_cfg"].pretrained_kwargs["return_unused_kwargs"] = return_unused
+        test_it_cfg["model_cfg"] = {"tie_word_embeddings": tie_word_embeddings}
         if return_unused:
-            test_it_cfg['hf_from_pretrained_cfg'].pretrained_kwargs['give_it_back'] = True
+            test_it_cfg["hf_from_pretrained_cfg"].pretrained_kwargs["give_it_back"] = True
         hf_from_pretrained_mixin = TestClassMixins._get_hf_from_pretrained_mixin(test_it_cfg)
         cust_config, unused_kwargs = hf_from_pretrained_mixin._hf_gen_cust_config()
         assert cust_config.tie_word_embeddings == tie_word_embeddings
         if return_unused:
-            assert 'give_it_back' in unused_kwargs
-            hf_from_pretrained_mixin.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs.pop('give_it_back', None)
+            assert "give_it_back" in unused_kwargs
+            hf_from_pretrained_mixin.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs.pop("give_it_back", None)
         model = hf_from_pretrained_mixin.hf_configured_model_init(cust_config, access_token)
         assert model.config.tie_word_embeddings == tie_word_embeddings
 
@@ -81,9 +92,9 @@ class TestClassMixins:
     )
     def test_hf_from_pretrained_hf_configured_model_init(self, head_configured, defer_init):
         test_it_cfg = deepcopy(TestClassMixins.test_core_gpt2)
-        test_it_cfg['defer_model_init'] = defer_init
+        test_it_cfg["defer_model_init"] = defer_init
         if not head_configured:
-            test_it_cfg['hf_from_pretrained_cfg'].model_head = ''
+            test_it_cfg["hf_from_pretrained_cfg"].model_head = ""
         hf_from_pretrained_mixin = TestClassMixins._get_hf_from_pretrained_mixin(test_it_cfg)
         if not head_configured and defer_init:
             with pytest.warns(UserWarning, match="`defer_model_init` not currently supported without `model_head`"):
@@ -96,15 +107,15 @@ class TestClassMixins:
     def test_hf_from_pretrained_peft_init(self, get_it_session__core_gpt2_peft__initonly):
         fixture = get_it_session__core_gpt2_peft__initonly
         it_m = fixture.it_session.module
-        assert it_m.model.transformer.h[0].attn.c_proj.weight.quant_type == 'nf4'
+        assert it_m.model.transformer.h[0].attn.c_proj.weight.quant_type == "nf4"
         assert it_m.model.transformer.h[0].attn.c_proj.base_layer.compute_dtype == torch.bfloat16
-        assert getattr(it_m.model.transformer.h[0].attn.c_proj, 'lora_A', None) is not None
+        assert getattr(it_m.model.transformer.h[0].attn.c_proj, "lora_A", None) is not None
         assert it_m.model.base_model.model.is_gradient_checkpointing
 
     @RunIf(min_cuda_gpus=1)
     @pytest.mark.parametrize(
         "phase, genclassif",
-        [pytest.param('train', True), pytest.param('test', True), pytest.param('test', False)],
+        [pytest.param("train", True), pytest.param("test", True), pytest.param("test", False)],
         ids=["train_genclassif", "test_genclassif", "test_no_genclassif"],
     )
     def test_peft(self, recwarn, get_it_session__core_gpt2_peft__initonly, phase, genclassif):
@@ -130,13 +141,15 @@ class TestClassMixins:
         assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
 
     def test_hf_from_pretrained_dynamic_module_load(self):
-        pretrained_kwargs = {"pretrained_kwargs":{"device_map": "cpu", "torch_dtype": "float32"}}
-        dynamic_module_cfg = {"config_class": "configuration_falcon.FalconConfig",
-                              "model_class": "modeling_falcon.FalconForCausalLM"}
+        pretrained_kwargs = {"pretrained_kwargs": {"device_map": "cpu", "torch_dtype": "float32"}}
+        dynamic_module_cfg = {
+            "config_class": "configuration_falcon.FalconConfig",
+            "model_class": "modeling_falcon.FalconForCausalLM",
+        }
         test_it_cfg = deepcopy(TestClassMixins.test_core_gpt2)
-        test_it_cfg['model_name_or_path'] = "tiiuae/falcon-7b"
+        test_it_cfg["model_name_or_path"] = "tiiuae/falcon-7b"
         hf_from_pretrained_cfg = HFFromPretrainedConfig(**pretrained_kwargs, dynamic_module_cfg=dynamic_module_cfg)
-        test_it_cfg['hf_from_pretrained_cfg'] = hf_from_pretrained_cfg
+        test_it_cfg["hf_from_pretrained_cfg"] = hf_from_pretrained_cfg
         hf_from_pretrained_mixin = TestClassMixins._get_hf_from_pretrained_mixin(test_it_cfg)
         hf_from_pretrained_mixin._hf_gen_cust_config()
 
@@ -152,20 +165,27 @@ class TestClassMixins:
         fixture = get_it_session__core_cust__initonly
         it_session, test_cfg = fixture.it_session, fixture.test_cfg()
         core_cust_it_m = it_session.module
-        test_cfg.phase = 'test'
+        test_cfg.phase = "test"
+
         def generate(oops_no_matching_args):
             pass
+
         # we modify our generate function and avoid checking the batch inputs in order to generate our error feedback
-        with mock.patch.object(core_cust_it_m.model, 'generate', generate), \
-            mock.patch.object(core_cust_it_m, 'map_gen_inputs', lambda x: x):
+        with (
+            mock.patch.object(core_cust_it_m.model, "generate", generate),
+            mock.patch.object(core_cust_it_m, "map_gen_inputs", lambda x: x),
+        ):
             with pytest.warns(UserWarning, match="The following keys were found"), pytest.raises(Exception):
                 run_it(it_session=it_session, test_cfg=test_cfg)
 
-    @pytest.mark.parametrize("tokenizer_id_overrides", [None, {'pad_token_id': 150}],
-                             ids=["no_token_overrides", "new_token_overrides"],)
+    @pytest.mark.parametrize(
+        "tokenizer_id_overrides",
+        [None, {"pad_token_id": 150}],
+        ids=["no_token_overrides", "new_token_overrides"],
+    )
     def test_hf_from_pretrained_maybe_resize_token_embeddings(self, tokenizer_id_overrides):
         test_it_cfg = deepcopy(TestClassMixins.test_core_gpt2)
-        test_it_cfg['tokenizer_id_overrides'] = tokenizer_id_overrides
+        test_it_cfg["tokenizer_id_overrides"] = tokenizer_id_overrides
         hf_from_pretrained_mixin = TestClassMixins._get_hf_from_pretrained_mixin(test_it_cfg)
         hf_from_pretrained_mixin.model = mock.Mock()
         hf_from_pretrained_mixin.model.base_model = mock.Mock()
@@ -182,9 +202,9 @@ class TestITStateMixin:
         from interpretune.config import ITState
 
         # Test initializing state when none exists
-        test_obj = type('TestObj', (), {})()
+        test_obj = type("TestObj", (), {})()
         ITStateMixin._init_internal_state(test_obj)
-        assert hasattr(test_obj, '_it_state')
+        assert hasattr(test_obj, "_it_state")
         assert isinstance(test_obj._it_state, ITState)
 
         # Test that existing state is preserved
@@ -216,13 +236,13 @@ class TestAnalysisStepMixin:
                 module.analysis_cfg
 
         # Test with regular operation
-        with mock.patch.object(torch, 'set_grad_enabled') as mock_grad:
+        with mock.patch.object(torch, "set_grad_enabled") as mock_grad:
             module.on_analysis_start()
             # Should disable gradients for non-gradient operations
             mock_grad.assert_called_with(False)
 
         # Test with gradient operation
-        with mock.patch.object(torch, 'set_grad_enabled') as mock_grad:
+        with mock.patch.object(torch, "set_grad_enabled") as mock_grad:
             # Save original op
             original_op = module.analysis_cfg.op
             # Mock op to be gradient operation
@@ -232,7 +252,7 @@ class TestAnalysisStepMixin:
             mock_grad.assert_called_with(True)
 
             # Test on_analysis_end with gradient operation
-            with mock.patch.object(module, 'on_analysis_end') as mock_session_end:
+            with mock.patch.object(module, "on_analysis_end") as mock_session_end:
                 # Instead of mocking session_complete property directly,
                 # create a custom context to test both paths without patching
                 module.on_analysis_end()
@@ -244,7 +264,7 @@ class TestAnalysisStepMixin:
             module.analysis_cfg.op = original_op
 
         # Test on_analysis_end with non-gradient operation
-        with mock.patch.object(torch, 'set_grad_enabled') as mock_grad:
+        with mock.patch.object(torch, "set_grad_enabled") as mock_grad:
             # We don't need to patch session_complete - the test will still
             # verify that torch.set_grad_enabled(True) is called
             module.on_analysis_end()
@@ -261,7 +281,7 @@ class TestGenerativeStepMixin:
         generative_mixin.GEN_PREPARES_INPUTS_SIGS = ("_prepare_model_inputs",)
 
         # Test when model has the prepare method
-        model_with_prepare = mock.Mock(spec=['_prepare_model_inputs'])
+        model_with_prepare = mock.Mock(spec=["_prepare_model_inputs"])
         generative_mixin.model = model_with_prepare
 
         assert generative_mixin._generate_prepares_inputs() is True
@@ -291,7 +311,7 @@ class TestGenerativeStepMixin:
         mock_model.generate.return_value = expected_output
 
         # Create our test mixin
-        test_mixin = TestGenerativeMixin(mock_model, sig_keys=['kwargs'])
+        test_mixin = TestGenerativeMixin(mock_model, sig_keys=["kwargs"])
 
         # Run the test
         output = test_mixin.it_generate(batch, max_length=10)
@@ -309,7 +329,7 @@ class TestGenerativeStepMixin:
         class TestGenerativeMixin(GenerativeStepMixin):
             def __init__(self, model, inspect_inputs=False):
                 self.model = model
-                self._gen_sig_keys = ['input_ids', 'max_length']
+                self._gen_sig_keys = ["input_ids", "max_length"]
                 self._should_inspect_inputs_value = inspect_inputs
 
             @property
@@ -342,7 +362,7 @@ class TestGenerativeStepMixin:
         class TestGenerativeMixin(GenerativeStepMixin):
             def __init__(self, model, inspect_inputs=True):
                 self.model = model
-                self._gen_sig_keys = ['input_ids', 'max_length']
+                self._gen_sig_keys = ["input_ids", "max_length"]
                 self._should_inspect_inputs_value = inspect_inputs
 
             @property
@@ -378,7 +398,7 @@ class TestGenerativeStepMixin:
         # Create a test mixin that will trigger the error handling
         class ErrorGenerativeMixin(GenerativeStepMixin):
             def __init__(self):
-                self._gen_sig_keys = ['input_ids']
+                self._gen_sig_keys = ["input_ids"]
                 self.model = mock.Mock()
                 self.model.generate = mock.Mock(side_effect=TypeError("Test error"))
                 self.it_cfg = mock.Mock()
@@ -411,27 +431,32 @@ class TestClassificationMixin:
         module.it_cfg.classification_mapping_indices = None
 
         # Mock the tokenizer to convert tokens to IDs
-        with mock.patch.object(it_session.datamodule.tokenizer, 'convert_tokens_to_ids',
-                               return_value=[10, 20]) as mock_convert:
-
-            _call_itmodule_hook(it_session.datamodule, hook_name="prepare_data", hook_msg="Preparing data",
-                                target_model=module.model)
+        with mock.patch.object(
+            it_session.datamodule.tokenizer, "convert_tokens_to_ids", return_value=[10, 20]
+        ) as mock_convert:
+            _call_itmodule_hook(
+                it_session.datamodule, hook_name="prepare_data", hook_msg="Preparing data", target_model=module.model
+            )
             _call_itmodule_hook(it_session.datamodule, hook_name="setup", hook_msg="Setting up datamodule")
 
             # Patch the RTEBoolqModuleMixin.setup method at the class level to ensure only the base setup() is called
             # TODO: replace use of `core_cust` fixture with a more generic one when available instead of this patch
             with mock.patch(
-                'it_examples.experiments.rte_boolq.RTEBoolqModuleMixin.setup', autospec=True,
-                side_effect=lambda self, *args, **kwargs: super(RTEBoolqModuleMixin, self).setup(*args, **kwargs)):
-                _call_itmodule_hook(module, hook_name="setup", hook_msg="Setting up model",
-                                    datamodule=it_session.datamodule)
+                "it_examples.experiments.rte_boolq.RTEBoolqModuleMixin.setup",
+                autospec=True,
+                side_effect=lambda self, *args, **kwargs: super(RTEBoolqModuleMixin, self).setup(*args, **kwargs),
+            ):
+                _call_itmodule_hook(
+                    module, hook_name="setup", hook_msg="Setting up model", datamodule=it_session.datamodule
+                )
 
             # Verify tokenizer was called with the right arguments
             mock_convert.assert_called_once_with(["token1", "token2"])
 
             # Verify classification_mapping_indices was set correctly
-            assert torch.equal(module.it_cfg.classification_mapping_indices,
-                               torch.tensor([10, 20], device=module.device))
+            assert torch.equal(
+                module.it_cfg.classification_mapping_indices, torch.tensor([10, 20], device=module.device)
+            )
 
     def test_standardize_logits(self, get_it_session__core_cust__setup):
         """Test the standardize_logits method with different input shapes."""
@@ -439,8 +464,9 @@ class TestClassificationMixin:
         module = fixture.it_session.module
         # Use the utility function to get the BaseITModule standardize_logits method
         # (skipping the override in RTEBoolqModuleMixin)
-        target_standard_logits = get_super_method("it_examples.experiments.rte_boolq.RTEBoolqModuleMixin", module,
-                                                  "standardize_logits")
+        target_standard_logits = get_super_method(
+            "it_examples.experiments.rte_boolq.RTEBoolqModuleMixin", module, "standardize_logits"
+        )
 
         # Setup classification mapping indices - ensure we have the right device
         device = module.device
@@ -470,7 +496,7 @@ class TestClassificationMixin:
         assert std_logits.shape == (2, 4, num_labels)  # Should maintain positions and select indices
 
         # Test with generative_step_cfg disabled
-        with mock.patch.object(module.it_cfg, 'generative_step_cfg') as mock_gen_cfg:
+        with mock.patch.object(module.it_cfg, "generative_step_cfg") as mock_gen_cfg:
             mock_gen_cfg.enabled = False
             std_logits = target_standard_logits(logits_3d)
             assert std_logits.shape == (2, 1, num_labels)  # Should select only the last position for non-generative
@@ -488,8 +514,9 @@ class TestClassificationMixin:
         fixture = get_it_session__core_cust__setup
         module = fixture.it_session.module
 
-        target_labels_to_ids = get_super_method("it_examples.experiments.rte_boolq.RTEBoolqModuleMixin", module,
-                                                "labels_to_ids")
+        target_labels_to_ids = get_super_method(
+            "it_examples.experiments.rte_boolq.RTEBoolqModuleMixin", module, "labels_to_ids"
+        )
         # Setup classification mapping indices
         module.it_cfg.classification_mapping_indices = torch.tensor([10, 20, 30], device=module.device)
 

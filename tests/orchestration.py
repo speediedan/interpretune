@@ -53,6 +53,7 @@ from tests.utils import kwargs_from_cfg_obj
 #   on a test-by-test basis as well)
 ########################################################################################################################
 
+
 def parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode: bool = False):
     it_session = config_modules(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)
     if Adapter.lightning in test_cfg.adapter_ctx:
@@ -60,15 +61,18 @@ def parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode
     else:
         run_it(it_session, test_cfg)
 
+
 def init_it_runner(it_session: ITSession, test_cfg: BaseCfg, *args, **kwargs):
     # we allow passing unused args for parity testing, e.g. the IT module configured tmp_path is needed by some trainers
-    test_cfg_overrides = {k: v for k,v in test_cfg.__dict__.items() if k in SessionRunnerCfg.__dict__.keys()}
+    test_cfg_overrides = {k: v for k, v in test_cfg.__dict__.items() if k in SessionRunnerCfg.__dict__.keys()}
     runner_config = SessionRunnerCfg(it_session=it_session, **test_cfg_overrides)
     runner = SessionRunner(run_cfg=runner_config)
     return runner
 
-def run_it(it_session: ITSession, test_cfg: BaseCfg, init_only: bool = False) -> \
-    SessionRunner | AnalysisStoreProtocol | Dict[str, AnalysisStoreProtocol] | None:
+
+def run_it(
+    it_session: ITSession, test_cfg: BaseCfg, init_only: bool = False
+) -> SessionRunner | AnalysisStoreProtocol | Dict[str, AnalysisStoreProtocol] | None:
     # Check if test_cfg is an AnalysisBaseCfg and use the appropriate runner initialization
     if isinstance(test_cfg, AnalysisBaseCfg):
         runner = init_analysis_runner(it_session, test_cfg)
@@ -96,6 +100,7 @@ def run_it(it_session: ITSession, test_cfg: BaseCfg, init_only: bool = False) ->
 # Analysis Orchestration
 ################################################################################
 
+
 def init_analysis_runner(it_session: ITSession, test_cfg: BaseCfg, *args, **kwargs):
     """Initialize an AnalysisRunner with the appropriate configuration.
 
@@ -111,6 +116,7 @@ def init_analysis_runner(it_session: ITSession, test_cfg: BaseCfg, *args, **kwar
     analysis_cfg = AnalysisRunnerCfg(**run_cfg_kwargs)
     runner = AnalysisRunner(run_cfg=analysis_cfg)
     return runner
+
 
 def run_analysis_operation(it_session, use_run_cfg=True, test_cfg: BaseCfg | None = None, **kwargs):
     """Run analysis operations either through a runner with run_config or directly via core_analysis_loop.
@@ -147,6 +153,7 @@ def run_analysis_operation(it_session, use_run_cfg=True, test_cfg: BaseCfg | Non
         }
 
         return core_analysis_loop(**analysis_cfg_kwargs)
+
 
 def run_op_with_config(request, op_cfg: OpTestConfig):
     """Run operation and return results.
@@ -217,8 +224,11 @@ def run_op_with_config(request, op_cfg: OpTestConfig):
                         nested_shapes = {}
                         for k, v in value.items():
                             if isinstance(v, dict):
-                                nested_shapes[k] = {inner_k: inner_v.shape for inner_k, inner_v in v.items()
-                                                  if isinstance(inner_v, torch.Tensor)}
+                                nested_shapes[k] = {
+                                    inner_k: inner_v.shape
+                                    for inner_k, inner_v in v.items()
+                                    if isinstance(inner_v, torch.Tensor)
+                                }
                             elif isinstance(v, torch.Tensor):
                                 nested_shapes[k] = v.shape
                         pre_serialization_shapes[column_name] = nested_shapes
@@ -228,6 +238,7 @@ def run_op_with_config(request, op_cfg: OpTestConfig):
     _call_itmodule_hook(it_session.module, hook_name="on_analysis_end", hook_msg="Running analysis start hooks")
 
     return it_session, batches, result_batches, pre_serialization_shapes
+
 
 def save_reload_results_dataset(it_session, result_batches, batches, features_format: Optional[Tuple[Dict]] = None):
     if features_format is not None:
@@ -245,7 +256,7 @@ def save_reload_results_dataset(it_session, result_batches, batches, features_fo
                 tokenizer=it_session.datamodule.tokenizer,
                 save_prompts=it_session.module.analysis_cfg.save_prompts,
                 save_tokens=it_session.module.analysis_cfg.save_tokens,
-                decode_kwargs=it_session.module.analysis_cfg.decode_kwargs
+                decode_kwargs=it_session.module.analysis_cfg.decode_kwargs,
             )
             yield processed_batch
 
@@ -254,7 +265,7 @@ def save_reload_results_dataset(it_session, result_batches, batches, features_fo
         generator=multi_batch_generator,
         features=features,
         cache_dir=it_session.module.analysis_cfg.output_store.cache_dir,
-        split='test',
+        split="test",
     ).with_format("interpretune", **it_format_kwargs)
 
     # TODO: add option to attach the dataset to the current analysis_cfg?
@@ -270,20 +281,35 @@ def save_reload_results_dataset(it_session, result_batches, batches, features_fo
 
     return loaded_dataset
 
+
 ################################################################################
 # Lightning Adapter Train/Test Orchestration
 ################################################################################
 
+
 def init_lightning_trainer(it_session: ITSession, test_cfg: tuple, tmp_path: Path) -> Trainer:
     accelerator = "cpu" if test_cfg.device_type == "cpu" else "gpu"
-    callbacks = instantiate_callbacks(getattr(test_cfg, 'callback_cfgs', {}))
-    trainer_steps = {"limit_train_batches": test_cfg.limit_train_batches,
-                     "limit_val_batches": test_cfg.limit_val_batches, "limit_test_batches": test_cfg.limit_test_batches,
-                     "limit_predict_batches": 1, "max_steps": test_cfg.max_steps}
-    trainer = Trainer(default_root_dir=tmp_path, devices=1, deterministic=True, accelerator=accelerator,
-                      max_epochs=test_cfg.max_epochs, precision=lightning_prec_alias(test_cfg.precision),
-                      num_sanity_val_steps=0, callbacks=callbacks, **trainer_steps)
+    callbacks = instantiate_callbacks(getattr(test_cfg, "callback_cfgs", {}))
+    trainer_steps = {
+        "limit_train_batches": test_cfg.limit_train_batches,
+        "limit_val_batches": test_cfg.limit_val_batches,
+        "limit_test_batches": test_cfg.limit_test_batches,
+        "limit_predict_batches": 1,
+        "max_steps": test_cfg.max_steps,
+    }
+    trainer = Trainer(
+        default_root_dir=tmp_path,
+        devices=1,
+        deterministic=True,
+        accelerator=accelerator,
+        max_epochs=test_cfg.max_epochs,
+        precision=lightning_prec_alias(test_cfg.precision),
+        num_sanity_val_steps=0,
+        callbacks=callbacks,
+        **trainer_steps,
+    )
     return trainer
+
 
 def run_lightning(it_session: ITSessionConfig, test_cfg: tuple, tmp_path: Path) -> Trainer:
     trainer = init_lightning_trainer(it_session, test_cfg, tmp_path)
@@ -303,10 +329,12 @@ def run_lightning(it_session: ITSessionConfig, test_cfg: tuple, tmp_path: Path) 
             lightning_func(**it_session)
     return trainer
 
+
 def lightning_prec_alias(precision: str):
     # TODO: update this and get_model_input_dtype() to use a shared set of supported alias mappings once more
     # types are tested
     return "bf16-true" if precision == "bf16" else "32-true"
+
 
 def instantiate_callbacks(callbacks_cfg: dict):
     return [callback_cls(**kwargs) for callback_cls, kwargs in callbacks_cfg.items()]

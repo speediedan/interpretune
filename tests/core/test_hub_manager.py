@@ -1,4 +1,5 @@
 """Unit tests for Hub Analysis Operations Manager."""
+
 import os
 import tempfile
 import pytest
@@ -33,13 +34,11 @@ class TestHubOpCollection:
     def test_namespace_prefix(self):
         """Test namespace prefix generation."""
         collection = HubOpCollection(
-            repo_id="username/some_repo",
-            username="username",
-            repo_name="some_repo",
-            local_path=Path("/fake/path")
+            repo_id="username/some_repo", username="username", repo_name="some_repo", local_path=Path("/fake/path")
         )
 
         assert collection.namespace_prefix == "username.some_repo"
+
 
 class TestHubAnalysisOpManager:
     """Test cases for HubAnalysisOpManager."""
@@ -52,9 +51,10 @@ class TestHubAnalysisOpManager:
     def teardown_method(self):
         """Clean up test environment after each test."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch('interpretune.analysis.ops.hub_manager.snapshot_download')
+    @patch("interpretune.analysis.ops.hub_manager.snapshot_download")
     def test_download_ops_success(self, mock_snapshot_download):
         """Test successful download of operations."""
         mock_snapshot_download.return_value = str(self.temp_dir / "downloaded")
@@ -66,7 +66,7 @@ class TestHubAnalysisOpManager:
         assert collection.repo_name == "some_repo"
         mock_snapshot_download.assert_called_once()
 
-    @patch('interpretune.analysis.ops.hub_manager.snapshot_download')
+    @patch("interpretune.analysis.ops.hub_manager.snapshot_download")
     def test_download_ops_repository_not_found(self, mock_snapshot_download):
         """Test download when repository doesn't exist."""
         mock_snapshot_download.side_effect = RepositoryNotFoundError("Not found")
@@ -74,7 +74,7 @@ class TestHubAnalysisOpManager:
         with pytest.raises(RepositoryNotFoundError):
             self.manager.download_ops("nonexistent/repo")
 
-    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    @patch("interpretune.analysis.ops.hub_manager.HfApi")
     def test_upload_ops_success(self, mock_hf_api_class):
         """Test successful upload of operations."""
         # Create test files
@@ -110,8 +110,7 @@ class TestHubAnalysisOpManager:
         with pytest.raises(ValueError, match="Invalid repo_id format"):
             self.manager.upload_ops(test_dir, "invalid-repo-id")
 
-
-    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    @patch("interpretune.analysis.ops.hub_manager.HfApi")
     def test_list_available_collections(self, mock_hf_api_class):
         """Test listing available collections."""
         mock_api = Mock()
@@ -132,7 +131,7 @@ class TestHubAnalysisOpManager:
         assert "user2/nlp" in collections
         assert "user1/not-ops" in collections  # Actually included by search
 
-    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    @patch("interpretune.analysis.ops.hub_manager.HfApi")
     def test_list_available_collections_with_username_filter(self, mock_hf_api_class):
         """Test listing available collections with username filter."""
         mock_api = Mock()
@@ -185,8 +184,8 @@ class TestHubAnalysisOpManager:
         assert collections[0].username == "username"
         assert collections[0].repo_name == "some_repo"
 
-    @patch('huggingface_hub.utils.scan_cache_dir')
-    @patch('interpretune.analysis.ops.hub_manager._get_latest_revision')
+    @patch("huggingface_hub.utils.scan_cache_dir")
+    @patch("interpretune.analysis.ops.hub_manager._get_latest_revision")
     def test_get_cached_collections_skips_non_model_repos(self, mock_get_latest_revision, mock_scan_cache_dir):
         """Test that get_cached_collections skips non-model repositories."""
         from unittest.mock import Mock
@@ -222,8 +221,8 @@ class TestHubAnalysisOpManager:
         # Verify _get_latest_revision was only called for model repo
         mock_get_latest_revision.assert_called_once_with(mock_model_repo)
 
-    @patch('huggingface_hub.utils.scan_cache_dir')
-    @patch('interpretune.analysis.ops.hub_manager._get_latest_revision')
+    @patch("huggingface_hub.utils.scan_cache_dir")
+    @patch("interpretune.analysis.ops.hub_manager._get_latest_revision")
     def test_get_cached_collections_skips_repos_with_no_revision(self, mock_get_latest_revision, mock_scan_cache_dir):
         """Test that get_cached_collections skips repos when _get_latest_revision returns None."""
         from unittest.mock import Mock
@@ -265,9 +264,8 @@ class TestHubAnalysisOpManager:
         # Verify _get_latest_revision was called for both repos
         assert mock_get_latest_revision.call_count == 2
 
-
-    @patch('interpretune.analysis.ops.hub_manager.HubAnalysisOpManager.download_ops')
-    @patch('interpretune.analysis.ops.hub_manager.HubAnalysisOpManager.list_available_collections')
+    @patch("interpretune.analysis.ops.hub_manager.HubAnalysisOpManager.download_ops")
+    @patch("interpretune.analysis.ops.hub_manager.HubAnalysisOpManager.list_available_collections")
     def test_discover_hub_ops_auto_discover(self, mock_list_collections, mock_download_ops):
         """Test auto-discovery of hub operations."""
         mock_list_collections.return_value = ["user1/ops1", "user2/ops2"]
@@ -280,7 +278,7 @@ class TestHubAnalysisOpManager:
         assert len(collections) == 2
         assert mock_download_ops.call_count == 2
 
-    @patch('interpretune.analysis.ops.hub_manager.HubAnalysisOpManager.download_ops')
+    @patch("interpretune.analysis.ops.hub_manager.HubAnalysisOpManager.download_ops")
     def test_discover_hub_ops_with_patterns(self, mock_download_ops):
         """Test discovery with specific patterns."""
         mock_collection = Mock()
@@ -291,7 +289,7 @@ class TestHubAnalysisOpManager:
         assert len(collections) == 1
         mock_download_ops.assert_called_once_with("user1/test-ops")
 
-    @patch('interpretune.analysis.ops.hub_manager.HubAnalysisOpManager.download_ops')
+    @patch("interpretune.analysis.ops.hub_manager.HubAnalysisOpManager.download_ops")
     def test_discover_hub_ops_with_failures(self, mock_download_ops):
         """Test discovery handles failures gracefully."""
         mock_download_ops.side_effect = [Exception("Failed"), Mock()]
@@ -311,6 +309,7 @@ class TestHubAnalysisOpManagerIntegration:
     def teardown_method(self):
         """Clean up test environment."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_namespace_prefix_extraction(self):
@@ -325,28 +324,28 @@ class TestHubAnalysisOpManagerIntegration:
             collection = HubOpCollection.from_repo_id(repo_id, Path("/fake"))
             assert collection.namespace_prefix == expected_namespace
 
-    @patch.dict(os.environ, {'IT_ANALYSIS_OP_PATHS': '/path1:/path2'})
+    @patch.dict(os.environ, {"IT_ANALYSIS_OP_PATHS": "/path1:/path2"})
     def test_environment_variable_parsing(self):
         """Test that environment variables are properly parsed."""
         import sys
         import importlib
 
         # Backup existing module
-        original_mod = sys.modules.get('interpretune.analysis', None)
+        original_mod = sys.modules.get("interpretune.analysis", None)
 
         # Remove interpretune.analysis from sys.modules to force reload
-        sys.modules.pop('interpretune.analysis', None)
+        sys.modules.pop("interpretune.analysis", None)
         # Now import and check the variable
-        analysis_mod = importlib.import_module('interpretune.analysis')
-        IT_ANALYSIS_OP_PATHS = getattr(analysis_mod, 'IT_ANALYSIS_OP_PATHS', None)
+        analysis_mod = importlib.import_module("interpretune.analysis")
+        IT_ANALYSIS_OP_PATHS = getattr(analysis_mod, "IT_ANALYSIS_OP_PATHS", None)
 
-        assert IT_ANALYSIS_OP_PATHS == ['/path1', '/path2']
+        assert IT_ANALYSIS_OP_PATHS == ["/path1", "/path2"]
 
         # Restore original module
         if original_mod is not None:
-            sys.modules['interpretune.analysis'] = original_mod
+            sys.modules["interpretune.analysis"] = original_mod
         else:
-            sys.modules.pop('interpretune.analysis', None)
+            sys.modules.pop("interpretune.analysis", None)
 
 
 class TestDynamicModuleUtils:
@@ -359,10 +358,11 @@ class TestDynamicModuleUtils:
     def teardown_method(self):
         """Clean up test environment after each test."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.get_function_in_module')
+    @patch("interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.get_function_in_module")
     def test_get_function_from_dynamic_module_success(self, mock_get_function, mock_get_file):
         """Test successful dynamic function loading."""
         from interpretune.analysis.ops.dynamic_module_utils import get_function_from_dynamic_module
@@ -374,8 +374,7 @@ class TestDynamicModuleUtils:
 
         # Test the function
         result = get_function_from_dynamic_module(
-            function_reference="__init__.test_function",
-            op_repo_name_or_path="test_user.test_repo"
+            function_reference="__init__.test_function", op_repo_name_or_path="test_user.test_repo"
         )
 
         # Verify calls
@@ -395,7 +394,7 @@ class TestDynamicModuleUtils:
 
         assert result == mock_function
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it')
+    @patch("interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it")
     def test_get_function_from_dynamic_module_file_not_found(self, mock_get_file):
         """Test dynamic function loading when module file is not found."""
         from interpretune.analysis.ops.dynamic_module_utils import get_function_from_dynamic_module
@@ -406,16 +405,17 @@ class TestDynamicModuleUtils:
         # Test should raise a OSError when None is passed to get_function_in_module
         with pytest.raises(OSError):
             get_function_from_dynamic_module(
-                function_reference="__init__.test_function",
-                op_repo_name_or_path="test_user.test_repo"
+                function_reference="__init__.test_function", op_repo_name_or_path="test_user.test_repo"
             )
 
     def test_init_it_modules(self):
         """Test initialization of interpretune modules cache."""
         from interpretune.analysis.ops.dynamic_module_utils import init_it_modules
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE', str(self.temp_dir)), \
-             patch('interpretune.analysis.ops.dynamic_module_utils.IT_DYNAMIC_MODULE_NAME', "interpretune_modules"):
+        with (
+            patch("interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE", str(self.temp_dir)),
+            patch("interpretune.analysis.ops.dynamic_module_utils.IT_DYNAMIC_MODULE_NAME", "interpretune_modules"),
+        ):
             init_it_modules()
             # The function creates the cache dir but not the dynamic modules subdir
             assert self.temp_dir.exists()
@@ -426,8 +426,10 @@ class TestDynamicModuleUtils:
         """Test creation of dynamic module directories."""
         from interpretune.analysis.ops.dynamic_module_utils import create_dynamic_module_it
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE', str(self.temp_dir)), \
-             patch('interpretune.analysis.ops.dynamic_module_utils.IT_DYNAMIC_MODULE_NAME', "interpretune_modules"):
+        with (
+            patch("interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE", str(self.temp_dir)),
+            patch("interpretune.analysis.ops.dynamic_module_utils.IT_DYNAMIC_MODULE_NAME", "interpretune_modules"),
+        ):
             # Create test module file
             test_file = self.temp_dir / "test_module.py"
             test_file.write_text("def test_func(): pass")
@@ -443,7 +445,7 @@ class TestDynamicModuleUtils:
         """Test getting function from module."""
         from interpretune.analysis.ops.dynamic_module_utils import get_function_in_module
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE', str(self.temp_dir)):
+        with patch("interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE", str(self.temp_dir)):
             # Create a test module
             module_dir = self.temp_dir / "test_module"
             module_dir.mkdir(parents=True)
@@ -455,8 +457,7 @@ class TestDynamicModuleUtils:
             assert callable(func)
             assert func() == "test_result"
 
-
-    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    @patch("interpretune.analysis.ops.hub_manager.HfApi")
     def test_upload_ops_existing_repo_with_clean_existing(self, mock_hf_api_class):
         """Test upload to existing repository with clean_existing=True."""
         # Create test files
@@ -480,10 +481,11 @@ class TestDynamicModuleUtils:
 
         manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
 
-        with patch('interpretune.analysis.ops.hub_manager.rank_zero_warn') as mock_warn, \
-             patch('interpretune.analysis.ops.hub_manager.rank_zero_info') as mock_info, \
-             patch('interpretune.analysis.ops.hub_manager.rank_zero_debug') as mock_debug:
-
+        with (
+            patch("interpretune.analysis.ops.hub_manager.rank_zero_warn") as mock_warn,
+            patch("interpretune.analysis.ops.hub_manager.rank_zero_info") as mock_info,
+            patch("interpretune.analysis.ops.hub_manager.rank_zero_debug") as mock_debug,
+        ):
             commit_sha = manager.upload_ops(test_dir, "username/test-ops", clean_existing=True)
 
             assert commit_sha == "new_sha"
@@ -495,10 +497,11 @@ class TestDynamicModuleUtils:
             assert "clean_existing=True removed 2 existing files" in warning_call
             assert "old_ops.py" in warning_call or "config.yaml" in warning_call
             # Verify success logging
-            mock_info.assert_any_call("Successfully uploaded to username/test-ops, previous sha: initial_sha, " \
-            "new sha: new_sha")
+            mock_info.assert_any_call(
+                "Successfully uploaded to username/test-ops, previous sha: initial_sha, new sha: new_sha"
+            )
 
-    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    @patch("interpretune.analysis.ops.hub_manager.HfApi")
     def test_upload_ops_existing_repo_clean_existing_custom_patterns(self, mock_hf_api_class):
         """Test upload with custom delete patterns."""
         # Create test files
@@ -522,12 +525,9 @@ class TestDynamicModuleUtils:
 
         manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
 
-        with patch('interpretune.analysis.ops.hub_manager.rank_zero_warn') as mock_warn:
+        with patch("interpretune.analysis.ops.hub_manager.rank_zero_warn") as mock_warn:
             commit_sha = manager.upload_ops(
-                test_dir,
-                "username/test-ops",
-                clean_existing=True,
-                delete_patterns=["*.txt"]
+                test_dir, "username/test-ops", clean_existing=True, delete_patterns=["*.txt"]
             )
 
             assert commit_sha == "new_sha"
@@ -537,7 +537,7 @@ class TestDynamicModuleUtils:
             assert "clean_existing=True removed 1 existing files" in warning_call
             assert "data.txt" in warning_call
 
-    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    @patch("interpretune.analysis.ops.hub_manager.HfApi")
     def test_upload_ops_new_repo_clean_existing_with_patterns(self, mock_hf_api_class):
         """Test upload to new repository with clean_existing and custom patterns."""
         # Create test files
@@ -556,19 +556,14 @@ class TestDynamicModuleUtils:
 
         manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
 
-        commit_sha = manager.upload_ops(
-            test_dir,
-            "username/test-ops",
-            clean_existing=True,
-            delete_patterns=["*.old"]
-        )
+        commit_sha = manager.upload_ops(test_dir, "username/test-ops", clean_existing=True, delete_patterns=["*.old"])
 
         assert commit_sha == "abc123"
         # Verify upload_folder was called with custom delete patterns
         upload_call = mock_api.upload_folder.call_args
-        assert upload_call[1]['delete_patterns'] == ["*.old"]
+        assert upload_call[1]["delete_patterns"] == ["*.old"]
 
-    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    @patch("interpretune.analysis.ops.hub_manager.HfApi")
     def test_upload_ops_existing_repo_list_files_error(self, mock_hf_api_class):
         """Test upload when listing existing files fails."""
         # Create test files
@@ -596,7 +591,7 @@ class TestDynamicModuleUtils:
         commit_sha = manager.upload_ops(test_dir, "username/test-ops", clean_existing=True)
         assert commit_sha == "new_sha"
 
-    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    @patch("interpretune.analysis.ops.hub_manager.HfApi")
     def test_upload_ops_no_commit_issued(self, mock_hf_api_class):
         """Test upload when no actual commit is made (same SHA)."""
         # Create test files
@@ -620,20 +615,20 @@ class TestDynamicModuleUtils:
 
         manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
 
-        with patch('interpretune.analysis.ops.hub_manager.rank_zero_warn') as mock_warn, \
-             patch('interpretune.analysis.ops.hub_manager.rank_zero_info') as mock_info:
-
+        with (
+            patch("interpretune.analysis.ops.hub_manager.rank_zero_warn") as mock_warn,
+            patch("interpretune.analysis.ops.hub_manager.rank_zero_info") as mock_info,
+        ):
             commit_sha = manager.upload_ops(test_dir, "username/test-ops", clean_existing=True)
 
             assert commit_sha == "same_sha"
             # No warning should be issued since no commit was made
             mock_warn.assert_not_called()
             # No success info should be logged since no commit was made
-            success_calls = [call for call in mock_info.call_args_list
-                           if "Successfully uploaded" in str(call)]
+            success_calls = [call for call in mock_info.call_args_list if "Successfully uploaded" in str(call)]
             assert len(success_calls) == 0
 
-    @patch('interpretune.analysis.ops.hub_manager.HfApi')
+    @patch("interpretune.analysis.ops.hub_manager.HfApi")
     def test_upload_ops_many_files_deleted_truncation(self, mock_hf_api_class):
         """Test warning message truncation when many files are deleted."""
         # Create test files
@@ -658,7 +653,7 @@ class TestDynamicModuleUtils:
 
         manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
 
-        with patch('interpretune.analysis.ops.hub_manager.rank_zero_warn') as mock_warn:
+        with patch("interpretune.analysis.ops.hub_manager.rank_zero_warn") as mock_warn:
             commit_sha = manager.upload_ops(test_dir, "username/test-ops", clean_existing=True)
 
             assert commit_sha == "new_sha"

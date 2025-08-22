@@ -7,6 +7,7 @@ from pprint import pformat
 from interpretune.utils import rank_zero_warn
 from interpretune.protocol import Adapter
 
+
 class CompositionRegistry(dict):
     # TODO: if this experimental compositional utility and protocol gains traction with external users:
     #         - change Adapter enum to a separate AdapterRegistry that can be loaded externally similar to extensions
@@ -31,28 +32,32 @@ class CompositionRegistry(dict):
         supported_composition: Dict[str | Adapter | Tuple[Adapter | str], Any] = {}
         composition_key = (component_key,) + self.canonicalize_composition(adapter_combination)
         supported_composition[composition_key] = composition_classes
-        supported_composition['lead_adapter'] = Adapter[lead_adapter] if isinstance(lead_adapter, str) else lead_adapter
+        supported_composition["lead_adapter"] = Adapter[lead_adapter] if isinstance(lead_adapter, str) else lead_adapter
         supported_composition["description"] = description if description is not None else ""
         self[composition_key] = supported_composition
 
     @staticmethod
-    def resolve_adapter_filter(adapter_filter: Optional[Sequence[Adapter| str]| Adapter | str] = None) -> List[Adapter]:
-            unresolved_filters = []
-            if adapter_filter is None:
-                return []
-            if isinstance(adapter_filter, str):
-                adapter_filter = [Adapter[adapter_filter]]
-            elif isinstance(adapter_filter, Adapter):
-                adapter_filter = [adapter_filter]
-            for adapter in adapter_filter:
-                try:
-                    adapter = CompositionRegistry.sanitize_adapter(adapter)
-                except ValueError:
-                    unresolved_filters.append(adapter)
-            if unresolved_filters:
-                rank_zero_warn("The following adapter names specified in `adapter_filter` could not be resolved: "
-                               f" {unresolved_filters}.")
-            return [adapter for adapter in adapter_filter if isinstance(adapter, Adapter)]
+    def resolve_adapter_filter(
+        adapter_filter: Optional[Sequence[Adapter | str] | Adapter | str] = None,
+    ) -> List[Adapter]:
+        unresolved_filters = []
+        if adapter_filter is None:
+            return []
+        if isinstance(adapter_filter, str):
+            adapter_filter = [Adapter[adapter_filter]]
+        elif isinstance(adapter_filter, Adapter):
+            adapter_filter = [adapter_filter]
+        for adapter in adapter_filter:
+            try:
+                adapter = CompositionRegistry.sanitize_adapter(adapter)
+            except ValueError:
+                unresolved_filters.append(adapter)
+        if unresolved_filters:
+            rank_zero_warn(
+                "The following adapter names specified in `adapter_filter` could not be resolved: "
+                f" {unresolved_filters}."
+            )
+        return [adapter for adapter in adapter_filter if isinstance(adapter, Adapter)]
 
     @staticmethod
     def sanitize_adapter(adapter: Adapter | str) -> Adapter:
@@ -80,15 +85,17 @@ class CompositionRegistry(dict):
             return default
 
         available_keys = pformat(self.keys()) or "none"
-        err_msg = (f"The composition key `{composition_key}` was not found in the registry."
-                   f" Available valid compositions: {available_keys}")
+        err_msg = (
+            f"The composition key `{composition_key}` was not found in the registry."
+            f" Available valid compositions: {available_keys}"
+        )
         raise KeyError(err_msg)
 
     def remove(self, composition_key: Tuple[Adapter | str]) -> None:
         """Removes the registered adapter composition by name."""
         del self[composition_key]
 
-    def available_compositions(self, adapter_filter: Optional[Sequence[Adapter| str]| Adapter | str] = None) -> Set:
+    def available_compositions(self, adapter_filter: Optional[Sequence[Adapter | str] | Adapter | str] = None) -> Set:
         """Returns a list of registered adapters, optionally filtering by the lead adapter that registered the
         valid composition."""
         if adapter_filter is not None:
@@ -99,10 +106,12 @@ class CompositionRegistry(dict):
     def __str__(self) -> str:
         return f"Registered Adapter Compositions: {pformat(self.keys())}"
 
+
 @runtime_checkable
 class AdapterProtocol(Protocol):
     @classmethod
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None: ...
+
 
 def _register_adapters(registry: Any, method: str, module: ModuleType, parent: Type[object]) -> None:
     for _, member in getmembers(module, isclass):

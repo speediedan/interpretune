@@ -9,6 +9,7 @@ from contextlib import contextmanager
 
 from interpretune.analysis import ColCfg
 
+
 class OpSchemaExt:
     """Provides operation schema extensions for tensor processing."""
 
@@ -27,7 +28,7 @@ class OpSchemaExt:
         if isinstance(field_info, str) or field_info is None:
             field_name = field_info
             dyn_dim = self.dyn_dims.get(field_name)
-            field_info = (field_name, {'dyn_dim': dyn_dim} if dyn_dim is not None else {})
+            field_info = (field_name, {"dyn_dim": dyn_dim} if dyn_dim is not None else {})
         self._field_context.append(field_info)
         try:
             yield
@@ -48,9 +49,9 @@ class OpSchemaExt:
 
     def handle_per_latent_dict(self, value: dict, tensorize_fn) -> dict:
         """Transform per_latent dictionary structure into key-value pairs."""
-        if set(value.keys()) == {'latents', 'per_latent'}:
-            latents = value['latents']
-            per_latent_values = value['per_latent']
+        if set(value.keys()) == {"latents", "per_latent"}:
+            latents = value["latents"]
+            per_latent_values = value["per_latent"]
             if latents is not None and per_latent_values is not None:
                 if len(latents) != len(per_latent_values):
                     raise ValueError(f"Mismatch in latents ({len(latents)}) and values ({len(per_latent_values)})")
@@ -62,7 +63,7 @@ class OpSchemaExt:
         dyn_dim = self.dyn_dims.get(field_name)
         curr_tensor_dim = tensor.dim()
         if dyn_dim is not None and curr_tensor_dim > dyn_dim:
-            if (tensor_shape := getattr(self.features[field_name], 'shape', None)) is not None:
+            if (tensor_shape := getattr(self.features[field_name], "shape", None)) is not None:
                 if len(tensor_shape) == curr_tensor_dim - 1:
                     # operating on all examples so dyn_dim += 1 and we swap dims[1] and dims[dyn_dim] instead of dims[0]
                     dyn_dim += 1
@@ -72,8 +73,10 @@ class OpSchemaExt:
                     dims = list(range(curr_tensor_dim))
                     dims[0], dims[dyn_dim] = dims[dyn_dim], dims[0]
                 else:
-                    raise ValueError(f"Tensor dimension length mismatch detected during dynamic dim deserialization: "
-                                     f"tensor shape to deserialize: {tensor.shape} vs shape serialized: {tensor_shape}")
+                    raise ValueError(
+                        f"Tensor dimension length mismatch detected during dynamic dim deserialization: "
+                        f"tensor shape to deserialize: {tensor.shape} vs shape serialized: {tensor_shape}"
+                    )
             return tensor.permute(*dims)
         return tensor
 
@@ -83,7 +86,7 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
     extensions."""
 
     def __init__(self, features=None, **format_kwargs):
-        col_cfg = format_kwargs.pop('col_cfg', {})
+        col_cfg = format_kwargs.pop("col_cfg", {})
         super().__init__(col_cfg=col_cfg, features=features, **format_kwargs)
 
     def _tensorize(self, value: Any, field_name: Optional[str] = None) -> Any:
@@ -126,16 +129,15 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
             result = {}
             for k, v in data_struct.items():
                 dyn_dim = self.dyn_dims.get(k, None)
-                col_dict = {'dyn_dim': dyn_dim} if dyn_dim is not None else {}
+                col_dict = {"dyn_dim": dyn_dim} if dyn_dim is not None else {}
                 with self.field_context((k, col_dict)):
                     result[k] = self._recursive_tensorize(v)
 
             current_field = self._field_context[-1][0] if self._field_context else None
             if self.is_field_per_latent(current_field):
-                if all(isinstance(v, dict) and set(v.keys()) == {'latents', 'per_latent'} for v in result.values()):
+                if all(isinstance(v, dict) and set(v.keys()) == {"latents", "per_latent"} for v in result.values()):
                     return {
-                        hook_name: self._tensorize(hook_data, current_field)
-                        for hook_name, hook_data in result.items()
+                        hook_name: self._tensorize(hook_data, current_field) for hook_name, hook_data in result.items()
                     }
             return result
         current_field = self._field_context[-1][0] if self._field_context else None
@@ -147,7 +149,7 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
         column = self.python_features_decoder.decode_column(column, pa_table.column_names[0])
         col_name = pa_table.column_names[0]
         dyn_dim = self.dyn_dims.get(col_name, None)
-        col_dict = {'dyn_dim': dyn_dim} if dyn_dim is not None else {}
+        col_dict = {"dyn_dim": dyn_dim} if dyn_dim is not None else {}
         with self.field_context((col_name, col_dict)):
             column = self._recursive_tensorize(column)
         return self._consolidate(column)
@@ -161,7 +163,7 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
         result = {}
         for field_name, field_value in row.items():
             dyn_dim = self.dyn_dims.get(field_name, None)
-            col_dict = {'dyn_dim': dyn_dim} if dyn_dim is not None else {}
+            col_dict = {"dyn_dim": dyn_dim} if dyn_dim is not None else {}
             with self.field_context((field_name, col_dict)):
                 result[field_name] = self._recursive_tensorize(field_value)
 
@@ -176,7 +178,7 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
         result = {}
         for column_name, column_values in batch.items():
             dyn_dim = self.dyn_dims.get(column_name, None)
-            col_dict = {'dyn_dim': dyn_dim} if dyn_dim is not None else {}
+            col_dict = {"dyn_dim": dyn_dim} if dyn_dim is not None else {}
             with self.field_context((column_name, col_dict)):
                 processed_column = self._recursive_tensorize(column_values)
                 result[column_name] = self._consolidate(processed_column)

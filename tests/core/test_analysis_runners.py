@@ -19,19 +19,20 @@ class TestAnalysisRunner:
     @pytest.mark.parametrize(
         "session_fixture, test_cfg_override_kwargs",
         [
-            pytest.param("get_it_session__sl_gpt2_analysis__setup",
-                         {'analysis_cfgs': [AnalysisCfg(output_schema=it.sae_correct_acts)]}),
+            pytest.param(
+                "get_it_session__sl_gpt2_analysis__setup",
+                {"analysis_cfgs": [AnalysisCfg(output_schema=it.sae_correct_acts)]},
+            ),
             # we need to set ignore_manual=True at both the analysis_cfg and the test_cfg levels since we always want
             # test_cfg to override nested configs (analysis_cfg here) but also want to leverage an existing
             # fixture test_cfg in this case.
-            pytest.param("get_it_session__sl_gpt2_analysis__setup",
-                         {'analysis_cfgs': [AnalysisCfg(target_op=it.model_forward, ignore_manual=True)],
-                          'ignore_manual': True}),
+            pytest.param(
+                "get_it_session__sl_gpt2_analysis__setup",
+                {"analysis_cfgs": [AnalysisCfg(target_op=it.model_forward, ignore_manual=True)], "ignore_manual": True},
+            ),
             pytest.param("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis", {}),
         ],
-        ids=["manual_step",
-             "api_generated_step_with_op",
-             "analysis_store_fixt"],
+        ids=["manual_step", "api_generated_step_with_op", "analysis_store_fixt"],
     )
     def test_basic_runner_mode_parity(self, request, session_fixture, test_cfg_override_kwargs):
         fixture = request.getfixturevalue(session_fixture)
@@ -47,9 +48,11 @@ class TestAnalysisRunner:
         assert isinstance(analysis_result, AnalysisStore)
 
         # For the op-based test, verify the generated analysis step was created and used
-        if test_cfg_override_kwargs.get("analysis_configs") and \
-            hasattr(test_cfg_override_kwargs["analysis_configs"][0], "target_op") and \
-                test_cfg_override_kwargs["analysis_configs"][0].target_op is not None:
+        if (
+            test_cfg_override_kwargs.get("analysis_configs")
+            and hasattr(test_cfg_override_kwargs["analysis_configs"][0], "target_op")
+            and test_cfg_override_kwargs["analysis_configs"][0].target_op is not None
+        ):
             # Verify that the dynamically generated analysis step method exists
             assert hasattr(it_session.module, "_generated_analysis_step")
             # Verify the analysis_cfg op was properly set
@@ -94,7 +97,7 @@ class TestAnalysisRunner:
             datamodule=mock_analysis_datamodule,
             limit_analysis_batches=1,
             step_fn="analysis_step",
-            max_epochs=1
+            max_epochs=1,
         )
 
         # Consume the generator
@@ -147,7 +150,7 @@ class TestAnalysisRunner:
                     module=mock_analysis_module,
                     features={},
                     it_format_kwargs={},
-                    gen_kwargs={"module": mock_analysis_module, "datamodule": mock_analysis_datamodule}
+                    gen_kwargs={"module": mock_analysis_module, "datamodule": mock_analysis_datamodule},
                 )
 
             # Verify error handling was called
@@ -175,7 +178,7 @@ class TestAnalysisRunner:
         runner.it_session_end = MagicMock()
 
         # Add a default analysis_cfg with an op to module to prevent the AttributeError
-        if not hasattr(it_session.module, 'analysis_cfg') or it_session.module.analysis_cfg is None:
+        if not hasattr(it_session.module, "analysis_cfg") or it_session.module.analysis_cfg is None:
             it_session.module.analysis_cfg = MagicMock()
             it_session.module.analysis_cfg.op = MagicMock()
 
@@ -196,6 +199,7 @@ class TestAnalysisRunner:
 
                     # Verify phase was set to the correct AllPhases enum
                     from interpretune.protocol import AllPhases
+
                     assert runner.phase == AllPhases.analysis
                     assert result == "test_result"
 
@@ -203,16 +207,19 @@ class TestAnalysisRunner:
                     # For this test we need to use our own implementation to avoid the pickling issues
                     def direct_core_analysis_loop(*args, **kwargs):
                         # Run analysis start hooks
-                        _call_itmodule_hook(it_session.module, hook_name="on_analysis_start",
-                                           hook_msg="Running analysis start hooks")
+                        _call_itmodule_hook(
+                            it_session.module, hook_name="on_analysis_start", hook_msg="Running analysis start hooks"
+                        )
                         # Run analysis end hooks
-                        _call_itmodule_hook(it_session.module, hook_name="on_analysis_end",
-                                           hook_msg="Running analysis end hooks")
+                        _call_itmodule_hook(
+                            it_session.module, hook_name="on_analysis_end", hook_msg="Running analysis end hooks"
+                        )
                         return "test_result"
 
                     # Patch the core_analysis_loop with our direct implementation
-                    with patch("interpretune.runners.analysis.core_analysis_loop",
-                               side_effect=direct_core_analysis_loop):
+                    with patch(
+                        "interpretune.runners.analysis.core_analysis_loop", side_effect=direct_core_analysis_loop
+                    ):
                         result = runner.analysis(step_fn="test_step")
                         #
 
@@ -247,7 +254,7 @@ class TestAnalysisRunner:
                 result = runner.run_analysis(
                     analysis_cfgs=AnalysisCfg(target_op=it.model_forward),
                     cache_dir="/tmp/test_cache",
-                    op_output_dataset_path="/tmp/test_output"
+                    op_output_dataset_path="/tmp/test_output",
                 )
 
                 # Verify the result is directly returned (not in a dict)
@@ -273,7 +280,7 @@ class TestAnalysisRunner:
         mock_run_cfg.datamodule = MagicMock()
         mock_run_cfg._processed_analysis_cfgs = [
             AnalysisCfg(name="analysis1", target_op=it.model_forward),
-            AnalysisCfg(name="analysis2", target_op=it.logit_diffs_base)
+            AnalysisCfg(name="analysis2", target_op=it.logit_diffs_base),
         ]
         mock_run_cfg.cache_dir = None
         mock_run_cfg.op_output_dataset_path = None
@@ -329,6 +336,7 @@ class TestAnalysisRunner:
 
         # Call the function being tested
         from interpretune.runners.analysis import dataset_features_and_format
+
         features, it_format_kwargs, kwargs = dataset_features_and_format(mock_analysis_module, {})
 
         # Verify that features is an empty dict
@@ -354,7 +362,7 @@ class TestAnalysisRunner:
 
         # Case 1: phase='analysis', no analysis_step, has analysis_cfg with op
         runner1 = it.runners.analysis.AnalysisRunner.__new__(it.runners.analysis.AnalysisRunner)
-        runner1.phase = 'analysis'
+        runner1.phase = "analysis"
         runner1.run_cfg = mock_run_cfg
 
         # Remove analysis_step attribute
@@ -382,7 +390,7 @@ class TestAnalysisRunner:
 
         # Case 2: phase='analysis', has generated analysis_step, has analysis_cfg with op
         runner2 = it.runners.analysis.AnalysisRunner.__new__(it.runners.analysis.AnalysisRunner)
-        runner2.phase = 'analysis'
+        runner2.phase = "analysis"
         runner2.run_cfg = mock_run_cfg
 
         # Add analysis_step and set _generated_analysis_step flag
@@ -403,7 +411,7 @@ class TestAnalysisRunner:
 
         # Case 3: phase='analysis', no analysis_step, no analysis_cfg with op
         runner3 = it.runners.analysis.AnalysisRunner.__new__(it.runners.analysis.AnalysisRunner)
-        runner3.phase = 'analysis'
+        runner3.phase = "analysis"
         runner3.run_cfg = mock_run_cfg
 
         # Remove analysis_step
@@ -427,13 +435,13 @@ class TestAnalysisRunner:
 
         # Case 4: phase='analysis', has regular (non-generated) analysis_step
         runner4 = it.runners.analysis.AnalysisRunner.__new__(it.runners.analysis.AnalysisRunner)
-        runner4.phase = 'analysis'
+        runner4.phase = "analysis"
         runner4.run_cfg = mock_run_cfg
 
         # Add analysis_step but no _generated_analysis_step flag
         mock_module.analysis_step = MagicMock()
-        if hasattr(mock_module, '_generated_analysis_step'):
-            delattr(mock_module, '_generated_analysis_step')
+        if hasattr(mock_module, "_generated_analysis_step"):
+            delattr(mock_module, "_generated_analysis_step")
 
         # Run it_init
         with patch("interpretune.runners.SessionRunner.it_init"):
@@ -445,7 +453,7 @@ class TestAnalysisRunner:
 
         # Case 5: phase != 'analysis'
         runner5 = it.runners.analysis.AnalysisRunner.__new__(it.runners.analysis.AnalysisRunner)
-        runner5.phase = 'train'  # Not 'analysis'
+        runner5.phase = "train"  # Not 'analysis'
         runner5.run_cfg = mock_run_cfg
 
         # Remove analysis_step to make sure the check would trigger if it ran

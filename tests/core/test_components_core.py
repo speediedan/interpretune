@@ -21,12 +21,14 @@ from tests.warns import unmatched_warns
 
 
 class TestClassCoreModule:
-
     def test_lr_scheduler_confs(self, get_it_module__core_cust__setup):
         core_cust_it_m = get_it_module__core_cust__setup
-        _call_itmodule_hook(core_cust_it_m, hook_name="configure_optimizers",
-                            hook_msg="initializing optimizers and schedulers",
-                            connect_output=True)
+        _call_itmodule_hook(
+            core_cust_it_m,
+            hook_name="configure_optimizers",
+            hook_msg="initializing optimizers and schedulers",
+            connect_output=True,
+        )
         assert isinstance(core_cust_it_m.lr_scheduler_configs[0], LRSchedulerConfig)
         # validate property mapping
         assert isinstance(core_cust_it_m.lr_schedulers, LRScheduler)
@@ -61,18 +63,21 @@ class TestClassCoreModule:
 
     def test_property_dispatch_warns(self, recwarn, get_it_module__core_cust__setup):
         core_cust_it_m = get_it_module__core_cust__setup
-        _call_itmodule_hook(core_cust_it_m, hook_name="setup",
-                            hook_msg="warning on setup hook that does not support connected output",
-                            connect_output=True)
+        _call_itmodule_hook(
+            core_cust_it_m,
+            hook_name="setup",
+            hook_msg="warning on setup hook that does not support connected output",
+            connect_output=True,
+        )
         EXPECTED_PROP_WARNS = ("Could not find a device reference", "Output received for hook")
         core_cust_it_m.CORE_TO_FRAMEWORK_ATTRS_MAP["_current_epoch"] = ("foo.attr", 42, "FooAttr not set yet.")
         assert core_cust_it_m.current_epoch == 42  # validate unset c2f property mapping handling
         core_cust_it_m._it_state._device = None
-        delattr(core_cust_it_m.model, 'device')
+        delattr(core_cust_it_m.model, "device")
         assert core_cust_it_m.device is None  # validate device unset handling generates warning
         core_cust_it_m.it_cfg._torch_dtype = None
         assert core_cust_it_m.torch_dtype == torch.float32  # validate backup dtype introspection
-        delattr(core_cust_it_m, 'it_cfg')  # ensure unexpected torch_dtype resolution failure is handled gracefully
+        delattr(core_cust_it_m, "it_cfg")  # ensure unexpected torch_dtype resolution failure is handled gracefully
         assert core_cust_it_m.torch_dtype is None
         w_expected = EXPECTED_PROP_WARNS
         if w_expected:
@@ -86,5 +91,5 @@ class TestClassCoreModule:
     def test_config_adapter(self, get_it_session__tl_cust__initonly):
         curr_mod = get_it_session__tl_cust__initonly.it_session.module
         curr_config = curr_mod.it_cfg.tl_cfg.cfg
-        curr_config = curr_mod._make_config_serializable(curr_config, 'dtype')
+        curr_config = curr_mod._make_config_serializable(curr_config, "dtype")
         assert isinstance(curr_config.dtype, str)

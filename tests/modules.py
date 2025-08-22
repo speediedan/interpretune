@@ -21,8 +21,15 @@ from interpretune.utils import rank_zero_only, rank_zero_debug
 from it_examples.experiments.rte_boolq import RTEBoolqDataModule, RTEBoolqModuleMixin, RTEBoolqSteps
 from tests import FinetuningScheduler
 from tests.base_defaults import default_test_task
-from tests.results import (TEST_TASK_NUM_LABELS, TEST_TASK_TEXT_FIELD_MAP, NUM_SAMPLE_ROWS, SAMPLE_POSITION,
-                           DatasetState, save_memory_footprint_results, parity_normalize)
+from tests.results import (
+    TEST_TASK_NUM_LABELS,
+    TEST_TASK_TEXT_FIELD_MAP,
+    NUM_SAMPLE_ROWS,
+    SAMPLE_POSITION,
+    DatasetState,
+    save_memory_footprint_results,
+    parity_normalize,
+)
 from tests.parity_acceptance.expected import memory_footprints
 
 
@@ -30,11 +37,14 @@ from tests.parity_acceptance.expected import memory_footprints
 # Test DataModules
 ################################################################################
 
-class BaseTestDataModule:
 
+class BaseTestDataModule:
     def __init__(self, itdm_cfg: ITDataModuleConfig, force_prepare_data: bool = False) -> None:
-        with mock.patch.multiple('it_examples.experiments.rte_boolq', TASK_NUM_LABELS=TEST_TASK_NUM_LABELS,
-                                 TASK_TEXT_FIELD_MAP=TEST_TASK_TEXT_FIELD_MAP):
+        with mock.patch.multiple(
+            "it_examples.experiments.rte_boolq",
+            TASK_NUM_LABELS=TEST_TASK_NUM_LABELS,
+            TASK_TEXT_FIELD_MAP=TEST_TASK_TEXT_FIELD_MAP,
+        ):
             super().__init__(itdm_cfg=itdm_cfg)
         self.force_prepare_data = force_prepare_data
 
@@ -86,6 +96,7 @@ class BaseTestDataModule:
             rank_zero_debug(f"[PREPARE_DATA] Final dataset_path before save_to_disk: {dataset_path}")
             rank_zero_debug(f"[PREPARE_DATA] Calling save_to_disk with: {dataset_path}")
             import traceback
+
             try:
                 dataset.save_to_disk(dataset_path)
                 rank_zero_debug("[PREPARE_DATA] save_to_disk: SUCCESS")
@@ -94,11 +105,11 @@ class BaseTestDataModule:
                 rank_zero_debug(f"[PREPARE_DATA] Exception type: {type(e).__name__}")
                 traceback.print_exc()
 
-class TestITDataModule(BaseTestDataModule, RTEBoolqDataModule):
-    ...
+
+class TestITDataModule(BaseTestDataModule, RTEBoolqDataModule): ...
+
 
 class SampleDatasetStateMixin:
-
     def sample_unpadded_state(self, rows: List) -> List:
         # we strip padding from sampled rows before collecting ids to make our sample padding-side agnostic
         return [list(filter(lambda v: v != self.tokenizer.pad_token_id, t))[SAMPLE_POSITION] for t in rows]
@@ -126,8 +137,9 @@ class SampleDatasetStateMixin:
         sample_state.extend(self.sample_unpadded_state(sampled_rows))
         return sample_state
 
-class FingerprintTestITDataModule(SampleDatasetStateMixin, BaseTestDataModule, RTEBoolqDataModule):
-    ...
+
+class FingerprintTestITDataModule(SampleDatasetStateMixin, BaseTestDataModule, RTEBoolqDataModule): ...
+
 
 class SampledOutput(NamedTuple):
     """Sampled Output Named Tuple.
@@ -145,6 +157,7 @@ class SampledOutput(NamedTuple):
 # https://bit.ly/toy_transformer. The intention is to ensure we test a more
 # heterogenous set of toy configurable transformer implementations
 ################################################################################
+
 
 @dataclass
 class TestModelArgs:
@@ -198,12 +211,16 @@ class Attention(torch.nn.Module):
         values = values.transpose(1, 2)  # (bsz, n_heads, seq_len, head_dim)
 
         output = torch.nn.functional.scaled_dot_product_attention(
-            queries, keys, values, None,
+            queries,
+            keys,
+            values,
+            None,
             self.dropout_p if self.training else 0,
             self.use_attn_mask,
         )
         output = output.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
         return self.resid_dropout(self.wo(output))
+
 
 class FeedForward(torch.nn.Module):
     def __init__(self, dim, hidden_dim, dropout_p):
@@ -215,6 +232,7 @@ class FeedForward(torch.nn.Module):
 
     def forward(self, x):
         return self.resid_dropout(self.w2(self.gelu(self.w1(x))))
+
 
 class TransformerBlock(torch.nn.Module):
     def __init__(self, args: TestModelArgs):
@@ -228,6 +246,7 @@ class TransformerBlock(torch.nn.Module):
         h = x + self.attention(self.attention_norm(x))
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
+
 
 class Transformer(torch.nn.Module):
     def __init__(self, args: TestModelArgs):
@@ -271,7 +290,7 @@ class Transformer(torch.nn.Module):
         eos_token_id: Optional[int] = None,
         output_logits: bool = False,
         verbose: bool = True,
-        **kwargs
+        **kwargs,
     ) -> Union[SampledOutput, Int[torch.Tensor, "batch pos_plus_new_tokens"]]:
         """Toy generate function to support non-HF/TransformerLens tests with the same interface.
 
@@ -297,19 +316,16 @@ class Transformer(torch.nn.Module):
         stop_tokens = []
         eos_token_for_padding = 0
 
-        tokenizer_has_eos_token = (self.tokenizer is not None and self.tokenizer.eos_token_id is not None)
+        tokenizer_has_eos_token = self.tokenizer is not None and self.tokenizer.eos_token_id is not None
         if eos_token_id is None:
-            assert (tokenizer_has_eos_token), \
-            "Must pass an `eos_token_id` if tokenizer is None or has no eos_token_id"
+            assert tokenizer_has_eos_token, "Must pass an `eos_token_id` if tokenizer is None or has no eos_token_id"
             eos_token_id = self.tokenizer.eos_token_id
 
         stop_tokens = [eos_token_id]
         eos_token_for_padding = eos_token_id
 
         # An array to track which sequences in the batch have finished.
-        finished_sequences = torch.zeros(
-            batch_size, dtype=torch.bool, device=gen_device
-        )
+        finished_sequences = torch.zeros(batch_size, dtype=torch.bool, device=gen_device)
 
         for index in tqdm.tqdm(range(max_new_tokens), disable=not verbose):
             # While generating, we keep generating logits, throw away all but the final logits,
@@ -328,9 +344,7 @@ class Transformer(torch.nn.Module):
             # finished, throw away the generated token and add eos_token_for_padding
             # instead.
             sampled_tokens[finished_sequences] = eos_token_for_padding
-            finished_sequences.logical_or_(
-                torch.isin(sampled_tokens, torch.tensor(stop_tokens).to(gen_device))
-            )
+            finished_sequences.logical_or_(torch.isin(sampled_tokens, torch.tensor(stop_tokens).to(gen_device)))
 
             tokens = torch.cat([tokens, sampled_tokens.unsqueeze(-1)], dim=-1)
 
@@ -342,9 +356,11 @@ class Transformer(torch.nn.Module):
         else:
             return tokens
 
+
 def get_filesystem(path: str | Path, **kwargs: Any) -> AbstractFileSystem:
     fs, _ = url_to_fs(str(path), **kwargs)
     return fs
+
 
 ################################################################################
 # Test Modules
@@ -354,10 +370,19 @@ def get_filesystem(path: str | Path, **kwargs: Any) -> AbstractFileSystem:
 # compositions (e.g. `transformer_lens`, `Lightning`, native PyTorch)
 ################################################################################
 
+
 class StateLogInspectMixin:
-    def __init__(self, *args, expected_exact: Optional[Dict] = None, expected_close: Optional[Dict] = None,
-                expected_memstats: Optional[Tuple] = None, tolerance_map: Optional[Dict] = None,
-                test_alias: Optional[str] = None, state_log_dir: Optional[str] = None, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        expected_exact: Optional[Dict] = None,
+        expected_close: Optional[Dict] = None,
+        expected_memstats: Optional[Tuple] = None,
+        tolerance_map: Optional[Dict] = None,
+        test_alias: Optional[str] = None,
+        state_log_dir: Optional[str] = None,
+        **kwargs,
+    ) -> None:
         self.expected_memstats = expected_memstats
         self.expected_exact = expected_exact
         self.expected_close = expected_close
@@ -403,11 +428,10 @@ class StateLogInspectMixin:
                 assert_close(actual=actual_val, expected=exp, rtol=rtol, atol=atol)
             else:
                 self.dev_expected_close[act] = self.memprofiler.memory_stats[self.expected_memstats[0]][act]
-                memory_footprints[parity_normalize(self.test_alias)]['expected_mem'][act] = actual_val
+                memory_footprints[parity_normalize(self.test_alias)]["expected_mem"][act] = actual_val
 
 
 class BaseTestModule(StateLogInspectMixin):
-
     def __init__(self, *args, req_grad_mask: Optional[Dict] = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.req_grad_mask = req_grad_mask or {}
@@ -423,14 +447,15 @@ class BaseTestModule(StateLogInspectMixin):
         return it_cfg
 
     def load_metric(self) -> None:
-        self.metric = evaluate.load("super_glue", default_test_task,
-                                    experiment_id=self._it_state._init_hparams['experiment_id'])
+        self.metric = evaluate.load(
+            "super_glue", default_test_task, experiment_id=self._it_state._init_hparams["experiment_id"]
+        )
 
     def model_init(self) -> None:
         """If we're not using a from-configuration model, we initialize the model here."""
         self.device = self.it_cfg.model_cfg.get("device", None) or self.device
         self.torch_dtype = self.it_cfg.model_cfg.get("dtype", None) or self.torch_dtype
-        cust_config = TestModelArgs(**self.it_cfg.model_cfg.get('model_args', {}), ctx_handle=self)
+        cust_config = TestModelArgs(**self.it_cfg.model_cfg.get("model_args", {}), ctx_handle=self)
         self.model = Transformer(args=cust_config)
         # TODO: add note to documentation that for now user is responsible for setting device/dtype w model_init
         self.model.to(device=self.device, dtype=self.torch_dtype)
@@ -439,18 +464,21 @@ class BaseTestModule(StateLogInspectMixin):
         # gather device and precision and dataset state info
         device_type = self.device.type if isinstance(self.device, torch.device) else self.output_device.type
         model_dtype = self.model.dtype if hasattr(self.model, "dtype") else self.tl_cfg.dtype
-        return {'device_type': device_type, 'precision': model_dtype, **self._get_dataset_state()}
+        return {"device_type": device_type, "precision": model_dtype, **self._get_dataset_state()}
 
     def _get_dataset_state(self) -> Dict:
-        dataset_state = (self.datamodule.tokenizer.__class__.__name__, self.datamodule.sample_dataset_state(),
-                         self.sampled_fwd_inputs)
-        return {'dataset_state': DatasetState(*dataset_state)}
+        dataset_state = (
+            self.datamodule.tokenizer.__class__.__name__,
+            self.datamodule.sample_dataset_state(),
+            self.sampled_fwd_inputs,
+        )
+        return {"dataset_state": DatasetState(*dataset_state)}
 
     def _epoch_end_validation(self, *args, **kwargs) -> None:
         state_key = self.current_epoch
         current_close = {}
         if self.epoch_losses and self.epoch_losses.get(state_key, None):
-            current_close.update({'loss': self.epoch_losses[state_key]})
+            current_close.update({"loss": self.epoch_losses[state_key]})
         self.inspect_or_assert(self._get_current_exact(), current_close, state_key)
 
     def configure_optimizers(self):
@@ -482,11 +510,13 @@ class BaseTestModule(StateLogInspectMixin):
                     self.epoch_losses[self.current_epoch] = outputs.item()
                 # TODO: add this helper attribute to CoreHelperAttributes?
                 elif callback_metrics := reduce(getattr, "trainer.callback_metrics".split("."), self):
-                    self.epoch_losses[self.current_epoch] = callback_metrics['train_loss'].item()
+                    self.epoch_losses[self.current_epoch] = callback_metrics["train_loss"].item()
             except AttributeError as ae:
-                raise AttributeError(f"Could not find and log loss output for epoch {self.current_epoch}, "
-                                    f"batch {batch_idx}, received: {ae}")
-            assert self.epoch_losses.get(self.current_epoch, None) is not None, 'No loss recorded for current epoch!'
+                raise AttributeError(
+                    f"Could not find and log loss output for epoch {self.current_epoch}, "
+                    f"batch {batch_idx}, received: {ae}"
+                )
+            assert self.epoch_losses.get(self.current_epoch, None) is not None, "No loss recorded for current epoch!"
 
     def on_test_epoch_end(self, *args, **kwargs):
         self._epoch_end_validation(*args, **kwargs)
@@ -504,25 +534,26 @@ class BaseTestModule(StateLogInspectMixin):
         if self.state_log_dir:
             self.log_dev_state()
 
-class TestITModule(BaseTestModule, RTEBoolqSteps, RTEBoolqModuleMixin):
-    ...
+
+class TestITModule(BaseTestModule, RTEBoolqSteps, RTEBoolqModuleMixin): ...
+
 
 class TestFTS(StateLogInspectMixin, FinetuningScheduler):
-
     def on_train_epoch_start(self, trainer, pl_module):
         super().on_train_epoch_start(trainer, pl_module)
         state_key = trainer.current_epoch
-        fts_current_state = {'curr_depth': self.curr_depth,
-                             'depth_remaining': self.depth_remaining,
-                             'ft_epoch': self._fts_state._ft_epoch,
-                             'current_ckpt_depth': self._fts_state._fts_ckpt_metadata["current_ckpt_depth"],
-                             'best_ckpt_depth': self._fts_state._fts_ckpt_metadata["best_ckpt_depth"],
-                             'best_ckpt_pgs_len': len(self._fts_state._fts_ckpt_metadata["best_ckpt_pgs"]),
-                             'curr_thawed_params': len(self._fts_state._curr_thawed_params),
-                             'optim_pg_len': len(self._internal_optimizer_metadata[0]),
-                             'ckpt_cback_current_ckpt_depth': trainer.checkpoint_callback.current_ckpt_depth,
-                             'ckpt_cback_best_ckpt_depth': trainer.checkpoint_callback.best_ckpt_depth,
-                             }
+        fts_current_state = {
+            "curr_depth": self.curr_depth,
+            "depth_remaining": self.depth_remaining,
+            "ft_epoch": self._fts_state._ft_epoch,
+            "current_ckpt_depth": self._fts_state._fts_ckpt_metadata["current_ckpt_depth"],
+            "best_ckpt_depth": self._fts_state._fts_ckpt_metadata["best_ckpt_depth"],
+            "best_ckpt_pgs_len": len(self._fts_state._fts_ckpt_metadata["best_ckpt_pgs"]),
+            "curr_thawed_params": len(self._fts_state._curr_thawed_params),
+            "optim_pg_len": len(self._internal_optimizer_metadata[0]),
+            "ckpt_cback_current_ckpt_depth": trainer.checkpoint_callback.current_ckpt_depth,
+            "ckpt_cback_best_ckpt_depth": trainer.checkpoint_callback.best_ckpt_depth,
+        }
         current_close = {}
         self.inspect_or_assert(fts_current_state, current_close, state_key)
 

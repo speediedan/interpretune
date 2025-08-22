@@ -14,8 +14,10 @@ import torch
 
 _DEVICE = Union[torch.device, str, int]
 
-def to_device(device: _DEVICE, obj: Union[torch.nn.Module, torch.Tensor, Any]) -> Union[torch.nn.Module, torch.Tensor,
-                                                                                        Any]:
+
+def to_device(
+    device: _DEVICE, obj: Union[torch.nn.Module, torch.Tensor, Any]
+) -> Union[torch.nn.Module, torch.Tensor, Any]:
     r"""Move a :class:`torch.nn.Module` or a collection of tensors to the current device, if it is not already on
     that device.
 
@@ -30,6 +32,7 @@ def to_device(device: _DEVICE, obj: Union[torch.nn.Module, torch.Tensor, Any]) -
         obj.to(device)
         return obj
     return move_data_to_device(obj, device=device)
+
 
 def move_data_to_device(batch: Any, device: _DEVICE) -> Any:
     """Transfers a collection of data to the given device. Any object that defines a method ``to(device)`` will be

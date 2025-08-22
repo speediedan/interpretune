@@ -20,6 +20,7 @@ from interpretune.config import ITLensCustomConfig
 # Mixins to support Transformer Lens in different adapter contexts
 ################################################################################
 
+
 class TLensAttributeMixin:
     @property
     def tl_cfg(self) -> Optional[HookedTransformerConfig]:
@@ -34,8 +35,11 @@ class TLensAttributeMixin:
     @property
     def device(self) -> Optional[torch.device]:
         try:
-            device = getattr(self._it_state, "_device", None) or getattr(self.tl_cfg, "device", None) or \
-                reduce(getattr, "model.device".split("."), self)
+            device = (
+                getattr(self._it_state, "_device", None)
+                or getattr(self.tl_cfg, "device", None)
+                or reduce(getattr, "model.device".split("."), self)
+            )
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
             device = None
@@ -51,8 +55,10 @@ class TLensAttributeMixin:
         try:
             device = get_device_for_block_index(block_index, self.tl_cfg)
         except (AttributeError, AssertionError) as ae:
-            rank_zero_warn(f"Problem determining appropriate device for block {block_index} from TransformerLens"
-                           f" config. Received: {ae}")
+            rank_zero_warn(
+                f"Problem determining appropriate device for block {block_index} from TransformerLens"
+                f" config. Received: {ae}"
+            )
             device = None
         return device
 
@@ -81,16 +87,18 @@ class BaseITLensModule(BaseITModule):
 
     def hf_pretrained_model_init(self) -> None:
         # for TL, only a subset of the HF pretrained init flow used since the model is replaced with a HookedTransformer
-        access_token = os.environ[self.it_cfg.os_env_model_auth_key.upper()] if self.it_cfg.os_env_model_auth_key \
-            else None
+        access_token = (
+            os.environ[self.it_cfg.os_env_model_auth_key.upper()] if self.it_cfg.os_env_model_auth_key else None
+        )
         quantization_config = super()._hf_configure_quantization()
         super()._update_hf_pretrained_cfg(quantization_config)
         cust_config, _ = super()._hf_gen_cust_config(access_token)
         self.model = self.hf_configured_model_init(cust_config, access_token)
         self._convert_hf_to_tl()
 
-    def hf_configured_model_init(self, cust_config: PretrainedConfig | ITLensCustomConfig,
-                                  access_token: Optional[str] = None) -> torch.nn.Module:
+    def hf_configured_model_init(
+        self, cust_config: PretrainedConfig | ITLensCustomConfig, access_token: Optional[str] = None
+    ) -> torch.nn.Module:
         # usually makes sense to init the HookedTransfomer (empty) and pretrained HF model weights on cpu
         # versus moving them both to GPU (may make sense to explore meta device usage for model definition
         # in the future, only materializing parameter by parameter during loading from pretrained weights
@@ -98,12 +106,15 @@ class BaseITLensModule(BaseITModule):
         # TODO: add warning that TransformerLens only specifying a single device via device  is supported
         # (though the model will automatically be moved to multiple devices if n_devices > 1)
         cust_config.num_labels = self.it_cfg.num_labels
-        if (dmap := self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs.get('device_map', None)) != 'cpu':
-            rank_zero_warn('Overriding `device_map` passed to TransformerLens to transform pretrained weights on'
-                        f' cpu prior to moving the model to target device: {dmap}')
-            self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs['device_map'] = "cpu"
-        model = self.it_cfg.model_class.from_pretrained(**self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs,
-                                                        config=cust_config, token=access_token)
+        if (dmap := self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs.get("device_map", None)) != "cpu":
+            rank_zero_warn(
+                "Overriding `device_map` passed to TransformerLens to transform pretrained weights on"
+                f" cpu prior to moving the model to target device: {dmap}"
+            )
+            self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs["device_map"] = "cpu"
+        model = self.it_cfg.model_class.from_pretrained(
+            **self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs, config=cust_config, token=access_token
+        )
         # perhaps explore initializing on the meta device and then materializing as needed layer by layer during
         # loading/processing into hookedtransformer
         # with torch.device("meta"):
@@ -124,7 +135,7 @@ class BaseITLensModule(BaseITModule):
         Returns:
             dict: The pruned dictionary
         """
-        prune_list = prune_list or  ['hf_model', 'tokenizer']
+        prune_list = prune_list or ["hf_model", "tokenizer"]
         pruned_dict = deepcopy(self.it_cfg.tl_cfg.__dict__)
 
         for key in prune_list:
@@ -154,11 +165,14 @@ class BaseITLensModule(BaseITModule):
         # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
         # TODO: serialize tl_config
         if self.it_cfg.hf_from_pretrained_cfg:
-            self._it_state._init_hparams.update({"tl_cfg": self._make_config_serializable(self.it_cfg.tl_cfg, ['device',
-                                                                                                          'dtype']),})
+            self._it_state._init_hparams.update(
+                {
+                    "tl_cfg": self._make_config_serializable(self.it_cfg.tl_cfg, ["device", "dtype"]),
+                }
+            )
         else:
             serializable_tl_cfg = deepcopy(self.it_cfg.tl_cfg)
-            serializable_tl_cfg.cfg = self._make_config_serializable(self.it_cfg.tl_cfg.cfg, ['device', 'dtype'])
+            serializable_tl_cfg.cfg = self._make_config_serializable(self.it_cfg.tl_cfg.cfg, ["device", "dtype"])
             self._it_state._init_hparams.update({"tl_cfg": serializable_tl_cfg})
         super()._capture_hyperparameters()
 
@@ -171,35 +185,48 @@ class BaseITLensModule(BaseITModule):
 # Transformer Lens Module Composition
 ################################################################################
 
-class TransformerLensAdapter(TLensAttributeMixin):
 
+class TransformerLensAdapter(TLensAttributeMixin):
     @classmethod
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
-        adapter_ctx_registry.register(Adapter.transformer_lens, component_key = "datamodule",
-                                        adapter_combination=(Adapter.core, Adapter.transformer_lens),
-                                        composition_classes=(ITDataModule,),
-                                        description="Transformer Lens adapter that can be composed with core and l...",
+        adapter_ctx_registry.register(
+            Adapter.transformer_lens,
+            component_key="datamodule",
+            adapter_combination=(Adapter.core, Adapter.transformer_lens),
+            composition_classes=(ITDataModule,),
+            description="Transformer Lens adapter that can be composed with core and l...",
         )
-        adapter_ctx_registry.register(Adapter.transformer_lens, component_key = "datamodule",
-                                        adapter_combination=(Adapter.lightning, Adapter.transformer_lens),
-                                        composition_classes=(ITDataModule, LightningDataModule),
-                                        description="Transformer Lens adapter that can be composed with core and l...",
+        adapter_ctx_registry.register(
+            Adapter.transformer_lens,
+            component_key="datamodule",
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),
+            composition_classes=(ITDataModule, LightningDataModule),
+            description="Transformer Lens adapter that can be composed with core and l...",
         )
-        adapter_ctx_registry.register(Adapter.transformer_lens, component_key = "module",
-                                        adapter_combination=(Adapter.core, Adapter.transformer_lens),
-                                        composition_classes=(ITLensModule,),
-                                        description="Transformer Lens adapter that can be composed with core and l...",
+        adapter_ctx_registry.register(
+            Adapter.transformer_lens,
+            component_key="module",
+            adapter_combination=(Adapter.core, Adapter.transformer_lens),
+            composition_classes=(ITLensModule,),
+            description="Transformer Lens adapter that can be composed with core and l...",
         )
-        adapter_ctx_registry.register(Adapter.transformer_lens, component_key = "module",
-                                        adapter_combination=(Adapter.lightning, Adapter.transformer_lens),
-                                        composition_classes=(TLensAttributeMixin, BaseITLensModule, LightningAdapter,
-                                                             BaseITModule, LightningModule),
-                                        description="Transformer Lens adapter that can be composed with core and l...",
+        adapter_ctx_registry.register(
+            Adapter.transformer_lens,
+            component_key="module",
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),
+            composition_classes=(
+                TLensAttributeMixin,
+                BaseITLensModule,
+                LightningAdapter,
+                BaseITModule,
+                LightningModule,
+            ),
+            description="Transformer Lens adapter that can be composed with core and l...",
         )
 
     def batch_to_device(self, batch) -> BatchEncoding:
         move_data_to_device(batch, self.input_device)
         return batch
 
-class ITLensModule(TransformerLensAdapter, CoreHelperAttributes, BaseITLensModule):
-    ...
+
+class ITLensModule(TransformerLensAdapter, CoreHelperAttributes, BaseITLensModule): ...

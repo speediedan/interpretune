@@ -26,13 +26,13 @@ def test_generate_pip_compile_inputs_writes_files(tmp_path):
             "optional-dependencies": {
                 "examples": ["example_pkg >=0.1", "datasets >= 2.0", "some_transitive_dep"],
                 "test": ["test_pkg >=1.0", "coverage >= 6.0"],
-                "lightning": ["bitsandbytes", "peft", "finetuning-scheduler >= 2.5.0"]
+                "lightning": ["bitsandbytes", "peft", "finetuning-scheduler >= 2.5.0"],
             },
         },
         "tool": {
             "ci_pinning": {
                 "post_upgrades": {"datasets": "4.0.0", "fsspec": "2025.3.0"},
-                "platform_dependent": ["bitsandbytes"]
+                "platform_dependent": ["bitsandbytes"],
             }
         },
     }
@@ -67,7 +67,7 @@ def test_generate_pip_compile_inputs_writes_files(tmp_path):
     assert "peft" in req_in  # key package from lightning group
     assert "finetuning-scheduler" in req_in  # key package from lightning group
     assert "datasets" not in req_in  # excluded as post_upgrade
-    assert "fsspec" not in req_in    # excluded as post_upgrade
+    assert "fsspec" not in req_in  # excluded as post_upgrade
     assert "bitsandbytes" not in req_in  # excluded as platform_dependent
     # All packages from examples and test groups should be included (test and examples are included completely)
     assert "example_pkg" in req_in  # from examples group (included completely)

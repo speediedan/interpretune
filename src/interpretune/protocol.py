@@ -1,6 +1,21 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import (Protocol, runtime_checkable, Union, TypeAlias, NamedTuple, TYPE_CHECKING, Callable, Optional,
-                    Any, Sequence, _ProtocolMeta, get_args, Mapping, TypedDict, TypeVar)
+from typing import (
+    Protocol,
+    runtime_checkable,
+    Union,
+    TypeAlias,
+    NamedTuple,
+    TYPE_CHECKING,
+    Callable,
+    Optional,
+    Any,
+    Sequence,
+    _ProtocolMeta,
+    get_args,
+    Mapping,
+    TypedDict,
+    TypeVar,
+)
 from os import PathLike
 from types import UnionType
 from enum import auto, Enum, EnumMeta
@@ -30,6 +45,7 @@ StrOrPath: TypeAlias = Union[str, PathLike]
 # Interpretune Enhanced Enums
 ################################################################################
 
+
 class AutoStrEnum(Enum):
     def _generate_next_value_(name, _start, _count, _last_values) -> str:  # type: ignore
         return name
@@ -54,8 +70,9 @@ class Adapter(AutoStrEnum):
     #                  in combination with any supported and specified adapter.
     circuit_tracer = auto()
 
-    def __lt__(self, other: 'Adapter') -> bool:
+    def __lt__(self, other: "Adapter") -> bool:
         return self.value < other.value
+
 
 # DerivedEnumMeta is a custom metaclass that adds enum members from an input set.
 class DerivedEnumMeta(EnumMeta):  # change EnumMeta alias to EnumType when 3.11 python is minimum
@@ -80,8 +97,9 @@ class DerivedEnumMeta(EnumMeta):  # change EnumMeta alias to EnumType when 3.11 
                     classdict[member] = auto()
         return super().__new__(mcls, clsname, bases, classdict)
 
-class SetDerivedEnum(AutoStrEnum, metaclass=DerivedEnumMeta):
-    ...
+
+class SetDerivedEnum(AutoStrEnum, metaclass=DerivedEnumMeta): ...
+
 
 ################################################################################
 # Core Enums
@@ -90,24 +108,29 @@ class SetDerivedEnum(AutoStrEnum, metaclass=DerivedEnumMeta):
 # TODO: consider switching these to a data structure that natively allows for more flexible DRY composition
 #       (currently preferring a custom enum for IDE autocompletion etc.)
 
-CORE_PHASES = frozenset(['train', 'validation', 'test', 'predict'])
-EXT_PHASES = frozenset(['analysis'])
+CORE_PHASES = frozenset(["train", "validation", "test", "predict"])
+EXT_PHASES = frozenset(["analysis"])
 ALL_PHASES = CORE_PHASES.union(EXT_PHASES)
+
 
 class CorePhases(SetDerivedEnum):
     # The _input_set class attribute is used by DerivedEnumMeta to generate enum members.
     _input_set = CORE_PHASES
 
+
 class CoreSteps(SetDerivedEnum):
     _input_set = CORE_PHASES
     _transform = lambda x: "training_step" if x == "train" else f"{x}_step"
 
+
 class AllPhases(SetDerivedEnum):
     _input_set = ALL_PHASES
+
 
 class AllSteps(SetDerivedEnum):
     _input_set = ALL_PHASES
     _transform = lambda x: "training_step" if x == "train" else f"{x}_step"
+
 
 ################################################################################
 # Framework Compatibility helper types
@@ -116,12 +139,14 @@ class AllSteps(SetDerivedEnum):
 
 _DictKey = TypeVar("_DictKey")
 
+
 @runtime_checkable
 class Steppable(Protocol):
     """To structurally type ``optimizer.step()``"""
 
     # Inferred from `torch.optim.optimizer.pyi`
     def step(self, closure: Callable[[], float] | None = ...) -> float | None: ...
+
 
 @runtime_checkable
 class Optimizable(Steppable, Protocol):
@@ -178,9 +203,11 @@ class ReduceLROnPlateau(_Stateful[str], Protocol):
 
     def step(self, metrics: float | int | Tensor, epoch: int | None = None) -> None: ...
 
+
 STEP_OUTPUT = Optional[Union[Tensor, Mapping[str, Any]]]
 
 LRSchedulerTypeUnion = Union[torch.optim.lr_scheduler.LRScheduler, torch.optim.lr_scheduler.ReduceLROnPlateau]
+
 
 @dataclass
 class LRSchedulerConfig:
@@ -225,12 +252,13 @@ OptimizerLRScheduler = Optional[
 
 ArgsType = Optional[Union[list[str], dict[str, Any], Namespace]]
 
-AnyDataClass = TypeVar('AnyDataClass', bound=dataclass)
+AnyDataClass = TypeVar("AnyDataClass", bound=dataclass)
 
 
 ################################################################################
 # Core Protocols
 ################################################################################
+
 
 @runtime_checkable
 class DataPrepable(Protocol):
@@ -239,21 +267,26 @@ class DataPrepable(Protocol):
 
     def prepare_data(self, target_model: torch.nn.Module | None = None) -> None: ...
 
+
 @runtime_checkable
 class TrainLoadable(DataPrepable, Protocol):
     def train_dataloader(self) -> torch.utils.data.DataLoader: ...
+
 
 @runtime_checkable
 class ValLoadable(DataPrepable, Protocol):
     def val_dataloader(self) -> torch.utils.data.DataLoader: ...
 
+
 @runtime_checkable
 class TestLoadable(DataPrepable, Protocol):
     def test_dataloader(self) -> torch.utils.data.DataLoader: ...
 
+
 @runtime_checkable
 class PredictLoadable(DataPrepable, Protocol):
     def predict_dataloader(self) -> torch.utils.data.DataLoader: ...
+
 
 @runtime_checkable
 class DataModuleInvariants(Protocol):
@@ -261,21 +294,26 @@ class DataModuleInvariants(Protocol):
 
     def setup(self, *args, **kwargs) -> None: ...
 
+
 @runtime_checkable
 class TrainSteppable(Protocol):
     def training_step(self, *args, **kwargs) -> STEP_OUTPUT: ...
+
 
 @runtime_checkable
 class ValidationSteppable(Protocol):
     def validation_step(self, *args, **kwargs) -> STEP_OUTPUT: ...
 
+
 @runtime_checkable
 class TestSteppable(Protocol):
     def test_step(self, *args, **kwargs) -> STEP_OUTPUT: ...
 
+
 @runtime_checkable
 class PredictSteppable(Protocol):
     def predict_step(self, *args, **kwargs) -> STEP_OUTPUT: ...
+
 
 @runtime_checkable
 class ModuleInvariants(Protocol):
@@ -285,37 +323,43 @@ class ModuleInvariants(Protocol):
 
     def configure_optimizers(self) -> OptimizerLRScheduler | None: ...
 
+
 # N.B. runtime protocol validation will check for attribute presence but not validate signatures etc. With this
 # protocol-based approach we're providing rudimentary functional checks while erroring on the side of flexibility
 ModuleSteppable: TypeAlias = TrainSteppable | ValidationSteppable | TestSteppable | PredictSteppable
 DataModuleInitable: TypeAlias = TrainLoadable | ValLoadable | TestLoadable | PredictLoadable
 
-def gen_protocol_variants(supported_sub_protocols: UnionType,
-                          base_protocols: _ProtocolMeta | tuple[_ProtocolMeta]) -> UnionType:
+
+def gen_protocol_variants(
+    supported_sub_protocols: UnionType, base_protocols: _ProtocolMeta | tuple[_ProtocolMeta]
+) -> UnionType:
     protocol_components = []
     if not isinstance(base_protocols, tuple):
         base_protocols = (base_protocols,)
     for sub_proto in get_args(supported_sub_protocols):
-        supported_cls = _ProtocolMeta(f'Built{sub_proto.__name__}', (*base_protocols, sub_proto, Protocol), {})
+        supported_cls = _ProtocolMeta(f"Built{sub_proto.__name__}", (*base_protocols, sub_proto, Protocol), {})
         supported_cls._is_runtime_protocol = True
         supported_cls.__module__ = inspect.getmodule(inspect.currentframe().f_back).__name__
         protocol_components.append(supported_cls)
     gen_type_alias = " | ".join([f"protocol_components[{i}]" for i in range(len(protocol_components))])
     return eval(gen_type_alias)
 
+
 # We generate valid datamodule/module protocol variants by composing their respective base protocols with the set of
 # valid subprotocols over which `any` semantics apply.
 ITDataModuleProtocol: TypeAlias = gen_protocol_variants(DataModuleInitable, DataModuleInvariants)  # type: ignore
-ITModuleProtocol: TypeAlias = gen_protocol_variants(ModuleSteppable, ModuleInvariants)   # type: ignore
+ITModuleProtocol: TypeAlias = gen_protocol_variants(ModuleSteppable, ModuleInvariants)  # type: ignore
 # TODO: ensure protocol variants are explicitly documented and possibly add a section describing the approach to
 #       supported protocol variant generation. Also add an issue tracker for this approach to solicit ideas for a
 #       cleaner/more pythonic approach. As Python structural subtyping features are still evolving, if a cleaner and
 #       more pythonic approach isn't available now, one will hopefully be available in the near future.
 InterpretunableType: TypeAlias = Union[ITDataModuleProtocol, ITModuleProtocol]
 
+
 class InterpretunableTuple(NamedTuple):
     datamodule: ITDataModuleProtocol | None = None
     module: ITModuleProtocol | None = None
+
 
 ################################################################################
 # Analysis Protocols
@@ -323,32 +367,44 @@ class InterpretunableTuple(NamedTuple):
 
 NamesFilter = Optional[Union[Callable[[str], bool], Sequence[str], str]]
 
+
 class SAEFqn(NamedTuple):
     release: str
     sae_id: str
 
+
 class AnalysisOpProtocol(Protocol):
     """Protocol defining required interface for analysis operations."""
+
     name: str
     description: str
     output_schema: dict
     input_schema: Optional[dict]
 
-    def save_batch(self, analysis_batch: BaseAnalysisBatchProtocol, batch: BatchEncoding,
-                  tokenizer: PreTrainedTokenizerBase | None = None,
-                  save_prompts: bool = False, save_tokens: bool = False,
-                  decode_kwargs: Optional[dict] = None) -> BaseAnalysisBatchProtocol: ...
+    def save_batch(
+        self,
+        analysis_batch: BaseAnalysisBatchProtocol,
+        batch: BatchEncoding,
+        tokenizer: PreTrainedTokenizerBase | None = None,
+        save_prompts: bool = False,
+        save_tokens: bool = False,
+        decode_kwargs: Optional[dict] = None,
+    ) -> BaseAnalysisBatchProtocol: ...
+
 
 class SAEDictProtocol(Protocol):
     """Protocol for SAE analysis dictionary operations."""
+
     def shapes(self) -> dict[str, torch.Size | list[torch.Size]]: ...
-    def batch_join(self, across_saes: bool = False,
-                  join_fn: Callable = torch.cat) -> SAEDictProtocol | list[torch.Tensor]: ...
-    def apply_op_by_sae(self, operation: Callable | str,
-                       *args, **kwargs) -> SAEDictProtocol: ...
+    def batch_join(
+        self, across_saes: bool = False, join_fn: Callable = torch.cat
+    ) -> SAEDictProtocol | list[torch.Tensor]: ...
+    def apply_op_by_sae(self, operation: Callable | str, *args, **kwargs) -> SAEDictProtocol: ...
+
 
 class AnalysisStoreProtocol(Protocol):
     """Protocol verifying core analysis store functionality."""
+
     dataset: HfDataset
     streaming: bool
     cache_dir: str | None
@@ -361,8 +417,10 @@ class AnalysisStoreProtocol(Protocol):
     def __getattr__(self, name: str) -> list: ...
     def reset_dataset(self) -> None: ...
 
+
 class AnalysisCfgProtocol(Protocol):
     """Protocol verifying core analysis configuration functionality."""
+
     output_store: AnalysisStoreProtocol
     input_store: AnalysisStoreProtocol
     op: AnalysisOpProtocol
@@ -376,30 +434,31 @@ class AnalysisCfgProtocol(Protocol):
     decode_kwargs: dict
 
     def check_add_default_hooks(
-        self, op: AnalysisOpProtocol,
-        names_filter: str | Callable | None,
-        cache_dict: dict | None
+        self, op: AnalysisOpProtocol, names_filter: str | Callable | None, cache_dict: dict | None
     ) -> tuple[list[tuple], list[tuple]]: ...
+
 
 class SAEAnalysisProtocol(Protocol):
     """Protocol for SAE analysis components requiring a subset of SAEAnalysisMixin methods."""
 
     def construct_names_filter(
-        self,
-        target_layers: list[int],
-        sae_hook_match_fn: Callable[[str, list[int] | None], bool]
+        self, target_layers: list[int], sae_hook_match_fn: Callable[[str, list[int] | None], bool]
     ) -> NamesFilter: ...
+
 
 class ActivationCacheProtocol(Protocol):
     """Core activation cache protocol."""
+
     cache_dict: dict[str, torch.Tensor]
     has_batch_dim: bool
     has_embed: bool
     has_pos_embed: bool
 
     def __getitem__(self, key: str | tuple) -> torch.Tensor: ...
-    def stack_activation(self, activation_name: str, layer: int = -1,
-                        sublayer_type: str | None = None) -> torch.Tensor: ...
+    def stack_activation(
+        self, activation_name: str, layer: int = -1, sublayer_type: str | None = None
+    ) -> torch.Tensor: ...
+
 
 class BaseAnalysisBatchProtocol(Protocol):
     """Base protocol defining methods all analysis batches should implement.
@@ -407,8 +466,10 @@ class BaseAnalysisBatchProtocol(Protocol):
     Subclasses should define which dataset columns will have attribute-based access enabled for associated AnalysisStore
     objects.
     """
+
     def update(self, **kwargs) -> None: ...
     def to_cpu(self) -> None: ...
+
 
 class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):
     """Default analysis batch protocol defining which dataset columns should have attribute-based access enabled
@@ -445,6 +506,7 @@ class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):
         prompts (Optional[list[str]]):
             Text prompts
     """
+
     logit_diffs: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
     answer_logits: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
     loss: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
@@ -476,6 +538,7 @@ class CircuitAnalysisBatchProtocol(DefaultAnalysisBatchProtocol):
         circuit_prompts (Optional[list[str]]):
             Prompts used for circuit attribution (may differ from input prompts)
     """
+
     attribution_graphs: Optional[list]
     graph_metadata: Optional[list[dict]]
     graph_paths: Optional[list[str]]

@@ -8,8 +8,9 @@ from interpretune.protocol import OptimizerLRScheduler, STEP_OUTPUT
 if TYPE_CHECKING:
     from interpretune.config import ITConfig, ITState
 
+
 class BaseITHooks:
-    """" IT Protocol hooks implemented by BaseITModule."""
+    """ " IT Protocol hooks implemented by BaseITModule."""
 
     # if you override these in your module, ensure you cooperatively call super() if you want to retain
     # the relevant BaseITModule hook functionality

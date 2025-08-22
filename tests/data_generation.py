@@ -16,8 +16,12 @@ import torch
 from transformer_lens import ActivationCache
 from datasets import Array2D, Array3D, Value, Sequence as DatasetsSequence
 
-from interpretune.analysis.core import (get_module_dims, schema_to_features, get_filtered_sae_hook_keys,
-                                        _check_names_filter_available)
+from interpretune.analysis.core import (
+    get_module_dims,
+    schema_to_features,
+    get_filtered_sae_hook_keys,
+    _check_names_filter_available,
+)
 
 
 def _generate_cache_data(module, field, cfg, num_batches, dim_vars, is_grad_cache=False):
@@ -35,17 +39,20 @@ def _generate_cache_data(module, field, cfg, num_batches, dim_vars, is_grad_cach
         List of ActivationCache objects or None if generation not possible
     """
     # Check if we have what we need to generate cache data
-    if not hasattr(module, 'sae_handles') or len(module.sae_handles) == 0 \
-        or not _check_names_filter_available(module, field, cfg):
+    if (
+        not hasattr(module, "sae_handles")
+        or len(module.sae_handles) == 0
+        or not _check_names_filter_available(module, field, cfg)
+    ):
         if cfg.required:
             raise ValueError(f"Field '{field}' requires module.sae_handles, but it is missing or empty")
         return None  # Skip this field if not required
 
-    batch_size = dim_vars['batch_size']
-    max_seq_len = dim_vars['max_seq_len']
+    batch_size = dim_vars["batch_size"]
+    max_seq_len = dim_vars["max_seq_len"]
 
     # Use the actual sequence length from the batch if available
-    seq_len = dim_vars.get('target_seq_len', max_seq_len)
+    seq_len = dim_vars.get("target_seq_len", max_seq_len)
     # Use minimum of max_seq_len and actual sequence length
     seq_len = min(seq_len, max_seq_len)
 
@@ -89,8 +96,11 @@ def _generate_per_sae_hook_data(module, field, cfg, num_batches, dim_vars, prede
         List of dictionaries mapping hook paths to appropriate values
     """
     # Check if we have what we need to generate hook data
-    if not hasattr(module, 'sae_handles') or len(module.sae_handles) == 0 \
-        or not _check_names_filter_available(module, field, cfg):
+    if (
+        not hasattr(module, "sae_handles")
+        or len(module.sae_handles) == 0
+        or not _check_names_filter_available(module, field, cfg)
+    ):
         if cfg.required:
             raise ValueError(f"Field '{field}' requires module.sae_handles, but it is missing or empty")
         return None  # Skip this field if not required
@@ -122,8 +132,8 @@ def _generate_per_sae_hook_data(module, field, cfg, num_batches, dim_vars, prede
                 elif not cfg.non_tensor:
                     # Generate tensor data (e.g., correct_activations)
                     # Use the actual sequence length if available
-                    seq_len = dim_vars.get('target_seq_len', dim_vars['max_seq_len'])
-                    seq_len = min(seq_len, dim_vars['max_seq_len'])
+                    seq_len = dim_vars.get("target_seq_len", dim_vars["max_seq_len"])
+                    seq_len = min(seq_len, dim_vars["max_seq_len"])
 
                     # For tensor fields, create appropriate shape based on field requirements
                     if cfg.sequence_type:
@@ -155,8 +165,11 @@ def _generate_per_latent_data(module, field, cfg, num_batches, dim_vars, predefi
         List of dictionaries with proper per_latent structure
     """
     # Check if we have what we need to generate latent data
-    if not hasattr(module, 'sae_handles') or len(module.sae_handles) == 0 \
-        or not _check_names_filter_available(module, field, cfg):
+    if (
+        not hasattr(module, "sae_handles")
+        or len(module.sae_handles) == 0
+        or not _check_names_filter_available(module, field, cfg)
+    ):
         if cfg.required:
             raise ValueError(f"Field '{field}' requires module.sae_handles, but it is missing or empty")
         return None  # Skip this field if not required
@@ -164,7 +177,7 @@ def _generate_per_latent_data(module, field, cfg, num_batches, dim_vars, predefi
     # These are available but not currently used - keeping for future use
     # batch_size = dim_vars['batch_size']
     # max_answer_tokens = dim_vars['max_answer_tokens']
-    num_classes = dim_vars['num_classes']
+    num_classes = dim_vars["num_classes"]
     batch_data_list = []
     dtype = cfg.array_dtype or cfg.datasets_dtype
 
@@ -194,12 +207,18 @@ def _generate_per_latent_data(module, field, cfg, num_batches, dim_vars, predefi
                     per_latent_data = []
                     for _ in range(num_latents):
                         if len(shape) == 2:
-                            tensor = torch.randn(*shape) if dtype.startswith("float") else torch.randint(0, num_classes,
-                                                                                                        shape)
+                            tensor = (
+                                torch.randn(*shape)
+                                if dtype.startswith("float")
+                                else torch.randint(0, num_classes, shape)
+                            )
                             per_latent_data.append(tensor.tolist())
                         elif len(shape) == 3:
-                            tensor = torch.randn(*shape) if dtype.startswith("float") else torch.randint(0, num_classes,
-                                                                                                        shape)
+                            tensor = (
+                                torch.randn(*shape)
+                                if dtype.startswith("float")
+                                else torch.randint(0, num_classes, shape)
+                            )
                             per_latent_data.append(tensor.tolist())
                 elif cfg.sequence_type:
                     # Simple sequence per latent
@@ -222,10 +241,7 @@ def _generate_per_latent_data(module, field, cfg, num_batches, dim_vars, predefi
                         per_latent_data.append(val)
 
                 # Create the per_latent structure
-                hook_dict[hook_key] = {
-                    'latents': latent_indices,
-                    'per_latent': per_latent_data
-                }
+                hook_dict[hook_key] = {"latents": latent_indices, "per_latent": per_latent_data}
 
         batch_data_list.append(hook_dict)
 
@@ -234,10 +250,11 @@ def _generate_per_latent_data(module, field, cfg, num_batches, dim_vars, predefi
 
 # Define mapping from field names to generator functions
 INTERMEDIATE_FIELD_GENERATORS = {
-    'cache': _generate_cache_data,
-    'grad_cache': partial(_generate_cache_data, is_grad_cache=True)
+    "cache": _generate_cache_data,
+    "grad_cache": partial(_generate_cache_data, is_grad_cache=True),
     # More field generators can be added here as needed
 }
+
 
 def should_process_field(field, cfg, required_only, override_req_cols=None):
     """Determine if a field should be processed based on required status and overrides.
@@ -282,14 +299,21 @@ def _infer_high_value_from_cfg(cfg, dim_vars):
         for dim in cfg.array_shape:
             if isinstance(dim, str) and dim in dim_vars:
                 # If a dimension is a vocab_size or num_classes, use that as high value
-                if dim in ['vocab_size', 'num_classes']:
+                if dim in ["vocab_size", "num_classes"]:
                     return dim_vars[dim]
-    return dim_vars.get('num_classes', default_high)
+    return dim_vars.get("num_classes", default_high)
 
 
-def gen_or_validate_input_data(module, input_schema, batch_shapes=None, input_data=None, num_batches=1,
-                              required_only=True, override_req_cols: Optional[tuple] = None,
-                              predefined_indices=True):
+def gen_or_validate_input_data(
+    module,
+    input_schema,
+    batch_shapes=None,
+    input_data=None,
+    num_batches=1,
+    required_only=True,
+    override_req_cols: Optional[tuple] = None,
+    predefined_indices=True,
+):
     """Generate or validate input data based on an input schema.
 
     Args:
@@ -313,11 +337,11 @@ def gen_or_validate_input_data(module, input_schema, batch_shapes=None, input_da
     # Get dims and map vars
     batch_size, max_answer_tokens, num_classes, vocab_size, max_seq_len = get_module_dims(module)
     dim_vars = {
-        'batch_size': batch_size,
-        'max_answer_tokens': max_answer_tokens,
-        'num_classes': num_classes,
-        'vocab_size': vocab_size,
-        'max_seq_len': max_seq_len,
+        "batch_size": batch_size,
+        "max_answer_tokens": max_answer_tokens,
+        "num_classes": num_classes,
+        "vocab_size": vocab_size,
+        "max_seq_len": max_seq_len,
     }
 
     # Update with actual batch shapes if available
@@ -346,8 +370,7 @@ def gen_or_validate_input_data(module, input_schema, batch_shapes=None, input_da
                 # Just validate batch count if data already exists
                 if len(input_data[field]) != num_batches:
                     raise ValueError(
-                        f"Input field '{field}' has {len(input_data[field])} batches "
-                        f"but expected {num_batches}"
+                        f"Input field '{field}' has {len(input_data[field])} batches but expected {num_batches}"
                     )
                 # Move to intermediate_data
                 intermediate_data[field] = input_data[field]
@@ -369,13 +392,13 @@ def gen_or_validate_input_data(module, input_schema, batch_shapes=None, input_da
                 # Just validate batch count if data already exists
                 if len(input_data[field]) != num_batches:
                     raise ValueError(
-                        f"Input field '{field}' has {len(input_data[field])} batches "
-                        f"but expected {num_batches}"
+                        f"Input field '{field}' has {len(input_data[field])} batches but expected {num_batches}"
                     )
             else:
                 # Generate data for per_sae_hook fields
-                batch_data_list = _generate_per_sae_hook_data(module, field, cfg, num_batches,
-                                                             dim_vars, predefined_indices)
+                batch_data_list = _generate_per_sae_hook_data(
+                    module, field, cfg, num_batches, dim_vars, predefined_indices
+                )
 
                 if batch_data_list:
                     input_data[field] = batch_data_list
@@ -389,13 +412,13 @@ def gen_or_validate_input_data(module, input_schema, batch_shapes=None, input_da
                 # Just validate batch count if data already exists
                 if len(input_data[field]) != num_batches:
                     raise ValueError(
-                        f"Input field '{field}' has {len(input_data[field])} batches "
-                        f"but expected {num_batches}"
+                        f"Input field '{field}' has {len(input_data[field])} batches but expected {num_batches}"
                     )
             else:
                 # Generate data for per_latent fields
-                batch_data_list = _generate_per_latent_data(module, field, cfg, num_batches,
-                                                          dim_vars, predefined_indices)
+                batch_data_list = _generate_per_latent_data(
+                    module, field, cfg, num_batches, dim_vars, predefined_indices
+                )
 
                 if batch_data_list:
                     input_data[field] = batch_data_list
@@ -415,9 +438,9 @@ def gen_or_validate_input_data(module, input_schema, batch_shapes=None, input_da
         elif isinstance(feature, DatasetsSequence):
             inner = feature.feature
             if isinstance(inner, (Array2D, Array3D)):
-                exp_shape = (batch_size, ) + inner.shape
+                exp_shape = (batch_size,) + inner.shape
             else:
-                exp_shape = (batch_size, )
+                exp_shape = (batch_size,)
         elif isinstance(feature, Value):
             exp_shape = ()
         else:
@@ -458,8 +481,7 @@ def gen_or_validate_input_data(module, input_schema, batch_shapes=None, input_da
             # Make sure we have the right number of batches
             if len(input_data[field]) != num_batches:
                 raise ValueError(
-                    f"Input field '{field}' has {len(input_data[field])} batches "
-                    f"but expected {num_batches}"
+                    f"Input field '{field}' has {len(input_data[field])} batches but expected {num_batches}"
                 )
 
             # Validate each batch
@@ -467,8 +489,7 @@ def gen_or_validate_input_data(module, input_schema, batch_shapes=None, input_da
                 arr = torch.tensor(batch_data)
                 if tuple(arr.shape) != exp_shape:
                     raise ValueError(
-                        f"Input field '{field}' batch {batch_idx} has shape {tuple(arr.shape)} "
-                        f"but expected {exp_shape}"
+                        f"Input field '{field}' batch {batch_idx} has shape {tuple(arr.shape)} but expected {exp_shape}"
                     )
         else:
             # Generate default tensor/list of correct shape for each batch

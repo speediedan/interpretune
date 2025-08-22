@@ -24,9 +24,15 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def analysis_store_generator(module: ITModule, datamodule: ITDataModule,
-                             limit_analysis_batches: int = -1,
-                             step_fn: str = "analysis_step", max_epochs: int = 1, *args, **kwargs):
+def analysis_store_generator(
+    module: ITModule,
+    datamodule: ITDataModule,
+    limit_analysis_batches: int = -1,
+    step_fn: str = "analysis_step",
+    max_epochs: int = 1,
+    *args,
+    **kwargs,
+):
     # TODO: should we create separate dataset phase subsplits (per epoch)?
     # TODO: allow for custom dataloader associations
     dataloader = datamodule.test_dataloader()
@@ -39,6 +45,7 @@ def analysis_store_generator(module: ITModule, datamodule: ITDataModule,
             # TODO: move previous inference_mode toggle to IT dispatch logic
             yield from run_step(step_fn=step_fn, batch=batch, batch_idx=batch_idx, **test_ctx)
         _call_itmodule_hook(module, hook_name="on_analysis_epoch_end", hook_msg="Running analysis epoch end hooks")
+
 
 def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: Optional[AnalysisCfg] = None, **kwargs) -> dict:
     """Initialize analysis configuration if needed and return updated kwargs.
@@ -58,8 +65,7 @@ def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: Optional[AnalysisC
         # Extract and pop any AnalysisCfg.apply-specific kwargs
         init_analysis_cfg_params = signature(init_analysis_cfgs).parameters
         init_analysis_cfg_kwargs = {
-            k: kwargs.pop(k) for k in list(kwargs.keys())
-            if k in init_analysis_cfg_params and k != "analysis_cfgs"
+            k: kwargs.pop(k) for k in list(kwargs.keys()) if k in init_analysis_cfg_params and k != "analysis_cfgs"
         }
 
         # Only initialize if not already applied to this module
@@ -67,6 +73,7 @@ def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: Optional[AnalysisC
             init_analysis_cfgs(module, [module.analysis_cfg], **init_analysis_cfg_kwargs)
 
     return kwargs
+
 
 def dataset_features_and_format(module: "ITModule", kwargs: dict) -> Tuple[dict, dict, Any, dict]:
     """Generate dataset features and formatting parameters based on module configuration.
@@ -83,10 +90,10 @@ def dataset_features_and_format(module: "ITModule", kwargs: dict) -> Tuple[dict,
     """
     # Generate appropriate features based on module configuration and current op context
     # Handle different schema sources based on configuration
-    if hasattr(module.analysis_cfg, 'op') and module.analysis_cfg.op is not None:
+    if hasattr(module.analysis_cfg, "op") and module.analysis_cfg.op is not None:
         features = schema_to_features(module=module, op=module.analysis_cfg.op)
         schema_source = module.analysis_cfg.op.output_schema
-    elif hasattr(module.analysis_cfg, 'output_schema') and module.analysis_cfg.output_schema is not None:
+    elif hasattr(module.analysis_cfg, "output_schema") and module.analysis_cfg.output_schema is not None:
         # Use explicitly provided output schema when op is None
         features = schema_to_features(module=module, schema=module.analysis_cfg.output_schema)
         schema_source = module.analysis_cfg.output_schema
@@ -101,9 +108,8 @@ def dataset_features_and_format(module: "ITModule", kwargs: dict) -> Tuple[dict,
     kwargs.update(schema_source=schema_source, serializable_col_cfg=serializable_col_cfg)
     return features, it_format_kwargs, kwargs
 
-def generate_analysis_dataset(
-    module, features, it_format_kwargs, gen_kwargs, split="test", **kwargs
-) -> Dataset:
+
+def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, split="test", **kwargs) -> Dataset:
     """Generate a dataset for analysis using the ITAnalysisFormatter.
 
     Args:
@@ -121,8 +127,13 @@ def generate_analysis_dataset(
         Exception: If dataset generation fails, with detailed debug information
     """
     # TODO: allow split customization rather than hardcode to "test"
-    from_gen_kwargs = dict(generator=analysis_store_generator, gen_kwargs=gen_kwargs, features=features, split=split,
-                           cache_dir=module.analysis_cfg.output_store.cache_dir)
+    from_gen_kwargs = dict(
+        generator=analysis_store_generator,
+        gen_kwargs=gen_kwargs,
+        features=features,
+        split=split,
+        cache_dir=module.analysis_cfg.output_store.cache_dir,
+    )
 
     # Create dataset with ITAnalysisFormatter
     try:
@@ -131,19 +142,26 @@ def generate_analysis_dataset(
     except Exception as e:
         # improve visibility of errors since they can otherwise be obscured by the dataset generator
         context_data = (
-            features,                 # Features derived from schema
-            from_gen_kwargs,          # Arguments for Dataset.from_generator
-            gen_kwargs,               # Arguments for the analysis generator
-            it_format_kwargs,         # Arguments for interpretune format
-            kwargs,                   # Additional user-provided arguments
+            features,  # Features derived from schema
+            from_gen_kwargs,  # Arguments for Dataset.from_generator
+            gen_kwargs,  # Arguments for the analysis generator
+            it_format_kwargs,  # Arguments for interpretune format
+            kwargs,  # Additional user-provided arguments
         )
         handle_exception_with_debug_dump(e, context_data, "dataset_generation")
         raise  # Re-raise after logging to ensure proper error handling
 
-def core_analysis_loop(module: ITModule, datamodule: ITDataModule,
-                      limit_analysis_batches: int = -1,
-                      step_fn: str = "analysis_step",
-                      max_epochs: int = 1, analysis_cfg: Optional[AnalysisCfg] = None, *args, **kwargs):
+
+def core_analysis_loop(
+    module: ITModule,
+    datamodule: ITDataModule,
+    limit_analysis_batches: int = -1,
+    step_fn: str = "analysis_step",
+    max_epochs: int = 1,
+    analysis_cfg: Optional[AnalysisCfg] = None,
+    *args,
+    **kwargs,
+):
     """Create dataset using the ITAnalysisFormatter for optimal handling of analysis data."""
     # Initialize analysis configuration if needed
     kwargs = maybe_init_analysis_cfg(module, analysis_cfg, **kwargs)
@@ -158,12 +176,16 @@ def core_analysis_loop(module: ITModule, datamodule: ITDataModule,
     features, it_format_kwargs, kwargs = dataset_features_and_format(module, kwargs)
 
     # Create generator kwargs dictionary
-    gen_kwargs = dict(module=module, datamodule=datamodule, limit_analysis_batches=limit_analysis_batches,
-                      step_fn=step_fn, max_epochs=max_epochs)
+    gen_kwargs = dict(
+        module=module,
+        datamodule=datamodule,
+        limit_analysis_batches=limit_analysis_batches,
+        step_fn=step_fn,
+        max_epochs=max_epochs,
+    )
 
     # Generate the dataset
     dataset = generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, **kwargs)
-
 
     save_dir = Path(module.analysis_cfg.output_store.save_dir)
     dataset.save_to_disk(save_dir)
@@ -175,8 +197,10 @@ def core_analysis_loop(module: ITModule, datamodule: ITDataModule,
 
     return module.analysis_cfg.output_store
 
+
 class AnalysisRunner(SessionRunner):
     """Trainer subclass with analysis orchestration logic."""
+
     def __init__(self, run_cfg: AnalysisRunnerCfg | dict[str, Any], *args: Any, **kwargs: Any) -> Any:
         run_cfg = run_cfg if isinstance(run_cfg, AnalysisRunnerCfg) else AnalysisRunnerCfg(**run_cfg)
         super().__init__(run_cfg, *args, **kwargs)
@@ -188,9 +212,9 @@ class AnalysisRunner(SessionRunner):
         super().it_init()
         module = self.run_cfg.module
         # Check if running analysis and the module needs an analysis_step
-        if hasattr(self, 'phase') and self.phase == 'analysis':
-            if not hasattr(module, 'analysis_step') or getattr(module, '_generated_analysis_step', False):
-                if hasattr(module, 'analysis_cfg') and hasattr(module.analysis_cfg, 'op'):
+        if hasattr(self, "phase") and self.phase == "analysis":
+            if not hasattr(module, "analysis_step") or getattr(module, "_generated_analysis_step", False):
+                if hasattr(module, "analysis_cfg") and hasattr(module.analysis_cfg, "op"):
                     # Apply the analysis config to generate the analysis_step
                     module.analysis_cfg.apply(module)
                 else:
@@ -198,7 +222,6 @@ class AnalysisRunner(SessionRunner):
                         f"Module {module.__class__.__name__} has no analysis_step method and "
                         "no analysis configuration to generate one."
                     )
-
 
     def _run(self, phase, loop_fn, step_fn: Optional[str] = None, *args: Any, **kwargs: Any) -> Any | None:
         self.phase = AllPhases[phase]
@@ -208,11 +231,13 @@ class AnalysisRunner(SessionRunner):
 
     analysis = partialmethod(_run, phase="analysis", loop_fn=core_analysis_loop)
 
-    def run_analysis(self,
-                     analysis_cfgs: Optional[Union[AnalysisCfg, Any, List[Union[AnalysisCfg, Any]]]] = None,
-                     cache_dir: str | Path | None = None,
-                     op_output_dataset_path: str | Path | None = None,
-                     **kwargs) -> AnalysisStoreProtocol | Dict[str, AnalysisStoreProtocol]:
+    def run_analysis(
+        self,
+        analysis_cfgs: Optional[Union[AnalysisCfg, Any, List[Union[AnalysisCfg, Any]]]] = None,
+        cache_dir: str | Path | None = None,
+        op_output_dataset_path: str | Path | None = None,
+        **kwargs,
+    ) -> AnalysisStoreProtocol | Dict[str, AnalysisStoreProtocol]:
         """Unified method to run analysis operations based on the provided configuration.
 
         Args:
@@ -250,7 +275,7 @@ class AnalysisRunner(SessionRunner):
             cache_dir=self.run_cfg.cache_dir,
             op_output_dataset_path=self.run_cfg.op_output_dataset_path,
             sae_analysis_targets=self.run_cfg.sae_analysis_targets,
-            ignore_manual=self.run_cfg.ignore_manual
+            ignore_manual=self.run_cfg.ignore_manual,
         )
 
         # Check if we have any analysis configurations to process

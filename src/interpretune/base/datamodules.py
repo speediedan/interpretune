@@ -23,13 +23,7 @@ log = logging.getLogger(__name__)
 # TODO: move core datamodule logic to a separate mixin and compose it with supported hooks analogous to BaseITModule
 #       and ITModule
 class ITDataModule:
-
-    def __init__(
-        self,
-        itdm_cfg: ITDataModuleConfig,
-        *args,
-        **kwargs
-    ):
+    def __init__(self, itdm_cfg: ITDataModuleConfig, *args, **kwargs):
         r"""
 
         Args:
@@ -44,7 +38,7 @@ class ITDataModule:
             datasets.enable_caching()
         else:
             datasets.disable_caching()
-        if hasattr(self, 'save_hyperparameters'):
+        if hasattr(self, "save_hyperparameters"):
             self.save_hyperparameters()
         os.environ["TOKENIZERS_PARALLELISM"] = "true" if self.itdm_cfg.tokenizers_parallelism else "false"
         self.tokenizer = self.configure_tokenizer()
@@ -53,7 +47,7 @@ class ITDataModule:
             f"padding_side={getattr(self.tokenizer, 'padding_side', None)}, "
             f"model_input_names={getattr(self.tokenizer, 'model_input_names', None)}"
         )
-        collator_kwargs = self.itdm_cfg.data_collator_cfg.get('collator_kwargs', None) or {}
+        collator_kwargs = self.itdm_cfg.data_collator_cfg.get("collator_kwargs", None) or {}
         collator_class = _import_class(self.itdm_cfg.data_collator_cfg["collator_class"])
         self.data_collator = collator_class(self.tokenizer, **collator_kwargs)
 
@@ -82,8 +76,9 @@ class ITDataModule:
             self._module = module
 
     def configure_tokenizer(self) -> PreTrainedTokenizerBase:
-        access_token = os.environ[self.itdm_cfg.os_env_model_auth_key.upper()] if self.itdm_cfg.os_env_model_auth_key \
-              else None
+        access_token = (
+            os.environ[self.itdm_cfg.os_env_model_auth_key.upper()] if self.itdm_cfg.os_env_model_auth_key else None
+        )
         ### tokenizer config precedence: pre-configured > pretrained tokenizer name -> model name
         if self.itdm_cfg.tokenizer:
             tokenizer = self.itdm_cfg.tokenizer
@@ -98,8 +93,7 @@ class ITDataModule:
                 self.itdm_cfg.model_name_or_path, token=access_token, **self.itdm_cfg.tokenizer_kwargs
             )
             rank_zero_debug(
-                f"[configure_tokenizer] Loaded tokenizer from model_name_or_path: "
-                f"{self.itdm_cfg.model_name_or_path}"
+                f"[configure_tokenizer] Loaded tokenizer from model_name_or_path: {self.itdm_cfg.model_name_or_path}"
             )
         _ = tokenizer.add_special_tokens(self.itdm_cfg.special_tokens_dict)
         if self.itdm_cfg.tokenizer_id_overrides:
@@ -122,34 +116,35 @@ class ITDataModule:
 
     # adapted from HF native trainer
     # note for raw pytorch we require a target_model (vs getting it from the trainer)
-    def _remove_unused_columns(self, dataset: "datasets.Dataset", target_model: torch.nn.Module | None = None,
-                               description: str | None = None) -> Dataset:
-            if not self.itdm_cfg.remove_unused_columns:
-                return dataset
-            if not self.itdm_cfg.signature_columns:
-                if not target_model:
-                    target_model = self.module.model
-                self._set_signature_columns_if_needed(target_model)
-            ignored_columns = list(set(dataset.column_names) - set(self.itdm_cfg.signature_columns))
-            if len(ignored_columns) > 0:
-                dset_description = "" if description is None else f"in the {description} set"
-                target_name = f"`{target_model.__class__.__name__}.forward`"
-                rank_zero_info(
-                    f"The following columns {dset_description} don't have a corresponding argument in {target_name} and"
-                    f" have been ignored: {', '.join(ignored_columns)}. If {', '.join(ignored_columns)} are not"
-                    f" expected by {target_name}, you can safely ignore this message."
-                )
-            return dataset.remove_columns(ignored_columns)
+    def _remove_unused_columns(
+        self, dataset: "datasets.Dataset", target_model: torch.nn.Module | None = None, description: str | None = None
+    ) -> Dataset:
+        if not self.itdm_cfg.remove_unused_columns:
+            return dataset
+        if not self.itdm_cfg.signature_columns:
+            if not target_model:
+                target_model = self.module.model
+            self._set_signature_columns_if_needed(target_model)
+        ignored_columns = list(set(dataset.column_names) - set(self.itdm_cfg.signature_columns))
+        if len(ignored_columns) > 0:
+            dset_description = "" if description is None else f"in the {description} set"
+            target_name = f"`{target_model.__class__.__name__}.forward`"
+            rank_zero_info(
+                f"The following columns {dset_description} don't have a corresponding argument in {target_name} and"
+                f" have been ignored: {', '.join(ignored_columns)}. If {', '.join(ignored_columns)} are not"
+                f" expected by {target_name}, you can safely ignore this message."
+            )
+        return dataset.remove_columns(ignored_columns)
 
     def __repr__(self):
         if self._module:
-            module_str = getattr(self._module, '_orig_module_name', self._module.__class__.__name__)
+            module_str = getattr(self._module, "_orig_module_name", self._module.__class__.__name__)
         else:
-            module_str = 'No module yet attached.'
-        tokenizer_str = self.tokenizer.__class__.__name__ if self.tokenizer else 'No tokenizer yet defined'
-        repr_string = [f'Attached module: {module_str}']
-        repr_string += [f'Attached tokenizer: {tokenizer_str}']
-        return self.__class__.__name__ + '(' + ', '.join(repr_string) + ')'
+            module_str = "No module yet attached."
+        tokenizer_str = self.tokenizer.__class__.__name__ if self.tokenizer else "No tokenizer yet defined"
+        repr_string = [f"Attached module: {module_str}"]
+        repr_string += [f"Attached tokenizer: {tokenizer_str}"]
+        return self.__class__.__name__ + "(" + ", ".join(repr_string) + ")"
 
     def on_train_end(self) -> Any | None:
         """Optionally execute some post-interpretune train session steps."""

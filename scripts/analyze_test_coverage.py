@@ -25,10 +25,18 @@ from pathlib import Path
 class TestCoverageAnalyzer:
     """Analyzes test coverage and identifies redundant tests."""
 
-    def __init__(self, output_dir=None, max_candidates=None, normal_subset=None,
-                 standalone_subset=None, profile_ci_subset=None,
-                 profile_subset=None, optional_subset=None, mark_types_to_run=None,
-                 branch_level=False):
+    def __init__(
+        self,
+        output_dir=None,
+        max_candidates=None,
+        normal_subset=None,
+        standalone_subset=None,
+        profile_ci_subset=None,
+        profile_subset=None,
+        optional_subset=None,
+        mark_types_to_run=None,
+        branch_level=False,
+    ):
         """Initialize the analyzer with configuration options.
 
         Args:
@@ -42,7 +50,7 @@ class TestCoverageAnalyzer:
             mark_types_to_run: Comma-separated string of mark types to run (default: "normal,standalone,profile_ci")
             branch_level: Whether to perform branch-level analysis instead of statement-level
         """
-        self.output_dir = Path(output_dir or '.')
+        self.output_dir = Path(output_dir or ".")
         self.max_candidates = max_candidates
         self.normal_subset = normal_subset
         self.standalone_subset = standalone_subset
@@ -55,14 +63,13 @@ class TestCoverageAnalyzer:
         # Parse mark_types_to_run
         # Default comes from argparse, so mark_types_to_run is always a string.
         if mark_types_to_run and mark_types_to_run.strip():
-            self.mark_types_to_run = {s.strip() for s in mark_types_to_run.split(',') if s.strip()}
-        else: # User provided an empty string e.g. --mark-types-to-run ""
+            self.mark_types_to_run = {s.strip() for s in mark_types_to_run.split(",") if s.strip()}
+        else:  # User provided an empty string e.g. --mark-types-to-run ""
             self.mark_types_to_run = set()
 
-
         # Set up paths for coverage data
-        self.coverage_db = self.output_dir / '.coverage'
-        self.coverage_config = self.output_dir / '.coveragerc'
+        self.coverage_db = self.output_dir / ".coverage"
+        self.coverage_config = self.output_dir / ".coveragerc"
 
         # Store analysis results for statement-level (default)
         self.test_to_lines = defaultdict(set)
@@ -105,7 +112,7 @@ exclude_lines =
 show_contexts = True
 """.format(self.coverage_db, branch_option)
 
-        with open(self.coverage_config, 'w') as f:
+        with open(self.coverage_config, "w") as f:
             f.write(config_content.strip())
         print(f"Created coverage config at {self.coverage_config}")
         if self.branch_level:
@@ -130,8 +137,16 @@ show_contexts = True
         if run_normal_tests:
             # Run regular tests with pytest-cov
             cmd = [
-                "python", "-m", "pytest", "--cov", f"--cov-config={self.coverage_config}", "--cov-append",
-                "--cov-context=test", "--cov-report=", "tests", "-v"
+                "python",
+                "-m",
+                "pytest",
+                "--cov",
+                f"--cov-config={self.coverage_config}",
+                "--cov-append",
+                "--cov-context=test",
+                "--cov-report=",
+                "tests",
+                "-v",
             ]
 
             # Add normal subset filter if specified
@@ -145,10 +160,8 @@ show_contexts = True
             subprocess.run(cmd, check=True)
         else:
             print(
-                "Skipping normal tests as 'normal' is not in --mark-types-to-run and "
-                "--normal-subset is not provided."
+                "Skipping normal tests as 'normal' is not in --mark-types-to-run and --normal-subset is not provided."
             )
-
 
         # Run special tests with different mark types
         all_special_mark_types = ["standalone", "profile_ci", "profile", "optional"]
@@ -228,10 +241,10 @@ show_contexts = True
 
             # Check if we're doing branch-level analysis
             has_arcs = False
-            if 'meta' in tables:
+            if "meta" in tables:
                 cursor.execute("SELECT value FROM meta WHERE key = 'has_arcs'")
                 row = cursor.fetchone()
-                if row and row[0].lower() == 'true':
+                if row and row[0].lower() == "true":
                     has_arcs = True
                     print("Database indicates branch coverage was collected (has_arcs=true)")
 
@@ -245,12 +258,12 @@ show_contexts = True
             file_paths = {}
             cursor.execute("SELECT id, path FROM file")
             for row in cursor.fetchall():
-                file_paths[row['id']] = row['path']
+                file_paths[row["id"]] = row["path"]
 
             contexts = {}
             cursor.execute("SELECT id, context FROM context")
             for row in cursor.fetchall():
-                contexts[row['id']] = row['context']
+                contexts[row["id"]] = row["context"]
 
             # Print contexts info
             print(f"Found {len(contexts)} contexts in the database")
@@ -268,7 +281,7 @@ show_contexts = True
 
             # Process statement coverage if not in branch mode
             if not self.branch_level:
-                if 'line_bits' not in tables:
+                if "line_bits" not in tables:
                     raise ValueError("line_bits table not found in the coverage database")
 
                 # Process line_bits data for statement coverage
@@ -279,9 +292,9 @@ show_contexts = True
                 # Process statement-level data
                 for row in line_bits_data:
                     # Extract using dictionary keys which avoids column name issues
-                    file_id = row['file_id']
-                    context_id = row['context_id']
-                    numbits_blob = row['numbits']
+                    file_id = row["file_id"]
+                    context_id = row["context_id"]
+                    numbits_blob = row["numbits"]
 
                     file_path = file_paths.get(file_id)
                     if not file_path:
@@ -299,11 +312,11 @@ show_contexts = True
                     # Decode the bitmap in numbits to get actual line numbers
                     if isinstance(numbits_blob, bytes):
                         # Convert blob to binary string
-                        binary_str = ''.join(format(byte, '08b') for byte in numbits_blob)
+                        binary_str = "".join(format(byte, "08b") for byte in numbits_blob)
 
                         # Each '1' bit represents a covered line
                         for i, bit in enumerate(binary_str):
-                            if bit == '1':
+                            if bit == "1":
                                 line_no = i + 1  # Line numbers are 1-based
 
                                 # Store mappings
@@ -317,7 +330,7 @@ show_contexts = True
 
             # Process branch coverage if in branch mode
             elif self.branch_level:
-                if 'arc' not in tables:
+                if "arc" not in tables:
                     raise ValueError("arc table not found in the coverage database")
 
                 # Process arc data for branch coverage
@@ -327,10 +340,10 @@ show_contexts = True
 
                 # Process branch-level data
                 for row in arc_data:
-                    file_id = row['file_id']
-                    context_id = row['context_id']
-                    fromno = row['fromno']
-                    tono = row['tono']
+                    file_id = row["file_id"]
+                    context_id = row["context_id"]
+                    fromno = row["fromno"]
+                    tono = row["tono"]
 
                     file_path = file_paths.get(file_id)
                     if not file_path:
@@ -382,27 +395,27 @@ show_contexts = True
     def _extract_test_name(self, context):
         """Extract test name from coverage context string."""
         # Regular test format: test_file.py::test_name|run
-        match = re.match(r'(.+?)\|(setup|run|teardown)$', context)
+        match = re.match(r"(.+?)\|(setup|run|teardown)$", context)
         if match:
             return match.group(1)
 
         # Special test format: special:mark_type:test_name
-        match = re.match(r'special:(\w+):(.+)$', context)
+        match = re.match(r"special:(\w+):(.+)$", context)
         if match:
             return match.group(2)
 
         # Example: tests/core/test_analysis_core.py::TestSAEAnalysisDict::test_core_sae_analysis_dict
-        match = re.match(r'(tests/.*?::.*?)(?:\[|$)', context)
+        match = re.match(r"(tests/.*?::.*?)(?:\[|$)", context)
         if match:
             return match.group(1)
 
         # Direct context is the test name pattern itself
-        match = re.search(r'(test_\w+(?:\[\w+\])?)', context)
+        match = re.search(r"(test_\w+(?:\[\w+\])?)", context)
         if match:
             return match.group(1)
 
         # If all patterns fail but looks like a test name
-        if context and 'test_' in context:
+        if context and "test_" in context:
             return context
 
         return None
@@ -414,20 +427,20 @@ show_contexts = True
             test_to_lines = {k: list(v) for k, v in self.test_to_lines.items()}
             line_to_tests = {k: list(v) for k, v in self.line_to_tests.items()}
 
-            with open(self.output_dir / 'test_to_lines.json', 'w') as f:
+            with open(self.output_dir / "test_to_lines.json", "w") as f:
                 json.dump(test_to_lines, f, indent=2)
 
-            with open(self.output_dir / 'line_to_tests.json', 'w') as f:
+            with open(self.output_dir / "line_to_tests.json", "w") as f:
                 json.dump(line_to_tests, f, indent=2)
         else:
             # Save branch coverage mappings
             test_to_branches = {k: list(v) for k, v in self.test_to_branches.items()}
             branch_to_tests = {k: list(v) for k, v in self.branch_to_tests.items()}
 
-            with open(self.output_dir / 'test_to_branches.json', 'w') as f:
+            with open(self.output_dir / "test_to_branches.json", "w") as f:
                 json.dump(test_to_branches, f, indent=2)
 
-            with open(self.output_dir / 'branch_to_tests.json', 'w') as f:
+            with open(self.output_dir / "branch_to_tests.json", "w") as f:
                 json.dump(branch_to_tests, f, indent=2)
 
     def find_base_tests(self):
@@ -447,13 +460,13 @@ show_contexts = True
             # Save the base tests information
             base_tests_info = {
                 "count": len(self.statement_level_base),
-                "tests": {test: len(self.test_to_lines[test]) for test in self.statement_level_base}
+                "tests": {test: len(self.test_to_lines[test]) for test in self.statement_level_base},
             }
 
-            with open(self.output_dir / 'statement_level_base.json', 'w') as f:
+            with open(self.output_dir / "statement_level_base.json", "w") as f:
                 json.dump(base_tests_info, f, indent=2)
 
-            with open(self.output_dir / 'unique_statement_coverage.json', 'w') as f:
+            with open(self.output_dir / "unique_statement_coverage.json", "w") as f:
                 json.dump({k: v for k, v in unique_coverage.items()}, f, indent=2)
 
             print(f"Found {len(self.statement_level_base)} base tests that uniquely cover at least one line")
@@ -472,13 +485,13 @@ show_contexts = True
             # Save the base tests information
             base_tests_info = {
                 "count": len(self.branch_level_base),
-                "tests": {test: len(self.test_to_branches[test]) for test in self.branch_level_base}
+                "tests": {test: len(self.test_to_branches[test]) for test in self.branch_level_base},
             }
 
-            with open(self.output_dir / 'branch_level_base.json', 'w') as f:
+            with open(self.output_dir / "branch_level_base.json", "w") as f:
                 json.dump(base_tests_info, f, indent=2)
 
-            with open(self.output_dir / 'unique_branch_coverage.json', 'w') as f:
+            with open(self.output_dir / "unique_branch_coverage.json", "w") as f:
                 json.dump({k: v for k, v in unique_coverage.items()}, f, indent=2)
 
             print(f"Found {len(self.branch_level_base)} base tests that uniquely cover at least one branch")
@@ -502,25 +515,27 @@ show_contexts = True
 
                 redundancy_ratio = redundant_lines / lines_covered if lines_covered > 0 else 1.0
 
-                test_stats.append({
-                    "test": test,
-                    "lines_covered": lines_covered,
-                    "redundant_lines": redundant_lines,
-                    "redundancy_ratio": redundancy_ratio,
-                    "unique_lines": lines_covered - redundant_lines
-                })
+                test_stats.append(
+                    {
+                        "test": test,
+                        "lines_covered": lines_covered,
+                        "redundant_lines": redundant_lines,
+                        "redundancy_ratio": redundancy_ratio,
+                        "unique_lines": lines_covered - redundant_lines,
+                    }
+                )
 
             # Sort by redundancy ratio (highest first) and then by lines covered (lowest first)
             test_stats.sort(key=lambda x: (-x["redundancy_ratio"], x["lines_covered"]))
 
             # Apply max_candidates limit if specified
-            self.statement_level_redundant = test_stats[:self.max_candidates] if self.max_candidates else test_stats
+            self.statement_level_redundant = test_stats[: self.max_candidates] if self.max_candidates else test_stats
 
             # Sort by test name before saving
             sorted_redundant = sorted(self.statement_level_redundant, key=lambda x: x["test"])
 
             # Save the results
-            with open(self.output_dir / 'statement_level_redundant.json', 'w') as f:
+            with open(self.output_dir / "statement_level_redundant.json", "w") as f:
                 json.dump(sorted_redundant, f, indent=2)
 
             print(f"Found {len(self.statement_level_redundant)} potential statement-level candidates for removal")
@@ -542,25 +557,27 @@ show_contexts = True
 
                 redundancy_ratio = redundant_branches / branches_covered if branches_covered > 0 else 1.0
 
-                test_stats.append({
-                    "test": test,
-                    "branches_covered": branches_covered,
-                    "redundant_branches": redundant_branches,
-                    "redundancy_ratio": redundancy_ratio,
-                    "unique_branches": branches_covered - redundant_branches
-                })
+                test_stats.append(
+                    {
+                        "test": test,
+                        "branches_covered": branches_covered,
+                        "redundant_branches": redundant_branches,
+                        "redundancy_ratio": redundancy_ratio,
+                        "unique_branches": branches_covered - redundant_branches,
+                    }
+                )
 
             # Sort by redundancy ratio (highest first) and then by branches covered (lowest first)
             test_stats.sort(key=lambda x: (-x["redundancy_ratio"], x["branches_covered"]))
 
             # Apply max_candidates limit if specified
-            self.branch_level_redundant = test_stats[:self.max_candidates] if self.max_candidates else test_stats
+            self.branch_level_redundant = test_stats[: self.max_candidates] if self.max_candidates else test_stats
 
             # Sort by test name before saving
             sorted_redundant = sorted(self.branch_level_redundant, key=lambda x: x["test"])
 
             # Save the results
-            with open(self.output_dir / 'branch_level_redundant.json', 'w') as f:
+            with open(self.output_dir / "branch_level_redundant.json", "w") as f:
                 json.dump(sorted_redundant, f, indent=2)
 
             print(f"Found {len(self.branch_level_redundant)} potential branch-level candidates for removal")
@@ -609,10 +626,10 @@ show_contexts = True
                 "base_tests": len(self.statement_level_base),
                 "total_tests_needed": len(selected_tests),
                 "removal_candidates": len(removal_candidates),
-                "removal_candidates_list": sorted(list(removal_candidates))
+                "removal_candidates_list": sorted(list(removal_candidates)),
             }
 
-            with open(self.output_dir / 'statement_minimization_stats.json', 'w') as f:
+            with open(self.output_dir / "statement_minimization_stats.json", "w") as f:
                 json.dump(minimization_stats, f, indent=2)
 
             print(
@@ -663,10 +680,10 @@ show_contexts = True
                 "base_tests": len(self.branch_level_base),
                 "total_tests_needed": len(selected_tests),
                 "removal_candidates": len(removal_candidates),
-                "removal_candidates_list": sorted(list(removal_candidates))
+                "removal_candidates_list": sorted(list(removal_candidates)),
             }
 
-            with open(self.output_dir / 'branch_minimization_stats.json', 'w') as f:
+            with open(self.output_dir / "branch_minimization_stats.json", "w") as f:
                 json.dump(minimization_stats, f, indent=2)
 
             print(
@@ -678,9 +695,9 @@ show_contexts = True
 
     def generate_report(self):
         """Generate a human-readable report."""
-        report_path = self.output_dir / 'test_coverage_analysis_report.txt'
+        report_path = self.output_dir / "test_coverage_analysis_report.txt"
 
-        with open(report_path, 'w') as f:
+        with open(report_path, "w") as f:
             f.write("Test Coverage Analysis Report\n")
             f.write("============================\n\n")
 
@@ -696,7 +713,7 @@ show_contexts = True
                 f.write("---------------------------------------\n\n")
 
                 # Load the sorted redundant tests
-                with open(self.output_dir / 'statement_level_redundant.json', 'r') as rf:
+                with open(self.output_dir / "statement_level_redundant.json", "r") as rf:
                     redundant_tests = json.load(rf)
 
                 # Just list the test names
@@ -707,7 +724,7 @@ show_contexts = True
                 f.write("------------------------------------------------\n\n")
 
                 # Load minimization stats
-                with open(self.output_dir / 'statement_minimization_stats.json', 'r') as mf:
+                with open(self.output_dir / "statement_minimization_stats.json", "r") as mf:
                     stats = json.load(mf)
             else:
                 # Branch-level reporting
@@ -718,7 +735,7 @@ show_contexts = True
                 f.write("-------------------------------------\n\n")
 
                 # Load the sorted redundant tests
-                with open(self.output_dir / 'branch_level_redundant.json', 'r') as rf:
+                with open(self.output_dir / "branch_level_redundant.json", "r") as rf:
                     redundant_tests = json.load(rf)
 
                 # Just list the test names
@@ -729,7 +746,7 @@ show_contexts = True
                 f.write("--------------------------------------------\n\n")
 
                 # Load minimization stats
-                with open(self.output_dir / 'branch_minimization_stats.json', 'r') as mf:
+                with open(self.output_dir / "branch_minimization_stats.json", "r") as mf:
                     stats = json.load(mf)
 
             f.write(f"Tests needed for full coverage: {stats['total_tests_needed']} ")
@@ -741,11 +758,11 @@ show_contexts = True
     def generate_coverage_reports(self):
         """Generate HTML and JSON coverage reports."""
         # Create subdirectories for HTML reports
-        html_dir = self.output_dir / 'html_report'
+        html_dir = self.output_dir / "html_report"
         html_dir.mkdir(exist_ok=True)
 
         # Define JSON output file
-        json_file = self.output_dir / 'coverage.json'
+        json_file = self.output_dir / "coverage.json"
 
         # Determine report type label
         report_type = "branch" if self.branch_level else "statement"
@@ -753,20 +770,28 @@ show_contexts = True
         # Generate HTML report
         print(f"Generating {report_type}-level HTML coverage report...")
         html_cmd = [
-            "python", "-m", "coverage", "html",
+            "python",
+            "-m",
+            "coverage",
+            "html",
             f"--rcfile={self.coverage_config}",
             f"--data-file={self.coverage_db}",
-            "-d", f"{html_dir}"
+            "-d",
+            f"{html_dir}",
         ]
         subprocess.run(html_cmd, check=True)
 
         # Generate JSON report
         print(f"Generating {report_type}-level JSON coverage report...")
         json_cmd = [
-            "python", "-m", "coverage", "json",
+            "python",
+            "-m",
+            "coverage",
+            "json",
             f"--rcfile={self.coverage_config}",
             f"--data-file={self.coverage_db}",
-            "-o", f"{json_file}"
+            "-o",
+            f"{json_file}",
         ]
         subprocess.run(json_cmd, check=True)
 
@@ -789,42 +814,36 @@ show_contexts = True
 
 def main():
     """Parse arguments and run the analyzer."""
-    parser = argparse.ArgumentParser(description='Analyze test coverage and identify redundant tests.')
-    parser.add_argument('--output-dir', help='Directory to store output files', default='test_coverage_analysis')
-    parser.add_argument('--max-candidates', type=int, help='Maximum number of removal candidates to report')
+    parser = argparse.ArgumentParser(description="Analyze test coverage and identify redundant tests.")
+    parser.add_argument("--output-dir", help="Directory to store output files", default="test_coverage_analysis")
+    parser.add_argument("--max-candidates", type=int, help="Maximum number of removal candidates to report")
     parser.add_argument(
-        '--normal-subset',
-        help='Filter expression for normal pytest tests (e.g., "test_feature1 or test_feature2")'
+        "--normal-subset", help='Filter expression for normal pytest tests (e.g., "test_feature1 or test_feature2")'
     )
     parser.add_argument(
-        '--standalone-subset',
-        help='Filter expression for standalone tests (e.g., "test_standalone1 or test_standalone2")'
+        "--standalone-subset",
+        help='Filter expression for standalone tests (e.g., "test_standalone1 or test_standalone2")',
     )
     parser.add_argument(
-        '--profile-ci-subset',
-        help='Filter expression for profile_ci tests (e.g., "test_profile1 or test_profile2")'
+        "--profile-ci-subset", help='Filter expression for profile_ci tests (e.g., "test_profile1 or test_profile2")'
     )
     parser.add_argument(
-        '--profile-subset',
-        help='Filter expression for profile tests (e.g., "test_profile_A or test_profile_B")'
+        "--profile-subset", help='Filter expression for profile tests (e.g., "test_profile_A or test_profile_B")'
     )
     parser.add_argument(
-        '--optional-subset',
-        help='Filter expression for optional tests (e.g., "test_optional_X or test_optional_Y")'
+        "--optional-subset", help='Filter expression for optional tests (e.g., "test_optional_X or test_optional_Y")'
     )
     parser.add_argument(
-        '--mark-types-to-run',
+        "--mark-types-to-run",
         default="normal,standalone,profile_ci",
         help='Comma-separated list of mark types to run (e.g., "normal,standalone,profile"). '
-             'Supported types: normal, standalone, profile_ci, profile, optional. '
-             'Default: "normal,standalone,profile_ci". '
-             'If a specific subset (e.g. --profile-subset) is provided for a mark type not listed here, '
-             'that mark type will still be run with a warning.'
+        "Supported types: normal, standalone, profile_ci, profile, optional. "
+        'Default: "normal,standalone,profile_ci". '
+        "If a specific subset (e.g. --profile-subset) is provided for a mark type not listed here, "
+        "that mark type will still be run with a warning.",
     )
     parser.add_argument(
-        '--branch-level',
-        action='store_true',
-        help='Perform branch-level analysis instead of statement-level (default)'
+        "--branch-level", action="store_true", help="Perform branch-level analysis instead of statement-level (default)"
     )
     args = parser.parse_args()
 
@@ -837,7 +856,7 @@ def main():
         profile_subset=args.profile_subset,
         optional_subset=args.optional_subset,
         mark_types_to_run=args.mark_types_to_run,
-        branch_level=args.branch_level
+        branch_level=args.branch_level,
     )
 
     try:
@@ -848,5 +867,5 @@ def main():
         return 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())
