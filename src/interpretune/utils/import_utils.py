@@ -36,14 +36,18 @@ def instantiate_class(init: Dict[str, Any],
         else:
             raise MisconfigurationException("A class_path was not included in a configuration that requires one")
         if not shortcircuit_local:
+            assert class_module is not None
+            assert class_name is not None
             module = importlib.import_module(class_module)
             args_class = getattr(module, class_name)
         if import_only:
+            assert args_class is not None
             return args_class
         else:
+            assert args_class is not None
             return args_class(**kwargs) if not args else args_class(*args, **kwargs)
 
-def resolve_funcs(cfg_obj: Any, func_type: str) -> List:
+def resolve_funcs(cfg_obj: Any, func_type: str) -> List[Callable[..., Any]]:
     resolved_funcs = []
     funcs_to_resolve = getattr(cfg_obj, func_type)
     if not isinstance(funcs_to_resolve, list):
@@ -52,6 +56,8 @@ def resolve_funcs(cfg_obj: Any, func_type: str) -> List:
         if callable(func_or_qualname):
             resolved_funcs.append(func_or_qualname)  # TODO: inspect if signature is appropriate for custom hooks
         else:
+            module = None
+            func = None
             try:
                 module, func = func_or_qualname.rsplit(".", 1)
                 mod = importlib.import_module(module)
@@ -65,7 +71,7 @@ def resolve_funcs(cfg_obj: Any, func_type: str) -> List:
                 raise MisconfigurationException(err_msg)
     return resolved_funcs
 
-def _resolve_torch_dtype(dtype: Union[torch.device, str]) -> Optional[torch.device]:
+def _resolve_torch_dtype(dtype: Union[torch.dtype, str]) -> Optional[torch.dtype]:
     if isinstance(dtype, torch.dtype):
         return dtype
     elif isinstance(dtype, str):

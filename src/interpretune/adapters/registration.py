@@ -28,7 +28,7 @@ class CompositionRegistry(dict):
             composition_classes: Tuple[Callable, ...],
             description : composition description
         """
-        supported_composition: Dict[str | Adapter | Tuple[Adapter | str], Tuple[Callable[..., Any], ...]] = {}
+        supported_composition: Dict[str | Adapter | Tuple[Adapter | str], Any] = {}
         composition_key = (component_key,) + self.canonicalize_composition(adapter_combination)
         supported_composition[composition_key] = composition_classes
         supported_composition['lead_adapter'] = Adapter[lead_adapter] if isinstance(lead_adapter, str) else lead_adapter
@@ -38,8 +38,12 @@ class CompositionRegistry(dict):
     @staticmethod
     def resolve_adapter_filter(adapter_filter: Optional[Sequence[Adapter| str]| Adapter | str] = None) -> List[Adapter]:
             unresolved_filters = []
+            if adapter_filter is None:
+                return []
             if isinstance(adapter_filter, str):
                 adapter_filter = [Adapter[adapter_filter]]
+            elif isinstance(adapter_filter, Adapter):
+                adapter_filter = [adapter_filter]
             for adapter in adapter_filter:
                 try:
                     adapter = CompositionRegistry.sanitize_adapter(adapter)
@@ -67,10 +71,13 @@ class CompositionRegistry(dict):
         return adapter_ctx
 
     @override
-    def get(self, composition_key: Tuple[Adapter | str]) -> Any:
+    def get(self, composition_key: Tuple[Adapter | str], default: Any = None) -> Any:
         if composition_key in self:
             supported_composition = self[composition_key]
             return supported_composition[composition_key]
+
+        if default is not None:
+            return default
 
         available_keys = pformat(self.keys()) or "none"
         err_msg = (f"The composition key `{composition_key}` was not found in the registry."
