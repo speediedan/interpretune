@@ -173,86 +173,99 @@ max-complexity = 10
 
 [tool.pyright]
 include = [
-    # Phase 1 - Fixed type errors in 4 complex files (20 errors total)
-    "src/interpretune/adapters/lightning.py",
-    "src/interpretune/utils/import_utils.py",
-    "src/interpretune/adapters/registration.py",
-    "src/interpretune/session.py",
-    "src/interpretune/base/call.py",
-
-    # Phase 2 - Clean files with 0 errors (expanding coverage to 40 files)
-    # Batch 1: Initial clean files
+    # Current clean files (0 errors) - organized with wildcards where possible
     "src/interpretune/__about__.py",
-    "src/interpretune/adapters/__init__.py",
-    "src/interpretune/base/components/__init__.py",
-    "src/interpretune/config/__init__.py",
-    "src/interpretune/tools/",  # Folder wildcard - all files pass
+    "src/interpretune/__init__.py",
+    "src/interpretune/adapter_registry.py",
+    "src/interpretune/protocol.py",
+    "src/interpretune/session.py",
 
-    # Batch 2: Module initializations and config
-    "src/interpretune/extensions/__init__.py",
-    "src/interpretune/runners/__init__.py",
+    # Adapter files (clean)
+    "src/interpretune/adapters/__init__.py",
+    "src/interpretune/adapters/core.py",
+    "src/interpretune/adapters/lightning.py",
+    "src/interpretune/adapters/registration.py",
+
+    # Analysis files (clean)
     "src/interpretune/analysis/__init__.py",
+    "src/interpretune/analysis/formatters.py",
     "src/interpretune/analysis/ops/__init__.py",
+    "src/interpretune/analysis/ops/auto_columns.py",
+    "src/interpretune/analysis/ops/base.py",
+    "src/interpretune/analysis/ops/hub_manager.py",
     "src/interpretune/analysis/ops/compiler/__init__.py",
+    "src/interpretune/analysis/ops/compiler/cache_manager.py",
+    "src/interpretune/analysis/ops/compiler/schema_compiler.py",
+
+    # Base components (clean)
+    "src/interpretune/base/call.py",
+    "src/interpretune/base/hooks.py",
+    "src/interpretune/base/modules.py",
+    "src/interpretune/base/components/__init__.py",
+
+    # Config files (clean)
+    "src/interpretune/config/__init__.py",
+    "src/interpretune/config/circuit_tracer.py",
     "src/interpretune/config/datamodule.py",
     "src/interpretune/config/extensions.py",
     "src/interpretune/config/mixins.py",
-    "src/interpretune/config/circuit_tracer.py",
+    "src/interpretune/config/module.py",
+    "src/interpretune/config/sae_lens.py",
 
-    # Batch 3: Analysis, adapters, and utilities
-    "src/interpretune/analysis/ops/hub_manager.py",
-    "src/interpretune/adapter_registry.py",
-    "src/interpretune/adapters/core.py",
-    # Utils files (individual listing to exclude patched_tlens_generate.py)
+    # Extensions (clean)
+    "src/interpretune/extensions/__init__.py",
+
+    # Runners (clean)
+    "src/interpretune/runners/__init__.py",
+
+    # Tools (all clean - using wildcard)
+    "src/interpretune/tools/",
+
+    # Utils (clean files only - excluding patched_tlens_generate.py)
     "src/interpretune/utils/__init__.py",
     "src/interpretune/utils/data_movement.py",
-    "src/interpretune/utils/warnings.py",
     "src/interpretune/utils/exceptions.py",
+    "src/interpretune/utils/import_utils.py",
     "src/interpretune/utils/logging.py",
-    "src/interpretune/utils/tokenization.py",
     "src/interpretune/utils/schema_validation.py",  # warnings only
-    "src/interpretune/utils/import_utils.py",  # Phase 1 fixed file
+    "src/interpretune/utils/tokenization.py",
+    "src/interpretune/utils/warnings.py",
 
-    # Batch 4: Fixed simple type errors (7 files total - expanding to 40+ files)
-    "src/interpretune/__init__.py",
-    "src/interpretune/analysis/ops/compiler/schema_compiler.py",
-    "src/interpretune/analysis/ops/auto_columns.py",
-    "src/interpretune/analysis/ops/compiler/cache_manager.py",
-    "src/interpretune/config/module.py",
-    "src/interpretune/base/modules.py",
-    "src/interpretune/base/hooks.py",
-    "src/interpretune/protocol.py",
-    "src/interpretune/analysis/formatters.py",
-    "src/interpretune/config/sae_lens.py",
-    "src/interpretune/analysis/ops/base.py",
-#    "src",
-#    "tests"
-
-# Remaining files that need type checking fixes for future phases:
-# High complexity files (many errors):
-#    "src/interpretune/registry.py",        # 15 errors - protocol compatibility, dict typing, method overrides
-#    "src/interpretune/config/shared.py",   # 11 errors - type variable usage, tuple operations
-#    "src/interpretune/config/analysis.py", # 12 errors - protocol compatibility, function attributes
-#    "src/interpretune/config/runner.py",   # 12 errors - iterable types, path handling
-#    "src/interpretune/config/transformer_lens.py", # 10 errors - variable overrides, optional member access
-#    "src/interpretune/runners/analysis.py", # 28 errors - protocol mismatches, argument types
-#    "src/interpretune/runners/core.py",    # 9 errors - path operations, parameter mismatches
-#    "src/interpretune/analysis/core.py",   # 78 errors - very complex type issues
-#    "src/interpretune/base/components/core.py", # 9 errors - protocol issues, path operations
-#    "src/interpretune/base/components/mixins.py", # 35 errors - optional member access, callable issues
-#    "src/interpretune/base/datamodules.py", # 7 errors - module types, path operations
-#    "src/interpretune/base/components/cli.py", # 24 errors - path operations, argument types
-#    "src/interpretune/extensions/debug_generation.py", # 30 errors - optional member access
-#    "src/interpretune/extensions/memprofiler.py", # 15 errors - optional member access, psutil import
-#    "src/interpretune/extensions/neuronpedia.py", # 5 errors - optional member access, jsonschema import
-#    "src/interpretune/analysis/ops/definitions.py", # 19 errors - tensor operations, protocol issues
-#    "src/interpretune/analysis/ops/dispatcher.py", # 9 errors - list variance, type assignments
-#    "src/interpretune/analysis/ops/dynamic_module_utils.py", # 5 errors - module loading, optional access
-#    "src/interpretune/utils/patched_tlens_generate.py", # 12 errors - syntax/undefined variables
-#    "src/interpretune/adapters/transformer_lens.py", # Complex transformer_lens integration
-#    "src/interpretune/adapters/sae_lens.py",      # SAE lens integration
-#    "src/interpretune/adapters/circuit_tracer.py", # Circuit tracer integration
+    # Phase 4 newly fixed files (pattern-based fixes)
+    "src/interpretune/analysis/ops/dynamic_module_utils.py",  # Fixed 5 errors: Optional safety, PathLike handling
+    "src/interpretune/extensions/neuronpedia.py",            # Fixed 5 errors: Optional member access patterns
+    "src/interpretune/base/datamodules.py",                  # Fixed 7 errors: Module types, path operations, Optional safety
+    "src/interpretune/config/transformer_lens.py",          # Fixed 10 errors: Variable overrides, optional member access
+    "src/interpretune/analysis/ops/dispatcher.py",          # Fixed 9 errors: Container typing, list variance, return types
+    "src/interpretune/extensions/memprofiler.py",           # Fixed 15 errors: Optional member access, psutil import, path operations
 ]
+exclude = [
+    # Special case file with complex syntax issues
+    "src/interpretune/utils/patched_tlens_generate.py",
+]
+
+# Phase 4 target files (ordered by error count descending for pattern-based fixes):
+# "src/interpretune/analysis/core.py",                    # 78 errors - very complex type issues
+# "src/interpretune/base/components/mixins.py",           # 35 errors - optional member access, callable issues
+# "src/interpretune/extensions/debug_generation.py",      # 30 errors - optional member access
+# "src/interpretune/runners/analysis.py",                 # 28 errors - protocol mismatches, argument types
+# "src/interpretune/base/components/cli.py",              # 24 errors - path operations, argument types
+# "src/interpretune/analysis/ops/definitions.py",        # 19 errors - tensor operations, protocol issues
+# "src/interpretune/extensions/memprofiler.py",           # 15 errors - optional member access, psutil import
+# "src/interpretune/registry.py",                         # 15 errors - protocol compatibility, dict typing
+# "src/interpretune/config/analysis.py",                  # 12 errors - protocol compatibility, function attributes
+# "src/interpretune/config/runner.py",                    # 12 errors - iterable types, path handling
+# "src/interpretune/config/shared.py",                    # 11 errors - type variable usage, tuple operations
+# "src/interpretune/config/transformer_lens.py",         # 10 errors - variable overrides, optional member access
+# "src/interpretune/analysis/ops/dispatcher.py",         # 9 errors - list variance, type assignments
+# "src/interpretune/runners/core.py",                     # 9 errors - path operations, parameter mismatches
+# "src/interpretune/base/components/core.py",             # 9 errors - protocol issues, path operations
+# "src/interpretune/base/datamodules.py",                 # 7 errors - module types, path operations
+# "src/interpretune/extensions/neuronpedia.py",           # 5 errors - optional member access, jsonschema import
+# "src/interpretune/analysis/ops/dynamic_module_utils.py",# 5 errors - module loading, optional access
+# "src/interpretune/adapters/transformer_lens.py",       # Complex transformer_lens integration
+# "src/interpretune/adapters/sae_lens.py",               # SAE lens integration
+# "src/interpretune/adapters/circuit_tracer.py",         # Circuit tracer integration
 reportMissingTypeStubs = false
 reportUnknownMemberType = "none"
 reportUnknownArgumentType = "none"

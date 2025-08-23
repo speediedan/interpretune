@@ -112,7 +112,8 @@ class AnalysisOpDispatcher:
             if self.enable_hub_ops:
                 rank_zero_debug("[DISPATCHER] Hub ops enabled, adding hub YAML files")
                 hub_yaml_files = self._cache_manager.add_hub_yaml_files()
-                yaml_files.extend(hub_yaml_files or [])
+                # Filter out None values before extending
+                yaml_files.extend([f for f in (hub_yaml_files or []) if f is not None])
                 rank_zero_debug(f"[DISPATCHER] Total YAML files after hub: {len(yaml_files)}")
             else:
                 rank_zero_debug("[DISPATCHER] Hub ops disabled")
@@ -380,7 +381,7 @@ class AnalysisOpDispatcher:
         return self._aliases.get(op_alias, None)
 
     @_ensure_loaded
-    def get_op_aliases(self, op_name: str) -> Dict[str, List[str]]:
+    def get_op_aliases(self, op_name: str) -> List[str]:
         return self._op_to_aliases[op_name]
 
     @_ensure_loaded
@@ -464,7 +465,6 @@ class AnalysisOpDispatcher:
                     else:
                         if base_alias != op_name and base_alias != alias:
                             target_ops[base_alias] = target_ops[op_name]
-        return target_ops
 
     def _import_callable(self, callable_path: str) -> Callable:
         """Import a callable from a path."""
@@ -542,7 +542,11 @@ class AnalysisOpDispatcher:
         if op_def.composition is not None:
             composition = op_def.composition
             # instantiate each operation in the composition
-            ops = [self.get_op(op) for op in composition]
+            raw_ops = [self.get_op(op) for op in composition]
+            # Filter to ensure we only have AnalysisOp objects
+            ops = [op for op in raw_ops if isinstance(op, AnalysisOp)]
+            if len(ops) != len(raw_ops):
+                raise ValueError(f"Composition for {op_name} contains non-AnalysisOp objects")
             op = CompositeAnalysisOp(ops, name=op_name, aliases=op_def.aliases)
             op.description = op_def.description
             op.input_schema = op_def.input_schema
@@ -662,7 +666,10 @@ class AnalysisOpDispatcher:
         """Ensure an operation is instantiated based on various reference types."""
         # If it's an OpWrapper, use its _ensure_instantiated method to get the actual op
         if hasattr(op_ref, "_ensure_instantiated") and callable(op_ref._ensure_instantiated):
-            return op_ref._ensure_instantiated()  # This now returns the actual op, not the wrapper
+            result = op_ref._ensure_instantiated()  # This now returns the actual op, not the wrapper
+            if not isinstance(result, AnalysisOp):
+                raise TypeError(f"Expected AnalysisOp, got {type(result)}")
+            return result
 
         # If it's an AnalysisOp, get the op name
         if isinstance(op_ref, AnalysisOp):
@@ -680,13 +687,20 @@ class AnalysisOpDispatcher:
         if callable(op) and not isinstance(op, AnalysisOp):
             # Instantiate the operation and update the dispatch table
             instantiated_op = op()
+            if not isinstance(instantiated_op, AnalysisOp):
+                raise TypeError(f"Factory function returned {type(instantiated_op)}, expected AnalysisOp")
             ctx_dict[context] = instantiated_op
             return instantiated_op
         elif op is not None:
+            if not isinstance(op, AnalysisOp):
+                raise TypeError(f"Expected AnalysisOp, got {type(op)}")
             return op
         else:
             # Try to get the op if it's not in the dispatch table
-            return self.get_op(op_name, context)
+            result = self.get_op(op_name, context)
+            if not isinstance(result, AnalysisOp):
+                raise TypeError(f"get_op returned {type(result)}, expected AnalysisOp")
+            return result
 
     @_ensure_loaded
     def instantiate_all_ops(self) -> Dict[str, AnalysisOp]:
@@ -717,7 +731,7 @@ class AnalysisOpDispatcher:
         # See NOTE [Composition and Compilation Limitations]
         # Support for dot-separated string format
         if isinstance(op_names, str):
-            op_names = op_names.split(".")
+            op_names = op_names.split(".")  # type: ignore[assignment]  # Converting str to list[str]
         # If op_names is a list, split any string elements containing '.' into multiple op names
         elif isinstance(op_names, list):
             split_names = []
@@ -728,7 +742,11 @@ class AnalysisOpDispatcher:
                     split_names.append(op_name)
             op_names = split_names
 
-        ops = [self.get_op(op_name) if isinstance(op_name, str) else op_name for op_name in op_names]
+        raw_ops = [self.get_op(op_name) if isinstance(op_name, str) else op_name for op_name in op_names]
+        # Filter to ensure we only have AnalysisOp objects
+        ops = [op for op in raw_ops if isinstance(op, AnalysisOp)]
+        if len(ops) != len(raw_ops):
+            raise ValueError("Composition contains non-AnalysisOp objects")
         return CompositeAnalysisOp(ops, name=name, aliases=aliases)
 
     def __call__(

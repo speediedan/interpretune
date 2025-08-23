@@ -52,13 +52,13 @@ class ITLensFromPretrainedConfig(ITLensSharedConfig):
 # rather than use from_pretrained_no_processing wrapper, we can specify the simplified config defaults we want directly
 @dataclass(kw_only=True)
 class ITLensFromPretrainedNoProcessingConfig(ITLensFromPretrainedConfig):
-    fold_ln: bool = False
-    center_writing_weights: bool = False
-    center_unembed: bool = False
-    refactor_factored_attn_matrices: bool = False
-    fold_value_biases: bool = False
+    fold_ln: bool | None = False
+    center_writing_weights: bool | None = False
+    center_unembed: bool | None = False
+    refactor_factored_attn_matrices: bool | None = False
+    fold_value_biases: bool | None = False
     dtype: str = "float32"
-    default_prepend_bos: bool = True
+    default_prepend_bos: bool | None = True
 
 
 @dataclass(kw_only=True)
@@ -167,12 +167,20 @@ class ITLensConfig(ITConfig):
             self._sync_hf_tl_dtypes(hf_dtype, tl_dtype)
 
     def _check_supported_device_map(self):
+        if self.hf_from_pretrained_cfg is None or self.hf_from_pretrained_cfg.pretrained_kwargs is None:
+            return
         device_map = self.hf_from_pretrained_cfg.pretrained_kwargs.get("device_map", None)
         if isinstance(device_map, dict) and len(device_map.keys()) > 1:
             rank_zero_warn(tl_invalid_dmap)
             self.hf_from_pretrained_cfg.pretrained_kwargs["device_map"] = "cpu"
 
     def _sync_hf_tl_dtypes(self, hf_dtype, tl_dtype):
+        if self.hf_from_pretrained_cfg is None:
+            return
+
+        if self.hf_from_pretrained_cfg.pretrained_kwargs is None:
+            self.hf_from_pretrained_cfg.pretrained_kwargs = {}
+
         if hf_dtype and tl_dtype:
             if hf_dtype != tl_dtype:  # if both are provided, TL dtype takes precedence
                 rank_zero_warn(

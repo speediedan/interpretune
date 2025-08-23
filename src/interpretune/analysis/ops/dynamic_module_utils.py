@@ -98,6 +98,8 @@ def get_function_in_module(
             importlib.invalidate_caches()
         cached_module: Optional[ModuleType] = sys.modules.get(name)
         module_spec = importlib.util.spec_from_file_location(name, location=module_file)
+        if module_spec is None:
+            raise ImportError(f"Could not create module spec for {name} from {module_file}")
 
         # Hash the module file and all its relative imports to check if we need to reload it
         module_files: list[Path] = [module_file] + sorted(map(Path, get_relative_import_files(module_file)))
@@ -112,6 +114,8 @@ def get_function_in_module(
             module = cached_module
         # reload in both cases, unless the module is already imported and the hash hits
         if getattr(module, "__interpretune_module_hash__", "") != module_hash:
+            if module_spec.loader is None:
+                raise ImportError(f"Module spec for {name} has no loader")
             module_spec.loader.exec_module(module)
             module.__interpretune_module_hash__ = module_hash
         return getattr(module, function_name)
@@ -183,6 +187,7 @@ def get_cached_module_file_it(
     # Download and cache module_file from the repo `op_repo_name_or_path` or grab it if it's a local file.
     op_repo_name_or_path = str(op_repo_name_or_path)
     is_local = os.path.isdir(op_repo_name_or_path)
+    cached_module = None  # Initialize to prevent unbound variable error
     if is_local:
         submodule = os.path.basename(op_repo_name_or_path)
     else:
@@ -190,7 +195,11 @@ def get_cached_module_file_it(
         op_repo_name_or_path = op_repo_name_or_path.replace(".", "/")
         submodule = op_repo_name_or_path.replace("/", os.path.sep)
         cached_module = try_to_load_from_cache(
-            op_repo_name_or_path, module_file, cache_dir=cache_dir, revision=_commit_hash, repo_type=repo_type
+            op_repo_name_or_path,
+            module_file,
+            cache_dir=Path(cache_dir) if cache_dir is not None else None,
+            revision=_commit_hash,
+            repo_type=repo_type,
         )
     new_files = []
     try:
