@@ -47,6 +47,7 @@ StrOrPath: TypeAlias = Union[str, PathLike]
 
 
 class AutoStrEnum(Enum):
+    @staticmethod
     def _generate_next_value_(name, _start, _count, _last_values) -> str:  # type: ignore
         return name
 
@@ -92,7 +93,7 @@ class DerivedEnumMeta(EnumMeta):  # change EnumMeta alias to EnumType when 3.11 
         if input_set is not None:
             if transform and callable(transform):
                 input_set = {transform(x) for x in input_set}
-            for member in sorted(input_set):
+            for member in sorted(input_set, key=str):
                 if member not in classdict:
                     classdict[member] = auto()
         return super().__new__(mcls, clsname, bases, classdict)
@@ -252,7 +253,7 @@ OptimizerLRScheduler = Optional[
 
 ArgsType = Optional[Union[list[str], dict[str, Any], Namespace]]
 
-AnyDataClass = TypeVar("AnyDataClass", bound=dataclass)
+AnyDataClass = TypeVar("AnyDataClass")
 
 
 ################################################################################
@@ -337,9 +338,13 @@ def gen_protocol_variants(
     if not isinstance(base_protocols, tuple):
         base_protocols = (base_protocols,)
     for sub_proto in get_args(supported_sub_protocols):
-        supported_cls = _ProtocolMeta(f"Built{sub_proto.__name__}", (*base_protocols, sub_proto, Protocol), {})
+        supported_cls = _ProtocolMeta(f"Built{sub_proto.__name__}", (*base_protocols, sub_proto, Protocol), {})  # type: ignore[arg-type]
         supported_cls._is_runtime_protocol = True
-        supported_cls.__module__ = inspect.getmodule(inspect.currentframe().f_back).__name__
+        frame = inspect.currentframe()
+        if frame and frame.f_back:
+            module = inspect.getmodule(frame.f_back)
+            if module:
+                supported_cls.__module__ = module.__name__
         protocol_components.append(supported_cls)
     gen_type_alias = " | ".join([f"protocol_components[{i}]" for i in range(len(protocol_components))])
     return eval(gen_type_alias)

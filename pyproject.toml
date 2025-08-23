@@ -221,6 +221,7 @@ include = [
     "src/interpretune/config/module.py",
     "src/interpretune/base/modules.py",
     "src/interpretune/base/hooks.py",
+    "src/interpretune/protocol.py",
 #    "src",
 #    "tests"
 
