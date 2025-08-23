@@ -194,7 +194,7 @@ include = [
     "src/interpretune/analysis/formatters.py",
     # "src/interpretune/analysis/core.py",                    # 78 errors - very complex type issues
     # "src/interpretune/analysis/ops/definitions.py",        # 19 errors - tensor operations, protocol issues
-    "src/interpretune/analysis/ops/dynamic_module_utils.py",  # Fixed 5 errors: Optional safety, PathLike handling
+    "src/interpretune/analysis/ops/dynamic_module_utils.py",
     "src/interpretune/analysis/ops/__init__.py",
     "src/interpretune/analysis/ops/auto_columns.py",
     "src/interpretune/analysis/ops/dispatcher.py",
@@ -232,12 +232,12 @@ include = [
     "src/interpretune/extensions/__init__.py",
     "src/interpretune/extensions/memprofiler.py",
     "src/interpretune/extensions/neuronpedia.py",
-    # "src/interpretune/extensions/debug_generation.py",      # 30 errors - optional member access
+    "src/interpretune/extensions/debug_generation.py",      # 1 error - optional member access
 
     # Runners
     "src/interpretune/runners/__init__.py",
     # "src/interpretune/runners/analysis.py",                 # 28 errors - protocol mismatches, argument types
-    # "src/interpretune/runners/core.py",                     # Fixed: was 9 errors - path operations, parameter mismatches
+    "src/interpretune/runners/core.py",
 
     # Tools
     "src/interpretune/tools/",
@@ -253,8 +253,9 @@ include = [
     "src/interpretune/utils/warnings.py",
 
 ]
+typeCheckingMode = "basic"
 exclude = [
-    # Special case file with complex syntax issues
+    # patch of external code
     "src/interpretune/utils/patched_tlens_generate.py",
 ]
 

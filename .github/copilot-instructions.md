@@ -15,7 +15,9 @@
 ## Code Standards
 
 ### Required Before Each Commit
+- Unless guidance in a comment or a pull request or target issue description states otherwise, always run the `ci_test-full.yml` workflow in your local environment and ensure all tests are passing before committing.
 - Ensure all pre-commit hooks pass.
+- If the copilot session is still failing despite trying to get tests and pre-commit hooks passing for some time, it's okay to commit your intermediate work with a comment about the present challenge to be dealt with in a subsequent session.
 
 ### Requirement for Each Pull Request
 - All pull requests must pass the CI checks.
