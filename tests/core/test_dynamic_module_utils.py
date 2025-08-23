@@ -149,9 +149,11 @@ class TestGetCachedModuleFileIt:
     @patch("interpretune.analysis.ops.dynamic_module_utils.filecmp.cmp")
     @patch("interpretune.analysis.ops.dynamic_module_utils.shutil.copy")
     @patch("interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches")
-    def test_local_file_copying_when_different(self, mock_invalidate, mock_copy, mock_filecmp, mock_it_modules_cache):
+    @patch("interpretune.analysis.ops.dynamic_module_utils.cached_file")
+    def test_local_file_copying_when_different(self, mock_cached_file, mock_invalidate, mock_copy, mock_filecmp, mock_it_modules_cache):
         """Test file copying logic when local files are different."""
         mock_filecmp.return_value = False  # Files are different
+        mock_cached_file.return_value = "/test/path/module.py"
 
         with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=True):
             with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.exists", return_value=True):

@@ -161,7 +161,7 @@ class DebugGeneration:
         corpus: Optional[Dataset | DatasetDict | IterableDataset | IterableDatasetDict | Dict] = None,
         stride: Optional[int] = None,
         limit_chars: Optional[int] = None,
-    ) -> float:
+    ) -> torch.Tensor:
         if self.phandle is None:
             raise RuntimeError("phandle not connected - call connect() first")
 
@@ -224,7 +224,7 @@ class DebugGeneration:
         correct_tokens = self.phandle.datamodule.tokenizer.batch_decode(prediction[prediction == true_tokens])
         return num_correct / len(true_tokens), correct_tokens
 
-    def naive_perplexity(self, encoded_corpus, stride: int = 512) -> float:
+    def naive_perplexity(self, encoded_corpus, stride: int = 512) -> torch.Tensor:
         if self.phandle is None:
             raise RuntimeError("phandle not connected - call connect() first")
 
@@ -255,7 +255,7 @@ class DebugGeneration:
                 break
 
         ppl = torch.exp(torch.stack(nlls).mean())
-        return float(ppl.item())
+        return ppl
 
     def sanitize_gen_output(
         self, outputs: Any, gen_output_attr: Optional[str] = None, decode_cfg_override: Optional[Dict] = None

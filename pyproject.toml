@@ -185,7 +185,7 @@ include = [
     "src/interpretune/adapters/core.py",
     "src/interpretune/adapters/lightning.py",
     "src/interpretune/adapters/registration.py",
-    # "src/interpretune/adapters/transformer_lens.py",       # 13 errors - transformer_lens integration
+    "src/interpretune/adapters/transformer_lens.py",            # 13 → 0 errors - Fixed!
     # "src/interpretune/adapters/sae_lens.py",               # 12 errors - SAE lens integration
     # "src/interpretune/adapters/circuit_tracer.py",         # 14 errors - circuit tracer integration
 
@@ -232,7 +232,7 @@ include = [
     "src/interpretune/extensions/__init__.py",
     "src/interpretune/extensions/memprofiler.py",
     "src/interpretune/extensions/neuronpedia.py",
-    "src/interpretune/extensions/debug_generation.py",      # 1 error - optional member access
+    "src/interpretune/extensions/debug_generation.py",      # 30+ → 0 errors - Fixed!
 
     # Runners
     "src/interpretune/runners/__init__.py",
