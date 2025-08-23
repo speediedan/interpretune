@@ -3,7 +3,7 @@ import tempfile
 import os
 import warnings
 from datetime import datetime
-from typing import Any, Union, TYPE_CHECKING
+from typing import Any, Union, TYPE_CHECKING, cast
 from functools import reduce, partial
 from pathlib import Path
 from copy import deepcopy
@@ -83,14 +83,18 @@ class BaseConfigImpl:
     def _init_dirs_and_hooks(self) -> None:
         self._create_experiment_dir()
         if hasattr(self, "analysis_run_cfg") and self.analysis_run_cfg:
-            init_analysis_cfgs(
-                module=self,
-                analysis_cfgs=self.analysis_run_cfg._processed_analysis_cfgs,
-                cache_dir=self.analysis_run_cfg.cache_dir,
-                op_output_dataset_path=self.analysis_run_cfg.op_output_dataset_path,
-                sae_analysis_targets=self.analysis_run_cfg.sae_analysis_targets,
-                ignore_manual=self.analysis_run_cfg.ignore_manual,
-            )
+            # Only call init_analysis_cfgs if the module has the required construct_names_filter method
+            if hasattr(self, "construct_names_filter"):
+                from interpretune.protocol import SAEAnalysisProtocol
+
+                init_analysis_cfgs(
+                    module=cast(SAEAnalysisProtocol, self),
+                    analysis_cfgs=self.analysis_run_cfg._processed_analysis_cfgs,
+                    cache_dir=self.analysis_run_cfg.cache_dir,
+                    op_output_dataset_path=self.analysis_run_cfg.op_output_dataset_path,
+                    sae_analysis_targets=self.analysis_run_cfg.sae_analysis_targets,
+                    ignore_manual=self.analysis_run_cfg.ignore_manual,
+                )
         if self.cuda_allocator_history:
             self.memprofiler.init_cuda_snapshots_dir()
         # TODO: add save_hyperparameters/basic logging func for raw pytorch
@@ -162,7 +166,14 @@ class PropertyDispatcher:
         Returns:
             Optional[Any]: _description_
         """
-        if (overridden_method := inspect.currentframe().f_back.f_code.co_name) in self._enabled_overrides:
+        current_frame = inspect.currentframe()
+        if current_frame is None or current_frame.f_back is None:
+            return non_dispatch_val
+        f_back = current_frame.f_back
+        if f_back.f_code is None:
+            return non_dispatch_val
+        overridden_method = f_back.f_code.co_name
+        if overridden_method in self._enabled_overrides:
             return self.PROPERTY_COMPOSITION[overridden_method]["dispatch"].__get__(self._it_state)
         else:
             return non_dispatch_val
@@ -179,11 +190,13 @@ class PropertyDispatcher:
 
     @property
     def core_log_dir(self) -> str | os.PathLike | None:
-        return self._core_or_framework(c2f_map_key="_log_dir")
+        result = self._core_or_framework(c2f_map_key="_log_dir")
+        return cast(Union[str, os.PathLike, None], result)
 
     @property
     def datamodule(self) -> ITDataModule | None:
-        return self._core_or_framework(c2f_map_key="_datamodule")
+        result = self._core_or_framework(c2f_map_key="_datamodule")
+        return cast(Union[ITDataModule, None], result)
 
     @property
     def session_complete(self) -> bool:
@@ -216,7 +229,7 @@ class PropertyDispatcher:
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
             device = None
-        return device
+        return cast(Union[torch.device, None], device)
 
     @device.setter
     def device(self, value: str | torch.device | None) -> None:
@@ -290,7 +303,8 @@ class CoreHelperAttributes:
         if not self.lr_scheduler_configs:
             return None
 
-        lr_schedulers: list[LRScheduler] = [config.scheduler for config in self.lr_scheduler_configs]
+        lr_scheduler_configs = cast(list, self.lr_scheduler_configs)
+        lr_schedulers: list[LRScheduler] = [config.scheduler for config in lr_scheduler_configs]
         if len(lr_schedulers) == 1:
             return lr_schedulers[0]
 
@@ -356,7 +370,9 @@ class OptimizerScheduler:
         optimizers, lr_schedulers = [], []
 
         # single output, single optimizer
-        if isinstance(optim_conf, Optimizable):  # TODO: switch to ParamGroupAddable protocol for FTS instead?
+        if isinstance(
+            optim_conf, Optimizable
+        ):  # TODO: switch to ParamGroupAddable protocol for FTS instead?  # type: ignore[misc]
             optimizers = [optim_conf]
         # two lists, optimizer + lr schedulers
         elif (
@@ -402,4 +418,5 @@ class OptimizerScheduler:
         return optimizers, lr_schedulers
 
 
-class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler): ...
+class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler):  # type: ignore[misc]
+    ...

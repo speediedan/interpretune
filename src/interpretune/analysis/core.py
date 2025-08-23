@@ -13,8 +13,14 @@ import plotly.express as px
 from tabulate import tabulate
 from transformers import PreTrainedTokenizerBase
 from sae_lens.config import HfDataset
-from datasets import Features, Array2D, Value, Array3D, load_dataset, Column
+from datasets import Features, Array2D, Value, Array3D, load_dataset
 from datasets import Sequence as DatasetsSequence
+
+# Column class was introduced in datasets 4.0, make it optional for backward compatibility
+try:
+    from datasets import Column
+except ImportError:
+    Column = None
 
 from interpretune.protocol import (
     AnalysisStoreProtocol,
@@ -460,7 +466,7 @@ class AnalysisStore:
     def _is_tensor_seq(self, data) -> bool:
         """Check if data is a Datasets Column, sequence of torch.Tensors or a single torch.Tensor."""
         return (
-            (isinstance(data, Column) and isinstance(data[0], torch.Tensor))
+            (Column is not None and isinstance(data, Column) and isinstance(data[0], torch.Tensor))
             or isinstance(data, torch.Tensor)
             or (isinstance(data, list) and all(isinstance(x, torch.Tensor) for x in data))
         )

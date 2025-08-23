@@ -1,12 +1,12 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 import logging
 from functools import partialmethod
 import torch
 
 from interpretune.config import SessionRunnerCfg
 from interpretune.base import _call_itmodule_hook, it_init, it_session_end, ITDataModule
-from interpretune.protocol import Optimizable, CorePhases
+from interpretune.protocol import Optimizable, CorePhases, AllPhases
 
 if TYPE_CHECKING:
     from interpretune.adapters import ITModule
@@ -27,7 +27,12 @@ def core_train_loop(
     train_dataloader = datamodule.train_dataloader()
     val_dataloader = datamodule.val_dataloader()
     # TODO: add optimizers property setter to corehelperattributes
-    optim = module.optimizers[0]
+    optimizers = module.optimizers
+    if optimizers is None or not optimizers:
+        raise RuntimeError("Module has no optimizers configured")
+    # Cast to list to fix typing issues where optimizers might be seen as PathLike
+    optimizers_list = cast(list, optimizers)
+    optim = optimizers_list[0]
     train_ctx = {"module": module, "optimizer": optim}
     for epoch_idx in range(max_epochs):
         module.model.train()
@@ -50,14 +55,14 @@ def core_train_loop(
 
 def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batches: int, *args, **kwargs):
     dataloader = datamodule.test_dataloader()
-    test_ctx = {"module": module}
+    test_ctx = {}  # Remove duplicate module from context
     module._it_state._current_epoch = 0
     module.model.eval()
     for batch_idx, batch in enumerate(dataloader):
         with torch.inference_mode():
             if batch_idx >= limit_test_batches >= 0:
                 break
-            run_step(step_fn="test_step", batch=batch, batch_idx=batch_idx, **test_ctx)
+            run_step(step_fn="test_step", module=module, batch=batch, batch_idx=batch_idx, **test_ctx)
     _call_itmodule_hook(module, hook_name="on_test_epoch_end", hook_msg="Running test epoch end hooks")
 
 
@@ -106,7 +111,7 @@ class SessionRunner:
     """A barebones trainer that can be used to orchestrate training when no adapter is specified during ITSession
     composition."""
 
-    def __init__(self, run_cfg: SessionRunnerCfg | dict[str, Any], *args: Any, **kwargs: Any) -> Any:
+    def __init__(self, run_cfg: SessionRunnerCfg | dict[str, Any], *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.run_cfg = run_cfg if isinstance(run_cfg, SessionRunnerCfg) else SessionRunnerCfg(**run_cfg)
         # Only training and testing commands are supported in SessionRunner
@@ -123,11 +128,19 @@ class SessionRunner:
 
     def it_init(self):
         # Unless overridden we dispatch the trainer-independent `it_init`
-        it_init(**self.run_cfg.it_session)
+        session_cfg = self.run_cfg.it_session
+        if not isinstance(session_cfg, dict):
+            raise TypeError("it_session configuration must be a dictionary")
+        it_init(**session_cfg)
 
     def it_session_end(self):
         """Dispatch any phase-specific session end hooks."""
-        it_session_end(session_type=self.phase, **self.run_cfg.it_session)
+        if self.phase is None:
+            raise RuntimeError("Cannot call it_session_end without setting phase first")
+        session_cfg = self.run_cfg.it_session
+        if not isinstance(session_cfg, dict):
+            raise TypeError("it_session configuration must be a dictionary")
+        it_session_end(session_type=AllPhases[self.phase.name], **session_cfg)
 
     def _run(self, phase, loop_fn, *args: Any, **kwargs: Any) -> Any | None:
         self.phase = CorePhases[phase]

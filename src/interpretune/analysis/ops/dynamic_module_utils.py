@@ -227,6 +227,8 @@ def get_cached_module_file_it(
         raise
 
     # Check we have all the requirements in our environment
+    if resolved_module_file is None:
+        raise RuntimeError(f"Failed to resolve module file {module_file} from {op_repo_name_or_path}")
     modules_needed = check_imports(resolved_module_file)
 
     # Now we move the module inside our cached dynamic modules.
