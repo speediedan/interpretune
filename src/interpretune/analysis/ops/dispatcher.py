@@ -408,7 +408,7 @@ class AnalysisOpDispatcher:
 
         return resolved
 
-    def _set_default_hub_op_aliases(self) -> None:
+    def _set_default_hub_op_aliases(self) -> dict[str, "OpDef"]:
         """Ensure operations are accessible both with and without namespaces."""
         # Use existing definitions if no raw definitions provided
         target_ops = self._op_definitions
@@ -465,6 +465,8 @@ class AnalysisOpDispatcher:
                     else:
                         if base_alias != op_name and base_alias != alias:
                             target_ops[base_alias] = target_ops[op_name]
+
+        return target_ops
 
     def _import_callable(self, callable_path: str) -> Callable:
         """Import a callable from a path."""
@@ -742,11 +744,16 @@ class AnalysisOpDispatcher:
                     split_names.append(op_name)
             op_names = split_names
 
-        raw_ops = [self.get_op(op_name) if isinstance(op_name, str) else op_name for op_name in op_names]
-        # Filter to ensure we only have AnalysisOp objects
-        ops = [op for op in raw_ops if isinstance(op, AnalysisOp)]
-        if len(ops) != len(raw_ops):
-            raise ValueError("Composition contains non-AnalysisOp objects")
+        # Convert all op references to AnalysisOp objects
+        ops = []
+        for op_name in op_names:
+            if isinstance(op_name, str):
+                op = self.get_op(op_name)
+            else:
+                # Handle OpWrapper and other non-string references
+                op = self._maybe_instantiate_op(op_name)
+            ops.append(op)
+
         return CompositeAnalysisOp(ops, name=name, aliases=aliases)
 
     def __call__(

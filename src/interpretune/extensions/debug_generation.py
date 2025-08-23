@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from copy import deepcopy
 
 import torch
-from datasets import load_dataset, Dataset
+from datasets import load_dataset, Dataset, DatasetDict, IterableDataset, IterableDatasetDict
 import numpy as np
 from torch.nn import CrossEntropyLoss
 
@@ -70,7 +70,10 @@ class DebugGeneration:
         gen_config_override={"max_new_tokens": 25})
         ```
         """
-        sequences = sequences or self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
+        if sequences is None:
+            if self.phandle is None:
+                raise RuntimeError("phandle not connected - call connect() first")
+            sequences = self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
         if not isinstance(sequences, list):
             sequences = [sequences]
         return [f"{ex.strip()}" for ex in sequences]
@@ -99,8 +102,15 @@ class DebugGeneration:
             gen_config_override={"max_new_tokens": 25})
         ```
         """
-        sequences = sequences or self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
-        format = format or self.phandle.datamodule.itdm_cfg.cust_tokenization_pattern
+        if self.phandle is None:
+            raise RuntimeError("phandle not connected - call connect() first")
+
+        if sequences is None:
+            sequences = self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
+        if format is None:
+            format = self.phandle.datamodule.itdm_cfg.cust_tokenization_pattern
+        if sequences is None:
+            sequences = []
         try:
             return [self.phandle.datamodule.itdm_cfg.prompt_cfg.model_chat_template_fn(ex, format) for ex in sequences]
         except Exception as e:
@@ -134,6 +144,9 @@ class DebugGeneration:
             gen_config_override={"max_new_tokens": 25})
         ```
         """
+        if self.phandle is None:
+            raise RuntimeError("phandle not connected - call connect() first")
+
         # note we're not using a context manager here, keeping our new override for subsequent debugging convenience
         gen_kwargs = self.phandle.it_cfg.generative_step_cfg.lm_generation_cfg.generate_kwargs
         if gen_kwargs_override:
@@ -144,17 +157,62 @@ class DebugGeneration:
         return self.phandle.it_generate(inputs, **gen_kwargs)
 
     def perplexity_on_sample(
-        self, corpus: Optional[Dataset | Dict] = None, stride: Optional[int] = None, limit_chars: Optional[int] = None
+        self,
+        corpus: Optional[Dataset | DatasetDict | IterableDataset | IterableDatasetDict | Dict] = None,
+        stride: Optional[int] = None,
+        limit_chars: Optional[int] = None,
     ) -> float:
+        if self.phandle is None:
+            raise RuntimeError("phandle not connected - call connect() first")
+
         if not corpus:
             corpus = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
-        corpus_raw = "\n\n".join(corpus["text"])
+
+        # Handle different dataset types to extract text as List[str]
+        text_list: List[str] = []
+
+        if hasattr(corpus, "to_dict"):
+            corpus_dict = corpus.to_dict()
+            text_list = corpus_dict.get("text", [])
+        elif isinstance(corpus, dict):
+            text_list = corpus.get("text", [])
+        elif isinstance(corpus, (Dataset,)):
+            # Regular Dataset with indexing support
+            text_list = corpus["text"]
+        elif isinstance(corpus, (IterableDataset, IterableDatasetDict)):
+            # IterableDataset - convert to list first
+            try:
+                corpus_list = list(corpus)
+                if corpus_list and isinstance(corpus_list[0], dict) and "text" in corpus_list[0]:
+                    text_list = [str(item["text"]) for item in corpus_list]
+                else:
+                    text_list = [str(item) for item in corpus_list]
+            except Exception:
+                text_list = []
+        else:
+            # Other iterable types
+            try:
+                if hasattr(corpus, "__iter__"):
+                    corpus_list = list(corpus)
+                    if corpus_list and isinstance(corpus_list[0], dict) and "text" in corpus_list[0]:
+                        text_list = [str(item["text"]) for item in corpus_list]
+                    else:
+                        text_list = [str(item) for item in corpus_list]
+                else:
+                    text_list = []
+            except Exception:
+                text_list = []
+
+        corpus_raw = "\n\n".join(text_list)
         corpus_max_idx = limit_chars or len(corpus_raw)
         encoded_corpus = self.phandle.datamodule.tokenizer(corpus_raw[:corpus_max_idx], return_tensors="pt")
         encoded_corpus = sanitize_input_name(self.model_input_names, encoded_corpus)
-        return self.naive_perplexity(encoded_corpus, stride=stride)
+        return self.naive_perplexity(encoded_corpus, stride=stride or 512)
 
     def top1_token_accuracy_on_sample(self, sample: str) -> Tuple[float, List[str]]:
+        if self.phandle is None:
+            raise RuntimeError("phandle not connected - call connect() first")
+
         sample_input_ids = self.phandle.datamodule.tokenizer.encode(sample)
         sample_input_ids = torch.tensor(sample_input_ids).to(self.phandle.device)
         sample_input_ids = sample_input_ids.unsqueeze(0)
@@ -167,6 +225,9 @@ class DebugGeneration:
         return num_correct / len(true_tokens), correct_tokens
 
     def naive_perplexity(self, encoded_corpus, stride: int = 512) -> float:
+        if self.phandle is None:
+            raise RuntimeError("phandle not connected - call connect() first")
+
         max_length = self.phandle.datamodule.tokenizer.model_max_length
         corpus_ids = getattr(encoded_corpus, self.model_input_names[0])
         seq_len = corpus_ids.size(1)
@@ -194,7 +255,7 @@ class DebugGeneration:
                 break
 
         ppl = torch.exp(torch.stack(nlls).mean())
-        return ppl
+        return float(ppl.item())
 
     def sanitize_gen_output(
         self, outputs: Any, gen_output_attr: Optional[str] = None, decode_cfg_override: Optional[Dict] = None
@@ -224,6 +285,8 @@ class DebugGeneration:
 
     @property
     def model_input_names(self) -> List[str]:
+        if self.phandle is None:
+            raise RuntimeError("phandle not connected - call connect() first")
         return self.phandle.datamodule.tokenizer.model_input_names
 
     def debug_generate_batch(
@@ -234,6 +297,9 @@ class DebugGeneration:
         gen_kwargs_override: Optional[Dict] = None,
         decode_cfg_override: Optional[Dict] = None,
     ) -> Tuple[List, List]:
+        if self.phandle is None:
+            raise RuntimeError("phandle not connected - call connect() first")
+
         test_input_ids = self.phandle.datamodule.tokenizer.batch_encode_plus(sequences)
         test_input_ids = sanitize_input_name(self.model_input_names, test_input_ids)
         test_input_ids = self.phandle.datamodule.data_collator(test_input_ids)
@@ -255,6 +321,9 @@ class DebugGeneration:
         gen_kwargs_override: Optional[Dict] = None,
         decode_cfg_override: Optional[Dict] = None,
     ) -> Tuple[List, List]:
+        if self.phandle is None:
+            raise RuntimeError("phandle not connected - call connect() first")
+
         answers = []
         full_outputs = []
         for seq in sequences:
