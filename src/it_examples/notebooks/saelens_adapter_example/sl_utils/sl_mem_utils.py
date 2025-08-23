@@ -2,7 +2,8 @@ import gc
 
 from typing import Tuple
 import torch as t
-#from openai import OpenAIError
+
+# from openai import OpenAIError
 from tabulate import tabulate
 
 
@@ -48,8 +49,13 @@ def profile_pytorch_memory(namespace: dict, n_top: int = 10, filter_device: str 
     object_sizes = {}
     for name, obj in namespace.items():
         try:
-            obj_type = (type(obj).__name__ if isinstance(obj, t.nn.Module) \
-                         else f"Tensor {tuple(obj.shape)}" if t.is_tensor(obj) else None)
+            obj_type = (
+                type(obj).__name__
+                if isinstance(obj, t.nn.Module)
+                else f"Tensor {tuple(obj.shape)}"
+                if t.is_tensor(obj)
+                else None
+            )
             if obj_type is None:
                 continue
             device = get_device(obj)
@@ -57,7 +63,7 @@ def profile_pytorch_memory(namespace: dict, n_top: int = 10, filter_device: str 
                 continue
             size = get_tensors_size(obj)
             object_sizes[name] = (obj_type, device, size / (1024**3))
-        except (ReferenceError):
+        except ReferenceError:
             # ReferenceError: this object might have been garbage collected, so we don't care about it
             continue
 
@@ -81,6 +87,7 @@ def find_cuda_tensors():
             pass
     return cuda_tensors
 
+
 def find_cuda_tensors_by_type():
     tensors = find_cuda_tensors()
     tensors_by_type = {}
@@ -90,6 +97,7 @@ def find_cuda_tensors_by_type():
             tensors_by_type[t] = 0
         tensors_by_type[t] += tensor.element_size() * tensor.nelement()
     return tensors_by_type
+
 
 def summarize_cuda_tensors_by_shape():
     tensors = find_cuda_tensors()
@@ -104,6 +112,7 @@ def summarize_cuda_tensors_by_shape():
     summary = {shape: (count, size / (1024**2)) for shape, (count, size) in tensors_by_shape.items()}
     sorted_summary = dict(sorted(summary.items(), key=lambda x: x[1][1], reverse=True))
     return sorted_summary
+
 
 def find_cuda_tensors_by_shape(shape: Tuple):
     tensors = find_cuda_tensors()

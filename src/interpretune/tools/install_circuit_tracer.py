@@ -12,18 +12,18 @@ def install_circuit_tracer(use_commit_pin: bool = True, verbose: bool = False):
     # Inline the utility functions to avoid importing interpretune package
     def should_use_commit_pin():
         """Check if we should use commit pin based on environment variable."""
-        return os.getenv('IT_USE_CT_COMMIT_PIN', '').lower() in ['true', '1', 'yes']
+        return os.getenv("IT_USE_CT_COMMIT_PIN", "").lower() in ["true", "1", "yes"]
 
     def get_circuit_tracer_commit():
         """Get the pinned circuit-tracer commit hash."""
         repo_root = Path(__file__).parent.parent.parent.parent
-        pin_file = repo_root / 'requirements' / 'circuit_tracer_pin.txt'
+        pin_file = repo_root / "requirements" / "circuit_tracer_pin.txt"
 
         if pin_file.exists():
-            with open(pin_file, 'r') as f:
+            with open(pin_file, "r") as f:
                 for line in f:
                     line = line.strip()
-                    if line and not line.startswith('#'):
+                    if line and not line.startswith("#"):
                         return line
         return "6c74ea291c410bb3391e572cd6a8d020be714922"  # fallback
 
@@ -76,19 +76,11 @@ def install_circuit_tracer(use_commit_pin: bool = True, verbose: bool = False):
 
 def main():
     """CLI entry point for circuit-tracer installation."""
-    parser = argparse.ArgumentParser(
-        description="Install circuit-tracer for interpretune examples"
-    )
+    parser = argparse.ArgumentParser(description="Install circuit-tracer for interpretune examples")
     parser.add_argument(
-        "--no-commit-pin",
-        action="store_true",
-        help="Use version-based installation instead of commit pin"
+        "--no-commit-pin", action="store_true", help="Use version-based installation instead of commit pin"
     )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Verbose output"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
 
     args = parser.parse_args()
 

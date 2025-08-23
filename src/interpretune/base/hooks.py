@@ -8,8 +8,9 @@ from interpretune.protocol import OptimizerLRScheduler, STEP_OUTPUT
 if TYPE_CHECKING:
     from interpretune.config import ITConfig, ITState
 
+
 class BaseITHooks:
-    """" IT Protocol hooks implemented by BaseITModule."""
+    """ " IT Protocol hooks implemented by BaseITModule."""
 
     # if you override these in your module, ensure you cooperatively call super() if you want to retain
     # the relevant BaseITModule hook functionality
@@ -45,7 +46,7 @@ class BaseITHooks:
                 "scheduler": instantiate_class(args=optimizer, init=self.it_cfg.lr_scheduler_init),
                 **self.it_cfg.pl_lrs_cfg,
             }
-        return [optimizer], [scheduler]
+        return [optimizer], [scheduler]  # type: ignore[return-value]
 
     # N.B. we call `on_session_end` at the end of train, test, analysis and predict session types only. This is because
     # `on_train_end` and `on_validation_end` are called with most training sessions (when running both a fit and

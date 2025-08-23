@@ -24,6 +24,7 @@ from it_examples.patching.dep_patch_shim import ExpPatch, _ACTIVE_PATCHES
 
 EXTENDED_VER_PAT = re.compile(r"([0-9]+\.){2}[0-9]+")
 
+
 def maybe_mark_exp(exp_patch_set: Set[ExpPatch], mark_if_false: Optional[Dict] = None):
     """This allows us to evaluate whether an experimental patch set that is conditionally required for a given test
     is required in the current execution context.
@@ -38,17 +39,18 @@ def maybe_mark_exp(exp_patch_set: Set[ExpPatch], mark_if_false: Optional[Dict] =
     else:
         return mark_if_false or {}
 
+
 # runif components
-cuda_mark = {'min_cuda_gpus': 1}
-bf16_cuda_mark = {'bf16_cuda': True}
-profiling_mark = {'profiling': True}
-profiling_ci_mark = {'profiling_ci': True}
-standalone_mark = {'standalone': True}
-optional_mark = {'optional': True}
+cuda_mark = {"min_cuda_gpus": 1}
+bf16_cuda_mark = {"bf16_cuda": True}
+profiling_mark = {"profiling": True}
+profiling_ci_mark = {"profiling_ci": True}
+standalone_mark = {"standalone": True}
+optional_mark = {"optional": True}
 lightning_mark = {"lightning": True}
-fts_mark = {'finetuning_scheduler': True}
+fts_mark = {"finetuning_scheduler": True}
 bitsandbytes_mark = {"bitsandbytes": True}
-skip_win_mark = {'skip_windows': True}
+skip_win_mark = {"skip_windows": True}
 
 # RunIf aliases
 RUNIF_ALIASES = {
@@ -78,6 +80,7 @@ RUNIF_ALIASES = {
     "l_optional": {**lightning_mark, **optional_mark},
     "skip_win_optional": {**skip_win_mark, **optional_mark},
 }
+
 
 class RunIf:
     """RunIf wrapper for simple marking specific cases, basically a `pytest.mark.skipif` decorator factory:
@@ -250,7 +253,6 @@ class RunIf:
                 reasons.append(f"Required experimental patch configuration {exp_patch} is not active.")
             # used in conftest.py::pytest_collection_modifyitems
             kwargs["exp_patch"] = True
-
 
         reasons = [rs for cond, rs in zip(conditions, reasons) if cond]
         return pytest.mark.skipif(

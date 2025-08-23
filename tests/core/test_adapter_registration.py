@@ -17,38 +17,47 @@ from interpretune.adapters import CompositionRegistry, ITModule, LightningAdapte
 
 
 class TestClassRegistration:
-
-
     def test_canonicalize_composition(self):
         TEST_ADAPTER_REGISTRY = CompositionRegistry()
-        adapter_tuple_cc_result = TEST_ADAPTER_REGISTRY.canonicalize_composition(("transformer_lens", Adapter.core,))
+        adapter_tuple_cc_result = TEST_ADAPTER_REGISTRY.canonicalize_composition(
+            (
+                "transformer_lens",
+                Adapter.core,
+            )
+        )
         str_list_cc_result = TEST_ADAPTER_REGISTRY.canonicalize_composition(["core", "transformer_lens", Adapter.core])
         assert adapter_tuple_cc_result == str_list_cc_result == (Adapter.core, Adapter.transformer_lens)
 
     def test_register_adapter(self):
         TEST_ADAPTER_REGISTRY = CompositionRegistry()
-        TEST_ADAPTER_REGISTRY.register(Adapter.core, component_key = "module",
-                adapter_combination=(Adapter.core,),
-                composition_classes=(ITModule,),
-                description="core adapter to be used with native PyTorch",
-            )
+        TEST_ADAPTER_REGISTRY.register(
+            Adapter.core,
+            component_key="module",
+            adapter_combination=(Adapter.core,),
+            composition_classes=(ITModule,),
+            description="core adapter to be used with native PyTorch",
+        )
         with pytest.raises(KeyError, match="was not found in the registry. Available valid compositions"):
             TEST_ADAPTER_REGISTRY.get((Adapter.lightning,))
-        TEST_ADAPTER_REGISTRY.register(Adapter.core, component_key = "datamodule",
-                adapter_combination=(Adapter.core,),
-                composition_classes=(ITDataModule,),
-                description="core adapter to be used with native PyTorch",
-            )
-        TEST_ADAPTER_REGISTRY.register(Adapter.core, component_key = "module",
-                adapter_combination=(Adapter.lightning,),
-                composition_classes=(LightningAdapter, BaseITModule, LightningModule),
-                description="lighting adapter",
-            )
+        TEST_ADAPTER_REGISTRY.register(
+            Adapter.core,
+            component_key="datamodule",
+            adapter_combination=(Adapter.core,),
+            composition_classes=(ITDataModule,),
+            description="core adapter to be used with native PyTorch",
+        )
+        TEST_ADAPTER_REGISTRY.register(
+            Adapter.core,
+            component_key="module",
+            adapter_combination=(Adapter.lightning,),
+            composition_classes=(LightningAdapter, BaseITModule, LightningModule),
+            description="lighting adapter",
+        )
         available_set = TEST_ADAPTER_REGISTRY.available_compositions(adapter_filter="core")
-        assert available_set == {('module', Adapter.core), ('datamodule', Adapter.core)}
+        assert available_set == {("module", Adapter.core), ("datamodule", Adapter.core)}
         with pytest.warns(UserWarning, match="The following adapter names"):
             _ = TEST_ADAPTER_REGISTRY.available_compositions(adapter_filter=[Adapter.core, "oops"])
         TEST_ADAPTER_REGISTRY.remove(("datamodule", Adapter.core))
         TEST_ADAPTER_REGISTRY.remove(("module", Adapter.lightning))
-        assert TEST_ADAPTER_REGISTRY.available_compositions() == {('module', Adapter.core)}
+        assert TEST_ADAPTER_REGISTRY.available_compositions() == {("module", Adapter.core)}
         assert str(TEST_ADAPTER_REGISTRY)

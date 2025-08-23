@@ -15,7 +15,10 @@ from jsonschema import ValidationError, validate
 
 from interpretune.config import ITSerializableCfg
 from interpretune.utils import (
-    rank_zero_warn, rank_zero_info, _NEURONPEDIA_AVAILABLE, RemoveAdditionalPropertiesValidator
+    rank_zero_warn,
+    rank_zero_info,
+    _NEURONPEDIA_AVAILABLE,
+    RemoveAdditionalPropertiesValidator,
 )
 
 from interpretune.analysis import IT_ANALYSIS_CACHE
@@ -28,6 +31,7 @@ if _NEURONPEDIA_AVAILABLE:
     @dataclass(kw_only=True)
     class NeuronpediaConfig(ITSerializableCfg):
         """Configuration for Neuronpedia integration."""
+
         """Enable Neuronpedia integration."""
         enabled: bool = False
         """Whether to automatically transform Circuit Tracer graphs for Neuronpedia compatibility."""
@@ -46,18 +50,19 @@ if _NEURONPEDIA_AVAILABLE:
         """Default prefix for graph slugs when not specified."""
         default_slug_prefix: str = "it-generated"
         """Default metadata to add to graphs."""
-        default_metadata: Dict[str, Any] = field(default_factory=lambda: {
-            "info": {
-                "creator_name": "interpretune-user",
-                "creator_url": "https://github.com/speediedan/interpretune",
-                "generator": {
-                    "name": "Interpretune Circuit Tracer",
-                    "version": "latest",
-                    "url": "https://github.com/speediedan/interpretune"
-                }
-            },
-        })
-
+        default_metadata: Dict[str, Any] = field(
+            default_factory=lambda: {
+                "info": {
+                    "creator_name": "interpretune-user",
+                    "creator_url": "https://github.com/speediedan/interpretune",
+                    "generator": {
+                        "name": "Interpretune Circuit Tracer",
+                        "version": "latest",
+                        "url": "https://github.com/speediedan/interpretune",
+                    },
+                },
+            }
+        )
 
     class NeuronpediaIntegration:
         """Neuronpedia integration extension for Interpretune.
@@ -82,14 +87,12 @@ if _NEURONPEDIA_AVAILABLE:
             """Setup Neuronpedia imports and check availability."""
             try:
                 from neuronpedia.np_graph_metadata import NPGraphMetadata
+
                 self._neuronpedia_available = True
                 self._np_graph_metadata = NPGraphMetadata
                 logger.info("Neuronpedia package available")
             except ImportError as e:
-                rank_zero_warn(
-                    f"Neuronpedia package not available: {e}. "
-                    "Install with: pip install neuronpedia"
-                )
+                rank_zero_warn(f"Neuronpedia package not available: {e}. Install with: pip install neuronpedia")
                 self._neuronpedia_available = False
 
         def connect(self, obj_ref: Any) -> None:
@@ -106,10 +109,7 @@ if _NEURONPEDIA_AVAILABLE:
             """Get the Neuronpedia configuration."""
             return self.phandle.it_cfg.neuronpedia_cfg
 
-        def _get_latest_graph_schema(
-            self,
-            schema_path: Union[str, Path] = "graph-schema.json"
-        ) -> Dict[str, Any]:
+        def _get_latest_graph_schema(self, schema_path: Union[str, Path] = "graph-schema.json") -> Dict[str, Any]:
             """Fetch the latest Neuronpedia graph schema and return it as a dictionary."""
             if not _NEURONPEDIA_AVAILABLE:
                 raise RuntimeError("Neuronpedia package is not available.")
@@ -148,7 +148,7 @@ if _NEURONPEDIA_AVAILABLE:
 
                 if latest_tag and latest_tag != cached_tag:
                     # Try to download latest schema
-                    url = f'{self.NP_RAW_REPO_URL_BASE}/{latest_tag}/{self.NP_GRAPH_SCHEMA_PATH}'
+                    url = f"{self.NP_RAW_REPO_URL_BASE}/{latest_tag}/{self.NP_GRAPH_SCHEMA_PATH}"
                     try:
                         schema_resp = requests.get(url, timeout=10)
                         schema_resp.raise_for_status()
@@ -160,8 +160,12 @@ if _NEURONPEDIA_AVAILABLE:
 
                 # Use cached schema if available
                 if cached_schema_path.exists():
-                    rank_zero_info(("[NeuronpediaIntegration] Using cached graph-schema.json "
-                                    f"(tag: {get_cached_tag() or 'unknown'})"))
+                    rank_zero_info(
+                        (
+                            "[NeuronpediaIntegration] Using cached graph-schema.json "
+                            f"(tag: {get_cached_tag() or 'unknown'})"
+                        )
+                    )
                     return json.loads(cached_schema_path.read_text())
 
             # Fallback to default schema
@@ -173,10 +177,7 @@ if _NEURONPEDIA_AVAILABLE:
             raise FileNotFoundError("No graph-schema.json available (failed to fetch, no cache, no fallback)")
 
         def apply_qparam_transforms(
-            self,
-            graph_dict: Dict[str, Any],
-            in_place: bool = True,
-            change_log_path: Optional[Union[str, Path]] = None
+            self, graph_dict: Dict[str, Any], in_place: bool = True, change_log_path: Optional[Union[str, Path]] = None
         ) -> Tuple[bool, Dict[str, Any]]:
             """Apply transformations to qParams fields based on predefined rules.
 
@@ -196,11 +197,7 @@ if _NEURONPEDIA_AVAILABLE:
 
             # Ensure qParams exists
             if "qParams" not in graph_dict or not isinstance(graph_dict["qParams"], dict):
-                log.append({
-                    "field": "qParams",
-                    "before": graph_dict.get("qParams", None),
-                    "after": {}
-                })
+                log.append({"field": "qParams", "before": graph_dict.get("qParams", None), "after": {}})
                 graph_dict["qParams"] = {}
                 was_valid = False
 
@@ -227,21 +224,13 @@ if _NEURONPEDIA_AVAILABLE:
                 transform = field_def["transform"]
 
                 if field not in qp:
-                    log.append({
-                        "field": field,
-                        "before": None,
-                        "after": default_value
-                    })
+                    log.append({"field": field, "before": None, "after": default_value})
                     qp[field] = default_value
                     was_valid = False
                 elif not isinstance(qp[field], expected_type):
                     if transform is not None:
                         transformed_value = transform(qp[field])
-                        log.append({
-                            "field": field,
-                            "before": qp[field],
-                            "after": transformed_value
-                        })
+                        log.append({"field": field, "before": qp[field], "after": transformed_value})
                         qp[field] = transformed_value
                         was_valid = False
 
@@ -252,10 +241,7 @@ if _NEURONPEDIA_AVAILABLE:
             return was_valid, graph_dict
 
         def _log_qparam_changes(
-            self,
-            log: List[Dict],
-            graph_dict: Dict[str, Any],
-            change_log_path: Optional[Union[str, Path]]
+            self, log: List[Dict], graph_dict: Dict[str, Any], change_log_path: Optional[Union[str, Path]]
         ) -> None:
             """Log qParams changes to console and file."""
             # Console logging
@@ -272,11 +258,7 @@ if _NEURONPEDIA_AVAILABLE:
                     log_dir = Path(graph_path).parent
                 else:
                     log_dir = Path(self.phandle.core_log_dir)
-                slug = (
-                    graph_dict.get("metadata", {}).get("slug")
-                    or graph_dict.get("slug")
-                    or "unknown-slug"
-                )
+                slug = graph_dict.get("metadata", {}).get("slug") or graph_dict.get("slug") or "unknown-slug"
                 dt = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 change_log_path = log_dir / f"{slug}_qparam_changes_{dt}.log"
 
@@ -299,9 +281,7 @@ if _NEURONPEDIA_AVAILABLE:
 
             assert graph_dict.get("metadata") is not None, "Graph dictionary must contain 'metadata' key."
             try:
-                RemoveAdditionalPropertiesValidator(schema=metadata_schema).validate(
-                    instance=graph_dict["metadata"]
-                )
+                RemoveAdditionalPropertiesValidator(schema=metadata_schema).validate(instance=graph_dict["metadata"])
             except ValidationError as e:
                 # Remove invalid keys based on the error path
                 invalid_keys = [error.path[0] for error in e.context]
@@ -312,7 +292,7 @@ if _NEURONPEDIA_AVAILABLE:
             self,
             graph_dict: Dict[str, Any],
             slug: Optional[str] = None,
-            custom_metadata: Optional[Dict[str, Any]] = None
+            custom_metadata: Optional[Dict[str, Any]] = None,
         ) -> Dict[str, Any]:
             """Prepare and enrich graph metadata for Neuronpedia.
 
@@ -372,7 +352,7 @@ if _NEURONPEDIA_AVAILABLE:
             graph_path: Union[str, Path],
             output_path: Optional[Union[str, Path]] = None,
             slug: Optional[str] = None,
-            custom_metadata: Optional[Dict[str, Any]] = None
+            custom_metadata: Optional[Dict[str, Any]] = None,
         ) -> Tuple[Dict[str, Any], Path]:
             """Transform a Circuit Tracer graph for Neuronpedia compatibility.
 
@@ -391,16 +371,17 @@ if _NEURONPEDIA_AVAILABLE:
                 raise FileNotFoundError(f"Graph file not found: {graph_path}")
 
             # Load the original graph
-            with open(graph_path, 'r') as f:
+            with open(graph_path, "r") as f:
                 graph_dict = json.load(f)
 
             rank_zero_info(f"[NeuronpediaIntegration] Transforming graph: {graph_path}")
 
             # Create backup if requested
             if self.neuronpedia_cfg.backup_original:
-                backup_path = graph_path.with_suffix('.backup' + graph_path.suffix)
+                backup_path = graph_path.with_suffix(".backup" + graph_path.suffix)
                 if not backup_path.exists():  # Don't overwrite existing backups
                     import shutil
+
                     shutil.copy2(graph_path, backup_path)
                     rank_zero_info(f"[NeuronpediaIntegration] Created backup: {backup_path}")
 
@@ -430,7 +411,7 @@ if _NEURONPEDIA_AVAILABLE:
             else:
                 json_str = json.dumps(graph_dict)
 
-            with open(output_path, 'w') as f:
+            with open(output_path, "w") as f:
                 f.write(json_str)
 
         def validate_graph(self, graph_dict: Dict[str, Any]) -> bool:
@@ -479,9 +460,7 @@ if _NEURONPEDIA_AVAILABLE:
                 NPGraphMetadata object from successful upload
             """
             if not self._neuronpedia_available:
-                raise RuntimeError(
-                    "Neuronpedia package not available. Install with: pip install neuronpedia"
-                )
+                raise RuntimeError("Neuronpedia package not available. Install with: pip install neuronpedia")
             # TODO: consider adding support for graph_dict input directly in the future
             # Handle graph input
             graph_path = Path(graph_path)
@@ -498,13 +477,14 @@ if _NEURONPEDIA_AVAILABLE:
             # Determine API key
             if api_key is None:
                 use_localhost = os.environ.get("USE_LOCALHOST", "false").lower() == "true"
-                api_key = os.environ.get("DEV_NEURONPEDIA_API_KEY") if use_localhost \
+                api_key = (
+                    os.environ.get("DEV_NEURONPEDIA_API_KEY")
+                    if use_localhost
                     else os.environ.get("NEURONPEDIA_API_KEY")
+                )
 
                 if not api_key:
-                    raise ValueError(
-                        "API key not found. Set NEURONPEDIA_API_KEY env var."
-                    )
+                    raise ValueError("API key not found. Set NEURONPEDIA_API_KEY env var.")
 
             # Upload with API key context
             import neuronpedia
@@ -515,15 +495,14 @@ if _NEURONPEDIA_AVAILABLE:
             rank_zero_info(f"[NeuronpediaIntegration] Using {api_type} API")
             if api_type == "dev":
                 rank_zero_warn(
-                    "[NeuronpediaIntegration] Uploading using a development API key. "
-                    "Ensure this is intended."
+                    "[NeuronpediaIntegration] Uploading using a development API key. Ensure this is intended."
                 )
 
             with neuronpedia.api_key(api_key):
                 try:
                     graph_metadata = self._np_graph_metadata.upload_file(str(graph_path))
                     rank_zero_info("[NeuronpediaIntegration] Upload successful!")
-                    if hasattr(graph_metadata, 'url'):
+                    if hasattr(graph_metadata, "url"):
                         rank_zero_info(f"[NeuronpediaIntegration] Graph URL: {graph_metadata.url}")
                     return graph_metadata
                 except Exception as e:
@@ -536,7 +515,7 @@ if _NEURONPEDIA_AVAILABLE:
             slug: Optional[str] = None,
             upload_to_np: bool = False,
             custom_metadata: Optional[Dict[str, Any]] = None,
-            api_key: Optional[str] = None
+            api_key: Optional[str] = None,
         ) -> Tuple[Dict[str, Any], Any]:
             """Transform and upload a Circuit Tracer graph to Neuronpedia.
 
@@ -554,9 +533,7 @@ if _NEURONPEDIA_AVAILABLE:
 
             # Transform the graph
             transformed_graph, output_path = self.transform_circuit_tracer_graph(
-                graph_path=graph_path,
-                slug=slug,
-                custom_metadata=custom_metadata
+                graph_path=graph_path, slug=slug, custom_metadata=custom_metadata
             )
 
             # Upload if enabled

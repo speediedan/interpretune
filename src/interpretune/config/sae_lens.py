@@ -13,6 +13,7 @@ from interpretune.utils import rank_zero_warn, MisconfigurationException
 # SAE Lens Configuration Encapsulation
 ################################################################################
 
+
 @dataclass(kw_only=True)
 class SAELensFromPretrainedConfig(ITSerializableCfg):
     release: str
@@ -24,9 +25,11 @@ class SAELensFromPretrainedConfig(ITSerializableCfg):
         if self.device is None:  # align with TL default device resolution
             self.device = str(tl_get_device())
 
+
 @dataclass(kw_only=True)
 class SAELensCustomConfig(ITSerializableCfg):
     cfg: SAEConfig | dict[str, Any]
+
     # TODO: may add additional custom behavior handling attributes here
     def __post_init__(self) -> None:
         if not isinstance(self.cfg, SAEConfig):
@@ -37,7 +40,9 @@ class SAELensCustomConfig(ITSerializableCfg):
             # TODO: enable configuration/introspection of custom SAE subclasses here
             self.cfg = StandardSAEConfig.from_dict(self.cfg)
 
+
 SAECfgType: TypeAlias = SAELensFromPretrainedConfig | SAELensCustomConfig
+
 
 @dataclass(kw_only=True)
 class SAELensConfig(ITLensConfig):
@@ -67,9 +72,9 @@ class SAELensConfig(ITLensConfig):
         self._sync_sl_tl_device_cfg()
 
     def _sync_sl_tl_device_cfg(self):
-        tl_device = self.tl_cfg.cfg.device if hasattr(self.tl_cfg, 'cfg') else self.tl_cfg.device
+        tl_device = self.tl_cfg.cfg.device if hasattr(self.tl_cfg, "cfg") else self.tl_cfg.device
         for sae_cfg in self.sae_cfgs:
-            if hasattr(sae_cfg, 'cfg'):
+            if hasattr(sae_cfg, "cfg"):
                 self._sync_sl_tl_default_device(sae_cfg_obj=sae_cfg.cfg, tl_device=str(tl_device))
             else:
                 self._sync_sl_tl_default_device(sae_cfg_obj=sae_cfg, tl_device=str(tl_device))
@@ -82,10 +87,10 @@ class SAELensConfig(ITLensConfig):
                     f"('{tl_device}'). Setting the device type for this SAE to match the specified TL device "
                     f"('{tl_device}')."
                 )
-            setattr(sae_cfg_obj, 'device', tl_device)
+            setattr(sae_cfg_obj, "device", tl_device)
         else:
             rank_zero_warn(
                 "An SAEConfig device type was not provided. Setting the device type to match the currently specified "
                 f"TL device type: '{tl_device}'."
             )
-            setattr(sae_cfg_obj, 'device', tl_device)
+            setattr(sae_cfg_obj, "device", tl_device)

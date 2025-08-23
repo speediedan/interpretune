@@ -13,8 +13,14 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 import interpretune as it
 from interpretune.utils import rank_zero_warn, _import_class, _BNB_AVAILABLE
-from interpretune.config import (HFFromPretrainedConfig, HFGenerationConfig, BaseGenerationConfig, ITConfig, ITState,
-                                 ITExtensionsConfigMixin)
+from interpretune.config import (
+    HFFromPretrainedConfig,
+    HFGenerationConfig,
+    BaseGenerationConfig,
+    ITConfig,
+    ITState,
+    ITExtensionsConfigMixin,
+)
 
 if TYPE_CHECKING:
     from interpretune.protocol import AnalysisCfgProtocol
@@ -30,12 +36,11 @@ class ITStateMixin:
 
     @staticmethod
     def _init_internal_state(obj: Any) -> None:
-        if not obj.__dict__.get('_it_state', None):
+        if not obj.__dict__.get("_it_state", None):
             obj._it_state = ITState()
 
 
 class MemProfilerHooks:
-
     @contextmanager
     @staticmethod
     def memprofile_ctx(memprofiler, phase: str, epoch_idx: int | None = None, step_idx: int | None = None):
@@ -56,20 +61,22 @@ class MemProfilerHooks:
             # parsing `args` if a `batch_idx` kwarg isn't found
             step_idx = kwargs.get("batch_idx", None)
             with MemProfilerHooks.memprofile_ctx(self.memprofiler, phase=phase, step_idx=step_idx):
-                if self.memprofiler.memprofiler_cfg.enable_saved_tensors_hooks and \
-                    self.memprofiler._enabled[(phase, 'start')]:
+                if (
+                    self.memprofiler.memprofiler_cfg.enable_saved_tensors_hooks
+                    and self.memprofiler._enabled[(phase, "start")]
+                ):
                     with torch.autograd.graph.saved_tensors_hooks(*self.memprofiler._saved_tensors_funcs):
                         return func(self, *args, **kwargs)
                 else:
                     return func(self, *args, **kwargs)
-        return wrapper
 
+        return wrapper
 
 
 class AnalysisStepMixin:
     @property
     def analysis_cfg(self) -> Optional[AnalysisCfgProtocol]:
-        if not hasattr(self.it_cfg, 'analysis_cfg') or self.it_cfg.analysis_cfg is None:
+        if not hasattr(self.it_cfg, "analysis_cfg") or self.it_cfg.analysis_cfg is None:
             rank_zero_warn("Analysis configuration has not been set.")
             return
         return self.it_cfg.analysis_cfg
@@ -87,15 +94,14 @@ class AnalysisStepMixin:
         else:
             torch.set_grad_enabled(False)
 
-
     def on_analysis_epoch_end(self) -> Any | None:
         pass
         # TODO: maybe reintroduce logic here if we decide to keep per-epoch versions or perform other caching
         # Create a shallow copy from the current analysis cache
-        #cache_copy = self.analysis_cfg.analysis_store
-        #self._analysis_stores.append(cache_copy)
+        # cache_copy = self.analysis_cfg.analysis_store
+        # self._analysis_stores.append(cache_copy)
         # TODO: we don't want to reset the analysis store but rather ensure we flush the current epoch
-        #self.analysis_cfg.reset_analysis_store()  # Prepare a new instance for the next epoch, preserving save_cfg
+        # self.analysis_cfg.reset_analysis_store()  # Prepare a new instance for the next epoch, preserving save_cfg
 
     def on_analysis_end(self) -> Any | None:
         """Optionally execute some post-interpretune session steps if the session is not complete."""
@@ -106,7 +112,7 @@ class AnalysisStepMixin:
         # self._analysis_stores = []  # uncomment if we re-enable the reset of the analysis stores
         if self.analysis_cfg.op != it.logit_diffs_attr_grad:
             torch.set_grad_enabled(True)
-            #torch.set_grad_enabled(False)  # to detect leak
+            # torch.set_grad_enabled(False)  # to detect leak
         if not self.session_complete:
             self.on_session_end()
 
@@ -122,6 +128,7 @@ class AnalysisStepMixin:
         # and step logic are incompatible
         # TODO: handle regular dicts in addition to BatchEncoding?
         return {bk: batch[bk] for bk in list(batch.data) if bk in self.model_sig_keys(target_method)}
+
 
 class GenerativeStepMixin:
     # Often used for n-shot classification, those contexts are only a subset of generative classification use cases
@@ -167,7 +174,7 @@ class GenerativeStepMixin:
     def it_generate(self, batch: BatchEncoding | torch.Tensor, **kwargs) -> Any:
         try:
             # variadic kwargs not supported by generate so inspect kwargs and use only those supported
-            if 'kwargs' not in self.gen_sig_keys:
+            if "kwargs" not in self.gen_sig_keys:
                 kwargs = self.map_gen_kwargs(kwargs)
             if isinstance(batch, torch.Tensor):
                 outputs = self.model.generate(batch, **kwargs)
@@ -185,6 +192,7 @@ class GenerativeStepMixin:
             rank_zero_warn(gen_dataset_info_msg)
             raise Exception(f"{gen_dataset_info_msg} Received the following error msg: {ge}")
         return outputs
+
 
 class ClassificationMixin:
     # Default classification helper methods
@@ -228,21 +236,23 @@ class ClassificationMixin:
             assert isinstance(logits, torch.Tensor), f"Expected logits to be a torch.Tensor but got {type(logits)}"
         return torch.squeeze(logits[:, -1, :], dim=1), label_ids, labels
 
-    def collect_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor, mode: str = 'log') -> Optional[Dict]:
+    def collect_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor, mode: str = "log") -> Optional[Dict]:
         logits = self.standardize_logits(logits)
         per_example_answers, _ = torch.max(logits, dim=-2)
         preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
         metric_dict = self.metric.compute(predictions=preds, references=labels)
         # TODO: check if this type casting is still required for lightning torchmetrics, bug should be fixed now...
-        metric_dict = dict(map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)),
-                               metric_dict.items()))
-        if mode == 'log':
+        metric_dict = dict(
+            map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)), metric_dict.items())
+        )
+        if mode == "log":
             self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
         else:
             return metric_dict
 
+
 class HFFromPretrainedMixin:
-    """" Barebones interface to setup optimizers and schedulers for manual optimization with core IT modules."""
+    """ " Barebones interface to setup optimizers and schedulers for manual optimization with core IT modules."""
 
     # proper initialization of these variables should be done in the child class
     it_cfg: ITConfig
@@ -253,8 +263,9 @@ class HFFromPretrainedMixin:
         return self.it_cfg.hf_from_pretrained_cfg
 
     def hf_pretrained_model_init(self) -> None:
-        access_token = os.environ[self.it_cfg.os_env_model_auth_key.upper()] if self.it_cfg.os_env_model_auth_key \
-            else None
+        access_token = (
+            os.environ[self.it_cfg.os_env_model_auth_key.upper()] if self.it_cfg.os_env_model_auth_key else None
+        )
         quantization_config = self._hf_configure_quantization()
         self._update_hf_pretrained_cfg(quantization_config)
         cust_config, _ = self._hf_gen_cust_config(access_token)
@@ -271,16 +282,18 @@ class HFFromPretrainedMixin:
     def _hf_configure_quantization(self) -> Any | None:
         if self.hf_cfg.bitsandbytesconfig and _BNB_AVAILABLE:
             from transformers import BitsAndBytesConfig
+
             quantization_config = BitsAndBytesConfig(**self.hf_cfg.bitsandbytesconfig)
         else:
             quantization_config = None
         return quantization_config
 
     def _update_hf_pretrained_cfg(self, quantization_config: dict[str, Any] | None = None) -> None:
-        additional_from_pretrained_kwargs = {"pretrained_model_name_or_path": self.it_cfg.model_name_or_path,
-                                            "quantization_config": quantization_config,
-                                            "torch_dtype": self.torch_dtype,
-                                            }
+        additional_from_pretrained_kwargs = {
+            "pretrained_model_name_or_path": self.it_cfg.model_name_or_path,
+            "quantization_config": quantization_config,
+            "torch_dtype": self.torch_dtype,
+        }
         self.hf_cfg.pretrained_kwargs.update(additional_from_pretrained_kwargs)
 
     def _hf_gen_cust_config(self, access_token: str | None = None) -> tuple[PretrainedConfig, dict]:
@@ -288,34 +301,41 @@ class HFFromPretrainedMixin:
             self.it_cfg.model_class = _import_class(self.hf_cfg.model_head)
             cust_config = AutoConfig.from_pretrained(**self.hf_cfg.pretrained_kwargs, token=access_token)
         elif self.hf_cfg.dynamic_module_cfg:
-            config_class = get_class_from_dynamic_module(self.hf_cfg.dynamic_module_cfg['config_class'],
-                                                         self.it_cfg.model_name_or_path)
-            self.it_cfg.model_class = get_class_from_dynamic_module(self.hf_cfg.dynamic_module_cfg['model_class'],
-                                                                    self.it_cfg.model_name_or_path)
+            config_class = get_class_from_dynamic_module(
+                self.hf_cfg.dynamic_module_cfg["config_class"], self.it_cfg.model_name_or_path
+            )
+            self.it_cfg.model_class = get_class_from_dynamic_module(
+                self.hf_cfg.dynamic_module_cfg["model_class"], self.it_cfg.model_name_or_path
+            )
             cust_config = config_class.from_pretrained(self.it_cfg.model_name_or_path)
         else:
             if self.it_cfg.defer_model_init:
-                rank_zero_warn("`defer_model_init` not currently supported without `model_head` or "
-                               "`dynamic_module_cfg`. Proceeding with model init.")
-            cust_config = AutoConfig.from_pretrained(**self.hf_cfg.pretrained_kwargs, token=access_token,
-                                                     local_files_only=False)
+                rank_zero_warn(
+                    "`defer_model_init` not currently supported without `model_head` or "
+                    "`dynamic_module_cfg`. Proceeding with model init."
+                )
+            cust_config = AutoConfig.from_pretrained(
+                **self.hf_cfg.pretrained_kwargs, token=access_token, local_files_only=False
+            )
         unused_kwargs = {}
-        if self.hf_cfg.pretrained_kwargs.pop('return_unused_kwargs', False):
+        if self.hf_cfg.pretrained_kwargs.pop("return_unused_kwargs", False):
             cust_config, unused_kwargs = cust_config
         cust_config.update(self.it_cfg.model_cfg)  # apply pre-init model config overrides
         return cust_config, unused_kwargs
 
-    def hf_configured_model_init(self, cust_config: PretrainedConfig, access_token: str | None = None) \
-        -> torch.nn.Module:
+    def hf_configured_model_init(
+        self, cust_config: PretrainedConfig, access_token: str | None = None
+    ) -> torch.nn.Module:
         cust_config.num_labels = self.it_cfg.num_labels
         head_configured = self.hf_cfg.model_head or self.hf_cfg.dynamic_module_cfg
         # TODO: parameterize the default model head when one not provided in pretrained config
         if not self.it_cfg.defer_model_init:
             if not head_configured:
                 self.it_cfg.model_class = _import_class(self.it_cfg.hf_from_pretrained_cfg.default_head)
-            model = self.it_cfg.model_class.from_pretrained(**self.hf_cfg.pretrained_kwargs, config=cust_config,
-                                                            token=access_token)
-        else: # defer model materialization (e.g., to `configure_model` hook)
+            model = self.it_cfg.model_class.from_pretrained(
+                **self.hf_cfg.pretrained_kwargs, config=cust_config, token=access_token
+            )
+        else:  # defer model materialization (e.g., to `configure_model` hook)
             with torch.device("meta"):
                 model = self.it_cfg.model_class(config=cust_config)
         return model
@@ -328,7 +348,7 @@ class HFFromPretrainedMixin:
     def _hf_maybe_resize_token_embeddings(self) -> None:
         if not self.it_cfg.tokenizer_id_overrides:
             return
-        vocab_size = getattr(self.model.base_model, 'vocab_size', None) or self.model.config.vocab_size
+        vocab_size = getattr(self.model.base_model, "vocab_size", None) or self.model.config.vocab_size
         max_override_id = max(self.it_cfg.tokenizer_id_overrides.values())
         if max_override_id >= vocab_size:
             new_num_tokens = max_override_id + 1
@@ -361,10 +381,17 @@ class HFFromPretrainedMixin:
         if self.hf_cfg.activation_checkpointing:
             self.model.gradient_checkpointing_enable()
         from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
+
         self.model = prepare_model_for_kbit_training(self.model)
         self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))
 
 
-class BaseITMixins(ITStateMixin, ITExtensionsConfigMixin, HFFromPretrainedMixin, ClassificationMixin,
-                   AnalysisStepMixin, GenerativeStepMixin, MemProfilerHooks):
-    ...
+class BaseITMixins(
+    ITStateMixin,
+    ITExtensionsConfigMixin,
+    HFFromPretrainedMixin,
+    ClassificationMixin,
+    AnalysisStepMixin,
+    GenerativeStepMixin,
+    MemProfilerHooks,
+): ...

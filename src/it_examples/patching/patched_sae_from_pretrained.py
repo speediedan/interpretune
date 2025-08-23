@@ -6,8 +6,7 @@ from it_examples.patching._patch_utils import _prepare_module_ctx, lwt_compare_v
 # pyright: reportUndefinedVariable=false
 
 if lwt_compare_version("sae_lens", operator.ge, "4.4.1"):
-    globals().update(_prepare_module_ctx('sae_lens.saes.sae', globals()))
-
+    globals().update(_prepare_module_ctx("sae_lens.saes.sae", globals()))
 
     # Patched to support dtype argument in from_pretrained_with_cfg_and_sparsity
     # https://github.com/jbloomAus/SAELens/blob/e36245ceebe224b816e6d65b8f2b8b76847a4efb/sae_lens/saes/sae.py#L586-L684
@@ -44,14 +43,8 @@ if lwt_compare_version("sae_lens", operator.ge, "4.4.1"):
                 )
         elif sae_id not in sae_directory[release].saes_map:
             # Handle special cases like Gemma Scope
-            if (
-                "gemma-scope" in release
-                and "canonical" not in release
-                and f"{release}-canonical" in sae_directory
-            ):
-                canonical_ids = list(
-                    sae_directory[release + "-canonical"].saes_map.keys()
-                )
+            if "gemma-scope" in release and "canonical" not in release and f"{release}-canonical" in sae_directory:
+                canonical_ids = list(sae_directory[release + "-canonical"].saes_map.keys())
                 # Shorten the lengthy string of valid IDs
                 if len(canonical_ids) > 5:
                     str_canonical_ids = str(canonical_ids[:5])[:-1] + ", ...]"
@@ -72,14 +65,10 @@ if lwt_compare_version("sae_lens", operator.ge, "4.4.1"):
                 str_valid_ids = str(valid_ids)
 
             raise ValueError(
-                f"ID {sae_id} not found in release {release}. Valid IDs are {str_valid_ids}."
-                + value_suffix
+                f"ID {sae_id} not found in release {release}. Valid IDs are {str_valid_ids}." + value_suffix
             )
 
-        conversion_loader = (
-            converter
-            or NAMED_PRETRAINED_SAE_LOADERS[get_conversion_loader_name(release)]
-        )
+        conversion_loader = converter or NAMED_PRETRAINED_SAE_LOADERS[get_conversion_loader_name(release)]
         repo_id, folder_name = get_repo_id_and_folder_name(release, sae_id)
         config_overrides = get_config_overrides(release, sae_id)
         ############ PATCH ######################
@@ -100,9 +89,7 @@ if lwt_compare_version("sae_lens", operator.ge, "4.4.1"):
         cfg_dict = handle_config_defaulting(cfg_dict)
 
         # Create SAE with appropriate architecture
-        sae_config_cls = cls.get_sae_config_class_for_architecture(
-            cfg_dict["architecture"]
-        )
+        sae_config_cls = cls.get_sae_config_class_for_architecture(cfg_dict["architecture"])
         sae_cfg = sae_config_cls.from_dict(cfg_dict)
         sae_cls = cls.get_sae_class_for_architecture(sae_cfg.architecture())
         sae = sae_cls(sae_cfg)

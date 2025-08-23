@@ -7,11 +7,12 @@ from functools import lru_cache
 
 
 @lru_cache
-def lwt_compare_version(package: str, op: Callable, version: str, use_base_version: bool = True,
-                        local_version: str = None) -> bool:
+def lwt_compare_version(
+    package: str, op: Callable, version: str, use_base_version: bool = True, local_version: str = None
+) -> bool:
     try:
         pkg_version = Version(importlib.metadata.version(package))
-    except (importlib.metadata.PackageNotFoundError):
+    except importlib.metadata.PackageNotFoundError:
         return False
     except TypeError:
         # possibly mocked by Sphinx so needs to return True to generate summaries
@@ -25,7 +26,7 @@ def lwt_compare_version(package: str, op: Callable, version: str, use_base_versi
 
 
 def _prepare_module_ctx(module_path, orig_globals):
-    _orig_file = orig_globals.pop('__file__')
+    _orig_file = orig_globals.pop("__file__")
     orig_globals.update(vars(sys.modules.get(module_path)))
-    orig_globals['__file__'] = _orig_file
+    orig_globals["__file__"] = _orig_file
     return orig_globals

@@ -19,7 +19,7 @@ from interpretune.protocol import Adapter
 from tests.base_defaults import BaseAugTest, BaseCfg, pytest_factory
 from tests.configuration import IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
-from tests.parity_acceptance.cfg_aliases import (cuda, w_l_sl, cust_no_sae_grad)
+from tests.parity_acceptance.cfg_aliases import cuda, w_l_sl, cust_no_sae_grad
 from tests.parity_acceptance.expected import sl_parity_results
 from tests.results import collect_results
 from tests.warns import unexpected_warns, SL_CTX_WARNS, SL_LIGHTNING_CTX_WARNS
@@ -27,11 +27,13 @@ from tests.warns import unexpected_warns, SL_CTX_WARNS, SL_LIGHTNING_CTX_WARNS
 # TODO: add tl and tl_profiling bf16 tests if/when support vetted
 # TODO: add tl activation checkpointing tests if/when support vetted
 
+
 @dataclass(kw_only=True)
 class SLParityCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
     model_src_key: Optional[str] = "cust"
     add_saes_on_init: bool = True
+
 
 @dataclass
 class SLParityTest(BaseAugTest):
@@ -40,13 +42,15 @@ class SLParityTest(BaseAugTest):
 
 PARITY_SL_CONFIGS = (
     SLParityTest(alias="test_cpu_32", cfg=SLParityCfg(phase="test")),
-    SLParityTest(alias="test_cpu_32_l", cfg=SLParityCfg(phase="test", model_src_key="gpt2", **w_l_sl),
-                 marks="lightning"),
+    SLParityTest(
+        alias="test_cpu_32_l", cfg=SLParityCfg(phase="test", model_src_key="gpt2", **w_l_sl), marks="lightning"
+    ),
     SLParityTest(alias="train_cpu_32_l", cfg=SLParityCfg(**cust_no_sae_grad, **w_l_sl), marks="lightning"),
     SLParityTest(alias="train_cuda_32", cfg=SLParityCfg(**cuda), marks="cuda"),
 )
 
 EXPECTED_PARITY_SL = {cfg.alias: cfg.expected for cfg in PARITY_SL_CONFIGS}
+
 
 @pytest.mark.usefixtures("make_deterministic")
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(PARITY_SL_CONFIGS, unpack=False))

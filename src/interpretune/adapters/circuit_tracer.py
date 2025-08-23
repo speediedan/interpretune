@@ -11,8 +11,14 @@ from circuit_tracer import ReplacementModel, Graph, attribute
 from circuit_tracer.utils import create_graph_files
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.adapters import (CompositionRegistry, LightningDataModule, LightningModule, LightningAdapter,
-                                   BaseITLensModule, TLensAttributeMixin)
+from interpretune.adapters import (
+    CompositionRegistry,
+    LightningDataModule,
+    LightningModule,
+    LightningAdapter,
+    BaseITLensModule,
+    TLensAttributeMixin,
+)
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import CircuitTracerConfig
 from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info
@@ -30,18 +36,19 @@ class InstantiatedGraph:
 # Mixins to support Circuit Tracer in different adapter contexts
 ################################################################################
 
+
 class CircuitTracerAttributeMixin(TLensAttributeMixin):
     @property
     def circuit_tracer_cfg(self) -> CircuitTracerConfig | None:
         """Get circuit tracer configuration."""
-        if hasattr(self.it_cfg, 'circuit_tracer_cfg'):
+        if hasattr(self.it_cfg, "circuit_tracer_cfg"):
             return self.it_cfg.circuit_tracer_cfg
         return None
 
     @property
     def replacement_model(self) -> ReplacementModel | None:
         """Get the replacement model handle."""
-        if hasattr(self, '_replacement_model'):
+        if hasattr(self, "_replacement_model"):
             return self._replacement_model
         return None
 
@@ -64,8 +71,9 @@ class BaseCircuitTracerModule(BaseITLensModule):
         #           fold_ln=False,
         #           center_writing_weights=False,
         #           center_unembed=False,
-        pruned_tl_cfg = self._prune_tl_cfg_dict(['hf_model', 'tokenizer', 'model_name', 'dtype', 'fold_ln',
-                                                 'center_writing_weights', 'center_unembed'])
+        pruned_tl_cfg = self._prune_tl_cfg_dict(
+            ["hf_model", "tokenizer", "model_name", "dtype", "fold_ln", "center_writing_weights", "center_unembed"]
+        )
         loaded_model_kwargs = {"hf_model": self.model, "tokenizer": tokenizer_handle, **pruned_tl_cfg}
         self._load_replacement_model(pretrained_kwargs=loaded_model_kwargs)
         self.model.config = hf_preconversion_config
@@ -82,7 +90,7 @@ class BaseCircuitTracerModule(BaseITLensModule):
             model_name=cfg.model_name or self.it_cfg.model_name_or_path,
             transcoder_set=cfg.transcoder_set,
             dtype=cfg.dtype,
-            **pretrained_kwargs
+            **pretrained_kwargs,
         )
 
         # Replace the model with the replacement model for circuit tracing
@@ -96,7 +104,7 @@ class BaseCircuitTracerModule(BaseITLensModule):
 
     def _capture_hyperparameters(self) -> None:
         """Capture hyperparameters for logging."""
-        #self._it_state._init_hparams = {"sae_cfgs": deepcopy(self.it_cfg.sae_cfgs)}
+        # self._it_state._init_hparams = {"sae_cfgs": deepcopy(self.it_cfg.sae_cfgs)}
         self._it_state._init_hparams.update({"circuit_tracer_cfg": deepcopy(self.circuit_tracer_cfg)})
         super()._capture_hyperparameters()
 
@@ -159,30 +167,23 @@ class BaseCircuitTracerModule(BaseITLensModule):
 
         # Set default attribution parameters
         attribution_kwargs = {
-            'max_n_logits': cfg.max_n_logits if cfg else 10,
-            'desired_logit_prob': cfg.desired_logit_prob if cfg else 0.95,
-            'batch_size': cfg.batch_size if cfg else 256,
-            'max_feature_nodes': cfg.max_feature_nodes if cfg else None,
-            'offload': cfg.offload if cfg else None,
-            'verbose': cfg.verbose if cfg else True,
-            'analysis_target_indices': analysis_target_indices,
+            "max_n_logits": cfg.max_n_logits if cfg else 10,
+            "desired_logit_prob": cfg.desired_logit_prob if cfg else 0.95,
+            "batch_size": cfg.batch_size if cfg else 256,
+            "max_feature_nodes": cfg.max_feature_nodes if cfg else None,
+            "offload": cfg.offload if cfg else None,
+            "verbose": cfg.verbose if cfg else True,
+            "analysis_target_indices": analysis_target_indices,
         }
 
         # Override with any provided kwargs
         attribution_kwargs.update(kwargs)
 
         # Generate the attribution graph
-        graph = attribute(
-            prompt=prompt,
-            model=self.replacement_model,
-            **attribution_kwargs
-        )
+        graph = attribute(prompt=prompt, model=self.replacement_model, **attribution_kwargs)
 
         # Store the graph
-        instantiated_graph = InstantiatedGraph(
-            handle=graph,
-            metadata={'prompt': prompt, **attribution_kwargs}
-        )
+        instantiated_graph = InstantiatedGraph(handle=graph, metadata={"prompt": prompt, **attribution_kwargs})
         self.attribution_graphs.append(instantiated_graph)
 
         return graph
@@ -193,21 +194,28 @@ class BaseCircuitTracerModule(BaseITLensModule):
         graph.to_pt(output_path)
         return output_path
 
-    def create_graph_visualization_files(self, graph: Graph, slug: str, output_dir: Union[str, Path],
-                                         node_threshold: float = 0.8, edge_threshold: float = 0.98) -> None:
+    def create_graph_visualization_files(
+        self,
+        graph: Graph,
+        slug: str,
+        output_dir: Union[str, Path],
+        node_threshold: float = 0.8,
+        edge_threshold: float = 0.98,
+    ) -> None:
         """Create graph visualization files for frontend."""
         create_graph_files(
             graph_or_path=graph,
             slug=slug,
             output_path=str(output_dir),
             node_threshold=node_threshold,
-            edge_threshold=edge_threshold
+            edge_threshold=edge_threshold,
         )
 
 
 ################################################################################
 # Circuit Tracer Module Composition
 ################################################################################
+
 
 class CircuitTracerAdapter(CircuitTracerAttributeMixin):
     def initialize_graph_output_dir(self, core_log_dir: Path) -> None:
@@ -279,10 +287,14 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
 class CircuitTracerAnalysisMixin:
     """Mixin for circuit tracer analysis operations."""
 
-    def save_graph(self, graph: Graph, output_dir: Union[str, Path],
-                   slug: Optional[str] = None,
-                   custom_metadata: Optional[Dict[str, Any]] = None,
-                   use_neuronpedia: Optional[bool] = None) -> Path:
+    def save_graph(
+        self,
+        graph: Graph,
+        output_dir: Union[str, Path],
+        slug: Optional[str] = None,
+        custom_metadata: Optional[Dict[str, Any]] = None,
+        use_neuronpedia: Optional[bool] = None,
+    ) -> Path:
         """Save and optionally transform graph for Neuronpedia upload."""
         # Default output_dir to graph_output_dir if not set
         if output_dir is None:
@@ -300,21 +312,20 @@ class CircuitTracerAnalysisMixin:
             slug=slug,
             output_dir=output_dir,
             node_threshold=self.circuit_tracer_cfg.default_node_threshold if self.circuit_tracer_cfg else 0.8,
-            edge_threshold=self.circuit_tracer_cfg.default_edge_threshold if self.circuit_tracer_cfg else 0.98
+            edge_threshold=self.circuit_tracer_cfg.default_edge_threshold if self.circuit_tracer_cfg else 0.98,
         )
         output_json_path = output_dir / f"{slug}.json"
 
         # Determine whether to use Neuronpedia
         if use_neuronpedia is None:
-            use_neuronpedia = self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg \
-                else False
+            use_neuronpedia = (
+                self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg else False
+            )
 
-        if use_neuronpedia and hasattr(self, 'neuronpedia') and self.neuronpedia:
+        if use_neuronpedia and hasattr(self, "neuronpedia") and self.neuronpedia:
             try:
                 transformed_graph, graph_path = self.neuronpedia.transform_circuit_tracer_graph(
-                    graph_path=output_json_path,
-                    slug=slug,
-                    custom_metadata=custom_metadata
+                    graph_path=output_json_path, slug=slug, custom_metadata=custom_metadata
                 )
                 return graph_path
             except Exception as e:
@@ -322,23 +333,25 @@ class CircuitTracerAnalysisMixin:
 
         return output_json_path
 
-    def generate_graph(self, prompt: str,
-                 slug: Optional[str] = None,
-                 custom_metadata: Optional[Dict[str, Any]] = None,
-                 upload_to_np: bool = False,
-                 output_dir: Optional[Union[str, Path]] = None,
-                 use_neuronpedia: Optional[bool] = None,
-                 **generation_kwargs) -> Tuple[Graph, Path, Any]:
+    def generate_graph(
+        self,
+        prompt: str,
+        slug: Optional[str] = None,
+        custom_metadata: Optional[Dict[str, Any]] = None,
+        upload_to_np: bool = False,
+        output_dir: Optional[Union[str, Path]] = None,
+        use_neuronpedia: Optional[bool] = None,
+        **generation_kwargs,
+    ) -> Tuple[Graph, Path, Any]:
         """Generate attribution graph and optionally upload to Neuronpedia."""
         if use_neuronpedia is None:
-            use_neuronpedia = self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg \
-                else False
+            use_neuronpedia = (
+                self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg else False
+            )
 
         if use_neuronpedia:
-            if not hasattr(self, 'neuronpedia') or not self.neuronpedia:
-                raise RuntimeError(
-                    "Neuronpedia extension not available. Enable it in your configuration."
-                )
+            if not hasattr(self, "neuronpedia") or not self.neuronpedia:
+                raise RuntimeError("Neuronpedia extension not available. Enable it in your configuration.")
 
         # Generate the attribution graph
         graph = self.generate_attribution_graph(prompt, **generation_kwargs)
@@ -357,7 +370,7 @@ class CircuitTracerAnalysisMixin:
             output_dir=output_dir,
             slug=graph_slug,
             custom_metadata=custom_metadata,
-            use_neuronpedia=use_neuronpedia
+            use_neuronpedia=use_neuronpedia,
         )
 
         # Determine whether to upload to Neuronpedia
@@ -375,9 +388,5 @@ class CircuitTracerAnalysisMixin:
 
 
 class CircuitTracerModule(
-    CircuitTracerAnalysisMixin,
-    CircuitTracerAdapter,
-    CoreHelperAttributes,
-    BaseCircuitTracerModule
-):
-    ...
+    CircuitTracerAnalysisMixin, CircuitTracerAdapter, CoreHelperAttributes, BaseCircuitTracerModule
+): ...

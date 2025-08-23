@@ -1,4 +1,5 @@
 """Definitions of specific analysis operations."""
+
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from typing import Callable, Literal, Any
 from collections import defaultdict
@@ -22,19 +23,20 @@ def boolean_logits_to_avg_logit_diff(
 ) -> list[float] | float:
     """Returns the avg logit diff on a set of prompts, with fixed s2 pos and stuff."""
     incorrect_indices = 1 - target_indices
-    correct_logits = torch.gather(logits, 2, torch.reshape(target_indices, (-1,1,1))).squeeze()
-    incorrect_logits = torch.gather(logits, 2, torch.reshape(incorrect_indices, (-1,1,1))).squeeze()
+    correct_logits = torch.gather(logits, 2, torch.reshape(target_indices, (-1, 1, 1))).squeeze()
+    incorrect_logits = torch.gather(logits, 2, torch.reshape(incorrect_indices, (-1, 1, 1))).squeeze()
     logit_diff = correct_logits - incorrect_logits
     if reduction is not None:
         logit_diff = logit_diff.mean() if reduction == "mean" else logit_diff.sum()
     return logit_diff if keep_as_tensor else logit_diff.tolist()
 
 
-def get_loss_preds_diffs(module: torch.nn.Module,
-                         analysis_batch: DefaultAnalysisBatchProtocol,
-                         answer_logits: torch.Tensor,
-                         logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff) -> tuple[
-                             torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+def get_loss_preds_diffs(
+    module: torch.nn.Module,
+    analysis_batch: DefaultAnalysisBatchProtocol,
+    answer_logits: torch.Tensor,
+    logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Implementation for computing loss, predictions, and logit differences.
 
     Args:
@@ -68,8 +70,9 @@ def ablate_sae_latent(
     return sae_acts
 
 
-def labels_to_ids_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
-                       batch: BatchEncoding) -> DefaultAnalysisBatchProtocol:
+def labels_to_ids_impl(
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding
+) -> DefaultAnalysisBatchProtocol:
     """Implementation for converting string labels to tensor IDs."""
     if "labels" in batch:
         label_ids, orig_labels = module.labels_to_ids(batch.pop("labels"))
@@ -77,16 +80,17 @@ def labels_to_ids_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
     return analysis_batch
 
 
-def get_answer_indices_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
-                          batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
+def get_answer_indices_impl(
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Implementation for extracting answer indices from batch."""
 
     # Check if answer_indices already exist
-    if hasattr(analysis_batch, 'answer_indices') and analysis_batch.answer_indices is not None:
+    if hasattr(analysis_batch, "answer_indices") and analysis_batch.answer_indices is not None:
         return analysis_batch
 
     # Check if we can get from input store
-    if module.analysis_cfg.input_store and getattr(module.analysis_cfg.input_store, 'answer_indices', None) is not None:
+    if module.analysis_cfg.input_store and getattr(module.analysis_cfg.input_store, "answer_indices", None) is not None:
         answer_indices = module.analysis_cfg.input_store.answer_indices[batch_idx]
     else:
         # Otherwise compute it
@@ -102,11 +106,12 @@ def get_answer_indices_impl(module, analysis_batch: DefaultAnalysisBatchProtocol
     return analysis_batch
 
 
-def get_alive_latents_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
-                           batch_idx: int) -> DefaultAnalysisBatchProtocol:
+def get_alive_latents_impl(
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Implementation for extracting alive latents from cache."""
     # Check if alive_latents already exist
-    if hasattr(analysis_batch, 'alive_latents') and analysis_batch.alive_latents is not None:
+    if hasattr(analysis_batch, "alive_latents") and analysis_batch.alive_latents is not None:
         return analysis_batch
 
     # Check if we can get from input store
@@ -114,7 +119,7 @@ def get_alive_latents_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
     #       via analysis_cfg.input_store at the op level
     if module.analysis_cfg.input_store and module.analysis_cfg.input_store.alive_latents is not None:
         alive_latents = module.analysis_cfg.input_store.alive_latents[batch_idx]
-    elif not hasattr(analysis_batch, 'cache') or analysis_batch.cache is None:
+    elif not hasattr(analysis_batch, "cache") or analysis_batch.cache is None:
         alive_latents = {}
     else:
         # Extract alive latents from the cache using the answer indices
@@ -125,38 +130,38 @@ def get_alive_latents_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
         filtered_acts = {name: acts for name, acts in cache.items() if names_filter(name)}
         alive_latents = {}
         for name, acts in filtered_acts.items():
-            alive = (acts[torch.arange(acts.size(0)),
-                                 answer_indices, :] > 0).any(dim=0).nonzero().squeeze(1).tolist()
+            alive = (acts[torch.arange(acts.size(0)), answer_indices, :] > 0).any(dim=0).nonzero().squeeze(1).tolist()
             alive_latents[name] = alive
 
     analysis_batch.update(alive_latents=alive_latents)
     return analysis_batch
 
 
-def model_forward_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
-                       batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
+def model_forward_impl(
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Implementation for basic model forward pass."""
     # Ensure we have answer indices
-    if not hasattr(analysis_batch, 'answer_indices') or analysis_batch.answer_indices is None:
+    if not hasattr(analysis_batch, "answer_indices") or analysis_batch.answer_indices is None:
         analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
 
     # Run forward pass
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
-        batch = module.auto_prune_batch(batch, 'forward')
+        batch = module.auto_prune_batch(batch, "forward")
     answer_logits = module(**batch)
     analysis_batch.update(answer_logits=answer_logits)
     return analysis_batch
 
 
-def model_cache_forward_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
-                           batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
+def model_cache_forward_impl(
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Implementation for forward pass with cache."""
     # Run with cache and SAEs
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
-        batch = module.auto_prune_batch(batch, 'forward')
+        batch = module.auto_prune_batch(batch, "forward")
     answer_logits, cache = module.model.run_with_cache_with_saes(
-        **batch, saes=module.sae_handles,
-        names_filter=module.analysis_cfg.names_filter
+        **batch, saes=module.sae_handles, names_filter=module.analysis_cfg.names_filter
     )
 
     # Get answer indices and alive latents
@@ -168,53 +173,57 @@ def model_cache_forward_impl(module, analysis_batch: DefaultAnalysisBatchProtoco
     return analysis_batch
 
 
-def model_ablation_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
-                      batch: BatchEncoding, batch_idx: int,
-                      ablate_latent_fn: Callable = ablate_sae_latent) -> DefaultAnalysisBatchProtocol:
+def model_ablation_impl(
+    module,
+    analysis_batch: DefaultAnalysisBatchProtocol,
+    batch: BatchEncoding,
+    batch_idx: int,
+    ablate_latent_fn: Callable = ablate_sae_latent,
+) -> DefaultAnalysisBatchProtocol:
     """Implementation for model ablation analysis."""
     # Ensure we have answer indices and alive latents
-    if not hasattr(analysis_batch, 'answer_indices') or analysis_batch.answer_indices is None:
+    if not hasattr(analysis_batch, "answer_indices") or analysis_batch.answer_indices is None:
         analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
 
-    if not hasattr(analysis_batch, 'alive_latents') or analysis_batch.alive_latents is None:
+    if not hasattr(analysis_batch, "alive_latents") or analysis_batch.alive_latents is None:
         # TODO: remove this leaky abstraction, alive_latents should only be in analysis_batch
-        assert module.analysis_cfg.input_store and getattr(module.analysis_cfg.input_store, 'alive_latents', None), \
+        assert module.analysis_cfg.input_store and getattr(module.analysis_cfg.input_store, "alive_latents", None), (
             "alive_latents required for ablation op"
+        )
         analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
 
     answer_indices = analysis_batch.answer_indices
     alive_latents = analysis_batch.alive_latents
 
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
-        batch = module.auto_prune_batch(batch, 'forward')
+        batch = module.auto_prune_batch(batch, "forward")
 
     # Run ablation for each latent
     per_latent_logits: dict[str, dict[Any, torch.Tensor]] = defaultdict(dict)
     for name, alive in alive_latents.items():
         for latent_idx in alive:
-            fwd_hooks_cfg = [(name, partial(ablate_latent_fn,
-                                            latent_idx=latent_idx,
-                                            seq_pos=answer_indices))]
+            fwd_hooks_cfg = [(name, partial(ablate_latent_fn, latent_idx=latent_idx, seq_pos=answer_indices))]
             answer_logits = module.model.run_with_hooks_with_saes(
-                **batch, saes=module.sae_handles,
-                clear_contexts=True, fwd_hooks=fwd_hooks_cfg
+                **batch, saes=module.sae_handles, clear_contexts=True, fwd_hooks=fwd_hooks_cfg
             )
-            per_latent_logits[name][latent_idx] = answer_logits[
-                torch.arange(batch["input"].size(0)), answer_indices, :
-            ]
+            per_latent_logits[name][latent_idx] = answer_logits[torch.arange(batch["input"].size(0)), answer_indices, :]
 
     analysis_batch.update(answer_logits=per_latent_logits)
     return analysis_batch
 
 
-def model_gradient_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
-                      batch: BatchEncoding, batch_idx: int,
-                      logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
-                      get_loss_preds_diffs: Callable = get_loss_preds_diffs) -> DefaultAnalysisBatchProtocol:
+def model_gradient_impl(
+    module,
+    analysis_batch: DefaultAnalysisBatchProtocol,
+    batch: BatchEncoding,
+    batch_idx: int,
+    logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
+    get_loss_preds_diffs: Callable = get_loss_preds_diffs,
+) -> DefaultAnalysisBatchProtocol:
     """Implementation for gradient-based attribution."""
 
     # Ensure we have answer indices
-    if not hasattr(analysis_batch, 'answer_indices') or analysis_batch.answer_indices is None:
+    if not hasattr(analysis_batch, "answer_indices") or analysis_batch.answer_indices is None:
         analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
 
     answer_indices = analysis_batch.answer_indices
@@ -222,23 +231,21 @@ def model_gradient_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
     # if we're running a manual analysis_step context, we may need to manually set hooks
     module.analysis_cfg.add_default_cache_hooks()
     # Verify hooks are configured
-    assert all((module.analysis_cfg.fwd_hooks, module.analysis_cfg.bwd_hooks)), \
+    assert all((module.analysis_cfg.fwd_hooks, module.analysis_cfg.bwd_hooks)), (
         "fwd_hooks and bwd_hooks required for gradient-based attribution op"
+    )
 
     # TODO: In the future, we will likely use IT dispatch logic to control toggling autograd/inference mode etc.
     #       but for now controlling manually here
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
-        batch = module.auto_prune_batch(batch, 'forward')
+        batch = module.auto_prune_batch(batch, "forward")
     # Run with hooks and compute gradients
     with torch.set_grad_enabled(True):
         with module.model.saes(saes=module.sae_handles):
-            with module.model.hooks(
-                fwd_hooks=module.analysis_cfg.fwd_hooks, bwd_hooks=module.analysis_cfg.bwd_hooks
-            ):
+            with module.model.hooks(fwd_hooks=module.analysis_cfg.fwd_hooks, bwd_hooks=module.analysis_cfg.bwd_hooks):
                 answer_logits = module.model(**batch)
                 answer_logits = torch.squeeze(
-                    answer_logits[torch.arange(batch["input"].size(0)), answer_indices],
-                    dim=1
+                    answer_logits[torch.arange(batch["input"].size(0)), answer_indices], dim=1
                 )
                 # Compute loss and logit differences using the instance's get_loss_preds_diffs method
                 loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(
@@ -255,32 +262,35 @@ def model_gradient_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
         logit_diffs=logit_diffs,
         preds=preds,
         loss=loss,
-        grad_cache=module.analysis_cfg.cache_dict  # Store the gradient cache
+        grad_cache=module.analysis_cfg.cache_dict,  # Store the gradient cache
     )
     return analysis_batch
 
 
-def logit_diffs_impl(module: torch.nn.Module, analysis_batch: DefaultAnalysisBatchProtocol,
-                   batch: BatchEncoding, logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
-                   get_loss_preds_diffs: Callable = get_loss_preds_diffs) -> DefaultAnalysisBatchProtocol:
+def logit_diffs_impl(
+    module: torch.nn.Module,
+    analysis_batch: DefaultAnalysisBatchProtocol,
+    batch: BatchEncoding,
+    logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
+    get_loss_preds_diffs: Callable = get_loss_preds_diffs,
+) -> DefaultAnalysisBatchProtocol:
     """Implementation for computing logit differences."""
 
     logits, indices = analysis_batch.answer_logits, analysis_batch.answer_indices
     answer_logits = torch.squeeze(logits[torch.arange(batch["input"].size(0)), indices], dim=1)
-    loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(
-        module, analysis_batch, answer_logits, logit_diff_fn
-    )
+    loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn)
     if logit_diffs.dim() == 0:
         logit_diffs.unsqueeze_(0)
     analysis_batch.update(loss=loss, logit_diffs=logit_diffs, preds=preds, answer_logits=answer_logits)
     return analysis_batch
 
 
-def sae_correct_acts_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
-                        batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
+def sae_correct_acts_impl(
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Implementation for computing correct activations from SAE outputs."""
     # Validate required inputs # TODO: refactor all required input checks to use shared AnalysisOp or Dispatcher logic
-    required_inputs = ['logit_diffs', 'answer_indices', 'cache']
+    required_inputs = ["logit_diffs", "answer_indices", "cache"]
     for key in required_inputs:
         if not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None:
             raise ValueError(f"Missing required input '{key}' for {module.__class__.__name__}.sae_correct_acts")
@@ -291,7 +301,7 @@ def sae_correct_acts_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
     answer_indices = analysis_batch.answer_indices
 
     # Ensure alive_latents are present
-    if not hasattr(analysis_batch, 'alive_latents') or analysis_batch.alive_latents is None:
+    if not hasattr(analysis_batch, "alive_latents") or analysis_batch.alive_latents is None:
         analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
 
     # Extract correct activations for examples with positive logit differences
@@ -316,12 +326,13 @@ def sae_correct_acts_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
     return analysis_batch
 
 
-def gradient_attribution_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
-                            batch: BatchEncoding, batch_idx: int) -> DefaultAnalysisBatchProtocol:
+def gradient_attribution_impl(
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Implementation for computing attribution values from gradients."""
     # TODO: change this to use shared superclass required input validation
     # Ensure required inputs exist
-    required_inputs = ['answer_indices', 'logit_diffs']
+    required_inputs = ["answer_indices", "logit_diffs"]
     for key in required_inputs:
         if not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None:
             raise ValueError(f"Missing required input '{key}' for gradient attribution")
@@ -329,6 +340,7 @@ def gradient_attribution_impl(module, analysis_batch: DefaultAnalysisBatchProtoc
     # TODO: switch to using grad_cache from analysis_batch once that functionality is implemented
     # Get cached activations (forwards) and gradients (backwards) from analysis_cfg.cache_dict
     from transformer_lens import ActivationCache
+
     # Prefer grad_cache on the analysis_batch, else fall back to module.analysis_cfg.cache_dict
     if getattr(analysis_batch, "grad_cache", None) is not None:
         cache_source = analysis_batch.grad_cache
@@ -348,10 +360,7 @@ def gradient_attribution_impl(module, analysis_batch: DefaultAnalysisBatchProtoc
 
     # Get alive latents using GetAliveLatentsOp  # TODO: clean this up so no temp batch is required
     # Create a temporary analysis batch with the cache for GetAliveLatentsOp
-    temp_batch = AnalysisBatch(
-        cache=batch_cache_dict,
-        answer_indices=analysis_batch.answer_indices
-    )
+    temp_batch = AnalysisBatch(cache=batch_cache_dict, answer_indices=analysis_batch.answer_indices)
 
     # TODO: refactor this to use the GetAliveLatentsOp? (which should then dispatch alive_latents implementation)
     temp_batch = it.get_alive_latents(module, temp_batch, batch, batch_idx)
@@ -362,8 +371,11 @@ def gradient_attribution_impl(module, analysis_batch: DefaultAnalysisBatchProtoc
     correct_activations: dict[str, torch.Tensor] = {}
 
     # Process each forward hook
-    for fwd_name in [name for name in batch_cache_dict.keys()
-                     if module.analysis_cfg.names_filter(name) and not name.endswith("_grad")]:
+    for fwd_name in [
+        name
+        for name in batch_cache_dict.keys()
+        if module.analysis_cfg.names_filter(name) and not name.endswith("_grad")
+    ]:
         # Check if we have gradient information for this hook
         grad_name = f"{fwd_name}_grad"
         if grad_name not in batch_cache_dict:
@@ -382,40 +394,42 @@ def gradient_attribution_impl(module, analysis_batch: DefaultAnalysisBatchProtoc
                 t.unsqueeze_(1)
 
         # Extract correct activations (for examples with positive logit differences)
-        correct_activations[fwd_name] = torch.squeeze(
-            fwd_hook_acts[(analysis_batch.logit_diffs > 0), :, :], dim=1
-        )
+        correct_activations[fwd_name] = torch.squeeze(fwd_hook_acts[(analysis_batch.logit_diffs > 0), :, :], dim=1)
 
         # Calculate attribution as activations × gradients for the alive latents
         alive_indices = analysis_batch.alive_latents[fwd_name]
         attribution_values[fwd_name][:, alive_indices] = torch.squeeze(
-            (bwd_hook_grads[:, :, alive_indices] *
-             fwd_hook_acts[:, :, alive_indices]).cpu(), dim=1
+            (bwd_hook_grads[:, :, alive_indices] * fwd_hook_acts[:, :, alive_indices]).cpu(), dim=1
         )
 
     # Update the analysis batch with results
-    analysis_batch.update(
-        attribution_values=attribution_values,
-        correct_activations=correct_activations
-    )
+    analysis_batch.update(attribution_values=attribution_values, correct_activations=correct_activations)
 
     return analysis_batch
 
 
-def ablation_attribution_impl(module, analysis_batch: DefaultAnalysisBatchProtocol,
-                            batch: BatchEncoding, logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
-                            get_loss_preds_diffs: Callable = get_loss_preds_diffs) -> DefaultAnalysisBatchProtocol:
+def ablation_attribution_impl(
+    module,
+    analysis_batch: DefaultAnalysisBatchProtocol,
+    batch: BatchEncoding,
+    logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
+    get_loss_preds_diffs: Callable = get_loss_preds_diffs,
+) -> DefaultAnalysisBatchProtocol:
     """Implementation for computing attribution values using latent ablation."""
     # Ensure we have required inputs
-    required_inputs = ['answer_logits', 'alive_latents', 'logit_diffs']
+    required_inputs = ["answer_logits", "alive_latents", "logit_diffs"]
     for key in required_inputs:
         if not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None:
             raise ValueError(f"Missing required input '{key}' for ablation attribution")
 
     # Initialize result structures
     attribution_values: dict[str, torch.Tensor] = {}
-    per_latent = {"loss": defaultdict(dict), "logit_diffs": defaultdict(dict),
-                  "preds": defaultdict(dict), "answer_logits": defaultdict(dict)}
+    per_latent = {
+        "loss": defaultdict(dict),
+        "logit_diffs": defaultdict(dict),
+        "preds": defaultdict(dict),
+        "answer_logits": defaultdict(dict),
+    }
 
     # Process per-latent logits for each hook
     for act_name, logits in analysis_batch.answer_logits.items():
@@ -427,10 +441,7 @@ def ablation_attribution_impl(module, analysis_batch: DefaultAnalysisBatchProtoc
             )
 
             # Store per-latent metrics
-            for metric_name, value in zip(
-                per_latent.keys(),
-                (loss, logit_diffs, preds, answer_logits)
-            ):
+            for metric_name, value in zip(per_latent.keys(), (loss, logit_diffs, preds, answer_logits)):
                 per_latent[metric_name][act_name][latent_idx] = value
 
             # Calculate attribution values

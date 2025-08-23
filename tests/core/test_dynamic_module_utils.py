@@ -1,4 +1,5 @@
 """Tests for dynamic module utilities."""
+
 import os
 import tempfile
 import warnings
@@ -35,11 +36,11 @@ class TestGetCachedModuleFileIt:
     def mock_it_modules_cache(self):
         """Fixture providing a temporary directory for IT_MODULES_CACHE."""
         with tempfile.TemporaryDirectory() as temp_cache:
-            with patch('interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE', temp_cache):
+            with patch("interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE", temp_cache):
                 yield temp_cache
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.filecmp.cmp')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.cached_file')
+    @patch("interpretune.analysis.ops.dynamic_module_utils.filecmp.cmp")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.cached_file")
     def test_deprecated_use_auth_token_warning(self, mock_cached_file, mock_filecmp, mock_it_modules_cache):
         """Test that use_auth_token parameter raises deprecation warning."""
         mock_filecmp.return_value = True
@@ -49,32 +50,26 @@ class TestGetCachedModuleFileIt:
         src_file = Path(mock_it_modules_cache) / "test_module.py"
         src_file.write_text("# test module")
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.isdir', return_value=True):
-            with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.exists', return_value=True):
-                with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.basename', return_value='test'):
-                    with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.join',
-                               return_value=str(src_file)):
-                        with patch('interpretune.analysis.ops.dynamic_module_utils.check_imports', return_value=[]):
-                            with patch('interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it'):
+        with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=True):
+            with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.exists", return_value=True):
+                with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.basename", return_value="test"):
+                    with patch(
+                        "interpretune.analysis.ops.dynamic_module_utils.os.path.join", return_value=str(src_file)
+                    ):
+                        with patch("interpretune.analysis.ops.dynamic_module_utils.check_imports", return_value=[]):
+                            with patch("interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it"):
                                 with pytest.warns(FutureWarning, match="use_auth_token.*deprecated"):
                                     get_cached_module_file_it(
-                                        "/test/path",
-                                        "test_module.py",
-                                        use_auth_token="test_token"
+                                        "/test/path", "test_module.py", use_auth_token="test_token"
                                     )
 
     def test_use_auth_token_and_token_conflict(self):
         """Test that specifying both use_auth_token and token raises ValueError."""
         with pytest.raises(ValueError, match="token.*and.*use_auth_token.*both specified"):
-            get_cached_module_file_it(
-                "/test/path",
-                "test_module.py",
-                token="new_token",
-                use_auth_token="old_token"
-            )
+            get_cached_module_file_it("/test/path", "test_module.py", token="new_token", use_auth_token="old_token")
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.filecmp.cmp')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.cached_file')
+    @patch("interpretune.analysis.ops.dynamic_module_utils.filecmp.cmp")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.cached_file")
     def test_use_auth_token_sets_token(self, mock_cached_file, mock_filecmp, mock_it_modules_cache):
         """Test that use_auth_token value is transferred to token parameter."""
         mock_filecmp.return_value = True
@@ -84,29 +79,29 @@ class TestGetCachedModuleFileIt:
         src_file = Path(mock_it_modules_cache) / "test_module.py"
         src_file.write_text("# test module")
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.isdir', return_value=True):
-            with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.exists', return_value=True):
-                with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.basename', return_value='test'):
-                    with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.join',
-                               return_value=str(src_file)):
-                        with patch('interpretune.analysis.ops.dynamic_module_utils.check_imports', return_value=[]):
-                            with patch('interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it'):
+        with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=True):
+            with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.exists", return_value=True):
+                with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.basename", return_value="test"):
+                    with patch(
+                        "interpretune.analysis.ops.dynamic_module_utils.os.path.join", return_value=str(src_file)
+                    ):
+                        with patch("interpretune.analysis.ops.dynamic_module_utils.check_imports", return_value=[]):
+                            with patch("interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it"):
                                 with warnings.catch_warnings():
                                     warnings.simplefilter("ignore")
                                     result = get_cached_module_file_it(
-                                        "/test/path",
-                                        "test_module.py",
-                                        use_auth_token="test_token"
+                                        "/test/path", "test_module.py", use_auth_token="test_token"
                                     )
                                     # Should complete without error, indicating token was set
                                     assert result is not None
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.filecmp.cmp')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.is_offline_mode')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.rank_zero_debug')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.cached_file')
-    def test_offline_mode_forces_local_files_only(self, mock_cached_file, mock_debug, mock_offline, mock_filecmp,
-                                                  mock_it_modules_cache):
+    @patch("interpretune.analysis.ops.dynamic_module_utils.filecmp.cmp")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.is_offline_mode")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.rank_zero_debug")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.cached_file")
+    def test_offline_mode_forces_local_files_only(
+        self, mock_cached_file, mock_debug, mock_offline, mock_filecmp, mock_it_modules_cache
+    ):
         """Test that offline mode forces local_files_only=True."""
         mock_offline.return_value = True
         mock_filecmp.return_value = True
@@ -116,23 +111,20 @@ class TestGetCachedModuleFileIt:
         src_file = Path(mock_it_modules_cache) / "test_module.py"
         src_file.write_text("# test module")
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.isdir', return_value=True):
-            with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.exists', return_value=True):
-                with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.basename', return_value='test'):
-                    with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.join',
-                               return_value=str(src_file)):
-                        with patch('interpretune.analysis.ops.dynamic_module_utils.check_imports', return_value=[]):
-                            with patch('interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it'):
-                                get_cached_module_file_it(
-                                    "/test/path",
-                                    "test_module.py",
-                                    local_files_only=False
-                                )
+        with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=True):
+            with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.exists", return_value=True):
+                with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.basename", return_value="test"):
+                    with patch(
+                        "interpretune.analysis.ops.dynamic_module_utils.os.path.join", return_value=str(src_file)
+                    ):
+                        with patch("interpretune.analysis.ops.dynamic_module_utils.check_imports", return_value=[]):
+                            with patch("interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it"):
+                                get_cached_module_file_it("/test/path", "test_module.py", local_files_only=False)
 
                                 mock_debug.assert_called_with("Offline mode: forcing local_files_only=True")
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.filecmp.cmp')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.cached_file')
+    @patch("interpretune.analysis.ops.dynamic_module_utils.filecmp.cmp")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.cached_file")
     def test_local_directory_processing(self, mock_cached_file, mock_filecmp, mock_it_modules_cache):
         """Test local directory processing with existing file."""
         mock_filecmp.return_value = True
@@ -142,50 +134,49 @@ class TestGetCachedModuleFileIt:
         src_file = Path(mock_it_modules_cache) / "module.py"
         src_file.write_text("# test module")
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.isdir', return_value=True):
-            with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.exists', return_value=True):
-                with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.basename', return_value='test_repo'):
-                    with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.join',
-                               return_value=str(src_file)):
-                        with patch('interpretune.analysis.ops.dynamic_module_utils.check_imports', return_value=[]):
-                            with patch('interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it'):
-                                result = get_cached_module_file_it(
-                                    "/test/path",
-                                    "module.py"
-                                )
+        with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=True):
+            with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.exists", return_value=True):
+                with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.basename", return_value="test_repo"):
+                    with patch(
+                        "interpretune.analysis.ops.dynamic_module_utils.os.path.join", return_value=str(src_file)
+                    ):
+                        with patch("interpretune.analysis.ops.dynamic_module_utils.check_imports", return_value=[]):
+                            with patch("interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it"):
+                                result = get_cached_module_file_it("/test/path", "module.py")
 
                                 assert result is not None
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.filecmp.cmp')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.shutil.copy')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches')
+    @patch("interpretune.analysis.ops.dynamic_module_utils.filecmp.cmp")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.shutil.copy")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches")
     def test_local_file_copying_when_different(self, mock_invalidate, mock_copy, mock_filecmp, mock_it_modules_cache):
         """Test file copying logic when local files are different."""
         mock_filecmp.return_value = False  # Files are different
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.isdir', return_value=True):
-            with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.exists', return_value=True):
-                with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.basename', return_value='test_repo'):
-                    with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.join',
-                               return_value='/test/path/module.py'):
-                        with patch('interpretune.analysis.ops.dynamic_module_utils.check_imports',
-                                   return_value=['helper']):
-                            with patch('interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it'):
-                                get_cached_module_file_it(
-                                    "/test/path",
-                                    "module.py"
-                                )
+        with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=True):
+            with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.exists", return_value=True):
+                with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.basename", return_value="test_repo"):
+                    with patch(
+                        "interpretune.analysis.ops.dynamic_module_utils.os.path.join",
+                        return_value="/test/path/module.py",
+                    ):
+                        with patch(
+                            "interpretune.analysis.ops.dynamic_module_utils.check_imports", return_value=["helper"]
+                        ):
+                            with patch("interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it"):
+                                get_cached_module_file_it("/test/path", "module.py")
 
                                 # Should copy main file and helper module
                                 assert mock_copy.call_count >= 2
                                 assert mock_invalidate.call_count >= 2
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.cached_file')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.try_to_load_from_cache')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.check_imports')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it')
-    def test_remote_repo_name_transformation(self, mock_create, mock_check, mock_try_load, mock_cached,
-                                             mock_it_modules_cache):
+    @patch("interpretune.analysis.ops.dynamic_module_utils.cached_file")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.try_to_load_from_cache")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.check_imports")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it")
+    def test_remote_repo_name_transformation(
+        self, mock_create, mock_check, mock_try_load, mock_cached, mock_it_modules_cache
+    ):
         """Test that remote repository names are properly transformed."""
         # Create actual files in the temporary cache
         src_file = Path(mock_it_modules_cache) / "module.py"
@@ -203,72 +194,72 @@ class TestGetCachedModuleFileIt:
 
         mock_create.side_effect = mock_create_dirs
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.isdir', return_value=False):
-            with patch('interpretune.analysis.ops.dynamic_module_utils.extract_commit_hash', return_value="abc123"):
+        with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=False):
+            with patch("interpretune.analysis.ops.dynamic_module_utils.extract_commit_hash", return_value="abc123"):
                 # Test with dot in repo name
-                _ = get_cached_module_file_it(
-                    "user.repo-name",
-                    "module.py"
-                )
+                _ = get_cached_module_file_it("user.repo-name", "module.py")
 
                 # Should have called cached_file with transformed name
                 mock_cached.assert_called_once()
                 args, kwargs = mock_cached.call_args
                 assert args[0] == "user/repo-name"  # Dots should be replaced with slashes
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.cached_file')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.try_to_load_from_cache')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.check_imports')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.extract_commit_hash')
-    def test_commit_hash_fallback_to_local(self, mock_extract, mock_create, mock_check, mock_try_load, mock_cached,
-    mock_it_modules_cache):
+    @patch("interpretune.analysis.ops.dynamic_module_utils.cached_file")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.try_to_load_from_cache")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.check_imports")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.extract_commit_hash")
+    def test_commit_hash_fallback_to_local(
+        self, mock_extract, mock_create, mock_check, mock_try_load, mock_cached, mock_it_modules_cache
+    ):
         """Test fallback to 'local' when commit hash extraction fails."""
         mock_cached.return_value = "/cache/path/module.py"
         mock_try_load.return_value = "/old/cache/module.py"
         mock_check.return_value = []
         mock_extract.return_value = None  # Simulate failed hash extraction
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.isdir', return_value=False):
-            with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.basename',
-                        return_value='user--remote-repo'):
-                with patch('interpretune.analysis.ops.dynamic_module_utils.shutil.copy'):
-                    with patch('interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches'):
-                        _ = get_cached_module_file_it(
-                            "user/remote-repo",
-                            "module.py"
-                        )
+        with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=False):
+            with patch(
+                "interpretune.analysis.ops.dynamic_module_utils.os.path.basename", return_value="user--remote-repo"
+            ):
+                with patch("interpretune.analysis.ops.dynamic_module_utils.shutil.copy"):
+                    with patch("interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches"):
+                        _ = get_cached_module_file_it("user/remote-repo", "module.py")
 
                         # Should create path with "local" as commit hash
                         mock_create.assert_called()
                         create_calls = [str(call[0][0]) for call in mock_create.call_args_list]
-                        assert any("local" in call for call in create_calls), \
+                        assert any("local" in call for call in create_calls), (
                             f"Expected 'local' in calls: {create_calls}"
+                        )
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.cached_file')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.try_to_load_from_cache')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.check_imports')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.extract_commit_hash')
-    def test_new_files_downloaded_warning(self, mock_extract, mock_create, mock_check, mock_try_load, mock_cached,
-                                          mock_it_modules_cache):
+    @patch("interpretune.analysis.ops.dynamic_module_utils.cached_file")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.try_to_load_from_cache")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.check_imports")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.extract_commit_hash")
+    def test_new_files_downloaded_warning(
+        self, mock_extract, mock_create, mock_check, mock_try_load, mock_cached, mock_it_modules_cache
+    ):
         """Test warning when new files are downloaded without revision."""
         mock_cached.return_value = "/cache/path/module.py"
         mock_try_load.return_value = "/different/cache/module.py"  # Different path indicates new file
         mock_check.return_value = ["helper"]
         mock_extract.return_value = "abc123"
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.isdir', return_value=False):
-            with patch('interpretune.analysis.ops.dynamic_module_utils.shutil.copy'):
-                with patch('interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches'):
-                    with patch('interpretune.analysis.ops.dynamic_module_utils.rank_zero_warn') as mock_warn:
+        with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=False):
+            with patch("interpretune.analysis.ops.dynamic_module_utils.shutil.copy"):
+                with patch("interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches"):
+                    with patch("interpretune.analysis.ops.dynamic_module_utils.rank_zero_warn") as mock_warn:
                         # Mock recursive call for helper module
-                        with patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it',
-                                   side_effect=lambda *args, **kwargs: "/path/helper.py"):
+                        with patch(
+                            "interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it",
+                            side_effect=lambda *args, **kwargs: "/path/helper.py",
+                        ):
                             get_cached_module_file_it(
                                 "user/remote-repo",
                                 "module.py",
-                                revision=None  # No revision specified
+                                revision=None,  # No revision specified
                             )
 
                             # Should warn about new files
@@ -277,13 +268,14 @@ class TestGetCachedModuleFileIt:
                             assert "new version" in warning_message
                             assert "module.py" in warning_message
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.cached_file')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.try_to_load_from_cache')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.check_imports')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.extract_commit_hash')
-    def test_recursive_module_downloading(self, mock_extract, mock_create, mock_check, mock_try_load, mock_cached,
-                                          mock_it_modules_cache):
+    @patch("interpretune.analysis.ops.dynamic_module_utils.cached_file")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.try_to_load_from_cache")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.check_imports")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.extract_commit_hash")
+    def test_recursive_module_downloading(
+        self, mock_extract, mock_create, mock_check, mock_try_load, mock_cached, mock_it_modules_cache
+    ):
         """Test recursive downloading of required modules."""
         mock_try_load.return_value = "/old/cache/module.py"
         mock_check.return_value = ["helper1", "helper2"]
@@ -338,35 +330,30 @@ class TestGetCachedModuleFileIt:
 
         mock_check.side_effect = side_effect_check_imports
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.isdir', return_value=False):
-            with patch('interpretune.analysis.ops.dynamic_module_utils.os.path.basename',
-                       return_value='user--remote-repo'):
-                with patch('interpretune.analysis.ops.dynamic_module_utils.shutil.copy'):
-                    with patch('interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches'):
-                        get_cached_module_file_it(
-                            "user/remote-repo",
-                            "module.py"
-                        )
+        with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=False):
+            with patch(
+                "interpretune.analysis.ops.dynamic_module_utils.os.path.basename", return_value="user--remote-repo"
+            ):
+                with patch("interpretune.analysis.ops.dynamic_module_utils.shutil.copy"):
+                    with patch("interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches"):
+                        get_cached_module_file_it("user/remote-repo", "module.py")
 
                         # Should have made calls for all modules (main + helpers)
                         assert "module.py" in recursive_calls, f"Expected 'module.py' in calls: {recursive_calls}"
                         assert "helper1.py" in recursive_calls, f"Expected 'helper1.py' in calls: {recursive_calls}"
                         assert "helper2.py" in recursive_calls, f"Expected 'helper2.py' in calls: {recursive_calls}"
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it')
-    @patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it')
+    @patch("interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it")
+    @patch("interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it")
     def test_get_function_from_dynamic_module_repo_parsing(self, mock_get_cached, mock_create):
         """Test function reference parsing with repo specification."""
         mock_get_cached.return_value = "/test/module.py"
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.get_function_in_module') as mock_get_func:
+        with patch("interpretune.analysis.ops.dynamic_module_utils.get_function_in_module") as mock_get_func:
             mock_get_func.return_value = lambda: "test"
 
             # Test with repo specification in function reference
-            _ = get_function_from_dynamic_module(
-                "test/repo--module.function_name",
-                "default/repo"
-            )
+            _ = get_function_from_dynamic_module("test/repo--module.function_name", "default/repo")
 
             # Should parse repo from function reference
             mock_get_cached.assert_called_once()
@@ -374,51 +361,42 @@ class TestGetCachedModuleFileIt:
             assert args[0] == "test/repo"  # Should use parsed repo
             assert args[1] == "module.py"
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it')
+    @patch("interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it")
     def test_get_function_from_dynamic_module_use_auth_token_deprecation_warning(self, mock_get_cached):
         """Test that get_function_from_dynamic_module raises deprecation warning for use_auth_token."""
         mock_get_cached.return_value = "/test/module.py"
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.get_function_in_module') as mock_get_func:
+        with patch("interpretune.analysis.ops.dynamic_module_utils.get_function_in_module") as mock_get_func:
             mock_get_func.return_value = lambda: "test"
 
             with pytest.warns(FutureWarning, match="use_auth_token.*deprecated"):
-                get_function_from_dynamic_module(
-                    "module.function_name",
-                    "/test/repo",
-                    use_auth_token="test_token"
-                )
+                get_function_from_dynamic_module("module.function_name", "/test/repo", use_auth_token="test_token")
 
     def test_get_function_from_dynamic_module_use_auth_token_and_token_conflict(self):
         """Test that specifying both use_auth_token and token raises ValueError."""
         with pytest.raises(ValueError, match="token.*and.*use_auth_token.*both specified"):
             get_function_from_dynamic_module(
-                "module.function_name",
-                "/test/repo",
-                token="new_token",
-                use_auth_token="old_token"
+                "module.function_name", "/test/repo", token="new_token", use_auth_token="old_token"
             )
 
-    @patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it')
+    @patch("interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it")
     def test_get_function_from_dynamic_module_use_auth_token_sets_token(self, mock_get_cached):
         """Test that use_auth_token value is transferred to token parameter."""
         mock_get_cached.return_value = "/test/module.py"
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.get_function_in_module') as mock_get_func:
+        with patch("interpretune.analysis.ops.dynamic_module_utils.get_function_in_module") as mock_get_func:
             mock_get_func.return_value = lambda: "test"
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 result = get_function_from_dynamic_module(
-                    "module.function_name",
-                    "/test/repo",
-                    use_auth_token="test_token"
+                    "module.function_name", "/test/repo", use_auth_token="test_token"
                 )
 
                 # Verify the function was called and token was passed correctly
                 mock_get_cached.assert_called_once()
                 call_kwargs = mock_get_cached.call_args[1]
-                assert call_kwargs['token'] == "test_token"
+                assert call_kwargs["token"] == "test_token"
                 assert result is not None
 
 
@@ -443,7 +421,7 @@ class TestOpPathMgmt:
 
     def test_ensure_op_paths_empty_and_none_paths(self):
         """Test handling of empty and None paths."""
-        with patch('interpretune.analysis.ops.dynamic_module_utils.rank_zero_warn') as mock_warn:
+        with patch("interpretune.analysis.ops.dynamic_module_utils.rank_zero_warn") as mock_warn:
             # Test with empty string and None values
             test_paths = ["", None]  # Empty string, None
 
@@ -457,7 +435,7 @@ class TestOpPathMgmt:
 
     def test_ensure_op_paths_nonexistent_path(self):
         """Test handling of non-existent paths."""
-        with patch('interpretune.analysis.ops.dynamic_module_utils.rank_zero_warn') as mock_warn:
+        with patch("interpretune.analysis.ops.dynamic_module_utils.rank_zero_warn") as mock_warn:
             # Create a path that doesn't exist
             nonexistent_path = "/this/path/does/not/exist"
             test_paths = [nonexistent_path]
@@ -483,7 +461,7 @@ class TestOpPathMgmt:
             test_file = Path(temp_dir) / "test_file.txt"
             test_file.write_text("test content")
 
-            with patch('interpretune.analysis.ops.dynamic_module_utils.rank_zero_warn') as mock_warn:
+            with patch("interpretune.analysis.ops.dynamic_module_utils.rank_zero_warn") as mock_warn:
                 test_paths = [str(test_file)]
 
                 cleanup_op_paths()
@@ -509,7 +487,7 @@ class TestOpPathMgmt:
 
             nonexistent_path = "/does/not/exist"
 
-            with patch('interpretune.analysis.ops.dynamic_module_utils.rank_zero_warn') as mock_warn:
+            with patch("interpretune.analysis.ops.dynamic_module_utils.rank_zero_warn") as mock_warn:
                 test_paths = [str(valid_dir), str(test_file), nonexistent_path, ""]
 
                 cleanup_op_paths()
@@ -556,6 +534,7 @@ class TestOpPathMgmt:
 
             # Manually add to tracking set without adding to sys.path
             from interpretune.analysis.ops.dynamic_module_utils import _added_op_paths
+
             test_path_str = str(test_dir.resolve())
             _added_op_paths.add(test_path_str)
 
@@ -607,6 +586,7 @@ class TestOpPathMgmt:
 
             # Manually add to tracking set without adding to sys.path
             from interpretune.analysis.ops.dynamic_module_utils import _added_op_paths
+
             test_path_str = str(test_dir.resolve())
             _added_op_paths.add(test_path_str)
 
@@ -638,17 +618,14 @@ class TestCreateDynModuleGetFn:
     def mock_it_modules_cache(self):
         """Fixture providing a temporary directory for IT_MODULES_CACHE."""
         with tempfile.TemporaryDirectory() as temp_cache:
-            with patch('interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE', temp_cache):
+            with patch("interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE", temp_cache):
                 yield temp_cache
 
     def test_get_function_from_dynamic_module_missing_module_error(self):
         """Test error handling when module file is not found."""
-        with patch('interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it', return_value=None):
+        with patch("interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it", return_value=None):
             with pytest.raises(OSError, match="Could not locate the module file"):
-                get_function_from_dynamic_module(
-                    "module.function_name",
-                    "/test/repo"
-                )
+                get_function_from_dynamic_module("module.function_name", "/test/repo")
 
     def test_create_dynamic_module_it_recursive_parent_creation(self, mock_it_modules_cache):
         """Test that create_dynamic_module_it recursively creates parent modules."""
@@ -657,8 +634,8 @@ class TestCreateDynModuleGetFn:
         # Create a nested module path that requires recursive parent creation
         nested_module_name = "level1/level2/level3/test_module"
 
-        with patch('interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE', mock_it_modules_cache):
-            with patch('interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches') as mock_invalidate:
+        with patch("interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE", mock_it_modules_cache):
+            with patch("interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches") as mock_invalidate:
                 # Call create_dynamic_module_it with the nested path
                 create_dynamic_module_it(nested_module_name)
 
@@ -667,7 +644,7 @@ class TestCreateDynModuleGetFn:
                     Path(mock_it_modules_cache) / "level1",
                     Path(mock_it_modules_cache) / "level1" / "level2",
                     Path(mock_it_modules_cache) / "level1" / "level2" / "level3",
-                    Path(mock_it_modules_cache) / "level1" / "level2" / "level3" / "test_module"
+                    Path(mock_it_modules_cache) / "level1" / "level2" / "level3" / "test_module",
                 ]
 
                 for path in expected_paths:
@@ -696,7 +673,7 @@ class TestGetFunctionInModule:
     def mock_it_modules_cache(self):
         """Fixture providing a temporary directory for IT_MODULES_CACHE."""
         with tempfile.TemporaryDirectory() as temp_cache:
-            with patch('interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE', temp_cache):
+            with patch("interpretune.analysis.ops.dynamic_module_utils.IT_MODULES_CACHE", temp_cache):
                 yield temp_cache
 
     def test_force_reload_removes_from_sys_modules(self, mock_it_modules_cache):
@@ -707,12 +684,12 @@ class TestGetFunctionInModule:
         module_file.write_text("def test_function():\n    return 'force_reload_test'")
 
         # Mock get_relative_import_files to return empty list
-        with patch('interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files', return_value=[]):
+        with patch("interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files", return_value=[]):
             # First, load the module normally to get it in sys.modules
             from interpretune.analysis.ops.dynamic_module_utils import get_function_in_module
 
             func1 = get_function_in_module("test_function", module_path)
-            assert func1() == 'force_reload_test'
+            assert func1() == "force_reload_test"
 
             # Verify module is in sys.modules
             module_name = "test_module"
@@ -720,8 +697,7 @@ class TestGetFunctionInModule:
 
             # Mock sys.modules as a whole and importlib.invalidate_caches to verify they're called
             original_sys_modules = sys.modules.copy()
-            with patch('sys.modules', original_sys_modules), patch('importlib.invalidate_caches') as mock_invalidate:
-
+            with patch("sys.modules", original_sys_modules), patch("importlib.invalidate_caches") as mock_invalidate:
                 # Now call with force_reload=True
                 func2 = get_function_in_module("test_function", module_path, force_reload=True)
 
@@ -729,7 +705,7 @@ class TestGetFunctionInModule:
                 # Since we can't directly verify pop was called, verify the module was removed and re-added
                 assert mock_invalidate.called
 
-                assert func2() == 'force_reload_test'
+                assert func2() == "force_reload_test"
 
     def test_cached_module_reuse(self, mock_it_modules_cache):
         """Test that cached module is reused when hash matches."""
@@ -739,19 +715,19 @@ class TestGetFunctionInModule:
         module_file.write_text("def cached_function():\n    return 'cached_result'")
 
         # Mock get_relative_import_files to return empty list
-        with patch('interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files', return_value=[]):
+        with patch("interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files", return_value=[]):
             from interpretune.analysis.ops.dynamic_module_utils import get_function_in_module
 
             # First call to load and cache the module
             func1 = get_function_in_module("cached_function", module_path)
-            assert func1() == 'cached_result'
+            assert func1() == "cached_result"
 
             # Get reference to the cached module
             module_name = "cached_test_module"
             cached_module = sys.modules[module_name]
 
             # Mock importlib.util.module_from_spec to verify it's NOT called for cached module
-            with patch('importlib.util.module_from_spec') as mock_from_spec:
+            with patch("importlib.util.module_from_spec") as mock_from_spec:
                 # Second call should use cached module
                 func2 = get_function_in_module("cached_function", module_path)
 
@@ -759,7 +735,7 @@ class TestGetFunctionInModule:
                 mock_from_spec.assert_not_called()
 
                 # Verify we got the same result
-                assert func2() == 'cached_result'
+                assert func2() == "cached_result"
 
                 # Verify the same module object is still in sys.modules
                 assert sys.modules[module_name] is cached_module
@@ -773,12 +749,12 @@ class TestGetFunctionInModule:
         module_file.write_text(original_content)
 
         # Mock get_relative_import_files to return empty list
-        with patch('interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files', return_value=[]):
+        with patch("interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files", return_value=[]):
             from interpretune.analysis.ops.dynamic_module_utils import get_function_in_module
 
             # First call to load the module
             func1 = get_function_in_module("hash_function", module_path)
-            assert func1() == 'original'
+            assert func1() == "original"
 
             # Get reference to the cached module and its initial hash
             module_name = "hash_test_module"
@@ -818,7 +794,7 @@ class TestGetFunctionInModule:
         module_file.write_text("def other_function():\n    return 'other'")
 
         # Mock get_relative_import_files to return empty list
-        with patch('interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files', return_value=[]):
+        with patch("interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files", return_value=[]):
             from interpretune.analysis.ops.dynamic_module_utils import get_function_in_module
 
             with pytest.raises(AttributeError):
@@ -837,14 +813,14 @@ class TestGetFunctionInModule:
         helper_module_file.write_text("def helper_function():\n    return 'helper'")
 
         # Mock get_relative_import_files to return the helper module
-        with patch('interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files') as mock_get_imports:
+        with patch("interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files") as mock_get_imports:
             mock_get_imports.return_value = [str(helper_module_file)]
 
             from interpretune.analysis.ops.dynamic_module_utils import get_function_in_module
 
             # First call to establish baseline
             func1 = get_function_in_module("main_function", main_module_path)
-            assert func1() == 'main'
+            assert func1() == "main"
 
             # Get reference to the cached module and its initial hash
             module_name = "main_with_imports"
@@ -863,7 +839,7 @@ class TestGetFunctionInModule:
             assert new_hash != initial_hash, "Hash should have changed after helper module modification"
 
             # Verify that the function still works (main functionality should be preserved)
-            assert func2() == 'main'
+            assert func2() == "main"
 
     def test_force_reload_clears_hash_and_reloads(self, mock_it_modules_cache):
         """Test that force_reload=True actually forces reload regardless of hash."""
@@ -873,12 +849,12 @@ class TestGetFunctionInModule:
         module_file.write_text("def test_function():\n    return 'original'")
 
         # Mock get_relative_import_files to return empty list
-        with patch('interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files', return_value=[]):
+        with patch("interpretune.analysis.ops.dynamic_module_utils.get_relative_import_files", return_value=[]):
             from interpretune.analysis.ops.dynamic_module_utils import get_function_in_module
 
             # First call to load the module
             func1 = get_function_in_module("test_function", module_path)
-            assert func1() == 'original'
+            assert func1() == "original"
 
             # Get reference to the cached module
             module_name = "force_reload_test"
@@ -897,4 +873,4 @@ class TestGetFunctionInModule:
             assert new_hash is not None
 
             # Function should still work
-            assert func2() == 'original'
+            assert func2() == "original"

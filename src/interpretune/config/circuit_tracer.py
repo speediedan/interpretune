@@ -66,4 +66,5 @@ class CircuitTracerConfig(ITSerializableCfg):
 @dataclass(kw_only=True)
 class CircuitTracerITLensConfig(ITLensConfig):
     """ITLens configuration with Circuit Tracer support."""
+
     circuit_tracer_cfg: Optional[CircuitTracerConfig] = None

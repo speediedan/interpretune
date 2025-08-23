@@ -16,28 +16,32 @@ from interpretune.config import ITSerializableCfg
 
 
 class DefaultMemHooks(AutoStrEnum):
-    pre_forward = 'interpretune.extensions.memprofiler._hook_npp_pre_forward'
-    post_forward = 'interpretune.extensions.memprofiler._hook_npp_post_forward'
-    reset_state = 'interpretune.extensions.memprofiler._reset_memory_hooks_state'
+    pre_forward = "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+    post_forward = "interpretune.extensions.memprofiler._hook_npp_post_forward"
+    reset_state = "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+
 
 @dataclass(kw_only=True)
 class MemProfilerHooks(ITSerializableCfg):
     pre_forward_hooks: list[str | Callable] = field(default_factory=lambda: [DefaultMemHooks.pre_forward.value])
-    post_forward_hooks: list[str| Callable] = field(default_factory=lambda: [DefaultMemHooks.post_forward.value])
+    post_forward_hooks: list[str | Callable] = field(default_factory=lambda: [DefaultMemHooks.post_forward.value])
     # the provided reset_state_hooks will be called with the model and the `save_hook_attrs` list
     reset_state_hooks: list[str | Callable] = field(default_factory=lambda: [DefaultMemHooks.reset_state.value])
 
+
 @dataclass(kw_only=True)
-class MemProfilerFuncs(ITSerializableCfg): # can specify arbitrary list of `memprofilable` decorated function names
+class MemProfilerFuncs(ITSerializableCfg):  # can specify arbitrary list of `memprofilable` decorated function names
     cuda: list[str | Enum] = field(default_factory=lambda: list(step.name for step in CoreSteps))
     cpu: list[str | Enum] = field(default_factory=lambda: list(step.name for step in CoreSteps))
     cuda_allocator_history: list[str | Enum] = field(default_factory=lambda: list(step.name for step in CoreSteps))
+
 
 @dataclass(kw_only=True)
 class MemProfilerSchedule(ITSerializableCfg):
     # keeping schedule simple as possible for now, may expand to accommodate more flexible schedules in the future
     warmup_steps: int = 0
     max_step: int | None = None
+
 
 @dataclass(kw_only=True)
 class MemProfilerCfg(ITSerializableCfg):
@@ -49,26 +53,39 @@ class MemProfilerCfg(ITSerializableCfg):
     enable_memory_hooks: bool = True
     enable_saved_tensors_hooks: bool = True
     memory_hooks: MemProfilerHooks = field(default_factory=MemProfilerHooks)
-    saved_tensors_funcs: list = field(default_factory=lambda: list(('interpretune.extensions.memprofiler._npp_hook',
-                                                                    lambda x: x)))
+    saved_tensors_funcs: list = field(
+        default_factory=lambda: list(("interpretune.extensions.memprofiler._npp_hook", lambda x: x))
+    )
     # if you add custom hooks, make sure to add the desired module state attributes to save to `save_hook_attrs`
-    save_hook_attrs: list = field(default_factory=lambda: ["rss_pre_forward", "rss_post_forward", "rss_diff",
-                                                           "npp_pre_forward", "npp_post_forward", "npp_diff"])
+    save_hook_attrs: list = field(
+        default_factory=lambda: [
+            "rss_pre_forward",
+            "rss_post_forward",
+            "rss_diff",
+            "npp_pre_forward",
+            "npp_post_forward",
+            "npp_diff",
+        ]
+    )
     # since we cannot reliably ascertain when all MemProfilerFuncs will be executed, memory hooks will
     # only be removed once the funcs in this list have reached `max_step`
     retain_hooks_for_funcs: list[str | Enum] = field(default_factory=lambda: list(step.name for step in CoreSteps))
 
     def __post_init__(self) -> None:
-        if not torch.cuda.is_available() and self.enabled and any((self.enabled_funcs.cuda_allocator_history,
-                                                                   self.enabled_funcs.cuda,
-                                                                   self.cuda_allocator_history)):
+        if (
+            not torch.cuda.is_available()
+            and self.enabled
+            and any((self.enabled_funcs.cuda_allocator_history, self.enabled_funcs.cuda, self.cuda_allocator_history))
+        ):
             rank_zero_warn("Disabling CUDA memory profiling functionality since no CUDA device detected.")
             self.enabled_funcs.cuda, self.enabled_funcs.cuda_allocator_history = [], []
             self.cuda_allocator_history = False
         has_hooks = any(getattr(self.memory_hooks, ht.name) for ht in fields(self.memory_hooks))
         if self.enabled and not has_hooks:
-            rank_zero_warn("MemProfilerCfg is configured to enable memory hooks but MemProfilerHooks does not have"
-                           " any specified.")
+            rank_zero_warn(
+                "MemProfilerCfg is configured to enable memory hooks but MemProfilerHooks does not have any specified."
+            )
+
 
 # TODO: enable once these hooks are added
 # @dataclass(kw_only=True)
@@ -79,12 +96,14 @@ class MemProfilerCfg(ITSerializableCfg):
 # accessed in global scope to track non-parameter packed bytes (npp) as a simple proxy (ceiling) for activation memory
 _npp_bytes = 0
 
+
 def _hook_npp_pre_forward(module, *args, **kwargs):
     mem = module.mem_info_handle()
     global _npp_bytes
     module.npp_pre_forward = _npp_bytes
     module.rss_pre_forward = mem.rss
     return None
+
 
 def _hook_npp_post_forward(module, *args, **kwargs):
     global _npp_bytes
@@ -96,6 +115,7 @@ def _hook_npp_post_forward(module, *args, **kwargs):
     module.rss_diff = rss_diff + (module.rss_diff if hasattr(module, "rss_diff") else 0)
     return None
 
+
 def _reset_memory_hooks_state(model, reset_attrs: list[str]):
     global _npp_bytes
     _npp_bytes = 0
@@ -103,11 +123,13 @@ def _reset_memory_hooks_state(model, reset_attrs: list[str]):
         for attr in reset_attrs:
             setattr(module, attr, 0)
 
+
 def _npp_hook(x):
     global _npp_bytes
     if not isinstance(x, torch.nn.Parameter):
         _npp_bytes += x.nbytes
     return x
+
 
 class MemProfiler:
     def __init__(self, *args, **kwargs) -> None:
@@ -128,7 +150,7 @@ class MemProfiler:
         self._module = obj_ref
         self._curr_pid = Process(os.getpid())
         if self.memprofiler_cfg.enable_saved_tensors_hooks:
-            self._saved_tensors_funcs = resolve_funcs(cfg_obj=self.memprofiler_cfg, func_type='saved_tensors_funcs')
+            self._saved_tensors_funcs = resolve_funcs(cfg_obj=self.memprofiler_cfg, func_type="saved_tensors_funcs")
 
     @property
     def memprofiler_cfg(self) -> MemProfilerCfg:
@@ -153,8 +175,9 @@ class MemProfiler:
         memory_hooks_cfg = self.memprofiler_cfg.memory_hooks
         for supported_hooks in fields(memory_hooks_cfg):
             if getattr(memory_hooks_cfg, supported_hooks.name):
-                self._configured_hooks[supported_hooks.name] = resolve_funcs(cfg_obj=memory_hooks_cfg,
-                                                                             func_type=supported_hooks.name)
+                self._configured_hooks[supported_hooks.name] = resolve_funcs(
+                    cfg_obj=memory_hooks_cfg, func_type=supported_hooks.name
+                )
         for module in self._module.model.modules():
             module.mem_info_handle = self._curr_pid.memory_info
             for hook_func in self._configured_hooks["pre_forward_hooks"]:
@@ -169,7 +192,7 @@ class MemProfiler:
         self._cuda_snapshot_dir.mkdir(exist_ok=True, parents=True)
 
     def cuda_allocator_history_snap(self, snap_key: tuple) -> dict:
-        cuda_snapshot_file = (self._cuda_snapshot_dir / f"cuda_alloc_{snap_key}.pickle")
+        cuda_snapshot_file = self._cuda_snapshot_dir / f"cuda_alloc_{snap_key}.pickle"
         torch.cuda.memory._dump_snapshot(cuda_snapshot_file)
 
     def done(self, step_idx: int) -> bool:
@@ -209,8 +232,9 @@ class MemProfiler:
             self.remove_memprofiler_hooks()
             self.memprofiler_cfg.enable_memory_hooks = False
 
-    def gen_snap_keys(self, phase: str, step_ctx: str, epoch_idx: int | None = None,
-                      step_idx: int | None = None) -> tuple[int, int, tuple]:
+    def gen_snap_keys(
+        self, phase: str, step_ctx: str, epoch_idx: int | None = None, step_idx: int | None = None
+    ) -> tuple[int, int, tuple]:
         # NOTE [Memprofiler Key Format]:
         # snap key format is rank.phase.epoch_idx.step_idx.step_ctx
         # e.g. 0.training_step.0.0.end keys hook output for the end of training step 0, epoch 0 for rank 0
@@ -225,8 +249,14 @@ class MemProfiler:
             self._snap_indices[(phase, step_ctx)] = 0
             self._enabled[(phase, step_ctx)] = True
 
-    def snap(self, phase: str, step_ctx: str, epoch_idx: int | None = None, step_idx: int | None = None,
-             reset_mem_hooks: bool = False) -> None:
+    def snap(
+        self,
+        phase: str,
+        step_ctx: str,
+        epoch_idx: int | None = None,
+        step_idx: int | None = None,
+        reset_mem_hooks: bool = False,
+    ) -> None:
         self.maybe_init_phase(phase, step_ctx)
         if not self._enabled[(phase, step_ctx)]:
             return

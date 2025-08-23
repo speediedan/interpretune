@@ -10,40 +10,46 @@ from packaging.version import Version
 from interpretune.utils import MisconfigurationException
 
 
-def instantiate_class(init: Dict[str, Any],
-                      args: Optional[Union[Any, Tuple[Any, ...]]] = None, import_only: bool = False) -> Any:
-        """Instantiates a class with the given args and init. Accepts class definitions with a "class_path".
+def instantiate_class(
+    init: Dict[str, Any], args: Optional[Union[Any, Tuple[Any, ...]]] = None, import_only: bool = False
+) -> Any:
+    """Instantiates a class with the given args and init. Accepts class definitions with a "class_path".
 
-        Args:
-            init: Dict of the form {"class_path":..., "init_args":...}.
-            args: Positional arguments required for instantiation.
+    Args:
+        init: Dict of the form {"class_path":..., "init_args":...}.
+        args: Positional arguments required for instantiation.
 
-        Returns:
-            The instantiated class object.
-        """
-        class_module, class_name, args_class = None, None, None
-        shortcircuit_local = False
-        kwargs = init.get("init_args", {})
-        class_path = init.get("class_path", None)
-        if args and not isinstance(args, tuple):
-            args = (args,)
-        if class_path:
-            shortcircuit_local = False if "." in class_path else True
-            if not shortcircuit_local:
-                class_module, class_name = init["class_path"].rsplit(".", 1)
-            else:  # class is expected to be locally defined
-                args_class = globals()[init["class_path"]]
-        else:
-            raise MisconfigurationException("A class_path was not included in a configuration that requires one")
+    Returns:
+        The instantiated class object.
+    """
+    class_module, class_name, args_class = None, None, None
+    shortcircuit_local = False
+    kwargs = init.get("init_args", {})
+    class_path = init.get("class_path", None)
+    if args and not isinstance(args, tuple):
+        args = (args,)
+    if class_path:
+        shortcircuit_local = False if "." in class_path else True
         if not shortcircuit_local:
-            module = importlib.import_module(class_module)
-            args_class = getattr(module, class_name)
-        if import_only:
-            return args_class
-        else:
-            return args_class(**kwargs) if not args else args_class(*args, **kwargs)
+            class_module, class_name = init["class_path"].rsplit(".", 1)
+        else:  # class is expected to be locally defined
+            args_class = globals()[init["class_path"]]
+    else:
+        raise MisconfigurationException("A class_path was not included in a configuration that requires one")
+    if not shortcircuit_local:
+        assert class_module is not None
+        assert class_name is not None
+        module = importlib.import_module(class_module)
+        args_class = getattr(module, class_name)
+    if import_only:
+        assert args_class is not None
+        return args_class
+    else:
+        assert args_class is not None
+        return args_class(**kwargs) if not args else args_class(*args, **kwargs)
 
-def resolve_funcs(cfg_obj: Any, func_type: str) -> List:
+
+def resolve_funcs(cfg_obj: Any, func_type: str) -> List[Callable[..., Any]]:
     resolved_funcs = []
     funcs_to_resolve = getattr(cfg_obj, func_type)
     if not isinstance(funcs_to_resolve, list):
@@ -52,6 +58,8 @@ def resolve_funcs(cfg_obj: Any, func_type: str) -> List:
         if callable(func_or_qualname):
             resolved_funcs.append(func_or_qualname)  # TODO: inspect if signature is appropriate for custom hooks
         else:
+            module = None
+            func = None
             try:
                 module, func = func_or_qualname.rsplit(".", 1)
                 mod = importlib.import_module(module)
@@ -65,11 +73,13 @@ def resolve_funcs(cfg_obj: Any, func_type: str) -> List:
                 raise MisconfigurationException(err_msg)
     return resolved_funcs
 
-def _resolve_torch_dtype(dtype: Union[torch.device, str]) -> Optional[torch.device]:
+
+def _resolve_torch_dtype(dtype: Union[torch.dtype, str]) -> Optional[torch.dtype]:
     if isinstance(dtype, torch.dtype):
         return dtype
     elif isinstance(dtype, str):
         return _str_to_torch_dtype(dtype)
+
 
 def _str_to_torch_dtype(str_dtype: str) -> Optional[torch.dtype]:
     if hasattr(torch, str_dtype):
@@ -83,10 +93,12 @@ def _import_class(class_path: str) -> Any:
     module = __import__(class_module, fromlist=[class_name])
     return getattr(module, class_name)
 
+
 ################################################################################
 # `lightning-utilities` compatible import helper functions
 # largely copied from https://bit.ly/lightning_utils definitions
 ################################################################################
+
 
 @lru_cache()
 def package_available(package_name: str) -> bool:
@@ -101,6 +113,7 @@ def package_available(package_name: str) -> bool:
         return find_spec(package_name) is not None
     except ModuleNotFoundError:
         return False
+
 
 @lru_cache()
 def module_available(module_path: str) -> bool:
@@ -121,6 +134,7 @@ def module_available(module_path: str) -> bool:
     except ImportError:
         return False
     return True
+
 
 def compare_version(package: str, op: Callable, version: str, use_base_version: bool = False) -> bool:
     """Compare package version with some requirements.

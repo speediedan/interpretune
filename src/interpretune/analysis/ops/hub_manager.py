@@ -1,4 +1,5 @@
 """Hub manager for downloading and uploading analysis operation definitions."""
+
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional, List
@@ -16,6 +17,7 @@ from interpretune.utils.logging import rank_zero_debug, rank_zero_warn, rank_zer
 @dataclass
 class HubOpCollection:
     """Information about an analysis operation collection from the Hub."""
+
     repo_id: str
     username: str
     repo_name: str
@@ -29,13 +31,7 @@ class HubOpCollection:
             raise ValueError(f"Invalid repo_id format: {repo_id}. Expected 'username/repo-name'")
 
         username, repo_name = repo_id.split("/", 1)
-        return cls(
-            repo_id=repo_id,
-            username=username,
-            repo_name=repo_name,
-            local_path=local_path,
-            revision=revision
-        )
+        return cls(repo_id=repo_id, username=username, repo_name=repo_name, local_path=local_path, revision=revision)
 
     @property
     def namespace_prefix(self) -> str:
@@ -79,13 +75,15 @@ class HubAnalysisOpManager:
 
         try:
             # Download the repository to cache
-            local_path = Path(snapshot_download(
-                repo_id=repo_id,
-                repo_type=REPO_TYPE_MODEL,
-                cache_dir=str(self.cache_dir),
-                revision=revision,
-                force_download=force_download
-            ))
+            local_path = Path(
+                snapshot_download(
+                    repo_id=repo_id,
+                    repo_type=REPO_TYPE_MODEL,
+                    cache_dir=str(self.cache_dir),
+                    revision=revision,
+                    force_download=force_download,
+                )
+            )
 
             collection = HubOpCollection.from_repo_id(repo_id, local_path, revision)
 
@@ -108,7 +106,7 @@ class HubAnalysisOpManager:
         create_pr: bool = False,
         private: bool = False,
         clean_existing: bool = False,
-        delete_patterns: Optional[List[str]] = None
+        delete_patterns: Optional[List[str]] = None,
     ) -> str:
         """Upload analysis operations to HuggingFace Hub.
 
@@ -144,11 +142,7 @@ class HubAnalysisOpManager:
             rank_zero_debug(f"Repository {repo_id} already exists")
         except RepositoryNotFoundError:
             rank_zero_info(f"Creating new repository: {repo_id}")
-            self.api.create_repo(
-                repo_id=repo_id,
-                repo_type=REPO_TYPE_MODEL,
-                private=private
-            )
+            self.api.create_repo(repo_id=repo_id, repo_type=REPO_TYPE_MODEL, private=private)
             repo_exists = False  # Just created, so no existing files to worry about
 
         # Default delete pattern for operation files
@@ -160,14 +154,11 @@ class HubAnalysisOpManager:
 
             # Check for existing files that would be deleted and store for potential warning
             try:
-                existing_files = self.api.list_repo_files(
-                    repo_id=repo_id,
-                    repo_type=REPO_TYPE_MODEL,
-                    revision=revision
-                )
+                existing_files = self.api.list_repo_files(repo_id=repo_id, repo_type=REPO_TYPE_MODEL, revision=revision)
 
                 # Filter files that match delete patterns
                 import fnmatch
+
                 for file_path in existing_files:
                     for pattern in delete_patterns_to_use:
                         if fnmatch.fnmatch(file_path, pattern):
@@ -190,10 +181,10 @@ class HubAnalysisOpManager:
                 commit_message=commit_message,
                 revision=revision,
                 create_pr=create_pr,
-                delete_patterns=delete_patterns_to_use
+                delete_patterns=delete_patterns_to_use,
             )
 
-            commit_issued = all((initial_repo_sha, hasattr(commit_info, 'oid'), commit_info.oid != initial_repo_sha))
+            commit_issued = all((initial_repo_sha, hasattr(commit_info, "oid"), commit_info.oid != initial_repo_sha))
             # Only issue the warning if files were actually deleted (commit hash changed) and files were identified for
             # deletion
             if files_to_delete and commit_issued:
@@ -202,12 +193,13 @@ class HubAnalysisOpManager:
                     f"matching patterns {delete_patterns_to_use} from repository '{repo_id}'. "
                     f"Files removed: {files_to_delete[:10]}"
                     f"{'...' if len(files_to_delete) > 10 else ''}",
-                    stacklevel=2
+                    stacklevel=2,
                 )
 
             if commit_issued:
-                rank_zero_info(f"Successfully uploaded to {repo_id}, previous sha: {initial_repo_sha}, "
-                               f"new sha: {commit_info.oid}")
+                rank_zero_info(
+                    f"Successfully uploaded to {repo_id}, previous sha: {initial_repo_sha}, new sha: {commit_info.oid}"
+                )
             return commit_info.oid
 
         except Exception as e:
@@ -228,10 +220,7 @@ class HubAnalysisOpManager:
             repos = []
 
             # Use HfApi to search for models with interpretune set as the library
-            models = self.api.list_models(
-                library="interpretune",
-                cardData=True
-            )
+            models = self.api.list_models(library="interpretune", cardData=True)
 
             for model in models:
                 repo_id = model.modelId
@@ -307,16 +296,13 @@ class HubAnalysisOpManager:
 
                 # Check if this revision has any YAML files (operation definitions)
                 has_yaml_files = any(
-                    file_info.file_name.endswith(('.yaml', '.yml'))
-                    for file_info in latest_revision.files
+                    file_info.file_name.endswith((".yaml", ".yml")) for file_info in latest_revision.files
                 )
 
                 if has_yaml_files:
                     # Create HubOpCollection from the repo info
                     collection = HubOpCollection.from_repo_id(
-                        repo.repo_id,
-                        latest_revision.snapshot_path,
-                        revision=latest_revision.commit_hash
+                        repo.repo_id, latest_revision.snapshot_path, revision=latest_revision.commit_hash
                     )
                     collections.append(collection)
 

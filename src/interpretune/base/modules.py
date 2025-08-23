@@ -10,14 +10,8 @@ from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
 #     warnings.filterwarnings("once", warnf)
 
 
-class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):
-
-    def __init__(
-        self,
-        it_cfg: ITConfig,
-        *args,
-        **kwargs
-    ):
+class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):  # type: ignore[misc]
+    def __init__(self, it_cfg: ITConfig, *args, **kwargs):
         """"""
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__(*args, **kwargs)
@@ -58,6 +52,6 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
 
     def on_session_end(self) -> Optional[Any]:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
-        if getattr(self, 'memprofiler', None):
+        if getattr(self, "memprofiler", None):
             self.memprofiler.dump_memory_stats()
         self._it_state._session_complete = True

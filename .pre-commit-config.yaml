@@ -48,10 +48,17 @@ repos:
   #       name: Upgrade code
 
   - repo: https://github.com/myint/docformatter
-    rev: 06907d0267368b49b9180eed423fae5697c1e909 # todo: fix for docformatter after 1.7.6+ released rather than pinning
+    rev: v1.7.7
+    #rev: 06907d0267368b49b9180eed423fae5697c1e909 # todo: fix for docformatter after 1.7.6+ released rather than pinning
     hooks:
       - id: docformatter
         args: [--in-place, --wrap-summaries=115, --wrap-descriptions=120]
+        exclude: |
+          (?x)^(?:
+            src/interpretune/base/components/core\.py
+            |src/interpretune/base/components/mixins\.py
+            |src/interpretune/base/hooks\.py
+          )$
 
   - repo: https://github.com/asottile/yesqa
     rev: v1.5.0
@@ -79,10 +86,10 @@ repos:
   #       files: ^requirements/ci_reqs.in$
 
   - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: 'v0.6.9'
+    rev: 'v0.12.10'
     hooks:
-      - id: ruff
-        # Respect `exclude` and `extend-exclude` settings.
-        args:
-          - "--fix"
-          #- "--force-exclude"
+      # Run the linter.
+      - id: ruff-check
+        args: [ --fix ]
+      # Run the formatter.
+      - id: ruff-format

@@ -8,6 +8,7 @@ from jsonschema import Draft202012Validator, validators
 # print(obj)
 # # Expected output: {'foo': 'bar'}
 
+
 def extend_validator(validator_class):
     validate_properties = validator_class.VALIDATORS["properties"]
 
@@ -19,7 +20,7 @@ def extend_validator(validator_class):
             yield error
         return
 
-    return validators.extend(
-        validator_class, {"properties": remove_additional_properties}
-    )
+    return validators.extend(validator_class, {"properties": remove_additional_properties})
+
+
 RemoveAdditionalPropertiesValidator = extend_validator(Draft202012Validator)

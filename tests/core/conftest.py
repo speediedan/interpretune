@@ -19,6 +19,7 @@ from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
 @pytest.fixture
 def op_serialization_fixt():
     """Create a test utility for serializing and loading analysis results."""
+
     def _op_serialization_fixt(
         it_session,
         result_batches,
@@ -39,7 +40,7 @@ def op_serialization_fixt():
         module = it_session.module
 
         # Generate a timestamp for the dataset directory
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Use test name if request is provided, otherwise use a generic name
         if request:
@@ -49,7 +50,7 @@ def op_serialization_fixt():
             dataset_name = f"test_dataset_{timestamp}"
 
         # Determine the save directory
-        if hasattr(module.analysis_cfg.output_store, 'save_dir'):
+        if hasattr(module.analysis_cfg.output_store, "save_dir"):
             base_dir = module.analysis_cfg.output_store.save_dir
             save_dir = base_dir / "test_datasets" / dataset_name
         else:
@@ -60,7 +61,7 @@ def op_serialization_fixt():
 
         # Store the original save_dir and restore it after the test
         original_save_dir = None
-        if hasattr(module.analysis_cfg.output_store, 'save_dir'):
+        if hasattr(module.analysis_cfg.output_store, "save_dir"):
             original_save_dir = module.analysis_cfg.output_store.save_dir
 
         try:
@@ -97,22 +98,27 @@ def initialized_analysis_cfg():
     def _initialized_analysis_cfg(fixture, target_op: Any = it.logit_diffs_attr_ablation):
         it_session = get_deepcopied_session(fixture.it_session)
         # Configure the analysis
-        analysis_cfg = AnalysisCfg(target_op=target_op, ignore_manual=True, save_tokens=False,
-                                   sae_analysis_targets=fixture.test_cfg().sae_analysis_targets)
+        analysis_cfg = AnalysisCfg(
+            target_op=target_op,
+            ignore_manual=True,
+            save_tokens=False,
+            sae_analysis_targets=fixture.test_cfg().sae_analysis_targets,
+        )
         # Initialize analysis config on the module
         maybe_init_analysis_cfg(it_session.module, analysis_cfg)
 
         batch_size, max_answer_tokens, num_classes, vocab_size, max_seq_len = get_module_dims(it_session.module)
         dim_vars = {
-            'batch_size': batch_size,
-            'max_answer_tokens': max_answer_tokens,
-            'num_classes': num_classes,
-            'vocab_size': vocab_size,
-            'max_seq_len': max_seq_len,
+            "batch_size": batch_size,
+            "max_answer_tokens": max_answer_tokens,
+            "num_classes": num_classes,
+            "vocab_size": vocab_size,
+            "max_seq_len": max_seq_len,
         }
         return it_session, dim_vars
 
     return _initialized_analysis_cfg
+
 
 @pytest.fixture
 def test_ops_yaml(tmp_path):
@@ -195,11 +201,12 @@ extra_op2:
 
     # Return a structure containing paths for different test scenarios
     return {
-        'main_file': main_yaml_file,
-        'sub_dir': sub_dir,
-        'all_files': [main_yaml_file, extra_yaml1_file, extra_yaml2_file],
-        'main_dir': tmp_path
+        "main_file": main_yaml_file,
+        "sub_dir": sub_dir,
+        "all_files": [main_yaml_file, extra_yaml1_file, extra_yaml2_file],
+        "main_dir": tmp_path,
     }
+
 
 @pytest.fixture
 def test_dispatcher(test_ops_yaml, tmp_path):
@@ -216,7 +223,7 @@ def test_dispatcher(test_ops_yaml, tmp_path):
         os.environ["IT_ANALYSIS_CACHE"] = str(test_cache_dir)
 
         # Create a test dispatcher that loads from our test YAML main file
-        dispatcher = AnalysisOpDispatcher(yaml_paths=test_ops_yaml['main_file'])
+        dispatcher = AnalysisOpDispatcher(yaml_paths=test_ops_yaml["main_file"])
         dispatcher.load_definitions()
         yield dispatcher
 
@@ -226,6 +233,7 @@ def test_dispatcher(test_ops_yaml, tmp_path):
             os.environ["IT_ANALYSIS_CACHE"] = original_cache_dir
         else:
             os.environ.pop("IT_ANALYSIS_CACHE", None)
+
 
 @pytest.fixture
 def multi_file_test_dispatcher(test_ops_yaml, tmp_path):
@@ -242,7 +250,7 @@ def multi_file_test_dispatcher(test_ops_yaml, tmp_path):
         os.environ["IT_ANALYSIS_CACHE"] = str(test_cache_dir)
 
         # Create a test dispatcher that discovers from directory
-        dispatcher = AnalysisOpDispatcher(yaml_paths=test_ops_yaml['main_dir'])
+        dispatcher = AnalysisOpDispatcher(yaml_paths=test_ops_yaml["main_dir"])
         dispatcher.load_definitions()
         yield dispatcher
 
@@ -253,15 +261,17 @@ def multi_file_test_dispatcher(test_ops_yaml, tmp_path):
         else:
             os.environ.pop("IT_ANALYSIS_CACHE", None)
 
+
 @pytest.fixture
 def target_module():
     """Create a mock module to use as a target for OpWrapper."""
-    return type('MockModule', (), {})()
+    return type("MockModule", (), {})()
+
 
 def test_initialize():
     """Test initializing the OpWrapper class."""
     # Create a mock module
-    mock_module = type('MockModule', (), {})()
+    mock_module = type("MockModule", (), {})()
 
     # Initialize OpWrapper with the module
     OpWrapper.initialize(mock_module)

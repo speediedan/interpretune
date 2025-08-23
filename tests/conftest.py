@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -45,16 +46,33 @@ from tests.parity_acceptance.test_it_l import CoreCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg
 from tests.utils import kwargs_from_cfg_obj
 
-from tests.core.cfg_aliases import (TEST_CONFIGS_CLI_UNIT, unit_exp_cli_cfgs, TLDebugCfg,
-    LightningLlama3DebugCfg, LightningGemma2DebugCfg,CoreMemProfCfg, CoreGPT2PEFTCfg, CoreGPT2PEFTSeqCfg,
-    CoreCfgForcePrepare, LightningGPT2, LightningTLGPT2, CoreSLGPT2, CoreSLGPT2Analysis, CoreSLCust, LightningSLGPT2,
-    CoreSLGPT2LogitDiffsSAE, CoreSLGPT2LogitDiffsAttrGrad, CoreSLGPT2LogitDiffsBase, TLMechInterpCfg,
-    CoreSLGPT2LogitDiffsAttrAblation)
+from tests.core.cfg_aliases import (
+    TEST_CONFIGS_CLI_UNIT,
+    unit_exp_cli_cfgs,
+    TLDebugCfg,
+    LightningLlama3DebugCfg,
+    LightningGemma2DebugCfg,
+    CoreMemProfCfg,
+    CoreGPT2PEFTCfg,
+    CoreGPT2PEFTSeqCfg,
+    CoreCfgForcePrepare,
+    LightningGPT2,
+    LightningTLGPT2,
+    CoreSLGPT2,
+    CoreSLGPT2Analysis,
+    CoreSLCust,
+    LightningSLGPT2,
+    CoreSLGPT2LogitDiffsSAE,
+    CoreSLGPT2LogitDiffsAttrGrad,
+    CoreSLGPT2LogitDiffsBase,
+    TLMechInterpCfg,
+    CoreSLGPT2LogitDiffsAttrAblation,
+)
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
 
 test_cli_cfgs = deepcopy(parity_cli_cfgs)
-test_cli_cfgs['exp_cfgs'].update(unit_exp_cli_cfgs)
+test_cli_cfgs["exp_cfgs"].update(unit_exp_cli_cfgs)
 
 # NOTE [Datamodule/Module/Session Fixture Caching]:
 # We note when instantiating module and datamodule manually (as is done in our datamodule/module fixture factories)
@@ -71,6 +89,7 @@ test_cli_cfgs['exp_cfgs'].update(unit_exp_cli_cfgs)
 # Generated Fixtures
 #################################
 
+
 class FixtPhase(IntEnum):
     cfgonly: int = auto()
     initonly: int = auto()
@@ -78,10 +97,12 @@ class FixtPhase(IntEnum):
     setup: int = auto()
     configure_optimizers: int = auto()
 
+
 class RunPhase(IntEnum):
     cfgonly: int = auto()
     initrunner: int = auto()
     runanalysis: int = auto()
+
 
 # we make the fixture phases an IntEnum to enable explicit definition of phase order
 # we then map the enum values to their string representations for use in generated fixture names
@@ -89,21 +110,26 @@ PHASE_STR = {v: v.name for v in FixtPhase.__members__.values()}
 RUN_PHASE_STR = {v: v.name for v in RunPhase.__members__.values()}
 
 # Namedtuple to encapsulate both FixtPhase and RunPhase
-FixtRunPhase = namedtuple('FixtRunPhase', ['fixt_phase', 'run_phase'])
+FixtRunPhase = namedtuple("FixtRunPhase", ["fixt_phase", "run_phase"])
+
 
 # Hierarchical fixture dataclasses
 @dataclass(kw_only=True)
 class ITSessionFixture:
     """Base dataclass for IT session fixtures."""
+
     it_session: ITSession | None
     test_cfg: BaseCfg | None
+
 
 @dataclass(kw_only=True)
 class AnalysisSessionFixture(ITSessionFixture):
     """Dataclass for analysis session fixtures that extends ITSessionFixture."""
-    result: AnalysisStore | Dict[AnalysisStore]= None
+
+    result: AnalysisStore | Dict[AnalysisStore] = None
     runner: AnalysisRunner = None
     run_config: Dict | AnalysisRunnerCfg = None
+
 
 # TODO: switch to namedtuple if not subclassing this in the future
 @dataclass(kw_only=True)
@@ -114,12 +140,21 @@ class FixtureCfg:
     scope: str = "class"
     variants: Dict[str, Sequence[FixtPhase]] = field(default_factory=lambda: defaultdict(list))
 
+
 FIXTURE_CFGS = {
-    "core_cust": FixtureCfg(scope="session", variants={
-        "it_session": [FixtPhase.initonly, FixtPhase.setup], "it_module": [FixtPhase.setup],
-        "it_session_cfg": [FixtPhase.cfgonly]}),
-    "tl_cust": FixtureCfg(test_cfg=TLParityCfg, scope="session", variants={
-        "it_session": [FixtPhase.initonly, FixtPhase.setup], "it_session_cfg": [FixtPhase.cfgonly]}),
+    "core_cust": FixtureCfg(
+        scope="session",
+        variants={
+            "it_session": [FixtPhase.initonly, FixtPhase.setup],
+            "it_module": [FixtPhase.setup],
+            "it_session_cfg": [FixtPhase.cfgonly],
+        },
+    ),
+    "tl_cust": FixtureCfg(
+        test_cfg=TLParityCfg,
+        scope="session",
+        variants={"it_session": [FixtPhase.initonly, FixtPhase.setup], "it_session_cfg": [FixtPhase.cfgonly]},
+    ),
     "sl_cust": FixtureCfg(test_cfg=CoreSLCust, scope="session", variants={"it_session_cfg": [FixtPhase.cfgonly]}),
     "core_cust_force_prepare": FixtureCfg(test_cfg=CoreCfgForcePrepare, variants={"it_session": [FixtPhase.initonly]}),
     "core_gpt2_peft": FixtureCfg(test_cfg=CoreGPT2PEFTCfg, variants={"it_session": [FixtPhase.initonly]}),
@@ -131,27 +166,32 @@ FIXTURE_CFGS = {
     "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg, variants={"it_session": [FixtPhase.setup]}),
     "l_gemma2_debug": FixtureCfg(test_cfg=LightningGemma2DebugCfg, variants={"it_session": [FixtPhase.setup]}),
     "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function", variants={"it_session": [FixtPhase.setup]}),
-    "sl_gpt2": FixtureCfg(test_cfg=CoreSLGPT2, variants={"it_session": [FixtPhase.initonly],
-                                                         "it_session_cfg": [FixtPhase.cfgonly]}),
-    "sl_gpt2_analysis": FixtureCfg(test_cfg=CoreSLGPT2Analysis,
-                                   scope="session",
-                                   variants={"it_session": [FixtPhase.initonly, FixtPhase.setup]}),
-    "sl_gpt2_logit_diffs_base": FixtureCfg(test_cfg=CoreSLGPT2LogitDiffsBase,
-                                          scope="session",
-                                          variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly,
-                                                                                      RunPhase.runanalysis)]}),
-    "sl_gpt2_logit_diffs_sae": FixtureCfg(test_cfg=CoreSLGPT2LogitDiffsSAE,
-                                          scope="session",
-                                          variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly,
-                                                                                      RunPhase.runanalysis)]}),
-    "sl_gpt2_logit_diffs_attr_grad": FixtureCfg(test_cfg=CoreSLGPT2LogitDiffsAttrGrad,
-                                        scope="session",
-                                        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly,
-                                                                                    RunPhase.runanalysis)]}),
-    "sl_gpt2_logit_diffs_attr_ablation": FixtureCfg(test_cfg=CoreSLGPT2LogitDiffsAttrAblation,
-                                        scope="class",
-                                        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly,
-                                                                                    RunPhase.runanalysis)]}),
+    "sl_gpt2": FixtureCfg(
+        test_cfg=CoreSLGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
+    ),
+    "sl_gpt2_analysis": FixtureCfg(
+        test_cfg=CoreSLGPT2Analysis, scope="session", variants={"it_session": [FixtPhase.initonly, FixtPhase.setup]}
+    ),
+    "sl_gpt2_logit_diffs_base": FixtureCfg(
+        test_cfg=CoreSLGPT2LogitDiffsBase,
+        scope="session",
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_gpt2_logit_diffs_sae": FixtureCfg(
+        test_cfg=CoreSLGPT2LogitDiffsSAE,
+        scope="session",
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_gpt2_logit_diffs_attr_grad": FixtureCfg(
+        test_cfg=CoreSLGPT2LogitDiffsAttrGrad,
+        scope="session",
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_gpt2_logit_diffs_attr_ablation": FixtureCfg(
+        test_cfg=CoreSLGPT2LogitDiffsAttrAblation,
+        scope="class",
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
     "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg, variants={"it_session": [FixtPhase.setup]}),
 }
 
@@ -160,25 +200,34 @@ FIXTURE_CFGS = {
 def mock_dm():
     # this mock fixture is necessary because many tests will want a mock tokenizer but being a dynamic attribute,
     # the tokenizer isn't generated with autospec. We therefore attach a mock tokenizer to our mock datamodule here
-    dm_cls = type('InterpretunableDataModule', (TestITDataModule, ITDataModule), {})
+    dm_cls = type("InterpretunableDataModule", (TestITDataModule, ITDataModule), {})
     with patch("transformers.PreTrainedTokenizer", autospec=True) as mock_tok:
         mock_uninit_dm = create_autospec(dm_cls)
         mock_uninit_dm.tokenizer = mock_tok
         yield mock_uninit_dm
 
+
 @pytest.fixture(scope="class")
 def make_it_module(tmp_path_factory):
     def __make_it_module(module_key, init_key):
-        m_kwargs = {'test_alias': f"{module_key}_{init_key}_it_m_fixture", 'state_log_dir': None}
-        test_cfg=FIXTURE_CFGS[module_key].test_cfg()
+        m_kwargs = {"test_alias": f"{module_key}_{init_key}_it_m_fixture", "state_log_dir": None}
+        test_cfg = FIXTURE_CFGS[module_key].test_cfg()
         core_log_dir = tmp_path_factory.mktemp(f"{module_key}_{init_key}_it_m_fixture")
         _, base_it_cfg, *_ = MODULE_EXAMPLE_REGISTRY.get(test_cfg)
         it_cfg = apply_it_test_cfg(base_it_cfg=base_it_cfg, test_cfg=test_cfg, core_log_dir=core_log_dir)
-        m_cls = ITMeta('InterpretunableModule', (), {}, component='m',
-                       input=FIXTURE_CFGS[module_key].module_cls, ctx=test_cfg.adapter_ctx)
+        m_cls = ITMeta(
+            "InterpretunableModule",
+            (),
+            {},
+            component="m",
+            input=FIXTURE_CFGS[module_key].module_cls,
+            ctx=test_cfg.adapter_ctx,
+        )
         it_m = m_cls(it_cfg=it_cfg, **m_kwargs)
         return it_m
+
     yield __make_it_module
+
 
 def module_fixture_factory(module_key, init_key):
     @pytest.fixture(scope="class")
@@ -187,21 +236,29 @@ def module_fixture_factory(module_key, init_key):
         if init_key == FixtPhase.setup:
             _call_itmodule_hook(it_m, hook_name="setup", hook_msg="Setting up model", datamodule=mock_dm)
         yield it_m
+
     return get_it_module
+
 
 def session_fixture_hook_exec(it_s, init_key: FixtPhase):
     if init_key.value > FixtPhase.initonly:  # call appropriate init phases if requested
         if init_key.value >= FixtPhase.prepare_data:
-            _call_itmodule_hook(it_s.datamodule, hook_name="prepare_data", hook_msg="Preparing data",
-                            target_model=it_s.module.model)
+            _call_itmodule_hook(
+                it_s.datamodule, hook_name="prepare_data", hook_msg="Preparing data", target_model=it_s.module.model
+            )
         if init_key.value >= FixtPhase.setup:
-            _call_itmodule_hook(it_s.datamodule, hook_name="setup", hook_msg="Setting up datamodule",
-                                module=it_s.module)
-            _call_itmodule_hook(it_s.module, hook_name="setup", hook_msg="Setting up model",
-                                datamodule=it_s.datamodule)
+            _call_itmodule_hook(
+                it_s.datamodule, hook_name="setup", hook_msg="Setting up datamodule", module=it_s.module
+            )
+            _call_itmodule_hook(it_s.module, hook_name="setup", hook_msg="Setting up model", datamodule=it_s.datamodule)
         if init_key.value >= FixtPhase.configure_optimizers:
-            _call_itmodule_hook(it_s.module, hook_name="configure_optimizers",
-                                hook_msg="initializing optimizers and schedulers", connect_output=True)
+            _call_itmodule_hook(
+                it_s.module,
+                hook_name="configure_optimizers",
+                hook_msg="initializing optimizers and schedulers",
+                connect_output=True,
+            )
+
 
 def parse_phase(phase):
     """Parse fixture and run phases from a phase object.
@@ -222,6 +279,7 @@ def parse_phase(phase):
 
     return fixt_phase, run_phase, phase_str
 
+
 def setup_fixture_env(config_key):
     """Setup common environment for fixtures.
 
@@ -233,6 +291,7 @@ def setup_fixture_env(config_key):
     """
     load_dotenv()  # load env vars from .env file
     return FIXTURE_CFGS[config_key].test_cfg
+
 
 def runner_fixture_init(sess_fixture, fixt_cfg, run_phase: RunPhase):
     """Initialize the runner and optionally run analysis based on the RunPhase.
@@ -262,6 +321,7 @@ def runner_fixture_init(sess_fixture, fixt_cfg, run_phase: RunPhase):
 
     return result, runner, run_config
 
+
 def analysis_session_fixture_factory(config_key, phase):
     @pytest.fixture(scope=FIXTURE_CFGS[config_key].scope)
     def get_analysis_session(tmp_path_factory):
@@ -270,34 +330,60 @@ def analysis_session_fixture_factory(config_key, phase):
         fixt_phase, run_phase, phase_str = parse_phase(phase)
 
         instantiated_test_cfg = test_sess_config()
-        it_s = config_modules(instantiated_test_cfg, f"{config_key}_{phase_str}_it_session_fixture", {},
-                             tmp_path_factory.mktemp(f"{config_key}_{phase_str}_it_session_fixture"), {}, False)
+        it_s = config_modules(
+            instantiated_test_cfg,
+            f"{config_key}_{phase_str}_it_session_fixture",
+            {},
+            tmp_path_factory.mktemp(f"{config_key}_{phase_str}_it_session_fixture"),
+            {},
+            False,
+        )
         session_fixture_hook_exec(it_s, fixt_phase)
         result, runner, run_config = runner_fixture_init(it_s, instantiated_test_cfg, run_phase)
 
         # note we copy a reference to the uninitialized original test session config to the fixture
-        yield AnalysisSessionFixture(result=result, it_session=it_s, runner=runner, run_config=run_config,
-                                     test_cfg=deepcopy(test_sess_config))
+        yield AnalysisSessionFixture(
+            result=result, it_session=it_s, runner=runner, run_config=run_config, test_cfg=deepcopy(test_sess_config)
+        )
+
     return get_analysis_session
+
 
 def it_session_fixture_factory(config_key, phase):
     @pytest.fixture(scope=FIXTURE_CFGS[config_key].scope)
     def get_it_session(tmp_path_factory):
         test_sess_config = setup_fixture_env(config_key)
         phase_str = PHASE_STR[phase]
-        it_s = config_modules(test_sess_config(), f"{config_key}_{phase_str}_it_session_fixture", {},
-                              tmp_path_factory.mktemp(f"{config_key}_{phase_str}_it_session_fixture"), {}, False)
+        it_s = config_modules(
+            test_sess_config(),
+            f"{config_key}_{phase_str}_it_session_fixture",
+            {},
+            tmp_path_factory.mktemp(f"{config_key}_{phase_str}_it_session_fixture"),
+            {},
+            False,
+        )
         session_fixture_hook_exec(it_s, phase)
         yield ITSessionFixture(it_session=it_s, test_cfg=deepcopy(test_sess_config))
+
     return get_it_session
+
 
 def it_session_cfg_fixture_factory(config_key):
     @pytest.fixture(scope=FIXTURE_CFGS[config_key].scope)
     def get_it_session_cfg(tmp_path_factory):
         test_sess_config = setup_fixture_env(config_key)
-        yield config_modules(test_sess_config(), f"{config_key}_it_session_cfg_fixture", {},
-                             tmp_path_factory.mktemp(f"{config_key}_it_session_cfg_fixture"), {}, False, True)
+        yield config_modules(
+            test_sess_config(),
+            f"{config_key}_it_session_cfg_fixture",
+            {},
+            tmp_path_factory.mktemp(f"{config_key}_it_session_cfg_fixture"),
+            {},
+            False,
+            True,
+        )
+
     return get_it_session_cfg
+
 
 def gen_fixture(fixt_type, fixt_key, phase):
     if isinstance(phase, FixtRunPhase):
@@ -330,6 +416,7 @@ def gen_fixture(fixt_type, fixt_key, phase):
     globals()[name].__name__ = name
     globals()[name].__qualname__ = name
 
+
 for fixt_key, fixt_cfg in FIXTURE_CFGS.items():
     for fixt_type, phases in fixt_cfg.variants.items():
         for phase in phases:
@@ -343,13 +430,15 @@ for fixt_key, fixt_cfg in FIXTURE_CFGS.items():
 # them sessionwise
 GEN_CLI_CFGS = [TEST_CONFIGS_CLI_PARITY, TEST_CONFIGS_CLI_UNIT]
 
+
 def gen_experiment_cfg_sets(test_keys: Sequence[Tuple[str, str, bool]], sess_paths: Tuple) -> Dict:
     EXPERIMENTS_BASE, BASE_DEBUG_CONFIG = sess_paths
     exp_cfg_sets = {}
     for exp, subexp, debug_mode in test_keys:
-        subexp_cfg =  EXPERIMENTS_BASE / f"{subexp}.yaml"
+        subexp_cfg = EXPERIMENTS_BASE / f"{subexp}.yaml"
         exp_cfg_sets[(exp, subexp, debug_mode)] = (subexp_cfg, BASE_DEBUG_CONFIG) if debug_mode else (subexp_cfg,)
     return exp_cfg_sets
+
 
 @pytest.fixture(scope="function")
 def clean_cli_env():
@@ -357,6 +446,7 @@ def clean_cli_env():
     for env_key in ("IT_GLOBAL_SEED",):
         if env_key in os.environ:
             del os.environ[env_key]
+
 
 @pytest.fixture(scope="session")
 def cli_test_file_env(tmp_path_factory):
@@ -372,19 +462,27 @@ def cli_test_file_env(tmp_path_factory):
         "exp_cfgs": test_cli_cfgs["exp_cfgs"],
     }
     yield TEST_CLI_CONFIG_FILES, EXPERIMENTS_BASE
-    for env_key in ("IT_CONFIG_BASE", "IT_CONFIG_DEFAULTS", "WANDB_API_KEY", "HF_GATED_PUBLIC_REPO_AUTH_KEY",
-                    "IDE_PROJECT_ROOTS"):
+    for env_key in (
+        "IT_CONFIG_BASE",
+        "IT_CONFIG_DEFAULTS",
+        "WANDB_API_KEY",
+        "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+        "IDE_PROJECT_ROOTS",
+    ):
         if env_key in os.environ:
             del os.environ[env_key]
+
 
 def ensure_path(cfg_dir):
     cfg_dir = Path(cfg_dir)
     cfg_dir.mkdir(exist_ok=True, parents=True)
     return cfg_dir
 
+
 def write_cfg_to_yaml_file(path, config):
     with open(path, "w") as f:
         f.write(yaml.dump(config))
+
 
 def write_cli_config_files(test_cli_cfg_files, test_exp_model_dir):
     test_config_files = {}
@@ -402,6 +500,7 @@ def write_cli_config_files(test_cli_cfg_files, test_exp_model_dir):
             test_config_files[k] = cfg_file_path
     return test_config_files
 
+
 @pytest.fixture(scope="session")
 def cli_test_configs(cli_test_file_env):
     # this fixture will collect all required cli test configuration files and dynamically generate them sessionwise
@@ -409,8 +508,7 @@ def cli_test_configs(cli_test_file_env):
     test_config_files = write_cli_config_files(test_cli_cfg_files, experiments_base)
     sess_paths = Path(experiments_base), Path(test_config_files["global_debug"])
     # we specify a set of CLI test configurations (GEN_CLI_CFGS) to drive our CLI configuration file generation
-    test_keys = ((CLI_EXP, c.alias, c.cfg.debug_mode)
-                 for cfg in GEN_CLI_CFGS for c in cfg)
+    test_keys = ((CLI_EXP, c.alias, c.cfg.debug_mode) for cfg in GEN_CLI_CFGS for c in cfg)
     EXPERIMENT_CFG_SETS = gen_experiment_cfg_sets(test_keys=test_keys, sess_paths=sess_paths)
     yield EXPERIMENT_CFG_SETS
 
@@ -418,6 +516,7 @@ def cli_test_configs(cli_test_file_env):
 #################################
 # Schedule Fixtures
 #################################
+
 
 @pytest.fixture(scope="function")
 def fts_patch_env():
@@ -427,29 +526,40 @@ def fts_patch_env():
         if env_key in os.environ:
             del os.environ[env_key]
 
+
 def l_imp_to_exp(sched_dict: Dict) -> Dict:
     sched_dict[0]["params"] = [r"model.transformer.h.(9|1[0-1]).(mlp|attn|ln_(1|2)).(c_proj|c_fc|c_attn|weight|bias).*"]
     sched_dict[0]["max_transition_epoch"] = 2
-    phase_1_pats = [r"model.transformer.h.([0-8](?!\d)).(mlp|attn|ln_(1|2)).(c_proj|c_fc|c_attn|weight|bias).*",
-     r"model.transformer.(wpe|wte).weight", r"model.transformer.ln_f.*"]
+    phase_1_pats = [
+        r"model.transformer.h.([0-8](?!\d)).(mlp|attn|ln_(1|2)).(c_proj|c_fc|c_attn|weight|bias).*",
+        r"model.transformer.(wpe|wte).weight",
+        r"model.transformer.ln_f.*",
+    ]
     sched_dict[1]["params"] = phase_1_pats
     sched_dict[1]["lr"] = 1e-06
-    sched_dict = {phase:phase_def for phase, phase_def in sched_dict.items() if phase in range(2)}
+    sched_dict = {phase: phase_def for phase, phase_def in sched_dict.items() if phase in range(2)}
     return sched_dict
+
 
 def tl_imp_to_exp(sched_dict: Dict) -> Dict:
     sched_dict[0]["params"] = [r"model.blocks.(9|1[0-1]).*"]
     sched_dict[0]["max_transition_epoch"] = 2
-    phase_1_pats = [r"model.blocks.([0-8](?!\d)).*", r"model.(pos_embed|embed).*", "model.unembed.W_U",
-                    "model.unembed.b_U"]
+    phase_1_pats = [
+        r"model.blocks.([0-8](?!\d)).*",
+        r"model.(pos_embed|embed).*",
+        "model.unembed.W_U",
+        "model.unembed.b_U",
+    ]
     sched_dict[1]["params"] = phase_1_pats
     sched_dict[1]["lr"] = 1e-06
-    sched_dict = {phase:phase_def for phase, phase_def in sched_dict.items() if phase in range(2)}
+    sched_dict = {phase: phase_def for phase, phase_def in sched_dict.items() if phase in range(2)}
     return sched_dict
 
+
 @pytest.fixture(scope="function")
-def gpt2_ft_schedules(tmpdir_factory, fts_patch_env, get_it_session__l_gpt2__setup,
-                      get_it_session__l_tl_gpt2__setup) -> Tuple[Path, Dict]:
+def gpt2_ft_schedules(
+    tmpdir_factory, fts_patch_env, get_it_session__l_gpt2__setup, get_it_session__l_tl_gpt2__setup
+) -> Tuple[Path, Dict]:
     """Generates a default fine-tuning schedule for 'implicit' testing, a modified one for 'explicit' mode and an
     epoch-driven transitions only one for epoch_transitions_only testing."""
     SCHED_TRANSFORMS = defaultdict(dict)
@@ -460,13 +570,16 @@ def gpt2_ft_schedules(tmpdir_factory, fts_patch_env, get_it_session__l_gpt2__set
     # for simplicity, initially only running FTS non-distributed tests
     tmpdir = tmpdir_factory.mktemp("test_fts_schedules")
     rank = getattr(rank_zero_only, "rank", 0)
-    models = {"l_gpt2": deepcopy(get_it_session__l_gpt2__setup.it_session.module),
-              "l_tl_gpt2": deepcopy(get_it_session__l_tl_gpt2__setup.it_session.module)}
+    models = {
+        "l_gpt2": deepcopy(get_it_session__l_gpt2__setup.it_session.module),
+        "l_tl_gpt2": deepcopy(get_it_session__l_tl_gpt2__setup.it_session.module),
+    }
     test_schedules = defaultdict(dict)
     for i, (model_key, model) in enumerate(models.items()):
         trainer = Trainer(default_root_dir=tmpdir, callbacks=callbacks, devices=1)
-        unmod_schedule_file = \
-              tmpdir / "lightning_logs" / f"version_{i}" / f"{model.__class__.__name__}_ft_schedule.yaml"
+        unmod_schedule_file = (
+            tmpdir / "lightning_logs" / f"version_{i}" / f"{model.__class__.__name__}_ft_schedule.yaml"
+        )
         # N.B. Though we run this fixture for each rank to avoid adding special logic to each distributed client test,
         # we only generate a schedule on rank 0, linking to it on the other ranks.
         if rank == 0:
@@ -477,9 +590,11 @@ def gpt2_ft_schedules(tmpdir_factory, fts_patch_env, get_it_session__l_gpt2__set
             test_schedules[model_key][transform_key] = transform_fn(deepcopy(test_schedules[model_key]["implicit"]))
     return test_schedules
 
+
 #################################
 # Misc Training Fixtures
 #################################
+
 
 @pytest.fixture(scope="session")
 def make_deterministic(warn_only=False, fill_uninitialized_memory=True):
@@ -517,6 +632,7 @@ def datadir():
 @pytest.fixture(scope="function", autouse=True)
 def preserve_global_rank_variable():
     from interpretune.utils import rank_zero_only
+
     """Ensures that the rank_zero_only.rank global variable gets reset in each test."""
     rank = getattr(rank_zero_only, "rank", None)
     yield
@@ -527,8 +643,14 @@ def preserve_global_rank_variable():
 @pytest.fixture(scope="function", autouse=True)
 def restore_env_variables():
     """Ensures that environment variables set during the test do not leak out."""
-    okay_session_scope_keys = {"IT_CONFIG_BASE", "IT_CORE_SHARED", "IT_LIGHTNING_SHARED", "WANDB_API_KEY",
-                               "HF_GATED_PUBLIC_REPO_AUTH_KEY", "IDE_PROJECT_ROOTS"}
+    okay_session_scope_keys = {
+        "IT_CONFIG_BASE",
+        "IT_CORE_SHARED",
+        "IT_LIGHTNING_SHARED",
+        "WANDB_API_KEY",
+        "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+        "IDE_PROJECT_ROOTS",
+    }
     env_backup = os.environ.copy()
     yield
     leaked_vars = os.environ.keys() - env_backup.keys()
@@ -572,6 +694,7 @@ def restore_env_variables():
     leaked_vars.difference_update(allowlist)
     assert not leaked_vars, f"test is leaking environment variable(s): {set(leaked_vars)}"
 
+
 @pytest.fixture(scope="function", autouse=True)
 def restore_grad_enabled_state():
     """Ensures that the PyTorch grad_enabled state gets reset to its default (True) in each test.
@@ -592,8 +715,10 @@ def restore_grad_enabled_state():
         if initial_grad_enabled != default_grad_enabled:
             pytest.fail(f"Test started with non-default torch.is_grad_enabled() state: {initial_grad_enabled}")
         else:
-            pytest.fail(f"Test is leaking torch.is_grad_enabled() state:\
-                         changed from {initial_grad_enabled} to {final_grad_enabled}")
+            pytest.fail(
+                f"Test is leaking torch.is_grad_enabled() state:\
+                         changed from {initial_grad_enabled} to {final_grad_enabled}"
+            )
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -602,6 +727,7 @@ def teardown_process_group():
     yield
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()
+
 
 @pytest.fixture
 def tmpdir_server(tmpdir):
@@ -616,6 +742,7 @@ def tmpdir_server(tmpdir):
         yield server.server_address
         server.shutdown()
 
+
 #################################
 # Pytest Collection Customization
 #################################
@@ -625,6 +752,7 @@ def tmpdir_server(tmpdir):
 #   `profiling` and `profiling_ci`
 # - The standalone marks run with CI by default and take precedence over profiling marks
 # - To run all profiling tests, set `IT_RUN_PROFILING_TESTS` to `2`
+
 
 def pytest_collection_modifyitems(items):
     # select special tests, all special tests run standalone
@@ -663,6 +791,7 @@ def pytest_collection_modifyitems(items):
             if marker.name == "skipif" and marker.kwargs.get("optional")
         ]
 
+
 # Fixture to set and restore HuggingFace cache env vars for cross-platform compatibility
 @pytest.fixture(scope="function")
 def huggingface_env(tmp_path):
@@ -695,6 +824,7 @@ def huggingface_env(tmp_path):
     else:
         os.environ.pop("HUGGINGFACE_HUB_CACHE", None)
 
+
 @pytest.fixture(scope="function")
 def mock_analysis_store():
     """Create a mock AnalysisStore with common test data."""
@@ -711,33 +841,30 @@ def mock_analysis_store():
 
     # Set up attribution values for by_sae testing
     mock_store.attribution_values = [
-        {'sae1': torch.rand(2, 10), 'sae2': torch.rand(2, 10)},
-        {'sae1': torch.rand(2, 10), 'sae2': torch.rand(2, 10)}
+        {"sae1": torch.rand(2, 10), "sae2": torch.rand(2, 10)},
+        {"sae1": torch.rand(2, 10), "sae2": torch.rand(2, 10)},
     ]
 
     # Set up correct_activations for calc_activation_summary
     mock_store.correct_activations = [
-        {'sae1': torch.rand(2, 10), 'sae2': torch.rand(2, 10)},
-        {'sae1': torch.rand(2, 10), 'sae2': torch.rand(2, 10)}
+        {"sae1": torch.rand(2, 10), "sae2": torch.rand(2, 10)},
+        {"sae1": torch.rand(2, 10), "sae2": torch.rand(2, 10)},
     ]
 
     # Set up alive_latents for plot_latent_effects
-    mock_store.alive_latents = [
-        {'sae1': [0, 1, 2], 'sae2': [0, 1]},
-        {'sae1': [0, 3, 4], 'sae2': [1, 2]}
-    ]
+    mock_store.alive_latents = [{"sae1": [0, 1, 2], "sae2": [0, 1]}, {"sae1": [0, 3, 4], "sae2": [1, 2]}]
 
     # Mock the by_sae method to return an SAEAnalysisDict
     def mock_by_sae(field_name, stack_latents=True):
-        if field_name == 'correct_activations':
+        if field_name == "correct_activations":
             result = SAEAnalysisDict()
-            result['sae1'] = [torch.rand(2, 10), torch.rand(2, 10)]
-            result['sae2'] = [torch.rand(2, 10), torch.rand(2, 10)]
+            result["sae1"] = [torch.rand(2, 10), torch.rand(2, 10)]
+            result["sae2"] = [torch.rand(2, 10), torch.rand(2, 10)]
             return result
-        elif field_name == 'attribution_values':
+        elif field_name == "attribution_values":
             result = SAEAnalysisDict()
-            result['sae1'] = [torch.rand(2, 10), torch.rand(2, 10)]
-            result['sae2'] = [torch.rand(2, 10), torch.rand(2, 10)]
+            result["sae1"] = [torch.rand(2, 10), torch.rand(2, 10)]
+            result["sae2"] = [torch.rand(2, 10), torch.rand(2, 10)]
             return result
         else:
             raise ValueError(f"Unexpected field_name: {field_name}")

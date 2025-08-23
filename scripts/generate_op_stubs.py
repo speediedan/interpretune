@@ -33,6 +33,7 @@ def format_type_annotation(annotation):
 
     # Handle complex typing constructs
     import typing
+
     if hasattr(typing, "get_origin") and hasattr(typing, "get_args"):
         origin = typing.get_origin(annotation)
         args = typing.get_args(annotation)
@@ -152,9 +153,7 @@ def generate_operation_stub(op_name: str, op_def: Dict[str, Any], yaml_content: 
 
         # Create formatted docstring
         docstring = format_docstring(
-            op_def.get("description", ""),
-            op_def.get("input_schema", {}),
-            op_def.get("output_schema", {})
+            op_def.get("description", ""), op_def.get("input_schema", {}), op_def.get("output_schema", {})
         )
 
         # Build the complete stub
@@ -177,10 +176,12 @@ def generate_operation_stub(op_name: str, op_def: Dict[str, Any], yaml_content: 
     except (ImportError, AttributeError) as e:
         print(f"Error generating stub for {op_name}: {e}")
         # Fallback to a basic stub
-        return (f"def {op_name}(module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, "
-                f"batch_idx: int) -> BaseAnalysisBatchProtocol:\n"
-                f"    \"\"\"Operation {op_name} (import failed: {e})\"\"\"\n"
-                f"    ...\n\n")
+        return (
+            f"def {op_name}(module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, "
+            f"batch_idx: int) -> BaseAnalysisBatchProtocol:\n"
+            f'    """Operation {op_name} (import failed: {e})"""\n'
+            f"    ...\n\n"
+        )
 
 
 def generate_composition_stub(op_name: str, op_def: Dict[str, Any]) -> str:
@@ -191,11 +192,8 @@ def generate_composition_stub(op_name: str, op_def: Dict[str, Any]) -> str:
     # Create a standardized signature for composite operations
     signature = wrap_signature(
         op_name,
-        ["module",
-         "analysis_batch: Optional[BaseAnalysisBatchProtocol]",
-         "batch",
-         "batch_idx: int"],
-        "BaseAnalysisBatchProtocol"
+        ["module", "analysis_batch: Optional[BaseAnalysisBatchProtocol]", "batch", "batch_idx: int"],
+        "BaseAnalysisBatchProtocol",
     )
 
     # Create docstring
@@ -215,21 +213,21 @@ def generate_composition_stub(op_name: str, op_def: Dict[str, Any]) -> str:
 def generate_stubs(yaml_path: Path, output_path: Path) -> None:
     """Generate type stubs for all operations in the YAML file."""
     # Load YAML definitions
-    with open(yaml_path, 'r', encoding='utf-8') as f:
+    with open(yaml_path, "r", encoding="utf-8") as f:
         yaml_content = yaml.safe_load(f)
 
     # Start with header
     stubs = [
         '"""Type stubs for Interpretune analysis operations."""',
-        '# This file is auto-generated. Do not modify directly.',
-        '',
-        'from typing import Any, Callable, Dict, List, Optional, Union, Tuple, Sequence, Literal',
-        'import torch',
-        'from transformers import BatchEncoding',
-        'from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatchProtocol',
-        '',
-        '# Basic operations',
-        ''
+        "# This file is auto-generated. Do not modify directly.",
+        "",
+        "from typing import Any, Callable, Dict, List, Optional, Union, Tuple, Sequence, Literal",
+        "import torch",
+        "from transformers import BatchEncoding",
+        "from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatchProtocol",
+        "",
+        "# Basic operations",
+        "",
     ]
 
     # Process individual operations
@@ -243,7 +241,7 @@ def generate_stubs(yaml_path: Path, output_path: Path) -> None:
 
     # Process composite operations
     if "composite_operations" in yaml_content:
-        stubs.append('# Composite operations\n')
+        stubs.append("# Composite operations\n")
         comp_ops = yaml_content["composite_operations"]
         for op_name, op_def in sorted(comp_ops.items()):
             op_stub = generate_composition_stub(op_name, op_def)

@@ -8,14 +8,19 @@ from tests.runif import RunIf
 from interpretune.extensions import DebugGeneration
 
 IT_TEST_TEXT = {
-    "text": [("Interpretune is a flexible ML experimentation framework that makes code adhering to a simple"
-             " protocol compatible with a wide variety of frameworks and research packages. Most of the adapters"
-             " currently available are for ML interpretability research packages but the defined protocol should"
-             " in principle accommodate adapters written for a vast range of frameworks, applications and research"
-             " domains.")]}
+    "text": [
+        (
+            "Interpretune is a flexible ML experimentation framework that makes code adhering to a simple"
+            " protocol compatible with a wide variety of frameworks and research packages. Most of the adapters"
+            " currently available are for ML interpretability research packages but the defined protocol should"
+            " in principle accommodate adapters written for a vast range of frameworks, applications and research"
+            " domains."
+        )
+    ]
+}
+
 
 class TestClassDebugGen:
-
     TEST_DEBUG_SEQS = ["Hello, I'm a large language,", "The day after Tuesday"]
 
     @pytest.mark.usefixtures("make_deterministic")
@@ -31,23 +36,55 @@ class TestClassDebugGen:
     @pytest.mark.parametrize(
         "session_fixture, format, pad_token, gen_kwargs, batch_mode, expected",
         [
-            pytest.param("get_it_session__l_gemma2_debug__setup", "gemma2-chat", "<pad>",
-                         {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 0},
-                          "decode_cfg_override": {"skip_special_tokens": False}}, True, (2, True),
-                          marks=RunIf(standalone=True, lightning=True, bf16_cuda=True)),
-            pytest.param("get_it_session__l_llama3_debug__setup", None, "<|finetune_right_pad_id|>",
-                         {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 128004},
-                          "decode_cfg_override": {"skip_special_tokens": False}}, True, (2, True),
-                          marks=RunIf(standalone=True, lightning=True, bf16_cuda=True)),
-            pytest.param("get_it_session__l_gemma2_debug__setup", None, "<pad>",
-                         {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 0}}, False, (2, False),
-                         marks=RunIf(optional=True, lightning=True, bf16_cuda=True)),
-            pytest.param("get_it_session__l_llama3_debug__setup", "llama3-chat", "<|finetune_right_pad_id|>",
-                         {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 128004}}, False, (2, False),
-                         marks=RunIf(optional=True, lightning=True, bf16_cuda=True)),
+            pytest.param(
+                "get_it_session__l_gemma2_debug__setup",
+                "gemma2-chat",
+                "<pad>",
+                {
+                    "gen_config_override": {"max_new_tokens": 4, "pad_token_id": 0},
+                    "decode_cfg_override": {"skip_special_tokens": False},
+                },
+                True,
+                (2, True),
+                marks=RunIf(standalone=True, lightning=True, bf16_cuda=True),
+            ),
+            pytest.param(
+                "get_it_session__l_llama3_debug__setup",
+                None,
+                "<|finetune_right_pad_id|>",
+                {
+                    "gen_config_override": {"max_new_tokens": 4, "pad_token_id": 128004},
+                    "decode_cfg_override": {"skip_special_tokens": False},
+                },
+                True,
+                (2, True),
+                marks=RunIf(standalone=True, lightning=True, bf16_cuda=True),
+            ),
+            pytest.param(
+                "get_it_session__l_gemma2_debug__setup",
+                None,
+                "<pad>",
+                {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 0}},
+                False,
+                (2, False),
+                marks=RunIf(optional=True, lightning=True, bf16_cuda=True),
+            ),
+            pytest.param(
+                "get_it_session__l_llama3_debug__setup",
+                "llama3-chat",
+                "<|finetune_right_pad_id|>",
+                {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 128004}},
+                False,
+                (2, False),
+                marks=RunIf(optional=True, lightning=True, bf16_cuda=True),
+            ),
         ],
-        ids=["gemma2_decode_override_no_skip_special_batch", "llama3_decode_override_no_skip_special_batch",
-             "gemma2_default_serial", "llama3_default_serial",],
+        ids=[
+            "gemma2_decode_override_no_skip_special_batch",
+            "llama3_decode_override_no_skip_special_batch",
+            "gemma2_default_serial",
+            "llama3_default_serial",
+        ],
     )
     def test_debug_session_chat(self, request, session_fixture, format, pad_token, gen_kwargs, batch_mode, expected):
         it_session_fixture = request.getfixturevalue(session_fixture)
@@ -82,17 +119,29 @@ class TestClassDebugGen:
         [
             pytest.param({"gen_kwargs_override": {"max_new_tokens": 4}}, True, (2, False)),
             pytest.param({"gen_kwargs_override": {"max_new_tokens": 4}, "gen_output_attr": "tokens"}, True, (2, False)),
-            pytest.param({"gen_kwargs_override": {"max_new_tokens": 4},
-                          "decode_cfg_override": {"skip_special_tokens": False}}, True, (2, True)),
+            pytest.param(
+                {"gen_kwargs_override": {"max_new_tokens": 4}, "decode_cfg_override": {"skip_special_tokens": False}},
+                True,
+                (2, True),
+            ),
             pytest.param({"gen_kwargs_override": {"max_new_tokens": 4}}, False, (2, False)),
-            pytest.param({"gen_kwargs_override": {"max_new_tokens": 4},
-                          "gen_output_attr": "tokens"}, False, (2, False)),
-            pytest.param({"gen_kwargs_override": {"max_new_tokens": 4},
-                          "decode_cfg_override": {"skip_special_tokens": False}}, False,
-                         (2, False)),
+            pytest.param(
+                {"gen_kwargs_override": {"max_new_tokens": 4}, "gen_output_attr": "tokens"}, False, (2, False)
+            ),
+            pytest.param(
+                {"gen_kwargs_override": {"max_new_tokens": 4}, "decode_cfg_override": {"skip_special_tokens": False}},
+                False,
+                (2, False),
+            ),
         ],
-        ids=["default_batch", "cust_gen_output_attr_batch", "decode_override_no_skip_special_batch",
-             "default_serial", "cust_gen_output_attr_serial", "decode_override_no_skip_special_serial"],
+        ids=[
+            "default_batch",
+            "cust_gen_output_attr_batch",
+            "decode_override_no_skip_special_batch",
+            "default_serial",
+            "cust_gen_output_attr_serial",
+            "decode_override_no_skip_special_serial",
+        ],
     )
     def test_debug_session_debug_gen(self, get_it_session__tl_gpt2_debug__setup, gen_kwargs, batch_mode, expected):
         fixture = get_it_session__tl_gpt2_debug__setup
@@ -115,7 +164,7 @@ class TestClassDebugGen:
     @pytest.mark.parametrize(
         "gen_kwargs, expected",
         [
-        pytest.param({"gen_config_override": {"max_new_tokens": 4}, "gen_output_attr": "tokens"}, (1, False)),
+            pytest.param({"gen_config_override": {"max_new_tokens": 4}, "gen_output_attr": "tokens"}, (1, False)),
         ],
         ids=["cust_gen_output_attr_serial_config_str"],
     )
@@ -135,7 +184,9 @@ class TestClassDebugGen:
 
     @pytest.mark.parametrize(
         "gen_kwargs, gen_error",
-        [pytest.param({"gen_config_override": {"max_new_tokens": 4}}, "No compatible default"),],
+        [
+            pytest.param({"gen_config_override": {"max_new_tokens": 4}}, "No compatible default"),
+        ],
         ids=["gen_output_attr_error"],
     )
     def test_debug_session_exceptions(self, get_it_session__tl_gpt2_debug__setup, gen_kwargs, gen_error):
@@ -144,15 +195,20 @@ class TestClassDebugGen:
         test_seqs = debug_module.debug_sequences(["Hello, I'm a large language,", "The day after Tuesday"])
         if gen_error:
             from interpretune.extensions import DebugGeneration
+
             with patch.object(DebugGeneration, "DEFAULT_OUTPUT_ATTRS", ("fake",)):
                 with pytest.raises(ValueError, match=gen_error):
                     _ = debug_module.debug_generate_batch(test_seqs, **gen_kwargs)
 
     @pytest.mark.usefixtures("make_deterministic")
-    @pytest.mark.parametrize("default, limit_chars, stride, expected", [(True, 8192, 512, 27.3), (False, 900, 8, 74.2)],
-                             ids=["wikitext", "custom"])
-    def test_debug_session_perplexity(self, get_it_session__tl_gpt2_debug__setup, default, limit_chars, stride,
-                                      expected):
+    @pytest.mark.parametrize(
+        "default, limit_chars, stride, expected",
+        [(True, 8192, 512, 27.3), (False, 900, 8, 74.2)],
+        ids=["wikitext", "custom"],
+    )
+    def test_debug_session_perplexity(
+        self, get_it_session__tl_gpt2_debug__setup, default, limit_chars, stride, expected
+    ):
         fixture = get_it_session__tl_gpt2_debug__setup
         debug_module = fixture.it_session.module.debug_lm
         corpus = IT_TEST_TEXT if not default else None

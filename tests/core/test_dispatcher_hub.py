@@ -1,4 +1,5 @@
 """Unit tests for enhanced AnalysisOpDispatcher with hub operations."""
+
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -32,32 +33,29 @@ test_op:
     def teardown_method(self):
         """Clean up test environment after each test."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_dispatcher_with_hub_ops_disabled(self):
         """Test dispatcher with hub operations disabled."""
-        dispatcher = AnalysisOpDispatcher(
-            yaml_paths=[self.test_yaml],
-            enable_hub_ops=False
-        )
+        dispatcher = AnalysisOpDispatcher(yaml_paths=[self.test_yaml], enable_hub_ops=False)
 
         assert dispatcher.enable_hub_ops is False
 
-        with patch.object(dispatcher._cache_manager, 'add_hub_yaml_files') as mock_add_hub:
+        with patch.object(dispatcher._cache_manager, "add_hub_yaml_files") as mock_add_hub:
             dispatcher.load_definitions()
             mock_add_hub.assert_not_called()
 
     def test_dispatcher_with_hub_ops_enabled(self):
         """Test dispatcher with hub operations enabled."""
-        dispatcher = AnalysisOpDispatcher(
-            yaml_paths=[self.test_yaml],
-            enable_hub_ops=True
-        )
+        dispatcher = AnalysisOpDispatcher(yaml_paths=[self.test_yaml], enable_hub_ops=True)
 
         assert dispatcher.enable_hub_ops is True
 
-        with patch.object(dispatcher._cache_manager, 'add_hub_yaml_files') as mock_add_hub, \
-             patch.object(dispatcher._cache_manager, 'discover_hub_yaml_files', return_value=[]):
+        with (
+            patch.object(dispatcher._cache_manager, "add_hub_yaml_files") as mock_add_hub,
+            patch.object(dispatcher._cache_manager, "discover_hub_yaml_files", return_value=[]),
+        ):
             dispatcher.load_definitions()
             mock_add_hub.assert_called_once()
 
@@ -65,17 +63,12 @@ test_op:
         """Test namespacing is not applied to native files."""
         dispatcher = AnalysisOpDispatcher(yaml_paths=[self.test_yaml])
 
-        raw_definitions = {
-            "test_op": {
-                "description": "Test operation",
-                "aliases": ["test_alias"]
-            }
-        }
+        raw_definitions = {"test_op": {"description": "Test operation", "aliases": ["test_alias"]}}
 
         # Mock native file path
         native_file = Path(__file__).parent.parent / "src" / "interpretune" / "analysis" / "ops" / "native.yaml"
 
-        with patch.object(dispatcher._cache_manager, 'get_hub_namespace', return_value=""):
+        with patch.object(dispatcher._cache_manager, "get_hub_namespace", return_value=""):
             result = dispatcher._apply_hub_namespacing(raw_definitions, native_file)
 
         assert "test_op" in result
@@ -85,19 +78,13 @@ test_op:
         dispatcher = AnalysisOpDispatcher(yaml_paths=[self.test_yaml])
 
         raw_definitions = {
-            "test_op": {
-                "description": "Test operation",
-                "aliases": ["test_alias"],
-                "required_ops": ["other_op"]
-            },
-            "other_op": {
-                "description": "Other operation"
-            }
+            "test_op": {"description": "Test operation", "aliases": ["test_alias"], "required_ops": ["other_op"]},
+            "other_op": {"description": "Other operation"},
         }
 
         hub_file = Path("/fake/hub/cache/models--user--repo/snapshots/abc/ops.yaml")
 
-        with patch.object(dispatcher._cache_manager, 'get_hub_namespace', return_value="user.repo"):
+        with patch.object(dispatcher._cache_manager, "get_hub_namespace", return_value="user.repo"):
             result = dispatcher._apply_hub_namespacing(raw_definitions, hub_file)
 
         assert "user.repo.test_op" in result
@@ -107,7 +94,7 @@ test_op:
         #       if collisions are too frequent, we may need to adjust this logic
         assert result["user.repo.test_op"]["required_ops"] == ["other_op"]
 
-    @patch('interpretune.analysis.ops.dispatcher.yaml.safe_load')
+    @patch("interpretune.analysis.ops.dispatcher.yaml.safe_load")
     def test_load_yaml_with_errors(self, mock_yaml_load):
         """Test loading YAML files with errors is handled gracefully."""
         mock_yaml_load.side_effect = Exception("YAML parse error")
@@ -145,6 +132,7 @@ class TestOpDefinitionsCacheManagerHub:
     def teardown_method(self):
         """Clean up test environment after each test."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_discover_hub_yaml_files_hub_cache(self):
@@ -162,8 +150,10 @@ class TestOpDefinitionsCacheManagerHub:
 
         cache_manager = OpDefinitionsCacheManager(self.temp_dir)
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', hub_cache), \
-             patch('interpretune.analysis.IT_ANALYSIS_OP_PATHS', []):
+        with (
+            patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
+            patch("interpretune.analysis.IT_ANALYSIS_OP_PATHS", []),
+        ):
             yaml_files = cache_manager.discover_hub_yaml_files()
 
         assert len(yaml_files) == 1
@@ -175,7 +165,7 @@ class TestOpDefinitionsCacheManagerHub:
 
         hub_file = Path("/cache/hub/interpretune-ops/models--username--some_repo/snapshots/abc/ops.yaml")
 
-        with patch('interpretune.analysis.IT_ANALYSIS_HUB_CACHE', Path("/cache/hub/interpretune-ops/")):
+        with patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", Path("/cache/hub/interpretune-ops/")):
             namespace = cache_manager.get_hub_namespace(hub_file)
 
         assert namespace == "username.some_repo"
@@ -198,7 +188,7 @@ class TestOpDefinitionsCacheManagerHub:
         test_file = self.temp_dir / "test.yaml"
         test_file.write_text("test: {}")
 
-        with patch.object(cache_manager, 'discover_hub_yaml_files', return_value=[test_file]):
+        with patch.object(cache_manager, "discover_hub_yaml_files", return_value=[test_file]):
             cache_manager.add_hub_yaml_files()
 
         # Should have added the file
@@ -211,7 +201,7 @@ class TestOpDefinitionsCacheManagerHub:
         # Create non-existent file
         nonexistent_file = self.temp_dir / "nonexistent.yaml"
 
-        with patch.object(cache_manager, 'discover_hub_yaml_files', return_value=[nonexistent_file]):
+        with patch.object(cache_manager, "discover_hub_yaml_files", return_value=[nonexistent_file]):
             # Should not raise exception
             cache_manager.add_hub_yaml_files()
 

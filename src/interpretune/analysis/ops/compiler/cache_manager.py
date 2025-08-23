@@ -1,4 +1,5 @@
 """Cache manager for pre-compiled operation definitions."""
+
 from __future__ import annotations
 import re
 import hashlib
@@ -20,6 +21,7 @@ from interpretune.analysis import IT_TRUST_REMOTE_CODE
 @dataclass(frozen=True)
 class OpDef:
     """Frozen dataclass representing a pre-compiled operation definition."""
+
     name: str
     description: str
     implementation: str
@@ -34,16 +36,16 @@ class OpDef:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format for compatibility with existing code."""
         result = {
-            'name': self.name,
-            'description': self.description,
-            'implementation': self.implementation,
-            'input_schema': self.input_schema,
-            'output_schema': self.output_schema,
-            'aliases': self.aliases,
-            'importable_params': self.importable_params,
-            'normal_params': self.normal_params,
-            'required_ops': self.required_ops,
-            'composition': self.composition
+            "name": self.name,
+            "description": self.description,
+            "implementation": self.implementation,
+            "input_schema": self.input_schema,
+            "output_schema": self.output_schema,
+            "aliases": self.aliases,
+            "importable_params": self.importable_params,
+            "normal_params": self.normal_params,
+            "required_ops": self.required_ops,
+            "composition": self.composition,
         }
         return result
 
@@ -57,12 +59,13 @@ class YamlFileInfo:
         self.content_hash = content_hash
 
     @classmethod
-    def from_path(cls, path: Path) -> 'YamlFileInfo':
+    def from_path(cls, path: Path) -> "YamlFileInfo":
         """Create YamlFileInfo from a file path."""
         stat = path.stat()
         content = path.read_bytes()
         content_hash = hashlib.sha256(content).hexdigest()
         return cls(path, stat.st_mtime, content_hash)
+
 
 def _get_latest_revision(repo: CachedRepoInfo) -> Optional[CachedRevisionInfo]:
     """Get the latest revision for a repository, preferring 'main' ref.
@@ -77,19 +80,23 @@ def _get_latest_revision(repo: CachedRepoInfo) -> Optional[CachedRevisionInfo]:
         return None
 
     # First, try to find revision referenced by 'main'
-    main_revision = repo.refs.get('main')
+    main_revision = repo.refs.get("main")
     if main_revision is not None:
         return main_revision
 
     # Fallback: get the most recently modified revision
     return max(repo.revisions, key=lambda rev: rev.last_modified)
 
+
 class OpDefinitionsCacheManager:
     """Manages caching of compiled operation definitions."""
 
-    _it_trust_remote_code_warning = ("The environmental variable IT_TRUST_REMOTE_CODE is not currently set. In order "
-    "to load analysis operations from previously downloaded op collection modules without being re-prompted repository "
-    "by repository, you can set the environmental variable IT_TRUST_REMOTE_CODE to ('1', 'yes' or 'true')")
+    _it_trust_remote_code_warning = (
+        "The environmental variable IT_TRUST_REMOTE_CODE is not currently set. In order "
+        "to load analysis operations from previously downloaded op collection modules without being re-prompted "
+        "repository by repository, you can set the environmental variable IT_TRUST_REMOTE_CODE to "
+        "('1', 'yes' or 'true')"
+    )
     _it_trust_false_skipping = "Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`."
 
     def __init__(self, cache_dir: Path):
@@ -133,10 +140,11 @@ class OpDefinitionsCacheManager:
             rank_zero_warn(f"Error discovering hub YAML files: {e}")
             rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Exception details: {type(e).__name__}: {str(e)}")
             import traceback
+
             rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Traceback: {traceback.format_exc()}")
 
         rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Returning {len(hub_yaml_files)} YAML files")
-        return hub_yaml_files
+        return hub_yaml_files  # type: ignore[return-value]
 
     def discover_hub_yaml_files(self) -> List[Path]:
         """Discover YAML files from the most recent revision of each hub repository.
@@ -148,6 +156,7 @@ class OpDefinitionsCacheManager:
             List of Path objects pointing to YAML files from latest revisions only.
         """
         from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
+
         yaml_files = []
 
         # in case this method is called directly, short-circuit if IT_TRUST_REMOTE_CODE is explicitly set to False
@@ -173,11 +182,13 @@ class OpDefinitionsCacheManager:
 
             for repo in sorted_repos:
                 trust_remote_code = IT_TRUST_REMOTE_CODE or resolve_trust_remote_code(
-                    IT_TRUST_REMOTE_CODE, repo.repo_id, False, True)
+                    IT_TRUST_REMOTE_CODE, repo.repo_id, False, True
+                )
 
                 if not trust_remote_code:
-                    rank_zero_warn(f"Skipping loading ops from repository {repo.repo_id} due to trust_remote_code "
-                                    "being `False`.")
+                    rank_zero_warn(
+                        f"Skipping loading ops from repository {repo.repo_id} due to trust_remote_code being `False`."
+                    )
                     continue
                 # Only consider model repositories
                 if repo.repo_type != "model":
@@ -190,9 +201,9 @@ class OpDefinitionsCacheManager:
 
                 # Check for YAML files in this revision
                 for file_info in latest_revision.files:
-                    if file_info.file_name.endswith(('.yaml', '.yml')):
+                    if file_info.file_name.endswith((".yaml", ".yml")):
                         # use file_path if available, otherwise construct path
-                        if hasattr(file_info, 'file_path') and file_info.file_path is not None:
+                        if hasattr(file_info, "file_path") and file_info.file_path is not None:
                             yaml_path = Path(file_info.file_path)
                         else:
                             yaml_path = latest_revision.snapshot_path / file_info.file_name
@@ -217,6 +228,7 @@ class OpDefinitionsCacheManager:
             - namespace: The extracted namespace (empty string if not a hub file)
         """
         from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
+
         rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Input yaml_file: {yaml_file}")
         rank_zero_debug(f"[ANALYSIS_HUB_CACHE] IT_ANALYSIS_HUB_CACHE: {IT_ANALYSIS_HUB_CACHE}")
 
@@ -237,7 +249,6 @@ class OpDefinitionsCacheManager:
             for i, part in enumerate(parts):
                 rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Checking part {i}: '{part}'")
                 if part.startswith("models--"):
-
                     if "snapshots" in parts[i:]:
                         # Use regex to properly extract user and repo parts
                         # Only match exactly two sets of '--' (models--user--repo)
@@ -247,8 +258,10 @@ class OpDefinitionsCacheManager:
                         if match:
                             user, repo = match.groups()
                             namespace = f"{user}.{repo}"
-                            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] REGEX MATCH SUCCESS: user='{user}', "
-                                          f"repo='{repo}', namespace='{namespace}'")
+                            rank_zero_debug(
+                                f"[ANALYSIS_HUB_CACHE] REGEX MATCH SUCCESS: user='{user}', "
+                                f"repo='{repo}', namespace='{namespace}'"
+                            )
                             # Return namespace without top-level package name
                             return True, namespace
                     break
@@ -266,8 +279,9 @@ class OpDefinitionsCacheManager:
 
         is_hub_file, namespace = self._parse_hub_file_path(yaml_file)
 
-        rank_zero_debug(f"[ANALYSIS_HUB_CACHE] get_hub_namespace result: is_hub_file={is_hub_file}, "
-                       f"namespace='{namespace}'")
+        rank_zero_debug(
+            f"[ANALYSIS_HUB_CACHE] get_hub_namespace result: is_hub_file={is_hub_file}, namespace='{namespace}'"
+        )
         return namespace
 
     @property
@@ -375,20 +389,20 @@ class OpDefinitionsCacheManager:
         fields.append(f'name="{op_def.name}"')
         fields.append(f'description="{op_def.description}"')
         fields.append(f'implementation="{op_def.implementation}"')
-        fields.append(f'input_schema={self._serialize_op_schema(op_def.input_schema)}')
-        fields.append(f'output_schema={self._serialize_op_schema(op_def.output_schema)}')
+        fields.append(f"input_schema={self._serialize_op_schema(op_def.input_schema)}")
+        fields.append(f"output_schema={self._serialize_op_schema(op_def.output_schema)}")
 
         # Include optional fields that have values
         if op_def.aliases:
-            fields.append(f'aliases={op_def.aliases!r}')
+            fields.append(f"aliases={op_def.aliases!r}")
         if op_def.importable_params:
-            fields.append(f'importable_params={op_def.importable_params!r}')
+            fields.append(f"importable_params={op_def.importable_params!r}")
         if op_def.normal_params:
-            fields.append(f'normal_params={op_def.normal_params!r}')
+            fields.append(f"normal_params={op_def.normal_params!r}")
         if op_def.required_ops:
-            fields.append(f'required_ops={op_def.required_ops!r}')
+            fields.append(f"required_ops={op_def.required_ops!r}")
         if op_def.composition:
-            fields.append(f'composition={op_def.composition!r}')
+            fields.append(f"composition={op_def.composition!r}")
 
         return f"OpDef({', '.join(fields)})"
 
@@ -416,7 +430,7 @@ class OpDefinitionsCacheManager:
 
         # Include other fields only if they differ from defaults
         for field_info in cfg_fields:
-            if field_info.name == 'datasets_dtype':
+            if field_info.name == "datasets_dtype":
                 continue  # Already handled
 
             value = getattr(col_cfg, field_info.name)
@@ -430,7 +444,7 @@ class OpDefinitionsCacheManager:
                     if isinstance(value, str):
                         args.append(f'{field_info.name}="{value}"')
                     else:
-                        args.append(f'{field_info.name}={value!r}')
+                        args.append(f"{field_info.name}={value!r}")
 
         return f"ColCfg({', '.join(args)})"
 
@@ -466,12 +480,12 @@ class OpDefinitionsCacheManager:
             spec.loader.exec_module(module)
 
             # Verify fingerprint matches
-            if hasattr(module, 'FINGERPRINT') and module.FINGERPRINT != self.fingerprint:
+            if hasattr(module, "FINGERPRINT") and module.FINGERPRINT != self.fingerprint:
                 rank_zero_warn("Cache fingerprint mismatch, invalidating cache")
                 return None
 
             # Return the operations
-            if hasattr(module, 'OP_DEFINITIONS'):
+            if hasattr(module, "OP_DEFINITIONS"):
                 op_definitions = module.OP_DEFINITIONS
                 if not op_definitions:
                     rank_zero_warn("No operation definitions found in cache")

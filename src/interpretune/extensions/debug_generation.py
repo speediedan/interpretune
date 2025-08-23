@@ -21,8 +21,12 @@ class DebugLMConfig(ITSerializableCfg):
 
     def __post_init__(self) -> None:
         if len(self.raw_debug_sequences) == 0 and self.enabled:
-            self.raw_debug_sequences = ['What is the color of a banana?', 'List the first 5 letters in the alphabet.',
-                                        'How many days in a week?', 'How old is Barack Obama?']
+            self.raw_debug_sequences = [
+                "What is the color of a banana?",
+                "List the first 5 letters in the alphabet.",
+                "How many days in a week?",
+                "How old is Barack Obama?",
+            ]
 
 
 class DebugGeneration:
@@ -31,6 +35,7 @@ class DebugGeneration:
     This resolution logic is provided in order to avoid callback-dependent trainer attributes (e.g.
     trainer.finetuningscheduler_callback)
     """
+
     # TODO:
     # - note availability of HF tokenizer methods are assumed for the moment, need to add to contract
     # - may make sense to add some additional debugging methods that parse and analyze all of the generated outputs
@@ -99,12 +104,18 @@ class DebugGeneration:
         try:
             return [self.phandle.datamodule.itdm_cfg.prompt_cfg.model_chat_template_fn(ex, format) for ex in sequences]
         except Exception as e:
-            rank_zero_warn(f"Failed to generate chat debug sequences. Exception: {e}. "
-                           "Returning the stripped sequences but without the corresponding chat format metadata.")
+            rank_zero_warn(
+                f"Failed to generate chat debug sequences. Exception: {e}. "
+                "Returning the stripped sequences but without the corresponding chat format metadata."
+            )
             return [f"{ex.strip()}" for ex in sequences]
 
-    def _debug_generate(self, inputs: List|torch.Tensor, gen_kwargs_override: Optional[Dict] = None,
-                        gen_config_override: Optional[Dict] = None) -> Any:
+    def _debug_generate(
+        self,
+        inputs: List | torch.Tensor,
+        gen_kwargs_override: Optional[Dict] = None,
+        gen_config_override: Optional[Dict] = None,
+    ) -> Any:
         """_summary_
 
         Args:
@@ -132,8 +143,9 @@ class DebugGeneration:
                 setattr(self.phandle.model.generation_config, k, v)
         return self.phandle.it_generate(inputs, **gen_kwargs)
 
-    def perplexity_on_sample(self, corpus: Optional[Dataset|Dict] = None, stride: Optional[int] = None,
-                             limit_chars: Optional[int] = None) -> float:
+    def perplexity_on_sample(
+        self, corpus: Optional[Dataset | Dict] = None, stride: Optional[int] = None, limit_chars: Optional[int] = None
+    ) -> float:
         if not corpus:
             corpus = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
         corpus_raw = "\n\n".join(corpus["text"])
@@ -152,7 +164,7 @@ class DebugGeneration:
         true_tokens = sample_input_ids.squeeze()[1:]
         num_correct = (prediction == true_tokens).sum()
         correct_tokens = self.phandle.datamodule.tokenizer.batch_decode(prediction[prediction == true_tokens])
-        return num_correct/len(true_tokens), correct_tokens
+        return num_correct / len(true_tokens), correct_tokens
 
     def naive_perplexity(self, encoded_corpus, stride: int = 512) -> float:
         max_length = self.phandle.datamodule.tokenizer.model_max_length
@@ -184,8 +196,9 @@ class DebugGeneration:
         ppl = torch.exp(torch.stack(nlls).mean())
         return ppl
 
-    def sanitize_gen_output(self, outputs: Any, gen_output_attr: Optional[str] = None,
-                              decode_cfg_override: Optional[Dict] = None) -> Tuple[Any, Dict]:
+    def sanitize_gen_output(
+        self, outputs: Any, gen_output_attr: Optional[str] = None, decode_cfg_override: Optional[Dict] = None
+    ) -> Tuple[Any, Dict]:
         decode_target = self.sanitize_model_output(outputs, gen_output_attr)
         decode_kwargs = deepcopy(DEFAULT_DECODE_KWARGS)
         if decode_cfg_override:
@@ -202,42 +215,55 @@ class DebugGeneration:
         for output_attr in self.DEFAULT_OUTPUT_ATTRS:
             if hasattr(output, output_attr):
                 return getattr(output, output_attr)
-        raise ValueError(f"No compatible default output attribute found for type: {type(output)}, if the"
-                            " generate method attached to your model is not returning a supported output attribute"
-                            f" ({self.DEFAULT_OUTPUT_ATTRS}) please provide a manual `gen_output_attr` argument to this"
-                            " debug_generate method.")
+        raise ValueError(
+            f"No compatible default output attribute found for type: {type(output)}, if the"
+            " generate method attached to your model is not returning a supported output attribute"
+            f" ({self.DEFAULT_OUTPUT_ATTRS}) please provide a manual `gen_output_attr` argument to this"
+            " debug_generate method."
+        )
 
     @property
     def model_input_names(self) -> List[str]:
         return self.phandle.datamodule.tokenizer.model_input_names
 
-    def debug_generate_batch(self, sequences: List,
-                             gen_output_attr: Optional[str] = None,
-                             gen_config_override: Optional[Dict] = None,
-                             gen_kwargs_override: Optional[Dict] = None,
-                             decode_cfg_override: Optional[Dict] = None) -> Tuple[List, List]:
+    def debug_generate_batch(
+        self,
+        sequences: List,
+        gen_output_attr: Optional[str] = None,
+        gen_config_override: Optional[Dict] = None,
+        gen_kwargs_override: Optional[Dict] = None,
+        decode_cfg_override: Optional[Dict] = None,
+    ) -> Tuple[List, List]:
         test_input_ids = self.phandle.datamodule.tokenizer.batch_encode_plus(sequences)
         test_input_ids = sanitize_input_name(self.model_input_names, test_input_ids)
         test_input_ids = self.phandle.datamodule.data_collator(test_input_ids)
         test_input_ids = test_input_ids.to(self.phandle.device)
-        outputs = self._debug_generate(inputs=test_input_ids[self.model_input_names[0]],
-                                       gen_config_override=gen_config_override,
-                                       gen_kwargs_override=gen_kwargs_override)
+        outputs = self._debug_generate(
+            inputs=test_input_ids[self.model_input_names[0]],
+            gen_config_override=gen_config_override,
+            gen_kwargs_override=gen_kwargs_override,
+        )
         decode_target, decode_kwargs = self.sanitize_gen_output(outputs, gen_output_attr, decode_cfg_override)
         answers = self.phandle.datamodule.tokenizer.batch_decode(decode_target, **decode_kwargs)
         return answers, outputs
 
-    def debug_generate_serial(self, sequences: List, gen_output_attr: Optional[str] = None,
-                              gen_config_override: Optional[Dict] = None, gen_kwargs_override: Optional[Dict] = None,
-                              decode_cfg_override: Optional[Dict] = None) -> Tuple[List, List]:
+    def debug_generate_serial(
+        self,
+        sequences: List,
+        gen_output_attr: Optional[str] = None,
+        gen_config_override: Optional[Dict] = None,
+        gen_kwargs_override: Optional[Dict] = None,
+        decode_cfg_override: Optional[Dict] = None,
+    ) -> Tuple[List, List]:
         answers = []
         full_outputs = []
         for seq in sequences:
             test_input_ids = self.phandle.datamodule.tokenizer.encode(seq)
             test_input_ids = torch.tensor(test_input_ids).to(self.phandle.device)
             test_input_ids = test_input_ids.unsqueeze(0)
-            output = self._debug_generate(inputs=test_input_ids, gen_config_override=gen_config_override,
-                                          gen_kwargs_override=gen_kwargs_override)
+            output = self._debug_generate(
+                inputs=test_input_ids, gen_config_override=gen_config_override, gen_kwargs_override=gen_kwargs_override
+            )
             decode_target, decode_kwargs = self.sanitize_gen_output(output, gen_output_attr, decode_cfg_override)
             sequences = decode_target.unbind()
             decode_kwargs = deepcopy(DEFAULT_DECODE_KWARGS)

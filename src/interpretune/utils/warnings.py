@@ -4,9 +4,11 @@ from pathlib import Path
 
 _default_format_warning = warnings.formatwarning
 
+
 def _is_path_in_interpretune(path: Path) -> bool:
     """Naive check whether the path looks like a path from the Interpretune package."""
     return "interpretune" in str(path.absolute())
+
 
 # adapted from lightning.fabric.utilities.warnings
 def _custom_format_warning(
@@ -17,6 +19,7 @@ def _custom_format_warning(
         # The warning originates from the Interpretune package
         return f"{filename}:{lineno}: {message}\n"
     return _default_format_warning(message, category, filename, lineno, line)
+
 
 warnings.formatwarning = _custom_format_warning
 

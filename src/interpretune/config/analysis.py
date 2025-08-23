@@ -6,8 +6,13 @@ import warnings
 
 from transformers import BatchEncoding, PreTrainedTokenizerBase
 
-from interpretune.analysis import (SAEAnalysisTargets, resolve_names_filter, _make_simple_cache_hook, OpSchema,
-                                   AnalysisOp)
+from interpretune.analysis import (
+    SAEAnalysisTargets,
+    resolve_names_filter,
+    _make_simple_cache_hook,
+    OpSchema,
+    AnalysisOp,
+)
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.config import ITSerializableCfg
 from interpretune.protocol import NamesFilter, AnalysisStoreProtocol, BaseAnalysisBatchProtocol, STEP_OUTPUT
@@ -43,7 +48,7 @@ class AnalysisCfg(ITSerializableCfg):
             return None
 
         # Unwrap OpWrapper instances if needed
-        if hasattr(self._op, '_is_instantiated') and getattr(self._op, '_is_instantiated', False):
+        if hasattr(self._op, "_is_instantiated") and getattr(self._op, "_is_instantiated", False):
             return self._op._instantiated_op
 
         return self._op
@@ -82,7 +87,7 @@ class AnalysisCfg(ITSerializableCfg):
     def resolve_output_schema(self) -> None:
         # If output_schema is AnalysisOp-like (using this attribute as heuristic to limit expensive protocol
         # checks), extract its schema
-        if hasattr(self.output_schema, 'output_schema'):
+        if hasattr(self.output_schema, "output_schema"):
             resolved_op = self.output_schema
             self.output_schema = self.output_schema.output_schema
         # If output_schema is a string, resolve to op and extract schema
@@ -101,13 +106,13 @@ class AnalysisCfg(ITSerializableCfg):
                 # TODO: consider deferring instantiation of composite ops
                 instantiated_ops = []
                 for op in self.op:
-                    if hasattr(op, '_ensure_instantiated'):
+                    if hasattr(op, "_ensure_instantiated"):
                         instantiated_ops.append(op._ensure_instantiated())
                     else:
                         instantiated_ops.append(op)
                 self.op = DISPATCHER.compile_ops(instantiated_ops)
         elif isinstance(self.op, str):  # Handle composite operations using dot notation
-            if '.' in self.op:
+            if "." in self.op:
                 # This is a composite operation
                 try:
                     self.op = DISPATCHER.compile_ops(self.op)
@@ -155,8 +160,10 @@ class AnalysisCfg(ITSerializableCfg):
 
         # Ensure sae_analysis_targets, fallback_sae_targets, or names_filter are set before materializing names_filter
         if not (self.sae_analysis_targets or fallback_sae_targets or self.names_filter):
-            rank_zero_debug("None of (sae_analysis_targets, fallback_sae_targets, names_filter) are set. "
-                            "Proceeding without materializing names_filter.")
+            rank_zero_debug(
+                "None of (sae_analysis_targets, fallback_sae_targets, names_filter) are set. "
+                "Proceeding without materializing names_filter."
+            )
         else:
             # Always materialize names_filter - needed for both op-based and manual analysis
             self.materialize_names_filter(module, fallback_sae_targets)
@@ -165,10 +172,13 @@ class AnalysisCfg(ITSerializableCfg):
         if self.op is not None:
             self.maybe_set_hooks()
 
-
     # TODO: Add a non-generator returning save_batch method at AnalysisCfg level (users already have op-level version)?
-    def save_batch(self, analysis_batch: BaseAnalysisBatchProtocol, batch: BatchEncoding,
-                   tokenizer: PreTrainedTokenizerBase | None = None):
+    def save_batch(
+        self,
+        analysis_batch: BaseAnalysisBatchProtocol,
+        batch: BatchEncoding,
+        tokenizer: PreTrainedTokenizerBase | None = None,
+    ):
         """Process and yield analysis batch results.
 
         Uses AnalysisOp.process_batch for consistent processing regardless of
@@ -191,7 +201,7 @@ class AnalysisCfg(ITSerializableCfg):
                 tokenizer=tokenizer,
                 save_prompts=self.save_prompts,
                 save_tokens=self.save_tokens,
-                decode_kwargs=self.decode_kwargs
+                decode_kwargs=self.decode_kwargs,
             )
         else:
             # For manual analysis steps, use the static method with output_schema
@@ -202,15 +212,12 @@ class AnalysisCfg(ITSerializableCfg):
                 tokenizer=tokenizer,
                 save_prompts=self.save_prompts,
                 save_tokens=self.save_tokens,
-                decode_kwargs=self.decode_kwargs
+                decode_kwargs=self.decode_kwargs,
             )
 
         yield analysis_batch
 
-    def add_default_cache_hooks(
-            self,
-            include_backward: bool = True
-            ) -> tuple[list[tuple], list[tuple]]:
+    def add_default_cache_hooks(self, include_backward: bool = True) -> tuple[list[tuple], list[tuple]]:
         """Add default caching hooks for forward and optionally backward passes.
 
         Args:
@@ -238,17 +245,15 @@ class AnalysisCfg(ITSerializableCfg):
             return
 
         # TODO: change these op-based checks to be functionally driven (e.g. uses_default_hooks attribute of ops)
-        if self.op.name == 'logit_diffs_base':
+        if self.op.name == "logit_diffs_base":
             return fwd_hooks, bwd_hooks
 
-        if self.op.name == 'logit_diffs_attr_grad':
+        if self.op.name == "logit_diffs_attr_grad":
             self.add_default_cache_hooks()
 
         # TODO: add in an op attribute akin to "uses_sae_hooks" to enable names_filter validation resolution etc.
         # if self.op_name in ('logit_diffs_attr_ablation', 'logit_diffs_attr_grad') and self.names_filter is None:
         #     raise ValueError("names_filter required for non-clean operations")
-
-
 
     def applied_to(self, module) -> bool:
         """Check if this configuration has been applied to a specific module.
@@ -275,8 +280,13 @@ class AnalysisCfg(ITSerializableCfg):
             # Reset for all modules
             self._applied_to.clear()
 
-    def apply(self, module, cache_dir: Optional[str] = None, op_output_dataset_path: Optional[str] = None,
-              fallback_sae_targets: Optional[SAEAnalysisTargets] = None):
+    def apply(
+        self,
+        module,
+        cache_dir: Optional[str] = None,
+        op_output_dataset_path: Optional[str] = None,
+        fallback_sae_targets: Optional[SAEAnalysisTargets] = None,
+    ):
         """Set up analysis configuration and configure for the given module.
 
         This method handles both setting up the analysis store and configuring
@@ -295,8 +305,7 @@ class AnalysisCfg(ITSerializableCfg):
             return
 
         # Check if module has an analysis step method with the specified name
-        has_custom_step = (hasattr(module, self.step_fn) and
-                          not getattr(module, f'_generated_{self.step_fn}', False))
+        has_custom_step = hasattr(module, self.step_fn) and not getattr(module, f"_generated_{self.step_fn}", False)
 
         # Only warn about custom step if we're not going to ignore it
         if has_custom_step and not self.ignore_manual:
@@ -325,14 +334,15 @@ class AnalysisCfg(ITSerializableCfg):
             # TODO: separate some of this more ephemeral state to an AnalysisState object
             # Add the method to the module with a _generated version of the specified step_fn name
             # (to avoid potentially clobbering the manual version)
-            setattr(module, f'_generated_{self.step_fn}', generated_analysis_step.__get__(module))
+            setattr(module, f"_generated_{self.step_fn}", generated_analysis_step.__get__(module))
             # update the analysis_cfg step_fn method name to the generated step_fn name
-            setattr(self, 'step_fn', f'_generated_{self.step_fn}')
+            setattr(self, "step_fn", f"_generated_{self.step_fn}")
 
         # Always set up the analysis store, even for manual analysis steps
         if not self.output_store:
             # Create the output store if needed
             from interpretune.analysis import AnalysisStore
+
             self.output_store = AnalysisStore(cache_dir=cache_dir, op_output_dataset_path=op_output_dataset_path)
         elif cache_dir or op_output_dataset_path:
             rank_zero_warn(
@@ -352,6 +362,7 @@ class AnalysisCfg(ITSerializableCfg):
 @dataclass(kw_only=True)
 class AnalysisArtifactCfg(ITSerializableCfg):
     """Configuration for analysis artifacts and visualizations."""
+
     latent_effects_graphs: bool = True
     latent_effects_graphs_per_batch: bool = False  # can be overwhelming with many batches
     latents_table_per_sae: bool = True

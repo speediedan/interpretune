@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 # ITDatamodule Configuration Dataclasses
 ################################################################################
 
+
 @dataclass(kw_only=True)
 class PromptConfig(ITSerializableCfg):
     cust_task_prompt: Dict[str, Any] = field(default_factory=dict)
@@ -21,13 +22,14 @@ class PromptConfig(ITSerializableCfg):
     def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: Optional[str] = None) -> str:
         return task_prompt.strip()
 
+
 @dataclass(kw_only=True)
 class TokenizationConfig(ITSerializableCfg):
     tokenizers_parallelism: bool = True
     local_fast_tokenizer_path: Optional[str] = None
     cust_tokenization_pattern: Optional[str] = None
     special_tokens_dict: Dict[str, Any] = field(default_factory=dict)
-    max_seq_length: int = 2048   # TODO: force this to be set rather than allowing a default?
+    max_seq_length: int = 2048  # TODO: force this to be set rather than allowing a default?
 
 
 @dataclass(kw_only=True)
@@ -62,7 +64,7 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
             self.data_collator_cfg = {"collator_class": "transformers.DataCollatorWithPadding"}
 
         # Use pathlib for cross-platform path handling and sanitize task name for Windows compatibility
-        sanitized_task_name = self.task_name.replace(':', '_').replace('|', '_')
+        sanitized_task_name = self.task_name.replace(":", "_").replace("|", "_")
         rank_zero_debug(f"[DATAMODULE_CONFIG] Sanitized task name: '{sanitized_task_name}'")
         hf_datasets_cache = os.environ.get("HF_DATASETS_CACHE")
 
@@ -91,6 +93,8 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
         # we first inspect to see if we have a fallback `model_name_or_path`
         for dm_fallback_attr in ["tokenizer", "tokenizer_name", "model_name_or_path"]:
             if getattr(self, dm_fallback_attr) is None and getattr(it_cfg, dm_fallback_attr, None) is not None:
-                rank_zero_warn(f"Since no datamodule `{dm_fallback_attr}` was provided, attempting to use fallback"
-                               f" configuration, setting `{dm_fallback_attr}` to {getattr(it_cfg, dm_fallback_attr)}.")
+                rank_zero_warn(
+                    f"Since no datamodule `{dm_fallback_attr}` was provided, attempting to use fallback"
+                    f" configuration, setting `{dm_fallback_attr}` to {getattr(it_cfg, dm_fallback_attr)}."
+                )
                 setattr(self, dm_fallback_attr, getattr(it_cfg, dm_fallback_attr))

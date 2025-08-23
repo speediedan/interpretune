@@ -10,15 +10,16 @@ from interpretune.utils.logging import rank_zero_warn
 
 
 # Type variables for schema and field definition types
-T_Schema = TypeVar('T_Schema')  # Schema container type (Dict or OpSchema)
-T_Field = TypeVar('T_Field')    # Field definition type (Dict or ColCfg)
+T_Schema = TypeVar("T_Schema")  # Schema container type (Dict or OpSchema)
+T_Field = TypeVar("T_Field")  # Field definition type (Dict or ColCfg)
+
 
 def _compile_composition_schema_core(
     operations: List[Any],
     get_schemas_fn: Callable[[Any], Tuple[Dict[str, T_Field], Dict[str, T_Field]]],
     is_intermediate_fn: Callable[[T_Field], bool],
     handle_object_field_fn: Callable[[T_Field], T_Field],
-    create_schema_fn: Callable[[Dict[str, T_Field]], T_Schema]
+    create_schema_fn: Callable[[Dict[str, T_Field]], T_Schema],
 ) -> Tuple[T_Schema, T_Schema]:
     """Core logic for compiling composition schemas with customizable handling of types.
 
@@ -59,9 +60,9 @@ def _compile_composition_schema_core(
     # Create and return the final schemas using the provided function
     return create_schema_fn(input_fields), create_schema_fn(output_fields)
 
+
 def jit_compile_composition_schema(
-    operations: List[Union[str, AnalysisOp]],
-    op_definitions: Dict[str, Dict]
+    operations: List[Union[str, AnalysisOp]], op_definitions: Dict[str, Dict]
 ) -> Tuple[OpSchema, OpSchema]:
     """Compile the complete schema for a composition of operations using operation definitions.
 
@@ -76,6 +77,7 @@ def jit_compile_composition_schema(
         ValueError: If operations is empty, an operation name is not found or lacks required schemas
         TypeError: If operations contain invalid types
     """
+
     def get_schemas(op):
         # Get operation schema based on input type
         if isinstance(op, str):
@@ -85,7 +87,7 @@ def jit_compile_composition_schema(
                 raise ValueError(f"Operation {op} not found in definitions")
 
             # Extract schema information from the definition
-            if 'input_schema' not in op_def or 'output_schema' not in op_def:
+            if "input_schema" not in op_def or "output_schema" not in op_def:
                 raise ValueError(f"Operation {op} is missing required schemas")
 
             # Convert dictionary schemas to ColCfg objects if needed
@@ -112,23 +114,23 @@ def jit_compile_composition_schema(
 
                 return result
 
-            return get_schema(op_def.get('input_schema', {})), get_schema(op_def.get('output_schema', {}))
+            return get_schema(op_def.get("input_schema", {})), get_schema(op_def.get("output_schema", {}))
 
-        elif hasattr(op, 'input_schema') and hasattr(op, 'output_schema'):
+        elif hasattr(op, "input_schema") and hasattr(op, "output_schema"):
             # It's already an AnalysisOp instance
             return op.input_schema or {}, op.output_schema or {}
         else:
             raise TypeError(f"Operations must be strings or AnalysisOp instances with schemas, got {type(op)}")
 
     def is_intermediate(field_def):
-        return getattr(field_def, 'intermediate_only', False)
+        return getattr(field_def, "intermediate_only", False)
 
     def handle_object_field(field_def):
         datasets_dtype = field_def.datasets_dtype
 
-        if datasets_dtype == 'object':
+        if datasets_dtype == "object":
             # Use replace to create a new instance instead of modifying
-            return replace(field_def, datasets_dtype='string', non_tensor=True)
+            return replace(field_def, datasets_dtype="string", non_tensor=True)
         return field_def
 
     def create_schema(fields):
@@ -139,8 +141,9 @@ def jit_compile_composition_schema(
         get_schemas_fn=get_schemas,
         is_intermediate_fn=is_intermediate,
         handle_object_field_fn=handle_object_field,
-        create_schema_fn=create_schema
+        create_schema_fn=create_schema,
     )
+
 
 def compile_operation_composition_schema(
     operations: List[str], all_operations_dict: Dict[str, Dict]
@@ -154,6 +157,7 @@ def compile_operation_composition_schema(
     Returns:
         Tuple of (input_schema, output_schema) representing the complete schemas
     """
+
     def get_schemas(op_name):
         op_def = all_operations_dict.get(op_name)
         if not op_def:
@@ -162,7 +166,7 @@ def compile_operation_composition_schema(
             for full_op_name in all_operations_dict.keys():
                 # Check if the full name ends with the requested op_name
                 # Format: namespace.collection.op_name
-                if '.' in full_op_name and full_op_name.split('.')[-1] == op_name:
+                if "." in full_op_name and full_op_name.split(".")[-1] == op_name:
                     matching_ops.append(full_op_name)
 
             if not matching_ops:
@@ -174,23 +178,23 @@ def compile_operation_composition_schema(
                     f"Multiple operations matching '{op_name}' were found: {matching_ops}. "
                     f"Using '{resolved_op_name}'. Consider using the fully-qualified operation name "
                     f"in your composition definition to avoid ambiguity.",
-                    stacklevel=3
+                    stacklevel=3,
                 )
                 op_def = all_operations_dict[resolved_op_name]
             else:
                 # Single match found - use it
                 op_def = all_operations_dict[matching_ops[0]]
 
-        return op_def.get('input_schema', {}), op_def.get('output_schema', {})
+        return op_def.get("input_schema", {}), op_def.get("output_schema", {})
 
     def is_intermediate(field_def):
-        return field_def.get('intermediate_only', False) if isinstance(field_def, dict) else False
+        return field_def.get("intermediate_only", False) if isinstance(field_def, dict) else False
 
     def handle_object_field(field_def):
-        if isinstance(field_def, dict) and field_def.get('datasets_dtype') == 'object':
+        if isinstance(field_def, dict) and field_def.get("datasets_dtype") == "object":
             field_def_copy = field_def.copy()
-            field_def_copy['datasets_dtype'] = 'string'
-            field_def_copy['non_tensor'] = True
+            field_def_copy["datasets_dtype"] = "string"
+            field_def_copy["non_tensor"] = True
             return field_def_copy
         return field_def
 
@@ -202,8 +206,9 @@ def compile_operation_composition_schema(
         get_schemas_fn=get_schemas,
         is_intermediate_fn=is_intermediate,
         handle_object_field_fn=handle_object_field,
-        create_schema_fn=create_schema
+        create_schema_fn=create_schema,
     )
+
 
 def resolve_required_ops(op_name: str, op_def: Dict[str, Any], op_definitions: Dict[str, Dict]) -> List[str]:
     """Resolve required_ops for an operation, handling namespaced operations.
@@ -219,7 +224,7 @@ def resolve_required_ops(op_name: str, op_def: Dict[str, Any], op_definitions: D
     Raises:
         ValueError: If required operations cannot be resolved
     """
-    required_ops = op_def.get('required_ops', [])
+    required_ops = op_def.get("required_ops", [])
     if not required_ops:
         return []
 
@@ -233,12 +238,12 @@ def resolve_required_ops(op_name: str, op_def: Dict[str, Any], op_definitions: D
 
         # If not found exactly, search for namespaced operations with matching basename
         # Extract basename from required_op (handle case where required_op might already be namespaced)
-        required_basename = required_op.split('.')[-1]
+        required_basename = required_op.split(".")[-1]
 
         # Find all ops whose basename matches the required basename
         matching_ops = []
         for existing_op_name in op_definitions:
-            existing_basename = existing_op_name.split('.')[-1]
+            existing_basename = existing_op_name.split(".")[-1]
             if existing_basename == required_basename:
                 matching_ops.append(existing_op_name)
 
@@ -253,9 +258,11 @@ def resolve_required_ops(op_name: str, op_def: Dict[str, Any], op_definitions: D
             resolved_ops.append(matching_ops[0])
         else:
             # Multiple matches - issue warning and use first match
-            rank_zero_warn(f"Operation '{op_name}' requires '{required_op}' but multiple matching operations found: "
-                          f"{matching_ops}. Using '{matching_ops[0]}'. Consider using a fully-qualified name "
-                          f"if a different operation should be used.")
+            rank_zero_warn(
+                f"Operation '{op_name}' requires '{required_op}' but multiple matching operations found: "
+                f"{matching_ops}. Using '{matching_ops[0]}'. Consider using a fully-qualified name "
+                f"if a different operation should be used."
+            )
             resolved_ops.append(matching_ops[0])
 
     return resolved_ops
@@ -271,24 +278,24 @@ def build_operation_compositions(yaml_config: Dict) -> Dict[str, Any]:
         Updated configuration with compiled operation compositions
     """
     ops = yaml_config.copy()
-    composite_ops = ops.pop('composite_operations', {})
+    composite_ops = ops.pop("composite_operations", {})
 
     all_ops_dict = {}
     # For the non-composite ops, add them to our operations dictionary
     for k, v in ops.items():
         if isinstance(v, dict):
             # Fix any 'object' type fields to use 'string' for PyArrow compatibility
-            if 'output_schema' in v:
-                for field_name, field_def in v['output_schema'].items():
-                    if isinstance(field_def, dict) and field_def.get('datasets_dtype') == 'object':
-                        field_def['datasets_dtype'] = 'string'
-                        field_def['non_tensor'] = True
+            if "output_schema" in v:
+                for field_name, field_def in v["output_schema"].items():
+                    if isinstance(field_def, dict) and field_def.get("datasets_dtype") == "object":
+                        field_def["datasets_dtype"] = "string"
+                        field_def["non_tensor"] = True
             all_ops_dict[k] = v
 
     # Build compiled operations
     for name, composition_def in composite_ops.items():
-        composition_str = composition_def.get('composition', '')
-        aliases = composition_def.get('aliases', [])
+        composition_str = composition_def.get("composition", "")
+        aliases = composition_def.get("aliases", [])
 
         # Parse composition string to handle parentheses-wrapped namespaced operations
         composition = _parse_composition_string(composition_str)
@@ -301,14 +308,15 @@ def build_operation_compositions(yaml_config: Dict) -> Dict[str, Any]:
 
         # Create a new operation definition with the compiled schemas
         ops[name] = {
-            'description': f"Compiled composition: {'.'.join(composition)}",
-            'composition': composition,
-            'input_schema': input_schema,
-            'output_schema': output_schema,
-            'aliases': aliases
+            "description": f"Compiled composition: {'.'.join(composition)}",
+            "composition": composition,
+            "input_schema": input_schema,
+            "output_schema": output_schema,
+            "aliases": aliases,
         }
 
     return ops
+
 
 def _parse_composition_string(composition_str: str) -> List[str]:
     """Parse composition string to handle parentheses-wrapped namespaced operations.
@@ -329,8 +337,8 @@ def _parse_composition_string(composition_str: str) -> List[str]:
         return []
 
     # Check for unbalanced parentheses
-    open_count = composition_str.count('(')
-    close_count = composition_str.count(')')
+    open_count = composition_str.count("(")
+    close_count = composition_str.count(")")
     if open_count != close_count:
         raise ValueError(f"Unbalanced parentheses in composition string: '{composition_str}'")
 
@@ -338,7 +346,7 @@ def _parse_composition_string(composition_str: str) -> List[str]:
     # 1. Parentheses-wrapped operations: (content) -> `\(([^)]+)\)`
     # 2. Regular operation names (sequences of non-dot, non-paren chars) -> `([^.()]+)`
     # Split by dots, but treat parentheses-wrapped content as single units
-    pattern = r'\(([^)]+)\)|([^.()]+)'
+    pattern = r"\(([^)]+)\)|([^.()]+)"
 
     operations = []
     for match in re.finditer(pattern, composition_str):
@@ -349,8 +357,10 @@ def _parse_composition_string(composition_str: str) -> List[str]:
 
     return operations
 
-def compile_op_schema(op_name: str, op_definitions: Dict[str, Dict[str, Any]],
-                      _processing: Set[str] = None) -> Dict[str, Any]:
+
+def compile_op_schema(
+    op_name: str, op_definitions: Dict[str, Dict[str, Any]], _processing: Set[str] = None
+) -> Dict[str, Any]:  # type: ignore[assignment]
     """Compile operation schema by merging schemas from required operations.
 
     Args:
@@ -371,7 +381,6 @@ def compile_op_schema(op_name: str, op_definitions: Dict[str, Dict[str, Any]],
     if _processing is None:
         _processing = set()
 
-
     op_def = op_definitions[op_name]
 
     # Start with a deep copy of the original definition
@@ -386,7 +395,7 @@ def compile_op_schema(op_name: str, op_definitions: Dict[str, Dict[str, Any]],
     # Resolve required_ops first
     try:
         resolved_required_ops = resolve_required_ops(op_name, op_def, op_definitions)
-        compiled_def['required_ops'] = resolved_required_ops
+        compiled_def["required_ops"] = resolved_required_ops
     except ValueError as e:
         # If we can't resolve required ops, skip this operation
         raise ValueError(f"Operation '{op_name}' cannot be compiled due to unresolved required operations: {e}")
@@ -407,7 +416,6 @@ def compile_op_schema(op_name: str, op_definitions: Dict[str, Dict[str, Any]],
     try:
         # Recursively merge schemas from required operations
         for req_op_name in resolved_required_ops:
-
             # Recursively compile the required operation first
             compiled_req_def = compile_op_schema(req_op_name, op_definitions, _processing)
 
@@ -420,14 +428,14 @@ def compile_op_schema(op_name: str, op_definitions: Dict[str, Dict[str, Any]],
                     if field_name not in compiled_def["output_schema"]:
                         compiled_def["output_schema"][field_name] = field_config.copy()
                         # Mark as not required since it comes from a required op
-                        compiled_def["output_schema"][field_name]['required'] = False
+                        compiled_def["output_schema"][field_name]["required"] = False
 
             # Merge required op output schemas (required op schemas have lower precedence)
             req_output_schema = compiled_req_def.get("output_schema", {})
             for field_name, field_config in req_output_schema.items():
                 if field_name not in compiled_def["output_schema"]:
                     compiled_def["output_schema"][field_name] = deepcopy(field_config)
-                    compiled_def["output_schema"][field_name]['required'] = False
+                    compiled_def["output_schema"][field_name]["required"] = False
 
     finally:
         # Remove current operation from processing set

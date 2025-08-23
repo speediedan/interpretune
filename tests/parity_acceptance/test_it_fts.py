@@ -57,6 +57,7 @@ PARITY_FTS_CONFIGS = (
 
 EXPECTED_PARITY_FTS = {cfg.alias: cfg.expected for cfg in PARITY_FTS_CONFIGS}
 
+
 @pytest.mark.usefixtures("make_deterministic")
 @RunIf(lightning=True, finetuning_scheduler=True)
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(PARITY_FTS_CONFIGS, unpack=False))
@@ -68,7 +69,7 @@ def test_parity_fts(gpt2_ft_schedules, recwarn, tmp_path, test_alias, test_cfg):
     if test_cfg.fts_schedule_key:
         mod, type = test_cfg.fts_schedule_key
         test_cfg.callback_cfgs[TestFTS]["ft_schedule"] = gpt2_ft_schedules[mod][type]
-        test_cfg.callback_cfgs[TestFTS]["expected_exact"] = expected_results.pop('callback_results', {})
+        test_cfg.callback_cfgs[TestFTS]["expected_exact"] = expected_results.pop("callback_results", {})
         test_cfg.callback_cfgs[TestFTS]["state_log_dir"] = tmp_path if state_log_mode else None
         test_cfg.callback_cfgs[TestFTS]["test_alias"] = test_alias
     parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)

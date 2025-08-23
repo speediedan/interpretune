@@ -17,19 +17,23 @@ from interpretune.config import GenerativeClassificationConfig, CoreGenerationCo
 # Test Utility Functions
 ################################################################################
 
+
 @dataclass(kw_only=True)
 class ToyGenCfg(CoreGenerationConfig):
     output_logits: bool = True
     verbose: bool = True
 
-def dummy_step(*args, **kwargs) -> None:
-    ...
+
+def dummy_step(*args, **kwargs) -> None: ...
+
 
 def nones(num_n) -> Tuple:  # to help dedup config
     return (None,) * num_n
 
+
 def _recursive_defaultdict():
     return defaultdict(_recursive_defaultdict)
+
 
 # useful for manipulating segments of nested dictionaries (e.g. generating config file sets for CLI composition tests)
 def set_nested(chained_keys: List | str, orig_dict: Optional[Dict] = None):
@@ -38,9 +42,11 @@ def set_nested(chained_keys: List | str, orig_dict: Optional[Dict] = None):
     reduce(lambda d, k: d.setdefault(k, {}), chained_keys, orig_dict)
     return orig_dict
 
+
 def get_nested(target: Dict, chained_keys: List | str):
     chained_keys = chained_keys if isinstance(chained_keys, list) else chained_keys.split(".")
     return reduce(lambda d, k: d.get(k), chained_keys, target)
+
 
 def get_model_input_dtype(precision):
     if precision in ("float16", "16-true", "16-mixed", "16", 16):
@@ -51,8 +57,9 @@ def get_model_input_dtype(precision):
         return torch.double
     return torch.float32
 
+
 @contextmanager
-def ablate_cls_attrs(object: object, attr_names: str| tuple):
+def ablate_cls_attrs(object: object, attr_names: str | tuple):
     try:
         # (orig_obj_attach, orig_attr_handle): index by original object and handle of attribute we ablate
         ablated_attr_indices = {}
@@ -65,11 +72,12 @@ def ablate_cls_attrs(object: object, attr_names: str| tuple):
         for attr_name in reversed(ablated_attr_indices.keys()):
             setattr(ablated_attr_indices[attr_name][0], attr_name, ablated_attr_indices[attr_name][1])
 
+
 def attr_resolve(object: object, attr_name: str):
     if not hasattr(object, attr_name):
         raise AttributeError(f"{object} does not have the requested attribute to ablate ({attr_name})")
     orig_attr_handle = getattr(object, attr_name)
-    if object.__dict__.get(attr_name, '_indirect') != '_indirect':
+    if object.__dict__.get(attr_name, "_indirect") != "_indirect":
         orig_obj_attach_handle = object
     else:
         orig_obj_attach_handle = indirect_resolve(object, attr_name, orig_attr_handle)
@@ -77,15 +85,19 @@ def attr_resolve(object: object, attr_name: str):
     delattr(orig_obj_attach_handle, attr_name)
     return ablation_index_entry
 
+
 def indirect_resolve(object: object, attr_name: str, orig_attr_handle: object):
     try:
         orig_attr_fqn = getattr(orig_attr_handle, "__qualname__", None) or orig_attr_handle.__class__.__qualname__
-        orig_obj_attach = orig_attr_fqn[:-len(orig_attr_fqn.rsplit(".", 1)[-1]) - 1]
+        orig_obj_attach = orig_attr_fqn[: -len(orig_attr_fqn.rsplit(".", 1)[-1]) - 1]
     except AttributeError as ae:
-        raise AttributeError("Could not resolve the original object and attribute of the requested object and"
-                             f" attribute pair: ({object}, {attr_name}). Received: {ae}")
+        raise AttributeError(
+            "Could not resolve the original object and attribute of the requested object and"
+            f" attribute pair: ({object}, {attr_name}). Received: {ae}"
+        )
     mod = importlib.import_module(orig_attr_handle.__module__)
     return getattr(mod, orig_obj_attach)
+
 
 @contextmanager
 def disable_genclassif(it_session: ITSession):
@@ -96,8 +108,10 @@ def disable_genclassif(it_session: ITSession):
     finally:
         it_session.module.it_cfg.generative_step_cfg = orig_genclassif_cfg
 
+
 def _unwrap_one(seq):
     return seq[0] if len(seq) == 1 else seq
+
 
 def kwargs_from_cfg_obj(cfg_obj, source_obj, base_kwargs=None):
     """Dynamically extract a subset of configuration parameters from a source object based on an object's
@@ -119,13 +133,12 @@ def kwargs_from_cfg_obj(cfg_obj, source_obj, base_kwargs=None):
     # Determine the signature to use based on the type of cfg_obj
     if inspect.isclass(cfg_obj):
         param_names = [
-            param.name for param in inspect.signature(cfg_obj.__init__).parameters.values()
-            if param.name not in ('self',)  # Exclude 'self'
+            param.name
+            for param in inspect.signature(cfg_obj.__init__).parameters.values()
+            if param.name not in ("self",)  # Exclude 'self'
         ]
     elif inspect.isfunction(cfg_obj):
-        param_names = [
-            param.name for param in inspect.signature(cfg_obj).parameters.values()
-        ]
+        param_names = [param.name for param in inspect.signature(cfg_obj).parameters.values()]
     else:
         raise TypeError("cfg_obj must be a class or a function")
 
@@ -135,6 +148,7 @@ def kwargs_from_cfg_obj(cfg_obj, source_obj, base_kwargs=None):
             kwargs[attr] = getattr(source_obj, attr)
 
     return kwargs
+
 
 def get_super_method(cls_path_or_type: Union[str, Type], instance: Any, method_name: str) -> Callable:
     """Retrieves a method from a parent class by using standard super() resolution.
@@ -162,7 +176,7 @@ def get_super_method(cls_path_or_type: Union[str, Type], instance: Any, method_n
         # If cls_path_or_type is a string, import the class
         if isinstance(cls_path_or_type, str):
             try:
-                module_path, class_name = cls_path_or_type.rsplit('.', 1)
+                module_path, class_name = cls_path_or_type.rsplit(".", 1)
                 module = importlib.import_module(module_path)
                 cls = getattr(module, class_name)
             except (ImportError, AttributeError) as e:
@@ -176,6 +190,7 @@ def get_super_method(cls_path_or_type: Union[str, Type], instance: Any, method_n
     except AttributeError as e:
         raise AttributeError(f"Method '{method_name}' not found in parent classes of {cls.__name__}: {str(e)}")
 
+
 # Platform-independent string normalization for line endings
 def platform_normalize_str(s):
     """Normalize line endings to '\n' for cross-platform string comparison.
@@ -183,17 +198,21 @@ def platform_normalize_str(s):
     Also normalizes Windows/Mac/Unix line endings.
     """
     if isinstance(s, str):
-        return s.replace('\r\n', '\n').replace('\r', '\n')
+        return s.replace("\r\n", "\n").replace("\r", "\n")
     return s
+
 
 class InOutComp(NamedTuple):
     """Named tuple for more explicit input and output access in comparisons."""
+
     input: Any
     output: Any
+
 
 ################################################################################
 # CUDA utils
 ################################################################################
+
 
 def _clear_cuda_memory() -> None:
     # strangely, the attribute function be undefined when torch.compile is used
@@ -202,10 +221,12 @@ def _clear_cuda_memory() -> None:
         torch._C._cuda_clearCublasWorkspaces()
     torch.cuda.empty_cache()
 
+
 def cuda_reset():
     if torch.cuda.is_available():
         _clear_cuda_memory()
         torch.cuda.reset_peak_memory_stats()
+
 
 def sync_dev_graph_metadata():
     """Sync graph metadata from Neuronpedia production service to a local dev database.
@@ -225,6 +246,7 @@ def sync_dev_graph_metadata():
 
     import neuronpedia
     from neuronpedia.np_graph_metadata import NPGraphMetadata
+
     # Load environment variables
     load_dotenv(".env.localhost_np")
 
@@ -243,13 +265,13 @@ def sync_dev_graph_metadata():
         user=os.environ.get("POSTGRES_USER"),
         password=os.environ.get("POSTGRES_PASSWORD"),
         host="localhost",
-        port=5432
+        port=5432,
     )
 
     try:
         with conn.cursor() as cursor:
             # Get user ID from username
-            cursor.execute("SELECT id FROM \"User\" WHERE name=%s;", (username,))
+            cursor.execute('SELECT id FROM "User" WHERE name=%s;', (username,))
             user_id = cursor.fetchone()
             if not user_id:
                 raise ValueError(f"User '{username}' not found in the database.")
@@ -275,8 +297,8 @@ def sync_dev_graph_metadata():
                     graph_metadata.prompt,
                     graph_metadata.title_prefix,
                     s3_url,
-                    user_id
-                )
+                    user_id,
+                ),
             )
 
             conn.commit()

@@ -13,9 +13,16 @@ import torch
 
 from interpretune.base import ITStateMixin, ITDataModule
 from interpretune.extensions import MemProfiler
-from interpretune.utils import (rank_zero_info, rank_zero_warn, rank_zero_debug, MisconfigurationException,
-                                _resolve_torch_dtype, collect_env_info, dummy_method_warn_fingerprint)
-from interpretune.protocol import LRScheduler, Optimizable, Optimizer,LRSchedulerConfig
+from interpretune.utils import (
+    rank_zero_info,
+    rank_zero_warn,
+    rank_zero_debug,
+    MisconfigurationException,
+    _resolve_torch_dtype,
+    collect_env_info,
+    dummy_method_warn_fingerprint,
+)
+from interpretune.protocol import LRScheduler, Optimizable, Optimizer, LRSchedulerConfig
 from interpretune.config import init_analysis_cfgs
 
 if TYPE_CHECKING:
@@ -23,7 +30,9 @@ if TYPE_CHECKING:
 
 
 # TODO: add core helper log/log_dict methods for core context usage
-for warnf in [f".*{dummy_method_warn_fingerprint}.*",]:
+for warnf in [
+    f".*{dummy_method_warn_fingerprint}.*",
+]:
     warnings.filterwarnings("once", warnf)
 
 # simple barebones interface encapsulating the data preparation, data setup, model setup and optimizer/scheduler
@@ -34,15 +43,18 @@ for warnf in [f".*{dummy_method_warn_fingerprint}.*",]:
 # code to be reused for maximally flexible interactive experimentation and interleaved framework-based tuning, testing
 # and prediction/interpretation tasks.
 
+
 def _dummy_notify(method: str, ret_callable: bool, ret_val: Any, *args, **kwargs) -> Any | None:
-    rank_zero_warn(f"The `{method}` method is not defined for this module. For framework compatibility, this noop "
-                  "method will be used. This warning will only be issued once by default.")
+    rank_zero_warn(
+        f"The `{method}` method is not defined for this module. For framework compatibility, this noop "
+        "method will be used. This warning will only be issued once by default."
+    )
     out = lambda *args, **kwargs: ret_val if ret_callable else ret_val
     return out
 
 
 class BaseConfigImpl:
-    """" Methods for adapting the configuration and logging of BaseITModule."""
+    """ " Methods for adapting the configuration and logging of BaseITModule."""
 
     # if you override these in your module, ensure you cooperatively call super() if you want to retain
     # the relevant BaseITModule hook functionality
@@ -63,58 +75,63 @@ class BaseConfigImpl:
             try:
                 setattr(reduce(getattr, fqn_l[:-1], serial_cfg), fqn_l[-1], repr(reduce(getattr, fqn_l, serial_cfg)))
             except AttributeError as ae:
-                rank_zero_info("Attempted to clean a key that was not present, continuing without cleaning that key: "
-                               f"{ae}")
+                rank_zero_info(
+                    f"Attempted to clean a key that was not present, continuing without cleaning that key: {ae}"
+                )
         return serial_cfg
 
     def _init_dirs_and_hooks(self) -> None:
         self._create_experiment_dir()
-        if hasattr(self, 'analysis_run_cfg') and self.analysis_run_cfg:
+        if hasattr(self, "analysis_run_cfg") and self.analysis_run_cfg:
             init_analysis_cfgs(
                 module=self,
                 analysis_cfgs=self.analysis_run_cfg._processed_analysis_cfgs,
                 cache_dir=self.analysis_run_cfg.cache_dir,
                 op_output_dataset_path=self.analysis_run_cfg.op_output_dataset_path,
                 sae_analysis_targets=self.analysis_run_cfg.sae_analysis_targets,
-                ignore_manual=self.analysis_run_cfg.ignore_manual
+                ignore_manual=self.analysis_run_cfg.ignore_manual,
             )
         if self.cuda_allocator_history:
             self.memprofiler.init_cuda_snapshots_dir()
         # TODO: add save_hyperparameters/basic logging func for raw pytorch
         # (override w/ a framework-specific version where appropriate)
-        #self.save_hyperparameters(self._it_state._init_hparams)
+        # self.save_hyperparameters(self._it_state._init_hparams)
 
     def _create_experiment_dir(self) -> None:
         # we only want to create the core experiment-specific dir for frameworks that aren't adding their own
-        if getattr(self._it_state, '_log_dir', None) is not None:
-            self._it_state._log_dir = self._it_state._log_dir / self._it_state._init_hparams['experiment_id']
+        if getattr(self._it_state, "_log_dir", None) is not None:
+            self._it_state._log_dir = self._it_state._log_dir / self._it_state._init_hparams["experiment_id"]
             self._it_state._log_dir.mkdir(exist_ok=True, parents=True)
 
     def _capture_hyperparameters(self) -> None:
         # subclasses may have provided their own hparams so we update rather than override
         model_config = {}
         if self.it_cfg.hf_from_pretrained_cfg:
-            model_config = self._make_config_serializable(self.model.config,
-                                                          ['quantization_config.bnb_4bit_compute_dtype',
-                                                           'torch_dtype', '_pre_quantization_dtype']),
+            model_config = (
+                self._make_config_serializable(
+                    self.model.config,
+                    ["quantization_config.bnb_4bit_compute_dtype", "torch_dtype", "_pre_quantization_dtype"],
+                ),
+            )
         # if `model.config `exists, any provided `model_cfg` should already be merged with it
-        elif getattr(self.model, 'config', None) is None:
+        elif getattr(self.model, "config", None) is None:
             model_config = self.it_cfg.model_cfg
-        self._it_state._init_hparams.update({
-            "optimizer_init": self.it_cfg.optimizer_init,
-            "lr_scheduler_init": self.it_cfg.lr_scheduler_init,
-            "pl_lrs_cfg": self.it_cfg.pl_lrs_cfg,
-            "hf_from_pretrained_cfg": self.it_cfg.hf_from_pretrained_cfg,
-            "model_config": model_config,
-            "model_name_or_path": self.it_cfg.model_name_or_path,
-            "task_name": self.it_cfg.task_name,
-            "experiment_id": f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.it_cfg.experiment_tag}",
-            })
+        self._it_state._init_hparams.update(
+            {
+                "optimizer_init": self.it_cfg.optimizer_init,
+                "lr_scheduler_init": self.it_cfg.lr_scheduler_init,
+                "pl_lrs_cfg": self.it_cfg.pl_lrs_cfg,
+                "hf_from_pretrained_cfg": self.it_cfg.hf_from_pretrained_cfg,
+                "model_config": model_config,
+                "model_name_or_path": self.it_cfg.model_name_or_path,
+                "task_name": self.it_cfg.task_name,
+                "experiment_id": f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.it_cfg.experiment_tag}",
+            }
+        )
         self._it_state._init_hparams["env_info"] = collect_env_info() if self.it_cfg.log_env_details else None
 
 
 class PropertyDispatcher:
-
     _it_state: ITState
 
     CORE_TO_FRAMEWORK_ATTRS_MAP = {}
@@ -128,11 +145,13 @@ class PropertyDispatcher:
 
     PROPERTY_COMPOSITION = {}
     """Property dispatcher."""
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._cached_mro = inspect.getmro(type(self))
-        self._enabled_overrides = [p for p, cfg in self.PROPERTY_COMPOSITION.items() if cfg['enabled']
-                                   and cfg['target'] in self._cached_mro]
+        self._enabled_overrides = [
+            p for p, cfg in self.PROPERTY_COMPOSITION.items() if cfg["enabled"] and cfg["target"] in self._cached_mro
+        ]
 
     def _maybe_dispatch(self, non_dispatch_val: Any | None = None) -> Any | None:
         """_summary_
@@ -144,7 +163,7 @@ class PropertyDispatcher:
             Optional[Any]: _description_
         """
         if (overridden_method := inspect.currentframe().f_back.f_code.co_name) in self._enabled_overrides:
-            return self.PROPERTY_COMPOSITION[overridden_method]['dispatch'].__get__(self._it_state)
+            return self.PROPERTY_COMPOSITION[overridden_method]["dispatch"].__get__(self._it_state)
         else:
             return non_dispatch_val
 
@@ -175,11 +194,11 @@ class PropertyDispatcher:
         return self.it_cfg.memprofiler_cfg.enabled and self.it_cfg.memprofiler_cfg.cuda_allocator_history
 
     @property
-    def torch_dtype(self) -> Union[torch.dtype, 'str'] | None:
+    def torch_dtype(self) -> Union[torch.dtype, "str"] | None:
         try:
             if dtype := getattr(self.it_cfg, "_torch_dtype", None):
                 return dtype
-            if getattr(self, 'model', None):
+            if getattr(self, "model", None):
                 dtype = getattr(self.model, "_torch_dtype", None) or getattr(self.model, "dtype", None)
         except AttributeError:
             dtype = None
@@ -206,7 +225,7 @@ class PropertyDispatcher:
         self._it_state._device = value
 
     @torch_dtype.setter
-    def torch_dtype(self, value: Union[torch.dtype, 'str'] | None) -> None:
+    def torch_dtype(self, value: Union[torch.dtype, "str"] | None) -> None:
         if value is not None and not isinstance(value, torch.dtype):
             value = _resolve_torch_dtype(value)
         self.it_cfg._torch_dtype = value
@@ -217,28 +236,31 @@ class PropertyDispatcher:
         else:
             rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
+
 class CoreHelperAttributes:
     """Mixin class for adding arbitrary core helper attributes to core (non-framework adapted) IT classes."""
+
     def __init__(self, *args, **kwargs) -> None:
         # we need to initialize internal state before `ITStateMixin`'s __init__ is invoked so use this static method
         ITStateMixin._init_internal_state(self)
         # for core/non-framework modules, we configure a _log_dir rather than relying on the trainer to do so
         # if using a framework (e.g. Lightning) module, we can access the trainer log_dir via the `core_log_dir`
         # property or continue to rely on the trainer log_dir directly
-        if it_cfg := kwargs.get('it_cfg', None):
+        if it_cfg := kwargs.get("it_cfg", None):
             self._it_state._log_dir = Path(it_cfg.core_log_dir or tempfile.gettempdir())
             ca = it_cfg.compatibility_attrs
         else:
             raise MisconfigurationException("CoreHelperAttributes requires an ITConfig.")
-        self._supported_helper_attrs = {k: partial(_dummy_notify, method=k, ret_callable=v.ret_callable,
-                                                   ret_val=v.ret_val) for k,v in ca.items()}
+        self._supported_helper_attrs = {
+            k: partial(_dummy_notify, method=k, ret_callable=v.ret_callable, ret_val=v.ret_val) for k, v in ca.items()
+        }
         super().__init__(*args, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
         # NOTE: dynamically stub a specified subset of framework module attributes (if they don't already exist) to
         #       extend the cases where framework methods can be iteratively used for core context experimentation
-        if '_supported_helper_attrs' in self.__dict__:
-            _helper_attrs= self.__dict__['_supported_helper_attrs']
+        if "_supported_helper_attrs" in self.__dict__:
+            _helper_attrs = self.__dict__["_supported_helper_attrs"]
             if name in _helper_attrs:
                 return _helper_attrs[name]()
         # the unresolved attribute wasn't ours, pass it to the next __getattr__ in __mro__
@@ -291,15 +313,15 @@ class CoreHelperAttributes:
     def global_step(self, value: int) -> None:
         self._it_state._global_step = value
 
+
 # adapted from pytorch/core/optimizer.py initialization methods
 class OptimizerScheduler:
-    """" Barebones interface to setup optimizers and schedulers for manual optimization with core IT modules."""
+    """ " Barebones interface to setup optimizers and schedulers for manual optimization with core IT modules."""
 
     # proper initialization of these variables should be done in the child class
     _it_state: ITState
 
     def _it_init_optimizers_and_schedulers(self, optim_conf: dict[str, Any] | list | Optimizer | tuple) -> None:
-
         if optim_conf is None:
             rank_zero_info(  # TODO: maybe set a debug level instead?
                 "`configure_optimizers` returned `None`, Interpretune will not configure an optimizer or scheduler.",
@@ -319,7 +341,7 @@ class OptimizerScheduler:
             if isinstance(scheduler, dict):
                 # We do not filter out keys that are invalid with manual optimization to maximize flexibility (since
                 # this is a core IT module context)
-                #invalid_keys = {"reduce_on_plateau", "monitor", "strict", "interval"}
+                # invalid_keys = {"reduce_on_plateau", "monitor", "strict", "interval"}
 
                 config = LRSchedulerConfig(**{key: scheduler[key] for key in scheduler})
             else:
@@ -328,9 +350,7 @@ class OptimizerScheduler:
         return lr_scheduler_configs
 
     @staticmethod
-    def _configure_optimizers(
-        optim_conf: dict[str, Any] | list | Optimizer | tuple
-    ) -> tuple[list, list]:
+    def _configure_optimizers(optim_conf: dict[str, Any] | list | Optimizer | tuple) -> tuple[list, list]:
         # for basic optimizer/scheduler init, the proposed IT protocol uses the convenient Lightning optimizer/scheduler
         # formats. Note we do not subject configuration to Lightning validation constraints to increase flexibility.
         optimizers, lr_schedulers = [], []
@@ -353,14 +373,16 @@ class OptimizerScheduler:
             optimizers = [optim_conf["optimizer"]]
             monitor = optim_conf.get("monitor", None)
             if monitor:
-                rank_zero_warn("Interpretune does not support `monitor` in `configure_optimizers` with the core IT"
-                               " module context.")
+                rank_zero_warn(
+                    "Interpretune does not support `monitor` in `configure_optimizers` with the core IT module context."
+                )
             lr_schedulers = [optim_conf["lr_scheduler"]] if "lr_scheduler" in optim_conf else []
         # multiple dictionaries
         elif isinstance(optim_conf, (list, tuple)) and all(isinstance(d, dict) for d in optim_conf):
             optimizers = [opt_dict["optimizer"] for opt_dict in optim_conf]
-            scheduler_dict = lambda scheduler: dict(scheduler) if isinstance(scheduler, dict) else \
-                {"scheduler": scheduler}
+            scheduler_dict = (
+                lambda scheduler: dict(scheduler) if isinstance(scheduler, dict) else {"scheduler": scheduler}
+            )
             lr_schedulers = [
                 scheduler_dict(opt_dict["lr_scheduler"]) for opt_dict in optim_conf if "lr_scheduler" in opt_dict
             ]
@@ -379,5 +401,5 @@ class OptimizerScheduler:
             )
         return optimizers, lr_schedulers
 
-class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler):
-    ...
+
+class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler): ...

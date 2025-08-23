@@ -6,16 +6,20 @@ from functools import partial
 # similar to ``mem_results`` to make programmatic management of expected results easier
 
 l_parity_results = {
-    "train_cpu_32":
-    TestResult(exact_results=def_results("cpu", 32, ds_cfg="train"), close_results=((0, 'loss', 15.520967),)),
-    "train_cpu_32_debug":
-    TestResult(exact_results=def_results("cpu", 32, ds_cfg="train"), close_results=((0, 'loss', 15.520967),)),
-    "train_cuda_32":
-    TestResult(exact_results=def_results("cuda", 32, ds_cfg="train"), close_results=((0, 'loss', 13.356880),)),
-    "train_cuda_bf16":
-    TestResult(exact_results=def_results("cuda", "bf16", ds_cfg="train"), close_results=((0, 'loss', 13.402528),)),
+    "train_cpu_32": TestResult(
+        exact_results=def_results("cpu", 32, ds_cfg="train"), close_results=((0, "loss", 15.520967),)
+    ),
+    "train_cpu_32_debug": TestResult(
+        exact_results=def_results("cpu", 32, ds_cfg="train"), close_results=((0, "loss", 15.520967),)
+    ),
+    "train_cuda_32": TestResult(
+        exact_results=def_results("cuda", 32, ds_cfg="train"), close_results=((0, "loss", 13.356880),)
+    ),
+    "train_cuda_bf16": TestResult(
+        exact_results=def_results("cuda", "bf16", ds_cfg="train"), close_results=((0, "loss", 13.402528),)
+    ),
     "train_cpu_bf16": TestResult(exact_results=def_results("cpu", "bf16", ds_cfg="train")),
-    "test_cpu_32": TestResult(exact_results=def_results("cpu", 32,ds_cfg="test")),
+    "test_cpu_32": TestResult(exact_results=def_results("cpu", 32, ds_cfg="test")),
     "predict_cpu_32": TestResult(exact_results=def_results("cpu", 32, ds_cfg="test")),
     "test_cuda_32": TestResult(exact_results=def_results("cuda", 32, ds_cfg="test")),
     "test_cuda_bf16": TestResult(exact_results=def_results("cuda", "bf16", ds_cfg="test")),
@@ -49,11 +53,13 @@ cprof_results = partial(def_results, ds_cfg="train_prof")
 
 memory_footprints = load_memory_footprint_results()
 
+
 class MemResult(TestResult):
     __slots__ = ()
 
     def __new__(cls, *args, **kwargs):
         return super().__new__(cls, mem_results=memory_footprints, *args, **kwargs)
+
 
 profiling_results = {
     "test_l_profiling.test_cuda_32": MemResult(exact_results=cprof_results("cuda", 32, ds_cfg="test_prof")),
@@ -66,10 +72,12 @@ profiling_results = {
     "test_tl_profiling.test_cuda_32": MemResult(exact_results=def_results("cuda", 32, ds_cfg="test_prof")),
     "test_tl_profiling.train_cpu_32": MemResult(exact_results=def_results("cpu", 32, ds_cfg="train_prof")),
     "test_tl_profiling.train_cuda_32": MemResult(exact_results=def_results("cuda", 32, ds_cfg="train_prof")),
-    "test_l_profiling.test_cpu_32": MemResult(exact_results=cprof_results("cpu", 32, ds_cfg="test_prof"),
-                                              tolerance_map={"rss_diff": (0.05, 1e08)}),
-    "test_l_profiling.train_cuda_bf16": MemResult(exact_results=cprof_results("cuda", "bf16"),
-                                                  tolerance_map={k: (0.1, 2e08) for k in MemProfResult.cuda_mem_keys}),
+    "test_l_profiling.test_cpu_32": MemResult(
+        exact_results=cprof_results("cpu", 32, ds_cfg="test_prof"), tolerance_map={"rss_diff": (0.05, 1e08)}
+    ),
+    "test_l_profiling.train_cuda_bf16": MemResult(
+        exact_results=cprof_results("cuda", "bf16"), tolerance_map={k: (0.1, 2e08) for k in MemProfResult.cuda_mem_keys}
+    ),
     # TODO: as current allocated memory for Lightning is about 217 MB higher than core and npp is about 80 MB lower than
     # core, investigate the precise source of these divergences (not presently viewed as highest priority given other
     # values are nearly identical to core)
@@ -156,12 +164,16 @@ l_tl_fts_callback_results = l_fts_callback_results
 # we always check for basic exact match on device type and precision as well
 # note our result mapping function uses these results for all supported parity test suffixes (e.g. '_l_fts')
 fts_parity_results = {
-    "train_cpu_32_l_fts": TestResult(exact_results=def_results("cpu", 32, ds_cfg="train"),
-                                     callback_results=l_fts_callback_results),
-    "train_cpu_32_l_tl_fts": TestResult(exact_results=def_results("cpu", 32, ds_cfg="train"),
-                               callback_results=l_tl_fts_callback_results),
-    "train_cuda_32_l_fts": TestResult(exact_results=def_results("cuda", 32, ds_cfg="train"),
-                                callback_results=l_fts_callback_results),
-    "train_cuda_32_l_tl_fts": TestResult(exact_results=def_results("cuda", 32, ds_cfg="train"),
-                                callback_results=l_tl_fts_callback_results),
+    "train_cpu_32_l_fts": TestResult(
+        exact_results=def_results("cpu", 32, ds_cfg="train"), callback_results=l_fts_callback_results
+    ),
+    "train_cpu_32_l_tl_fts": TestResult(
+        exact_results=def_results("cpu", 32, ds_cfg="train"), callback_results=l_tl_fts_callback_results
+    ),
+    "train_cuda_32_l_fts": TestResult(
+        exact_results=def_results("cuda", 32, ds_cfg="train"), callback_results=l_fts_callback_results
+    ),
+    "train_cuda_32_l_tl_fts": TestResult(
+        exact_results=def_results("cuda", 32, ds_cfg="train"), callback_results=l_tl_fts_callback_results
+    ),
 }

@@ -59,8 +59,10 @@ For complex setups, use the provided build script:
 
 ```bash
 # Run ruff linting (configured in pyproject.toml)
-ruff check .
-ruff check . --fix  # Auto-fix issues
+# we don't have ruff installed as a separate package but use it via pre-commit (with the --fix flag)
+# there are two phases, the check and format, run each separately
+pre-commit run ruff-check --all-files
+pre-commit run ruff-format --all-files
 
 # Run pre-commit hooks (includes ruff, docformatter, yaml checks)
 pre-commit run --all-files

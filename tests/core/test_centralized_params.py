@@ -1,10 +1,17 @@
 """Tests for centralized parameter handling in analysis operations."""
+
 import torch
 from unittest.mock import MagicMock, patch
 
 from interpretune.analysis.ops.base import (
-    AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg, AnalysisBatch,
-    DEFAULT_OP_PARAMS, DEFAULT_OP_PARAM_NAMES, build_call_args
+    AnalysisOp,
+    CompositeAnalysisOp,
+    OpSchema,
+    ColCfg,
+    AnalysisBatch,
+    DEFAULT_OP_PARAMS,
+    DEFAULT_OP_PARAM_NAMES,
+    build_call_args,
 )
 
 
@@ -18,7 +25,7 @@ class TestCentralizedParams:
         assert isinstance(DEFAULT_OP_PARAM_NAMES, frozenset)
 
         # Check expected parameter names
-        expected_params = {'module', 'analysis_batch', 'batch', 'batch_idx'}
+        expected_params = {"module", "analysis_batch", "batch", "batch_idx"}
         assert DEFAULT_OP_PARAM_NAMES == expected_params
 
         # Check that all default values are None
@@ -36,10 +43,7 @@ class TestCentralizedParams:
         extra_kwargs = {"debug": True}
 
         # Test with all parameters
-        result = build_call_args(
-            module, analysis_batch, batch, batch_idx,
-            impl_params=impl_params, **extra_kwargs
-        )
+        result = build_call_args(module, analysis_batch, batch, batch_idx, impl_params=impl_params, **extra_kwargs)
 
         # Check that all default parameters are included
         assert result["module"] is module
@@ -73,16 +77,14 @@ class TestCentralizedParams:
         impl_params = {"threshold": 0.5}
         kwargs = {"threshold": 0.8}
 
-        result = build_call_args(
-            None, None, None, None,
-            impl_params=impl_params, **kwargs
-        )
+        result = build_call_args(None, None, None, None, impl_params=impl_params, **kwargs)
 
         # kwargs should override impl_params
         assert result["threshold"] == 0.8
 
     def test_analysis_op_uses_centralized_params(self):
         """Test that AnalysisOp properly uses centralized parameter handling."""
+
         def test_impl(module, analysis_batch, batch, batch_idx, custom_param=None):
             result = analysis_batch or AnalysisBatch()
             result.output = torch.tensor([custom_param or 0])
@@ -92,7 +94,7 @@ class TestCentralizedParams:
             name="test_centralized",
             description="Test centralized params",
             output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
-            impl_params={"custom_param": 42}
+            impl_params={"custom_param": 42},
         )
         op._impl = test_impl
 
@@ -104,6 +106,7 @@ class TestCentralizedParams:
 
     def test_composite_op_uses_centralized_params(self):
         """Test that CompositeAnalysisOp uses centralized parameter handling."""
+
         def impl1(module, analysis_batch, batch, batch_idx, value1=None):
             result = analysis_batch or AnalysisBatch()
             result.step1 = torch.tensor([value1 or 1])
@@ -118,7 +121,7 @@ class TestCentralizedParams:
             name="step1",
             description="First step",
             output_schema=OpSchema({"step1": ColCfg(datasets_dtype="float32")}),
-            impl_params={"value1": 10}
+            impl_params={"value1": 10},
         )
         op1._impl = impl1
 
@@ -126,12 +129,12 @@ class TestCentralizedParams:
             name="step2",
             description="Second step",
             output_schema=OpSchema({"step2": ColCfg(datasets_dtype="float32")}),
-            impl_params={"value2": 20}
+            impl_params={"value2": 20},
         )
         op2._impl = impl2
 
         # Mock the compilation function to avoid circular imports in test
-        with patch('interpretune.analysis.ops.compiler.schema_compiler.jit_compile_composition_schema') as mock_compile:
+        with patch("interpretune.analysis.ops.compiler.schema_compiler.jit_compile_composition_schema") as mock_compile:
             # Mock the compilation to return empty schemas
             mock_compile.return_value = (OpSchema({}), OpSchema({}))
 
@@ -146,6 +149,7 @@ class TestCentralizedParams:
 
     def test_parameter_precedence(self):
         """Test parameter precedence: kwargs > impl_params > defaults."""
+
         def test_impl(module, analysis_batch, batch, batch_idx, param=None):
             result = analysis_batch or AnalysisBatch()
             result.param_value = torch.tensor([param])
@@ -155,7 +159,7 @@ class TestCentralizedParams:
             name="test_precedence",
             description="Test parameter precedence",
             output_schema=OpSchema({"param_value": ColCfg(datasets_dtype="float32")}),
-            impl_params={"param": 100}
+            impl_params={"param": 100},
         )
         op._impl = test_impl
 
@@ -173,12 +177,12 @@ class TestCentralizedParams:
             name="test_rename",
             description="Test impl_params rename",
             output_schema=OpSchema({"output": ColCfg(datasets_dtype="float32")}),
-            impl_params={"test_param": "test_value"}
+            impl_params={"test_param": "test_value"},
         )
 
         # Should have impl_params attribute
-        assert hasattr(op, 'impl_params')
+        assert hasattr(op, "impl_params")
         assert op.impl_params == {"test_param": "test_value"}
 
         # Should not have the old impl_args attribute
-        assert not hasattr(op, 'impl_args')
+        assert not hasattr(op, "impl_args")

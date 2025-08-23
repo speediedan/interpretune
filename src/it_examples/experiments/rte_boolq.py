@@ -17,9 +17,21 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 import interpretune as it
 from interpretune import (
-    ITDataModule, MemProfilerHooks, AnalysisBatch, ITLensConfig, SAELensConfig, PromptConfig, ITDataModuleConfig,
-    ITConfig, GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig, rank_zero_warn,
-    sanitize_input_name, STEP_OUTPUT)
+    ITDataModule,
+    MemProfilerHooks,
+    AnalysisBatch,
+    ITLensConfig,
+    SAELensConfig,
+    PromptConfig,
+    ITDataModuleConfig,
+    ITConfig,
+    GenerativeClassificationConfig,
+    BaseGenerationConfig,
+    HFGenerationConfig,
+    rank_zero_warn,
+    sanitize_input_name,
+    STEP_OUTPUT,
+)
 # from interpretune.config import (ITLensConfig, SAELensConfig, PromptConfig, ITDataModuleConfig, ITConfig,
 #                                  GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig)
 # from interpretune.base import MemProfilerHooks, ITDataModule
@@ -52,23 +64,22 @@ class RTEBoolqGenerativeClassificationConfig(RTEBoolqEntailmentMapping, Generati
 
 @dataclass(kw_only=True)
 class RTEBoolqPromptConfig(PromptConfig):
-    ctx_question_join: str = 'Does the previous passage imply that '
-    question_suffix: str = '? Answer with only one word, either Yes or No.'
+    ctx_question_join: str = "Does the previous passage imply that "
+    question_suffix: str = "? Answer with only one word, either Yes or No."
     cust_task_prompt: Optional[Dict[str, Any]] = None
+
 
 # add our custom model attributes
 @dataclass(kw_only=True)
-class RTEBoolqConfig(RTEBoolqEntailmentMapping, ITConfig):
-    ...
+class RTEBoolqConfig(RTEBoolqEntailmentMapping, ITConfig): ...
 
 
 @dataclass(kw_only=True)
-class RTEBoolqTLConfig(RTEBoolqEntailmentMapping, ITLensConfig):
-    ...
+class RTEBoolqTLConfig(RTEBoolqEntailmentMapping, ITLensConfig): ...
+
 
 @dataclass(kw_only=True)
-class RTEBoolqSLConfig(RTEBoolqEntailmentMapping, SAELensConfig):
-    ...
+class RTEBoolqSLConfig(RTEBoolqEntailmentMapping, SAELensConfig): ...
 
 
 class RTEBoolqDataModule(ITDataModule):
@@ -100,61 +111,72 @@ class RTEBoolqDataModule(ITDataModule):
             dataset[split] = dataset[split].map(tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
             dataset[split] = self._remove_unused_columns(dataset[split], target_model)
 
-
         save_path = Path(self.itdm_cfg.dataset_path)
         dataset.save_to_disk(save_path)
 
     def dataloader_factory(self, split: str, use_train_batch_size: bool = False) -> DataLoader:
-        dataloader_kwargs = {"dataset": self.dataset[split], "collate_fn":self.data_collator,
-                             **self.itdm_cfg.dataloader_kwargs}
-        dataloader_kwargs['batch_size'] = self.itdm_cfg.train_batch_size if use_train_batch_size else \
-            self.itdm_cfg.eval_batch_size
+        dataloader_kwargs = {
+            "dataset": self.dataset[split],
+            "collate_fn": self.data_collator,
+            **self.itdm_cfg.dataloader_kwargs,
+        }
+        dataloader_kwargs["batch_size"] = (
+            self.itdm_cfg.train_batch_size if use_train_batch_size else self.itdm_cfg.eval_batch_size
+        )
         return DataLoader(**dataloader_kwargs)
 
     def train_dataloader(self) -> DataLoader:
-        return self.dataloader_factory(split='train', use_train_batch_size=True)
+        return self.dataloader_factory(split="train", use_train_batch_size=True)
 
     def val_dataloader(self) -> DataLoader:
-        return self.dataloader_factory(split='validation')
+        return self.dataloader_factory(split="validation")
 
     def test_dataloader(self) -> DataLoader:
-        return self.dataloader_factory(split='validation')
+        return self.dataloader_factory(split="validation")
 
     def predict_dataloader(self) -> DataLoader:
-        return self.dataloader_factory(split='validation')
+        return self.dataloader_factory(split="validation")
 
-    #TODO: relax PreTrainedTokenizerBase to the protocol that is actually required
+    # TODO: relax PreTrainedTokenizerBase to the protocol that is actually required
     @staticmethod
-    def encode_for_rteboolq(example_batch: LazyDict, tokenizer: PreTrainedTokenizerBase, text_fields: List[str],
-                            prompt_cfg: PromptConfig, template_fn: Callable,
-                            tokenization_pattern: Optional[str] = None) -> BatchEncoding:
-        example_batch['sequences'] = []
+    def encode_for_rteboolq(
+        example_batch: LazyDict,
+        tokenizer: PreTrainedTokenizerBase,
+        text_fields: List[str],
+        prompt_cfg: PromptConfig,
+        template_fn: Callable,
+        tokenization_pattern: Optional[str] = None,
+    ) -> BatchEncoding:
+        example_batch["sequences"] = []
         # TODO: use promptsource instead of this manual approach after tinkering
-        for field1, field2 in zip(example_batch[text_fields[0]],
-                                  example_batch[text_fields[1]]):
+        for field1, field2 in zip(example_batch[text_fields[0]], example_batch[text_fields[1]]):
             if prompt_cfg.cust_task_prompt:
-                task_prompt = (prompt_cfg.cust_task_prompt['context'] + "\n" +
-                               field1 + "\n" +
-                               prompt_cfg.cust_task_prompt['question'] + "\n" +
-                               field2)
+                task_prompt = (
+                    prompt_cfg.cust_task_prompt["context"]
+                    + "\n"
+                    + field1
+                    + "\n"
+                    + prompt_cfg.cust_task_prompt["question"]
+                    + "\n"
+                    + field2
+                )
             else:
-                task_prompt = (field1 + prompt_cfg.ctx_question_join + field2 \
-                               + prompt_cfg.question_suffix)
+                task_prompt = field1 + prompt_cfg.ctx_question_join + field2 + prompt_cfg.question_suffix
             sequence = template_fn(task_prompt=task_prompt, tokenization_pattern=tokenization_pattern)
-            example_batch['sequences'].append(sequence)
-        features = tokenizer.batch_encode_plus(example_batch["sequences"], padding="longest",
-                                               padding_side=tokenizer.padding_side)
+            example_batch["sequences"].append(sequence)
+        features = tokenizer.batch_encode_plus(
+            example_batch["sequences"], padding="longest", padding_side=tokenizer.padding_side
+        )
         features["labels"] = example_batch["label"]  # Rename label to labels, easier to pass to model forward
         features = sanitize_input_name(tokenizer.model_input_names, features)
         return features
 
-class RTEBoolqSteps:
 
+class RTEBoolqSteps:
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         # when using TransformerLens, we need to manually calculate our loss from logit output
         self.loss_fn = CrossEntropyLoss()
-
 
     @MemProfilerHooks.memprofilable
     def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
@@ -181,8 +203,9 @@ class RTEBoolqSteps:
         else:
             self.default_test_step(batch, batch_idx, dataloader_idx=dataloader_idx)
 
-    def generative_classification_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> \
-        Optional[STEP_OUTPUT]:
+    def generative_classification_test_step(
+        self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0
+    ) -> Optional[STEP_OUTPUT]:
         labels = batch.pop("labels")
         outputs = self.it_generate(batch, **self.it_cfg.generative_step_cfg.lm_generation_cfg.generate_kwargs)
         self.collect_answers(outputs.logits, labels)
@@ -195,10 +218,15 @@ class RTEBoolqSteps:
     def predict_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         labels = batch.pop("labels")
         outputs = self(**batch)
-        return self.collect_answers(outputs, labels, mode='return')
+        return self.collect_answers(outputs, labels, mode="return")
 
-    def analysis_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0,
-                      analysis_batch: Optional[AnalysisBatch] = None) -> Generator[STEP_OUTPUT,None, None]:
+    def analysis_step(
+        self,
+        batch: BatchEncoding,
+        batch_idx: int,
+        dataloader_idx: int = 0,
+        analysis_batch: Optional[AnalysisBatch] = None,
+    ) -> Generator[STEP_OUTPUT, None, None]:
         """Run analysis operations on a batch and yield results."""
         # Demo mixing model methods and native IT analysis ops
         label_ids, orig_labels = self.labels_to_ids(batch.pop("labels"))
@@ -214,7 +242,6 @@ class RTEBoolqSteps:
 
 
 class RTEBoolqModuleMixin:
-
     def setup(self, *args, **kwargs) -> None:
         super().setup(*args, **kwargs)
         self._init_entailment_mapping()
@@ -227,8 +254,9 @@ class RTEBoolqModuleMixin:
         return it_cfg
 
     def load_metric(self) -> None:
-        self.metric = evaluate.load("super_glue", self.it_cfg.task_name,
-                                    experiment_id=self._it_state._init_hparams['experiment_id'])
+        self.metric = evaluate.load(
+            "super_glue", self.it_cfg.task_name, experiment_id=self._it_state._init_hparams["experiment_id"]
+        )
 
     # we override the default labels_to_ids method to demo using our module-specific attributes/logic
     def labels_to_ids(self, labels: List[str]) -> List[int]:
@@ -256,5 +284,4 @@ class RTEBoolqModuleMixin:
         ent_cfg.entailment_mapping_indices = torch.tensor(token_ids).to(device)
 
 
-class RTEBoolqModule(RTEBoolqSteps, RTEBoolqModuleMixin, torch.nn.Module):
-    ...
+class RTEBoolqModule(RTEBoolqSteps, RTEBoolqModuleMixin, torch.nn.Module): ...

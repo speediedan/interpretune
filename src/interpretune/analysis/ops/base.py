@@ -1,4 +1,5 @@
 """Base classes for analysis operations."""
+
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from typing import Literal, Union, Optional, Any, Dict, Callable, Sequence
 from dataclasses import dataclass, fields
@@ -11,18 +12,12 @@ from transformers import BatchEncoding, PreTrainedTokenizerBase
 from interpretune.protocol import BaseAnalysisBatchProtocol
 
 # Module-level constants for default operation parameters
-DEFAULT_OP_PARAMS = {
-    'module': None,
-    'analysis_batch': None,
-    'batch': None,
-    'batch_idx': None
-}
+DEFAULT_OP_PARAMS = {"module": None, "analysis_batch": None, "batch": None, "batch_idx": None}
 
 DEFAULT_OP_PARAM_NAMES = frozenset(DEFAULT_OP_PARAMS.keys())
 
 
-def build_call_args(module, analysis_batch, batch, batch_idx,
-                   impl_params=None, **kwargs):
+def build_call_args(module, analysis_batch, batch, batch_idx, impl_params=None, **kwargs):
     """Build arguments for operation calls.
 
     Args:
@@ -36,12 +31,7 @@ def build_call_args(module, analysis_batch, batch, batch_idx,
     Returns:
         Dictionary of arguments for the operation call
     """
-    args = {
-        'module': module,
-        'analysis_batch': analysis_batch,
-        'batch': batch,
-        'batch_idx': batch_idx
-    }
+    args = {"module": module, "analysis_batch": analysis_batch, "batch": batch, "batch_idx": batch_idx}
     if impl_params:
         args.update(impl_params)
     args.update(kwargs)
@@ -59,7 +49,7 @@ class AttrDict(dict):
             raise AttributeError(e)
 
     def __setattr__(self, name, value):
-         super().__setitem__(name, value)
+        super().__setitem__(name, value)
 
     def __delattr__(self, name):
         try:
@@ -69,7 +59,6 @@ class AttrDict(dict):
 
 
 class AnalysisBatch(AttrDict):
-
     def __getattr__(self, name):
         return super().__getattr__(name)
 
@@ -92,23 +81,24 @@ class AnalysisBatch(AttrDict):
             val2 = other[key]
 
             # Handle tensor comparison
-            if hasattr(val1, 'dtype') and hasattr(val1, 'shape') and hasattr(val2, 'dtype') and hasattr(val2, 'shape'):
+            if hasattr(val1, "dtype") and hasattr(val1, "shape") and hasattr(val2, "dtype") and hasattr(val2, "shape"):
                 # Both are tensor-like objects, use torch.equal
                 try:
                     import torch
+
                     if torch.is_tensor(val1) and torch.is_tensor(val2):
                         if not torch.equal(val1, val2):
                             return False
                     else:
-                        raise TypeError # catch this to handle objects that are torch tensor-like but not torch tensors
-                        #return False  # If they are not both tensors, return False
+                        raise TypeError  # catch this to handle objects that are torch tensor-like but not torch tensors
+                        # return False  # If they are not both tensors, return False
                 except (RuntimeError, TypeError):
                     # Fallback to regular comparison if torch.equal fails
                     # For tensors, try element-wise comparison if possible
                     try:
-                        comparison_result = (val1 == val2)
+                        comparison_result = val1 == val2
                         # Check if the result has an .all() method (actual tensor comparison)
-                        if hasattr(comparison_result, 'all'):
+                        if hasattr(comparison_result, "all"):
                             if not comparison_result.all():
                                 return False
                         else:
@@ -132,6 +122,7 @@ class AnalysisBatch(AttrDict):
 
     def to_cpu(self):
         """Detach and move all field tensors to CPU."""
+
         def maybe_detach(val, visited=None):
             if visited is None:
                 visited = set()
@@ -148,12 +139,13 @@ class AnalysisBatch(AttrDict):
             self[key] = maybe_detach(value)
 
 
-DIM_VAR = Literal['batch_size', 'max_answer_tokens', 'num_classes', 'vocab_size', 'max_seq_len']
+DIM_VAR = Literal["batch_size", "max_answer_tokens", "num_classes", "vocab_size", "max_seq_len"]
 
 
 @dataclass(frozen=True)
 class ColCfg:
     """Configuration for a dataset column."""
+
     datasets_dtype: str  # Explicit datasets dtype string (e.g. "float32", "int64")
     required: bool = True
     dyn_dim: Optional[int] = None
@@ -162,7 +154,7 @@ class ColCfg:
     per_latent: bool = False
     per_sae_hook: bool = False  # For fields that have per-SAE hook subfields
     intermediate_only: bool = False  # Indicates column used in processing but not written to output
-    connected_obj: Literal['analysis_store', 'datamodule'] = 'analysis_store'
+    connected_obj: Literal["analysis_store", "datamodule"] = "analysis_store"
     array_shape: tuple[Optional[Union[int, DIM_VAR]], ...] | None = None  # Shape with optional dimension variables
     sequence_type: bool = True  # Default to sequence type for most fields
     array_dtype: str | None = None  # Override for array fields, defaults to datasets_dtype
@@ -176,7 +168,7 @@ class ColCfg:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict) -> 'ColCfg':
+    def from_dict(cls, data: dict) -> "ColCfg":
         """Create from dict representation."""
         # TODO: expected to add custom logic here
         return cls(**data)
@@ -187,27 +179,29 @@ class ColCfg:
         hashable_shape = None
         if self.array_shape is not None:
             # Convert any unhashable elements in array_shape to their string representation
-            hashable_shape = tuple(str(dim) if isinstance(dim, (list, dict)) else dim
-                                   for dim in self.array_shape)
+            hashable_shape = tuple(str(dim) if isinstance(dim, (list, dict)) else dim for dim in self.array_shape)
 
         # Include all other attributes in the hash
-        return hash((
-            self.datasets_dtype,
-            self.required,
-            self.dyn_dim,
-            self.non_tensor,
-            self.per_latent,
-            self.per_sae_hook,
-            self.intermediate_only,
-            self.connected_obj,
-            hashable_shape,
-            self.sequence_type,
-            self.array_dtype,
-        ))
+        return hash(
+            (
+                self.datasets_dtype,
+                self.required,
+                self.dyn_dim,
+                self.non_tensor,
+                self.per_latent,
+                self.per_sae_hook,
+                self.intermediate_only,
+                self.connected_obj,
+                hashable_shape,
+                self.sequence_type,
+                self.array_dtype,
+            )
+        )
 
 
 class OpSchema(dict):
     """Schema defining column specifications for analysis operations."""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._validate()
@@ -228,31 +222,36 @@ class OpSchema(dict):
         return frozenset(self.items()) == frozenset(other.items())
 
 
-def wrap_summary(analysis_batch: BaseAnalysisBatchProtocol, batch: BatchEncoding,
-                 tokenizer: PreTrainedTokenizerBase | None = None,
-                 save_prompts: bool = False, save_tokens: bool = False,
-                 decode_kwargs: Optional[dict[str, Any]] = None) -> BaseAnalysisBatchProtocol:
+def wrap_summary(
+    analysis_batch: BaseAnalysisBatchProtocol,
+    batch: BatchEncoding,
+    tokenizer: PreTrainedTokenizerBase | None = None,
+    save_prompts: bool = False,
+    save_tokens: bool = False,
+    decode_kwargs: Optional[dict[str, Any]] = None,
+) -> BaseAnalysisBatchProtocol:
     decode_kwargs = decode_kwargs or {}
     if save_prompts:
-        assert batch['input'] is not None, "Input batch must contain 'input' field for decoding prompts"
+        assert batch["input"] is not None, "Input batch must contain 'input' field for decoding prompts"
         assert tokenizer is not None, "Tokenizer is required to decode prompts"
-        analysis_batch.prompts = tokenizer.batch_decode(batch['input'], **decode_kwargs)
-    elif hasattr(analysis_batch, 'prompts'):
+        analysis_batch.prompts = tokenizer.batch_decode(batch["input"], **decode_kwargs)
+    elif hasattr(analysis_batch, "prompts"):
         del analysis_batch.prompts
 
     if save_tokens:
-        assert batch['input'] is not None, "Input batch must contain 'input' field for saving tokens"
-        analysis_batch.tokens = batch['input'].detach().cpu()
-    elif hasattr(analysis_batch, 'tokens'):
+        assert batch["input"] is not None, "Input batch must contain 'input' field for saving tokens"
+        analysis_batch.tokens = batch["input"].detach().cpu()
+    elif hasattr(analysis_batch, "tokens"):
         del analysis_batch.tokens
 
     # TODO: we need to remove this cache clearing hardcoding to refer to the relevant schema configuration
     #       and enable serialization of these fields based on the schema (on a non-default basis) in the future
-    for key in ['cache', 'grad_cache']:
+    for key in ["cache", "grad_cache"]:
         if hasattr(analysis_batch, key):
             setattr(analysis_batch, key, None)
     analysis_batch.to_cpu()
     return analysis_batch
+
 
 # we use this simple helper function for pickling ops of both AnalysisOp and OpWrapper
 def _reconstruct_op(cls, state):
@@ -264,11 +263,16 @@ def _reconstruct_op(cls, state):
 
 class AnalysisOp:
     """Base class for analysis operations."""
-    def __init__(self, name: str, description: str,
-                 output_schema: OpSchema,
-                 input_schema: Optional[OpSchema] = None,
-                 aliases: Optional[Sequence[str]] = None,
-                 impl_params: Optional[Dict[str, Any]] = None) -> None:
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        output_schema: OpSchema,
+        input_schema: Optional[OpSchema] = None,
+        aliases: Optional[Sequence[str]] = None,
+        impl_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self.name = name
         self.description = description
         self.output_schema = output_schema
@@ -297,8 +301,9 @@ class AnalysisOp:
         finally:
             self._ctx_key = original_ctx_key
 
-    def _validate_input_schema(self, analysis_batch: Optional[BaseAnalysisBatchProtocol],
-                               batch: Optional[BatchEncoding]) -> None:
+    def _validate_input_schema(
+        self, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch: Optional[BatchEncoding]
+    ) -> None:
         """Validate that required inputs defined in input_schema exist in analysis_batch or batch."""
         if self.input_schema is None:
             return
@@ -307,13 +312,13 @@ class AnalysisOp:
             if not col_cfg.required:
                 continue
 
-            if col_cfg.connected_obj == 'datamodule':
+            if col_cfg.connected_obj == "datamodule":
                 # Check in batch for fields from datamodule
                 # TODO: decide whether to allow this fallback behavior or require explicit mapping by the op definitions
                 # We don't raise an error until we also check if it's already been processed and moved to analysis_batch
-                if key not in batch and (analysis_batch is None or
-                                          not hasattr(analysis_batch, key) or
-                                          getattr(analysis_batch, key) is None):
+                if key not in batch and (
+                    analysis_batch is None or not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None
+                ):
                     raise ValueError(f"Missing required input '{key}' for {self.name} operation")
             else:  # 'analysis_store'
                 # Check in analysis_batch for fields from previous operations
@@ -321,10 +326,15 @@ class AnalysisOp:
                     raise ValueError(f"Missing required analysis input '{key}' for {self.name} operation")
 
     @staticmethod
-    def process_batch(analysis_batch: BaseAnalysisBatchProtocol, batch: BatchEncoding,
-                      output_schema: OpSchema, tokenizer: PreTrainedTokenizerBase | None = None,
-                      save_prompts: bool = False, save_tokens: bool = False,
-                      decode_kwargs: Optional[dict[str, Any]] = None) -> BaseAnalysisBatchProtocol:
+    def process_batch(
+        analysis_batch: BaseAnalysisBatchProtocol,
+        batch: BatchEncoding,
+        output_schema: OpSchema,
+        tokenizer: PreTrainedTokenizerBase | None = None,
+        save_prompts: bool = False,
+        save_tokens: bool = False,
+        decode_kwargs: Optional[dict[str, Any]] = None,
+    ) -> BaseAnalysisBatchProtocol:
         """Process analysis batch using provided output schema.
 
         This static method handles the common processing logic for analysis batches,
@@ -343,15 +353,16 @@ class AnalysisOp:
             Processed analysis batch
         """
         # First apply basic wrapping
-        analysis_batch = wrap_summary(analysis_batch, batch, tokenizer, save_prompts, save_tokens,
-                         decode_kwargs=decode_kwargs)
+        analysis_batch = wrap_summary(
+            analysis_batch, batch, tokenizer, save_prompts, save_tokens, decode_kwargs=decode_kwargs
+        )
         # TODO: it probably makes sense to add custom dataset builders to handle these transformations rather than
         #       doing it here for better separation of concerns and internal consistency/api symmetry (e.g. we
         #       have custom formatters for reading back these transformed columns and all serde logic should be
         #       encapsulated at the same level of abstraction)
         # Process column configurations
         for col_name, col_cfg in output_schema.items():
-            if (col_name not in analysis_batch.keys()):
+            if col_name not in analysis_batch.keys():
                 continue
 
             # Handle dynamic dimension swapping
@@ -369,15 +380,13 @@ class AnalysisOp:
                     serialized_dict = {}
                     for hook_name, latent_dict in orig_dict.items():
                         # Only serialize if the value is actually a dict mapping latents to tensors
-                        if isinstance(latent_dict, dict) and any(isinstance(v, torch.Tensor) for
-                                                                 v in latent_dict.values()):
+                        if isinstance(latent_dict, dict) and any(
+                            isinstance(v, torch.Tensor) for v in latent_dict.values()
+                        ):
                             # Split into latents and their corresponding values
                             latents = sorted(latent_dict.keys())  # Sort for consistency
                             per_latent = [latent_dict[k] for k in latents]
-                            serialized_dict[hook_name] = {
-                                'latents': latents,
-                                'per_latent': per_latent
-                            }
+                            serialized_dict[hook_name] = {"latents": latents, "per_latent": per_latent}
                         else:
                             # Keep the original value if it's not in the expected per-latent format
                             serialized_dict[hook_name] = latent_dict
@@ -387,10 +396,15 @@ class AnalysisOp:
 
     # TODO: Add a mode where save_batch does not apply dyn_dim serialization transformations? Would allow for
     # wrap_summary/latent transformations to be executed but enable manual dataset construction
-    def save_batch(self, analysis_batch: BaseAnalysisBatchProtocol, batch: BatchEncoding,
-                  tokenizer: PreTrainedTokenizerBase | None = None, save_prompts: bool = False,
-                  save_tokens: bool = False,
-                  decode_kwargs: Optional[dict[str, Any]] = None) -> BaseAnalysisBatchProtocol:
+    def save_batch(
+        self,
+        analysis_batch: BaseAnalysisBatchProtocol,
+        batch: BatchEncoding,
+        tokenizer: PreTrainedTokenizerBase | None = None,
+        save_prompts: bool = False,
+        save_tokens: bool = False,
+        decode_kwargs: Optional[dict[str, Any]] = None,
+    ) -> BaseAnalysisBatchProtocol:
         """Save analysis batch using process_batch static method."""
         return self.process_batch(
             analysis_batch=analysis_batch,
@@ -399,7 +413,7 @@ class AnalysisOp:
             tokenizer=tokenizer,
             save_prompts=save_prompts,
             save_tokens=save_tokens,
-            decode_kwargs=decode_kwargs
+            decode_kwargs=decode_kwargs,
         )
 
     def __eq__(self, other: object) -> bool:
@@ -436,15 +450,15 @@ class AnalysisOp:
         """Get the implementation function."""
         return self._impl
 
-    def _resolve_call_params(self, impl_func: Callable, module, analysis_batch,
-                            batch, batch_idx, **kwargs) -> Dict[str, Any]:
+    def _resolve_call_params(
+        self, impl_func: Callable, module, analysis_batch, batch, batch_idx, **kwargs
+    ) -> Dict[str, Any]:
         """Resolve parameters to pass to the implementation function using smart parameter detection."""
         import inspect
 
         # Use centralized parameter building
         available_defaults = build_call_args(
-            module, analysis_batch, batch, batch_idx,
-            impl_params=self.impl_params, **kwargs
+            module, analysis_batch, batch, batch_idx, impl_params=self.impl_params, **kwargs
         )
 
         try:
@@ -468,20 +482,21 @@ class AnalysisOp:
             raise NotImplementedError(f"Operation {self.name} has no implementation")
 
         # Use centralized parameter building
-        all_params = build_call_args(
-            module, analysis_batch, batch, batch_idx,
-            impl_params=self.impl_params, **kwargs
-        )
+        all_params = build_call_args(module, analysis_batch, batch, batch_idx, impl_params=self.impl_params, **kwargs)
 
         # Resolve parameters for this specific implementation
         resolved_params = self._resolve_call_params(self._impl, **all_params)
 
         return self._impl(**resolved_params)
 
-    def __call__(self, module: Optional[torch.nn.Module] = None,
-                 analysis_batch: Optional[BaseAnalysisBatchProtocol] = None,
-                 batch: Optional[BatchEncoding] = None, batch_idx: Optional[int] = None,
-                 **kwargs) -> BaseAnalysisBatchProtocol:
+    def __call__(
+        self,
+        module: Optional[torch.nn.Module] = None,
+        analysis_batch: Optional[BaseAnalysisBatchProtocol] = None,
+        batch: Optional[BatchEncoding] = None,
+        batch_idx: Optional[int] = None,
+        **kwargs,
+    ) -> BaseAnalysisBatchProtocol:
         """Execute the operation using the configured implementation."""
         analysis_batch = analysis_batch or AnalysisBatch()
 
@@ -498,17 +513,21 @@ class AnalysisOp:
 #   - Currently only sequential composition and schema compilation is supported, but the intention
 #     is to allow DAG of ops/schemas to be compiled in the future.
 
+
 class CompositeAnalysisOp(AnalysisOp):
     """A composition of analysis operations to be executed."""
 
-    def __init__(self, ops: list[AnalysisOp],
-                 name: Optional[str] = None,
-                 aliases: Optional[Sequence[str]] = None,
-                 description: Optional[str] = None,
-                 *args, **kwargs) -> None:
-
+    def __init__(
+        self,
+        ops: list[AnalysisOp],
+        name: Optional[str] = None,
+        aliases: Optional[Sequence[str]] = None,
+        description: Optional[str] = None,
+        *args,
+        **kwargs,
+    ) -> None:
         # Create a name that combines all operation names
-        self.composition_name = '.'.join(op.name for op in ops)
+        self.composition_name = ".".join(op.name for op in ops)
         description = description or f"Composition of operations: {' → '.join(op.description for op in ops)}"
         self.name = name or self.composition_name
 
@@ -523,31 +542,37 @@ class CompositeAnalysisOp(AnalysisOp):
             output_schema = op_def.output_schema
         else:
             # Compile input and output schemas using the op definitions dictionary
-            input_schema, output_schema = jit_compile_composition_schema(
-                ops, DISPATCHER._op_definitions
-            )
+            input_schema, output_schema = jit_compile_composition_schema(ops, DISPATCHER._op_definitions)
 
-        super().__init__(name=self.name, description=description,
-                         output_schema=output_schema, input_schema=input_schema,
-                         aliases=aliases,
-                         *args, **kwargs)
+        super().__init__(
+            name=self.name,
+            description=description,
+            output_schema=output_schema,
+            input_schema=input_schema,
+            aliases=aliases,
+            *args,
+            **kwargs,
+        )
         self.composition = ops
 
-    def __call__(self, module: Optional[torch.nn.Module] = None,
-                 analysis_batch: Optional[BaseAnalysisBatchProtocol] = None,
-                 batch: Optional[BatchEncoding] = None, batch_idx: Optional[int] = None,
-                 **kwargs) -> BaseAnalysisBatchProtocol:
+    def __call__(
+        self,
+        module: Optional[torch.nn.Module] = None,
+        analysis_batch: Optional[BaseAnalysisBatchProtocol] = None,
+        batch: Optional[BatchEncoding] = None,
+        batch_idx: Optional[int] = None,
+        **kwargs,
+    ) -> BaseAnalysisBatchProtocol:
         """Execute all operations in sequence with automatic parameter resolution."""
         current_batch = analysis_batch or AnalysisBatch()
 
         for op in self.composition:
             with op.active_ctx_key(self.name):
                 # Use centralized parameter building and resolution
-                current_batch = op._call_with_resolved_params(
-                    module, current_batch, batch, batch_idx, **kwargs
-                )
+                current_batch = op._call_with_resolved_params(module, current_batch, batch, batch_idx, **kwargs)
 
         return current_batch
+
 
 class OpWrapper:
     """A special wrapper for operations that ensures the op is instantiated when accessed directly or when
@@ -555,11 +580,21 @@ class OpWrapper:
 
     # Class variable to store module access info
     _target_module = None
-    _debugger_identifier = os.environ.get('IT_ENABLE_LAZY_DEBUGGER', '')
+    _debugger_identifier = os.environ.get("IT_ENABLE_LAZY_DEBUGGER", "")
 
     # Properties that can be accessed without instantiating the op
-    _DIRECT_ACCESS_ATTRS = ('_op_name', '_instantiated_op', '_is_instantiated', '__str__', '__repr__', '__class__',
-                            'dispatcher', '_dispatcher', '__reduce__', '__reduce_ex__')
+    _DIRECT_ACCESS_ATTRS = (
+        "_op_name",
+        "_instantiated_op",
+        "_is_instantiated",
+        "__str__",
+        "__repr__",
+        "__class__",
+        "dispatcher",
+        "_dispatcher",
+        "__reduce__",
+        "__reduce_ex__",
+    )
 
     _DEBUG_OVERRIDE_ATTRS = ("__iter__", "__len__")
 
@@ -588,7 +623,7 @@ class OpWrapper:
         cls.initialize(module)
 
         # Set debugger identifier class variable
-        cls._debugger_identifier = os.environ.get('IT_ENABLE_LAZY_DEBUGGER', '')
+        cls._debugger_identifier = os.environ.get("IT_ENABLE_LAZY_DEBUGGER", "")
 
         # Register all operations with lazy getters
         for op_name in dispatcher.registered_ops:
@@ -607,6 +642,7 @@ class OpWrapper:
         """Lazily load the dispatcher only when needed."""
         if self._dispatcher is None:
             from interpretune.analysis.ops.dispatcher import DISPATCHER
+
             self._dispatcher = DISPATCHER
         return self._dispatcher
 
@@ -642,15 +678,12 @@ class OpWrapper:
             import traceback
 
             stack = traceback.extract_stack()
-            is_debugger_inspection = any(
-                type(self)._debugger_identifier in frame.filename
-                for frame in stack
-            )
+            is_debugger_inspection = any(type(self)._debugger_identifier in frame.filename for frame in stack)
             if is_debugger_inspection:
                 return None
 
         # Normal attribute access
-        if name not in ('_ensure_instantiated', '__call__'):
+        if name not in ("_ensure_instantiated", "__call__"):
             op = self._ensure_instantiated()
             return getattr(op, name)
 
@@ -676,15 +709,12 @@ class OpWrapper:
         """Return a detailed representation useful for debugging."""
         if self._is_instantiated:
             instantiated_op_repr = repr(self._instantiated_op)
-            return (
-                f"OpWrapper(name='{self._op_name}', instantiated=True, "
-                f"op={instantiated_op_repr})"
-            )
+            return f"OpWrapper(name='{self._op_name}', instantiated=True, op={instantiated_op_repr})"
         return f"OpWrapper(name='{self._op_name}', instantiated=False)"
 
     def __reduce__(self):
         """Handle pickling by converting to the actual operation."""
         op = self._ensure_instantiated()
-        if getattr(op, '__reduce__', None) and callable(op.__reduce__):
+        if getattr(op, "__reduce__", None) and callable(op.__reduce__):
             return op.__reduce__()
         return (_reconstruct_op, (op.__class__, op.__dict__.copy()))
