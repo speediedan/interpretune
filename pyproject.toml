@@ -185,9 +185,9 @@ include = [
     "src/interpretune/adapters/core.py",
     "src/interpretune/adapters/lightning.py",
     "src/interpretune/adapters/registration.py",
-    # "src/interpretune/adapters/transformer_lens.py",       # Complex transformer_lens integration
-    # "src/interpretune/adapters/sae_lens.py",               # SAE lens integration
-    # "src/interpretune/adapters/circuit_tracer.py",         # Circuit tracer integration
+    # "src/interpretune/adapters/transformer_lens.py",       # 13 errors - transformer_lens integration
+    # "src/interpretune/adapters/sae_lens.py",               # 12 errors - SAE lens integration
+    # "src/interpretune/adapters/circuit_tracer.py",         # 14 errors - circuit tracer integration
 
     # Analysis files
     "src/interpretune/analysis/__init__.py",
@@ -237,7 +237,7 @@ include = [
     # Runners
     "src/interpretune/runners/__init__.py",
     # "src/interpretune/runners/analysis.py",                 # 28 errors - protocol mismatches, argument types
-    # "src/interpretune/runners/core.py",                     # 9 errors - path operations, parameter mismatches
+    # "src/interpretune/runners/core.py",                     # Fixed: was 9 errors - path operations, parameter mismatches
 
     # Tools
     "src/interpretune/tools/",

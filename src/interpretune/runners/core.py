@@ -128,19 +128,20 @@ class SessionRunner:
 
     def it_init(self):
         # Unless overridden we dispatch the trainer-independent `it_init`
-        session_cfg = self.run_cfg.it_session
-        if not isinstance(session_cfg, dict):
-            raise TypeError("it_session configuration must be a dictionary")
-        it_init(**session_cfg)
+        if self.run_cfg.it_session is not None:
+            # If we have an ITSession object, extract module and datamodule
+            it_init(module=self.run_cfg.module, datamodule=self.run_cfg.datamodule)
+        else:
+            # If we don't have an ITSession, assume module and datamodule are provided directly
+            it_init(module=self.run_cfg.module, datamodule=self.run_cfg.datamodule)
 
     def it_session_end(self):
         """Dispatch any phase-specific session end hooks."""
         if self.phase is None:
             raise RuntimeError("Cannot call it_session_end without setting phase first")
-        session_cfg = self.run_cfg.it_session
-        if not isinstance(session_cfg, dict):
-            raise TypeError("it_session configuration must be a dictionary")
-        it_session_end(session_type=AllPhases[self.phase.name], **session_cfg)
+        it_session_end(
+            module=self.run_cfg.module, datamodule=self.run_cfg.datamodule, session_type=AllPhases[self.phase.name]
+        )
 
     def _run(self, phase, loop_fn, *args: Any, **kwargs: Any) -> Any | None:
         self.phase = CorePhases[phase]

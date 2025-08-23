@@ -9,7 +9,12 @@ from types import ModuleType
 import pytest
 import torch
 from torch.testing import assert_close
-from datasets import Column
+
+# Column class was introduced in datasets 4.0, make it optional for backward compatibility
+try:
+    from datasets import Column
+except ImportError:
+    Column = None
 
 import interpretune as it
 from interpretune.analysis.core import (
