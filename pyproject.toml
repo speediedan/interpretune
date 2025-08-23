@@ -224,6 +224,7 @@ include = [
     "src/interpretune/protocol.py",
     "src/interpretune/analysis/formatters.py",
     "src/interpretune/config/sae_lens.py",
+    "src/interpretune/analysis/ops/base.py",
 #    "src",
 #    "tests"
 
