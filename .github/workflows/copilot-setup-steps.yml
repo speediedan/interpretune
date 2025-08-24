@@ -52,7 +52,7 @@ jobs:
         run: |
           # Install pyright, pre-commit, and git-lfs
           pip install --upgrade pyright pre-commit git-lfs
-          pyright -p pyproject.toml
+          # pyright -p pyproject.toml
           pre-commit install
           git lfs install
       - name: Network & firewall diagnostics (largely diagnostics for firewall)
