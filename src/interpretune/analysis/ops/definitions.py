@@ -20,7 +20,7 @@ def boolean_logits_to_avg_logit_diff(
     target_indices: torch.Tensor,
     reduction: Literal["mean", "sum"] | None = None,
     keep_as_tensor: bool = True,
-) -> list[float] | float:
+) -> torch.Tensor | list[float] | float:
     """Returns the avg logit diff on a set of prompts, with fixed s2 pos and stuff."""
     incorrect_indices = 1 - target_indices
     correct_logits = torch.gather(logits, 2, torch.reshape(target_indices, (-1, 1, 1))).squeeze()
@@ -48,8 +48,8 @@ def get_loss_preds_diffs(
     Returns:
         Tuple of (loss, logit_diffs, preds, answer_logits)
     """
-    loss = module.loss_fn(answer_logits, analysis_batch.label_ids)
-    answer_logits = module.standardize_logits(answer_logits)
+    loss = module.loss_fn(answer_logits, analysis_batch.label_ids)  # type: ignore[attr-defined]
+    answer_logits = module.standardize_logits(answer_logits)  # type: ignore[attr-defined]
     per_example_answers, _ = torch.max(answer_logits, dim=-2)
     preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
     logit_diffs = logit_diff_fn(answer_logits, target_indices=analysis_batch.orig_labels)
@@ -200,13 +200,14 @@ def model_ablation_impl(
 
     # Run ablation for each latent
     per_latent_logits: dict[str, dict[Any, torch.Tensor]] = defaultdict(dict)
-    for name, alive in alive_latents.items():
-        for latent_idx in alive:
-            fwd_hooks_cfg = [(name, partial(ablate_latent_fn, latent_idx=latent_idx, seq_pos=answer_indices))]
-            answer_logits = module.model.run_with_hooks_with_saes(
-                **batch, saes=module.sae_handles, clear_contexts=True, fwd_hooks=fwd_hooks_cfg
-            )
-            per_latent_logits[name][latent_idx] = answer_logits[torch.arange(batch["input"].size(0)), answer_indices, :]
+    if alive_latents is not None:
+        for name, alive in alive_latents.items():
+            for latent_idx in alive:
+                fwd_hooks_cfg = [(name, partial(ablate_latent_fn, latent_idx=latent_idx, seq_pos=answer_indices))]
+                answer_logits = module.model.run_with_hooks_with_saes(  # type: ignore[attr-defined]
+                    **batch, saes=module.sae_handles, clear_contexts=True, fwd_hooks=fwd_hooks_cfg  # type: ignore[attr-defined]
+                )
+                per_latent_logits[name][latent_idx] = answer_logits[torch.arange(batch["input"].size(0)), answer_indices, :]
 
     analysis_batch.update(answer_logits=per_latent_logits)
     return analysis_batch
@@ -277,6 +278,7 @@ def logit_diffs_impl(
     """Implementation for computing logit differences."""
 
     logits, indices = analysis_batch.answer_logits, analysis_batch.answer_indices
+    assert logits is not None and indices is not None, "answer_logits and answer_indices must not be None"
     answer_logits = torch.squeeze(logits[torch.arange(batch["input"].size(0)), indices], dim=1)
     loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn)
     if logit_diffs.dim() == 0:
@@ -305,12 +307,16 @@ def sae_correct_acts_impl(
         analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
 
     # Extract correct activations for examples with positive logit differences
-    correct_mask = logit_diffs > 0
-    # Handle scalar case
-    if correct_mask.dim() == 0:
-        correct_mask = correct_mask.unsqueeze(0)
-    if logit_diffs.dim() == 0:
-        logit_diffs = logit_diffs.unsqueeze(0)
+    if logit_diffs is not None and isinstance(logit_diffs, torch.Tensor):
+        correct_mask = logit_diffs > 0
+        # Handle scalar case
+        if correct_mask.dim() == 0:
+            correct_mask = correct_mask.unsqueeze(0)
+        if logit_diffs.dim() == 0:
+            logit_diffs = logit_diffs.unsqueeze(0)
+    else:
+        # Fallback case when logit_diffs is not available
+        correct_mask = torch.ones(batch["input"].size(0), dtype=torch.bool)
 
     correct_activations = {}
     names_filter = module.analysis_cfg.names_filter

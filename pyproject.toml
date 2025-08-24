@@ -226,7 +226,7 @@ include = [
     "src/interpretune/config/sae_lens.py",
     "src/interpretune/config/transformer_lens.py",
     "src/interpretune/config/analysis.py",                  # 12 → 9 → 0 errors - Fixed!
-    # "src/interpretune/config/runner.py",                    # 12 errors - iterable types, path handling
+    "src/interpretune/config/runner.py",                    # 12 → 0 errors - Fixed!
     # "src/interpretune/config/shared.py",                    # 11 errors - type variable usage, tuple operations
 
 

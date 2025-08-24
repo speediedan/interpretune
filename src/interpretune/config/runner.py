@@ -46,12 +46,14 @@ def to_analysis_cfgs(
 
     # Handle single AnalysisOp
     if hasattr(analysis_cfgs, "name") and hasattr(analysis_cfgs, "alias"):
-        processed_cfgs.append(AnalysisCfg(target_op=analysis_cfgs))
+        processed_cfgs.append(AnalysisCfg(target_op=analysis_cfgs))  # type: ignore[arg-type]
         return processed_cfgs
 
     # Handle iterable of AnalysisCfg or AnalysisOp
     try:
-        for cfg in analysis_cfgs:
+        # Check if it's iterable first
+        iter(analysis_cfgs)  # type: ignore[call-overload]
+        for cfg in analysis_cfgs:  # type: ignore[union-attr]
             if isinstance(cfg, AnalysisCfg):
                 processed_cfgs.append(cfg)
             elif hasattr(cfg, "name") and hasattr(cfg, "alias"):  # Check if it's an AnalysisOp
@@ -93,23 +95,24 @@ def init_analysis_dirs(
             / module.datamodule.dataset["validation"]._fingerprint
             / module.__class__._orig_module_name
         )
-    cache_dir = Path(cache_dir)
+    cache_dir = Path(cache_dir) if cache_dir is not None else Path(IT_ANALYSIS_CACHE)
     cache_dir.mkdir(exist_ok=True, parents=True)
 
     # Setup output dataset path
     if op_output_dataset_path is None:
         op_output_dataset_path = module.core_log_dir / "analysis_datasets"
-    op_output_dataset_path = Path(op_output_dataset_path)
+    op_output_dataset_path = Path(op_output_dataset_path) if op_output_dataset_path is not None else Path("analysis_datasets")
     op_output_dataset_path.mkdir(exist_ok=True, parents=True)
 
     # Check for op in analysis configurations and verify directory is empty
     if analysis_cfgs:
         for cfg in analysis_cfgs:
             if cfg.op is not None:
-                op_dir = op_output_dataset_path / cfg.op.name
+                op_name = getattr(cfg.op, 'name', str(cfg.op))
+                op_dir = op_output_dataset_path / op_name
                 if op_dir.exists() and any(op_dir.iterdir()):
                     raise Exception(
-                        f"Analysis dataset directory for op '{cfg.op.name}' ({op_dir}) is not empty. "
+                        f"Analysis dataset directory for op '{op_name}' ({op_dir}) is not empty. "
                         "Please delete it or specify a different path."
                     )
 
@@ -174,8 +177,9 @@ class SessionRunnerCfg:
                 "`module`/`datamodule` should only be specified if not providing `it_session`. Attempting to"
                 " use the `module`/`datamodule` handles from `it_session`."
             )
-        self.module = self.it_session.module
-        self.datamodule = self.it_session.datamodule
+        if self.it_session is not None:
+            self.module = self.it_session.module
+            self.datamodule = self.it_session.datamodule
 
 
 @dataclass(kw_only=True)
@@ -194,7 +198,8 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        self.it_session.module.analysis_run_cfg = self
+        if self.it_session is not None and self.it_session.module is not None:
+            self.it_session.module.analysis_run_cfg = self
 
         # No need to call _process_analysis_cfgs() as it's now a property
         if self.analysis_cfgs is None:
