@@ -107,6 +107,8 @@ if _NEURONPEDIA_AVAILABLE:
         @property
         def neuronpedia_cfg(self) -> NeuronpediaConfig:
             """Get the Neuronpedia configuration."""
+            if self.phandle is None or self.phandle.it_cfg is None:
+                raise RuntimeError("IT configuration is not available")
             return self.phandle.it_cfg.neuronpedia_cfg
 
         def _get_latest_graph_schema(self, schema_path: Union[str, Path] = "graph-schema.json") -> Dict[str, Any]:
@@ -257,6 +259,8 @@ if _NEURONPEDIA_AVAILABLE:
                 if graph_path:
                     log_dir = Path(graph_path).parent
                 else:
+                    if self.phandle is None or self.phandle.core_log_dir is None:
+                        raise RuntimeError("Core log directory is not available")
                     log_dir = Path(self.phandle.core_log_dir)
                 slug = graph_dict.get("metadata", {}).get("slug") or graph_dict.get("slug") or "unknown-slug"
                 dt = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -284,7 +288,7 @@ if _NEURONPEDIA_AVAILABLE:
                 RemoveAdditionalPropertiesValidator(schema=metadata_schema).validate(instance=graph_dict["metadata"])
             except ValidationError as e:
                 # Remove invalid keys based on the error path
-                invalid_keys = [error.path[0] for error in e.context]
+                invalid_keys = [error.path[0] for error in (e.context or [])]
                 for key in invalid_keys:
                     graph_dict["metadata"].pop(key, None)
 
@@ -474,9 +478,9 @@ if _NEURONPEDIA_AVAILABLE:
                 rank_zero_warn("[NeuronpediaIntegration] Graph validation failed. Upload aborted.")
                 return None
 
-            # Determine API key
+            # Determine API key and environment
+            use_localhost = os.environ.get("USE_LOCALHOST", "false").lower() == "true"
             if api_key is None:
-                use_localhost = os.environ.get("USE_LOCALHOST", "false").lower() == "true"
                 api_key = (
                     os.environ.get("DEV_NEURONPEDIA_API_KEY")
                     if use_localhost
@@ -500,6 +504,8 @@ if _NEURONPEDIA_AVAILABLE:
 
             with neuronpedia.api_key(api_key):
                 try:
+                    if self._np_graph_metadata is None:
+                        raise RuntimeError("Neuronpedia graph metadata is not available")
                     graph_metadata = self._np_graph_metadata.upload_file(str(graph_path))
                     rank_zero_info("[NeuronpediaIntegration] Upload successful!")
                     if hasattr(graph_metadata, "url"):

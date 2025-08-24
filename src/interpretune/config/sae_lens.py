@@ -53,7 +53,12 @@ class SAELensConfig(ITLensConfig):
     @property
     def normalized_sae_cfg_refs(self) -> list[str]:
         normalized_names = []
-        for sae_cfg in self.sae_cfgs:
+        # Handle both single config and list of configs
+        if isinstance(self.sae_cfgs, (SAELensFromPretrainedConfig, SAELensCustomConfig)):
+            sae_cfgs = [self.sae_cfgs]
+        else:
+            sae_cfgs = self.sae_cfgs
+        for sae_cfg in sae_cfgs:
             if isinstance(sae_cfg, SAELensFromPretrainedConfig):
                 normalized_names.append(sae_cfg.sae_id)
             elif isinstance(sae_cfg, SAELensCustomConfig):
@@ -73,13 +78,18 @@ class SAELensConfig(ITLensConfig):
 
     def _sync_sl_tl_device_cfg(self):
         tl_device = self.tl_cfg.cfg.device if hasattr(self.tl_cfg, "cfg") else self.tl_cfg.device
-        for sae_cfg in self.sae_cfgs:
+        # Handle both single config and list of configs
+        if isinstance(self.sae_cfgs, (SAELensFromPretrainedConfig, SAELensCustomConfig)):
+            sae_cfgs = [self.sae_cfgs]
+        else:
+            sae_cfgs = self.sae_cfgs
+        for sae_cfg in sae_cfgs:
             if hasattr(sae_cfg, "cfg"):
                 self._sync_sl_tl_default_device(sae_cfg_obj=sae_cfg.cfg, tl_device=str(tl_device))
             else:
                 self._sync_sl_tl_default_device(sae_cfg_obj=sae_cfg, tl_device=str(tl_device))
 
-    def _sync_sl_tl_default_device(self, sae_cfg_obj: SAECfgType, tl_device):
+    def _sync_sl_tl_default_device(self, sae_cfg_obj: Any, tl_device):
         if sae_cfg_obj.device and tl_device:
             if sae_cfg_obj.device != tl_device:
                 rank_zero_warn(

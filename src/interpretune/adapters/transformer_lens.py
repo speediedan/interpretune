@@ -40,6 +40,13 @@ class TLensAttributeMixin:
                 or getattr(self.tl_cfg, "device", None)
                 or reduce(getattr, "model.device".split("."), self)
             )
+            # Ensure the device is properly typed
+            if device is not None and not isinstance(device, torch.device):
+                if hasattr(device, 'type'):  # Could be a device-like object
+                    # Cast to device type for type checker  
+                    device = torch.device(device) if device else None  # type: ignore[arg-type]
+                else:
+                    device = None
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
             device = None
@@ -53,6 +60,8 @@ class TLensAttributeMixin:
 
     def get_tl_device(self, block_index: int) -> Optional[torch.device]:
         try:
+            if self.tl_cfg is None:
+                return None
             device = get_device_for_block_index(block_index, self.tl_cfg)
         except (AttributeError, AssertionError) as ae:
             rank_zero_warn(
@@ -106,15 +115,27 @@ class BaseITLensModule(BaseITModule):
         # TODO: add warning that TransformerLens only specifying a single device via device  is supported
         # (though the model will automatically be moved to multiple devices if n_devices > 1)
         cust_config.num_labels = self.it_cfg.num_labels
-        if (dmap := self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs.get("device_map", None)) != "cpu":
-            rank_zero_warn(
-                "Overriding `device_map` passed to TransformerLens to transform pretrained weights on"
-                f" cpu prior to moving the model to target device: {dmap}"
+        
+        if self.it_cfg.hf_from_pretrained_cfg is not None:
+            if (dmap := self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs.get("device_map", None)) != "cpu":
+                rank_zero_warn(
+                    "Overriding `device_map` passed to TransformerLens to transform pretrained weights on"
+                    f" cpu prior to moving the model to target device: {dmap}"
+                )
+                self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs["device_map"] = "cpu"
+            
+            if self.it_cfg.model_class is None:
+                raise ValueError("model_class is None - cannot call from_pretrained")
+            model = self.it_cfg.model_class.from_pretrained(  # type: ignore[misc]
+                **self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs, config=cust_config, token=access_token
             )
-            self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs["device_map"] = "cpu"
-        model = self.it_cfg.model_class.from_pretrained(
-            **self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs, config=cust_config, token=access_token
-        )
+        else:
+            # Fallback if hf_from_pretrained_cfg is None
+            if self.it_cfg.model_class is None:
+                raise ValueError("model_class is None - cannot call from_pretrained")
+            model = self.it_cfg.model_class.from_pretrained(  # type: ignore[misc]
+                self.it_cfg.model_key, config=cust_config, token=access_token
+            )
         # perhaps explore initializing on the meta device and then materializing as needed layer by layer during
         # loading/processing into hookedtransformer
         # with torch.device("meta"):
@@ -128,7 +149,7 @@ class BaseITLensModule(BaseITModule):
         # TODO: suppress messages from tl about no tokenizer here, we're deferring the tokenizer attach until setup
         self.model = HookedTransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
 
-    def _prune_tl_cfg_dict(self, prune_list: list = None) -> dict:
+    def _prune_tl_cfg_dict(self, prune_list: Optional[list] = None) -> dict:
         """Prunes the tl_cfg dictionary by removing 'hf_model' and 'tokenizer' keys. Asserts that these keys have
         None values, and warns if they don't.
 
@@ -192,28 +213,28 @@ class TransformerLensAdapter(TLensAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="datamodule",
-            adapter_combination=(Adapter.core, Adapter.transformer_lens),
+            adapter_combination=(Adapter.core, Adapter.transformer_lens),  # type: ignore[arg-type]
             composition_classes=(ITDataModule,),
             description="Transformer Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),  # type: ignore[arg-type]
             composition_classes=(ITDataModule, LightningDataModule),
             description="Transformer Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="module",
-            adapter_combination=(Adapter.core, Adapter.transformer_lens),
+            adapter_combination=(Adapter.core, Adapter.transformer_lens),  # type: ignore[arg-type]
             composition_classes=(ITLensModule,),
             description="Transformer Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="module",
-            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),  # type: ignore[arg-type]
             composition_classes=(
                 TLensAttributeMixin,
                 BaseITLensModule,
@@ -225,7 +246,9 @@ class TransformerLensAdapter(TLensAttributeMixin):
         )
 
     def batch_to_device(self, batch) -> BatchEncoding:
-        move_data_to_device(batch, self.input_device)
+        device = self.input_device
+        if device is not None:
+            move_data_to_device(batch, device)
         return batch
 
 

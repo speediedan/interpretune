@@ -154,10 +154,14 @@ class MemProfiler:
 
     @property
     def memprofiler_cfg(self) -> MemProfilerCfg:
+        if self._module is None or self._module.it_cfg is None:
+            raise RuntimeError("Module or IT configuration is not available")
         return self._module.it_cfg.memprofiler_cfg
 
     @property
     def schedule(self) -> int:
+        if self._module is None or self._module.it_cfg is None:
+            raise RuntimeError("Module or IT configuration is not available")
         return self._module.it_cfg.memprofiler_cfg.schedule
 
     def remove_memprofiler_hooks(self) -> None:
@@ -167,6 +171,8 @@ class MemProfiler:
 
     def exec_reset_state_hooks(self) -> None:
         for hook in self._configured_hooks["reset_state_hooks"]:
+            if self._module is None or self._module.model is None:
+                raise RuntimeError("Module or model is not available")
             hook(self._module.model, self.memprofiler_cfg.save_hook_attrs)
 
     def add_memprofiler_hooks(self) -> None:
@@ -178,6 +184,10 @@ class MemProfiler:
                 self._configured_hooks[supported_hooks.name] = resolve_funcs(
                     cfg_obj=memory_hooks_cfg, func_type=supported_hooks.name
                 )
+        if self._module is None or self._module.model is None:
+            raise RuntimeError("Module or model is not available")
+        if self._curr_pid is None:
+            raise RuntimeError("Memory profiling process not initialized")
         for module in self._module.model.modules():
             module.mem_info_handle = self._curr_pid.memory_info
             for hook_func in self._configured_hooks["pre_forward_hooks"]:
@@ -187,13 +197,23 @@ class MemProfiler:
         self.exec_reset_state_hooks()
 
     def init_cuda_snapshots_dir(self) -> None:
-        self._cuda_snapshot_dir = self.memprofiler_cfg.save_dir or Path(self._module.core_log_dir) / "memprofiler"
-        self._cuda_snapshot_dir = Path(self._cuda_snapshot_dir)  # ensure the dir is a Path
+        if self._module is None or self._module.core_log_dir is None:
+            raise RuntimeError("Module or core log directory is not available")
+
+        save_dir = self.memprofiler_cfg.save_dir
+        if save_dir is not None:
+            self._cuda_snapshot_dir = Path(save_dir)
+        else:
+            self._cuda_snapshot_dir = Path(self._module.core_log_dir) / "memprofiler"
+
         self._cuda_snapshot_dir.mkdir(exist_ok=True, parents=True)
 
     def cuda_allocator_history_snap(self, snap_key: tuple) -> dict:
+        if self._cuda_snapshot_dir is None:
+            raise RuntimeError("CUDA snapshot directory not initialized")
         cuda_snapshot_file = self._cuda_snapshot_dir / f"cuda_alloc_{snap_key}.pickle"
-        torch.cuda.memory._dump_snapshot(cuda_snapshot_file)
+        torch.cuda.memory._dump_snapshot(str(cuda_snapshot_file))
+        return {"cuda_snapshot_file": str(cuda_snapshot_file)}
 
     def done(self, step_idx: int) -> bool:
         return self.schedule.max_step and step_idx >= self.schedule.max_step
@@ -202,21 +222,26 @@ class MemProfiler:
         if self.memprofiler_cfg.enable_memory_hooks:
             if len(self._hook_handles) == 0:
                 self.add_memprofiler_hooks()
+            if self._module is None or self._module.model is None:
+                raise RuntimeError("Module or model is not available")
             collected = {attr: getattr(self._module.model, attr, None) for attr in self.memprofiler_cfg.save_hook_attrs}
             self.memory_stats[snap_key].update(collected)
 
     def _collect_snap(self, snap_key, reset_mem_hooks: bool = False) -> None:
+        original_snap_key = snap_key  # Keep the original tuple
         _, phase, *_ = snap_key
-        snap_key = ".".join(map(str, snap_key))
+        snap_key_str = ".".join(map(str, snap_key))
         mem_cfg = self.memprofiler_cfg
-        self._process_hooks(snap_key)
+        self._process_hooks(snap_key_str)
         if phase in mem_cfg.enabled_funcs.cpu:
+            if self._curr_pid is None:
+                raise RuntimeError("Memory profiling process not initialized")
             mem = self._curr_pid.memory_info()
-            self.memory_stats[snap_key].update({"rss": mem.rss, "vms": mem.vms})
+            self.memory_stats[snap_key_str].update({"rss": mem.rss, "vms": mem.vms})
         if phase in mem_cfg.enabled_funcs.cuda:
-            self.memory_stats[snap_key].update(torch.cuda.memory_stats())
+            self.memory_stats[snap_key_str].update(torch.cuda.memory_stats())
         if phase in mem_cfg.enabled_funcs.cuda_allocator_history and mem_cfg.cuda_allocator_history:
-            self.cuda_allocator_history_snap(snap_key)
+            self.cuda_allocator_history_snap(original_snap_key)
         if mem_cfg.enable_memory_hooks and reset_mem_hooks:
             self.exec_reset_state_hooks()
 
@@ -239,10 +264,16 @@ class MemProfiler:
         # snap key format is rank.phase.epoch_idx.step_idx.step_ctx
         # e.g. 0.training_step.0.0.end keys hook output for the end of training step 0, epoch 0 for rank 0
         # 0.training_step.1.2.start keys mem stats for the start of training step 2, epoch 1 for rank 0
-        epoch_idx = next(e_idx for e_idx in (epoch_idx, self._module.current_epoch) if e_idx is not None)
+        current_epoch = self._module.current_epoch if self._module is not None else None
+        epoch_idx = next((e_idx for e_idx in (epoch_idx, current_epoch) if e_idx is not None), 0)
         if step_idx is None:
-            step_idx = self._snap_indices[(phase, step_ctx)]
-        return epoch_idx, step_idx, (self._rank, phase, epoch_idx, step_idx, step_ctx)
+            step_idx = self._snap_indices.get((phase, step_ctx), 0)
+
+        # Ensure we return proper ints, not None
+        final_epoch_idx = epoch_idx if epoch_idx is not None else 0
+        final_step_idx = step_idx if step_idx is not None else 0
+
+        return final_epoch_idx, final_step_idx, (self._rank, phase, final_epoch_idx, final_step_idx, step_ctx)
 
     def maybe_init_phase(self, phase: str, step_ctx: str) -> None:
         if not self._snap_indices.get((phase, step_ctx), None):
@@ -272,6 +303,8 @@ class MemProfiler:
     @rank_zero_only
     def dump_memory_stats(self) -> None:
         # TODO: all gather memory stats in the future if/when multiple ranks are supported
+        if self._cuda_snapshot_dir is None:
+            raise RuntimeError("CUDA snapshot directory not initialized")
         filename = self._cuda_snapshot_dir / "memory_stats.pickle"
         with open(filename, "wb") as f:
             pickle.dump(self.memory_stats, f)
