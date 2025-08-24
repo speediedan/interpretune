@@ -202,6 +202,7 @@ class TestClassSAELens:
         assert not torch.allclose(logits_with_saes, original_logits)
         assert c.count == len(sl_test_module.sae_handles)
 
+    @RunIf(lightning=True)
     def test_sl_module_warns(self, get_it_session__l_sl_gpt2__initonly):
         fixture = get_it_session__l_sl_gpt2__initonly
         sl_test_module = fixture.it_session.module

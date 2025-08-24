@@ -22,7 +22,9 @@ if _LIGHTNING_AVAILABLE:
     from lightning.pytorch.callbacks import ModelCheckpoint
     from interpretune.base import l_cli_main
 else:
-    seed_everything = object
+    def seed_everything(*args, **kwargs):  # type: ignore[misc]
+        """Mock seed_everything when Lightning is not available."""
+        pass
     l_cli_main = None
     Trainer = object
     Callback = object
