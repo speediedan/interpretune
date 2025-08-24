@@ -102,16 +102,15 @@ class DebugGeneration:
             gen_config_override={"max_new_tokens": 25})
         ```
         """
-        if self.phandle is None:
-            raise RuntimeError("phandle not connected - call connect() first")
-
         if sequences is None:
-            sequences = self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
+            sequences = self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences if self.phandle is not None else []
         if format is None:
-            format = self.phandle.datamodule.itdm_cfg.cust_tokenization_pattern
+            format = self.phandle.datamodule.itdm_cfg.cust_tokenization_pattern if self.phandle is not None else None
         if sequences is None:
             sequences = []
         try:
+            if self.phandle is None:
+                raise AttributeError("phandle not connected - call connect() first")
             return [self.phandle.datamodule.itdm_cfg.prompt_cfg.model_chat_template_fn(ex, format) for ex in sequences]
         except Exception as e:
             rank_zero_warn(

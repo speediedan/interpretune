@@ -80,10 +80,12 @@ class BaseSAELensModule(BaseITLensModule):
                 handle, original_cfg, sparsity = SAE.from_pretrained_with_cfg_and_sparsity(**sae_cfg.__dict__)
             else:
                 # TODO: enable configuration of SAE subclass to use
-                handle = StandardSAE(cfg=sae_cfg.cfg)
-            self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))
+                handle = StandardSAE(cfg=sae_cfg.cfg)  # type: ignore[arg-type]
+                original_cfg = original_cfg or {}
+                sparsity = sparsity or {}
+            self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))  # type: ignore[arg-type]
             if self.it_cfg.add_saes_on_init:
-                self.model.add_sae(added_sae.handle)
+                self.model.add_sae(added_sae.handle())  # type: ignore[operator]
 
     def tl_config_model_init(self) -> None:
         self.model = HookedSAETransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
@@ -109,35 +111,35 @@ class SAELensAdapter(SAELensAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="datamodule",
-            adapter_combination=(Adapter.core, Adapter.sae_lens),
+            adapter_combination=(Adapter.sae_lens,),
             composition_classes=(ITDataModule,),
             description="SAE Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.sae_lens),
+            adapter_combination=(Adapter.sae_lens,),
             composition_classes=(ITDataModule, LightningDataModule),
             description="SAE Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module",
-            adapter_combination=(Adapter.core, Adapter.sae_lens),
+            adapter_combination=(Adapter.sae_lens,),
             composition_classes=(SAELensModule,),
             description="SAE Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module_cfg",
-            adapter_combination=(Adapter.core, Adapter.sae_lens),
+            adapter_combination=(Adapter.sae_lens,),
             composition_classes=(SAELensConfig,),
             description="SAE Lens configuration that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module",
-            adapter_combination=(Adapter.lightning, Adapter.sae_lens),
+            adapter_combination=(Adapter.sae_lens,),
             composition_classes=(
                 SAELensAttributeMixin,
                 BaseSAELensModule,
@@ -150,13 +152,14 @@ class SAELensAdapter(SAELensAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module_cfg",
-            adapter_combination=(Adapter.lightning, Adapter.sae_lens),
+            adapter_combination=(Adapter.sae_lens,),
             composition_classes=(SAELensConfig,),
             description="SAE Lens adapter that can be composed with core and l...",
         )
 
     def batch_to_device(self, batch) -> BatchEncoding:
-        move_data_to_device(batch, self.input_device)
+        if self.input_device is not None:
+            move_data_to_device(batch, self.input_device)
         return batch
 
 
@@ -170,7 +173,7 @@ class SAEAnalysisMixin:
         names_filter = [
             hook
             for hook in available_hooks
-            if sae_hook_match_fn(in_name=hook, layers=target_layers if target_layers is not None else None)
+            if sae_hook_match_fn(hook, [target_layers] if isinstance(target_layers, int) else target_layers)
         ]
         return names_filter
 

@@ -547,8 +547,8 @@ class CompositeAnalysisOp(AnalysisOp):
         super().__init__(
             name=self.name,
             description=description,
-            output_schema=output_schema,
-            input_schema=input_schema,
+            output_schema=output_schema,  # type: ignore[arg-type]
+            input_schema=input_schema,  # type: ignore[arg-type]
             aliases=aliases,
             *args,
             **kwargs,

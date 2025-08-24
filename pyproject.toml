@@ -188,8 +188,8 @@ include = [
     "src/interpretune/adapters/lightning.py",
     "src/interpretune/adapters/registration.py",
     "src/interpretune/adapters/transformer_lens.py",            # 13 → 0 errors - Fixed!
-    # "src/interpretune/adapters/sae_lens.py",               # 12 errors - SAE lens integration
-    # "src/interpretune/adapters/circuit_tracer.py",         # 14 errors - circuit tracer integration
+    "src/interpretune/adapters/sae_lens.py",                   # 12 → 0 errors - Fixed!
+    "src/interpretune/adapters/circuit_tracer.py",             # 14 → 0 errors - Fixed!
 
     # Analysis files
     "src/interpretune/analysis/__init__.py",
