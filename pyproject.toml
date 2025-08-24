@@ -195,7 +195,7 @@ include = [
     "src/interpretune/analysis/__init__.py",
     "src/interpretune/analysis/formatters.py",
     # "src/interpretune/analysis/core.py",                    # 78 errors - very complex type issues
-    # "src/interpretune/analysis/ops/definitions.py",        # 19 errors - tensor operations, protocol issues
+    "src/interpretune/analysis/ops/definitions.py",        # 19 → 0 errors - Fixed!
     "src/interpretune/analysis/ops/dynamic_module_utils.py",
     "src/interpretune/analysis/ops/__init__.py",
     "src/interpretune/analysis/ops/auto_columns.py",

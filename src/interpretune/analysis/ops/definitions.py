@@ -279,7 +279,9 @@ def logit_diffs_impl(
 
     logits, indices = analysis_batch.answer_logits, analysis_batch.answer_indices
     assert logits is not None and indices is not None, "answer_logits and answer_indices must not be None"
-    answer_logits = torch.squeeze(logits[torch.arange(batch["input"].size(0)), indices], dim=1)
+    assert isinstance(logits, torch.Tensor) and isinstance(indices, torch.Tensor), "logits and indices must be tensors"
+    indexed_logits = logits[torch.arange(batch["input"].size(0)), indices]
+    answer_logits = torch.squeeze(indexed_logits, dim=1)
     loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn)
     if logit_diffs.dim() == 0:
         logit_diffs.unsqueeze_(0)
@@ -319,7 +321,8 @@ def sae_correct_acts_impl(
         correct_mask = torch.ones(batch["input"].size(0), dtype=torch.bool)
 
     correct_activations = {}
-    names_filter = module.analysis_cfg.names_filter
+    names_filter = module.analysis_cfg.names_filter  # type: ignore[attr-defined]
+    assert cache is not None, "cache should not be None after validation"
     for name, acts in cache.items():
         if not names_filter(name):
             continue
@@ -361,7 +364,7 @@ def gradient_attribution_impl(
     if isinstance(cache_source, ActivationCache):
         batch_cache_dict = cache_source
     else:
-        batch_cache_dict = ActivationCache(cache_source, module.model)
+        batch_cache_dict = ActivationCache(cache_source, module.model)  # type: ignore[arg-type]
     batch_sz = batch["input"].size(0)
 
     # Get alive latents using GetAliveLatentsOp  # TODO: clean this up so no temp batch is required
@@ -369,7 +372,7 @@ def gradient_attribution_impl(
     temp_batch = AnalysisBatch(cache=batch_cache_dict, answer_indices=analysis_batch.answer_indices)
 
     # TODO: refactor this to use the GetAliveLatentsOp? (which should then dispatch alive_latents implementation)
-    temp_batch = it.get_alive_latents(module, temp_batch, batch, batch_idx)
+    temp_batch = it.get_alive_latents(module, temp_batch, batch, batch_idx)  # type: ignore[arg-type]
     analysis_batch.alive_latents = temp_batch.alive_latents
 
     # Compute attribution values and correct activations
@@ -400,13 +403,18 @@ def gradient_attribution_impl(
                 t.unsqueeze_(1)
 
         # Extract correct activations (for examples with positive logit differences)
-        correct_activations[fwd_name] = torch.squeeze(fwd_hook_acts[(analysis_batch.logit_diffs > 0), :, :], dim=1)
+        if analysis_batch.logit_diffs is not None and isinstance(analysis_batch.logit_diffs, torch.Tensor):
+            correct_mask = analysis_batch.logit_diffs > 0
+            correct_activations[fwd_name] = torch.squeeze(fwd_hook_acts[correct_mask, :, :], dim=1)
+        else:
+            correct_activations[fwd_name] = torch.squeeze(fwd_hook_acts, dim=1)
 
         # Calculate attribution as activations × gradients for the alive latents
-        alive_indices = analysis_batch.alive_latents[fwd_name]
-        attribution_values[fwd_name][:, alive_indices] = torch.squeeze(
-            (bwd_hook_grads[:, :, alive_indices] * fwd_hook_acts[:, :, alive_indices]).cpu(), dim=1
-        )
+        if analysis_batch.alive_latents is not None and fwd_name in analysis_batch.alive_latents:
+            alive_indices = analysis_batch.alive_latents[fwd_name]
+            attribution_values[fwd_name][:, alive_indices] = torch.squeeze(
+                (bwd_hook_grads[:, :, alive_indices] * fwd_hook_acts[:, :, alive_indices]).cpu(), dim=1
+            )
 
     # Update the analysis batch with results
     analysis_batch.update(attribution_values=attribution_values, correct_activations=correct_activations)
@@ -438,34 +446,36 @@ def ablation_attribution_impl(
     }
 
     # Process per-latent logits for each hook
-    for act_name, logits in analysis_batch.answer_logits.items():
-        attribution_values[act_name] = torch.zeros(batch["input"].size(0), module.sae_handles[0].cfg.d_sae)
-        for latent_idx in analysis_batch.alive_latents[act_name]:
-            # Calculate metrics for this latent using the instance's get_loss_preds_diffs method
-            loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(
-                module, analysis_batch, logits[latent_idx], logit_diff_fn
-            )
+    if analysis_batch.answer_logits is not None and analysis_batch.alive_latents is not None:
+        for act_name, logits in analysis_batch.answer_logits.items():
+            attribution_values[act_name] = torch.zeros(batch["input"].size(0), module.sae_handles[0].cfg.d_sae)  # type: ignore[attr-defined]
+            for latent_idx in analysis_batch.alive_latents[act_name]:
+                # Calculate metrics for this latent using the instance's get_loss_preds_diffs method
+                loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(
+                    module, analysis_batch, logits[latent_idx], logit_diff_fn
+                )
 
-            # Store per-latent metrics
-            for metric_name, value in zip(per_latent.keys(), (loss, logit_diffs, preds, answer_logits)):
-                per_latent[metric_name][act_name][latent_idx] = value
+                # Store per-latent metrics
+                for metric_name, value in zip(per_latent.keys(), (loss, logit_diffs, preds, answer_logits)):
+                    per_latent[metric_name][act_name][latent_idx] = value
 
-            # Calculate attribution values
-            example_mask = (per_latent["logit_diffs"][act_name][latent_idx] > 0).cpu()
-            per_latent["logit_diffs"][act_name][latent_idx] = (
-                per_latent["logit_diffs"][act_name][latent_idx][example_mask].detach().cpu()
-            )
+                # Calculate attribution values
+                example_mask = (per_latent["logit_diffs"][act_name][latent_idx] > 0).cpu()
+                per_latent["logit_diffs"][act_name][latent_idx] = (
+                    per_latent["logit_diffs"][act_name][latent_idx][example_mask].detach().cpu()
+                )
 
-            base_diffs = analysis_batch.logit_diffs
-            for t in [example_mask, base_diffs]:
-                if t.dim() == 0:
-                    t.unsqueeze_(0)
-            base_diffs = base_diffs.cpu()
+                base_diffs = analysis_batch.logit_diffs
+                if base_diffs is not None:
+                    for t in [example_mask, base_diffs]:
+                        if t.dim() == 0:
+                            t.unsqueeze_(0)
+                    base_diffs = base_diffs.cpu()
 
-            # Attribution is difference between base and ablated performance
-            attribution_values[act_name][example_mask, latent_idx] = (
-                base_diffs[example_mask] - per_latent["logit_diffs"][act_name][latent_idx]
-            )
+                    # Attribution is difference between base and ablated performance
+                    attribution_values[act_name][example_mask, latent_idx] = (
+                        base_diffs[example_mask] - per_latent["logit_diffs"][act_name][latent_idx]
+                    )
 
     # Update analysis batch with results
     for key in per_latent:
