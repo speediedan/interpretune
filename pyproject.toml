@@ -213,7 +213,7 @@ include = [
     "src/interpretune/base/components/__init__.py",
     # "src/interpretune/base/components/mixins.py",           # 35 errors - optional member access, callable issues
     # "src/interpretune/base/components/cli.py",              # 24 errors - path operations, argument types
-    # "src/interpretune/base/components/core.py",             # 9 errors - protocol issues, path operations
+    "src/interpretune/base/components/core.py",             # 9 → 1 → 0 errors - Fixed!
     "src/interpretune/base/datamodules.py",
 
     # Config files
@@ -225,7 +225,7 @@ include = [
     "src/interpretune/config/module.py",
     "src/interpretune/config/sae_lens.py",
     "src/interpretune/config/transformer_lens.py",
-    # "src/interpretune/config/analysis.py",                  # 12 errors - protocol compatibility, function attributes
+    "src/interpretune/config/analysis.py",                  # 12 → 9 → 0 errors - Fixed!
     # "src/interpretune/config/runner.py",                    # 12 errors - iterable types, path handling
     # "src/interpretune/config/shared.py",                    # 11 errors - type variable usage, tuple operations
 

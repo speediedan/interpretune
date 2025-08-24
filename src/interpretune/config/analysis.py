@@ -1,5 +1,5 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Optional, Generator, Union, Callable
+from typing import Optional, Generator, Union, Callable, cast
 from dataclasses import dataclass, field
 import datetime
 import warnings
@@ -47,10 +47,10 @@ class AnalysisCfg(ITSerializableCfg):
         if self._op is None:
             return None
 
-        # Unwrap OpWrapper instances if needed
+        # Unwrap OpWrapper instances if needed - only check on objects that might have these attributes
         if hasattr(self._op, "_is_instantiated") and getattr(self._op, "_is_instantiated", False):
             if hasattr(self._op, "_instantiated_op"):
-                return self._op._instantiated_op
+                return getattr(self._op, "_instantiated_op")
 
         return self._op
 
@@ -76,7 +76,7 @@ class AnalysisCfg(ITSerializableCfg):
             self.resolve_op()
         if self.name is None and self.op is not None:  # Set name from op if name is not already set
             if hasattr(self.op, "name"):
-                self.name = self.op.name
+                self.name = getattr(self.op, "name")
         if self.name is None:  # If name still not set (no op was resolved), use timestamp default
             self.name = f"default_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
@@ -97,7 +97,7 @@ class AnalysisCfg(ITSerializableCfg):
         elif isinstance(self.output_schema, str):
             resolved_op = DISPATCHER.get_op(self.output_schema)
             if hasattr(resolved_op, "output_schema"):
-                self.output_schema = resolved_op.output_schema
+                self.output_schema = getattr(resolved_op, "output_schema")
 
     def resolve_op(self) -> None:
         if isinstance(self.op, list):  # Convert list of ops to composition
@@ -199,7 +199,8 @@ class AnalysisCfg(ITSerializableCfg):
 
         if self.op is not None and hasattr(self.op, "save_batch"):
             # When using a defined operation
-            analysis_batch = self.op.save_batch(
+            save_batch_fn = getattr(self.op, "save_batch")
+            analysis_batch = save_batch_fn(
                 analysis_batch,
                 batch,
                 tokenizer=tokenizer,
@@ -213,13 +214,20 @@ class AnalysisCfg(ITSerializableCfg):
             if isinstance(output_schema, (str, type(None))):
                 # Convert string or None to OpSchema
                 output_schema = OpSchema({}) if output_schema is None else OpSchema({})
+            elif hasattr(output_schema, "output_schema"):  # Extract schema from AnalysisOp
+                extracted_schema = getattr(output_schema, "output_schema")
+                output_schema = extracted_schema if extracted_schema is not None else OpSchema({})
             elif not hasattr(output_schema, "__dict__"):  # Not OpSchema-like
+                output_schema = OpSchema({})
+            
+            # Final check to ensure output_schema is an OpSchema
+            if not hasattr(output_schema, "__dict__"):
                 output_schema = OpSchema({})
 
             analysis_batch = AnalysisOp.process_batch(
                 analysis_batch,
                 batch,
-                output_schema=output_schema,
+                output_schema=cast(OpSchema, output_schema),  # Ensure type checker knows this is OpSchema
                 tokenizer=tokenizer,
                 save_prompts=self.save_prompts,
                 save_tokens=self.save_tokens,
@@ -255,13 +263,13 @@ class AnalysisCfg(ITSerializableCfg):
 
         if self.op is None:
             self.fwd_hooks, self.bwd_hooks = fwd_hooks, bwd_hooks
-            return fwd_hooks, bwd_hooks
+            return
 
         # TODO: change these op-based checks to be functionally driven (e.g. uses_default_hooks attribute of ops)
-        if hasattr(self.op, "name") and self.op.name == "logit_diffs_base":
-            return fwd_hooks, bwd_hooks
+        if hasattr(self.op, "name") and getattr(self.op, "name") == "logit_diffs_base":
+            return
 
-        if hasattr(self.op, "name") and self.op.name == "logit_diffs_attr_grad":
+        if hasattr(self.op, "name") and getattr(self.op, "name") == "logit_diffs_attr_grad":
             self.add_default_cache_hooks()
 
         # TODO: add in an op attribute akin to "uses_sae_hooks" to enable names_filter validation resolution etc.

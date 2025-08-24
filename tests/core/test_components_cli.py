@@ -126,10 +126,6 @@ def test_lightning_adapter_attr_missing(clean_cli_env):
 @pytest.mark.parametrize("run", [True, False], ids=["run", "norun"])
 @pytest.mark.parametrize("l_cli", [True, False], ids=["l_cli", "core_cli"])
 def test_bootstrap_cli(clean_cli_env, l_cli, run):
-    # Skip Lightning tests when Lightning is not available
-    if l_cli:
-        pytest.importorskip("lightning.pytorch")
-    
     # note this test targets the CLI bootstrap parsing logic versus full CLI execution
     # the CLI bootstrap options are also exercised in `test_cli_configs` but tested here as well in part to ensure the
     # lines covered by `test_cli_configs` via subprocesses are properly captured by coverage without the burden

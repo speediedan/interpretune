@@ -85,7 +85,7 @@ class BaseSAELensModule(BaseITLensModule):
                 sparsity = sparsity or {}
             self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))  # type: ignore[arg-type]
             if self.it_cfg.add_saes_on_init:
-                self.model.add_sae(added_sae.handle)  # type: ignore[attr-defined]
+                self.model.add_sae(added_sae.handle())  # type: ignore[operator]
 
     def tl_config_model_init(self) -> None:
         self.model = HookedSAETransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
@@ -111,35 +111,35 @@ class SAELensAdapter(SAELensAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="datamodule",
-            adapter_combination=(Adapter.core, Adapter.sae_lens),
+            adapter_combination=(Adapter.sae_lens,),
             composition_classes=(ITDataModule,),
             description="SAE Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.sae_lens),
+            adapter_combination=(Adapter.sae_lens,),
             composition_classes=(ITDataModule, LightningDataModule),
             description="SAE Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module",
-            adapter_combination=(Adapter.core, Adapter.sae_lens),
+            adapter_combination=(Adapter.sae_lens,),
             composition_classes=(SAELensModule,),
             description="SAE Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module_cfg",
-            adapter_combination=(Adapter.core, Adapter.sae_lens),
+            adapter_combination=(Adapter.sae_lens,),
             composition_classes=(SAELensConfig,),
             description="SAE Lens configuration that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module",
-            adapter_combination=(Adapter.lightning, Adapter.sae_lens),
+            adapter_combination=(Adapter.sae_lens,),
             composition_classes=(
                 SAELensAttributeMixin,
                 BaseSAELensModule,
@@ -152,7 +152,7 @@ class SAELensAdapter(SAELensAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module_cfg",
-            adapter_combination=(Adapter.lightning, Adapter.sae_lens),
+            adapter_combination=(Adapter.sae_lens,),
             composition_classes=(SAELensConfig,),
             description="SAE Lens adapter that can be composed with core and l...",
         )

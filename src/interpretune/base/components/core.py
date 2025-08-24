@@ -371,15 +371,15 @@ class OptimizerScheduler:
 
         # single output, single optimizer
         if isinstance(
-            optim_conf, Optimizable
-        ):  # TODO: switch to ParamGroupAddable protocol for FTS instead?  # type: ignore[misc]
+            optim_conf, Optimizer
+        ):  # TODO: switch to ParamGroupAddable protocol for FTS instead?
             optimizers = [optim_conf]
         # two lists, optimizer + lr schedulers
         elif (
             isinstance(optim_conf, (list, tuple))
             and len(optim_conf) == 2
             and isinstance(optim_conf[0], list)
-            and all(isinstance(opt, Optimizable) for opt in optim_conf[0])
+            and all(isinstance(opt, Optimizer) for opt in optim_conf[0])
         ):
             opt, sch = optim_conf
             optimizers = opt
@@ -403,7 +403,7 @@ class OptimizerScheduler:
                 scheduler_dict(opt_dict["lr_scheduler"]) for opt_dict in optim_conf if "lr_scheduler" in opt_dict
             ]
         # single list or tuple, multiple optimizer
-        elif isinstance(optim_conf, (list, tuple)) and all(isinstance(opt, Optimizable) for opt in optim_conf):
+        elif isinstance(optim_conf, (list, tuple)) and all(isinstance(opt, Optimizer) for opt in optim_conf):
             optimizers = list(optim_conf)
         # unknown configuration
         else:
