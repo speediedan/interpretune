@@ -173,11 +173,6 @@ max-complexity = 10
 
 [tool.pyright]
 autoSearchPaths=false
-extraPaths= [
-    "/home/speediedan/repos/interpretune",
-    "/home/speediedan/repos/interpretune/src",
-    "/home/speediedan/repos/interpretune/tests",
-    ] # Include paths from PYTHONPATH env var and .env definition
 typeCheckingMode="standard"
 include = [
     "src/interpretune/__about__.py",
