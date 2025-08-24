@@ -172,13 +172,20 @@ order-by-type = false
 max-complexity = 10
 
 [tool.pyright]
+autoSearchPaths=true
+extraPaths= [
+    "/home/speediedan/repos/interpretune",
+    "/home/speediedan/repos/interpretune/src",
+    "/home/speediedan/repos/interpretune/tests",
+    ] # Include paths from PYTHONPATH env var and .env definition
+typeCheckingMode="standard"
 include = [
     "src/interpretune/__about__.py",
     "src/interpretune/__init__.py",
     "src/interpretune/adapter_registry.py",
     "src/interpretune/protocol.py",
     "src/interpretune/session.py",
-    # "src/interpretune/registry.py",                         # 15 errors - protocol compatibility, dict typing
+    "src/interpretune/registry.py",                         # 15 errors - protocol compatibility, dict typing
 
     # Adapter files
     "src/interpretune/adapters/__init__.py",
@@ -232,7 +239,7 @@ include = [
     "src/interpretune/extensions/__init__.py",
     "src/interpretune/extensions/memprofiler.py",
     "src/interpretune/extensions/neuronpedia.py",
-    "src/interpretune/extensions/debug_generation.py",      # 30+ → 0 errors - Fixed!
+    "src/interpretune/extensions/debug_generation.py",
 
     # Runners
     "src/interpretune/runners/__init__.py",
@@ -253,7 +260,6 @@ include = [
     "src/interpretune/utils/warnings.py",
 
 ]
-typeCheckingMode = "basic"
 exclude = [
     # patch of external code
     "src/interpretune/utils/patched_tlens_generate.py",
