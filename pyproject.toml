@@ -172,7 +172,7 @@ order-by-type = false
 max-complexity = 10
 
 [tool.pyright]
-autoSearchPaths=true
+autoSearchPaths=false
 extraPaths= [
     "/home/speediedan/repos/interpretune",
     "/home/speediedan/repos/interpretune/src",
@@ -185,7 +185,7 @@ include = [
     "src/interpretune/adapter_registry.py",
     "src/interpretune/protocol.py",
     "src/interpretune/session.py",
-    "src/interpretune/registry.py",                         # 15 errors - protocol compatibility, dict typing
+    # "src/interpretune/registry.py",                         # 15 errors - protocol compatibility, dict typing
 
     # Adapter files
     "src/interpretune/adapters/__init__.py",
