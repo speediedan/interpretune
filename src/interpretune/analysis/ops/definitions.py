@@ -249,8 +249,8 @@ def model_gradient_impl(
             with module.model.hooks(fwd_hooks=module.analysis_cfg.fwd_hooks, bwd_hooks=module.analysis_cfg.bwd_hooks):
                 answer_logits = module.model(**batch)
                 answer_logits = torch.squeeze(
-                    answer_logits[torch.arange(batch["input"].size(0)), answer_indices],
-                    dim=1,  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+                    answer_logits[torch.arange(batch["input"].size(0)), answer_indices],  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+                    dim=1,
                 )
                 # Compute loss and logit differences using the instance's get_loss_preds_diffs method
                 loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(

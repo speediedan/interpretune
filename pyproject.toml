@@ -189,7 +189,7 @@ include = [
     "src/interpretune/adapters/registration.py",               # Fixed: was 1 error
     "src/interpretune/adapters/transformer_lens.py",           # Fixed: was 6 errors
     "src/interpretune/adapters/sae_lens.py",                   # Fixed: was 4 errors
-    # "src/interpretune/adapters/circuit_tracer.py",             # 23 errors
+    "src/interpretune/adapters/circuit_tracer.py",             # Fixed: was 23 errors
 
     # Analysis files
     "src/interpretune/analysis/__init__.py",
@@ -234,7 +234,7 @@ include = [
     "src/interpretune/extensions/__init__.py",
     "src/interpretune/extensions/memprofiler.py",
     "src/interpretune/extensions/neuronpedia.py",
-    # "src/interpretune/extensions/debug_generation.py",       # 20 errors
+    "src/interpretune/extensions/debug_generation.py",       # Fixed: was 20 errors
 
     # Runners
     "src/interpretune/runners/__init__.py",
