@@ -180,13 +180,13 @@ include = [
     "src/interpretune/adapter_registry.py",
     "src/interpretune/protocol.py",
     "src/interpretune/session.py",
-    # "src/interpretune/registry.py",                         # 15 errors - protocol compatibility, dict typing
+    "src/interpretune/registry.py",                         # Fixed: was 15 errors - protocol compatibility, dict typing
 
     # Adapter files
     "src/interpretune/adapters/__init__.py",
     "src/interpretune/adapters/core.py",
-    # "src/interpretune/adapters/lightning.py",                  # 2 errors
-    # "src/interpretune/adapters/registration.py",               # 1 error
+    "src/interpretune/adapters/lightning.py",                  # Fixed: was 2 errors
+    "src/interpretune/adapters/registration.py",               # Fixed: was 1 error
     # "src/interpretune/adapters/transformer_lens.py",           # 6 errors
     # "src/interpretune/adapters/sae_lens.py",                   # 4 errors
     # "src/interpretune/adapters/circuit_tracer.py",             # 23 errors
