@@ -212,7 +212,7 @@ include = [
     "src/interpretune/base/modules.py",
     "src/interpretune/base/components/__init__.py",
     # "src/interpretune/base/components/mixins.py",           # 35 errors - optional member access, callable issues
-    # "src/interpretune/base/components/cli.py",              # 24 errors - path operations, argument types
+    "src/interpretune/base/components/cli.py",              # Fixed: was 12 errors
     "src/interpretune/base/components/core.py",             # Fixed: was 1 error
     "src/interpretune/base/datamodules.py",
 
