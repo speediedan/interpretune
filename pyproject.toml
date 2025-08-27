@@ -238,7 +238,7 @@ include = [
 
     # Runners
     "src/interpretune/runners/__init__.py",
-    # "src/interpretune/runners/analysis.py",                 # 28 errors - protocol mismatches, argument types
+    "src/interpretune/runners/analysis.py",                 # Fixed: was 46 errors
     "src/interpretune/runners/core.py",                     # Fixed: was 3 errors
 
     # Tools
