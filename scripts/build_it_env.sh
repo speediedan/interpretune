@@ -114,10 +114,10 @@ base_env_build(){
                 pip install ${pip_install_flags} torch torchvision --index-url https://download.pytorch.org/whl/cu128
             fi
             ;;
-        # it_latest_pt_2_4)
-        #     clear_activate_env python3.11
-        #     pip install ${pip_install_flags} torch==2.4.1 torchvision --index-url https://download.pytorch.org/whl/cu118
-        #     ;;
+        it_release)
+            clear_activate_env python3.12
+            pip install ${pip_install_flags} torch torchvision --index-url https://download.pytorch.org/whl/cu128
+            ;;
         *)
             echo "no matching environment found, exiting..."
             exit 1
