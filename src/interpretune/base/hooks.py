@@ -26,9 +26,9 @@ class BaseITHooks:
         # for some adapters, datamodule access is not provided in setup and will be accessed via Trainer
         if datamodule := kwargs.get("datamodule", None):
             self._it_state._datamodule = datamodule
-        self._init_dirs_and_hooks()
+        self._init_dirs_and_hooks()  # type: ignore[attr-defined]  # provided by mixin composition
         if self.it_cfg.classification_mapping is not None:
-            self.init_classification_mapping()
+            self.init_classification_mapping()  # type: ignore[attr-defined]  # provided by mixin composition
 
     def configure_optimizers(self) -> OptimizerLRScheduler | None:
         """Optional because it is not mandatory in the context of core IT modules (required for some adapter
@@ -37,7 +37,7 @@ class BaseITHooks:
         # configured here will optimize the parameters (and only those parameters) scheduled to be optimized in phase 0
         # of the current fine-tuning schedule. This auto-configuration can be disabled if desired by setting
         # ``enforce_phase0_params`` to ``False``.
-        self.set_input_require_grads()
+        self.set_input_require_grads()  # type: ignore[attr-defined]  # provided by mixin composition
         optimizer, scheduler = None, None
         if self.it_cfg.optimizer_init:  # in case this hook is manually invoked by the user
             optimizer = instantiate_class(args=self.model.parameters(), init=self.it_cfg.optimizer_init)
@@ -54,17 +54,17 @@ class BaseITHooks:
     def on_train_end(self) -> Any | None:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
         if not self.session_complete:
-            self.on_session_end()
+            self.on_session_end()  # type: ignore[attr-defined]  # provided by mixin composition
 
     def on_test_end(self) -> Any | None:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
         if not self.session_complete:
-            self.on_session_end()
+            self.on_session_end()  # type: ignore[attr-defined]  # provided by mixin composition
 
     def on_predict_end(self) -> Any | None:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
         if not self.session_complete:
-            self.on_session_end()
+            self.on_session_end()  # type: ignore[attr-defined]  # provided by mixin composition
 
     def forward(self, *args, **kwargs) -> STEP_OUTPUT:
         return self.model(*args, **kwargs, **self.it_cfg.cust_fwd_kwargs)

@@ -227,7 +227,7 @@ include = [
     "src/interpretune/config/transformer_lens.py",
     "src/interpretune/config/analysis.py",
     # "src/interpretune/config/runner.py",                    # 10 errors
-    # "src/interpretune/config/shared.py",                    # 11 errors - type variable usage, tuple operations
+    "src/interpretune/config/shared.py",                    # Fixed: 0 errors
 
 
     # Extensions

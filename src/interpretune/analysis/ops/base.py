@@ -234,15 +234,15 @@ def wrap_summary(
     if save_prompts:
         assert batch["input"] is not None, "Input batch must contain 'input' field for decoding prompts"
         assert tokenizer is not None, "Tokenizer is required to decode prompts"
-        analysis_batch.prompts = tokenizer.batch_decode(batch["input"], **decode_kwargs)
+        analysis_batch.prompts = tokenizer.batch_decode(batch["input"], **decode_kwargs)  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
     elif hasattr(analysis_batch, "prompts"):
-        del analysis_batch.prompts
+        del analysis_batch.prompts  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
 
     if save_tokens:
         assert batch["input"] is not None, "Input batch must contain 'input' field for saving tokens"
-        analysis_batch.tokens = batch["input"].detach().cpu()
+        analysis_batch.tokens = batch["input"].detach().cpu()  # type: ignore[attr-defined]  # dynamic attribute for batch protocol, tensor-like object
     elif hasattr(analysis_batch, "tokens"):
-        del analysis_batch.tokens
+        del analysis_batch.tokens  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
 
     # TODO: we need to remove this cache clearing hardcoding to refer to the relevant schema configuration
     #       and enable serialization of these fields based on the schema (on a non-default basis) in the future
@@ -362,7 +362,7 @@ class AnalysisOp:
         #       encapsulated at the same level of abstraction)
         # Process column configurations
         for col_name, col_cfg in output_schema.items():
-            if col_name not in analysis_batch.keys():
+            if col_name not in analysis_batch.keys():  # type: ignore[attr-defined]  # dict-like protocol for batch objects
                 continue
 
             # Handle dynamic dimension swapping
