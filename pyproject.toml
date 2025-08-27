@@ -187,8 +187,8 @@ include = [
     "src/interpretune/adapters/core.py",
     "src/interpretune/adapters/lightning.py",                  # Fixed: was 2 errors
     "src/interpretune/adapters/registration.py",               # Fixed: was 1 error
-    # "src/interpretune/adapters/transformer_lens.py",           # 6 errors
-    # "src/interpretune/adapters/sae_lens.py",                   # 4 errors
+    "src/interpretune/adapters/transformer_lens.py",           # Fixed: was 6 errors
+    "src/interpretune/adapters/sae_lens.py",                   # Fixed: was 4 errors
     # "src/interpretune/adapters/circuit_tracer.py",             # 23 errors
 
     # Analysis files

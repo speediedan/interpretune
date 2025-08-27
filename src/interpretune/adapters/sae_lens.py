@@ -53,7 +53,7 @@ class SAELensAttributeMixin(TLensAttributeMixin):
 
     @property
     def sae_handles(self) -> list[SAE]:
-        return [sae.handle for sae in self.saes]
+        return [sae.handle for sae in self.saes]  # type: ignore[attr-defined]  # provided by mixing class
 
 
 class BaseSAELensModule(BaseITLensModule):
@@ -61,7 +61,7 @@ class BaseSAELensModule(BaseITLensModule):
         # using cooperative inheritance, so initialize attributes that may be required in base init methods
         self.saes: list[InstantiatedSAE] = []
         super().__init__(*args, **kwargs)
-        HookedSAETransformer.generate = patched_generate
+        HookedSAETransformer.generate = patched_generate  # type: ignore[assignment]  # signature compatibility issue
 
     def _convert_hf_to_tl(self) -> None:
         # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
@@ -136,7 +136,7 @@ class SAELensAdapter(SAELensAttributeMixin):
             analysis_run_cfg = runner_holder.analysis_run_cfg
 
             init_analysis_cfgs(
-                module=cast(SAEAnalysisProtocol, self),
+                module=cast(SAEAnalysisProtocol, self),  # type: ignore[arg-type]  # protocol compatibility
                 analysis_cfgs=analysis_run_cfg._processed_analysis_cfgs,
                 cache_dir=analysis_run_cfg.cache_dir,
                 op_output_dataset_path=analysis_run_cfg.op_output_dataset_path,
@@ -206,7 +206,9 @@ class SAEAnalysisMixin:
         self, target_layers: int | list[int] | None, sae_hook_match_fn: Callable[[str, list[int] | None], bool]
     ) -> NamesFilter:
         available_hooks = {
-            f"{handle.cfg.metadata.hook_name}.{key}" for handle in self.sae_handles for key in handle.hook_dict.keys()
+            f"{handle.cfg.metadata.hook_name}.{key}"
+            for handle in self.sae_handles
+            for key in handle.hook_dict.keys()  # type: ignore[attr-defined]  # provided by mixing class
         }
         layers_arg = [target_layers] if isinstance(target_layers, int) else target_layers
         names_filter = [hook for hook in available_hooks if sae_hook_match_fn(hook, layers_arg)]
