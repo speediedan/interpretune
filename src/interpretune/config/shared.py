@@ -1,4 +1,4 @@
-from typing import Any, TypeVar, TypeAlias, Sequence
+from typing import Any, TypeVar, TypeAlias, Sequence, Optional
 from dataclasses import dataclass, field, fields, make_dataclass
 import inspect
 import logging
@@ -9,7 +9,7 @@ import yaml
 from transformers import PreTrainedTokenizerBase
 
 from interpretune.utils import rank_zero_warn, rank_zero_debug
-from interpretune.protocol import AnyDataClass, Adapter
+from interpretune.protocol import Adapter
 
 
 log = logging.getLogger(__name__)
@@ -23,7 +23,11 @@ AdapterSeq: TypeAlias = Sequence[Adapter | str] | Adapter | str
 def adapter_seq_to_list(adapter_seq: AdapterSeq):
     if isinstance(adapter_seq, str):
         adapter_seq = [adapter_seq]
-    if not isinstance(adapter_seq, list):
+    elif isinstance(adapter_seq, Adapter):
+        # Handle single Adapter enum
+        adapter_seq = [adapter_seq]
+    elif not isinstance(adapter_seq, list):
+        # Handle Sequence types
         adapter_seq = list(adapter_seq)
     return [Adapter[adp] if isinstance(adp, str) else adp for adp in adapter_seq]
 
@@ -54,8 +58,9 @@ class ITSerializableCfg(yaml.YAMLObject): ...
 @dataclass(kw_only=True)
 class AutoCompConfig(ITSerializableCfg):
     module_cfg_name: str
-    module_cfg_mixin: list[AnyDataClass] | AnyDataClass
+    module_cfg_mixin: list[Any] | Any
     target_adapters: AdapterSeq | None = None
+    _orig_cfg_cls: type | None = None
 
     def __post_init__(self):
         if not isinstance(self.module_cfg_mixin, list):
@@ -76,13 +81,13 @@ class AutoCompConf(ITSerializableCfg):
             return super().__new__(cls)
 
     @staticmethod
-    def compose_cfg_dataclass(cls, kwargs):
-        setattr(kwargs["auto_comp_cfg"], "_orig_cfg_cls", cls)
+    def compose_cfg_dataclass(target_cls, kwargs):
+        setattr(kwargs["auto_comp_cfg"], "_orig_cfg_cls", target_cls)
         auto_comp_cfg = kwargs.pop("auto_comp_cfg")
         assert getattr(auto_comp_cfg, "_orig_cfg_cls", None) is not None, "`auto_comp_cfg` missing `_orig_cfg_cls`"
         composition_classes = resolve_composition_classes(auto_comp_cfg, kwargs)
         if not composition_classes:
-            return cls
+            return target_cls
         built_class = make_dataclass(auto_comp_cfg.module_cfg_name, kwargs, bases=composition_classes, kw_only=True)
         built_class = type(auto_comp_cfg.module_cfg_name, (ComposedCfgWrapper, built_class), {})
         built_class.__module__ = "interpretune"
@@ -112,8 +117,10 @@ def candidate_subclass_attrs(kwargs: dict, target_type: type) -> dict:
 T = TypeVar("T")
 
 
-def find_adapter_subclasses(T: type, target_adapters: AdapterSeq | None = None) -> dict[str, type[T]]:
-    """Searches `interpretune.adapters` and `interpretune.config` for subclasses of `T` and returns them.
+def find_adapter_subclasses(
+    target_type: type, target_adapters: AdapterSeq | None = None
+) -> tuple[dict[Adapter, type], dict[Adapter, type]]:
+    """Searches `interpretune.adapters` and `interpretune.config` for subclasses of `target_type` and returns them.
 
     If target_adapters is provided, only considers subclasses from the specified adapters.
     """
@@ -132,16 +139,16 @@ def find_adapter_subclasses(T: type, target_adapters: AdapterSeq | None = None) 
             for _, member in inspect.getmembers(module, inspect.isclass):
                 if member.__module__ != module_fqn:
                     continue
-                if issubclass(member, T) and member is not T:
+                if issubclass(member, target_type) and member is not target_type:
                     subclasses[adapter] = member
-                elif issubclass(T, member):
+                elif issubclass(target_type, member):
                     superclasses[adapter] = member
     return subclasses, superclasses
 
 
 def search_candidate_subclass_attrs(
     candidate_modules: dict[Adapter, type], kwargs_not_in_target_type: dict
-) -> tuple[type] | None:
+) -> tuple[type, ...] | None:
     valid_subclasses = []
     min_extra_attrs = float("inf")
     for _, module_class in candidate_modules.items():
@@ -160,7 +167,7 @@ def search_candidate_subclass_attrs(
     return (valid_subclasses[0],)  # Return the first valid subclass (they all have the same number of extra attributes)
 
 
-def check_non_subclasses(target_class: type, candidate_classes: list[type]) -> tuple[type] | None:
+def check_non_subclasses(target_class: type, candidate_classes: list[type]) -> tuple[type, ...] | None:
     unfullfilled_subclasses = []
     for cls in candidate_classes:
         if not issubclass(target_class, cls):
@@ -184,13 +191,16 @@ def issue_noncomposition_feedback(auto_comp_cfg, superclasses, subclasses):
         )
 
 
-def issue_incomplete_composition_feedback(auto_comp_cfg, kwargs_not_in_target_type, nonsubcls_mixins):
+def issue_incomplete_composition_feedback(
+    auto_comp_cfg: AutoCompConfig, kwargs_not_in_target_type: dict, nonsubcls_mixins: Optional[tuple[type, ...]]
+):
     no_auto_prefix = (
         f"Could not find an auto-composition for {auto_comp_cfg._orig_cfg_cls} that supports all of"
         f" the following kwargs: {kwargs_not_in_target_type}."
     )
     if nonsubcls_mixins:
         rank_zero_warn(f"{no_auto_prefix} Trying instantiation while composing with {nonsubcls_mixins}.")
+        assert auto_comp_cfg._orig_cfg_cls is not None
         return (auto_comp_cfg._orig_cfg_cls,) + nonsubcls_mixins
     else:
         rank_zero_warn(
@@ -200,11 +210,18 @@ def issue_incomplete_composition_feedback(auto_comp_cfg, kwargs_not_in_target_ty
         return
 
 
-def resolve_composition_classes(auto_comp_cfg: AutoCompConfig, kwargs: dict) -> tuple[type] | None:
+def resolve_composition_classes(auto_comp_cfg: AutoCompConfig, kwargs: dict) -> tuple[type, ...] | None:
     adapter_composition_classes = None
+    assert auto_comp_cfg._orig_cfg_cls is not None
     subclasses, superclasses = find_adapter_subclasses(auto_comp_cfg._orig_cfg_cls, auto_comp_cfg.target_adapters)
     kwargs_not_in_target_type = candidate_subclass_attrs(kwargs, auto_comp_cfg._orig_cfg_cls)
-    nonsubcls_mixins = check_non_subclasses(auto_comp_cfg._orig_cfg_cls, auto_comp_cfg.module_cfg_mixin)
+    # Ensure module_cfg_mixin is a list of types
+    mixin_list = (
+        auto_comp_cfg.module_cfg_mixin
+        if isinstance(auto_comp_cfg.module_cfg_mixin, list)
+        else [auto_comp_cfg.module_cfg_mixin]
+    )
+    nonsubcls_mixins = check_non_subclasses(auto_comp_cfg._orig_cfg_cls, mixin_list)
     adapter_composition_classes = search_candidate_subclass_attrs(subclasses, kwargs_not_in_target_type)
     match bool(kwargs_not_in_target_type), bool(nonsubcls_mixins), bool(adapter_composition_classes):
         case (False, False, _):
@@ -215,12 +232,16 @@ def resolve_composition_classes(auto_comp_cfg: AutoCompConfig, kwargs: dict) -> 
                 f"{auto_comp_cfg._orig_cfg_cls} already supports all of the provided kwargs but needs to "
                 f"be composed with {nonsubcls_mixins}."
             )
+            if nonsubcls_mixins is None:
+                return (auto_comp_cfg._orig_cfg_cls,)
             return (auto_comp_cfg._orig_cfg_cls,) + nonsubcls_mixins
         case (True, _, False):
             return issue_incomplete_composition_feedback(auto_comp_cfg, kwargs_not_in_target_type, nonsubcls_mixins)
         case (_, False, True):
             return adapter_composition_classes
         case (_, True, True):
+            if nonsubcls_mixins is None or adapter_composition_classes is None:
+                return adapter_composition_classes or nonsubcls_mixins
             return adapter_composition_classes + nonsubcls_mixins
 
 
@@ -242,7 +263,8 @@ class ITSharedConfig(ITSerializableCfg):
 
     def _validate_on_session_cfg_init(self):
         # deferred validation for attributes that my be set via shared datamodule/module config
+        # type-checker directive used here since our ITSessionConfig is dynamically applying datamodule/module config
         if self.defer_model_init:
-            assert self.signature_columns is not None, (
+            assert self.signature_columns is not None, (  # pyright: ignore[reportAttributeAccessIssue]
                 "`signature_columns` must be specified if `defer_model_init` is set to True"
             )

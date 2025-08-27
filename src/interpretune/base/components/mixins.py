@@ -89,6 +89,14 @@ class AnalysisStepMixin:
         """Optionally execute some post-interpretune session steps if the session is not complete."""
         # TODO: we plan to avoid op-specific conditioning of this behavior, should be functionally specified in config,
         #       we should also narrow the scope if possible to a context manager around the relevant ops themselves
+        # Preserve caller's grad state and restore later in on_analysis_end. Tests expect we do not leak
+        # a global torch grad_enabled state change across tests.
+        try:
+            self._prev_grad_enabled = torch.is_grad_enabled()
+        except Exception:
+            # defensive: if something goes wrong, fallback to default True
+            self._prev_grad_enabled = True
+
         if self.analysis_cfg.op == it.logit_diffs_attr_grad:
             torch.set_grad_enabled(True)
         else:
@@ -108,11 +116,17 @@ class AnalysisStepMixin:
         # reset internal cache list (TODO: maybe keep this around and reset only on session start?)
         # TODO: we can avoid this analysis_stores reset if we make dataset per-epoch subsplits
         # TODO: flip back to the default if we disabled grad in on_analysis_start, again, this is terrible and should
-        # be handled more narrowly and functionally rather than op conditioned
+        # be handled more narrowly and functionally rather than op conditioned. Likely a context manager in the runner.
         # self._analysis_stores = []  # uncomment if we re-enable the reset of the analysis stores
-        if self.analysis_cfg.op != it.logit_diffs_attr_grad:
-            torch.set_grad_enabled(True)
-            # torch.set_grad_enabled(False)  # to detect leak
+        # Restore previous grad state if we saved one. This avoids leaking a disabled grad state
+        # to other tests or parts of the process.
+        prev = getattr(self, "_prev_grad_enabled", None)
+        if prev is not None:
+            torch.set_grad_enabled(prev)
+            try:
+                delattr(self, "_prev_grad_enabled")
+            except Exception:
+                pass
         if not self.session_complete:
             self.on_session_end()
 

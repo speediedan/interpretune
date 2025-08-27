@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Sequence, Union, Optional
+from typing import Any, Union, Optional
 import torch
 import numpy as np
 from datasets.formatting import TorchFormatter
@@ -13,7 +13,7 @@ from interpretune.analysis import ColCfg
 class OpSchemaExt:
     """Provides operation schema extensions for tensor processing."""
 
-    def __init__(self, col_cfg: dict = None, **kwargs):
+    def __init__(self, col_cfg: dict | None = None, **kwargs):
         super().__init__(**kwargs)  # Allow proper multiple inheritance
         col_cfg = col_cfg or {}
         col_cfg = {k: ColCfg.from_dict(v) for k, v in col_cfg.items()}
@@ -63,6 +63,7 @@ class OpSchemaExt:
         dyn_dim = self.dyn_dims.get(field_name)
         curr_tensor_dim = tensor.dim()
         if dyn_dim is not None and curr_tensor_dim > dyn_dim:
+            dims = None
             if (tensor_shape := getattr(self.features[field_name], "shape", None)) is not None:
                 if len(tensor_shape) == curr_tensor_dim - 1:
                     # operating on all examples so dyn_dim += 1 and we swap dims[1] and dims[dyn_dim] instead of dims[0]
@@ -77,7 +78,8 @@ class OpSchemaExt:
                         f"Tensor dimension length mismatch detected during dynamic dim deserialization: "
                         f"tensor shape to deserialize: {tensor.shape} vs shape serialized: {tensor_shape}"
                     )
-            return tensor.permute(*dims)
+            if dims is not None:
+                return tensor.permute(*dims)
         return tensor
 
 
@@ -143,16 +145,17 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
         current_field = self._field_context[-1][0] if self._field_context else None
         return self._tensorize(data_struct, current_field)
 
-    def format_column(self, pa_table: "pa.Table") -> Union[torch.Tensor, Sequence]:
+    # TODO: validate that we don't want to allow Union[torch.Tensor, Sequence] return type
+    def format_column(self, pa_table: "pa.Table") -> torch.Tensor:  # type: ignore[override]
         """Format a column with enhanced tensorization."""
         column = self.numpy_arrow_extractor().extract_column(pa_table)
-        column = self.python_features_decoder.decode_column(column, pa_table.column_names[0])
+        column = self.python_features_decoder.decode_column(column, pa_table.column_names[0])  # type: ignore[arg-type]
         col_name = pa_table.column_names[0]
         dyn_dim = self.dyn_dims.get(col_name, None)
         col_dict = {"dyn_dim": dyn_dim} if dyn_dim is not None else {}
         with self.field_context((col_name, col_dict)):
             column = self._recursive_tensorize(column)
-        return self._consolidate(column)
+        return self._consolidate(column)  # type: ignore[return-value]
 
     def format_row(self, pa_table: pa.Table) -> Mapping:
         """Format a row with enhanced tensorization that respects field contexts."""

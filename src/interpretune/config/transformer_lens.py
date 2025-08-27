@@ -1,4 +1,4 @@
-from typing import Optional, Literal, Dict, Any
+from typing import Optional, Literal, Dict, Any, TypeAlias, Tuple
 from dataclasses import dataclass
 from functools import reduce
 
@@ -35,7 +35,7 @@ class ITLensFromPretrainedConfig(ITLensSharedConfig):
     checkpoint_value: Optional[int] = None
     # for pretrained cfg, IT handles the HF model instantiation via model_name or_path
     hf_model: Optional[AutoModelForCausalLM | str] = None
-    # currently only support serializing str for device due to omegaconf container dumping limitations
+    # currently only annotating with str due to omegaconf container dumping limitations wrt torch.device
     device: Optional[str] = None
     n_devices: Optional[int] = 1
     # IT handles the tokenizer instantiation via either tokenizer, tokenizer_name or model_name_or_path
@@ -46,19 +46,19 @@ class ITLensFromPretrainedConfig(ITLensSharedConfig):
 
     def __post_init__(self) -> None:
         if self.device is None:  # align with TL default device resolution
-            self.device = tl_get_device()
+            self.device = tl_get_device()  # type: ignore
 
 
 # rather than use from_pretrained_no_processing wrapper, we can specify the simplified config defaults we want directly
 @dataclass(kw_only=True)
 class ITLensFromPretrainedNoProcessingConfig(ITLensFromPretrainedConfig):
-    fold_ln: bool = False
-    center_writing_weights: bool = False
-    center_unembed: bool = False
-    refactor_factored_attn_matrices: bool = False
-    fold_value_biases: bool = False
+    fold_ln: bool | None = False
+    center_writing_weights: bool | None = False
+    center_unembed: bool | None = False
+    refactor_factored_attn_matrices: bool | None = False
+    fold_value_biases: bool | None = False
     dtype: str = "float32"
-    default_prepend_bos: bool = True
+    default_prepend_bos: bool | None = True
 
 
 @dataclass(kw_only=True)
@@ -73,6 +73,10 @@ class ITLensCustomConfig(ITLensSharedConfig):
             if self.cfg.get("dtype", None) and not isinstance(self.cfg["dtype"], torch.dtype):
                 self.cfg["dtype"] = _resolve_torch_dtype(self.cfg["dtype"])
             self.cfg = HookedTransformerConfig.from_dict(self.cfg)
+
+
+ITLensCfg: TypeAlias = ITLensFromPretrainedConfig | ITLensCustomConfig  # for static typing
+ITLensCfgTypes: Tuple[type, type] = (ITLensFromPretrainedConfig, ITLensCustomConfig)  # for runtime checks
 
 
 @dataclass(kw_only=True)
@@ -91,6 +95,8 @@ class ITLensConfig(ITConfig):
         self._load_from_pretrained = False if isinstance(self.tl_cfg, ITLensCustomConfig) else True
         if not self._load_from_pretrained:
             self._disable_pretrained_model_mode()  # after this, hf_from_pretrained_cfg exists only if used
+            assert isinstance(self.tl_cfg, ITLensCustomConfig)
+            assert isinstance(self.tl_cfg.cfg, HookedTransformerConfig)
             self._torch_dtype = _resolve_torch_dtype(self.tl_cfg.cfg.dtype)
         else:
             # TL from pretrained currently requires a hf_from_pretrained_cfg, create one if it's not already configured
@@ -132,19 +138,9 @@ class ITLensConfig(ITConfig):
         if self._load_from_pretrained:
             self._map_tl_fallback(target_key="model_name_or_path", tl_cfg_key="tl_cfg.hf_model")
             self._map_tl_fallback(target_key="tokenizer", tl_cfg_key="tl_cfg.tokenizer")
-            # self._prune_converted_keys()
         else:
             self._map_tl_fallback(target_key="model_name_or_path", tl_cfg_key="tl_cfg.cfg.model_name")
             self._map_tl_fallback(target_key="tokenizer_name", tl_cfg_key="tl_cfg.cfg.tokenizer_name")
-
-    # def _prune_converted_keys(self):
-    #     if self._load_from_pretrained:
-    #         for attr in ['tokenizer', 'hf_model']:
-    #             if attr in type(self.tl_cfg).__dict__:
-    #                 if getattr(self.tl_cfg, attr) is not None:
-    #                     expected_none = f"{getattr(self.tl_cfg, attr)} should have been translated and set to `None`."
-    #                     assert getattr(self.tl_cfg, attr) is None, expected_none
-    #                 delattr(self.tl_cfg, attr)
 
     def _disable_pretrained_model_mode(self):
         ignored_attrs = []
@@ -163,16 +159,25 @@ class ITLensConfig(ITConfig):
             self._check_supported_device_map()
             if hf_dtype := self.hf_from_pretrained_cfg.pretrained_kwargs.get("torch_dtype", None):
                 hf_dtype = _resolve_torch_dtype(hf_dtype)
+            assert isinstance(self.tl_cfg, ITLensFromPretrainedConfig)
             tl_dtype = _resolve_torch_dtype(self.tl_cfg.dtype)
             self._sync_hf_tl_dtypes(hf_dtype, tl_dtype)
 
     def _check_supported_device_map(self):
+        if self.hf_from_pretrained_cfg is None or self.hf_from_pretrained_cfg.pretrained_kwargs is None:
+            return
         device_map = self.hf_from_pretrained_cfg.pretrained_kwargs.get("device_map", None)
         if isinstance(device_map, dict) and len(device_map.keys()) > 1:
             rank_zero_warn(tl_invalid_dmap)
             self.hf_from_pretrained_cfg.pretrained_kwargs["device_map"] = "cpu"
 
     def _sync_hf_tl_dtypes(self, hf_dtype, tl_dtype):
+        if self.hf_from_pretrained_cfg is None:
+            return
+
+        if self.hf_from_pretrained_cfg.pretrained_kwargs is None:
+            self.hf_from_pretrained_cfg.pretrained_kwargs = {}
+
         if hf_dtype and tl_dtype:
             if hf_dtype != tl_dtype:  # if both are provided, TL dtype takes precedence
                 rank_zero_warn(

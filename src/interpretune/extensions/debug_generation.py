@@ -1,4 +1,4 @@
-from typing import Optional, List, Any, Dict, Tuple, Union
+from typing import Optional, List, Any, Dict, Tuple, Union, cast
 from dataclasses import dataclass, field
 from copy import deepcopy
 
@@ -9,6 +9,7 @@ from torch.nn import CrossEntropyLoss
 
 from interpretune.config import ITSerializableCfg
 from interpretune.utils import rank_zero_warn, sanitize_input_name, DEFAULT_DECODE_KWARGS
+from interpretune.protocol import ITModuleGenDebuggable
 
 
 @dataclass(kw_only=True)
@@ -42,6 +43,7 @@ class DebugGeneration:
     #   including `output_attentions` and `output_hidden_states` etc.
     DEFAULT_OUTPUT_ATTRS = ("sequences", "tokens")
     DEFAULT_MODEL_CONFIG_ATTRS = ("cfg", "config")
+    phandle: Optional[ITModuleGenDebuggable]
 
     def __init__(
         self,
@@ -50,8 +52,19 @@ class DebugGeneration:
         super().__init__()
         self.phandle = None
 
-    def connect(self, obj_ref: Any) -> None:
+    def connect(self, obj_ref: ITModuleGenDebuggable) -> None:
         self.phandle = obj_ref
+
+    def _check_phandle(self) -> ITModuleGenDebuggable:
+        """Helper: raise a RuntimeError if phandle isn't connected.
+
+        This centralizes the check so all call sites have consistent behavior.
+        """
+        if self.phandle is None:
+            raise RuntimeError("Extension not connected to module - call connect() first")
+        # Help static type checkers: cast to the protocol we've defined
+        assert isinstance(self.phandle, ITModuleGenDebuggable)
+        return cast(ITModuleGenDebuggable, self.phandle)
 
     def debug_sequences(self, sequences: Optional[Union[List, str]] = None) -> List:
         """_summary_
@@ -70,7 +83,9 @@ class DebugGeneration:
         gen_config_override={"max_new_tokens": 25})
         ```
         """
-        sequences = sequences or self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
+        if sequences is None:
+            ph = self._check_phandle()
+            sequences = ph.it_cfg.debug_lm_cfg.raw_debug_sequences or []
         if not isinstance(sequences, list):
             sequences = [sequences]
         return [f"{ex.strip()}" for ex in sequences]
@@ -99,15 +114,20 @@ class DebugGeneration:
             gen_config_override={"max_new_tokens": 25})
         ```
         """
-        sequences = sequences or self.phandle.it_cfg.debug_lm_cfg.raw_debug_sequences
-        format = format or self.phandle.datamodule.itdm_cfg.cust_tokenization_pattern
         try:
-            return [self.phandle.datamodule.itdm_cfg.prompt_cfg.model_chat_template_fn(ex, format) for ex in sequences]
+            ph = self._check_phandle()
+            if sequences is None:
+                sequences = ph.it_cfg.debug_lm_cfg.raw_debug_sequences
+            if format is None:
+                format = ph.datamodule.itdm_cfg.cust_tokenization_pattern
+            assert isinstance(sequences, list)
+            return [ph.datamodule.itdm_cfg.prompt_cfg.model_chat_template_fn(ex, format) for ex in sequences]
         except Exception as e:
             rank_zero_warn(
                 f"Failed to generate chat debug sequences. Exception: {e}. "
                 "Returning the stripped sequences but without the corresponding chat format metadata."
             )
+            sequences = sequences or []  # sequences could still be None at Exception
             return [f"{ex.strip()}" for ex in sequences]
 
     def _debug_generate(
@@ -134,40 +154,53 @@ class DebugGeneration:
             gen_config_override={"max_new_tokens": 25})
         ```
         """
+        ph = self._check_phandle()
         # note we're not using a context manager here, keeping our new override for subsequent debugging convenience
-        gen_kwargs = self.phandle.it_cfg.generative_step_cfg.lm_generation_cfg.generate_kwargs
+        gen_kwargs = ph.it_cfg.generative_step_cfg.lm_generation_cfg.generate_kwargs
         if gen_kwargs_override:
             gen_kwargs.update(gen_kwargs_override)
-        if gen_config_override and getattr(self.phandle.model, "generation_config", None):
+        if gen_config_override and getattr(ph.model, "generation_config", None):
             for k, v in gen_config_override.items():
-                setattr(self.phandle.model.generation_config, k, v)
-        return self.phandle.it_generate(inputs, **gen_kwargs)
+                setattr(ph.model.generation_config, k, v)
+        return ph.it_generate(inputs, **gen_kwargs)
 
     def perplexity_on_sample(
-        self, corpus: Optional[Dataset | Dict] = None, stride: Optional[int] = None, limit_chars: Optional[int] = None
-    ) -> float:
+        self,
+        corpus: Optional[Dataset | Dict] = None,
+        stride: Optional[int] = None,
+        limit_chars: Optional[int] = None,
+    ) -> torch.Tensor:
+        ph = self._check_phandle()
+
         if not corpus:
-            corpus = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+            corpus_default = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+            assert isinstance(corpus_default, Dataset)
+            corpus = corpus_default
         corpus_raw = "\n\n".join(corpus["text"])
         corpus_max_idx = limit_chars or len(corpus_raw)
-        encoded_corpus = self.phandle.datamodule.tokenizer(corpus_raw[:corpus_max_idx], return_tensors="pt")
+        encoded_corpus = ph.datamodule.tokenizer(corpus_raw[:corpus_max_idx], return_tensors="pt")
         encoded_corpus = sanitize_input_name(self.model_input_names, encoded_corpus)
-        return self.naive_perplexity(encoded_corpus, stride=stride)
+        perplexity_kwargs = {"stride": stride} if stride else {}
+        return self.naive_perplexity(encoded_corpus, **perplexity_kwargs)
 
     def top1_token_accuracy_on_sample(self, sample: str) -> Tuple[float, List[str]]:
-        sample_input_ids = self.phandle.datamodule.tokenizer.encode(sample)
-        sample_input_ids = torch.tensor(sample_input_ids).to(self.phandle.device)
+        ph = self._check_phandle()
+
+        sample_input_ids = ph.datamodule.tokenizer.encode(sample)
+        sample_input_ids = torch.tensor(sample_input_ids).to(ph.device)
         sample_input_ids = sample_input_ids.unsqueeze(0)
         with torch.no_grad():
-            logits = self.phandle.model(sample_input_ids)
+            logits = ph.model(sample_input_ids)
         prediction = logits.argmax(dim=-1).squeeze()[:-1]
         true_tokens = sample_input_ids.squeeze()[1:]
         num_correct = (prediction == true_tokens).sum()
-        correct_tokens = self.phandle.datamodule.tokenizer.batch_decode(prediction[prediction == true_tokens])
+        correct_tokens = ph.datamodule.tokenizer.batch_decode(prediction[prediction == true_tokens])
         return num_correct / len(true_tokens), correct_tokens
 
-    def naive_perplexity(self, encoded_corpus, stride: int = 512) -> float:
-        max_length = self.phandle.datamodule.tokenizer.model_max_length
+    def naive_perplexity(self, encoded_corpus, stride: int = 512) -> torch.Tensor:
+        ph = self._check_phandle()
+
+        max_length = ph.datamodule.tokenizer.model_max_length
         corpus_ids = getattr(encoded_corpus, self.model_input_names[0])
         seq_len = corpus_ids.size(1)
         stride = min(stride, seq_len)
@@ -177,11 +210,11 @@ class DebugGeneration:
         for begin_loc in range(0, seq_len, stride):
             end_loc = min(begin_loc + max_length, seq_len)
             trg_len = end_loc - prev_end_loc  # may be different from stride on last loop
-            inputs = corpus_ids[:, begin_loc:end_loc].to(self.phandle.device)
+            inputs = corpus_ids[:, begin_loc:end_loc].to(ph.device)
             target_ids = inputs.clone()
             target_ids[:, :-trg_len] = -100
             with torch.inference_mode():
-                output_logits = self.phandle.model.forward(inputs)
+                output_logits = ph.model.forward(inputs)
                 shift_logits = output_logits[..., :-1, :].contiguous()
                 shift_target_ids = target_ids[..., 1:].contiguous()
                 preds = shift_logits.view(-1, shift_logits.size(-1))
@@ -206,10 +239,6 @@ class DebugGeneration:
         return decode_target, decode_kwargs
 
     def sanitize_model_output(self, output: Any, gen_output_attr: Optional[str] = None) -> List[str]:
-        # TODO: consider updating for cache ahead of 4.47
-        #       From v4.47 onwards, when a model cache is to be returned, `generate` will return a `Cache` instance
-        #       instead by default (as opposed to the legacy tuple of tuples format). If you want to keep returning the
-        #       legacy format, please set `return_legacy_cache=True`.
         if gen_output_attr:
             return getattr(output, gen_output_attr)
         for output_attr in self.DEFAULT_OUTPUT_ATTRS:
@@ -224,7 +253,8 @@ class DebugGeneration:
 
     @property
     def model_input_names(self) -> List[str]:
-        return self.phandle.datamodule.tokenizer.model_input_names
+        ph = self._check_phandle()
+        return ph.datamodule.tokenizer.model_input_names
 
     def debug_generate_batch(
         self,
@@ -234,17 +264,19 @@ class DebugGeneration:
         gen_kwargs_override: Optional[Dict] = None,
         decode_cfg_override: Optional[Dict] = None,
     ) -> Tuple[List, List]:
-        test_input_ids = self.phandle.datamodule.tokenizer.batch_encode_plus(sequences)
+        ph = self._check_phandle()
+
+        test_input_ids = ph.datamodule.tokenizer.batch_encode_plus(sequences)
         test_input_ids = sanitize_input_name(self.model_input_names, test_input_ids)
-        test_input_ids = self.phandle.datamodule.data_collator(test_input_ids)
-        test_input_ids = test_input_ids.to(self.phandle.device)
+        test_input_ids = ph.datamodule.data_collator(test_input_ids)
+        test_input_ids = test_input_ids.to(ph.device)
         outputs = self._debug_generate(
             inputs=test_input_ids[self.model_input_names[0]],
             gen_config_override=gen_config_override,
             gen_kwargs_override=gen_kwargs_override,
         )
         decode_target, decode_kwargs = self.sanitize_gen_output(outputs, gen_output_attr, decode_cfg_override)
-        answers = self.phandle.datamodule.tokenizer.batch_decode(decode_target, **decode_kwargs)
+        answers = ph.datamodule.tokenizer.batch_decode(decode_target, **decode_kwargs)
         return answers, outputs
 
     def debug_generate_serial(
@@ -255,11 +287,13 @@ class DebugGeneration:
         gen_kwargs_override: Optional[Dict] = None,
         decode_cfg_override: Optional[Dict] = None,
     ) -> Tuple[List, List]:
+        ph = self._check_phandle()
+
         answers = []
         full_outputs = []
         for seq in sequences:
-            test_input_ids = self.phandle.datamodule.tokenizer.encode(seq)
-            test_input_ids = torch.tensor(test_input_ids).to(self.phandle.device)
+            test_input_ids = ph.datamodule.tokenizer.encode(seq)
+            test_input_ids = torch.tensor(test_input_ids).to(ph.device)
             test_input_ids = test_input_ids.unsqueeze(0)
             output = self._debug_generate(
                 inputs=test_input_ids, gen_config_override=gen_config_override, gen_kwargs_override=gen_kwargs_override
@@ -270,6 +304,6 @@ class DebugGeneration:
             if decode_cfg_override:
                 decode_kwargs.update(decode_cfg_override)
             for seq in sequences:  # in case num_return_sequences > 1
-                answers.append(self.phandle.datamodule.tokenizer.decode(seq, **decode_kwargs))
+                answers.append(ph.datamodule.tokenizer.decode(seq, **decode_kwargs))
             full_outputs.append(output)
         return answers, full_outputs

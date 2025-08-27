@@ -1,6 +1,6 @@
 # from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 import os
-from typing import Any, TYPE_CHECKING, Optional, Tuple
+from typing import Any, TYPE_CHECKING, Optional, Tuple, Type
 from dataclasses import dataclass, field
 
 import torch
@@ -14,7 +14,7 @@ from interpretune.config import (
     GenerativeClassificationConfig,
 )
 from interpretune.utils import rank_zero_info
-from interpretune.protocol import LRSchedulerConfig, Optimizable
+from interpretune.protocol import LRSchedulerConfig, Optimizable, StrOrPath
 
 if TYPE_CHECKING:
     from interpretune.protocol import AnalysisCfgProtocol
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 @dataclass(kw_only=True)
 class ModelConf(ITSerializableCfg):
-    model_class: torch.nn.Module | None = None
+    model_class: Type[torch.nn.Module] | None = None
     model_cfg: dict[str, Any] = field(default_factory=dict)
     cust_fwd_kwargs: dict[str, Any] = field(default_factory=dict)
 
@@ -114,6 +114,7 @@ class ITState:
 
     _it_lr_scheduler_configs: list[LRSchedulerConfig] = field(default_factory=list)
     _it_optimizers: list[Optimizable] = field(default_factory=list)  # init'd via `configure_optimizers`
+    _log_dir: Optional[StrOrPath] = None
     _datamodule: Optional["ITDataModule"] = None  # datamodule handle attached after init
     _device: torch.device | None = None  # root device (sometimes used if not handled by Lightning)
     _extensions: dict[str, Any] = field(default_factory=dict)

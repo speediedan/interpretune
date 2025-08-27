@@ -34,9 +34,9 @@ if _FTS_AVAILABLE:
 
     fts_resolver = CallbackResolverMixin()
 
-    def get_fts(trainer: Trainer) -> Callback:
+    def get_fts(trainer: Trainer) -> Callback:  # type: ignore
         fts_resolver.connect_callback(trainer, reconnect=True)
-        return fts_resolver.finetuningscheduler_callback
+        return fts_resolver.finetuningscheduler_callback  # type: ignore
 
 else:
     FinetuningScheduler = object

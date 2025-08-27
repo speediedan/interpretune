@@ -164,11 +164,15 @@ class TestGetCachedModuleFileIt:
                             "interpretune.analysis.ops.dynamic_module_utils.check_imports", return_value=["helper"]
                         ):
                             with patch("interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it"):
-                                get_cached_module_file_it("/test/path", "module.py")
+                                with patch(
+                                    "interpretune.analysis.ops.dynamic_module_utils.cached_file",
+                                    return_value="/test/path/module.py",
+                                ):
+                                    get_cached_module_file_it("/test/path", "module.py")
 
-                                # Should copy main file and helper module
-                                assert mock_copy.call_count >= 2
-                                assert mock_invalidate.call_count >= 2
+                                    # Should copy main file and helper module
+                                    assert mock_copy.call_count >= 2
+                                    assert mock_invalidate.call_count >= 2
 
     @patch("interpretune.analysis.ops.dynamic_module_utils.cached_file")
     @patch("interpretune.analysis.ops.dynamic_module_utils.try_to_load_from_cache")

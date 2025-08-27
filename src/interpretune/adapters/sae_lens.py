@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any
+from typing import Any, cast
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import reduce
@@ -80,10 +80,12 @@ class BaseSAELensModule(BaseITLensModule):
                 handle, original_cfg, sparsity = SAE.from_pretrained_with_cfg_and_sparsity(**sae_cfg.__dict__)
             else:
                 # TODO: enable configuration of SAE subclass to use
-                handle = StandardSAE(cfg=sae_cfg.cfg)
-            self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))
+                handle = StandardSAE(cfg=sae_cfg.cfg)  # type: ignore[arg-type]
+                original_cfg = original_cfg or {}
+                sparsity = sparsity or {}
+            self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))  # type: ignore[arg-type]
             if self.it_cfg.add_saes_on_init:
-                self.model.add_sae(added_sae.handle)
+                self.model.add_sae(added_sae.handle)  # type: ignore[operator]
 
     def tl_config_model_init(self) -> None:
         self.model = HookedSAETransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
@@ -104,40 +106,78 @@ class BaseSAELensModule(BaseITLensModule):
 
 
 class SAELensAdapter(SAELensAttributeMixin):
+    @property
+    def has_sae_analysis_cfg(self) -> bool:
+        """Return True if this object has an analysis_run_cfg and implements construct_names_filter.
+
+        As in other places, we favor hasattr structural check instead of runtime protocol for SAEAnalysisProtocol.
+        """
+        return (
+            hasattr(self, "analysis_run_cfg")
+            and bool(getattr(self, "analysis_run_cfg", None))
+            and hasattr(self, "construct_names_filter")
+        )
+
+    def _init_dirs_and_hooks(self) -> None:
+        # Call the parent implementation to perform core directory and hook setup.
+        # BaseITModule is always present in the composition hierarchy for SAE-enabled modules.
+        # TODO: standardize and document how we handle these static type checker challenges. We currently use a mix of,
+        #       assertions, type checker directives and casting, e.g. cast(BaseITModule, self)._init_dirs_and_hooks()
+        super()._init_dirs_and_hooks()  # type: ignore[attr-defined]
+
+        # SAE-specific analysis initialization: only run when the light-weight structural checks pass
+        if self.has_sae_analysis_cfg:
+            # local import to avoid import cycles when adapters are imported early
+            from interpretune.protocol import SAEAnalysisProtocol, AnalysisRunnerProtocol
+            from interpretune.config import init_analysis_cfgs
+
+            # Cast self to AnalysisRunnerProtocol to satisfy typing and access analysis_run_cfg
+            runner_holder = cast(AnalysisRunnerProtocol, self)
+            analysis_run_cfg = runner_holder.analysis_run_cfg
+
+            init_analysis_cfgs(
+                module=cast(SAEAnalysisProtocol, self),
+                analysis_cfgs=analysis_run_cfg._processed_analysis_cfgs,
+                cache_dir=analysis_run_cfg.cache_dir,
+                op_output_dataset_path=analysis_run_cfg.op_output_dataset_path,
+                sae_analysis_targets=analysis_run_cfg.sae_analysis_targets,
+                ignore_manual=analysis_run_cfg.ignore_manual,
+            )
+
     @classmethod
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="datamodule",
-            adapter_combination=(Adapter.core, Adapter.sae_lens),
+            adapter_combination=(Adapter.core, Adapter.sae_lens),  # type: ignore[arg-type]
             composition_classes=(ITDataModule,),
             description="SAE Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.sae_lens),
+            adapter_combination=(Adapter.lightning, Adapter.sae_lens),  # type: ignore[arg-type]
             composition_classes=(ITDataModule, LightningDataModule),
             description="SAE Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module",
-            adapter_combination=(Adapter.core, Adapter.sae_lens),
+            adapter_combination=(Adapter.core, Adapter.sae_lens),  # type: ignore[arg-type]
             composition_classes=(SAELensModule,),
             description="SAE Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module_cfg",
-            adapter_combination=(Adapter.core, Adapter.sae_lens),
+            adapter_combination=(Adapter.core, Adapter.sae_lens),  # type: ignore[arg-type]
             composition_classes=(SAELensConfig,),
             description="SAE Lens configuration that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module",
-            adapter_combination=(Adapter.lightning, Adapter.sae_lens),
+            adapter_combination=(Adapter.lightning, Adapter.sae_lens),  # type: ignore[arg-type]
             composition_classes=(
                 SAELensAttributeMixin,
                 BaseSAELensModule,
@@ -150,13 +190,14 @@ class SAELensAdapter(SAELensAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module_cfg",
-            adapter_combination=(Adapter.lightning, Adapter.sae_lens),
+            adapter_combination=(Adapter.lightning, Adapter.sae_lens),  # type: ignore[arg-type]
             composition_classes=(SAELensConfig,),
             description="SAE Lens adapter that can be composed with core and l...",
         )
 
     def batch_to_device(self, batch) -> BatchEncoding:
-        move_data_to_device(batch, self.input_device)
+        if self.input_device is not None:
+            move_data_to_device(batch, self.input_device)
         return batch
 
 
@@ -167,11 +208,8 @@ class SAEAnalysisMixin:
         available_hooks = {
             f"{handle.cfg.metadata.hook_name}.{key}" for handle in self.sae_handles for key in handle.hook_dict.keys()
         }
-        names_filter = [
-            hook
-            for hook in available_hooks
-            if sae_hook_match_fn(in_name=hook, layers=target_layers if target_layers is not None else None)
-        ]
+        layers_arg = [target_layers] if isinstance(target_layers, int) else target_layers
+        names_filter = [hook for hook in available_hooks if sae_hook_match_fn(hook, layers_arg)]
         return names_filter
 
     @staticmethod

@@ -10,6 +10,7 @@ from typing import (
     Optional,
     Any,
     Sequence,
+    Iterable,
     _ProtocolMeta,
     get_args,
     Mapping,
@@ -17,6 +18,7 @@ from typing import (
     TypeVar,
 )
 from os import PathLike
+from pathlib import Path
 from types import UnionType
 from enum import auto, Enum, EnumMeta
 from dataclasses import dataclass
@@ -38,8 +40,7 @@ if TYPE_CHECKING:
 # Interpretune helper types
 ################################################################################
 
-# TODO: remove this type in favor using PathLike alone now that the type resolution issue should be fixed
-StrOrPath: TypeAlias = Union[str, PathLike]
+StrOrPath: TypeAlias = Union[str, PathLike, Path]
 
 ################################################################################
 # Interpretune Enhanced Enums
@@ -47,6 +48,7 @@ StrOrPath: TypeAlias = Union[str, PathLike]
 
 
 class AutoStrEnum(Enum):
+    @staticmethod
     def _generate_next_value_(name, _start, _count, _last_values) -> str:  # type: ignore
         return name
 
@@ -81,7 +83,8 @@ class DerivedEnumMeta(EnumMeta):  # change EnumMeta alias to EnumType when 3.11 
     @classmethod
     def __prepare__(metacls, clsname, bases, **kwargs):
         enum_dict = super().__prepare__(clsname, bases, **kwargs)
-        enum_dict._ignore = list(metacls._derived_enum_internal)
+        enum_dict._ignore = list(metacls._derived_enum_internal)  # type: ignore
+
         return enum_dict
 
     def __new__(mcls, clsname, bases, classdict):
@@ -92,7 +95,7 @@ class DerivedEnumMeta(EnumMeta):  # change EnumMeta alias to EnumType when 3.11 
         if input_set is not None:
             if transform and callable(transform):
                 input_set = {transform(x) for x in input_set}
-            for member in sorted(input_set):
+            for member in sorted(input_set, key=str):
                 if member not in classdict:
                     classdict[member] = auto()
         return super().__new__(mcls, clsname, bases, classdict)
@@ -156,6 +159,8 @@ class Optimizable(Steppable, Protocol):
     defaults: dict[Any, Any]
     state: dict[Any, Any]
 
+    def zero_grad(self) -> None: ...
+
     def state_dict(self) -> dict[str, dict[Any, Any]]: ...
 
     def load_state_dict(self, state_dict: dict[str, dict[Any, Any]]) -> None: ...
@@ -208,6 +213,9 @@ STEP_OUTPUT = Optional[Union[Tensor, Mapping[str, Any]]]
 
 LRSchedulerTypeUnion = Union[torch.optim.lr_scheduler.LRScheduler, torch.optim.lr_scheduler.ReduceLROnPlateau]
 
+# Protocol-level union covering the scheduler Protocol and the ReduceLROnPlateau Protocol
+LRSchedulerProtocolUnion: TypeAlias = Union[LRScheduler, ReduceLROnPlateau]
+
 
 @dataclass
 class LRSchedulerConfig:
@@ -252,7 +260,7 @@ OptimizerLRScheduler = Optional[
 
 ArgsType = Optional[Union[list[str], dict[str, Any], Namespace]]
 
-AnyDataClass = TypeVar("AnyDataClass", bound=dataclass)
+AnyDataClass = TypeVar("AnyDataClass")
 
 
 ################################################################################
@@ -266,6 +274,17 @@ class DataPrepable(Protocol):
     datamodule config."""
 
     def prepare_data(self, target_model: torch.nn.Module | None = None) -> None: ...
+
+
+@runtime_checkable
+class SaveHyperparametersProtocol(Protocol):
+    """Simple protocol indicating an object exposes a save_hyperparameters method.
+
+    Intentionally framework-agnostic, but see Lightning `HyperparametersMixin.save_hyperparameters` for an example
+    implementation. The method is expected to return None.
+    """
+
+    def save_hyperparameters(self, *args: Any, **kwargs: Any) -> None: ...
 
 
 @runtime_checkable
@@ -337,9 +356,13 @@ def gen_protocol_variants(
     if not isinstance(base_protocols, tuple):
         base_protocols = (base_protocols,)
     for sub_proto in get_args(supported_sub_protocols):
-        supported_cls = _ProtocolMeta(f"Built{sub_proto.__name__}", (*base_protocols, sub_proto, Protocol), {})
+        supported_cls = _ProtocolMeta(f"Built{sub_proto.__name__}", (*base_protocols, sub_proto, Protocol), {})  # type: ignore[arg-type]
         supported_cls._is_runtime_protocol = True
-        supported_cls.__module__ = inspect.getmodule(inspect.currentframe().f_back).__name__
+        frame = inspect.currentframe()
+        if frame and frame.f_back:
+            module = inspect.getmodule(frame.f_back)
+            if module:
+                supported_cls.__module__ = module.__name__
         protocol_components.append(supported_cls)
     gen_type_alias = " | ".join([f"protocol_components[{i}]" for i in range(len(protocol_components))])
     return eval(gen_type_alias)
@@ -359,6 +382,61 @@ InterpretunableType: TypeAlias = Union[ITDataModuleProtocol, ITModuleProtocol]
 class InterpretunableTuple(NamedTuple):
     datamodule: ITDataModuleProtocol | None = None
     module: ITModuleProtocol | None = None
+
+
+################################################################################
+# Base Module / Generative-step Protocols
+################################################################################
+
+
+@runtime_checkable
+class GenerativeStepProtocol(Protocol):
+    """Protocol describing the surface provided by GenerativeStepMixin used by debug utilities.
+
+    This is intentionally small: it only includes the methods/properties the debug generation code relies on.
+    """
+
+    def it_generate(self, batch: Any, **kwargs: Any) -> Any: ...
+
+    @property
+    def generation_cfg(self) -> Any: ...
+
+    @property
+    def gen_sig_keys(self) -> list: ...
+
+    def map_gen_inputs(self, batch: Any) -> dict[str, Any]: ...
+
+    def map_gen_kwargs(self, kwargs: dict) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class ITModuleBase(
+    ModuleInvariants,
+    Protocol,
+):
+    """Concrete Protocol combining the two core module protocols.
+
+    NOTE: As `ITModuleProtocol` is a union of dynamically created Protocol variants it can't be used as a direct base
+    class in a class statement without metaclass conflict (it's a typealias of a union so it has a metaclass
+    of types.UnionType and our derived class's metaclass (_ProtocolMeta) isn't a subclass of types.UnionType).
+    `ITModuleBase` provides a stable Protocol class that composes the structural requirements of our module and can be
+    used safely as a base for further composite Protocols.
+    """
+
+    ...
+
+
+@runtime_checkable
+class ITModuleGenDebuggable(ITModuleBase, GenerativeStepProtocol, Protocol):
+    """Composite protocol for ITModuleGenDebuggable objects.
+
+    Requires both module-like surface and generative-step helpers.
+
+    Use this as an annotation for attributes that must behave like a given module composition
+    that also supports generation helper methods (e.g., `it_generate`).
+    """
+
+    ...
 
 
 ################################################################################
@@ -395,26 +473,39 @@ class AnalysisOpProtocol(Protocol):
 class SAEDictProtocol(Protocol):
     """Protocol for SAE analysis dictionary operations."""
 
+    @property
     def shapes(self) -> dict[str, torch.Size | list[torch.Size]]: ...
+
     def batch_join(
         self, across_saes: bool = False, join_fn: Callable = torch.cat
-    ) -> SAEDictProtocol | list[torch.Tensor]: ...
-    def apply_op_by_sae(self, operation: Callable | str, *args, **kwargs) -> SAEDictProtocol: ...
+    ) -> "SAEDictProtocol" | list[torch.Tensor]: ...
+
+    def apply_op_by_sae(self, operation: Callable | str, *args, **kwargs) -> "SAEDictProtocol": ...
 
 
 class AnalysisStoreProtocol(Protocol):
     """Protocol verifying core analysis store functionality."""
 
-    dataset: HfDataset
+    dataset: Union[HfDataset, StrOrPath, None]
     streaming: bool
     cache_dir: str | None
-    save_dir: StrOrPath
+
+    # save_dir on AnalysisStore is exposed as a property (getter returns Path, setter accepts str/PathLike).
+    # Model it as a property in the protocol so static checkers consider the descriptor instead of a plain attribute.
+    @property
+    def save_dir(self) -> Path: ...
+
+    @save_dir.setter
+    def save_dir(self, path: StrOrPath) -> None: ...
+
     stack_batches: bool
     split: str
-    op_output_dataset_path: str | None
+    # op_output_dataset_path may be a string path, a pathlib.Path, or None at runtime
+    op_output_dataset_path: str | Path | None
 
     def by_sae(self, field_name: str, stack_latents: bool = True) -> SAEDictProtocol: ...
-    def __getattr__(self, name: str) -> list: ...
+    # __getattr__ may return dataset columns (lists/tensors), callables, or other attributes — accept Any
+    def __getattr__(self, name: str) -> Any: ...
     def reset_dataset(self) -> None: ...
 
 
@@ -446,6 +537,51 @@ class SAEAnalysisProtocol(Protocol):
     ) -> NamesFilter: ...
 
 
+class SAEAnalysisModuleProtocol(ITModuleBase, SAEAnalysisProtocol, Protocol):
+    """Protocol that requires both the ITModuleProtocol surface and SAEAnalysisProtocol methods.
+
+    Using a Protocol that inherits both interfaces expresses the intersection of the two required structural surfaces so
+    static checkers (like pyright) will require both sets of attributes/methods.
+    """
+
+    ...
+
+
+class RunnerCfgProtocol(Protocol):
+    """Protocol representing the base Session/Runner configuration object."""
+
+    it_session: Any | None
+    module: Any | None
+    datamodule: Any | None
+
+
+class AnalysisRunnerCfgProtocol(RunnerCfgProtocol, Protocol):
+    """Protocol representing the analysis runner configuration used by adapters.
+
+    Matches the public surface of `AnalysisRunnerCfg` (see `config/runner.py`).
+    """
+
+    analysis_cfgs: Any
+    limit_analysis_batches: int
+    cache_dir: Any
+    op_output_dataset_path: Any
+    sae_analysis_targets: Any
+    artifact_cfg: Any
+    ignore_manual: bool
+    # The processed, canonicalized list of AnalysisCfg that the runner exposes
+    _processed_analysis_cfgs: list[Any]
+
+
+class AnalysisRunnerProtocol(Protocol):
+    """Protocol verifying presence of analysis_run_cfg attribute.
+
+    This minimal structural protocol is used by adapters to access runner-provided analysis configuration without
+    importing the runner implementation.
+    """
+
+    analysis_run_cfg: AnalysisRunnerCfgProtocol
+
+
 class ActivationCacheProtocol(Protocol):
     """Core activation cache protocol."""
 
@@ -458,6 +594,7 @@ class ActivationCacheProtocol(Protocol):
     def stack_activation(
         self, activation_name: str, layer: int = -1, sublayer_type: str | None = None
     ) -> torch.Tensor: ...
+    def items(self) -> Iterable[tuple[str, torch.Tensor]]: ...
 
 
 class BaseAnalysisBatchProtocol(Protocol):

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 
 from huggingface_hub import scan_cache_dir
-from huggingface_hub.utils import CachedRepoInfo, CachedRevisionInfo
+from huggingface_hub.utils._cache_manager import CachedRepoInfo, CachedRevisionInfo
 from transformers.dynamic_module_utils import resolve_trust_remote_code
 
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
@@ -119,7 +119,7 @@ class OpDefinitionsCacheManager:
             # Skip files that don't exist anymore
             pass
 
-    def add_hub_yaml_files(self) -> List[Optional[Path]]:
+    def add_hub_yaml_files(self) -> List[Path]:
         """Add hub YAML files to monitoring."""
         hub_yaml_files = []
         try:

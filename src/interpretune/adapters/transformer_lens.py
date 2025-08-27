@@ -1,10 +1,11 @@
 import os
-from typing import Optional
+from typing import Optional, Type, cast
+import inspect
 from functools import reduce
 from copy import deepcopy
 
 import torch
-from transformers import PretrainedConfig
+from transformers import PretrainedConfig as HFPretrainedConfig, PreTrainedModel
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 from transformer_lens.utilities.devices import get_device_for_block_index
 from transformers.tokenization_utils_base import BatchEncoding
@@ -13,7 +14,6 @@ from interpretune.adapters import CompositionRegistry, LightningDataModule, Ligh
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.utils import move_data_to_device, patched_generate, rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
-from interpretune.config import ITLensCustomConfig
 
 
 ################################################################################
@@ -34,6 +34,7 @@ class TLensAttributeMixin:
     # TODO: we aren't using IT's Property Composition feature for TLens yet, but might be worth enabling it
     @property
     def device(self) -> Optional[torch.device]:
+        device: Optional[torch.device] = None
         try:
             device = (
                 getattr(self._it_state, "_device", None)
@@ -53,6 +54,8 @@ class TLensAttributeMixin:
 
     def get_tl_device(self, block_index: int) -> Optional[torch.device]:
         try:
+            if self.tl_cfg is None:
+                return None
             device = get_device_for_block_index(block_index, self.tl_cfg)
         except (AttributeError, AssertionError) as ae:
             rank_zero_warn(
@@ -97,23 +100,36 @@ class BaseITLensModule(BaseITModule):
         self._convert_hf_to_tl()
 
     def hf_configured_model_init(
-        self, cust_config: PretrainedConfig | ITLensCustomConfig, access_token: Optional[str] = None
+        self, cust_config: HFPretrainedConfig, access_token: Optional[str] = None
     ) -> torch.nn.Module:
         # usually makes sense to init the HookedTransfomer (empty) and pretrained HF model weights on cpu
         # versus moving them both to GPU (may make sense to explore meta device usage for model definition
         # in the future, only materializing parameter by parameter during loading from pretrained weights
         # to eliminate need for two copies in memory)
-        # TODO: add warning that TransformerLens only specifying a single device via device  is supported
+        # TODO: add warning that TransformerLens only specifying a single device via device is supported
         # (though the model will automatically be moved to multiple devices if n_devices > 1)
         cust_config.num_labels = self.it_cfg.num_labels
+        assert self.it_cfg.hf_from_pretrained_cfg is not None, (
+            "cannot init hf_configured_model if hf_from_pretrained_cfg is None"
+        )
+        assert self.it_cfg.model_class is not None, "cannot init hf_configured_model if model_class is None"
         if (dmap := self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs.get("device_map", None)) != "cpu":
             rank_zero_warn(
                 "Overriding `device_map` passed to TransformerLens to transform pretrained weights on"
                 f" cpu prior to moving the model to target device: {dmap}"
             )
             self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs["device_map"] = "cpu"
-        model = self.it_cfg.model_class.from_pretrained(
-            **self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs, config=cust_config, token=access_token
+        # We use nominal typing against HF's PreTrainedModel to satisfy static checkers without a local
+        # Protocol definition. We should switch to structural typing if/when HF offers a protocol definition.
+        assert inspect.isclass(self.it_cfg.model_class) and issubclass(self.it_cfg.model_class, PreTrainedModel), (
+            "model_class must be a PreTrainedModel subclass"
+        )
+
+        model_cls = cast(Type[PreTrainedModel], self.it_cfg.model_class)
+        model = model_cls.from_pretrained(
+            **self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs,
+            config=cust_config,
+            token=access_token,
         )
         # perhaps explore initializing on the meta device and then materializing as needed layer by layer during
         # loading/processing into hookedtransformer
@@ -128,7 +144,7 @@ class BaseITLensModule(BaseITModule):
         # TODO: suppress messages from tl about no tokenizer here, we're deferring the tokenizer attach until setup
         self.model = HookedTransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
 
-    def _prune_tl_cfg_dict(self, prune_list: list = None) -> dict:
+    def _prune_tl_cfg_dict(self, prune_list: Optional[list] = None) -> dict:
         """Prunes the tl_cfg dictionary by removing 'hf_model' and 'tokenizer' keys. Asserts that these keys have
         None values, and warns if they don't.
 
@@ -192,28 +208,28 @@ class TransformerLensAdapter(TLensAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="datamodule",
-            adapter_combination=(Adapter.core, Adapter.transformer_lens),
+            adapter_combination=(Adapter.core, Adapter.transformer_lens),  # type: ignore[arg-type]
             composition_classes=(ITDataModule,),
             description="Transformer Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),  # type: ignore[arg-type]
             composition_classes=(ITDataModule, LightningDataModule),
             description="Transformer Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="module",
-            adapter_combination=(Adapter.core, Adapter.transformer_lens),
+            adapter_combination=(Adapter.core, Adapter.transformer_lens),  # type: ignore[arg-type]
             composition_classes=(ITLensModule,),
             description="Transformer Lens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="module",
-            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),  # type: ignore[arg-type]
             composition_classes=(
                 TLensAttributeMixin,
                 BaseITLensModule,
@@ -225,7 +241,9 @@ class TransformerLensAdapter(TLensAttributeMixin):
         )
 
     def batch_to_device(self, batch) -> BatchEncoding:
-        move_data_to_device(batch, self.input_device)
+        device = self.input_device
+        if device is not None:
+            move_data_to_device(batch, device)
         return batch
 
 

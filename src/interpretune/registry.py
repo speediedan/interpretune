@@ -43,8 +43,8 @@ class RegKeyType(Enum):
 class RegisteredCfg(NamedTuple):
     datamodule_cfg: ITDataModuleConfig
     module_cfg: ITConfig
-    datamodule_cls: Type[DataModuleInitable] = DEFAULT_DATAMODULE
-    module_cls: Type[ModuleSteppable] = DEFAULT_MODULE
+    datamodule_cls: Type[DataModuleInitable] = DEFAULT_DATAMODULE  # type: ignore[assignment]
+    module_cls: Type[ModuleSteppable] = DEFAULT_MODULE  # type: ignore[assignment]
 
 
 @runtime_checkable
@@ -55,7 +55,7 @@ class RegKeyQueryable(Protocol):
     adapter_ctx: Tuple
 
 
-class ModuleRegistry(dict):
+class ModuleRegistry(dict):  # type: ignore[type-arg]
     def register(
         self,
         phase: str,
@@ -80,7 +80,7 @@ class ModuleRegistry(dict):
             description : composition description
             cfg_dict: optionally save original configuration dictionary
         """
-        supported_composition: Dict[str | Adapter | Tuple[Adapter | str], Tuple[Dict]] = {}
+        supported_composition: Dict[str | Adapter | Tuple[Adapter | str], Any] = {}
         supported_composition[reg_key] = registered_cfg
         supported_composition["description"] = description if description is not None else ""
         supported_composition["cfg_dict"] = cfg_dict
@@ -88,24 +88,40 @@ class ModuleRegistry(dict):
         for a_combo in adapter_combinations:
             a_combo = (a_combo,) if not isinstance(a_combo, tuple) else a_combo
             composition_key = (model_src_key, task_name, phase, self.canonicalize_composition(a_combo))
-            supported_composition[composition_key] = registered_cfg
-            self[composition_key] = supported_composition
+            supported_composition[composition_key] = registered_cfg  # type: ignore[assignment]
+            self[composition_key] = supported_composition  # type: ignore[assignment]
 
     def canonicalize_composition(self, adapter_ctx: Sequence[Adapter]) -> Tuple:
         return tuple(sorted(list(adapter_ctx), key=lambda a: a.value))
 
-    def available_keys(self, key_type: RegKeyType | str = "string") -> Set:
+    def available_keys(self, key_type: RegKeyType | str = "string") -> None:
         if isinstance(key_type, str):
             key_type = RegKeyType[key_type.upper()]
         print(self.available_keys_feedback(key_type.value))
 
-    def available_keys_feedback(self, target_key: str | Tuple) -> Set:
+    def available_keys_feedback(self, target_key: str | Tuple) -> str:
         assert isinstance(target_key, (str, tuple)), "`target_key` must be either a str or a tuple"
-        avail_keys = {(key, self[key]["description"]) for key in self.keys() if isinstance(key, type(target_key))}
+        # Collect entries as (displayable_key, description) and sort by the displayable key
+        entries: List[Tuple[str, str]] = []
+        for key in self.keys():
+            if not isinstance(key, type(target_key)):
+                continue
+            desc = self[key].get("description", "")
+            # Convert key to a stable, human-readable string for sorting/display
+            if isinstance(key, tuple):
+                # Represent tuple keys in a compact, stable way
+                key_str = "(" + ", ".join(map(str, key)) + ")"
+            else:
+                key_str = str(key)
+            entries.append((key_str, desc))
+
+        # Sort entries deterministically by the key string
+        entries.sort(key=lambda it: it[0])
+
         if isinstance(target_key, str):
-            return tabulate(sorted(avail_keys), headers=["Key", "Description"])
+            return tabulate(entries, headers=["Key", "Description"])
         else:
-            return tabulate(sorted(avail_keys), headers=["(Model Src, Task Name, Phase, Adapter Ctx)", "Description"])
+            return tabulate(entries, headers=["(Model Src, Task Name, Phase, Adapter Ctx)", "Description"])
 
     def composition_keys(self) -> Set:
         return {key for key in self.keys() if isinstance(key, tuple)}
@@ -127,13 +143,12 @@ class ModuleRegistry(dict):
             else:
                 raise KeyError
         except KeyError:
-            available_keys_set = None
-            if available_keys_set := self.available_keys_feedback(target):
-                available_keys_set = sorted(available_keys_set)
+            # Get a nicely formatted, sorted table of available keys for the same key type
+            available_keys_str = self.available_keys_feedback(target)
             err_msg = (
                 f"A module registered with `{target}` was not found in the registry."
                 "\nAvailable valid modules:\n"
-                f"{available_keys_set}"
+                f"{available_keys_str}"
             )
             raise KeyError(err_msg)
 
@@ -172,7 +187,10 @@ def instantiate_and_register(
         registered_cfg, shared_cfg, itdm_cfg_defaults_fn, it_cfg_defaults_fn, datamodule_cls, module_cls
     )
     registered_cfg = RegisteredCfg(
-        datamodule_cfg=datamodule_cfg, module_cfg=module_cfg, datamodule_cls=datamodule_cls, module_cls=module_cls
+        datamodule_cfg=datamodule_cfg,
+        module_cfg=module_cfg,
+        datamodule_cls=datamodule_cls,
+        module_cls=module_cls,  # type: ignore[arg-type]
     )
     for supported_p in AllPhases:
         reg_info["phase"] = supported_p.value
@@ -232,7 +250,7 @@ def instantiate_nested(c: Dict | List):
         for i, v in enumerate(c):
             c[i] = instantiate_nested(c[i])
     if "class_path" in c:  # if the dict directly contains a class_path key
-        c = instantiate_class(c, import_only=c.pop("import_only", False))  # with instantiating the class
+        c = instantiate_class(c, import_only=c.pop("import_only", False))  # type: ignore[arg-type]  # with instantiating the class
     return c
 
 

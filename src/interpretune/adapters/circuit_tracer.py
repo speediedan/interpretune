@@ -78,8 +78,9 @@ class BaseCircuitTracerModule(BaseITLensModule):
         self._load_replacement_model(pretrained_kwargs=loaded_model_kwargs)
         self.model.config = hf_preconversion_config
 
-    def _load_replacement_model(self, pretrained_kwargs: dict) -> None:
+    def _load_replacement_model(self, pretrained_kwargs: Optional[dict] = None) -> None:
         """Load the ReplacementModel for circuit tracing."""
+        pretrained_kwargs = pretrained_kwargs or {}
         cfg = self.circuit_tracer_cfg
         if not cfg:
             rank_zero_warn("No circuit_tracer_cfg found, using defaults")
@@ -104,7 +105,6 @@ class BaseCircuitTracerModule(BaseITLensModule):
 
     def _capture_hyperparameters(self) -> None:
         """Capture hyperparameters for logging."""
-        # self._it_state._init_hparams = {"sae_cfgs": deepcopy(self.it_cfg.sae_cfgs)}
         self._it_state._init_hparams.update({"circuit_tracer_cfg": deepcopy(self.circuit_tracer_cfg)})
         super()._capture_hyperparameters()
 
@@ -128,6 +128,7 @@ class BaseCircuitTracerModule(BaseITLensModule):
             # Tokenize and flatten to 1D tensor of token ids
             token_ids = []
             for token in cfg.analysis_target_tokens:
+                assert tokenizer is not None, "Tokenizer must be available to tokenize analysis_target_tokens"
                 ids = tokenizer.encode(token, add_special_tokens=False)
                 token_ids.extend(ids)
             if token_ids:
@@ -191,7 +192,7 @@ class BaseCircuitTracerModule(BaseITLensModule):
     def save_graph(self, graph: Graph, output_path: Union[str, Path]) -> Path:
         """Save attribution graph to file."""
         output_path = Path(output_path)
-        graph.to_pt(output_path)
+        graph.to_pt(str(output_path))
         return output_path
 
     def create_graph_visualization_files(
@@ -229,35 +230,35 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="datamodule",
-            adapter_combination=(Adapter.core, Adapter.circuit_tracer),
+            adapter_combination=(Adapter.core, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(ITDataModule,),
             description="Circuit Tracer adapter that can be composed with core...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),
+            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(ITDataModule, LightningDataModule),
             description="Circuit Tracer adapter that can be composed with lightning...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module",
-            adapter_combination=(Adapter.core, Adapter.circuit_tracer),
+            adapter_combination=(Adapter.core, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(CircuitTracerModule,),
             description="Circuit Tracer adapter that can be composed with core...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module_cfg",
-            adapter_combination=(Adapter.core, Adapter.circuit_tracer),
+            adapter_combination=(Adapter.core, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(CircuitTracerConfig,),
             description="Circuit Tracer configuration that can be composed with core...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module",
-            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),
+            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(
                 CircuitTracerAttributeMixin,
                 BaseCircuitTracerModule,
@@ -270,13 +271,14 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module_cfg",
-            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),
+            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(CircuitTracerConfig,),
             description="Circuit Tracer configuration that can be composed with lightning...",
         )
 
     def batch_to_device(self, batch) -> BatchEncoding:
-        move_data_to_device(batch, self.input_device)
+        if self.input_device is not None:
+            move_data_to_device(batch, self.input_device)
         return batch
 
     def setup(self, *args, **kwargs) -> None:
@@ -290,21 +292,27 @@ class CircuitTracerAnalysisMixin:
     def save_graph(
         self,
         graph: Graph,
-        output_dir: Union[str, Path],
+        output_path: Union[str, Path],
         slug: Optional[str] = None,
         custom_metadata: Optional[Dict[str, Any]] = None,
         use_neuronpedia: Optional[bool] = None,
     ) -> Path:
         """Save and optionally transform graph for Neuronpedia upload."""
-        # Default output_dir to graph_output_dir if not set
-        if output_dir is None:
-            output_dir = self.it_cfg.circuit_tracer_cfg.graph_output_dir
-        output_dir = Path(output_dir)
+        # Convert output_path to directory for processing
+        if output_path is None:
+            output_path = self.it_cfg.circuit_tracer_cfg.graph_output_dir
+
+        # If output_path is a file path, use its parent directory
+        if output_path is not None:
+            output_dir = Path(output_path).parent if Path(output_path).suffix else Path(output_path)
+        else:
+            raise ValueError("output_path is None and no default graph_output_dir configured")
+
         slug = slug or f"graph-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         output_dir.mkdir(parents=True, exist_ok=True)
         pt_path = output_dir / f"{slug}.pt"
         # Save graph tensors in .pt format
-        graph.to_pt(pt_path)
+        graph.to_pt(str(pt_path))
 
         # Create graph visualization files
         self.create_graph_visualization_files(
@@ -359,24 +367,22 @@ class CircuitTracerAnalysisMixin:
         # Default output_dir to graph_output_dir if not set
         if output_dir is None:
             output_dir = self.it_cfg.circuit_tracer_cfg.graph_output_dir
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        if output_dir is not None:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            raise ValueError("output_dir is None and no default graph_output_dir configured")
 
         graph_slug = slug or f"attribution-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
         # Save and optionally transform for Neuronpedia
         graph_path = self.save_graph(
             graph=graph,
-            output_dir=output_dir,
+            output_path=output_dir,
             slug=graph_slug,
             custom_metadata=custom_metadata,
             use_neuronpedia=use_neuronpedia,
         )
-
-        # Determine whether to upload to Neuronpedia
-        # if use_neuronpedia is None:
-        #     use_neuronpedia = self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg \
-        #         else False
 
         if upload_to_np and use_neuronpedia:
             neuronpedia_metadata = self.neuronpedia.upload_graph_to_neuronpedia(graph_path)

@@ -20,7 +20,7 @@ def boolean_logits_to_avg_logit_diff(
     target_indices: torch.Tensor,
     reduction: Literal["mean", "sum"] | None = None,
     keep_as_tensor: bool = True,
-) -> list[float] | float:
+) -> torch.Tensor | list[float] | float:
     """Returns the avg logit diff on a set of prompts, with fixed s2 pos and stuff."""
     incorrect_indices = 1 - target_indices
     correct_logits = torch.gather(logits, 2, torch.reshape(target_indices, (-1, 1, 1))).squeeze()
@@ -48,8 +48,8 @@ def get_loss_preds_diffs(
     Returns:
         Tuple of (loss, logit_diffs, preds, answer_logits)
     """
-    loss = module.loss_fn(answer_logits, analysis_batch.label_ids)
-    answer_logits = module.standardize_logits(answer_logits)
+    loss = module.loss_fn(answer_logits, analysis_batch.label_ids)  # type: ignore[attr-defined]
+    answer_logits = module.standardize_logits(answer_logits)  # type: ignore[attr-defined]
     per_example_answers, _ = torch.max(answer_logits, dim=-2)
     preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
     logit_diffs = logit_diff_fn(answer_logits, target_indices=analysis_batch.orig_labels)
@@ -200,11 +200,15 @@ def model_ablation_impl(
 
     # Run ablation for each latent
     per_latent_logits: dict[str, dict[Any, torch.Tensor]] = defaultdict(dict)
+    assert alive_latents is not None and isinstance(alive_latents, dict), "alive_latents must be a dict"
     for name, alive in alive_latents.items():
         for latent_idx in alive:
             fwd_hooks_cfg = [(name, partial(ablate_latent_fn, latent_idx=latent_idx, seq_pos=answer_indices))]
-            answer_logits = module.model.run_with_hooks_with_saes(
-                **batch, saes=module.sae_handles, clear_contexts=True, fwd_hooks=fwd_hooks_cfg
+            answer_logits = module.model.run_with_hooks_with_saes(  # type: ignore[attr-defined]
+                **batch,
+                saes=module.sae_handles,
+                clear_contexts=True,
+                fwd_hooks=fwd_hooks_cfg,  # type: ignore[attr-defined]
             )
             per_latent_logits[name][latent_idx] = answer_logits[torch.arange(batch["input"].size(0)), answer_indices, :]
 
@@ -277,7 +281,10 @@ def logit_diffs_impl(
     """Implementation for computing logit differences."""
 
     logits, indices = analysis_batch.answer_logits, analysis_batch.answer_indices
-    answer_logits = torch.squeeze(logits[torch.arange(batch["input"].size(0)), indices], dim=1)
+    assert logits is not None and indices is not None, "answer_logits and answer_indices must not be None"
+    assert isinstance(logits, torch.Tensor) and isinstance(indices, torch.Tensor), "logits and indices must be tensors"
+    indexed_logits = logits[torch.arange(batch["input"].size(0)), indices]
+    answer_logits = torch.squeeze(indexed_logits, dim=1)
     loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn)
     if logit_diffs.dim() == 0:
         logit_diffs.unsqueeze_(0)
@@ -304,6 +311,7 @@ def sae_correct_acts_impl(
     if not hasattr(analysis_batch, "alive_latents") or analysis_batch.alive_latents is None:
         analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
 
+    assert isinstance(logit_diffs, torch.Tensor), "expected logit_diffs to be a Tensor"
     # Extract correct activations for examples with positive logit differences
     correct_mask = logit_diffs > 0
     # Handle scalar case
@@ -313,7 +321,8 @@ def sae_correct_acts_impl(
         logit_diffs = logit_diffs.unsqueeze(0)
 
     correct_activations = {}
-    names_filter = module.analysis_cfg.names_filter
+    names_filter = module.analysis_cfg.names_filter  # type: ignore[attr-defined]
+    assert cache is not None, "cache should not be None after validation"
     for name, acts in cache.items():
         if not names_filter(name):
             continue
@@ -355,7 +364,7 @@ def gradient_attribution_impl(
     if isinstance(cache_source, ActivationCache):
         batch_cache_dict = cache_source
     else:
-        batch_cache_dict = ActivationCache(cache_source, module.model)
+        batch_cache_dict = ActivationCache(cache_source, module.model)  # type: ignore[arg-type]
     batch_sz = batch["input"].size(0)
 
     # Get alive latents using GetAliveLatentsOp  # TODO: clean this up so no temp batch is required
@@ -363,7 +372,7 @@ def gradient_attribution_impl(
     temp_batch = AnalysisBatch(cache=batch_cache_dict, answer_indices=analysis_batch.answer_indices)
 
     # TODO: refactor this to use the GetAliveLatentsOp? (which should then dispatch alive_latents implementation)
-    temp_batch = it.get_alive_latents(module, temp_batch, batch, batch_idx)
+    temp_batch = it.get_alive_latents(module, temp_batch, batch, batch_idx)  # type: ignore[arg-type]
     analysis_batch.alive_latents = temp_batch.alive_latents
 
     # Compute attribution values and correct activations
@@ -432,8 +441,12 @@ def ablation_attribution_impl(
     }
 
     # Process per-latent logits for each hook
+    assert analysis_batch.answer_logits is not None and analysis_batch.alive_latents is not None, (
+        "Missing required attributes in analysis_batch"
+    )
+    assert isinstance(analysis_batch.answer_logits, dict), "Expected answer_logits to be a dictionary"
     for act_name, logits in analysis_batch.answer_logits.items():
-        attribution_values[act_name] = torch.zeros(batch["input"].size(0), module.sae_handles[0].cfg.d_sae)
+        attribution_values[act_name] = torch.zeros(batch["input"].size(0), module.sae_handles[0].cfg.d_sae)  # type: ignore[attr-defined]
         for latent_idx in analysis_batch.alive_latents[act_name]:
             # Calculate metrics for this latent using the instance's get_loss_preds_diffs method
             loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(
@@ -451,6 +464,7 @@ def ablation_attribution_impl(
             )
 
             base_diffs = analysis_batch.logit_diffs
+            assert base_diffs is not None, "Expected logit_diffs to be present in analysis_batch"
             for t in [example_mask, base_diffs]:
                 if t.dim() == 0:
                     t.unsqueeze_(0)

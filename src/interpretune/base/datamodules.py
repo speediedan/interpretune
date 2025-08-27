@@ -1,6 +1,6 @@
 import os
 import inspect
-from typing import Any
+from typing import Any, cast
 from functools import reduce
 import logging
 
@@ -11,6 +11,8 @@ from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from interpretune.utils import rank_zero_info, rank_zero_warn, _import_class, rank_zero_debug
 from interpretune.config import ITDataModuleConfig
+from interpretune.protocol import SaveHyperparametersProtocol, ITModuleProtocol
+
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ class ITDataModule:
         else:
             datasets.disable_caching()
         if hasattr(self, "save_hyperparameters"):
-            self.save_hyperparameters()
+            cast(SaveHyperparametersProtocol, self).save_hyperparameters()
         os.environ["TOKENIZERS_PARALLELISM"] = "true" if self.itdm_cfg.tokenizers_parallelism else "false"
         self.tokenizer = self.configure_tokenizer()
         rank_zero_debug(
@@ -52,13 +54,21 @@ class ITDataModule:
         self.data_collator = collator_class(self.tokenizer, **collator_kwargs)
 
     @property
-    def module(self) -> torch.nn.Module | None:
+    def module(self) -> "ITModuleProtocol | None":
         try:
             module = getattr(self, "_module", None) or reduce(getattr, "trainer.model".split("."), self)
+            # Ensure we return the correct type. If a module-like object is attached but isn't a
+            # torch.nn.Module, warn the user that we'll cast it for downstream typing assumptions.
+            if module is not None and not isinstance(module, torch.nn.Module):
+                rank_zero_warn(
+                    f"Attached module is not an instance of torch.nn.Module (type={type(module)}); "
+                    "casting to torch.nn.Module for downstream compatibility."
+                )
+            # Cast to the protocol type for static type checkers; runtime cast is a no-op.
+            return cast("ITModuleProtocol | None", module)
         except AttributeError as ae:
             rank_zero_warn(f"Could not find module reference (has it been attached yet?): {ae}")
-            module = None
-        return module
+            return None
 
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
@@ -71,7 +81,9 @@ class ITDataModule:
         # stage is optional for raw pytorch support
         # attaching module handle to datamodule is optional. It can be convenient to align data prep with a  model using
         # signature inspection
-        self.dataset = datasets.load_from_disk(self.itdm_cfg.dataset_path)
+        assert self.itdm_cfg.dataset_path is not None, "Dataset path is not configured"
+        # Use os.fspath to support both str and PathLike  cleanly
+        self.dataset = datasets.load_from_disk(os.fspath(self.itdm_cfg.dataset_path))
         if module is not None:
             self._module = module
 
@@ -109,7 +121,7 @@ class ITDataModule:
 
     # adapted from HF native trainer
     def _set_signature_columns_if_needed(self, target_model: torch.nn.Module) -> None:
-        if len(self.itdm_cfg.signature_columns) == 0:
+        if not self.itdm_cfg.signature_columns or len(self.itdm_cfg.signature_columns) == 0:
             # Inspect model forward signature to keep only the arguments it accepts.
             signature = inspect.signature(target_model.forward)
             self.itdm_cfg.signature_columns = list(signature.parameters.keys())
@@ -123,9 +135,16 @@ class ITDataModule:
             return dataset
         if not self.itdm_cfg.signature_columns:
             if not target_model:
+                assert self.module is not None, "No target model provided and module is not set"
                 target_model = self.module.model
             self._set_signature_columns_if_needed(target_model)
-        ignored_columns = list(set(dataset.column_names) - set(self.itdm_cfg.signature_columns))
+
+        # Ensure signature_columns is not None after setup
+        signature_columns = self.itdm_cfg.signature_columns
+        if signature_columns is None:
+            signature_columns = []
+
+        ignored_columns = list(set(dataset.column_names) - set(signature_columns))
         if len(ignored_columns) > 0:
             dset_description = "" if description is None else f"in the {description} set"
             target_name = f"`{target_model.__class__.__name__}.forward`"

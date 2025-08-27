@@ -12,7 +12,7 @@ import torch
 from transformers import BatchEncoding
 
 from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS, IT_ANALYSIS_HUB_CACHE
-from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg
+from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg, OpWrapper
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
 from interpretune.analysis.ops.dynamic_module_utils import ensure_op_paths_in_syspath, get_function_from_dynamic_module
@@ -380,7 +380,7 @@ class AnalysisOpDispatcher:
         return self._aliases.get(op_alias, None)
 
     @_ensure_loaded
-    def get_op_aliases(self, op_name: str) -> Dict[str, List[str]]:
+    def get_op_aliases(self, op_name: str) -> list[str]:
         return self._op_to_aliases[op_name]
 
     @_ensure_loaded
@@ -407,7 +407,7 @@ class AnalysisOpDispatcher:
 
         return resolved
 
-    def _set_default_hub_op_aliases(self) -> None:
+    def _set_default_hub_op_aliases(self) -> dict[str, "OpDef"]:
         """Ensure operations are accessible both with and without namespaces."""
         # Use existing definitions if no raw definitions provided
         target_ops = self._op_definitions
@@ -464,6 +464,7 @@ class AnalysisOpDispatcher:
                     else:
                         if base_alias != op_name and base_alias != alias:
                             target_ops[base_alias] = target_ops[op_name]
+
         return target_ops
 
     def _import_callable(self, callable_path: str) -> Callable:
@@ -542,7 +543,11 @@ class AnalysisOpDispatcher:
         if op_def.composition is not None:
             composition = op_def.composition
             # instantiate each operation in the composition
-            ops = [self.get_op(op) for op in composition]
+            raw_ops = [self.get_op(op) for op in composition]
+            # Filter to ensure we only have AnalysisOp objects
+            ops = [op for op in raw_ops if isinstance(op, AnalysisOp)]
+            if len(ops) != len(raw_ops):
+                raise ValueError(f"Composition for {op_name} contains non-AnalysisOp objects")
             op = CompositeAnalysisOp(ops, name=op_name, aliases=op_def.aliases)
             op.description = op_def.description
             op.input_schema = op_def.input_schema
@@ -661,8 +666,11 @@ class AnalysisOpDispatcher:
     def _maybe_instantiate_op(self, op_ref, context: DispatchContext = DispatchContext()) -> AnalysisOp:
         """Ensure an operation is instantiated based on various reference types."""
         # If it's an OpWrapper, use its _ensure_instantiated method to get the actual op
-        if hasattr(op_ref, "_ensure_instantiated") and callable(op_ref._ensure_instantiated):
-            return op_ref._ensure_instantiated()  # This now returns the actual op, not the wrapper
+        if isinstance(op_ref, OpWrapper):
+            result = op_ref._ensure_instantiated()  # This now returns the actual op, not the wrapper
+            if not isinstance(result, AnalysisOp):
+                raise TypeError(f"Expected AnalysisOp, got {type(result)}")
+            return result
 
         # If it's an AnalysisOp, get the op name
         if isinstance(op_ref, AnalysisOp):
@@ -680,13 +688,20 @@ class AnalysisOpDispatcher:
         if callable(op) and not isinstance(op, AnalysisOp):
             # Instantiate the operation and update the dispatch table
             instantiated_op = op()
+            if not isinstance(instantiated_op, AnalysisOp):
+                raise TypeError(f"Factory function returned {type(instantiated_op)}, expected AnalysisOp")
             ctx_dict[context] = instantiated_op
             return instantiated_op
         elif op is not None:
+            if not isinstance(op, AnalysisOp):
+                raise TypeError(f"Expected AnalysisOp, got {type(op)}")
             return op
         else:
             # Try to get the op if it's not in the dispatch table
-            return self.get_op(op_name, context)
+            result = self.get_op(op_name, context)
+            if not isinstance(result, AnalysisOp):
+                raise TypeError(f"get_op returned {type(result)}, expected AnalysisOp")
+            return result
 
     @_ensure_loaded
     def instantiate_all_ops(self) -> Dict[str, AnalysisOp]:
@@ -717,7 +732,7 @@ class AnalysisOpDispatcher:
         # See NOTE [Composition and Compilation Limitations]
         # Support for dot-separated string format
         if isinstance(op_names, str):
-            op_names = op_names.split(".")
+            op_names = op_names.split(".")  # type: ignore[assignment]  # Converting str to list[str]
         # If op_names is a list, split any string elements containing '.' into multiple op names
         elif isinstance(op_names, list):
             split_names = []
@@ -728,7 +743,16 @@ class AnalysisOpDispatcher:
                     split_names.append(op_name)
             op_names = split_names
 
-        ops = [self.get_op(op_name) if isinstance(op_name, str) else op_name for op_name in op_names]
+        # Convert all op references to AnalysisOp objects
+        ops = []
+        for op_name in op_names:
+            if isinstance(op_name, str):
+                op = self.get_op(op_name)
+            else:
+                # Handle OpWrapper and other non-string references
+                op = self._maybe_instantiate_op(op_name)
+            ops.append(op)
+
         return CompositeAnalysisOp(ops, name=name, aliases=aliases)
 
     def __call__(

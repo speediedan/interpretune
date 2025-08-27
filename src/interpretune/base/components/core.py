@@ -1,9 +1,8 @@
 from __future__ import annotations
 import tempfile
-import os
 import warnings
 from datetime import datetime
-from typing import Any, Union, TYPE_CHECKING
+from typing import Any, Union, TYPE_CHECKING, cast, Optional
 from functools import reduce, partial
 from pathlib import Path
 from copy import deepcopy
@@ -22,8 +21,12 @@ from interpretune.utils import (
     collect_env_info,
     dummy_method_warn_fingerprint,
 )
-from interpretune.protocol import LRScheduler, Optimizable, Optimizer, LRSchedulerConfig
-from interpretune.config import init_analysis_cfgs
+from interpretune.protocol import (
+    Optimizable,
+    LRSchedulerConfig,
+    StrOrPath,
+    LRSchedulerProtocolUnion,
+)
 
 if TYPE_CHECKING:
     from interpretune.config import ITConfig, ITState
@@ -82,15 +85,6 @@ class BaseConfigImpl:
 
     def _init_dirs_and_hooks(self) -> None:
         self._create_experiment_dir()
-        if hasattr(self, "analysis_run_cfg") and self.analysis_run_cfg:
-            init_analysis_cfgs(
-                module=self,
-                analysis_cfgs=self.analysis_run_cfg._processed_analysis_cfgs,
-                cache_dir=self.analysis_run_cfg.cache_dir,
-                op_output_dataset_path=self.analysis_run_cfg.op_output_dataset_path,
-                sae_analysis_targets=self.analysis_run_cfg.sae_analysis_targets,
-                ignore_manual=self.analysis_run_cfg.ignore_manual,
-            )
         if self.cuda_allocator_history:
             self.memprofiler.init_cuda_snapshots_dir()
         # TODO: add save_hyperparameters/basic logging func for raw pytorch
@@ -99,9 +93,13 @@ class BaseConfigImpl:
 
     def _create_experiment_dir(self) -> None:
         # we only want to create the core experiment-specific dir for frameworks that aren't adding their own
-        if getattr(self._it_state, "_log_dir", None) is not None:
-            self._it_state._log_dir = self._it_state._log_dir / self._it_state._init_hparams["experiment_id"]
-            self._it_state._log_dir.mkdir(exist_ok=True, parents=True)
+        log_dir = getattr(self._it_state, "_log_dir", None)
+        if log_dir is None:
+            return
+        # coerce to pathlib.Path so we can safely call mkdir; original value may be str/PathLike
+        path_dir = Path(log_dir) / self._it_state._init_hparams["experiment_id"]
+        path_dir.mkdir(exist_ok=True, parents=True)
+        self._it_state._log_dir = path_dir
 
     def _capture_hyperparameters(self) -> None:
         # subclasses may have provided their own hparams so we update rather than override
@@ -133,6 +131,9 @@ class BaseConfigImpl:
 
 class PropertyDispatcher:
     _it_state: ITState
+    # These attributes are provided by the composed BaseITModule at runtime.
+    it_cfg: "ITConfig"
+    model: torch.nn.Module
 
     CORE_TO_FRAMEWORK_ATTRS_MAP = {}
 
@@ -162,7 +163,14 @@ class PropertyDispatcher:
         Returns:
             Optional[Any]: _description_
         """
-        if (overridden_method := inspect.currentframe().f_back.f_code.co_name) in self._enabled_overrides:
+        current_frame = inspect.currentframe()
+        if current_frame is None or current_frame.f_back is None:
+            return non_dispatch_val
+        f_back = current_frame.f_back
+        if f_back.f_code is None:
+            return non_dispatch_val
+        overridden_method = f_back.f_code.co_name
+        if overridden_method in self._enabled_overrides:
             return self.PROPERTY_COMPOSITION[overridden_method]["dispatch"].__get__(self._it_state)
         else:
             return non_dispatch_val
@@ -178,12 +186,14 @@ class PropertyDispatcher:
         return attr_val
 
     @property
-    def core_log_dir(self) -> str | os.PathLike | None:
-        return self._core_or_framework(c2f_map_key="_log_dir")
+    def core_log_dir(self) -> Optional[StrOrPath]:
+        result = self._core_or_framework(c2f_map_key="_log_dir")
+        return cast(Optional[StrOrPath], result)
 
     @property
     def datamodule(self) -> ITDataModule | None:
-        return self._core_or_framework(c2f_map_key="_datamodule")
+        result = self._core_or_framework(c2f_map_key="_datamodule")
+        return cast(Union[ITDataModule, None], result)
 
     @property
     def session_complete(self) -> bool:
@@ -216,7 +226,7 @@ class PropertyDispatcher:
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
             device = None
-        return device
+        return cast(Union[torch.device, None], device)
 
     @device.setter
     def device(self, value: str | torch.device | None) -> None:
@@ -264,37 +274,35 @@ class CoreHelperAttributes:
             if name in _helper_attrs:
                 return _helper_attrs[name]()
         # the unresolved attribute wasn't ours, pass it to the next __getattr__ in __mro__
-        return super().__getattr__(name)
+        return super().__getattr__(name)  # type: ignore[attr-defined]
 
     @property
     def current_epoch(self) -> int:
         return self._core_or_framework(c2f_map_key="_current_epoch")
 
     @property
-    def optimizers(self) -> str | os.PathLike | None:
+    def optimizers(self) -> Optional[list[Optimizable]]:
         return self._core_or_framework(c2f_map_key="_it_optimizers")
 
     @property
-    def lr_scheduler_configs(self) -> str | os.PathLike | None:
+    def lr_scheduler_configs(self) -> list[LRSchedulerConfig]:
         return self._core_or_framework(c2f_map_key="_it_lr_scheduler_configs")
 
     @property
-    def lr_schedulers(self) -> None | list[LRScheduler] | LRScheduler:
-        """Returns the learning rate scheduler(s) that are being used during training. Useful for manual
-        optimization.
+    def lr_schedulers(self) -> None | LRSchedulerProtocolUnion | list[LRSchedulerProtocolUnion]:
+        """Returns the learning rate scheduler(s) that are being used during training.
 
         Returns:
-            A single scheduler, or a list of schedulers in case multiple ones are present, or ``None`` if no
-            schedulers were returned.
+            A single scheduler (either an ``LRScheduler`` or ``ReduceLROnPlateau``),
+            a list of such schedulers, or ``None`` if no scheduler configs are available.
         """
         if not self.lr_scheduler_configs:
             return None
 
-        lr_schedulers: list[LRScheduler] = [config.scheduler for config in self.lr_scheduler_configs]
-        if len(lr_schedulers) == 1:
-            return lr_schedulers[0]
-
-        return lr_schedulers
+        scheds: list[LRSchedulerProtocolUnion] = [config.scheduler for config in self.lr_scheduler_configs]
+        if len(scheds) == 1:
+            return scheds[0]
+        return scheds
 
     # N.B. Some frameworks (e.g. Lightning) do not support directly setting `current_epoch` and `global_step`, instead
     # using `self.fit_loop.epoch_progress.current.completed` and `self.fit_loop.epoch_loop.global_step` respectively.
@@ -321,7 +329,7 @@ class OptimizerScheduler:
     # proper initialization of these variables should be done in the child class
     _it_state: ITState
 
-    def _it_init_optimizers_and_schedulers(self, optim_conf: dict[str, Any] | list | Optimizer | tuple) -> None:
+    def _it_init_optimizers_and_schedulers(self, optim_conf: dict[str, Any] | list | Optimizable | tuple) -> None:
         if optim_conf is None:
             rank_zero_info(  # TODO: maybe set a debug level instead?
                 "`configure_optimizers` returned `None`, Interpretune will not configure an optimizer or scheduler.",
@@ -350,7 +358,7 @@ class OptimizerScheduler:
         return lr_scheduler_configs
 
     @staticmethod
-    def _configure_optimizers(optim_conf: dict[str, Any] | list | Optimizer | tuple) -> tuple[list, list]:
+    def _configure_optimizers(optim_conf: dict[str, Any] | list | Optimizable | tuple) -> tuple[list, list]:
         # for basic optimizer/scheduler init, the proposed IT protocol uses the convenient Lightning optimizer/scheduler
         # formats. Note we do not subject configuration to Lightning validation constraints to increase flexibility.
         optimizers, lr_schedulers = [], []
@@ -402,4 +410,5 @@ class OptimizerScheduler:
         return optimizers, lr_schedulers
 
 
-class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler): ...
+class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler):  # type: ignore[misc]
+    ...

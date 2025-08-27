@@ -23,6 +23,7 @@ from interpretune.protocol import (
     NamesFilter,
     SAEFqn,
     AnalysisCfgProtocol,
+    StrOrPath,
 )
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema
 from interpretune.analysis.ops.dispatcher import DISPATCHER
@@ -240,6 +241,8 @@ def schema_to_features(
     Returns:
         A features dict compatible with Dataset.from_generator
     """
+    from interpretune.analysis.ops.base import AnalysisOpLike
+
     if isinstance(op, str):
         op = DISPATCHER.get_op(op)
     if schema is None and op is not None:
@@ -248,8 +251,13 @@ def schema_to_features(
         has_output_schema = hasattr(module.analysis_cfg, "output_schema")
         if has_output_schema:
             schema = module.analysis_cfg.output_schema
+
+    # Handle the case where schema is an OpWrapper or AnalysisOp instead of OpSchema
+    if isinstance(schema, AnalysisOpLike):
+        schema = schema.output_schema
+
     if not schema:
-        return {}  # Return empty dict if no schema available
+        return Features()  # Return empty Features if no schema available
 
     batch_size, max_answer_tokens, num_classes, vocab_size, max_seq_len = get_module_dims(module)
     features_dict = {}
@@ -344,7 +352,7 @@ class AnalysisStore:
     def __init__(
         self,
         # dataset: can be a path or a loaded Hugging Face dataset
-        dataset: HfDataset | str | os.PathLike | None = None,
+        dataset: HfDataset | StrOrPath | None = None,
         op_output_dataset_path: str | None = None,
         cache_dir: str | None = None,
         streaming: bool = False,
@@ -423,11 +431,11 @@ class AnalysisStore:
         return Path(self.op_output_dataset_path)
 
     @save_dir.setter
-    def save_dir(self, path: str | os.PathLike) -> None:
+    def save_dir(self, path: StrOrPath) -> None:
         """Set the directory where datasets will be saved."""
-        self.op_output_dataset_path = str(path)
+        self.op_output_dataset_path = Path(path)
 
-    def _load_dataset(self, dataset: HfDataset | str | os.PathLike) -> None:
+    def _load_dataset(self, dataset: HfDataset | StrOrPath | None) -> None:
         """Load a dataset from a path or existing dataset object."""
         load_dataset_kwargs = dict(
             split=self.split,
@@ -756,9 +764,9 @@ def default_sae_id_factory_fn(layer: int, prefix_pat: str = "blocks", suffix_pat
 
 def default_sae_hook_match_fn(
     in_name: str,
+    layers: int | Sequence[int] | None = None,
     hook_point_suffix: str = "hook_sae_acts_post",
     hook_point_prefix: str = "blocks",
-    layers: int | Sequence[int] | None = None,
 ) -> bool:
     suffix_matched = in_name.endswith(f"{hook_point_suffix}")
     if suffix_matched and layers is not None:

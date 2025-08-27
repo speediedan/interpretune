@@ -32,8 +32,8 @@ max_seed_value = np.iinfo(np.uint32).max
 min_seed_value = np.iinfo(np.uint32).min
 
 IT_BASE = os.environ.get("IT_BASE", Path(__file__).parent.parent.parent.parent / "it_examples")
-IT_CONFIG_BASE = os.environ.get("IT_CONFIG_BASE", IT_BASE / "config")
-IT_CONFIG_GLOBAL = os.environ.get("IT_CONFIG_GLOBAL", Path(IT_CONFIG_BASE) / "global")
+IT_CONFIG_BASE = Path(os.environ.get("IT_CONFIG_BASE", Path(IT_BASE) / "config"))
+IT_CONFIG_GLOBAL = Path(os.environ.get("IT_CONFIG_GLOBAL", IT_CONFIG_BASE / "global"))
 
 log = logging.getLogger(__name__)
 
@@ -78,8 +78,8 @@ class ITCLI(ITSessionMixin):
 
     def __init__(
         self,
-        module_class: ITModule = None,
-        datamodule_class: ITDataModule = None,
+        module_class: ITModule | None = None,
+        datamodule_class: ITDataModule | None = None,
         parser_kwargs: dict[str, Any] | dict[str, dict[str, Any]] | None = None,
         args: ArgsType = None,
         seed_everything_default: bool | int = True,
@@ -101,7 +101,7 @@ class ITCLI(ITSessionMixin):
         self.runner_class = runner_class
         self._supported_run_commands = getattr(self.runner_class, "supported_commands", None) or (None, "train", "test")
         self.run_cfg = run_cfg
-        self.setup_parser(parser_kwargs)
+        self.setup_parser(parser_kwargs or {})
         self.parse_arguments(self.parser, args)
 
         self.run_command = run_command
@@ -138,7 +138,7 @@ class ITCLI(ITSessionMixin):
             rank_zero_info(f"Invalid seed found: {repr(seed_in)}, seed set to {seed}")
         return seed
 
-    def seed_everything(self, seed: int | None = None, workers: bool = False) -> int:
+    def seed_everything(self, seed: int | None = None, workers: bool = False) -> None:
         r""""""
         if seed is None:
             env_seed = os.environ.get("IT_GLOBAL_SEED")
@@ -180,12 +180,12 @@ class ITCLI(ITSessionMixin):
         """Adds core arguments to the parser."""
         super().add_base_args(parser)
         parser.add_class_arguments(
-            self.runner_class,
+            self.runner_class,  # type: ignore[arg-type]
             "runner",
             instantiate=True,
             sub_configs=True,
         )
-        parser.add_class_arguments(self.run_cfg, "run_cfg", instantiate=True, sub_configs=True)
+        parser.add_class_arguments(self.run_cfg, "run_cfg", instantiate=True, sub_configs=True)  # type: ignore[arg-type]
         parser.link_arguments("it_session", "run_cfg.it_session", apply_on="instantiate")
         parser.link_arguments("run_cfg", "runner.run_cfg", apply_on="instantiate")
 
@@ -200,7 +200,7 @@ class ITCLI(ITSessionMixin):
 
         # TODO: consider supporting parse_object path in the future and document its (in)availability either way
         # e.g. self.config = parser.parse_object(args)
-        self.config = parser.parse_args(args)
+        self.config = parser.parse_args(args)  # type: ignore[arg-type]
 
     def _set_seed(self) -> None:
         """Sets the seed."""
@@ -288,7 +288,7 @@ def compose_config(config_files: Sequence[str]) -> list:
     return args
 
 
-def configure_cli(shared_config_dir: Path | str) -> tuple[bool, list]:
+def configure_cli(shared_config_dir: Path | str) -> list:
     env_setup()
     shared_config_files = enumerate_config_files(shared_config_dir)
     return shared_config_files

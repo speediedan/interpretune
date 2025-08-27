@@ -132,6 +132,8 @@ def _npp_hook(x):
 
 
 class MemProfiler:
+    MODEL_MISSING_MSG = "Module or model is not available"
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__()
         self.memory_stats = defaultdict(dict)
@@ -154,10 +156,12 @@ class MemProfiler:
 
     @property
     def memprofiler_cfg(self) -> MemProfilerCfg:
+        assert self._module is not None and self._module.it_cfg is not None, "Module or IT config is not available"
         return self._module.it_cfg.memprofiler_cfg
 
     @property
-    def schedule(self) -> int:
+    def schedule(self) -> MemProfilerSchedule:
+        assert self._module is not None and self._module.it_cfg is not None, "Module or IT config is not available"
         return self._module.it_cfg.memprofiler_cfg.schedule
 
     def remove_memprofiler_hooks(self) -> None:
@@ -167,6 +171,7 @@ class MemProfiler:
 
     def exec_reset_state_hooks(self) -> None:
         for hook in self._configured_hooks["reset_state_hooks"]:
+            assert self._module is not None and self._module.model is not None, self.MODEL_MISSING_MSG
             hook(self._module.model, self.memprofiler_cfg.save_hook_attrs)
 
     def add_memprofiler_hooks(self) -> None:
@@ -178,30 +183,46 @@ class MemProfiler:
                 self._configured_hooks[supported_hooks.name] = resolve_funcs(
                     cfg_obj=memory_hooks_cfg, func_type=supported_hooks.name
                 )
+
+        assert self._module is not None and self._module.model is not None, self.MODEL_MISSING_MSG
+        assert self._curr_pid is not None, "Memory profiling process not initialized"
+
         for module in self._module.model.modules():
             module.mem_info_handle = self._curr_pid.memory_info
             for hook_func in self._configured_hooks["pre_forward_hooks"]:
                 self._hook_handles[hook_func].append(module.register_forward_pre_hook(hook_func))
             for hook_func in self._configured_hooks["post_forward_hooks"]:
                 self._hook_handles[hook_func].append(module.register_forward_hook(hook_func))
+
         self.exec_reset_state_hooks()
 
     def init_cuda_snapshots_dir(self) -> None:
-        self._cuda_snapshot_dir = self.memprofiler_cfg.save_dir or Path(self._module.core_log_dir) / "memprofiler"
-        self._cuda_snapshot_dir = Path(self._cuda_snapshot_dir)  # ensure the dir is a Path
+        assert self._module is not None and self._module.core_log_dir is not None, (
+            "Module or core log directory is not available"
+        )
+
+        save_dir = self.memprofiler_cfg.save_dir
+        if save_dir is not None:
+            self._cuda_snapshot_dir = Path(save_dir)
+        else:
+            self._cuda_snapshot_dir = Path(self._module.core_log_dir) / "memprofiler"
+
         self._cuda_snapshot_dir.mkdir(exist_ok=True, parents=True)
 
-    def cuda_allocator_history_snap(self, snap_key: tuple) -> dict:
+    def cuda_allocator_history_snap(self, snap_key: str) -> dict:
+        assert self._cuda_snapshot_dir is not None, "CUDA snapshot directory not initialized"
         cuda_snapshot_file = self._cuda_snapshot_dir / f"cuda_alloc_{snap_key}.pickle"
-        torch.cuda.memory._dump_snapshot(cuda_snapshot_file)
+        torch.cuda.memory._dump_snapshot(str(cuda_snapshot_file))
+        return {"cuda_snapshot_file": str(cuda_snapshot_file)}
 
     def done(self, step_idx: int) -> bool:
-        return self.schedule.max_step and step_idx >= self.schedule.max_step
+        return bool(self.schedule.max_step and step_idx >= self.schedule.max_step)
 
     def _process_hooks(self, snap_key) -> None:
         if self.memprofiler_cfg.enable_memory_hooks:
             if len(self._hook_handles) == 0:
                 self.add_memprofiler_hooks()
+            assert self._module is not None and self._module.model is not None, self.MODEL_MISSING_MSG
             collected = {attr: getattr(self._module.model, attr, None) for attr in self.memprofiler_cfg.save_hook_attrs}
             self.memory_stats[snap_key].update(collected)
 
@@ -211,6 +232,7 @@ class MemProfiler:
         mem_cfg = self.memprofiler_cfg
         self._process_hooks(snap_key)
         if phase in mem_cfg.enabled_funcs.cpu:
+            assert self._curr_pid is not None, "Memory profiling process not initialized"
             mem = self._curr_pid.memory_info()
             self.memory_stats[snap_key].update({"rss": mem.rss, "vms": mem.vms})
         if phase in mem_cfg.enabled_funcs.cuda:
@@ -239,9 +261,14 @@ class MemProfiler:
         # snap key format is rank.phase.epoch_idx.step_idx.step_ctx
         # e.g. 0.training_step.0.0.end keys hook output for the end of training step 0, epoch 0 for rank 0
         # 0.training_step.1.2.start keys mem stats for the start of training step 2, epoch 1 for rank 0
+        assert self._module is not None, "Module not connected"
         epoch_idx = next(e_idx for e_idx in (epoch_idx, self._module.current_epoch) if e_idx is not None)
         if step_idx is None:
-            step_idx = self._snap_indices[(phase, step_ctx)]
+            step_idx = self._snap_indices.get((phase, step_ctx), 0)
+        # epoch_idx or step_idx should not be None
+        assert epoch_idx is not None, "Epoch index is None"
+        assert step_idx is not None, "Step index is None"
+
         return epoch_idx, step_idx, (self._rank, phase, epoch_idx, step_idx, step_ctx)
 
     def maybe_init_phase(self, phase: str, step_ctx: str) -> None:
@@ -272,6 +299,7 @@ class MemProfiler:
     @rank_zero_only
     def dump_memory_stats(self) -> None:
         # TODO: all gather memory stats in the future if/when multiple ranks are supported
+        assert self._cuda_snapshot_dir is not None, "CUDA snapshot directory not initialized"
         filename = self._cuda_snapshot_dir / "memory_stats.pickle"
         with open(filename, "wb") as f:
             pickle.dump(self.memory_stats, f)
