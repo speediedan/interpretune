@@ -279,7 +279,7 @@ class AnalysisOp:
         self.input_schema = input_schema
         self._ctx_key = None
         self._aliases = aliases  # Store aliases for the operation
-        self._impl = None
+        self._impl: Optional[Callable] = None
         self.impl_params = impl_params or {}
 
     @property

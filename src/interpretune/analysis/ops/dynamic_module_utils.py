@@ -117,7 +117,7 @@ def get_function_in_module(
             if module_spec.loader is None:
                 raise ImportError(f"Module spec for {name} has no loader")
             module_spec.loader.exec_module(module)
-            module.__interpretune_module_hash__ = module_hash
+            module.__interpretune_module_hash__ = module_hash  # type: ignore[attr-defined]  # custom attribute for caching
         return getattr(module, function_name)
 
 

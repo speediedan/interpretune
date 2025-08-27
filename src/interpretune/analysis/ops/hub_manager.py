@@ -223,7 +223,7 @@ class HubAnalysisOpManager:
             models = self.api.list_models(library="interpretune", cardData=True)
 
             for model in models:
-                repo_id = model.modelId
+                repo_id = model.modelId  # type: ignore[attr-defined]  # HuggingFace ModelInfo compatibility
                 if username and not repo_id.startswith(f"{username}/"):
                     continue
                 repos.append(repo_id)
