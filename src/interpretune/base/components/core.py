@@ -242,7 +242,7 @@ class PropertyDispatcher:
 
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         if hook_name == "configure_optimizers":
-            self._it_init_optimizers_and_schedulers(output)
+            self._it_init_optimizers_and_schedulers(output)  # type: ignore[attr-defined]  # provided by mixing class
         else:
             rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 

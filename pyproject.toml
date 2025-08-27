@@ -193,9 +193,8 @@ include = [
 
     # Analysis files
     "src/interpretune/analysis/__init__.py",
-    "src/interpretune/analysis/formatters.py",
+    "src/interpretune/analysis/formatters.py",                 # Fixed: was 1 error
     # "src/interpretune/analysis/core.py",                    # 78 errors - very complex type issues
-    # "src/interpretune/analysis/formatters.py",               # 1 error
     # "src/interpretune/analysis/ops/definitions.py",         # 8 errors
     "src/interpretune/analysis/ops/dynamic_module_utils.py",
     "src/interpretune/analysis/ops/__init__.py",
@@ -214,7 +213,7 @@ include = [
     "src/interpretune/base/components/__init__.py",
     # "src/interpretune/base/components/mixins.py",           # 35 errors - optional member access, callable issues
     # "src/interpretune/base/components/cli.py",              # 24 errors - path operations, argument types
-    # "src/interpretune/base/components/core.py",             # 1 error
+    "src/interpretune/base/components/core.py",             # Fixed: was 1 error
     "src/interpretune/base/datamodules.py",
 
     # Config files
@@ -240,7 +239,7 @@ include = [
     # Runners
     "src/interpretune/runners/__init__.py",
     # "src/interpretune/runners/analysis.py",                 # 28 errors - protocol mismatches, argument types
-    # "src/interpretune/runners/core.py",                     # 3 errors
+    "src/interpretune/runners/core.py",                     # Fixed: was 3 errors
 
     # Tools
     "src/interpretune/tools/",

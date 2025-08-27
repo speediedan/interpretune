@@ -207,8 +207,8 @@ class SAEAnalysisMixin:
     ) -> NamesFilter:
         available_hooks = {
             f"{handle.cfg.metadata.hook_name}.{key}"
-            for handle in self.sae_handles
-            for key in handle.hook_dict.keys()  # type: ignore[attr-defined]  # provided by mixing class
+            for handle in self.sae_handles  # type: ignore[attr-defined]  # provided by mixing class
+            for key in handle.hook_dict.keys()
         }
         layers_arg = [target_layers] if isinstance(target_layers, int) else target_layers
         names_filter = [hook for hook in available_hooks if sae_hook_match_fn(hook, layers_arg)]
