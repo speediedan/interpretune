@@ -195,7 +195,7 @@ include = [
     "src/interpretune/analysis/__init__.py",
     "src/interpretune/analysis/formatters.py",                 # Fixed: was 1 error
     # "src/interpretune/analysis/core.py",                    # 78 errors - very complex type issues
-    # "src/interpretune/analysis/ops/definitions.py",         # 8 errors
+    "src/interpretune/analysis/ops/definitions.py",         # Fixed: was 8 errors
     "src/interpretune/analysis/ops/dynamic_module_utils.py",
     "src/interpretune/analysis/ops/__init__.py",
     "src/interpretune/analysis/ops/auto_columns.py",
@@ -226,7 +226,7 @@ include = [
     "src/interpretune/config/sae_lens.py",
     "src/interpretune/config/transformer_lens.py",
     "src/interpretune/config/analysis.py",
-    # "src/interpretune/config/runner.py",                    # 10 errors
+    "src/interpretune/config/runner.py",                    # Fixed: was 10 errors
     "src/interpretune/config/shared.py",                    # Fixed: 0 errors
 
 
