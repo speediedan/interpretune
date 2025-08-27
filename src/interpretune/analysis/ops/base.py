@@ -519,7 +519,7 @@ class CompositeAnalysisOp(AnalysisOp):
 
     def __init__(
         self,
-        ops: list[AnalysisOp],
+        ops: Sequence[AnalysisOp],
         name: Optional[str] = None,
         aliases: Optional[Sequence[str]] = None,
         description: Optional[str] = None,
@@ -720,3 +720,7 @@ class OpWrapper:
         if getattr(op, "__reduce__", None) and callable(op.__reduce__):
             return op.__reduce__()
         return (_reconstruct_op, (op.__class__, op.__dict__.copy()))
+
+
+# Type alias for objects that behave like analysis operations (either actual AnalysisOp instances or OpWrapper proxies)
+AnalysisOpLike = (OpWrapper, AnalysisOp)

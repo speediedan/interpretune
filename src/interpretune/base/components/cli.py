@@ -138,7 +138,7 @@ class ITCLI(ITSessionMixin):
             rank_zero_info(f"Invalid seed found: {repr(seed_in)}, seed set to {seed}")
         return seed
 
-    def seed_everything(self, seed: int | None = None, workers: bool = False) -> int:
+    def seed_everything(self, seed: int | None = None, workers: bool = False) -> None:
         r""""""
         if seed is None:
             env_seed = os.environ.get("IT_GLOBAL_SEED")
@@ -159,7 +159,6 @@ class ITCLI(ITSessionMixin):
         np.random.seed(seed)
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-        return seed
 
     def _add_arguments(self, parser: ArgumentParser) -> None:
         self.add_default_arguments_to_parser(parser)

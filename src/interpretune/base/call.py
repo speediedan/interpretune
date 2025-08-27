@@ -23,7 +23,7 @@ def it_init(module, datamodule, *args, **kwargs):
         )
 
 
-def it_session_end(module, datamodule, session_type: AllPhases = CorePhases.train, *args, **kwargs):
+def it_session_end(module, datamodule, session_type: AllPhases | CorePhases = CorePhases.train, *args, **kwargs):
     # dispatch the appropriate stage-specific `end` hook upon completion of the session
     hook_name = f"on_{session_type.name}_end"
     _call_itmodule_hook(module, hook_name=hook_name, hook_msg="Running stage end hooks on IT module")

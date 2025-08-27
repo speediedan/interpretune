@@ -1,6 +1,14 @@
 """Operation definitions and infrastructure for analysis operations."""
 
-from interpretune.analysis.ops.base import OpSchema, ColCfg, AnalysisBatch, AnalysisOp, CompositeAnalysisOp
+from interpretune.analysis.ops.base import (
+    OpSchema,
+    ColCfg,
+    AnalysisBatch,
+    AnalysisOp,
+    CompositeAnalysisOp,
+    OpWrapper,
+    AnalysisOpLike,
+)
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 
 
@@ -11,4 +19,6 @@ __all__ = [
     "AnalysisOp",
     "CompositeAnalysisOp",
     "DISPATCHER",
+    "OpWrapper",
+    "AnalysisOpLike",
 ]

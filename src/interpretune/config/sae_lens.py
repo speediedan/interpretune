@@ -5,8 +5,15 @@ from dataclasses import dataclass
 from sae_lens.saes.sae import SAEConfig
 from sae_lens.saes.standard_sae import StandardSAEConfig
 from transformer_lens.utils import get_device as tl_get_device
+from transformer_lens import HookedTransformerConfig
 
-from interpretune.config import ITLensConfig, ITSerializableCfg
+from interpretune.config import (
+    ITLensConfig,
+    ITSerializableCfg,
+    ITLensCfgTypes,
+    ITLensCustomConfig,
+    ITLensFromPretrainedConfig,
+)
 from interpretune.utils import rank_zero_warn, MisconfigurationException
 
 ################################################################################
@@ -62,6 +69,7 @@ class SAELensConfig(ITLensConfig):
             if isinstance(sae_cfg, SAELensFromPretrainedConfig):
                 normalized_names.append(sae_cfg.sae_id)
             elif isinstance(sae_cfg, SAELensCustomConfig):
+                assert isinstance(sae_cfg.cfg, SAEConfig)
                 normalized_names.append(sae_cfg.cfg.metadata.hook_name)
         return normalized_names
 
@@ -77,7 +85,14 @@ class SAELensConfig(ITLensConfig):
         self._sync_sl_tl_device_cfg()
 
     def _sync_sl_tl_device_cfg(self):
-        tl_device = self.tl_cfg.cfg.device if hasattr(self.tl_cfg, "cfg") else self.tl_cfg.device
+        assert isinstance(self.tl_cfg, ITLensCfgTypes)
+        if hasattr(self.tl_cfg, "cfg"):  # TODO: consider reverting this to ternary assignment w/ type check directives
+            assert isinstance(self.tl_cfg, ITLensCustomConfig)
+            assert isinstance(self.tl_cfg.cfg, HookedTransformerConfig)
+            tl_device = self.tl_cfg.cfg.device
+        else:
+            assert isinstance(self.tl_cfg, ITLensFromPretrainedConfig)
+            tl_device = self.tl_cfg.device
         # Handle both single config and list of configs
         if isinstance(self.sae_cfgs, (SAELensFromPretrainedConfig, SAELensCustomConfig)):
             sae_cfgs = [self.sae_cfgs]
@@ -85,11 +100,14 @@ class SAELensConfig(ITLensConfig):
             sae_cfgs = self.sae_cfgs
         for sae_cfg in sae_cfgs:
             if hasattr(sae_cfg, "cfg"):
+                assert isinstance(sae_cfg, SAELensCustomConfig)
+                assert isinstance(sae_cfg.cfg, SAEConfig)
                 self._sync_sl_tl_default_device(sae_cfg_obj=sae_cfg.cfg, tl_device=str(tl_device))
             else:
+                assert isinstance(sae_cfg, SAELensFromPretrainedConfig)
                 self._sync_sl_tl_default_device(sae_cfg_obj=sae_cfg, tl_device=str(tl_device))
 
-    def _sync_sl_tl_default_device(self, sae_cfg_obj: Any, tl_device):
+    def _sync_sl_tl_default_device(self, sae_cfg_obj: SAELensFromPretrainedConfig | SAEConfig, tl_device):
         if sae_cfg_obj.device and tl_device:
             if sae_cfg_obj.device != tl_device:
                 rank_zero_warn(

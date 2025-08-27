@@ -27,7 +27,7 @@ IT_ANALYSIS_HUB_CACHE = Path(os.getenv("IT_ANALYSIS_HUB_CACHE", DEFAULT_IT_ANALY
 # Environment variable for additional op definition paths
 IT_ANALYSIS_OP_PATHS = os.getenv("IT_ANALYSIS_OP_PATHS", "").split(":") if os.getenv("IT_ANALYSIS_OP_PATHS") else []
 
-from interpretune.analysis.ops import ColCfg, OpSchema, AnalysisBatch, DISPATCHER, AnalysisOp
+from interpretune.analysis.ops import ColCfg, OpSchema, AnalysisBatch, DISPATCHER, AnalysisOp, OpWrapper, AnalysisOpLike
 from interpretune.analysis.ops.hub_manager import HubAnalysisOpManager
 from interpretune.analysis.core import (
     AnalysisStore,
@@ -75,6 +75,8 @@ __all__ = [
     # Analysis Operations
     "DISPATCHER",
     "AnalysisOp",
+    "OpWrapper",
+    "AnalysisOpLike",
     "ColCfg",
     "OpSchema",
     "AnalysisBatch",

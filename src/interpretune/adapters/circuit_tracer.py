@@ -78,8 +78,9 @@ class BaseCircuitTracerModule(BaseITLensModule):
         self._load_replacement_model(pretrained_kwargs=loaded_model_kwargs)
         self.model.config = hf_preconversion_config
 
-    def _load_replacement_model(self, pretrained_kwargs: dict) -> None:
+    def _load_replacement_model(self, pretrained_kwargs: Optional[dict] = None) -> None:
         """Load the ReplacementModel for circuit tracing."""
+        pretrained_kwargs = pretrained_kwargs or {}
         cfg = self.circuit_tracer_cfg
         if not cfg:
             rank_zero_warn("No circuit_tracer_cfg found, using defaults")
@@ -100,11 +101,10 @@ class BaseCircuitTracerModule(BaseITLensModule):
         """Initialize model using TransformerLens configuration."""
         super().tl_config_model_init()
         if self.circuit_tracer_cfg:
-            self._load_replacement_model(pretrained_kwargs={})
+            self._load_replacement_model()
 
     def _capture_hyperparameters(self) -> None:
         """Capture hyperparameters for logging."""
-        # self._it_state._init_hparams = {"sae_cfgs": deepcopy(self.it_cfg.sae_cfgs)}
         self._it_state._init_hparams.update({"circuit_tracer_cfg": deepcopy(self.circuit_tracer_cfg)})
         super()._capture_hyperparameters()
 
@@ -128,9 +128,9 @@ class BaseCircuitTracerModule(BaseITLensModule):
             # Tokenize and flatten to 1D tensor of token ids
             token_ids = []
             for token in cfg.analysis_target_tokens:
-                if tokenizer is not None:
-                    ids = tokenizer.encode(token, add_special_tokens=False)
-                    token_ids.extend(ids)
+                assert tokenizer is not None, "Tokenizer must be available to tokenize analysis_target_tokens"
+                ids = tokenizer.encode(token, add_special_tokens=False)
+                token_ids.extend(ids)
             if token_ids:
                 return torch.tensor(token_ids, dtype=torch.long)
             else:
@@ -230,35 +230,35 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="datamodule",
-            adapter_combination=(Adapter.circuit_tracer,),
+            adapter_combination=(Adapter.core, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(ITDataModule,),
             description="Circuit Tracer adapter that can be composed with core...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="datamodule",
-            adapter_combination=(Adapter.circuit_tracer,),
+            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(ITDataModule, LightningDataModule),
             description="Circuit Tracer adapter that can be composed with lightning...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module",
-            adapter_combination=(Adapter.circuit_tracer,),
+            adapter_combination=(Adapter.core, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(CircuitTracerModule,),
             description="Circuit Tracer adapter that can be composed with core...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module_cfg",
-            adapter_combination=(Adapter.circuit_tracer,),
+            adapter_combination=(Adapter.core, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(CircuitTracerConfig,),
             description="Circuit Tracer configuration that can be composed with core...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module",
-            adapter_combination=(Adapter.circuit_tracer,),
+            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(
                 CircuitTracerAttributeMixin,
                 BaseCircuitTracerModule,
@@ -271,7 +271,7 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module_cfg",
-            adapter_combination=(Adapter.circuit_tracer,),
+            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(CircuitTracerConfig,),
             description="Circuit Tracer configuration that can be composed with lightning...",
         )
@@ -301,13 +301,13 @@ class CircuitTracerAnalysisMixin:
         # Convert output_path to directory for processing
         if output_path is None:
             output_path = self.it_cfg.circuit_tracer_cfg.graph_output_dir
-        
+
         # If output_path is a file path, use its parent directory
         if output_path is not None:
             output_dir = Path(output_path).parent if Path(output_path).suffix else Path(output_path)
         else:
             raise ValueError("output_path is None and no default graph_output_dir configured")
-            
+
         slug = slug or f"graph-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         output_dir.mkdir(parents=True, exist_ok=True)
         pt_path = output_dir / f"{slug}.pt"
@@ -383,11 +383,6 @@ class CircuitTracerAnalysisMixin:
             custom_metadata=custom_metadata,
             use_neuronpedia=use_neuronpedia,
         )
-
-        # Determine whether to upload to Neuronpedia
-        # if use_neuronpedia is None:
-        #     use_neuronpedia = self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg \
-        #         else False
 
         if upload_to_np and use_neuronpedia:
             neuronpedia_metadata = self.neuronpedia.upload_graph_to_neuronpedia(graph_path)

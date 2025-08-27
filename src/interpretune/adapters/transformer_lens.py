@@ -1,10 +1,11 @@
 import os
-from typing import Optional
+from typing import Optional, Type, cast
+import inspect
 from functools import reduce
 from copy import deepcopy
 
 import torch
-from transformers import PretrainedConfig
+from transformers import PretrainedConfig as HFPretrainedConfig, PreTrainedModel
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 from transformer_lens.utilities.devices import get_device_for_block_index
 from transformers.tokenization_utils_base import BatchEncoding
@@ -13,7 +14,6 @@ from interpretune.adapters import CompositionRegistry, LightningDataModule, Ligh
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.utils import move_data_to_device, patched_generate, rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
-from interpretune.config import ITLensCustomConfig
 
 
 ################################################################################
@@ -34,19 +34,13 @@ class TLensAttributeMixin:
     # TODO: we aren't using IT's Property Composition feature for TLens yet, but might be worth enabling it
     @property
     def device(self) -> Optional[torch.device]:
+        device: Optional[torch.device] = None
         try:
             device = (
                 getattr(self._it_state, "_device", None)
                 or getattr(self.tl_cfg, "device", None)
                 or reduce(getattr, "model.device".split("."), self)
             )
-            # Ensure the device is properly typed
-            if device is not None and not isinstance(device, torch.device):
-                if hasattr(device, 'type'):  # Could be a device-like object
-                    # Cast to device type for type checker  
-                    device = torch.device(device) if device else None  # type: ignore[arg-type]
-                else:
-                    device = None
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
             device = None
@@ -106,36 +100,37 @@ class BaseITLensModule(BaseITModule):
         self._convert_hf_to_tl()
 
     def hf_configured_model_init(
-        self, cust_config: PretrainedConfig | ITLensCustomConfig, access_token: Optional[str] = None
+        self, cust_config: HFPretrainedConfig, access_token: Optional[str] = None
     ) -> torch.nn.Module:
         # usually makes sense to init the HookedTransfomer (empty) and pretrained HF model weights on cpu
         # versus moving them both to GPU (may make sense to explore meta device usage for model definition
         # in the future, only materializing parameter by parameter during loading from pretrained weights
         # to eliminate need for two copies in memory)
-        # TODO: add warning that TransformerLens only specifying a single device via device  is supported
+        # TODO: add warning that TransformerLens only specifying a single device via device is supported
         # (though the model will automatically be moved to multiple devices if n_devices > 1)
         cust_config.num_labels = self.it_cfg.num_labels
-        
-        if self.it_cfg.hf_from_pretrained_cfg is not None:
-            if (dmap := self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs.get("device_map", None)) != "cpu":
-                rank_zero_warn(
-                    "Overriding `device_map` passed to TransformerLens to transform pretrained weights on"
-                    f" cpu prior to moving the model to target device: {dmap}"
-                )
-                self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs["device_map"] = "cpu"
-            
-            if self.it_cfg.model_class is None:
-                raise ValueError("model_class is None - cannot call from_pretrained")
-            model = self.it_cfg.model_class.from_pretrained(  # type: ignore[misc]
-                **self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs, config=cust_config, token=access_token
+        assert self.it_cfg.hf_from_pretrained_cfg is not None, (
+            "cannot init hf_configured_model if hf_from_pretrained_cfg is None"
+        )
+        assert self.it_cfg.model_class is not None, "cannot init hf_configured_model if model_class is None"
+        if (dmap := self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs.get("device_map", None)) != "cpu":
+            rank_zero_warn(
+                "Overriding `device_map` passed to TransformerLens to transform pretrained weights on"
+                f" cpu prior to moving the model to target device: {dmap}"
             )
-        else:
-            # Fallback if hf_from_pretrained_cfg is None
-            if self.it_cfg.model_class is None:
-                raise ValueError("model_class is None - cannot call from_pretrained")
-            model = self.it_cfg.model_class.from_pretrained(  # type: ignore[misc]
-                self.it_cfg.model_key, config=cust_config, token=access_token
-            )
+            self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs["device_map"] = "cpu"
+        # We use nominal typing against HF's PreTrainedModel to satisfy static checkers without a local
+        # Protocol definition. We should switch to structural typing if/when HF offers a protocol definition.
+        assert inspect.isclass(self.it_cfg.model_class) and issubclass(self.it_cfg.model_class, PreTrainedModel), (
+            "model_class must be a PreTrainedModel subclass"
+        )
+
+        model_cls = cast(Type[PreTrainedModel], self.it_cfg.model_class)
+        model = model_cls.from_pretrained(
+            **self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs,
+            config=cust_config,
+            token=access_token,
+        )
         # perhaps explore initializing on the meta device and then materializing as needed layer by layer during
         # loading/processing into hookedtransformer
         # with torch.device("meta"):

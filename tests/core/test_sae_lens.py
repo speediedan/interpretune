@@ -51,7 +51,10 @@ def l_sl_gpt2_w_ref_logits(get_it_session__l_sl_gpt2__initonly):
 
 
 core_l_run_w_pytest_cfg = {
-    "argvalues": [pytest.param("sl_gpt2_w_ref_logits"), pytest.param("l_sl_gpt2_w_ref_logits")],
+    "argvalues": [
+        pytest.param("sl_gpt2_w_ref_logits"),
+        pytest.param("l_sl_gpt2_w_ref_logits", marks=RunIf(lightning=True)),
+    ],
     "ids": ["core", "lightning"],
 }
 

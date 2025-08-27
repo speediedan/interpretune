@@ -1,12 +1,12 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Any, TYPE_CHECKING, cast
+from typing import Any, TYPE_CHECKING
 import logging
 from functools import partialmethod
 import torch
 
 from interpretune.config import SessionRunnerCfg
 from interpretune.base import _call_itmodule_hook, it_init, it_session_end, ITDataModule
-from interpretune.protocol import Optimizable, CorePhases, AllPhases
+from interpretune.protocol import Optimizable, CorePhases
 
 if TYPE_CHECKING:
     from interpretune.adapters import ITModule
@@ -24,15 +24,14 @@ def core_train_loop(
     *args,
     **kwargs,
 ):
+    # Use duck-typing so MagicMock-based tests that provide the expected methods pass
+    if not hasattr(datamodule, "train_dataloader"):
+        raise AssertionError("Datamodule is expected to have a train dataloader")
     train_dataloader = datamodule.train_dataloader()
-    val_dataloader = datamodule.val_dataloader()
+    val_dataloader = datamodule.val_dataloader() if hasattr(datamodule, "val_dataloader") else None
     # TODO: add optimizers property setter to corehelperattributes
-    optimizers = module.optimizers
-    if optimizers is None or not optimizers:
-        raise RuntimeError("Module has no optimizers configured")
-    # Cast to list to fix typing issues where optimizers might be seen as PathLike
-    optimizers_list = cast(list, optimizers)
-    optim = optimizers_list[0]
+    assert module.optimizers, "Module has no optimizers configured"
+    optim = module.optimizers[0]
     train_ctx = {"module": module, "optimizer": optim}
     for epoch_idx in range(max_epochs):
         module.model.train()
@@ -54,8 +53,10 @@ def core_train_loop(
 
 
 def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batches: int, *args, **kwargs):
+    if not hasattr(datamodule, "test_dataloader"):
+        raise AssertionError("Datamodule is expected to have a test dataloader")
     dataloader = datamodule.test_dataloader()
-    test_ctx = {}  # Remove duplicate module from context
+    test_ctx = {}
     module._it_state._current_epoch = 0
     module.model.eval()
     for batch_idx, batch in enumerate(dataloader):
@@ -128,20 +129,14 @@ class SessionRunner:
 
     def it_init(self):
         # Unless overridden we dispatch the trainer-independent `it_init`
-        if self.run_cfg.it_session is not None:
-            # If we have an ITSession object, extract module and datamodule
-            it_init(module=self.run_cfg.module, datamodule=self.run_cfg.datamodule)
-        else:
-            # If we don't have an ITSession, assume module and datamodule are provided directly
-            it_init(module=self.run_cfg.module, datamodule=self.run_cfg.datamodule)
+        assert self.run_cfg.it_session is not None, "Expected ITSession object"
+        it_init(**self.run_cfg.it_session)
 
     def it_session_end(self):
         """Dispatch any phase-specific session end hooks."""
-        if self.phase is None:
-            raise RuntimeError("Cannot call it_session_end without setting phase first")
-        it_session_end(
-            module=self.run_cfg.module, datamodule=self.run_cfg.datamodule, session_type=AllPhases[self.phase.name]
-        )
+        assert self.run_cfg.it_session is not None, "Expected ITSession object"
+        assert self.phase is not None, "Expected phase to be set"
+        it_session_end(session_type=self.phase, **self.run_cfg.it_session)
 
     def _run(self, phase, loop_fn, *args: Any, **kwargs: Any) -> Any | None:
         self.phase = CorePhases[phase]

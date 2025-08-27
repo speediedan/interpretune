@@ -101,17 +101,33 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
 
     def available_keys_feedback(self, target_key: str | Tuple) -> str:
         assert isinstance(target_key, (str, tuple)), "`target_key` must be either a str or a tuple"
-        avail_keys = {(key, self[key]["description"]) for key in self.keys() if isinstance(key, type(target_key))}
+        # Collect entries as (displayable_key, description) and sort by the displayable key
+        entries: List[Tuple[str, str]] = []
+        for key in self.keys():
+            if not isinstance(key, type(target_key)):
+                continue
+            desc = self[key].get("description", "")
+            # Convert key to a stable, human-readable string for sorting/display
+            if isinstance(key, tuple):
+                # Represent tuple keys in a compact, stable way
+                key_str = "(" + ", ".join(map(str, key)) + ")"
+            else:
+                key_str = str(key)
+            entries.append((key_str, desc))
+
+        # Sort entries deterministically by the key string
+        entries.sort(key=lambda it: it[0])
+
         if isinstance(target_key, str):
-            return tabulate(sorted(avail_keys), headers=["Key", "Description"])
+            return tabulate(entries, headers=["Key", "Description"])
         else:
-            return tabulate(sorted(avail_keys), headers=["(Model Src, Task Name, Phase, Adapter Ctx)", "Description"])
+            return tabulate(entries, headers=["(Model Src, Task Name, Phase, Adapter Ctx)", "Description"])
 
     def composition_keys(self) -> Set:
         return {key for key in self.keys() if isinstance(key, tuple)}
 
     @override
-    def get(self, target: Tuple | str | RegKeyQueryable, default: Any = None) -> Any:
+    def get(self, target: Tuple | str | RegKeyQueryable) -> Any:
         if not isinstance(target, (tuple, str)):
             assert isinstance(target, RegKeyQueryable), (
                 f"Non-string/non-tuple keys must be `RegKeyQueryable` (i.e. an object "
@@ -127,13 +143,12 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
             else:
                 raise KeyError
         except KeyError:
-            available_keys_set = None
-            if available_keys_set := self.available_keys_feedback(target):
-                available_keys_set = sorted(available_keys_set)
+            # Get a nicely formatted, sorted table of available keys for the same key type
+            available_keys_str = self.available_keys_feedback(target)
             err_msg = (
                 f"A module registered with `{target}` was not found in the registry."
                 "\nAvailable valid modules:\n"
-                f"{available_keys_set}"
+                f"{available_keys_str}"
             )
             raise KeyError(err_msg)
 
@@ -172,7 +187,10 @@ def instantiate_and_register(
         registered_cfg, shared_cfg, itdm_cfg_defaults_fn, it_cfg_defaults_fn, datamodule_cls, module_cls
     )
     registered_cfg = RegisteredCfg(
-        datamodule_cfg=datamodule_cfg, module_cfg=module_cfg, datamodule_cls=datamodule_cls, module_cls=module_cls  # type: ignore[arg-type]
+        datamodule_cfg=datamodule_cfg,
+        module_cfg=module_cfg,
+        datamodule_cls=datamodule_cls,
+        module_cls=module_cls,  # type: ignore[arg-type]
     )
     for supported_p in AllPhases:
         reg_info["phase"] = supported_p.value

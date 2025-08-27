@@ -1,4 +1,4 @@
-from typing import Any, TypeVar, TypeAlias, Sequence
+from typing import Any, TypeVar, TypeAlias, Sequence, Optional
 from dataclasses import dataclass, field, fields, make_dataclass
 import inspect
 import logging
@@ -60,6 +60,7 @@ class AutoCompConfig(ITSerializableCfg):
     module_cfg_name: str
     module_cfg_mixin: list[Any] | Any
     target_adapters: AdapterSeq | None = None
+    _orig_cfg_cls: type | None = None
 
     def __post_init__(self):
         if not isinstance(self.module_cfg_mixin, list):
@@ -190,13 +191,16 @@ def issue_noncomposition_feedback(auto_comp_cfg, superclasses, subclasses):
         )
 
 
-def issue_incomplete_composition_feedback(auto_comp_cfg, kwargs_not_in_target_type, nonsubcls_mixins):
+def issue_incomplete_composition_feedback(
+    auto_comp_cfg: AutoCompConfig, kwargs_not_in_target_type: dict, nonsubcls_mixins: Optional[tuple[type, ...]]
+):
     no_auto_prefix = (
         f"Could not find an auto-composition for {auto_comp_cfg._orig_cfg_cls} that supports all of"
         f" the following kwargs: {kwargs_not_in_target_type}."
     )
     if nonsubcls_mixins:
         rank_zero_warn(f"{no_auto_prefix} Trying instantiation while composing with {nonsubcls_mixins}.")
+        assert auto_comp_cfg._orig_cfg_cls is not None
         return (auto_comp_cfg._orig_cfg_cls,) + nonsubcls_mixins
     else:
         rank_zero_warn(
@@ -208,6 +212,7 @@ def issue_incomplete_composition_feedback(auto_comp_cfg, kwargs_not_in_target_ty
 
 def resolve_composition_classes(auto_comp_cfg: AutoCompConfig, kwargs: dict) -> tuple[type, ...] | None:
     adapter_composition_classes = None
+    assert auto_comp_cfg._orig_cfg_cls is not None
     subclasses, superclasses = find_adapter_subclasses(auto_comp_cfg._orig_cfg_cls, auto_comp_cfg.target_adapters)
     kwargs_not_in_target_type = candidate_subclass_attrs(kwargs, auto_comp_cfg._orig_cfg_cls)
     # Ensure module_cfg_mixin is a list of types
@@ -258,7 +263,8 @@ class ITSharedConfig(ITSerializableCfg):
 
     def _validate_on_session_cfg_init(self):
         # deferred validation for attributes that my be set via shared datamodule/module config
+        # type-checker directive used here since our ITSessionConfig is dynamically applying datamodule/module config
         if self.defer_model_init:
-            assert self.signature_columns is not None, (
+            assert self.signature_columns is not None, (  # pyright: ignore[reportAttributeAccessIssue]
                 "`signature_columns` must be specified if `defer_model_init` is set to True"
             )

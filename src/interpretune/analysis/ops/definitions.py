@@ -200,14 +200,17 @@ def model_ablation_impl(
 
     # Run ablation for each latent
     per_latent_logits: dict[str, dict[Any, torch.Tensor]] = defaultdict(dict)
-    if alive_latents is not None:
-        for name, alive in alive_latents.items():
-            for latent_idx in alive:
-                fwd_hooks_cfg = [(name, partial(ablate_latent_fn, latent_idx=latent_idx, seq_pos=answer_indices))]
-                answer_logits = module.model.run_with_hooks_with_saes(  # type: ignore[attr-defined]
-                    **batch, saes=module.sae_handles, clear_contexts=True, fwd_hooks=fwd_hooks_cfg  # type: ignore[attr-defined]
-                )
-                per_latent_logits[name][latent_idx] = answer_logits[torch.arange(batch["input"].size(0)), answer_indices, :]
+    assert alive_latents is not None and isinstance(alive_latents, dict), "alive_latents must be a dict"
+    for name, alive in alive_latents.items():
+        for latent_idx in alive:
+            fwd_hooks_cfg = [(name, partial(ablate_latent_fn, latent_idx=latent_idx, seq_pos=answer_indices))]
+            answer_logits = module.model.run_with_hooks_with_saes(  # type: ignore[attr-defined]
+                **batch,
+                saes=module.sae_handles,
+                clear_contexts=True,
+                fwd_hooks=fwd_hooks_cfg,  # type: ignore[attr-defined]
+            )
+            per_latent_logits[name][latent_idx] = answer_logits[torch.arange(batch["input"].size(0)), answer_indices, :]
 
     analysis_batch.update(answer_logits=per_latent_logits)
     return analysis_batch
@@ -308,17 +311,14 @@ def sae_correct_acts_impl(
     if not hasattr(analysis_batch, "alive_latents") or analysis_batch.alive_latents is None:
         analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
 
+    assert isinstance(logit_diffs, torch.Tensor), "expected logit_diffs to be a Tensor"
     # Extract correct activations for examples with positive logit differences
-    if logit_diffs is not None and isinstance(logit_diffs, torch.Tensor):
-        correct_mask = logit_diffs > 0
-        # Handle scalar case
-        if correct_mask.dim() == 0:
-            correct_mask = correct_mask.unsqueeze(0)
-        if logit_diffs.dim() == 0:
-            logit_diffs = logit_diffs.unsqueeze(0)
-    else:
-        # Fallback case when logit_diffs is not available
-        correct_mask = torch.ones(batch["input"].size(0), dtype=torch.bool)
+    correct_mask = logit_diffs > 0
+    # Handle scalar case
+    if correct_mask.dim() == 0:
+        correct_mask = correct_mask.unsqueeze(0)
+    if logit_diffs.dim() == 0:
+        logit_diffs = logit_diffs.unsqueeze(0)
 
     correct_activations = {}
     names_filter = module.analysis_cfg.names_filter  # type: ignore[attr-defined]
@@ -403,18 +403,13 @@ def gradient_attribution_impl(
                 t.unsqueeze_(1)
 
         # Extract correct activations (for examples with positive logit differences)
-        if analysis_batch.logit_diffs is not None and isinstance(analysis_batch.logit_diffs, torch.Tensor):
-            correct_mask = analysis_batch.logit_diffs > 0
-            correct_activations[fwd_name] = torch.squeeze(fwd_hook_acts[correct_mask, :, :], dim=1)
-        else:
-            correct_activations[fwd_name] = torch.squeeze(fwd_hook_acts, dim=1)
+        correct_activations[fwd_name] = torch.squeeze(fwd_hook_acts[(analysis_batch.logit_diffs > 0), :, :], dim=1)
 
         # Calculate attribution as activations × gradients for the alive latents
-        if analysis_batch.alive_latents is not None and fwd_name in analysis_batch.alive_latents:
-            alive_indices = analysis_batch.alive_latents[fwd_name]
-            attribution_values[fwd_name][:, alive_indices] = torch.squeeze(
-                (bwd_hook_grads[:, :, alive_indices] * fwd_hook_acts[:, :, alive_indices]).cpu(), dim=1
-            )
+        alive_indices = analysis_batch.alive_latents[fwd_name]
+        attribution_values[fwd_name][:, alive_indices] = torch.squeeze(
+            (bwd_hook_grads[:, :, alive_indices] * fwd_hook_acts[:, :, alive_indices]).cpu(), dim=1
+        )
 
     # Update the analysis batch with results
     analysis_batch.update(attribution_values=attribution_values, correct_activations=correct_activations)
@@ -446,36 +441,39 @@ def ablation_attribution_impl(
     }
 
     # Process per-latent logits for each hook
-    if analysis_batch.answer_logits is not None and analysis_batch.alive_latents is not None:
-        for act_name, logits in analysis_batch.answer_logits.items():
-            attribution_values[act_name] = torch.zeros(batch["input"].size(0), module.sae_handles[0].cfg.d_sae)  # type: ignore[attr-defined]
-            for latent_idx in analysis_batch.alive_latents[act_name]:
-                # Calculate metrics for this latent using the instance's get_loss_preds_diffs method
-                loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(
-                    module, analysis_batch, logits[latent_idx], logit_diff_fn
-                )
+    assert analysis_batch.answer_logits is not None and analysis_batch.alive_latents is not None, (
+        "Missing required attributes in analysis_batch"
+    )
+    assert isinstance(analysis_batch.answer_logits, dict), "Expected answer_logits to be a dictionary"
+    for act_name, logits in analysis_batch.answer_logits.items():
+        attribution_values[act_name] = torch.zeros(batch["input"].size(0), module.sae_handles[0].cfg.d_sae)  # type: ignore[attr-defined]
+        for latent_idx in analysis_batch.alive_latents[act_name]:
+            # Calculate metrics for this latent using the instance's get_loss_preds_diffs method
+            loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(
+                module, analysis_batch, logits[latent_idx], logit_diff_fn
+            )
 
-                # Store per-latent metrics
-                for metric_name, value in zip(per_latent.keys(), (loss, logit_diffs, preds, answer_logits)):
-                    per_latent[metric_name][act_name][latent_idx] = value
+            # Store per-latent metrics
+            for metric_name, value in zip(per_latent.keys(), (loss, logit_diffs, preds, answer_logits)):
+                per_latent[metric_name][act_name][latent_idx] = value
 
-                # Calculate attribution values
-                example_mask = (per_latent["logit_diffs"][act_name][latent_idx] > 0).cpu()
-                per_latent["logit_diffs"][act_name][latent_idx] = (
-                    per_latent["logit_diffs"][act_name][latent_idx][example_mask].detach().cpu()
-                )
+            # Calculate attribution values
+            example_mask = (per_latent["logit_diffs"][act_name][latent_idx] > 0).cpu()
+            per_latent["logit_diffs"][act_name][latent_idx] = (
+                per_latent["logit_diffs"][act_name][latent_idx][example_mask].detach().cpu()
+            )
 
-                base_diffs = analysis_batch.logit_diffs
-                if base_diffs is not None:
-                    for t in [example_mask, base_diffs]:
-                        if t.dim() == 0:
-                            t.unsqueeze_(0)
-                    base_diffs = base_diffs.cpu()
+            base_diffs = analysis_batch.logit_diffs
+            assert base_diffs is not None, "Expected logit_diffs to be present in analysis_batch"
+            for t in [example_mask, base_diffs]:
+                if t.dim() == 0:
+                    t.unsqueeze_(0)
+            base_diffs = base_diffs.cpu()
 
-                    # Attribution is difference between base and ablated performance
-                    attribution_values[act_name][example_mask, latent_idx] = (
-                        base_diffs[example_mask] - per_latent["logit_diffs"][act_name][latent_idx]
-                    )
+            # Attribution is difference between base and ablated performance
+            attribution_values[act_name][example_mask, latent_idx] = (
+                base_diffs[example_mask] - per_latent["logit_diffs"][act_name][latent_idx]
+            )
 
     # Update analysis batch with results
     for key in per_latent:

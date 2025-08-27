@@ -21,6 +21,8 @@ from interpretune.config.transformer_lens import (
     ITLensFromPretrainedConfig,
     ITLensFromPretrainedNoProcessingConfig,
     TLensGenerationConfig,
+    ITLensCfgTypes,
+    ITLensCfg,
 )
 from interpretune.config.sae_lens import (
     SAEConfig,
@@ -74,6 +76,8 @@ __all__ = [
     "ITLensFromPretrainedConfig",
     "ITLensFromPretrainedNoProcessingConfig",
     "TLensGenerationConfig",
+    "ITLensCfg",
+    "ITLensCfgTypes",
     # from interpretune.config.sae_lens
     "SAEConfig",
     "SAECfgType",

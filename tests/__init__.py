@@ -22,9 +22,7 @@ if _LIGHTNING_AVAILABLE:
     from lightning.pytorch.callbacks import ModelCheckpoint
     from interpretune.base import l_cli_main
 else:
-    def seed_everything(*args, **kwargs):  # type: ignore[misc]
-        """Mock seed_everything when Lightning is not available."""
-        pass
+    seed_everything = object
     l_cli_main = None
     Trainer = object
     Callback = object
@@ -36,9 +34,9 @@ if _FTS_AVAILABLE:
 
     fts_resolver = CallbackResolverMixin()
 
-    def get_fts(trainer: Trainer) -> Callback:
+    def get_fts(trainer: Trainer) -> Callback:  # type: ignore
         fts_resolver.connect_callback(trainer, reconnect=True)
-        return fts_resolver.finetuningscheduler_callback
+        return fts_resolver.finetuningscheduler_callback  # type: ignore
 
 else:
     FinetuningScheduler = object

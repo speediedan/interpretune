@@ -1,5 +1,5 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Optional, Generator, Union, Callable, cast
+from typing import Optional, Generator, Union, Callable
 from dataclasses import dataclass, field
 import datetime
 import warnings
@@ -12,6 +12,8 @@ from interpretune.analysis import (
     _make_simple_cache_hook,
     OpSchema,
     AnalysisOp,
+    OpWrapper,
+    AnalysisOpLike,
 )
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.config import ITSerializableCfg
@@ -48,9 +50,8 @@ class AnalysisCfg(ITSerializableCfg):
             return None
 
         # Unwrap OpWrapper instances if needed - only check on objects that might have these attributes
-        if hasattr(self._op, "_is_instantiated") and getattr(self._op, "_is_instantiated", False):
-            if hasattr(self._op, "_instantiated_op"):
-                return getattr(self._op, "_instantiated_op")
+        if isinstance(self._op, OpWrapper) and getattr(self._op, "_is_instantiated", False):
+            return getattr(self._op, "_instantiated_op")
 
         return self._op
 
@@ -87,44 +88,93 @@ class AnalysisCfg(ITSerializableCfg):
                 setattr(self, key, value)
 
     def resolve_output_schema(self) -> None:
-        # If output_schema is AnalysisOp-like (using this attribute as heuristic to limit expensive protocol
-        # checks), extract its schema
-        if self.output_schema is not None and hasattr(self.output_schema, "output_schema"):
+        assert self.output_schema is not None, "Output schema to resolve must be set"
+        # Accept either AnalysisOp or OpWrapper-like objects that will resolve to AnalysisOp when instantiated
+        if isinstance(self.output_schema, AnalysisOpLike):
             resolved_op = self.output_schema
-            if hasattr(self.output_schema, "output_schema"):
-                self.output_schema = self.output_schema.output_schema
+            self.output_schema = resolved_op.output_schema
         # If output_schema is a string, resolve to op and extract schema
         elif isinstance(self.output_schema, str):
             resolved_op = DISPATCHER.get_op(self.output_schema)
-            if hasattr(resolved_op, "output_schema"):
-                self.output_schema = getattr(resolved_op, "output_schema")
+            assert hasattr(resolved_op, "output_schema"), "Resolved op is malformed"
+            self.output_schema = getattr(resolved_op, "output_schema")
 
     def resolve_op(self) -> None:
+        # Handle list inputs (composition)
+        # TODO: this resolution still needs to be both refactored (we haven't fully refined excessively defensive
+        # AI written conditions) and enhanced to handle additional not officially supported but possible to support
+        # cases (e.g. OpWrapper instance in a list,)
         if isinstance(self.op, list):  # Convert list of ops to composition
             if len(self.op) == 1:
                 self.op = self.op[0]
                 if isinstance(self.op, str):
                     self.op = DISPATCHER.get_op(self.op)
             else:
-                # Create a composite operation from the list, ensuring each op in the list is instantiated
+                # Create a composite operation, ensuring constituent ops are instantiated
                 # TODO: consider deferring instantiation of composite ops
                 instantiated_ops = []
                 for op in self.op:
-                    if hasattr(op, "_ensure_instantiated"):
+                    if isinstance(op, str):
+                        instantiated_ops.append(DISPATCHER.get_op(op))
+                    elif not isinstance(op, AnalysisOp):
+                        # Expect an OpWrapper-like object
                         instantiated_ops.append(op._ensure_instantiated())
                     else:
                         instantiated_ops.append(op)
                 self.op = DISPATCHER.compile_ops(instantiated_ops)
-        elif isinstance(self.op, str):  # Handle composite operations using dot notation
+            return
+
+        # Handle string names or composite names using dot notation
+        if isinstance(self.op, str):
             if "." in self.op:
-                # This is a composite operation
-                try:
-                    self.op = DISPATCHER.compile_ops(self.op)
-                except ValueError as e:
-                    raise e
+                # This is a composite operation name
+                self.op = DISPATCHER.compile_ops(self.op)
             else:
-                # Try to resolve a single op by name or alias
+                # Resolve single op name or alias
                 self.op = DISPATCHER.get_op(self.op)
+            return
+
+        # Defensive normalization for non-instance inputs (classes, wrappers, etc.)
+        candidate = self._op
+        # Try common attributes for an op name
+        op_name = getattr(candidate, "_op_name", None) or getattr(candidate, "name", None)
+        # If a class/type was passed, try to resolve an op name or instantiate
+        if isinstance(candidate, type):
+            if isinstance(op_name, str):
+                try:
+                    self.op = DISPATCHER.get_op(op_name)
+                    return
+                except Exception:
+                    # fall through to other heuristics
+                    pass
+
+            # Try to call the class (if it returns a wrapper or op instance)
+            try:
+                inst = candidate()
+            except Exception:
+                inst = None
+
+            if isinstance(inst, (OpWrapper, AnalysisOp)):
+                # Replace stored value with the instantiated object
+                self._op = inst
+                if isinstance(inst, OpWrapper):
+                    try:
+                        resolved = inst._ensure_instantiated()
+                        self._op = resolved
+                    except Exception:
+                        # keep wrapper instance if unable to fully resolve
+                        self._op = inst
+                return
+
+        # If provided object has an _op_name or name attribute, try resolving via dispatcher
+        if isinstance(op_name, str):
+            try:
+                self.op = DISPATCHER.get_op(op_name)
+                return
+            except Exception:
+                pass
+
+        # Otherwise leave as-is; callers will raise clear errors if this is invalid
 
     def materialize_names_filter(self, module, fallback_sae_targets: Optional[SAEAnalysisTargets] = None) -> None:
         """Set names_filter using sae_analysis_targets if not already set.
@@ -197,10 +247,10 @@ class AnalysisCfg(ITSerializableCfg):
             Processed analysis batch
         """
 
-        if self.op is not None and hasattr(self.op, "save_batch"):
+        if self.op is not None:
             # When using a defined operation
-            save_batch_fn = getattr(self.op, "save_batch")
-            analysis_batch = save_batch_fn(
+            assert isinstance(self.op, AnalysisOp), "op expected to be an instance of AnalysisOp"
+            analysis_batch = self.op.save_batch(
                 analysis_batch,
                 batch,
                 tokenizer=tokenizer,
@@ -210,24 +260,18 @@ class AnalysisCfg(ITSerializableCfg):
             )
         else:
             # For manual analysis steps, use the static method with output_schema
-            output_schema = self.output_schema
-            if isinstance(output_schema, (str, type(None))):
-                # Convert string or None to OpSchema
-                output_schema = OpSchema({}) if output_schema is None else OpSchema({})
-            elif hasattr(output_schema, "output_schema"):  # Extract schema from AnalysisOp
-                extracted_schema = getattr(output_schema, "output_schema")
-                output_schema = extracted_schema if extracted_schema is not None else OpSchema({})
-            elif not hasattr(output_schema, "__dict__"):  # Not OpSchema-like
-                output_schema = OpSchema({})
-            
-            # Final check to ensure output_schema is an OpSchema
-            if not hasattr(output_schema, "__dict__"):
-                output_schema = OpSchema({})
+            from interpretune.analysis.ops.base import AnalysisOpLike
 
+            # Convert OpWrapper or AnalysisOp to OpSchema if needed
+            output_schema = self.output_schema
+            if isinstance(output_schema, AnalysisOpLike):
+                output_schema = output_schema.output_schema
+
+            assert isinstance(output_schema, (OpSchema, type(None))), "if set output_schema should be an OpSchema"
             analysis_batch = AnalysisOp.process_batch(
                 analysis_batch,
                 batch,
-                output_schema=cast(OpSchema, output_schema),  # Ensure type checker knows this is OpSchema
+                output_schema=output_schema or OpSchema({}),  # Ensure type checker knows this is OpSchema
                 tokenizer=tokenizer,
                 save_prompts=self.save_prompts,
                 save_tokens=self.save_tokens,
@@ -236,7 +280,7 @@ class AnalysisCfg(ITSerializableCfg):
 
         yield analysis_batch
 
-    def add_default_cache_hooks(self, include_backward: bool = True) -> tuple[list[tuple], list[tuple]]:
+    def add_default_cache_hooks(self, include_backward: bool = True) -> None:
         """Add default caching hooks for forward and optionally backward passes.
 
         Args:
@@ -255,9 +299,7 @@ class AnalysisCfg(ITSerializableCfg):
             bwd_hooks = [(self.names_filter, _make_simple_cache_hook(cache_dict=self.cache_dict, is_backward=True))]
             self.bwd_hooks = bwd_hooks
 
-        return fwd_hooks, bwd_hooks
-
-    def check_add_default_hooks(self) -> None:
+    def check_add_default_hooks(self) -> Optional[tuple[list, list]]:
         """Construct forward and backward hooks based on analysis operation."""
         fwd_hooks, bwd_hooks = [], []
 
@@ -265,11 +307,12 @@ class AnalysisCfg(ITSerializableCfg):
             self.fwd_hooks, self.bwd_hooks = fwd_hooks, bwd_hooks
             return
 
+        assert isinstance(self.op, AnalysisOpLike), f"op expected to be AnalysisOp, got {type(self.op)}"
         # TODO: change these op-based checks to be functionally driven (e.g. uses_default_hooks attribute of ops)
-        if hasattr(self.op, "name") and getattr(self.op, "name") == "logit_diffs_base":
-            return
+        if self.op.name == "logit_diffs_base":
+            return fwd_hooks, bwd_hooks
 
-        if hasattr(self.op, "name") and getattr(self.op, "name") == "logit_diffs_attr_grad":
+        if self.op.name == "logit_diffs_attr_grad":
             self.add_default_cache_hooks()
 
         # TODO: add in an op attribute akin to "uses_sae_hooks" to enable names_filter validation resolution etc.

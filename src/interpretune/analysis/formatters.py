@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Sequence, Union, Optional
+from typing import Any, Union, Optional
 import torch
 import numpy as np
 from datasets.formatting import TorchFormatter
@@ -145,6 +145,7 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
         current_field = self._field_context[-1][0] if self._field_context else None
         return self._tensorize(data_struct, current_field)
 
+    # TODO: validate that we don't want to allow Union[torch.Tensor, Sequence] return type
     def format_column(self, pa_table: "pa.Table") -> torch.Tensor:  # type: ignore[override]
         """Format a column with enhanced tensorization."""
         column = self.numpy_arrow_extractor().extract_column(pa_table)

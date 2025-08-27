@@ -1,9 +1,10 @@
-from typing import Optional, Any, Dict, Tuple, List, Union
+from typing import Optional, Any, Dict, Tuple, List
 import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from interpretune.protocol import StrOrPath
 from interpretune.config import ITSerializableCfg, ITSharedConfig
 from interpretune.utils import rank_zero_warn, rank_zero_debug
 
@@ -36,7 +37,7 @@ class TokenizationConfig(ITSerializableCfg):
 class DatasetProcessingConfig(ITSerializableCfg):
     remove_unused_columns: bool = True
     text_fields: Optional[Tuple] = None
-    dataset_path: Optional[Union[str, os.PathLike]] = None
+    dataset_path: Optional[StrOrPath] = None
     enable_datasets_cache: Optional[bool] = False  # disable caching unless explicitly set to improve reproducibility
     data_collator_cfg: Dict[str, Any] = field(default_factory=dict)
     signature_columns: Optional[List] = field(default_factory=list)

@@ -97,6 +97,11 @@ def dataset_features_and_format(module: "ITModule", kwargs: dict) -> Tuple[dict,
         # Use explicitly provided output schema when op is None
         features = schema_to_features(module=module, schema=module.analysis_cfg.output_schema)
         schema_source = module.analysis_cfg.output_schema
+        # Handle the case where schema_source is an OpWrapper or AnalysisOp instead of OpSchema
+        from interpretune.analysis.ops.base import AnalysisOpLike
+
+        if isinstance(schema_source, AnalysisOpLike):
+            schema_source = schema_source.output_schema
     else:
         # For manual analysis steps without any schema, use a default empty features dict
         features = {}

@@ -107,8 +107,7 @@ if _NEURONPEDIA_AVAILABLE:
         @property
         def neuronpedia_cfg(self) -> NeuronpediaConfig:
             """Get the Neuronpedia configuration."""
-            if self.phandle is None or self.phandle.it_cfg is None:
-                raise RuntimeError("IT configuration is not available")
+            assert self.phandle is not None and self.phandle.it_cfg is not None, "IT configuration is not available"
             return self.phandle.it_cfg.neuronpedia_cfg
 
         def _get_latest_graph_schema(self, schema_path: Union[str, Path] = "graph-schema.json") -> Dict[str, Any]:
@@ -259,8 +258,9 @@ if _NEURONPEDIA_AVAILABLE:
                 if graph_path:
                     log_dir = Path(graph_path).parent
                 else:
-                    if self.phandle is None or self.phandle.core_log_dir is None:
-                        raise RuntimeError("Core log directory is not available")
+                    assert self.phandle is not None and self.phandle.core_log_dir is not None, (
+                        "Core log directory is not available"
+                    )
                     log_dir = Path(self.phandle.core_log_dir)
                 slug = graph_dict.get("metadata", {}).get("slug") or graph_dict.get("slug") or "unknown-slug"
                 dt = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -504,8 +504,7 @@ if _NEURONPEDIA_AVAILABLE:
 
             with neuronpedia.api_key(api_key):
                 try:
-                    if self._np_graph_metadata is None:
-                        raise RuntimeError("Neuronpedia graph metadata is not available")
+                    assert self._np_graph_metadata is not None, "Neuronpedia graph metadata is not available"
                     graph_metadata = self._np_graph_metadata.upload_file(str(graph_path))
                     rank_zero_info("[NeuronpediaIntegration] Upload successful!")
                     if hasattr(graph_metadata, "url"):

@@ -4,17 +4,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from interpretune.utils import rank_zero_warn, rank_zero_debug, MisconfigurationException
-from interpretune.analysis import IT_ANALYSIS_CACHE
-from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg
+from interpretune.analysis import IT_ANALYSIS_CACHE, AnalysisOp
+from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg, SAEAnalysisTargets
+from interpretune.protocol import StrOrPath
 
 if TYPE_CHECKING:
     from interpretune.session import ITSession
-    from interpretune.protocol import ITModuleProtocol, ITDataModuleProtocol, SAEAnalysisProtocol
-    from interpretune.analysis import SAEAnalysisTargets, AnalysisOp
+    from interpretune.protocol import ITModuleProtocol, ITDataModuleProtocol, SAEAnalysisModuleProtocol
+
 
 # Standalone functions for analysis initialization
-
-
 def to_analysis_cfgs(
     analysis_cfgs: Optional[Union[AnalysisCfg, "AnalysisOp", Iterable[Union[AnalysisCfg, "AnalysisOp"]]]],
 ) -> List[AnalysisCfg]:
@@ -71,7 +70,7 @@ def to_analysis_cfgs(
 
 
 def init_analysis_dirs(
-    module: "SAEAnalysisProtocol",
+    module: "SAEAnalysisModuleProtocol",
     cache_dir: Optional[Union[str, Path]] = None,
     op_output_dataset_path: Optional[Union[str, Path]] = None,
     analysis_cfgs: Optional[List[AnalysisCfg]] = None,
@@ -95,24 +94,28 @@ def init_analysis_dirs(
             / module.datamodule.dataset["validation"]._fingerprint
             / module.__class__._orig_module_name
         )
-    cache_dir = Path(cache_dir) if cache_dir is not None else Path(IT_ANALYSIS_CACHE)
+    assert isinstance(cache_dir, StrOrPath), "cache_dir must be a str or Path"
+    cache_dir = Path(cache_dir)
     cache_dir.mkdir(exist_ok=True, parents=True)
 
     # Setup output dataset path
     if op_output_dataset_path is None:
         op_output_dataset_path = module.core_log_dir / "analysis_datasets"
-    op_output_dataset_path = Path(op_output_dataset_path) if op_output_dataset_path is not None else Path("analysis_datasets")
+    assert isinstance(op_output_dataset_path, StrOrPath), "op_output_dataset_path must be a str or Path"
+    op_output_dataset_path = Path(op_output_dataset_path)
     op_output_dataset_path.mkdir(exist_ok=True, parents=True)
 
     # Check for op in analysis configurations and verify directory is empty
     if analysis_cfgs:
         for cfg in analysis_cfgs:
             if cfg.op is not None:
-                op_name = getattr(cfg.op, 'name', str(cfg.op))
-                op_dir = op_output_dataset_path / op_name
+                # Accept either AnalysisOp instances or OpWrapper-like objects / simple objects providing a `name`
+                if not (isinstance(cfg.op, AnalysisOp) or hasattr(cfg.op, "name")):
+                    raise AssertionError("cfg.op must be an AnalysisOp instance or provide a `name` attribute")
+                op_dir = op_output_dataset_path / cfg.op.name
                 if op_dir.exists() and any(op_dir.iterdir()):
                     raise Exception(
-                        f"Analysis dataset directory for op '{op_name}' ({op_dir}) is not empty. "
+                        f"Analysis dataset directory for op '{cfg.op.name}' ({op_dir}) is not empty. "
                         "Please delete it or specify a different path."
                     )
 
@@ -120,7 +123,7 @@ def init_analysis_dirs(
 
 
 def init_analysis_cfgs(
-    module: "SAEAnalysisProtocol",
+    module: "SAEAnalysisModuleProtocol",
     analysis_cfgs: List[AnalysisCfg],
     cache_dir: Optional[Union[str, Path]] = None,
     op_output_dataset_path: Optional[Union[str, Path]] = None,
@@ -177,9 +180,9 @@ class SessionRunnerCfg:
                 "`module`/`datamodule` should only be specified if not providing `it_session`. Attempting to"
                 " use the `module`/`datamodule` handles from `it_session`."
             )
-        if self.it_session is not None:
-            self.module = self.it_session.module
-            self.datamodule = self.it_session.datamodule
+        assert self.it_session is not None
+        self.module = self.it_session.module
+        self.datamodule = self.it_session.datamodule
 
 
 @dataclass(kw_only=True)
@@ -198,8 +201,8 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        if self.it_session is not None and self.it_session.module is not None:
-            self.it_session.module.analysis_run_cfg = self
+        assert self.it_session is not None and self.it_session.module is not None
+        self.it_session.module.analysis_run_cfg = self  # type: ignore[attr-defined]
 
         # No need to call _process_analysis_cfgs() as it's now a property
         if self.analysis_cfgs is None:

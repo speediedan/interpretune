@@ -12,7 +12,7 @@ import torch
 from transformers import BatchEncoding
 
 from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS, IT_ANALYSIS_HUB_CACHE
-from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg
+from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg, OpWrapper
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
 from interpretune.analysis.ops.dynamic_module_utils import ensure_op_paths_in_syspath, get_function_from_dynamic_module
@@ -112,8 +112,7 @@ class AnalysisOpDispatcher:
             if self.enable_hub_ops:
                 rank_zero_debug("[DISPATCHER] Hub ops enabled, adding hub YAML files")
                 hub_yaml_files = self._cache_manager.add_hub_yaml_files()
-                # Filter out None values before extending
-                yaml_files.extend([f for f in (hub_yaml_files or []) if f is not None])
+                yaml_files.extend(hub_yaml_files or [])
                 rank_zero_debug(f"[DISPATCHER] Total YAML files after hub: {len(yaml_files)}")
             else:
                 rank_zero_debug("[DISPATCHER] Hub ops disabled")
@@ -381,7 +380,7 @@ class AnalysisOpDispatcher:
         return self._aliases.get(op_alias, None)
 
     @_ensure_loaded
-    def get_op_aliases(self, op_name: str) -> List[str]:
+    def get_op_aliases(self, op_name: str) -> list[str]:
         return self._op_to_aliases[op_name]
 
     @_ensure_loaded
@@ -667,7 +666,7 @@ class AnalysisOpDispatcher:
     def _maybe_instantiate_op(self, op_ref, context: DispatchContext = DispatchContext()) -> AnalysisOp:
         """Ensure an operation is instantiated based on various reference types."""
         # If it's an OpWrapper, use its _ensure_instantiated method to get the actual op
-        if hasattr(op_ref, "_ensure_instantiated") and callable(op_ref._ensure_instantiated):
+        if isinstance(op_ref, OpWrapper):
             result = op_ref._ensure_instantiated()  # This now returns the actual op, not the wrapper
             if not isinstance(result, AnalysisOp):
                 raise TypeError(f"Expected AnalysisOp, got {type(result)}")

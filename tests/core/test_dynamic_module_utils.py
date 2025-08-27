@@ -149,11 +149,9 @@ class TestGetCachedModuleFileIt:
     @patch("interpretune.analysis.ops.dynamic_module_utils.filecmp.cmp")
     @patch("interpretune.analysis.ops.dynamic_module_utils.shutil.copy")
     @patch("interpretune.analysis.ops.dynamic_module_utils.importlib.invalidate_caches")
-    @patch("interpretune.analysis.ops.dynamic_module_utils.cached_file")
-    def test_local_file_copying_when_different(self, mock_cached_file, mock_invalidate, mock_copy, mock_filecmp, mock_it_modules_cache):
+    def test_local_file_copying_when_different(self, mock_invalidate, mock_copy, mock_filecmp, mock_it_modules_cache):
         """Test file copying logic when local files are different."""
         mock_filecmp.return_value = False  # Files are different
-        mock_cached_file.return_value = "/test/path/module.py"
 
         with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.isdir", return_value=True):
             with patch("interpretune.analysis.ops.dynamic_module_utils.os.path.exists", return_value=True):
@@ -166,11 +164,15 @@ class TestGetCachedModuleFileIt:
                             "interpretune.analysis.ops.dynamic_module_utils.check_imports", return_value=["helper"]
                         ):
                             with patch("interpretune.analysis.ops.dynamic_module_utils.create_dynamic_module_it"):
-                                get_cached_module_file_it("/test/path", "module.py")
+                                with patch(
+                                    "interpretune.analysis.ops.dynamic_module_utils.cached_file",
+                                    return_value="/test/path/module.py",
+                                ):
+                                    get_cached_module_file_it("/test/path", "module.py")
 
-                                # Should copy main file and helper module
-                                assert mock_copy.call_count >= 2
-                                assert mock_invalidate.call_count >= 2
+                                    # Should copy main file and helper module
+                                    assert mock_copy.call_count >= 2
+                                    assert mock_invalidate.call_count >= 2
 
     @patch("interpretune.analysis.ops.dynamic_module_utils.cached_file")
     @patch("interpretune.analysis.ops.dynamic_module_utils.try_to_load_from_cache")

@@ -185,17 +185,18 @@ include = [
     # Adapter files
     "src/interpretune/adapters/__init__.py",
     "src/interpretune/adapters/core.py",
-    "src/interpretune/adapters/lightning.py",
-    "src/interpretune/adapters/registration.py",
-    "src/interpretune/adapters/transformer_lens.py",            # 13 → 0 errors - Fixed!
-    "src/interpretune/adapters/sae_lens.py",                   # 12 → 0 errors - Fixed!
-    "src/interpretune/adapters/circuit_tracer.py",             # 14 → 0 errors - Fixed!
+    # "src/interpretune/adapters/lightning.py",                  # 2 errors
+    # "src/interpretune/adapters/registration.py",               # 1 error
+    # "src/interpretune/adapters/transformer_lens.py",           # 6 errors
+    # "src/interpretune/adapters/sae_lens.py",                   # 4 errors
+    # "src/interpretune/adapters/circuit_tracer.py",             # 23 errors
 
     # Analysis files
     "src/interpretune/analysis/__init__.py",
     "src/interpretune/analysis/formatters.py",
     # "src/interpretune/analysis/core.py",                    # 78 errors - very complex type issues
-    "src/interpretune/analysis/ops/definitions.py",        # 19 → 0 errors - Fixed!
+    # "src/interpretune/analysis/formatters.py",               # 1 error
+    # "src/interpretune/analysis/ops/definitions.py",         # 8 errors
     "src/interpretune/analysis/ops/dynamic_module_utils.py",
     "src/interpretune/analysis/ops/__init__.py",
     "src/interpretune/analysis/ops/auto_columns.py",
@@ -213,7 +214,7 @@ include = [
     "src/interpretune/base/components/__init__.py",
     # "src/interpretune/base/components/mixins.py",           # 35 errors - optional member access, callable issues
     # "src/interpretune/base/components/cli.py",              # 24 errors - path operations, argument types
-    "src/interpretune/base/components/core.py",             # 9 → 1 → 0 errors - Fixed!
+    # "src/interpretune/base/components/core.py",             # 1 error
     "src/interpretune/base/datamodules.py",
 
     # Config files
@@ -225,8 +226,8 @@ include = [
     "src/interpretune/config/module.py",
     "src/interpretune/config/sae_lens.py",
     "src/interpretune/config/transformer_lens.py",
-    "src/interpretune/config/analysis.py",                  # 12 → 9 → 0 errors - Fixed!
-    "src/interpretune/config/runner.py",                    # 12 → 0 errors - Fixed!
+    "src/interpretune/config/analysis.py",
+    # "src/interpretune/config/runner.py",                    # 10 errors
     # "src/interpretune/config/shared.py",                    # 11 errors - type variable usage, tuple operations
 
 
@@ -234,12 +235,12 @@ include = [
     "src/interpretune/extensions/__init__.py",
     "src/interpretune/extensions/memprofiler.py",
     "src/interpretune/extensions/neuronpedia.py",
-    "src/interpretune/extensions/debug_generation.py",
+    # "src/interpretune/extensions/debug_generation.py",       # 20 errors
 
     # Runners
     "src/interpretune/runners/__init__.py",
     # "src/interpretune/runners/analysis.py",                 # 28 errors - protocol mismatches, argument types
-    "src/interpretune/runners/core.py",
+    # "src/interpretune/runners/core.py",                     # 3 errors
 
     # Tools
     "src/interpretune/tools/",
@@ -250,7 +251,7 @@ include = [
     "src/interpretune/utils/exceptions.py",
     "src/interpretune/utils/import_utils.py",
     "src/interpretune/utils/logging.py",
-    "src/interpretune/utils/schema_validation.py",  # warnings only
+    "src/interpretune/utils/schema_validation.py",
     "src/interpretune/utils/tokenization.py",
     "src/interpretune/utils/warnings.py",
 
@@ -272,7 +273,6 @@ reportUnknownLambdaType = "none"
 reportPrivateUsage = "none"
 reportDeprecated = "none"
 reportPrivateImportUsage = "none"
-reportAttributeAccessIssue = "none"
 reportUnusedImport = "none"
 reportUnusedVariable = "none"
 reportImplicitOverride = "none"
