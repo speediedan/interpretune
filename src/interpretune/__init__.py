@@ -117,7 +117,15 @@ from interpretune.utils import (
 from interpretune.session import ITSession, ITSessionConfig
 from interpretune.runners import SessionRunner, AnalysisRunner
 from interpretune.base import ITDataModule, MemProfilerHooks, ITCLI, it_init, IT_BASE, it_session_end
-
+from interpretune.registry import (
+    ModuleRegistry,
+    RegisteredCfg,
+    RegKeyType,
+    it_cfg_factory,
+    gen_module_registry,
+    instantiate_and_register,
+    apply_defaults,
+)
 
 __all__ = [
     # About Module
@@ -197,4 +205,12 @@ __all__ = [
     "it_init",
     "IT_BASE",
     "it_session_end",
+    # Registry Components
+    "ModuleRegistry",
+    "RegisteredCfg",
+    "RegKeyType",
+    "it_cfg_factory",
+    "gen_module_registry",
+    "instantiate_and_register",
+    "apply_defaults",
 ]

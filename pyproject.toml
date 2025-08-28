@@ -194,7 +194,6 @@ include = [
     # Analysis files
     "src/interpretune/analysis/__init__.py",
     "src/interpretune/analysis/formatters.py",
-    # "src/interpretune/analysis/core.py",                    # 78 errors - very complex type issues
     "src/interpretune/analysis/core.py",
     "src/interpretune/analysis/ops/definitions.py",
     "src/interpretune/analysis/ops/dynamic_module_utils.py",
@@ -212,7 +211,6 @@ include = [
     "src/interpretune/base/hooks.py",
     "src/interpretune/base/modules.py",
     "src/interpretune/base/components/__init__.py",
-    # "src/interpretune/base/components/mixins.py",           # 35 errors - optional member access, callable issues
     "src/interpretune/base/components/mixins.py",
     "src/interpretune/base/components/cli.py",
     "src/interpretune/base/components/core.py",
@@ -260,6 +258,8 @@ include = [
 exclude = [
     # patch of external code
     "src/interpretune/utils/patched_tlens_generate.py",
+    "src/it_examples/patching/patched_sae_from_pretrained.py",
+    "src/it_examples/raw_graph_analysis.py",
 ]
 
 # Custom directives removed for stricter type checking

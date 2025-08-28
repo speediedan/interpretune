@@ -167,7 +167,7 @@ def model_cache_forward_impl(
     # Get answer indices and alive latents
     analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
     analysis_batch.update(cache=cache)
-    analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
+    analysis_batch = it.get_alive_latents(module, analysis_batch, batch_idx)
 
     analysis_batch.update(answer_logits=answer_logits)
     return analysis_batch
@@ -190,7 +190,7 @@ def model_ablation_impl(
         assert module.analysis_cfg.input_store and getattr(module.analysis_cfg.input_store, "alive_latents", None), (
             "alive_latents required for ablation op"
         )
-        analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
+        analysis_batch = it.get_alive_latents(module, analysis_batch, batch_idx)
 
     answer_indices = analysis_batch.answer_indices
     alive_latents = analysis_batch.alive_latents
@@ -310,7 +310,7 @@ def sae_correct_acts_impl(
 
     # Ensure alive_latents are present
     if not hasattr(analysis_batch, "alive_latents") or analysis_batch.alive_latents is None:
-        analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
+        analysis_batch = it.get_alive_latents(module, analysis_batch, batch_idx)
 
     assert isinstance(logit_diffs, torch.Tensor), "expected logit_diffs to be a Tensor"
     # Extract correct activations for examples with positive logit differences
