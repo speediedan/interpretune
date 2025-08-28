@@ -500,7 +500,13 @@ class AnalysisStore:
             if self._is_tensor_seq(data):
                 if self.stack_batches:
                     return torch.stack([t for t in data])  # type: ignore[return-value]  # stacked tensor is valid return for tensor sequences
-                if hasattr(data, "__getitem__") and len(data) > 0 and hasattr(data[0], "dim") and data[0].dim() > 1:  # type: ignore[index,attr-defined]  # tensor sequence access
+                if (
+                    hasattr(data, "__getitem__")
+                    and hasattr(data, "__len__")
+                    and len(data) > 0  # type: ignore[arg-type]  # datasets Column may be IterableColumn
+                    and hasattr(data[0], "dim")  # type: ignore[index]  # datasets Column supports indexing
+                    and data[0].dim() > 1  # type: ignore[attr-defined]  # tensor has dim attribute
+                ):
                     return [t for t in data]  # type: ignore[return-value]  # list of tensors is valid return
                 # Split 1D tensors into scalar tensors
                 return [torch.tensor(x) for x in data]  # type: ignore[return-value]  # list of tensors is valid return
@@ -516,8 +522,12 @@ class AnalysisStore:
                     if self.stack_batches:
                         result[col] = torch.stack([t for t in data])  # type: ignore[misc]  # torch.stack accepts tensor sequences
                     elif (
-                        hasattr(data, "__getitem__") and len(data) > 0 and hasattr(data[0], "dim") and data[0].dim() > 1
-                    ):  # type: ignore[index,attr-defined]  # tensor sequence access
+                        hasattr(data, "__getitem__")
+                        and hasattr(data, "__len__")
+                        and len(data) > 0  # type: ignore[arg-type]  # datasets Column may be IterableColumn
+                        and hasattr(data[0], "dim")  # type: ignore[index]  # datasets Column supports indexing
+                        and data[0].dim() > 1  # type: ignore[attr-defined]  # tensor has dim attribute
+                    ):
                         result[col] = [t for t in data]
                     else:
                         # Split 1D tensors into scalar tensors
