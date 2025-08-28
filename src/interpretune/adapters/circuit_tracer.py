@@ -20,7 +20,7 @@ from interpretune.adapters import (
     TLensAttributeMixin,
 )
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
-from interpretune.config import CircuitTracerConfig
+from interpretune.config import CircuitTracerConfig, ITConfig
 from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
 
@@ -38,11 +38,13 @@ class InstantiatedGraph:
 
 
 class CircuitTracerAttributeMixin(TLensAttributeMixin):
+    it_cfg: ITConfig
+
     @property
     def circuit_tracer_cfg(self) -> CircuitTracerConfig | None:
         """Get circuit tracer configuration."""
-        if hasattr(self.it_cfg, "circuit_tracer_cfg"):  # type: ignore[attr-defined]  # mixin provides it_cfg
-            return self.it_cfg.circuit_tracer_cfg  # type: ignore[attr-defined]  # mixin provides it_cfg
+        if hasattr(self.it_cfg, "circuit_tracer_cfg"):
+            return self.it_cfg.circuit_tracer_cfg
         return None
 
     @property
@@ -221,9 +223,9 @@ class BaseCircuitTracerModule(BaseITLensModule):
 class CircuitTracerAdapter(CircuitTracerAttributeMixin):
     def initialize_graph_output_dir(self, core_log_dir: Path) -> None:
         """Initialize graph_output_dir based on configuration or default to core_log_dir/graph_data."""
-        if not self.it_cfg.circuit_tracer_cfg.graph_output_dir:  # type: ignore[attr-defined]  # mixin provides it_cfg
-            self.it_cfg.circuit_tracer_cfg.graph_output_dir = core_log_dir / "graph_data"  # type: ignore[attr-defined]  # mixin provides it_cfg
-            self.it_cfg.circuit_tracer_cfg.graph_output_dir.mkdir(parents=True, exist_ok=True)  # type: ignore[attr-defined]  # mixin provides it_cfg
+        if not self.it_cfg.circuit_tracer_cfg.graph_output_dir:
+            self.it_cfg.circuit_tracer_cfg.graph_output_dir = core_log_dir / "graph_data"
+            self.it_cfg.circuit_tracer_cfg.graph_output_dir.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:

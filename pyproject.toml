@@ -180,22 +180,22 @@ include = [
     "src/interpretune/adapter_registry.py",
     "src/interpretune/protocol.py",
     "src/interpretune/session.py",
-    "src/interpretune/registry.py",                         # Fixed: was 15 errors - protocol compatibility, dict typing
+    "src/interpretune/registry.py",
 
     # Adapter files
     "src/interpretune/adapters/__init__.py",
     "src/interpretune/adapters/core.py",
-    "src/interpretune/adapters/lightning.py",                  # Fixed: was 2 errors
-    "src/interpretune/adapters/registration.py",               # Fixed: was 1 error
-    "src/interpretune/adapters/transformer_lens.py",           # Fixed: was 6 errors
-    "src/interpretune/adapters/sae_lens.py",                   # Fixed: was 4 errors
-    "src/interpretune/adapters/circuit_tracer.py",             # Fixed: was 23 errors
+    "src/interpretune/adapters/lightning.py",
+    "src/interpretune/adapters/registration.py",
+    "src/interpretune/adapters/transformer_lens.py",
+    "src/interpretune/adapters/sae_lens.py",
+    "src/interpretune/adapters/circuit_tracer.py",
 
     # Analysis files
     "src/interpretune/analysis/__init__.py",
-    "src/interpretune/analysis/formatters.py",                 # Fixed: was 1 error
+    "src/interpretune/analysis/formatters.py",
     # "src/interpretune/analysis/core.py",                    # 78 errors - very complex type issues
-    "src/interpretune/analysis/ops/definitions.py",         # Fixed: was 8 errors
+    "src/interpretune/analysis/ops/definitions.py",
     "src/interpretune/analysis/ops/dynamic_module_utils.py",
     "src/interpretune/analysis/ops/__init__.py",
     "src/interpretune/analysis/ops/auto_columns.py",
@@ -212,8 +212,8 @@ include = [
     "src/interpretune/base/modules.py",
     "src/interpretune/base/components/__init__.py",
     # "src/interpretune/base/components/mixins.py",           # 35 errors - optional member access, callable issues
-    "src/interpretune/base/components/cli.py",              # Fixed: was 12 errors
-    "src/interpretune/base/components/core.py",             # Fixed: was 1 error
+    "src/interpretune/base/components/cli.py",
+    "src/interpretune/base/components/core.py",
     "src/interpretune/base/datamodules.py",
 
     # Config files
@@ -226,20 +226,20 @@ include = [
     "src/interpretune/config/sae_lens.py",
     "src/interpretune/config/transformer_lens.py",
     "src/interpretune/config/analysis.py",
-    "src/interpretune/config/runner.py",                    # Fixed: was 10 errors
-    "src/interpretune/config/shared.py",                    # Fixed: 0 errors
+    "src/interpretune/config/runner.py",
+    "src/interpretune/config/shared.py",
 
 
     # Extensions
     "src/interpretune/extensions/__init__.py",
     "src/interpretune/extensions/memprofiler.py",
     "src/interpretune/extensions/neuronpedia.py",
-    "src/interpretune/extensions/debug_generation.py",       # Fixed: was 20 errors
+    "src/interpretune/extensions/debug_generation.py",
 
     # Runners
     "src/interpretune/runners/__init__.py",
-    "src/interpretune/runners/analysis.py",                 # Fixed: was 46 errors
-    "src/interpretune/runners/core.py",                     # Fixed: was 3 errors
+    "src/interpretune/runners/analysis.py",
+    "src/interpretune/runners/core.py",
 
     # Tools
     "src/interpretune/tools/",
