@@ -80,7 +80,7 @@ class RTEBoolqGenerativeClassificationConfig(RTEBoolqEntailmentMapping, Generati
 class RTEBoolqPromptConfig(PromptConfig):
     ctx_question_join: str = "Does the previous passage imply that "
     question_suffix: str = "? Answer with only one word, either Yes or No."
-    cust_task_prompt: Optional[Dict[str, Any]] = None
+    cust_task_prompt: Dict[str, Any] | None = None  # type: ignore[assignment]  # intentional override for demo
 
 
 # add our custom model attributes
@@ -246,9 +246,9 @@ class RTEBoolqSteps:
         label_ids, orig_labels = self.labels_to_ids(batch.pop("labels"))
         analysis_batch = AnalysisBatch(label_ids=label_ids, orig_labels=orig_labels)
         op_kwargs = {"module": self, "batch": batch, "batch_idx": batch_idx}
-        analysis_batch = it.model_cache_forward(analysis_batch=analysis_batch, **op_kwargs)
-        analysis_batch = it.logit_diffs_cache(analysis_batch=analysis_batch, **op_kwargs)
-        analysis_batch = it.sae_correct_acts(analysis_batch=analysis_batch, **op_kwargs)
+        analysis_batch = it.model_cache_forward(analysis_batch=analysis_batch, **op_kwargs)  # type: ignore[assignment]  # protocol compatibility
+        analysis_batch = it.logit_diffs_cache(analysis_batch=analysis_batch, **op_kwargs)  # type: ignore[assignment]  # protocol compatibility
+        analysis_batch = it.sae_correct_acts(analysis_batch=analysis_batch, **op_kwargs)  # type: ignore[assignment]  # protocol compatibility
 
         # note, there is an equivalent existing composite op for the decomposed version above:
         # analysis_batch = it.logit_diffs_sae(**op_kwargs)
