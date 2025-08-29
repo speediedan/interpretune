@@ -207,6 +207,7 @@ include = [
     "src/interpretune/analysis/ops/compiler/schema_compiler.py",
 
     # Base components
+    "src/interpretune/base/__init__.py",
     "src/interpretune/base/call.py",
     "src/interpretune/base/hooks.py",
     "src/interpretune/base/modules.py",
