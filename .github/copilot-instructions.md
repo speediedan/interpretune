@@ -17,7 +17,7 @@
 ### Required Before Each Commit
 - Unless guidance in a comment or a pull request or target issue description states otherwise, always run our basic tests (which mirror the `ci_test-full.yml` workflow) in your local environment and ensure all tests are passing before committing, for example:
 ```bash
-cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpretune tests -v --import-mode=importlib
+cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpretune tests -v
 ```
 - Ensure all pre-commit hooks pass.
 - If the copilot session is still failing despite trying to get tests and pre-commit hooks passing for some time, it's okay to commit your intermediate work with a comment about the present challenge to be dealt with in a subsequent session.
@@ -36,10 +36,10 @@ Always install dependencies in order to avoid conflicts:
 ```bash
 # Basic development setup
 python -m pip install --upgrade pip setuptools wheel build
-python -m pip install '.[test]' -c requirements/ci_constraints.txt
-
-# Full development with examples (may fail due to circuit-tracer dependency)
-python -m pip install '.[test,examples,lightning]' -c requirements/ci_constraints.txt
+python -m pip install -r requirements/ci/requirements.txt -r requirements/platform_dependent.txt
+python -m pip install -e '.[test,examples,lightning]'
+# enabled until further notice (will be removed from instructions once no longer necessary)
+pip install --upgrade -r requirements/post_upgrades.txt
 
 # If circuit-tracer install fails, use the built-in tool after basic install:
 pip install interpretune[examples]
@@ -79,10 +79,10 @@ pre-commit run --all-files
 **Test command:**
 ```bash
 # Basic test run (requires full dependencies)
-cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpretune tests -v --import-mode=importlib
+cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpretune tests -v
 
-# With coverage (as used in non-editable CI setup)
-python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --import-mode=importlib
+# With coverage
+python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v
 coverage report
 
 # Test collection only (to check test discovery)

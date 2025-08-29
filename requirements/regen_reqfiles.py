@@ -183,7 +183,8 @@ def run_pip_compile(req_in_path, output_path):
     if not pip_compile:
         print("pip-compile not found in PATH; install pip-tools to generate full pinned requirements.txt")
         return False
-    cmd = [pip_compile, "--output-file", output_path, req_in_path]
+    # Use --upgrade to ensure we don't rely on cached/resolved older versions when regenerating pins
+    cmd = [pip_compile, "--output-file", output_path, req_in_path, "--upgrade"]
     print("Running:", " ".join(shlex.quote(c) for c in cmd))
     subprocess.check_call(cmd)
     return True

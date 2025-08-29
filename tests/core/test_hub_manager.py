@@ -184,7 +184,7 @@ class TestHubAnalysisOpManager:
         assert collections[0].username == "username"
         assert collections[0].repo_name == "some_repo"
 
-    @patch("huggingface_hub.utils.scan_cache_dir")
+    @patch("huggingface_hub.utils._cache_manager.scan_cache_dir")
     @patch("interpretune.analysis.ops.hub_manager._get_latest_revision")
     def test_get_cached_collections_skips_non_model_repos(self, mock_get_latest_revision, mock_scan_cache_dir):
         """Test that get_cached_collections skips non-model repositories."""
@@ -221,7 +221,7 @@ class TestHubAnalysisOpManager:
         # Verify _get_latest_revision was only called for model repo
         mock_get_latest_revision.assert_called_once_with(mock_model_repo)
 
-    @patch("huggingface_hub.utils.scan_cache_dir")
+    @patch("huggingface_hub.utils._cache_manager.scan_cache_dir")
     @patch("interpretune.analysis.ops.hub_manager._get_latest_revision")
     def test_get_cached_collections_skips_repos_with_no_revision(self, mock_get_latest_revision, mock_scan_cache_dir):
         """Test that get_cached_collections skips repos when _get_latest_revision returns None."""

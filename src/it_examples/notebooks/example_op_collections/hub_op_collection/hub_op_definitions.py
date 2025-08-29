@@ -15,11 +15,11 @@ class SomeDifferentBatchDef(BaseAnalysisBatchProtocol):
     pred_sum: Optional[torch.Tensor]
 
 
-def trivial_test_op_impl(analysis_batch: DefaultAnalysisBatchProtocol) -> SomeDifferentBatchDef:
+def trivial_test_op_impl(analysis_batch: DefaultAnalysisBatchProtocol) -> DefaultAnalysisBatchProtocol:
     """Implementation that takes preds as input and returns the sum of the preds (pred_sum)."""
     if hasattr(analysis_batch, "preds") and analysis_batch.preds is not None:
         # Count zeros in the preds tensor
-        pred_sum = torch.sum(analysis_batch.preds)
+        pred_sum = torch.sum(analysis_batch.preds)  # type: ignore[arg-type]  # preds may be dict but used as tensor
         analysis_batch.update(pred_sum=pred_sum)
         print(f"Hub op: Calculated pred_sum: {pred_sum}")
     else:

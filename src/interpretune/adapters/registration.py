@@ -1,4 +1,5 @@
-from typing import Any, Dict, Optional, Tuple, Callable, Type, Protocol, Set, runtime_checkable, List, Sequence
+from __future__ import annotations
+from typing import Any, Dict, Optional, Tuple, Callable, Type, Protocol, Set, runtime_checkable, List, Sequence, cast
 from inspect import getmembers, isclass
 from typing_extensions import override
 from types import ModuleType
@@ -69,10 +70,12 @@ class CompositionRegistry(dict):
         return adapter
 
     def canonicalize_composition(self, adapter_ctx: Sequence[Adapter | str]) -> Tuple:
-        resolved_adapter_ctx = set()
+        resolved_adapter_ctx: set[Adapter] = set()
         for adapter in adapter_ctx:
             resolved_adapter_ctx.add(CompositionRegistry.sanitize_adapter(adapter))
-        adapter_ctx = tuple(sorted(list(resolved_adapter_ctx), key=lambda a: a.value))
+        # All items in resolved_adapter_ctx are now guaranteed to be Adapter objects
+        adapter_list: list[Adapter] = list(resolved_adapter_ctx)
+        adapter_ctx = tuple(sorted(adapter_list, key=lambda a: cast(Adapter, a).value))
         return adapter_ctx
 
     @override

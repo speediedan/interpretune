@@ -35,7 +35,7 @@ def analysis_store_generator(
 ):
     # TODO: should we create separate dataset phase subsplits (per epoch)?
     # TODO: allow for custom dataloader associations
-    dataloader = datamodule.test_dataloader()
+    dataloader = datamodule.test_dataloader()  # type: ignore[attr-defined]  # ITDataModule provides test_dataloader
     test_ctx = {"module": module, "as_generator": True}
     for epoch_idx in range(max_epochs):
         module.current_epoch = epoch_idx
@@ -60,7 +60,7 @@ def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: Optional[AnalysisC
     """
     if analysis_cfg is not None:
         # Set module's analysis_cfg
-        module.analysis_cfg = analysis_cfg
+        module.analysis_cfg = analysis_cfg  # type: ignore[assignment]  # protocol compatibility
 
         # Extract and pop any AnalysisCfg.apply-specific kwargs
         init_analysis_cfg_params = signature(init_analysis_cfgs).parameters
@@ -69,13 +69,13 @@ def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: Optional[AnalysisC
         }
 
         # Only initialize if not already applied to this module
-        if not module.analysis_cfg.applied_to(module):
-            init_analysis_cfgs(module, [module.analysis_cfg], **init_analysis_cfg_kwargs)
+        if not module.analysis_cfg.applied_to(module):  # type: ignore[attr-defined]  # protocol provides applied_to
+            init_analysis_cfgs(module, [module.analysis_cfg], **init_analysis_cfg_kwargs)  # type: ignore[arg-type]  # protocol compatibility
 
     return kwargs
 
 
-def dataset_features_and_format(module: "ITModule", kwargs: dict) -> Tuple[dict, dict, Any, dict]:
+def dataset_features_and_format(module: "ITModule", kwargs: dict) -> Tuple[dict, dict, dict]:
     """Generate dataset features and formatting parameters based on module configuration.
 
     Args:
@@ -85,18 +85,17 @@ def dataset_features_and_format(module: "ITModule", kwargs: dict) -> Tuple[dict,
         Tuple containing:
         - features: Dataset features derived from schema
         - it_format_kwargs: Kwargs for interpretune format
-        - schema_source: Source of the schema definition
-        - serializable_col_cfg: Column configs in serializable format
+        - kwargs: Updated kwargs dict
     """
     # Generate appropriate features based on module configuration and current op context
     # Handle different schema sources based on configuration
-    if hasattr(module.analysis_cfg, "op") and module.analysis_cfg.op is not None:
-        features = schema_to_features(module=module, op=module.analysis_cfg.op)
-        schema_source = module.analysis_cfg.op.output_schema
-    elif hasattr(module.analysis_cfg, "output_schema") and module.analysis_cfg.output_schema is not None:
+    if hasattr(module.analysis_cfg, "op") and module.analysis_cfg.op is not None:  # type: ignore[attr-defined]  # protocol provides op
+        features = schema_to_features(module=module, op=module.analysis_cfg.op)  # type: ignore[attr-defined,arg-type]  # protocol compatibility
+        schema_source = module.analysis_cfg.op.output_schema  # type: ignore[attr-defined]  # protocol provides op
+    elif hasattr(module.analysis_cfg, "output_schema") and module.analysis_cfg.output_schema is not None:  # type: ignore[attr-defined]  # protocol provides output_schema
         # Use explicitly provided output schema when op is None
-        features = schema_to_features(module=module, schema=module.analysis_cfg.output_schema)
-        schema_source = module.analysis_cfg.output_schema
+        features = schema_to_features(module=module, schema=module.analysis_cfg.output_schema)  # type: ignore[attr-defined]  # protocol provides output_schema
+        schema_source = module.analysis_cfg.output_schema  # type: ignore[attr-defined]  # protocol provides output_schema
         # Handle the case where schema_source is an OpWrapper or AnalysisOp instead of OpSchema
         from interpretune.analysis.ops.base import AnalysisOpLike
 
@@ -137,13 +136,13 @@ def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, sp
         gen_kwargs=gen_kwargs,
         features=features,
         split=split,
-        cache_dir=module.analysis_cfg.output_store.cache_dir,
+        cache_dir=module.analysis_cfg.output_store.cache_dir,  # type: ignore[attr-defined]  # protocol provides output_store
     )
 
     # Create dataset with ITAnalysisFormatter
     try:
-        dataset = Dataset.from_generator(**from_gen_kwargs).with_format("interpretune", **it_format_kwargs)
-        return dataset
+        dataset = Dataset.from_generator(**from_gen_kwargs).with_format("interpretune", **it_format_kwargs)  # type: ignore[arg-type]  # datasets compatibility
+        return dataset  # type: ignore[return-value]  # datasets compatibility
     except Exception as e:
         # improve visibility of errors since they can otherwise be obscured by the dataset generator
         context_data = (
@@ -192,21 +191,21 @@ def core_analysis_loop(
     # Generate the dataset
     dataset = generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, **kwargs)
 
-    save_dir = Path(module.analysis_cfg.output_store.save_dir)
+    save_dir = Path(module.analysis_cfg.output_store.save_dir)  # type: ignore[attr-defined]  # protocol provides output_store
     dataset.save_to_disk(save_dir)
     # Assign dataset to analysis store
-    module.analysis_cfg.output_store.dataset = dataset
+    module.analysis_cfg.output_store.dataset = dataset  # type: ignore[attr-defined]  # protocol provides output_store
 
     # Run analysis end hooks
     _call_itmodule_hook(module, hook_name="on_analysis_end", hook_msg="Running analysis end hooks")
 
-    return module.analysis_cfg.output_store
+    return module.analysis_cfg.output_store  # type: ignore[attr-defined]  # protocol provides output_store
 
 
 class AnalysisRunner(SessionRunner):
     """Trainer subclass with analysis orchestration logic."""
 
-    def __init__(self, run_cfg: AnalysisRunnerCfg | dict[str, Any], *args: Any, **kwargs: Any) -> Any:
+    def __init__(self, run_cfg: AnalysisRunnerCfg | dict[str, Any], *args: Any, **kwargs: Any) -> None:
         run_cfg = run_cfg if isinstance(run_cfg, AnalysisRunnerCfg) else AnalysisRunnerCfg(**run_cfg)
         super().__init__(run_cfg, *args, **kwargs)
         # Extend supported commands to include analysis
@@ -219,9 +218,9 @@ class AnalysisRunner(SessionRunner):
         # Check if running analysis and the module needs an analysis_step
         if hasattr(self, "phase") and self.phase == "analysis":
             if not hasattr(module, "analysis_step") or getattr(module, "_generated_analysis_step", False):
-                if hasattr(module, "analysis_cfg") and hasattr(module.analysis_cfg, "op"):
+                if hasattr(module, "analysis_cfg") and hasattr(module.analysis_cfg, "op"):  # type: ignore[attr-defined]  # protocol provides analysis_cfg
                     # Apply the analysis config to generate the analysis_step
-                    module.analysis_cfg.apply(module)
+                    module.analysis_cfg.apply(module)  # type: ignore[attr-defined]  # protocol provides analysis_cfg
                 else:
                     rank_zero_warn(
                         f"Module {module.__class__.__name__} has no analysis_step method and "
@@ -229,7 +228,7 @@ class AnalysisRunner(SessionRunner):
                     )
 
     def _run(self, phase, loop_fn, step_fn: Optional[str] = None, *args: Any, **kwargs: Any) -> Any | None:
-        self.phase = AllPhases[phase]
+        self.phase = AllPhases[phase]  # type: ignore[assignment]  # phase attribute assignment
         phase_artifacts = loop_fn(step_fn=step_fn, **self.run_cfg.__dict__)
         self.it_session_end()
         return phase_artifacts
@@ -263,32 +262,32 @@ class AnalysisRunner(SessionRunner):
 
         # Update configuration parameters if provided
         if cache_dir is not None:
-            self.run_cfg.cache_dir = cache_dir
+            self.run_cfg.cache_dir = cache_dir  # type: ignore[assignment]  # dynamic config update
         if op_output_dataset_path is not None:
-            self.run_cfg.op_output_dataset_path = op_output_dataset_path
+            self.run_cfg.op_output_dataset_path = op_output_dataset_path  # type: ignore[assignment]  # dynamic config update
 
         # Update analysis_cfgs if provided
         if analysis_cfgs is not None:
-            self.run_cfg.analysis_cfgs = analysis_cfgs
+            self.run_cfg.analysis_cfgs = analysis_cfgs  # type: ignore[assignment]  # dynamic config update
             # # Process the new analysis_cfgs
             # self.run_cfg._process_analysis_cfgs()
 
         # Initialize analysis configurations
         init_analysis_cfgs(
-            module=self.run_cfg.module,
-            analysis_cfgs=self.run_cfg._processed_analysis_cfgs,
-            cache_dir=self.run_cfg.cache_dir,
-            op_output_dataset_path=self.run_cfg.op_output_dataset_path,
-            sae_analysis_targets=self.run_cfg.sae_analysis_targets,
-            ignore_manual=self.run_cfg.ignore_manual,
+            module=self.run_cfg.module,  # type: ignore[arg-type]  # protocol compatibility
+            analysis_cfgs=self.run_cfg._processed_analysis_cfgs,  # type: ignore[attr-defined]  # dynamic config attribute
+            cache_dir=self.run_cfg.cache_dir,  # type: ignore[attr-defined]  # dynamic config attribute
+            op_output_dataset_path=self.run_cfg.op_output_dataset_path,  # type: ignore[attr-defined]  # dynamic config attribute
+            sae_analysis_targets=self.run_cfg.sae_analysis_targets,  # type: ignore[attr-defined]  # dynamic config attribute
+            ignore_manual=self.run_cfg.ignore_manual,  # type: ignore[attr-defined]  # dynamic config attribute
         )
 
         # Check if we have any analysis configurations to process
-        if not self.run_cfg._processed_analysis_cfgs:
+        if not self.run_cfg._processed_analysis_cfgs:  # type: ignore[attr-defined]  # dynamic config attribute
             raise ValueError("No analysis configurations provided. Please specify analysis_cfgs.")
 
         # Run each analysis configuration
-        for cfg in self.run_cfg._processed_analysis_cfgs:
+        for cfg in self.run_cfg._processed_analysis_cfgs:  # type: ignore[attr-defined]  # dynamic config attribute
             result = self._run_analysis_cfg(cfg)
             self.analysis_results[cfg.name] = result
 
@@ -301,7 +300,7 @@ class AnalysisRunner(SessionRunner):
     def _run_analysis_cfg(self, analysis_cfg: AnalysisCfg) -> Any:
         """Run a single analysis operation with the provided configuration."""
         # Set active analysis config
-        self.run_cfg.module.analysis_cfg = analysis_cfg
+        self.run_cfg.module.analysis_cfg = analysis_cfg  # type: ignore[attr-defined]  # protocol provides analysis_cfg
 
         # TODO: Determine if/when we should (re)apply an analysis_cfg given `init_analysis_cfgs` should have already
         #       applied the config. Would probably only if one analysis_cfg updates global state in a way that requires

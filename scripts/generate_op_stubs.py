@@ -71,7 +71,7 @@ def format_schema_doc(schema_dict: Dict) -> str:
                 field_str += " (required)"
             lines.append(field_str)
 
-    return "\n    ".join(lines)
+    return "\n".join(lines)
 
 
 def wrap_signature(name: str, params: List[str], return_type: str = "", max_width: int = 120) -> str:
@@ -97,17 +97,33 @@ def wrap_signature(name: str, params: List[str], return_type: str = "", max_widt
     return signature
 
 
-def format_docstring(description: str, input_schema: Dict, output_schema: Dict) -> str:
+def format_docstring(
+    description: str, input_schema: Dict, output_schema: Dict, function_param_defaults: Dict[str, str] | None = None
+) -> str:
     """Format a docstring with proper wrapping and sections."""
     doc_lines = [f'"""{description}']
 
     if input_schema:
-        doc_lines.append("\nInput Schema:")
-        doc_lines.append(f"    {format_schema_doc(input_schema)}")
+        doc_lines.append("\n    Input Schema:")
+        schema_doc = format_schema_doc(input_schema)
+        if schema_doc:
+            # Add proper indentation to each line
+            indented_schema = "\n".join(f"        {line}" for line in schema_doc.split("\n"))
+            doc_lines.append(indented_schema)
 
     if output_schema:
-        doc_lines.append("\nOutput Schema:")
-        doc_lines.append(f"    {format_schema_doc(output_schema)}")
+        doc_lines.append("\n    Output Schema:")
+        schema_doc = format_schema_doc(output_schema)
+        if schema_doc:
+            # Add proper indentation to each line
+            indented_schema = "\n".join(f"        {line}" for line in schema_doc.split("\n"))
+            doc_lines.append(indented_schema)
+
+    # Document any function-parameter defaults that were present in the YAML (FQ callable paths).
+    if function_param_defaults:
+        doc_lines.append("\n    Function parameter defaults (from YAML):")
+        for param_name, fq_path in function_param_defaults.items():
+            doc_lines.append(f"        {param_name}: {fq_path}")
 
     doc_lines.append('"""')
     return "\n".join(doc_lines)
@@ -125,6 +141,8 @@ def generate_operation_stub(op_name: str, op_def: Dict[str, Any], yaml_content: 
 
         # Create parameters list
         params = []
+        # Collect function-parameter defaults to document them in the docstring
+        function_param_defaults: Dict[str, str] = {}
         for name, param in sig.parameters.items():
             annotation = format_type_annotation(param.annotation)
             if annotation:
@@ -132,10 +150,12 @@ def generate_operation_stub(op_name: str, op_def: Dict[str, Any], yaml_content: 
 
             default = ""
             if param.default is not param.empty:
-                # Check if this parameter has a corresponding function_param in the YAML definition
-                if "function_params" in op_def and name in op_def["function_params"]:
-                    # Use fully qualified function name as a string
-                    default = f' = "{op_def["function_params"][name]}"'
+                # Check if this parameter has a corresponding importable_param in the YAML definition
+                if "importable_params" in op_def and name in op_def["importable_params"]:
+                    # DO NOT emit the FQ path as the default in the stub (string default breaks type checkers).
+                    # Instead, set default to ... and record the FQ path for documentation in the docstring.
+                    default = " = ..."
+                    function_param_defaults[name] = op_def["importable_params"][name]
                 elif param.default is None:
                     default = " = None"
                 elif isinstance(param.default, str):
@@ -151,9 +171,12 @@ def generate_operation_stub(op_name: str, op_def: Dict[str, Any], yaml_content: 
         # Create function signature
         signature = wrap_signature(op_name, params, return_type)
 
-        # Create formatted docstring
+        # Create formatted docstring (include the recorded function_param_defaults)
         docstring = format_docstring(
-            op_def.get("description", ""), op_def.get("input_schema", {}), op_def.get("output_schema", {})
+            op_def.get("description", ""),
+            op_def.get("input_schema", {}),
+            op_def.get("output_schema", {}),
+            function_param_defaults or None,
         )
 
         # Build the complete stub
@@ -197,7 +220,7 @@ def generate_composition_stub(op_name: str, op_def: Dict[str, Any]) -> str:
     )
 
     # Create docstring
-    doc = f'    """Composition of operations: {composition_str}'
+    doc = f'    """Composition of operations:\n    {composition_str}'
     if "description" in op_def:
         doc += f"\n\n    {op_def['description']}"
     doc += '\n    """'
@@ -221,10 +244,29 @@ def generate_stubs(yaml_path: Path, output_path: Path) -> None:
         '"""Type stubs for Interpretune analysis operations."""',
         "# This file is auto-generated. Do not modify directly.",
         "",
-        "from typing import Any, Callable, Dict, List, Optional, Union, Tuple, Sequence, Literal",
+        "from typing import Callable, Optional",
         "import torch",
         "from transformers import BatchEncoding",
         "from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatchProtocol",
+        "",
+        "# Main module exports - added for static analysis",
+        "# These imports resolve pyright 'unknown import symbol' errors caused by the complex import hook",
+        "# mechanism used for analysis operations.",
+        "from interpretune.base.datamodules import ITDataModule as ITDataModule",
+        "from interpretune.base.components.mixins import MemProfilerHooks as MemProfilerHooks",
+        "from interpretune.analysis.ops import AnalysisBatch as AnalysisBatch",
+        "from interpretune.config import (",
+        "    ITLensConfig as ITLensConfig,",
+        "    SAELensConfig as SAELensConfig,",
+        "    PromptConfig as PromptConfig,",
+        "    ITDataModuleConfig as ITDataModuleConfig,",
+        "    ITConfig as ITConfig,",
+        "    GenerativeClassificationConfig as GenerativeClassificationConfig,",
+        "    BaseGenerationConfig as BaseGenerationConfig,",
+        "    HFGenerationConfig as HFGenerationConfig,",
+        ")",
+        "from interpretune.utils import rank_zero_warn as rank_zero_warn, sanitize_input_name as sanitize_input_name",
+        "from interpretune.protocol import STEP_OUTPUT as STEP_OUTPUT",
         "",
         "# Basic operations",
         "",

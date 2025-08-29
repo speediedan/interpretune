@@ -90,9 +90,9 @@ def init_analysis_dirs(
     if cache_dir is None:
         cache_dir = (
             Path(IT_ANALYSIS_CACHE)
-            / module.datamodule.dataset["validation"].config_name
-            / module.datamodule.dataset["validation"]._fingerprint
-            / module.__class__._orig_module_name
+            / module.datamodule.dataset["validation"].config_name  # type: ignore[attr-defined]  # protocol provides datamodule
+            / module.datamodule.dataset["validation"]._fingerprint  # type: ignore[attr-defined]  # protocol provides datamodule
+            / module.__class__._orig_module_name  # type: ignore[attr-defined]  # dynamic module attribute
         )
     assert isinstance(cache_dir, StrOrPath), "cache_dir must be a str or Path"
     cache_dir = Path(cache_dir)
@@ -100,7 +100,7 @@ def init_analysis_dirs(
 
     # Setup output dataset path
     if op_output_dataset_path is None:
-        op_output_dataset_path = module.core_log_dir / "analysis_datasets"
+        op_output_dataset_path = module.core_log_dir / "analysis_datasets"  # type: ignore[attr-defined]  # protocol provides core_log_dir
     assert isinstance(op_output_dataset_path, StrOrPath), "op_output_dataset_path must be a str or Path"
     op_output_dataset_path = Path(op_output_dataset_path)
     op_output_dataset_path.mkdir(exist_ok=True, parents=True)
@@ -112,10 +112,10 @@ def init_analysis_dirs(
                 # Accept either AnalysisOp instances or OpWrapper-like objects / simple objects providing a `name`
                 if not (isinstance(cfg.op, AnalysisOp) or hasattr(cfg.op, "name")):
                     raise AssertionError("cfg.op must be an AnalysisOp instance or provide a `name` attribute")
-                op_dir = op_output_dataset_path / cfg.op.name
+                op_dir = op_output_dataset_path / cfg.op.name  # type: ignore[attr-defined]  # validated above to have name
                 if op_dir.exists() and any(op_dir.iterdir()):
                     raise Exception(
-                        f"Analysis dataset directory for op '{cfg.op.name}' ({op_dir}) is not empty. "
+                        f"Analysis dataset directory for op '{cfg.op.name}' ({op_dir}) is not empty. "  # type: ignore[attr-defined]  # validated above to have name
                         "Please delete it or specify a different path."
                     )
 

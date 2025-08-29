@@ -33,9 +33,9 @@ from interpretune.utils import rank_zero_warn, DEFAULT_DECODE_KWARGS
 class SAEAnalysisDict(dict):
     """Dictionary for SAE-specific data where values must be torch.Tensor or list[torch.Tensor]."""
 
-    def __setitem__(self, key: str, value: torch.Tensor | Sequence[torch.Tensor]) -> None:
+    def __setitem__(self, key: str, value: torch.Tensor | Sequence[torch.Tensor] | None) -> None:
         if value is None:
-            super().__setitem__(key, None)
+            super().__setitem__(key, None)  # type: ignore[arg-type]  # SAEAnalysisDict allows None values for empty SAE data
             return
         # Handle namedtuple-like torch.return_types.<op> objects
         if not isinstance(value, (torch.Tensor, list)):
@@ -244,9 +244,9 @@ def schema_to_features(
     from interpretune.analysis.ops.base import AnalysisOpLike
 
     if isinstance(op, str):
-        op = DISPATCHER.get_op(op)
-    if schema is None and op is not None:
-        schema = op.output_schema
+        op = DISPATCHER.get_op(op)  # type: ignore[assignment]  # DISPATCHER.get_op can return callable or AnalysisOp
+    if schema is None and op is not None and hasattr(op, "output_schema"):
+        schema = op.output_schema  # type: ignore[attr-defined]  # AnalysisOp has output_schema attribute
     elif schema is None and module is not None and hasattr(module, "analysis_cfg"):
         has_output_schema = hasattr(module.analysis_cfg, "output_schema")
         if has_output_schema:
@@ -307,6 +307,7 @@ def schema_to_features(
             for handle in module.sae_handles:
                 for hook_key in get_filtered_sae_hook_keys(handle, module.analysis_cfg.names_filter):
                     # Determine base feature based on ColCfg properties
+                    base_feature = Value(dtype=dtype)  # Default to simple Value type
                     if col_cfg.array_shape:
                         shape = list(col_cfg.array_shape)
                         shape = [dim_vars.get(dim, dim) if isinstance(dim, str) else dim for dim in shape]
@@ -316,8 +317,6 @@ def schema_to_features(
                             base_feature = Array3D(shape=tuple(shape), dtype=dtype)
                     elif col_cfg.sequence_type:
                         base_feature = DatasetsSequence(Value(dtype=dtype))
-                    else:
-                        base_feature = Value(dtype=dtype)
 
                     sae_features[hook_key] = {
                         "latents": DatasetsSequence(Value(int_dtype)),
@@ -377,19 +376,22 @@ class AnalysisStore:
                 # Only consider conflict if raw paths match
                 if str(dataset) == self.op_output_dataset_path:
                     raise ValueError("The dataset path and op_output_dataset_path must not overlap.")
-            self.dataset = load_dataset(dataset_path, **load_dataset_kwargs)
+            self.dataset = load_dataset(path=dataset_path, **load_dataset_kwargs)  # type: ignore[misc]  # load_dataset API compatible with these args
         else:
             self.dataset = dataset
 
         if self.dataset is not None:
             if self.it_format_kwargs is not None:
                 # Set custom format options if provided
-                self.dataset.set_format(type="interpretune", **it_format_kwargs)
+                self.dataset.set_format(type="interpretune", **self.it_format_kwargs)  # type: ignore[attr-defined]  # datasets API supports set_format
             else:
                 # check current format and set it to interpretune if not already set
-                if not hasattr(self.dataset, "format") or self.dataset.format["type"] != "interpretune":
+                if (
+                    not hasattr(self.dataset, "format")
+                    or getattr(self.dataset, "format", {}).get("type") != "interpretune"
+                ):  # type: ignore[attr-defined]  # datasets format attribute
                     # Set default format as our custom analysis formatter
-                    self.dataset.set_format(type="interpretune")
+                    self.dataset.set_format(type="interpretune")  # type: ignore[attr-defined]  # datasets API supports set_format
 
     def _format_columns(self, cols_to_fetch: list[str], indices: Optional[Union[int, slice, list[int]]] = None) -> dict:
         """Internal helper to format specified columns into tensors with proper shape reconstruction.
@@ -399,20 +401,21 @@ class AnalysisStore:
             indices: Optional index, slice or list of indices to select. If None, fetch all rows.
         """
         # Let the dataset handle the formatting using our registered ITAnalysisFormatter
-        self.dataset.set_format(type="interpretune", columns=cols_to_fetch)
+        assert self.dataset is not None, "Dataset should be loaded before formatting columns"
+        self.dataset.set_format(type="interpretune", columns=cols_to_fetch)  # type: ignore[attr-defined]  # datasets API supports set_format
 
         # Handle different types of indexing to get examples
         if indices is None:
-            examples = list(self.dataset)
+            examples = list(self.dataset)  # type: ignore[arg-type]  # datasets are iterable
         elif isinstance(indices, int):
-            examples = [self.dataset[indices]]
+            examples = [self.dataset[indices]]  # type: ignore[index]  # datasets support integer indexing
         elif isinstance(indices, slice):
             start = indices.start or 0
-            stop = indices.stop or len(self.dataset)
+            stop = indices.stop or len(self.dataset)  # type: ignore[arg-type]  # datasets have len
             step = indices.step or 1
-            examples = [self.dataset[i] for i in range(start, stop, step)]
+            examples = [self.dataset[i] for i in range(start, stop, step)]  # type: ignore[index]  # datasets support integer indexing
         else:
-            examples = [self.dataset[idx] for idx in indices]
+            examples = [self.dataset[idx] for idx in indices]  # type: ignore[index]  # datasets support integer indexing
 
         # Extract requested columns
         result = {col: [ex[col] for ex in examples] for col in cols_to_fetch}
@@ -448,12 +451,13 @@ class AnalysisStore:
                 # Compare raw paths to detect overlap
                 if str(dataset) == self.op_output_dataset_path:
                     raise ValueError("The dataset path and op_output_dataset_path must not overlap.")
-            self.dataset = load_dataset(dataset_path, **load_dataset_kwargs)
+            self.dataset = load_dataset(path=dataset_path, **load_dataset_kwargs)  # type: ignore[misc]  # load_dataset API compatible with these args
         else:
             self.dataset = dataset
 
         # Set default tensor format
-        self.dataset.set_format(type="interpretune")
+        if self.dataset is not None:
+            self.dataset.set_format(type="interpretune")  # type: ignore[attr-defined]  # datasets API supports set_format
 
     def reset_dataset(self) -> None:
         """Reset the dataset."""
@@ -486,7 +490,8 @@ class AnalysisStore:
         """
         if isinstance(key, str):
             # Single column access
-            data = self.dataset[key]
+            assert self.dataset is not None, "Dataset should be loaded before accessing columns"
+            data = self.dataset[key]  # type: ignore[index]  # datasets support string column indexing
 
             # now that Datasets >= 4.0 has introduced the Column class, we need to refactor AnalysisStore
             # methods accordingly (since we are pre-MVP, we can start with the Datasets 4.0 API w/o bc concerns)
@@ -494,22 +499,35 @@ class AnalysisStore:
             # a future refactor (or subclass of Column) that allows our stacking behavior might make more sense
             if self._is_tensor_seq(data):
                 if self.stack_batches:
-                    return torch.stack([t for t in data])
-                if data[0].dim() > 1:
-                    return [t for t in data]
+                    return torch.stack([t for t in data])  # type: ignore[return-value]  # stacked tensor is valid return for tensor sequences
+                if (
+                    hasattr(data, "__getitem__")
+                    and hasattr(data, "__len__")
+                    and len(data) > 0  # type: ignore[arg-type]  # datasets Column may be IterableColumn
+                    and hasattr(data[0], "dim")  # type: ignore[index]  # datasets Column supports indexing
+                    and data[0].dim() > 1  # type: ignore[attr-defined]  # tensor has dim attribute
+                ):
+                    return [t for t in data]  # type: ignore[return-value]  # list of tensors is valid return
                 # Split 1D tensors into scalar tensors
-                return [torch.tensor(x) for x in data]
-            return data
+                return [torch.tensor(x) for x in data]  # type: ignore[return-value]  # list of tensors is valid return
+            return data  # type: ignore[return-value]  # raw data return is valid
         elif isinstance(key, list) and all(isinstance(k, str) for k in key):
             # Multiple column access
             result = {}
             for col in key:
-                data = self.dataset[col]
+                assert self.dataset is not None, "Dataset should be loaded before accessing columns"
+                data = self.dataset[col]  # type: ignore[index]  # datasets support string column indexing
                 # If tensor data, optionally stack individual tensors
                 if self._is_tensor_seq(data):
                     if self.stack_batches:
-                        result[col] = torch.stack([t for t in data])
-                    elif data[0].dim() > 1:
+                        result[col] = torch.stack([t for t in data])  # type: ignore[misc]  # torch.stack accepts tensor sequences
+                    elif (
+                        hasattr(data, "__getitem__")
+                        and hasattr(data, "__len__")
+                        and len(data) > 0  # type: ignore[arg-type]  # datasets Column may be IterableColumn
+                        and hasattr(data[0], "dim")  # type: ignore[index]  # datasets Column supports indexing
+                        and data[0].dim() > 1  # type: ignore[attr-defined]  # tensor has dim attribute
+                    ):
                         result[col] = [t for t in data]
                     else:
                         # Split 1D tensors into scalar tensors
@@ -519,7 +537,8 @@ class AnalysisStore:
             return result
         else:
             # Row access delegates to dataset
-            return self.dataset[key]
+            assert self.dataset is not None, "Dataset should be loaded before accessing rows"
+            return self.dataset[key]  # type: ignore[index]  # datasets support various indexing types
 
     def select_columns(self, column_names: List[str]) -> "AnalysisStore":
         """Select a subset of columns.
@@ -530,7 +549,8 @@ class AnalysisStore:
         Returns:
             New AnalysisStore with only selected columns
         """
-        self.dataset = self.dataset.select_columns(column_names)
+        assert self.dataset is not None, "Dataset should be loaded before selecting columns"
+        self.dataset = self.dataset.select_columns(column_names)  # type: ignore[attr-defined]  # datasets support select_columns
         return self
 
     def __getattr__(self, name: str) -> Any:
@@ -549,7 +569,11 @@ class AnalysisStore:
         # First check if it's a protocol-defined column
         if name in self._protocol_cls.__annotations__:
             # Check if the column actually exists in the dataset
-            if self.dataset is not None and hasattr(self.dataset, "column_names") and name in self.dataset.column_names:
+            if (
+                self.dataset is not None
+                and hasattr(self.dataset, "column_names")
+                and name in getattr(self.dataset, "column_names", [])
+            ):  # type: ignore[attr-defined]  # datasets have column_names
                 return self[name]
             # Return None if column isn't available yet
             return None
@@ -564,7 +588,7 @@ class AnalysisStore:
                     result = attr(*args, **kwargs)
                     # If the result is a Dataset, ensure it maintains the interpretune format
                     if hasattr(result, "set_format"):
-                        result.set_format(type="interpretune")
+                        result.set_format(type="interpretune")  # type: ignore[attr-defined]  # datasets support set_format
                     return result
 
                 return _caller
@@ -601,10 +625,10 @@ class AnalysisStore:
                 for batch in values:
                     latent_tensors = [t for t in batch[sae].values()]
                     batch_tensors.append(torch.stack(latent_tensors) if latent_tensors else None)
-                result[sae] = batch_tensors
+                result[sae] = batch_tensors  # type: ignore[assignment]  # SAEAnalysisDict accepts list of tensor batches
             else:
                 # Handle both non-nested and non-stacked nested cases
-                result[sae] = [
+                result[sae] = [  # type: ignore[assignment]  # SAEAnalysisDict handles mixed tensor/None lists
                     None if isinstance(batch[sae], list) and not batch[sae] else batch[sae] for batch in values
                 ]
         return result
@@ -627,6 +651,7 @@ class AnalysisStore:
             raise ValueError("Analysis cache requires 'correct_activations' data to calculate per-SAE activation stats")
 
         sae_data = self.by_sae("correct_activations").batch_join()
+        assert isinstance(sae_data, SAEAnalysisDict), "batch_join should return SAEAnalysisDict"
         mean_activation = sae_data.apply_op_by_sae(operation="mean", dim=0)
         num_samples_active = sae_data.apply_op_by_sae(operation=torch.count_nonzero, dim=0)
 
@@ -665,18 +690,22 @@ class AnalysisStore:
                 correct_mask = torch.cat([(diffs > 0) for diffs in self.logit_diffs])
             total_examples = correct_mask.sum()
 
+        assert isinstance(activation_summary.num_samples_active, SAEAnalysisDict), (
+            "num_samples_active should be SAEAnalysisDict"
+        )
         proportion_samples_active = activation_summary.num_samples_active.apply_op_by_sae(
             operation=torch.div, other=total_examples
         )
 
         attribution_values = self.by_sae("attribution_values").batch_join()
+        assert isinstance(attribution_values, SAEAnalysisDict), "batch_join should return SAEAnalysisDict"
 
         if filter_by_correct:
             per_example_latent_effects = attribution_values.apply_op_by_sae(
                 operation=lambda x, mask: x[mask], mask=correct_mask
             )
         else:
-            per_example_latent_effects = attribution_values
+            per_example_latent_effects = attribution_values  # type: ignore[assignment]  # attribution_values is SAEAnalysisDict
 
         total_effect = per_example_latent_effects.apply_op_by_sae(operation=torch.sum, dim=0)
         # TODO: make mean effect normalized by num samples active?
@@ -716,6 +745,7 @@ class AnalysisStore:
         else:
             # Aggregate across all batches using SAEAnalysisDict operations
             stacked_values = self.by_sae("attribution_values").batch_join()
+            assert isinstance(stacked_values, SAEAnalysisDict), "batch_join should return SAEAnalysisDict"
             len_alives = {
                 act_name: len({latent for batch in self.alive_latents for latent in batch.get(act_name, [])})
                 for act_name in stacked_values.keys()
@@ -803,18 +833,18 @@ class SAEAnalysisTargets:
                     new_sae_fqns.append(SAEFqn(release=s[0], sae_id=s[1]))
                 else:
                     raise TypeError("All elements in sae_fqns must be instances of SAEFqn or 2-tuples")
-            self.sae_fqns = tuple(new_sae_fqns)
+            self.sae_fqns = tuple(new_sae_fqns)  # type: ignore[misc]  # assignment to dataclass field with SAEFqn tuple
         else:
             if self.target_sae_ids:
-                self.sae_fqns = tuple(SAEFqn(release=self.sae_release, sae_id=s) for s in self.target_sae_ids)
+                self.sae_fqns = tuple(SAEFqn(release=self.sae_release, sae_id=s) for s in self.target_sae_ids)  # type: ignore[misc]  # assignment to dataclass field
             elif self.target_layers:
-                self.sae_fqns = tuple(
+                self.sae_fqns = tuple(  # type: ignore[misc]  # assignment to dataclass field
                     SAEFqn(release=self.sae_release, sae_id=self.sae_id_factory_fn(layer))
                     for layer in self.target_layers
                 )
             else:
                 rank_zero_warn("SAEFqns could not be resolved based on provided configuration")
-                self.sae_fqns = tuple()
+                self.sae_fqns = tuple()  # type: ignore[misc]  # assignment to dataclass field
         return self.sae_fqns
 
 
@@ -878,7 +908,7 @@ class ActivationSumm(BaseMetrics):
         _default_field_repr = MappingProxyType(
             {"mean_activation": "Mean Activation", "num_samples_active": "Number Active"}
         )
-        self._set_field_repr(_default_field_repr)
+        self._set_field_repr(_default_field_repr)  # type: ignore[arg-type]  # MappingProxyType is compatible with dict
         super().__post_init__()
 
 
@@ -901,7 +931,7 @@ class LatentMetrics(ActivationSumm):
                 "proportion_samples_active": "Proportion Active",
             }
         )
-        self._set_field_repr(_default_field_repr)
+        self._set_field_repr(_default_field_repr)  # type: ignore[arg-type]  # MappingProxyType is compatible with dict
         super().__post_init__()
 
     # TODO: decompose this function into smaller, more testable parts
@@ -1069,7 +1099,7 @@ def base_vs_sae_logit_diffs(
     df = df.explode(["prompt", "correct_answer", "clean_logit_diff", "sae_logit_diff"])
     df["sample_id"] = range(len(df))
     df = df[["sample_id", "prompt", "correct_answer", "clean_logit_diff", "sae_logit_diff"]]
-    df = df[df.clean_logit_diff > 0].sort_values(by="clean_logit_diff", ascending=False)
+    df = df[df.clean_logit_diff > 0].sort_values(by="clean_logit_diff", ascending=False)  # type: ignore[misc]  # pandas DataFrame sort_values method
 
     max_samples = min(top_k, len(df))
     df = df.head(max_samples)
@@ -1095,7 +1125,7 @@ def compute_correct(
     # Handle input type and get op and analysis_store
     if hasattr(analysis_obj, "output_store") and hasattr(analysis_obj, "op"):
         analysis_store = analysis_obj.output_store
-        op = analysis_obj.op
+        op = analysis_obj.op  # type: ignore[assignment]  # analysis objects have op attribute
     else:
         # TODO: we can assume this is None if not provided, we should really change compute_correct to have a per-latent
         #       data structured overload
@@ -1104,20 +1134,23 @@ def compute_correct(
         analysis_store = analysis_obj
 
     if isinstance(op, str):
-        op = DISPATCHER.get_op(op)
+        op = DISPATCHER.get_op(op)  # type: ignore[assignment]  # DISPATCHER.get_op can return AnalysisOp
 
     # TODO: this is another location where we should be conditioning behavior on op functionality, not name
-    if op.ctx_key == "logit_diffs_attr_ablation":
-        batch_preds = [b.mode(dim=0).values.cpu() for b in analysis_store.by_sae("preds").batch_join(across_saes=True)]
+    if hasattr(op, "ctx_key") and op.ctx_key == "logit_diffs_attr_ablation":  # type: ignore[attr-defined]  # AnalysisOp has ctx_key
+        batch_preds = [b.mode(dim=0).values.cpu() for b in analysis_store.by_sae("preds").batch_join(across_saes=True)]  # type: ignore[attr-defined]  # analysis_store has by_sae method
     else:
-        batch_preds = analysis_store.preds
+        batch_preds = analysis_store.preds  # type: ignore[attr-defined]  # analysis_store has preds attribute
     correct_statuses = [
-        (labels == preds).nonzero().unique().size(0) for labels, preds in zip(analysis_store.orig_labels, batch_preds)
+        (labels == preds).nonzero().unique().size(0)
+        for labels, preds in zip(analysis_store.orig_labels, batch_preds)  # type: ignore[attr-defined]  # analysis_store has orig_labels
     ]
     total_correct = sum(correct_statuses)
-    percentage_correct = total_correct / (len(torch.cat(analysis_store.orig_labels))) * 100
+    percentage_correct = total_correct / (len(torch.cat(analysis_store.orig_labels))) * 100  # type: ignore[attr-defined]  # analysis_store has orig_labels
     return PredSumm(
-        total_correct, percentage_correct, batch_preds if op.ctx_key == "logit_diffs_attr_ablation" else None
+        total_correct,
+        percentage_correct,
+        batch_preds if hasattr(op, "ctx_key") and op.ctx_key == "logit_diffs_attr_ablation" else None,  # type: ignore[attr-defined]  # AnalysisOp has ctx_key
     )
 
 

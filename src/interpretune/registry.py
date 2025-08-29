@@ -127,7 +127,7 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
         return {key for key in self.keys() if isinstance(key, tuple)}
 
     @override
-    def get(self, target: Tuple | str | RegKeyQueryable) -> Any:
+    def get(self, target: Tuple | str | RegKeyQueryable, default: Any = None) -> Any:
         if not isinstance(target, (tuple, str)):
             assert isinstance(target, RegKeyQueryable), (
                 f"Non-string/non-tuple keys must be `RegKeyQueryable` (i.e. an object "
@@ -143,6 +143,8 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
             else:
                 raise KeyError
         except KeyError:
+            if default is not None:
+                return default
             # Get a nicely formatted, sorted table of available keys for the same key type
             available_keys_str = self.available_keys_feedback(target)
             err_msg = (
@@ -189,7 +191,7 @@ def instantiate_and_register(
     registered_cfg = RegisteredCfg(
         datamodule_cfg=datamodule_cfg,
         module_cfg=module_cfg,
-        datamodule_cls=datamodule_cls,
+        datamodule_cls=datamodule_cls,  # type: ignore[arg-type]
         module_cls=module_cls,  # type: ignore[arg-type]
     )
     for supported_p in AllPhases:

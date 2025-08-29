@@ -37,9 +37,10 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel build
           # Prefer pinned CI requirements if present
           if [ -f requirements/ci/requirements.txt ]; then
-            pip install -r requirements/ci/requirements.txt
+            python -m pip install -r requirements/ci/requirements.txt -r requirements/platform_dependent.txt
+            python -m pip install -e '.[test,examples,lightning]'
           else
-            python -m pip install '.[test,examples,lightning]' -c requirements/ci_constraints.txt
+            python -m pip install -e '.[test,examples,lightning]' -c requirements/ci_constraints.txt
           fi
           # Optional post-upgrades (disabled by default)
           if [ "${APPLY_POST_UPGRADES:-1}" = "1" ] && [ -s requirements/post_upgrades.txt ]; then

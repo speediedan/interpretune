@@ -234,15 +234,15 @@ def wrap_summary(
     if save_prompts:
         assert batch["input"] is not None, "Input batch must contain 'input' field for decoding prompts"
         assert tokenizer is not None, "Tokenizer is required to decode prompts"
-        analysis_batch.prompts = tokenizer.batch_decode(batch["input"], **decode_kwargs)
+        analysis_batch.prompts = tokenizer.batch_decode(batch["input"], **decode_kwargs)  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
     elif hasattr(analysis_batch, "prompts"):
-        del analysis_batch.prompts
+        del analysis_batch.prompts  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
 
     if save_tokens:
         assert batch["input"] is not None, "Input batch must contain 'input' field for saving tokens"
-        analysis_batch.tokens = batch["input"].detach().cpu()
+        analysis_batch.tokens = batch["input"].detach().cpu()  # type: ignore[attr-defined]  # dynamic attribute for batch protocol, tensor-like object
     elif hasattr(analysis_batch, "tokens"):
-        del analysis_batch.tokens
+        del analysis_batch.tokens  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
 
     # TODO: we need to remove this cache clearing hardcoding to refer to the relevant schema configuration
     #       and enable serialization of these fields based on the schema (on a non-default basis) in the future
@@ -279,7 +279,7 @@ class AnalysisOp:
         self.input_schema = input_schema
         self._ctx_key = None
         self._aliases = aliases  # Store aliases for the operation
-        self._impl = None
+        self._impl: Optional[Callable] = None
         self.impl_params = impl_params or {}
 
     @property
@@ -308,6 +308,19 @@ class AnalysisOp:
         if self.input_schema is None:
             return
 
+        # NOTE: [Op-Driven Transitive Dependency Atomicity]
+        # https://github.com/speediedan/interpretune/issues/161
+        # The transitive dependencies of one op on another are currently atomic, i.e., if one op requires
+        # another op, then all the dependencies of the required op are included in the compiled schema. We should
+        # introduce a more granular op-driven inheritance scheme that distinguishes between:
+        # 1. Dependencies actually used by the implementation (direct dependencies)
+        # 2. Dependencies inherited through required_ops (transitive dependencies)
+
+        # As a concrete example, get_alive_latents requires get_answer_indices, but when inspecting the compiled
+        # schema, it requires the indirect batch/input column (which is not actually required for the
+        # get_alive_latents_impl function) in addition to the actually used/required answer_indices column.
+        # This creates a signature mismatch where the runtime operation expects more parameters than the
+        # implementation can handle, requiring workarounds in both validation logic and stub generation.
         for key, col_cfg in self.input_schema.items():
             if not col_cfg.required:
                 continue
@@ -316,7 +329,7 @@ class AnalysisOp:
                 # Check in batch for fields from datamodule
                 # TODO: decide whether to allow this fallback behavior or require explicit mapping by the op definitions
                 # We don't raise an error until we also check if it's already been processed and moved to analysis_batch
-                if key not in batch and (
+                if (batch is None or key not in batch) and (
                     analysis_batch is None or not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None
                 ):
                     raise ValueError(f"Missing required input '{key}' for {self.name} operation")
@@ -362,7 +375,7 @@ class AnalysisOp:
         #       encapsulated at the same level of abstraction)
         # Process column configurations
         for col_name, col_cfg in output_schema.items():
-            if col_name not in analysis_batch.keys():
+            if col_name not in analysis_batch.keys():  # type: ignore[attr-defined]  # dict-like protocol for batch objects
                 continue
 
             # Handle dynamic dimension swapping

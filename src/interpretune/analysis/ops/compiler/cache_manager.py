@@ -245,11 +245,13 @@ class OpDefinitionsCacheManager:
             rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Relative path: {relative_path}")
             parts = relative_path.parts
 
-            # Look for models-- pattern and snapshots directory
+            # Look for models-- pattern and snapshots or blobs directory
             for i, part in enumerate(parts):
                 rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Checking part {i}: '{part}'")
                 if part.startswith("models--"):
-                    if "snapshots" in parts[i:]:
+                    # Check if this is a valid hub cache structure (has snapshots or blobs)
+                    remaining_parts = parts[i:]
+                    if "snapshots" in remaining_parts or "blobs" in remaining_parts:
                         # Use regex to properly extract user and repo parts
                         # Only match exactly two sets of '--' (models--user--repo)
                         regex_pattern = r"models--([^-]+(?:-[^-]+)*)--([^-]+(?:-[^-]+)*)$"

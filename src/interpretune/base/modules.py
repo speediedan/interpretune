@@ -15,7 +15,7 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         """"""
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__(*args, **kwargs)
-        self.model: torch.nn.Module = None
+        self.model: torch.nn.Module = None  # type: ignore[assignment]  # initialized later in lifecycle
         self.it_cfg: ITConfig = self._before_it_cfg_init(it_cfg)
         self._connect_extensions()
         self._dispatch_model_init()

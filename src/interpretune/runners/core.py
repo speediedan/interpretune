@@ -27,13 +27,14 @@ def core_train_loop(
     # Use duck-typing so MagicMock-based tests that provide the expected methods pass
     if not hasattr(datamodule, "train_dataloader"):
         raise AssertionError("Datamodule is expected to have a train dataloader")
-    train_dataloader = datamodule.train_dataloader()
-    val_dataloader = datamodule.val_dataloader() if hasattr(datamodule, "val_dataloader") else None
+    train_dataloader = datamodule.train_dataloader()  # type: ignore[attr-defined]  # duck typing, checked above
+    val_dataloader = datamodule.val_dataloader() if hasattr(datamodule, "val_dataloader") else None  # type: ignore[attr-defined]  # duck typing
     # TODO: add optimizers property setter to corehelperattributes
     assert module.optimizers, "Module has no optimizers configured"
     optim = module.optimizers[0]
     train_ctx = {"module": module, "optimizer": optim}
     for epoch_idx in range(max_epochs):
+        assert module.model is not None, "Model must be initialized before training"
         module.model.train()
         module.current_epoch = epoch_idx
         _call_itmodule_hook(module, hook_name="on_train_epoch_start", hook_msg="Running train epoch start hooks")
@@ -55,9 +56,10 @@ def core_train_loop(
 def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batches: int, *args, **kwargs):
     if not hasattr(datamodule, "test_dataloader"):
         raise AssertionError("Datamodule is expected to have a test dataloader")
-    dataloader = datamodule.test_dataloader()
+    dataloader = datamodule.test_dataloader()  # type: ignore[attr-defined]  # duck typing, checked above
     test_ctx = {}
     module._it_state._current_epoch = 0
+    assert module.model is not None, "Model must be initialized before testing"
     module.model.eval()
     for batch_idx, batch in enumerate(dataloader):
         with torch.inference_mode():

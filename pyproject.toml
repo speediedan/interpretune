@@ -175,109 +175,16 @@ max-complexity = 10
 autoSearchPaths=false
 typeCheckingMode="standard"
 include = [
-    "src/interpretune/__about__.py",
-    "src/interpretune/__init__.py",
-    "src/interpretune/adapter_registry.py",
-    "src/interpretune/protocol.py",
-    "src/interpretune/session.py",
-    # "src/interpretune/registry.py",                         # 15 errors - protocol compatibility, dict typing
-
-    # Adapter files
-    "src/interpretune/adapters/__init__.py",
-    "src/interpretune/adapters/core.py",
-    # "src/interpretune/adapters/lightning.py",                  # 2 errors
-    # "src/interpretune/adapters/registration.py",               # 1 error
-    # "src/interpretune/adapters/transformer_lens.py",           # 6 errors
-    # "src/interpretune/adapters/sae_lens.py",                   # 4 errors
-    # "src/interpretune/adapters/circuit_tracer.py",             # 23 errors
-
-    # Analysis files
-    "src/interpretune/analysis/__init__.py",
-    "src/interpretune/analysis/formatters.py",
-    # "src/interpretune/analysis/core.py",                    # 78 errors - very complex type issues
-    # "src/interpretune/analysis/formatters.py",               # 1 error
-    # "src/interpretune/analysis/ops/definitions.py",         # 8 errors
-    "src/interpretune/analysis/ops/dynamic_module_utils.py",
-    "src/interpretune/analysis/ops/__init__.py",
-    "src/interpretune/analysis/ops/auto_columns.py",
-    "src/interpretune/analysis/ops/dispatcher.py",
-    "src/interpretune/analysis/ops/base.py",
-    "src/interpretune/analysis/ops/hub_manager.py",
-    "src/interpretune/analysis/ops/compiler/__init__.py",
-    "src/interpretune/analysis/ops/compiler/cache_manager.py",
-    "src/interpretune/analysis/ops/compiler/schema_compiler.py",
-
-    # Base components
-    "src/interpretune/base/call.py",
-    "src/interpretune/base/hooks.py",
-    "src/interpretune/base/modules.py",
-    "src/interpretune/base/components/__init__.py",
-    # "src/interpretune/base/components/mixins.py",           # 35 errors - optional member access, callable issues
-    # "src/interpretune/base/components/cli.py",              # 24 errors - path operations, argument types
-    # "src/interpretune/base/components/core.py",             # 1 error
-    "src/interpretune/base/datamodules.py",
-
-    # Config files
-    "src/interpretune/config/__init__.py",
-    "src/interpretune/config/circuit_tracer.py",
-    "src/interpretune/config/datamodule.py",
-    "src/interpretune/config/extensions.py",
-    "src/interpretune/config/mixins.py",
-    "src/interpretune/config/module.py",
-    "src/interpretune/config/sae_lens.py",
-    "src/interpretune/config/transformer_lens.py",
-    "src/interpretune/config/analysis.py",
-    # "src/interpretune/config/runner.py",                    # 10 errors
-    # "src/interpretune/config/shared.py",                    # 11 errors - type variable usage, tuple operations
-
-
-    # Extensions
-    "src/interpretune/extensions/__init__.py",
-    "src/interpretune/extensions/memprofiler.py",
-    "src/interpretune/extensions/neuronpedia.py",
-    # "src/interpretune/extensions/debug_generation.py",       # 20 errors
-
-    # Runners
-    "src/interpretune/runners/__init__.py",
-    # "src/interpretune/runners/analysis.py",                 # 28 errors - protocol mismatches, argument types
-    # "src/interpretune/runners/core.py",                     # 3 errors
-
-    # Tools
-    "src/interpretune/tools/",
-
-    # Utils
-    "src/interpretune/utils/__init__.py",
-    "src/interpretune/utils/data_movement.py",
-    "src/interpretune/utils/exceptions.py",
-    "src/interpretune/utils/import_utils.py",
-    "src/interpretune/utils/logging.py",
-    "src/interpretune/utils/schema_validation.py",
-    "src/interpretune/utils/tokenization.py",
-    "src/interpretune/utils/warnings.py",
-
+    "src/",
 ]
 exclude = [
     # patch of external code
     "src/interpretune/utils/patched_tlens_generate.py",
+    "src/it_examples/patching/patched_sae_from_pretrained.py",
+    "src/it_examples/raw_graph_analysis.py",
 ]
 
-reportMissingTypeStubs = false
-reportUnknownMemberType = "none"
-reportUnknownArgumentType = "none"
-reportUnknownVariableType = "none"
-reportUntypedFunctionDecorator = "none"
-reportUnnecessaryIsInstance = "none"
-reportUnnecessaryComparison = "none"
-reportConstantRedefinition = "none"
-reportUnknownLambdaType = "none"
-reportPrivateUsage = "none"
-reportDeprecated = "none"
-reportPrivateImportUsage = "none"
-reportUnusedImport = "none"
-reportUnusedVariable = "none"
-reportImplicitOverride = "none"
-reportNoReturnInFunction = "none"
-reportMissingImports = false
+# Custom directives removed for stricter type checking
 
 [tool.coverage.run]
 source = ["src/interpretune"]
