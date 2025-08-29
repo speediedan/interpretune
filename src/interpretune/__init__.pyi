@@ -12,6 +12,11 @@ from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatc
 from interpretune.base.datamodules import ITDataModule as ITDataModule
 from interpretune.base.components.mixins import MemProfilerHooks as MemProfilerHooks
 from interpretune.analysis.ops import AnalysisBatch as AnalysisBatch
+from interpretune.analysis import (
+    AnalysisStore as AnalysisStore,
+    DISPATCHER as DISPATCHER,
+    SAEAnalysisTargets as SAEAnalysisTargets,
+)
 from interpretune.config import (
     ITLensConfig as ITLensConfig,
     SAELensConfig as SAELensConfig,
@@ -21,7 +26,11 @@ from interpretune.config import (
     GenerativeClassificationConfig as GenerativeClassificationConfig,
     BaseGenerationConfig as BaseGenerationConfig,
     HFGenerationConfig as HFGenerationConfig,
+    SAELensFromPretrainedConfig as SAELensFromPretrainedConfig,
+    AnalysisCfg as AnalysisCfg,
 )
+from interpretune.session import ITSessionConfig as ITSessionConfig, ITSession as ITSession
+from interpretune.runners import AnalysisRunner as AnalysisRunner
 from interpretune.utils import rank_zero_warn as rank_zero_warn, sanitize_input_name as sanitize_input_name
 from interpretune.protocol import STEP_OUTPUT as STEP_OUTPUT
 

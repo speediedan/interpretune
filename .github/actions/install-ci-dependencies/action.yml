@@ -1,0 +1,52 @@
+name: "Install CI Dependencies"
+description: "Install Python dependencies for CI workflows including platform-dependent packages and post-upgrades"
+
+inputs:
+  show_pip_list:
+    description: "Whether to show pip list output after installations"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up venv and install ci dependencies
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip setuptools wheel build --cache-dir "$PIP_CACHE_DIR"
+        # Prefer CI pinned requirements if present
+        if [ -f requirements/ci/requirements.txt ]; then
+          pip install -r requirements/ci/requirements.txt --cache-dir "$PIP_CACHE_DIR"
+          python -m pip install -e '.[test,examples,lightning]' --cache-dir "$PIP_CACHE_DIR"
+        else
+          python -m pip install -e '.[test,examples,lightning]' -c requirements/ci_constraints.txt --cache-dir "$PIP_CACHE_DIR"
+        fi
+        if [ "${{ inputs.show_pip_list }}" = "true" ]; then
+          pip list
+        fi
+
+    - name: Install platform-dependent packages
+      shell: bash
+      run: |
+        # Install platform-dependent packages with flexible constraints to allow platform-specific resolution
+        if [ -f requirements/platform_dependent.txt ] && [ -s requirements/platform_dependent.txt ]; then
+          echo "Installing platform-dependent packages..."
+          python -m pip install -r requirements/platform_dependent.txt --cache-dir "$PIP_CACHE_DIR" || echo "Some platform-dependent packages may not be available on this platform, continuing..."
+        else
+          echo "No platform-dependent packages to install."
+        fi
+
+    - name: Optional post-upgrades (datasets/fsspec etc)
+      shell: bash
+      env:
+        APPLY_POST_UPGRADES: ${{ vars.APPLY_POST_UPGRADES || '1' }}
+      run: |
+        if [ "${APPLY_POST_UPGRADES}" = "1" ] && [ -s requirements/post_upgrades.txt ]; then
+          echo "Applying post-upgrades..."
+          python -m pip install --upgrade -r requirements/post_upgrades.txt --cache-dir "$PIP_CACHE_DIR"
+          if [ "${{ inputs.show_pip_list }}" = "true" ]; then
+            pip list
+          fi
+        else
+          echo "Skipping post-upgrades (either disabled or file empty)."
+        fi
