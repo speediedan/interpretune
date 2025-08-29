@@ -267,6 +267,7 @@ include = [
     "src/it_examples/notebooks/example_op_collections/op_collection_demo_utils.py",
     "src/it_examples/notebooks/example_op_collections/hub_op_collection/hub_op_definitions.py",
     "src/it_examples/notebooks/saelens_adapter_example/sl_utils/sl_mem_utils.py",
+    "src/it_examples/experiments/rte_boolq.py",
 
 ]
 exclude = [
