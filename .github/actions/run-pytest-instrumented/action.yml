@@ -93,9 +93,9 @@ runs:
       run: |
         if [ -n "$PYTEST_FILTER_PATTERN" ]; then
           echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."
-          PYTEST_CMD="pytest src/interpretune tests -v --import-mode=importlib --durations=50 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
+          PYTEST_CMD="pytest src/interpretune tests -v --durations=50 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
         else
-          PYTEST_CMD="python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --import-mode=importlib --durations=50 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
+          PYTEST_CMD="python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --durations=50 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
         fi
         eval $PYTEST_CMD
 
