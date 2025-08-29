@@ -56,12 +56,4 @@ __all__ = [
     "_call_itmodule_hook",
     "it_session_end",
     "it_init",
-    # Registry Components
-    "ModuleRegistry",
-    "RegisteredCfg",
-    "RegKeyType",
-    "it_cfg_factory",
-    "gen_module_registry",
-    "instantiate_and_register",
-    "apply_defaults",
 ]

@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 max_seed_value = np.iinfo(np.uint32).max
 min_seed_value = np.iinfo(np.uint32).min
 
-IT_BASE = os.environ.get("IT_BASE", Path(__file__).parent.parent.parent.parent / "it_examples")
-IT_CONFIG_BASE = Path(os.environ.get("IT_CONFIG_BASE", Path(IT_BASE) / "config"))
+IT_BASE = Path(os.environ.get("IT_BASE", Path(__file__).parent.parent.parent.parent / "it_examples"))
+IT_CONFIG_BASE = Path(os.environ.get("IT_CONFIG_BASE", IT_BASE / "config"))
 IT_CONFIG_GLOBAL = Path(os.environ.get("IT_CONFIG_GLOBAL", IT_CONFIG_BASE / "global"))
 
 log = logging.getLogger(__name__)
@@ -321,9 +321,9 @@ if _LIGHTNING_AVAILABLE:
         core_to_lightning_cli_map = {"data": "it_session.datamodule", "model": "it_session.module"}
 
         def instantiate_classes(self) -> None:
-            super().instantiate_classes()
+            super().instantiate_classes()  # type: ignore[misc]  # mixin provides instantiate_classes
             # create a convenient alias for the lightning model attribute that uses a standard `module` reference
-            self.module = weakref.proxy(self.model)
+            self.module = weakref.proxy(self.model)  # type: ignore[attr-defined]  # mixin provides model
 
         def _it_session_cfg(self, config, key) -> InterpretunableType | None:
             try:
@@ -335,8 +335,8 @@ if _LIGHTNING_AVAILABLE:
         def _get(self, config: Namespace, key: str, default: Any | None = None) -> Any:
             """Utility to get a config value which might be inside a subcommand."""
             if target_key := self.core_to_lightning_cli_map.get(key, None):
-                return self._it_session_cfg(config.get(str(self.subcommand), config), target_key)
-            return config.get(str(self.subcommand), config).get(key, default)
+                return self._it_session_cfg(config.get(str(self.subcommand), config), target_key)  # type: ignore[attr-defined]  # mixin provides subcommand
+            return config.get(str(self.subcommand), config).get(key, default)  # type: ignore[attr-defined]  # mixin provides subcommand
 
     class LightningITCLI(LightningCLIAdapter, ITSessionMixin, LightningCLI):
         """Customize the :class:`~lightning.pytorch.cli.LightningCLI` to ensure the
@@ -367,9 +367,9 @@ if _LIGHTNING_AVAILABLE:
             }
         )
         cli = LightningITCLI(
-            datamodule_class=ITDataModule,
+            datamodule_class=ITDataModule,  # type: ignore[arg-type]  # ITDataModule is Lightning-compatible
             # N.B. we can provide a regular PyTorch module as we're wrapping it as necessary
-            model_class=torch.nn.Module,
+            model_class=torch.nn.Module,  # type: ignore[arg-type]  # Lightning accepts PyTorch modules
             subclass_mode_model=True,
             subclass_mode_data=True,
             save_config_kwargs={"overwrite": True},
@@ -381,9 +381,9 @@ if _LIGHTNING_AVAILABLE:
             return cli
 
 else:
-    l_cli_main = object
-    LightningCLIAdapter = object
-    LightningITCLI = object
+    l_cli_main = object  # type: ignore[assignment]  # fallback when Lightning unavailable
+    LightningCLIAdapter = object  # type: ignore[assignment]  # fallback when Lightning unavailable
+    LightningITCLI = object  # type: ignore[assignment]  # fallback when Lightning unavailable
 
 
 def _parse_run_option(lightning_cli: bool = False) -> bool | str | None:
@@ -422,4 +422,4 @@ def bootstrap_cli() -> Callable:
     else:
         cli_main = core_cli_main
         run_mode = _parse_run_option()
-    return cli_main(run_mode=run_mode)
+    return cli_main(run_mode=run_mode)  # type: ignore[operator]  # dynamic CLI selection

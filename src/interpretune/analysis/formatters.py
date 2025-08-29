@@ -64,7 +64,7 @@ class OpSchemaExt:
         curr_tensor_dim = tensor.dim()
         if dyn_dim is not None and curr_tensor_dim > dyn_dim:
             dims = None
-            if (tensor_shape := getattr(self.features[field_name], "shape", None)) is not None:
+            if (tensor_shape := getattr(self.features[field_name], "shape", None)) is not None:  # type: ignore[attr-defined]  # provided by mixing class
                 if len(tensor_shape) == curr_tensor_dim - 1:
                     # operating on all examples so dyn_dim += 1 and we swap dims[1] and dims[dyn_dim] instead of dims[0]
                     dyn_dim += 1

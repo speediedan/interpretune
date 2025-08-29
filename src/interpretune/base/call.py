@@ -23,7 +23,7 @@ def it_init(module, datamodule, *args, **kwargs):
         )
 
 
-def it_session_end(module, datamodule, session_type: AllPhases | CorePhases = CorePhases.train, *args, **kwargs):
+def it_session_end(module, datamodule, session_type: AllPhases | CorePhases = CorePhases.train, *args, **kwargs):  # type: ignore[attr-defined]  # enum metaclass pattern
     # dispatch the appropriate stage-specific `end` hook upon completion of the session
     hook_name = f"on_{session_type.name}_end"
     _call_itmodule_hook(module, hook_name=hook_name, hook_msg="Running stage end hooks on IT module")
@@ -47,7 +47,7 @@ class _hookNameContextManager:
         self.previous_fx_name = None
 
     def __enter__(self) -> None:
-        self.previous_fx_name = self._module_ref._current_fx_name
+        self.previous_fx_name = self._module_ref._current_fx_name  # type: ignore[attr-defined]  # dynamic runtime attribute
         self._module_ref._current_fx_name = self._hook_name  # type: ignore[assignment]
 
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:

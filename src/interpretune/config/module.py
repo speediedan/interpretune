@@ -1,5 +1,3 @@
-# from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-import os
 from typing import Any, TYPE_CHECKING, Optional, Tuple, Type
 from dataclasses import dataclass, field
 
@@ -61,7 +59,7 @@ class MixinsConf(ITSerializableCfg):
 class LoggingConf(ITSerializableCfg):
     experiment_tag: str | None = "default"
     log_env_details: bool | None = True
-    core_log_dir: str | os.PathLike | None = None
+    core_log_dir: StrOrPath | None = None
 
 
 @dataclass(kw_only=True)
@@ -92,7 +90,7 @@ class ITConfig(
     AutoCompConf,
     ExtensionConf,
 ):
-    # """Dataclass to encapsulate the ITModuleinternal state."""
+    # """Dataclass to encapsulate the ITModule internal state."""
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
     # dynamic fields added via ExtensionConf contingent on supported extension availability
     # debug_lm_cfg: DebugLMConfig = field(default_factory=DebugLMConfig)

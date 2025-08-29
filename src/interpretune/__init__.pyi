@@ -6,15 +6,33 @@ import torch
 from transformers import BatchEncoding
 from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatchProtocol
 
+# Main module exports - added for static analysis
+# These imports resolve pyright 'unknown import symbol' errors caused by the complex import hook
+# mechanism used for analysis operations.
+from interpretune.base.datamodules import ITDataModule as ITDataModule
+from interpretune.base.components.mixins import MemProfilerHooks as MemProfilerHooks
+from interpretune.analysis.ops import AnalysisBatch as AnalysisBatch
+from interpretune.config import (
+    ITLensConfig as ITLensConfig,
+    SAELensConfig as SAELensConfig,
+    PromptConfig as PromptConfig,
+    ITDataModuleConfig as ITDataModuleConfig,
+    ITConfig as ITConfig,
+    GenerativeClassificationConfig as GenerativeClassificationConfig,
+    BaseGenerationConfig as BaseGenerationConfig,
+    HFGenerationConfig as HFGenerationConfig,
+)
+from interpretune.utils import rank_zero_warn as rank_zero_warn, sanitize_input_name as sanitize_input_name
+from interpretune.protocol import STEP_OUTPUT as STEP_OUTPUT
+
 # Basic operations
 
 def ablation_attribution(
     module,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
-    batch_idx: int,
-    logit_diff_fn: Callable = "interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff",
-    get_loss_preds_diffs: Callable = "interpretune.analysis.ops.definitions.get_loss_preds_diffs",
+    logit_diff_fn: Callable = ...,
+    get_loss_preds_diffs: Callable = ...,
 ) -> DefaultAnalysisBatchProtocol:
     """Compute attribution values from ablation
 
@@ -33,11 +51,15 @@ def ablation_attribution(
         answer_logits (float32)
         loss (float32)
         preds (int64)
+
+    Function parameter defaults (from YAML):
+        logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
+        get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
     """
     ...
 
 def get_alive_latents(
-    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
     """Extract alive latents from cache
 
@@ -83,7 +105,7 @@ def gradient_attribution(
     ...
 
 def labels_to_ids(
-    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding
 ) -> DefaultAnalysisBatchProtocol:
     """Convert label strings to tensor IDs
 
@@ -100,9 +122,8 @@ def logit_diffs(
     module: torch.nn.Module,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
-    batch_idx: int,
-    logit_diff_fn: Callable = "interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff",
-    get_loss_preds_diffs: Callable = "interpretune.analysis.ops.definitions.get_loss_preds_diffs",
+    logit_diff_fn: Callable = ...,
+    get_loss_preds_diffs: Callable = ...,
 ) -> DefaultAnalysisBatchProtocol:
     """Clean forward pass for computing logit differences
 
@@ -118,6 +139,10 @@ def logit_diffs(
         logit_diffs (float32)
         preds (int64)
         answer_logits (float32)
+
+    Function parameter defaults (from YAML):
+        logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
+        get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
     """
     ...
 
@@ -125,9 +150,8 @@ def logit_diffs_cache(
     module: torch.nn.Module,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
-    batch_idx: int,
-    logit_diff_fn: Callable = "interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff",
-    get_loss_preds_diffs: Callable = "interpretune.analysis.ops.definitions.get_loss_preds_diffs",
+    logit_diff_fn: Callable = ...,
+    get_loss_preds_diffs: Callable = ...,
 ) -> DefaultAnalysisBatchProtocol:
     """Clean forward pass for computing logit differences including cache activations (composition only)
 
@@ -144,6 +168,10 @@ def logit_diffs_cache(
         logit_diffs (float32)
         preds (int64)
         answer_logits (float32)
+
+    Function parameter defaults (from YAML):
+        logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
+        get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
     """
     ...
 
@@ -152,7 +180,7 @@ def model_ablation(
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
     batch_idx: int,
-    ablate_latent_fn: Callable = "interpretune.analysis.ops.definitions.ablate_sae_latent",
+    ablate_latent_fn: Callable = ...,
 ) -> DefaultAnalysisBatchProtocol:
     """Model ablation analysis
 
@@ -163,6 +191,9 @@ def model_ablation(
 
     Output Schema:
         answer_logits (float32)
+
+    Function parameter defaults (from YAML):
+        ablate_latent_fn: interpretune.analysis.ops.definitions.ablate_sae_latent
     """
     ...
 
@@ -203,8 +234,8 @@ def model_gradient(
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
     batch_idx: int,
-    logit_diff_fn: Callable = "interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff",
-    get_loss_preds_diffs: Callable = "interpretune.analysis.ops.definitions.get_loss_preds_diffs",
+    logit_diff_fn: Callable = ...,
+    get_loss_preds_diffs: Callable = ...,
 ) -> DefaultAnalysisBatchProtocol:
     """Model gradient-based attribution
 
@@ -221,6 +252,10 @@ def model_gradient(
         preds (int64)
         grad_cache (object)
         prompts (string)
+
+    Function parameter defaults (from YAML):
+        logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
+        get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
     """
     ...
 
@@ -252,17 +287,23 @@ def logit_diffs_attr_ablation(
 def logit_diffs_attr_grad(
     module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
 ) -> BaseAnalysisBatchProtocol:
-    """Composition of operations: labels_to_ids.model_gradient.gradient_attribution"""
+    """Composition of operations:
+    labels_to_ids.model_gradient.gradient_attribution
+    """
     ...
 
 def logit_diffs_base(
     module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
 ) -> BaseAnalysisBatchProtocol:
-    """Composition of operations: labels_to_ids.model_forward.logit_diffs"""
+    """Composition of operations:
+    labels_to_ids.model_forward.logit_diffs
+    """
     ...
 
 def logit_diffs_sae(
     module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
 ) -> BaseAnalysisBatchProtocol:
-    """Composition of operations: labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts"""
+    """Composition of operations:
+    labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts
+    """
     ...

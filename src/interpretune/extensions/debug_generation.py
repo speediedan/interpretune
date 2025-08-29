@@ -119,9 +119,9 @@ class DebugGeneration:
             if sequences is None:
                 sequences = ph.it_cfg.debug_lm_cfg.raw_debug_sequences
             if format is None:
-                format = ph.datamodule.itdm_cfg.cust_tokenization_pattern
+                format = ph.datamodule.itdm_cfg.cust_tokenization_pattern  # type: ignore[attr-defined]  # protocol provides datamodule
             assert isinstance(sequences, list)
-            return [ph.datamodule.itdm_cfg.prompt_cfg.model_chat_template_fn(ex, format) for ex in sequences]
+            return [ph.datamodule.itdm_cfg.prompt_cfg.model_chat_template_fn(ex, format) for ex in sequences]  # type: ignore[attr-defined]  # protocol provides datamodule
         except Exception as e:
             rank_zero_warn(
                 f"Failed to generate chat debug sequences. Exception: {e}. "
@@ -159,9 +159,9 @@ class DebugGeneration:
         gen_kwargs = ph.it_cfg.generative_step_cfg.lm_generation_cfg.generate_kwargs
         if gen_kwargs_override:
             gen_kwargs.update(gen_kwargs_override)
-        if gen_config_override and getattr(ph.model, "generation_config", None):
+        if gen_config_override and getattr(ph.model, "generation_config", None):  # type: ignore[attr-defined]  # protocol provides model
             for k, v in gen_config_override.items():
-                setattr(ph.model.generation_config, k, v)
+                setattr(ph.model.generation_config, k, v)  # type: ignore[attr-defined]  # protocol provides model
         return ph.it_generate(inputs, **gen_kwargs)
 
     def perplexity_on_sample(
@@ -178,7 +178,7 @@ class DebugGeneration:
             corpus = corpus_default
         corpus_raw = "\n\n".join(corpus["text"])
         corpus_max_idx = limit_chars or len(corpus_raw)
-        encoded_corpus = ph.datamodule.tokenizer(corpus_raw[:corpus_max_idx], return_tensors="pt")
+        encoded_corpus = ph.datamodule.tokenizer(corpus_raw[:corpus_max_idx], return_tensors="pt")  # type: ignore[attr-defined]  # protocol provides datamodule
         encoded_corpus = sanitize_input_name(self.model_input_names, encoded_corpus)
         perplexity_kwargs = {"stride": stride} if stride else {}
         return self.naive_perplexity(encoded_corpus, **perplexity_kwargs)
@@ -186,21 +186,21 @@ class DebugGeneration:
     def top1_token_accuracy_on_sample(self, sample: str) -> Tuple[float, List[str]]:
         ph = self._check_phandle()
 
-        sample_input_ids = ph.datamodule.tokenizer.encode(sample)
-        sample_input_ids = torch.tensor(sample_input_ids).to(ph.device)
+        sample_input_ids = ph.datamodule.tokenizer.encode(sample)  # type: ignore[attr-defined]  # protocol provides datamodule
+        sample_input_ids = torch.tensor(sample_input_ids).to(ph.device)  # type: ignore[attr-defined]  # protocol provides device
         sample_input_ids = sample_input_ids.unsqueeze(0)
         with torch.no_grad():
-            logits = ph.model(sample_input_ids)
+            logits = ph.model(sample_input_ids)  # type: ignore[attr-defined]  # protocol provides model
         prediction = logits.argmax(dim=-1).squeeze()[:-1]
         true_tokens = sample_input_ids.squeeze()[1:]
         num_correct = (prediction == true_tokens).sum()
-        correct_tokens = ph.datamodule.tokenizer.batch_decode(prediction[prediction == true_tokens])
+        correct_tokens = ph.datamodule.tokenizer.batch_decode(prediction[prediction == true_tokens])  # type: ignore[attr-defined]  # protocol provides datamodule
         return num_correct / len(true_tokens), correct_tokens
 
     def naive_perplexity(self, encoded_corpus, stride: int = 512) -> torch.Tensor:
         ph = self._check_phandle()
 
-        max_length = ph.datamodule.tokenizer.model_max_length
+        max_length = ph.datamodule.tokenizer.model_max_length  # type: ignore[attr-defined]  # protocol provides datamodule
         corpus_ids = getattr(encoded_corpus, self.model_input_names[0])
         seq_len = corpus_ids.size(1)
         stride = min(stride, seq_len)
@@ -210,11 +210,11 @@ class DebugGeneration:
         for begin_loc in range(0, seq_len, stride):
             end_loc = min(begin_loc + max_length, seq_len)
             trg_len = end_loc - prev_end_loc  # may be different from stride on last loop
-            inputs = corpus_ids[:, begin_loc:end_loc].to(ph.device)
+            inputs = corpus_ids[:, begin_loc:end_loc].to(ph.device)  # type: ignore[attr-defined]  # protocol provides device
             target_ids = inputs.clone()
             target_ids[:, :-trg_len] = -100
             with torch.inference_mode():
-                output_logits = ph.model.forward(inputs)
+                output_logits = ph.model.forward(inputs)  # type: ignore[attr-defined]  # protocol provides model
                 shift_logits = output_logits[..., :-1, :].contiguous()
                 shift_target_ids = target_ids[..., 1:].contiguous()
                 preds = shift_logits.view(-1, shift_logits.size(-1))
@@ -254,7 +254,7 @@ class DebugGeneration:
     @property
     def model_input_names(self) -> List[str]:
         ph = self._check_phandle()
-        return ph.datamodule.tokenizer.model_input_names
+        return ph.datamodule.tokenizer.model_input_names  # type: ignore[attr-defined]  # protocol provides datamodule
 
     def debug_generate_batch(
         self,
@@ -266,17 +266,17 @@ class DebugGeneration:
     ) -> Tuple[List, List]:
         ph = self._check_phandle()
 
-        test_input_ids = ph.datamodule.tokenizer.batch_encode_plus(sequences)
+        test_input_ids = ph.datamodule.tokenizer.batch_encode_plus(sequences)  # type: ignore[attr-defined]  # protocol provides datamodule
         test_input_ids = sanitize_input_name(self.model_input_names, test_input_ids)
-        test_input_ids = ph.datamodule.data_collator(test_input_ids)
-        test_input_ids = test_input_ids.to(ph.device)
+        test_input_ids = ph.datamodule.data_collator(test_input_ids)  # type: ignore[attr-defined]  # protocol provides datamodule
+        test_input_ids = test_input_ids.to(ph.device)  # type: ignore[attr-defined]  # protocol provides device
         outputs = self._debug_generate(
             inputs=test_input_ids[self.model_input_names[0]],
             gen_config_override=gen_config_override,
             gen_kwargs_override=gen_kwargs_override,
         )
         decode_target, decode_kwargs = self.sanitize_gen_output(outputs, gen_output_attr, decode_cfg_override)
-        answers = ph.datamodule.tokenizer.batch_decode(decode_target, **decode_kwargs)
+        answers = ph.datamodule.tokenizer.batch_decode(decode_target, **decode_kwargs)  # type: ignore[attr-defined]  # protocol provides datamodule
         return answers, outputs
 
     def debug_generate_serial(
@@ -292,8 +292,8 @@ class DebugGeneration:
         answers = []
         full_outputs = []
         for seq in sequences:
-            test_input_ids = ph.datamodule.tokenizer.encode(seq)
-            test_input_ids = torch.tensor(test_input_ids).to(ph.device)
+            test_input_ids = ph.datamodule.tokenizer.encode(seq)  # type: ignore[attr-defined]  # protocol provides datamodule
+            test_input_ids = torch.tensor(test_input_ids).to(ph.device)  # type: ignore[attr-defined]  # protocol provides device
             test_input_ids = test_input_ids.unsqueeze(0)
             output = self._debug_generate(
                 inputs=test_input_ids, gen_config_override=gen_config_override, gen_kwargs_override=gen_kwargs_override
@@ -304,6 +304,6 @@ class DebugGeneration:
             if decode_cfg_override:
                 decode_kwargs.update(decode_cfg_override)
             for seq in sequences:  # in case num_return_sequences > 1
-                answers.append(ph.datamodule.tokenizer.decode(seq, **decode_kwargs))
+                answers.append(ph.datamodule.tokenizer.decode(seq, **decode_kwargs))  # type: ignore[attr-defined]  # protocol provides datamodule
             full_outputs.append(output)
         return answers, full_outputs

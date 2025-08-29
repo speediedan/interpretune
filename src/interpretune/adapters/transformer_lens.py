@@ -37,7 +37,7 @@ class TLensAttributeMixin:
         device: Optional[torch.device] = None
         try:
             device = (
-                getattr(self._it_state, "_device", None)
+                getattr(self._it_state, "_device", None)  # type: ignore[attr-defined]  # provided by mixing class
                 or getattr(self.tl_cfg, "device", None)
                 or reduce(getattr, "model.device".split("."), self)
             )
@@ -50,7 +50,7 @@ class TLensAttributeMixin:
     def device(self, value: Optional[str | torch.device]) -> None:
         if value is not None and not isinstance(value, torch.device):
             value = torch.device(value)
-        self._it_state._device = value
+        self._it_state._device = value  # type: ignore[attr-defined]  # provided by mixing class
 
     def get_tl_device(self, block_index: int) -> Optional[torch.device]:
         try:
@@ -67,7 +67,7 @@ class TLensAttributeMixin:
 
     @property
     def output_device(self) -> Optional[torch.device]:
-        return self.get_tl_device(self.model.cfg.n_layers - 1)
+        return self.get_tl_device(self.model.cfg.n_layers - 1)  # type: ignore[attr-defined]  # provided by mixing class
 
     @property
     def input_device(self) -> Optional[torch.device]:
@@ -77,7 +77,7 @@ class TLensAttributeMixin:
 class BaseITLensModule(BaseITModule):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        HookedTransformer.generate = patched_generate
+        HookedTransformer.generate = patched_generate  # type: ignore[assignment]  # signature compatibility issue
         self.loss_fn = None
 
     def auto_model_init(self) -> None:
@@ -176,8 +176,8 @@ class BaseITLensModule(BaseITModule):
     def _capture_hyperparameters(self) -> None:
         # override unsupported from pretrained options
         if self.hf_cfg:
-            self.hf_cfg.lora_cfg = None
-            self.hf_cfg.bitsandbytesconfig = None  # TODO NEXT: enable bnb now that it's supported by TransformerLens
+            self.hf_cfg.lora_cfg = None  # type: ignore[assignment]  # config flexibility
+            self.hf_cfg.bitsandbytesconfig = None  # type: ignore[assignment]  # TODO NEXT: enable bnb now that it's supported by TransformerLens
         # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
         # TODO: serialize tl_config
         if self.it_cfg.hf_from_pretrained_cfg:

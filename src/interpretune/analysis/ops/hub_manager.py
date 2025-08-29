@@ -6,7 +6,7 @@ from typing import Optional, List
 from dataclasses import dataclass
 
 from huggingface_hub import HfApi, snapshot_download
-from huggingface_hub.utils import RepositoryNotFoundError
+from huggingface_hub.errors import RepositoryNotFoundError
 from huggingface_hub.constants import REPO_TYPE_MODEL
 
 from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
@@ -223,7 +223,7 @@ class HubAnalysisOpManager:
             models = self.api.list_models(library="interpretune", cardData=True)
 
             for model in models:
-                repo_id = model.modelId
+                repo_id = model.modelId  # type: ignore[attr-defined]  # HuggingFace ModelInfo compatibility
                 if username and not repo_id.startswith(f"{username}/"):
                     continue
                 repos.append(repo_id)
@@ -280,7 +280,7 @@ class HubAnalysisOpManager:
 
         # Use HuggingFace cache manager for robust scanning
         try:
-            from huggingface_hub.utils import scan_cache_dir
+            from huggingface_hub.utils._cache_manager import scan_cache_dir
 
             cache_info = scan_cache_dir(self.cache_dir)
 

@@ -94,9 +94,9 @@ def get_answer_indices_impl(
         answer_indices = module.analysis_cfg.input_store.answer_indices[batch_idx]
     else:
         # Otherwise compute it
-        tokens = batch["input"].detach().cpu()
+        tokens = batch["input"].detach().cpu()  # type: ignore[attr-defined]  # BatchEncoding tensor has detach/cpu
         if module.datamodule.tokenizer.padding_side == "left":
-            answer_indices = torch.full((tokens.size(0),), -1)
+            answer_indices = torch.full((tokens.size(0),), -1)  # type: ignore[attr-defined]  # BatchEncoding tensor has size
         else:
             nonpadding_mask = tokens != module.datamodule.tokenizer.pad_token_id
             # This could be more robust, test with various datasets and padding strategies
@@ -167,7 +167,8 @@ def model_cache_forward_impl(
     # Get answer indices and alive latents
     analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
     analysis_batch.update(cache=cache)
-    analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
+    # See NOTE [Op-Driven Transitive Dependency Atomicity]
+    analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)  # type: ignore[call-arg]
 
     analysis_batch.update(answer_logits=answer_logits)
     return analysis_batch
@@ -190,7 +191,8 @@ def model_ablation_impl(
         assert module.analysis_cfg.input_store and getattr(module.analysis_cfg.input_store, "alive_latents", None), (
             "alive_latents required for ablation op"
         )
-        analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
+        # See NOTE [Op-Driven Transitive Dependency Atomicity]
+        analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)  # type: ignore[call-arg]
 
     answer_indices = analysis_batch.answer_indices
     alive_latents = analysis_batch.alive_latents
@@ -210,7 +212,7 @@ def model_ablation_impl(
                 clear_contexts=True,
                 fwd_hooks=fwd_hooks_cfg,  # type: ignore[attr-defined]
             )
-            per_latent_logits[name][latent_idx] = answer_logits[torch.arange(batch["input"].size(0)), answer_indices, :]
+            per_latent_logits[name][latent_idx] = answer_logits[torch.arange(batch["input"].size(0)), answer_indices, :]  # type: ignore[attr-defined]  # BatchEncoding tensor has size
 
     analysis_batch.update(answer_logits=per_latent_logits)
     return analysis_batch
@@ -249,7 +251,8 @@ def model_gradient_impl(
             with module.model.hooks(fwd_hooks=module.analysis_cfg.fwd_hooks, bwd_hooks=module.analysis_cfg.bwd_hooks):
                 answer_logits = module.model(**batch)
                 answer_logits = torch.squeeze(
-                    answer_logits[torch.arange(batch["input"].size(0)), answer_indices], dim=1
+                    answer_logits[torch.arange(batch["input"].size(0)), answer_indices],  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+                    dim=1,
                 )
                 # Compute loss and logit differences using the instance's get_loss_preds_diffs method
                 loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(
@@ -283,7 +286,7 @@ def logit_diffs_impl(
     logits, indices = analysis_batch.answer_logits, analysis_batch.answer_indices
     assert logits is not None and indices is not None, "answer_logits and answer_indices must not be None"
     assert isinstance(logits, torch.Tensor) and isinstance(indices, torch.Tensor), "logits and indices must be tensors"
-    indexed_logits = logits[torch.arange(batch["input"].size(0)), indices]
+    indexed_logits = logits[torch.arange(batch["input"].size(0)), indices]  # type: ignore[attr-defined]  # BatchEncoding tensor has size
     answer_logits = torch.squeeze(indexed_logits, dim=1)
     loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn)
     if logit_diffs.dim() == 0:
@@ -309,7 +312,8 @@ def sae_correct_acts_impl(
 
     # Ensure alive_latents are present
     if not hasattr(analysis_batch, "alive_latents") or analysis_batch.alive_latents is None:
-        analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)
+        # See NOTE [Op-Driven Transitive Dependency Atomicity]
+        analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)  # type: ignore[call-arg]
 
     assert isinstance(logit_diffs, torch.Tensor), "expected logit_diffs to be a Tensor"
     # Extract correct activations for examples with positive logit differences
@@ -346,6 +350,10 @@ def gradient_attribution_impl(
         if not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None:
             raise ValueError(f"Missing required input '{key}' for gradient attribution")
 
+    # Type checker assistance after validation
+    assert analysis_batch.logit_diffs is not None, "logit_diffs validated above"
+    assert isinstance(analysis_batch.logit_diffs, torch.Tensor), "logit_diffs should be tensor after validation"
+
     # TODO: switch to using grad_cache from analysis_batch once that functionality is implemented
     # Get cached activations (forwards) and gradients (backwards) from analysis_cfg.cache_dict
     from transformer_lens import ActivationCache
@@ -365,7 +373,7 @@ def gradient_attribution_impl(
         batch_cache_dict = cache_source
     else:
         batch_cache_dict = ActivationCache(cache_source, module.model)  # type: ignore[arg-type]
-    batch_sz = batch["input"].size(0)
+    batch_sz = batch["input"].size(0)  # type: ignore[attr-defined]  # BatchEncoding tensor has size
 
     # Get alive latents using GetAliveLatentsOp  # TODO: clean this up so no temp batch is required
     # Create a temporary analysis batch with the cache for GetAliveLatentsOp
@@ -374,6 +382,7 @@ def gradient_attribution_impl(
     # TODO: refactor this to use the GetAliveLatentsOp? (which should then dispatch alive_latents implementation)
     temp_batch = it.get_alive_latents(module, temp_batch, batch, batch_idx)  # type: ignore[arg-type]
     analysis_batch.alive_latents = temp_batch.alive_latents
+    assert analysis_batch.alive_latents is not None, "alive_latents should be set after get_alive_latents call"
 
     # Compute attribution values and correct activations
     attribution_values: dict[str, torch.Tensor] = {}
@@ -465,6 +474,7 @@ def ablation_attribution_impl(
 
             base_diffs = analysis_batch.logit_diffs
             assert base_diffs is not None, "Expected logit_diffs to be present in analysis_batch"
+            assert isinstance(base_diffs, torch.Tensor), "Expected logit_diffs to be tensor at this point"
             for t in [example_mask, base_diffs]:
                 if t.dim() == 0:
                     t.unsqueeze_(0)

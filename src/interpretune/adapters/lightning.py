@@ -34,8 +34,8 @@ if _LIGHTNING_AVAILABLE:
 
         def on_train_start(self) -> None:
             # ensure model is in training mode (e.g. needed for some edge cases w/ skipped sanity checking)
-            self.model.train()
-            return super().on_train_start()
+            self.model.train()  # type: ignore[attr-defined]  # provided by LightningModule when mixed in
+            return super().on_train_start()  # type: ignore[misc]  # LightningModule method when mixed in
 
         @classmethod
         def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:

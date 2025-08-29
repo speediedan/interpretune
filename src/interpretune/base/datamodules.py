@@ -137,6 +137,7 @@ class ITDataModule:
             if not target_model:
                 assert self.module is not None, "No target model provided and module is not set"
                 target_model = self.module.model
+            assert target_model is not None, "Target model should be available at this point"
             self._set_signature_columns_if_needed(target_model)
 
         # Ensure signature_columns is not None after setup

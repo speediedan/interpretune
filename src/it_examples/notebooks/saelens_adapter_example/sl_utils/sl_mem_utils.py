@@ -43,7 +43,7 @@ def print_memory_status():
     print(f"Free:  {free / 1024**3:.2f} GB")
 
 
-def profile_pytorch_memory(namespace: dict, n_top: int = 10, filter_device: str = None):
+def profile_pytorch_memory(namespace: dict, n_top: int = 10, filter_device: str | None = None):
     print_memory_status()
 
     object_sizes = {}

@@ -41,7 +41,7 @@ for warnf in [
 # simple barebones interface encapsulating the data preparation, data setup, model setup and optimizer/scheduler
 # configuration processes. Intended for maximal interactive experimental flexibility without any iterative assumptions.
 # Interpretune executes these hooks after your IT data and model modules are instantiated. The intention is to
-# convienently handle common LLM interpretability experimental setup to facilitate iterative exploratory analysis
+# conveniently handle common LLM interpretability experimental setup to facilitate iterative exploratory analysis
 # with raw PyTorch in a way that is compatible with wide range of frameworks and research packages. This allows the same
 # code to be reused for maximally flexible interactive experimentation and interleaved framework-based tuning, testing
 # and prediction/interpretation tasks.
@@ -242,7 +242,7 @@ class PropertyDispatcher:
 
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         if hook_name == "configure_optimizers":
-            self._it_init_optimizers_and_schedulers(output)
+            self._it_init_optimizers_and_schedulers(output)  # type: ignore[attr-defined]  # provided by mixing class
         else:
             rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
@@ -306,7 +306,7 @@ class CoreHelperAttributes:
 
     # N.B. Some frameworks (e.g. Lightning) do not support directly setting `current_epoch` and `global_step`, instead
     # using `self.fit_loop.epoch_progress.current.completed` and `self.fit_loop.epoch_loop.global_step` respectively.
-    # Instead of mocking analagous loop attributes, when using this mixin, we allow settting the values directly for
+    # Instead of mocking analogous loop attributes, when using this mixin, we allow setting the values directly for
     # convenience.
 
     @current_epoch.setter

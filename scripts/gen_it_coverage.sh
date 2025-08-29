@@ -150,7 +150,7 @@ env_rebuild(){
                 ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${no_commit_pin_param} ${apply_post_upgrades_param}
             fi
             ;;
-        it_latest_pt_2_4 )
+        it_release )
             ${repo_home}/scripts/build_it_env.sh --repo_home=${repo_home} --target_env_name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${no_commit_pin_param} ${apply_post_upgrades_param}
             ;;
         *)
