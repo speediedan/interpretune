@@ -8,7 +8,7 @@ from functools import lru_cache
 
 @lru_cache
 def lwt_compare_version(
-    package: str, op: Callable, version: str, use_base_version: bool = True, local_version: str = None
+    package: str, op: Callable, version: str, use_base_version: bool = True, local_version: str | None = None
 ) -> bool:
     try:
         pkg_version = Version(importlib.metadata.version(package))

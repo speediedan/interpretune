@@ -359,11 +359,11 @@ def cleanup_hub_repository(download_result) -> None:
         print("⚠️ No download_result available - cannot determine what to clean up")
 
 
-def reimport_interpretune_with_capture() -> Tuple[str, str]:
+def reimport_interpretune_with_capture() -> Tuple[str, str, object]:  # type: ignore[misc]  # DISPATCHER type unknown
     """Re-import interpretune with stdout and stderr capture to check for expected warnings.
 
     Returns:
-        Tuple of (stdout_output, stderr_output) from the import process
+        Tuple of (stdout_output, stderr_output, DISPATCHER) from the import process
     """
     # Capture stdout and stderr during import to check for the expected warning
     f_stdout = io.StringIO()
@@ -374,7 +374,7 @@ def reimport_interpretune_with_capture() -> Tuple[str, str]:
         purge_it_modules_from_sys()
 
         # Re-import interpretune
-        from interpretune import DISPATCHER
+        from interpretune import DISPATCHER  # type: ignore[attr-defined]  # dynamic import
 
     stdout_output = f_stdout.getvalue()
     stderr_output = f_stderr.getvalue()

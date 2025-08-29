@@ -254,6 +254,20 @@ include = [
     "src/interpretune/utils/tokenization.py",
     "src/interpretune/utils/warnings.py",
 
+    # IT Examples (files with 0 errors)
+    "src/it_examples/__init__.py",
+    "src/it_examples/example_module_registry.py",
+    "src/it_examples/example_prompt_configs.py",
+    "src/it_examples/test_examples.py",
+    "src/it_examples/experiments/__init__.py",
+    "src/it_examples/patching/__init__.py",
+    "src/it_examples/patching/_patch_utils.py",
+    "src/it_examples/patching/dep_patch_shim.py",
+    "src/it_examples/notebooks/example_op_collections/local_op_collection/local_op_definitions.py",
+    "src/it_examples/notebooks/example_op_collections/op_collection_demo_utils.py",
+    "src/it_examples/notebooks/example_op_collections/hub_op_collection/hub_op_definitions.py",
+    "src/it_examples/notebooks/saelens_adapter_example/sl_utils/sl_mem_utils.py",
+
 ]
 exclude = [
     # patch of external code

@@ -17,20 +17,20 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 import interpretune as it
 from interpretune import (
-    ITDataModule,
-    MemProfilerHooks,
-    AnalysisBatch,
-    ITLensConfig,
-    SAELensConfig,
-    PromptConfig,
-    ITDataModuleConfig,
-    ITConfig,
-    GenerativeClassificationConfig,
-    BaseGenerationConfig,
-    HFGenerationConfig,
-    rank_zero_warn,
-    sanitize_input_name,
-    STEP_OUTPUT,
+    ITDataModule,  # type: ignore[attr-defined]  # complex import hook pattern
+    MemProfilerHooks,  # type: ignore[attr-defined]  # complex import hook pattern
+    AnalysisBatch,  # type: ignore[attr-defined]  # complex import hook pattern
+    ITLensConfig,  # type: ignore[attr-defined]  # complex import hook pattern
+    SAELensConfig,  # type: ignore[attr-defined]  # complex import hook pattern
+    PromptConfig,  # type: ignore[attr-defined]  # complex import hook pattern
+    ITDataModuleConfig,  # type: ignore[attr-defined]  # complex import hook pattern
+    ITConfig,  # type: ignore[attr-defined]  # complex import hook pattern
+    GenerativeClassificationConfig,  # type: ignore[attr-defined]  # complex import hook pattern
+    BaseGenerationConfig,  # type: ignore[attr-defined]  # complex import hook pattern
+    HFGenerationConfig,  # type: ignore[attr-defined]  # complex import hook pattern
+    rank_zero_warn,  # type: ignore[attr-defined]  # complex import hook pattern
+    sanitize_input_name,  # type: ignore[attr-defined]  # complex import hook pattern
+    STEP_OUTPUT,  # type: ignore[attr-defined]  # complex import hook pattern
 )
 # from interpretune.config import (ITLensConfig, SAELensConfig, PromptConfig, ITDataModuleConfig, ITConfig,
 #                                  GenerativeClassificationConfig, BaseGenerationConfig, HFGenerationConfig)
