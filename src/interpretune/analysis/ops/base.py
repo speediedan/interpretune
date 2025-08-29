@@ -308,6 +308,19 @@ class AnalysisOp:
         if self.input_schema is None:
             return
 
+        # NOTE: [Op-Driven Transitive Dependency Atomicity]
+        # https://github.com/speediedan/interpretune/issues/161
+        # The transitive dependencies of one op on another are currently atomic, i.e., if one op requires
+        # another op, then all the dependencies of the required op are included in the compiled schema. We should
+        # introduce a more granular op-driven inheritance scheme that distinguishes between:
+        # 1. Dependencies actually used by the implementation (direct dependencies)
+        # 2. Dependencies inherited through required_ops (transitive dependencies)
+
+        # As a concrete example, get_alive_latents requires get_answer_indices, but when inspecting the compiled
+        # schema, it requires the indirect batch/input column (which is not actually required for the
+        # get_alive_latents_impl function) in addition to the actually used/required answer_indices column.
+        # This creates a signature mismatch where the runtime operation expects more parameters than the
+        # implementation can handle, requiring workarounds in both validation logic and stub generation.
         for key, col_cfg in self.input_schema.items():
             if not col_cfg.required:
                 continue
@@ -316,7 +329,7 @@ class AnalysisOp:
                 # Check in batch for fields from datamodule
                 # TODO: decide whether to allow this fallback behavior or require explicit mapping by the op definitions
                 # We don't raise an error until we also check if it's already been processed and moved to analysis_batch
-                if key not in batch and (
+                if (batch is None or key not in batch) and (
                     analysis_batch is None or not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None
                 ):
                     raise ValueError(f"Missing required input '{key}' for {self.name} operation")
