@@ -39,36 +39,21 @@ class InstantiatedSAE:
 ################################################################################
 
 
-# We can only define SAELensAttributeMixin if TLensAttributeMixin is available
-if TLensAttributeMixin is not None:
+class SAELensAttributeMixin(TLensAttributeMixin):
+    @property
+    def sae_cfgs(self) -> SAEConfig | None:
+        try:
+            # TODO: probably will need to add a separate sae_cfg property here as well that points to the configured
+            #       SAEConfig
+            cfg = reduce(getattr, "it_cfg.sae_cfgs".split("."), self)
+        except AttributeError as ae:
+            rank_zero_warn(f"Could not find a `SAEConfig` reference (has it been set yet?): {ae}")
+            cfg = None
+        return cfg  # type: ignore[return-value]
 
-    class SAELensAttributeMixin(TLensAttributeMixin):
-        @property
-        def sae_cfgs(self) -> SAEConfig | None:
-            try:
-                # TODO: probably will need to add a separate sae_cfg property here as well that points to the configured
-                #       SAEConfig
-                cfg = reduce(getattr, "it_cfg.sae_cfgs".split("."), self)
-            except AttributeError as ae:
-                rank_zero_warn(f"Could not find a `SAEConfig` reference (has it been set yet?): {ae}")
-                cfg = None
-            return cfg  # type: ignore[return-value]
-
-        @property
-        def sae_handles(self) -> list[SAE]:
-            return [sae.handle for sae in self.saes]  # type: ignore[attr-defined]  # provided by mixing class
-else:
-    # Create a placeholder when transformer_lens is not available
-    class SAELensAttributeMixin:
-        @property
-        def sae_cfgs(self) -> SAEConfig | None:
-            rank_zero_warn("SAELensAttributeMixin requires transformer_lens to be available")
-            return None
-
-        @property
-        def sae_handles(self) -> list:
-            rank_zero_warn("SAELensAttributeMixin requires transformer_lens to be available")
-            return []
+    @property
+    def sae_handles(self) -> list[SAE]:
+        return [sae.handle for sae in self.saes]  # type: ignore[attr-defined]  # provided by mixing class
 
 
 class BaseSAELensModule(BaseITLensModule):

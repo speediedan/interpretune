@@ -750,43 +750,6 @@ def tmpdir_server(tmpdir):
 # NOTE [Profiling and Standalone Marks]:
 # - CI doesn't run all `profiling` marked tests by default, only the subset of profiling tests that are marked both
 #   `profiling` and `profiling_ci`
-
-################################################################################
-# Pytest Collection Hooks
-################################################################################
-
-
-def pytest_collection_modifyitems(config, items):
-    """Modify collected items to skip unavailable adapter modules during collection."""
-    pass  # For now, we handle this at import level
-
-
-def pytest_ignore_collect(path, config):
-    """Ignore collection of adapter modules when dependencies are unavailable."""
-    import os
-    import sys
-
-    # Check if we're in pytest collection mode
-    _in_pytest_collection = (
-        "pytest" in sys.modules
-        or "PYTEST_CURRENT_TEST" in os.environ
-        or any("pytest" in arg for arg in sys.argv)
-        or "--collect-only" in sys.argv
-    )
-
-    if _in_pytest_collection:
-        path_str = str(path)
-        # Skip heavy adapter modules during collection to avoid import errors
-        if (
-            path_str.endswith("transformer_lens.py")
-            or path_str.endswith("sae_lens.py")
-            or path_str.endswith("circuit_tracer.py")
-        ) and "adapters" in path_str:
-            return True
-
-    return False
-
-
 # - The standalone marks run with CI by default and take precedence over profiling marks
 # - To run all profiling tests, set `IT_RUN_PROFILING_TESTS` to `2`
 
