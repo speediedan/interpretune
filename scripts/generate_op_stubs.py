@@ -255,6 +255,11 @@ def generate_stubs(yaml_path: Path, output_path: Path) -> None:
         "from interpretune.base.datamodules import ITDataModule as ITDataModule",
         "from interpretune.base.components.mixins import MemProfilerHooks as MemProfilerHooks",
         "from interpretune.analysis.ops import AnalysisBatch as AnalysisBatch",
+        "from interpretune.analysis import (",
+        "    AnalysisStore as AnalysisStore,",
+        "    DISPATCHER as DISPATCHER,",
+        "    SAEAnalysisTargets as SAEAnalysisTargets,",
+        ")",
         "from interpretune.config import (",
         "    ITLensConfig as ITLensConfig,",
         "    SAELensConfig as SAELensConfig,",
@@ -264,7 +269,11 @@ def generate_stubs(yaml_path: Path, output_path: Path) -> None:
         "    GenerativeClassificationConfig as GenerativeClassificationConfig,",
         "    BaseGenerationConfig as BaseGenerationConfig,",
         "    HFGenerationConfig as HFGenerationConfig,",
+        "    SAELensFromPretrainedConfig as SAELensFromPretrainedConfig,",
+        "    AnalysisCfg as AnalysisCfg,",
         ")",
+        "from interpretune.session import ITSessionConfig as ITSessionConfig, ITSession as ITSession",
+        "from interpretune.runners import AnalysisRunner as AnalysisRunner",
         "from interpretune.utils import rank_zero_warn as rank_zero_warn, sanitize_input_name as sanitize_input_name",
         "from interpretune.protocol import STEP_OUTPUT as STEP_OUTPUT",
         "",
@@ -295,6 +304,39 @@ def generate_stubs(yaml_path: Path, output_path: Path) -> None:
         f.write("\n".join(stubs))
 
     print(f"Stubs generated at {output_path}")
+
+    # Apply formatting to match pre-commit hooks
+    try:
+        import subprocess
+
+        # Ensure pre-commit hooks are installed
+        # We run install every time since it's idempotent and fast if already installed
+        install_result = subprocess.run(["pre-commit", "install"], capture_output=True, text=True, cwd=project_root)
+
+        if install_result.returncode != 0:
+            print(f"Warning: Failed to install pre-commit hooks: {install_result.stderr}")
+            print("Skipping formatting step")
+            return
+
+        # Run pre-commit ruff formatting on the generated file to match pre-commit formatting
+        result = subprocess.run(
+            ["pre-commit", "run", "ruff-format", "--files", str(output_path)],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+        )
+
+        if result.returncode == 0:
+            print(f"Applied ruff formatting to {output_path}")
+        else:
+            # Pre-commit returns non-zero when it makes changes, which is expected
+            if "reformatted" in result.stdout or "Passed" in result.stdout:
+                print(f"Applied ruff formatting to {output_path}")
+            else:
+                print(f"Warning: ruff formatting may have failed: {result.stdout}")
+
+    except Exception as e:
+        print(f"Warning: Could not apply formatting: {e}")
 
 
 if __name__ == "__main__":

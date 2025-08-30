@@ -38,25 +38,11 @@ runs:
 
     - id: check
       name: Check for diffs and write patch
-      shell: bash
-      run: |
-        set -e
-        rc=0
-        git --no-pager diff --exit-code ${{ inputs.compare_paths }} > ${{ inputs.patch_path }} 2> regen_diff.err || rc=$?
-        if [ "$rc" -eq 0 ]; then
-          echo "changed=false" >> $GITHUB_OUTPUT
-          rm -f regen_diff.err || true
-        elif [ "$rc" -eq 1 ]; then
-          echo "changed=true" >> $GITHUB_OUTPUT
-          echo "Patch size: $(wc -c < ${{ inputs.patch_path }}) bytes"
-          rm -f regen_diff.err || true
-        else
-          echo "git diff failed with exit code $rc" >&2
-          echo "--- git diff stderr ---" >&2
-          cat regen_diff.err >&2 || true
-          exit $rc
-        fi
-        echo "patch_path=${{ inputs.patch_path }}" >> $GITHUB_OUTPUT
+      uses: ./.github/actions/check-file-diffs
+      with:
+        compare_paths: ${{ inputs.compare_paths }}
+        patch_path: ${{ inputs.patch_path }}
+        error_message: "CI requirements have changed and need to be regenerated"
 
 outputs:
   changed:
