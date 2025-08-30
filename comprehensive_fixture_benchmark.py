@@ -21,101 +21,103 @@ class FixtureCategory:
 def get_fixture_analysis() -> Dict[str, Dict]:
     """Complete enumeration of all fixtures with usage counts and metadata."""
 
-    # Generated fixtures with usage counts and categorization
+    # Generated fixtures with actual usage counts from test analysis
     generated_fixtures = {
+        # Most used generated fixtures
         "get_it_session_cfg__tl_cust": {
-            "uses": 15,
+            "uses": 5,
             "scope": "session",
             "category": FixtureCategory.CONFIG,
             "type": "it_session_cfg",
         },
         "get_it_session__tl_gpt2_debug__setup": {
-            "uses": 13,
+            "uses": 5,
             "scope": "class",
             "category": FixtureCategory.GPU,
             "type": "it_session",
         },
         "get_it_session__core_cust__setup": {
-            "uses": 12,
+            "uses": 4,
             "scope": "session",
             "category": FixtureCategory.HEAVY_ML,
             "type": "it_session",
         },
         "get_it_module__core_cust__setup": {
-            "uses": 9,
+            "uses": 3,
             "scope": "class",
             "category": FixtureCategory.HEAVY_ML,
             "type": "it_module",
         },
         "get_it_session__core_cust__initonly": {
-            "uses": 9,
+            "uses": 3,
             "scope": "session",
             "category": FixtureCategory.CONFIG,
             "type": "it_session",
         },
         "get_it_session_cfg__core_cust": {
-            "uses": 9,
+            "uses": 3,
             "scope": "session",
             "category": FixtureCategory.CONFIG,
             "type": "it_session_cfg",
         },
+        "get_it_session__core_gpt2_peft__initonly": {
+            "uses": 2,
+            "scope": "class",
+            "category": FixtureCategory.HEAVY_ML,
+            "type": "it_session",
+        },
         "get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis": {
-            "uses": 6,
+            "uses": 2,
             "scope": "session",
             "category": FixtureCategory.GPU,
             "type": "analysis_session",
         },
-        "get_it_session__core_gpt2_peft__initonly": {
-            "uses": 6,
-            "scope": "class",
-            "category": FixtureCategory.HEAVY_ML,
-            "type": "it_session",
-        },
         "get_it_session__tl_cust__setup": {
-            "uses": 6,
+            "uses": 2,
             "scope": "session",
             "category": FixtureCategory.GPU,
             "type": "it_session",
         },
+        # Single-use generated fixtures
+        "get_it_session__tl_cust__initonly": {
+            "uses": 1,
+            "scope": "session",
+            "category": FixtureCategory.CONFIG,
+            "type": "it_session",
+        },
+        "get_it_session__core_gpt2_peft_seq__initonly": {
+            "uses": 1,
+            "scope": "class",
+            "category": FixtureCategory.HEAVY_ML,
+            "type": "it_session",
+        },
         "get_it_session__core_cust_force_prepare__initonly": {
-            "uses": 3,
+            "uses": 1,
             "scope": "class",
             "category": FixtureCategory.CONFIG,
             "type": "it_session",
         },
-        "get_it_session__core_cust_memprof__initonly": {
-            "uses": 3,
-            "scope": "class",
-            "category": FixtureCategory.HEAVY_ML,
-            "type": "it_session",
-        },
-        "get_it_session__core_gpt2_peft_seq__initonly": {
-            "uses": 3,
-            "scope": "class",
-            "category": FixtureCategory.HEAVY_ML,
-            "type": "it_session",
-        },
         "get_it_session__l_sl_gpt2__initonly": {
-            "uses": 3,
+            "uses": 1,
             "scope": "class",
+            "category": FixtureCategory.GPU,
+            "type": "it_session",
+        },
+        "get_it_session__core_cust_memprof__initonly": {
+            "uses": 1,
+            "scope": "class",
+            "category": FixtureCategory.HEAVY_ML,
+            "type": "it_session",
+        },
+        "get_it_session__tl_cust_mi__setup": {
+            "uses": 1,
+            "scope": "function",
             "category": FixtureCategory.GPU,
             "type": "it_session",
         },
         "get_it_session__sl_gpt2__initonly": {
-            "uses": 3,
+            "uses": 1,
             "scope": "class",
-            "category": FixtureCategory.GPU,
-            "type": "it_session",
-        },
-        "get_it_session__tl_cust__initonly": {
-            "uses": 3,
-            "scope": "session",
-            "category": FixtureCategory.CONFIG,
-            "type": "it_session",
-        },
-        "get_it_session__tl_cust_mi__setup": {
-            "uses": 3,
-            "scope": "function",
             "category": FixtureCategory.GPU,
             "type": "it_session",
         },
@@ -188,20 +190,34 @@ def get_fixture_analysis() -> Dict[str, Dict]:
         },
     }
 
-    # Static fixtures with usage counts and categorization
+    # Static fixtures with actual usage counts from test analysis
     static_fixtures = {
+        # Most used static fixtures
+        "test_dispatcher": {"uses": 9, "scope": "class", "category": FixtureCategory.LIGHT, "type": "static"},
+        "target_module": {"uses": 8, "scope": "class", "category": FixtureCategory.LIGHT, "type": "static"},
         "clean_cli_env": {"uses": 7, "scope": "function", "category": FixtureCategory.LIGHT, "type": "static"},
         "huggingface_env": {"uses": 7, "scope": "function", "category": FixtureCategory.CONFIG, "type": "static"},
         "cli_test_configs": {"uses": 5, "scope": "session", "category": FixtureCategory.CONFIG, "type": "static"},
+        # Medium-use static fixtures
+        "op_serialization_fixt": {"uses": 2, "scope": "class", "category": FixtureCategory.LIGHT, "type": "static"},
         "mock_analysis_store": {"uses": 2, "scope": "function", "category": FixtureCategory.LIGHT, "type": "static"},
-        "cli_test_file_env": {"uses": 1, "scope": "session", "category": FixtureCategory.CONFIG, "type": "static"},
-        "fts_patch_env": {"uses": 1, "scope": "function", "category": FixtureCategory.LIGHT, "type": "static"},
+        "test_ops_yaml": {"uses": 2, "scope": "class", "category": FixtureCategory.LIGHT, "type": "static"},
+        # Single-use static fixtures
         "gpt2_ft_schedules": {"uses": 1, "scope": "function", "category": FixtureCategory.HEAVY_ML, "type": "static"},
-        "make_it_module": {"uses": 1, "scope": "class", "category": FixtureCategory.HEAVY_ML, "type": "static"},
-        "mock_dm": {"uses": 1, "scope": "class", "category": FixtureCategory.LIGHT, "type": "static"},
-        # Unused static fixtures (0 uses) - these are mostly autouse fixtures
+        "initialized_analysis_cfg": {"uses": 1, "scope": "class", "category": FixtureCategory.CONFIG, "type": "static"},
+        "multi_file_test_dispatcher": {
+            "uses": 1,
+            "scope": "class",
+            "category": FixtureCategory.LIGHT,
+            "type": "static",
+        },
+        # Unused static fixtures (0 uses) - these are mostly autouse fixtures or special purpose
+        "cli_test_file_env": {"uses": 0, "scope": "session", "category": FixtureCategory.CONFIG, "type": "static"},
         "datadir": {"uses": 0, "scope": "session", "category": FixtureCategory.LIGHT, "type": "static"},
+        "fts_patch_env": {"uses": 0, "scope": "function", "category": FixtureCategory.LIGHT, "type": "static"},
         "make_deterministic": {"uses": 0, "scope": "session", "category": FixtureCategory.CONFIG, "type": "static"},
+        "make_it_module": {"uses": 0, "scope": "class", "category": FixtureCategory.HEAVY_ML, "type": "static"},
+        "mock_dm": {"uses": 0, "scope": "class", "category": FixtureCategory.LIGHT, "type": "static"},
         "preserve_global_rank_variable": {
             "uses": 0,
             "scope": "function",
