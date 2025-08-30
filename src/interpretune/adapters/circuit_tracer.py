@@ -37,22 +37,37 @@ class InstantiatedGraph:
 ################################################################################
 
 
-class CircuitTracerAttributeMixin(TLensAttributeMixin):
-    it_cfg: ITConfig
+# We can only define CircuitTracerAttributeMixin if TLensAttributeMixin is available
+if TLensAttributeMixin is not None:
 
-    @property
-    def circuit_tracer_cfg(self) -> CircuitTracerConfig | None:
-        """Get circuit tracer configuration."""
-        if hasattr(self.it_cfg, "circuit_tracer_cfg"):
-            return self.it_cfg.circuit_tracer_cfg
-        return None
+    class CircuitTracerAttributeMixin(TLensAttributeMixin):
+        it_cfg: ITConfig
 
-    @property
-    def replacement_model(self) -> ReplacementModel | None:
-        """Get the replacement model handle."""
-        if hasattr(self, "_replacement_model"):
-            return self._replacement_model  # type: ignore[attr-defined]  # dynamic mixin attribute
-        return None
+        @property
+        def circuit_tracer_cfg(self) -> CircuitTracerConfig | None:
+            """Get circuit tracer configuration."""
+            if hasattr(self.it_cfg, "circuit_tracer_cfg"):
+                return self.it_cfg.circuit_tracer_cfg
+            return None
+
+        @property
+        def replacement_model(self) -> ReplacementModel | None:
+            """Get the replacement model handle."""
+            if hasattr(self, "_replacement_model"):
+                return self._replacement_model  # type: ignore[attr-defined]  # dynamic mixin attribute
+            return None
+else:
+    # Create a placeholder when transformer_lens is not available
+    class CircuitTracerAttributeMixin:
+        @property
+        def circuit_tracer_cfg(self):
+            rank_zero_warn("CircuitTracerAttributeMixin requires transformer_lens to be available")
+            return None
+
+        @property
+        def replacement_model(self):
+            rank_zero_warn("CircuitTracerAttributeMixin requires transformer_lens to be available")
+            return None
 
 
 class BaseCircuitTracerModule(BaseITLensModule):

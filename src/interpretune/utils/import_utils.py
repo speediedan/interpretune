@@ -3,11 +3,23 @@ import importlib
 from functools import lru_cache
 from importlib.util import find_spec
 import operator
-import torch
 import pkg_resources
 from packaging.version import Version
 
-from interpretune.utils import MisconfigurationException
+from interpretune.utils.exceptions import MisconfigurationException
+
+# Lazy import torch to improve import performance
+_torch = None
+
+
+def _get_torch():
+    """Get torch module, importing it lazily."""
+    global _torch
+    if _torch is None:
+        import torch
+
+        _torch = torch
+    return _torch
 
 
 def instantiate_class(
@@ -74,14 +86,16 @@ def resolve_funcs(cfg_obj: Any, func_type: str) -> List[Callable[..., Any]]:
     return resolved_funcs
 
 
-def _resolve_torch_dtype(dtype: Union[torch.dtype, str]) -> Optional[torch.dtype]:
+def _resolve_torch_dtype(dtype: Union[Any, str]) -> Optional[Any]:  # Use Any instead of torch.dtype
+    torch = _get_torch()
     if isinstance(dtype, torch.dtype):
         return dtype
     elif isinstance(dtype, str):
         return _str_to_torch_dtype(dtype)
 
 
-def _str_to_torch_dtype(str_dtype: str) -> Optional[torch.dtype]:
+def _str_to_torch_dtype(str_dtype: str) -> Optional[Any]:  # Use Any instead of torch.dtype
+    torch = _get_torch()
     if hasattr(torch, str_dtype):
         return getattr(torch, str_dtype)
     elif hasattr(torch, str_dtype.split(".")[-1]):
@@ -166,11 +180,38 @@ def compare_version(package: str, op: Callable, version: str, use_base_version: 
 # Interpretune installation environment probes
 ################################################################################
 
-_TORCH_GREATER_EQUAL_2_2 = compare_version("torch", operator.ge, "2.2.0", use_base_version=True)
-_DOTENV_AVAILABLE = module_available("dotenv")
-_LIGHTNING_AVAILABLE = package_available("lightning")
-_NEURONPEDIA_AVAILABLE = package_available("neuronpedia")
-_CT_AVAILABLE = package_available("circuit_tracer")
-_FTS_AVAILABLE = module_available("finetuning_scheduler")
-_BNB_AVAILABLE = package_available("bitsandbytes")
-_SL_AVAILABLE = module_available("sae_lens")
+################################################################################
+# Interpretune installation environment probes
+################################################################################
+
+
+# Lazy evaluation using classes that act like module-level constants
+class _LazyAvailability:
+    def __init__(self, check_func):
+        self._check_func = check_func
+        self._cached_result = None
+        self._evaluated = False
+
+    def __bool__(self):
+        if not self._evaluated:
+            self._cached_result = self._check_func()
+            self._evaluated = True
+        return self._cached_result
+
+    def __eq__(self, other):
+        return bool(self) == other
+
+    def __ne__(self, other):
+        return bool(self) != other
+
+
+_TORCH_GREATER_EQUAL_2_2 = _LazyAvailability(
+    lambda: compare_version("torch", operator.ge, "2.2.0", use_base_version=True)
+)
+_DOTENV_AVAILABLE = _LazyAvailability(lambda: module_available("dotenv"))
+_LIGHTNING_AVAILABLE = _LazyAvailability(lambda: package_available("lightning"))
+_NEURONPEDIA_AVAILABLE = _LazyAvailability(lambda: package_available("neuronpedia"))
+_CT_AVAILABLE = _LazyAvailability(lambda: package_available("circuit_tracer"))
+_FTS_AVAILABLE = _LazyAvailability(lambda: module_available("finetuning_scheduler"))
+_BNB_AVAILABLE = _LazyAvailability(lambda: package_available("bitsandbytes"))
+_SL_AVAILABLE = _LazyAvailability(lambda: module_available("sae_lens"))
