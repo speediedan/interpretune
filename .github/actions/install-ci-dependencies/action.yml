@@ -6,6 +6,10 @@ inputs:
     description: "Whether to show pip list output after installations"
     required: false
     default: "false"
+  apply_post_upgrades:
+    description: "Whether to apply post-upgrade packages"
+    required: false
+    default: "true"
 
 runs:
   using: "composite"
@@ -39,9 +43,9 @@ runs:
     - name: Optional post-upgrades (datasets/fsspec etc)
       shell: bash
       env:
-        APPLY_POST_UPGRADES: ${{ vars.APPLY_POST_UPGRADES || '1' }}
+        APPLY_POST_UPGRADES: ${{ inputs.apply_post_upgrades }}
       run: |
-        if [ "${APPLY_POST_UPGRADES}" = "1" ] && [ -s requirements/post_upgrades.txt ]; then
+        if ([ "${APPLY_POST_UPGRADES}" = "1" ] || [ "${APPLY_POST_UPGRADES}" = "true" ]) && [ -s requirements/post_upgrades.txt ]; then
           echo "Applying post-upgrades..."
           python -m pip install --upgrade -r requirements/post_upgrades.txt --cache-dir "$PIP_CACHE_DIR"
           if [ "${{ inputs.show_pip_list }}" = "true" ]; then

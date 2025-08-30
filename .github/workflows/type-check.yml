@@ -79,6 +79,8 @@ jobs:
 
       - name: Install CI dependencies
         uses: ./.github/actions/install-ci-dependencies
+        with:
+          apply_post_upgrades: ${{ vars.APPLY_POST_UPGRADES || 'true' }}
 
       - name: Check type stubs are up to date
         id: check_stubs

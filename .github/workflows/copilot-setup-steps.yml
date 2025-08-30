@@ -31,23 +31,32 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Set up venv and install dependencies
+
+      - name: Reset caching
+        id: set_time_period
+        run: |
+          python -c "import time; days = time.time() / 60 / 60 / 24; print(f'TIME_PERIOD=d{int(days / 7) * 7}')" >> $GITHUB_OUTPUT
+
+      - name: Get pip cache dir
+        id: pip-cache
         shell: bash
         run: |
-          python -m pip install --upgrade pip setuptools wheel build
-          # Prefer pinned CI requirements if present
-          if [ -f requirements/ci/requirements.txt ]; then
-            python -m pip install -r requirements/ci/requirements.txt -r requirements/platform_dependent.txt
-            python -m pip install -e '.[test,examples,lightning]'
-          else
-            python -m pip install -e '.[test,examples,lightning]' -c requirements/ci_constraints.txt
-          fi
-          # Optional post-upgrades (disabled by default)
-          if [ "${APPLY_POST_UPGRADES:-1}" = "1" ] && [ -s requirements/post_upgrades.txt ]; then
-            pip install --upgrade -r requirements/post_upgrades.txt
-          fi
-          pip list
-      # No env injection here; the shell uses ${APPLY_POST_UPGRADES:-1} to default when unset.
+          echo "PIP_CACHE_DIR=$(pip cache dir)" >> $GITHUB_ENV
+
+      - name: pip cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PIP_CACHE_DIR }}/wheels
+          key: ubuntu-22.04-pip-wheels-${{ steps.set_time_period.outputs.TIME_PERIOD }}-py3.12-${{ hashFiles('requirements/ci/requirements.txt') }}-${{ hashFiles('requirements/post_upgrades.txt') }}-${{ hashFiles('requirements/platform_dependent.txt') }}
+          restore-keys: |
+            ubuntu-22.04-pip-wheels-${{ steps.set_time_period.outputs.TIME_PERIOD }}-py3.12-
+
+      - name: Install CI dependencies
+        uses: ./.github/actions/install-ci-dependencies
+        with:
+          show_pip_list: "true"
+          apply_post_upgrades: "true"
+
       - name: Setup pyright, precommit and git lfs
         shell: bash
         run: |
