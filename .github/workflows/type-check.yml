@@ -1,4 +1,4 @@
-name: Type Check
+name: Stale Stubs and Type Checks
 
 on:
   push:
@@ -103,6 +103,13 @@ jobs:
           compare_paths: "src/interpretune/__init__.pyi"
           patch_path: "stubs_diff.patch"
           error_message: "Type stubs are stale and need to be regenerated with: python scripts/generate_op_stubs.py"
+
+      - name: Upload stub diff (if present)
+        if: steps.stub_diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: type-stubs-diff
+          path: stubs_diff.patch
 
       - name: Run pyright type check
         shell: bash
