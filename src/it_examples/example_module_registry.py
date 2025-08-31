@@ -68,77 +68,92 @@ class LazyModuleRegistry:
     def get(self, target: Union[Tuple, str, Any], default: Any = None) -> Any:
         """Get item from registry, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return self._registry.get(target, default)
 
     def register(self, *args, **kwargs):
         """Register item in registry, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return self._registry.register(*args, **kwargs)
 
     def __getitem__(self, key):
         """Get item from registry, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return self._registry[key]
 
     def __setitem__(self, key, value):
         """Set item in registry, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         self._registry[key] = value
 
     def __contains__(self, key):
         """Check if key is in registry, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return key in self._registry
 
     def keys(self):
         """Get keys from registry, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return self._registry.keys()
 
     def values(self):
         """Get values from registry, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return self._registry.values()
 
     def items(self):
         """Get items from registry, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return self._registry.items()
 
     def __len__(self):
         """Get length of registry, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return len(self._registry)
 
     def __str__(self):
         """String representation, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return str(self._registry)
 
     def __repr__(self):
         """Repr, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return repr(self._registry)
 
     # Forward other common methods
     def available_keys(self, *args, **kwargs):
         """Available keys, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return self._registry.available_keys(*args, **kwargs)
 
     def available_keys_feedback(self, *args, **kwargs):
         """Available keys feedback, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return self._registry.available_keys_feedback(*args, **kwargs)
 
     def available_compositions(self, *args, **kwargs):
         """Available compositions, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return self._registry.available_compositions(*args, **kwargs)
 
     def remove(self, *args, **kwargs):
         """Remove item, initializing if needed."""
         self._ensure_initialized()
+        assert self._registry is not None
         return self._registry.remove(*args, **kwargs)
 
 
