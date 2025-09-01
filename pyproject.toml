@@ -110,6 +110,10 @@ test = [
 "huggingface_hub[hf_xet]",
 ]
 
+profiling = [
+"importtime-convert",
+]
+
 
 [tool.setuptools.dynamic]
 version = {attr = "interpretune.__about__.__version__"}
