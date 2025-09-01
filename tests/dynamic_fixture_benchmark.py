@@ -32,17 +32,37 @@ The generated report includes:
 """
 
 import ast
-import re
 import subprocess
 import sys
 import time
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Tuple, Optional, Any
 
 import psutil
 import torch
+
+# Fixtures that are factory factories / not directly instantianted in tests.
+# Keep as a central list so it's easy to update when new factories are added.
+FACTORY_FIXTURES = {
+    "get_analysis_session",
+    "get_it_module",
+    "get_it_session",
+    "get_it_session_cfg",
+}
+
+# Model / pattern lists (centralized for easy updates)
+REAL_MODEL_PATTERNS = ["gpt2", "llama3", "gemma2"]
+CUST_MODEL_PATTERNS = ["cust"]
+CONFIG_ONLY_PATTERNS = ["it_session_cfg"]
+
+# Patterns used to identify dynamically generated fixtures
+DYNAMIC_PATTERNS = [
+    "get_it_session__",
+    "get_it_module__",
+    "get_analysis_session__",
+    "get_it_session_cfg__",
+]
 
 
 class FixtureCategory:
@@ -91,52 +111,6 @@ def get_gpu_memory_usage_mb() -> float:
     return 0.0
 
 
-def _parse_conftest_ast(conftest_path: Path) -> Dict[str, Tuple[Any, str]]:
-    """Parse conftest.py using AST to find fixture definitions."""
-    fixtures = {}
-
-    try:
-        with open(conftest_path, "r") as f:
-            content = f.read()
-
-        tree = ast.parse(content)
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                # Check if this function has a pytest.fixture decorator
-                for decorator in node.decorator_list:
-                    scope = "function"  # default scope
-
-                    if (
-                        isinstance(decorator, ast.Call)
-                        and isinstance(decorator.func, ast.Attribute)
-                        and isinstance(decorator.func.value, ast.Name)
-                        and decorator.func.value.id == "pytest"
-                        and decorator.func.attr == "fixture"
-                    ):
-                        # Check for scope argument
-                        for keyword in decorator.keywords:
-                            if keyword.arg == "scope" and isinstance(keyword.value, ast.Constant):
-                                scope = keyword.value.value
-
-                        fixtures[node.name] = (None, scope)  # No function object available from AST
-                        break
-
-                    elif (
-                        isinstance(decorator, ast.Attribute)
-                        and isinstance(decorator.value, ast.Name)
-                        and decorator.value.id == "pytest"
-                        and decorator.attr == "fixture"
-                    ):
-                        fixtures[node.name] = (None, scope)
-                        break
-
-    except Exception as e:
-        print(f"Error parsing conftest.py: {e}")
-
-    return fixtures
-
-
 def discover_generated_fixtures() -> Dict[str, Tuple[Any, str]]:
     """Discover all dynamically generated fixtures from conftest.py."""
     fixtures = {}
@@ -178,13 +152,7 @@ def discover_generated_fixtures() -> Dict[str, Tuple[Any, str]]:
                             scope_part = parts[1].split(" scope]")[0]
 
                             # Only include dynamic fixtures (get_* patterns)
-                            dynamic_patterns = [
-                                "get_it_session__",
-                                "get_it_module__",
-                                "get_analysis_session__",
-                                "get_it_session_cfg__",
-                            ]
-                            if any(fixture_name.startswith(pattern) for pattern in dynamic_patterns):
+                            if any(fixture_name.startswith(pattern) for pattern in DYNAMIC_PATTERNS):
                                 fixtures[fixture_name] = (None, scope_part)  # No function object from this method
                                 print(f"  Found dynamic fixture: {fixture_name} (scope: {scope_part})")
                         except Exception as e:
@@ -215,15 +183,8 @@ def discover_generated_fixtures() -> Dict[str, Tuple[Any, str]]:
                 import tests.conftest as conftest
 
             # Get all dynamically generated fixtures using pytest's fixture registry
-            dynamic_fixture_patterns = [
-                "get_it_session__",
-                "get_it_module__",
-                "get_analysis_session__",
-                "get_it_session_cfg__",
-            ]
-
             for attr_name in dir(conftest):
-                if any(attr_name.startswith(pattern) for pattern in dynamic_fixture_patterns):
+                if any(attr_name.startswith(pattern) for pattern in DYNAMIC_PATTERNS):
                     try:
                         fixture_func = getattr(conftest, attr_name)
                         if hasattr(fixture_func, "_pytestfixturefunction"):
@@ -244,50 +205,26 @@ def discover_generated_fixtures() -> Dict[str, Tuple[Any, str]]:
 
 
 def categorize_fixture(fixt_key: str, fixt_type: str) -> str:
-    """Categorize fixture based on its configuration key and type."""
+    """Categorize fixture based on its key using the centralized pattern lists."""
+    key = fixt_key.lower()
+
     # Config-only fixtures
-    if fixt_type == "it_session_cfg":
+    if any(pat in key for pat in CONFIG_ONLY_PATTERNS):
         return FixtureCategory.CONFIG_ONLY
 
-    # Real model fixtures (gpt2, llama3, gemma2)
-    real_model_patterns = ["gpt2", "llama3", "gemma2"]
-    if any(pattern in fixt_key.lower() for pattern in real_model_patterns):
+    # Real model fixtures
+    if any(pat in key for pat in REAL_MODEL_PATTERNS):
         return FixtureCategory.REAL_MODEL
 
-    # Custom test model fixtures (cust)
-    if "cust" in fixt_key.lower():
+    # Custom test model fixtures
+    if any(pat in key for pat in CUST_MODEL_PATTERNS):
         return FixtureCategory.CUSTOM_MODEL
 
-    # Default to custom for other patterns
+    # Default
     return FixtureCategory.CUSTOM_MODEL
 
 
-def count_fixture_usage() -> Dict[str, int]:
-    """Count how many times each fixture is used across test files."""
-    usage_counts = defaultdict(int)
-    tests_dir = Path(__file__).parent
-
-    # Search for fixture usage in all Python test files
-    for test_file in tests_dir.rglob("*.py"):
-        if test_file.name.startswith("test_") or test_file.name == "conftest.py":
-            try:
-                content = test_file.read_text()
-                # Find fixture usage patterns
-                fixture_patterns = [
-                    r"get_it_session__\w+(?:__\w+)?",
-                    r"get_it_module__\w+(?:__\w+)?",
-                    r"get_analysis_session__\w+(?:__\w+)",
-                    r"get_it_session_cfg__\w+",
-                ]
-
-                for pattern in fixture_patterns:
-                    matches = re.findall(pattern, content)
-                    for match in matches:
-                        usage_counts[match] += 1
-            except Exception:
-                continue  # Skip files that can't be read
-
-    return dict(usage_counts)
+# Usage-counting removed: prefer measuring usage via pytest --setup-show runs in future
 
 
 def measure_baseline_pytest_startup() -> float:
@@ -616,27 +553,20 @@ def test_fixture_benchmark({fixture_name}):
 def get_fixture_analysis() -> Dict[str, Dict[str, Any]]:
     """Complete analysis of all fixtures with dynamic discovery and usage counts."""
     raw_fixtures = discover_generated_fixtures()
-    usage_counts = count_fixture_usage()
 
     # Convert tuple format to dictionary format with usage counts and categorization
     processed_fixtures = {}
     for name, (func, scope) in raw_fixtures.items():
-        # Categorize the dynamic fixture
-        if "gpt2" in name.lower():
-            category = FixtureCategory.REAL_MODEL
-        elif "llama3" in name.lower() or "gemma2" in name.lower():
-            category = FixtureCategory.REAL_MODEL
-        elif "cust" in name.lower():
-            category = FixtureCategory.CUSTOM_MODEL
-        elif "cfg" in name:
-            category = FixtureCategory.CONFIG_ONLY
-        else:
+        # Use centralized categorization helper so CONFIG_ONLY is detected correctly
+        try:
+            category = categorize_fixture(name, "dynamic")
+        except Exception:
+            # Fallback to a conservative default
             category = FixtureCategory.CUSTOM_MODEL
 
         processed_fixtures[name] = {
             "func": func,
             "scope": scope,
-            "uses": usage_counts.get(name, 0),
             "category": category,
             "type": "dynamic",
         }
@@ -692,17 +622,25 @@ def discover_static_fixtures() -> Dict[str, Dict[str, Any]]:
     return static_fixtures
 
 
-def run_full_benchmark(max_fixtures: Optional[int] = None) -> Dict[str, Tuple[Dict[str, Any], FixtureMetrics]]:
+def run_full_benchmark(
+    max_fixtures: Optional[int] = None,
+) -> Tuple[
+    Dict[str, Tuple[Dict[str, Any], FixtureMetrics]],
+    float,
+    Dict[str, str],
+]:
     """Run comprehensive benchmark of all fixtures."""
     fixtures = get_fixture_analysis()
     static_fixtures = discover_static_fixtures()
 
-    # Add usage counts to static fixtures
-    usage_counts = count_fixture_usage()
-    for name, metadata in static_fixtures.items():
-        metadata["uses"] = usage_counts.get(name, 0)
+    # No usage-counting here; report will focus on measured metrics only
 
     all_fixtures = {**fixtures, **static_fixtures}
+
+    # Remove only explicit factory fixture names (full match), not prefixes
+    for factory_name in FACTORY_FIXTURES:
+        if factory_name in all_fixtures:
+            all_fixtures.pop(factory_name, None)
 
     # Apply max_fixtures limit for testing
     if max_fixtures:
@@ -761,10 +699,15 @@ def run_full_benchmark(max_fixtures: Optional[int] = None) -> Dict[str, Tuple[Di
             elif sys.path and str(Path(__file__).parent) in sys.path[0:2]:
                 sys.path.pop(0)
 
-    return results
+    # Attach baseline metadata separately by returning as tuple
+    return results, baseline_time, baseline_artifacts
 
 
-def generate_markdown_report(results: Dict[str, Tuple[Dict[str, Any], FixtureMetrics]]) -> str:
+def generate_markdown_report(
+    results: Dict[str, Tuple[Dict[str, Any], FixtureMetrics]],
+    baseline_time: float = 0.0,
+    baseline_artifacts: Optional[Dict[str, str]] = None,
+) -> str:
     """Generate comprehensive markdown report."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     gpu_available = torch.cuda.is_available()
@@ -777,65 +720,43 @@ def generate_markdown_report(results: Dict[str, Tuple[Dict[str, Any], FixtureMet
         f"**GPU Available:** {gpu_available}",
         f"**GPU Device:** {gpu_name}",
         f"**Total Fixtures Analyzed:** {len(results)}",
+        f"**Baseline Pytest Time:** {baseline_time:.3f}s",
         "",
-        "## Summary Statistics",
-        "",
-        "> **Note:** Fixture benchmarking is limited due to pytest fixture dependency",
-        "> injection requirements. This report focuses on fixture discovery, usage",
-        "> analysis, and categorization. For accurate performance benchmarking,",
-        "> fixtures should be tested within a proper pytest session context.",
+        "## Import Profiling Artifacts",
         "",
     ]
+    # Baseline artifact shortcuts (may be absent)
+    baseline_artifacts = baseline_artifacts or {}
+    raw_path = baseline_artifacts.get("raw_importtime", "")
+    flame_path = baseline_artifacts.get("flamegraph", "")
 
-    # Calculate summary statistics
-    categories = defaultdict(list)
-    scopes = defaultdict(list)
-    total_used = 0
+    report.append("📊 **Import Analysis**:")
+    if raw_path or flame_path:
+        # Show artifact file names with links when available
+        if raw_path:
+            report.append(f"- Raw timing data: [{Path(raw_path).name}]({raw_path})")
+        if flame_path:
+            report.append(f"- Flamegraph: [{Path(flame_path).name}]({flame_path})")
 
-    for fixture_name, (metadata, metrics) in results.items():
-        categories[metadata["category"]].append(fixture_name)
-        scopes[metadata["scope"]].append(fixture_name)
-        if metadata["uses"] > 0:
-            total_used += 1
+    report.extend(
+        [
+            "",
+            "## Summary Statistics",
+            "",
+            "> **Note:** Fully contextualized fixture profiling (i.e. using --setup-show",
+            "> with a full test suite run) is planned and will be linked to here.",
+            "> The focus of this report is fixture enumeration and isolated analysis/benchmarking.",
+            "",
+        ]
+    )
 
+    # Summary
     report.extend(
         [
             f"- **Total Fixtures:** {len(results)}",
-            f"- **Used Fixtures:** {total_used} ({total_used / len(results) * 100:.1f}%)",
-            f"- **Unused Fixtures:** {len(results) - total_used}",
             "",
         ]
     )
-
-    # Category breakdown
-    report.extend(
-        [
-            "### By Category",
-            "",
-            "| Category | Count | Used | Usage % |",
-            "|----------|-------|------|---------|",
-        ]
-    )
-
-    for category, fixture_list in categories.items():
-        used_count = sum(1 for f in fixture_list if results[f][0]["uses"] > 0)
-        usage_pct = used_count / len(fixture_list) * 100 if fixture_list else 0
-        report.append(f"| {category} | {len(fixture_list)} | {used_count} | {usage_pct:.1f}% |")
-
-    report.extend(
-        [
-            "",
-            "### By Scope",
-            "",
-            "| Scope | Count | Used | Usage % |",
-            "|-------|-------|------|---------|",
-        ]
-    )
-
-    for scope, fixture_list in scopes.items():
-        used_count = sum(1 for f in fixture_list if results[f][0]["uses"] > 0)
-        usage_pct = used_count / len(fixture_list) * 100 if fixture_list else 0
-        report.append(f"| {scope} | {len(fixture_list)} | {used_count} | {usage_pct:.1f}% |")
 
     # Detailed fixture table
     report.extend(
@@ -843,16 +764,15 @@ def generate_markdown_report(results: Dict[str, Tuple[Dict[str, Any], FixtureMet
             "",
             "## Detailed Fixture Analysis",
             "",
-            "| Fixture Name | Uses | Type | Scope | Category | Init Time (s) | Memory Δ (MB) | GPU Δ (MB) | Status |",
-            "|--------------|------|------|-------|----------|---------------|---------------|------------|--------|",
+            "| Fixture Name | Type | Scope | Category | Init Time (s) | Memory Δ (MB) | GPU Δ (MB) | Status |",
+            "|--------------|------|-------|----------|---------------|---------------|------------|--------|",
         ]
     )
 
-    # Sort by usage count descending, then by name
-    sorted_fixtures = sorted(results.items(), key=lambda x: (-x[1][0]["uses"], x[0]))
+    # Sort results by category then name so similar fixture types group together
+    sorted_fixtures = sorted(results.items(), key=lambda x: (x[1][0].get("category", ""), x[0]))
 
     for fixture_name, (metadata, metrics) in sorted_fixtures:
-        uses = metadata["uses"]
         fixture_type = metadata.get("type", "unknown")
         scope = metadata["scope"]
         category = metadata["category"]
@@ -864,99 +784,11 @@ def generate_markdown_report(results: Dict[str, Tuple[Dict[str, Any], FixtureMet
         status = "✅ Success" if metrics.error is None else f"❌ {metrics.error[:30]}..."
 
         report.append(
-            f"| {fixture_name} | {uses} | {fixture_type} | {scope} | {category} | "
+            f"| {fixture_name} | {fixture_type} | {scope} | {category} | "
             f"{init_time} | {memory_delta} | {gpu_delta} | {status} |"
         )
 
-    # Performance insights
-    report.extend(
-        [
-            "",
-            "## Performance Insights",
-            "",
-        ]
-    )
-
-    # Find most expensive fixtures
-    successful_benchmarks = [
-        (name, metadata, metrics) for name, (metadata, metrics) in results.items() if metrics.error is None
-    ]
-
-    if successful_benchmarks:
-        # Slowest fixtures
-        slowest = sorted(successful_benchmarks, key=lambda x: x[2].init_time, reverse=True)[:5]
-        report.extend(
-            [
-                "### Slowest Fixtures (Top 5)",
-                "",
-            ]
-        )
-        for name, metadata, metrics in slowest:
-            report.append(f"- **{name}**: {metrics.init_time:.3f}s (Category: {metadata['category']})")
-
-        # Most memory intensive
-        memory_intensive = sorted(successful_benchmarks, key=lambda x: x[2].memory_delta, reverse=True)[:5]
-        report.extend(
-            [
-                "",
-                "### Most Memory Intensive (Top 5)",
-                "",
-            ]
-        )
-        for name, metadata, metrics in memory_intensive:
-            report.append(f"- **{name}**: {metrics.memory_delta:.1f}MB (Category: {metadata['category']})")
-
-    # Optimization recommendations
-    report.extend(
-        [
-            "",
-            "## Optimization Recommendations",
-            "",
-        ]
-    )
-
-    # High-impact optimization targets
-    high_impact_fixtures = [
-        name
-        for name, (metadata, metrics) in results.items()
-        if metadata["uses"] >= 3
-        and metadata["scope"] == "session"
-        and metadata["category"] in [FixtureCategory.REAL_MODEL, FixtureCategory.CUSTOM_MODEL]
-    ]
-
-    if high_impact_fixtures:
-        report.extend(
-            [
-                "### High-Impact Optimization Targets",
-                "",
-                "These fixtures are heavily used and have session scope, "
-                "making them prime candidates for optimization:",
-                "",
-            ]
-        )
-        for fixture_name in high_impact_fixtures:
-            metadata, metrics = results[fixture_name]
-            report.append(f"- **{fixture_name}**: {metadata['uses']} uses, {metadata['category']}")
-
-    # Unused fixtures
-    unused_fixtures = [name for name, (metadata, metrics) in results.items() if metadata["uses"] == 0]
-
-    if unused_fixtures:
-        report.extend(
-            [
-                "",
-                "### Unused Fixtures Consider for Removal",
-                "",
-                f"Found {len(unused_fixtures)} unused fixtures that could potentially be removed:",
-                "",
-            ]
-        )
-        for fixture_name in unused_fixtures[:10]:  # Show first 10
-            metadata, metrics = results[fixture_name]
-            report.append(f"- **{fixture_name}**: {metadata['category']}, {metadata['scope']} scope")
-
-        if len(unused_fixtures) > 10:
-            report.append(f"- ... and {len(unused_fixtures) - 10} more")
+    # (Performance Insights and category/scope breakdown removed per simplification request.)
 
     return "\n".join(report)
 
@@ -1017,10 +849,10 @@ def main():
             return 0
 
         # Run full benchmark
-        results = run_full_benchmark(max_fixtures=args.max_fixtures)
+        results, baseline_time, baseline_artifacts = run_full_benchmark(max_fixtures=args.max_fixtures)
 
-        # Generate markdown report
-        report = generate_markdown_report(results)
+        # Generate markdown report (pass baseline profiling metadata)
+        report = generate_markdown_report(results, baseline_time=baseline_time, baseline_artifacts=baseline_artifacts)
 
         # Write report to file
         report_path = Path(__file__).parent / "fixture_benchmark_report.md"
@@ -1030,10 +862,6 @@ def main():
         print("\nBenchmark complete!")
         print(f"Report saved to: {report_path}")
         print(f"Analyzed {len(results)} fixtures")
-
-        # Print summary to console
-        used_count = sum(1 for _, (metadata, _) in results.items() if metadata["uses"] > 0)
-        print(f"Used fixtures: {used_count}/{len(results)} ({used_count / len(results) * 100:.1f}%)")
 
     except Exception as e:
         print(f"Error during benchmarking: {e}")
