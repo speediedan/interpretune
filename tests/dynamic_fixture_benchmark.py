@@ -294,62 +294,60 @@ def test_minimal():
         with open(baseline_test_path, "w") as f:
             f.write(baseline_content)
 
-        # Run pytest with import time profiling
-        start_time = time.perf_counter()
-        cmd = [
+        # First: attempt a py-spy speedscope recording (this adds overhead but produces useful artifacts)
+        speedscope_path = profiling_dir / f"pytest_startup_speedscope_{timestamp}.json"
+
+        pyspy_cmd = [
+            "py-spy",
+            "record",
+            "--subprocesses",
+            "-o",
+            str(speedscope_path),
+            "--format",
+            "speedscope",
+            "--",
             sys.executable,
-            "-X",
-            "importtime",
             "-m",
             "pytest",
             str(baseline_test_path),
-            "-v",
-            "--tb=short",
-            "-p",
-            "no:warnings",
+            "-q",
+            "--collect-only",
         ]
 
-        result = subprocess.run(
-            cmd,
+        try:
+            start_time = time.perf_counter()
+            result = subprocess.run(
+                pyspy_cmd,
+                capture_output=True,
+                text=True,
+                cwd=str(tests_dir),
+                timeout=120,
+            )
+            end_time = time.perf_counter()
+
+            if result.returncode == 0 and speedscope_path.exists():
+                artifacts["speedscope"] = str(speedscope_path)
+        except FileNotFoundError:
+            # py-spy not installed; continue to the non-profiling run
+            pass
+
+        # Second: plain timed pytest collect-only run without any profiler. This is the
+        # non-instrumented startup time we will subtract from fixture init times.
+        start_time = time.perf_counter()
+        plain_cmd = [sys.executable, "-m", "pytest", str(baseline_test_path), "-q", "--collect-only"]
+        plain_result = subprocess.run(
+            plain_cmd,
             capture_output=True,
             text=True,
             cwd=str(tests_dir),
-            timeout=30,
+            timeout=60,
         )
         end_time = time.perf_counter()
+        plain_startup_time = end_time - start_time if plain_result.returncode == 0 else 0.0
 
-        startup_time = end_time - start_time if result.returncode == 0 else 0.0
-
-        # Save raw import time data from stderr
-        if result.stderr:
-            raw_importtime_path = profiling_dir / f"pytest_importtime_raw_{timestamp}.txt"
-            with open(raw_importtime_path, "w") as f:
-                f.write(result.stderr)
-            artifacts["raw_importtime"] = str(raw_importtime_path)
-
-            # Convert to flamegraph format using importtime-convert
-            try:
-                flamegraph_path = profiling_dir / f"pytest_importtime_flamegraph_{timestamp}.txt"
-                convert_cmd = ["importtime-convert", "--output-format", "flamegraph.pl"]
-
-                convert_result = subprocess.run(
-                    convert_cmd,
-                    input=result.stderr,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-
-                if convert_result.returncode == 0:
-                    with open(flamegraph_path, "w") as f:
-                        f.write(convert_result.stdout)
-                    artifacts["flamegraph"] = str(flamegraph_path)
-
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                # importtime-convert might not be available, that's okay
-                pass
-
-        return startup_time, artifacts
+        # Return the non-profiling time (plain_startup_time) for subtraction, but keep any
+        # py-spy artifacts collected in the artifacts dict.
+        return plain_startup_time, artifacts
 
     except Exception:
         return 0.0, {}
@@ -722,21 +720,7 @@ def generate_markdown_report(
         f"**Total Fixtures Analyzed:** {len(results)}",
         f"**Baseline Pytest Time:** {baseline_time:.3f}s",
         "",
-        "## Import Profiling Artifacts",
-        "",
     ]
-    # Baseline artifact shortcuts (may be absent)
-    baseline_artifacts = baseline_artifacts or {}
-    raw_path = baseline_artifacts.get("raw_importtime", "")
-    flame_path = baseline_artifacts.get("flamegraph", "")
-
-    report.append("📊 **Import Analysis**:")
-    if raw_path or flame_path:
-        # Show artifact file names with links when available
-        if raw_path:
-            report.append(f"- Raw timing data: [{Path(raw_path).name}]({raw_path})")
-        if flame_path:
-            report.append(f"- Flamegraph: [{Path(flame_path).name}]({flame_path})")
 
     report.extend(
         [
@@ -745,7 +729,8 @@ def generate_markdown_report(
             "",
             "> **Note:** Fully contextualized fixture profiling (i.e. using --setup-show",
             "> with a full test suite run) is planned and will be linked to here.",
-            "> The focus of this report is fixture enumeration and isolated analysis/benchmarking.",
+            "> The focus of this report is to enumerate dynamic fixtures, facilitate appropriate fixture/test",
+            "> alignment and provide isolated analysis/benchmarking.",
             "",
         ]
     )
@@ -778,9 +763,12 @@ def generate_markdown_report(
         category = metadata["category"]
 
         # Format metrics
-        init_time = f"{metrics.init_time:.3f}" if metrics.error is None else "N/A"
-        memory_delta = f"{metrics.memory_delta:.1f}" if metrics.error is None else "N/A"
-        gpu_delta = f"{metrics.gpu_memory_delta:.1f}" if metrics.error is None and gpu_available else "N/A"
+        # - Clamp init time to a lower bound of 0.0 seconds
+        # - Report init time with tenth-of-a-second precision (1 decimal)
+        # - Zero-bound memory/gpu deltas so negative deltas are shown as 0.0
+        init_time = f"{max(metrics.init_time, 0.0):.1f}" if metrics.error is None else "N/A"
+        memory_delta = f"{max(metrics.memory_delta, 0.0):.1f}" if metrics.error is None else "N/A"
+        gpu_delta = f"{max(metrics.gpu_memory_delta, 0.0):.1f}" if metrics.error is None and gpu_available else "N/A"
         status = "✅ Success" if metrics.error is None else f"❌ {metrics.error[:30]}..."
 
         report.append(

@@ -84,6 +84,7 @@ coverage.xml
 tests/tests_tt_dir/
 tests/save_dir
 tests/tests/
+tests/profiling_artifacts/
 
 # Translations
 *.mo
