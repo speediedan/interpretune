@@ -4,9 +4,7 @@ from functools import reduce, partial
 import pytest
 
 import torch
-from transformer_lens.ActivationCache import ActivationCache
-from transformer_lens.utils import get_device as tl_get_device
-from sae_lens.saes.sae import SAEMetadata
+from tests._lazy_imports import lazy_attr
 
 from interpretune.utils import MisconfigurationException
 from interpretune.session import ITSession
@@ -23,6 +21,10 @@ from tests.runif import RunIf
 
 # Add new imports for mocking
 from unittest.mock import patch, MagicMock, call
+
+ActivationCache = lazy_attr("transformer_lens.ActivationCache.ActivationCache")
+tl_get_device = lazy_attr("transformer_lens.utils.get_device")
+SAEMetadata = lazy_attr("sae_lens.saes.sae.SAEMetadata")
 
 
 # simple counter hook
