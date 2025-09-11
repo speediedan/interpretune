@@ -1,28 +1,19 @@
-from __future__ import annotations
-
 import os
-from typing import Optional, Type, cast, TYPE_CHECKING
+from typing import Optional, Type, cast
 import inspect
 from functools import reduce
 from copy import deepcopy
 
 import torch
 from transformers import PretrainedConfig as HFPretrainedConfig, PreTrainedModel
+from transformer_lens import HookedTransformer, HookedTransformerConfig
+from transformer_lens.utilities.devices import get_device_for_block_index
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.adapters import CompositionRegistry, LightningDataModule, LightningModule, LightningAdapter
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.utils import move_data_to_device, patched_generate, rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
-
-if TYPE_CHECKING:
-    from transformer_lens import HookedTransformer, HookedTransformerConfig
-    from transformer_lens.utilities.devices import get_device_for_block_index
-else:
-    # At runtime avoid importing heavy third-party packages at module import time. Import them locally where needed.
-    HookedTransformer = None  # type: ignore
-    HookedTransformerConfig = None  # type: ignore
-    get_device_for_block_index = None  # type: ignore
 
 
 ################################################################################
@@ -65,12 +56,7 @@ class TLensAttributeMixin:
         try:
             if self.tl_cfg is None:
                 return None
-            # Import locally to avoid module-level dependency on transformer_lens
-            try:
-                from transformer_lens.utilities.devices import get_device_for_block_index as _get_dev  # type: ignore
-            except Exception:
-                return None
-            device = _get_dev(block_index, self.tl_cfg)
+            device = get_device_for_block_index(block_index, self.tl_cfg)
         except (AttributeError, AssertionError) as ae:
             rank_zero_warn(
                 f"Problem determining appropriate device for block {block_index} from TransformerLens"
@@ -91,19 +77,7 @@ class TLensAttributeMixin:
 class BaseITLensModule(BaseITModule):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Attempt to patch HookedTransformer.generate if the transformer_lens
-        # package is available at runtime. Import locally to avoid import-time
-        # dependency on transformer_lens.
-        try:
-            from transformer_lens import HookedTransformer as _HookedTransformer  # type: ignore
-
-            try:
-                _HookedTransformer.generate = patched_generate  # type: ignore[assignment]
-            except Exception:
-                rank_zero_warn("Failed to patch HookedTransformer.generate at runtime.")
-        except Exception:
-            # transformer_lens not available at runtime; continue without patching.
-            pass
+        HookedTransformer.generate = patched_generate  # type: ignore[assignment]  # signature compatibility issue
         self.loss_fn = None
 
     def auto_model_init(self) -> None:
@@ -168,15 +142,7 @@ class BaseITLensModule(BaseITModule):
         #       custom config) based, so model_init will not be used. To fully customize TL behavior, override this
         #       method and init config-based HookedTransformer as desired
         # TODO: suppress messages from tl about no tokenizer here, we're deferring the tokenizer attach until setup
-        try:
-            from transformer_lens import HookedTransformer as _Hooked  # type: ignore
-        except Exception:
-            raise RuntimeError(
-                "transformer_lens.HookedTransformer is required to initialize a TL model; "
-                "install the optional dependency or avoid calling tl_config_model_init."
-            )
-
-        self.model = _Hooked(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
+        self.model = HookedTransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
 
     def _prune_tl_cfg_dict(self, prune_list: Optional[list] = None) -> dict:
         """Prunes the tl_cfg dictionary by removing 'hf_model' and 'tokenizer' keys. Asserts that these keys have
@@ -204,15 +170,7 @@ class BaseITLensModule(BaseITModule):
         tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
         hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
         pruned_cfg = self._prune_tl_cfg_dict()  # avoid edge case where conflicting keys haven't already been pruned
-        try:
-            from transformer_lens import HookedTransformer as _Hooked  # type: ignore
-        except Exception:
-            raise RuntimeError(
-                "transformer_lens.HookedTransformer is required to convert HF model to TL model; "
-                "install the optional dependency or avoid calling _convert_hf_to_tl."
-            )
-
-        self.model = _Hooked.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle, **pruned_cfg)
+        self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle, **pruned_cfg)
         self.model.config = hf_preconversion_config
 
     def _capture_hyperparameters(self) -> None:

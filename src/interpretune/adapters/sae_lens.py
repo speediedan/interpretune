@@ -9,14 +9,8 @@ from IPython.display import IFrame, display
 from sae_lens.loading.pretrained_saes_directory import get_pretrained_saes_directory
 from sae_lens.saes.sae import SAE, SAEConfig
 from sae_lens.saes.standard_sae import StandardSAE
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer
-    from transformer_lens.hook_points import NamesFilter
-else:
-    HookedSAETransformer = None  # type: ignore
-    NamesFilter = None  # type: ignore
+from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer
+from transformer_lens.hook_points import NamesFilter
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.adapters import (
@@ -24,8 +18,9 @@ from interpretune.adapters import (
     LightningDataModule,
     LightningModule,
     LightningAdapter,
+    BaseITLensModule,
+    TLensAttributeMixin,
 )
-from interpretune.adapters.transformer_lens import BaseITLensModule, TLensAttributeMixin
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import SAELensFromPretrainedConfig, SAELensCustomConfig, SAELensConfig
 from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info, patched_generate
@@ -66,31 +61,14 @@ class BaseSAELensModule(BaseITLensModule):
         # using cooperative inheritance, so initialize attributes that may be required in base init methods
         self.saes: list[InstantiatedSAE] = []
         super().__init__(*args, **kwargs)
-        # Only patch HookedSAETransformer.generate if the class is available at runtime.
-        if HookedSAETransformer is not None:
-            try:
-                HookedSAETransformer.generate = patched_generate  # type: ignore[assignment]  # signature compatibility issue
-            except Exception:
-                # If patching fails for any reason, continue without crashing at import time.
-                rank_zero_warn("Failed to patch HookedSAETransformer.generate at import time.")
+        HookedSAETransformer.generate = patched_generate  # type: ignore[assignment]  # signature compatibility issue
 
     def _convert_hf_to_tl(self) -> None:
         # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
         tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
         hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
         pruned_cfg = self._prune_tl_cfg_dict()  # avoid edge case where conflicting keys haven't already been pruned
-
-        # Local import to avoid pulling transformer_lens/HookedSAETransformer at package import time
-        try:
-            from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer as _Hooked
-        except Exception:
-            # If the optional dependency is not available at import time, raise a clear error when trying to convert
-            raise RuntimeError(
-                "transformer_lens/HookedSAETransformer is required to convert HF model to TL model; "
-                "install the optional dependency or avoid calling _convert_hf_to_tl."
-            )
-
-        self.model = _Hooked.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle, **pruned_cfg)
+        self.model = HookedSAETransformer.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle, **pruned_cfg)
         self.model.config = hf_preconversion_config
         self.instantiate_saes()
 
@@ -110,10 +88,7 @@ class BaseSAELensModule(BaseITLensModule):
                 self.model.add_sae(added_sae.handle)  # type: ignore[operator]
 
     def tl_config_model_init(self) -> None:
-        # Local import so transformer_lens/HookedSAETransformer is imported only when actually initializing TL model
-        from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer as _Hooked
-
-        self.model = _Hooked(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
+        self.model = HookedSAETransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
         self.instantiate_saes()
 
     def _capture_hyperparameters(self) -> None:
@@ -230,7 +205,6 @@ class SAEAnalysisMixin:
     def construct_names_filter(
         self, target_layers: int | list[int] | None, sae_hook_match_fn: Callable[[str, list[int] | None], bool]
     ) -> NamesFilter:
-        # If NamesFilter type or transformer_lens is needed, import locally to avoid import-time cost
         available_hooks = {
             f"{handle.cfg.metadata.hook_name}.{key}"
             for handle in self.sae_handles  # type: ignore[attr-defined]  # provided by mixing class

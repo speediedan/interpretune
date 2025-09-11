@@ -2,14 +2,14 @@
 
 This module performs the minimal imports necessary to populate the
 `ADAPTER_REGISTRY` by calling `register_adapter_ctx` on adapter classes.
-It intentionally avoids importing heavy runtime dependencies because
-adapter implementation modules are written to be safe to import at
+It intentionally avoids importing heavy runtime dependencies to enable
+adapter implementation modules to be written (optionally) to be safe to import at
 module-level when optional heavy dependencies are guarded by TYPE_CHECKING
 or local imports.
 
 Keep this module small and dependency-free so it can be imported at
 package initialization time to ensure the registry is populated for
-tests and other runtime consumers that expect registrations to exist.
+runtime consumers that expect registrations to exist.
 """
 
 from importlib import import_module
@@ -37,7 +37,8 @@ def register_all_adapters(registry) -> None:
     """Call `register_adapter_ctx` on each known adapter class.
 
     This function imports adapter implementation modules and invokes the registration classmethod on matching classes.
-    The set of modules is intentionally explicit and small.
+    The set of modules is initially explicit and small but may switch to an entrypoint-based discovery mechanism in the
+    future.
     """
     # TODO: consider making this auto-discoverable via entrypoints
     adapter_modules: Iterable[str] = (

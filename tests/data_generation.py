@@ -13,7 +13,6 @@ from typing import Optional
 from functools import partial
 
 import torch
-from tests._lazy_imports import lazy_attr
 
 from datasets import Array2D, Array3D, Value, Sequence as DatasetsSequence
 
@@ -23,8 +22,6 @@ from interpretune.analysis.core import (
     get_filtered_sae_hook_keys,
     _check_names_filter_available,
 )
-
-ActivationCache = lazy_attr("transformer_lens.ActivationCache.ActivationCache")
 
 
 def _generate_cache_data(module, field, cfg, num_batches, dim_vars, is_grad_cache=False):
@@ -41,6 +38,8 @@ def _generate_cache_data(module, field, cfg, num_batches, dim_vars, is_grad_cach
     Returns:
         List of ActivationCache objects or None if generation not possible
     """
+    from transformer_lens import ActivationCache
+
     # Check if we have what we need to generate cache data
     if (
         not hasattr(module, "sae_handles")

@@ -216,19 +216,17 @@ class ReduceLROnPlateau(_Stateful[str], Protocol):
     def step(self, metrics: float | int | Tensor, epoch: int | None = None) -> None: ...
 
 
-# Use forward-references (strings) for heavy types so the runtime does not need to import torch.
-STEP_OUTPUT = Optional[Union["torch.Tensor", Mapping[str, Any]]]
+STEP_OUTPUT = Optional[Union[Tensor, Mapping[str, Any]]]
 
-# Use string-based refs for scheduler types to avoid importing torch at module import time.
-LRSchedulerTypeUnion = Union["torch.optim.lr_scheduler.LRScheduler", "torch.optim.lr_scheduler.ReduceLROnPlateau"]
+LRSchedulerTypeUnion = Union[torch.optim.lr_scheduler.LRScheduler, torch.optim.lr_scheduler.ReduceLROnPlateau]
 
 # Protocol-level union covering the scheduler Protocol and the ReduceLROnPlateau Protocol
-LRSchedulerProtocolUnion: TypeAlias = Union["LRScheduler", "ReduceLROnPlateau"]
+LRSchedulerProtocolUnion: TypeAlias = Union[LRScheduler, ReduceLROnPlateau]
 
 
 @dataclass
 class LRSchedulerConfig:
-    scheduler: "torch.optim.lr_scheduler.LRScheduler | ReduceLROnPlateau"
+    scheduler: torch.optim.lr_scheduler.LRScheduler | ReduceLROnPlateau
     # no custom name
     name: str | None = None
     # after epoch is over
@@ -318,7 +316,7 @@ class PredictLoadable(DataPrepable, Protocol):
 
 @runtime_checkable
 class DataModuleInvariants(Protocol):
-    itdm_cfg: "ITDataModuleConfig"
+    itdm_cfg: ITDataModuleConfig
 
     def setup(self, *args, **kwargs) -> None: ...
 
@@ -345,7 +343,7 @@ class PredictSteppable(Protocol):
 
 @runtime_checkable
 class ModuleInvariants(Protocol):
-    it_cfg: "ITConfig"
+    it_cfg: ITConfig
 
     def setup(self, *args, **kwargs) -> None: ...
 
@@ -487,7 +485,7 @@ class SAEDictProtocol(Protocol):
 
     def batch_join(
         self, across_saes: bool = False, join_fn: Callable | None = None
-    ) -> "SAEDictProtocol" | list["torch.Tensor"]: ...
+    ) -> "SAEDictProtocol" | list[torch.Tensor]: ...
 
     def apply_op_by_sae(self, operation: Callable | str, *args, **kwargs) -> "SAEDictProtocol": ...
 

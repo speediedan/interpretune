@@ -136,7 +136,7 @@ _LAZY_MODULE_ATTRS = {
 def __getattr__(name: str):
     """Lazily import heavy submodules/objects on attribute access to keep `import interpretune` fast.
 
-    This uses PEP 562 (__getattr__ on packages) and requires Python >= 3.7 (we support 3.12).
+    This uses PEP 562 (__getattr__ on packages).
     """
     if name in _LAZY_MODULE_ATTRS:
         module_path = _LAZY_MODULE_ATTRS[name]

@@ -68,7 +68,7 @@ class ITLensCustomConfig(ITLensSharedConfig):
     # IT handles the tokenizer instantiation via either tokenizer, tokenizer_name or model_name_or_path
     # tokenizer: Optional[PreTrainedTokenizerBase] = None
     def __post_init__(self) -> None:
-        if not isinstance(self.cfg, HookedTransformerConfig):
+        if isinstance(self.cfg, dict):
             # ensure the user provided a valid dtype (should be handled by HookedTransformerConfig ideally)
             if self.cfg.get("dtype", None) and not isinstance(self.cfg["dtype"], torch.dtype):
                 self.cfg["dtype"] = _resolve_torch_dtype(self.cfg["dtype"])

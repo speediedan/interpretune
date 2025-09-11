@@ -3,9 +3,9 @@ from copy import deepcopy
 from enum import auto
 from pathlib import Path
 
-from interpretune.config import HFFromPretrainedConfig
 from interpretune.protocol import AutoStrEnum, Adapter
 from interpretune.extensions import MemProfilerCfg, MemProfilerSchedule
+from interpretune.config import HFFromPretrainedConfig
 from it_examples.example_module_registry import (
     MODULE_EXAMPLE_REGISTRY,
     example_datamodule_defaults,
@@ -100,7 +100,12 @@ l_tl_gpt2_fts = {**default_fts_cfg, **l_tl_gpt2_explicit_sched}
 # TODO: Use more granular composable aliases for these configs to improve efficiency
 # tests currently use only a single experiment and custom model but use a variety of configurations
 CLI_EXP = "cust_test"
-RUN_FN = "interpretune"
+
+
+# By default use the console script so CLI tests validate the installed entrypoint end-to-end.
+# Allow overriding via the IT_RUN_FN environment variable (e.g. set to the python executable to run
+# as a module during local dev: IT_RUN_FN=/path/to/python)
+RUN_FN = os.environ.get("IT_RUN_FN", "interpretune")
 IT_HOME = Path(os.environ.get("IT_HOME", Path(__file__).parent.parent.parent / "src" / "interpretune"))
 
 

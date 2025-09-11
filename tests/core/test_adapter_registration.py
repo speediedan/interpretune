@@ -61,3 +61,16 @@ class TestClassRegistration:
         TEST_ADAPTER_REGISTRY.remove(("module", Adapter.lightning))
         assert TEST_ADAPTER_REGISTRY.available_compositions() == {("module", Adapter.core)}
         assert str(TEST_ADAPTER_REGISTRY)
+
+
+def test_lazy_adapter_registry_initializes(caplog):
+    """Ensure the lazy adapter registry can be accessed without raising.
+
+    The test triggers lazy initialization by calling a read-only method. The expectation is that initialization
+    completes (possibly leaving an empty registry if adapters couldn't be imported) and the call returns a set.
+    """
+    from interpretune.adapter_registry import ADAPTER_REGISTRY
+
+    # Should not raise and should return a set (possibly empty)
+    comps = ADAPTER_REGISTRY.available_compositions()
+    assert isinstance(comps, set)
