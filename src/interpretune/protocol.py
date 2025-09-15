@@ -30,10 +30,17 @@ from torch.optim import Optimizer
 from typing_extensions import NotRequired, Required
 from jsonargparse import Namespace
 from transformers import BatchEncoding, PreTrainedTokenizerBase
-from sae_lens.config import HfDataset
 
+# Heavy, optional runtime deps (sae_lens, transformer_lens) are only required for
+# type-checking and should not be imported at top-level to avoid slowing down package import.
 if TYPE_CHECKING:
+    from sae_lens.config import HfDataset
     from interpretune.config import ITDataModuleConfig, ITConfig
+else:
+    # Provide light-weight stand-ins for typing at runtime without importing heavy packages.
+    HfDataset = None  # type: ignore
+    ITDataModuleConfig = None  # type: ignore
+    ITConfig = None  # type: ignore
 
 
 ################################################################################
@@ -309,7 +316,7 @@ class PredictLoadable(DataPrepable, Protocol):
 
 @runtime_checkable
 class DataModuleInvariants(Protocol):
-    itdm_cfg: "ITDataModuleConfig"
+    itdm_cfg: ITDataModuleConfig
 
     def setup(self, *args, **kwargs) -> None: ...
 
@@ -336,7 +343,7 @@ class PredictSteppable(Protocol):
 
 @runtime_checkable
 class ModuleInvariants(Protocol):
-    it_cfg: "ITConfig"
+    it_cfg: ITConfig
 
     def setup(self, *args, **kwargs) -> None: ...
 

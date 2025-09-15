@@ -1,77 +1,47 @@
-import sys
-from interpretune.adapter_registry import ADAPTER_REGISTRY
-from interpretune.adapters.registration import _register_adapters, CompositionRegistry, AdapterProtocol
-from interpretune.adapters.core import CoreAdapter, ITModule
-from interpretune.adapters.lightning import LightningAdapter, LightningDataModule, LightningModule
-from interpretune.adapters.transformer_lens import (
-    ITLensModule,
-    ITDataModule,
-    BaseITLensModule,
-    TLensAttributeMixin,
-    TransformerLensAdapter,
-)
-from interpretune.adapters.sae_lens import (
-    SAELensAdapter,
-    SAEAnalysisMixin,
-    SAELensModule,
-    SAELensAttributeMixin,
-    BaseSAELensModule,
-    InstantiatedSAE,
-)
+"""Adapters package lazy exports.
 
-# TODO: we can remove this logic once a fork of circuit-tracer is available on PyPI and custom import tools are
-# no longer needed
-# Conditionally import circuit_tracer adapter
-try:
-    from interpretune.adapters.circuit_tracer import (
-        CircuitTracerAdapter,
-        CircuitTracerAttributeMixin,
-        BaseCircuitTracerModule,
-    )
+This module exposes adapter classes/registries lazily to avoid importing heavy third-party dependencies (e.g.,
+transformer_lens, sae_lens) at package import time.
+"""
 
-    _circuit_tracer_available = True
-except ImportError:
-    # circuit_tracer not available, define placeholder classes to avoid import errors
-    CircuitTracerAdapter = None
-    CircuitTracerAttributeMixin = None
-    BaseCircuitTracerModule = None
-    _circuit_tracer_available = False
-_register_adapters(ADAPTER_REGISTRY, "register_adapter_ctx", sys.modules[__name__], AdapterProtocol)
+_LAZY_ADAPTER_ATTRS = {
+    "ADAPTER_REGISTRY": "interpretune.adapter_registry.ADAPTER_REGISTRY",
+    "CompositionRegistry": "interpretune.adapters.registration.CompositionRegistry",
+    "AdapterProtocol": "interpretune.adapters.registration.AdapterProtocol",
+    "_register_adapters": "interpretune.adapters.registration._register_adapters",
+    # Core
+    "CoreAdapter": "interpretune.adapters.core.CoreAdapter",
+    "ITModule": "interpretune.adapters.core.ITModule",
+    # Lightning
+    "LightningAdapter": "interpretune.adapters.lightning.LightningAdapter",
+    "LightningDataModule": "interpretune.adapters.lightning.LightningDataModule",
+    "LightningModule": "interpretune.adapters.lightning.LightningModule",
+    # TransformerLens
+    "TransformerLensAdapter": "interpretune.adapters.transformer_lens.TransformerLensAdapter",
+    "ITLensModule": "interpretune.adapters.transformer_lens.ITLensModule",
+    "ITDataModule": "interpretune.adapters.transformer_lens.ITDataModule",
+    "TLensAttributeMixin": "interpretune.adapters.transformer_lens.TLensAttributeMixin",
+    "BaseITLensModule": "interpretune.adapters.transformer_lens.BaseITLensModule",
+    # SAE Lens
+    "SAELensAdapter": "interpretune.adapters.sae_lens.SAELensAdapter",
+    "SAEAnalysisMixin": "interpretune.adapters.sae_lens.SAEAnalysisMixin",
+    "SAELensModule": "interpretune.adapters.sae_lens.SAELensModule",
+    "SAELensAttributeMixin": "interpretune.adapters.sae_lens.SAELensAttributeMixin",
+    "BaseSAELensModule": "interpretune.adapters.sae_lens.BaseSAELensModule",
+    "InstantiatedSAE": "interpretune.adapters.sae_lens.InstantiatedSAE",
+}
 
-__all__ = [
-    # Registry
-    "ADAPTER_REGISTRY",  # from __init__
-    "CompositionRegistry",  # from .registration
-    "AdapterProtocol",  # from .registration
-    "_register_adapters",  # from .registration
-    # Core Adapters
-    "CoreAdapter",  # from .core
-    "ITModule",  # from .core
-    # Lightning Adapters
-    "LightningAdapter",  # from .lightning
-    "LightningDataModule",  # from .lightning
-    "LightningModule",  # from .lightning
-    # TransformerLens Adapters
-    "TransformerLensAdapter",  # from .transformer_lens
-    "ITLensModule",  # from .transformer_lens
-    "ITDataModule",  # from .transformer_lens
-    "TLensAttributeMixin",  # from .transformer_lens
-    "BaseITLensModule",  # from .transformer_lens
-    # SAE Lens Adapters
-    "SAELensAdapter",  # from .sae_lens
-    "SAEAnalysisMixin",  # from .sae_lens
-    "SAELensModule",  # from .sae_lens
-    "SAELensAttributeMixin",  # from .sae_lens
-    "BaseSAELensModule",  # from .sae_lens
-    "InstantiatedSAE",  # from .sae_lens
-]
 
-# Add circuit_tracer adapters only if available
-if _circuit_tracer_available:
-    __all__.extend(
-        [
-            "CircuitTracerAdapter",  # from .circuit_tracer
-            "CircuitTracerAttributeMixin",  # from .circuit_tracer
-            "BaseCircuitTracerModule",  # from .circuit_tracer
-        ]
-    )
+def __getattr__(name: str):
+    if name in _LAZY_ADAPTER_ATTRS:
+        module_path = _LAZY_ADAPTER_ATTRS[name]
+        module_name, attr = module_path.rsplit(".", 1)
+        module = __import__(module_name, fromlist=[attr])
+        val = getattr(module, attr)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__} has no attribute {name}")
+
+
+def __dir__():
+    return sorted(list(globals().keys()) + list(_LAZY_ADAPTER_ATTRS.keys()))

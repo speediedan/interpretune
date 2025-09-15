@@ -1,6 +1,7 @@
 import pytest
 import subprocess
 import re
+import sys
 from subprocess import TimeoutExpired, PIPE
 from unittest import mock
 from typing import Optional, List, Sequence
@@ -102,7 +103,12 @@ def gen_cli_args(
 ):
     cli_main_kwargs = {"run_mode": run} if run else {"run_mode": False}
     cli_main_kwargs["args"] = extra_args if extra_args else None
-    cli_args, cli_main = [RUN_FN], core_cli_main  # defaults w/ no adapter
+    # defaults w/ no adapter
+    if RUN_FN == sys.executable:
+        # run as `python -m interpretune` if using the current python executable
+        cli_args, cli_main = [RUN_FN, "-m", "interpretune"], core_cli_main
+    else:
+        cli_args, cli_main = [RUN_FN], core_cli_main
     if bootstrap_args:
         cli_args.extend(bootstrap_args)
     if cli_adapter == Adapter.lightning:
