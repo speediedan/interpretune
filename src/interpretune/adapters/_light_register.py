@@ -14,10 +14,10 @@ runtime consumers that expect registrations to exist.
 
 from importlib import import_module
 from types import ModuleType
-from typing import Iterable
+from typing import Iterable, Optional
 
 
-def _import_adapter_module(module_path: str) -> ModuleType:
+def _import_adapter_module(module_path: str) -> Optional[ModuleType]:
     """Import an adapter module and return the module object.
 
     We rely on adapter modules to avoid importing heavy third-party dependencies at module import time (they use
@@ -30,7 +30,7 @@ def _import_adapter_module(module_path: str) -> ModuleType:
         # Import failures here are non-fatal for the import-time
         # registration pass; leave the registry empty for adapters that
         # could not be imported and allow them to register lazily later.
-        return None  # type: ignore[return-value]
+        return None
 
 
 def register_all_adapters(registry) -> None:

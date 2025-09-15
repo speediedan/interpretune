@@ -862,4 +862,11 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as e:
+        print(f"Fatal error in main(): {e}")
+        import traceback
+
+        traceback.print_exc()
+        sys.exit(1)
