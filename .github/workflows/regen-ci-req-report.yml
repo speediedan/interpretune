@@ -63,19 +63,19 @@ jobs:
           python_version: '3.12'
           ci_output_dir: requirements/ci
           compare_paths: "requirements/ci/requirements.txt requirements/post_upgrades.txt requirements/platform_dependent.txt"
-          patch_path: regen_diff.patch
+          patch_path: /tmp/regen_diff.patch
 
       - name: Upload regen diff (if present)
         if: steps.regen_ci_reqs.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: regen-pins-diff
-          path: regen_diff.patch
+          path: /tmp/regen_diff.patch
 
       - name: Compute top-5 package-change summary
         if: steps.regen_ci_reqs.outputs.changed == 'true'
         run: |
-          python scripts/regen_summary.py regen_diff.patch regen_summary.txt
+          python scripts/regen_summary.py /tmp/regen_diff.patch regen_summary.txt
 
 
       - name: Create or update PR comment (single-comment)
