@@ -1,0 +1,84 @@
+diff --git a/requirements/ci/requirements.txt b/requirements/ci/requirements.txt
+index b168347..24c57c7 100644
+--- a/requirements/ci/requirements.txt
++++ b/requirements/ci/requirements.txt
+@@ -6,7 +6,7 @@
+ #
+ circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6c74ea291c410bb3391e572cd6a8d020be714922
+     # via -r requirements/ci/requirements.in
+-coverage==7.10.5
++coverage==7.10.6
+     # via
+     #   -r requirements/ci/requirements.in
+     #   nbval
+@@ -16,7 +16,7 @@ finetuning-scheduler==2.5.3
+     # via -r requirements/ci/requirements.in
+ gdown==5.2.0
+     # via -r requirements/ci/requirements.in
+-huggingface-hub[hf-xet]==0.34.4
++huggingface-hub[hf-xet]==0.34.5
+     # via
+     #   -r requirements/ci/requirements.in
+     #   accelerate
+@@ -28,13 +28,13 @@ huggingface-hub[hf-xet]==0.34.4
+     #   transformers
+ ipywidgets==8.1.7
+     # via -r requirements/ci/requirements.in
+-jsonargparse[signatures,typing-extensions]==4.40.2
++jsonargparse[signatures,typing-extensions]==4.41.0
+     # via -r requirements/ci/requirements.in
+-jupyterlab==4.4.6
++jupyterlab==4.4.7
+     # via
+     #   -r requirements/ci/requirements.in
+     #   notebook
+-jupytext==1.17.2
++jupytext==1.17.3
+     # via -r requirements/ci/requirements.in
+ nbval==0.11.0
+     # via -r requirements/ci/requirements.in
+@@ -53,26 +53,26 @@ plotly==6.3.0
+     #   sae-lens
+ pre-commit==4.3.0
+     # via -r requirements/ci/requirements.in
+-psycopg==3.2.9
++psycopg==3.2.10
+     # via -r requirements/ci/requirements.in
+-pyright==1.1.404
++pyright==1.1.405
+     # via -r requirements/ci/requirements.in
+-pytest==8.4.1
++pytest==8.4.2
+     # via
+     #   -r requirements/ci/requirements.in
+     #   circuit-tracer
+     #   nbval
+     #   pytest-rerunfailures
+-pytest-rerunfailures==15.1
++pytest-rerunfailures==16.0.1
+     # via -r requirements/ci/requirements.in
+ python-dotenv==1.1.1
+     # via
+     #   -r requirements/ci/requirements.in
+     #   neuronpedia
+     #   sae-lens
+-sae-lens==6.7.0
++sae-lens==6.12.1
+     # via -r requirements/ci/requirements.in
+-scikit-learn==1.7.1
++scikit-learn==1.7.2
+     # via -r requirements/ci/requirements.in
+ tabulate==0.9.0
+     # via -r requirements/ci/requirements.in
+@@ -96,9 +96,9 @@ transformer-lens==2.16.1
+     #   -r requirements/ci/requirements.in
+     #   circuit-tracer
+     #   sae-lens
+-twine==6.1.0
++twine==6.2.0
+     # via -r requirements/ci/requirements.in
+-wandb==0.21.1
++wandb==0.21.4
+     # via
+     #   -r requirements/ci/requirements.in
+     #   transformer-lens
