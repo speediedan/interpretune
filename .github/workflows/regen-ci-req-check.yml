@@ -22,13 +22,15 @@ jobs:
           python_version: '3.12'
           ci_output_dir: requirements/ci
           compare_paths: "requirements/ci/requirements.txt requirements/post_upgrades.txt requirements/platform_dependent.txt"
-          patch_path: regen_diff.patch
+          patch_path: /tmp/regen_diff.patch
 
       - name: Create PR with updated pins
         if: steps.regen_ci_reqs.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Use a repository-scoped Personal Access Token (PAT) stored in secrets.REGEN_PR_TOKEN.
+          # This ensures the PR creation event is not suppressed by GitHub and will trigger downstream workflows.
+          token: ${{ secrets.REGEN_PR_TOKEN }}
           title: "[auto] regen pinned requirements"
           commit-message: "Auto-regenerate pinned requirements via scheduled regen-check"
           branch: regen/pinned-requirements-${{ github.run_id }}
