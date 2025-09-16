@@ -1,8 +1,9 @@
 [build-system]
 # we require a setuptools version with PEP 639 support
 requires = [
-    "setuptools>=77.0.0",
+    "setuptools>=80.0.0",
     "wheel",
+    "setuptools_scm>=8",
 ]
 build-backend = "setuptools.build_meta"
 
@@ -114,11 +115,7 @@ profiling = [
 "py-spy",
 ]
 
-
-[tool.setuptools.dynamic]
-version = {attr = "interpretune.__about__.__version__"}
-
-[tools.setuptools]
+[tool.setuptools]
 package-dir = {"" = "src"}
 include-package-data = true
 zip-safe = false
@@ -135,7 +132,13 @@ namespaces = true
 #"it_examples.config.lightning.experiments" = ["*.yaml"]
 #"it_examples.config.lightning.ft_schedules" = ["*.yaml"]
 #"it_examples.config.lightning.shared" = ["*.yaml"]
-"*" = ["*.yaml"]
+"it_examples" = ["*.yaml"]
+"interpretune" = ["*.yaml"]
+# "*" = ["*.yaml"]
+
+[tool.setuptools_scm]
+fallback_version = "0.1.0.dev0"
+
 
 [tool.ruff]
 line-length = 120
