@@ -17,7 +17,7 @@ def install_circuit_tracer(use_commit_pin: bool = True, verbose: bool = False):
     def get_circuit_tracer_commit():
         """Get the pinned circuit-tracer commit hash."""
         repo_root = Path(__file__).parent.parent.parent.parent
-        pin_file = repo_root / "requirements" / "circuit_tracer_pin.txt"
+        pin_file = repo_root / "requirements" / "ci" / "circuit_tracer_pin.txt"
 
         if pin_file.exists():
             with open(pin_file, "r") as f:
@@ -25,7 +25,7 @@ def install_circuit_tracer(use_commit_pin: bool = True, verbose: bool = False):
                     line = line.strip()
                     if line and not line.startswith("#"):
                         return line
-        return "6c74ea291c410bb3391e572cd6a8d020be714922"  # fallback
+        return "8941776fdbe6f37b4c87e5bb2c14b8b746be0f9b"  # fallback
 
     # Determine installation mode
     if use_commit_pin is None:
@@ -77,14 +77,13 @@ def install_circuit_tracer(use_commit_pin: bool = True, verbose: bool = False):
 def main():
     """CLI entry point for circuit-tracer installation."""
     parser = argparse.ArgumentParser(description="Install circuit-tracer for interpretune examples")
-    parser.add_argument(
-        "--no-commit-pin", action="store_true", help="Use version-based installation instead of commit pin"
-    )
+    parser.add_argument("--ct-commit-pin", action="store_true", help="To use commit-based installation")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
 
     args = parser.parse_args()
 
-    use_commit_pin = not args.no_commit_pin
+    # If --ct-commit-pin is provided, we disable commit pin usage
+    use_commit_pin = bool(getattr(args, "ct_commit_pin", False))
 
     # Set environment variable for consistency
     if use_commit_pin:

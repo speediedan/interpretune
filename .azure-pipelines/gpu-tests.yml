@@ -65,6 +65,7 @@ jobs:
         HF_HUB_CACHE: /opt/interpretune/hf_cache/hub
         TRANSFORMERS_CACHE: /opt/interpretune/hf_cache/transformers
         XDG_CACHE_HOME: /opt/interpretune/hf_cache
+        APPLY_POST_UPGRADES: "false"
 
     workspace:
       clean: outputs
@@ -96,10 +97,16 @@ jobs:
 
       - bash: |
           . /tmp/venvs/it_dev/bin/activate
-          python -m pip install --upgrade pip setuptools wheel build
-          python -m pip install -r requirements/ci/requirements.txt -r requirements/platform_dependent.txt --no-warn-script-location
+          python -m pip install --upgrade pip setuptools setuptools-scm wheel build
+          python -m pip install -r requirements/ci/requirements.txt -r requirements/ci/platform_dependent.txt --no-warn-script-location
           python -m pip install -e '.[test,examples,lightning]'  --no-warn-script-location
-          python -m pip install --upgrade -r requirements/post_upgrades.txt  --no-warn-script-location
+          if ([ "${APPLY_POST_UPGRADES:-}" = "1" ] || [ "${APPLY_POST_UPGRADES:-}" = "true" ]) && [ -s requirements/ci/post_upgrades.txt ]; then
+            echo "Applying post-upgrades (requirements/ci/post_upgrades.txt)..."
+            python -m pip install --upgrade -r requirements/ci/post_upgrades.txt --cache-dir "$PIP_CACHE_DIR"
+          else
+            echo "Skipping post-upgrades (either disabled or file empty)."
+          fi
+          python -m pip list
         displayName: 'Install dependencies'
 
       - bash: |

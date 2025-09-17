@@ -17,7 +17,7 @@ unset torch_test_channel
 unset fts_from_source
 unset ct_from_source
 unset pip_install_flags
-unset no_commit_pin
+unset ct_commit_pin
 unset regen_with_pip_compile
 unset apply_post_upgrades
 unset no_ci_reqs
@@ -25,42 +25,42 @@ unset no_ci_reqs
 usage(){
 >&2 cat << EOF
 Usage: $0
-   [ --repo_home input]
-   [ --target_env_name input ]
-   [ --torch_dev_ver input ]
-   [ --torch_test_channel ]
-   [ --fts_from_source "path" ]
-   [ --ct_from_source "path" ]
-   [ --pip_install_flags "flags" ]
-   [ --no_commit_pin ]
+   [ --repo-home input]
+   [ --target-env-name input ]
+   [ --torch-dev-ver input ]
+   [ --torch-test-channel ]
+   [ --fts-from-source "path" ]
+   [ --ct-from-source "path" ]
+   [ --pip-install-flags "flags" ]
+   [ --ct-commit-pin ]
    [ --no-ci-reqs ]
-   [ --regen_with_pip_compile ]
-   [ --apply_post_upgrades ]
+   [ --regen-with-pip-compile ]
+   [ --apply-post-upgrades ]
    [ --help ]
    Examples:
     # build latest:
-    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest
+    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest
     # build latest with specific pytorch nightly:
-    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --torch_dev_ver=dev20240201
+    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --torch-dev-ver=dev20240201
     # build latest with torch test channel:
-    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --torch_test_channel
+    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --torch-test-channel
     # build latest with FTS from source:
-    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --fts_from_source=${HOME}/repos/finetuning-scheduler
+    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --fts-from-source=${HOME}/repos/finetuning-scheduler
     # build latest with circuit-tracer from source:
-    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --ct_from_source=${HOME}/repos/circuit-tracer
+    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --ct-from-source=${HOME}/repos/circuit-tracer
     # build latest with no cache directory:
-    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --pip_install_flags="--no-cache-dir"
-    # build latest without using CI commit pinning:
-    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --no_commit_pin
+    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --pip-install-flags="--no-cache-dir"
+    # build latest without using CT commit pinning:
+    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest
     # build latest and regenerate CI pinned requirements:
-    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --regen_with_pip_compile
+    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --regen-with-pip-compile
     # build latest and apply post-upgrades:
-    #   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --apply_post_upgrades
+    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --apply-post-upgrades
 EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo_home:,target_env_name:,torch_dev_ver:,torch_test_channel,fts_from_source:,ct_from_source:,pip_install_flags:,no_commit_pin,no-ci-reqs,regen_with_pip_compile,apply_post_upgrades,help -- "$@")
+args=$(getopt -o '' --long repo-home:,target-env-name:,torch-dev-ver:,torch-test-channel,fts-from-source:,ct-from-source:,pip-install-flags:,ct-commit-pin,no-ci-reqs,regen-with-pip-compile,apply-post-upgrades,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -69,17 +69,17 @@ eval set -- ${args}
 while :
 do
   case $1 in
-    --repo_home)  repo_home=$2    ; shift 2  ;;
-    --target_env_name)  target_env_name=$2  ; shift 2 ;;
-    --torch_dev_ver)   torch_dev_ver=$2   ; shift 2 ;;
-    --torch_test_channel)   torch_test_channel=1 ; shift  ;;
-    --fts_from_source)   fts_from_source=$2 ; shift 2 ;;
-    --ct_from_source)   ct_from_source=$2 ; shift 2 ;;
-    --pip_install_flags)   pip_install_flags=$2 ; shift 2 ;;
-    --no_commit_pin)   no_commit_pin=1 ; shift  ;;
+    --repo-home)  repo_home=$2    ; shift 2  ;;
+    --target-env-name)  target_env_name=$2  ; shift 2 ;;
+    --torch-dev-ver)   torch_dev_ver=$2   ; shift 2 ;;
+    --torch-test-channel)   torch_test_channel=1 ; shift  ;;
+    --fts-from-source)   fts_from_source=$2 ; shift 2 ;;
+    --ct-from-source)   ct_from_source=$2 ; shift 2 ;;
+    --pip-install-flags)   pip_install_flags=$2 ; shift 2 ;;
+    --ct-commit-pin)   ct_commit_pin=1 ; shift  ;;
     --no-ci-reqs)      no_ci_reqs=1 ; shift ;;
-    --regen_with_pip_compile) regen_with_pip_compile=1 ; shift ;;
-    --apply_post_upgrades) apply_post_upgrades=1 ; shift ;;
+    --regen-with-pip-compile) regen_with_pip_compile=1 ; shift ;;
+    --apply-post-upgrades) apply_post_upgrades=1 ; shift ;;
     --help)    usage      ; shift   ;;
     # -- means the end of the arguments; drop this, and break out of the while loop
     --) shift; break ;;
@@ -90,6 +90,21 @@ done
 
 # Use pip_install_flags in pip commands
 pip_install_flags=${pip_install_flags:-""}
+
+# Expand leading ~ in common path arguments so users can pass --repo-home=~/repos/...
+expand_tilde(){
+    local p="$1"
+    if [[ -n "$p" ]] && [[ "$p" == ~* ]]; then
+        # Use eval to expand ~ reliably
+        eval echo "$p"
+    else
+        echo "$p"
+    fi
+}
+
+repo_home=$(expand_tilde "${repo_home}")
+fts_from_source=$(expand_tilde "${fts_from_source}")
+ct_from_source=$(expand_tilde "${ct_from_source}")
 
 # Source common utility functions
 source ${repo_home}/scripts/infra_utils.sh
@@ -139,18 +154,20 @@ it_install(){
 
     # Optionally regenerate CI pinned requirements (pip-compile mode) if requested
     if [[ -n ${regen_with_pip_compile} ]]; then
+        python -m pip install ${pip_install_flags} toml pip-tools
         echo "Regenerating CI pinned requirements (pip-compile mode)"
-        python ${repo_home}/requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci || true
+        python ${repo_home}/requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci
     fi
 
     # If CI pinned requirements don't exist and user did not disable ci-reqs, regenerate them
     if [[ -z ${no_ci_reqs} ]] && [[ ! -f ${repo_home}/requirements/ci/requirements.txt ]]; then
+        python -m pip install ${pip_install_flags} toml pip-tools
         echo "CI pinned requirements not found; regenerating requirements.in and post_upgrades."
-        python ${repo_home}/requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci || true
+        python ${repo_home}/requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci
     fi
 
-    # Set IT_USE_CT_COMMIT_PIN by default, unless --no_commit_pin is specified
-    if [[ -z ${no_commit_pin} ]]; then
+    # Set IT_USE_CT_COMMIT_PIN if --ct_commit_pin is specified
+    if [[ -n ${ct_commit_pin} ]]; then
         export IT_USE_CT_COMMIT_PIN="1"
         echo "Using IT_USE_CT_COMMIT_PIN for circuit-tracer installation"
     else
@@ -163,16 +180,16 @@ it_install(){
         # Install pinned requirements, then install editable package so CLI modules (interpretune.*) are importable
         python -m pip install ${pip_install_flags} -r ${repo_home}/requirements/ci/requirements.txt -r requirements/docs.txt || true
         # Ensure interpretune package is installed (editable install recommended during dev)
-        python -m pip install ${pip_install_flags} -e ".[test,examples,lightning]" || true
+        python -m pip install ${pip_install_flags} -e ".[test,examples,lightning,profiling]"
     else
-        python -m pip install ${pip_install_flags} -e ".[test,examples,lightning]" -r requirements/docs.txt
+        python -m pip install ${pip_install_flags} -e ".[test,examples,lightning,profiling]" -r requirements/docs.txt
     fi
 
     cd ${repo_home}
     # Optionally apply post-upgrades if requested and file exists
-    if [[ -n ${apply_post_upgrades} ]] && [[ -s ${repo_home}/requirements/post_upgrades.txt ]]; then
-        echo "Applying post-upgrades from requirements/post_upgrades.txt"
-        pip install --upgrade -r ${repo_home}/requirements/post_upgrades.txt || true
+    if [[ -n ${apply_post_upgrades} ]] && [[ -s ${repo_home}/requirements/ci/post_upgrades.txt ]]; then
+        echo "Applying post-upgrades from requirements/ci/post_upgrades.txt"
+        pip install --upgrade -r ${repo_home}/requirements/ci/post_upgrades.txt || true
     else
         echo "Skipping post-upgrades (flag not set or file empty)."
     fi
@@ -182,12 +199,10 @@ it_install(){
         cd ${ct_from_source}
         python -m pip install ${pip_install_flags} -e .
     else
-        echo "Installing circuit-tracer via interpretune CLI tool"
         # Use the interpretune CLI tool to install circuit-tracer
         if [[ -n ${IT_USE_CT_COMMIT_PIN} ]]; then
-            python -m interpretune.tools.install_circuit_tracer
-        else
-            python -m interpretune.tools.install_circuit_tracer --no-commit-pin
+            echo "Installing circuit-tracer via interpretune CLI tool"
+            python -m interpretune.tools.install_circuit_tracer --ct-commit-pin
         fi
     fi
 

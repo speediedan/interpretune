@@ -12,7 +12,7 @@ inputs:
   compare_paths:
     description: Space-separated list of files/paths to compare with git diff
     required: false
-    default: "requirements/ci/requirements.txt requirements/post_upgrades.txt requirements/platform_dependent.txt"
+    default: "requirements/ci/requirements.txt requirements/ci/post_upgrades.txt requirements/ci/platform_dependent.txt"
   patch_path:
     description: Path to write the patch file
     required: false

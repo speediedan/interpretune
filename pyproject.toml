@@ -36,7 +36,7 @@ dependencies = [
     "sae_lens >= 6.3.1",  # use new sae_lens API
     "torch >=2.7.1",
     "tabulate >= 0.9.0",
-    "datasets >= 2.2.0",
+    "datasets >= 4.0.0",
     "jsonargparse[signatures] >= 4.35.0",  # replace this req once adding fts req
     # "finetuning-scheduler[possible_future_it_plugin] >= 2.5.0",
 ]
@@ -76,13 +76,13 @@ examples = [
 "evaluate",
 "scikit-learn",
 "neuronpedia",
-# TODO: add our packaged circuit-tracer dep (either origin or fork) once it is available and remove the
+# TODO: add our packaged circuit-tracer dep (either pypi or pypi fork) once it is available and remove the
 #       `install_circuit_tracer` tool
-# "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6c74ea291c410bb3391e572cd6a8d020be714922",
+# "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@8941776fdbe6f37b4c87e5bb2c14b8b746be0f9b",
 ]
 
 docs = [
-"sphinx >=4.0,<5.0 ",
+"sphinx >= 4.0",
 "myst-parser >= 0.18.1",
 "nbsphinx >= 0.8.5",
 "pandoc >= 1.0",
@@ -130,7 +130,6 @@ namespaces = true
 
 [tool.setuptools_scm]
 fallback_version = "0.1.0.dev0"
-
 
 [tool.ruff]
 line-length = 120
@@ -245,5 +244,4 @@ platform_dependent = ["bitsandbytes"]
 
 # packages that should be applied as post-upgrades (package -> desired_version)
 [tool.ci_pinning.post_upgrades]
-datasets = "==4.0.0"
-fsspec = ">=2025.3.0"
+# no packages currently require post installation upgrades

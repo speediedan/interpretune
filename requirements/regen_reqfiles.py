@@ -12,8 +12,8 @@ REQ_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(REQ_DIR)
 PYPROJECT_PATH = os.path.join(REPO_ROOT, "pyproject.toml")
 CI_REQ_DIR = os.path.join(REPO_ROOT, "requirements", "ci")
-POST_UPGRADES_PATH = os.path.join(REPO_ROOT, "requirements", "post_upgrades.txt")
-CIRCUIT_TRACER_PIN = os.path.join(REPO_ROOT, "requirements", "circuit_tracer_pin.txt")
+POST_UPGRADES_PATH = os.path.join(CI_REQ_DIR, "post_upgrades.txt")
+CIRCUIT_TRACER_PIN = os.path.join(CI_REQ_DIR, "circuit_tracer_pin.txt")
 
 os.makedirs(REQ_DIR, exist_ok=True)
 os.makedirs(CI_REQ_DIR, exist_ok=True)
@@ -31,7 +31,7 @@ def load_pyproject():
 
 
 def convert_circuit_tracer_pin():
-    """Read requirements/circuit_tracer_pin.txt and return a list of VCS requirement lines.
+    """Read requirements/ci/circuit_tracer_pin.txt and return a list of VCS requirement lines.
 
     The file may contain a single commit SHA; translate that to a git+ URL usable by pip. If the file already contains a
     full VCS spec, return it as-is.
@@ -172,7 +172,7 @@ def generate_pip_compile_inputs(pyproject, ci_output_dir=CI_REQ_DIR):
     write_file(POST_UPGRADES_PATH, post_lines)
 
     # write platform_dependent.txt with flexible constraints
-    platform_path = os.path.join(REQ_DIR, "platform_dependent.txt")
+    platform_path = os.path.join(CI_REQ_DIR, "platform_dependent.txt")
     write_file(platform_path, platform_dependent_lines)
 
     return in_path, POST_UPGRADES_PATH, platform_path, direct_packages
