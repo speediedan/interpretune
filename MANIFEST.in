@@ -1,18 +1,53 @@
-# Exclude commonly generated files
-recursive-exclude __pycache__  *.py[cod] *.orig lightning_logs
-# prune testing-only ipynb_src dir
-#prune src/it_examples/*/ipynb_src
-# exclude it_examples tests
-#exclude src/fts_examples/*/test_examples.py
-# Include the README and CHANGELOG
+# Includes
+# -----------------------------------------------------------------------
+# Include the README, CHANGELOG, CONTRIBUTING, SECURITY markdown files
 include *.md
 # Include the license file
 include LICENSE
-#include .actions/assistant.py
 # Include the citation info
-#include *.cff
-# Include marker file for PEP 561
-#include src/finetuning_scheduler/py.typed
+include *.cff
+# Include project metadata and changelog
+include pyproject.toml
+# include main source modules
+recursive-include src *
 # Include the Requirements
 recursive-include requirements *.txt
 include requirements.txt
+
+# Excludes
+# -----------------------------------------------------------------------
+# ci requirements
+recursive-exclude requirements/ci *
+
+# misc dev req files
+exclude requirements/ci_constraints.txt
+exclude requirements/post_upgrades.txt
+exclude requirements/collect_env_details.py
+exclude requirements/regen_reqfiles.py
+exclude requirements/circuit_tracer_pin.txt
+exclude requirements/platform_dependent.txt
+
+# legacy/duplicate packaging config files from the sdist
+# Note: setuptools writes a small setup.cfg and interpretune.egg-info dir into the sdist release tree that would require
+#       post-processing to remove. We'll do so in the future if we decide the marginal complexity is justified.
+exclude MANIFEST.in
+
+# NOTE: We are intentionally keeping Jupyter notebooks and their images in the
+# sdist for now (they live under `src/it_examples/notebooks/`). If/when we decide
+# to package examples separately we should
+# prune that directory here (e.g. `prune src/it_examples/notebooks`).
+# Exclude pre-commit cfg
+exclude .pre-commit-config.yaml
+# exclude non-src folders
+prune tests
+prune scripts
+prune docs
+prune dockers
+# exclude all dot-prefixed directories
+prune .*/
+# exclude dot-prefixed files in top-level directory
+exclude .*
+# exclude compiled Python files and other log patterns globally
+global-exclude __pycache__/ *.orig lightning_logs *.py[cod]
+# exclude it_examples tests
+exclude src/it_examples/test_examples.py

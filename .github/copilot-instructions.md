@@ -83,7 +83,7 @@ cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpret
 
 # With coverage
 python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v
-coverage report
+python -m coverage report
 
 # Test collection only (to check test discovery)
 pytest --collect-only
@@ -102,7 +102,7 @@ pytest --collect-only
 ### Source Code Structure
 ```
 src/interpretune/           # Main package
-├── __about__.py            # Version info (0.1.0dev)
+├── (version metadata forwarded from top-level `src/__about__.py`)
 ├── adapters/               # Integration adapters
 │   ├── transformer_lens.py
 │   ├── sae_lens.py

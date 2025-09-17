@@ -9,6 +9,7 @@ import os
 import sys
 from importlib.abc import MetaPathFinder
 from importlib.machinery import ModuleSpec
+from importlib.metadata import version, PackageNotFoundError
 
 # we ignore these for the entire file due to our import hook dependency
 # ruff: noqa: E402
@@ -17,7 +18,12 @@ from importlib.machinery import ModuleSpec
 # https://github.com/pytorch/pytorch/issues/83973
 os.environ["PYTORCH_NVML_BASED_CUDA_CHECK"] = "1"
 
-from interpretune.__about__ import __version__ as version  # noqa: E402
+try:
+    __version__ = version("interpretune")
+except PackageNotFoundError:
+    # interpretune is not installed
+    pass
+
 from interpretune.protocol import (
     ITModuleProtocol,
     ITDataModuleProtocol,

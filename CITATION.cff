@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use Interpretune in your work, please cite it as below 😊"
+title: "Interpretune"
+version: 0.1.0
+# date-released: XXXX-XX-XX
+authors:
+  - family-names: "Dale"
+    given-names: "Dan"
+    email: "danny.dale@gmail.com"
+# doi: ""
+url: "https://github.com/speediedan/interpretune"
+license: "Apache-2.0"
+abstract: |
+  Interpretune accelerates collaborative interpretability research and world-model tuning
+  by providing a flexible framework for running, analyzing, and fine-tuning LLM experiments.
+  Please cite this project when using it in published work.
+# identifiers:
+#   - description: "Interpretune (all versions)"
+#     type: doi
+#     value: 10.5281/zenodo.6463952
+#   - description: "Interpretune (v0.1.0)"
+#     type: doi
+#     value: 10.5281/zenodo.6463992

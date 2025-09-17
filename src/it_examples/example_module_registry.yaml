@@ -654,7 +654,7 @@ gemma2.rte_demo.circuit_tracer_w_neuronpedia:
                 creator_url: "https://github.com/speediedan/interpretune"
                 generator:
                   name: "Interpretune Circuit Tracer Example"
-                  version: "0.1.0"
+                  version: "0.1.0.dev0"
                   url: "https://github.com/speediedan/interpretune"
               # feature_details:
               #   neuronpedia_source_set: "gemmascope-transcoder-16k"

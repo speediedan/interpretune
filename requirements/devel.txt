@@ -9,3 +9,6 @@
 
 # install lightning adapter additional deps
 -r ./lightning.txt
+
+# install profiling additional deps
+-r ./profiling.txt
