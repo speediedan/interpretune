@@ -125,16 +125,8 @@ where = ["src"]
 namespaces = true
 
 [tool.setuptools.package-data]
-#"it_examples.config.experiments" = ["*.yaml"]
-#"it_examples.config.ft_schedules" = ["*.yaml"]
-#"it_examples.config.global" = ["*.yaml"]
-#"it_examples.config.global.defaults" = ["*.yaml"]
-#"it_examples.config.lightning.experiments" = ["*.yaml"]
-#"it_examples.config.lightning.ft_schedules" = ["*.yaml"]
-#"it_examples.config.lightning.shared" = ["*.yaml"]
 "it_examples" = ["*.yaml"]
 "interpretune" = ["*.yaml"]
-# "*" = ["*.yaml"]
 
 [tool.setuptools_scm]
 fallback_version = "0.1.0.dev0"

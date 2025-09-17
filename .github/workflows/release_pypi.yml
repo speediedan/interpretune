@@ -17,7 +17,42 @@ on:
         required: false
         type: boolean
   push:
-    branches: [main, "release/*"]
+    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    paths:
+      - "requirements.txt"
+      - "pyproject.toml"
+      - "MANIFEST.in"
+      - ".github/workflows/release_pypi.yml"
+      - "src/**"
+      - "requirements/**"
+      # Exclude documentation-only files from triggering
+      - "!docs/**"
+      - "!**/*.md"
+      - "!**/*.rst"
+      - "!mkdocs.yml"
+      - "!**/CHANGELOG.md"
+      - "!**/CODE_OF_CONDUCT.md"
+      - "!**/CONTRIBUTING.md"
+      - "!**/LICENSE*"
+  pull_request:
+    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    types: [opened, reopened, ready_for_review, synchronize]
+    paths:
+      - "requirements.txt"
+      - "pyproject.toml"
+      - "MANIFEST.in"
+      - ".github/workflows/release_pypi.yml"
+      - "src/**"
+      - "requirements/**"
+      # Exclude documentation-only files from triggering
+      - "!docs/**"
+      - "!**/*.md"
+      - "!**/*.rst"
+      - "!mkdocs.yml"
+      - "!**/CHANGELOG.md"
+      - "!**/CODE_OF_CONDUCT.md"
+      - "!**/CONTRIBUTING.md"
+      - "!**/LICENSE*"
   release:
     types: [published]
 
