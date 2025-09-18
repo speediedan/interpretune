@@ -17,7 +17,6 @@ unset torch_test_channel
 unset fts_from_source
 unset ct_from_source
 unset pip_install_flags
-unset ct_commit_pin
 unset regen_with_pip_compile
 unset apply_post_upgrades
 unset no_ci_reqs
@@ -32,7 +31,6 @@ Usage: $0
    [ --fts-from-source "path" ]
    [ --ct-from-source "path" ]
    [ --pip-install-flags "flags" ]
-   [ --ct-commit-pin ]
    [ --no-ci-reqs ]
    [ --regen-with-pip-compile ]
    [ --apply-post-upgrades ]
@@ -60,7 +58,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo-home:,target-env-name:,torch-dev-ver:,torch-test-channel,fts-from-source:,ct-from-source:,pip-install-flags:,ct-commit-pin,no-ci-reqs,regen-with-pip-compile,apply-post-upgrades,help -- "$@")
+args=$(getopt -o '' --long repo-home:,target-env-name:,torch-dev-ver:,torch-test-channel,fts-from-source:,ct-from-source:,pip-install-flags:,no-ci-reqs,regen-with-pip-compile,apply-post-upgrades,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -76,7 +74,6 @@ do
     --fts-from-source)   fts_from_source=$2 ; shift 2 ;;
     --ct-from-source)   ct_from_source=$2 ; shift 2 ;;
     --pip-install-flags)   pip_install_flags=$2 ; shift 2 ;;
-    --ct-commit-pin)   ct_commit_pin=1 ; shift  ;;
     --no-ci-reqs)      no_ci_reqs=1 ; shift ;;
     --regen-with-pip-compile) regen_with_pip_compile=1 ; shift ;;
     --apply-post-upgrades) apply_post_upgrades=1 ; shift ;;
@@ -156,23 +153,14 @@ it_install(){
     if [[ -n ${regen_with_pip_compile} ]]; then
         python -m pip install ${pip_install_flags} toml pip-tools
         echo "Regenerating CI pinned requirements (pip-compile mode)"
-        python ${repo_home}/requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci
+        python ${repo_home}/requirements/utils/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci
     fi
 
     # If CI pinned requirements don't exist and user did not disable ci-reqs, regenerate them
     if [[ -z ${no_ci_reqs} ]] && [[ ! -f ${repo_home}/requirements/ci/requirements.txt ]]; then
         python -m pip install ${pip_install_flags} toml pip-tools
         echo "CI pinned requirements not found; regenerating requirements.in and post_upgrades."
-        python ${repo_home}/requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci
-    fi
-
-    # Set IT_USE_CT_COMMIT_PIN if --ct_commit_pin is specified
-    if [[ -n ${ct_commit_pin} ]]; then
-        export IT_USE_CT_COMMIT_PIN="1"
-        echo "Using IT_USE_CT_COMMIT_PIN for circuit-tracer installation"
-    else
-        unset IT_USE_CT_COMMIT_PIN
-        echo "Using version-based circuit-tracer installation"
+        python ${repo_home}/requirements/utils/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci
     fi
 
     # Install project and extras; prefer CI pinned requirements if available
@@ -196,22 +184,17 @@ it_install(){
 
     if [[ -n ${ct_from_source} ]]; then
         echo "Installing circuit-tracer from source at ${ct_from_source}"
+        # Try uninstalling both import-style package name and hyphenated distribution name to avoid conflicts
+        python -m pip uninstall -y circuit_tracer || true
+        python -m pip uninstall -y circuit-tracer || true
         cd ${ct_from_source}
         python -m pip install ${pip_install_flags} -e .
-    # else
-    #     # Use the interpretune CLI tool to install circuit-tracer
-    #     if [[ -n ${IT_USE_CT_COMMIT_PIN} ]]; then
-    #         echo "Installing circuit-tracer via interpretune CLI tool"
-    #         python -m interpretune.tools.install_circuit_tracer --ct-commit-pin
-    #     fi
     fi
 
     pyright -p pyproject.toml
     pre-commit install
     git lfs install
-    python ${repo_home}/requirements/collect_env_details.py
-    # Print environment/package diagnostics using the CI helper script
-    python ${repo_home}/scripts/ci_print_env_versions.py ${repo_home}
+    python ${repo_home}/requirements/utils/collect_env_details.py --packages-only
 }
 
 d=`date +%Y%m%d%H%M%S`

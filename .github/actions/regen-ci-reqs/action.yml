@@ -34,7 +34,7 @@ runs:
     - name: Run regen (pip-compile)
       shell: bash
       run: |
-        python requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir=${{ inputs.ci_output_dir }}
+        python requirements/utils/regen_reqfiles.py --mode pip-compile --ci-output-dir=${{ inputs.ci_output_dir }}
 
     - id: check
       name: Check for diffs and write patch

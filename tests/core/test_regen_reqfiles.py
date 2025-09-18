@@ -5,7 +5,7 @@ import importlib.util
 def load_regen_module():
     spec = importlib.util.spec_from_file_location(
         "regen_reqfiles",
-        Path(__file__).resolve().parents[2] / "requirements" / "regen_reqfiles.py",
+        Path(__file__).resolve().parents[2] / "requirements" / "utils" / "regen_reqfiles.py",
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

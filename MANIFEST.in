@@ -18,10 +18,7 @@ include requirements.txt
 # -----------------------------------------------------------------------
 # ci requirements
 prune requirements/ci
-
-# misc dev req files
-exclude requirements/collect_env_details.py
-exclude requirements/regen_reqfiles.py
+prune requirements/utils
 
 # legacy/duplicate packaging config files from the sdist
 # Note: setuptools writes a small setup.cfg and interpretune.egg-info dir into the sdist release tree that would require

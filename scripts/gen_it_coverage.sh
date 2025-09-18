@@ -14,7 +14,6 @@ unset run_all_and_examples
 unset no_export_cov_xml
 unset pip_install_flags
 unset self_test_only
-unset ct_commit_pin
 unset apply_post_upgrades
 
 usage(){
@@ -31,7 +30,6 @@ Usage: $0
     [ --no-export-cov-xml ]
     [ --pip-install-flags "flags" ]
     [ --self-test-only ]
-    [ --ct-commit-pin ]
      [ --apply-post-upgrades ]
    [ --help ]
    Examples:
@@ -53,7 +51,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo-home:,target-env-name:,torch-dev-ver:,torchvision-dev-ver:,torch-test-channel,no-rebuild-base,fts-from-source:,ct-from-source:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,ct-commit-pin,apply-post-upgrades,help -- "$@")
+args=$(getopt -o '' --long repo-home:,target-env-name:,torch-dev-ver:,torchvision-dev-ver:,torch-test-channel,no-rebuild-base,fts-from-source:,ct-from-source:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,apply-post-upgrades,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -73,7 +71,6 @@ do
     --no-export-cov-xml)   no_export_cov_xml=1 ; shift ;;
     --pip-install-flags)   pip_install_flags=$2 ; shift 2 ;;
     --self-test-only)   self_test_only=1 ; shift ;;
-    --ct-commit-pin)   ct_commit_pin=1 ; shift ;;
     --apply-post-upgrades)   apply_post_upgrades=1 ; shift ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
@@ -128,11 +125,6 @@ env_rebuild(){
     ct_from_source_param=""
     if [[ -n "${ct_from_source}" ]]; then
         ct_from_source_param="--ct-from-source=${ct_from_source}"
-    fi
-
-    ct_commit_pin_param=""
-    if [[ -n "${ct_commit_pin}" ]]; then
-        ct_commit_pin_param="--ct-commit-pin"
     fi
 
     apply_post_upgrades_param=""

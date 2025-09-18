@@ -49,7 +49,6 @@ dependencies = [
 
 [project.entry-points."console_scripts"]
 interpretune = "interpretune.base.components.cli:bootstrap_cli"
-interpretune-install-circuit-tracer = "interpretune.tools.install_circuit_tracer:main"
 
 [project.optional-dependencies]
 

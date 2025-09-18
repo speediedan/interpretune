@@ -111,8 +111,7 @@ jobs:
 
       - bash: |
           . /tmp/venvs/it_dev/bin/activate
-          python requirements/collect_env_details.py
-          python scripts/ci_print_env_versions.py
+          python requirements/utils/collect_env_details.py
         displayName: 'Env details and package versions'
 
       - bash: |

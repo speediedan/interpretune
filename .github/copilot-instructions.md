@@ -54,7 +54,7 @@ For complex setups, use the provided build script:
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
 
 # Build with a circuit-tracer commit pin
-./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --ct-commit-pin
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
 ```
 
 ### Linting and Code Quality
@@ -180,8 +180,7 @@ When updating top-level requirements or periodically refreshing CI pins, use the
 Run these commands from your repo home after activating ensuring you've activated any relevant venv (e.g. `source ~/.venvs/${target_env_name}/bin/activate`):
 
 ```bash
-python requirements/regen_reqfiles.py && \
-python requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir=requirements/ci
+python requirements/utils/regen_reqfiles.py --mode pip-compile --ci-output-dir=requirements/ci
 ```
 
 Notes:
