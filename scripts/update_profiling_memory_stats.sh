@@ -10,18 +10,18 @@ unset working_dir
 usage(){
 >&2 cat << EOF
 Usage: $0
-   [ --repo_home input ]
-   [ --target_env_name input ]
-   [ --working_dir input ]
+  [ --repo-home input ]
+  [ --target-env-name input ]
+  [ --working-dir input ]
    [ --help ]
    Examples:
 	# update profiling memory stats for it_latest:
-	#   ./update_profiling_memory_stats.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --working_dir=/tmp
+	#   ./update_profiling_memory_stats.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --working-dir=/tmp
 EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo_home:,target_env_name:,working_dir:,help -- "$@")
+args=$(getopt -o '' --long repo-home:,target-env-name:,working-dir:,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -30,9 +30,9 @@ eval set -- ${args}
 while :
 do
   case $1 in
-    --repo_home)  repo_home=$2    ; shift 2  ;;
-    --target_env_name)  target_env_name=$2  ; shift 2 ;;
-    --working_dir)  working_dir=$2    ; shift 2  ;;
+    --repo-home)  repo_home=$2    ; shift 2  ;;
+    --target-env-name)  target_env_name=$2  ; shift 2 ;;
+    --working-dir)  working_dir=$2    ; shift 2  ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
     *) >&2 echo Unsupported option: $1

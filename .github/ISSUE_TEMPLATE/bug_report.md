@@ -27,12 +27,12 @@ but remember, bugs with code are fixed faster!
 
 <!--
 Please copy and paste the output from our environment collection script:
-https://raw.githubusercontent.com/speediedan/interpretune/main/requirements/collect_env_details.py
+https://raw.githubusercontent.com/speediedan/interpretune/main/requirements/utils/collect_env_details.py
 (For security purposes, please check the contents of the script before running it)
 
 You can get the script and run it with:
 ```bash
-wget https://raw.githubusercontent.com/speediedan/interpretune/main/requirements/collect_env_details.py
+wget https://raw.githubusercontent.com/speediedan/interpretune/main/requirements/utils/collect_env_details.py
 python collect_env_details.py
 ```
 

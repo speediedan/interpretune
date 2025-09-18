@@ -2,6 +2,7 @@ transformer_lens >= 2.15.4
 sae_lens >= 6.3.1
 torch >=2.7.1
 tabulate >= 0.9.0
+datasets >= 4.0.0
 jsonargparse[signatures] >= 4.35.0
 finetuning-scheduler >= 2.5.0
 peft
@@ -28,4 +29,4 @@ psycopg
 toml
 pip-tools
 huggingface_hub[hf_xet]
-git+https://github.com/speediedan/circuit-tracer.git@6c74ea291c410bb3391e572cd6a8d020be714922#egg=circuit-tracer
+git+https://github.com/speediedan/circuit-tracer.git@75fd21f666cbdaece57eca561b4342ad84746b40#egg=circuit-tracer

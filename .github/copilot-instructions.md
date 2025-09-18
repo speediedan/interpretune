@@ -35,11 +35,9 @@ Always install dependencies in order to avoid conflicts:
 
 ```bash
 # Basic development setup
-python -m pip install --upgrade pip setuptools wheel build
-python -m pip install -r requirements/ci/requirements.txt -r requirements/platform_dependent.txt
+python -m pip install --upgrade pip setuptools setuptools-scm wheel build
+python -m pip install -r requirements/ci/requirements.txt -r requirements/ci/platform_dependent.txt
 python -m pip install -e '.[test,examples,lightning]'
-# enabled until further notice (will be removed from instructions once no longer necessary)
-pip install --upgrade -r requirements/post_upgrades.txt
 
 # If circuit-tracer install fails, use the built-in tool after basic install:
 pip install interpretune[examples]
@@ -55,8 +53,8 @@ For complex setups, use the provided build script:
 # Standard development build (recommended for dev work)
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
 
-# Build without circuit-tracer commit pin
-./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --no_commit_pin
+# Build with a circuit-tracer commit pin
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
 ```
 
 ### Linting and Code Quality
@@ -128,7 +126,6 @@ src/it_examples/            # Example experiments
 - `.pre-commit-config.yaml` - Code quality hooks
 - `requirements/` - Pinned dependency files
   - `base.txt` - Core dependencies
-  - `ci_constraints.txt` - CI version pins
   - `test.txt`, `examples.txt`, etc. - Optional dependency groups
 
 ### Key Entry Points
@@ -183,8 +180,7 @@ When updating top-level requirements or periodically refreshing CI pins, use the
 Run these commands from your repo home after activating ensuring you've activated any relevant venv (e.g. `source ~/.venvs/${target_env_name}/bin/activate`):
 
 ```bash
-python requirements/regen_reqfiles.py && \
-python requirements/regen_reqfiles.py --mode pip-compile --ci-output-dir=requirements/ci
+python requirements/utils/regen_reqfiles.py --mode pip-compile --ci-output-dir=requirements/ci
 ```
 
 Notes:

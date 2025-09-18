@@ -5,7 +5,7 @@ import importlib.util
 def load_regen_module():
     spec = importlib.util.spec_from_file_location(
         "regen_reqfiles",
-        Path(__file__).resolve().parents[2] / "requirements" / "regen_reqfiles.py",
+        Path(__file__).resolve().parents[2] / "requirements" / "utils" / "regen_reqfiles.py",
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -43,8 +43,8 @@ def test_generate_pip_compile_inputs_writes_files(tmp_path):
     # Redirect regen module file outputs to tmp paths so tests don't modify repo files
     regen.REQ_DIR = str(tmp_path)
     regen.CI_REQ_DIR = str(ci_out)
-    regen.POST_UPGRADES_PATH = str(tmp_path / "post_upgrades.txt")
-    regen.CIRCUIT_TRACER_PIN = str(tmp_path / "circuit_tracer_pin.txt")
+    regen.POST_UPGRADES_PATH = str(ci_out / "post_upgrades.txt")
+    regen.CIRCUIT_TRACER_PIN = str(ci_out / "circuit_tracer_pin.txt")
 
     req_in_path, post_path, platform_path, direct_packages = regen.generate_pip_compile_inputs(pyproject, str(ci_out))
 
@@ -118,9 +118,11 @@ numpy==1.26.4
     # Direct packages list (only the packages we explicitly specify)
     direct_packages = ["torch", "transformers", "peft"]
     # Redirect regen module file outputs to tmp paths so tests don't modify repo files
+    ci_out = tmp_path / "ci"
+    ci_out.mkdir()
     regen.REQ_DIR = str(tmp_path)
-    regen.POST_UPGRADES_PATH = str(tmp_path / "post_upgrades.txt")
-    regen.CIRCUIT_TRACER_PIN = str(tmp_path / "circuit_tracer_pin.txt")
+    regen.POST_UPGRADES_PATH = str(ci_out / "post_upgrades.txt")
+    regen.CIRCUIT_TRACER_PIN = str(ci_out / "circuit_tracer_pin.txt")
 
     # Run post-processing using the direct_packages defined above
     regen.post_process_pinned_requirements(
@@ -171,8 +173,8 @@ def test_post_upgrades_comparators_and_malformed(tmp_path):
     # Redirect regen module file outputs to tmp paths so tests don't modify repo files
     regen.REQ_DIR = str(tmp_path)
     regen.CI_REQ_DIR = str(ci_out)
-    regen.POST_UPGRADES_PATH = str(tmp_path / "post_upgrades.txt")
-    regen.CIRCUIT_TRACER_PIN = str(tmp_path / "circuit_tracer_pin.txt")
+    regen.POST_UPGRADES_PATH = str(ci_out / "post_upgrades.txt")
+    regen.CIRCUIT_TRACER_PIN = str(ci_out / "circuit_tracer_pin.txt")
 
     req_in_path, post_path, platform_path, direct_packages = regen.generate_pip_compile_inputs(pyproject, str(ci_out))
 

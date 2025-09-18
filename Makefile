@@ -3,6 +3,7 @@
 .PHONY: help lint test build sdist wheel clean
 
 export SPHINX_MOCK_REQUIREMENTS=1
+# TODO: remove this once CT is available via PyPI or our own package index
 export IT_USE_CT_COMMIT_PIN="1"
 
 help:
@@ -31,8 +32,6 @@ lint:
 
 test: clean
 	pip install -r requirements/devel.txt
-	# TODO: remove this once no longer necessary
-	pip install --upgrade -r requirements/post_upgrades.txt
 	# TODO: remove this once no longer necessary
 	@echo "Using IT_USE_CT_COMMIT_PIN for circuit-tracer installation"
 	interpretune-install-circuit-tracer

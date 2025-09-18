@@ -4,7 +4,7 @@
 # Usage examples:
 #   ./manage_standalone_processes.sh /path/to/script.sh --arg1 value1 --arg2 value2
 #   ./manage_standalone_processes.sh python -m pytest tests/some_test.py
-#   ./manage_standalone_processes.sh --use_nohup /path/to/script.sh --arg1 value1
+#   ./manage_standalone_processes.sh --use-nohup /path/to/script.sh --arg1 value1
 set -eo pipefail
 
 # Default configuration
@@ -13,7 +13,7 @@ USE_NOHUP=false
 # Process flags
 while [[ "$1" == --* ]]; do
   case "$1" in
-    --use_nohup)
+    --use-nohup)
       USE_NOHUP=true
       shift
       ;;

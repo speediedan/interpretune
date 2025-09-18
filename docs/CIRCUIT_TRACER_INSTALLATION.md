@@ -51,7 +51,7 @@ This installs circuit-tracer from a specific tested commit for maximum compatibi
 ### Using Version-based Installation
 
 ```bash
-interpretune-install-circuit-tracer --no-commit-pin
+interpretune-install-circuit-tracer
 ```
 
 This attempts to install circuit-tracer from PyPI (currently not available, will fail).
@@ -78,8 +78,8 @@ For development environments, the build scripts handle circuit-tracer installati
 # Standard development build (uses commit pin)
 ./scripts/build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest
 
-# Development build without commit pin
-./scripts/build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --no_commit_pin
+# Development build without CT commit pin
+./scripts/build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest
 
 # Development build with local circuit-tracer source
 ./scripts/build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --ct_from_source=${HOME}/repos/circuit-tracer
