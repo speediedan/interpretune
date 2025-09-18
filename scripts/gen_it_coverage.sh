@@ -132,7 +132,7 @@ env_rebuild(){
 
     ct_commit_pin_param=""
     if [[ -n "${ct_commit_pin}" ]]; then
-        ct_commit_pin_param="--no-commit-pin"
+        ct_commit_pin_param="--ct-commit-pin"
     fi
 
     apply_post_upgrades_param=""

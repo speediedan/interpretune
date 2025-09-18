@@ -25,7 +25,7 @@ def install_circuit_tracer(use_commit_pin: bool = True, verbose: bool = False):
                     line = line.strip()
                     if line and not line.startswith("#"):
                         return line
-        return "8941776fdbe6f37b4c87e5bb2c14b8b746be0f9b"  # fallback
+        return "75fd21f666cbdaece57eca561b4342ad84746b40"  # fallback
 
     # Determine installation mode
     if use_commit_pin is None:
@@ -82,7 +82,7 @@ def main():
 
     args = parser.parse_args()
 
-    # If --ct-commit-pin is provided, we disable commit pin usage
+    # If --ct-commit-pin is provided, we enable commit pin usage
     use_commit_pin = bool(getattr(args, "ct_commit_pin", False))
 
     # Set environment variable for consistency

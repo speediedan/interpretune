@@ -198,12 +198,12 @@ it_install(){
         echo "Installing circuit-tracer from source at ${ct_from_source}"
         cd ${ct_from_source}
         python -m pip install ${pip_install_flags} -e .
-    else
-        # Use the interpretune CLI tool to install circuit-tracer
-        if [[ -n ${IT_USE_CT_COMMIT_PIN} ]]; then
-            echo "Installing circuit-tracer via interpretune CLI tool"
-            python -m interpretune.tools.install_circuit_tracer --ct-commit-pin
-        fi
+    # else
+    #     # Use the interpretune CLI tool to install circuit-tracer
+    #     if [[ -n ${IT_USE_CT_COMMIT_PIN} ]]; then
+    #         echo "Installing circuit-tracer via interpretune CLI tool"
+    #         python -m interpretune.tools.install_circuit_tracer --ct-commit-pin
+    #     fi
     fi
 
     pyright -p pyproject.toml

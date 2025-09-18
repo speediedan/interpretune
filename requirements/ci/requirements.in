@@ -29,4 +29,4 @@ psycopg
 toml
 pip-tools
 huggingface_hub[hf_xet]
-git+https://github.com/speediedan/circuit-tracer.git@8941776fdbe6f37b4c87e5bb2c14b8b746be0f9b#egg=circuit-tracer
+git+https://github.com/speediedan/circuit-tracer.git@75fd21f666cbdaece57eca561b4342ad84746b40#egg=circuit-tracer
