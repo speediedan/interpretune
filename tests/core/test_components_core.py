@@ -70,8 +70,18 @@ class TestClassCoreModule:
             connect_output=True,
         )
         EXPECTED_PROP_WARNS = ("Could not find a device reference", "Output received for hook")
-        core_cust_it_m.CORE_TO_FRAMEWORK_ATTRS_MAP["_current_epoch"] = ("foo.attr", 42, "FooAttr not set yet.")
-        assert core_cust_it_m.current_epoch == 42  # validate unset c2f property mapping handling
+        # Temporarily override the core->framework mapping for `_current_epoch` to validate fallback handling.
+        c2f_map = type(core_cust_it_m)._it_cls_metadata.core_to_framework_attrs_map
+        _old_val = c2f_map.get("_current_epoch", None)
+        try:
+            c2f_map["_current_epoch"] = ("foo.attr", 42, "FooAttr not set yet.")
+            assert core_cust_it_m.current_epoch == 42  # validate unset c2f property mapping handling
+        finally:
+            # Restore prior mapping to avoid leaking test state across the suite.
+            if _old_val is None:
+                del c2f_map["_current_epoch"]
+            else:
+                c2f_map["_current_epoch"] = _old_val
         core_cust_it_m._it_state._device = None
         delattr(core_cust_it_m.model, "device")
         assert core_cust_it_m.device is None  # validate device unset handling generates warning

@@ -20,7 +20,14 @@ from interpretune.protocol import Adapter
 from tests.base_defaults import BaseAugTest, BaseCfg, pytest_factory
 from tests.configuration import IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
-from tests.parity_acceptance.cfg_aliases import cuda, test_bs1_mem, test_bs1_mem_nosavedt, bs1_warm_mem, w_l_tl
+from tests.parity_acceptance.cfg_aliases import (
+    cuda,
+    req_det_cuda,
+    test_bs1_mem,
+    test_bs1_mem_nosavedt,
+    bs1_warm_mem,
+    w_l_tl,
+)
 from tests.parity_acceptance.expected import tl_parity_results, profiling_results
 from tests.results import collect_results
 from tests.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS
@@ -50,12 +57,12 @@ PARITY_TL_CONFIGS = (
         ),
         marks="lightning",
     ),
-    TLParityTest(alias="test_cuda_32", cfg=TLParityCfg(phase="test", **cuda), marks="cuda"),
-    TLParityTest(alias="test_cuda_32_l", cfg=TLParityCfg(phase="test", **cuda, **w_l_tl), marks="cuda_l"),
+    TLParityTest(alias="test_cuda_32", cfg=TLParityCfg(phase="test", **req_det_cuda), marks="cuda"),
+    TLParityTest(alias="test_cuda_32_l", cfg=TLParityCfg(phase="test", **req_det_cuda, **w_l_tl), marks="cuda_l"),
     TLParityTest(alias="train_cpu_32", cfg=TLParityCfg()),
     TLParityTest(alias="train_cpu_32_l", cfg=TLParityCfg(**w_l_tl), marks="lightning"),
-    TLParityTest(alias="train_cuda_32", cfg=TLParityCfg(**cuda), marks="cuda"),
-    TLParityTest(alias="train_cuda_32_l", cfg=TLParityCfg(**cuda, **w_l_tl), marks="cuda_l"),
+    TLParityTest(alias="train_cuda_32", cfg=TLParityCfg(**req_det_cuda), marks="cuda"),
+    TLParityTest(alias="train_cuda_32_l", cfg=TLParityCfg(**req_det_cuda, **w_l_tl), marks="cuda_l"),
 )
 
 EXPECTED_PARITY_TL = {cfg.alias: cfg.expected for cfg in PARITY_TL_CONFIGS}
@@ -63,7 +70,9 @@ EXPECTED_PARITY_TL = {cfg.alias: cfg.expected for cfg in PARITY_TL_CONFIGS}
 
 @pytest.mark.usefixtures("make_deterministic")
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(PARITY_TL_CONFIGS, unpack=False))
-def test_parity_tl(recwarn, tmp_path, test_alias, test_cfg):
+def test_parity_tl(recwarn, tmp_path, request, test_alias, test_cfg):
+    if test_cfg.req_deterministic:
+        request.getfixturevalue("make_deterministic")
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PARITY_TL[test_alias] or {}
     expected_warnings = TL_LIGHTNING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else TL_CTX_WARNS

@@ -12,6 +12,12 @@ from interpretune.config import (
     GenerativeClassificationConfig,
 )
 from interpretune.utils import rank_zero_info
+from interpretune.utils.repr_helpers import (
+    summarize_obj,
+    state_to_dict,
+    state_to_summary,
+    state_repr,
+)
 from interpretune.protocol import LRSchedulerConfig, Optimizable, StrOrPath
 
 if TYPE_CHECKING:
@@ -121,3 +127,62 @@ class ITState:
     # TODO: should we leave initialization of the below to the relevant property dispatch functions?
     _current_epoch: int = 0
     _global_step: int = 0
+
+    # Object summarization mapping used by shared repr helpers.
+    # a simple mapping of attribute_name -> label is used
+    _obj_summ_map = {
+        "_device": "device",
+        "_datamodule": "datamodule",
+        "_it_optimizers": "optimizers",
+        "_it_lr_scheduler_configs": "schedulers",
+        "_current_epoch": "epoch",
+        "_global_step": "step",
+        "_session_complete": "session_complete",
+        "_log_dir": "log_dir",
+        "_extensions": "extensions",
+        "_init_hparams": "init_cfg",
+    }
+
+    def to_dict(self) -> dict:
+        """Return a JSON-serializable summary dict of the ITState."""
+        return state_to_dict(
+            self,
+            custom_key_transforms={
+                "_init_hparams": self._init_hparams_transform,
+                "_extensions": self._extensions_transform,
+            },
+        )
+
+    @staticmethod
+    def _init_hparams_transform(v: dict[str, Any]) -> dict:
+        """Custom transform for summarizing the `_init_hparams` mapping.
+
+        - empty -> {}
+        - nested dict -> "{...}" (non-empty) or {} (empty)
+        - string -> short repr
+        - otherwise -> summarize_obj
+        """
+        if not v:
+            return {}
+        init_summary: dict[str, Any] = {}
+        for ik, iv in v.items():
+            if isinstance(iv, dict):
+                init_summary[ik] = "{...}" if len(iv) > 0 else {}
+            else:
+                init_summary[ik] = summarize_obj(iv)
+        return init_summary
+
+    @staticmethod
+    def _extensions_transform(v: Any) -> Any:
+        """Transform for summarizing the `_extensions` mapping."""
+        try:
+            return {ek: summarize_obj(ev) for ek, ev in (v or {}).items()}
+        except Exception:
+            return summarize_obj(v)
+
+    def __repr__(self) -> str:
+        try:
+            inner = state_to_summary(self.to_dict(), self)
+            return state_repr(inner, self.__class__.__name__)
+        except Exception:
+            return state_repr("", self.__class__.__name__)

@@ -19,7 +19,7 @@ from interpretune.protocol import Adapter
 from tests.base_defaults import BaseAugTest, BaseCfg, pytest_factory
 from tests.configuration import IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
-from tests.parity_acceptance.cfg_aliases import cuda, w_l_sl, cust_no_sae_grad
+from tests.parity_acceptance.cfg_aliases import req_det_cuda, w_l_sl, cust_no_sae_grad
 from tests.parity_acceptance.expected import sl_parity_results
 from tests.results import collect_results
 from tests.warns import unexpected_warns, SL_CTX_WARNS, SL_LIGHTNING_CTX_WARNS
@@ -46,15 +46,17 @@ PARITY_SL_CONFIGS = (
         alias="test_cpu_32_l", cfg=SLParityCfg(phase="test", model_src_key="gpt2", **w_l_sl), marks="lightning"
     ),
     SLParityTest(alias="train_cpu_32_l", cfg=SLParityCfg(**cust_no_sae_grad, **w_l_sl), marks="lightning"),
-    SLParityTest(alias="train_cuda_32", cfg=SLParityCfg(**cuda), marks="cuda"),
+    SLParityTest(alias="train_cuda_32", cfg=SLParityCfg(**req_det_cuda), marks="cuda"),
 )
 
 EXPECTED_PARITY_SL = {cfg.alias: cfg.expected for cfg in PARITY_SL_CONFIGS}
 
 
-@pytest.mark.usefixtures("make_deterministic")
+# @pytest.mark.usefixtures("make_deterministic")
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(PARITY_SL_CONFIGS, unpack=False))
-def test_parity_sl(recwarn, tmp_path, test_alias, test_cfg):
+def test_parity_sl(recwarn, tmp_path, request, test_alias, test_cfg):
+    if test_cfg.req_deterministic:
+        request.getfixturevalue("make_deterministic")
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PARITY_SL[test_alias] or {}
     expected_warnings = SL_LIGHTNING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else SL_CTX_WARNS

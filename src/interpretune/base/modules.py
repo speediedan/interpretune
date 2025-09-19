@@ -55,3 +55,13 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         if getattr(self, "memprofiler", None):
             self.memprofiler.dump_memory_stats()
         self._it_state._session_complete = True
+
+    def __repr__(self) -> str:
+        try:
+            state_summary = getattr(self, "_it_state", None)
+            state_str = repr(state_summary) if state_summary is not None else "ITState(<no state>)"
+            model_name = getattr(self.model, "__class__", None)
+            model_repr = model_name.__name__ if model_name is not None else str(self.model)
+            return f"{self.__class__.__name__}({state_str}, model={model_repr})"
+        except Exception:
+            return super().__repr__()

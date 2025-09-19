@@ -94,6 +94,7 @@ class BaseCfg:
     force_prepare_data: bool = False  # TODO: make this settable via an env variable as well
     max_steps: Optional[int] = None
     save_checkpoints: bool = False
+    req_deterministic: bool = False
 
     def __post_init__(self):
         self.adapter_ctx = ADAPTER_REGISTRY.canonicalize_composition(self.adapter_ctx)

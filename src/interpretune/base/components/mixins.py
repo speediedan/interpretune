@@ -148,7 +148,10 @@ class GenerativeStepMixin:
     # Often used for n-shot classification, those contexts are only a subset of generative classification use cases
 
     _gen_sig_keys: list | None = None
-    GEN_PREPARES_INPUTS_SIGS: tuple = ("_prepare_model_inputs",)
+    # class-level metadata container to reduce attribute clutter
+    from interpretune.base.metadata import ITClassMetadata  # local import to avoid top-level cycle
+
+    _it_cls_metadata = ITClassMetadata(gen_prepares_inputs_sigs=("_prepare_model_inputs",))
 
     @property
     def generation_cfg(self) -> BaseGenerationConfig | None:
@@ -183,7 +186,8 @@ class GenerativeStepMixin:
 
     def _generate_prepares_inputs(self) -> bool:
         # match sentinal methods indicating that a given model's generate function prepares inputs
-        return any(hasattr(self.model, prep_method) for prep_method in self.GEN_PREPARES_INPUTS_SIGS)  # type: ignore[attr-defined]  # mixin provides model
+        sigs = type(self)._it_cls_metadata.gen_prepares_inputs_sigs
+        return any(hasattr(self.model, prep_method) for prep_method in sigs)  # type: ignore[attr-defined]  # mixin provides model
 
     def it_generate(self, batch: BatchEncoding | torch.Tensor, **kwargs) -> Any:
         try:

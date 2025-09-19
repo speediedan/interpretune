@@ -14,7 +14,6 @@ from __future__ import annotations
 # initially based on: https://bit.ly/3GDHDcI
 import os
 import threading
-import random
 from collections import defaultdict, namedtuple
 from typing import Dict, Tuple, Type, Sequence
 from functools import partial
@@ -44,7 +43,7 @@ from tests.parity_acceptance.test_it_cli import TEST_CONFIGS_CLI_PARITY
 from tests.base_defaults import BaseCfg
 from tests.parity_acceptance.test_it_l import CoreCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg
-from tests.utils import kwargs_from_cfg_obj
+from tests.utils import kwargs_from_cfg_obj, deterministic_context
 
 from tests.core.cfg_aliases import (
     TEST_CONFIGS_CLI_UNIT,
@@ -104,16 +103,14 @@ class RunPhase(IntEnum):
     runanalysis: int = auto()
 
 
-# we make the fixture phases an IntEnum to enable explicit definition of phase order
+# Namedtuple to encapsulate both FixtPhase and RunPhase (used by fixture variants)
+FixtRunPhase = namedtuple("FixtRunPhase", ["fixt_phase", "run_phase"])
+
 # we then map the enum values to their string representations for use in generated fixture names
 PHASE_STR = {v: v.name for v in FixtPhase.__members__.values()}
 RUN_PHASE_STR = {v: v.name for v in RunPhase.__members__.values()}
 
-# Namedtuple to encapsulate both FixtPhase and RunPhase
-FixtRunPhase = namedtuple("FixtRunPhase", ["fixt_phase", "run_phase"])
 
-
-# Hierarchical fixture dataclasses
 @dataclass(kw_only=True)
 class ITSessionFixture:
     """Base dataclass for IT session fixtures."""
@@ -417,6 +414,10 @@ def gen_fixture(fixt_type, fixt_key, phase):
     globals()[name].__qualname__ = name
 
 
+# set CUBLAS_WORKSPACE_CONFIG before generating fixtures to increase the number of tests
+# that can be configured to require deterministic behavior (determinism flexibility at some cost of test performance)
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
 for fixt_key, fixt_cfg in FIXTURE_CFGS.items():
     for fixt_type, phases in fixt_cfg.variants.items():
         for phase in phases:
@@ -596,32 +597,18 @@ def gpt2_ft_schedules(
 #################################
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def make_deterministic(warn_only=False, fill_uninitialized_memory=True):
-    # https://pytorch.org/docs/2.3/notes/randomness.html#reproducibility
-    # https://docs.nvidia.com/cuda/cublas/index.html#results-reproducibility
-    # Store the original state
-    original_cublas_config = os.environ.get("CUBLAS_WORKSPACE_CONFIG")
-    original_deterministic = torch.are_deterministic_algorithms_enabled()
-    original_cudnn_benchmark = torch.backends.cudnn.benchmark
+    # Use the shared deterministic_context to avoid duplication.
+    with deterministic_context(warn_only=warn_only, fill_uninitialized_memory=fill_uninitialized_memory):
+        yield
 
-    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-    torch.use_deterministic_algorithms(True, warn_only=warn_only)
-    torch._C._set_deterministic_fill_uninitialized_memory(fill_uninitialized_memory)
-    torch.backends.cudnn.benchmark = False
-    random.seed(1)
-    torch.manual_seed(1)
-    torch.cuda.manual_seed(1)
 
-    yield
-    # Restore original state instead of completely removing
-    if original_cublas_config is not None:
-        os.environ["CUBLAS_WORKSPACE_CONFIG"] = original_cublas_config
-    else:
-        os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
-
-    torch.use_deterministic_algorithms(original_deterministic)
-    torch.backends.cudnn.benchmark = original_cudnn_benchmark
+# Session-scoped version of make_deterministic
+@pytest.fixture(scope="session")
+def make_deterministic_session():
+    with deterministic_context(warn_only=False, fill_uninitialized_memory=True):
+        yield
 
 
 @pytest.fixture(scope="session")

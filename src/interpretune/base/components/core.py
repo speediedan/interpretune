@@ -21,6 +21,7 @@ from interpretune.utils import (
     collect_env_info,
     dummy_method_warn_fingerprint,
 )
+from interpretune.base.metadata import ITClassMetadata
 from interpretune.protocol import (
     Optimizable,
     LRSchedulerConfig,
@@ -135,7 +136,11 @@ class PropertyDispatcher:
     it_cfg: "ITConfig"
     model: torch.nn.Module
 
-    CORE_TO_FRAMEWORK_ATTRS_MAP = {}
+    # Consolidated class-level metadata to reduce attribute clutter
+    _it_cls_metadata = ITClassMetadata(
+        core_to_framework_attrs_map={},
+        property_composition={},
+    )
 
     # Below is an experimental feature that enables us to conditionally defer property definitions to other
     # adapter definitions. The intention is to conditionally enhance functionality (e.g., add a setter method
@@ -144,14 +149,14 @@ class PropertyDispatcher:
     # functionality can be disabled on a property basis by setting `enabled=False` at the cost of potentially reduced
     # compatibility because IT will not dispatch to the adapter's implementation of the IT-enhanced property.
 
-    PROPERTY_COMPOSITION = {}
     """Property dispatcher."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._cached_mro = inspect.getmro(type(self))
+        prop_comp = type(self)._it_cls_metadata.property_composition
         self._enabled_overrides = [
-            p for p, cfg in self.PROPERTY_COMPOSITION.items() if cfg["enabled"] and cfg["target"] in self._cached_mro
+            p for p, cfg in prop_comp.items() if cfg["enabled"] and cfg["target"] in self._cached_mro
         ]
 
     def _maybe_dispatch(self, non_dispatch_val: Any | None = None) -> Any | None:
@@ -171,12 +176,15 @@ class PropertyDispatcher:
             return non_dispatch_val
         overridden_method = f_back.f_code.co_name
         if overridden_method in self._enabled_overrides:
-            return self.PROPERTY_COMPOSITION[overridden_method]["dispatch"].__get__(self._it_state)
+            return (
+                type(self)._it_cls_metadata.property_composition[overridden_method]["dispatch"].__get__(self._it_state)
+            )
         else:
             return non_dispatch_val
 
     def _core_or_framework(self, c2f_map_key: str):
-        if not (c2f := self.CORE_TO_FRAMEWORK_ATTRS_MAP.get(c2f_map_key, None)):  # short-circuit w/o mapping dispatch
+        c2f_map = type(self)._it_cls_metadata.core_to_framework_attrs_map
+        if not (c2f := c2f_map.get(c2f_map_key, None)):  # short-circuit w/o mapping dispatch
             return getattr(self._it_state, c2f_map_key, None)
         try:
             attr_val = getattr(self._it_state, c2f_map_key, None) or reduce(getattr, c2f[0].split("."), self)

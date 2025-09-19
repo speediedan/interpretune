@@ -27,6 +27,7 @@ class CLICfg:
     use_harness: bool = False
     bootstrap_args: Optional[List] = None
     extra_args: Optional[ArgsType] = None
+    req_deterministic: bool = False
 
     def __post_init__(self):
         self.adapter_ctx = ADAPTER_REGISTRY.canonicalize_composition(self.adapter_ctx)
@@ -46,7 +47,13 @@ TEST_CONFIGS_CLI_PARITY = (
     ),
     BaseAugTest(
         alias=CLI_TESTS.core_tl_test_noharness.value,
-        cfg=CLICfg(compose_cfg=True, run="test", debug_mode=True, adapter_ctx=(Adapter.core, Adapter.transformer_lens)),
+        cfg=CLICfg(
+            compose_cfg=True,
+            run="test",
+            debug_mode=True,
+            adapter_ctx=(Adapter.core, Adapter.transformer_lens),
+            req_deterministic=True,
+        ),
     ),
     BaseAugTest(
         alias=CLI_TESTS.core_tl_norun.value,
@@ -57,7 +64,10 @@ TEST_CONFIGS_CLI_PARITY = (
     BaseAugTest(
         alias=CLI_TESTS.l_tl_test.value,
         cfg=CLICfg(
-            cli_adapter=Adapter.lightning, run="test", adapter_ctx=(Adapter.lightning, Adapter.transformer_lens)
+            cli_adapter=Adapter.lightning,
+            run="test",
+            adapter_ctx=(Adapter.lightning, Adapter.transformer_lens),
+            req_deterministic=True,
         ),
         marks="lightning",
     ),
@@ -86,6 +96,7 @@ TEST_CONFIGS_CLI_PARITY = (
             debug_mode=True,
             cli_adapter=Adapter.lightning,
             adapter_ctx=(Adapter.lightning,),
+            req_deterministic=True,
         ),
     ),
 )
@@ -123,10 +134,12 @@ def gen_cli_args(
     return cli_main, cli_args, cli_main_kwargs
 
 
-@pytest.mark.usefixtures("make_deterministic")
+# @pytest.mark.usefixtures("make_deterministic")
 @RunIf(min_cuda_gpus=1, skip_windows=True)
 @pytest.mark.parametrize("test_alias, cli_cfg", pytest_factory(TEST_CONFIGS_CLI_PARITY, unpack=False))
-def test_cli_configs(recwarn, clean_cli_env, cli_test_configs, test_alias, cli_cfg):
+def test_cli_configs(recwarn, clean_cli_env, cli_test_configs, request, test_alias, cli_cfg):
+    if cli_cfg.req_deterministic:
+        request.getfixturevalue("make_deterministic")
     expected_warnings = CLI_EXPECTED_WARNS[(cli_cfg.cli_adapter, *cli_cfg.adapter_ctx)]
     cfg_files = cli_test_configs[(CLI_EXP, test_alias, cli_cfg.debug_mode)]
     cli_main, cli_args, main_kwargs = gen_cli_args(
