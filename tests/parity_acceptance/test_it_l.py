@@ -23,6 +23,12 @@ from tests.orchestration import parity_test
 from tests.parity_acceptance.expected import l_parity_results, profiling_results
 from tests.parity_acceptance.cfg_aliases import (
     w_lit,
+    req_det,
+    req_det_l,
+    req_det_cuda,
+    req_det_cuda_l,
+    req_det_cuda_bf16,
+    req_det_cuda_bf16_l,
     cuda,
     cuda_bf16,
     bf16,
@@ -49,12 +55,12 @@ class ParityTest(BaseAugTest):
 
 
 PARITY_BASIC_CONFIGS = (
-    ParityTest(alias="train_cpu_32", cfg=CoreCfg()),
-    ParityTest(alias="train_cpu_32_l", cfg=CoreCfg(**w_lit), marks="lightning"),
-    ParityTest(alias="train_cuda_32", cfg=CoreCfg(**cuda), marks="cuda"),
-    ParityTest(alias="train_cuda_32_l", cfg=CoreCfg(**cuda, **w_lit), marks="cuda_l"),
-    ParityTest(alias="train_cuda_bf16", cfg=CoreCfg(**cuda_bf16), marks="bf16_cuda"),
-    ParityTest(alias="train_cuda_bf16_l", cfg=CoreCfg(**cuda_bf16_l), marks="bf16_cuda_l"),
+    ParityTest(alias="train_cpu_32", cfg=CoreCfg(**req_det)),
+    ParityTest(alias="train_cpu_32_l", cfg=CoreCfg(**req_det_l), marks="lightning"),
+    ParityTest(alias="train_cuda_32", cfg=CoreCfg(**req_det_cuda), marks="cuda"),
+    ParityTest(alias="train_cuda_32_l", cfg=CoreCfg(**req_det_cuda_l), marks="cuda_l"),
+    ParityTest(alias="train_cuda_bf16", cfg=CoreCfg(**req_det_cuda_bf16), marks="bf16_cuda"),
+    ParityTest(alias="train_cuda_bf16_l", cfg=CoreCfg(**req_det_cuda_bf16_l), marks="bf16_cuda_l"),
     ParityTest(alias="test_cpu_32", cfg=CoreCfg(phase="test")),
     ParityTest(alias="test_cpu_32_l", cfg=CoreCfg(phase="test", **w_lit), marks="lightning"),
     ParityTest(alias="predict_cpu_32_l", cfg=CoreCfg(phase="predict", **w_lit), marks="lightning"),
@@ -66,9 +72,10 @@ PARITY_BASIC_CONFIGS = (
 EXPECTED_PARITY_BASIC = {cfg.alias: cfg.expected for cfg in PARITY_BASIC_CONFIGS}
 
 
-@pytest.mark.usefixtures("make_deterministic")
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(PARITY_BASIC_CONFIGS, unpack=False))
-def test_parity_l(recwarn, tmp_path, test_alias, test_cfg):
+def test_parity_l(recwarn, tmp_path, request, test_alias, test_cfg):
+    if test_cfg.req_deterministic:
+        request.getfixturevalue("make_deterministic")
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PARITY_BASIC[test_alias] or {}
     expected_warnings = LIGHTING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else CORE_CTX_WARNS

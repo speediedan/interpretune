@@ -32,6 +32,18 @@ bf16 = {"precision": "bf16"}
 cuda_bf16 = {**cuda, **bf16}
 cuda_bf16_l = {**cuda, **bf16, **w_lit}
 
+
+################################################################################
+# Determinism cfg aliases
+################################################################################
+req_det = {"req_deterministic": True}
+req_det_l = {"req_deterministic": True, **w_lit}
+req_det_cuda = {"req_deterministic": True, **cuda}
+req_det_cuda_l = {"req_deterministic": True, **cuda, **w_lit}
+req_det_cuda_bf16 = {"req_deterministic": True, **cuda, **bf16}
+req_det_cuda_bf16_l = {"req_deterministic": True, **cuda, **bf16, **w_lit}
+
+
 ################################################################################
 # Extension cfg aliases
 ################################################################################

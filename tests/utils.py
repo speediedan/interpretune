@@ -1,4 +1,5 @@
-from typing import Tuple, List, Dict, Optional, Union, Type, Any, Callable, NamedTuple
+from typing import Tuple, List, Iterator, Dict, Optional, Union, Type, Any, Callable, NamedTuple
+import random
 import importlib
 from collections import defaultdict
 from contextlib import contextmanager
@@ -310,3 +311,46 @@ def sync_dev_graph_metadata():
 
     finally:
         conn.close()
+
+
+@contextmanager
+def deterministic_context(warn_only: bool = False, fill_uninitialized_memory: bool = True) -> Iterator[None]:
+    """Context manager that enables deterministic PyTorch algorithms and restores state on exit.
+
+    Shared helper used by test fixtures so we don't duplicate setup/teardown logic.
+    """
+    original_cublas_config = os.environ.get("CUBLAS_WORKSPACE_CONFIG")
+    original_deterministic = torch.are_deterministic_algorithms_enabled()
+    original_cudnn_benchmark = torch.backends.cudnn.benchmark
+
+    # Apply deterministic settings
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    torch.use_deterministic_algorithms(True, warn_only=warn_only)
+    try:
+        torch._C._set_deterministic_fill_uninitialized_memory(fill_uninitialized_memory)
+    except Exception:
+        # older torch builds may not provide this symbol; ignore silently
+        pass
+    torch.backends.cudnn.benchmark = False
+    random.seed(1)
+    torch.manual_seed(1)
+    try:
+        torch.cuda.manual_seed(1)
+    except Exception:
+        pass
+
+    try:
+        yield
+    finally:
+        # Restore original state
+        if original_cublas_config is not None:
+            os.environ["CUBLAS_WORKSPACE_CONFIG"] = original_cublas_config
+        else:
+            if "CUBLAS_WORKSPACE_CONFIG" in os.environ:
+                del os.environ["CUBLAS_WORKSPACE_CONFIG"]
+        torch.use_deterministic_algorithms(original_deterministic, warn_only=False)
+        try:
+            torch._C._set_deterministic_fill_uninitialized_memory(False)
+        except Exception:
+            pass
+        torch.backends.cudnn.benchmark = original_cudnn_benchmark

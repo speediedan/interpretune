@@ -278,7 +278,10 @@ class TestGenerativeStepMixin:
 
         # Create a minimal mixin instance for testing
         generative_mixin = GenerativeStepMixin()
-        generative_mixin.GEN_PREPARES_INPUTS_SIGS = ("_prepare_model_inputs",)
+        from interpretune.base.metadata import ITClassMetadata
+
+        # replace class-level metadata for the purpose of this test
+        type(generative_mixin)._it_cls_metadata = ITClassMetadata(gen_prepares_inputs_sigs=("_prepare_model_inputs",))
 
         # Test when model has the prepare method
         model_with_prepare = mock.Mock(spec=["_prepare_model_inputs"])

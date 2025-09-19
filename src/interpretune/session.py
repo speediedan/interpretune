@@ -7,6 +7,7 @@ from interpretune.adapter_registry import ADAPTER_REGISTRY
 from interpretune.config import ITDataModuleConfig, ITConfig, ITSerializableCfg, ITSharedConfig
 from interpretune.protocol import Adapter, DataModuleInitable, ModuleSteppable, ITModuleProtocol, ITDataModuleProtocol
 from interpretune.utils import unexpected_state_msg_suffix, rank_zero_warn
+from interpretune.base.metadata import ITClassMetadata
 
 
 class NamedWrapper:
@@ -104,10 +105,13 @@ class ITSessionConfig(UnencapsulatedArgs):
 
 
 class ITSession(Mapping):
-    BASE_ATTRS = {Adapter.core: ("datamodule", "module"), Adapter.lightning: ("datamodule", "model")}
-    READY_ATTRS = ["datamodule", "module"]
-    COMPOSITION_TARGET_ATTRS = ["datamodule_cls", "module_cls"]
-    READY_PROTOCOLS = [ITDataModuleProtocol, ITModuleProtocol]
+    # Consolidated class-level metadata to reduce attribute clutter
+    _it_cls_metadata = ITClassMetadata(
+        base_attrs={Adapter.core: ("datamodule", "module"), Adapter.lightning: ("datamodule", "model")},
+        ready_attrs=("datamodule", "module"),
+        composition_target_attrs=("datamodule_cls", "module_cls"),
+        ready_protocols=(ITDataModuleProtocol, ITModuleProtocol),
+    )
 
     def __init__(self, session_cfg: ITSessionConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -118,10 +122,9 @@ class ITSession(Mapping):
         session_cfg.datamodule_cfg._cross_validate(session_cfg.module_cfg)
         self.compose_interpretunable(session_cfg)
         # TODO: filter adapter_ctx to find first adapter w custom BASE_ATTRS in the future (only lightning right now)
+        base_attrs = type(self)._it_cls_metadata.base_attrs
         self._ctx = (
-            self.BASE_ATTRS[Adapter.lightning]
-            if Adapter.lightning in session_cfg.adapter_ctx
-            else self.BASE_ATTRS[Adapter.core]
+            base_attrs[Adapter.lightning] if Adapter.lightning in session_cfg.adapter_ctx else base_attrs[Adapter.core]
         )
 
     def __getitem__(self, key):
@@ -136,8 +139,26 @@ class ITSession(Mapping):
     def to_dict(self) -> Dict[str, Any]:
         return {self._ctx[0]: self.datamodule, self._ctx[1]: self.module}
 
+    def __repr__(self) -> str:
+        try:
+            dm = getattr(self, "datamodule", None)
+            m = getattr(self, "module", None)
+            parts = []
+            parts.append(f"datamodule={dm.__class__.__name__ if dm is not None else None}")
+            parts.append(f"module={m.__class__.__name__ if m is not None else None}")
+            # include module._it_state summary if available
+            if m is not None and hasattr(m, "_it_state"):
+                try:
+                    parts.append(m._it_state.to_summary())
+                except Exception:
+                    parts.append("ITState(<unavailable>)")
+            return f"ITSession({', '.join(parts)})"
+        except Exception:
+            return super().__repr__()
+
     def _check_ready(self, session_cfg: ITSessionConfig) -> None:
-        for ready, tocompose, ready_type in zip(self.READY_ATTRS, self.COMPOSITION_TARGET_ATTRS, self.READY_PROTOCOLS):
+        meta = type(self)._it_cls_metadata
+        for ready, tocompose, ready_type in zip(meta.ready_attrs, meta.composition_target_attrs, meta.ready_protocols):
             if ready_mod := getattr(session_cfg, ready):  # if a module is ready, ensure we don't try to transform it
                 if not isinstance(ready_mod, ready_type):
                     raise ValueError(
@@ -153,7 +174,8 @@ class ITSession(Mapping):
         #    protocol.
         self._check_ready(session_cfg)
         # 1.1. If so, we can skip composition
-        for ready, tocompose in zip(self.READY_ATTRS, self.COMPOSITION_TARGET_ATTRS):
+        meta = type(self)._it_cls_metadata
+        for ready, tocompose in zip(meta.ready_attrs, meta.composition_target_attrs):
             if getattr(session_cfg, tocompose) is not None:
                 continue
             setattr(self, ready, getattr(session_cfg, ready))

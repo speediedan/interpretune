@@ -9,28 +9,33 @@ if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import LightningDataModule, LightningModule
 
     class LightningAdapter:
-        CORE_TO_FRAMEWORK_ATTRS_MAP = {
-            "_it_lr_scheduler_configs": (
-                "trainer.strategy.lr_scheduler_configs",
-                None,
-                "No lr_scheduler_configs have been set.",
-            ),
-            "_it_optimizers": ("trainer.optimizers", None, "No optimizers have been set yet."),
-            "_log_dir": ("trainer.model._trainer.log_dir", None, "No log_dir has been set yet."),
-            "_datamodule": (
-                "trainer.datamodule",
-                None,
-                "Could not find datamodule reference (has it been attached yet?)",
-            ),
-            "_current_epoch": ("trainer.current_epoch", 0, ""),
-            "_global_step": ("trainer.global_step", 0, ""),
-        }
+        from interpretune.base.metadata import ITClassMetadata  # local import to avoid cycles
 
-        PROPERTY_COMPOSITION = {
-            # property composition is by default only enabled for `device` if Lightning is available and only effective
-            # if Lightning actively being used.
-            "device": {"enabled": True, "target": _DeviceDtypeModuleMixin, "dispatch": _DeviceDtypeModuleMixin.device}
-        }
+        _it_cls_metadata = ITClassMetadata(
+            core_to_framework_attrs_map={
+                "_it_lr_scheduler_configs": (
+                    "trainer.strategy.lr_scheduler_configs",
+                    None,
+                    "No lr_scheduler_configs have been set.",
+                ),
+                "_it_optimizers": ("trainer.optimizers", None, "No optimizers have been set yet."),
+                "_log_dir": ("trainer.model._trainer.log_dir", None, "No log_dir has been set yet."),
+                "_datamodule": (
+                    "trainer.datamodule",
+                    None,
+                    "Could not find datamodule reference (has it been attached yet?)",
+                ),
+                "_current_epoch": ("trainer.current_epoch", 0, ""),
+                "_global_step": ("trainer.global_step", 0, ""),
+            },
+            property_composition={
+                "device": {
+                    "enabled": True,
+                    "target": _DeviceDtypeModuleMixin,
+                    "dispatch": _DeviceDtypeModuleMixin.device,
+                }
+            },
+        )
 
         def on_train_start(self) -> None:
             # ensure model is in training mode (e.g. needed for some edge cases w/ skipped sanity checking)

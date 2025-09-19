@@ -300,7 +300,9 @@ def init_lightning_trainer(it_session: ITSession, test_cfg: tuple, tmp_path: Pat
     trainer = Trainer(
         default_root_dir=tmp_path,
         devices=1,
-        deterministic=True,
+        # Avoid enabling deterministic globally here; tests should opt-in via the
+        # `make_deterministic` fixture or `make_deterministic_session` when needed.
+        deterministic=False,
         accelerator=accelerator,
         max_epochs=test_cfg.max_epochs,
         precision=lightning_prec_alias(test_cfg.precision),
