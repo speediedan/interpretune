@@ -9,7 +9,7 @@ if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import LightningDataModule, LightningModule
 
     class LightningAdapter:
-        from interpretune.base.metadata import ITClassMetadata  # local import to avoid cycles
+        from interpretune.metadata import ITClassMetadata  # local import to avoid cycles
 
         _it_cls_metadata = ITClassMetadata(
             core_to_framework_attrs_map={

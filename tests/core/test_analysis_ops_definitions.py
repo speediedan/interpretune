@@ -41,11 +41,6 @@ class TestFunctionalOpArgs:
         expected_sum = torch.tensor(1.2)  # Sum of [0.6, 0.4, 0.2]
         assert torch.allclose(sum_diff, expected_sum)
 
-        # Test with keep_as_tensor=False
-        list_diff = boolean_logits_to_avg_logit_diff(logits, target_indices, keep_as_tensor=False)
-        assert isinstance(list_diff, list)
-        assert torch.allclose(torch.tensor(list_diff), torch.tensor([0.6, 0.4, 0.2]))
-
     def test_get_loss_preds_diffs(self):
         """Test the get_loss_preds_diffs function."""
         # Create mock module with standardize_logits and loss_fn

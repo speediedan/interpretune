@@ -19,8 +19,7 @@ def boolean_logits_to_avg_logit_diff(
     logits: Float[torch.Tensor, "batch seq 2"],  # type: ignore
     target_indices: torch.Tensor,
     reduction: Literal["mean", "sum"] | None = None,
-    keep_as_tensor: bool = True,
-) -> torch.Tensor | list[float] | float:
+) -> torch.Tensor:
     """Returns the avg logit diff on a set of prompts, with fixed s2 pos and stuff."""
     incorrect_indices = 1 - target_indices
     correct_logits = torch.gather(logits, 2, torch.reshape(target_indices, (-1, 1, 1))).squeeze()
@@ -28,7 +27,7 @@ def boolean_logits_to_avg_logit_diff(
     logit_diff = correct_logits - incorrect_logits
     if reduction is not None:
         logit_diff = logit_diff.mean() if reduction == "mean" else logit_diff.sum()
-    return logit_diff if keep_as_tensor else logit_diff.tolist()
+    return logit_diff
 
 
 def get_loss_preds_diffs(

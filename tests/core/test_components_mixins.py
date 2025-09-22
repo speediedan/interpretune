@@ -275,10 +275,10 @@ class TestGenerativeStepMixin:
     def test_generate_prepares_inputs(self):
         """Test the _generate_prepares_inputs method in GenerativeStepMixin."""
         from interpretune.base.components.mixins import GenerativeStepMixin
+        from interpretune.metadata import ITClassMetadata
 
         # Create a minimal mixin instance for testing
         generative_mixin = GenerativeStepMixin()
-        from interpretune.base.metadata import ITClassMetadata
 
         # replace class-level metadata for the purpose of this test
         type(generative_mixin)._it_cls_metadata = ITClassMetadata(gen_prepares_inputs_sigs=("_prepare_model_inputs",))

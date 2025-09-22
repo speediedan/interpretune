@@ -203,7 +203,7 @@ class SAELensAdapter(SAELensAttributeMixin):
 
 class SAEAnalysisMixin:
     def construct_names_filter(
-        self, target_layers: int | list[int] | None, sae_hook_match_fn: Callable[[str, list[int] | None], bool]
+        self, target_layers: int | list[int] | None, sae_hook_match_fn: Callable[[str, int | list[int] | None], bool]
     ) -> NamesFilter:
         available_hooks = {
             f"{handle.cfg.metadata.hook_name}.{key}"

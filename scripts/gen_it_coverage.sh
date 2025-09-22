@@ -14,7 +14,7 @@ unset run_all_and_examples
 unset no_export_cov_xml
 unset pip_install_flags
 unset self_test_only
-unset apply_post_upgrades
+unset it_build_flags
 
 usage(){
 >&2 cat << EOF
@@ -30,9 +30,9 @@ Usage: $0
     [ --no-export-cov-xml ]
     [ --pip-install-flags "flags" ]
     [ --self-test-only ]
-     [ --apply-post-upgrades ]
-   [ --help ]
-   Examples:
+    [ --it-build-flags "flags" ]
+    [ --help ]
+    Examples:
     # generate it_latest coverage without rebuilding the it_latest base environment:
     #   ./gen_it_coverage.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --no_rebuild_base
     # generate it_latest coverage with a given torch_dev_version, rebuilding base it_latest and with FTS from source:
@@ -51,7 +51,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo-home:,target-env-name:,torch-dev-ver:,torchvision-dev-ver:,torch-test-channel,no-rebuild-base,fts-from-source:,ct-from-source:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,apply-post-upgrades,help -- "$@")
+args=$(getopt -o '' --long repo-home:,target-env-name:,torch-dev-ver:,torchvision-dev-ver:,torch-test-channel,no-rebuild-base,fts-from-source:,ct-from-source:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,it-build-flags:,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -71,7 +71,7 @@ do
     --no-export-cov-xml)   no_export_cov_xml=1 ; shift ;;
     --pip-install-flags)   pip_install_flags=$2 ; shift 2 ;;
     --self-test-only)   self_test_only=1 ; shift ;;
-    --apply-post-upgrades)   apply_post_upgrades=1 ; shift ;;
+    --it-build-flags)   it_build_flags=$2 ; shift 2 ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
     *) >&2 echo Unsupported option: $1
@@ -100,6 +100,9 @@ fi
 if [[ -n "${fts_from_source}" ]]; then
     fts_from_source=$(strip_quotes "$fts_from_source")
 fi
+if [[ -n "${it_build_flags}" ]]; then
+    it_build_flags=$(strip_quotes "$it_build_flags")
+fi
 
 check_self_test_only(){
     local message=$1
@@ -127,9 +130,9 @@ env_rebuild(){
         ct_from_source_param="--ct-from-source=${ct_from_source}"
     fi
 
-    apply_post_upgrades_param=""
-    if [[ -n "${apply_post_upgrades}" ]]; then
-        apply_post_upgrades_param="--apply-post-upgrades"
+    it_build_flags_params=""
+       if [[ -n "${it_build_flags}" ]]; then
+           it_build_flags_params="${it_build_flags}"
     fi
 
     case $1 in
@@ -139,11 +142,11 @@ env_rebuild(){
             elif [[ $torch_test_channel -eq 1 ]]; then
                 ${repo_home}/scripts/build_it_env.sh --repo-home=${repo_home} --target-env-name=$1 --torch-test-channel  ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${ct_commit_pin_param} ${apply_post_upgrades_param}
             else
-                ${repo_home}/scripts/build_it_env.sh --repo-home=${repo_home} --target-env-name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${ct_commit_pin_param} ${apply_post_upgrades_param}
+                ${repo_home}/scripts/build_it_env.sh --repo-home=${repo_home} --target-env-name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${ct_commit_pin_param} ${it_build_flags_params}
             fi
             ;;
         it_release )
-            ${repo_home}/scripts/build_it_env.sh --repo-home=${repo_home} --target-env-name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${ct_commit_pin_param} ${apply_post_upgrades_param}
+                ${repo_home}/scripts/build_it_env.sh --repo-home=${repo_home} --target-env-name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${ct_commit_pin_param} ${it_build_flags_params}
             ;;
         *)
             echo "no matching environment found, exiting..." >> $coverage_session_log

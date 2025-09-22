@@ -7,7 +7,7 @@ from interpretune.adapter_registry import ADAPTER_REGISTRY
 from interpretune.config import ITDataModuleConfig, ITConfig, ITSerializableCfg, ITSharedConfig
 from interpretune.protocol import Adapter, DataModuleInitable, ModuleSteppable, ITModuleProtocol, ITDataModuleProtocol
 from interpretune.utils import unexpected_state_msg_suffix, rank_zero_warn
-from interpretune.base.metadata import ITClassMetadata
+from interpretune.metadata import ITClassMetadata
 
 
 class NamedWrapper:
