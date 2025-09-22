@@ -49,7 +49,6 @@ repos:
 
   - repo: https://github.com/myint/docformatter
     rev: v1.7.7
-    #rev: 06907d0267368b49b9180eed423fae5697c1e909 # todo: fix for docformatter after 1.7.6+ released rather than pinning
     hooks:
       - id: docformatter
         args: [--in-place, --wrap-summaries=115, --wrap-descriptions=120]
@@ -75,15 +74,6 @@ repos:
   #         - mdformat-gfm
   #         - mdformat_frontmatter
   #       exclude: "CHANGELOG.md", "**/*.prompt.md"
-
-  # TODO: remove this deprecated/experimental hook before public MVP
-  # - repo: local
-  #   hooks:
-  #     - id: pip-compile-ci-reqs
-  #       name: Recompile ci_reqs.txt
-  #       entry: bash -c 'pip-compile requirements/ci_reqs.in --output-file=requirements/ci_reqs.txt -v && git add requirements/ci_reqs.txt'
-  #       language: system
-  #       files: ^requirements/ci_reqs.in$
 
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: 'v0.12.10'

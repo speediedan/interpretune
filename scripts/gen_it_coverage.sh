@@ -131,8 +131,8 @@ env_rebuild(){
     fi
 
     it_build_flags_params=""
-       if [[ -n "${it_build_flags}" ]]; then
-           it_build_flags_params="${it_build_flags}"
+    if [[ -n "${it_build_flags}" ]]; then
+        it_build_flags_params="${it_build_flags}"
     fi
 
     case $1 in
@@ -146,7 +146,7 @@ env_rebuild(){
             fi
             ;;
         it_release )
-                ${repo_home}/scripts/build_it_env.sh --repo-home=${repo_home} --target-env-name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${ct_commit_pin_param} ${it_build_flags_params}
+            ${repo_home}/scripts/build_it_env.sh --repo-home=${repo_home} --target-env-name=$1 ${fts_from_source_param} ${ct_from_source_param} ${pip_flags_param} ${ct_commit_pin_param} ${it_build_flags_params}
             ;;
         *)
             echo "no matching environment found, exiting..." >> $coverage_session_log
