@@ -13,7 +13,6 @@ on:
       - "src/**"
       - "requirements/**"
       - ".github/workflows/ci_test-full.yml"
-      - ".actions/**"
       # Exclude documentation-only files from triggering
       - "!docs/**"
       - "!**/*.md"
@@ -23,6 +22,7 @@ on:
       - "!**/CODE_OF_CONDUCT.md"
       - "!**/CONTRIBUTING.md"
       - "!**/LICENSE*"
+      - "!scripts/**"
   pull_request:
     branches: [main, "release/*", "bugfix/*", "feature/*"]
     types: [opened, reopened, ready_for_review, synchronize]
@@ -35,7 +35,6 @@ on:
       - "src/**"
       - "requirements/**"
       - ".github/workflows/ci_test-full.yml"
-      - ".actions/**"
       # Exclude documentation-only files from triggering
       - "!docs/**"
       - "!**/*.md"
@@ -45,6 +44,7 @@ on:
       - "!**/CODE_OF_CONDUCT.md"
       - "!**/CONTRIBUTING.md"
       - "!**/LICENSE*"
+      - "!scripts/**"
 
 jobs:
   report:

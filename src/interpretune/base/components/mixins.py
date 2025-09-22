@@ -149,7 +149,7 @@ class GenerativeStepMixin:
 
     _gen_sig_keys: list | None = None
     # class-level metadata container to reduce attribute clutter
-    from interpretune.base.metadata import ITClassMetadata  # local import to avoid top-level cycle
+    from interpretune.metadata import ITClassMetadata  # local import to avoid top-level cycle
 
     _it_cls_metadata = ITClassMetadata(gen_prepares_inputs_sigs=("_prepare_model_inputs",))
 

@@ -245,10 +245,48 @@ def run_pip_compile(req_in_path, output_path):
     if not pip_compile:
         print("pip-compile not found in PATH; install pip-tools to generate full pinned requirements.txt")
         return False
-    cmd = [pip_compile, "--output-file", output_path, req_in_path, "--upgrade"]
+    cmd = [pip_compile, "--output-file", output_path, req_in_path, "--upgrade", "--no-strip-extras"]
     print("Running:", " ".join(shlex.quote(c) for c in cmd))
     subprocess.check_call(cmd)
     return True
+
+
+def normalize_pip_compile_comments(requirements_path: str, repo_root: str) -> None:
+    """Normalize absolute repository-root-prefixed paths found in pip-compile comment lines.
+
+    This replaces occurrences of the absolute `repo_root` path with a repository-relative
+    path (for example, "/home/me/repos/interpretune/requirements/ci/requirements.in" ->
+    "requirements/ci/requirements.in") inside comment lines (lines that start with "#").
+
+    This keeps the rest of the file intact and only rewrites comment text so generated
+    pinned files are consistent across environments.
+    """
+    if not os.path.exists(requirements_path):
+        return
+
+    with open(requirements_path, "r") as f:
+        lines = f.readlines()
+
+    prefix = repo_root if repo_root.endswith(os.sep) else repo_root + os.sep
+    changed = False
+    out_lines: List[str] = []
+
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            # Replace any occurrence of the absolute repo root path with a relative path
+            new_line = line.replace(prefix, "")
+            # Normalize backslashes just in case (Windows paths in cross-envs)
+            new_line = new_line.replace("\\", "/")
+            if new_line != line:
+                changed = True
+            out_lines.append(new_line)
+        else:
+            out_lines.append(line)
+
+    if changed:
+        with open(requirements_path, "w") as f:
+            f.writelines(out_lines)
 
 
 def post_process_pinned_requirements(requirements_path, platform_dependent_path, platform_patterns, direct_packages):

@@ -184,3 +184,36 @@ def test_post_upgrades_comparators_and_malformed(tmp_path):
     assert "fsspec>=2025.3.0" in post_lines
     # malformed spec should be preserved as-is (regenerator does not validate comparator syntax)
     assert "weirdpkg=>1.2.3" in post_lines
+
+
+def test_normalize_rewrites_absolute_paths_in_comments(tmp_path):
+    regen = load_regen_module()
+    normalize = regen.normalize_pip_compile_comments
+    repo_root = regen.REPO_ROOT
+    # example absolute path inside comments
+    abs_line = f"#    -r {repo_root}/requirements/ci/requirements.in\n"
+    non_comment = "package==1.2.3\n"
+
+    tmp = tmp_path / "reqs.txt"
+    tmp.write_text(abs_line + non_comment)
+
+    normalize(str(tmp), repo_root)
+
+    out = tmp.read_text().splitlines()
+    assert out[0].startswith("#")
+    assert "requirements/ci/requirements.in" in out[0]
+    # absolute root should not be present
+    assert repo_root not in out[0]
+    # non-comment should remain unchanged
+    assert out[1] == non_comment.strip()
+
+
+def test_idempotent_when_no_absolute_paths(tmp_path):
+    regen = load_regen_module()
+    normalize = regen.normalize_pip_compile_comments
+    content = "# some comment without path\npackage==0.1.0\n"
+    tmp = tmp_path / "reqs2.txt"
+    tmp.write_text(content)
+
+    normalize(str(tmp), regen.REPO_ROOT)
+    assert tmp.read_text() == content

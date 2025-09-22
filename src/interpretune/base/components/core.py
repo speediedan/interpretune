@@ -21,7 +21,7 @@ from interpretune.utils import (
     collect_env_info,
     dummy_method_warn_fingerprint,
 )
-from interpretune.base.metadata import ITClassMetadata
+from interpretune.metadata import ITClassMetadata
 from interpretune.protocol import (
     Optimizable,
     LRSchedulerConfig,

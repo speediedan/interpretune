@@ -307,7 +307,9 @@ class AnalysisCfg(ITSerializableCfg):
             self.fwd_hooks, self.bwd_hooks = fwd_hooks, bwd_hooks
             return
 
-        assert isinstance(self.op, AnalysisOpLike), f"op expected to be AnalysisOp, got {type(self.op)}"
+        assert isinstance(self.op, AnalysisOpLike), (
+            f"op expected to be AnalysisOp (or uninstantiated OpWrapper), got {type(self.op)}"
+        )
         # TODO: change these op-based checks to be functionally driven (e.g. uses_default_hooks attribute of ops)
         if self.op.name == "logit_diffs_base":
             return fwd_hooks, bwd_hooks
