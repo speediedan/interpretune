@@ -43,7 +43,7 @@ class TestClassMixins:
     test_core_gpt2 = {
         **core_gpt2_shared_config,
         "hf_from_pretrained_cfg": HFFromPretrainedConfig(
-            pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
+            pretrained_kwargs={"device_map": "cpu", "dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
         ),
     }
 
@@ -53,7 +53,7 @@ class TestClassMixins:
         hf_from_pretrained_mixin = HFFromPretrainedMixin()
         hf_from_pretrained_mixin.it_cfg = it_cfg
         it_cfg.num_labels = 0
-        hf_from_pretrained_mixin.torch_dtype = it_cfg._torch_dtype
+        hf_from_pretrained_mixin.dtype = it_cfg._dtype
         hf_from_pretrained_mixin._update_hf_pretrained_cfg()
         return hf_from_pretrained_mixin
 
@@ -141,7 +141,7 @@ class TestClassMixins:
         assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
 
     def test_hf_from_pretrained_dynamic_module_load(self):
-        pretrained_kwargs = {"pretrained_kwargs": {"device_map": "cpu", "torch_dtype": "float32"}}
+        pretrained_kwargs = {"pretrained_kwargs": {"device_map": "cpu", "dtype": "float32"}}
         dynamic_module_cfg = {
             "config_class": "configuration_falcon.FalconConfig",
             "model_class": "modeling_falcon.FalconForCausalLM",

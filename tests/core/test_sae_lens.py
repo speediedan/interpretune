@@ -88,7 +88,7 @@ class TestClassSAELens:
         **test_tl_gpt2_shared_config,
         "tl_cfg": ITLensFromPretrainedConfig(),
         "hf_from_pretrained_cfg": dict(
-            pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
+            pretrained_kwargs={"device_map": "cpu", "dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
         ),
     }
     test_sl_from_pretrained = SAELensFromPretrainedConfig(

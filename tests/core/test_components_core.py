@@ -85,10 +85,10 @@ class TestClassCoreModule:
         core_cust_it_m._it_state._device = None
         delattr(core_cust_it_m.model, "device")
         assert core_cust_it_m.device is None  # validate device unset handling generates warning
-        core_cust_it_m.it_cfg._torch_dtype = None
-        assert core_cust_it_m.torch_dtype == torch.float32  # validate backup dtype introspection
-        delattr(core_cust_it_m, "it_cfg")  # ensure unexpected torch_dtype resolution failure is handled gracefully
-        assert core_cust_it_m.torch_dtype is None
+        core_cust_it_m.it_cfg._dtype = None
+        assert core_cust_it_m.dtype == torch.float32  # validate backup dtype introspection
+        delattr(core_cust_it_m, "it_cfg")  # ensure unexpected dtype resolution failure is handled gracefully
+        assert core_cust_it_m.dtype is None
         w_expected = EXPECTED_PROP_WARNS
         if w_expected:
             unmatched = unmatched_warns(rec_warns=recwarn.list, expected_warns=w_expected)

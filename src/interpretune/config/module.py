@@ -103,13 +103,13 @@ class ITConfig(
     # memprofiler_cfg: MemProfilerCfg = field(default_factory=MemProfilerCfg)
 
     def __post_init__(self) -> None:
-        # _torch_dtype may have been resolved and set in a subclass already
+        # `_dtype` may have been resolved and set in a subclass already
         if self.hf_from_pretrained_cfg:
-            if not hasattr(self, "_torch_dtype"):
-                self._torch_dtype = self.hf_from_pretrained_cfg._torch_dtype_serde()
-            if self._torch_dtype and self.hf_from_pretrained_cfg.bitsandbytesconfig:
-                rank_zero_info(f"Specified torch_dtype `{self._torch_dtype}` being overridden by quantization config.")
-                self._torch_dtype = None
+            if not hasattr(self, "_dtype"):
+                self._dtype = self.hf_from_pretrained_cfg._dtype_serde()
+            if self._dtype and self.hf_from_pretrained_cfg.bitsandbytesconfig:
+                rank_zero_info(f"Specified dtype `{self._dtype}` being overridden by quantization config.")
+                self._dtype = None
 
 
 @dataclass

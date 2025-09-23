@@ -180,7 +180,7 @@ class TestModelArgs:
             # snag potentially useful context references and then delete the handle
             self.tokenizer = self.tokenizer or self.ctx_handle.it_cfg.tokenizer
             self.device = self.device or self.ctx_handle.device
-            self.dtype = self.dtype or self.ctx_handle.torch_dtype
+            self.dtype = self.dtype or self.ctx_handle.dtype
             del self.ctx_handle
 
 
@@ -454,11 +454,11 @@ class BaseTestModule(StateLogInspectMixin):
     def model_init(self) -> None:
         """If we're not using a from-configuration model, we initialize the model here."""
         self.device = self.it_cfg.model_cfg.get("device", None) or self.device
-        self.torch_dtype = self.it_cfg.model_cfg.get("dtype", None) or self.torch_dtype
+        self.dtype = self.it_cfg.model_cfg.get("dtype", None) or self.dtype
         cust_config = TestModelArgs(**self.it_cfg.model_cfg.get("model_args", {}), ctx_handle=self)
         self.model = Transformer(args=cust_config)
         # TODO: add note to documentation that for now user is responsible for setting device/dtype w model_init
-        self.model.to(device=self.device, dtype=self.torch_dtype)
+        self.model.to(device=self.device, dtype=self.dtype)
 
     def _get_current_exact(self) -> Dict:
         # gather device and precision and dataset state info

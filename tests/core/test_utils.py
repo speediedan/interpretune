@@ -32,7 +32,7 @@ from interpretune.utils import (
     rank_zero_only,
     rank_zero_deprecation,
     instantiate_class,
-    _resolve_torch_dtype,
+    _resolve_dtype,
     package_available,
     move_data_to_device,
     to_device,
@@ -134,7 +134,7 @@ class TestClassUtils:
             resolved_single_hook = resolve_funcs(cfg_obj=memory_hooks_cfg, func_type="pre_forward_hooks")
 
     def test_fn_resolve_dtype(self):
-        resolved_dtype = _resolve_torch_dtype(dtype="torch.float32")
+        resolved_dtype = _resolve_dtype(dtype="torch.float32")
         assert isinstance(resolved_dtype, torch.dtype)
 
     def test_package_module_available(self):

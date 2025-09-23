@@ -58,7 +58,7 @@ session_cfg:
             task_type: "CAUSAL_LM"
           pretrained_kwargs:
             device_map: 0
-            torch_dtype: bfloat16
+            dtype: bfloat16
 trainer:
   accumulate_grad_batches: 1
   precision: bf16-true

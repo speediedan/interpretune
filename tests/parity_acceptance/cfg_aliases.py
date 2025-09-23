@@ -75,7 +75,7 @@ bs1_nowarm_hk_mem = {**bs1_memprof_steps, "memprofiler_cfg": nowarm_maxstep_hk_m
 ################################################################################
 act_ckpt = {
     "hf_from_pretrained_cfg": HFFromPretrainedConfig(
-        pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"},
+        pretrained_kwargs={"device_map": "cpu", "dtype": "float32"},
         model_head="transformers.GPT2LMHeadModel",
         activation_checkpointing=True,
     )

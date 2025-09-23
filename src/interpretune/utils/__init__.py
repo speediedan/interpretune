@@ -26,7 +26,7 @@ from interpretune.utils.schema_validation import RemoveAdditionalPropertiesValid
 from interpretune.utils.tokenization import DEFAULT_DECODE_KWARGS, sanitize_input_name
 from interpretune.utils.warnings import unexpected_state_msg_suffix, tl_invalid_dmap, dummy_method_warn_fingerprint
 from interpretune.utils.data_movement import to_device, move_data_to_device
-from interpretune.utils.import_utils import _import_class, instantiate_class, _resolve_torch_dtype, resolve_funcs
+from interpretune.utils.import_utils import _import_class, instantiate_class, _resolve_dtype, resolve_funcs
 
 __all__ = [
     # exceptions
@@ -45,7 +45,7 @@ __all__ = [
     "_NEURONPEDIA_AVAILABLE",
     "_import_class",
     "instantiate_class",
-    "_resolve_torch_dtype",
+    "_resolve_dtype",
     "resolve_funcs",
     # logging
     "rank_zero_only",
