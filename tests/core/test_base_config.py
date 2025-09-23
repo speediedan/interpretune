@@ -50,7 +50,7 @@ class TestClassBaseConfigs:
     test_core_gpt2 = {
         **core_gpt2_shared_config,
         "hf_from_pretrained_cfg": HFFromPretrainedConfig(
-            pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
+            pretrained_kwargs={"device_map": "cpu", "dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
         ),
     }
     tl_gpt2_shared_config = deepcopy(core_gpt2_shared_config)
@@ -70,7 +70,7 @@ class TestClassBaseConfigs:
                 enabled=True, lm_generation_cfg=TLensGenerationConfig(max_new_tokens=1)
             ),
             "hf_from_pretrained_cfg": HFFromPretrainedConfig(
-                pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"},
+                pretrained_kwargs={"device_map": "cpu", "dtype": "float32"},
                 model_head="transformers.GPT2LMHeadModel",
             ),
             "tl_cfg": ITLensFromPretrainedConfig(),
@@ -204,16 +204,16 @@ class TestClassBaseConfigs:
         assert ITDataModuleConfig(**itdm_cfg)
 
     def test_hf_from_pretrained_cfg_validation(self):
-        pretrained_kwargs = {"pretrained_kwargs": {"device_map": "cpu", "torch_dtype": "float32", "token": "strip-me"}}
+        pretrained_kwargs = {"pretrained_kwargs": {"device_map": "cpu", "dtype": "float32", "token": "strip-me"}}
         from_pretrained_cfg = HFFromPretrainedConfig(**pretrained_kwargs, model_head="transformers.GPT2LMHeadModel")
         assert from_pretrained_cfg.pretrained_kwargs.get("token", None) is None
         test_it_cfg = deepcopy(TestClassBaseConfigs.test_core_gpt2)
         test_it_cfg["hf_from_pretrained_cfg"].bitsandbytesconfig = True
         it_cfg = ITConfig(**test_it_cfg)
-        assert it_cfg._torch_dtype is None
-        with pytest.warns(UserWarning, match="attempting to proceed with `torch_dtype` unset"):
-            it_cfg.hf_from_pretrained_cfg.pretrained_kwargs["torch_dtype"] = "unresolvable"
-            it_cfg.hf_from_pretrained_cfg._torch_dtype_serde()
+        assert it_cfg._dtype is None
+        with pytest.warns(UserWarning, match="attempting to proceed with `dtype` unset"):
+            it_cfg.hf_from_pretrained_cfg.pretrained_kwargs["dtype"] = "unresolvable"
+            it_cfg.hf_from_pretrained_cfg._dtype_serde()
         # TODO: add testing for core IT object custom constructor/representers, e.g. for ITConfig here
         # cfg_file = tmp_path / "test_config.yaml"
         # with open(cfg_file, "w") as f:

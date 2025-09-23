@@ -17,7 +17,7 @@ from interpretune.utils import (
     rank_zero_warn,
     rank_zero_debug,
     MisconfigurationException,
-    _resolve_torch_dtype,
+    _resolve_dtype,
     collect_env_info,
     dummy_method_warn_fingerprint,
 )
@@ -109,7 +109,7 @@ class BaseConfigImpl:
             model_config = (
                 self._make_config_serializable(
                     self.model.config,
-                    ["quantization_config.bnb_4bit_compute_dtype", "torch_dtype", "_pre_quantization_dtype"],
+                    ["quantization_config.bnb_4bit_compute_dtype", "dtype", "_pre_quantization_dtype"],
                 ),
             )
         # if `model.config `exists, any provided `model_cfg` should already be merged with it
@@ -212,15 +212,26 @@ class PropertyDispatcher:
         return self.it_cfg.memprofiler_cfg.enabled and self.it_cfg.memprofiler_cfg.cuda_allocator_history
 
     @property
-    def torch_dtype(self) -> Union[torch.dtype, "str"] | None:
+    def dtype(self) -> Union[torch.dtype, "str"] | None:
         try:
-            if dtype := getattr(self.it_cfg, "_torch_dtype", None):
-                return dtype
-            if getattr(self, "model", None):
-                dtype = getattr(self.model, "_torch_dtype", None) or getattr(self.model, "dtype", None)
+            # If `it_cfg` is not present on the object at all, treat this as an unexpected context and return None
+            if not hasattr(self, "it_cfg"):
+                return None
+            it_cfg = getattr(self, "it_cfg", None)
+            model_obj = getattr(self, "model", None)
+            # Prefer an explicitly set dtype on the config
+            if it_cfg is not None and getattr(it_cfg, "_dtype", None) is not None:
+                return it_cfg._dtype
+            # Next prefer an explicitly set dtype on the model
+            if model_obj is not None and getattr(model_obj, "_dtype", None) is not None:
+                return getattr(model_obj, "_dtype")
+            # If we have any module/context present but no explicit dtype set, fall back to torch's default dtype
+            if it_cfg is not None or model_obj is not None:
+                return torch.get_default_dtype()
         except AttributeError:
-            dtype = None
-        return dtype
+            # If `it_cfg` attribute is missing entirely, behave gracefully and return None
+            return None
+        return None
 
     @property
     def device(self) -> torch.device | None:
@@ -242,11 +253,11 @@ class PropertyDispatcher:
             value = torch.device(value)
         self._it_state._device = value
 
-    @torch_dtype.setter
-    def torch_dtype(self, value: Union[torch.dtype, "str"] | None) -> None:
+    @dtype.setter
+    def dtype(self, value: Union[torch.dtype, "str"] | None) -> None:
         if value is not None and not isinstance(value, torch.dtype):
-            value = _resolve_torch_dtype(value)
-        self.it_cfg._torch_dtype = value
+            value = _resolve_dtype(value)
+        self.it_cfg._dtype = value
 
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         if hook_name == "configure_optimizers":

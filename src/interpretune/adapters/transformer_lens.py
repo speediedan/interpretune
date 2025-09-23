@@ -164,7 +164,7 @@ class BaseITLensModule(BaseITModule):
 
     def _convert_hf_to_tl(self) -> None:
         # TODO: decide whether to pass remaining hf_from_pretrained_cfg args to HookedTransformer
-        # (other than torch_dtype which should already have been processed and removed, device_map should also be
+        # (other than `dtype` which should already have been processed and removed, `device_map` should also be
         # removed before passing to HookedTransformer)
         # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
         tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer

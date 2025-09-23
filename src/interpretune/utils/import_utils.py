@@ -74,14 +74,15 @@ def resolve_funcs(cfg_obj: Any, func_type: str) -> List[Callable[..., Any]]:
     return resolved_funcs
 
 
-def _resolve_torch_dtype(dtype: Union[torch.dtype, str]) -> Optional[torch.dtype]:
+def _resolve_dtype(dtype: Union[torch.dtype, str]) -> Optional[torch.dtype]:
+    """Resolve a dtype which may be a torch.dtype or a string to a torch.dtype."""
     if isinstance(dtype, torch.dtype):
         return dtype
     elif isinstance(dtype, str):
-        return _str_to_torch_dtype(dtype)
+        return _str_to_dtype(dtype)
 
 
-def _str_to_torch_dtype(str_dtype: str) -> Optional[torch.dtype]:
+def _str_to_dtype(str_dtype: str) -> Optional[torch.dtype]:
     if hasattr(torch, str_dtype):
         return getattr(torch, str_dtype)
     elif hasattr(torch, str_dtype.split(".")[-1]):

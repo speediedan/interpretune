@@ -40,7 +40,7 @@ gpt2_lora_cfg = {"target_modules": ["c_attn", "c_proj"], **base_lora_cfg}
 gpt2_hf_bnb_lora_cfg = {"bitsandbytesconfig": nf4_bnb_config, "lora_cfg": gpt2_lora_cfg}
 gpt2_hf_bnb_lora_cfg_seq = {"bitsandbytesconfig": nf4_bnb_config, "lora_cfg": {**gpt2_lora_cfg, "task_type": "SEQ_CLS"}}
 gpt2_seq_hf_from_pretrained_kwargs = {
-    "pretrained_kwargs": {"device_map": "cpu", "torch_dtype": "float32"},
+    "pretrained_kwargs": {"device_map": "cpu", "dtype": "float32"},
     "model_head": "transformers.AutoModelForSequenceClassification",
 }
 tl_cust_mi_cfg = {
@@ -109,7 +109,7 @@ class CoreGPT2PEFTCfg(BaseCfg):
     hf_from_pretrained_cfg: HFFromPretrainedConfig | None = field(
         default_factory=lambda: HFFromPretrainedConfig(
             **gpt2_hf_bnb_lora_cfg,
-            pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"},
+            pretrained_kwargs={"device_map": "cpu", "dtype": "float32"},
             model_head="transformers.GPT2LMHeadModel",
             activation_checkpointing=True,
         )
@@ -201,7 +201,7 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
     )
     hf_from_pretrained_cfg: HFFromPretrainedConfig = field(
         default_factory=lambda: HFFromPretrainedConfig(
-            pretrained_kwargs={"torch_dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
+            pretrained_kwargs={"dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
         )
     )
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(

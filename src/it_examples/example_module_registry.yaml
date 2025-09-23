@@ -212,7 +212,7 @@ gpt2.rte:
           init_args:
             pretrained_kwargs:
               device_map: cpu
-              torch_dtype: float32
+              dtype: float32
             model_head: transformers.GPT2LMHeadModel
     datamodule_cls:
       class_path: tests.modules.FingerprintTestITDataModule
@@ -266,7 +266,7 @@ gpt2.rte.transformer_lens:
           init_args:
             pretrained_kwargs:
               device_map: cpu
-              torch_dtype: float32
+              dtype: float32
             model_head: transformers.GPT2LMHeadModel
         tl_cfg:
           class_path: interpretune.config.transformer_lens.ITLensFromPretrainedConfig
@@ -323,7 +323,7 @@ gpt2.rte.sae_lens:
           init_args:
             pretrained_kwargs:
               device_map: cpu
-              torch_dtype: float32
+              dtype: float32
             model_head: transformers.GPT2LMHeadModel
         tl_cfg:
           class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
@@ -387,7 +387,7 @@ gpt2.rte_demo.sae_lens:
           init_args:
             pretrained_kwargs:
               device_map: cpu
-              torch_dtype: float32
+              dtype: float32
             model_head: transformers.GPT2LMHeadModel
         tl_cfg:
           class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
@@ -451,7 +451,7 @@ gemma2.rte:
           init_args:
             pretrained_kwargs:
               device_map: cpu
-              torch_dtype: float32
+              dtype: float32
             model_head: transformers.Gemma2ForCausalLM
 gemma2.rte.sae_lens:
   reg_info:
@@ -493,7 +493,7 @@ gemma2.rte.sae_lens:
           init_args:
             pretrained_kwargs:
               device_map: cpu
-              torch_dtype: float32
+              dtype: float32
             model_head: transformers.Gemma2ForCausalLM
         tl_cfg:
           class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
@@ -551,7 +551,7 @@ gemma2.rte_demo.circuit_tracer:
           init_args:
             pretrained_kwargs:
               device_map: cpu
-              torch_dtype: float32
+              dtype: float32
             model_head: transformers.Gemma2ForCausalLM
         tl_cfg:
           class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
@@ -622,7 +622,7 @@ gemma2.rte_demo.circuit_tracer_w_neuronpedia:
           init_args:
             pretrained_kwargs:
               device_map: cpu
-              torch_dtype: float32
+              dtype: float32
             model_head: transformers.Gemma2ForCausalLM
         tl_cfg:
           class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
@@ -714,7 +714,7 @@ llama3.rte:
             use_model_cache: false
             pretrained_kwargs:
               device_map: cpu
-              torch_dtype: float32
+              dtype: float32
             model_head: transformers.LlamaForCausalLM
             bitsandbytesconfig:
               load_in_4bit: True

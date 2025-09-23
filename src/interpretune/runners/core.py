@@ -80,8 +80,8 @@ def run_step(step_fn, module, batch, batch_idx, optimizer: Optimizable | None = 
         )
     if step_fn == "training_step" and optimizer is not None:
         optimizer.zero_grad()
-    if module.torch_dtype == torch.bfloat16:
-        with torch.autocast(device_type=module.device.type, dtype=module.torch_dtype):
+    if module.dtype == torch.bfloat16:
+        with torch.autocast(device_type=module.device.type, dtype=module.dtype):
             output = step_func(batch, batch_idx)
     else:
         output = step_func(batch, batch_idx)

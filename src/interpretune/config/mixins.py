@@ -9,7 +9,7 @@ import torch
 from transformers.generation.configuration_utils import GenerationConfig
 
 from interpretune.config import ITSerializableCfg
-from interpretune.utils import rank_zero_warn, _resolve_torch_dtype
+from interpretune.utils import rank_zero_warn, _resolve_dtype
 
 # class ITExtension(NamedTuple):
 #     ext_attr: str
@@ -96,13 +96,14 @@ class HFFromPretrainedConfig(ITSerializableCfg):
         if self.pretrained_kwargs.get("token", None):
             del self.pretrained_kwargs["token"]
 
-    def _torch_dtype_serde(self) -> torch.dtype | None:
-        if self.pretrained_kwargs and self.pretrained_kwargs.get("torch_dtype", None):
-            if resolved_dtype := _resolve_torch_dtype(self.pretrained_kwargs["torch_dtype"]):
-                del self.pretrained_kwargs["torch_dtype"]
+    def _dtype_serde(self) -> torch.dtype | None:
+        """Resolve and remove a 'dtype' entry from pretrained_kwargs if present."""
+        if self.pretrained_kwargs and self.pretrained_kwargs.get("dtype", None):
+            if resolved_dtype := _resolve_dtype(self.pretrained_kwargs["dtype"]):
+                del self.pretrained_kwargs["dtype"]
                 return resolved_dtype
             else:
                 rank_zero_warn(
-                    f"The provided `torch_dtype` {self.pretrained_kwargs.pop('torch_dtype')} could not"
-                    " be resolved, attempting to proceed with `torch_dtype` unset."
+                    f"The provided `dtype` {self.pretrained_kwargs.pop('dtype')} could not"
+                    " be resolved, attempting to proceed with `dtype` unset."
                 )

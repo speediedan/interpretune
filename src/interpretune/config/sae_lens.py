@@ -43,7 +43,7 @@ class SAELensCustomConfig(ITSerializableCfg):
             # TODO: add a PR to SAELens to allow SAEConfig to ref torch dtype and device objects instead of str repr
             # ensure the user provided a valid dtype (should be handled by SAEConfig ideally)
             # if self.cfg.get('dtype', None) and not isinstance(self.cfg['dtype'], torch.dtype):
-            #     self.cfg['dtype'] = _resolve_torch_dtype(self.cfg['dtype'])
+            #     self.cfg['dtype'] = _resolve_dtype(self.cfg['dtype'])
             # TODO: enable configuration/introspection of custom SAE subclasses here
             self.cfg = StandardSAEConfig.from_dict(self.cfg)
 

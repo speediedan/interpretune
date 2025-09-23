@@ -86,13 +86,13 @@ def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int
     # TODO: As we accommodate many different device/precision setting sources at the moment, it may make sense
     # to refactor hf and tl support via additional adapter functions and only test adherence to the
     # common Interpretune protocol here (testing the adapter functions separately with smaller unit tests)
-    # if we've already initialized config, we need to manually update (`_torch_dtype`)
-    if hasattr(cfg, "_torch_dtype"):
-        cfg._torch_dtype = get_model_input_dtype(precision)
+    # if we've already initialized config, we need to manually update (`_dtype`)
+    if hasattr(cfg, "_dtype"):
+        cfg._dtype = get_model_input_dtype(precision)
     if cfg.model_cfg:
         cfg.model_cfg.update({"dtype": get_model_input_dtype(precision), "device": device_type})
     if cfg.hf_from_pretrained_cfg:
-        cfg.hf_from_pretrained_cfg.pretrained_kwargs.update({"torch_dtype": get_model_input_dtype(precision)})
+        cfg.hf_from_pretrained_cfg.pretrained_kwargs.update({"dtype": get_model_input_dtype(precision)})
         if device_type == "cuda":
             # note that with TLens this should be overridden by the tl adapter but we want to test that functionality
             cfg.hf_from_pretrained_cfg.pretrained_kwargs.update({"device_map": 0})

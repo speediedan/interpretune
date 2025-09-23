@@ -8,7 +8,7 @@ from transformer_lens import HookedTransformerConfig
 from transformer_lens.utils import get_device as tl_get_device
 
 from interpretune.config import ITConfig, HFFromPretrainedConfig, CoreGenerationConfig, ITSerializableCfg
-from interpretune.utils import _resolve_torch_dtype, tl_invalid_dmap, rank_zero_warn, MisconfigurationException
+from interpretune.utils import _resolve_dtype, tl_invalid_dmap, rank_zero_warn, MisconfigurationException
 
 ################################################################################
 # Transformer Lens Configuration Encapsulation
@@ -71,7 +71,7 @@ class ITLensCustomConfig(ITLensSharedConfig):
         if not isinstance(self.cfg, HookedTransformerConfig):
             # ensure the user provided a valid dtype (should be handled by HookedTransformerConfig ideally)
             if self.cfg.get("dtype", None) and not isinstance(self.cfg["dtype"], torch.dtype):
-                self.cfg["dtype"] = _resolve_torch_dtype(self.cfg["dtype"])
+                self.cfg["dtype"] = _resolve_dtype(self.cfg["dtype"])
             self.cfg = HookedTransformerConfig.from_dict(self.cfg)
 
 
@@ -97,7 +97,7 @@ class ITLensConfig(ITConfig):
             self._disable_pretrained_model_mode()  # after this, hf_from_pretrained_cfg exists only if used
             assert isinstance(self.tl_cfg, ITLensCustomConfig)
             assert isinstance(self.tl_cfg.cfg, HookedTransformerConfig)
-            self._torch_dtype = _resolve_torch_dtype(self.tl_cfg.cfg.dtype)
+            self._dtype = _resolve_dtype(self.tl_cfg.cfg.dtype)
         else:
             # TL from pretrained currently requires a hf_from_pretrained_cfg, create one if it's not already configured
             if not self.hf_from_pretrained_cfg:
@@ -157,10 +157,10 @@ class ITLensConfig(ITConfig):
     def _sync_pretrained_cfg(self):
         if self.hf_from_pretrained_cfg:
             self._check_supported_device_map()
-            if hf_dtype := self.hf_from_pretrained_cfg.pretrained_kwargs.get("torch_dtype", None):
-                hf_dtype = _resolve_torch_dtype(hf_dtype)
+            if hf_dtype := self.hf_from_pretrained_cfg.pretrained_kwargs.get("dtype", None):
+                hf_dtype = _resolve_dtype(hf_dtype)
             assert isinstance(self.tl_cfg, ITLensFromPretrainedConfig)
-            tl_dtype = _resolve_torch_dtype(self.tl_cfg.dtype)
+            tl_dtype = _resolve_dtype(self.tl_cfg.dtype)
             self._sync_hf_tl_dtypes(hf_dtype, tl_dtype)
 
     def _check_supported_device_map(self):
@@ -184,13 +184,13 @@ class ITLensConfig(ITConfig):
                     f"HF `from_pretrained` dtype {hf_dtype} does not match TL dtype {tl_dtype}."
                     f" Setting both to the specified TL dtype {tl_dtype}."
                 )
-                self.hf_from_pretrained_cfg.pretrained_kwargs["torch_dtype"] = tl_dtype
+                self.hf_from_pretrained_cfg.pretrained_kwargs["dtype"] = tl_dtype
         else:
             rank_zero_warn(
                 "HF `from_pretrained` dtype was not provided. Setting `from_pretrained` dtype to match"
                 f" specified TL dtype: {tl_dtype}."
             )
-            self.hf_from_pretrained_cfg.pretrained_kwargs["torch_dtype"] = tl_dtype
+            self.hf_from_pretrained_cfg.pretrained_kwargs["dtype"] = tl_dtype
 
 
 @dataclass(kw_only=True)

@@ -310,7 +310,7 @@ class HFFromPretrainedMixin:
         additional_from_pretrained_kwargs = {
             "pretrained_model_name_or_path": self.it_cfg.model_name_or_path,  # type: ignore[attr-defined]  # mixin provides it_cfg
             "quantization_config": quantization_config,
-            "torch_dtype": self.torch_dtype,  # type: ignore[attr-defined]  # mixin provides torch_dtype
+            "dtype": self.dtype,  # type: ignore[attr-defined]  # mixin provides dtype
         }
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _update_hf_pretrained_cfg"
         self.hf_cfg.pretrained_kwargs.update(additional_from_pretrained_kwargs)

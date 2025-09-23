@@ -51,7 +51,7 @@ class TestClassTransformerLens:
         **test_tl_gpt2_shared_config,
         "tl_cfg": {},
         "hf_from_pretrained_cfg": dict(
-            pretrained_kwargs={"device_map": "cpu", "torch_dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
+            pretrained_kwargs={"device_map": "cpu", "dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
         ),
     }
     test_tlens_cust = {**test_tl_gpt2_shared_config, "tl_cfg": test_tl_cust_config}
@@ -92,7 +92,7 @@ class TestClassTransformerLens:
             pytest.param(True, {"dict unconvertible": "to hf_cfg"}, None, None, None, "or a dict convertible"),
             pytest.param(
                 True,
-                {"pretrained_kwargs": {"torch_dtype": "bfloat16"}},
+                {"pretrained_kwargs": {"dtype": "bfloat16"}},
                 None,
                 {"dtype": "float32"},
                 "does not match TL dtype",
