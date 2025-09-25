@@ -87,7 +87,7 @@ class TLMechInterpCfg(BaseCfg):
     tl_cfg: dict | None = field(default_factory=lambda: ITLensCustomConfig(**tl_cust_mi_cfg))
     dm_override_cfg: dict | None = field(
         default_factory=lambda: {
-            "enable_datasets_cache": False,
+            "enable_datasets_cache": True,
             "tokenizer_kwargs": {"padding_side": "right", "model_input_names": ["input"]},
             "dataset_path": str(Path(tempfile.gettempdir()) / "tl_cust_mi_force_prepare_ds"),
         }
@@ -222,7 +222,7 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
     force_prepare_data: Optional[bool] = True
     dm_override_cfg: dict | None = field(
         default_factory=lambda: {
-            "enable_datasets_cache": False,
+            "enable_datasets_cache": True,
             "dataset_path": str(Path(tempfile.gettempdir()) / "force_prepare_analysis_ds"),
         }
     )

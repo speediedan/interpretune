@@ -240,7 +240,9 @@ def run_op_with_config(request, op_cfg: OpTestConfig):
     return it_session, batches, result_batches, pre_serialization_shapes
 
 
-def save_reload_results_dataset(it_session, result_batches, batches, features_format: Optional[Tuple[Dict]] = None):
+def save_reload_results_dataset(
+    it_session, result_batches, batches, features_format: Optional[Tuple[Dict]] = None, split: str = "validation"
+):
     if features_format is not None:
         features, it_format_kwargs = features_format
     else:
@@ -265,7 +267,7 @@ def save_reload_results_dataset(it_session, result_batches, batches, features_fo
         generator=multi_batch_generator,
         features=features,
         cache_dir=it_session.module.analysis_cfg.output_store.cache_dir,
-        split="test",
+        split=split,
     ).with_format("interpretune", **it_format_kwargs)
 
     # TODO: add option to attach the dataset to the current analysis_cfg?

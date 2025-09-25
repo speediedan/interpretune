@@ -113,7 +113,7 @@ def dataset_features_and_format(module: "ITModule", kwargs: dict) -> Tuple[dict,
     return features, it_format_kwargs, kwargs
 
 
-def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, split="test", **kwargs) -> Dataset:
+def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, split="validation", **kwargs) -> Dataset:
     """Generate a dataset for analysis using the ITAnalysisFormatter.
 
     Args:
@@ -130,7 +130,7 @@ def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, sp
     Raises:
         Exception: If dataset generation fails, with detailed debug information
     """
-    # TODO: allow split customization rather than hardcode to "test"
+    # NOTE: default split changed from "test" to "validation" for consistency
     from_gen_kwargs = dict(
         generator=analysis_store_generator,
         gen_kwargs=gen_kwargs,
