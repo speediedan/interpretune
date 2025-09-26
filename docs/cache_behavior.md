@@ -1,7 +1,7 @@
 # Interpretune AnalysisStore caching
 
 This document describes the current AnalysisStore caching behavior (MVP)
-and the planned future behavior.
+and the planned future behavior (see https://github.com/speediedan/interpretune/issues/183).
 
 Current behavior (MVP)
 - Interpretune ships a toggle `enable_analysisstore_caching()` which is
