@@ -24,20 +24,14 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+from datasets.fingerprint import (
+    generate_random_fingerprint,
+    is_caching_enabled as _hf_is_caching_enabled,
+    get_temporary_cache_files_directory as _hf_get_temp_cache_dir,
+    maybe_register_dataset_for_temp_dir_deletion as _hf_maybe_register_tempdir,
+)
+
 from interpretune.utils import rank_zero_warn
-
-try:
-    # Preferred helpers from HF datasets if available
-    from datasets.fingerprint import (
-        is_caching_enabled as _hf_is_caching_enabled,
-        get_temporary_cache_files_directory as _hf_get_temp_cache_dir,
-        maybe_register_dataset_for_temp_dir_deletion as _hf_maybe_register_tempdir,
-    )
-except Exception:
-    _hf_is_caching_enabled = None
-    _hf_get_temp_cache_dir = None
-    _hf_maybe_register_tempdir = None
-
 from interpretune.analysis import IT_ANALYSIS_CACHE
 
 # Feature flag (disabled by default)
@@ -86,8 +80,11 @@ def _create_tempdir() -> Path:
         if _hf_maybe_register_tempdir is not None:
             try:
                 _hf_maybe_register_tempdir(str(tmpdir))
-            except Exception:
+            except Exception as e:
                 # Fall back to local atexit registration if HF helper fails
+                rank_zero_warn(
+                    f"_hf_maybe_register_tempdir failed with exception: {e!r}; falling back to local atexit cleanup."
+                )
                 atexit.register(lambda p=tmpdir: shutil.rmtree(p, ignore_errors=True))
         else:
             atexit.register(lambda p=tmpdir: shutil.rmtree(p, ignore_errors=True))
@@ -123,8 +120,9 @@ def get_analysis_cache_dir(module, explicit_cache_dir: Optional[str | Path] = No
         except Exception:
             # Best-effort fallback - put node under IT_ANALYSIS_CACHE/module-name
             cfg_name = "unknown"
-            fingerprint = "unknown"
-        cache_dir = Path(IT_ANALYSIS_CACHE) / cfg_name / fingerprint / module.__class__._orig_module_name
+            fingerprint = generate_random_fingerprint()
+        module_name = getattr(module.__class__, "_orig_module_name", module.__class__.__name__)
+        cache_dir = Path(IT_ANALYSIS_CACHE) / cfg_name / fingerprint / module_name
         cache_dir.mkdir(parents=True, exist_ok=True)
         return cache_dir
 

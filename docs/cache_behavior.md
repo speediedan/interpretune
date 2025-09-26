@@ -73,7 +73,7 @@ _op_serialization_fixt (/home/speediedan/repos/interpretune/tests/core/conftest.
 test_op_serialization (/home/speediedan/repos/interpretune/tests/core/test_analysis_ops_definitions.py:1178)
 ```
 
-Concrete hashing example
+Concrete hashing example (using `test_op_serialization[model_forward]` from `tests/core/test_analysis_ops_definitions.py`):
 
 ```python
 # config_kwargs_to_add_to_suffix: {'features': {'answer_logits': Array3D(shape=(None, 2, 50257), dtype='float32'), 'prompts': List(Value('string')), 'answer_indices': List(Value('int64')), 'tokens': Array2D(shape=(None, 2), dtype='int64')}, 'gen_kwargs': None, 'generator': <function save_reload_results_dataset.<locals>.multi_batch_generator at 0x7fefcc3136a0>, 'split': 'test'}
