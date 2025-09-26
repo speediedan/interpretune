@@ -146,6 +146,8 @@ class ITDataModule:
             signature_columns = []
 
         ignored_columns = list(set(dataset.column_names) - set(signature_columns))
+        # sort for deterministic fingerprinting (datasets caching relies on deterministic column order)
+        ignored_columns.sort()
         if len(ignored_columns) > 0:
             dset_description = "" if description is None else f"in the {description} set"
             target_name = f"`{target_model.__class__.__name__}.forward`"

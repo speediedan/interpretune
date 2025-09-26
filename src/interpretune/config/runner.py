@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from interpretune.utils import rank_zero_warn, rank_zero_debug, MisconfigurationException
-from interpretune.analysis import IT_ANALYSIS_CACHE, AnalysisOp
+from interpretune.analysis import AnalysisOp
+from interpretune.analysis.cache import get_analysis_cache_dir
 from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg, SAEAnalysisTargets
 from interpretune.protocol import StrOrPath
 
@@ -86,16 +87,14 @@ def init_analysis_dirs(
     Returns:
         Tuple of (cache_dir, op_output_dataset_path) as Path objects
     """
-    # Setup cache directory
-    if cache_dir is None:
-        cache_dir = (
-            Path(IT_ANALYSIS_CACHE)
-            / module.datamodule.dataset["validation"].config_name  # type: ignore[attr-defined]  # protocol provides datamodule
-            / module.datamodule.dataset["validation"]._fingerprint  # type: ignore[attr-defined]  # protocol provides datamodule
-            / module.__class__._orig_module_name  # type: ignore[attr-defined]  # dynamic module attribute
-        )
+    # Setup cache directory using analysis/cache helper which selects a temporary
+    # directory by default and a permanent path under IT_ANALYSIS_CACHE only
+    # when persistent analysisstore caching is enabled.
+    cache_dir = get_analysis_cache_dir(module, explicit_cache_dir=cache_dir)
     assert isinstance(cache_dir, StrOrPath), "cache_dir must be a str or Path"
     cache_dir = Path(cache_dir)
+    # Creation is handled by get_analysis_cache_dir for permanent dirs; ensure
+    # temp dirs exist as well.
     cache_dir.mkdir(exist_ok=True, parents=True)
 
     # Setup output dataset path
