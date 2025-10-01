@@ -22,7 +22,7 @@ finetuning-scheduler==2.5.3
     # via -r requirements/ci/requirements.in
 gdown==5.2.0
     # via -r requirements/ci/requirements.in
-huggingface-hub[hf-xet]==0.35.0
+huggingface-hub[hf-xet]==0.35.3
     # via
     #   -r requirements/ci/requirements.in
     #   accelerate
@@ -38,7 +38,7 @@ ipywidgets==8.1.7
     #   circuit-tracer
 jsonargparse[signatures,typing-extensions]==4.41.0
     # via -r requirements/ci/requirements.in
-jupyterlab==4.4.7
+jupyterlab==4.4.9
     # via
     #   -r requirements/ci/requirements.in
     #   notebook
@@ -48,7 +48,7 @@ nbval==0.11.0
     # via -r requirements/ci/requirements.in
 neuronpedia==1.0.22
     # via -r requirements/ci/requirements.in
-notebook==7.4.5
+notebook==7.4.7
     # via -r requirements/ci/requirements.in
 peft==0.17.1
     # via -r requirements/ci/requirements.in
@@ -77,7 +77,7 @@ python-dotenv==1.1.1
     #   -r requirements/ci/requirements.in
     #   neuronpedia
     #   sae-lens
-sae-lens==6.12.1
+sae-lens==6.12.3
     # via -r requirements/ci/requirements.in
 scikit-learn==1.7.2
     # via -r requirements/ci/requirements.in
@@ -105,7 +105,7 @@ transformer-lens==2.16.1
     #   sae-lens
 twine==6.2.0
     # via -r requirements/ci/requirements.in
-wandb==0.22.0
+wandb==0.22.1
     # via
     #   -r requirements/ci/requirements.in
     #   transformer-lens
