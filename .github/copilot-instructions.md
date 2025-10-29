@@ -161,17 +161,15 @@ We now have a separate Azure DevOps pipeline that runs GPU/standalone tests on a
 Note: the GPU pipeline runs only when a PR is ready for review and an admin approves the run — do not expect it to run automatically for draft PRs or early-stage work.
 
 ### Manual Validation Steps
-```bash
-# Lint check
-ruff check .
 
-# Type checking (limited scope)
-pyright src/interpretune/adapters/lightning.py
+# Run ruff linting (configured in pyproject.toml)
+# we don't have ruff installed as a separate package but use it via pre-commit (with the --fix flag)
+# there are two phases, the check and format, run each separately
+pre-commit run ruff-check --all-files
+pre-commit run ruff-format --all-files
 
-# Test with resource monitoring (Linux)
-./scripts/ci_resource_monitor.sh &
-pytest src/interpretune tests -v
-```
+# Run pre-commit hooks (includes ruff, docformatter, yaml checks)
+pre-commit run --all-files
 
 ### Regenerating stable CI dependency pins
 
@@ -201,9 +199,9 @@ Full repository type-checking is a work in progress. Current local checks may on
 3. Environment variable control: `IT_USE_CT_COMMIT_PIN=1`
 
 ### Dependency Constraints
-- **datasets** pinned to 2.21.0 for sae_lens compatibility
 - **torch** requires 2.7.1+ for newer features
 - **setuptools** requires 77.0.0+ for PEP 639 support
+- **pip** requires < 25.3 to avoid issues with pip-tools https://github.com/jazzband/pip-tools/issues/2252
 
 ### Import Dependencies
 - `transformer_lens` and `sae_lens` have complex initialization requirements

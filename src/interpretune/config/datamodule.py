@@ -96,6 +96,6 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
             if getattr(self, dm_fallback_attr) is None and getattr(it_cfg, dm_fallback_attr, None) is not None:
                 rank_zero_warn(
                     f"Since no datamodule `{dm_fallback_attr}` was provided, attempting to use fallback"
-                    f" configuration, setting `{dm_fallback_attr}` to {getattr(it_cfg, dm_fallback_attr)}."
+                    f" configuration, setting `{dm_fallback_attr}` to {str(getattr(it_cfg, dm_fallback_attr))[:20]}."
                 )
                 setattr(self, dm_fallback_attr, getattr(it_cfg, dm_fallback_attr))

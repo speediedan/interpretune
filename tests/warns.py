@@ -35,6 +35,8 @@ LIGHTING_CTX_WARNS = (
     HF_EXPECTED_WARNS
     + EXPECTED_WARNS
     + [
+        "Please use the new API settings to control TF32 behavior",  # for PT 2.9+ with Lightning 2.5.5
+        "in eval mode at the start of training",  # required starting with Lightning #21446
         "does not have many workers",
         "GPU available but",
         "is smaller than the logging interval",

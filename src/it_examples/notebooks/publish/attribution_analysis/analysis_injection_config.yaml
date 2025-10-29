@@ -1,0 +1,109 @@
+# Base analysis injection configuration for the attribution analysis notebook.
+#
+# This file can be imported directly or copied/modified within the notebook.
+# Individual analysis points can be toggled on/off via the `enable` flag below.
+settings:
+  enabled: true
+  target_package_version: "0.1.0"  # Required circuit_tracer version for this notebook
+  log_to_console: false
+  log_to_file: true
+  log_dir: /tmp
+  analysis_log_prefix: attribution_flow_analysis
+  analysis_points_module_path: ./analysis_points.py
+
+shared_context:
+  target_tokens:
+    - "▁Dallas"
+    - "▁Austin"
+
+file_hooks:
+  ap_precomputation_phase_end:
+    file_path: attribution/attribute.py
+    enable: true
+    regex_pattern: '^\\s*logger\\.info\\("Phase 1: Running forward pass"\\)'
+    insert_after: true
+    description: "End of precomputation of activations and vectors"
+
+  ap_forward_pass_end:
+    file_path: attribution/attribute.py
+    enable: true
+    regex_pattern: '^\\s*ctx\\._resid_activations\\[-1\\]\\s*=\\s*model\\.ln_final'
+    insert_after: true
+    description: "After forward pass on original replacement model"
+
+  ap_build_input_vectors_end:
+    file_path: attribution/attribute.py
+    enable: true
+    regex_pattern: '^\\s*logger\\.info\\(f"Input vectors built'
+    insert_after: true
+    description: "After building input vectors with target logits"
+
+  ap_compute_logit_attribution_end:
+    file_path: attribution/attribute.py
+    enable: true
+    regex_pattern: '^\\s*logger\\.info\\(f"Logit attributions completed'
+    insert_after: true
+    description: "End of logit attribution"
+
+  ap_compute_feature_attributions_end:
+    file_path: attribution/attribute.py
+    enable: true
+    regex_pattern: '^\\s*selected_features\\s*=\\s*torch\\.where\\(visited\\)\\[0\\]'
+    insert_after: true
+    description: "End of feature attribution"
+
+  ap_graph_creation_start:
+    file_path: attribution/attribute.py
+    enable: true
+    regex_pattern: '^\\s*full_edge_matrix\\[-n_logits:\\] = edge_matrix\\[max_feature_nodes:\\]'
+    insert_after: true
+    description: "Start of attribution graph packaging"
+
+  ap_compute_attribution_end:
+    file_path: replacement_model.py
+    enable: true
+    regex_pattern: '^\\s*attribution_data\\s*=\\s*self\\.transcoders\\.compute_attribution_components\\(mlp_in_cache\\)'
+    insert_after: true
+    description: "End of compute attribution components"
+
+  ap_graph_prune_node_influence_end:
+    file_path: graph.py
+    enable: true
+    regex_pattern: '^\\s*edge_scores = compute_edge_influence\\(pruned_matrix, logit_weights\\)'
+    insert_after: false
+    description: "Graph prune node influence end"
+
+  ap_graph_prune_edge_influence_post_norm:
+    file_path: graph.py
+    enable: true
+    regex_pattern: '^\\s*edge_scores\\s*=\\s*normalized_pruned\\s*\\*\\s*pruned_influence\\[:,\\s*None\\]'
+    insert_after: true
+    description: "Graph prune edge influence post normalization"
+
+  ap_graph_prune_edge_influence_pre_mask:
+    file_path: graph.py
+    enable: true
+    regex_pattern: '^\\s*edge_mask\\s*=\\s*edge_scores\\s*>=\\s*find_threshold\\(.*\\)'
+    insert_after: true
+    description: "Graph prune edge pre-mask application"
+
+  ap_graph_prune_edge_influence_end:
+    file_path: graph.py
+    enable: true
+    regex_pattern: '^\\s*return PruneResult\\(node_mask, edge_mask, final_scores\\)'
+    insert_after: false
+    description: "Graph prune edge influence end"
+
+  ap_node_compute_influence_init:
+    file_path: graph.py
+    enable: true
+    regex_pattern: '^\\s*current_influence = logit_weights @ A'
+    insert_after: true
+    description: "After initial current_influence computation in compute_influence"
+
+  ap_node_compute_influence:
+    file_path: graph.py
+    enable: true
+    regex_pattern: '^\\s*current_influence = current_influence @ A'
+    insert_after: true
+    description: "After each iteration of compute_influence updates current_influence"
