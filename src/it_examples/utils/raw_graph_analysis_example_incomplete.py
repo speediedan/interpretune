@@ -29,7 +29,8 @@ from it_examples.utils.raw_graph_analysis import (
 node_threshold = 0.8
 edge_threshold = 0.98
 OS_HOME = os.environ.get("HOME")
-
+if OS_HOME is None:
+    raise RuntimeError("HOME environment variable is not set")
 
 local_it_demo_graph_data = Path(OS_HOME) / "repos" / "local_it_demo_graph_data"
 target_example_dir = "ct_attribution_analysis_example"
@@ -41,7 +42,7 @@ graph_json_path = local_it_demo_graph_data / target_example_dir / target_example
 graph_dict = load_graph_json(graph_json_path)
 locals().update(unpack_objs_from_pt_dict(raw_graph_data))
 
-graph = Graph.from_pt(raw_graph_inspect)
+graph = Graph.from_pt(str(raw_graph_inspect))
 device = "cuda" if torch.cuda.is_available() else "cpu"
 graph.to(device)
 node_mask, edge_mask, cumulative_scores = (el.cpu() for el in prune_graph(graph, node_threshold, edge_threshold))
