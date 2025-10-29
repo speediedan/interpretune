@@ -207,7 +207,8 @@ def _format_data_for_logging(data: dict) -> str:
                 else:
                     parts.append(f"  {k} shape: {shape}")
                 continue
-        except Exception:
+        except Exception as e:
+            _get_pkg_logger().warning(f"Failed to format data for key '{k}': {e}")
             pass
 
         if isinstance(v, dict):
@@ -770,23 +771,6 @@ class AnalysisInjectionOrchestrator:
                 for key, value in self.config.shared_context.items():
                     # Set the value directly
                     HOOK_REGISTRY.set_context(**{key: value})
-
-                    # # Special handling for token lists - also set token_ids if tokenizer available
-                    # if isinstance(value, list) and all(isinstance(item, str) for item in value):
-                    #     if tokenizer is not None:
-                    #         try:
-                    #             token_ids = tokenizer.convert_tokens_to_ids(value)
-                    #             HOOK_REGISTRY.set_context(**{f"{key}_ids": token_ids})
-                    #         except Exception as e:
-                    #             _get_pkg_logger().warning(
-                    #                 f"Failed to convert {key} to token IDs: {e}. "
-                    #                 f"Only {key} will be available in shared context."
-                    #             )
-                    #     else:
-                    #         _get_pkg_logger().warning(
-                    #             f"No tokenizer provided. {key} will be available in shared context, "
-                    #             f"but {key}_ids will not be set."
-                    #         )
 
             # Log current hook registry contents
             try:

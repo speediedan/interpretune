@@ -113,8 +113,6 @@ def find_line_by_regex(file_path: Path, regex_pattern: str) -> Optional[int]:
             if pattern.search(line):
                 # Debug: log match location
                 try:
-                    import logging
-
                     logging.getLogger("analysis_injection").info(
                         f"Regex matched in {file_path}: pattern={regex_pattern!r} at line {line_num + 1}"
                     )
@@ -123,12 +121,7 @@ def find_line_by_regex(file_path: Path, regex_pattern: str) -> Optional[int]:
                 return line_num
 
     # If we didn't find a match, log a debug message
-    try:
-        import logging
-
-        logging.getLogger("analysis_injection").warning(f"Regex not found in {file_path}: pattern={regex_pattern!r}")
-    except Exception:
-        pass
+    logging.getLogger("analysis_injection").warning(f"Regex not found in {file_path}: pattern={regex_pattern!r}")
 
     return None
 
@@ -158,7 +151,6 @@ def patch_file_with_hooks(
         line_num = find_line_by_regex(file_path, hook.regex_pattern)
         if line_num is None:
             # Log and continue so we can see which patterns failed without throwing
-            import logging
 
             logging.getLogger("analysis_injection").warning(
                 f"Pattern not found for point {hook.point_id} in {file_path}: {hook.regex_pattern}"
@@ -232,8 +224,6 @@ def create_patched_module_loader(module_name: str, patched_file_path: Path) -> N
 
     # Verify the module's __file__ attribute matches our patched file
     if hasattr(module, "__file__") and module.__file__ != str(patched_file_path):
-        import logging
-
         logging.getLogger("analysis_injection").warning(
             f"Module {module_name} loaded but __file__ doesn't match: "
             f"expected {patched_file_path}, got {module.__file__}"
@@ -331,14 +321,9 @@ def install_patched_modules_with_references(patched_modules: Dict[str, Path]) ->
                         setattr(importer_module, attr_name, patched_func)
 
                         # Log the update for debugging
-                        try:
-                            import logging
-
-                            logging.getLogger("analysis_injection").debug(
-                                f"Updated reference to {module_name}.{attr_name} in {importer_name}"
-                            )
-                        except Exception:
-                            pass
+                        logging.getLogger("analysis_injection").debug(
+                            f"Updated reference to {module_name}.{attr_name} in {importer_name}"
+                        )
 
 
 def count_regex_matches(file_path: Path, regex_pattern: str) -> int:
@@ -441,7 +426,9 @@ def get_module_debug_info(module_name: str) -> Dict[str, Any]:
                 source = inspect.getsource(obj)
                 if "HOOK_REGISTRY.execute" in source:
                     info["functions_with_hooks"].append(name)
-            except Exception:
+            except Exception as e:
+                # Log the function that caused the exception for debugging
+                info.setdefault("source_errors", []).append(f"{name}: {str(e)}")
                 pass
     except Exception as e:
         info["inspect_error"] = str(e)

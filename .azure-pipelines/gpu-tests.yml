@@ -112,15 +112,12 @@ jobs:
               echo "✗ Write access FAILED (exit code: $?)"
               echo "LOCK FILE INACCESSIBLE - attempting to fix permissions"
               # Try to fix permissions before falling back to cache reset
-              bash -c "$(cat <<'FIXPERMS'
-                echo "Fixing HF cache dataset permissions..."
-                # Fix lock files to be group-writable
-                sudo find /opt/interpretune/hf_cache/datasets -type f -name "*.lock" -exec chmod 664 {} \; 2>/dev/null || true
-                # Ensure directories have SGID and group write
-                sudo find /opt/interpretune/hf_cache/datasets -type d -exec chmod g+ws {} \; 2>/dev/null || true
-                echo "Permissions fix completed"
-              FIXPERMS
-              )"
+              echo "Fixing HF cache dataset permissions..."
+              # Fix lock files to be group-writable
+              sudo find /opt/interpretune/hf_cache/datasets -type f -name "*.lock" -exec chmod 664 {} \; 2>/dev/null || true
+              # Ensure directories have SGID and group write
+              sudo find /opt/interpretune/hf_cache/datasets -type d -exec chmod g+ws {} \; 2>/dev/null || true
+              echo "Permissions fix completed"
               # Test again after fix
               if touch "$LOCK_FILE" 2>&1; then
                 echo "✓ Write access restored after permission fix"
