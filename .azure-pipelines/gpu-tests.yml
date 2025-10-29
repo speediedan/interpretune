@@ -48,7 +48,7 @@ jobs:
     strategy:
       matrix:
         PyTorch_latest:
-          image: speediedan/interpretune:py3.12-pt2.8.0-azpl-init
+          image: speediedan/interpretune:py3.12-pt2.9.0-azpl-init
           scope: ""
     timeoutInMinutes: 100
     cancelTimeoutInMinutes: 2
@@ -94,9 +94,58 @@ jobs:
         displayName: 'Verify runner hf_cache mount & permissions'
 
       - bash: |
-          echo "RESET_HF_CACHE=true — clearing /opt/interpretune/hf_cache"
-          rm -rf /opt/interpretune/hf_cache/* || true
-        condition: eq(${{ parameters.reset_hf_cache }}, true)
+          echo "=== Probing HF cache lock file accessibility ==="
+          LOCK_FILE=$(find /opt/interpretune/hf_cache/datasets -name "*super_glue*rte*.lock" -type f 2>/dev/null | head -1)
+          if [ -n "$LOCK_FILE" ]; then
+            echo "Found lock file: $LOCK_FILE"
+            ls -l "$LOCK_FILE"
+            echo "Testing read access..."
+            if cat "$LOCK_FILE" >/dev/null 2>&1; then
+              echo "✓ Read access OK"
+            else
+              echo "✗ Read access FAILED (exit code: $?)"
+            fi
+            echo "Testing write access..."
+            if touch "$LOCK_FILE" 2>&1; then
+              echo "✓ Write access OK"
+            else
+              echo "✗ Write access FAILED (exit code: $?)"
+              echo "LOCK FILE INACCESSIBLE - attempting to fix permissions"
+              # Try to fix permissions before falling back to cache reset
+              bash -c "$(cat <<'FIXPERMS'
+                echo "Fixing HF cache dataset permissions..."
+                # Fix lock files to be group-writable
+                sudo find /opt/interpretune/hf_cache/datasets -type f -name "*.lock" -exec chmod 664 {} \; 2>/dev/null || true
+                # Ensure directories have SGID and group write
+                sudo find /opt/interpretune/hf_cache/datasets -type d -exec chmod g+ws {} \; 2>/dev/null || true
+                echo "Permissions fix completed"
+              FIXPERMS
+              )"
+              # Test again after fix
+              if touch "$LOCK_FILE" 2>&1; then
+                echo "✓ Write access restored after permission fix"
+              else
+                echo "✗ Write access still failed - triggering cache reset"
+                echo "##vso[task.setvariable variable=FORCE_CACHE_RESET]1"
+              fi
+            fi
+            echo "Lock file ownership details:"
+            stat "$LOCK_FILE" || true
+            echo "Current user context:"
+            id
+          else
+            echo "No super_glue RTE lock files found in cache"
+          fi
+        displayName: 'Debug: Probe HF cache lock file permissions'
+        continueOnError: true
+
+      - bash: |
+          if [ "$FORCE_CACHE_RESET" = "1" ] || [ "${{ parameters.reset_hf_cache }}" = "true" ]; then
+            echo "Clearing HF cache due to: $([ "$FORCE_CACHE_RESET" = "1" ] && echo "inaccessible lock files" || echo "manual reset parameter")"
+            rm -rf /opt/interpretune/hf_cache/* || true
+          else
+            echo "HF cache reset not required"
+          fi
         displayName: 'Maybe reset HF cache'
 
       - bash: |
@@ -179,8 +228,15 @@ jobs:
           # is the only folder in this category currently)
           echo "Adjusting ownership/permissions..."
           sudo chmod -R 775 /__w/2/s || true
-          echo "cleaning up ephemeral directories..."
+          echo "Cleaning up ephemeral directories..."
           sudo rm -rf /__w/2/s/.pytest_cache || true
-          echo 'Agent working directory clean-up step completed'
+
+          echo "Fixing HF cache dataset permissions for next run..."
+          # Fix lock files to be group-writable
+          sudo find /opt/interpretune/hf_cache/datasets -type f -name "*.lock" -exec chmod 664 {} \; 2>/dev/null || true
+          # Ensure directories have SGID and group write
+          sudo find /opt/interpretune/hf_cache/datasets -type d -exec chmod g+ws {} \; 2>/dev/null || true
+
+          echo 'Agent workspace and HF cache cleanup completed'
         condition: always()
         displayName: 'Cleaning up agent workspace'
