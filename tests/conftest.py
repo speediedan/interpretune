@@ -468,6 +468,7 @@ def cli_test_file_env(tmp_path_factory):
         "IT_CONFIG_DEFAULTS",
         "WANDB_API_KEY",
         "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+        "HF_TOKEN",
         "IDE_PROJECT_ROOTS",
     ):
         if env_key in os.environ:
@@ -636,6 +637,7 @@ def restore_env_variables():
         "IT_LIGHTNING_SHARED",
         "WANDB_API_KEY",
         "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+        "HF_TOKEN",
         "IDE_PROJECT_ROOTS",
     }
     env_backup = os.environ.copy()

@@ -172,10 +172,12 @@ jobs:
       - bash: |
           . /tmp/venvs/it_dev/bin/activate
           export HF_GATED_PUBLIC_REPO_AUTH_KEY=$HF_GATED_PUBLIC_REPO_AUTH_KEY
+          export HF_TOKEN=$HF_TOKEN
           bash ./tests/special_tests.sh --mark_type=standalone
         displayName: 'Testing: standalone gpu'
         env:
           HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+          HF_TOKEN: $(HF_TOKEN)
 
       - bash: |
           . /tmp/venvs/it_dev/bin/activate
