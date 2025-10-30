@@ -12,7 +12,7 @@ if lwt_compare_version("sae_lens", operator.ge, "4.4.1"):
     # https://github.com/jbloomAus/SAELens/blob/e36245ceebe224b816e6d65b8f2b8b76847a4efb/sae_lens/saes/sae.py#L586-L684
     @classmethod
     def from_pretrained_with_cfg_and_sparsity(
-        cls: Type[T_SAE],
+        cls: type[T_SAE],
         release: str,
         sae_id: str,
         device: str = "cpu",

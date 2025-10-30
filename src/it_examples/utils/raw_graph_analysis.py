@@ -1,13 +1,282 @@
-import os
 import json
-from pathlib import Path
-
-import torch
-
-from circuit_tracer.frontend.graph_models import Node
-from circuit_tracer.graph import Graph, prune_graph
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+import torch
+from circuit_tracer.frontend.graph_models import Node
+
+if TYPE_CHECKING:
+    from circuit_tracer.graph import Graph
+
+
+# **TODO** save/parameterize the below vectorized 2nd order adjacency_matrix influence sampling function
+# for later use in utils
+# example:
+# top_graph_2nd_order_vals, top_graph_2nd_order_indices = get_topk_2nd_order_adjacency(
+#     5, 6374, torch.tensor((0,5)), 10, None, full_edge_matrix, None
+# )
+
+
+def get_topk_2nd_order_adjacency(
+    k: int,
+    limit_node: int,
+    inspect_logit_idxs: torch.Tensor,
+    n_logits: int = 10,
+    graph: Optional["Graph"] = None,
+    adjacency_matrix: Optional[torch.Tensor] = None,
+    adj_matrix_name: str = "adjacency_matrix",
+):
+    """Returns the top-k 2nd order adjacency values and indices for non-error, non-logit nodes.
+
+    Args:
+        k (int): Number of top values to select per row.
+        limit_node (int): Only consider nodes with indices < limit_node.
+        top_adj_edge_postnorm_indices (torch.Tensor): Indices of top adjacency edges (shape: [n_rows, k]).
+        graph (Graph, optional): Graph object containing adjacency matrices.
+        adjacency_matrix (torch.Tensor, optional): Adjacency matrix to use directly.
+        adj_matrix_name (str): Name of the adjacency matrix attribute in graph.
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: (topk_values, topk_indices), both of shape [n_rows, k, k]
+    """
+    if adjacency_matrix is None:
+        if graph is None:
+            raise ValueError("Either 'graph' or 'adjacency_matrix' must be provided.")
+        adjacency_matrix = getattr(graph, adj_matrix_name)
+    adj_logit_idxs = (adjacency_matrix.shape[0] - n_logits) + inspect_logit_idxs
+    first_order_values, first_order_indices = torch.topk(adjacency_matrix[adj_logit_idxs, :], k)
+    adj_mask = first_order_indices < limit_node
+    safe_indices = first_order_indices.clone()
+    safe_indices[~adj_mask] = 0  # Replace invalid indices with a dummy row (e.g., 0)
+    selected_rows = adjacency_matrix[safe_indices]
+    selected_rows[~adj_mask] = float("-inf")  # Mask out invalid rows
+    flat_rows = selected_rows.view(-1, adjacency_matrix.shape[1])
+    topk_values, topk_indices = torch.topk(flat_rows, k, dim=1)
+    topk_values = topk_values.view(*selected_rows.shape[:2], k)
+    topk_indices = topk_indices.view(*selected_rows.shape[:2], k)
+    return topk_values, topk_indices, first_order_values, first_order_indices
+
+
+# version of compute_influence that lets us trace the approximate neumann series convergence
+
+
+def compute_influence_trace_and_save(
+    A: torch.Tensor, logit_weights: torch.Tensor, pt_path: str, max_iter: int = 1000, trace_total: bool = False
+):
+    """Computes influence per iteration, saves adjacency matrix, logit_weights, and trace to a .pt file."""
+    current_influence = logit_weights @ A
+    influence = current_influence
+    trace = [current_influence.clone()]
+    iterations = 0
+    while current_influence.any():
+        if iterations >= max_iter:
+            raise RuntimeError(f"Influence computation failed to converge after {iterations} iterations")
+        current_influence = current_influence @ A
+        influence += current_influence
+        trace.append(current_influence.clone() if not trace_total else influence.clone())
+        iterations += 1
+    # Save to .pt file
+    torch.save(
+        {
+            "adjacency_matrix": A,
+            "logit_weights": logit_weights,
+            "trace": torch.stack(trace),
+        },
+        pt_path,
+    )
+    return trace
+
+
+# plot summary stats of a tensor where each row contains a distribution of a convergence process
+
+
+def tensor_distribution_summary_stats(tensor: torch.Tensor):
+    """Returns summary statistics (mean, std, min, max, median, nonzero count) for each row in a tensor. Each row
+    is assumed to represent a distribution from a given iteration.
+
+    Args:
+        tensor (torch.Tensor): shape (num_iterations, num_values)
+
+    Returns:
+        List[dict]: List of dicts containing summary stats for each iteration.
+    """
+    stats = []
+    for i in range(tensor.shape[0]):
+        row = tensor[i]
+        stats.append(
+            {
+                "iteration": i,
+                "mean": row.mean().item(),
+                "std": row.std().item(),
+                "min": row.min().item(),
+                "max": row.max().item(),
+                "median": row.median().item(),
+                "nonzero_count": (row != 0).sum().item(),
+                "total_count": row.numel(),
+            }
+        )
+    return stats
+
+
+def plot_ridgeline_convergence(
+    data: torch.Tensor,
+    stats: Optional[List[Dict[str, Any]]] = None,
+    title: str = "Convergence Distribution Ridgeline Plot",
+):
+    """Plot ridgeline distributions for convergence data using Plotly.
+
+    Args:
+        data: Tensor of shape [n_iterations_to_convergence, n_total_nodes] containing the convergence data
+        stats: List of dictionaries containing summary statistics for each iteration
+        title: Title for the plot
+    """
+    if not stats:
+        stats = tensor_distribution_summary_stats(data)
+    if data.shape[0] != len(stats):
+        raise ValueError(f"Data has {data.shape[0]} rows but {len(stats)} stat entries")
+
+    fig = go.Figure()
+
+    # Color scale for iterations
+    colors = px.colors.sequential.Viridis
+    color_scale = np.linspace(0, 1, len(stats))
+
+    # Calculate y-positions for ridgeline effect
+    y_spacing = 1.0
+    y_positions = np.arange(len(stats)) * y_spacing
+
+    # Process each iteration
+    for i, (row_data, stat) in enumerate(zip(data, stats)):
+        # Convert to numpy and filter out zeros for better visualization
+        values = row_data.cpu().numpy() if torch.is_tensor(row_data) else row_data
+        nonzero_values = values[values > 0]
+
+        if len(nonzero_values) == 0:
+            # Handle the case where all values are zero (like iteration 27)
+            continue
+
+        # Use log scale for better visualization of wide range
+        log_values = np.log10(nonzero_values + 1e-40)  # Add small epsilon to handle zeros
+
+        # Create histogram to get density
+        counts, bin_edges = np.histogram(log_values, bins=50, density=True)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+        # Normalize density for ridgeline effect (scale down for visibility)
+        normalized_density = counts / np.max(counts) * 0.8 if np.max(counts) > 0 else counts
+
+        # Create y-coordinates for this distribution
+        y_coords = y_positions[i] + normalized_density
+
+        # Add the distribution curve
+        color_idx = int(color_scale[i] * (len(colors) - 1))
+        color = colors[color_idx]
+
+        # Fill area under curve
+        fig.add_trace(
+            go.Scatter(
+                x=np.concatenate([bin_centers, bin_centers[::-1]]),
+                y=np.concatenate([y_coords, np.full(len(bin_centers), y_positions[i])]),
+                fill="toself",
+                fillcolor=color,
+                opacity=0.6,
+                line=dict(color=color, width=1),
+                name=f"Iteration {stat['iteration']}",
+                hovertemplate=(
+                    f"Iteration {stat['iteration']}<br>"
+                    + f"Mean: {stat['mean']:.2e}<br>"
+                    + f"Max: {stat['max']:.2e}<br>"
+                    + f"Nonzero: {stat['nonzero_count']}/{stat['total_count']}<br>"
+                    + "Log10(Value): %{x:.2f}<br>"
+                    + "<extra></extra>"
+                ),
+            )
+        )
+
+        # Add baseline
+        fig.add_trace(
+            go.Scatter(
+                x=[bin_centers.min(), bin_centers.max()],
+                y=[y_positions[i], y_positions[i]],
+                mode="lines",
+                line=dict(color="black", width=1),
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+
+    # Update layout
+    fig.update_layout(
+        title=dict(text=title, x=0.5, font=dict(size=16)),
+        xaxis=dict(title="Log10(Value + ε)", showgrid=True, gridcolor="lightgray"),
+        yaxis=dict(
+            title="Iteration",
+            tickmode="array",
+            tickvals=y_positions,
+            ticktext=[f"Iter {i}" for i in range(len(stats))],
+            showgrid=False,
+        ),
+        showlegend=True,
+        legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
+        width=1200,
+        height=800,
+        plot_bgcolor="white",
+    )
+
+    # Add annotations for key statistics (mean and max for first several iterations)
+    for i, stat in enumerate(stats[:8]):  # Show stats for first 8 iterations
+        if stat["nonzero_count"] > 0:
+            # Mean annotation
+            fig.add_annotation(
+                x=np.log10(stat["mean"] + 1e-40),
+                y=y_positions[i] + 0.3,
+                text=f"μ={stat['mean']:.1e}",
+                showarrow=False,
+                font=dict(size=8, color="blue"),
+                bgcolor="white",
+                bordercolor="blue",
+                borderwidth=1,
+                opacity=0.9,
+            )
+
+            # Max annotation
+            fig.add_annotation(
+                x=np.log10(stat["max"] + 1e-40),
+                y=y_positions[i] + 0.6,
+                text=f"max={stat['max']:.1e}",
+                showarrow=False,
+                font=dict(size=8, color="red"),
+                bgcolor="white",
+                bordercolor="red",
+                borderwidth=1,
+                opacity=0.9,
+            )
+
+    return fig
+
+
+# TODO: convert these manual examples to usage docstring w/ tests or remove
+# # example usage of neumann series convergence tracing
+
+# trace = compute_influence_trace_and_save(
+#     A, logit_weights, '/tmp/adjmat_logit_trace_neumann_convergence.pt'
+# )  # by default, traces only marginal updates (the diminishing updates of each order's update)
+# trace = compute_influence_trace_and_save(
+#     A, logit_weights, '/tmp/adjmat_logit_trace_neumann_convergence.pt', trace_total=True
+# )  # trace the total influence matrix evolution (not the diminishing updates of each order's update)
+
+# # within ipynb notebook
+# # target neumann series convergence trace
+# trace_path = './adjmat_logit_trace_neumann_convergence.pt'
+
+# data = torch.load(trace_path, map_location="cpu")
+# trace = data["trace"]  # shape: (num_iters, ...)
+
+# fig = plot_ridgeline_convergence(data=trace, stats=None, title="Neumann Series Convergence Trace Ridgeline Plot")
+# fig.show()
 
 
 # convenience function to unpack variables in a deserialized pytorch dictionary to local scope
@@ -45,8 +314,8 @@ def get_topk_edges_for_node_range(node_range: tuple, adjacency_matrix: torch.Ten
 
 def get_logit_indices_for_tokens(
     graph,
-    token_ids: torch.Tensor = None,
-    token_strings: list = None,
+    token_ids: Optional[torch.Tensor] = None,
+    token_strings: Optional[list] = None,
     tokenizer=None,
 ):
     """Given a tensor of token ids or a list of token strings (with tokenizer), return the corresponding indices in
@@ -214,11 +483,11 @@ class RawGraphOverview:
 def gen_raw_graph_overview(
     k: int,
     target_token_ids: torch.Tensor,
-    graph: "Graph" = None,
-    adjacency_matrix: torch.Tensor = None,
+    graph: Optional["Graph"] = None,
+    adjacency_matrix: Optional[torch.Tensor] = None,
     adj_matrix_name: str = "adjacency_matrix",
-    node_ranges: dict = None,
-    node_mapping: dict = None,
+    node_ranges: Optional[dict] = None,
+    node_mapping: Optional[dict] = None,
     node_mask: Optional[torch.Tensor] = None,
 ):
     """Returns the top-k 2nd order adjacency values and indices for non-error, non-logit nodes, as well as the
@@ -287,76 +556,5 @@ def gen_raw_graph_overview(
     )
 
 
-node_threshold = 0.8
-edge_threshold = 0.98
-OS_HOME = os.environ.get("HOME")
-
-
-local_np_graph_data = Path(OS_HOME) / "repos" / "local_np_graph_data"
-target_example_dir = "circuit_tracer_demo_specific_gradient_flow_attribution_example_orig"
-target_example_raw_data_file = "attribution_graph_ex_0.pt"
-target_example_graph_file = "ex-0.json"
-raw_graph_inspect = local_np_graph_data / target_example_dir / target_example_raw_data_file
-raw_graph_data = torch.load(raw_graph_inspect, weights_only=False, map_location="cpu")
-graph_json_path = local_np_graph_data / target_example_dir / target_example_graph_file
-graph_dict = load_graph_json(graph_json_path)
-locals().update(unpack_objs_from_pt_dict(raw_graph_data))
-
-graph = Graph.from_pt(raw_graph_inspect)
-device = "cuda" if torch.cuda.is_available() else "cpu"
-graph.to(device)
-node_mask, edge_mask, cumulative_scores = (el.cpu() for el in prune_graph(graph, node_threshold, edge_threshold))
-graph.to("cpu")
-
-
-# Examining logit node edges in the adjacency matrix directly
-# Set our target_token_ids either by str (with tokenizer) or manually
-target_token_ids = torch.tensor([26865, 22605], device=graph.logit_tokens.device)
-
-# Generate our raw graph overview
-raw_graph_overview = gen_raw_graph_overview(k=5, target_token_ids=target_token_ids, graph=graph, node_mask=node_mask)
-
-# Explore as desired
-# raw_graph_overview.first_order_node_ids
-# (
-#     ['20_15589_7', 'E_26865_6', '0_24_7', '21_5943_7', '23_12237_7'],
-#     ['E_26865_6', '20_15589_7', '21_5943_7', '14_2268_6', '16_25_6']
-# )
-# raw_graph_overview.first_order_values
-# tensor([[6.0000, 5.9062, 3.6719, 3.5000, 2.8594],
-#         [9.6875, 5.5000, 3.8906, 2.8281, 2.7812]])
-# raw_graph_overview.idxs_to_node_ids(6588)
-# ['E_26865_6']
-
-# Or indvidually analyze the adjacency matrix
-# generate our node mapping and ranges
-node_mapping, node_ranges = generate_topk_node_mapping(graph, node_mask)
-
-# Get our topk edges for a given node range
-topk_logit_vals, topk_logit_indices = get_topk_edges_for_node_range(node_ranges["logit_nodes"], graph.adjacency_matrix)
-
-# Get our target logit indices into both the adjacency matrix and our logit_probabilities/logit_tokens vector
-adj_matrix_target_logit_idxs, target_logit_vec_idxs = get_logit_indices_for_tokens(graph, target_token_ids)
-
-# Gather our target logit topk edge values using the full adj_matrix logit indices
-target_topk_logit_vals = torch.gather(
-    graph.adjacency_matrix[adj_matrix_target_logit_idxs], 1, topk_logit_indices[target_logit_vec_idxs]
-)
-
-# Get node_ids for the target logit indices in the adjacency matrix
-node_ids_for_target_logit_nodes = get_node_ids_for_adj_matrix_indices(adj_matrix_target_logit_idxs, node_mapping)
-
-# Example output:
-# node_ids_for_target_logit_nodes
-# ['27_22605_0', '27_26865_5']
-
-# Get the node_ids for the topk edges for our target logit nodes
-node_ids_for_topk_edges_of_target_logit_nodes = get_node_ids_for_adj_matrix_indices(
-    topk_logit_indices[target_logit_vec_idxs], node_mapping
-)
-
-# Example output:
-# node_ids_for_topk_edges_of_target_logit_nodes[0]
-# ['20_15589_7', 'E_26865_6', '0_24_7', '21_5943_7', '23_12237_7']
-# node_ids_for_topk_edges_of_target_logit_nodes[1]
-# ['E_26865_6', '20_15589_7', '21_5943_7', '14_2268_6', '16_25_6']
+# NOTE: For a complete example of using these functions with Circuit Tracer graphs,
+# see raw_graph_analysis_example_incomplete.py (TODO: requires local demo data to be made public)

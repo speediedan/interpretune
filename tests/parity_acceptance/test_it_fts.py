@@ -49,7 +49,10 @@ class FTSParityTest(BaseAugTest):
 
 
 PARITY_FTS_CONFIGS = (
-    FTSParityTest(alias="train_cpu_32_l_fts", cfg=FTSParityCfg(**l_gpt2_fts)),
+    # NOTE: train_cpu_32_l_fts marked as standalone due to disk space constraints on GitHub runners.
+    # This test creates large checkpoint files and may cause out-of-space errors when run alongside other tests.
+    # Consider switching to a trivial custom model if this becomes problematic.
+    FTSParityTest(alias="train_cpu_32_l_fts", cfg=FTSParityCfg(**l_gpt2_fts), marks="standalone"),
     FTSParityTest(alias="train_cpu_32_l_tl_fts", cfg=FTSParityCfg(**l_tl_gpt2_fts), marks="l_optional"),
     FTSParityTest(alias="train_cuda_32_l_fts", cfg=FTSParityCfg(**l_gpt2_fts, **cuda), marks="cuda_l_optional"),
     FTSParityTest(alias="train_cuda_32_l_tl_fts", cfg=FTSParityCfg(**l_tl_gpt2_fts, **cuda), marks="cuda"),

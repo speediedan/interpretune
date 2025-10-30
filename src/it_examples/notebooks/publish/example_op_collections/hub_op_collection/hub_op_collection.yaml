@@ -1,0 +1,12 @@
+---
+trivial_test_op:
+  description: Hub-based test op that sums the preds tensor over each batch
+  implementation: hub_op_definitions.trivial_test_op_impl
+  aliases: []
+  input_schema:
+    preds:
+      datasets_dtype: int64
+      required: false
+  output_schema:
+    pred_sum:
+      datasets_dtype: int64

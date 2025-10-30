@@ -82,6 +82,16 @@ runs:
         GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
         REPO: speediedan/interpretune
 
+    - name: Check disk space before tests
+      shell: bash
+      run: |
+        echo "=== Disk space before tests ==="
+        df -h
+        echo "=== Largest directories in /tmp ==="
+        du -sh /tmp/* 2>/dev/null | sort -hr | head -10 || true
+        echo "=== HuggingFace cache size ==="
+        du -sh ~/.cache/huggingface 2>/dev/null || echo "No HuggingFace cache yet"
+
     - name: Run tests and coverage
       shell: bash
       env:
@@ -98,6 +108,19 @@ runs:
           PYTEST_CMD="python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --durations=50 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
         fi
         eval $PYTEST_CMD
+
+    - name: Check disk space after tests
+      if: always()
+      shell: bash
+      run: |
+        echo "=== Disk space after tests ==="
+        df -h
+        echo "=== Largest directories in /tmp ==="
+        du -sh /tmp/* 2>/dev/null | sort -hr | head -10 || true
+        echo "=== Pytest temp directories ==="
+        du -sh /tmp/pytest-of-* 2>/dev/null | sort -hr | head -5 || echo "No pytest temp dirs"
+        echo "=== Lightning logs ==="
+        find . -type d -name "lightning_logs" -exec du -sh {} \; 2>/dev/null || true
 
     - name: Stop CI resource monitor (Linux only)
       if: always() && runner.os == 'Linux' && inputs.run_resource_monitor == '1'

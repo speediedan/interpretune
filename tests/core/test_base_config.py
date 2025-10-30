@@ -251,7 +251,7 @@ class TestClassBaseConfigs:
         assert supers == {}
 
 
-class TestAnalysisConfigs:
+class TestAnalysisInjectionConfigs:
     def test_analysis_cfg_post_init(self):
         # Test without op
         cfg = AnalysisCfg(name="test_analysis")

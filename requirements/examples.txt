@@ -7,6 +7,7 @@ jupytext >= 1.10
 nbval >= 0.9.6
 python-dotenv
 plotly
+matplotlib
 gdown
 evaluate
 scikit-learn

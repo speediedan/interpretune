@@ -39,6 +39,10 @@ repos:
             )$
       - id: detect-private-key
 
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.5.0
+    hooks:
+      - id: nbstripout
   # temporarily disabling until the pre-commit hook allows per-line ignores to avoid certain errors with jaxtyping
   # - repo: https://github.com/asottile/pyupgrade
   #   rev: v3.19.1
@@ -74,6 +78,15 @@ repos:
   #         - mdformat-gfm
   #         - mdformat_frontmatter
   #       exclude: "CHANGELOG.md", "**/*.prompt.md"
+
+  - repo: local
+    hooks:
+      - id: publish-notebooks
+        name: Publish notebooks if changed
+        entry: python scripts/publish_notebooks.py
+        language: system
+        files: ^src/it_examples/notebooks/dev/.*\.ipynb$
+        pass_filenames: false
 
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: 'v0.12.10'

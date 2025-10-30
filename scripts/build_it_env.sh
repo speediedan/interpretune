@@ -123,12 +123,12 @@ base_env_build(){
             elif [[ $torch_test_channel -eq 1 ]]; then
                 pip install ${pip_install_flags} --pre torch==2.9.0 --index-url https://download.pytorch.org/whl/test/cu128
             else
-                pip install ${pip_install_flags} torch torchvision --index-url https://download.pytorch.org/whl/cu128
+                pip install ${pip_install_flags} torch --index-url https://download.pytorch.org/whl/cu128
             fi
             ;;
         it_release)
             clear_activate_env python3.12
-            pip install ${pip_install_flags} torch torchvision --index-url https://download.pytorch.org/whl/cu128
+            pip install ${pip_install_flags} torch --index-url https://download.pytorch.org/whl/cu128
             ;;
         *)
             echo "no matching environment found, exiting..."
@@ -148,10 +148,11 @@ it_install(){
         unset USE_CI_COMMIT_PIN
     fi
     cd ${repo_home}
-
     # Optionally regenerate CI pinned requirements (pip-compile mode) if requested
     if [[ -n ${regen_with_pip_compile} ]]; then
         python -m pip install ${pip_install_flags} toml pip-tools
+        # "pip < 25.3" temporarily needed due to pip-tools https://github.com/jazzband/pip-tools/issues/2252
+        python -m pip install ${pip_install_flags} "pip<25.3"
         echo "Regenerating CI pinned requirements (pip-compile mode)"
         python ${repo_home}/requirements/utils/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci
     fi
@@ -159,6 +160,8 @@ it_install(){
     # If CI pinned requirements don't exist and user did not disable ci-reqs, regenerate them
     if [[ -z ${no_ci_reqs} ]] && [[ ! -f ${repo_home}/requirements/ci/requirements.txt ]]; then
         python -m pip install ${pip_install_flags} toml pip-tools
+        # "pip < 25.3" temporarily needed due to pip-tools https://github.com/jazzband/pip-tools/issues/2252
+        python -m pip install ${pip_install_flags} "pip<25.3"
         echo "CI pinned requirements not found; regenerating requirements.in and post_upgrades."
         python ${repo_home}/requirements/utils/regen_reqfiles.py --mode pip-compile --ci-output-dir ${repo_home}/requirements/ci
     fi
@@ -189,6 +192,15 @@ it_install(){
         python -m pip uninstall -y circuit-tracer || true
         cd ${ct_from_source}
         python -m pip install ${pip_install_flags} -e .
+
+        # Verify only the editable source installation is installed
+        echo "Verifying circuit-tracer installation..."
+        if pip show circuit_tracer | grep -q "Editable project location:"; then
+            echo "✓ circuit_tracer is installed in editable mode"
+        else
+            echo "✗ circuit_tracer is not installed in editable mode"
+            exit 1
+        fi
     fi
 
     pyright -p pyproject.toml
