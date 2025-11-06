@@ -22,4 +22,6 @@ maybe_deactivate(){
     if [ -n "$VIRTUAL_ENV" ]; then
         deactivate
     fi
+    # maybe replace with this in future:
+    # deactivate 2>/dev/null || true
 }
