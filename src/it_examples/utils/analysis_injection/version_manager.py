@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
+import re
 import subprocess
 import sys
 import tempfile
@@ -30,16 +31,12 @@ logger = logging.getLogger(__name__)
 
 # Mapping of (package_name, version) to git-based installation URLs
 # Used as fallback when package is not available on PyPI
-# Note: Supports both hyphenated and underscored package names
+# Package names are normalized according to PEP 503 (canonical form)
 GIT_FALLBACK_URLS = {
     (
         "circuit-tracer",
         "0.1.0",
-    ): "git+https://github.com/speediedan/circuit-tracer.git@b228bf190fadb3cb30f6a5ba6691dc4c86d76ba3",
-    (
-        "circuit_tracer",
-        "0.1.0",
-    ): "git+https://github.com/speediedan/circuit-tracer.git@b228bf190fadb3cb30f6a5ba6691dc4c86d76ba3",
+    ): "git+https://github.com/speediedan/circuit-tracer.git@004f1b2822eca3f0c1ddd2389e9105b3abffde87",
 }
 
 
@@ -57,6 +54,22 @@ class PackageVersionManager:
         >>> # Use the package...
         >>> mgr.cleanup()
     """
+
+    @staticmethod
+    def _normalize_package_name(name: str) -> str:
+        """Normalize package name according to PEP 503.
+
+        Converts package name to canonical form by:
+        - Converting to lowercase
+        - Replacing any sequence of [-_.] with a single hyphen
+
+        Args:
+            name: Package name to normalize
+
+        Returns:
+            Normalized package name
+        """
+        return re.sub(r"[-_.]+", "-", name).lower()
 
     def __init__(self, package_name: str, required_version: str):
         """Initialize the version manager.
@@ -137,7 +150,8 @@ class PackageVersionManager:
 
         # If PyPI installation fails, try git-based fallback
         if not success:
-            git_url = GIT_FALLBACK_URLS.get((self.package_name, self.required_version))
+            normalized_name = self._normalize_package_name(self.package_name)
+            git_url = GIT_FALLBACK_URLS.get((normalized_name, self.required_version))
             if git_url:
                 logger.warning(
                     f"{self.package_name}=={self.required_version} not available on PyPI. "

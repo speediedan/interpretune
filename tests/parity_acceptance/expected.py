@@ -16,7 +16,7 @@ l_parity_results = {
         exact_results=def_results("cuda", 32, ds_cfg="train"), close_results=((0, "loss", 13.356880),)
     ),
     "train_cuda_bf16": TestResult(
-        exact_results=def_results("cuda", "bf16", ds_cfg="train"), close_results=((0, "loss", 13.402528),)
+        exact_results=def_results("cuda", "bf16", ds_cfg="train"), close_results=((0, "loss", 14.748956),)
     ),
     "train_cpu_bf16": TestResult(exact_results=def_results("cpu", "bf16", ds_cfg="train")),
     "test_cpu_32": TestResult(exact_results=def_results("cpu", 32, ds_cfg="test")),

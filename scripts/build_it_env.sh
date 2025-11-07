@@ -195,7 +195,7 @@ it_install(){
 
         # Verify only the editable source installation is installed
         echo "Verifying circuit-tracer installation..."
-        if pip show circuit_tracer | grep -q "Editable project location:"; then
+        if pip show circuit_tracer 2>/dev/null | grep -q "Editable project location:"; then
             echo "✓ circuit_tracer is installed in editable mode"
         else
             echo "✗ circuit_tracer is not installed in editable mode"

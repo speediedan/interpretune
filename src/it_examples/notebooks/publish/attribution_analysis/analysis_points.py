@@ -68,48 +68,49 @@ def ap_build_input_vectors_end(local_vars: Dict[str, Any]) -> None:
     v = get_analysis_vars(
         context_keys=["target_token_analysis"],
         local_keys=[
-            "logit_idx",
-            "logit_p",
+            "targets",
             "total_nodes",
             "total_active_feats",
             "max_feature_nodes",
             "edge_matrix",
             "row_to_node_index",
-            "logit_vecs",
             "n_layers",
             "n_pos",
         ],
         local_vars=local_vars,
     )
     tta = v["target_token_analysis"]
-    tta.update_logit_info(v["logit_idx"], v["logit_p"])
-    max_n_logits = len(v["logit_idx"])
+    targets = v["targets"]
+    # Extract token IDs and probabilities from targets object
+    logit_idx, logit_p = targets.token_ids, targets.logit_probabilities
+    tta.update_logit_info(logit_idx, logit_p)
+    max_n_logits = len(targets)
 
     HOOK_REGISTRY.set_context(
         max_feature_nodes=v["max_feature_nodes"],
         total_nodes=v["total_nodes"],
-        logit_idx=v["logit_idx"],
-        logit_p=v["logit_p"],
+        logit_idx=logit_idx,
+        logit_p=logit_p,
         n_pos=v["n_pos"],
         max_n_logits=max_n_logits,
     )
     data = {
-        "logit_idx": v["logit_idx"],
-        "logit_p": VarAnnotate("logit_p", var_value=v["logit_p"], annotation="non-demeaned logits probabilities"),
+        "logit_idx": logit_idx,
+        "logit_p": VarAnnotate("logit_p", var_value=logit_p, annotation="logit probabilities"),
         "target_tokens": tta.tokens,
         "target_logit_indices": tta.logit_indices,
         "target_logit_p": tta.logit_probabilities,
-        "logit_cumulative_prob": float(v["logit_p"].sum().item()),
+        "logit_cumulative_prob": float(logit_p.sum().item()),
         "total_nodes": v["total_nodes"],
         "max_feature_nodes": v["max_feature_nodes"],
         "total_active_feats": v["total_active_feats"],
-        "n_logits": len(v["logit_idx"]),
+        "n_logits": len(targets),
         "n_layers": v["n_layers"],
         "n_pos": v["n_pos"],
         "max_n_logits": max_n_logits,
         "edge_matrix.shape": v["edge_matrix"].shape,
         "row_to_node_index.shape": v["row_to_node_index"].shape if v["row_to_node_index"] is not None else None,
-        "logit_vecs.shape": v["logit_vecs"].shape,
+        "logit_vecs.shape": targets.logit_vectors.shape,
     }
     analysis_log_point("after building input vectors w/ target logits", data)
 
@@ -151,7 +152,7 @@ def ap_compute_feature_attributions_end(local_vars: Dict[str, Any]) -> None:
     # Use dict directly for cleaner access
     v = get_analysis_vars(
         context_keys=["target_token_analysis"],
-        local_keys=["n_visited", "max_feature_nodes", "logit_p", "edge_matrix", "ctx"],
+        local_keys=["n_visited", "max_feature_nodes", "targets", "edge_matrix", "ctx"],
         local_vars=local_vars,
     )
     tta = v["target_token_analysis"]
