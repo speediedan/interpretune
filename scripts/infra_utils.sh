@@ -19,9 +19,5 @@ show_elapsed_time(){
 
 # Function to safely deactivate a virtual environment if one is active
 maybe_deactivate(){
-    if [ -n "$VIRTUAL_ENV" ]; then
-        deactivate
-    fi
-    # maybe replace with this in future:
-    # deactivate 2>/dev/null || true
+    deactivate 2>/dev/null || true
 }

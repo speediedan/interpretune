@@ -33,4 +33,4 @@ pip < 25.3
 huggingface_hub[hf_xet]
 nbmake >= 1.5.0
 papermill >= 2.4.0
-git+https://github.com/speediedan/circuit-tracer.git@b228bf190fadb3cb30f6a5ba6691dc4c86d76ba3#egg=circuit-tracer
+git+https://github.com/speediedan/circuit-tracer.git@004f1b2822eca3f0c1ddd2389e9105b3abffde87#egg=circuit-tracer

@@ -78,7 +78,7 @@ examples = [
 "neuronpedia",
 # TODO: add our packaged circuit-tracer dep (either pypi or pypi fork) once it is available and remove the
 #       `install_circuit_tracer` tool
-# "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@b228bf190fadb3cb30f6a5ba6691dc4c86d76ba3",
+# "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@004f1b2822eca3f0c1ddd2389e9105b3abffde87",
 ]
 
 docs = [

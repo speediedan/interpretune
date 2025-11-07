@@ -26,6 +26,35 @@ def test_git_fallback_urls_configured():
     assert "circuit-tracer" in url
 
 
+def test_package_name_normalization():
+    """Test that package name normalization works according to PEP 503."""
+    # Test various forms normalize to the same canonical name
+    assert PackageVersionManager._normalize_package_name("circuit_tracer") == "circuit-tracer"
+    assert PackageVersionManager._normalize_package_name("circuit-tracer") == "circuit-tracer"
+    assert PackageVersionManager._normalize_package_name("Circuit.Tracer") == "circuit-tracer"
+    assert PackageVersionManager._normalize_package_name("circuit__tracer") == "circuit-tracer"
+    assert PackageVersionManager._normalize_package_name("CIRCUIT_TRACER") == "circuit-tracer"
+
+
+def test_normalized_git_fallback_lookup():
+    """Test that git fallback lookup works with normalized package names."""
+    # Both forms should find the same URL after normalization
+    mgr_underscore = PackageVersionManager("circuit_tracer", "0.1.0")
+    mgr_hyphen = PackageVersionManager("circuit-tracer", "0.1.0")
+
+    normalized_underscore = mgr_underscore._normalize_package_name(mgr_underscore.package_name)
+    normalized_hyphen = mgr_hyphen._normalize_package_name(mgr_hyphen.package_name)
+
+    assert normalized_underscore == normalized_hyphen == "circuit-tracer"
+
+    url_underscore = GIT_FALLBACK_URLS.get((normalized_underscore, "0.1.0"))
+    url_hyphen = GIT_FALLBACK_URLS.get((normalized_hyphen, "0.1.0"))
+
+    assert url_underscore == url_hyphen
+    assert url_underscore is not None
+    assert url_underscore.startswith("git+https://")
+
+
 def test_version_manager_init():
     """Test that PackageVersionManager can be initialized."""
     mgr = PackageVersionManager("circuit-tracer", "0.1.0")

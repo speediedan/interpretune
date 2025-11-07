@@ -115,30 +115,24 @@ class BaseCircuitTracerModule(BaseITLensModule):
         # Circuit tracer handles gradient requirements internally
         rank_zero_info("Input gradient requirements handled by circuit tracer internally.")
 
-    def _get_analysis_target_indices(self) -> Optional[torch.Tensor]:
-        """Determine the value for compute_specific_logits based on CircuitTracerConfig.
+    def _get_attribution_targets(self) -> Optional[list | torch.Tensor]:
+        """Determine the attribution_targets value based on CircuitTracerConfig.
 
-        Returns a 1D tensor of token ids, or None.
+        Returns:
+            - None: Auto-select salient logits (default behavior)
+            - list[str]: Token strings to analyze (will be converted by AttributionTargets)
+            - torch.Tensor: Tensor of token IDs
         """
         cfg = self.circuit_tracer_cfg
         if not cfg:
             return None
 
-        # If analysis_target_tokens is set, tokenize them
+        # If analysis_target_tokens is set, return as list of strings
+        # AttributionTargets will handle tokenization internally
         if cfg.analysis_target_tokens is not None:
-            tokenizer = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
-            # Tokenize and flatten to 1D tensor of token ids
-            token_ids = []
-            for token in cfg.analysis_target_tokens:
-                assert tokenizer is not None, "Tokenizer must be available to tokenize analysis_target_tokens"
-                ids = tokenizer.encode(token, add_special_tokens=False)
-                token_ids.extend(ids)
-            if token_ids:
-                return torch.tensor(token_ids, dtype=torch.long)
-            else:
-                return None
+            return cfg.analysis_target_tokens
 
-        # If target_token_ids is set
+        # If target_token_ids is set, process it
         if cfg.target_token_ids is not None:
             ids = cfg.target_token_ids
             if isinstance(ids, torch.Tensor):
@@ -155,7 +149,7 @@ class BaseCircuitTracerModule(BaseITLensModule):
             else:
                 return None
 
-        # If neither is set, return None
+        # If neither is set, return None (use salient logits)
         return None
 
     def generate_attribution_graph(self, prompt: str, **kwargs) -> Graph:
@@ -165,18 +159,18 @@ class BaseCircuitTracerModule(BaseITLensModule):
 
         cfg = self.circuit_tracer_cfg
 
-        # Determine compute_specific_logits using the new method
-        analysis_target_indices = self._get_analysis_target_indices()
+        # Determine attribution_targets using the new method
+        attribution_targets = self._get_attribution_targets()
 
         # Set default attribution parameters
         attribution_kwargs = {
+            "attribution_targets": attribution_targets,
             "max_n_logits": cfg.max_n_logits if cfg else 10,
             "desired_logit_prob": cfg.desired_logit_prob if cfg else 0.95,
             "batch_size": cfg.batch_size if cfg else 256,
             "max_feature_nodes": cfg.max_feature_nodes if cfg else None,
             "offload": cfg.offload if cfg else None,
             "verbose": cfg.verbose if cfg else True,
-            "analysis_target_indices": analysis_target_indices,
         }
 
         # Override with any provided kwargs
