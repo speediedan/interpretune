@@ -3,7 +3,7 @@ from functools import partial
 from typing import List, Optional
 from warnings import WarningMessage
 from packaging.version import Version
-from pkg_resources import get_distribution
+from importlib.metadata import version as get_version
 
 from interpretune.utils import dummy_method_warn_fingerprint
 from interpretune.protocol import Adapter
@@ -83,7 +83,7 @@ MIN_VERSION_WARNS = "2.2"
 MAX_VERSION_WARNS = "2.5"
 # torch version-specific warns go here
 EXPECTED_VERSION_WARNS = {MIN_VERSION_WARNS: [], MAX_VERSION_WARNS: []}
-torch_version = get_distribution("torch").version
+torch_version = get_version("torch")
 extended_torch_ver = EXTENDED_VER_PAT.match(torch_version).group() or torch_version
 if Version(extended_torch_ver) < Version(MAX_VERSION_WARNS):
     EXPECTED_WARNS.extend(EXPECTED_VERSION_WARNS[MIN_VERSION_WARNS])

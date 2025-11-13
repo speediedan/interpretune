@@ -21,6 +21,7 @@ from pathlib import Path
 from types import UnionType
 from enum import auto, Enum, EnumMeta
 from dataclasses import dataclass
+from os import PathLike
 import inspect
 
 import torch
@@ -492,7 +493,7 @@ class SAEDictProtocol(Protocol):
 class AnalysisStoreProtocol(Protocol):
     """Protocol verifying core analysis store functionality."""
 
-    dataset: Union[HfDataset, StrOrPath, None]
+    dataset: Union[HfDataset, StrOrPath, PathLike, None]
     streaming: bool
     cache_dir: str | None
 

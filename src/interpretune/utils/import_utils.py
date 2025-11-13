@@ -2,9 +2,9 @@ from typing import Any, Union, Optional, Dict, Tuple, Callable, List
 import importlib
 from functools import lru_cache
 from importlib.util import find_spec
+from importlib.metadata import version as get_version, PackageNotFoundError
 import operator
 import torch
-import pkg_resources
 from packaging.version import Version
 
 from interpretune.utils import MisconfigurationException
@@ -137,7 +137,7 @@ def module_available(module_path: str) -> bool:
     return True
 
 
-def compare_version(package: str, op: Callable, version: str, use_base_version: bool = False) -> bool:
+def compare_version(package: str, op: Callable, version_str: str, use_base_version: bool = False) -> bool:
     """Compare package version with some requirements.
 
     >>> compare_version("torch", operator.ge, "0.1")
@@ -147,20 +147,20 @@ def compare_version(package: str, op: Callable, version: str, use_base_version: 
     """
     try:
         pkg = importlib.import_module(package)
-    except (ImportError, pkg_resources.DistributionNotFound):
+    except (ImportError, PackageNotFoundError):
         return False
     try:
         if hasattr(pkg, "__version__"):
             pkg_version = Version(pkg.__version__)
         else:
-            # try pkg_resources to infer version
-            pkg_version = Version(pkg_resources.get_distribution(package).version)
-    except TypeError:
+            # try importlib.metadata to infer version
+            pkg_version = Version(get_version(package))
+    except (TypeError, PackageNotFoundError):
         # this is mocked by Sphinx, so it should return True to generate all summaries
         return True
     if use_base_version:
         pkg_version = Version(pkg_version.base_version)
-    return op(pkg_version, Version(version))
+    return op(pkg_version, Version(version_str))
 
 
 ################################################################################

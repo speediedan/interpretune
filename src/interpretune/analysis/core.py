@@ -351,7 +351,7 @@ class AnalysisStore:
     def __init__(
         self,
         # dataset: can be a path or a loaded Hugging Face dataset
-        dataset: HfDataset | StrOrPath | None = None,
+        dataset: HfDataset | StrOrPath | os.PathLike | None = None,
         op_output_dataset_path: str | None = None,
         cache_dir: str | None = None,
         streaming: bool = False,

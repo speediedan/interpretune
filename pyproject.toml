@@ -54,7 +54,7 @@ interpretune = "interpretune.base.components.cli:bootstrap_cli"
 
 lightning = [
     "finetuning-scheduler >= 2.5.0",
-    "bitsandbytes",
+    "bitsandbytes; platform_system != 'Darwin' or platform_machine != 'arm64'",
     "peft",
 ]
 
@@ -187,7 +187,6 @@ order-by-type = false
 max-complexity = 10
 
 [tool.pyright]
-autoSearchPaths=false
 typeCheckingMode="standard"
 include = [
     "src/",

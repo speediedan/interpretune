@@ -19,7 +19,7 @@ import pytest
 import torch
 from interpretune.utils import _LIGHTNING_AVAILABLE, _BNB_AVAILABLE, _FTS_AVAILABLE
 from packaging.version import Version
-from pkg_resources import get_distribution
+from importlib.metadata import version as get_version
 from it_examples.patching.dep_patch_shim import ExpPatch, _ACTIVE_PATCHES
 
 EXTENDED_VER_PAT = re.compile(r"([0-9]+\.){2}[0-9]+")
@@ -151,13 +151,13 @@ class RunIf:
             kwargs["min_cuda_gpus"] = True
 
         if min_torch:
-            torch_version = get_distribution("torch").version
+            torch_version = get_version("torch")
             extended_torch_ver = EXTENDED_VER_PAT.match(torch_version).group() or torch_version
             conditions.append(Version(extended_torch_ver) < Version(min_torch))
             reasons.append(f"torch>={min_torch}, {extended_torch_ver} installed.")
 
         if max_torch:
-            torch_version = get_distribution("torch").version
+            torch_version = get_version("torch")
             extended_torch_ver = EXTENDED_VER_PAT.match(torch_version).group() or torch_version
             conditions.append(Version(extended_torch_ver) > Version(max_torch))
             reasons.append(f"torch<={max_torch}, {extended_torch_ver} installed.")
