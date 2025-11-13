@@ -57,7 +57,7 @@ def collect_env_info() -> Dict:
     # does not start doing so soon
     pip_packages = sys_dict.get("pip_packages")
     if pip_packages:
-        pip_dict = {name: ver for name, ver in [p.split("==") for p in pip_packages.split("\n") if "==" in p]}
+        pip_dict = {name: ver for name, ver in [p.split("==", 1) for p in pip_packages.split("\n") if "==" in p]}
         sys_dict["pip_packages"] = pip_dict
     else:
         sys_dict["pip_packages"] = {}

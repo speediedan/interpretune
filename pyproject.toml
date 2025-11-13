@@ -54,7 +54,7 @@ interpretune = "interpretune.base.components.cli:bootstrap_cli"
 
 lightning = [
     "finetuning-scheduler >= 2.5.0",
-    "bitsandbytes; platform_system != 'Darwin' or platform_machine != 'arm64'",
+    "bitsandbytes; platform_system != 'Darwin'",
     "peft",
 ]
 

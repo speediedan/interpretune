@@ -79,8 +79,8 @@ CLI_EXPECTED_WARNS = {
     (Adapter.core, Adapter.core, Adapter.transformer_lens): TL_CTX_WARNS,
 }
 
-MIN_VERSION_WARNS = "2.2"
-MAX_VERSION_WARNS = "2.5"
+MIN_VERSION_WARNS = "2.7"
+MAX_VERSION_WARNS = "2.9"
 # torch version-specific warns go here
 EXPECTED_VERSION_WARNS = {MIN_VERSION_WARNS: [], MAX_VERSION_WARNS: []}
 torch_version = get_version("torch")
