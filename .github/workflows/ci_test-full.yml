@@ -132,7 +132,6 @@ jobs:
         python-version: ["3.12"]
     timeout-minutes: 90
     env:
-      IT_USE_CT_COMMIT_PIN: "1"
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       HF_GATED_PUBLIC_REPO_AUTH_KEY: ${{ secrets.HF_GATED_PUBLIC_REPO_AUTH_KEY }}
       ### we need to set the below secrets/vars for Grafana Alloy monitoring in our composite action (which doesn't have direct access to those workflow inputs)
@@ -147,32 +146,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Reset caching
-        id: set_time_period
-        run: |
-          python -c "import time; days = time.time() / 60 / 60 / 24; print(f'TIME_PERIOD=d{int(days / 7) * 7}')" >> $GITHUB_OUTPUT
-
       - name: Install libpq (macOS only)
         if: runner.os == 'macOS'
         run: |
           brew reinstall libpq
           brew link --force libpq
-
-      # Note: This uses an internal pip API and may not always work
-      # https://github.com/actions/cache/blob/master/examples.md#multiple-oss-in-a-workflow
-      - name: Get pip cache dir
-        id: pip-cache
-        shell: bash
-        run: |
-          echo "PIP_CACHE_DIR=$(pip cache dir)" >> $GITHUB_ENV
-
-      - name: pip cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.PIP_CACHE_DIR }}/wheels
-          key: ${{ runner.os }}-pip-wheels-${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-${{ hashFiles('requirements/ci/requirements.txt') }}-${{ hashFiles('requirements/ci/post_upgrades.txt') }}-${{ hashFiles('requirements/ci/platform_dependent.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-wheels-${{ steps.set_time_period.outputs.TIME_PERIOD }}-py${{ matrix.python-version }}-
 
       - name: Install CI dependencies
         uses: ./.github/actions/install-ci-dependencies

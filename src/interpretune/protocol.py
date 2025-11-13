@@ -17,7 +17,6 @@ from typing import (
     TypedDict,
     TypeVar,
 )
-from os import PathLike
 from pathlib import Path
 from types import UnionType
 from enum import auto, Enum, EnumMeta
@@ -47,7 +46,7 @@ else:
 # Interpretune helper types
 ################################################################################
 
-StrOrPath: TypeAlias = Union[str, PathLike, Path]
+StrOrPath: TypeAlias = Union[str, Path]
 
 ################################################################################
 # Interpretune Enhanced Enums

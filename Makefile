@@ -3,8 +3,6 @@
 .PHONY: help lint test build sdist wheel clean
 
 export SPHINX_MOCK_REQUIREMENTS=1
-# TODO: remove this once CT is available via PyPI or our own package index
-export IT_USE_CT_COMMIT_PIN="1"
 
 help:
 	@echo "Makefile commands:"
@@ -26,19 +24,17 @@ clean:
 	rm -rf ./docs/source/api
 
 lint:
-	# run ruff via pre-commit where available
+	# run ruff via pre-commit where available (assumes activated venv)
 	pre-commit run ruff-check --all-files
 	pre-commit run ruff-format --all-files
 
 test: clean
-	pip install -r requirements/devel.txt
-	# TODO: remove this once no longer necessary
-	@echo "Using IT_USE_CT_COMMIT_PIN for circuit-tracer installation"
-	interpretune-install-circuit-tracer
 	# run tests with coverage (cpu-only, running gpu standalone tests required for full coverage)
+	# assumes activated venv with interpretune installed
 	python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v
 	python -m coverage report
 
 docs: clean
-	pip install --quiet -r requirements/docs.txt
+	# assumes activated venv
+	uv pip install --quiet -e . --group docs
 	python -m sphinx -b html -W --keep-going docs/source docs/build
