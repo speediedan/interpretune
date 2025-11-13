@@ -56,23 +56,20 @@ ENV \
     && \
     update-alternatives --install /usr/bin/python${PYTHON_VERSION%%.*} python${PYTHON_VERSION%%.*} /usr/bin/python${PYTHON_VERSION} 1 && \
     update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 && \
-    # Install uv for fast, reliable package management
-    curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    # Install uv for fast, reliable package management (system-wide)
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh && \
     # Cleaning
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /root/.cache && \
     rm -rf /var/lib/apt/lists/*
 
-# Add uv to PATH
-ENV PATH="/root/.local/bin/:/root/.cargo/bin:$PATH"
-
 COPY ./requirements/ ./requirements/
 
 ENV PYTHONPATH=/usr/lib/python${PYTHON_VERSION}/site-packages
 
 RUN \
-    # Create virtual environment with uv (much faster than virtualenv)
+    # Create virtual environment with uv
     uv venv /tmp/venvs/it_dev --python python${PYTHON_VERSION} && \
     . /tmp/venvs/it_dev/bin/activate && \
     # set particular PyTorch version by default
