@@ -146,12 +146,38 @@ jobs:
         displayName: 'Maybe reset HF cache'
 
       - bash: |
+          set -e  # Exit on any error
           source /tmp/venvs/it_dev/bin/activate
-          echo "Installing interpretune in editable mode with any git url dependencies..."
-          uv pip install -e . --group git-deps
-          echo "Installing locked CI requirements..."
-          uv pip install -r requirements/ci/requirements.txt
+
+          echo "=== Installing interpretune in editable mode with git dependencies ==="
+          if ! uv pip install -e . --group git-deps; then
+            echo "ERROR: Failed to install interpretune in editable mode"
+            exit 1
+          fi
+          echo "✓ Interpretune installation completed"
+
+          echo "=== Installing locked CI requirements ==="
+          if ! uv pip install -r requirements/ci/requirements.txt; then
+            echo "ERROR: Failed to install locked CI requirements"
+            echo "Checking for permission issues in venv..."
+            find /tmp/venvs/it_dev -type d -name __pycache__ ! -writable 2>/dev/null | head -20
+            exit 1
+          fi
+          echo "✓ CI requirements installation completed"
+
+          echo "=== Installed packages ==="
           uv pip list
+
+          echo "=== Verifying critical packages ==="
+          for pkg in coverage pytest torch transformers; do
+            if uv pip show "$pkg" >/dev/null 2>&1; then
+              echo "✓ $pkg is installed"
+            else
+              echo "✗ ERROR: $pkg is NOT installed"
+              exit 1
+            fi
+          done
+          echo "✓ All critical packages verified"
         displayName: 'Install dependencies'
 
       - bash: |

@@ -94,6 +94,8 @@ RUN \
     # uv pip install "lightning @ git+https://github.com/Lightning-AI/lightning.git@${LIGHTNING_COMMIT}#egg=lightning" --no-cache && \
     # Install all requirements
     # uv pip install -r requirements/devel.txt --no-cache && \
+    # Ensure venv is fully writable by all users and clean up __pycache__ to avoid permission issues
+    find /tmp/venvs/it_dev -type d -name __pycache__ -exec chmod -R 777 {} + 2>/dev/null || true && \
     chmod -R 777 /tmp/venvs/it_dev && \
     rm -rf requirements.* requirements/
 
