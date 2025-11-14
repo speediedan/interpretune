@@ -69,6 +69,8 @@ COPY ./requirements/ ./requirements/
 ENV PYTHONPATH=/usr/lib/python${PYTHON_VERSION}/site-packages
 
 RUN \
+    # Set umask to make all new files/dirs world-writable by default
+    umask 000 && \
     # Create virtual environment with uv
     uv venv /tmp/venvs/it_dev --python python${PYTHON_VERSION} && \
     . /tmp/venvs/it_dev/bin/activate && \
@@ -94,14 +96,24 @@ RUN \
     # uv pip install "lightning @ git+https://github.com/Lightning-AI/lightning.git@${LIGHTNING_COMMIT}#egg=lightning" --no-cache && \
     # Install all requirements
     # uv pip install -r requirements/devel.txt --no-cache && \
-    # Ensure venv is fully writable by all users and clean up __pycache__ to avoid permission issues
-    find /tmp/venvs/it_dev -type d -name __pycache__ -exec chmod -R 777 {} + 2>/dev/null || true && \
+    # Ensure venv is fully writable by all users - apply to existing files and dirs
     chmod -R 777 /tmp/venvs/it_dev && \
-    rm -rf requirements.* requirements/
+    # Verify permissions were set correctly
+    echo "=== Verifying venv permissions ===" && \
+    ls -ld /tmp/venvs/it_dev && \
+    echo "Sample __pycache__ dirs:" && \
+    find /tmp/venvs/it_dev -type d -name __pycache__ | head -5 | xargs ls -ld && \
+    echo "site-packages dir:" && \
+    ls -ld /tmp/venvs/it_dev/lib/python${PYTHON_VERSION}/site-packages && \
+    echo "=== Permission verification complete ===" && \
+    rm -rf requirements/
+
+# Set VIRTUAL_ENV to activate the venv for subsequent RUN commands
+ENV VIRTUAL_ENV=/tmp/venvs/it_dev
+ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
 
 RUN \
     set -x && \
-    . /tmp/venvs/it_dev/bin/activate && \
     echo "Checking CUDA version:" && \
     CUDA_VERSION_MAJOR=$(python -c "import torch; print(torch.version.cuda.split('.')[0])") && \
     echo "CUDA Version Major: ${CUDA_VERSION_MAJOR}" && \
