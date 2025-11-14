@@ -31,36 +31,112 @@ cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpret
 ## Build and Validation Commands
 
 ### Environment Setup
-Always install dependencies in order to avoid conflicts:
+Development environment uses `uv` for fast, reliable dependency management:
 
 ```bash
-# Basic development setup
-python -m pip install --upgrade pip setuptools setuptools-scm wheel build
-python -m pip install -r requirements/ci/requirements.txt -r requirements/ci/platform_dependent.txt
-python -m pip install -e '.[test,examples,lightning]'
+# Install uv (one-time setup)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# If circuit-tracer install fails, use the built-in tool after basic install:
-pip install interpretune[examples]
-interpretune-install-circuit-tracer
+# Create development environment (creates traditional venv at ~/.venvs/it_latest)
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
+
+# Activate the environment
+source ~/.venvs/it_latest/bin/activate
+
+# Run commands directly (no need for 'uv run')
+python --version
+python -m pytest tests/
 ```
 
-**⚠️ Known Issue:** Full dependency install may timeout due to large ML packages. Install basic deps first, then add extras incrementally.
-
 ### Development Environment Scripts
-For complex setups, use the provided build script:
+Use the provided build script for automated setup:
 
 ```bash
 # Standard development build (recommended for dev work)
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
 
-# Build with a circuit-tracer commit pin
+# Quick editable install (without locked requirements)
+uv pip install -e ".[test,examples,lightning,profiling]" --group git-deps dev
+
+# Venv Location Options (for hardlink performance and standalone process wrappers):
+#
+# OPTION 1 (Recommended for standalone process wrappers): Use --venv-dir to set BASE directory
+# The venv will be created at: <venv-dir>/<target-env-name>
+# This is most robust when using with manage_standalone_processes.sh:
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --venv-dir=/mnt/cache/username/.venvs
+# Creates venv at: /mnt/cache/username/.venvs/it_latest
+#
+# OPTION 2: Use IT_VENV_BASE environment variable to set base directory
+# This approach uses IT_VENV_BASE as base + target_env_name:
+export IT_VENV_BASE=/mnt/cache/username/.venvs
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
+# Creates venv at: /mnt/cache/username/.venvs/it_latest
+#
+# OPTION 3: Use default (~/.venvs/<target_env_name>) - simplest but may cause hardlink warnings
+# If UV cache is on different filesystem, you'll see "Failed to hardlink files" warnings
+# Creates venv at: ~/.venvs/it_latest
+#
+# Why placement matters: UV uses hardlinks for fast installs, but hardlinks only work within
+# the same filesystem. Placing venv on same filesystem as UV cache ensures fast installs and
+# no warnings. Example UV cache location: /mnt/cache/username/.cache/uv
+
+# Build with specific PyTorch nightly version
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --torch_dev_ver=dev20240201
+
+# Build with PyTorch test channel
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --torch_test_channel
+
+# Build with single package from source (no extras)
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --from-source="circuit_tracer:${HOME}/repos/circuit-tracer"
+
+# Build with package from source with extras
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all"
+
+# Build with package from source with extras and environment variable
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1"
+
+# Build with multiple packages from source (using multiple --from-source flags - cleaner!)
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest \
+  --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1" \
+  --from-source="circuit_tracer:${HOME}/repos/circuit-tracer"
+
+# Build with multiple packages from source (using semicolon separator - also supported)
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1;circuit_tracer:${HOME}/repos/circuit-tracer"
+
+# Important: When using with manage_standalone_processes.sh wrapper, use --venv-dir:
+~/repos/interpretune/scripts/manage_standalone_processes.sh --use-nohup scripts/build_it_env.sh \
+  --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest \
+  --venv-dir=/mnt/cache/speediedan/.venvs/it_latest \
+  --from-source="finetuning_scheduler:~/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1"
 ```
 
+**Important: Git Dependency Caching and override-dependencies**
+
+When installing from-source packages that specify git dependencies (e.g., finetuning-scheduler with USE_CI_COMMIT_PIN=1 pinning Lightning to a specific commit), UV's caching ensures correct behavior:
+
+1. From-source packages are installed FIRST with all their dependencies
+2. UV caches git dependencies by their fully-resolved commit hash
+3. When interpretune is subsequently installed, UV respects the cached commit-pinned versions
+4. The [tool.uv] override-dependencies in pyproject.toml replaces interpretune's git URL dependencies with version constraints, allowing editable installations to satisfy requirements
+
+See [UV's dependency caching docs](https://docs.astral.sh/uv/concepts/cache/#dependency-caching) for details on git dependency caching behavior.
+
+**From-Source Package Version Requirements:**
+
+When installing packages from source (especially transformer-lens), ensure the package version in the source repo satisfies dependent package requirements:
+- circuit-tracer requires `transformer-lens>=v2.16.0`
+- TransformerLens repo default version (with the old v2 poetry install) is 0.0.0 in pyproject.toml (set by CI pipeline on release)
+- For local development, update TransformerLens version to 2.16.1 or higher: `sed -i 's/version="0\.0\.0"/version="2.16.1"/' ~/repos/TransformerLens/pyproject.toml`
+- This ensures circuit-tracer's dependency is satisfied without UV upgrading transformer-lens to PyPI version
+- This should not be necessary when installing transformer_lens from source with versions >= 3.0.0 as uv is used
+
 ### Linting and Code Quality
-**Always run linting before committing:**
+**Always run linting before committing (assumes activated venv):**
 
 ```bash
+# Activate your environment first
+source ~/.venvs/it_latest/bin/activate
+
 # Run ruff linting (configured in pyproject.toml)
 # we don't have ruff installed as a separate package but use it via pre-commit (with the --fix flag)
 # there are two phases, the check and format, run each separately
@@ -74,8 +150,11 @@ pre-commit run --all-files
 **Expected Ruff Issues:** The `tests/*_parity/` directories contain imported research code with many linting violations - these are intentionally excluded from pre-commit checks.
 
 ### Testing
-**Test command:**
+**Test command (assumes activated venv):**
 ```bash
+# Activate your environment first
+source ~/.venvs/it_latest/bin/activate
+
 # Basic test run (requires full dependencies)
 cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpretune tests -v
 
@@ -130,7 +209,6 @@ src/it_examples/            # Example experiments
 
 ### Key Entry Points
 - Console script: `interpretune` → `interpretune.base.components.cli:bootstrap_cli`
-- Circuit-tracer installer: `interpretune-install-circuit-tracer`
 
 ## CI and Validation Pipeline
 
@@ -142,10 +220,32 @@ src/it_examples/            # Example experiments
 **Timeout:** 90 minutes
 
 **CI Process:**
-1. Install dependencies with constraints
-2. Run pytest with coverage
-3. Resource monitoring (Linux only)
-4. Upload artifacts on failure
+1. Install interpretune in editable mode with git dependencies
+2. Install locked CI requirements (all PyPI packages)
+3. Run pytest with coverage
+4. Resource monitoring (Linux only)
+5. Upload artifacts on failure
+
+**CI Installation Flow:**
+```bash
+# Step 1: Install interpretune editable + git dependencies
+uv pip install -e . --group git-deps
+
+# Step 2: Install all locked PyPI dependencies
+uv pip install -r requirements/ci/requirements.txt
+```
+
+**Development Installation Flow (build_it_env.sh):**
+```bash
+# Step 1: Install interpretune editable + git dependencies
+uv pip install -e . --group git-deps
+
+# Step 2: Install locked CI requirements
+uv pip install -r requirements/ci/requirements.txt
+
+# Step 3: Install from-source packages (if specified)
+# These override any PyPI/git versions for development
+```
 
 **Environment Variables for CI:**
 - `IT_CI_LOG_LEVEL` - Defaults to "INFO", set to "DEBUG" for verbose logging
@@ -162,6 +262,10 @@ Note: the GPU pipeline runs only when a PR is ready for review and an admin appr
 
 ### Manual Validation Steps
 
+```bash
+# Activate your environment first
+source ~/.venvs/it_latest/bin/activate
+
 # Run ruff linting (configured in pyproject.toml)
 # we don't have ruff installed as a separate package but use it via pre-commit (with the --fix flag)
 # there are two phases, the check and format, run each separately
@@ -170,19 +274,34 @@ pre-commit run ruff-format --all-files
 
 # Run pre-commit hooks (includes ruff, docformatter, yaml checks)
 pre-commit run --all-files
+```
 
-### Regenerating stable CI dependency pins
+### Updating dependencies
 
-When updating top-level requirements or periodically refreshing CI pins, use the repository helper to regenerate and compile the CI requirement files. This workflow updates `requirements/*` and writes compiled CI pins to `requirements/ci`.
-
-Run these commands from your repo home after activating ensuring you've activated any relevant venv (e.g. `source ~/.venvs/${target_env_name}/bin/activate`):
+When updating dependencies, edit `pyproject.toml` and regenerate locked requirements:
 
 ```bash
-python requirements/utils/regen_reqfiles.py --mode pip-compile --ci-output-dir=requirements/ci
+# Edit pyproject.toml to update version constraints
+
+# Regenerate locked CI requirements
+./requirements/utils/lock_ci_requirements.sh
+
+# Rebuild your development environment
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
+
+# Or update manually in an activated environment
+source ~/.venvs/it_latest/bin/activate
+uv pip install --upgrade <package-name>
+
+# After updating, test thoroughly
+python -m pytest tests/ -v
 ```
 
 Notes:
-- Regenerating pins may change CI dependency resolution — run the full CI (or at least the CPU GitHub Actions CI) after updating pins to validate. Don't update pins aggressively, this is done periodically anyway, focus mostly on the issue at hand without changing the CI pins unless you think it is related to the issue.
+- Dependencies are specified in `pyproject.toml` with optional extras and dependency groups
+- CI uses locked requirements (requirements/ci/requirements.txt) for reproducibility
+- Development can use either locked requirements (via build script) or direct installation
+- Always run the full CI after dependency changes to validate compatibility across platforms
 
 ### Type-checking caveat
 
@@ -191,17 +310,11 @@ Full repository type-checking is a work in progress. Current local checks may on
 ## Special Dependencies and Known Issues
 
 ### Circuit-Tracer Dependency
-**Issue:** circuit-tracer is not on PyPI, requires git-based install
-
-**Solutions:**
-1. Use built-in installer: `interpretune-install-circuit-tracer`
-2. Manual install: `pip install git+https://github.com/speediedan/circuit-tracer.git@<commit>`
-3. Environment variable control: `IT_USE_CT_COMMIT_PIN=1`
+**Note:** circuit-tracer is installed directly from git as specified in `pyproject.toml`. The commit is pinned in the examples optional dependencies: `circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@004f1b28...`. When you run `uv pip install -e ".[examples]"`, uv resolves and installs this git dependency automatically.
 
 ### Dependency Constraints
 - **torch** requires 2.7.1+ for newer features
-- **setuptools** requires 77.0.0+ for PEP 639 support
-- **pip** requires < 25.3 to avoid issues with pip-tools https://github.com/jazzband/pip-tools/issues/2252
+- **setuptools** requires 77.0.0+ for PEP 639 support (used in build system)
 
 ### Import Dependencies
 - `transformer_lens` and `sae_lens` have complex initialization requirements

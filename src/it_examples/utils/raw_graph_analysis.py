@@ -322,7 +322,7 @@ def get_logit_indices_for_tokens(
     the adjacency matrix for the logit nodes of those tokens.
 
     Args:
-        graph: The graph object containing logit_tokens and adjacency_matrix.
+        graph: The graph object containing logit_token_ids and adjacency_matrix.
         token_ids (torch.Tensor, optional): Tensor of token ids to inspect.
         token_strings (list, optional): List of token strings to inspect.
         tokenizer (transformers.PreTrainedTokenizer, optional): Tokenizer to convert strings to ids.
@@ -331,19 +331,19 @@ def get_logit_indices_for_tokens(
         torch.Tensor: Indices in the adjacency matrix for the logit nodes of the specified tokens.
     """
     if token_strings is not None and tokenizer is not None:
-        inspect_ids = torch.tensor(tokenizer.convert_tokens_to_ids(token_strings), device=graph.logit_tokens.device)
+        inspect_ids = torch.tensor(tokenizer.convert_tokens_to_ids(token_strings), device=graph.logit_token_ids.device)
     elif token_ids is not None:
-        inspect_ids = token_ids.to(graph.logit_tokens.device)
+        inspect_ids = token_ids.to(graph.logit_token_ids.device)
     else:
         raise ValueError("Either token_ids or (token_strings and tokenizer) must be provided.")
 
-    lmask = (graph.logit_tokens.unsqueeze(1) == inspect_ids).any(dim=1)
+    lmask = (graph.logit_token_ids.unsqueeze(1) == inspect_ids).any(dim=1)
     indices = torch.nonzero(lmask, as_tuple=False).cpu().squeeze()
     if indices.numel() == 0:
         return torch.tensor([], dtype=torch.long)
     if indices.dim() == 0:
         indices = indices.unsqueeze(0)
-    adj_offset = graph.adjacency_matrix.shape[0] - len(graph.logit_tokens)
+    adj_offset = graph.adjacency_matrix.shape[0] - len(graph.logit_token_ids)
     final_logit_idxs = adj_offset + indices
     return final_logit_idxs, indices
 
@@ -370,8 +370,8 @@ def generate_topk_node_mapping(graph, node_mask, topk_feats_to_translate=None, c
     # If cumulative_scores is provided, use its length for logit_end_idx, else infer from graph
     if cumulative_scores is not None:
         logit_end_idx = len(cumulative_scores)
-    elif hasattr(graph, "logit_tokens"):
-        logit_end_idx = logit_start_idx + len(graph.logit_tokens)
+    elif hasattr(graph, "logit_token_ids"):
+        logit_end_idx = logit_start_idx + len(graph.logit_token_ids)
     else:
         logit_end_idx = logit_start_idx
 
@@ -413,7 +413,7 @@ def generate_topk_node_mapping(graph, node_mask, topk_feats_to_translate=None, c
             node_ids[node_idx] = node_id
         elif node_idx in range(logit_start_idx, logit_end_idx):
             pos = node_idx - logit_start_idx
-            vocab_idx = graph.logit_tokens[pos]
+            vocab_idx = graph.logit_token_ids[pos]
             layer = str(layers + 1)
             node_id = f"{layer}_{vocab_idx}_{pos}"
             node_ids[node_idx] = node_id

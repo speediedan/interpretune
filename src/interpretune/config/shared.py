@@ -4,6 +4,7 @@ import inspect
 import logging
 import os
 import sys
+from pathlib import PosixPath, WindowsPath
 
 import yaml
 from transformers import PreTrainedTokenizerBase
@@ -52,7 +53,25 @@ class ComposedCfgWrapper:
 
 # TODO: add custom constructors and representers for core IT object types
 @dataclass(kw_only=True)
-class ITSerializableCfg(yaml.YAMLObject): ...
+class ITSerializableCfg(yaml.YAMLObject):
+    """Base class for serializable Interpretune configs.
+
+    Automatically registers subclasses and Path types as safe globals for PyTorch checkpoint loading.
+    """
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # Auto-register all ITSerializableCfg subclasses as safe for pickle deserialization
+        # This is required when loading checkpoints with weights_only=True
+        # Also register Path types to allow Path objects in serialized configs
+        try:
+            import torch.serialization
+
+            # Register the config class and both platform-specific Path types
+            torch.serialization.add_safe_globals([cls, PosixPath, WindowsPath])
+        except (ImportError, AttributeError):
+            # torch.serialization.add_safe_globals not available in older PyTorch versions
+            pass
 
 
 @dataclass(kw_only=True)

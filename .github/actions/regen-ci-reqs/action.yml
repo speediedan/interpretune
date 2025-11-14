@@ -12,7 +12,7 @@ inputs:
   compare_paths:
     description: Space-separated list of files/paths to compare with git diff
     required: false
-    default: "requirements/ci/requirements.txt requirements/ci/post_upgrades.txt requirements/ci/platform_dependent.txt"
+    default: "requirements/ci/requirements.txt"
   patch_path:
     description: Path to write the patch file
     required: false
@@ -20,21 +20,16 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ inputs.python_version }}
-
-    - name: Install regen deps
+    - name: Install uv
       shell: bash
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install pip-tools toml
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-    - name: Run regen (pip-compile)
+    - name: Run lock regeneration
       shell: bash
       run: |
-        python requirements/utils/regen_reqfiles.py --mode pip-compile --ci-output-dir=${{ inputs.ci_output_dir }}
+        bash requirements/utils/lock_ci_requirements.sh
 
     - id: check
       name: Check for diffs and write patch

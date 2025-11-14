@@ -53,69 +53,83 @@ interpretune = "interpretune.base.components.cli:bootstrap_cli"
 [project.optional-dependencies]
 
 lightning = [
-    # TODO: revert this FTS commit pin and/or old FTS version once lightning publishes a new release
-    # "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@44a8e62fdc0fa9b08ef770160e2fa25a89f389f4",
-    #"finetuning-scheduler[examples, cli, extra] >= 2.5.0",
     "finetuning-scheduler >= 2.5.0",
-    "bitsandbytes",
+    "bitsandbytes; platform_system != 'Darwin'",
     "peft",
 ]
 
 examples = [
-"wandb",
-"torch-tb-profiler",
-"notebook",
-"jupyterlab",
-"ipywidgets",
-"jupytext >= 1.10",  # converting notebook source .py to .ipynb
-"nbval >= 0.9.6",  # testing the notebook
-"python-dotenv",
-"plotly",
-"matplotlib",
-"gdown",
-"evaluate",
-"scikit-learn",
-"neuronpedia",
-# TODO: add our packaged circuit-tracer dep (either pypi or pypi fork) once it is available and remove the
-#       `install_circuit_tracer` tool
-# "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@004f1b2822eca3f0c1ddd2389e9105b3abffde87",
+    "wandb",
+    "torch-tb-profiler",
+    "notebook",
+    "jupyterlab",
+    "ipywidgets",
+    "jupytext >= 1.10",  # converting notebook source .py to .ipynb
+    "nbval >= 0.9.6",  # testing the notebook
+    "python-dotenv",
+    "plotly",
+    "matplotlib",
+    "gdown",
+    "evaluate",
+    "scikit-learn",
+    "neuronpedia",
+    # "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@004f1b2822eca3f0c1ddd2389e9105b3abffde87",
 ]
 
-docs = [
-"sphinx >= 4.0",
-"myst-parser >= 0.18.1",
-"nbsphinx >= 0.8.5",
-"pandoc >= 1.0",
-"docutils >= 0.16",
-"sphinxcontrib-fulltoc >= 1.0",
-"sphinxcontrib-mockautodoc",
-"sphinx-autodoc-typehints >= 1.16",
-"sphinx-paramlinks >= 0.5.1",
-"sphinx-togglebutton >= 0.2",
-"sphinx-copybutton >= 0.3",
-"typing-extensions",
-"jinja2 >= 3.0.0,<3.1.0",
-"pt_lightning_sphinx_theme @ git+https://github.com/speediedan/lightning_sphinx_theme.git@057f4c3e669948bc618eec1688b016f07140cc0d",
+[dependency-groups]
+# PEP 735 dependency groups for development and CI
+
+# Git URL dependencies - packages installed from git repositories
+# These are separated because they cannot be included in universal lock files
+# Update commit hashes when cutting release branches to pin to tested versions
+git-deps = [
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@004f1b2822eca3f0c1ddd2389e9105b3abffde87",
+]
+
+dev = [
+    # Core development tools
+    "uv >= 0.5.0",
+    "pre-commit >= 1.0",
+    "pyright >= 1.1.365",
+    "toml",
 ]
 
 test = [
-"coverage >= 6.4",
-"pytest >= 6.0",
-"pytest-rerunfailures >= 10.2",
-"twine >= 3.2",
-"pyright >= 1.1.365",
-"pre-commit >= 1.0",
-"psycopg",
-"toml",
-"pip-tools >= 7.5.1",
-"pip < 25.3",  # temporarily need to avoid pip 25.3 due to pip-tools https://github.com/jazzband/pip-tools/issues/2252
-"huggingface_hub[hf_xet]",
-"nbmake >= 1.5.0",
-"papermill >= 2.4.0",
+    { include-group = "dev" },
+    # Testing framework and tools
+    "coverage >= 6.4",
+    "pytest >= 6.0",
+    "pytest-rerunfailures >= 10.2",
+    # Additional test dependencies
+    "twine >= 3.2",
+    "psycopg",
+    "huggingface_hub[hf_xet]",
+    # Notebook testing
+    "nbmake >= 1.5.0",
+    "papermill >= 2.4.0",
+]
+
+docs = [
+    # Documentation generation
+    "sphinx >= 4.0",
+    "myst-parser >= 0.18.1",
+    "nbsphinx >= 0.8.5",
+    "pandoc >= 1.0",
+    "docutils >= 0.16",
+    "sphinxcontrib-fulltoc >= 1.0",
+    "sphinxcontrib-mockautodoc",
+    "sphinx-autodoc-typehints >= 1.16",
+    "sphinx-paramlinks >= 0.5.1",
+    "sphinx-togglebutton >= 0.2",
+    "sphinx-copybutton >= 0.3",
+    "typing-extensions",
+    "jinja2 >= 3.0.0,<3.1.0",
+    "pt_lightning_sphinx_theme @ git+https://github.com/speediedan/lightning_sphinx_theme.git@057f4c3e669948bc618eec1688b016f07140cc0d",
 ]
 
 profiling = [
-"py-spy",
+    # Performance profiling tools
+    "py-spy",
 ]
 
 [tool.setuptools]
@@ -173,7 +187,6 @@ order-by-type = false
 max-complexity = 10
 
 [tool.pyright]
-autoSearchPaths=false
 typeCheckingMode="standard"
 include = [
     "src/",
@@ -232,19 +245,3 @@ notebook_metadata_filter = "-all"
 [tool.jupytext.formats]
 "notebooks/" = "ipynb"
 "scripts/" = "py"
-
-[tool.ci_pinning]
-# default pinning behavior for packages not listed explicitly: "major", "minor", "exact", or "none"
-default = "major"
-
-# packages to never relax (keep exact/strict behavior)
-strict = ["torch"]
-
-# packages with platform-dependent versions that should be excluded from pinning
-# these will be installed separately with flexible constraints to allow platform-specific resolution
-# only applies to direct dependencies we specify in pyproject.toml
-platform_dependent = ["bitsandbytes"]
-
-# packages that should be applied as post-upgrades (package -> desired_version)
-[tool.ci_pinning.post_upgrades]
-# no packages currently require post installation upgrades

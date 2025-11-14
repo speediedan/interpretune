@@ -32,36 +32,16 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Reset caching
-        id: set_time_period
-        run: |
-          python -c "import time; days = time.time() / 60 / 60 / 24; print(f'TIME_PERIOD=d{int(days / 7) * 7}')" >> $GITHUB_OUTPUT
-
-      - name: Get pip cache dir
-        id: pip-cache
-        shell: bash
-        run: |
-          echo "PIP_CACHE_DIR=$(pip cache dir)" >> $GITHUB_ENV
-
-      - name: pip cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.PIP_CACHE_DIR }}/wheels
-          key: ubuntu-22.04-pip-wheels-${{ steps.set_time_period.outputs.TIME_PERIOD }}-py3.12-${{ hashFiles('requirements/ci/requirements.txt') }}-${{ hashFiles('requirements/ci/post_upgrades.txt') }}-${{ hashFiles('requirements/ci/platform_dependent.txt') }}
-          restore-keys: |
-            ubuntu-22.04-pip-wheels-${{ steps.set_time_period.outputs.TIME_PERIOD }}-py3.12-
-
       - name: Install CI dependencies
         uses: ./.github/actions/install-ci-dependencies
         with:
           show_pip_list: "true"
-          apply_post_upgrades: "true"
 
-      - name: Setup pyright, precommit and git lfs
+      - name: Setup development tools
         shell: bash
         run: |
-          # Install pyright, pre-commit, and git-lfs
-          pip install --upgrade pyright pre-commit git-lfs
+          # Install development tools via dev dependency group
+          uv pip install --group dev
           # pyright -p pyproject.toml
           pre-commit install
           git lfs install

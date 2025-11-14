@@ -11,7 +11,7 @@
 # limitations under the License.
 
 ARG PYTHON_VERSION=3.12
-ARG PYTORCH_VERSION=2.9.0
+ARG PYTORCH_VERSION=2.9.1
 ARG CUST_BASE
 
 FROM speediedan/interpretune:base-${CUST_BASE}py${PYTHON_VERSION}-pt${PYTORCH_VERSION}

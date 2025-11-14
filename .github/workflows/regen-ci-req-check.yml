@@ -21,7 +21,7 @@ jobs:
         with:
           python_version: '3.12'
           ci_output_dir: requirements/ci
-          compare_paths: "requirements/ci/requirements.txt requirements/ci/post_upgrades.txt requirements/ci/platform_dependent.txt"
+          compare_paths: "requirements/ci/requirements.txt"
           patch_path: /tmp/regen_diff.patch
 
       - name: Create PR with updated pins

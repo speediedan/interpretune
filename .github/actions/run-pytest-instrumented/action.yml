@@ -99,7 +99,6 @@ runs:
         PYTHONPATH: ${{ inputs.workspace }}/src
         PYTEST_ADDOPTS: "--log-cli-level=${{ inputs.it_ci_log_level }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"
         PYTEST_FILTER_PATTERN: ${{ inputs.pytest_filter_pattern }}
-        PIP_CACHE_DIR: ${{ inputs.pip_cache_dir }}
       run: |
         if [ -n "$PYTEST_FILTER_PATTERN" ]; then
           echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."

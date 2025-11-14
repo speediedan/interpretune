@@ -17,11 +17,11 @@ from typing import (
     TypedDict,
     TypeVar,
 )
-from os import PathLike
 from pathlib import Path
 from types import UnionType
 from enum import auto, Enum, EnumMeta
 from dataclasses import dataclass
+from os import PathLike
 import inspect
 
 import torch
@@ -47,7 +47,7 @@ else:
 # Interpretune helper types
 ################################################################################
 
-StrOrPath: TypeAlias = Union[str, PathLike, Path]
+StrOrPath: TypeAlias = Union[str, Path]
 
 ################################################################################
 # Interpretune Enhanced Enums
@@ -493,7 +493,7 @@ class SAEDictProtocol(Protocol):
 class AnalysisStoreProtocol(Protocol):
     """Protocol verifying core analysis store functionality."""
 
-    dataset: Union[HfDataset, StrOrPath, None]
+    dataset: Union[HfDataset, StrOrPath, PathLike, None]
     streaming: bool
     cache_dir: str | None
 
