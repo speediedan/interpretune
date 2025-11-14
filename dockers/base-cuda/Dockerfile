@@ -90,36 +90,19 @@ RUN \
         # ... test channel
         # uv pip install --pre torch==2.9.0 --index-url https://download.pytorch.org/whl/test/cu128; \
     fi && \
-    # We avoid installing Lightning and other dependencies here as they are usually upgraded anyway later in
-    # CI but we may re-enable in the future.
-    # LIGHTNING_COMMIT=$(cat ./requirements/lightning_pin.txt) && \
-    # uv pip install "lightning @ git+https://github.com/Lightning-AI/lightning.git@${LIGHTNING_COMMIT}#egg=lightning" --no-cache && \
-    # Install all requirements
-    # uv pip install -r requirements/devel.txt --no-cache && \
-    # Ensure venv is fully writable by all users - apply to existing files and dirs
-    chmod -R 777 /tmp/venvs/it_dev && \
-    # Verify permissions were set correctly
-    echo "=== Verifying venv permissions ===" && \
-    ls -ld /tmp/venvs/it_dev && \
-    echo "Sample __pycache__ dirs:" && \
-    find /tmp/venvs/it_dev -type d -name __pycache__ | head -5 | xargs ls -ld && \
-    echo "site-packages dir:" && \
-    ls -ld /tmp/venvs/it_dev/lib/python${PYTHON_VERSION}/site-packages && \
-    echo "=== Permission verification complete ===" && \
     rm -rf requirements/
 
 # Set VIRTUAL_ENV to activate the venv for subsequent RUN commands
 ENV VIRTUAL_ENV=/tmp/venvs/it_dev
 ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
 
+# Separate RUN to verify permissions persist across Docker layers
 RUN \
-    set -x && \
-    echo "Checking CUDA version:" && \
-    CUDA_VERSION_MAJOR=$(python -c "import torch; print(torch.version.cuda.split('.')[0])") && \
-    echo "CUDA Version Major: ${CUDA_VERSION_MAJOR}" && \
-    echo "Checking Python version compatibility:" && \
-    py_ver=$(python -c "print(int('$PYTHON_VERSION'.split('.') >= '3.12'.split('.')))") && \
-    echo "Python version check result: ${py_ver}"
+    echo "=== Post-ENV permission check ===" && \
+    ls -ld /tmp/venvs/it_dev && \
+    echo "Checking torch __pycache__ permissions:" && \
+    find /tmp/venvs/it_dev -type d -path "*/torch/__pycache__" | head -3 | xargs ls -ld || echo "No torch __pycache__ found" && \
+    echo "=== Post-ENV check complete ==="
 
 RUN \
     set -x && \
@@ -133,4 +116,9 @@ RUN \
     python -c "import sys; ver = sys.version_info; print(f'Python {ver.major}.{ver.minor} detected'); assert f'{ver.major}.{ver.minor}' == '$PYTHON_VERSION', ver" && \
     echo "Verifying PyTorch version:" && \
     python -c "import torch; print(f'PyTorch {torch.__version__} detected'); assert torch.__version__.startswith('$PYTORCH_VERSION'), torch.__version__" && \
-    echo "============= Environment Verification Complete ============="
+    echo "============= Environment Verification Complete =============" && \
+    # Apply recursive chmod to allow userns-remapped rootless Docker users to update the venv
+    chmod -R 777 /tmp/venvs/it_dev && \
+    echo "Verify permission state:" && \
+    find /tmp/venvs/it_dev -type d -path "*/torch/__pycache__" | head -3 | xargs ls -ld || echo "No torch __pycache__ found" && \
+    echo "=== Post-env-check chmod complete ==="
