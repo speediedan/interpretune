@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 from sae_lens.saes.sae import SAEConfig
 from sae_lens.saes.standard_sae import StandardSAEConfig
-from transformer_lens.utils import get_device as tl_get_device
-from transformer_lens import HookedTransformerConfig
+from transformer_lens.utilities import get_device as tl_get_device
+from transformer_lens.config import HookedTransformerConfig
 
 from interpretune.config import (
     ITLensConfig,

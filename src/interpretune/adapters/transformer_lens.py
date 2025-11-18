@@ -6,13 +6,14 @@ from copy import deepcopy
 
 import torch
 from transformers import PretrainedConfig as HFPretrainedConfig, PreTrainedModel
-from transformer_lens import HookedTransformer, HookedTransformerConfig
-from transformer_lens.utilities.devices import get_device_for_block_index
+from transformer_lens import HookedTransformer
+from transformer_lens.config import HookedTransformerConfig
+from transformer_lens.utilities import get_device_for_block_index
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.adapters import CompositionRegistry, LightningDataModule, LightningModule, LightningAdapter
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
-from interpretune.utils import move_data_to_device, patched_generate, rank_zero_warn, rank_zero_info
+from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
 
 
@@ -77,7 +78,6 @@ class TLensAttributeMixin:
 class BaseITLensModule(BaseITModule):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        HookedTransformer.generate = patched_generate  # type: ignore[assignment]  # signature compatibility issue
         self.loss_fn = None
 
     def auto_model_init(self) -> None:

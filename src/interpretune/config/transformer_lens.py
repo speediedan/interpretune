@@ -4,8 +4,8 @@ from functools import reduce
 
 import torch
 from transformers import AutoModelForCausalLM, PreTrainedTokenizerBase
-from transformer_lens import HookedTransformerConfig
-from transformer_lens.utils import get_device as tl_get_device
+from transformer_lens.config import HookedTransformerConfig
+from transformer_lens.utilities import get_device as tl_get_device
 
 from interpretune.config import ITConfig, HFFromPretrainedConfig, CoreGenerationConfig, ITSerializableCfg
 from interpretune.utils import _resolve_dtype, tl_invalid_dmap, rank_zero_warn, MisconfigurationException

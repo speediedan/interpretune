@@ -5,11 +5,14 @@ Copies notebooks from dev/ to publish/ directory, strips "remove-cell" tags,
 and adds Colab badges and installation cells for published versions.
 
 Usage:
-    python scripts/publish_notebooks.py [--dry-run] [--check-only]
+    python scripts/publish_notebooks.py [--dry-run] [--check-only] [--force]
 
 Options:
     --dry-run: Show what would be done without making changes
     --check-only: Check if any notebooks need publishing (returns non-zero if changes needed)
+    --force: Publish all files (ignores stored hashes), useful when changing the
+             publisher behavior (for example, the installation cell) to re-run
+             publication steps on already-published notebooks.
 """
 
 import argparse
@@ -109,18 +112,68 @@ def add_colab_badge_and_install_cell(notebook: Dict[str, Any], relative_path: st
         "source": [f"[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)]({colab_url})"],
     }
 
-    # Create installation cell
-    install_cell = {
+    # Create installation cell (development-aware)
+    # NOTE: For published notebooks we avoid unconditionally running pip installs
+    # so local editable dev environments are not overwritten. This cell detects an
+    # editable install and skips installs; otherwise proceeds with installation.
+    # Insert badge and canonical install cell at the top.
+    #
+    # Split the install flow into two cells:
+    #  1) a hidden helper cell with the `_is_editable_install` function so that the
+    #     main visible cell can call it.  This keeps the helper out of the way for
+    #     readers while still allowing programmatic checks.
+    #  2) the visible install cell that checks for editable installs and either
+    #     warns and skips or proceeds to install using `uv` only when not editable.
+
+    install_helper_cell = {
         "cell_type": "code",
-        "metadata": {},
-        "source": ["# Install interpretune with examples\n", "!pip install interpretune[examples]"],
+        "metadata": {"language": "python", "tags": ["hide-input"]},
+        "source": [
+            "def _is_editable_install(pkg):\n",
+            "    import subprocess, sys\n",
+            "    try:\n",
+            "        res = subprocess.run([\n",
+            "            sys.executable, '-m', 'pip', 'show', pkg\n",
+            "        ], capture_output=True, text=True)\n",
+            "        if res.returncode == 0:\n",
+            "            return 'Editable project location:' in res.stdout\n",
+            "    except Exception:\n",
+            "        pass\n",
+            "    return False\n",
+        ],
         "outputs": [],
         "execution_count": None,
     }
 
-    # Insert cells at the beginning
+    install_runner_cell = {
+        "cell_type": "code",
+        "metadata": {"language": "python"},
+        "source": [
+            "pkg = 'interpretune'\n",
+            "if _is_editable_install(pkg):\n",
+            "    import warnings\n",
+            "    warnings.warn(\n",
+            "        'Preserving editable install for interpretune; skipping automatic install',\n",
+            "        UserWarning,\n",
+            "    )\n",
+            "else:\n",
+            "    # Use uv to install dev git-deps and examples extra. We install uv first so the\n",
+            "    # the uv-aware pip command is available for reproducible installs.\n",
+            "    %pip install uv\n",
+            "    %uv pip install --upgrade pip setuptools wheel\n",
+            "    %uv pip install 'git+https://github.com/speediedan/interpretune.git@main[examples]'\n",
+            "    # Install development git dependencies so notebooks can depend on unpublished packages\n",
+            "    %uv pip install --upgrade --group git-deps\n",
+            "\n",
+            "# NOTE: In the future, when all required packages are published to PyPI, this\n",
+            "# can be simplified to: %uv pip install interpretune[examples]\n",
+        ],
+        "outputs": [],
+        "execution_count": None,
+    }
+
     cells = notebook.get("cells", [])
-    notebook["cells"] = [badge_cell, install_cell] + cells
+    notebook["cells"] = [badge_cell, install_helper_cell, install_runner_cell] + cells
 
     return notebook
 
@@ -190,6 +243,11 @@ def main():
         action="store_true",
         help="Check if any notebooks need publishing (returns non-zero if changes needed)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Publish all notebooks even if there are no detected changes (overrides hashes)",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).parent.parent
@@ -205,6 +263,13 @@ def main():
 
     # Get all changed files (notebooks and non-notebooks)
     changed_files = get_changed_files(dev_dir, stored_hashes, "*")
+
+    # If --force is set, publish all files under dev_dir regardless of change
+    if args.force:
+        # Publish all *files* under dev_dir. Avoid including directories which
+        # would cause shutil.copy2 to error. This ensures we only process files
+        # while supporting --force to re-run publication logic.
+        changed_files = {p for p in dev_dir.rglob("*") if p.is_file()}
 
     files_to_process = list(changed_files)
 

@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from it_examples.utils.analysis_injection.version_manager import GIT_FALLBACK_URLS, PackageVersionManager
 
 
@@ -93,7 +95,17 @@ def test_needs_temp_install_matching_version():
 def test_needs_temp_install_mismatched_version():
     """Test that temp install is needed when versions don't match."""
     mgr = PackageVersionManager("circuit-tracer", "99.99.99")
-    assert mgr.needs_temp_install()
+    # If the package is editably installed (dev environment), we preserve editable
+    # installs and do not perform a temp install. Otherwise, a version mismatch
+    # should trigger a temp install.
+    if mgr.is_editable_install():
+        # Editable installs preserve the developer's local checkout. When a required
+        # version is requested but an editable install is present, we skip a temp
+        # install and emit a UserWarning to make this behavior explicit to the user.
+        with pytest.warns(match="Preserving editable install"):
+            assert not mgr.needs_temp_install()
+    else:
+        assert mgr.needs_temp_install()
 
 
 def test_needs_temp_install_nonexistent():

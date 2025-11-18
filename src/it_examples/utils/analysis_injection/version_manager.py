@@ -19,6 +19,7 @@ packages.
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import logging
 import re
 import subprocess
@@ -26,6 +27,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +97,43 @@ class PackageVersionManager:
         except importlib.metadata.PackageNotFoundError:
             return None
 
+    def is_editable_install(self) -> bool:
+        """Check if the package is installed in editable mode.
+
+        Returns:
+            True if package is editably installed, False otherwise
+        """
+        try:
+            dist = importlib.metadata.distribution(self.package_name)
+            # Check for .egg-link or direct_url.json (PEP 610) indicating editable install
+            direct_url_content = dist.read_text("direct_url.json")
+            if direct_url_content:
+                direct_url_data = json.loads(direct_url_content)
+                return direct_url_data.get("dir_info", {}).get("editable", False)
+        except (importlib.metadata.PackageNotFoundError, FileNotFoundError, json.JSONDecodeError):
+            pass
+
+        # Fallback: check using pip show
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "show", self.package_name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                return "Editable project location:" in result.stdout
+        except Exception:
+            pass
+
+        return False
+
     def needs_temp_install(self) -> bool:
         """Check if we need to install a temporary version.
+
+        IMPORTANT: Preserves editable installs to avoid breaking development environments.
+        If the package is installed in editable mode, we skip temp installation regardless
+        of version mismatch to preserve the developer's local checkout.
 
         Returns:
             True if temp installation is needed, False otherwise
@@ -105,6 +142,18 @@ class PackageVersionManager:
         if installed is None:
             logger.warning(f"{self.package_name} not installed, will use temp version {self.required_version}")
             return True
+
+        if self.is_editable_install():
+            # Emit a warning instead of silently logging: users running notebooks should
+            # be made aware that a required version is being skipped due to an editable
+            # local installation — this avoids surprising behavior during analysis.
+            warnings.warn(
+                f"{self.package_name} is installed in editable mode (version={installed}). "
+                f"Preserving editable install and skipping temp install for required version {self.required_version}",
+                UserWarning,
+            )
+            return False
+
         if installed != self.required_version:
             logger.info(
                 f"{self.package_name} version mismatch: "

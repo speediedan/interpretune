@@ -239,6 +239,15 @@ class DebugGeneration:
         return decode_target, decode_kwargs
 
     def sanitize_model_output(self, output: Any, gen_output_attr: Optional[str] = None) -> List[str]:
+        # TODO: revisit this logic after getting TL generate PR ready
+        # transformer_lens generates returns plain tensors by default
+        if isinstance(output, torch.Tensor):
+            # If it's already a tensor and they want 'tokens' or 'sequences', just return it
+            if gen_output_attr in (None, "tokens", "sequences"):
+                return output
+            # Otherwise try to get the requested attribute (will fail if not present)
+            return getattr(output, gen_output_attr)
+
         if gen_output_attr:
             return getattr(output, gen_output_attr)
         for output_attr in self.DEFAULT_OUTPUT_ATTRS:

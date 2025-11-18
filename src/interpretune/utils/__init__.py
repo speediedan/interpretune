@@ -21,7 +21,6 @@ from interpretune.utils.logging import (
     collect_env_info,
     _get_rank,
 )
-from interpretune.utils.patched_tlens_generate import generate as patched_generate
 from interpretune.utils.schema_validation import RemoveAdditionalPropertiesValidator
 from interpretune.utils.tokenization import DEFAULT_DECODE_KWARGS, sanitize_input_name
 from interpretune.utils.warnings import unexpected_state_msg_suffix, tl_invalid_dmap, dummy_method_warn_fingerprint
@@ -55,8 +54,6 @@ __all__ = [
     "rank_zero_deprecation",
     "collect_env_info",
     "_get_rank",
-    # patched_tlens_generate
-    "patched_generate",
     # tokenization
     "DEFAULT_DECODE_KWARGS",
     "sanitize_input_name",

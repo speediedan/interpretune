@@ -23,7 +23,7 @@ from interpretune.adapters import (
 )
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import SAELensFromPretrainedConfig, SAELensCustomConfig, SAELensConfig
-from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info, patched_generate
+from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
 
 
@@ -61,7 +61,6 @@ class BaseSAELensModule(BaseITLensModule):
         # using cooperative inheritance, so initialize attributes that may be required in base init methods
         self.saes: list[InstantiatedSAE] = []
         super().__init__(*args, **kwargs)
-        HookedSAETransformer.generate = patched_generate  # type: ignore[assignment]  # signature compatibility issue
 
     def _convert_hf_to_tl(self) -> None:
         # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
