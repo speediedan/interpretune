@@ -24,7 +24,7 @@ def _custom_format_warning(
 warnings.formatwarning = _custom_format_warning
 
 tl_invalid_dmap = """
-Transformer Lens does not currently support mapping to multiple devices with `device_map` directly. If using
+TransformerLens does not currently support mapping to multiple devices with `device_map` directly. If using
 multiple devices, it is recommended to set `device_map` to `cpu` (or leave it unset) and allow TransformerLens to
 algorithmically allocate layers to the specified number of devices.
 

@@ -7,10 +7,54 @@
 **Key Technologies:**
 - Python 3.10+ (CI tests on 3.12)
 - PyTorch 2.7.1+ with transformers ecosystem
-- Core deps: transformer_lens, sae_lens, datasets, jsonargparse
-- Optional: PyTorch Lightning, W&B, circuit-tracer
+- Core deps: transformer_lens >= 3.0.0 (TransformerBridge support), sae_lens, datasets, jsonargparse
+- Optional: PyTorch Lightning, W&B, circuit-tracer, neuronpedia
 
 **Repository Size:** ~200 files, primarily Python, with YAML configs and shell scripts
+
+## TransformerLens v3 Integration
+
+**TransformerBridge (v3, default):**
+- Wraps HuggingFace models without weight conversion
+- More memory efficient (no weight duplication)
+- Better HF ecosystem compatibility
+- Enabled by default via `use_bridge=True` in tl_cfg
+
+**Legacy HookedTransformer:**
+- Traditional TL interface with weight conversion
+- Available via `use_bridge=False` in tl_cfg
+- Maintained for backward compatibility
+
+**Implementation:**
+- `_convert_hf_to_bridge()`: TransformerBridge initialization
+- `_convert_hf_to_tl()`: Legacy HookedTransformer initialization
+- Config-based initialization always uses HookedTransformer (TransformerBridge requires HF model)
+
+### Configuration Hierarchy
+
+**TransformerLens Configs:**
+- `TransformerLensConfig`: Base class (d_model, n_layers, etc.)
+- `HookedTransformerConfig`: Legacy config extending base (dataclass)
+- `TransformerBridgeConfig`: V3 config extending base with architecture field
+
+**Interpretune Configs:**
+- `ITLensSharedConfig`: Base with shared and IT-specific settings (`move_to_device`, `use_bridge`)
+- `ITLensFromPretrainedConfig`: For from_pretrained initialization (fold_ln, model_name, etc.)
+- `ITLensCustomConfig`: For config-based initialization (requires HookedTransformerConfig or one constructed from a dict)
+- `ITLensConfig`: Top-level IT config encapsulating all settings
+
+**Config Serialization:**
+Three types of configs are serialized by `_capture_hyperparameters()`:
+1. `hf_preconversion_config`: Original HF PretrainedConfig (via superclass)
+2. `tl_model_cfg`: Actual TL config from `self.model.cfg` (HookedTransformerConfig or TransformerBridgeConfig)
+3. `it_tl_cfg`: IT-specific settings from `self.it_cfg.tl_cfg` (ITLensFromPretrainedConfig or ITLensCustomConfig)
+
+**Important Limitations:**
+- `ITLensCustomConfig` with `use_bridge=True` will be ignored; IT will warn and force `use_bridge=False`.
+- TransformerBridge requires HF model, cannot be initialized from config alone
+- Config-based path (`ITLensCustomConfig`) only supports HookedTransformer
+
+See `docs/config_hierarchy_analysis.md` for detailed configuration relationship analysis.
 
 ## Code Standards
 

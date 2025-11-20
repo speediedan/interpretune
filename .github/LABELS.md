@@ -144,7 +144,7 @@ gh label create "extension: neuronpedia" --color "e1bfff" --description "Neuronp
 gh label create "adapter: circuit_tracer" --color "ffeaa7" --description "Circuit tracer adapter"
 gh label create "adapter: sae_lens" --color "ffeaa7" --description "SAE Lens adapter"
 gh label create "adapter: lightning" --color "ffeaa7" --description "PyTorch Lightning adapter"
-gh label create "adapter: transformer_lens" --color "ffeaa7" --description "Transformer Lens adapter"
+gh label create "adapter: transformer_lens" --color "ffeaa7" --description "TransformerLens adapter"
 gh label create "adapter: core" --color "ffeaa7" --description "Core adapter functionality"
 gh label create "adapter: registration" --color "ffeaa7" --description "Adapter registration system"
 

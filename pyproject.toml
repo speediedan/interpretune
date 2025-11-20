@@ -32,7 +32,9 @@ classifiers = [
 description = "A package to support LLM reasoning and interpretability experiments at a level of abstraction that is both powerfully flexible and convenient"
 readme = "README.md"
 dependencies = [
-    "transformer_lens >= 2.15.4",
+    "transformer_lens >= 3.0.0",  # v3 adds TransformerBridge architecture
+    # NOTE: Will temporarily depend on forked transformer_lens commit with custom generate method
+    # that returns SampledOutput(tokens, logits) when output_logits=True, until PR is merged
     "sae_lens >= 6.3.1",  # use new sae_lens API
     "torch >=2.7.1",
     "tabulate >= 0.9.0",
@@ -84,6 +86,7 @@ examples = [
 # Update commit hashes when cutting release branches to pin to tested versions
 git-deps = [
     "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@004f1b2822eca3f0c1ddd2389e9105b3abffde87",
+    #"transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@2be123d8908556ac5dad58953827f9574ca70a2",
 ]
 
 dev = [
@@ -131,6 +134,11 @@ profiling = [
     # Performance profiling tools
     "py-spy",
 ]
+
+[tool.uv]
+
+# override-dependencies = []
+exclude-dependencies = ['transformer-lens']  # TODO: remove once override of circuit-tracer transitive dep not needed
 
 [tool.setuptools]
 package-dir = {"" = "src"}

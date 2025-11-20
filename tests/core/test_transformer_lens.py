@@ -59,7 +59,10 @@ class TestClassTransformerLens:
     def test_tl_session_exceptions(self, get_it_session__tl_cust__setup):
         fixture = get_it_session__tl_cust__setup
         tl_test_module = fixture.it_session.module
-        with ablate_cls_attrs(tl_test_module.model, "cfg"), pytest.warns(UserWarning, match="Could not find a `Hooked"):
+        with (
+            ablate_cls_attrs(tl_test_module.model, "cfg"),
+            pytest.warns(UserWarning, match="Could not find a TransformerLens config"),
+        ):
             _ = tl_test_module.tl_cfg
         with ablate_cls_attrs(tl_test_module._it_state, "_device"), ablate_cls_attrs(tl_test_module.tl_cfg, "device"):
             with pytest.warns(UserWarning, match="Could not find a device reference"):
@@ -160,3 +163,40 @@ class TestClassTransformerLens:
         # Verify the keys were actually removed despite having values
         assert "hf_model" not in pruned_dict
         assert "tokenizer" not in pruned_dict
+
+    def test_tl_use_bridge_config(self):
+        """Test that use_bridge configuration option is properly handled."""
+        # Test with use_bridge=True (default, TransformerBridge)
+        test_tl_cfg = deepcopy(TestClassTransformerLens.test_tlens_gpt2)
+        test_tl_cfg["tl_cfg"]["use_bridge"] = True
+        test_tl_cfg["tl_cfg"] = ITLensFromPretrainedConfig(**test_tl_cfg["tl_cfg"])
+        it_cfg_bridge = ITLensConfig(**test_tl_cfg)
+        assert it_cfg_bridge.tl_cfg.use_bridge is True
+
+        # Test with use_bridge=False (legacy HookedTransformer)
+        test_tl_cfg_legacy = deepcopy(TestClassTransformerLens.test_tlens_gpt2)
+        test_tl_cfg_legacy["tl_cfg"]["use_bridge"] = False
+        test_tl_cfg_legacy["tl_cfg"] = ITLensFromPretrainedConfig(**test_tl_cfg_legacy["tl_cfg"])
+        it_cfg_legacy = ITLensConfig(**test_tl_cfg_legacy)
+        assert it_cfg_legacy.tl_cfg.use_bridge is False
+
+        # Test default (should be True)
+        test_tl_cfg_default = deepcopy(TestClassTransformerLens.test_tlens_gpt2)
+        test_tl_cfg_default["tl_cfg"] = ITLensFromPretrainedConfig(**test_tl_cfg_default["tl_cfg"])
+        it_cfg_default = ITLensConfig(**test_tl_cfg_default)
+        assert it_cfg_default.tl_cfg.use_bridge is False  # TODO: remove this switch after debugging upstream issue
+        # assert it_cfg_default.tl_cfg.use_bridge is True  # default should be True
+
+        # Test default for custom config: should default to False (HookedTransformer)
+        test_tl_cfg_custom_default = deepcopy(TestClassTransformerLens.test_tlens_cust)
+        test_tl_cfg_custom_default["tl_cfg"] = ITLensCustomConfig(**test_tl_cfg_custom_default["tl_cfg"])
+        it_cfg_custom = ITLensConfig(**test_tl_cfg_custom_default)
+        assert it_cfg_custom.tl_cfg.use_bridge is False
+
+        # If user sets use_bridge=True in a custom config, warn and force to False
+        test_tl_cfg_custom_override = deepcopy(TestClassTransformerLens.test_tlens_cust)
+        test_tl_cfg_custom_override["tl_cfg"]["use_bridge"] = True
+        test_tl_cfg_custom_override["tl_cfg"] = ITLensCustomConfig(**test_tl_cfg_custom_override["tl_cfg"])
+        with pytest.warns(UserWarning, match="ITLensCustomConfig does not support TransformerBridge"):
+            it_cfg_custom_override = ITLensConfig(**test_tl_cfg_custom_override)
+        assert it_cfg_custom_override.tl_cfg.use_bridge is False

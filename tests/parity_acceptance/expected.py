@@ -28,7 +28,7 @@ l_parity_results = {
 cprof_results = partial(def_results, ds_cfg="train_prof")
 
 ########################################################################################################################
-# NOTE [Transformer Lens Profiling Parity Differences]:
+# NOTE [TransformerLens Profiling Parity Differences]:
 # Salient differences between TransformerLens and Base Profiling Contexts
 # ----------------------------------------------------------------------------------------------------------------------
 # 1. The total memory allocated on cuda for a single forward (batch size 1) is ~150MB higher with TransformerLens than

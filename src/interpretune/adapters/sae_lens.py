@@ -87,7 +87,9 @@ class BaseSAELensModule(BaseITLensModule):
                 self.model.add_sae(added_sae.handle)  # type: ignore[operator]
 
     def tl_config_model_init(self) -> None:
-        self.model = HookedSAETransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
+        # Filter out IT-specific keys (e.g., 'use_bridge') that HookedSAETransformer doesn't accept
+        pruned_cfg = self._prune_tl_cfg_dict()
+        self.model = HookedSAETransformer(tokenizer=self.it_cfg.tokenizer, **pruned_cfg)
         self.instantiate_saes()
 
     def _capture_hyperparameters(self) -> None:
