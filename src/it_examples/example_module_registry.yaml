@@ -43,6 +43,8 @@ cust.rte:
               class_path: interpretune.config.mixins.CoreGenerationConfig
               init_args:
                 max_new_tokens: 2
+                output_logits: true
+                return_dict_in_generate: true
     datamodule_cls:
       class_path: tests.modules.FingerprintTestITDataModule
 cust.rte.transformer_lens:
@@ -82,6 +84,8 @@ cust.rte.transformer_lens:
               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
               init_args:
                   max_new_tokens: 1
+                  output_logits: true
+                  return_dict_in_generate: true
         tl_cfg:
           class_path: interpretune.config.transformer_lens.ITLensCustomConfig
           init_args:
@@ -133,6 +137,8 @@ cust.rte.sae_lens:
               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
+                output_logits: true
+                return_dict_in_generate: true
         tl_cfg:
           class_path: interpretune.config.transformer_lens.ITLensCustomConfig
           init_args:
@@ -207,6 +213,8 @@ gpt2.rte:
               init_args:
                 model_config:
                   max_new_tokens: 3
+                  output_logits: true
+                  return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:
@@ -261,6 +269,8 @@ gpt2.rte.transformer_lens:
               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
               init_args:
                   max_new_tokens: 1
+                  output_logits: true
+                  return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:
@@ -318,6 +328,8 @@ gpt2.rte.sae_lens:
               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
+                output_logits: true
+                return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:
@@ -446,6 +458,8 @@ gemma2.rte:
               init_args:
                 model_config:
                   max_new_tokens: 3
+                  output_logits: true
+                  return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:
@@ -488,6 +502,8 @@ gemma2.rte.sae_lens:
               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
+                output_logits: true
+                return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:
@@ -546,6 +562,8 @@ gemma2.rte_demo.circuit_tracer:
               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
+                output_logits: true
+                return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:
@@ -708,6 +726,8 @@ llama3.rte:
               init_args:
                 model_config:
                   max_new_tokens: 3
+                  output_logits: true
+                  return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:

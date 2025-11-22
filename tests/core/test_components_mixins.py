@@ -323,6 +323,45 @@ class TestGenerativeStepMixin:
         mock_model.generate.assert_called_once_with(batch, max_length=10)
         assert torch.equal(output, expected_output)
 
+    @pytest.mark.parametrize("hf_kw", ["output_scores", "output_logits"])
+    def test_it_generate_pass_through_hf_kwargs(self, hf_kw):
+        """Test that it_generate passes through HF generation kwargs like `output_scores` and `output_logits` to
+        model.generate when supported."""
+        from types import SimpleNamespace
+        from interpretune.base.components.mixins import GenerativeStepMixin
+
+        class TestGenerativeMixin(GenerativeStepMixin):
+            def __init__(self, model, sig_keys=None):
+                self.model = model
+                # empty list to not rely on signature filtering
+                self._gen_sig_keys = sig_keys or []
+
+        # Define generate function to capture kwargs
+        def gen_func(inputs, **kwargs):
+            gen_func.called = True
+            gen_func.kwargs = kwargs
+            # For output_logits case return a ModelOutput with logits attribute
+            if kwargs.get("output_logits"):
+                from transformers.utils import ModelOutput
+
+                sequences = inputs
+                logits = (torch.zeros((sequences.shape[0], 10)),)
+                return ModelOutput(sequences=sequences, logits=logits)
+            # default behavior for output_scores or others
+            return torch.tensor([[4, 5, 6]])
+
+        test_model = SimpleNamespace(generate=gen_func)
+        test_mixin = TestGenerativeMixin(test_model)
+        # Minimal it_cfg to avoid referencing missing attributes
+        test_mixin.it_cfg = SimpleNamespace(generative_step_cfg=SimpleNamespace(lm_generation_cfg=None))
+        batch = torch.tensor([[1, 2, 3]])
+        kwargs = {hf_kw: True}
+        output = test_mixin.it_generate(batch, **kwargs)
+        assert getattr(gen_func, "called", False)
+        assert hf_kw in getattr(gen_func, "kwargs", {}) and gen_func.kwargs[hf_kw] is True
+        if hf_kw == "output_logits":
+            assert hasattr(output, "logits") and output.logits is not None
+
     def test_it_generate_with_batch_encoding(self):
         """Test the it_generate method with BatchEncoding and _should_inspect_inputs=False."""
         from transformers import BatchEncoding
@@ -392,6 +431,55 @@ class TestGenerativeStepMixin:
         # Verify results
         mock_model.generate.assert_called_once_with(input_ids=batch["input_ids"], max_length=10)
         assert torch.equal(output, torch.tensor([[4, 5, 6]]))
+
+    def test_bridge_generate_pass_through_output_logits(self):
+        """Test that TransformerBridge.generate accepts `output_logits` and returns ModelOutput with logits."""
+        from types import SimpleNamespace
+        from transformer_lens.model_bridge.bridge import TransformerBridge
+        from transformers.utils import ModelOutput
+        import torch.nn as nn
+
+        # Create a minimal model that the bridge can be constructed with
+        model = nn.Module()
+        model.embed = nn.Embedding(100, 10)
+        model.unembed = nn.Linear(10, 100)
+        model.ln_final = nn.LayerNorm(10)
+        model.blocks = nn.ModuleList()
+        block = nn.Module()
+        block.ln1 = nn.LayerNorm(10)
+        block.ln2 = nn.LayerNorm(10)
+        block.attn = nn.Module()
+        block.mlp = nn.Module()
+        model.blocks.append(block)
+        model.outer_blocks = nn.ModuleList()
+        outer_block = nn.Module()
+        outer_block.inner_blocks = nn.ModuleList()
+        inner_block = nn.Module()
+        inner_block.ln = nn.LayerNorm(10)
+        outer_block.inner_blocks.append(inner_block)
+        model.outer_blocks.append(outer_block)
+
+        called = {}
+
+        def fake_generate(input_ids, **kwargs):
+            called["kwargs"] = kwargs
+            # Return ModelOutput with sequences and logits
+            logits = (torch.zeros((input_ids.shape[0], 100)),)
+            return ModelOutput(sequences=input_ids, logits=logits)
+
+        model.generate = fake_generate
+
+        # Make a minimal bridge object without running heavy init
+        bridge = object.__new__(TransformerBridge)
+        bridge.__dict__["original_model"] = model
+        bridge.cfg = SimpleNamespace(device="cpu")
+        # Fake tokenizer: only the attributes accessed by generate are needed
+        tokenizer = SimpleNamespace(eos_token_id=2, pad_token_id=2, get_vocab=lambda: {str(i): i for i in range(100)})
+        bridge.tokenizer = tokenizer
+        # Make sure we call the generate function with output_logits
+        outputs = bridge.generate(torch.tensor([[1, 2, 3]]), output_logits=True, max_new_tokens=1)
+        assert "kwargs" in called and "output_logits" in called["kwargs"] and called["kwargs"]["output_logits"] is True
+        assert hasattr(outputs, "logits") and outputs.logits is not None
 
     def test_it_generate_exception_handling_type_error(self):
         """Test it_generate exception handling with TypeError."""

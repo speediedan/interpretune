@@ -41,6 +41,8 @@ session_cfg:
               model_config:
                 use_cache: false  # there was a dtype issue when using cache + bfloat16
                 max_new_tokens: 5
+                output_logits: true
+                return_dict_in_generate: true
       hf_from_pretrained_cfg:
         class_path: interpretune.config.module.HFFromPretrainedConfig
         init_args:

@@ -58,6 +58,8 @@ class ArchitectureAdapter:
 
 ## Interpretune Config Hierarchy
 
+For generation flag precedence and debug semantics, see `docs/generation_precedence.md`.
+
 ### Base: ITLensSharedConfig
 Common configuration shared across both initialization modes:
 - **Location**: `src/interpretune/config/transformer_lens.py`

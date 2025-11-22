@@ -215,6 +215,8 @@ class ITLensConfig(ITConfig):
             self.hf_from_pretrained_cfg.pretrained_kwargs["dtype"] = tl_dtype
 
 
+# TODO: we should be able to standardize on the HF GenerationConfig interface and remove TLensGenerationConfig once
+#       once (if) TL migrates away from HookedTransformer.generate method to using the HF generate interface
 @dataclass(kw_only=True)
 class TLensGenerationConfig(CoreGenerationConfig):
     stop_at_eos: bool = True
@@ -224,5 +226,5 @@ class TLensGenerationConfig(CoreGenerationConfig):
     prepend_bos: Optional[bool] = None
     padding_side: Optional[Literal["left", "right"]] = None
     return_type: Optional[str] = "input"
-    output_logits: Optional[bool] = True  # TODO: consider setting this back to None after testing
+    output_logits: Optional[bool] = None
     verbose: bool = True

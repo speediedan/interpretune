@@ -222,7 +222,14 @@ class RTEBoolqSteps:
     ) -> Optional[STEP_OUTPUT]:
         labels = batch.pop("labels")
         outputs = self.it_generate(batch, **self.it_cfg.generative_step_cfg.lm_generation_cfg.generate_kwargs)
-        self.collect_answers(outputs.logits, labels)
+        # We expect a HF ModelOutput with a `.logits` attribute when `output_logits` is used.
+        if isinstance(outputs, torch.Tensor):
+            logits = outputs
+        elif hasattr(outputs, "logits") and outputs.logits is not None:
+            logits = outputs.logits
+        else:
+            raise ValueError("Expected ModelOutput with `logits` or a logits tensor from generate()")
+        self.collect_answers(logits, labels)
 
     def default_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
         labels = batch.pop("labels")

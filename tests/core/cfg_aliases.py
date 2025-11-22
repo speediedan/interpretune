@@ -99,6 +99,15 @@ class TLDebugCfg(TLParityCfg):
     debug_lm_cfg: DebugLMConfig | None = field(default_factory=lambda: DebugLMConfig(enabled=True))
     phase: str | None = "test"
     model_src_key: str | None = "gpt2"
+    generative_step_cfg: GenerativeClassificationConfig | None = field(
+        default_factory=lambda: GenerativeClassificationConfig(
+            enabled=True,
+            lm_generation_cfg=TLensGenerationConfig(
+                max_new_tokens=4,
+                generate_kwargs={"output_logits": True, "return_dict_in_generate": True},
+            ),
+        )
+    )
 
 
 @dataclass(kw_only=True)
@@ -193,7 +202,8 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
     generative_step_cfg: GenerativeClassificationConfig = field(
         default_factory=lambda: GenerativeClassificationConfig(
-            enabled=True, lm_generation_cfg=TLensGenerationConfig(max_new_tokens=1)
+            enabled=True,
+            lm_generation_cfg=TLensGenerationConfig(max_new_tokens=1, output_logits=True, return_dict_in_generate=True),
         )
     )
     sae_analysis_targets: SAEAnalysisTargets = field(

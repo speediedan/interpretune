@@ -148,6 +148,8 @@ class GenerativeStepMixin:
     # Often used for n-shot classification, those contexts are only a subset of generative classification use cases
 
     _gen_sig_keys: list | None = None
+    # HF-style flags that commonly request a dict/ModelOutput from HF `generate`
+    hf_dict_flags = ("output_scores", "output_logits", "output_attentions", "output_hidden_states")
     # class-level metadata container to reduce attribute clutter
     from interpretune.metadata import ITClassMetadata  # local import to avoid top-level cycle
 
@@ -164,6 +166,18 @@ class GenerativeStepMixin:
             self._gen_sig_keys = list(generate_signature.parameters.keys())
         return self._gen_sig_keys
 
+    def _generate_accepts_kwargs(self) -> bool:
+        """Return True if the model `generate` method accepts arbitrary kwargs (**kwargs).
+
+        We detect this by inspecting the signature for a VAR_KEYWORD parameter (the parameter kind associated with
+        variadic keyword parameters).
+        """
+        generate_signature = inspect.signature(getattr(self.model, "generate"))
+        for p in generate_signature.parameters.values():
+            if p.kind == inspect.Parameter.VAR_KEYWORD:
+                return True
+        return False
+
     def map_gen_inputs(self, batch) -> dict[str, Any]:
         # since we're abstracting the same generative classification logic to be used with different frameworks, models
         # and datasets we use a mapping function to provide only data inputs a given generate function supports (for
@@ -176,6 +190,11 @@ class GenerativeStepMixin:
     def map_gen_kwargs(self, kwargs: dict) -> dict[str, Any]:
         # we use a mapping function to provide only generate kwargs a given generate function supports (for
         # frameworks that don't support variadic kwargs).
+        # For models whose generate accepts arbitrary kwargs (via **kwargs), pass-through everything.
+        # TODO: consider deprecating this filtering and require all model.generate methods to accept **kwargs
+        if self._generate_accepts_kwargs():
+            return kwargs
+        # Otherwise, filter out keys not present in the model signature
         return {k: v for k, v in kwargs.items() if k in self.gen_sig_keys}
 
     # TODO: move this property to _it_state?
@@ -191,9 +210,10 @@ class GenerativeStepMixin:
 
     def it_generate(self, batch: BatchEncoding | torch.Tensor, **kwargs) -> Any:
         try:
-            # variadic kwargs not supported by generate so inspect kwargs and use only those supported
-            if "kwargs" not in self.gen_sig_keys:
+            # If the generate method does not accept arbitrary kwargs, inspect kwargs and use only those supported
+            if not self._generate_accepts_kwargs():
                 kwargs = self.map_gen_kwargs(kwargs)
+
             if isinstance(batch, torch.Tensor):
                 outputs = self.model.generate(batch, **kwargs)  # type: ignore[attr-defined]  # mixin provides model
             else:
@@ -203,8 +223,14 @@ class GenerativeStepMixin:
         except (TypeError, AttributeError, ValueError) as ge:
             # TODO: consider further inspecting the possible generation errors encountered here to help narrow the
             # problem space for the user
+            if hasattr(batch, "data"):
+                batch_keys = list(batch.data)
+            elif isinstance(batch, dict):
+                batch_keys = list(batch.keys())
+            else:
+                batch_keys = [str(type(batch))]
             gen_dataset_info_msg = (
-                f"The following keys were found in the provided data batch: {os.sep} {list(batch.data)}). The current"
+                f"The following keys were found in the provided data batch: {os.sep} {batch_keys}). The current"
                 f" generate method ({self.model.generate}) accepts: {os.sep} {[self._gen_sig_keys]}."  # type: ignore[attr-defined]  # mixin provides model
             )
             rank_zero_warn(gen_dataset_info_msg)
