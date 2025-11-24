@@ -172,7 +172,7 @@ class GenerativeStepMixin:
         We detect this by inspecting the signature for a VAR_KEYWORD parameter (the parameter kind associated with
         variadic keyword parameters).
         """
-        generate_signature = inspect.signature(getattr(self.model, "generate"))
+        generate_signature = inspect.signature(getattr(self.model, "generate"))  # type: ignore[attr-defined]  # mixin provides model
         for p in generate_signature.parameters.values():
             if p.kind == inspect.Parameter.VAR_KEYWORD:
                 return True

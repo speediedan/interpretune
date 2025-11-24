@@ -67,8 +67,8 @@ class TestClassTransformerLens:
         with ablate_cls_attrs(tl_test_module._it_state, "_device"), ablate_cls_attrs(tl_test_module.tl_cfg, "device"):
             with pytest.warns(UserWarning, match="Could not find a device reference"):
                 _ = tl_test_module.device
-            with pytest.warns(UserWarning, match="determining appropriate device for block"):
-                _ = tl_test_module.get_tl_device(0)
+            with pytest.warns(UserWarning, match="determining appropriate device from TransformerLens"):
+                _ = tl_test_module.get_tl_device()
         tl_test_module.device = "meta"
         assert isinstance(tl_test_module.device, device)
         assert tl_test_module.device.type == "meta"

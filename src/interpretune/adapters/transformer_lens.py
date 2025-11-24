@@ -8,7 +8,7 @@ import torch
 from transformers import PretrainedConfig as HFPretrainedConfig, PreTrainedModel
 from transformer_lens import HookedTransformer
 from transformer_lens.config import HookedTransformerConfig, TransformerBridgeConfig
-from transformer_lens.utilities import get_device_for_block_index
+from transformer_lens.utilities.multi_gpu import get_best_available_device
 from transformer_lens.model_bridge import TransformerBridge
 from transformer_lens.factories.architecture_adapter_factory import ArchitectureAdapterFactory
 from transformer_lens.model_bridge.sources.transformers import (
@@ -59,26 +59,26 @@ class TLensAttributeMixin:
             value = torch.device(value)
         self._it_state._device = value  # type: ignore[attr-defined]  # provided by mixing class
 
-    def get_tl_device(self, block_index: int) -> Optional[torch.device]:
+    def get_tl_device(self) -> Optional[torch.device]:
+        """Get the best available device based on TransformerLens config."""
         try:
             if self.tl_cfg is None:
                 return None
-            device = get_device_for_block_index(block_index, self.tl_cfg)
+            # get_best_available_device works with both HookedTransformerConfig and TransformerBridgeConfig
+            # at runtime, though type signature only declares HookedTransformerConfig
+            device = get_best_available_device(self.tl_cfg)  # type: ignore[arg-type]
         except (AttributeError, AssertionError) as ae:
-            rank_zero_warn(
-                f"Problem determining appropriate device for block {block_index} from TransformerLens"
-                f" config. Received: {ae}"
-            )
+            rank_zero_warn(f"Problem determining appropriate device from TransformerLens config. Received: {ae}")
             device = None
         return device
 
     @property
     def output_device(self) -> Optional[torch.device]:
-        return self.get_tl_device(self.model.cfg.n_layers - 1)  # type: ignore[attr-defined]  # provided by mixing class
+        return self.get_tl_device()  # type: ignore[attr-defined]  # provided by mixing class
 
     @property
     def input_device(self) -> Optional[torch.device]:
-        return self.get_tl_device(0)
+        return self.get_tl_device()
 
 
 class BaseITLensModule(BaseITModule):
@@ -202,7 +202,9 @@ class BaseITLensModule(BaseITModule):
         tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
         hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
         pruned_cfg = self._prune_tl_cfg_dict()  # avoid edge case where conflicting keys haven't already been pruned
-        self.model = HookedTransformer.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle, **pruned_cfg)
+        self.model = HookedTransformer.from_pretrained(
+            hf_model=cast(PreTrainedModel, self.model), tokenizer=tokenizer_handle, **pruned_cfg
+        )
         self.model.config = hf_preconversion_config
 
     def _convert_hf_to_bridge(self) -> None:

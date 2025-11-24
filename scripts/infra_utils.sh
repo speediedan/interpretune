@@ -78,6 +78,41 @@ determine_venv_path(){
     echo "${venv_base}/${target_env_name}"
 }
 
+# Split a colon-delimited string while respecting quoted segments.
+# Colons that appear inside single or double quotes are treated as literal characters.
+# Usage:
+#   local fields=()
+#   split_colon_fields "pkg:path:extra:VAR='json:with:colons'" fields
+split_colon_fields(){
+    local input="$1"
+    local -n result=$2
+    local current=""
+    local in_single=0
+    local in_double=0
+    local char
+
+    while IFS= read -r -n1 char || [[ -n $char ]]; do
+        if [[ $char == "'" && $in_double -eq 0 ]]; then
+            ((in_single ^= 1))
+            current+="$char"
+            continue
+        fi
+        if [[ $char == '"' && $in_single -eq 0 ]]; then
+            ((in_double ^= 1))
+            current+="$char"
+            continue
+        fi
+        if [[ $char == ':' && $in_single -eq 0 && $in_double -eq 0 ]]; then
+            result+=("$current")
+            current=""
+        else
+            current+="$char"
+        fi
+    done <<< "$input"
+
+    result+=("$current")
+}
+
 # Parse from-source specifications into an associative array
 # Format: package:path[:extras][:env_var=value...]
 # Usage: parse_from_source_specs "spec1;spec2;..." from_source_packages_array_name
@@ -94,8 +129,9 @@ parse_from_source_specs(){
 
     IFS=';' read -ra PAIRS <<< "${from_source_spec}"
     for pair in "${PAIRS[@]}"; do
-        # Split on colons to get all fields
-        IFS=':' read -ra FIELDS <<< "${pair}"
+        # Split on colons to get all fields, but respect quoted values
+        local FIELDS=()
+        split_colon_fields "${pair}" FIELDS
 
         if [[ ${#FIELDS[@]} -lt 2 ]]; then
             echo "Error: Invalid from-source format: '$pair'" >&2
@@ -103,24 +139,25 @@ parse_from_source_specs(){
             return 1
         fi
 
-        local pkg_name="${FIELDS[0]}"
-        local pkg_path="${FIELDS[1]}"
+        local pkg_name="$(strip_quotes "${FIELDS[0]}")"
+        local pkg_path="$(strip_quotes "${FIELDS[1]}")"
         local pkg_extras=""
         local pkg_env_vars=""
 
         # Process remaining fields - first non-env field is extras, rest are env vars
         for ((i=2; i<${#FIELDS[@]}; i++)); do
             local field="${FIELDS[i]}"
-            if [[ $field =~ ^[A-Z_][A-Z0-9_]*=.*$ ]]; then
+            local stripped_field="$(strip_quotes "${field}")"
+            if [[ $stripped_field =~ ^[A-Z_][A-Z0-9_]*=.*$ ]]; then
                 # This is an env var (contains =)
                 if [[ -n ${pkg_env_vars} ]]; then
                     pkg_env_vars="${pkg_env_vars}|${field}"
                 else
                     pkg_env_vars="${field}"
                 fi
-            elif [[ -z ${pkg_extras} && -n ${field} ]]; then
+            elif [[ -z ${pkg_extras} && -n ${stripped_field} ]]; then
                 # First non-env, non-empty field is extras
-                pkg_extras="${field}"
+                pkg_extras="${stripped_field}"
             fi
         done
 

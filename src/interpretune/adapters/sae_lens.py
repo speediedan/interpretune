@@ -11,6 +11,7 @@ from sae_lens.saes.sae import SAE, SAEConfig
 from sae_lens.saes.standard_sae import StandardSAE
 from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer
 from transformer_lens.hook_points import NamesFilter
+from transformers import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.adapters import (
@@ -67,7 +68,9 @@ class BaseSAELensModule(BaseITLensModule):
         tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
         hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
         pruned_cfg = self._prune_tl_cfg_dict()  # avoid edge case where conflicting keys haven't already been pruned
-        self.model = HookedSAETransformer.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle, **pruned_cfg)
+        self.model = HookedSAETransformer.from_pretrained(
+            hf_model=cast(PreTrainedModel, self.model), tokenizer=tokenizer_handle, **pruned_cfg
+        )
         self.model.config = hf_preconversion_config
         self.instantiate_saes()
 

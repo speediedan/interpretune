@@ -9,7 +9,7 @@ from torch.nn import CrossEntropyLoss
 
 from interpretune.config import ITSerializableCfg
 from interpretune.utils import rank_zero_warn, sanitize_input_name, DEFAULT_DECODE_KWARGS
-from transformers.utils import ModelOutput
+from transformers.utils.generic import ModelOutput
 from transformers.generation.utils import GenerateDecoderOnlyOutput
 from interpretune.protocol import ITModuleGenDebuggable
 
@@ -342,7 +342,7 @@ class DebugGeneration:
         # If the sanitized output is a ModelOutput or dict, extract the `sequences` field
         # which is what the tokenizer expects for decoding.
         if isinstance(decode_target, ModelOutput):
-            decode_target = decode_target.sequences
+            decode_target = decode_target.sequences  # type: ignore[attr-defined]  # sequences is present in GenerateDecoderOnlyOutput
         elif isinstance(decode_target, dict) and "sequences" in decode_target:
             decode_target = decode_target["sequences"]
         # Now decode_target should be a tensor or list-like of token ids that can be decoded.
@@ -374,10 +374,10 @@ class DebugGeneration:
             decode_target, decode_kwargs = self.sanitize_gen_output(output, gen_output_attr, decode_cfg_override)
             # If we received a ModelOutput/dict, get the sequences tensor for decoding
             if isinstance(decode_target, ModelOutput):
-                decode_target = decode_target.sequences
+                decode_target = decode_target.sequences  # type: ignore[attr-defined]  # sequences is present in GenerateDecoderOnlyOutput
             elif isinstance(decode_target, dict) and "sequences" in decode_target:
                 decode_target = decode_target["sequences"]
-            sequences = decode_target.unbind()
+            sequences = decode_target.unbind()  # type: ignore[union-attr]  # decode_target is tensor at this point
             decode_kwargs = deepcopy(DEFAULT_DECODE_KWARGS)
             if decode_cfg_override:
                 decode_kwargs.update(decode_cfg_override)
