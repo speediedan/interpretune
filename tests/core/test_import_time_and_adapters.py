@@ -49,10 +49,21 @@ def test_import_interpretune_does_not_pull_adapters_and_is_fast():
     if os.environ.get("IT_ALLOW_SLOW_IMPORT"):
         pytest.skip("Skipping import time assertion because IT_ALLOW_SLOW_IMPORT is set")
 
-    # Configurable threshold (seconds)
-    try:
-        threshold = float(os.environ.get("IT_IMPORT_TIME_THRESHOLD_SECONDS", "6.0"))
-    except ValueError:
-        threshold = 6.0
+    # OS-specific threshold (seconds) - Windows runner's slower, Linux/macOS runners are faster (TODO: analyze diff)
+    import platform
 
-    assert duration < threshold, f"interpretune import took too long ({duration:.2f}s) — expected < {threshold:.1f}s"
+    system = platform.system()
+    if system == "Windows":
+        default_threshold = 8.0
+    else:  # Linux, Darwin (macOS), and others
+        default_threshold = 3.0
+
+    # Allow override via environment variable
+    try:
+        threshold = float(os.environ.get("IT_IMPORT_TIME_THRESHOLD_SECONDS", str(default_threshold)))
+    except ValueError:
+        threshold = default_threshold
+
+    assert duration < threshold, (
+        f"interpretune import took too long ({duration:.2f}s) — expected < {threshold:.1f}s on {system}"
+    )
