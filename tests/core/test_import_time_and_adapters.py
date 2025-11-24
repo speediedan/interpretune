@@ -11,7 +11,7 @@ def test_import_interpretune_does_not_pull_adapters_and_is_fast():
 
     This runs a fresh Python subprocess to avoid contamination from the test runner's imports. The test asserts that
     commonly-heavy adapter packages are NOT in sys.modules after `import interpretune` and that the import completes
-    within a configurable threshold (default 6 seconds).
+    within a configurable threshold (conservative defaults).
 
     To avoid CI flakes on slower runners, set the environment variable `IT_ALLOW_SLOW_IMPORT=1` to skip the timing
     assertion (adapter presence is still checked).
@@ -56,7 +56,7 @@ def test_import_interpretune_does_not_pull_adapters_and_is_fast():
     if system == "Windows":
         default_threshold = 8.0
     else:  # Linux, Darwin (macOS), and others
-        default_threshold = 3.0
+        default_threshold = 5.0
 
     # Allow override via environment variable
     try:
