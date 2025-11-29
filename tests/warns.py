@@ -67,6 +67,7 @@ SL_LIGHTNING_CTX_WARNS = SL_CTX_WARNS + LIGHTING_CTX_WARNS
 FTS_CTX_WARNS = [
     ".*currently depends upon.*",
     "No monitor metric specified for.*",
+    "Pruning explicitly specified shared parameter.*",
 ]
 
 EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS + TL_EXPECTED_WARNS

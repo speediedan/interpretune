@@ -88,9 +88,9 @@ test_tl_profiling.train_cpu_32:
 test_tl_profiling.train_cuda_32:
   mem_results:
     expected_mem:
-      allocated_bytes.all.current: 2333571584
-      allocated_bytes.all.peak: 3354528768
-      npp_diff: 312483840
-      reserved_bytes.all.peak: 3636461568
+      allocated_bytes.all.current: 1870141952
+      allocated_bytes.all.peak: 2891096576
+      npp_diff: 430427424
+      reserved_bytes.all.peak: 3173019648
     phase: train
     src: cuda

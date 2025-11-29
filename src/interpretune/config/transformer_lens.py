@@ -44,7 +44,6 @@ class ITLensFromPretrainedConfig(ITLensSharedConfig):
     fold_value_biases: Optional[bool] = True
     default_prepend_bos: Optional[bool] = True
     dtype: str = "float32"
-    use_bridge: bool | None = False  # TODO: re-enable TransformerBridge after debugging
 
     def __post_init__(self) -> None:
         if self.device is None:  # align with TL default device resolution

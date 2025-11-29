@@ -65,6 +65,82 @@ def _cleanup_notebook_artifacts():
                 pass
 
 
+def validate_notebook_outputs(
+    output_notebook: Path,
+    params: Dict[str, Any],
+    check_prompt_errors: bool = True,
+    check_analysis_points: bool = True,
+    check_prompt_success: bool = True,
+) -> None:
+    """Validate notebook execution outputs.
+
+    Args:
+        output_notebook: Path to the executed notebook
+        params: Parameters used for notebook execution
+        check_prompt_errors: Whether to check for prompt processing errors
+        check_analysis_points: Whether to check for missing analysis point data
+        check_prompt_success: Whether to check that at least one prompt succeeded
+
+    Raises:
+        pytest.fail: If validation checks fail
+        AssertionError: If prompt success count validation fails
+    """
+    import nbformat
+    import re
+
+    # Read the executed notebook
+    with open(output_notebook) as f:
+        nb = nbformat.read(f, as_version=4)
+
+    # Check for errors in prompt processing
+    prompt_errors = []
+    missing_analysis_points = []
+    prompt_success_count = None
+
+    for cell in nb.cells:
+        if cell.cell_type == "code" and cell.get("outputs"):
+            for output in cell.outputs:
+                if output.output_type in ("stream", "execute_result", "display_data"):
+                    text = output.get("text", "")
+                    if isinstance(text, list):
+                        text = "".join(text)
+
+                    # Check for prompt processing errors
+                    if check_prompt_errors and "Error processing prompt:" in text:
+                        prompt_errors.append(text)
+
+                    # Check for missing analysis points (if analysis injection enabled)
+                    if check_analysis_points and params.get("enable_analysis_injection", False):
+                        if "No analysis data for analysis point" in text:
+                            missing_analysis_points.append(text)
+
+                    # Extract prompt success count
+                    if check_prompt_success and "Processed" in text and "prompts successfully" in text:
+                        match = re.search(r"Processed (\d+) prompts successfully", text)
+                        if match:
+                            prompt_success_count = int(match.group(1))
+
+    # Fail test if any prompts had errors
+    if check_prompt_errors and prompt_errors:
+        error_msg = "\n".join(prompt_errors)
+        pytest.fail(f"Prompt processing errors detected:\n{error_msg}")
+
+    # Verify at least one prompt was processed successfully
+    if check_prompt_success and prompt_success_count is not None:
+        assert prompt_success_count > 0, (
+            f"Expected at least 1 prompt to be processed successfully, got {prompt_success_count}"
+        )
+
+    # Fail test if analysis injection was enabled but analysis points didn't produce data
+    if check_analysis_points and params.get("enable_analysis_injection", False) and missing_analysis_points:
+        # For now, we expect 0 missing analysis points when analysis injection is enabled
+        error_msg = "\n".join(missing_analysis_points)
+        pytest.fail(
+            f"Analysis injection enabled but {len(missing_analysis_points)} analysis points "
+            f"did not produce data:\n{error_msg}"
+        )
+
+
 # Test parameters for attribution analysis notebook
 ATTRIBUTION_ANALYSIS_PARAMS = [
     pytest.param(
@@ -105,6 +181,9 @@ def test_attribution_analysis_notebook(params: Dict[str, Any], tmp_path: Path):
 
     # Verify output
     assert output_notebook.exists(), f"Output notebook not created at {output_notebook}"
+
+    # Validate notebook outputs
+    validate_notebook_outputs(output_notebook, params)
 
     # Clean up
     _cleanup_notebook_artifacts()

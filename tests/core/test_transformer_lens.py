@@ -184,8 +184,7 @@ class TestClassTransformerLens:
         test_tl_cfg_default = deepcopy(TestClassTransformerLens.test_tlens_gpt2)
         test_tl_cfg_default["tl_cfg"] = ITLensFromPretrainedConfig(**test_tl_cfg_default["tl_cfg"])
         it_cfg_default = ITLensConfig(**test_tl_cfg_default)
-        assert it_cfg_default.tl_cfg.use_bridge is False  # TODO: remove this switch after debugging upstream issue
-        # assert it_cfg_default.tl_cfg.use_bridge is True  # default should be True
+        assert it_cfg_default.tl_cfg.use_bridge is True
 
         # Test default for custom config: should default to False (HookedTransformer)
         test_tl_cfg_custom_default = deepcopy(TestClassTransformerLens.test_tlens_cust)

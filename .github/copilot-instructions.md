@@ -379,6 +379,58 @@ Full repository type-checking is a work in progress. Current local checks may on
 - Add coverage for new functionality
 - Avoid modifying `*_parity/` test directories (research code)
 
+#### Running Special Tests (Standalone and Profiling)
+
+Some tests require special environment setup and are marked with `@pytest.mark.standalone` or involve profiling. These tests can be run using the `special_tests.sh` harness or manually with environment variables.
+
+**Using the test harness:**
+```bash
+export IT_REPO_DIR=${HOME}/repos/interpretune  # Example: adjust to your local repo path
+# Run all standalone tests
+cd ${IT_REPO_DIR} && ./tests/special_tests.sh --mark_type=standalone
+
+# Run specific standalone test by filter pattern
+cd ${IT_REPO_DIR} && \
+./tests/special_tests.sh --mark_type=standalone --filter_pattern='test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]'
+
+# Run profiling tests
+cd ${IT_REPO_DIR} && ./tests/special_tests.sh --mark_type=profiling
+```
+
+**Manual execution (without harness):**
+
+Set environment context variables (developer-specific paths):
+
+```bash
+export IT_VENV_BASE=/mnt/cache/${USER}/.venvs
+export IT_TARGET_VENV=it_latest
+export IT_REPO_DIR=${HOME}/repos/interpretune  # Example: adjust to your local repo path
+```
+
+Then run specific tests using **inline environment variables** (not export) to avoid marker conflicts:
+
+```bash
+# Run specific standalone test
+# IMPORTANT: Use inline variable assignment (VAR=value command), not export
+# This prevents marker conflicts when multiple test environment variables are set
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/examples/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT] -v
+
+# Run specific profiling test
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+IT_RUN_PROFILING_TESTS=1 python -m pytest tests/parity_acceptance/test_it_l.py::test_l_profiling[test_cuda_32_l] -v
+```
+
+**Important Notes:**
+- **Always use inline environment variables** (`VAR=value command`) instead of `export` for test markers
+- Using `export` can cause marker filtering conflicts when multiple test environment variables are set
+- Environment variables like `IT_VENV_BASE`, `IT_TARGET_VENV`, and `IT_REPO_DIR` are developer-specific
+- Adjust these paths to match your local development environment
+- The `special_tests.sh` harness handles environment setup automatically
+- Standalone tests may take longer and require more resources than regular tests
+
 ### Configuration
 - YAML configs in `src/it_examples/config/`
 - Use dataclasses for configuration objects

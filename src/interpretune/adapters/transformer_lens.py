@@ -238,6 +238,12 @@ class BaseITLensModule(BaseITModule):
         adapter = ArchitectureAdapterFactory.select_architecture_adapter(bridge_config)
         self.model = TransformerBridge(model=hf_model, adapter=adapter, tokenizer=tokenizer_handle)
 
+        # Move model to device if move_to_device is enabled (default True)
+        if pruned_cfg.get("move_to_device", True) and "device" in pruned_cfg:
+            device = pruned_cfg["device"]
+            rank_zero_info(f"Moving TransformerBridge to device: {device}")
+            self.model.to(device)
+
         # Preserve original HF config for reference
         self.model.config = hf_preconversion_config
 

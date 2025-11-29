@@ -185,6 +185,22 @@ class LightningGPT2(BaseCfg):
 class LightningTLGPT2(BaseCfg):
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
+    tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
+        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
+            model_name="gpt2-small", default_padding_side="left", use_bridge=False
+        )
+    )
+
+
+@dataclass(kw_only=True)
+class LightningTLBridgeGPT2(BaseCfg):
+    model_src_key: str | None = "gpt2"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
+    tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
+        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
+            model_name="gpt2-small", default_padding_side="left", use_bridge=True
+        )
+    )
 
 
 @dataclass(kw_only=True)
@@ -192,6 +208,12 @@ class CoreSLGPT2(BaseCfg):
     phase: str | None = "test"
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
+    # sae_lens does not yet support TransformerBridge, so we set use_bridge=False
+    tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
+        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
+            model_name="gpt2-small", default_padding_side="left", use_bridge=False
+        )
+    )
     # force_prepare_data: Optional[bool] = True  # sometimes useful to enable for test debugging
 
 
@@ -216,7 +238,7 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
     )
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left"
+            model_name="gpt2-small", default_padding_side="left", use_bridge=False
         )
     )
     sae_cfgs: list = field(default_factory=lambda: [])
@@ -288,6 +310,11 @@ class LightningSLGPT2(BaseCfg):
     phase: str | None = "test"
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.sae_lens)
+    tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
+        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
+            model_name="gpt2-small", default_padding_side="left", use_bridge=False
+        )
+    )
 
 
 class CLI_UNIT_TESTS(AutoStrEnum):

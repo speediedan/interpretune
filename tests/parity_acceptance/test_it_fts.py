@@ -21,7 +21,14 @@ from interpretune.protocol import Adapter
 from tests.base_defaults import BaseAugTest, BaseCfg, pytest_factory
 from tests.configuration import IT_GLOBAL_STATE_LOG_MODE
 from tests.orchestration import parity_test
-from tests.parity_acceptance.cfg_aliases import cuda, l_gpt2_fts, l_tl_gpt2_fts, TestFTS
+from tests.parity_acceptance.cfg_aliases import (
+    cuda,
+    l_gpt2_fts,
+    l_tl_gpt2_fts,
+    l_tl_gpt2_fts_no_restore,
+    l_tl_bridge_gpt2_fts,
+    TestFTS,
+)
 from tests.parity_acceptance.expected import fts_parity_results
 from tests.results import collect_results
 from tests.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS, FTS_CTX_WARNS
@@ -56,6 +63,14 @@ PARITY_FTS_CONFIGS = (
     FTSParityTest(alias="train_cpu_32_l_tl_fts", cfg=FTSParityCfg(**l_tl_gpt2_fts), marks="l_optional"),
     FTSParityTest(alias="train_cuda_32_l_fts", cfg=FTSParityCfg(**l_gpt2_fts, **cuda), marks="cuda_l_optional"),
     FTSParityTest(alias="train_cuda_32_l_tl_fts", cfg=FTSParityCfg(**l_tl_gpt2_fts, **cuda), marks="cuda"),
+    FTSParityTest(
+        alias="train_cuda_32_l_tl_fts_no_restore",
+        cfg=FTSParityCfg(**l_tl_gpt2_fts_no_restore, **cuda),
+        marks="cuda_l_optional",
+    ),
+    FTSParityTest(
+        alias="train_cuda_32_l_tl_bridge_fts", cfg=FTSParityCfg(**l_tl_bridge_gpt2_fts, **cuda), marks="cuda_l_optional"
+    ),
 )
 
 EXPECTED_PARITY_FTS = {cfg.alias: cfg.expected for cfg in PARITY_FTS_CONFIGS}

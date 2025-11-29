@@ -155,8 +155,162 @@ l_fts_callback_results = {
     },
 }
 
-# currently these are the same, but they could well be different in future tests with enriched TL-specific functionality
-l_tl_fts_callback_results = l_fts_callback_results
+# TODO: this will need to be edited when testing FTS with TransformerBridge mode in the future
+l_tl_fts_callback_results = {
+    0: {
+        "curr_depth": 0,
+        "depth_remaining": 1,
+        "ft_epoch": 0,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 0,
+        "curr_thawed_params": 48,
+        "optim_pg_len": 1,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    1: {
+        "curr_depth": 0,
+        "depth_remaining": 1,
+        "ft_epoch": 1,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 48,
+        "optim_pg_len": 1,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    2: {
+        "curr_depth": 1,
+        "depth_remaining": 0,
+        "ft_epoch": 2,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 196,
+        "optim_pg_len": 2,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    3: {
+        "curr_depth": 1,
+        "depth_remaining": 0,
+        "ft_epoch": 3,
+        "current_ckpt_depth": 1,
+        "best_ckpt_depth": 1,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 196,
+        "optim_pg_len": 2,
+        "ckpt_cback_current_ckpt_depth": 1,
+        "ckpt_cback_best_ckpt_depth": 1,
+    },
+}
+
+# TODO: Run tests with IT_GLOBAL_STATE_LOG_MODE=1 to populate these expected results
+# HookedTransformer with restore_best=False - expected to have different best_ckpt_depth values
+l_tl_fts_no_restore_callback_results = {
+    0: {
+        "curr_depth": 0,
+        "depth_remaining": 1,
+        "ft_epoch": 0,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 0,
+        "curr_thawed_params": 48,
+        "optim_pg_len": 1,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    1: {
+        "curr_depth": 0,
+        "depth_remaining": 1,
+        "ft_epoch": 1,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 48,
+        "optim_pg_len": 1,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    2: {
+        "curr_depth": 1,
+        "depth_remaining": 0,
+        "ft_epoch": 2,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 196,
+        "optim_pg_len": 2,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    3: {
+        "curr_depth": 1,
+        "depth_remaining": 0,
+        "ft_epoch": 3,
+        "current_ckpt_depth": 1,
+        "best_ckpt_depth": 1,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 196,
+        "optim_pg_len": 2,
+        "ckpt_cback_current_ckpt_depth": 1,
+        "ckpt_cback_best_ckpt_depth": 1,
+    },
+}
+
+# TransformerBridge with restore_best=False - expected to have same structure but different param counts
+l_tl_bridge_fts_callback_results = {
+    0: {
+        "curr_depth": 0,
+        "depth_remaining": 1,
+        "ft_epoch": 0,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 0,
+        "curr_thawed_params": 54,
+        "optim_pg_len": 1,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    1: {
+        "curr_depth": 0,
+        "depth_remaining": 1,
+        "ft_epoch": 1,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 54,
+        "optim_pg_len": 1,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    2: {
+        "curr_depth": 1,
+        "depth_remaining": 0,
+        "ft_epoch": 2,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 218,
+        "optim_pg_len": 2,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    3: {
+        "curr_depth": 1,
+        "depth_remaining": 0,
+        "ft_epoch": 3,
+        "current_ckpt_depth": 1,
+        "best_ckpt_depth": 1,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 218,
+        "optim_pg_len": 2,
+        "ckpt_cback_current_ckpt_depth": 1,
+        "ckpt_cback_best_ckpt_depth": 1,
+    },
+}
 
 # TODO: using result dicts in this module for now but ultimately plan to save/construct TestResults from a yaml file
 # here to make programmatic management of expected results easier
@@ -175,5 +329,11 @@ fts_parity_results = {
     ),
     "train_cuda_32_l_tl_fts": TestResult(
         exact_results=def_results("cuda", 32, ds_cfg="train"), callback_results=l_tl_fts_callback_results
+    ),
+    "train_cuda_32_l_tl_fts_no_restore": TestResult(
+        exact_results=def_results("cuda", 32, ds_cfg="train"), callback_results=l_tl_fts_no_restore_callback_results
+    ),
+    "train_cuda_32_l_tl_bridge_fts": TestResult(
+        exact_results=def_results("cuda", 32, ds_cfg="train"), callback_results=l_tl_bridge_fts_callback_results
     ),
 }

@@ -403,6 +403,8 @@ gpt2.rte_demo.sae_lens:
             model_head: transformers.GPT2LMHeadModel
         tl_cfg:
           class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
+          init_args:
+            use_bridge: false  # SAE Lens requires run_with_cache_with_saes which is only in HookedTransformer
         sae_cfgs:
           - class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
             init_args:
@@ -576,6 +578,7 @@ gemma2.rte_demo.circuit_tracer:
           init_args:
             model_name: gemma-2-2b
             default_padding_side: left  # to pad on left
+            use_bridge: false  # circuit_tracer doesn't fully support TransformerBridge yet
         circuit_tracer_cfg:
           class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
           init_args:
@@ -647,6 +650,7 @@ gemma2.rte_demo.circuit_tracer_w_neuronpedia:
           init_args:
             model_name: gemma-2-2b
             default_padding_side: left  # to pad on left
+            use_bridge: false  # circuit_tracer doesn't fully support TransformerBridge yet
         circuit_tracer_cfg:
           class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
           init_args:
