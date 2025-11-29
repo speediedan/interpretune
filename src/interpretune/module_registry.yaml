@@ -75,7 +75,7 @@
 #     adapter_combinations:
 #       - [core, transformer_lens]
 #       - [lightning, transformer_lens]
-#     description: Custom transformer with Transformer Lens and supported adapter compositions
+#     description: Custom transformer with TransformerLens and supported adapter compositions
 #   shared_config:
 #     task_name: pytest_rte_tl
 #     model_name_or_path: gpt2

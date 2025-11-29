@@ -33,6 +33,8 @@ class SLParityCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
     model_src_key: Optional[str] = "cust"
     add_saes_on_init: bool = True
+    # SAE lens doesn't support TransformerBridge yet, must use legacy HookedTransformer
+    # This will be handled in the test configuration by ensuring tl_cfg has use_bridge=False
 
 
 @dataclass
@@ -45,7 +47,9 @@ PARITY_SL_CONFIGS = (
     SLParityTest(
         alias="test_cpu_32_l", cfg=SLParityCfg(phase="test", model_src_key="gpt2", **w_l_sl), marks="lightning"
     ),
-    SLParityTest(alias="train_cpu_32_l", cfg=SLParityCfg(**cust_no_sae_grad, **w_l_sl), marks="lightning"),
+    SLParityTest(
+        alias="train_cpu_32_l", cfg=SLParityCfg(model_src_key="gpt2", **cust_no_sae_grad, **w_l_sl), marks="lightning"
+    ),
     SLParityTest(alias="train_cuda_32", cfg=SLParityCfg(**req_det_cuda), marks="cuda"),
 )
 

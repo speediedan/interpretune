@@ -44,6 +44,8 @@ session_cfg:
                 do_sample: true
                 top_k: 50
                 padding_side: left
+                output_logits: true
+                return_dict_in_generate: true
       hf_from_pretrained_cfg:
         class_path: interpretune.config.module.HFFromPretrainedConfig
         init_args:

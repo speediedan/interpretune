@@ -57,6 +57,7 @@ from tests.core.cfg_aliases import (
     CoreCfgForcePrepare,
     LightningGPT2,
     LightningTLGPT2,
+    LightningTLBridgeGPT2,
     CoreSLGPT2,
     CoreSLGPT2Analysis,
     CoreSLCust,
@@ -159,6 +160,9 @@ FIXTURE_CFGS = {
     "core_cust_memprof": FixtureCfg(test_cfg=CoreMemProfCfg, variants={"it_session": [FixtPhase.initonly]}),
     "l_gpt2": FixtureCfg(test_cfg=LightningGPT2, scope="function", variants={"it_session": [FixtPhase.setup]}),
     "l_tl_gpt2": FixtureCfg(test_cfg=LightningTLGPT2, scope="function", variants={"it_session": [FixtPhase.setup]}),
+    "l_tl_bridge_gpt2": FixtureCfg(
+        test_cfg=LightningTLBridgeGPT2, scope="function", variants={"it_session": [FixtPhase.setup]}
+    ),
     "l_sl_gpt2": FixtureCfg(test_cfg=LightningSLGPT2, variants={"it_session": [FixtPhase.initonly]}),
     "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg, variants={"it_session": [FixtPhase.setup]}),
     "l_gemma2_debug": FixtureCfg(test_cfg=LightningGemma2DebugCfg, variants={"it_session": [FixtPhase.setup]}),
@@ -549,8 +553,26 @@ def tl_imp_to_exp(sched_dict: Dict) -> Dict:
     phase_1_pats = [
         r"model.blocks.([0-8](?!\d)).*",
         r"model.(pos_embed|embed).*",
-        "model.unembed.W_U",
-        "model.unembed.b_U",
+        "model.unembed.W_U",  # HookedTransformer parameter names
+        "model.unembed.b_U",  # HookedTransformer parameter names
+    ]
+    sched_dict[1]["params"] = phase_1_pats
+    sched_dict[1]["lr"] = 1e-06
+    sched_dict = {phase: phase_def for phase, phase_def in sched_dict.items() if phase in range(2)}
+    return sched_dict
+
+
+def tl_bridge_imp_to_exp(sched_dict: Dict) -> Dict:
+    """Transform implicit schedule for TransformerBridge (uses _original_component wrapper for parameter names)."""
+    sched_dict[0]["params"] = [r"model.blocks.(9|1[0-1]).*"]
+    sched_dict[0]["max_transition_epoch"] = 2
+    phase_1_pats = [
+        r"model.blocks.([0-8](?!\d)).*",
+        r"model.(pos_embed|embed).*",
+        # TransformerBridge uses _original_component wrapper for parameter names
+        "model.unembed._original_component.weight",
+        # Note: GPT2 unembed typically doesn't have bias, but including pattern for completeness
+        # "model.unembed._original_component.bias",  # Uncomment if TransformerBridge model has unembed bias
     ]
     sched_dict[1]["params"] = phase_1_pats
     sched_dict[1]["lr"] = 1e-06
@@ -560,13 +582,18 @@ def tl_imp_to_exp(sched_dict: Dict) -> Dict:
 
 @pytest.fixture(scope="function")
 def gpt2_ft_schedules(
-    tmpdir_factory, fts_patch_env, get_it_session__l_gpt2__setup, get_it_session__l_tl_gpt2__setup
+    tmpdir_factory,
+    fts_patch_env,
+    get_it_session__l_gpt2__setup,
+    get_it_session__l_tl_gpt2__setup,
+    get_it_session__l_tl_bridge_gpt2__setup,
 ) -> Tuple[Path, Dict]:
     """Generates a default fine-tuning schedule for 'implicit' testing, a modified one for 'explicit' mode and an
     epoch-driven transitions only one for epoch_transitions_only testing."""
     SCHED_TRANSFORMS = defaultdict(dict)
     SCHED_TRANSFORMS["l_gpt2"]["basic_explicit"] = l_imp_to_exp
     SCHED_TRANSFORMS["l_tl_gpt2"]["basic_explicit"] = tl_imp_to_exp
+    SCHED_TRANSFORMS["l_tl_bridge_gpt2"]["basic_explicit"] = tl_bridge_imp_to_exp
     seed_everything(42)
     callbacks = [FinetuningScheduler(gen_ft_sched_only=True)]
     # for simplicity, initially only running FTS non-distributed tests
@@ -575,6 +602,7 @@ def gpt2_ft_schedules(
     models = {
         "l_gpt2": deepcopy(get_it_session__l_gpt2__setup.it_session.module),
         "l_tl_gpt2": deepcopy(get_it_session__l_tl_gpt2__setup.it_session.module),
+        "l_tl_bridge_gpt2": deepcopy(get_it_session__l_tl_bridge_gpt2__setup.it_session.module),
     }
     test_schedules = defaultdict(dict)
     for i, (model_key, model) in enumerate(models.items()):

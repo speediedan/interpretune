@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from jaxtyping import Float, Int
-from typing import Optional, Any, Dict, NamedTuple, Union, Callable, List, Tuple
+from typing import Optional, Any, Dict, Union, Callable, List, Tuple
 from unittest import mock
 from functools import reduce, partial
 from dataclasses import dataclass
@@ -14,6 +14,7 @@ import datasets
 import evaluate
 from torch.testing import assert_close
 from transformers.tokenization_utils_base import BatchEncoding
+from transformers.utils import ModelOutput
 
 from interpretune.protocol import ITModuleProtocol, STEP_OUTPUT
 from interpretune.config import ITDataModuleConfig, ITConfig
@@ -139,16 +140,6 @@ class SampleDatasetStateMixin:
 
 
 class FingerprintTestITDataModule(SampleDatasetStateMixin, BaseTestDataModule, RTEBoolqDataModule): ...
-
-
-class SampledOutput(NamedTuple):
-    """Sampled Output Named Tuple.
-
-    Named tuple object for if we want to output both logits and tokens.
-    """
-
-    tokens: Union[Int[torch.Tensor, "batch pos_plus_new_tokens"], str]
-    logits: Float[torch.Tensor, "batch pos d_vocab"]
 
 
 ################################################################################
@@ -291,7 +282,7 @@ class Transformer(torch.nn.Module):
         output_logits: bool = False,
         verbose: bool = True,
         **kwargs,
-    ) -> Union[SampledOutput, Int[torch.Tensor, "batch pos_plus_new_tokens"]]:
+    ) -> Union[ModelOutput, Int[torch.Tensor, "batch pos_plus_new_tokens"]]:
         """Toy generate function to support non-HF/TransformerLens tests with the same interface.
 
         Args:
@@ -306,7 +297,7 @@ class Transformer(torch.nn.Module):
         """
         # To enable a broader range of testing contexts, use the configuration context of the parent_handle
         # TODO: update this method to use parent_handle if available for broader range of testing
-        out_logits = () if output_logits else None
+        out_logits = [] if output_logits else None
 
         assert isinstance(tokens, torch.Tensor)
         batch_size, ctx_length = tokens.shape
@@ -336,7 +327,7 @@ class Transformer(torch.nn.Module):
             logits = self.forward(tokens)
             final_logits = logits[:, -1, :]
             if output_logits:
-                out_logits += (final_logits,)
+                out_logits.append(final_logits)
 
             sampled_tokens = final_logits.argmax(-1).to(gen_device)
 
@@ -352,7 +343,9 @@ class Transformer(torch.nn.Module):
                 break
 
         if output_logits:
-            return SampledOutput(tokens, torch.stack(out_logits, dim=1))
+            assert out_logits is not None
+            # For HF semantics, when `output_logits` is requested, return a ModelOutput with `logits`
+            return ModelOutput(sequences=tokens, logits=tuple(out_logits))
         else:
             return tokens
 

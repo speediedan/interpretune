@@ -11,6 +11,7 @@ from sae_lens.saes.sae import SAE, SAEConfig
 from sae_lens.saes.standard_sae import StandardSAE
 from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer
 from transformer_lens.hook_points import NamesFilter
+from transformers import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.adapters import (
@@ -23,7 +24,7 @@ from interpretune.adapters import (
 )
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import SAELensFromPretrainedConfig, SAELensCustomConfig, SAELensConfig
-from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info, patched_generate
+from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
 
 
@@ -61,14 +62,15 @@ class BaseSAELensModule(BaseITLensModule):
         # using cooperative inheritance, so initialize attributes that may be required in base init methods
         self.saes: list[InstantiatedSAE] = []
         super().__init__(*args, **kwargs)
-        HookedSAETransformer.generate = patched_generate  # type: ignore[assignment]  # signature compatibility issue
 
     def _convert_hf_to_tl(self) -> None:
         # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
         tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
         hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
         pruned_cfg = self._prune_tl_cfg_dict()  # avoid edge case where conflicting keys haven't already been pruned
-        self.model = HookedSAETransformer.from_pretrained(hf_model=self.model, tokenizer=tokenizer_handle, **pruned_cfg)
+        self.model = HookedSAETransformer.from_pretrained(
+            hf_model=cast(PreTrainedModel, self.model), tokenizer=tokenizer_handle, **pruned_cfg
+        )
         self.model.config = hf_preconversion_config
         self.instantiate_saes()
 
@@ -88,7 +90,9 @@ class BaseSAELensModule(BaseITLensModule):
                 self.model.add_sae(added_sae.handle)  # type: ignore[operator]
 
     def tl_config_model_init(self) -> None:
-        self.model = HookedSAETransformer(tokenizer=self.it_cfg.tokenizer, **self.it_cfg.tl_cfg.__dict__)
+        # Filter out IT-specific keys (e.g., 'use_bridge') that HookedSAETransformer doesn't accept
+        pruned_cfg = self._prune_tl_cfg_dict()
+        self.model = HookedSAETransformer(tokenizer=self.it_cfg.tokenizer, **pruned_cfg)
         self.instantiate_saes()
 
     def _capture_hyperparameters(self) -> None:

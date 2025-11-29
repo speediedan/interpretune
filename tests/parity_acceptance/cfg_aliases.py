@@ -5,7 +5,11 @@ from pathlib import Path
 
 from interpretune.protocol import AutoStrEnum, Adapter
 from interpretune.extensions import MemProfilerCfg, MemProfilerSchedule
-from interpretune.config import HFFromPretrainedConfig
+from interpretune.config import (
+    HFFromPretrainedConfig,
+    ITLensFromPretrainedNoProcessingConfig,
+    ITLensFromPretrainedConfig,
+)
 from it_examples.example_module_registry import (
     MODULE_EXAMPLE_REGISTRY,
     example_datamodule_defaults,
@@ -22,7 +26,8 @@ from tests.utils import get_nested, set_nested
 ################################################################################
 w_lit = {"adapter_ctx": (Adapter.lightning,)}
 w_l_tl = {"adapter_ctx": (Adapter.lightning, Adapter.transformer_lens)}
-w_l_sl = {"adapter_ctx": (Adapter.lightning, Adapter.sae_lens)}
+# SAE lens doesn't support TransformerBridge yet, must use legacy HookedTransformer
+w_l_sl = {"adapter_ctx": (Adapter.lightning, Adapter.sae_lens), "tl_cfg": ITLensFromPretrainedConfig(use_bridge=False)}
 
 ################################################################################
 # Device and Precision cfg aliases
@@ -95,12 +100,38 @@ cust_no_sae_grad = {
 ##################################
 
 default_test_fts_kwargs = {"max_depth": -1}
+no_restore_fts_kwargs = {"max_depth": -1, "restore_best": False}
 l_gpt2_explicit_sched = {"fts_schedule_key": ("l_gpt2", "basic_explicit")}
 l_tl_gpt2_explicit_sched = {"fts_schedule_key": ("l_tl_gpt2", "basic_explicit")}
+l_tl_bridge_gpt2_explicit_sched = {"fts_schedule_key": ("l_tl_bridge_gpt2", "basic_explicit")}
 l_ctx = {"adapter_ctx": (Adapter.lightning,)}
 default_fts_cfg = {"callback_cfgs": {TestFTS: default_test_fts_kwargs}}
+no_restore_fts_cfg = {"callback_cfgs": {TestFTS: no_restore_fts_kwargs}}
 l_gpt2_fts = {**default_fts_cfg, **l_gpt2_explicit_sched, **l_ctx}
-l_tl_gpt2_fts = {**default_fts_cfg, **l_tl_gpt2_explicit_sched}
+# Use HookedTransformer (use_bridge=False) for FTS tests to avoid TransformerBridge checkpoint state_dict mismatches
+l_tl_gpt2_fts = {
+    **default_fts_cfg,
+    **l_tl_gpt2_explicit_sched,
+    "tl_cfg": ITLensFromPretrainedNoProcessingConfig(
+        model_name="gpt2-small", default_padding_side="left", use_bridge=False
+    ),
+}
+# HookedTransformer test with restore_best=False
+l_tl_gpt2_fts_no_restore = {
+    **no_restore_fts_cfg,
+    **l_tl_gpt2_explicit_sched,
+    "tl_cfg": ITLensFromPretrainedNoProcessingConfig(
+        model_name="gpt2-small", default_padding_side="left", use_bridge=False
+    ),
+}
+# TransformerBridge test with restore_best=False (until FTS updated to support TransformerBridge ckpt restore)
+l_tl_bridge_gpt2_fts = {
+    **no_restore_fts_cfg,
+    **l_tl_bridge_gpt2_explicit_sched,
+    "tl_cfg": ITLensFromPretrainedNoProcessingConfig(
+        model_name="gpt2-small", default_padding_side="left", use_bridge=True
+    ),
+}
 
 
 ########################################################################################################################

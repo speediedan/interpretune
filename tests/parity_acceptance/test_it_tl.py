@@ -103,12 +103,12 @@ TL_PROFILING_CONFIGS = (
         cfg=TLProfileCfg(**cuda, **w_l_tl, **test_bs1_mem),
         marks="cuda_l_prof",
     ),
-    # See NOTE [Transformer Lens Profiling Parity Differences], temporarily disabled
+    # See NOTE [TransformerLens Profiling Parity Differences], temporarily disabled
     # ProfilingTest(alias="test_tl_profiling.train_cpu_32", cfg=TLProfileCfg(**bs1_nowarm_hk_mem), marks="optional"),
     ProfilingTest(
         alias="test_tl_profiling.train_cuda_32", cfg=TLProfileCfg(**cuda, **bs1_warm_mem), marks="cuda_profci"
     ),
-    # See NOTE [Transformer Lens Profiling Parity Differences], temporarily disabled
+    # See NOTE [TransformerLens Profiling Parity Differences], temporarily disabled
     # ProfilingTest(alias="test_tl_profiling.train_cuda_32_l",
     #               cfg=TLProfileCfg(**cuda, **w_l_tl, **bs1_warm_mem), marks="cuda_l_optional"),
 )

@@ -5,11 +5,14 @@ Copies notebooks from dev/ to publish/ directory, strips "remove-cell" tags,
 and adds Colab badges and installation cells for published versions.
 
 Usage:
-    python scripts/publish_notebooks.py [--dry-run] [--check-only]
+    python scripts/publish_notebooks.py [--dry-run] [--check-only] [--force]
 
 Options:
     --dry-run: Show what would be done without making changes
     --check-only: Check if any notebooks need publishing (returns non-zero if changes needed)
+    --force: Publish all files (ignores stored hashes), useful when changing the
+             publisher behavior (for example, the installation cell) to re-run
+             publication steps on already-published notebooks.
 """
 
 import argparse
@@ -109,18 +112,32 @@ def add_colab_badge_and_install_cell(notebook: Dict[str, Any], relative_path: st
         "source": [f"[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)]({colab_url})"],
     }
 
-    # Create installation cell
-    install_cell = {
+    # Create a single, commented-out installation cell that preserves editable
+    # installs by default. The cell is left commented to avoid inadvertently
+    # overwriting developer checkouts. We'll uncomment this install command in
+    # published notebooks in the future once we no longer require preserving the
+    # editable install in the published runtime.
+    install_runner_cell = {
         "cell_type": "code",
-        "metadata": {},
-        "source": ["# Install interpretune with examples\n", "!pip install interpretune[examples]"],
+        "metadata": {"language": "python"},
+        "source": [
+            "# Uncomment to run installation steps if you do not have a development\n",
+            "# editable install and want to run this notebook in a fresh environment.\n",
+            "# %pip install uv\n",
+            "# %uv pip install --upgrade pip setuptools wheel && \\\n",
+            "# %uv pip install 'git+https://github.com/speediedan/interpretune.git@main[examples]'\n",
+            "# %uv pip install --group git-deps\n",
+            "#\n",
+            "# NOTE: This cell is intentionally commented out. We will uncomment these\n",
+            "# install commands once we no longer need to preserve editable installs\n",
+            "# for active developer venvs.\n",
+        ],
         "outputs": [],
         "execution_count": None,
     }
 
-    # Insert cells at the beginning
     cells = notebook.get("cells", [])
-    notebook["cells"] = [badge_cell, install_cell] + cells
+    notebook["cells"] = [badge_cell, install_runner_cell] + cells
 
     return notebook
 
@@ -190,6 +207,11 @@ def main():
         action="store_true",
         help="Check if any notebooks need publishing (returns non-zero if changes needed)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Publish all notebooks even if there are no detected changes (overrides hashes)",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).parent.parent
@@ -205,6 +227,13 @@ def main():
 
     # Get all changed files (notebooks and non-notebooks)
     changed_files = get_changed_files(dev_dir, stored_hashes, "*")
+
+    # If --force is set, publish all files under dev_dir regardless of change
+    if args.force:
+        # Publish all *files* under dev_dir. Avoid including directories which
+        # would cause shutil.copy2 to error. This ensures we only process files
+        # while supporting --force to re-run publication logic.
+        changed_files = {p for p in dev_dir.rglob("*") if p.is_file()}
 
     files_to_process = list(changed_files)
 

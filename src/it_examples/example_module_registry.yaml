@@ -43,6 +43,8 @@ cust.rte:
               class_path: interpretune.config.mixins.CoreGenerationConfig
               init_args:
                 max_new_tokens: 2
+                output_logits: true
+                return_dict_in_generate: true
     datamodule_cls:
       class_path: tests.modules.FingerprintTestITDataModule
 cust.rte.transformer_lens:
@@ -52,7 +54,7 @@ cust.rte.transformer_lens:
     adapter_combinations:
       - [core, transformer_lens]
       - [lightning, transformer_lens]
-    description: Custom transformer with Transformer Lens and supported adapter compositions
+    description: Custom transformer with TransformerLens and supported adapter compositions
   shared_config:
     task_name: pytest_rte_tl
     model_name_or_path: gpt2
@@ -82,6 +84,8 @@ cust.rte.transformer_lens:
               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
               init_args:
                   max_new_tokens: 1
+                  output_logits: true
+                  return_dict_in_generate: true
         tl_cfg:
           class_path: interpretune.config.transformer_lens.ITLensCustomConfig
           init_args:
@@ -133,6 +137,8 @@ cust.rte.sae_lens:
               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
+                output_logits: true
+                return_dict_in_generate: true
         tl_cfg:
           class_path: interpretune.config.transformer_lens.ITLensCustomConfig
           init_args:
@@ -207,6 +213,8 @@ gpt2.rte:
               init_args:
                 model_config:
                   max_new_tokens: 3
+                  output_logits: true
+                  return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:
@@ -261,6 +269,8 @@ gpt2.rte.transformer_lens:
               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
               init_args:
                   max_new_tokens: 1
+                  output_logits: true
+                  return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:
@@ -318,6 +328,8 @@ gpt2.rte.sae_lens:
               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
+                output_logits: true
+                return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:
@@ -391,6 +403,8 @@ gpt2.rte_demo.sae_lens:
             model_head: transformers.GPT2LMHeadModel
         tl_cfg:
           class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
+          init_args:
+            use_bridge: false  # SAE Lens requires run_with_cache_with_saes which is only in HookedTransformer
         sae_cfgs:
           - class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
             init_args:
@@ -446,6 +460,8 @@ gemma2.rte:
               init_args:
                 model_config:
                   max_new_tokens: 3
+                  output_logits: true
+                  return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:
@@ -488,6 +504,8 @@ gemma2.rte.sae_lens:
               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
+                output_logits: true
+                return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:
@@ -546,6 +564,8 @@ gemma2.rte_demo.circuit_tracer:
               class_path: interpretune.config.transformer_lens.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
+                output_logits: true
+                return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:
@@ -558,6 +578,7 @@ gemma2.rte_demo.circuit_tracer:
           init_args:
             model_name: gemma-2-2b
             default_padding_side: left  # to pad on left
+            use_bridge: false  # circuit_tracer doesn't fully support TransformerBridge yet
         circuit_tracer_cfg:
           class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
           init_args:
@@ -629,6 +650,7 @@ gemma2.rte_demo.circuit_tracer_w_neuronpedia:
           init_args:
             model_name: gemma-2-2b
             default_padding_side: left  # to pad on left
+            use_bridge: false  # circuit_tracer doesn't fully support TransformerBridge yet
         circuit_tracer_cfg:
           class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
           init_args:
@@ -708,6 +730,8 @@ llama3.rte:
               init_args:
                 model_config:
                   max_new_tokens: 3
+                  output_logits: true
+                  return_dict_in_generate: true
         hf_from_pretrained_cfg:
           class_path: interpretune.config.mixins.HFFromPretrainedConfig
           init_args:

@@ -112,7 +112,9 @@ class BaseConfigImpl:
                     ["quantization_config.bnb_4bit_compute_dtype", "dtype", "_pre_quantization_dtype"],
                 ),
             )
-        # if `model.config `exists, any provided `model_cfg` should already be merged with it
+        # if `model.config` exists, any provided `model_cfg` should already be merged with it
+        # TODO: cleanup this logic, we want to capture the used model config whether it is in the hf_from_pretrained_cfg
+        #       case (self.model.config) or self.it_cfg.model_cfg
         elif getattr(self.model, "config", None) is None:
             model_config = self.it_cfg.model_cfg
         self._it_state._init_hparams.update(

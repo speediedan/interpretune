@@ -43,6 +43,8 @@ session_cfg:
               model_config:
                 max_new_tokens: 5
                 pad_token_id: 128004
+                output_logits: true
+                return_dict_in_generate: true
       hf_from_pretrained_cfg:
         class_path: interpretune.config.module.HFFromPretrainedConfig
         init_args:

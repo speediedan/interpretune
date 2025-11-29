@@ -11,11 +11,6 @@ from transformers.generation.configuration_utils import GenerationConfig
 from interpretune.config import ITSerializableCfg
 from interpretune.utils import rank_zero_warn, _resolve_dtype
 
-# class ITExtension(NamedTuple):
-#     ext_attr: str
-#     ext_cls_fqn: str
-#     ext_cfg_fqn: str
-
 
 @dataclass(kw_only=True)
 class BaseGenerationConfig(ITSerializableCfg):
@@ -23,6 +18,8 @@ class BaseGenerationConfig(ITSerializableCfg):
     generate_kwargs: dict = field(default_factory=dict)
 
 
+# TODO: we should be able to standardize on the HF GenerationConfig interface and remove CoreGenerationConfig once
+#       (if) TL migrates away from HookedTransformer.generate method to using the HF generate interface
 @dataclass(kw_only=True)
 class CoreGenerationConfig(BaseGenerationConfig):
     max_new_tokens: int = 5  # nb maxing logits over multiple tokens (n<=5) will yield a very slight perf gain versus 1
@@ -30,9 +27,10 @@ class CoreGenerationConfig(BaseGenerationConfig):
     top_p: float = 1.0
     top_k: int = 50
     temperature: float = 1.0
-    # TODO: test these additions below
-    return_dict_in_generate: bool | None = True
-    output_logits: bool | None = True
+    # We intentionally leave HF dict flags unset by default. Callers or configs should explicitly
+    # set these flags if they expect a ModelOutput return value from `.generate()`.
+    return_dict_in_generate: bool | None = None
+    output_logits: bool | None = None
 
     def __post_init__(self):
         # TODO: consider finding a more elegant abstraction that allows providing both model.config based and direct to
@@ -47,7 +45,7 @@ class CoreGenerationConfig(BaseGenerationConfig):
 class HFGenerationConfig(BaseGenerationConfig):
     # generation kwargs to be added to the HF model config (which in turn override the model.generation_config)
     model_config: dict = field(default_factory=dict)
-    default_overrides: dict = field(default_factory=lambda: {"return_dict_in_generate": True, "output_logits": True})
+    default_overrides: dict = field(default_factory=lambda: {})
 
     def __post_init__(self):
         valid_hf_keys = [k for k in GenerationConfig().__dict__.keys() if not k.startswith("_")]

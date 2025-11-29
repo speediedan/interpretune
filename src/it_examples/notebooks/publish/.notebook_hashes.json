@@ -1,10 +1,13 @@
 {
+  "notebooks/dev/attribution_analysis/__pycache__/analysis_points.cpython-310.pyc": "3d1c0c51fe0e6026c710b90e2b3c3b892aecdb8c3c50356273228a58dec4610e",
+  "notebooks/dev/attribution_analysis/__pycache__/analysis_points.cpython-312.pyc": "32665520ebe6c5becf19c9ec52aa260cc5ce8cde167d5b21ed1f7d4148d31e98",
   "notebooks/dev/attribution_analysis/analysis_injection_config.yaml": "0153616832195ab9adfc9008cdf7f26d73426128f9fe01b9a614929018e1a53a",
   "notebooks/dev/attribution_analysis/analysis_points.py": "b27a7eb3d6cf02194ed776b4d7e9a885c2ebb563aac73822e3d21b0366c3e8a0",
-  "notebooks/dev/attribution_analysis/attribution_analysis.ipynb": "89d1509a99ba14a391dbde18d4bda68b276551b52eb4207942b7308f06980a00",
+  "notebooks/dev/attribution_analysis/attribution_analysis.ipynb": "09a357b3db12c6bcaa8cae2d2c854aa62fb2155443e484e5b2721fd616e19464",
   "notebooks/dev/circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb": "760c051bfb3932815e400918724661e46ef49fbe10a4e9231442653707dc83c9",
   "notebooks/dev/circuit_tracer_examples/circuit_tracer_adapter_example_basic_clt.ipynb": "c101e6594dd34cc55c7dd46439e316a8b4a4fff8d7afc1edb9b5bba88156ab0a",
   "notebooks/dev/circuit_tracer_examples/gradient_flow_analysis.ipynb": "21818d3fa9765b29b84d38d977a744c185d89fced8913893147d61600c124b45",
+  "notebooks/dev/example_op_collections/__pycache__/op_collection_demo_utils.cpython-312.pyc": "26040b9a677df03c8b52c34bb31682936a16a5fa6e790b856e8596d64452b12e",
   "notebooks/dev/example_op_collections/hub_op_collection/hub_op_collection.yaml": "93d81adff9eb7380500df6e598a712d7ac1b73c54a831bdfbfaa05ed701b244b",
   "notebooks/dev/example_op_collections/hub_op_collection/hub_op_definitions.py": "ebcc238e3c0cefc94dba7963197f5a6d81a28158f5f13b1bb826859dd5475f60",
   "notebooks/dev/example_op_collections/local_op_collection/local_op_collection.yaml": "9542558d80cbd561dcc59173073c4c28abb641fcd956da40bd47a59d7d8d670d",
@@ -21,5 +24,6 @@
   "notebooks/dev/saelens_adapter_example/saelens_adapter_example.ipynb": "767a69cbeaaea2d22d4895d02b4083ad37489adc5de6ac5c66c6d322b63d9cf5",
   "notebooks/dev/saelens_adapter_example/saelens_adapter_example_registry.ipynb": "bf0cac8ee40fa7407eee7004cfa8116496a0bef6a43f17dbcfa2eb666e7f2544",
   "notebooks/dev/saelens_adapter_example/side_by_side_yaml.png": "d190f0c9c0946347f77f109b4ff1e1d65bc2be70a1903defbf651b9bc75da281",
+  "notebooks/dev/saelens_adapter_example/sl_utils/__pycache__/sl_mem_utils.cpython-312.pyc": "23cc4b9179e33e8154381cbeded275ce9195c8a0924deee610462662cdf2047c",
   "notebooks/dev/saelens_adapter_example/sl_utils/sl_mem_utils.py": "e5d212369c23b6ebfef3d25a0642b8f1a87e430964c1ae8d55607f88b6228654"
 }

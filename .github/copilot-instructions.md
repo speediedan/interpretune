@@ -7,10 +7,54 @@
 **Key Technologies:**
 - Python 3.10+ (CI tests on 3.12)
 - PyTorch 2.7.1+ with transformers ecosystem
-- Core deps: transformer_lens, sae_lens, datasets, jsonargparse
-- Optional: PyTorch Lightning, W&B, circuit-tracer
+- Core deps: transformer_lens >= 3.0.0 (TransformerBridge support), sae_lens, datasets, jsonargparse
+- Optional: PyTorch Lightning, W&B, circuit-tracer, neuronpedia
 
 **Repository Size:** ~200 files, primarily Python, with YAML configs and shell scripts
+
+## TransformerLens v3 Integration
+
+**TransformerBridge (v3, default):**
+- Wraps HuggingFace models without weight conversion
+- More memory efficient (no weight duplication)
+- Better HF ecosystem compatibility
+- Enabled by default via `use_bridge=True` in tl_cfg
+
+**Legacy HookedTransformer:**
+- Traditional TL interface with weight conversion
+- Available via `use_bridge=False` in tl_cfg
+- Maintained for backward compatibility
+
+**Implementation:**
+- `_convert_hf_to_bridge()`: TransformerBridge initialization
+- `_convert_hf_to_tl()`: Legacy HookedTransformer initialization
+- Config-based initialization always uses HookedTransformer (TransformerBridge requires HF model)
+
+### Configuration Hierarchy
+
+**TransformerLens Configs:**
+- `TransformerLensConfig`: Base class (d_model, n_layers, etc.)
+- `HookedTransformerConfig`: Legacy config extending base (dataclass)
+- `TransformerBridgeConfig`: V3 config extending base with architecture field
+
+**Interpretune Configs:**
+- `ITLensSharedConfig`: Base with shared and IT-specific settings (`move_to_device`, `use_bridge`)
+- `ITLensFromPretrainedConfig`: For from_pretrained initialization (fold_ln, model_name, etc.)
+- `ITLensCustomConfig`: For config-based initialization (requires HookedTransformerConfig or one constructed from a dict)
+- `ITLensConfig`: Top-level IT config encapsulating all settings
+
+**Config Serialization:**
+Three types of configs are serialized by `_capture_hyperparameters()`:
+1. `hf_preconversion_config`: Original HF PretrainedConfig (via superclass)
+2. `tl_model_cfg`: Actual TL config from `self.model.cfg` (HookedTransformerConfig or TransformerBridgeConfig)
+3. `it_tl_cfg`: IT-specific settings from `self.it_cfg.tl_cfg` (ITLensFromPretrainedConfig or ITLensCustomConfig)
+
+**Important Limitations:**
+- `ITLensCustomConfig` with `use_bridge=True` will be ignored; IT will warn and force `use_bridge=False`.
+- TransformerBridge requires HF model, cannot be initialized from config alone
+- Config-based path (`ITLensCustomConfig`) only supports HookedTransformer
+
+See `docs/config_hierarchy_analysis.md` for detailed configuration relationship analysis.
 
 ## Code Standards
 
@@ -334,6 +378,58 @@ Full repository type-checking is a work in progress. Current local checks may on
 - Use pytest fixtures from `conftest.py`
 - Add coverage for new functionality
 - Avoid modifying `*_parity/` test directories (research code)
+
+#### Running Special Tests (Standalone and Profiling)
+
+Some tests require special environment setup and are marked with `@pytest.mark.standalone` or involve profiling. These tests can be run using the `special_tests.sh` harness or manually with environment variables.
+
+**Using the test harness:**
+```bash
+export IT_REPO_DIR=${HOME}/repos/interpretune  # Example: adjust to your local repo path
+# Run all standalone tests
+cd ${IT_REPO_DIR} && ./tests/special_tests.sh --mark_type=standalone
+
+# Run specific standalone test by filter pattern
+cd ${IT_REPO_DIR} && \
+./tests/special_tests.sh --mark_type=standalone --filter_pattern='test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]'
+
+# Run profiling tests
+cd ${IT_REPO_DIR} && ./tests/special_tests.sh --mark_type=profiling
+```
+
+**Manual execution (without harness):**
+
+Set environment context variables (developer-specific paths):
+
+```bash
+export IT_VENV_BASE=/mnt/cache/${USER}/.venvs
+export IT_TARGET_VENV=it_latest
+export IT_REPO_DIR=${HOME}/repos/interpretune  # Example: adjust to your local repo path
+```
+
+Then run specific tests using **inline environment variables** (not export) to avoid marker conflicts:
+
+```bash
+# Run specific standalone test
+# IMPORTANT: Use inline variable assignment (VAR=value command), not export
+# This prevents marker conflicts when multiple test environment variables are set
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/examples/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT] -v
+
+# Run specific profiling test
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+IT_RUN_PROFILING_TESTS=1 python -m pytest tests/parity_acceptance/test_it_l.py::test_l_profiling[test_cuda_32_l] -v
+```
+
+**Important Notes:**
+- **Always use inline environment variables** (`VAR=value command`) instead of `export` for test markers
+- Using `export` can cause marker filtering conflicts when multiple test environment variables are set
+- Environment variables like `IT_VENV_BASE`, `IT_TARGET_VENV`, and `IT_REPO_DIR` are developer-specific
+- Adjust these paths to match your local development environment
+- The `special_tests.sh` harness handles environment setup automatically
+- Standalone tests may take longer and require more resources than regular tests
 
 ### Configuration
 - YAML configs in `src/it_examples/config/`

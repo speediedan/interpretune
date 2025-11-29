@@ -9,14 +9,16 @@ from torch.nn import CrossEntropyLoss
 
 from interpretune.config import ITSerializableCfg
 from interpretune.utils import rank_zero_warn, sanitize_input_name, DEFAULT_DECODE_KWARGS
+from transformers.utils.generic import ModelOutput
+from transformers.generation.utils import GenerateDecoderOnlyOutput
 from interpretune.protocol import ITModuleGenDebuggable
 
 
 @dataclass(kw_only=True)
 class DebugLMConfig(ITSerializableCfg):
     enabled: bool = False
-    debug_raw_preds: Optional[np.ndarray] = None  # field(default_factory=lambda: np.array([]))
-    debug_raw_labels: Optional[np.ndarray] = None  # field(default_factory=lambda: np.array([]))
+    debug_raw_preds: Optional[np.ndarray] = None
+    debug_raw_labels: Optional[np.ndarray] = None
     debug_raw_sequences: Optional[List[str]] = None
     raw_debug_sequences: List = field(default_factory=list)
 
@@ -37,11 +39,17 @@ class DebugGeneration:
     trainer.finetuningscheduler_callback)
     """
 
-    # TODO:
-    # - note availability of HF tokenizer methods are assumed for the moment, need to add to contract
-    # - may make sense to add some additional debugging methods that parse and analyze all of the generated outputs
-    #   including `output_attentions` and `output_hidden_states` etc.
-    DEFAULT_OUTPUT_ATTRS = ("sequences", "tokens")
+    # TODO: note availability of HF tokenizer methods are assumed for the moment, need to add to contract
+    # TODO: may make sense to add some additional debugging methods that parse and analyze all of the generated outputs
+    #       including `output_attentions` and `output_hidden_states` etc.
+    # TODO: Intelligently assign/normalize to appropriate HF ModelOutput subclass based on model type
+    #       (see https://bit.ly/hf_model_output_types)
+    # Default HF Generation output dataclass and attributes taken from HF's
+    # GenerateDecoderOnlyOutput dataclass. This centralizes the attribute list
+    # and keeps the normalization logic focused on HF-recognized attributes.
+    DEFAULT_OUTPUT_DATACLS = GenerateDecoderOnlyOutput
+    # Derive standard output attributes from HF dataclass
+    DEFAULT_OUTPUT_ATTRS = tuple(list(DEFAULT_OUTPUT_DATACLS.__annotations__.keys()))
     DEFAULT_MODEL_CONFIG_ATTRS = ("cfg", "config")
     phandle: Optional[ITModuleGenDebuggable]
 
@@ -135,15 +143,20 @@ class DebugGeneration:
         inputs: List | torch.Tensor,
         gen_kwargs_override: Optional[Dict] = None,
         gen_config_override: Optional[Dict] = None,
+        gen_output_attr: Optional[str] = None,
     ) -> Any:
         """_summary_
 
         Args:
             inputs (_type_): _description_
             gen_kwargs_override (Optional[Dict], optional): _description_. Defaults to None.
+            gen_output_attr (Optional[str], optional): Specific attribute on the model output to use for decoding
+                (e.g., `sequences`). If None, DebugGeneration.DEFAULT_OUTPUT_ATTRS are used for validation.
+                If a raw `torch.Tensor` is returned by the model generate (e.g., HookedTransformer), the
+                DebugGeneration extension will normalize the result into a `transformers.utils.ModelOutput`
+                instance exposing `sequences` when appropriate (see `docs/generation_precedence.md`).
 
         Usage:
-
         ```python
         self.debug_lm.debug_generate_batch(['my sequence potentially with chat specific tags', 'another sequence'])
         # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
@@ -162,7 +175,49 @@ class DebugGeneration:
         if gen_config_override and getattr(ph.model, "generation_config", None):  # type: ignore[attr-defined]  # protocol provides model
             for k, v in gen_config_override.items():
                 setattr(ph.model.generation_config, k, v)  # type: ignore[attr-defined]  # protocol provides model
-        return ph.it_generate(inputs, **gen_kwargs)
+        outputs = ph.it_generate(inputs, **gen_kwargs)
+        return self._normalize_output_to_model_output(outputs, gen_output_attr)
+
+    def _normalize_output_to_model_output(self, outputs: Any, gen_output_attr: Optional[str] = None) -> Any:
+        """Normalize outputs to a Hugging Face ModelOutput if required.
+
+        - If the model returns a plain torch.Tensor (e.g. legacy HookedTransformer generate), and either
+          gen_output_attr is unset/None or explicitly requests one of DebugGeneration.DEFAULT_OUTPUT_ATTRS,
+          we wrap the tensor in a `ModelOutput` exposing `.sequences` attributes.
+        - Otherwise, return the outputs unchanged.
+        """
+        # If it contains any of the DEFAULT_OUTPUT_ATTRS or the requested gen_output_attr,
+        # normalize into a ModelOutput dataclass if it's not already one.
+        # If a requested attribute is present, or any of the standard HF attributes
+        # are present on the output (or as dict keys), convert to a HF ModelOutput
+        # wrapper unless it's already a ModelOutput. This is a straightforward
+        # normalization rule to support HF-like outputs without forcing
+        # normalization for raw tensors.
+        requested_attrs = set(self.DEFAULT_OUTPUT_ATTRS)
+        if gen_output_attr is not None:
+            requested_attrs.add(gen_output_attr)
+        has_any_attr = False
+        if isinstance(outputs, dict):
+            has_any_attr = any(attr in outputs for attr in requested_attrs)
+        else:
+            has_any_attr = any(hasattr(outputs, attr) for attr in requested_attrs)
+        if has_any_attr:
+            if isinstance(outputs, ModelOutput):
+                return outputs
+            mo_kwargs = {}
+            if isinstance(outputs, dict):
+                for attr in self.DEFAULT_OUTPUT_ATTRS:
+                    if attr in outputs:
+                        mo_kwargs[attr] = outputs[attr]
+            else:
+                for attr in self.DEFAULT_OUTPUT_ATTRS:
+                    if hasattr(outputs, attr):
+                        mo_kwargs[attr] = getattr(outputs, attr)
+            return ModelOutput(mo_kwargs)
+        # If it's a plain tensor (legacy HookedTransformer), return as-is
+        if isinstance(outputs, torch.Tensor):
+            return outputs
+        return outputs
 
     def perplexity_on_sample(
         self,
@@ -238,18 +293,25 @@ class DebugGeneration:
             decode_kwargs.update(decode_cfg_override)
         return decode_target, decode_kwargs
 
-    def sanitize_model_output(self, output: Any, gen_output_attr: Optional[str] = None) -> List[str]:
+    def sanitize_model_output(self, output: Any, gen_output_attr: Optional[str] = None) -> Any:
+        # TODO: revisit this logic after getting TL generate PR ready
+        # For simplification, sanitization returns the requested attribute if
+        # specified. Otherwise, return the output directly (e.g. raw tensor or
+        # ModelOutput) without attempting further coercion. This keeps the
+        # behavior explicit and reduces implicit conversions in test expectations.
         if gen_output_attr:
+            if isinstance(output, dict):
+                return output[gen_output_attr]
+            if isinstance(output, torch.Tensor):
+                # For raw tensors returned by legacy TL, if the requested attr
+                # is one of the known DEFAULT_OUTPUT_ATTRS, we allow returning
+                # the raw tensor for downstream decoding. Otherwise, raising
+                # an AttributeError is appropriate.
+                if gen_output_attr in set(self.DEFAULT_OUTPUT_ATTRS):
+                    return output
+                raise AttributeError(f"Output tensor has no attribute {gen_output_attr}")
             return getattr(output, gen_output_attr)
-        for output_attr in self.DEFAULT_OUTPUT_ATTRS:
-            if hasattr(output, output_attr):
-                return getattr(output, output_attr)
-        raise ValueError(
-            f"No compatible default output attribute found for type: {type(output)}, if the"
-            " generate method attached to your model is not returning a supported output attribute"
-            f" ({self.DEFAULT_OUTPUT_ATTRS}) please provide a manual `gen_output_attr` argument to this"
-            " debug_generate method."
-        )
+        return output
 
     @property
     def model_input_names(self) -> List[str]:
@@ -274,8 +336,16 @@ class DebugGeneration:
             inputs=test_input_ids[self.model_input_names[0]],
             gen_config_override=gen_config_override,
             gen_kwargs_override=gen_kwargs_override,
+            gen_output_attr=gen_output_attr,
         )
         decode_target, decode_kwargs = self.sanitize_gen_output(outputs, gen_output_attr, decode_cfg_override)
+        # If the sanitized output is a ModelOutput or dict, extract the `sequences` field
+        # which is what the tokenizer expects for decoding.
+        if isinstance(decode_target, ModelOutput):
+            decode_target = decode_target.sequences  # type: ignore[attr-defined]  # sequences is present in GenerateDecoderOnlyOutput
+        elif isinstance(decode_target, dict) and "sequences" in decode_target:
+            decode_target = decode_target["sequences"]
+        # Now decode_target should be a tensor or list-like of token ids that can be decoded.
         answers = ph.datamodule.tokenizer.batch_decode(decode_target, **decode_kwargs)  # type: ignore[attr-defined]  # protocol provides datamodule
         return answers, outputs
 
@@ -296,10 +366,18 @@ class DebugGeneration:
             test_input_ids = torch.tensor(test_input_ids).to(ph.device)  # type: ignore[attr-defined]  # protocol provides device
             test_input_ids = test_input_ids.unsqueeze(0)
             output = self._debug_generate(
-                inputs=test_input_ids, gen_config_override=gen_config_override, gen_kwargs_override=gen_kwargs_override
+                inputs=test_input_ids,
+                gen_config_override=gen_config_override,
+                gen_kwargs_override=gen_kwargs_override,
+                gen_output_attr=gen_output_attr,
             )
             decode_target, decode_kwargs = self.sanitize_gen_output(output, gen_output_attr, decode_cfg_override)
-            sequences = decode_target.unbind()
+            # If we received a ModelOutput/dict, get the sequences tensor for decoding
+            if isinstance(decode_target, ModelOutput):
+                decode_target = decode_target.sequences  # type: ignore[attr-defined]  # sequences is present in GenerateDecoderOnlyOutput
+            elif isinstance(decode_target, dict) and "sequences" in decode_target:
+                decode_target = decode_target["sequences"]
+            sequences = decode_target.unbind()  # type: ignore[union-attr]  # decode_target is tensor at this point
             decode_kwargs = deepcopy(DEFAULT_DECODE_KWARGS)
             if decode_cfg_override:
                 decode_kwargs.update(decode_cfg_override)

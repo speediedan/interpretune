@@ -67,7 +67,10 @@ class TestClassBaseConfigs:
         return {
             **TestClassBaseConfigs.tl_gpt2_shared_config,
             "generative_step_cfg": GenerativeClassificationConfig(
-                enabled=True, lm_generation_cfg=TLensGenerationConfig(max_new_tokens=1)
+                enabled=True,
+                lm_generation_cfg=TLensGenerationConfig(
+                    max_new_tokens=1, output_logits=True, return_dict_in_generate=True
+                ),
             ),
             "hf_from_pretrained_cfg": HFFromPretrainedConfig(
                 pretrained_kwargs={"device_map": "cpu", "dtype": "float32"},

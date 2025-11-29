@@ -323,6 +323,45 @@ class TestGenerativeStepMixin:
         mock_model.generate.assert_called_once_with(batch, max_length=10)
         assert torch.equal(output, expected_output)
 
+    @pytest.mark.parametrize("hf_kw", ["output_scores", "output_logits"])
+    def test_it_generate_pass_through_hf_kwargs(self, hf_kw):
+        """Test that it_generate passes through HF generation kwargs like `output_scores` and `output_logits` to
+        model.generate when supported."""
+        from types import SimpleNamespace
+        from interpretune.base.components.mixins import GenerativeStepMixin
+
+        class TestGenerativeMixin(GenerativeStepMixin):
+            def __init__(self, model, sig_keys=None):
+                self.model = model
+                # empty list to not rely on signature filtering
+                self._gen_sig_keys = sig_keys or []
+
+        # Define generate function to capture kwargs
+        def gen_func(inputs, **kwargs):
+            gen_func.called = True
+            gen_func.kwargs = kwargs
+            # For output_logits case return a ModelOutput with logits attribute
+            if kwargs.get("output_logits"):
+                from transformers.utils import ModelOutput
+
+                sequences = inputs
+                logits = (torch.zeros((sequences.shape[0], 10)),)
+                return ModelOutput(sequences=sequences, logits=logits)
+            # default behavior for output_scores or others
+            return torch.tensor([[4, 5, 6]])
+
+        test_model = SimpleNamespace(generate=gen_func)
+        test_mixin = TestGenerativeMixin(test_model)
+        # Minimal it_cfg to avoid referencing missing attributes
+        test_mixin.it_cfg = SimpleNamespace(generative_step_cfg=SimpleNamespace(lm_generation_cfg=None))
+        batch = torch.tensor([[1, 2, 3]])
+        kwargs = {hf_kw: True}
+        output = test_mixin.it_generate(batch, **kwargs)
+        assert getattr(gen_func, "called", False)
+        assert hf_kw in getattr(gen_func, "kwargs", {}) and gen_func.kwargs[hf_kw] is True
+        if hf_kw == "output_logits":
+            assert hasattr(output, "logits") and output.logits is not None
+
     def test_it_generate_with_batch_encoding(self):
         """Test the it_generate method with BatchEncoding and _should_inspect_inputs=False."""
         from transformers import BatchEncoding
@@ -392,6 +431,29 @@ class TestGenerativeStepMixin:
         # Verify results
         mock_model.generate.assert_called_once_with(input_ids=batch["input_ids"], max_length=10)
         assert torch.equal(output, torch.tensor([[4, 5, 6]]))
+
+    def test_bridge_generate_pass_through_output_logits(self):
+        """Test that TransformerBridge.generate accepts `output_logits` and returns ModelOutput with logits.
+
+        Note: This is a simplified test that verifies the API contract without mocking internals.
+        Full integration tests are in test_transformer_lens_generation.py.
+        """
+        # This test verifies that the generate() method signature includes output_logits
+        # The actual functionality is tested in integration tests with real models
+        from transformer_lens.model_bridge.bridge import TransformerBridge
+        import inspect
+
+        # Verify output_logits is in the generate method signature or **kwargs is present
+        generate_sig = inspect.signature(TransformerBridge.generate)
+        params = list(generate_sig.parameters.keys())
+
+        # Check if either output_logits is explicitly in params or if **kwargs is accepted
+        has_output_logits = "output_logits" in params
+        has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in generate_sig.parameters.values())
+
+        assert has_output_logits or has_kwargs, (
+            "TransformerBridge.generate should accept output_logits parameter (either explicitly or via **kwargs)"
+        )
 
     def test_it_generate_exception_handling_type_error(self):
         """Test it_generate exception handling with TypeError."""

@@ -1006,15 +1006,18 @@ def setup_analysis_injection(
         Configured AnalysisInjectionOrchestrator instance
 
     Example:
+        >>> def ap_0_10(ctx):
+        ...     return None
+        >>> def ap_0_11(ctx):
+        ...     return None
         >>> AP_FUNCTIONS = {'0_10': ap_0_10, '0_11': ap_0_11}
-        >>> orchestrator = setup_analysis_injection(
+        >>> orchestrator = setup_analysis_injection(  # doctest: +SKIP
         ...     config_path='config.yaml',
         ...     target_package='circuit_tracer',
-        ...     analysis_functions=AP_FUNCTIONS,
-        ...     tokenizer=model.tokenizer
+        ...     analysis_functions=AP_FUNCTIONS
         ... )
         >>> # Run code with hooks active
-        >>> orchestrator.teardown()  # Disable hooks when done
+        >>> orchestrator.teardown()  # doctest: +SKIP
     """
     # Require explicit config path to avoid ambiguity. Callers typically pass the
     # repository-provided analysis_injection_config.yaml and rely on

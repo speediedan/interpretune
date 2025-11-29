@@ -4,23 +4,24 @@ from functools import reduce
 
 import torch
 from transformers import AutoModelForCausalLM, PreTrainedTokenizerBase
-from transformer_lens import HookedTransformerConfig
-from transformer_lens.utils import get_device as tl_get_device
+from transformer_lens.config import HookedTransformerConfig
+from transformer_lens.utilities import get_device as tl_get_device
 
 from interpretune.config import ITConfig, HFFromPretrainedConfig, CoreGenerationConfig, ITSerializableCfg
 from interpretune.utils import _resolve_dtype, tl_invalid_dmap, rank_zero_warn, MisconfigurationException
 
 ################################################################################
-# Transformer Lens Configuration Encapsulation
+# TransformerLens Configuration Encapsulation
 ################################################################################
 
 
 @dataclass(kw_only=True)
 class ITLensSharedConfig(ITSerializableCfg):
-    """Transformer Lens configuration shared across both `from_pretrained` and config based instantiation modes."""
+    """TransformerLens configuration shared across both `from_pretrained` and config based instantiation modes."""
 
     move_to_device: Optional[bool] = True
     default_padding_side: Optional[Literal["left", "right"]] = "right"
+    use_bridge: Optional[bool] = True  # Use TransformerBridge (v3) by default, set False for legacy HookedTransformer
 
 
 # TODO: open a PR to have TL `from_pretrained` config encapsulated in a dataclass for improved external compatibility
@@ -63,7 +64,17 @@ class ITLensFromPretrainedNoProcessingConfig(ITLensFromPretrainedConfig):
 
 @dataclass(kw_only=True)
 class ITLensCustomConfig(ITLensSharedConfig):
+    """Custom TL config for creating a HookedTransformer from a TL config.
+
+    NOTE: TransformerBridge is not supported with config-only initialization.
+    Set `use_bridge=False` (default) or interpretune will force the value to False and warn.
+    """
+
     cfg: HookedTransformerConfig | Dict[str, Any]
+    # When using a custom config, default to legacy HookedTransformer behavior to prevent
+    # misconfiguration. If the user explicitly sets `use_bridge=True`, Interpretune will
+    # warn and force it to False in `ITLensConfig.__post_init__`.
+    use_bridge: Optional[bool] = False
 
     # IT handles the tokenizer instantiation via either tokenizer, tokenizer_name or model_name_or_path
     # tokenizer: Optional[PreTrainedTokenizerBase] = None
@@ -89,11 +100,21 @@ class ITLensConfig(ITConfig):
         if not self.tl_cfg:
             raise MisconfigurationException(
                 "Either a `ITLensFromPretrainedConfig` or `ITLensCustomConfig` must be"
-                " provided to initialize a HookedTransformer and use Transformer Lens."
+                " provided to initialize a HookedTransformer and use TransformerLens."
             )
         # internal variable used to bootstrap model initialization mode (we may need to override hf_from_pretrained_cfg)
         self._load_from_pretrained = False if isinstance(self.tl_cfg, ITLensCustomConfig) else True
         if not self._load_from_pretrained:
+            # If a custom config was provided, TransformerBridge (v3) cannot be used because it requires an HF model.
+            # Default to legacy HookedTransformer (use_bridge=False) for custom configs. If the user explicitly
+            # set `use_bridge=True`, warn and force it to False so the session doesn't fail unexpectedly.
+            if getattr(self.tl_cfg, "use_bridge", False):
+                rank_zero_warn(
+                    "ITLensCustomConfig does not support TransformerBridge (use_bridge=True); "
+                    "forcing `use_bridge=False` and falling back to HookedTransformer."
+                )
+                # Make sure downstream logic sees the intended value
+                self.tl_cfg.use_bridge = False
             self._disable_pretrained_model_mode()  # after this, hf_from_pretrained_cfg exists only if used
             assert isinstance(self.tl_cfg, ITLensCustomConfig)
             assert isinstance(self.tl_cfg.cfg, HookedTransformerConfig)
@@ -193,6 +214,8 @@ class ITLensConfig(ITConfig):
             self.hf_from_pretrained_cfg.pretrained_kwargs["dtype"] = tl_dtype
 
 
+# TODO: we should be able to standardize on the HF GenerationConfig interface and remove TLensGenerationConfig once
+#       once (if) TL migrates away from HookedTransformer.generate method to using the HF generate interface
 @dataclass(kw_only=True)
 class TLensGenerationConfig(CoreGenerationConfig):
     stop_at_eos: bool = True
@@ -202,5 +225,5 @@ class TLensGenerationConfig(CoreGenerationConfig):
     prepend_bos: Optional[bool] = None
     padding_side: Optional[Literal["left", "right"]] = None
     return_type: Optional[str] = "input"
-    output_logits: Optional[bool] = True  # TODO: consider setting this back to None after testing
+    output_logits: Optional[bool] = None
     verbose: bool = True

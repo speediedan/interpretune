@@ -1,4 +1,5 @@
 from unittest.mock import patch
+import torch
 import re
 
 import pytest
@@ -6,6 +7,39 @@ from torch.testing import assert_close
 
 from tests.runif import RunIf
 from interpretune.extensions import DebugGeneration
+from transformers.utils import ModelOutput
+
+
+def _get_sequence_from_output(output, batch_idx: int = 0):
+    """Utility fn that extracts the per-example sequence tensor from a variety of output types returned by
+    DebugGeneration.
+
+    Supports:
+    - HF ModelOutput-like objects with `.sequences` attribute
+    - dicts with a "sequences" key
+    - raw torch.Tensor shaped `[batch, seq]` or `[seq]`
+    - lists/tuples of per-example outputs (serial case)
+    """
+    # Handle lists/tuples (serial-mode full_outputs is often a list)
+    if isinstance(output, (list, tuple)):
+        return _get_sequence_from_output(output[batch_idx], 0)
+    # ModelOutput or any object with `.sequences`
+    if hasattr(output, "sequences"):
+        seqs = getattr(output, "sequences")
+        if isinstance(seqs, torch.Tensor):
+            # Return the selected batch row or full tensor when batch_idx == 0
+            return seqs[batch_idx] if seqs.dim() > 1 else seqs
+    # Dict case
+    if isinstance(output, dict) and "sequences" in output:
+        seqs = output["sequences"]
+        if isinstance(seqs, torch.Tensor):
+            return seqs[batch_idx] if seqs.dim() > 1 else seqs
+    # Raw tensor case; if 2D, it's batch x seq
+    if isinstance(output, torch.Tensor):
+        return output[batch_idx] if output.dim() > 1 else output
+    # Fallback: return what we were given
+    return output
+
 
 IT_TEST_TEXT = {
     "text": [
@@ -94,11 +128,11 @@ class TestClassDebugGen:
         debug_gen_fn = debug_module.debug_generate_batch if batch_mode else debug_module.debug_generate_serial
         answers, full_outputs = debug_gen_fn(test_seqs, **gen_kwargs)
         pad_token_id = gen_kwargs.get("gen_config_override", {}).get("pad_token_id", 0)
+        inspect_tokens = _get_sequence_from_output(full_outputs, 1)
         if batch_mode:
-            inspect_tokens = full_outputs.sequences[1]
             assert inspect_tokens[2].item() == pad_token_id
         else:
-            inspect_tokens = full_outputs[1].sequences
+            assert isinstance(inspect_tokens, torch.Tensor)
             inspect_tokens = inspect_tokens.squeeze()
             assert inspect_tokens[2].item() != pad_token_id
         padpat = re.compile(r".*" + pad_token + ".*")
@@ -118,7 +152,11 @@ class TestClassDebugGen:
         "gen_kwargs, batch_mode, expected",
         [
             pytest.param({"gen_kwargs_override": {"max_new_tokens": 4}}, True, (2, False)),
-            pytest.param({"gen_kwargs_override": {"max_new_tokens": 4}, "gen_output_attr": "tokens"}, True, (2, False)),
+            pytest.param(
+                {"gen_kwargs_override": {"max_new_tokens": 4}, "gen_output_attr": "sequences"},
+                True,
+                (2, False),
+            ),
             pytest.param(
                 {"gen_kwargs_override": {"max_new_tokens": 4}, "decode_cfg_override": {"skip_special_tokens": False}},
                 True,
@@ -126,7 +164,9 @@ class TestClassDebugGen:
             ),
             pytest.param({"gen_kwargs_override": {"max_new_tokens": 4}}, False, (2, False)),
             pytest.param(
-                {"gen_kwargs_override": {"max_new_tokens": 4}, "gen_output_attr": "tokens"}, False, (2, False)
+                {"gen_kwargs_override": {"max_new_tokens": 4}, "gen_output_attr": "sequences"},
+                False,
+                (2, False),
             ),
             pytest.param(
                 {"gen_kwargs_override": {"max_new_tokens": 4}, "decode_cfg_override": {"skip_special_tokens": False}},
@@ -149,11 +189,11 @@ class TestClassDebugGen:
         test_seqs = debug_module.debug_sequences(self.TEST_DEBUG_SEQS)
         debug_gen_fn = debug_module.debug_generate_batch if batch_mode else debug_module.debug_generate_serial
         answers, full_outputs = debug_gen_fn(test_seqs, **gen_kwargs)
+        inspect_tokens = _get_sequence_from_output(full_outputs, 1)
         if batch_mode:
-            inspect_tokens = full_outputs.tokens[1]
             assert inspect_tokens[3].item() == 50256
         else:
-            inspect_tokens = full_outputs[1].tokens
+            assert isinstance(inspect_tokens, torch.Tensor)
             inspect_tokens = inspect_tokens.squeeze()
             assert inspect_tokens[3].item() != 50256
         padpat = re.compile(r".*\|endoftext\|.*")
@@ -164,7 +204,10 @@ class TestClassDebugGen:
     @pytest.mark.parametrize(
         "gen_kwargs, expected",
         [
-            pytest.param({"gen_config_override": {"max_new_tokens": 4}, "gen_output_attr": "tokens"}, (1, False)),
+            pytest.param(
+                {"gen_config_override": {"max_new_tokens": 4}, "gen_output_attr": "sequences"},
+                (1, False),
+            ),
         ],
         ids=["cust_gen_output_attr_serial_config_str"],
     )
@@ -174,7 +217,8 @@ class TestClassDebugGen:
         test_sequence = self.TEST_DEBUG_SEQS[1]
         test_seqs = debug_module.debug_sequences(test_sequence)
         answers, full_outputs = debug_module.debug_generate_serial(test_seqs, **gen_kwargs)
-        inspect_tokens = full_outputs[0].tokens
+        out0 = full_outputs[0]
+        inspect_tokens = out0.sequences if hasattr(out0, "sequences") else out0
         inspect_tokens = inspect_tokens.squeeze()
         assert inspect_tokens[4].item() != 50256
         padpat = re.compile(r".*\|endoftext\|.*")
@@ -196,9 +240,12 @@ class TestClassDebugGen:
         if gen_error:
             from interpretune.extensions import DebugGeneration
 
+            # With the simplified sanitize behavior, we no longer raise a ValueError
+            # when DEFAULT_OUTPUT_ATTRS don't match; instead, raw tensors are returned.
             with patch.object(DebugGeneration, "DEFAULT_OUTPUT_ATTRS", ("fake",)):
-                with pytest.raises(ValueError, match=gen_error):
-                    _ = debug_module.debug_generate_batch(test_seqs, **gen_kwargs)
+                answers, full_outputs = debug_module.debug_generate_batch(test_seqs, **gen_kwargs)
+                # Make sure it returned something useful (no exception)
+                assert len(answers) > 0
 
     @pytest.mark.usefixtures("make_deterministic")
     @pytest.mark.parametrize(
@@ -214,3 +261,33 @@ class TestClassDebugGen:
         corpus = IT_TEST_TEXT if not default else None
         ppl = debug_module.perplexity_on_sample(corpus, limit_chars=limit_chars, stride=stride)
         assert_close(actual=ppl.cpu().item(), expected=expected, rtol=0.03, atol=0)
+
+    # Only wrap to a ModelOutput when the output contains any of `DebugGeneration.DEFAULT_OUTPUT_ATTRS` or when a
+    # specific `gen_output_attr` is requested.
+    def test_normalize_returns_tensor_by_default(self):
+        dbg = DebugGeneration()
+        x = torch.randint(0, 100, (2, 4))
+        mo = dbg._normalize_output_to_model_output(x, None)
+        # For raw tensors without any named output attributes, the result should
+        # remain a plain torch.Tensor.
+        assert isinstance(mo, torch.Tensor)
+
+    def test_normalize_wraps_dict_if_matches_attrs(self):
+        dbg = DebugGeneration()
+        seqs = torch.randint(0, 100, (2, 4))
+        outputs = {"sequences": seqs}
+        mo = dbg._normalize_output_to_model_output(outputs, None)
+        assert isinstance(mo, ModelOutput)
+        assert hasattr(mo, "sequences")
+
+    def test_sanitize_returns_requested_attr_or_output(self):
+        dbg = DebugGeneration()
+        seqs = torch.randint(0, 100, (2, 4))
+        outputs = {"sequences": seqs}
+        # When gen_output_attr is set, we should return the requested attribute
+        subset = dbg.sanitize_model_output(outputs, gen_output_attr="sequences")
+        assert isinstance(subset, torch.Tensor)
+        assert torch.equal(subset, seqs)
+        # Otherwise, sanitize_model_output returns the full output unchanged
+        out = dbg.sanitize_model_output(outputs, gen_output_attr=None)
+        assert out is outputs
