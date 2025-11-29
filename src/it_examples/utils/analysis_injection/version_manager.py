@@ -111,7 +111,9 @@ class PackageVersionManager:
                 direct_url_data = json.loads(direct_url_content)
                 return direct_url_data.get("dir_info", {}).get("editable", False)
         except (importlib.metadata.PackageNotFoundError, FileNotFoundError, json.JSONDecodeError):
-            pass
+            logger.debug(
+                f"Falling back to pip show for editable check due to issue w/ primary method for {self.package_name}"
+            )
 
         # Fallback: check using pip show
         try:
@@ -124,7 +126,11 @@ class PackageVersionManager:
             if result.returncode == 0:
                 return "Editable project location:" in result.stdout
         except Exception:
-            pass
+            warnings.warn(
+                f"Unable to determine if {self.package_name} is installed in editable mode. "
+                "Assuming it is not editable to proceed.",
+                UserWarning,
+            )
 
         return False
 

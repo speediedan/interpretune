@@ -19,7 +19,7 @@ class BaseGenerationConfig(ITSerializableCfg):
 
 
 # TODO: we should be able to standardize on the HF GenerationConfig interface and remove CoreGenerationConfig once
-#       once (if) TL migrates away from HookedTransformer.generate method to using the HF generate interface
+#       (if) TL migrates away from HookedTransformer.generate method to using the HF generate interface
 @dataclass(kw_only=True)
 class CoreGenerationConfig(BaseGenerationConfig):
     max_new_tokens: int = 5  # nb maxing logits over multiple tokens (n<=5) will yield a very slight perf gain versus 1
