@@ -2,7 +2,7 @@
 
 ## Repository Overview
 
-**Interpretune** is a flexible, powerful framework for collaborative LLM world model analysis and tuning. This project is in **pre-MVP** stage - features and APIs are subject to change.
+**Interpretune** is a flexible, powerful framework for collaborative AI world model analysis and tuning. This project is in **pre-MVP** stage - features and APIs are subject to change.
 
 **Key Technologies:**
 - Python 3.10+ (CI tests on 3.12)
@@ -305,10 +305,15 @@ We now have a separate Azure DevOps pipeline that runs GPU/standalone tests on a
 Note: the GPU pipeline runs only when a PR is ready for review and an admin approves the run — do not expect it to run automatically for draft PRs or early-stage work.
 
 ### Manual Validation Steps
+Set environment context variables (developer-specific paths):
 
 ```bash
-# Activate your environment first
-source ~/.venvs/it_latest/bin/activate
+export IT_VENV_BASE=/mnt/cache/${USER}/.venvs
+export IT_TARGET_VENV=it_latest
+export IT_REPO_DIR=${HOME}/repos/interpretune  # Example: adjust to your local repo path
+
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 
 # Run ruff linting (configured in pyproject.toml)
 # we don't have ruff installed as a separate package but use it via pre-commit (with the --fix flag)

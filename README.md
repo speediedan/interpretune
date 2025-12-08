@@ -1,12 +1,12 @@
 # Interpretune
 
-Interpretune: A flexible, powerful framework for collaborative LLM world model analysis and tuning.
+Interpretune: A flexible, powerful framework for collaborative AI world model analysis and tuning.
 
 > **Status:** Pre-MVP (Minimum Viable Product) – Active development, not yet feature complete.
 
 ## Overview
 Interpretune aims to provide tools and infrastructure for:
-- Analyzing large language model (LLM) world models
+- Analyzing AI world models
 - Collaborative research with shareable/composable experimentation
 - Flexible tuning and interpretability workflows
 

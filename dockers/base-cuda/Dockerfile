@@ -100,8 +100,8 @@ ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
 RUN \
     echo "=== Post-ENV permission check ===" && \
     ls -ld /tmp/venvs/it_dev && \
-    echo "Checking torch __pycache__ permissions:" && \
-    find /tmp/venvs/it_dev -type d -path "*/torch/__pycache__" | head -3 | xargs ls -ld || echo "No torch __pycache__ found" && \
+    echo "Checking __pycache__ permissions (sample):" && \
+    find /tmp/venvs/it_dev -type d -name "__pycache__" | head -5 | xargs ls -ld || echo "No __pycache__ found" && \
     echo "=== Post-ENV check complete ==="
 
 RUN \
@@ -119,6 +119,6 @@ RUN \
     echo "============= Environment Verification Complete =============" && \
     # Apply recursive chmod to allow userns-remapped rootless Docker users to update the venv
     chmod -R 777 /tmp/venvs/it_dev && \
-    echo "Verify permission state:" && \
-    find /tmp/venvs/it_dev -type d -path "*/torch/__pycache__" | head -3 | xargs ls -ld || echo "No torch __pycache__ found" && \
+    echo "Verify permission state after final chmod:" && \
+    find /tmp/venvs/it_dev -type d -name "__pycache__" | head -5 | xargs ls -ld || echo "No __pycache__ found" && \
     echo "=== Post-env-check chmod complete ==="
