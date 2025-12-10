@@ -1,10 +1,13 @@
 from copy import deepcopy
+import inspect
 
 import pytest
 from torch import device
+from finetuning_scheduler.strategy_adapters.base import StrategyAdapter
 
 from interpretune.config import ITLensFromPretrainedConfig, ITLensConfig, ITLensCustomConfig
 from interpretune.utils import MisconfigurationException
+from interpretune.adapters.transformer_lens import TransformerBridgeStrategyAdapter
 from tests.warns import unexpected_warns, TL_CTX_WARNS
 from tests.utils import ablate_cls_attrs
 from tests.base_defaults import default_test_task
@@ -199,3 +202,17 @@ class TestClassTransformerLens:
         with pytest.warns(UserWarning, match="ITLensCustomConfig does not support TransformerBridge"):
             it_cfg_custom_override = ITLensConfig(**test_tl_cfg_custom_override)
         assert it_cfg_custom_override.tl_cfg.use_bridge is False
+
+
+def test_transformerbridge_adapter_basic_properties():
+    """Sanity check for TransformerBridgeStrategyAdapter plugin.
+
+    This ensures the adapter is well-formed and provides the hooks required by FTS restore logic.
+    """
+    assert issubclass(TransformerBridgeStrategyAdapter, StrategyAdapter)
+    methods = inspect.getmembers(TransformerBridgeStrategyAdapter, predicate=inspect.isfunction)
+    method_names = {n for n, _ in methods}
+    # Should implement the adapter's before_restore_model hook (new preferred name) and backward compat alias
+    assert "before_restore_model" in method_names
+    assert "fts_optim_transform" in method_names
+    assert "logical_param_translation" in method_names

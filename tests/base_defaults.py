@@ -95,6 +95,7 @@ class BaseCfg:
     max_steps: Optional[int] = None
     save_checkpoints: bool = False
     req_deterministic: bool = False
+    logging_level: str | int = "INFO"  # Logging level for test runs
 
     def __post_init__(self):
         self.adapter_ctx = ADAPTER_REGISTRY.canonicalize_composition(self.adapter_ctx)

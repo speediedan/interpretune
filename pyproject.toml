@@ -49,6 +49,9 @@ dependencies = [
 [project.entry-points."console_scripts"]
 interpretune = "interpretune.base.components.cli:bootstrap_cli"
 
+[project.entry-points."finetuning_scheduler.strategy_adapters"]
+transformerbridge = "interpretune.adapters.transformer_lens:TransformerBridgeStrategyAdapter"
+
 [project.optional-dependencies]
 
 lightning = [

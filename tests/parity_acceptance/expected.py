@@ -336,4 +336,7 @@ fts_parity_results = {
     "train_cuda_32_l_tl_bridge_fts": TestResult(
         exact_results=def_results("cuda", 32, ds_cfg="train"), callback_results=l_tl_bridge_fts_callback_results
     ),
+    "train_cuda_32_l_tl_bridge_fts_restore": TestResult(
+        exact_results=def_results("cuda", 32, ds_cfg="train"), callback_results=l_tl_bridge_fts_callback_results
+    ),
 }

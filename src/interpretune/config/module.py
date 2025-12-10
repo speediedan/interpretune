@@ -66,6 +66,7 @@ class LoggingConf(ITSerializableCfg):
     experiment_tag: str | None = "default"
     log_env_details: bool | None = True
     core_log_dir: StrOrPath | None = None
+    logging_level: str | int = "INFO"
 
 
 @dataclass(kw_only=True)

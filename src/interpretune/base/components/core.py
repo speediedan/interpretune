@@ -1,6 +1,7 @@
 from __future__ import annotations
 import tempfile
 import warnings
+import logging
 from datetime import datetime
 from typing import Any, Union, TYPE_CHECKING, cast, Optional
 from functools import reduce, partial
@@ -84,7 +85,26 @@ class BaseConfigImpl:
                 )
         return serial_cfg
 
+    def _configure_logging(self) -> None:
+        """Configure logging level for Interpretune loggers."""
+        log_level = self.it_cfg.logging_level
+        if isinstance(log_level, str):
+            log_level = getattr(logging, log_level.upper(), logging.INFO)
+
+        # Set level for main interpretune logger and key submodules
+        for logger_name in ["interpretune", "interpretune.adapters", "interpretune.base"]:
+            logger = logging.getLogger(logger_name)
+            logger.setLevel(log_level)
+            # Also ensure handlers exist and are configured
+            if not logger.handlers:
+                handler = logging.StreamHandler()
+                handler.setLevel(log_level)
+                formatter = logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
+                handler.setFormatter(formatter)
+                logger.addHandler(handler)
+
     def _init_dirs_and_hooks(self) -> None:
+        self._configure_logging()
         self._create_experiment_dir()
         if self.cuda_allocator_history:
             self.memprofiler.init_cuda_snapshots_dir()

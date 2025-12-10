@@ -1,7 +1,7 @@
 import os
-from typing import Optional, Type, cast, Union
+from typing import Optional, Type, cast, Union, Dict, Any, List
 import inspect
-from functools import reduce
+from functools import reduce, partial
 from copy import deepcopy
 
 import torch
@@ -19,7 +19,7 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.adapters import CompositionRegistry, LightningDataModule, LightningModule, LightningAdapter
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
-from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info
+from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info, _FTS_AVAILABLE
 from interpretune.protocol import Adapter
 
 
@@ -236,8 +236,50 @@ class BaseITLensModule(BaseITModule):
 
         # Create adapter and bridge
         adapter = ArchitectureAdapterFactory.select_architecture_adapter(bridge_config)
+        ### TMP DEBUG SHIM START - Checkpoint Format Investigation ###
+        rank_zero_info("=== BRIDGE CONVERSION DEBUG ===")
+
+        # 1. Capture HF model state dict
+        hf_state_dict = hf_model.state_dict()
+        hf_keys_sample = list(hf_state_dict.keys())[:10]
+        rank_zero_info(f"HF model state_dict keys (sample): {hf_keys_sample}")
+
+        # 2. Create Bridge
         self.model = TransformerBridge(model=hf_model, adapter=adapter, tokenizer=tokenizer_handle)
 
+        # 3. Capture Bridge model state dict (default - should return TL style keys)
+        bridge_state_dict = self.model.state_dict()
+        bridge_keys_sample = list(bridge_state_dict.keys())[:10]
+        rank_zero_info(f"Bridge model.state_dict() keys (sample): {bridge_keys_sample}")
+
+        # 4. Capture Bridge TL-style state dict (if different)
+        tl_params = {n: p.shape for n, p in self.model.tl_named_parameters()}
+        tl_keys_sample = list(tl_params.keys())[:10]
+        rank_zero_info(f"Bridge tl_named_parameters() keys (sample): {tl_keys_sample}")
+
+        # 5. Capture Bridge runtime parameters (named_parameters - what optimizer sees)
+        runtime_params = {n: p.shape for n, p in self.model.named_parameters()}
+        runtime_keys_sample = list(runtime_params.keys())[:10]
+        rank_zero_info(f"Bridge named_parameters() keys (sample): {runtime_keys_sample}")
+
+        # 6. Test specific parameter for detailed investigation
+        test_param_hf = "transformer.h.9.mlp.c_proj.weight"
+        test_param_tl = "blocks.9.mlp.W_out"
+        test_param_runtime = "blocks.9._original_component.mlp._original_component.c_proj._original_component.weight"
+
+        if test_param_hf in hf_state_dict:
+            rank_zero_info(f"Found in HF: {test_param_hf}, shape: {hf_state_dict[test_param_hf].shape}")
+        if test_param_tl in bridge_state_dict:
+            rank_zero_info(
+                f"Found in Bridge state_dict: {test_param_tl}, shape: {bridge_state_dict[test_param_tl].shape}"
+            )
+        if test_param_runtime in runtime_params:
+            rank_zero_info(
+                f"Found in runtime params: {test_param_runtime}, shape: {runtime_params[test_param_runtime]}"
+            )
+
+        rank_zero_info("=== END BRIDGE CONVERSION DEBUG ===")
+        ### TMP DEBUG SHIM END ###
         # Move model to device if move_to_device is enabled (default True)
         if pruned_cfg.get("move_to_device", True) and "device" in pruned_cfg:
             device = pruned_cfg["device"]
@@ -333,3 +375,91 @@ class TransformerLensAdapter(TLensAttributeMixin):
 
 
 class ITLensModule(TransformerLensAdapter, CoreHelperAttributes, BaseITLensModule): ...
+
+
+if _FTS_AVAILABLE:
+    from finetuning_scheduler.strategy_adapters.base import StrategyAdapter
+
+    # Strategy adapter for TransformerLens Bridge integration
+    class TransformerBridgeStrategyAdapter(StrategyAdapter):
+        """Strategy adapter to support TransformerLens Bridge naming translation.
+
+        NOTE: This is a minimal implementation that keeps identity mapping for Phase 0.
+        Future work will implement canonical HF name mapping and save/restore mapping.
+        """
+
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.exec_ft_phase = partial(StrategyAdapter.base_ft_phase, translation_func=self.logical_param_translation)
+
+        def logical_param_translation(self, param_names: List[str]) -> List[str]:
+            return param_names
+
+        def fts_optim_transform(self, orig_pl: List[str], inspect_only: bool = False) -> List[str]:
+            return orig_pl
+
+        def before_restore_model(self, checkpoint: Dict[str, Any]) -> Dict[str, Any]:
+            """Prepare checkpoint for TransformerBridge restoration.
+
+            TransformerBridge creates multiple parameter aliases:
+            1. Original HF keys: model.transformer.*
+            2. TL-style aliases: model.blocks.*, model.embed, etc.
+            3. Prefixed HF keys: model.original_model.transformer.*
+
+            Checkpoints only contain the original HF keys. We need to duplicate them with the
+            additional naming patterns so all named_parameters can find their values.
+            """
+            state_dict = checkpoint.get("state_dict", {})
+            if not state_dict:
+                return checkpoint
+
+            rank_zero_info(
+                "TransformerBridgeStrategyAdapter: Expanding checkpoint keys for TransformerBridge aliases..."
+            )
+
+            expanded_state_dict = {}
+
+            for key, value in state_dict.items():
+                # Skip direct HF keys - we only want the aliased versions
+                # (The original model.transformer.* and model.lm_head.* keys should not be in expanded dict)
+
+                # Add original_model prefix for HF keys
+                if key.startswith("model.transformer."):
+                    original_model_key = key.replace("model.transformer.", "model.original_model.transformer.", 1)
+                    expanded_state_dict[original_model_key] = value
+                elif key.startswith("model.lm_head."):
+                    original_model_key = key.replace("model.lm_head.", "model.original_model.lm_head.", 1)
+                    expanded_state_dict[original_model_key] = value
+                else:
+                    # Keep non-model keys as-is (like optimizer states, etc.)
+                    expanded_state_dict[key] = value
+
+                # Add TL-style alias keys
+                # model.transformer.wte -> model.embed
+                if ".transformer.wte." in key:
+                    tl_key = key.replace(".transformer.wte.", ".embed.")
+                    expanded_state_dict[tl_key] = value
+                # model.transformer.wpe -> model.pos_embed
+                elif ".transformer.wpe." in key:
+                    tl_key = key.replace(".transformer.wpe.", ".pos_embed.")
+                    expanded_state_dict[tl_key] = value
+                # model.transformer.h.N -> model.blocks.N
+                elif ".transformer.h." in key:
+                    tl_key = key.replace(".transformer.h.", ".blocks.")
+                    expanded_state_dict[tl_key] = value
+                # model.transformer.ln_f -> model.ln_final
+                elif ".transformer.ln_f." in key:
+                    tl_key = key.replace(".transformer.ln_f.", ".ln_final.")
+                    expanded_state_dict[tl_key] = value
+                # model.lm_head -> model.unembed
+                elif ".lm_head." in key:
+                    tl_key = key.replace(".lm_head.", ".unembed.")
+                    expanded_state_dict[tl_key] = value
+
+            checkpoint["state_dict"] = expanded_state_dict
+            rank_zero_info(f"Expanded {len(state_dict)} keys to {len(expanded_state_dict)} keys with aliases")
+
+            return checkpoint
+
+else:
+    TransformerBridgeStrategyAdapter = object
