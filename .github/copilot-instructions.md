@@ -421,11 +421,21 @@ Then run specific tests using **inline environment variables** (not export) to a
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
 IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/examples/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT] -v
+unset IT_RUN_STANDALONE_TESTS
 
 # Run specific profiling test
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
 IT_RUN_PROFILING_TESTS=1 python -m pytest tests/parity_acceptance/test_it_l.py::test_l_profiling[test_cuda_32_l] -v
+unset IT_RUN_PROFILING_TESTS
+
+# Run specific optional tests
+export IT_RUN_OPTIONAL_TESTS=1 && \
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+python -m pytest tests/parity_acceptance/test_it_fts.py::test_parity_fts[train_cuda_32_l_tl_bridge_fts] -v  || true && \
+python -m pytest tests/parity_acceptance/test_it_fts.py::test_parity_fts[train_cuda_32_l_tl_bridge_fts_restore] -v  || true && \
+unset IT_RUN_OPTIONAL_TESTS
 ```
 
 **Important Notes:**
