@@ -196,6 +196,7 @@ class LightningTLGPT2(BaseCfg):
 class LightningTLBridgeGPT2(BaseCfg):
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
+    # logging_level: str | int = "DEBUG"
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
             model_name="gpt2-small", default_padding_side="left", use_bridge=True

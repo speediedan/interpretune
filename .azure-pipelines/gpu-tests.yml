@@ -218,7 +218,7 @@ jobs:
           gpg --no-default-keyring --keyring trustedkeys.gpg --verify codecov.SHA256SUM.sig codecov.SHA256SUM
           shasum -a 256 -c codecov.SHA256SUM
           chmod +x codecov
-          ./codecov upload-process --slug 'speediedan/interpretune' -t $CODECOV_TOK --commit-sha $(Build.SourceVersion) --git-service 'github' -n "GPU-coverage" -F 'gpu,pytest' --env 'linux,azure' -f 'coverage.xml'
+          ./codecov upload-process --slug 'speediedan/interpretune' -t $CODECOV_TOK --commit-sha $(Build.SourceVersion) --git-service 'github' -n "GPU-coverage" -F gpu -F pytest --env 'linux,azure' -f 'coverage.xml'
         displayName: 'Upload Coverage to Codecov'
         env:
           CODECOV_TOK: $(CODECOV_TOKEN)
@@ -239,6 +239,7 @@ jobs:
       #   env:
       #     PYTORCH_KERNEL_CACHE_PATH: "/__w/_temp/kernel_cache"
       #   displayName: 'Testing: Extended profile and optional tests'
+
       - bash: |
           # since we use rootless docker and userns-remapping, we need to ensure all files/directories in previous
           # steps that may have been written with Azure's `az_pipeline_agent_azpcontainer` user (100997 in the host

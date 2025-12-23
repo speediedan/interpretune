@@ -24,10 +24,8 @@ from tests.orchestration import parity_test
 from tests.parity_acceptance.cfg_aliases import (
     cuda,
     l_gpt2_fts,
-    l_tl_gpt2_fts,
-    l_tl_gpt2_fts_no_restore,
-    l_tl_bridge_gpt2_fts,
-    l_tl_bridge_gpt2_fts_restore,
+    l_tl_ht_gpt2_fts_multiphase,
+    l_tl_bridge_gpt2_fts_multiphase,
     TestFTS,
 )
 from tests.parity_acceptance.expected import fts_parity_results
@@ -61,21 +59,17 @@ PARITY_FTS_CONFIGS = (
     # This test creates large checkpoint files and may cause out-of-space errors when run alongside other tests.
     # Consider switching to a trivial custom model if this becomes problematic.
     FTSParityTest(alias="train_cpu_32_l_fts", cfg=FTSParityCfg(**l_gpt2_fts), marks="standalone"),
-    FTSParityTest(alias="train_cpu_32_l_tl_fts", cfg=FTSParityCfg(**l_tl_gpt2_fts), marks="l_optional"),
     FTSParityTest(alias="train_cuda_32_l_fts", cfg=FTSParityCfg(**l_gpt2_fts, **cuda), marks="cuda_l_optional"),
-    FTSParityTest(alias="train_cuda_32_l_tl_fts", cfg=FTSParityCfg(**l_tl_gpt2_fts, **cuda), marks="cuda"),
     FTSParityTest(
-        alias="train_cuda_32_l_tl_fts_no_restore",
-        cfg=FTSParityCfg(**l_tl_gpt2_fts_no_restore, **cuda),
-        marks="cuda_l_optional",
+        alias="train_cpu_32_l_tl_ht_fts", cfg=FTSParityCfg(**l_tl_ht_gpt2_fts_multiphase), marks="l_optional"
     ),
     FTSParityTest(
-        alias="train_cuda_32_l_tl_bridge_fts", cfg=FTSParityCfg(**l_tl_bridge_gpt2_fts, **cuda), marks="cuda_l_optional"
+        alias="train_cuda_32_l_tl_ht_fts", cfg=FTSParityCfg(**l_tl_ht_gpt2_fts_multiphase, **cuda), marks="cuda_alone"
     ),
     FTSParityTest(
-        alias="train_cuda_32_l_tl_bridge_fts_restore",
-        cfg=FTSParityCfg(**l_tl_bridge_gpt2_fts_restore, **cuda),
-        marks="cuda_l_optional",
+        alias="train_cuda_32_l_tl_bridge_fts",
+        cfg=FTSParityCfg(**l_tl_bridge_gpt2_fts_multiphase, **cuda),
+        marks="cuda_alone",
     ),
 )
 

@@ -74,6 +74,8 @@ class BaseCfg:
     precision: str | int = "torch.float32"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     model_src_key: Optional[str] = None
+    datamodule_cls: Optional[str] = None  # Fully qualified class name (e.g., "tests.modules.DivergeTestITModule")
+    module_cls: Optional[str] = None  # Fully qualified class name (e.g., "tests.modules.DivergeTestITModule")
     limit_train_batches: Optional[int] = 1
     limit_val_batches: Optional[int] = 1
     limit_test_batches: Optional[int] = 1

@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Type, cast, Union, Dict, Any, List
+from typing import Optional, Type, cast, Union, Dict, Any, List, Mapping
 import inspect
 from functools import reduce, partial
 from copy import deepcopy
@@ -236,16 +236,25 @@ class BaseITLensModule(BaseITModule):
 
         # Create adapter and bridge
         adapter = ArchitectureAdapterFactory.select_architecture_adapter(bridge_config)
-        ### TMP DEBUG SHIM START ###
-        rank_zero_debug("=== BRIDGE CONVERSION DEBUG ===")
 
-        # 1. Capture HF model state dict
-        hf_state_dict = hf_model.state_dict()
-        hf_keys_sample = list(hf_state_dict.keys())[:10]
-        rank_zero_debug(f"HF model state_dict keys (sample): {hf_keys_sample}")
+        # Inspect HF model before TransformerBridge instantiation
+        inspect_state_dict_or_params(
+            hf_model.state_dict(),
+            "hf_model.state_dict()",
+            context_message="Before TransformerBridge instantiation",
+            prefix_filter=None,
+            num_keys_sample=10,
+            log_debug=True,
+        )
+        inspect_state_dict_or_params(
+            hf_model,
+            "hf_model.named_parameters()",
+            context_message="Before TransformerBridge instantiation",
+            prefix_filter=None,
+            num_keys_sample=10,
+            log_debug=True,
+        )
 
-        # 2. Create Bridge
-        ### TMP DEBUG SHIM END ###
         self.model = TransformerBridge(model=hf_model, adapter=adapter, tokenizer=tokenizer_handle)
 
         # Debug shim: log component mapping for troubleshooting checkpoint restoration
@@ -255,22 +264,32 @@ class BaseITLensModule(BaseITModule):
             rank_zero_debug(f"TransformerBridge component_mapping keys: {list(component_mapping.keys())}")
             rank_zero_debug(f"TransformerBridge HF top-level prefixes: {hf_prefixes}")
 
-        ### TMP DEBUG SHIM START ###
-        # 3. Capture Bridge model state dict (default - should return TL style keys)
-        bridge_state_dict = self.model.state_dict()
-        bridge_keys_sample = list(bridge_state_dict.keys())[:10]
-        rank_zero_debug(f"Bridge model.state_dict() keys (sample): {bridge_keys_sample}")
+        # Inspect TransformerBridge after instantiation
+        inspect_state_dict_or_params(
+            self.model,
+            "self.model.named_parameters()",
+            context_message="After TransformerBridge instantiation",
+            prefix_filter="",
+            num_keys_sample=10,
+            log_debug=True,
+        )
+        inspect_state_dict_or_params(
+            self.model,
+            "self.model.tl_named_parameters()",
+            context_message="After TransformerBridge instantiation",
+            prefix_filter="",
+            num_keys_sample=10,
+            log_debug=True,
+        )
+        inspect_state_dict_or_params(
+            self.model.state_dict(),
+            "self.model.state_dict()",
+            context_message="After TransformerBridge instantiation",
+            prefix_filter="",
+            num_keys_sample=10,
+            log_debug=True,
+        )
 
-        # 4. Capture Bridge TL-style state dict (if different)
-        tl_params = {n: p.shape for n, p in self.model.tl_named_parameters()}
-        tl_keys_sample = list(tl_params.keys())[:10]
-        rank_zero_debug(f"Bridge tl_named_parameters() keys (sample): {tl_keys_sample}")
-
-        # 5. Capture Bridge runtime parameters (named_parameters - what optimizer sees)
-        runtime_params = {n: p.shape for n, p in self.model.named_parameters()}
-        runtime_keys_sample = list(runtime_params.keys())[:10]
-        rank_zero_debug(f"Bridge named_parameters() keys (sample): {runtime_keys_sample}")
-        ### TMP DEBUG SHIM END ###
         # Move model to device if move_to_device is enabled (default True)
         if pruned_cfg.get("move_to_device", True) and "device" in pruned_cfg:
             device = pruned_cfg["device"]
@@ -371,6 +390,190 @@ class ITLensModule(TransformerLensAdapter, CoreHelperAttributes, BaseITLensModul
 if _FTS_AVAILABLE:
     from finetuning_scheduler.strategy_adapters.base import StrategyAdapter
 
+    def inspect_state_dict_or_params(
+        source: Union[Dict[str, Any], Any],
+        source_name: str = "state_dict",
+        context_message: Optional[str] = None,
+        prefix_filter: Optional[str] = "model.",
+        num_keys_sample: int = 10,
+        log_debug: bool = False,
+        return_string: bool = False,
+    ) -> Optional[str]:
+        """Inspect and pretty-print state_dict or named_parameters for debugging checkpoint flows.
+
+        This is a standalone debugging utility that can be used at any point in the checkpoint
+        save/load pipeline to inspect the structure, types, shapes, and devices of model parameters.
+
+        Args:
+            source: Either a state_dict (dict) or an object with named_parameters() method
+            source_name: Descriptive name for the source being inspected
+            context_message: Optional context message to display before inspection output
+            prefix_filter: Only include keys starting with this prefix (None = no filtering)
+            num_keys_sample: Number of first/last keys to display in summary
+            log_debug: If True, also log output at DEBUG level
+            return_string: If True, return the formatted string instead of printing
+
+        Returns:
+            Formatted string if return_string=True, "data collection error" on failure, otherwise None
+
+        Example:
+            >>> # Inspect a model's state_dict
+            >>> inspect_state_dict_or_params(
+            ...     model.state_dict(),
+            ...     "model.state_dict()",
+            ...     context_message="Before checkpoint save"
+            ... )
+            >>>
+            >>> # Inspect named_parameters iterator with requires_grad count
+            >>> inspect_state_dict_or_params(
+            ...     model,
+            ...     "model.named_parameters()",
+            ...     context_message="After TransformerBridge instantiation"
+            ... )
+        """
+        from pprint import pformat
+
+        try:
+            # Convert source to dict format
+            is_named_params = False
+            requires_grad_count = None
+
+            if isinstance(source, dict):
+                state_dict = source
+            elif hasattr(source, "named_parameters") or hasattr(source, "tl_named_parameters"):
+                # Prefer tl_named_parameters when explicitly requested via source_name
+                prefer_tl = "tl_named_parameters" in (source_name or "")
+                prefer_named = "named_parameters" in (source_name or "")
+                # Choose the appropriate iterator when available
+                if hasattr(source, "tl_named_parameters") and (
+                    prefer_tl or (not prefer_named and not hasattr(source, "named_parameters"))
+                ):
+                    is_named_params = True
+                    params_list = list(source.tl_named_parameters())
+                elif hasattr(source, "named_parameters"):
+                    is_named_params = True
+                    params_list = list(source.named_parameters())
+                else:
+                    # Fall back defensively
+                    rank_zero_warn(
+                        f"inspect_state_dict_or_params: Source has no named parameter iterators, got {type(source)}"
+                    )
+                    return "data collection error"
+                state_dict = dict(params_list)
+                requires_grad_count = sum(1 for _, p in params_list if hasattr(p, "requires_grad") and p.requires_grad)
+            else:
+                rank_zero_warn(
+                    f"inspect_state_dict_or_params: Source must be a dict or have named_parameters() method, "
+                    f"got {type(source)}"
+                )
+                return "data collection error"
+
+            # Apply prefix filter if specified
+            if prefix_filter is not None:
+                filtered_dict = {k: v for k, v in state_dict.items() if k.startswith(prefix_filter)}
+            else:
+                filtered_dict = state_dict
+
+            # Collect metadata
+            num_keys = len(filtered_dict)
+            keys_list = list(filtered_dict.keys())
+
+            # Analyze each value
+            value_metadata = []
+            for key, value in filtered_dict.items():
+                meta = {
+                    "key": key,
+                    "type": type(value).__name__,
+                    "shape": tuple(value.shape) if hasattr(value, "shape") else None,
+                    "device": str(value.device) if hasattr(value, "device") else None,
+                    "dtype": str(value.dtype) if hasattr(value, "dtype") else None,
+                }
+                value_metadata.append(meta)
+
+            # Build output string
+            lines = []
+            lines.append("=" * 80)
+            lines.append(f"STATE INSPECTION: {source_name}")
+            if context_message:
+                lines.append(f"Context: {context_message}")
+            lines.append("=" * 80)
+            lines.append(f"Prefix filter: {prefix_filter if prefix_filter else 'None (all keys)'}")
+            lines.append(f"Total keys: {num_keys}")
+            if is_named_params and requires_grad_count is not None:
+                lines.append(f"Parameters with requires_grad=True: {requires_grad_count}")
+            lines.append("")
+
+            # Sample of first/last keys
+            lines.append(f"First {min(num_keys_sample, num_keys)} keys:")
+            for key in keys_list[:num_keys_sample]:
+                lines.append(f"  {key}")
+            lines.append("")
+
+            if num_keys > num_keys_sample * 2:
+                lines.append(f"Last {min(num_keys_sample, num_keys)} keys:")
+                for key in keys_list[-num_keys_sample:]:
+                    lines.append(f"  {key}")
+                lines.append("")
+
+            # Metadata summary
+            lines.append("Value metadata summary (first 10):")
+            for meta in value_metadata[:10]:
+                lines.append(f"  {meta['key']}:")
+                lines.append(f"    type: {meta['type']}")
+                if meta["shape"] is not None:
+                    lines.append(f"    shape: {meta['shape']}")
+                if meta["device"] is not None:
+                    lines.append(f"    device: {meta['device']}")
+                if meta["dtype"] is not None:
+                    lines.append(f"    dtype: {meta['dtype']}")
+            lines.append("")
+
+            # Type/shape distribution
+            type_counts = {}
+            shape_counts = {}
+            device_counts = {}
+            for meta in value_metadata:
+                type_counts[meta["type"]] = type_counts.get(meta["type"], 0) + 1
+                if meta["shape"] is not None:
+                    shape_counts[meta["shape"]] = shape_counts.get(meta["shape"], 0) + 1
+                if meta["device"] is not None:
+                    device_counts[meta["device"]] = device_counts.get(meta["device"], 0) + 1
+
+            lines.append("Type distribution:")
+            lines.append(pformat(type_counts, indent=2))
+            lines.append("")
+
+            if shape_counts:
+                lines.append("Shape distribution (top 10):")
+                sorted_shapes = sorted(shape_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+                lines.append(pformat(dict(sorted_shapes), indent=2))
+                lines.append("")
+
+            if device_counts:
+                lines.append("Device distribution:")
+                lines.append(pformat(device_counts, indent=2))
+                lines.append("")
+
+            lines.append("=" * 80)
+
+            output = "\n".join(lines)
+
+            # Output handling
+            if log_debug:
+                rank_zero_debug(f"\n{output}")
+
+            if return_string:
+                return output
+            else:
+                print(output)
+                return None
+
+        except Exception as e:
+            error_msg = f"inspect_state_dict_or_params error for {source_name}: {e}"
+            rank_zero_warn(error_msg)
+            return "data collection error"
+
+    # TODO: will need to gate this on Lightning being available as well once FTS can use raw torch
     # Strategy adapter for TransformerLens Bridge integration
     class TransformerBridgeStrategyAdapter(StrategyAdapter):
         """Strategy adapter to support TransformerLens Bridge naming translation.
@@ -382,11 +585,18 @@ if _FTS_AVAILABLE:
         Uses the TransformerBridge adapter's component_mapping for architecture-agnostic conversion.
         """
 
+        # Attach standalone debugging utility as static method
+        inspect_state = staticmethod(inspect_state_dict_or_params)
+
         def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
             self.exec_ft_phase = partial(StrategyAdapter.base_ft_phase, translation_func=self.logical_param_translation)
-            self._component_mapping_cache: Optional[Dict[str, str]] = None
-            self._hf_top_level_prefixes_cache: Optional[set] = None
+
+        def on_before_init_fts(self) -> None:
+            # we patch our wrapped TransformerBridge module to use the TransformerBridge's state_dict and
+            # load_state_dict methods to handle the specialized key translation logic
+            setattr(self.pl_module, "state_dict", self.pl_module.model.state_dict)
+            setattr(self.pl_module, "load_state_dict", self.pl_module.model.load_state_dict)
 
         def logical_param_translation(self, param_names: List[str]) -> List[str]:
             return param_names
@@ -394,185 +604,18 @@ if _FTS_AVAILABLE:
         def fts_optim_transform(self, orig_pl: List[str], inspect_only: bool = False) -> List[str]:
             return orig_pl
 
-        def _get_bridge_adapter(self) -> Optional[Any]:
-            """Get the TransformerBridge adapter from the pl_module if available."""
-            try:
-                model = getattr(self.pl_module, "model", None)
-                if model is not None and hasattr(model, "adapter"):
-                    return model.adapter
-            except Exception:
-                pass
-            return None
-
-        def _build_prefix_mapping(self, adapter: Any) -> Dict[str, str]:
-            """Build HF->TL prefix mapping from the adapter's component_mapping.
-
-            Returns a dict mapping HF prefixes to TL prefixes, e.g.: {     'transformer.wte': 'embed',
-            'transformer.wpe': 'pos_embed',     'transformer.h': 'blocks',     'transformer.ln_f': 'ln_final',
-            'lm_head': 'unembed', }
-
-            Also populates self._hf_top_level_prefixes_cache with unique top-level HF prefixes (e.g., {'transformer',
-            'lm_head'} for GPT-2, {'model', 'lm_head'} for Llama).
-            """
-            if self._component_mapping_cache is not None:
-                return self._component_mapping_cache
-
-            mapping: Dict[str, str] = {}
-            hf_top_level_prefixes: set = set()
-            component_mapping = getattr(adapter, "component_mapping", None)
-            if component_mapping is None:
-                self._hf_top_level_prefixes_cache = hf_top_level_prefixes
-                return mapping
-
-            for tl_name, component in component_mapping.items():
-                hf_path = getattr(component, "name", None)
-                if hf_path is not None:
-                    mapping[hf_path] = tl_name
-                    # Extract top-level prefix (first component of the path)
-                    top_level = hf_path.split(".")[0]
-                    hf_top_level_prefixes.add(top_level)
-
-            self._component_mapping_cache = mapping
-            self._hf_top_level_prefixes_cache = hf_top_level_prefixes
-            return mapping
-
-        def _convert_checkpoint_key_to_runtime(self, ckpt_key: str, prefix_mapping: Dict[str, str]) -> str:
-            """Convert a checkpoint key (HF-style prefix) to runtime key (TL-style prefix).
-
-            Checkpoint: model.transformer.h.0._original_component.attn.q._original_component.weight
-            Runtime:    model.blocks.0._original_component.attn.q._original_component.weight
-
-            Only converts the top-level prefix path. Everything after the first _original_component
-            stays the same since those use TL-style submodule names already.
-            """
-            if not ckpt_key.startswith("model."):
-                return ckpt_key
-
-            key = ckpt_key[6:]  # Remove 'model.' prefix
-            oc_marker = "._original_component"
-
-            # Find the first _original_component - everything before it is the HF prefix to convert
-            first_oc_idx = key.find(oc_marker)
-            if first_oc_idx == -1:
-                # No _original_component - shouldn't happen for bridge keys, return as-is
-                return ckpt_key
-
-            hf_prefix = key[:first_oc_idx]
-            rest = key[first_oc_idx:]  # includes the _original_component
-
-            # Convert HF prefix to TL prefix using mapping
-            tl_prefix = hf_prefix  # default: keep as-is
-
-            # Check for blocks pattern: e.g. transformer.h.N -> blocks.N
-            blocks_hf_prefix = None
-            for hf_path, tl_name in prefix_mapping.items():
-                if tl_name == "blocks":
-                    blocks_hf_prefix = hf_path
-                    break
-
-            if blocks_hf_prefix and hf_prefix.startswith(blocks_hf_prefix + "."):
-                layer_part = hf_prefix[len(blocks_hf_prefix) + 1 :]
-                tl_prefix = f"blocks.{layer_part}"
-            else:
-                # Check other top-level components (exact match)
-                for hf_path, tl_name in prefix_mapping.items():
-                    if hf_prefix == hf_path:
-                        tl_prefix = tl_name
-                        break
-
-            return "model." + tl_prefix + rest
-
-        def before_restore_model(self, checkpoint: Dict[str, Any]) -> Dict[str, Any]:
-            """Prepare checkpoint for TransformerBridge restoration.
-
-            TransformerBridge creates multiple parameter aliases:
-            1. Original HF keys in checkpoint: model.transformer.*
-            2. TL-style aliases at runtime: model.embed.*, model.blocks.*, etc.
-            3. Prefixed HF keys at runtime: model.original_model.transformer.*
-
-            Checkpoints contain HF-style keys. We need to transform them to match
-            the runtime module structure:
-            - Add model.original_model.* prefix for HF keys
-            - Add TL-style aliases using adapter component mapping
-
-            Uses the bridge adapter's component_mapping for architecture-agnostic conversion.
-            """
-            state_dict = checkpoint.get("state_dict", {})
-            if not state_dict:
-                return checkpoint
-
-            # Get the bridge adapter for component mapping
-            adapter = self._get_bridge_adapter()
-            if adapter is None:
-                rank_zero_warn(
-                    "TransformerBridgeStrategyAdapter: Could not access bridge adapter. "
-                    "Skipping checkpoint key conversion."
-                )
-                return checkpoint
-
-            prefix_mapping = self._build_prefix_mapping(adapter)
-            if not prefix_mapping:
-                rank_zero_warn(
-                    "TransformerBridgeStrategyAdapter: No component mapping found. Skipping checkpoint key conversion."
-                )
-                return checkpoint
-
-            rank_zero_info(
-                "TransformerBridgeStrategyAdapter: Expanding checkpoint keys for TransformerBridge aliases..."
+        def lightning_module_state_dict(self) -> dict[str, Any]:
+            """Override lightning_module_state_dict to use TransformerBridge state_dict to avoid dup keys."""
+            assert (
+                self.pl_module is not None
+                and hasattr(self.pl_module, "model")
+                and hasattr(self.pl_module.model, "state_dict")
             )
-            rank_zero_debug(f"TransformerBridgeStrategyAdapter: Prefix mapping: {prefix_mapping}")
+            return self.pl_module.model.state_dict()
 
-            # Get HF top-level prefixes for architecture-agnostic original_model prefixing
-            hf_top_level_prefixes = self._hf_top_level_prefixes_cache or set()
-            rank_zero_debug(f"TransformerBridgeStrategyAdapter: HF top-level prefixes: {hf_top_level_prefixes}")
-
-            expanded_state_dict = {}
-            sample_conversions = []
-            sample_original_model_keys = []
-
-            for key, value in state_dict.items():
-                if not key.startswith("model."):
-                    # Non-model keys (optimizer states, etc.) pass through unchanged
-                    expanded_state_dict[key] = value
-                    continue
-
-                # Extract the component after "model." prefix to check against HF prefixes
-                key_after_model = key[6:]  # Remove "model." prefix
-                matched_hf_prefix = None
-                for hf_prefix in hf_top_level_prefixes:
-                    if key_after_model.startswith(hf_prefix + ".") or key_after_model == hf_prefix:
-                        matched_hf_prefix = hf_prefix
-                        break
-
-                if matched_hf_prefix:
-                    # Add original_model prefix for HF keys (required by runtime module structure)
-                    original_model_key = f"model.original_model.{key_after_model}"
-                    expanded_state_dict[original_model_key] = value
-                    if len(sample_original_model_keys) < 3:
-                        sample_original_model_keys.append(f"{key} -> {original_model_key}")
-                else:
-                    # Non-HF model keys - keep as-is
-                    expanded_state_dict[key] = value
-
-                # Add TL-style alias key using component mapping
-                tl_key = self._convert_checkpoint_key_to_runtime(key, prefix_mapping)
-                if tl_key != key:
-                    expanded_state_dict[tl_key] = value
-                    if len(sample_conversions) < 5:
-                        sample_conversions.append(f"{key} -> {tl_key}")
-
-            checkpoint["state_dict"] = expanded_state_dict
-            rank_zero_info(
-                f"TransformerBridgeStrategyAdapter: Expanded {len(state_dict)} keys to {len(expanded_state_dict)} keys"
-            )
-            if sample_original_model_keys:
-                rank_zero_debug(
-                    f"TransformerBridgeStrategyAdapter: Sample original_model prefixing: {sample_original_model_keys}"
-                )
-            if sample_conversions:
-                rank_zero_debug(f"TransformerBridgeStrategyAdapter: Sample TL conversions: {sample_conversions}")
-
-            return checkpoint
+        def load_model_state_dict(self, checkpoint: Mapping[str, Any], strict: bool = True) -> None:
+            assert self.pl_module is not None
+            self.pl_module.model.load_state_dict(checkpoint["state_dict"], strict=strict)
 
 else:
     TransformerBridgeStrategyAdapter = object

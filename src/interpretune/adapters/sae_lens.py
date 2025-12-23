@@ -122,12 +122,12 @@ class SAELensAdapter(SAELensAttributeMixin):
             and hasattr(self, "construct_names_filter")
         )
 
-    def _init_dirs_and_hooks(self) -> None:
+    def _make_setup_dirs(self) -> None:
         # Call the parent implementation to perform core directory and hook setup.
         # BaseITModule is always present in the composition hierarchy for SAE-enabled modules.
         # TODO: standardize and document how we handle these static type checker challenges. We currently use a mix of,
-        #       assertions, type checker directives and casting, e.g. cast(BaseITModule, self)._init_dirs_and_hooks()
-        super()._init_dirs_and_hooks()  # type: ignore[attr-defined]
+        #       assertions, type checker directives and casting, e.g. cast(BaseITModule, self)._make_setup_dirs()
+        super()._make_setup_dirs()  # type: ignore[attr-defined]
 
         # SAE-specific analysis initialization: only run when the light-weight structural checks pass
         if self.has_sae_analysis_cfg:

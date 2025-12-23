@@ -26,7 +26,7 @@ class BaseITHooks:
         # for some adapters, datamodule access is not provided in setup and will be accessed via Trainer
         if datamodule := kwargs.get("datamodule", None):
             self._it_state._datamodule = datamodule
-        self._init_dirs_and_hooks()  # type: ignore[attr-defined]  # provided by mixin composition
+        self._make_setup_dirs()  # type: ignore[attr-defined]  # provided by mixin composition
         if self.it_cfg.classification_mapping is not None:
             self.init_classification_mapping()  # type: ignore[attr-defined]  # provided by mixin composition
 

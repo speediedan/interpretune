@@ -19,6 +19,7 @@ from transformers.utils import ModelOutput
 from interpretune.protocol import ITModuleProtocol, STEP_OUTPUT
 from interpretune.config import ITDataModuleConfig, ITConfig
 from interpretune.utils import rank_zero_only, rank_zero_debug
+from interpretune import MemProfilerHooks
 from it_examples.experiments.rte_boolq import RTEBoolqDataModule, RTEBoolqModuleMixin, RTEBoolqSteps
 from tests import FinetuningScheduler
 from tests.base_defaults import default_test_task
@@ -424,15 +425,82 @@ class StateLogInspectMixin:
                 memory_footprints[parity_normalize(self.test_alias)]["expected_mem"][act] = actual_val
 
 
+class DivergeOnEpochMixin:
+    """Mixin that adds diverging loss behavior starting at a specified epoch.
+
+    This mixin overrides training_step and validation_step to blend real logits with fake (zeros) logits based on
+    current_epoch/max_epochs ratio, causing gradual loss divergence.
+    """
+
+    def __init__(self, *args, diverge_on_epoch: Optional[int] = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        it_cfg = reduce(lambda o, a: getattr(o, a, None), ("it_cfg", "model_cfg"), self)
+        self.diverge_on_epoch = it_cfg.get("diverge_on_epoch", diverge_on_epoch) if it_cfg else diverge_on_epoch
+
+    def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
+        it_cfg = super()._before_it_cfg_init(it_cfg) if hasattr(super(), "_before_it_cfg_init") else it_cfg
+        if it_cfg.model_cfg and "diverge_on_epoch" in it_cfg.model_cfg:
+            self.diverge_on_epoch = it_cfg.model_cfg.get("diverge_on_epoch", None)
+        if self.diverge_on_epoch is not None:
+            rank_zero_debug(f"Divergence enabled: will diverge starting at epoch {self.diverge_on_epoch}")
+        return it_cfg
+
+    def _compute_diverging_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """Compute loss with gradual divergence based on current_epoch to max_epochs ratio.
+
+        Blends real logits with fake (zeros) logits to cause increasing loss. The ratio increases from 0 at
+        diverge_on_epoch to 1 at max_epochs.
+        """
+        if (
+            self.diverge_on_epoch is not None
+            and hasattr(self, "current_epoch")
+            and self.current_epoch >= self.diverge_on_epoch
+        ):
+            # Calculate divergence ratio based on progress from diverge_on_epoch to max_epochs
+            max_epochs = self.trainer.max_epochs if hasattr(self, "trainer") else 5
+            # Add 1 to epochs_diverging so that at diverge_on_epoch we get ratio > 0
+            # Example: diverge_on_epoch=2, max_epochs=5
+            #   epoch 2: (2-2+1) / (5-2) = 1/3 = 0.333
+            #   epoch 3: (3-2+1) / (5-2) = 2/3 = 0.667
+            #   epoch 4: (4-2+1) / (5-2) = 3/3 = 1.0
+            epochs_diverging = self.current_epoch - self.diverge_on_epoch + 1
+            total_diverge_epochs = max(max_epochs - self.diverge_on_epoch, 1)
+            diverge_ratio = min(epochs_diverging / total_diverge_epochs, 1.0)
+
+            # Blend real logits with zeros to cause gradual divergence
+            fake_logits = torch.zeros_like(logits)
+            blended_logits = (1 - diverge_ratio) * logits + diverge_ratio * fake_logits
+
+            rank_zero_debug(
+                f"Epoch {self.current_epoch} >= {self.diverge_on_epoch}: DIVERGING "
+                f"(ratio={diverge_ratio:.3f}, {epochs_diverging}/{total_diverge_epochs} epochs)"
+            )
+            return self.loss_fn(blended_logits, labels)
+        else:
+            # Normal behavior: use original loss function
+            return self.loss_fn(logits, labels)
+
+    @MemProfilerHooks.memprofilable
+    def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
+        answer_logits, labels, _ = self.logits_and_labels(batch, batch_idx)
+        loss = self._compute_diverging_loss(answer_logits, labels)
+        self.log("train_loss", loss, sync_dist=True)
+        return loss
+
+    @MemProfilerHooks.memprofilable
+    def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
+        answer_logits, labels, orig_labels = self.logits_and_labels(batch, batch_idx)
+        val_loss = self._compute_diverging_loss(answer_logits, labels)
+        self.log("val_loss", val_loss, prog_bar=True, sync_dist=True)
+        self.collect_answers(answer_logits, orig_labels)
+
+
 class BaseTestModule(StateLogInspectMixin):
     def __init__(self, *args, req_grad_mask: Optional[Dict] = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.req_grad_mask = req_grad_mask or {}
         self.epoch_losses = {}
         self.sampled_fwd_inputs = None
-
-    def setup(self, *args, **kwargs) -> None:
-        super().setup(*args, **kwargs)
 
     # TODO: use mock TASK_NUM_LABELS here (not just in __init__) to rely on rteboolq example method here for testing
     def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
@@ -529,6 +597,12 @@ class BaseTestModule(StateLogInspectMixin):
 
 
 class TestITModule(BaseTestModule, RTEBoolqSteps, RTEBoolqModuleMixin): ...
+
+
+class DivergeTestITModule(DivergeOnEpochMixin, BaseTestModule, RTEBoolqSteps, RTEBoolqModuleMixin):
+    """Test module with diverging loss behavior for FTS multi-level schedule testing."""
+
+    pass
 
 
 class TestFTS(StateLogInspectMixin, FinetuningScheduler):
