@@ -16,6 +16,7 @@ from interpretune.config.mixins import (
 )
 from interpretune.config.module import ITConfig, ITState
 from interpretune.config.transformer_lens import (
+    ITLensBridgeConfig,
     ITLensConfig,
     ITLensCustomConfig,
     ITLensFromPretrainedConfig,
@@ -71,6 +72,7 @@ __all__ = [
     "ITConfig",
     "ITState",
     # from interpretune.config.transformer_lens
+    "ITLensBridgeConfig",
     "ITLensConfig",
     "ITLensCustomConfig",
     "ITLensFromPretrainedConfig",

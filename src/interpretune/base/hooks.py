@@ -33,10 +33,6 @@ class BaseITHooks:
     def configure_optimizers(self) -> OptimizerLRScheduler | None:
         """Optional because it is not mandatory in the context of core IT modules (required for some adapter
         modules)."""
-        # With FTS >= 2.0, ``FinetuningScheduler`` simplifies initial optimizer configuration by ensuring the optimizer
-        # configured here will optimize the parameters (and only those parameters) scheduled to be optimized in phase 0
-        # of the current fine-tuning schedule. This auto-configuration can be disabled if desired by setting
-        # ``enforce_phase0_params`` to ``False``.
         self.set_input_require_grads()  # type: ignore[attr-defined]  # provided by mixin composition
         optimizer, scheduler = None, None
         if self.it_cfg.optimizer_init:  # in case this hook is manually invoked by the user

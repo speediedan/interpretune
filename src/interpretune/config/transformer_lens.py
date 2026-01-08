@@ -24,6 +24,79 @@ class ITLensSharedConfig(ITSerializableCfg):
     use_bridge: Optional[bool] = True  # Use TransformerBridge (v3) by default, set False for legacy HookedTransformer
 
 
+@dataclass(kw_only=True)
+class ITLensBridgeConfig(ITLensSharedConfig):
+    """TransformerBridge-specific configuration for TransformerLens v3 integration.
+
+    This config provides explicit control over TransformerBridge initialization and
+    compatibility mode settings. Use this config when you need fine-grained control
+    over how the bridge is configured (e.g., enabling/disabling weight processing).
+
+    Args:
+        model_name: The model name for TransformerBridge (passed to TransformerBridgeConfig).
+        transformer_bridge_config_overrides: Optional dict of kwargs to pass to/override
+            in the TransformerBridgeConfig constructor. Use this to set device, dtype,
+            or any other TransformerBridgeConfig fields.
+        enable_compatibility_mode: Whether to call enable_compatibility_mode() on the
+            TransformerBridge after instantiation. Default: False.
+        enable_compatibility_mode_kwargs: Optional dict of kwargs for enable_compatibility_mode().
+            Supported kwargs:
+            - disable_warnings: bool (default False)
+            - no_processing: bool (default False) - disables ALL weight processing
+            - fold_ln: bool (default True) - fold LayerNorm weights
+            - center_writing_weights: bool (default True)
+            - center_unembed: bool (default True)
+            - fold_value_biases: bool (default True)
+            - refactor_factored_attn_matrices: bool (default False)
+
+    Example:
+        # Basic bridge config (no processing, current default behavior)
+        config = ITLensBridgeConfig(model_name="gpt2-small")
+
+        # Enable weight processing via compatibility mode
+        config = ITLensBridgeConfig(
+            model_name="gpt2-small",
+            enable_compatibility_mode=True,
+            enable_compatibility_mode_kwargs={"fold_ln": True, "fold_value_biases": True}
+        )
+
+        # Use no_processing (analogous to ITLensFromPretrainedNoProcessingConfig behavior)
+        config = ITLensBridgeConfig(
+            model_name="gpt2-small",
+            enable_compatibility_mode=True,
+            enable_compatibility_mode_kwargs={"no_processing": True}
+        )
+    """
+
+    # The model name/path for TransformerBridge - IT handles HF model instantiation via model_name_or_path
+    model_name: str = "gpt2-small"
+    # Optional kwargs to pass to TransformerBridgeConfig constructor
+    transformer_bridge_config_overrides: Optional[Dict[str, Any]] = None
+    # Whether to call enable_compatibility_mode on the bridge after instantiation
+    # N.B.: See transformer_lens/model_bridge/bridge.py for details, among other things, this mode:
+    # 1. Breaks weight tying between embed and unembed to allow separate unembed centering
+    # 2. Extracts q/k/v from joint qkv matrices for compatibility with HookedTransformer parameterizations
+    enable_compatibility_mode: bool = False
+    # Optional kwargs for enable_compatibility_mode()
+    enable_compatibility_mode_kwargs: Optional[Dict[str, Any]] = None
+    # Bridge config defaults to using bridge
+    use_bridge: Optional[bool] = True
+    # Device is commonly set, so we provide a top-level field for convenience
+    device: Optional[str] = None
+    # Dtype is commonly set, so we provide a top-level field for convenience
+    dtype: str = "float32"
+
+    def __post_init__(self) -> None:
+        if self.device is None:  # align with TL default device resolution
+            self.device = tl_get_device()  # type: ignore
+        # Validate that enable_compatibility_mode_kwargs are only set when enable_compatibility_mode is True
+        if self.enable_compatibility_mode_kwargs and not self.enable_compatibility_mode:
+            rank_zero_warn(
+                "enable_compatibility_mode_kwargs was provided but enable_compatibility_mode is False. "
+                "The kwargs will be ignored. Set enable_compatibility_mode=True to use them."
+            )
+
+
 # TODO: open a PR to have TL `from_pretrained` config encapsulated in a dataclass for improved external compatibility
 @dataclass(kw_only=True)
 class ITLensFromPretrainedConfig(ITLensSharedConfig):
@@ -86,24 +159,29 @@ class ITLensCustomConfig(ITLensSharedConfig):
             self.cfg = HookedTransformerConfig.from_dict(self.cfg)
 
 
-ITLensCfg: TypeAlias = ITLensFromPretrainedConfig | ITLensCustomConfig  # for static typing
-ITLensCfgTypes: Tuple[type, type] = (ITLensFromPretrainedConfig, ITLensCustomConfig)  # for runtime checks
+ITLensCfg: TypeAlias = ITLensFromPretrainedConfig | ITLensCustomConfig | ITLensBridgeConfig  # for static typing
+ITLensCfgTypes: Tuple[type, type, type] = (
+    ITLensFromPretrainedConfig,
+    ITLensCustomConfig,
+    ITLensBridgeConfig,
+)  # for runtime checks
 
 
 @dataclass(kw_only=True)
 class ITLensConfig(ITConfig):
-    """Dataclass to encapsulate the ITModuleinternal state."""
+    """Dataclass to encapsulate the ITModule internal state."""
 
-    tl_cfg: ITLensFromPretrainedConfig | ITLensCustomConfig
+    tl_cfg: ITLensFromPretrainedConfig | ITLensCustomConfig | ITLensBridgeConfig
 
     def __post_init__(self) -> None:
         if not self.tl_cfg:
             raise MisconfigurationException(
-                "Either a `ITLensFromPretrainedConfig` or `ITLensCustomConfig` must be"
-                " provided to initialize a HookedTransformer and use TransformerLens."
+                "A valid tl_cfg (ITLensFromPretrainedConfig, ITLensCustomConfig, or ITLensBridgeConfig) must be"
+                " provided to initialize a HookedTransformer/TransformerBridge and use TransformerLens."
             )
         # internal variable used to bootstrap model initialization mode (we may need to override hf_from_pretrained_cfg)
-        self._load_from_pretrained = False if isinstance(self.tl_cfg, ITLensCustomConfig) else True
+        # ITLensBridgeConfig is a pretrained mode config (like ITLensFromPretrainedConfig)
+        self._load_from_pretrained = not isinstance(self.tl_cfg, ITLensCustomConfig)
         if not self._load_from_pretrained:
             # If a custom config was provided, TransformerBridge (v3) cannot be used because it requires an HF model.
             # Default to legacy HookedTransformer (use_bridge=False) for custom configs. If the user explicitly
@@ -141,7 +219,9 @@ class ITLensConfig(ITConfig):
         qual_sub_key = tl_cfg_key.split(".")
         fallback_val = reduce(getattr, qual_sub_key, self)
         if fallback_val not in [None, "custom"]:
-            if getattr(self, target_key, None) is not None:
+            existing_val = getattr(self, target_key, None)
+            # Treat both None and empty string as "not provided"
+            if existing_val is not None and existing_val != "":
                 hf_override_msg = f"Since `{target_key}` was provided, `{tl_cfg_key}` will be ignored."
             else:
                 hf_override_msg = (
@@ -157,8 +237,14 @@ class ITLensConfig(ITConfig):
     def _translate_tl_config(self):
         # TODO: driving this fallback mapping from a dict
         if self._load_from_pretrained:
-            self._map_tl_fallback(target_key="model_name_or_path", tl_cfg_key="tl_cfg.hf_model")
-            self._map_tl_fallback(target_key="tokenizer", tl_cfg_key="tl_cfg.tokenizer")
+            # Only ITLensFromPretrainedConfig and variants have an `hf_model` field that maps to model_name_or_path,
+            # ITLensBridgeConfig natively uses `model_name` for HF model instantiation (TL registry aliases for models
+            # have been deprecated in favor of HF model names/paths for bridge mode).
+            if hasattr(self.tl_cfg, "hf_model"):
+                self._map_tl_fallback(target_key="model_name_or_path", tl_cfg_key="tl_cfg.hf_model")
+            # Only ITLensFromPretrainedConfig has tokenizer field; ITLensBridgeConfig doesn't have it
+            if hasattr(self.tl_cfg, "tokenizer"):
+                self._map_tl_fallback(target_key="tokenizer", tl_cfg_key="tl_cfg.tokenizer")
         else:
             self._map_tl_fallback(target_key="model_name_or_path", tl_cfg_key="tl_cfg.cfg.model_name")
             self._map_tl_fallback(target_key="tokenizer_name", tl_cfg_key="tl_cfg.cfg.tokenizer_name")
@@ -180,7 +266,8 @@ class ITLensConfig(ITConfig):
             self._check_supported_device_map()
             if hf_dtype := self.hf_from_pretrained_cfg.pretrained_kwargs.get("dtype", None):
                 hf_dtype = _resolve_dtype(hf_dtype)
-            assert isinstance(self.tl_cfg, ITLensFromPretrainedConfig)
+            # Both ITLensFromPretrainedConfig and ITLensBridgeConfig have dtype attribute
+            assert isinstance(self.tl_cfg, (ITLensFromPretrainedConfig, ITLensBridgeConfig))
             tl_dtype = _resolve_dtype(self.tl_cfg.dtype)
             self._sync_hf_tl_dtypes(hf_dtype, tl_dtype)
 

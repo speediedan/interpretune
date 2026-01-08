@@ -15,6 +15,7 @@ from interpretune.config import (
     ITLensCustomConfig,
     TLensGenerationConfig,
     AutoCompConfig,
+    ITLensBridgeConfig,
     ITLensFromPretrainedNoProcessingConfig,
     SAELensFromPretrainedConfig,
     AnalysisCfg,
@@ -175,6 +176,53 @@ class LightningGemma2DebugCfg(BaseCfg):
 
 
 @dataclass(kw_only=True)
+class LightningTLBridgeLlama3(BaseCfg):
+    """Llama3 with TransformerBridge for parameter mapping validation tests.
+
+    Uses meta-llama/Llama-3.2-3B-Instruct (registry default for model_src_key=llama3).
+    Exercises:
+    - GQA (grouped-query attention) with n_key_value_heads != n_heads
+    - SwiGLU MLP with gate projection (W_gate)
+    - RMSNorm instead of LayerNorm
+    """
+
+    model_src_key: str | None = "llama3"
+    device_type: str | None = "cuda"
+    precision: str | int | None = "bf16-true"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
+    tl_cfg: ITLensBridgeConfig = field(
+        default_factory=lambda: ITLensBridgeConfig(
+            model_name="meta-llama/Llama-3.2-3B-Instruct",
+            default_padding_side="left",
+        )
+    )
+
+
+@dataclass(kw_only=True)
+class LightningTLBridgeGemma2(BaseCfg):
+    """Gemma2 with TransformerBridge for parameter mapping validation tests.
+
+    Uses google/gemma-2-2b for reasonable test size while exercising:
+    - Sliding window attention with interleaved global attention
+    - GeGLU activation with gate projection
+    - RMSNorm instead of LayerNorm
+    """
+
+    model_src_key: str | None = "gemma2"
+    device_type: str | None = "cuda"
+    precision: str | int | None = "bf16-true"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
+    tl_cfg: ITLensBridgeConfig = field(
+        default_factory=lambda: ITLensBridgeConfig(
+            model_name="google/gemma-2-2b",
+            default_padding_side="left",
+        )
+    )
+    datamodule_cls: str | None = "tests.modules.FingerprintTestITDataModule"
+    module_cls: str | None = "tests.modules.TestITModule"
+
+
+@dataclass(kw_only=True)
 class LightningGPT2(BaseCfg):
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning,)
@@ -196,10 +244,30 @@ class LightningTLGPT2(BaseCfg):
 class LightningTLBridgeGPT2(BaseCfg):
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
-    # logging_level: str | int = "DEBUG"
-    tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
-        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left", use_bridge=True
+    logging_level: str | int = "DEBUG"
+    tl_cfg: ITLensBridgeConfig = field(
+        default_factory=lambda: ITLensBridgeConfig(
+            model_name="gpt2-small",
+            default_padding_side="left",
+        )
+    )
+
+
+@dataclass(kw_only=True)
+class LightningTLBridgeGPT2Processed(BaseCfg):
+    """GPT-2 with TransformerBridge using default weight processing (fold_ln, fold_value_biases, etc.).
+
+    This config uses ITLensBridgeConfig with enable_compatibility_mode=True to apply fold_ln=True,
+    fold_value_biases=True, etc. Used to test bidirectional mapping behavior when LayerNorms are folded etc.
+    """
+
+    model_src_key: str | None = "gpt2"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
+    tl_cfg: ITLensBridgeConfig = field(
+        default_factory=lambda: ITLensBridgeConfig(
+            model_name="gpt2-small",
+            default_padding_side="left",
+            enable_compatibility_mode=True,
         )
     )
 

@@ -446,39 +446,42 @@ class DivergeOnEpochMixin:
         return it_cfg
 
     def _compute_diverging_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        """Compute loss with gradual divergence based on current_epoch to max_epochs ratio.
+        """Compute loss with gradual divergence using additive penalty.
 
-        Blends real logits with fake (zeros) logits to cause increasing loss. The ratio increases from 0 at
-        diverge_on_epoch to 1 at max_epochs.
+        Adds a baseline-relative penalty that increases from 0.5x baseline at diverge_on_epoch to 2.0x baseline at
+        max_epochs. This ensures monotonic loss increase regardless of learning improvements from parameter thawing,
+        enabling reliable cross-architecture testing.
         """
+        base_loss = self.loss_fn(logits, labels)
+
         if (
             self.diverge_on_epoch is not None
             and hasattr(self, "current_epoch")
             and self.current_epoch >= self.diverge_on_epoch
         ):
-            # Calculate divergence ratio based on progress from diverge_on_epoch to max_epochs
+            # Store baseline loss at divergence start (first epoch where divergence activates)
+            if not hasattr(self, "_divergence_baseline"):
+                self._divergence_baseline = base_loss.detach().item()
+
+            # Calculate additive penalty based on progress from diverge_on_epoch to max_epochs
             max_epochs = self.trainer.max_epochs if hasattr(self, "trainer") else 5
-            # Add 1 to epochs_diverging so that at diverge_on_epoch we get ratio > 0
-            # Example: diverge_on_epoch=2, max_epochs=5
-            #   epoch 2: (2-2+1) / (5-2) = 1/3 = 0.333
-            #   epoch 3: (3-2+1) / (5-2) = 2/3 = 0.667
-            #   epoch 4: (4-2+1) / (5-2) = 3/3 = 1.0
             epochs_diverging = self.current_epoch - self.diverge_on_epoch + 1
             total_diverge_epochs = max(max_epochs - self.diverge_on_epoch, 1)
-            diverge_ratio = min(epochs_diverging / total_diverge_epochs, 1.0)
+            progress = min(epochs_diverging / total_diverge_epochs, 1.0)
 
-            # Blend real logits with zeros to cause gradual divergence
-            fake_logits = torch.zeros_like(logits)
-            blended_logits = (1 - diverge_ratio) * logits + diverge_ratio * fake_logits
+            # Add increasing penalty: starts at 0.5x baseline, grows to 2.0x baseline
+            penalty = self._divergence_baseline * (0.5 + 1.5 * progress)
+            diverged_loss = base_loss + penalty
 
             rank_zero_debug(
                 f"Epoch {self.current_epoch} >= {self.diverge_on_epoch}: DIVERGING "
-                f"(ratio={diverge_ratio:.3f}, {epochs_diverging}/{total_diverge_epochs} epochs)"
+                f"(penalty={penalty:.3f}, baseline={self._divergence_baseline:.3f}, "
+                f"base={base_loss.item():.3f}, total={diverged_loss.item():.3f}, progress={progress:.3f})"
             )
-            return self.loss_fn(blended_logits, labels)
+            return diverged_loss
         else:
             # Normal behavior: use original loss function
-            return self.loss_fn(logits, labels)
+            return base_loss
 
     @MemProfilerHooks.memprofilable
     def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:

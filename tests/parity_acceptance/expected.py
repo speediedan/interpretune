@@ -104,11 +104,83 @@ sl_parity_results = {
     "train_cuda_32": TestResult(exact_results=def_results("cuda", 32)),
 }
 
-# Run tests with IT_GLOBAL_STATE_LOG_MODE=1 to populate these expected results
+# =====================================================================================
+# FinetuningScheduler (FTS) Expected Results
+# =====================================================================================
+#
+# These dictionaries validate checkpoint restoration and parameter thawing behavior
+# across different TransformerLens architectures and naming conventions.
+#
+# RUNNING TESTS TO CAPTURE STATE:
+# Run tests with IT_GLOBAL_STATE_LOG_MODE=1 to populate/update these expected results:
+#   IT_GLOBAL_STATE_LOG_MODE=1 python -m pytest \
+#     tests/parity_acceptance/test_it_fts.py::test_parity_fts[train_cpu_32_l_fts] -v
+#
+# PARAMETER COUNTS PER PHASE:
+#
+# Base GPT-2 (3-phase schedule):
+#   Phase 0: 36 params  (blocks 9-11, 3 blocks × (4 attn + 4 mlp + 4 ln params per block))
+#   Phase 1: 60 params  (adds blocks 7-8, +24 params)
+#   Phase 2: 148 params (adds blocks 0-6 + embeddings, +88 params)
+#
+# HookedTransformer (3-phase schedule):
+#   Phase 0: 48 params  (blocks 9-11, 3 blocks × (8 attn + 4 mlp + 4 ln params per block))
+#   NOTE: +4 params per block vs Base GPT-2 due to split QKV projections (-2 qkv joint, +6 q/k/v split)
+#   Phase 1: 80 params  (adds blocks 7-8, +32 params)
+#   Phase 2: 196 params (adds blocks 0-6 + embeddings, +116 params)
+#
+# TransformerBridge Canonical (3-phase schedule):
+#   Phase 0: 54 params  (blocks 9-11, 3 blocks × (10 attn + 4 mlp + 4 ln params per block))
+#   NOTE: +2 params per block vs HookedTransformer due to thawed (but unused) joint QKV projections
+#   Phase 1: 90 params  (adds blocks 7-8, +36 params)
+#   Phase 2: 219 params (adds blocks 0-6 + embeddings, +129 params)
+#
+# TransformerBridge TL Names (3-phase schedule):
+#   Phase 0: 48 params  (blocks 9-11, identical to HookedTransformer)
+#   Phase 1: 80 params  (adds blocks 7-8, identical to HookedTransformer)
+#   Phase 2: 197 params (adds blocks 0-6 + 2 ln_final - 1 unembed weight, +1 vs HookedTransformer)
+#   NOTE: TL names mode bidirectionally translates canonical<->TL names using TL names for schedule generation and
+#         orchestration. The 2 ln_final parameters are thawed because we left implicit_ln_thaw `True` and
+#         we did not configure enable_compatibility_mode so the unembed weight remained tied to embed weight and
+#         thus we have only an unembed bias.
+#         +2 thawed ln_final params - 1 unembed weight param = net +1 param vs HookedTransformer
+#
+# WHY THE DIFFERENCES?
+#
+# Base vs HookedTransformer (+12 params in Phase 0):
+#   - HookedTransformer has 8 attention params per block vs Base's 4
+#   - Base: c_attn.weight, c_attn.bias, c_proj.weight, c_proj.bias (4 params)
+#   - HookedTransformer: W_Q, W_K, W_V, W_O, b_Q, b_K, b_V, b_O (8 params)
+#   - Split Q/K/V projections vs joint QKV (-2 qkv joint, +6 q/k/v split = net +4 per block)
+#   - LayerNorm params: explicitly included in HookedTransformer schedules, explicitly included in Base schedules
+#
+# TransformerBridge Canonical vs HookedTransformer (+6 params in Phase 0):
+#   - Bridge stores joint QKV projection (qkv.weight, qkv.bias per block)
+#   - Split Q, K, V parameters are materialized as new parameters for LinearBridge modules
+#   - Joint and split QKV parameters do NOT share underlying storage
+#   - Result: 2 additional params per attention layer × 3 blocks = +6 params
+#
+# TransformerBridge TL Names vs HookedTransformer (parameter differences):
+#   - TL names mode transforms canonical parameter names to TL-style names
+#   - LayerNorms handled differently: explicit in HookedTransformer schedules, implicit_ln_thaw in Bridge
+#   - Unembed parameters may differ (weight tying depends on enable_compatibility_mode)
+#   - Using TL names provides standard interface for cross-architecture schedules
+#   - CanonicalModelView (use_tl_names=False, default) allows direct canonical specification
+#     but may expose architectural differences reducing schedule portability
+#
+# CHECKPOINT RESTORATION (with additive penalty divergence):
+#   - Divergence starts at epoch 2 (first epoch of phase 1)
+#   - Best checkpoint remains at depth 0 (phase 0) for all architectures
+#   - All tests correctly restore to best checkpoint from phase 0 in epochs 3-4
+#
+# See docs/fts_transformerlens_integration.md for detailed documentation
+# =====================================================================================
+
+# Base GPT-2 FTS Results (3-phase schedule: 36 → 60 → 148 params)
 l_fts_callback_results = {
     0: {
         "curr_depth": 0,
-        "depth_remaining": 1,
+        "depth_remaining": 2,
         "ft_epoch": 0,
         "current_ckpt_depth": 0,
         "best_ckpt_depth": 0,
@@ -120,7 +192,7 @@ l_fts_callback_results = {
     },
     1: {
         "curr_depth": 0,
-        "depth_remaining": 1,
+        "depth_remaining": 2,
         "ft_epoch": 1,
         "current_ckpt_depth": 0,
         "best_ckpt_depth": 0,
@@ -132,31 +204,44 @@ l_fts_callback_results = {
     },
     2: {
         "curr_depth": 1,
-        "depth_remaining": 0,
+        "depth_remaining": 1,
         "ft_epoch": 2,
         "current_ckpt_depth": 0,
         "best_ckpt_depth": 0,
         "best_ckpt_pgs_len": 1,
-        "curr_thawed_params": 148,
+        "curr_thawed_params": 60,
         "optim_pg_len": 2,
         "ckpt_cback_current_ckpt_depth": 0,
         "ckpt_cback_best_ckpt_depth": 0,
     },
     3: {
-        "curr_depth": 1,
+        "curr_depth": 2,
         "depth_remaining": 0,
         "ft_epoch": 3,
-        "current_ckpt_depth": 1,
-        "best_ckpt_depth": 1,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
         "best_ckpt_pgs_len": 1,
         "curr_thawed_params": 148,
-        "optim_pg_len": 2,
-        "ckpt_cback_current_ckpt_depth": 1,
-        "ckpt_cback_best_ckpt_depth": 1,
+        "optim_pg_len": 3,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    4: {
+        "curr_depth": 2,
+        "depth_remaining": 0,
+        "ft_epoch": 4,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 148,
+        "optim_pg_len": 3,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
     },
 }
 
-# HookedTransformer with multi-level explicit schedule (3 phases)
+# HookedTransformer FTS Results (3-phase schedule: 48 → 80 → 196 params)
+# TL-style naming with implicit LayerNorm thawing via regex wildcards
 l_tl_ht_fts_multiphase_callback_results = {
     0: {
         "curr_depth": 0,
@@ -220,7 +305,9 @@ l_tl_ht_fts_multiphase_callback_results = {
     },
 }
 
-# TransformerBridge with multi-level explicit schedule (3 phases)
+# TransformerBridge Canonical FTS Results (3-phase schedule: 54 → 90 → 219 params)
+# Canonical HF naming with _original_component wrappers, +2 params/block vs HookedTransformer due to
+# joint QKV projections
 l_tl_bridge_fts_multiphase_callback_results = {
     0: {
         "curr_depth": 0,
@@ -265,7 +352,7 @@ l_tl_bridge_fts_multiphase_callback_results = {
         "current_ckpt_depth": 0,
         "best_ckpt_depth": 0,
         "best_ckpt_pgs_len": 1,
-        "curr_thawed_params": 218,
+        "curr_thawed_params": 219,
         "optim_pg_len": 3,
         "ckpt_cback_current_ckpt_depth": 0,
         "ckpt_cback_best_ckpt_depth": 0,
@@ -277,7 +364,73 @@ l_tl_bridge_fts_multiphase_callback_results = {
         "current_ckpt_depth": 0,
         "best_ckpt_depth": 0,
         "best_ckpt_pgs_len": 1,
-        "curr_thawed_params": 218,
+        "curr_thawed_params": 219,
+        "optim_pg_len": 3,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+}
+
+# TransformerBridge TL Names FTS Results (3-phase schedule: 48 → 80 → 197 params)
+# TL-style naming mode (blocks.9.attn.W_Q) with 1:1 mapping to canonical params
+# Joint QKV params excluded from TL name mapping, implicitly thawed via regex wildcard patterns
+l_tl_bridge_fts_tl_names_multiphase_callback_results = {
+    0: {
+        "curr_depth": 0,
+        "depth_remaining": 2,
+        "ft_epoch": 0,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 0,
+        "curr_thawed_params": 48,
+        "optim_pg_len": 1,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    1: {
+        "curr_depth": 0,
+        "depth_remaining": 2,
+        "ft_epoch": 1,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 48,
+        "optim_pg_len": 1,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    2: {
+        "curr_depth": 1,
+        "depth_remaining": 1,
+        "ft_epoch": 2,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 80,
+        "optim_pg_len": 2,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    3: {
+        "curr_depth": 2,
+        "depth_remaining": 0,
+        "ft_epoch": 3,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 197,
+        "optim_pg_len": 3,
+        "ckpt_cback_current_ckpt_depth": 0,
+        "ckpt_cback_best_ckpt_depth": 0,
+    },
+    4: {
+        "curr_depth": 2,
+        "depth_remaining": 0,
+        "ft_epoch": 4,
+        "current_ckpt_depth": 0,
+        "best_ckpt_depth": 0,
+        "best_ckpt_pgs_len": 1,
+        "curr_thawed_params": 197,
         "optim_pg_len": 3,
         "ckpt_cback_current_ckpt_depth": 0,
         "ckpt_cback_best_ckpt_depth": 0,
@@ -306,5 +459,9 @@ fts_parity_results = {
     "train_cuda_32_l_tl_bridge_fts": TestResult(
         exact_results=def_results("cuda", 32, ds_cfg="train"),
         callback_results=l_tl_bridge_fts_multiphase_callback_results,
+    ),
+    "train_cuda_32_l_tl_bridge_tl_names_fts": TestResult(
+        exact_results=def_results("cuda", 32, ds_cfg="train"),
+        callback_results=l_tl_bridge_fts_tl_names_multiphase_callback_results,
     ),
 }

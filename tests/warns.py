@@ -65,6 +65,8 @@ SL_CTX_WARNS = SL_EXPECTED_WARNS + CORE_CTX_WARNS
 SL_LIGHTNING_CTX_WARNS = SL_CTX_WARNS + LIGHTING_CTX_WARNS
 
 FTS_CTX_WARNS = [
+    "You defined a `validation_step`",
+    "`max_epochs` was not",
     ".*currently depends upon.*",
     "No monitor metric specified for.*",
     "Pruning explicitly specified shared parameter.*",

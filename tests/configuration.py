@@ -25,6 +25,7 @@ from interpretune.config import (
     AnalysisCfg,
     SAELensFromPretrainedConfig,
     SAELensCustomConfig,
+    ITLensBridgeConfig,
     ITLensFromPretrainedConfig,
     ITLensCustomConfig,
 )
@@ -111,8 +112,8 @@ def _update_tl_cfg_device_precision(cfg: Dict, device_type: str, precision: Unio
     dev_prec_override = {"dtype": get_model_input_dtype(precision), "device": device_type}
     if isinstance(cfg.tl_cfg, ITLensCustomConfig):  # initialized TL custom model config
         cfg.tl_cfg.cfg.__dict__.update(dev_prec_override)
-    elif isinstance(cfg.tl_cfg, ITLensFromPretrainedConfig):
-        # TL from pretrained config, we set directly in addition to pretrained above to verify sync behavior
+    elif isinstance(cfg.tl_cfg, (ITLensFromPretrainedConfig, ITLensBridgeConfig)):
+        # TL from pretrained or bridge config, we set directly in addition to pretrained above to verify sync behavior
         cfg.tl_cfg.__dict__.update(dev_prec_override)
     else:  # likely uninitialized TL custom model config, may want to remove this branch/check
         assert cfg.tl_cfg.get("cfg", None)

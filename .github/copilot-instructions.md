@@ -325,6 +325,56 @@ pre-commit run ruff-format --all-files
 pre-commit run --all-files
 ```
 
+### Coverage Collection
+
+Use the `gen_it_coverage.sh` script to collect comprehensive test coverage locally. This script runs all tests including standalone and special tests, then generates a coverage report.
+
+**Handling conflicting processes:**
+
+The `manage_standalone_processes.sh` harness checks for conflicting pytest processes before starting. If you encounter a conflict:
+- If the process is hung or old (>40 minutes), kill it: `pkill -f "pytest.*--collect-only"`
+- If recently started (<40 minutes), wait a few minutes for it to complete naturally
+
+**Monitoring progress:**
+
+```bash
+# Tail the most recent coverage log
+tail -f `ls -rt /tmp/gen_it_coverage_it_* | tail -1`
+```
+
+**Common coverage commands:**
+
+```bash
+# Generate coverage with no rebuild (recommended for quick iteration)
+~/repos/interpretune/scripts/manage_standalone_processes.sh --use-nohup \
+  ~/repos/interpretune/scripts/gen_it_coverage.sh \
+  --repo-home=${HOME}/repos/interpretune \
+  --target-env-name=it_latest \
+  --venv-dir=/mnt/cache/${USER}/.venvs \
+  --no-rebuild-base
+
+# Generate coverage with rebuild (use when dependencies changed)
+~/repos/interpretune/scripts/manage_standalone_processes.sh --use-nohup \
+  ~/repos/interpretune/scripts/gen_it_coverage.sh \
+  --repo-home=${HOME}/repos/interpretune \
+  --target-env-name=it_latest \
+  --venv-dir=/mnt/cache/${USER}/.venvs
+
+# Note: Coverage collection takes approximately 30-35 minutes
+```
+
+**Flags:**
+
+- `--no-rebuild-base`: Skips environment rebuild (faster, use when dependencies haven't changed)
+- `--venv-dir`: Base directory for venvs (recommended: `/mnt/cache/${USER}/.venvs` for hardlink performance)
+- `--run-all-and-examples`: Include additional example tests (extends runtime)
+
+**Output:**
+
+- Coverage report written to `/tmp/current_interpretune_coverage.out`
+- Detailed logs in `/tmp/gen_it_coverage_it_latest_<timestamp>.log`
+- HTML coverage report in `htmlcov/` directory
+
 ### Updating dependencies
 
 When updating dependencies, edit `pyproject.toml` and regenerate locked requirements:
@@ -388,18 +438,34 @@ Full repository type-checking is a work in progress. Current local checks may on
 
 Some tests require special environment setup and are marked with `@pytest.mark.standalone` or involve profiling. These tests can be run using the `special_tests.sh` harness or manually with environment variables.
 
+Set environment context variables (developer-specific paths):
+
+```bash
+export IT_VENV_BASE=/mnt/cache/${USER}/.venvs
+export IT_TARGET_VENV=it_latest
+export IT_REPO_DIR=${HOME}/repos/interpretune  # Example: adjust to your local repo path
+```
+
 **Using the test harness:**
 ```bash
 export IT_REPO_DIR=${HOME}/repos/interpretune  # Example: adjust to your local repo path
 # Run all standalone tests
-cd ${IT_REPO_DIR} && ./tests/special_tests.sh --mark_type=standalone
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+ ./tests/special_tests.sh --mark_type=standalone
 
 # Run specific standalone test by filter pattern
 cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
 ./tests/special_tests.sh --mark_type=standalone --filter_pattern='test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]'
-
+# another example, filtering by partial test class name
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+./tests/special_tests.sh --mark_type=standalone --filter_pattern='ParameterMapping'
 # Run profiling tests
-cd ${IT_REPO_DIR} && ./tests/special_tests.sh --mark_type=profiling
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+./tests/special_tests.sh --mark_type=profiling
 ```
 
 **Manual execution (without harness):**
@@ -421,6 +487,13 @@ Then run specific tests using **inline environment variables** (not export) to a
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
 IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/examples/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT] -v
+unset IT_RUN_STANDALONE_TESTS
+
+# another example using inline variable assignment with multiple standalone tests invoked separately
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_transformer_lens.py::TestGemma2ParameterMapping::test_gemma2_tl_param_structure -v
+IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_transformer_lens.py::TestLlama3ParameterMapping::test_llama3_tl_param_structure -v
 unset IT_RUN_STANDALONE_TESTS
 
 # Run specific profiling test

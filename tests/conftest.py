@@ -51,6 +51,8 @@ from tests.core.cfg_aliases import (
     TLDebugCfg,
     LightningLlama3DebugCfg,
     LightningGemma2DebugCfg,
+    LightningTLBridgeLlama3,
+    LightningTLBridgeGemma2,
     CoreMemProfCfg,
     CoreGPT2PEFTCfg,
     CoreGPT2PEFTSeqCfg,
@@ -58,6 +60,7 @@ from tests.core.cfg_aliases import (
     LightningGPT2,
     LightningTLGPT2,
     LightningTLBridgeGPT2,
+    LightningTLBridgeGPT2Processed,
     CoreSLGPT2,
     CoreSLGPT2Analysis,
     CoreSLCust,
@@ -161,7 +164,16 @@ FIXTURE_CFGS = {
     "l_gpt2": FixtureCfg(test_cfg=LightningGPT2, scope="function", variants={"it_session": [FixtPhase.setup]}),
     "l_tl_ht_gpt2": FixtureCfg(test_cfg=LightningTLGPT2, scope="function", variants={"it_session": [FixtPhase.setup]}),
     "l_tl_bridge_gpt2": FixtureCfg(
-        test_cfg=LightningTLBridgeGPT2, scope="function", variants={"it_session": [FixtPhase.setup]}
+        test_cfg=LightningTLBridgeGPT2, scope="module", variants={"it_session": [FixtPhase.setup]}
+    ),
+    "l_tl_bridge_gpt2_processed": FixtureCfg(
+        test_cfg=LightningTLBridgeGPT2Processed, scope="module", variants={"it_session": [FixtPhase.setup]}
+    ),
+    "l_tl_bridge_llama3": FixtureCfg(
+        test_cfg=LightningTLBridgeLlama3, scope="function", variants={"it_session": [FixtPhase.setup]}
+    ),
+    "l_tl_bridge_gemma2": FixtureCfg(
+        test_cfg=LightningTLBridgeGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
     ),
     "l_sl_gpt2": FixtureCfg(test_cfg=LightningSLGPT2, variants={"it_session": [FixtPhase.initonly]}),
     "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg, variants={"it_session": [FixtPhase.setup]}),
@@ -194,6 +206,11 @@ FIXTURE_CFGS = {
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg, variants={"it_session": [FixtPhase.setup]}),
+    # FT Schedule fixtures (function-scoped for per-test generation)
+    "l_gpt2_sched": FixtureCfg(scope="function", variants={"ft_schedule": [FixtPhase.setup]}),
+    "l_tl_ht_gpt2_sched": FixtureCfg(scope="function", variants={"ft_schedule": [FixtPhase.setup]}),
+    "l_tl_bridge_gpt2_sched": FixtureCfg(scope="function", variants={"ft_schedule": [FixtPhase.setup]}),
+    "l_tl_bridge_gpt2_tl_names_sched": FixtureCfg(scope="function", variants={"ft_schedule": [FixtPhase.setup]}),
 }
 
 
@@ -386,6 +403,92 @@ def it_session_cfg_fixture_factory(config_key):
     return get_it_session_cfg
 
 
+def ft_schedule_fixture_factory(config_key, phase):
+    """Factory for creating FT schedule fixtures on-demand.
+
+    Generates a fine-tuning schedule for the specified config_key. This replaces the monolithic
+    gpt2_ft_schedules fixture that generated all schedules upfront.
+
+    Args:
+        config_key: Schedule configuration key (e.g., 'l_gpt2_sched', 'l_tl_bridge_gpt2_sched')
+        phase: FixtPhase (currently only FixtPhase.setup is supported)
+
+    Returns:
+        A pytest fixture that generates the requested schedule
+    """
+
+    @pytest.fixture(scope=FIXTURE_CFGS[config_key].scope)
+    def get_ft_schedule(tmpdir_factory, request):
+        """Generate a fine-tuning schedule for this specific configuration."""
+        from tests.parity_acceptance.cfg_aliases import tl_bridge_custom_adapter_map
+
+        # Map config_key to model_key and schedule transforms
+        # Defined here to have access to transform functions that are defined later in conftest.py
+        SCHEDULE_CONFIG_MAP = {
+            "l_gpt2_sched": {
+                "model_key": "l_gpt2",
+                "session_fixture": "get_it_session__l_gpt2__setup",
+                "transforms": {"basic_explicit": l_imp_to_exp, "multiphase_explicit": l_multiphase_explicit},
+                "fts_kwargs": {},
+            },
+            "l_tl_ht_gpt2_sched": {
+                "model_key": "l_tl_ht_gpt2",
+                "session_fixture": "get_it_session__l_tl_ht_gpt2__setup",
+                "transforms": {"multiphase_explicit": tl_ht_multiphase_explicit},
+                "fts_kwargs": {},
+            },
+            "l_tl_bridge_gpt2_sched": {
+                "model_key": "l_tl_bridge_gpt2",
+                "session_fixture": "get_it_session__l_tl_bridge_gpt2__setup",
+                "transforms": {"multiphase_explicit": tl_bridge_multiphase_explicit},
+                "fts_kwargs": {
+                    "custom_strategy_adapters": tl_bridge_custom_adapter_map,
+                },
+            },
+            "l_tl_bridge_gpt2_tl_names_sched": {
+                "model_key": "l_tl_bridge_gpt2",
+                "session_fixture": "get_it_session__l_tl_bridge_gpt2__setup",
+                "transforms": {"multiphase_explicit_tl_names": tl_bridge_multiphase_explicit_tl_names},
+                "fts_kwargs": {
+                    "custom_strategy_adapters": tl_bridge_custom_adapter_map,
+                    "strategy_adapter_cfg": {"use_tl_names": True},
+                },
+            },
+        }
+
+        sched_cfg = SCHEDULE_CONFIG_MAP[config_key]
+
+        seed_everything(42)
+        tmpdir = tmpdir_factory.mktemp(f"test_fts_schedules_{config_key}")
+        rank = getattr(rank_zero_only, "rank", 0)
+
+        # Get the session fixture for this model
+        session_fixture = request.getfixturevalue(sched_cfg["session_fixture"])
+        model = deepcopy(session_fixture.it_session.module)
+
+        # Create FinetuningScheduler with model-specific kwargs
+        fts_kwargs = sched_cfg["fts_kwargs"]
+        callbacks = [FinetuningScheduler(gen_ft_sched_only=True, **fts_kwargs)]
+        trainer = Trainer(default_root_dir=tmpdir, callbacks=callbacks, devices=1)
+        schedule_filename = f"{model.__class__.__name__}_ft_schedule.yaml"
+        unmod_schedule_file = tmpdir / "lightning_logs" / "version_0" / schedule_filename
+
+        # Generate schedule on rank 0
+        if rank == 0:
+            with pytest.raises(SystemExit):
+                trainer.fit(model)
+
+        # Load implicit schedule and apply transforms
+        schedules = {}
+        schedules["implicit"] = get_fts(trainer).load_yaml_schedule(unmod_schedule_file)
+        for transform_key, transform_fn in sched_cfg["transforms"].items():
+            schedules[transform_key] = transform_fn(deepcopy(schedules["implicit"]))
+
+        return schedules
+
+    return get_ft_schedule
+
+
 def gen_fixture(fixt_type, fixt_key, phase):
     if isinstance(phase, FixtRunPhase):
         fixt_phase, run_phase = phase.fixt_phase, phase.run_phase
@@ -410,6 +513,9 @@ def gen_fixture(fixt_type, fixt_key, phase):
     elif fixt_type == "analysis_session":
         name = f"get_analysis_session__{fixt_key}__{phase_str}"
         factory = analysis_session_fixture_factory
+    elif fixt_type == "ft_schedule":
+        name = f"get_ft_schedule__{fixt_key}__{phase_str}"
+        factory = ft_schedule_fixture_factory
     else:
         raise NotImplementedError
     globals()[name] = factory(*args)
@@ -561,9 +667,7 @@ def tl_ht_imp_to_exp(sched_dict: Dict) -> Dict:
     sched_dict[0]["max_transition_epoch"] = 2
     phase_1_pats = [
         r"model.blocks.([0-8](?!\d)).*",
-        r"model.(pos_embed|embed).*",
-        "model.unembed.W_U",  # HookedTransformer parameter names
-        "model.unembed.b_U",  # HookedTransformer parameter names
+        r"model.(pos_embed|embed|unembed).*",
     ]
     sched_dict[1]["params"] = phase_1_pats
     sched_dict[1]["lr"] = 1e-06
@@ -583,9 +687,7 @@ def tl_ht_multiphase_explicit(sched_dict: Dict) -> Dict:
     sched_dict[2] = {
         "params": [
             r"model.blocks.([0-6](?!\d)).*",
-            r"model.(pos_embed|embed).*",
-            "model.unembed.W_U",
-            "model.unembed.b_U",
+            r"model.(pos_embed|embed|unembed).*",
         ],
         "lr": 1e-06,
     }
@@ -598,11 +700,7 @@ def tl_bridge_imp_to_exp(sched_dict: Dict) -> Dict:
     sched_dict[0]["max_transition_epoch"] = 2
     phase_1_pats = [
         r"model.blocks.([0-8](?!\d)).*",
-        r"model.(pos_embed|embed).*",
-        # TransformerBridge uses _original_component wrapper for parameter names
-        "model.unembed._original_component.weight",
-        # Note: GPT2 unembed typically doesn't have bias, but including pattern for completeness
-        # "model.unembed._original_component.bias",  # Uncomment if TransformerBridge model has unembed bias
+        r"model.(pos_embed|embed|unembed).*",
     ]
     sched_dict[1]["params"] = phase_1_pats
     sched_dict[1]["lr"] = 1e-06
@@ -622,57 +720,46 @@ def tl_bridge_multiphase_explicit(sched_dict: Dict) -> Dict:
     sched_dict[2] = {
         "params": [
             r"model.blocks.([0-6](?!\d)).*",
-            r"model.(pos_embed|embed).*",
-            "model.unembed._original_component.weight",
-            # "model.unembed._original_component.bias",  # Uncomment if TransformerBridge model has unembed bias
+            r"model.(pos_embed|embed|unembed).*",
         ],
         "lr": 1e-06,
     }
     return sched_dict
 
 
-@pytest.fixture(scope="function")
-def gpt2_ft_schedules(
-    tmpdir_factory,
-    # fts_patch_env,
-    get_it_session__l_gpt2__setup,
-    get_it_session__l_tl_ht_gpt2__setup,
-    get_it_session__l_tl_bridge_gpt2__setup,
-) -> Tuple[Path, Dict]:
-    """Generates a default fine-tuning schedule for 'implicit' testing, a modified one for 'explicit' mode and an
-    epoch-driven transitions only one for epoch_transitions_only testing."""
-    SCHED_TRANSFORMS = defaultdict(dict)
-    SCHED_TRANSFORMS["l_gpt2"]["basic_explicit"] = l_imp_to_exp
-    # SCHED_TRANSFORMS["l_gpt2"]["multiphase_explicit"] = l_multiphase_explicit  # not currently used
-    # SCHED_TRANSFORMS["l_tl_ht_gpt2"]["basic_explicit"] = tl_imp_to_exp  # not currently used
-    SCHED_TRANSFORMS["l_tl_ht_gpt2"]["multiphase_explicit"] = tl_ht_multiphase_explicit
-    # SCHED_TRANSFORMS["l_tl_bridge_gpt2"]["basic_explicit"] = tl_bridge_imp_to_exp  # not currently used
-    SCHED_TRANSFORMS["l_tl_bridge_gpt2"]["multiphase_explicit"] = tl_bridge_multiphase_explicit
-    seed_everything(42)
-    callbacks = [FinetuningScheduler(gen_ft_sched_only=True)]
-    # for simplicity, initially only running FTS non-distributed tests
-    tmpdir = tmpdir_factory.mktemp("test_fts_schedules")
-    rank = getattr(rank_zero_only, "rank", 0)
-    models = {
-        "l_gpt2": deepcopy(get_it_session__l_gpt2__setup.it_session.module),
-        "l_tl_ht_gpt2": deepcopy(get_it_session__l_tl_ht_gpt2__setup.it_session.module),
-        "l_tl_bridge_gpt2": deepcopy(get_it_session__l_tl_bridge_gpt2__setup.it_session.module),
+def tl_bridge_multiphase_explicit_tl_names(sched_dict: Dict) -> Dict:
+    """Multi-level TL-style schedule for l_tl_bridge_gpt2: uses clean TL parameter names.
+
+    This variant uses TL-style naming (e.g., blocks.9.attn.W_Q) instead of canonical names
+    (e.g., model.blocks.9._original_component.attn.q._original_component.weight).
+
+    Unlike canonical schedules, TL-style schedules should ONLY contain TL-style parameter names.
+    We create a fresh schedule dict with only the 3 phases we need.
+    """
+    # Create a fresh schedule with only TL-style phases (removes all canonical-named phases)
+    tl_sched = {}
+
+    # Phase 0: layers 9-11
+    tl_sched[0] = {
+        "params": [r"blocks.(9|1[0-1]).*"],
+        "max_transition_epoch": 2,
     }
-    test_schedules = defaultdict(dict)
-    for i, (model_key, model) in enumerate(models.items()):
-        trainer = Trainer(default_root_dir=tmpdir, callbacks=callbacks, devices=1)
-        unmod_schedule_file = (
-            tmpdir / "lightning_logs" / f"version_{i}" / f"{model.__class__.__name__}_ft_schedule.yaml"
-        )
-        # N.B. Though we run this fixture for each rank to avoid adding special logic to each distributed client test,
-        # we only generate a schedule on rank 0, linking to it on the other ranks.
-        if rank == 0:
-            with pytest.raises(SystemExit):
-                trainer.fit(model)
-        test_schedules[model_key]["implicit"] = get_fts(trainer).load_yaml_schedule(unmod_schedule_file)
-        for transform_key, transform_fn in SCHED_TRANSFORMS[model_key].items():
-            test_schedules[model_key][transform_key] = transform_fn(deepcopy(test_schedules[model_key]["implicit"]))
-    return test_schedules
+
+    # Phase 1: layers 7-8 only
+    tl_sched[1] = {
+        "params": [r"blocks.([7-8]).*"],
+        "max_transition_epoch": 3,
+    }
+
+    # Phase 2: layers 0-6 and embeddings
+    tl_sched[2] = {
+        "params": [
+            r"blocks.([0-6](?!\d)).*",  # Layers 0-6
+            r"(pos_embed|embed|unembed).*",  # Embeddings (no 'model.' prefix in TL-style)
+        ],
+        "lr": 1e-06,
+    }
+    return tl_sched
 
 
 #################################
