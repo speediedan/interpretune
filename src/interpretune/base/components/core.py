@@ -141,7 +141,9 @@ class BaseConfigImpl:
         if core_ld is not None:
             target_log_dir = Path(core_ld)
         elif getattr(self, "_it_state", None) and getattr(self._it_state, "_log_dir", None):
-            target_log_dir = Path(self._it_state._log_dir)
+            log_dir = self._it_state._log_dir
+            if log_dir is not None:
+                target_log_dir = Path(log_dir)
 
         if self.it_cfg.log_to_file and target_log_dir is not None:
             target_log_dir.mkdir(exist_ok=True, parents=True)

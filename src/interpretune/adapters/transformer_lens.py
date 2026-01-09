@@ -263,9 +263,10 @@ class BaseITLensModule(BaseITModule):
         # Debug shim: log component mapping for troubleshooting checkpoint restoration
         if hasattr(adapter, "component_mapping"):
             component_mapping = adapter.component_mapping
-            hf_prefixes = {getattr(c, "name", "?").split(".")[0] for c in component_mapping.values()}
-            rank_zero_debug(f"TransformerBridge component_mapping keys: {list(component_mapping.keys())}")
-            rank_zero_debug(f"TransformerBridge HF top-level prefixes: {hf_prefixes}")
+            if component_mapping is not None:
+                hf_prefixes = {getattr(c, "name", "?").split(".")[0] for c in component_mapping.values()}
+                rank_zero_debug(f"TransformerBridge component_mapping keys: {list(component_mapping.keys())}")
+                rank_zero_debug(f"TransformerBridge HF top-level prefixes: {hf_prefixes}")
 
         # Enable compatibility mode if requested (ITLensBridgeConfig only)
         if isinstance(self.it_cfg.tl_cfg, ITLensBridgeConfig) and self.it_cfg.tl_cfg.enable_compatibility_mode:
@@ -456,13 +457,15 @@ if _FTS_AVAILABLE:
                 self.model_view = CanonicalModelView(self, **self._model_view_cfg)
 
             # Build parameter mapping
+            assert self.model_view is not None
             self.model_view.build_param_mapping()
 
         def on_before_init_fts(self) -> None:
             # we patch our wrapped TransformerBridge module to use the TransformerBridge's state_dict and
             # load_state_dict methods to handle the specialized key translation logic
-            setattr(self.pl_module, "state_dict", self.pl_module.model.state_dict)
-            setattr(self.pl_module, "load_state_dict", self.pl_module.model.load_state_dict)
+            assert self.pl_module is not None
+            setattr(self.pl_module, "state_dict", self.pl_module.model.state_dict)  # type: ignore[attr-defined]
+            setattr(self.pl_module, "load_state_dict", self.pl_module.model.load_state_dict)  # type: ignore[attr-defined]
 
             # Ensure model_view is initialized (may already be initialized if gen_ft_sched_only=True)
             self._ensure_model_view_initialized()
@@ -479,6 +482,7 @@ if _FTS_AVAILABLE:
             Returns:
                 List of canonical parameter names for optimizer
             """
+            assert self.model_view is not None
             return self.model_view.transform_to_canonical(orig_pl, inspect_only=inspect_only)
 
         def logical_param_translation(self, param_names: List[str]) -> List[str]:
@@ -492,18 +496,20 @@ if _FTS_AVAILABLE:
             Returns:
                 List of model view parameter names
             """
+            assert self.model_view is not None
             return self.model_view.transform_from_canonical(param_names)
 
-        def get_named_params_for_schedule_validation(self) -> Dict[str, torch.Tensor]:
+        def get_named_params_for_schedule_validation(self) -> Dict[str, torch.nn.Parameter]:
             """Get named parameters for schedule validation.
 
             Delegates to the active model view for parameter naming.
 
             Returns:
-                Dict[str, torch.Tensor]: A dictionary mapping parameter names to parameter tensors.
+                Dict[str, torch.nn.Parameter]: A dictionary mapping parameter names to parameter tensors.
             """
             self._ensure_model_view_initialized()
-            return self.model_view.get_named_params()
+            assert self.model_view is not None
+            return self.model_view.get_named_params()  # type: ignore[return-value]
 
         def validate_ft_sched(self) -> Tuple[int, int]:
             """Validate the fine-tuning schedule.
@@ -521,6 +527,7 @@ if _FTS_AVAILABLE:
                 f"for schedule validation (module: {self.pl_module.__class__.__name__})"
             )
             # Delegate to model view's validation (which calls base StrategyAdapter implementation)
+            assert self.model_view is not None
             return self.model_view.validate_schedule()
 
         def gen_ft_schedule(self, dump_loc: Union[str, os.PathLike]) -> Optional[os.PathLike]:
@@ -539,6 +546,7 @@ if _FTS_AVAILABLE:
                 f"[TransformerBridgeStrategyAdapter.gen_ft_schedule] Using {self.model_view.__class__.__name__} "
                 f"for schedule generation (module: {self.pl_module.__class__.__name__})"
             )
+            assert self.model_view is not None
             return self.model_view.gen_schedule(dump_loc)
 
         def lightning_module_state_dict(self) -> dict[str, Any]:
@@ -548,11 +556,11 @@ if _FTS_AVAILABLE:
                 and hasattr(self.pl_module, "model")
                 and hasattr(self.pl_module.model, "state_dict")
             )
-            return self.pl_module.model.state_dict()
+            return self.pl_module.model.state_dict()  # type: ignore[attr-defined,no-any-return]
 
         def load_model_state_dict(self, checkpoint: Mapping[str, Any], strict: bool = True) -> None:
             assert self.pl_module is not None
-            self.pl_module.model.load_state_dict(checkpoint["state_dict"], strict=strict)
+            self.pl_module.model.load_state_dict(checkpoint["state_dict"], strict=strict)  # type: ignore[attr-defined]
 
     class TLNamesModelView(ModelView):
         """TransformerLens-style parameter naming strategy.
@@ -603,7 +611,7 @@ if _FTS_AVAILABLE:
             bridge = self.pl_module.model
 
             # Get TL-style parameter names (source of truth for TL naming)
-            tl_params = dict(bridge.tl_named_parameters())
+            tl_params = dict(bridge.tl_named_parameters())  # type: ignore[attr-defined]
 
             # Get canonical parameters
             canonical_params = dict(self.pl_module.named_parameters())
@@ -764,7 +772,7 @@ if _FTS_AVAILABLE:
             Returns:
                 Dict[str, torch.Tensor]: A dictionary mapping TL-style names to parameter tensors.
             """
-            return dict(self.pl_module.model.tl_named_parameters())
+            return dict(self.pl_module.model.tl_named_parameters())  # type: ignore[attr-defined]
 
         def gen_schedule(self, dump_loc: Union[str, os.PathLike]) -> Optional[os.PathLike]:
             """Generate fine-tuning schedule using TL-style parameter names.
@@ -787,7 +795,7 @@ if _FTS_AVAILABLE:
             cur_group: List = []
 
             # Use TL-style parameter names
-            model_params = list(self.pl_module.model.tl_named_parameters())[::-1]
+            model_params = list(self.pl_module.model.tl_named_parameters())[::-1]  # type: ignore[attr-defined]
 
             # Apply 2-parameters per-level heuristic
             for i, (n, _) in enumerate(model_params):
@@ -823,7 +831,7 @@ if _FTS_AVAILABLE:
                     2. The maximum epoch watermark explicitly specified in the schedule
             """
             rank_zero_debug("TLNamesModelView.validate_schedule() called")
-            if self._tl_to_canonical_mapping is not None:
+            if self._tl_to_canonical_mapping is not None and self._canonical_to_tl_mapping is not None:
                 # Log mapping diagnostics for debugging
                 rank_zero_debug(
                     f"TL-style schedule validation - TL→Canonical mapping summary:\n"
@@ -1043,5 +1051,5 @@ if _FTS_AVAILABLE:
             return implicit_ln_params
 
 else:
-    TransformerBridgeStrategyAdapter = object
-    TLNamesModelView = object
+    TransformerBridgeStrategyAdapter = object  # type: ignore[misc,assignment]
+    TLNamesModelView = object  # type: ignore[misc,assignment]
