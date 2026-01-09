@@ -55,7 +55,8 @@ transformerbridge = "interpretune.adapters.transformer_lens:TransformerBridgeStr
 [project.optional-dependencies]
 
 lightning = [
-    "finetuning-scheduler >= 2.5.0",
+    # commenting out when installing from git urls to avoid dep conflicts
+    # "finetuning-scheduler >= 2.10.0",
     "bitsandbytes; platform_system != 'Darwin'",
     "peft",
 ]
@@ -92,6 +93,7 @@ examples = [
 git-deps = [
     "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@004f1b2822eca3f0c1ddd2389e9105b3abffde87",
     "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@d35d01feb9cc076a091e41255e1c9f92de2af236",
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@4aa64032c07acd34493a5c05929845bd011426c9",
     "sae_lens >= 6.3.1",
 ]
 
