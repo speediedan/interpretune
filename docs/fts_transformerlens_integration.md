@@ -11,6 +11,86 @@ FinetuningScheduler enables flexible fine-tuning through YAML-based schedules th
 3. **TransformerLens - TransformerBridge** - Modern names using canonical `_original_component` wrapper references
 4. **TransformerLens - TransformerBridge TL Names Mode** - Modern TL-style naming
 
+## Usage
+
+### Plugin Registration
+
+Interpretune registers the `TransformerBridgeStrategyAdapter` as a FinetuningScheduler plugin via entry points in `pyproject.toml`:
+
+```toml
+[project.entry-points."finetuning_scheduler.strategy_adapters"]
+transformerbridge = "interpretune.adapters.transformer_lens:TransformerBridgeStrategyAdapter"
+```
+
+This allows the adapter to be discovered and used by FTS without requiring direct imports.
+
+### Basic Usage
+
+```python
+from finetuning_scheduler import FinetuningScheduler
+from interpretune import InterpretunableModule
+from interpretune.config import ITLensBridgeConfig
+
+# Configure TransformerBridge model
+tl_cfg = ITLensBridgeConfig(model_name="gpt2-small")
+model = InterpretunableModule(tl_cfg=tl_cfg)
+
+# Create FTS callback using the registered plugin
+# Map Lightning strategy flags to the adapter
+fts = FinetuningScheduler(
+    custom_strategy_adapters={
+        "single_device": "transformerbridge",  # Use plugin name
+        "ddp": "transformerbridge",  # Same adapter for DDP
+    },
+    strategy_adapter_cfg={"use_tl_names": True},  # Enable TL-style naming
+)
+```
+
+**Alternative formats** for specifying the adapter:
+
+```python
+# Using entry point name (recommended)
+custom_strategy_adapters={"single_device": "transformerbridge"}
+
+# Using colon-separated fully qualified path
+custom_strategy_adapters={
+    "single_device": "interpretune.adapters.transformer_lens:TransformerBridgeStrategyAdapter"
+}
+
+# Using dot-separated fully qualified path
+custom_strategy_adapters={
+    "single_device": "interpretune.adapters.transformer_lens.TransformerBridgeStrategyAdapter"
+}
+```
+
+### Configuration Options
+
+The `TransformerBridgeStrategyAdapter` supports two parameter naming modes via `strategy_adapter_cfg`:
+
+**Canonical Mode (default):**
+```python
+fts = FinetuningScheduler(
+    custom_strategy_adapters={"single_device": "transformerbridge"},
+    # No strategy_adapter_cfg needed - canonical mode is default
+)
+```
+Schedules use canonical names like `model.blocks.9._original_component.attn.q._original_component.weight`
+
+**TL Names Mode:**
+```python
+fts = FinetuningScheduler(
+    custom_strategy_adapters={"single_device": "transformerbridge"},
+    strategy_adapter_cfg={"use_tl_names": True},
+)
+```
+Schedules use clean TL-style names like `blocks.9.attn.W_Q`
+
+### Related Documentation
+
+- FTS Plugin Documentation: [Strategy Adapter Entry Points](https://finetuning-scheduler.readthedocs.io/en/latest/plugins/strategy_adapter_entry_points.html)
+- Interpretune TransformerBridge Integration: [TL-Style Naming Implementation](./tl_style_naming_implementation.md)
+- FTS Custom Strategy Adapters: [API Reference](https://finetuning-scheduler.readthedocs.io/en/latest/api/finetuning_scheduler.fts.html#finetuning_scheduler.fts.FinetuningScheduler)
+
 ## Parameter Naming Conventions
 
 ### Base (HuggingFace GPT-2)

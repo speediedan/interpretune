@@ -145,9 +145,10 @@ l_tl_bridge_gpt2_fts_multiphase = {
 
 # When running TransformerBridge based configs with FTS, favor a strategy adapter that can translate HF
 # canonical names to runtime names; by default map a few common strategy keys for local/CI testing.
+# Uses the plugin alias 'transformerbridge' registered via entry point in pyproject.toml
 tl_bridge_custom_adapter_map = {
-    "single_device": "interpretune.adapters.transformer_lens.TransformerBridgeStrategyAdapter",
-    "auto": "interpretune.adapters.transformer_lens.TransformerBridgeStrategyAdapter",
+    "single_device": "transformerbridge",
+    "auto": "transformerbridge",
 }
 tl_bridge_fts_kwargs = {**default_test_fts_kwargs, "custom_strategy_adapters": tl_bridge_custom_adapter_map}
 get_nested(l_tl_bridge_gpt2_fts_multiphase, "callback_cfgs")[TestFTS] = {**tl_bridge_fts_kwargs}

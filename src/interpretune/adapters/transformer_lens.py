@@ -258,25 +258,6 @@ class BaseITLensModule(BaseITModule):
 
         # Create adapter and bridge
         adapter = ArchitectureAdapterFactory.select_architecture_adapter(bridge_config)
-
-        # Inspect HF model before TransformerBridge instantiation
-        inspect_state_dict_or_params(
-            hf_model.state_dict(),
-            "hf_model.state_dict()",
-            context_message="Before TransformerBridge instantiation",
-            prefix_filter=None,
-            num_keys_sample=10,
-            log_debug=True,
-        )
-        inspect_state_dict_or_params(
-            hf_model,
-            "hf_model.named_parameters()",
-            context_message="Before TransformerBridge instantiation",
-            prefix_filter=None,
-            num_keys_sample=10,
-            log_debug=True,
-        )
-
         self.model = TransformerBridge(model=hf_model, adapter=adapter, tokenizer=tokenizer_handle)
 
         # Debug shim: log component mapping for troubleshooting checkpoint restoration
@@ -291,32 +272,6 @@ class BaseITLensModule(BaseITModule):
             compat_kwargs = self.it_cfg.tl_cfg.enable_compatibility_mode_kwargs or {}
             rank_zero_info(f"Enabling TransformerBridge compatibility mode with kwargs: {compat_kwargs}")
             self.model.enable_compatibility_mode(**compat_kwargs)
-
-        # Inspect TransformerBridge after instantiation
-        inspect_state_dict_or_params(
-            self.model,
-            "self.model.named_parameters()",
-            context_message="After TransformerBridge instantiation",
-            prefix_filter="",
-            num_keys_sample=10,
-            log_debug=True,
-        )
-        inspect_state_dict_or_params(
-            self.model,
-            "self.model.tl_named_parameters()",
-            context_message="After TransformerBridge instantiation",
-            prefix_filter="",
-            num_keys_sample=10,
-            log_debug=True,
-        )
-        inspect_state_dict_or_params(
-            self.model.state_dict(),
-            "self.model.state_dict()",
-            context_message="After TransformerBridge instantiation",
-            prefix_filter="",
-            num_keys_sample=10,
-            log_debug=True,
-        )
 
         # Move model to device if move_to_device is enabled (default True)
         if pruned_cfg.get("move_to_device", True) and "device" in pruned_cfg:
@@ -418,189 +373,6 @@ class ITLensModule(TransformerLensAdapter, CoreHelperAttributes, BaseITLensModul
 if _FTS_AVAILABLE:
     from finetuning_scheduler.strategy_adapters.base import StrategyAdapter
 
-    def inspect_state_dict_or_params(
-        source: Union[Dict[str, Any], Any],
-        source_name: str = "state_dict",
-        context_message: Optional[str] = None,
-        prefix_filter: Optional[str] = "model.",
-        num_keys_sample: int = 10,
-        log_debug: bool = False,
-        return_string: bool = False,
-    ) -> Optional[str]:
-        """Inspect and pretty-print state_dict or named_parameters for debugging checkpoint flows.
-
-        This is a standalone debugging utility that can be used at any point in the checkpoint
-        save/load pipeline to inspect the structure, types, shapes, and devices of model parameters.
-
-        Args:
-            source: Either a state_dict (dict) or an object with named_parameters() method
-            source_name: Descriptive name for the source being inspected
-            context_message: Optional context message to display before inspection output
-            prefix_filter: Only include keys starting with this prefix (None = no filtering)
-            num_keys_sample: Number of first/last keys to display in summary
-            log_debug: If True, also log output at DEBUG level
-            return_string: If True, return the formatted string instead of printing
-
-        Returns:
-            Formatted string if return_string=True, "data collection error" on failure, otherwise None
-
-        Example:
-            >>> # Inspect a model's state_dict
-            >>> inspect_state_dict_or_params(
-            ...     model.state_dict(),
-            ...     "model.state_dict()",
-            ...     context_message="Before checkpoint save"
-            ... )
-            >>>
-            >>> # Inspect named_parameters iterator with requires_grad count
-            >>> inspect_state_dict_or_params(
-            ...     model,
-            ...     "model.named_parameters()",
-            ...     context_message="After TransformerBridge instantiation"
-            ... )
-        """
-        from pprint import pformat
-
-        try:
-            # Convert source to dict format
-            is_named_params = False
-            requires_grad_count = None
-
-            if isinstance(source, dict):
-                state_dict = source
-            elif hasattr(source, "named_parameters") or hasattr(source, "tl_named_parameters"):
-                # Prefer tl_named_parameters when explicitly requested via source_name
-                prefer_tl = "tl_named_parameters" in (source_name or "")
-                prefer_named = "named_parameters" in (source_name or "")
-                # Choose the appropriate iterator when available
-                if hasattr(source, "tl_named_parameters") and (
-                    prefer_tl or (not prefer_named and not hasattr(source, "named_parameters"))
-                ):
-                    is_named_params = True
-                    params_list = list(source.tl_named_parameters())
-                elif hasattr(source, "named_parameters"):
-                    is_named_params = True
-                    params_list = list(source.named_parameters())
-                else:
-                    # Fall back defensively
-                    rank_zero_warn(
-                        f"inspect_state_dict_or_params: Source has no named parameter iterators, got {type(source)}"
-                    )
-                    return "data collection error"
-                state_dict = dict(params_list)
-                requires_grad_count = sum(1 for _, p in params_list if hasattr(p, "requires_grad") and p.requires_grad)
-            else:
-                rank_zero_warn(
-                    f"inspect_state_dict_or_params: Source must be a dict or have named_parameters() method, "
-                    f"got {type(source)}"
-                )
-                return "data collection error"
-
-            # Apply prefix filter if specified
-            if prefix_filter is not None:
-                filtered_dict = {k: v for k, v in state_dict.items() if k.startswith(prefix_filter)}
-            else:
-                filtered_dict = state_dict
-
-            # Collect metadata
-            num_keys = len(filtered_dict)
-            keys_list = list(filtered_dict.keys())
-
-            # Analyze each value
-            value_metadata = []
-            for key, value in filtered_dict.items():
-                meta = {
-                    "key": key,
-                    "type": type(value).__name__,
-                    "shape": tuple(value.shape) if hasattr(value, "shape") else None,
-                    "device": str(value.device) if hasattr(value, "device") else None,
-                    "dtype": str(value.dtype) if hasattr(value, "dtype") else None,
-                }
-                value_metadata.append(meta)
-
-            # Build output string
-            lines = []
-            lines.append("=" * 80)
-            lines.append(f"STATE INSPECTION: {source_name}")
-            if context_message:
-                lines.append(f"Context: {context_message}")
-            lines.append("=" * 80)
-            lines.append(f"Prefix filter: {prefix_filter if prefix_filter else 'None (all keys)'}")
-            lines.append(f"Total keys: {num_keys}")
-            if is_named_params and requires_grad_count is not None:
-                lines.append(f"Parameters with requires_grad=True: {requires_grad_count}")
-            lines.append("")
-
-            # Sample of first/last keys
-            lines.append(f"First {min(num_keys_sample, num_keys)} keys:")
-            for key in keys_list[:num_keys_sample]:
-                lines.append(f"  {key}")
-            lines.append("")
-
-            if num_keys > num_keys_sample * 2:
-                lines.append(f"Last {min(num_keys_sample, num_keys)} keys:")
-                for key in keys_list[-num_keys_sample:]:
-                    lines.append(f"  {key}")
-                lines.append("")
-
-            # Metadata summary
-            lines.append("Value metadata summary (first 10):")
-            for meta in value_metadata[:10]:
-                lines.append(f"  {meta['key']}:")
-                lines.append(f"    type: {meta['type']}")
-                if meta["shape"] is not None:
-                    lines.append(f"    shape: {meta['shape']}")
-                if meta["device"] is not None:
-                    lines.append(f"    device: {meta['device']}")
-                if meta["dtype"] is not None:
-                    lines.append(f"    dtype: {meta['dtype']}")
-            lines.append("")
-
-            # Type/shape distribution
-            type_counts = {}
-            shape_counts = {}
-            device_counts = {}
-            for meta in value_metadata:
-                type_counts[meta["type"]] = type_counts.get(meta["type"], 0) + 1
-                if meta["shape"] is not None:
-                    shape_counts[meta["shape"]] = shape_counts.get(meta["shape"], 0) + 1
-                if meta["device"] is not None:
-                    device_counts[meta["device"]] = device_counts.get(meta["device"], 0) + 1
-
-            lines.append("Type distribution:")
-            lines.append(pformat(type_counts, indent=2))
-            lines.append("")
-
-            if shape_counts:
-                lines.append("Shape distribution (top 10):")
-                sorted_shapes = sorted(shape_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-                lines.append(pformat(dict(sorted_shapes), indent=2))
-                lines.append("")
-
-            if device_counts:
-                lines.append("Device distribution:")
-                lines.append(pformat(device_counts, indent=2))
-                lines.append("")
-
-            lines.append("=" * 80)
-
-            output = "\n".join(lines)
-
-            # Output handling
-            if log_debug:
-                rank_zero_debug(f"\n{output}")
-
-            if return_string:
-                return output
-            else:
-                print(output)
-                return None
-
-        except Exception as e:
-            error_msg = f"inspect_state_dict_or_params error for {source_name}: {e}"
-            rank_zero_warn(error_msg)
-            return "data collection error"
-
     # TODO: will need to gate this on Lightning being available as well once FTS can use raw torch
     # Strategy adapter for TransformerLens Bridge integration
     class TransformerBridgeStrategyAdapter(StrategyAdapter):
@@ -624,9 +396,6 @@ if _FTS_AVAILABLE:
             use_tl_names: Convenience flag. If True, automatically creates TLNamesModelView instance.
                 Cannot be used together with model_view parameter.
         """
-
-        # Attach standalone debugging utility as static method
-        inspect_state = staticmethod(inspect_state_dict_or_params)
 
         def __init__(
             self,
@@ -697,15 +466,6 @@ if _FTS_AVAILABLE:
 
             # Ensure model_view is initialized (may already be initialized if gen_ft_sched_only=True)
             self._ensure_model_view_initialized()
-
-        def on_before_restore_optimizers_and_lrs(self) -> None:
-            """Allow inspection for now.
-
-            May be necessary so we can allow adapter to manage the movement of restored optimizer states to the relevant
-            devices.
-            """
-            checkpoint_connector = self.trainer._checkpoint_connector
-            _ = checkpoint_connector._loaded_checkpoint["optimizer_states"]
 
         def fts_optim_transform(self, orig_pl: List[str], inspect_only: bool = False) -> List[str]:
             """Transform parameter names to canonical names for optimizer.

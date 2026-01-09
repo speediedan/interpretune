@@ -454,11 +454,6 @@ class TestBasicTransformerBridgeAdapter:
         assert "blocks" in tl_name or "embed" in tl_name or "unembed" in tl_name
         assert "_original_component" in expected_canonical_pattern or expected_canonical_pattern == "model.unembed.W_U"
 
-    def test_inspect_state(self):
-        """Test that inspect_state utility is available as static method."""
-        assert hasattr(TransformerBridgeStrategyAdapter, "inspect_state")
-        assert callable(TransformerBridgeStrategyAdapter.inspect_state)
-
     def test_gen_ft_schedule_disabled(self):
         """Test gen_ft_schedule delegates to parent when use_tl_names=False."""
         adapter = TransformerBridgeStrategyAdapter(use_tl_names=False)
@@ -472,8 +467,6 @@ class TestBasicTransformerBridgeAdapter:
 # =============================================================================
 # Parameter Mapping Validation Tests
 # =============================================================================
-
-
 class TestArchitectureParameterMapping:
     """Parameterized architecture parameter mapping tests.
 
