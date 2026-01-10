@@ -97,8 +97,8 @@ class BaseConfigImpl:
             logger.removeHandler(existing_stream)
             try:
                 existing_stream.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                rank_zero_debug("Failed to close existing stream handler: %s", exc)
 
     def _existing_file_handler_matches(
         self, existing_files: list[logging.FileHandler], logger_name: str, log_file: Path
