@@ -708,7 +708,7 @@ class TestArchitectureParameterMapping:
         ],
     )
     def test_bidirectional_mapping(self, request, session_fixture: str, arch_expectations: ArchitectureExpectations):
-        """Validate bidirectional TL ↔ canonical parameter mapping using component tracing.
+        """Validate bidirectional TL <-> canonical parameter mapping using component tracing.
 
         First validates TL parameter structure as a precondition, then tests the
         TransformerBridgeStrategyAdapter's _build_param_mapping() method which uses
@@ -752,7 +752,7 @@ class TestArchitectureParameterMapping:
         assert tl_to_canonical is not None, "TL to canonical mapping not built"
         assert canonical_to_tl is not None, "Canonical to TL mapping not built"
 
-        # ===== TL → Canonical Mapping Validation =====
+        # ===== TL -> Canonical Mapping Validation =====
         unmapped_tl = []
         mapped_tl_count = 0
         for tl_name in tl_params.keys():
@@ -768,7 +768,7 @@ class TestArchitectureParameterMapping:
                 unmapped_tl.append(tl_name)
 
         print(
-            f"[{arch_expectations.model_name}] TL→Canonical: {mapped_tl_count}/{len(tl_params)} mapped, "
+            f"[{arch_expectations.model_name}] TL->Canonical: {mapped_tl_count}/{len(tl_params)} mapped, "
             f"{len(unmapped_tl)} unmapped"
         )
 
@@ -783,12 +783,12 @@ class TestArchitectureParameterMapping:
             f"Unmapped: {unmapped_tl[:10]}"
         )
 
-        # ===== Canonical → TL Mapping Validation =====
+        # ===== Canonical -> TL Mapping Validation =====
         mapped_canonical_count = len(canonical_to_tl)
         unmapped_canonical = [k for k in canonical_params.keys() if k not in canonical_to_tl]
 
         print(
-            f"[{arch_expectations.model_name}] Canonical→TL: {mapped_canonical_count}/{len(canonical_params)} mapped, "
+            f"[{arch_expectations.model_name}] Canonical->TL: {mapped_canonical_count}/{len(canonical_params)} mapped, "
             f"{len(unmapped_canonical)} unmapped"
         )
 
@@ -812,7 +812,7 @@ class TestArchitectureParameterMapping:
             # Verify bidirectional consistency
             assert canonical_name in tl_to_canonical.get(tl_name, []), (
                 f"[{arch_expectations.model_name}] Bidirectional inconsistency: "
-                f"canonical '{canonical_name}' → TL '{tl_name}' but TL doesn't map back"
+                f"canonical '{canonical_name}' -> TL '{tl_name}' but TL doesn't map back"
             )
 
 
