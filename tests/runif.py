@@ -64,6 +64,7 @@ RUNIF_ALIASES = {
     "standalone": standalone_mark,
     "l_fts": {**lightning_mark, **fts_mark},
     "cuda": cuda_mark,
+    "cuda_alone": {**cuda_mark, **standalone_mark},
     "cuda_prof": {**cuda_mark, **profiling_mark},
     "cuda_profci": {**cuda_mark, **profiling_ci_mark},
     "cuda_l": {**cuda_mark, **lightning_mark},

@@ -7,6 +7,7 @@ from interpretune.protocol import AutoStrEnum, Adapter
 from interpretune.extensions import MemProfilerCfg, MemProfilerSchedule
 from interpretune.config import (
     HFFromPretrainedConfig,
+    ITLensBridgeConfig,
     ITLensFromPretrainedNoProcessingConfig,
     ITLensFromPretrainedConfig,
 )
@@ -100,39 +101,74 @@ cust_no_sae_grad = {
 ##################################
 
 default_test_fts_kwargs = {"max_depth": -1}
-no_restore_fts_kwargs = {"max_depth": -1, "restore_best": False}
-l_gpt2_explicit_sched = {"fts_schedule_key": ("l_gpt2", "basic_explicit")}
-l_tl_gpt2_explicit_sched = {"fts_schedule_key": ("l_tl_gpt2", "basic_explicit")}
-l_tl_bridge_gpt2_explicit_sched = {"fts_schedule_key": ("l_tl_bridge_gpt2", "basic_explicit")}
+# Schedule keys now refer to fixture config keys and transform names
+l_gpt2_explicit_sched = {"fts_schedule_key": ("l_gpt2_sched", "basic_explicit")}
+l_gpt2_multiphase_sched = {"fts_schedule_key": ("l_gpt2_sched", "multiphase_explicit")}
+l_tl_ht_gpt2_multiphase_sched = {"fts_schedule_key": ("l_tl_ht_gpt2_sched", "multiphase_explicit")}
+l_tl_bridge_gpt2_multiphase_sched = {"fts_schedule_key": ("l_tl_bridge_gpt2_sched", "multiphase_explicit")}
+l_tl_bridge_gpt2_tl_names_multiphase_sched = {
+    "fts_schedule_key": ("l_tl_bridge_gpt2_tl_names_sched", "multiphase_explicit_tl_names")
+}
 l_ctx = {"adapter_ctx": (Adapter.lightning,)}
-default_fts_cfg = {"callback_cfgs": {TestFTS: default_test_fts_kwargs}}
-no_restore_fts_cfg = {"callback_cfgs": {TestFTS: no_restore_fts_kwargs}}
-l_gpt2_fts = {**default_fts_cfg, **l_gpt2_explicit_sched, **l_ctx}
-# Use HookedTransformer (use_bridge=False) for FTS tests to avoid TransformerBridge checkpoint state_dict mismatches
-l_tl_gpt2_fts = {
-    **default_fts_cfg,
-    **l_tl_gpt2_explicit_sched,
+l_gpt2_fts = {
+    "callback_cfgs": {TestFTS: {**default_test_fts_kwargs}},
+    **l_gpt2_multiphase_sched,
+    **l_ctx,
+    "module_cls": "tests.modules.DivergeTestITModule",
+    "model_cfg": {"diverge_on_epoch": 2},
+    "max_epochs": 5,
+}
+l_tl_ht_gpt2_fts_multiphase = {
+    "callback_cfgs": {TestFTS: {**default_test_fts_kwargs}},
+    **l_tl_ht_gpt2_multiphase_sched,
     "tl_cfg": ITLensFromPretrainedNoProcessingConfig(
         model_name="gpt2-small", default_padding_side="left", use_bridge=False
     ),
+    "module_cls": "tests.modules.DivergeTestITModule",
+    "model_cfg": {"diverge_on_epoch": 2},
+    "max_epochs": 5,
 }
-# HookedTransformer test with restore_best=False
-l_tl_gpt2_fts_no_restore = {
-    **no_restore_fts_cfg,
-    **l_tl_gpt2_explicit_sched,
-    "tl_cfg": ITLensFromPretrainedNoProcessingConfig(
-        model_name="gpt2-small", default_padding_side="left", use_bridge=False
+l_tl_bridge_gpt2_fts_multiphase = {
+    "callback_cfgs": {TestFTS: {**default_test_fts_kwargs}},
+    **l_tl_bridge_gpt2_multiphase_sched,
+    "tl_cfg": ITLensBridgeConfig(
+        model_name="gpt2-small",
+        default_padding_side="left",
+        enable_compatibility_mode=True,
+        enable_compatibility_mode_kwargs={"no_processing": True},
     ),
-}
-# TransformerBridge test with restore_best=False (until FTS updated to support TransformerBridge ckpt restore)
-l_tl_bridge_gpt2_fts = {
-    **no_restore_fts_cfg,
-    **l_tl_bridge_gpt2_explicit_sched,
-    "tl_cfg": ITLensFromPretrainedNoProcessingConfig(
-        model_name="gpt2-small", default_padding_side="left", use_bridge=True
-    ),
+    "module_cls": "tests.modules.DivergeTestITModule",
+    "model_cfg": {"diverge_on_epoch": 2},
+    "logging_level": "DEBUG",
+    "max_epochs": 5,
 }
 
+# When running TransformerBridge based configs with FTS, favor a strategy adapter that can translate HF
+# canonical names to runtime names; by default map a few common strategy keys for local/CI testing.
+# Uses the plugin alias 'transformerbridge' registered via entry point in pyproject.toml
+tl_bridge_custom_adapter_map = {
+    "single_device": "transformerbridge",
+    "auto": "transformerbridge",
+}
+tl_bridge_fts_kwargs = {**default_test_fts_kwargs, "custom_strategy_adapters": tl_bridge_custom_adapter_map}
+get_nested(l_tl_bridge_gpt2_fts_multiphase, "callback_cfgs")[TestFTS] = {**tl_bridge_fts_kwargs}
+
+# TL-style naming variant: uses clean TL parameter names in schedules
+l_tl_bridge_gpt2_tl_names_fts = {
+    "callback_cfgs": {TestFTS: {**default_test_fts_kwargs}},
+    **l_tl_bridge_gpt2_tl_names_multiphase_sched,
+    "tl_cfg": ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left"),
+    "module_cls": "tests.modules.DivergeTestITModule",
+    "model_cfg": {"diverge_on_epoch": 2},
+    "logging_level": "DEBUG",
+    "max_epochs": 5,
+}
+tl_bridge_fts_tl_names_kwargs = {
+    **default_test_fts_kwargs,
+    "custom_strategy_adapters": tl_bridge_custom_adapter_map,
+    "strategy_adapter_cfg": {"use_tl_names": True},
+}
+get_nested(l_tl_bridge_gpt2_tl_names_fts, "callback_cfgs")[TestFTS] = {**tl_bridge_fts_tl_names_kwargs}
 
 ########################################################################################################################
 # Composable CLI config aliases

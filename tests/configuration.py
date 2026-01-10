@@ -25,6 +25,7 @@ from interpretune.config import (
     AnalysisCfg,
     SAELensFromPretrainedConfig,
     SAELensCustomConfig,
+    ITLensBridgeConfig,
     ITLensFromPretrainedConfig,
     ITLensCustomConfig,
 )
@@ -70,6 +71,7 @@ def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: Op
         "sae_analysis_targets",
         "analysis_cfgs",
         "sae_cfgs",
+        "logging_level",
     ]
     test_it_cfg = deepcopy(base_it_cfg)
     for attr in test_cfg_override_attrs:
@@ -110,8 +112,8 @@ def _update_tl_cfg_device_precision(cfg: Dict, device_type: str, precision: Unio
     dev_prec_override = {"dtype": get_model_input_dtype(precision), "device": device_type}
     if isinstance(cfg.tl_cfg, ITLensCustomConfig):  # initialized TL custom model config
         cfg.tl_cfg.cfg.__dict__.update(dev_prec_override)
-    elif isinstance(cfg.tl_cfg, ITLensFromPretrainedConfig):
-        # TL from pretrained config, we set directly in addition to pretrained above to verify sync behavior
+    elif isinstance(cfg.tl_cfg, (ITLensFromPretrainedConfig, ITLensBridgeConfig)):
+        # TL from pretrained or bridge config, we set directly in addition to pretrained above to verify sync behavior
         cfg.tl_cfg.__dict__.update(dev_prec_override)
     else:  # likely uninitialized TL custom model config, may want to remove this branch/check
         assert cfg.tl_cfg.get("cfg", None)
@@ -154,6 +156,9 @@ def gen_session_cfg(
     test_cfg, test_alias, expected_results, tmp_path, prewrapped_modules, state_log_mode: bool = False
 ) -> ITSessionConfig:
     base_itdm_cfg, base_it_cfg, dm_cls, m_cls = MODULE_EXAMPLE_REGISTRY.get(test_cfg)
+    # Override with test_cfg classes if provided, ITSessionConfig.__post_init__ handles str-to-class conversion
+    m_cls = test_cfg.module_cls if test_cfg.module_cls is not None else m_cls
+    dm_cls = test_cfg.datamodule_cls if test_cfg.datamodule_cls is not None else dm_cls
     itdm_cfg = apply_itdm_test_cfg(base_itdm_cfg=base_itdm_cfg, test_cfg=test_cfg)
     it_cfg = apply_it_test_cfg(base_it_cfg=base_it_cfg, test_cfg=test_cfg, core_log_dir=tmp_path)
     core_cfg = {"datamodule_cls": dm_cls, "module_cls": m_cls, "datamodule_cfg": itdm_cfg, "module_cfg": it_cfg}

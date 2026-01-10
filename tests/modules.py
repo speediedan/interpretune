@@ -19,6 +19,7 @@ from transformers.utils import ModelOutput
 from interpretune.protocol import ITModuleProtocol, STEP_OUTPUT
 from interpretune.config import ITDataModuleConfig, ITConfig
 from interpretune.utils import rank_zero_only, rank_zero_debug
+from interpretune import MemProfilerHooks
 from it_examples.experiments.rte_boolq import RTEBoolqDataModule, RTEBoolqModuleMixin, RTEBoolqSteps
 from tests import FinetuningScheduler
 from tests.base_defaults import default_test_task
@@ -424,15 +425,85 @@ class StateLogInspectMixin:
                 memory_footprints[parity_normalize(self.test_alias)]["expected_mem"][act] = actual_val
 
 
+class DivergeOnEpochMixin:
+    """Mixin that adds diverging loss behavior starting at a specified epoch.
+
+    This mixin overrides training_step and validation_step to blend real logits with fake (zeros) logits based on
+    current_epoch/max_epochs ratio, causing gradual loss divergence.
+    """
+
+    def __init__(self, *args, diverge_on_epoch: Optional[int] = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        it_cfg = reduce(lambda o, a: getattr(o, a, None), ("it_cfg", "model_cfg"), self)
+        self.diverge_on_epoch = it_cfg.get("diverge_on_epoch", diverge_on_epoch) if it_cfg else diverge_on_epoch
+
+    def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
+        it_cfg = super()._before_it_cfg_init(it_cfg) if hasattr(super(), "_before_it_cfg_init") else it_cfg
+        if it_cfg.model_cfg and "diverge_on_epoch" in it_cfg.model_cfg:
+            self.diverge_on_epoch = it_cfg.model_cfg.get("diverge_on_epoch", None)
+        if self.diverge_on_epoch is not None:
+            rank_zero_debug(f"Divergence enabled: will diverge starting at epoch {self.diverge_on_epoch}")
+        return it_cfg
+
+    def _compute_diverging_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """Compute loss with gradual divergence using additive penalty.
+
+        Adds a baseline-relative penalty that increases from 0.5x baseline at diverge_on_epoch to 2.0x baseline at
+        max_epochs. This ensures monotonic loss increase regardless of learning improvements from parameter thawing,
+        enabling reliable cross-architecture testing.
+        """
+        base_loss = self.loss_fn(logits, labels)
+
+        if (
+            self.diverge_on_epoch is not None
+            and hasattr(self, "current_epoch")
+            and self.current_epoch >= self.diverge_on_epoch
+        ):
+            # Store baseline loss at divergence start (first epoch where divergence activates)
+            if not hasattr(self, "_divergence_baseline"):
+                self._divergence_baseline = base_loss.detach().item()
+
+            # Calculate additive penalty based on progress from diverge_on_epoch to max_epochs
+            max_epochs = self.trainer.max_epochs if hasattr(self, "trainer") else 5
+            epochs_diverging = self.current_epoch - self.diverge_on_epoch + 1
+            total_diverge_epochs = max(max_epochs - self.diverge_on_epoch, 1)
+            progress = min(epochs_diverging / total_diverge_epochs, 1.0)
+
+            # Add increasing penalty: starts at 0.5x baseline, grows to 2.0x baseline
+            penalty = self._divergence_baseline * (0.5 + 1.5 * progress)
+            diverged_loss = base_loss + penalty
+
+            rank_zero_debug(
+                f"Epoch {self.current_epoch} >= {self.diverge_on_epoch}: DIVERGING "
+                f"(penalty={penalty:.3f}, baseline={self._divergence_baseline:.3f}, "
+                f"base={base_loss.item():.3f}, total={diverged_loss.item():.3f}, progress={progress:.3f})"
+            )
+            return diverged_loss
+        else:
+            # Normal behavior: use original loss function
+            return base_loss
+
+    @MemProfilerHooks.memprofilable
+    def training_step(self, batch: BatchEncoding, batch_idx: int) -> STEP_OUTPUT:
+        answer_logits, labels, _ = self.logits_and_labels(batch, batch_idx)
+        loss = self._compute_diverging_loss(answer_logits, labels)
+        self.log("train_loss", loss, sync_dist=True)
+        return loss
+
+    @MemProfilerHooks.memprofilable
+    def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
+        answer_logits, labels, orig_labels = self.logits_and_labels(batch, batch_idx)
+        val_loss = self._compute_diverging_loss(answer_logits, labels)
+        self.log("val_loss", val_loss, prog_bar=True, sync_dist=True)
+        self.collect_answers(answer_logits, orig_labels)
+
+
 class BaseTestModule(StateLogInspectMixin):
     def __init__(self, *args, req_grad_mask: Optional[Dict] = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.req_grad_mask = req_grad_mask or {}
         self.epoch_losses = {}
         self.sampled_fwd_inputs = None
-
-    def setup(self, *args, **kwargs) -> None:
-        super().setup(*args, **kwargs)
 
     # TODO: use mock TASK_NUM_LABELS here (not just in __init__) to rely on rteboolq example method here for testing
     def _before_it_cfg_init(self, it_cfg: ITConfig) -> ITConfig:
@@ -529,6 +600,12 @@ class BaseTestModule(StateLogInspectMixin):
 
 
 class TestITModule(BaseTestModule, RTEBoolqSteps, RTEBoolqModuleMixin): ...
+
+
+class DivergeTestITModule(DivergeOnEpochMixin, BaseTestModule, RTEBoolqSteps, RTEBoolqModuleMixin):
+    """Test module with diverging loss behavior for FTS multi-level schedule testing."""
+
+    pass
 
 
 class TestFTS(StateLogInspectMixin, FinetuningScheduler):

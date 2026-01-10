@@ -1,6 +1,7 @@
 from __future__ import annotations
 import tempfile
 import warnings
+import logging
 from datetime import datetime
 from typing import Any, Union, TYPE_CHECKING, cast, Optional
 from functools import reduce, partial
@@ -84,13 +85,123 @@ class BaseConfigImpl:
                 )
         return serial_cfg
 
-    def _init_dirs_and_hooks(self) -> None:
-        self._create_experiment_dir()
+    def _setup_stream_handler(self, logger: logging.Logger, formatter: logging.Formatter, level: int) -> None:
+        """Ensure stream handler presence/absence per config."""
+        existing_stream = next((h for h in logger.handlers if isinstance(h, logging.StreamHandler)), None)
+        if self.it_cfg.log_to_stream and existing_stream is None:
+            stream_handler = logging.StreamHandler()
+            stream_handler.setLevel(level)
+            stream_handler.setFormatter(formatter)
+            logger.addHandler(stream_handler)
+        elif not self.it_cfg.log_to_stream and existing_stream is not None:
+            logger.removeHandler(existing_stream)
+            try:
+                existing_stream.close()
+            except Exception as exc:
+                rank_zero_debug("Failed to close existing stream handler: %s", exc)
+
+    def _existing_file_handler_matches(
+        self, existing_files: list[logging.FileHandler], logger_name: str, log_file: Path
+    ) -> bool:
+        """Return True if any existing FileHandler already points to log_file. Logs debug messages for other cases."""
+        matched = False
+        for existing_file in existing_files:
+            try:
+                existing_path = getattr(existing_file, "baseFilename", None)
+            except Exception:
+                existing_path = None
+
+            if existing_path is None:
+                rank_zero_debug(
+                    "Existing file handler for logger %s has unknown path; keeping existing handler "
+                    "and still creating %s if not present.",
+                    logger_name,
+                    log_file,
+                )
+            elif Path(existing_path) == log_file:
+                matched = True
+                break
+            else:
+                rank_zero_debug(
+                    "Existing file handler for logger %s points to %s; will keep it and also create handler at %s.",
+                    logger_name,
+                    existing_path,
+                    log_file,
+                )
+        return matched
+
+    def _setup_file_handler(
+        self, logger_name: str, logger: logging.Logger, formatter: logging.Formatter, level: int
+    ) -> None:
+        """Attach a FileHandler to logger if requested, preserving existing handlers when appropriate."""
+        existing_files = [h for h in logger.handlers if isinstance(h, logging.FileHandler)]
+
+        target_log_dir = None
+        core_ld = getattr(self.it_cfg, "core_log_dir", None)
+        if core_ld is not None:
+            target_log_dir = Path(core_ld)
+        elif getattr(self, "_it_state", None) and getattr(self._it_state, "_log_dir", None):
+            log_dir = self._it_state._log_dir
+            if log_dir is not None:
+                target_log_dir = Path(log_dir)
+
+        if self.it_cfg.log_to_file and target_log_dir is not None:
+            target_log_dir.mkdir(exist_ok=True, parents=True)
+            log_file = target_log_dir / f"{logger_name.replace('.', '_')}.log"
+            matched = self._existing_file_handler_matches(existing_files, logger_name, log_file)
+            if not matched:
+                file_handler = logging.FileHandler(log_file, mode="a")
+                file_handler.setLevel(level)
+                file_handler.setFormatter(formatter)
+                logger.addHandler(file_handler)
+
+    def _configure_logging(self) -> None:
+        """Configure logging level for Interpretune loggers."""
+        log_level = self.it_cfg.logging_level
+        if isinstance(log_level, str):
+            log_level = getattr(logging, log_level.upper(), logging.INFO)
+
+        # Set level for main interpretune logger and key submodules
+        for logger_name in ["interpretune"]:
+            logger = logging.getLogger(logger_name)
+            logger.setLevel(log_level)
+
+            formatter = logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
+
+            # Stream handler: ensure presence when configured
+            self._setup_stream_handler(logger, formatter, log_level)
+
+            # File handler: attach to core_log_dir if set in config, otherwise fall back to runtime _log_dir
+            self._setup_file_handler(logger_name, logger, formatter, log_level)
+
+    def _make_setup_dirs(self) -> None:
+        """Create minimal setup directories."""
         if self.cuda_allocator_history:
             self.memprofiler.init_cuda_snapshots_dir()
         # TODO: add save_hyperparameters/basic logging func for raw pytorch
         # (override w/ a framework-specific version where appropriate)
         # self.save_hyperparameters(self._it_state._init_hparams)
+
+    def _init_experiment_id(self) -> None:
+        """Initialize experiment_id early in the lifecycle, before directory creation.
+
+        This must be called before _create_experiment_dir() which needs the experiment_id.
+        """
+        if "experiment_id" not in self._it_state._init_hparams:
+            self._it_state._init_hparams["experiment_id"] = (
+                f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.it_cfg.experiment_tag}"
+            )
+
+    def _make_init_dirs(self) -> None:
+        """Create experiment-scoped directories and configure logging. This should be called when the
+        runtime experiment directory (and therefore the per-run log dir) is available (e.g., after fixture/trainer
+        setup)."""
+        # Ensure experiment_id exists before creating directories
+        self._init_experiment_id()
+        # Create the experiment dir first so that log directory exists
+        self._create_experiment_dir()
+        # Now configure logging to attach file handlers into the experiment directory if requested
+        self._configure_logging()
 
     def _create_experiment_dir(self) -> None:
         # we only want to create the core experiment-specific dir for frameworks that aren't adding their own
@@ -117,6 +228,10 @@ class BaseConfigImpl:
         #       case (self.model.config) or self.it_cfg.model_cfg
         elif getattr(self.model, "config", None) is None:
             model_config = self.it_cfg.model_cfg
+
+        # Ensure experiment_id is initialized (may have been set earlier by _init_experiment_id)
+        self._init_experiment_id()
+
         self._it_state._init_hparams.update(
             {
                 "optimizer_init": self.it_cfg.optimizer_init,
@@ -126,7 +241,6 @@ class BaseConfigImpl:
                 "model_config": model_config,
                 "model_name_or_path": self.it_cfg.model_name_or_path,
                 "task_name": self.it_cfg.task_name,
-                "experiment_id": f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.it_cfg.experiment_tag}",
             }
         )
         self._it_state._init_hparams["env_info"] = collect_env_info() if self.it_cfg.log_env_details else None

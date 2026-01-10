@@ -24,9 +24,9 @@ from tests.orchestration import parity_test
 from tests.parity_acceptance.cfg_aliases import (
     cuda,
     l_gpt2_fts,
-    l_tl_gpt2_fts,
-    l_tl_gpt2_fts_no_restore,
-    l_tl_bridge_gpt2_fts,
+    l_tl_ht_gpt2_fts_multiphase,
+    l_tl_bridge_gpt2_fts_multiphase,
+    l_tl_bridge_gpt2_tl_names_fts,
     TestFTS,
 )
 from tests.parity_acceptance.expected import fts_parity_results
@@ -60,16 +60,22 @@ PARITY_FTS_CONFIGS = (
     # This test creates large checkpoint files and may cause out-of-space errors when run alongside other tests.
     # Consider switching to a trivial custom model if this becomes problematic.
     FTSParityTest(alias="train_cpu_32_l_fts", cfg=FTSParityCfg(**l_gpt2_fts), marks="standalone"),
-    FTSParityTest(alias="train_cpu_32_l_tl_fts", cfg=FTSParityCfg(**l_tl_gpt2_fts), marks="l_optional"),
     FTSParityTest(alias="train_cuda_32_l_fts", cfg=FTSParityCfg(**l_gpt2_fts, **cuda), marks="cuda_l_optional"),
-    FTSParityTest(alias="train_cuda_32_l_tl_fts", cfg=FTSParityCfg(**l_tl_gpt2_fts, **cuda), marks="cuda"),
     FTSParityTest(
-        alias="train_cuda_32_l_tl_fts_no_restore",
-        cfg=FTSParityCfg(**l_tl_gpt2_fts_no_restore, **cuda),
-        marks="cuda_l_optional",
+        alias="train_cpu_32_l_tl_ht_fts", cfg=FTSParityCfg(**l_tl_ht_gpt2_fts_multiphase), marks="l_optional"
     ),
     FTSParityTest(
-        alias="train_cuda_32_l_tl_bridge_fts", cfg=FTSParityCfg(**l_tl_bridge_gpt2_fts, **cuda), marks="cuda_l_optional"
+        alias="train_cuda_32_l_tl_ht_fts", cfg=FTSParityCfg(**l_tl_ht_gpt2_fts_multiphase, **cuda), marks="cuda_alone"
+    ),
+    FTSParityTest(
+        alias="train_cuda_32_l_tl_bridge_fts",
+        cfg=FTSParityCfg(**l_tl_bridge_gpt2_fts_multiphase, **cuda),
+        marks="cuda_alone",
+    ),
+    FTSParityTest(
+        alias="train_cuda_32_l_tl_bridge_tl_names_fts",
+        cfg=FTSParityCfg(**l_tl_bridge_gpt2_tl_names_fts, **cuda),
+        marks="cuda_alone",
     ),
 )
 
@@ -79,14 +85,17 @@ EXPECTED_PARITY_FTS = {cfg.alias: cfg.expected for cfg in PARITY_FTS_CONFIGS}
 @pytest.mark.usefixtures("make_deterministic")
 @RunIf(lightning=True, finetuning_scheduler=True)
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(PARITY_FTS_CONFIGS, unpack=False))
-def test_parity_fts(gpt2_ft_schedules, recwarn, tmp_path, test_alias, test_cfg):
+def test_parity_fts(recwarn, tmp_path, test_alias, test_cfg, request):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PARITY_FTS[test_alias] or {}
     expected_warnings = TL_LIGHTNING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else TL_CTX_WARNS
     expected_warnings = copy(expected_warnings) + FTS_CTX_WARNS
     if test_cfg.fts_schedule_key:
-        mod, type = test_cfg.fts_schedule_key
-        test_cfg.callback_cfgs[TestFTS]["ft_schedule"] = gpt2_ft_schedules[mod][type]
+        fixture_key, schedule_type = test_cfg.fts_schedule_key
+        # Request the fixture dynamically using the fixture_key from schedule config
+        fixture_name = f"get_ft_schedule__{fixture_key}__setup"
+        schedules = request.getfixturevalue(fixture_name)
+        test_cfg.callback_cfgs[TestFTS]["ft_schedule"] = schedules[schedule_type]
         test_cfg.callback_cfgs[TestFTS]["expected_exact"] = expected_results.pop("callback_results", {})
         test_cfg.callback_cfgs[TestFTS]["state_log_dir"] = tmp_path if state_log_mode else None
         test_cfg.callback_cfgs[TestFTS]["test_alias"] = test_alias

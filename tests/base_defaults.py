@@ -74,6 +74,8 @@ class BaseCfg:
     precision: str | int = "torch.float32"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     model_src_key: Optional[str] = None
+    datamodule_cls: Optional[str] = None  # Fully qualified class name (e.g., "tests.modules.DivergeTestITModule")
+    module_cls: Optional[str] = None  # Fully qualified class name (e.g., "tests.modules.DivergeTestITModule")
     limit_train_batches: Optional[int] = 1
     limit_val_batches: Optional[int] = 1
     limit_test_batches: Optional[int] = 1
@@ -95,6 +97,7 @@ class BaseCfg:
     max_steps: Optional[int] = None
     save_checkpoints: bool = False
     req_deterministic: bool = False
+    logging_level: str | int = "INFO"  # Logging level for test runs
 
     def __post_init__(self):
         self.adapter_ctx = ADAPTER_REGISTRY.canonicalize_composition(self.adapter_ctx)
