@@ -10,7 +10,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable
 import logging
 
 from .config_parser import FileHook
@@ -20,15 +20,15 @@ class HookRegistry:
     """Global registry for managing analysis hook functions."""
 
     def __init__(self):
-        self._hooks: Dict[str, Callable] = {}
+        self._hooks: dict[str, Callable] = {}
         self._enabled: bool = False
-        self._context: Dict[str, Any] = {}  # Shared context for all hooks
+        self._context: dict[str, Any] = {}  # Shared context for all hooks
 
     def register(self, point_id: str, func: Callable) -> None:
         """Register an analysis function for a point ID."""
         self._hooks[point_id] = func
 
-    def execute(self, point_id: str, local_vars: Dict[str, Any]) -> None:
+    def execute(self, point_id: str, local_vars: dict[str, Any]) -> None:
         """Execute hook if enabled and registered."""
         if not self._enabled:
             return
@@ -97,7 +97,7 @@ def get_analysis_vars(
     return result
 
 
-def find_line_by_regex(file_path: Path, regex_pattern: str) -> Optional[int]:
+def find_line_by_regex(file_path: Path, regex_pattern: str) -> int | None:
     """Find line number that matches regex pattern.
 
     Args:
@@ -128,8 +128,8 @@ def find_line_by_regex(file_path: Path, regex_pattern: str) -> Optional[int]:
 
 def patch_file_with_hooks(
     file_path: Path,
-    hooks: List[FileHook],
-    output_path: Optional[Path] = None,
+    hooks: list[FileHook],
+    output_path: Path | None = None,
 ) -> Path:
     """Patch a file by inserting hook calls at regex-matched lines.
 
@@ -231,10 +231,10 @@ def create_patched_module_loader(module_name: str, patched_file_path: Path) -> N
 
 
 def patch_target_package_files(
-    file_hooks: Dict[str, FileHook],
+    file_hooks: dict[str, FileHook],
     target_package_path: str | Path,
     target_package_name: str,
-) -> Dict[str, Path]:
+) -> dict[str, Path]:
     """Patch target package files with hooks.
 
     Args:
@@ -248,7 +248,7 @@ def patch_target_package_files(
     target_package_path = Path(target_package_path)
 
     # Group hooks by file
-    hooks_by_file: Dict[Path, List[FileHook]] = {}
+    hooks_by_file: dict[Path, list[FileHook]] = {}
     for hook in file_hooks.values():
         if not hook.enabled:
             continue
@@ -272,7 +272,7 @@ def patch_target_package_files(
     return patched_modules
 
 
-def install_patched_modules(patched_modules: Dict[str, Path]) -> None:
+def install_patched_modules(patched_modules: dict[str, Path]) -> None:
     """Install patched modules into sys.modules.
 
     Args:
@@ -282,7 +282,7 @@ def install_patched_modules(patched_modules: Dict[str, Path]) -> None:
         create_patched_module_loader(module_name, patched_path)
 
 
-def install_patched_modules_with_references(patched_modules: Dict[str, Path]) -> None:
+def install_patched_modules_with_references(patched_modules: dict[str, Path]) -> None:
     """Install patched modules and update all cross-references to patched functions.
 
     This function addresses the issue where modules that have already imported functions
@@ -340,15 +340,15 @@ def count_regex_matches(file_path: Path, regex_pattern: str) -> int:
     return matches
 
 
-def validate_file_hooks(file_hooks: Dict[str, FileHook], target_package_path: str | Path) -> Dict[str, List[str]]:
+def validate_file_hooks(file_hooks: dict[str, FileHook], target_package_path: str | Path) -> dict[str, list[str]]:
     """Validate that each FileHook's regex matches exactly one line in the target file.
 
     Returns a dict with keys 'missing' and 'multiple', each a list of human-readable descriptions for hooks that failed
     validation.
     """
     target_package_path = Path(target_package_path)
-    missing: List[str] = []
-    multiple: List[str] = []
+    missing: list[str] = []
+    multiple: list[str] = []
 
     for hook in file_hooks.values():
         if not hook.enabled:
@@ -370,7 +370,7 @@ def validate_file_hooks(file_hooks: Dict[str, FileHook], target_package_path: st
     return {"missing": missing, "multiple": multiple}
 
 
-def get_module_debug_info(module_name: str) -> Dict[str, Any]:
+def get_module_debug_info(module_name: str) -> dict[str, Any]:
     """Get debug information about a module's patching status.
 
     Args:
@@ -436,7 +436,7 @@ def get_module_debug_info(module_name: str) -> Dict[str, Any]:
     return info
 
 
-def verify_patching(patched_modules: Dict[str, Path]) -> Dict[str, Dict[str, Any]]:
+def verify_patching(patched_modules: dict[str, Path]) -> dict[str, dict[str, Any]]:
     """Verify that patched modules are correctly loaded and contain hooks.
 
     Args:

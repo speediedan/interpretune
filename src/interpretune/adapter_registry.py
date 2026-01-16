@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Optional
+from typing import Any
 
 from interpretune.adapters.registration import CompositionRegistry
 
@@ -25,7 +25,7 @@ class LazyCompositionRegistry:
     """
 
     def __init__(self) -> None:
-        self._registry: Optional[CompositionRegistry] = None
+        self._registry: CompositionRegistry | None = None
         self._lock = threading.RLock()
 
     def _ensure_initialized(self) -> None:

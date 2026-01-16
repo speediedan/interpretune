@@ -7,7 +7,7 @@ import random
 import logging
 import weakref
 from pathlib import Path
-from typing import Any, Union, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 from collections.abc import Callable, Sequence
 from typing_extensions import override
 from functools import reduce
@@ -168,7 +168,7 @@ class ITCLI(ITSessionMixin):
         """Adds default arguments to the parser."""
         parser.add_argument(
             "--seed_everything",
-            type=Union[bool, int, str, float],
+            type=bool | int | str | float,
             default=self.seed_everything_default,
             help=(
                 "Set to an int to run seed_everything with this value before classes instantiation."

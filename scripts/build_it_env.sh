@@ -155,7 +155,7 @@ clear_activate_env(){
 base_env_build(){
     case ${target_env_name} in
         it_latest)
-            clear_activate_env python3.12
+            clear_activate_env python3.13
             if [[ -n ${torch_dev_ver} ]]; then
                 # temporarily remove torchvision until it supports cu128 in nightly binary
                 uv pip install ${uv_install_flags} --pre torch==2.10.0.${torch_dev_ver} --index-url https://download.pytorch.org/whl/nightly/cu128
@@ -166,7 +166,7 @@ base_env_build(){
             fi
             ;;
         it_release)
-            clear_activate_env python3.12
+            clear_activate_env python3.13
             uv pip install ${uv_install_flags} torch --index-url https://download.pytorch.org/whl/cu128
             ;;
         *)

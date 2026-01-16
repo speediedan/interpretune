@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -64,7 +64,7 @@ class ModelView(ABC):
         pass
 
     @abstractmethod
-    def transform_to_canonical(self, param_names: List[str], inspect_only: bool = False) -> List[str]:
+    def transform_to_canonical(self, param_names: list[str], inspect_only: bool = False) -> list[str]:
         """Transform view-specific parameter names to canonical names.
 
         Used by FTS to convert schedule params to optimizer params.
@@ -79,7 +79,7 @@ class ModelView(ABC):
         pass
 
     @abstractmethod
-    def transform_from_canonical(self, param_names: List[str]) -> List[str]:
+    def transform_from_canonical(self, param_names: list[str]) -> list[str]:
         """Transform canonical parameter names to view-specific names.
 
         Used for logging/reporting optimizer params in view naming.
@@ -93,7 +93,7 @@ class ModelView(ABC):
         pass
 
     @abstractmethod
-    def get_named_params(self) -> Dict[str, torch.Tensor]:
+    def get_named_params(self) -> dict[str, torch.Tensor]:
         """Get model parameters using view-specific naming.
 
         Returns:
@@ -102,7 +102,7 @@ class ModelView(ABC):
         pass
 
     @abstractmethod
-    def gen_schedule(self, dump_loc: Union[str, os.PathLike]) -> Optional[os.PathLike]:
+    def gen_schedule(self, dump_loc: str | os.PathLike) -> os.PathLike | None:
         """Generate implicit schedule using view-specific naming.
 
         Args:
@@ -114,7 +114,7 @@ class ModelView(ABC):
         pass
 
     @abstractmethod
-    def validate_schedule(self) -> Tuple[int, int]:
+    def validate_schedule(self) -> tuple[int, int]:
         """Validate schedule with optional view-specific diagnostics.
 
         Delegates to base StrategyAdapter implementation.
@@ -149,19 +149,19 @@ class CanonicalModelView(ModelView):
         """No mapping needed for canonical naming."""
         pass
 
-    def transform_to_canonical(self, param_names: List[str], inspect_only: bool = False) -> List[str]:
+    def transform_to_canonical(self, param_names: list[str], inspect_only: bool = False) -> list[str]:
         """Identity transformation - params already canonical."""
         return param_names
 
-    def transform_from_canonical(self, param_names: List[str]) -> List[str]:
+    def transform_from_canonical(self, param_names: list[str]) -> list[str]:
         """Identity transformation - params already canonical."""
         return param_names
 
-    def get_named_params(self) -> Dict[str, torch.Tensor]:
+    def get_named_params(self) -> dict[str, torch.Tensor]:
         """Get canonical parameter names."""
         return dict(self.pl_module.named_parameters())
 
-    def gen_schedule(self, dump_loc: Union[str, os.PathLike]) -> Optional[os.PathLike]:
+    def gen_schedule(self, dump_loc: str | os.PathLike) -> os.PathLike | None:
         """Generate schedule with canonical naming.
 
         Delegates to base StrategyAdapter implementation via the adapter reference.
@@ -171,7 +171,7 @@ class CanonicalModelView(ModelView):
 
         return StrategyAdapter.gen_ft_schedule(self.adapter, dump_loc)
 
-    def validate_schedule(self) -> Tuple[int, int]:
+    def validate_schedule(self) -> tuple[int, int]:
         """Validate schedule with canonical naming.
 
         Delegates to base StrategyAdapter implementation via the adapter reference.

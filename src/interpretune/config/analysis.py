@@ -1,5 +1,5 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Optional, Generator, Union, Callable
+from typing import Generator, Callable
 from dataclasses import dataclass, field
 import datetime
 import warnings
@@ -26,9 +26,9 @@ from interpretune.utils import rank_zero_warn, rank_zero_debug
 class AnalysisCfg(ITSerializableCfg):
     output_store: AnalysisStoreProtocol | None = None  # usually constructed on setup()
     input_store: AnalysisStoreProtocol | None = None  # store containing input data from previous op
-    target_op: Optional[Union[str, AnalysisOp, Callable, list[AnalysisOp]]] = None  # input op to be resolved
-    output_schema: Optional[OpSchema | str | AnalysisOp] = None  # Schema, op, or op name to define schema
-    name: Optional[str] = None  # Name for this analysis configuration
+    target_op: str | AnalysisOp | Callable | list[AnalysisOp] | None = None  # input op to be resolved
+    output_schema: OpSchema | str | AnalysisOp | None = None  # Schema, op, or op name to define schema
+    name: str | None = None  # Name for this analysis configuration
     fwd_hooks: list[tuple] = field(default_factory=list)
     bwd_hooks: list[tuple] = field(default_factory=list)
     cache_dict: dict = field(default_factory=dict)
@@ -41,10 +41,10 @@ class AnalysisCfg(ITSerializableCfg):
     step_fn: str = "analysis_step"  # Name of the method to use/generate for analysis
     auto_prune_batch_encoding: bool = True  # Automatically prune encoded batches to only include relevant keys
     _applied_to: dict = field(default_factory=dict)  # Dictionary tracking which modules this cfg has been applied to
-    _op: Optional[Union[str, AnalysisOp, Callable, list[AnalysisOp]]] = None  # op via generated analysis step
+    _op: str | AnalysisOp | Callable | list[AnalysisOp] | None = None  # op via generated analysis step
 
     @property
-    def op(self) -> Optional[Union[str, AnalysisOp, Callable, list[AnalysisOp]]]:
+    def op(self) -> str | AnalysisOp | Callable | list[AnalysisOp] | None:
         """Get the operation, unwrapping any OpWrapper if present."""
         if self._op is None:
             return None
@@ -56,7 +56,7 @@ class AnalysisCfg(ITSerializableCfg):
         return self._op
 
     @op.setter
-    def op(self, value: Optional[Union[str, AnalysisOp, Callable, list[AnalysisOp]]]) -> None:
+    def op(self, value: str | AnalysisOp | Callable | list[AnalysisOp] | None) -> None:
         """Set the operation value."""
         self._op = value
 
@@ -176,7 +176,7 @@ class AnalysisCfg(ITSerializableCfg):
 
         # Otherwise leave as-is; callers will raise clear errors if this is invalid
 
-    def materialize_names_filter(self, module, fallback_sae_targets: Optional[SAEAnalysisTargets] = None) -> None:
+    def materialize_names_filter(self, module, fallback_sae_targets: SAEAnalysisTargets | None = None) -> None:
         """Set names_filter using sae_analysis_targets if not already set.
 
         Args:
@@ -204,7 +204,7 @@ class AnalysisCfg(ITSerializableCfg):
         if not self.fwd_hooks and not self.bwd_hooks:
             self.check_add_default_hooks()
 
-    def prepare_model_ctx(self, module, fallback_sae_targets: Optional[SAEAnalysisTargets] = None) -> None:
+    def prepare_model_ctx(self, module, fallback_sae_targets: SAEAnalysisTargets | None = None) -> None:
         """Configure names_filter and hooks for a specific module.
 
         Args:
@@ -299,7 +299,7 @@ class AnalysisCfg(ITSerializableCfg):
             bwd_hooks = [(self.names_filter, _make_simple_cache_hook(cache_dict=self.cache_dict, is_backward=True))]
             self.bwd_hooks = bwd_hooks
 
-    def check_add_default_hooks(self) -> Optional[tuple[list, list]]:
+    def check_add_default_hooks(self) -> tuple[list, list] | None:
         """Construct forward and backward hooks based on analysis operation."""
         fwd_hooks, bwd_hooks = [], []
 
@@ -349,9 +349,9 @@ class AnalysisCfg(ITSerializableCfg):
     def apply(
         self,
         module,
-        cache_dir: Optional[str] = None,
-        op_output_dataset_path: Optional[str] = None,
-        fallback_sae_targets: Optional[SAEAnalysisTargets] = None,
+        cache_dir: str | None = None,
+        op_output_dataset_path: str | None = None,
+        fallback_sae_targets: SAEAnalysisTargets | None = None,
     ):
         """Set up analysis configuration and configure for the given module.
 

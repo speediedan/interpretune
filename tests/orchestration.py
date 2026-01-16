@@ -12,7 +12,7 @@
 # Initially based on https://bit.ly/3oQ8Vqf
 from pathlib import Path
 from unittest import mock
-from typing import Dict, Optional, Tuple
+from typing import Dict
 
 import torch
 from datasets import Dataset
@@ -72,7 +72,7 @@ def init_it_runner(it_session: ITSession, test_cfg: BaseCfg, *args, **kwargs):
 
 def run_it(
     it_session: ITSession, test_cfg: BaseCfg, init_only: bool = False
-) -> SessionRunner | AnalysisStoreProtocol | Dict[str, AnalysisStoreProtocol] | None:
+) -> SessionRunner | AnalysisStoreProtocol | dict[str, AnalysisStoreProtocol] | None:
     # Check if test_cfg is an AnalysisBaseCfg and use the appropriate runner initialization
     if isinstance(test_cfg, AnalysisBaseCfg):
         runner = init_analysis_runner(it_session, test_cfg)
@@ -241,7 +241,7 @@ def run_op_with_config(request, op_cfg: OpTestConfig):
 
 
 def save_reload_results_dataset(
-    it_session, result_batches, batches, features_format: Optional[Tuple[Dict]] = None, split: str = "validation"
+    it_session, result_batches, batches, features_format: tuple[Dict] | None = None, split: str = "validation"
 ):
     if features_format is not None:
         features, it_format_kwargs = features_format

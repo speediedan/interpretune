@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Optional, Type, cast, Union, Dict, Any, List, Mapping, Tuple
+from typing import Type, cast, Any, Mapping
 import inspect
 from functools import reduce, partial
 from copy import deepcopy
@@ -33,7 +33,7 @@ from interpretune.protocol import Adapter
 
 class TLensAttributeMixin:
     @property
-    def tl_cfg(self) -> Optional[Union[HookedTransformerConfig, TransformerBridgeConfig]]:
+    def tl_cfg(self) -> HookedTransformerConfig | TransformerBridgeConfig | None:
         try:
             cfg = reduce(getattr, "model.cfg".split("."), self)
         except AttributeError as ae:
@@ -43,8 +43,8 @@ class TLensAttributeMixin:
 
     # TODO: we aren't using IT's Property Composition feature for TLens yet, but might be worth enabling it
     @property
-    def device(self) -> Optional[torch.device]:
-        device: Optional[torch.device] = None
+    def device(self) -> torch.device | None:
+        device: torch.device | None = None
         try:
             device = (
                 getattr(self._it_state, "_device", None)  # type: ignore[attr-defined]  # provided by mixing class
@@ -57,12 +57,12 @@ class TLensAttributeMixin:
         return device
 
     @device.setter
-    def device(self, value: Optional[str | torch.device]) -> None:
+    def device(self, value: str | torch.device | None) -> None:
         if value is not None and not isinstance(value, torch.device):
             value = torch.device(value)
         self._it_state._device = value  # type: ignore[attr-defined]  # provided by mixing class
 
-    def get_tl_device(self) -> Optional[torch.device]:
+    def get_tl_device(self) -> torch.device | None:
         """Get the best available device based on TransformerLens config."""
         try:
             if self.tl_cfg is None:
@@ -76,11 +76,11 @@ class TLensAttributeMixin:
         return device
 
     @property
-    def output_device(self) -> Optional[torch.device]:
+    def output_device(self) -> torch.device | None:
         return self.get_tl_device()  # type: ignore[attr-defined]  # provided by mixing class
 
     @property
-    def input_device(self) -> Optional[torch.device]:
+    def input_device(self) -> torch.device | None:
         return self.get_tl_device()
 
 
@@ -127,7 +127,7 @@ class BaseITLensModule(BaseITModule):
             self._convert_hf_to_tl()
 
     def hf_configured_model_init(
-        self, cust_config: HFPretrainedConfig, access_token: Optional[str] = None
+        self, cust_config: HFPretrainedConfig, access_token: str | None = None
     ) -> torch.nn.Module:
         # usually makes sense to init the HookedTransfomer (empty) and pretrained HF model weights on cpu
         # versus moving them both to GPU (may make sense to explore meta device usage for model definition
@@ -179,7 +179,7 @@ class BaseITLensModule(BaseITModule):
         tl_kwargs = {k: v for k, v in self.it_cfg.tl_cfg.__dict__.items() if k not in ["use_bridge"]}
         self.model = HookedTransformer(tokenizer=self.it_cfg.tokenizer, **tl_kwargs)
 
-    def _prune_tl_cfg_dict(self, prune_list: Optional[list] = None) -> dict:
+    def _prune_tl_cfg_dict(self, prune_list: list | None = None) -> dict:
         """Prunes the tl_cfg dictionary by removing IT-specific and HF-specific keys that shouldn't be passed to
         HookedTransformer/TransformerBridge constructors.
 
@@ -400,8 +400,8 @@ if _FTS_AVAILABLE:
 
         def __init__(
             self,
-            model_view: Union[None, str, Type[ModelView], ModelView] = None,
-            model_view_cfg: Optional[Dict[str, Any]] = None,
+            model_view: None | str | Type[ModelView] | ModelView = None,
+            model_view_cfg: dict[str, Any] | None = None,
             use_tl_names: bool = False,
             *args,
             **kwargs,
@@ -415,10 +415,10 @@ if _FTS_AVAILABLE:
             # Store initialization parameters for deferred model_view creation
             # (model_view needs access to adapter, so we create it in on_before_init_fts)
             # If nothing specified, we'll use CanonicalModelView (identity transformation)
-            self._model_view_init: Union[None, str, Type[ModelView], ModelView] = model_view
-            self._model_view_cfg: Dict[str, Any] = model_view_cfg or {}
+            self._model_view_init: None | str | Type[ModelView] | ModelView = model_view
+            self._model_view_cfg: dict[str, Any] = model_view_cfg or {}
             self._use_tl_names: bool = use_tl_names
-            self.model_view: Optional[ModelView] = None
+            self.model_view: ModelView | None = None
 
             # Always use translation function (even for canonical mode via CanonicalModelView)
             self.exec_ft_phase = partial(StrategyAdapter.base_ft_phase, translation_func=self.logical_param_translation)
@@ -470,7 +470,7 @@ if _FTS_AVAILABLE:
             # Ensure model_view is initialized (may already be initialized if gen_ft_sched_only=True)
             self._ensure_model_view_initialized()
 
-        def fts_optim_transform(self, orig_pl: List[str], inspect_only: bool = False) -> List[str]:
+        def fts_optim_transform(self, orig_pl: list[str], inspect_only: bool = False) -> list[str]:
             """Transform parameter names to canonical names for optimizer.
 
             Delegates transformation to the active model view.
@@ -485,7 +485,7 @@ if _FTS_AVAILABLE:
             assert self.model_view is not None
             return self.model_view.transform_to_canonical(orig_pl, inspect_only=inspect_only)
 
-        def logical_param_translation(self, param_names: List[str]) -> List[str]:
+        def logical_param_translation(self, param_names: list[str]) -> list[str]:
             """Translate canonical parameter names to model view names.
 
             Delegates transformation to the active model view.
@@ -499,25 +499,25 @@ if _FTS_AVAILABLE:
             assert self.model_view is not None
             return self.model_view.transform_from_canonical(param_names)
 
-        def get_named_params_for_schedule_validation(self) -> Dict[str, torch.nn.Parameter]:
+        def get_named_params_for_schedule_validation(self) -> dict[str, torch.nn.Parameter]:
             """Get named parameters for schedule validation.
 
             Delegates to the active model view for parameter naming.
 
             Returns:
-                Dict[str, torch.nn.Parameter]: A dictionary mapping parameter names to parameter tensors.
+                dict[str, torch.nn.Parameter]: A dictionary mapping parameter names to parameter tensors.
             """
             self._ensure_model_view_initialized()
             assert self.model_view is not None
             return self.model_view.get_named_params()  # type: ignore[return-value]
 
-        def validate_ft_sched(self) -> Tuple[int, int]:
+        def validate_ft_sched(self) -> tuple[int, int]:
             """Validate the fine-tuning schedule.
 
             Delegates to the active model view's validation method.
 
             Returns:
-                Tuple[int, int]: A tuple of ints specifying:
+                tuple[int, int]: A tuple of ints specifying:
                     1. The depth of the final scheduled phase
                     2. The maximum epoch watermark explicitly specified in the schedule
             """
@@ -530,7 +530,7 @@ if _FTS_AVAILABLE:
             assert self.model_view is not None
             return self.model_view.validate_schedule()
 
-        def gen_ft_schedule(self, dump_loc: Union[str, os.PathLike]) -> Optional[os.PathLike]:
+        def gen_ft_schedule(self, dump_loc: str | os.PathLike) -> os.PathLike | None:
             """Generate fine-tuning schedule using active model view naming.
 
             Delegates to the active model view's generation method.
@@ -583,9 +583,9 @@ if _FTS_AVAILABLE:
         def __init__(self, adapter: "StrategyAdapter", implicit_ln_thaw: bool = True):
             super().__init__(adapter)
             self.implicit_ln_thaw = implicit_ln_thaw
-            self._tl_to_canonical_mapping: Optional[Dict[str, List[str]]] = None
-            self._canonical_to_tl_mapping: Optional[Dict[str, str]] = None
-            self._unmapped_canonical_params: Optional[set] = None
+            self._tl_to_canonical_mapping: dict[str, list[str]] | None = None
+            self._canonical_to_tl_mapping: dict[str, str] | None = None
+            self._unmapped_canonical_params: set | None = None
 
         def build_param_mapping(self) -> None:
             """Build bidirectional parameter name mappings using component structure tracing.
@@ -617,7 +617,7 @@ if _FTS_AVAILABLE:
             canonical_params = dict(self.pl_module.named_parameters())
 
             # Build index of canonical params by data_ptr for efficient lookup
-            canonical_by_ptr: Dict[int, List[str]] = {}
+            canonical_by_ptr: dict[int, list[str]] = {}
             for name, tensor in canonical_params.items():
                 ptr = tensor.data_ptr()
                 if ptr not in canonical_by_ptr:
@@ -676,7 +676,7 @@ if _FTS_AVAILABLE:
                 f"{sum(len(v) for v in self._tl_to_canonical_mapping.values())} canonical parameters"
             )
 
-        def transform_to_canonical(self, param_names: List[str], inspect_only: bool = False) -> List[str]:
+        def transform_to_canonical(self, param_names: list[str], inspect_only: bool = False) -> list[str]:
             """Transform TL-style parameter names to canonical names for optimizer.
 
             If implicit_ln_thaw=True, this method also appends LayerNorm parameters
@@ -730,7 +730,7 @@ if _FTS_AVAILABLE:
 
             return canonical_params
 
-        def transform_from_canonical(self, param_names: List[str]) -> List[str]:
+        def transform_from_canonical(self, param_names: list[str]) -> list[str]:
             """Translate canonical parameter names to TL-style names.
 
             Args:
@@ -764,17 +764,17 @@ if _FTS_AVAILABLE:
 
             return unique_tl_params
 
-        def get_named_params(self) -> Dict[str, torch.Tensor]:
+        def get_named_params(self) -> dict[str, torch.Tensor]:
             """Get named parameters for schedule validation.
 
             Returns TL-style parameter names from the TransformerBridge.
 
             Returns:
-                Dict[str, torch.Tensor]: A dictionary mapping TL-style names to parameter tensors.
+                dict[str, torch.Tensor]: A dictionary mapping TL-style names to parameter tensors.
             """
             return dict(self.pl_module.model.tl_named_parameters())  # type: ignore[attr-defined]
 
-        def gen_schedule(self, dump_loc: Union[str, os.PathLike]) -> Optional[os.PathLike]:
+        def gen_schedule(self, dump_loc: str | os.PathLike) -> os.PathLike | None:
             """Generate fine-tuning schedule using TL-style parameter names.
 
             Generates schedule with clean TL-style names (e.g., blocks.9.attn.W_Q).
@@ -791,8 +791,8 @@ if _FTS_AVAILABLE:
             rank_zero_debug("TLNamesModelView.gen_schedule() called")
             rank_zero_info(f"Generating TL-style fine-tuning schedule for {self.pl_module.__class__.__name__}")
 
-            param_lists: List = []
-            cur_group: List = []
+            param_lists: list = []
+            cur_group: list = []
 
             # Use TL-style parameter names
             model_params = list(self.pl_module.model.tl_named_parameters())[::-1]  # type: ignore[attr-defined]
@@ -818,7 +818,7 @@ if _FTS_AVAILABLE:
             assert dump_loc is not None
             return ScheduleImplMixin.save_schedule(schedule_name, layer_config, dump_loc)
 
-        def validate_schedule(self) -> Tuple[int, int]:
+        def validate_schedule(self) -> tuple[int, int]:
             """Validate the fine-tuning schedule with TL-style parameter mapping diagnostics.
 
             Logs diagnostic information about the parameter mappings before delegating
@@ -826,7 +826,7 @@ if _FTS_AVAILABLE:
             which canonical LayerNorm params are unmapped.
 
             Returns:
-                Tuple[int, int]: A tuple of ints specifying:
+                tuple[int, int]: A tuple of ints specifying:
                     1. The depth of the final scheduled phase
                     2. The maximum epoch watermark explicitly specified in the schedule
             """
@@ -863,7 +863,7 @@ if _FTS_AVAILABLE:
 
         # Private helper methods for component structure tracing
 
-        def _get_underlying_component_tensor(self, tl_name: str, bridge: Any) -> Optional[torch.Tensor]:
+        def _get_underlying_component_tensor(self, tl_name: str, bridge: Any) -> torch.Tensor | None:
             """Get the underlying component tensor for a TL-style parameter name.
 
             Maps TL names like 'blocks.0.attn.W_Q' to the actual component tensor
@@ -921,7 +921,7 @@ if _FTS_AVAILABLE:
 
             return None
 
-        def _get_attn_component_tensor(self, attn: Any, param_name: str) -> Optional[torch.Tensor]:
+        def _get_attn_component_tensor(self, attn: Any, param_name: str) -> torch.Tensor | None:
             """Get attention component tensor.
 
             Maps TL attention param names to underlying component tensors:
@@ -952,7 +952,7 @@ if _FTS_AVAILABLE:
 
             return None
 
-        def _get_mlp_component_tensor(self, mlp: Any, param_name: str) -> Optional[torch.Tensor]:
+        def _get_mlp_component_tensor(self, mlp: Any, param_name: str) -> torch.Tensor | None:
             """Get MLP component tensor.
 
             Maps TL MLP param names to underlying component tensors:
@@ -983,7 +983,7 @@ if _FTS_AVAILABLE:
 
             return None
 
-        def _get_ln_component_tensor(self, ln: Any, param_name: str) -> Optional[torch.Tensor]:
+        def _get_ln_component_tensor(self, ln: Any, param_name: str) -> torch.Tensor | None:
             """Get LayerNorm/RMSNorm component tensor.
 
             Maps TL LayerNorm param names to underlying component tensors:
@@ -997,7 +997,7 @@ if _FTS_AVAILABLE:
 
             return None
 
-        def _get_implicit_layernorm_params(self, tl_param_names: List[str]) -> List[str]:
+        def _get_implicit_layernorm_params(self, tl_param_names: list[str]) -> list[str]:
             """Get implicit LayerNorm canonical params for the layers referenced by TL params.
 
             TL-style nomenclature doesn't include LayerNorm parameters, but canonical training
@@ -1020,7 +1020,7 @@ if _FTS_AVAILABLE:
             if not self._unmapped_canonical_params:
                 return []
 
-            implicit_ln_params: List[str] = []
+            implicit_ln_params: list[str] = []
             layer_indices_seen: set = set()
             has_embed_params = False
 

@@ -1,7 +1,7 @@
 """Dispatcher for analysis operations."""
 
 from __future__ import annotations
-from typing import Optional, Dict, NamedTuple, List, Tuple, Iterator, Callable, Union, Any
+from typing import Dict, NamedTuple, Iterator, Callable, Any
 from pathlib import Path
 from functools import wraps
 from collections import defaultdict
@@ -48,7 +48,7 @@ class AnalysisOpDispatcher:
     # TODO:
     #  - decide whether to make the dispatcher a singleton or not
     #  - decide whether to make the dispatcher thread-safe
-    def __init__(self, yaml_paths: Optional[Union[Path, List[Path]]] = None, enable_hub_ops: bool = True):
+    def __init__(self, yaml_paths: Path | list[Path] | None = None, enable_hub_ops: bool = True):
         # Initialize yaml_paths
         self.yaml_paths = [Path(p.strip()) for p in IT_ANALYSIS_OP_PATHS]  # Start with op_paths
 
@@ -67,7 +67,7 @@ class AnalysisOpDispatcher:
                 )
 
         self.enable_hub_ops = enable_hub_ops
-        self._op_definitions: Dict[str, OpDef] = {}
+        self._op_definitions: dict[str, OpDef] = {}
         self._dispatch_table = {}  # {op_name: {context: instantiated_op}}
         self._aliases = {}  # {alias: op_name}
         self._op_to_aliases = defaultdict(list)  # {op_name: [aliases]}
@@ -85,7 +85,7 @@ class AnalysisOpDispatcher:
         # Normalize operation names for consistent lookup (case-insensitive, cross-platform)
         return name.replace("/", ".").replace("-", "_").lower()
 
-    def _discover_yaml_files(self, paths: List[Path]) -> List[Path]:
+    def _discover_yaml_files(self, paths: list[Path]) -> list[Path]:
         """Discover all YAML files from the given paths (files or directories)."""
         yaml_files = []
         for path in paths:
@@ -147,7 +147,7 @@ class AnalysisOpDispatcher:
         finally:
             self._loading_in_progress = False
 
-    def _load_from_yaml_and_compile(self, yaml_files: List[Path]):
+    def _load_from_yaml_and_compile(self, yaml_files: list[Path]):
         """Load from YAML files and compile to cache."""
         # Load and merge all YAML files
         raw_definitions = {}
@@ -215,7 +215,7 @@ class AnalysisOpDispatcher:
 
         self._loaded = True
 
-    def _compile_required_ops_schemas(self, definitions_to_compile: Dict[str, Dict]):
+    def _compile_required_ops_schemas(self, definitions_to_compile: dict[str, Dict]):
         """Compile schemas by recursively including required_ops dependencies."""
         from interpretune.analysis.ops.compiler.schema_compiler import compile_op_schema
 
@@ -232,7 +232,7 @@ class AnalysisOpDispatcher:
                 # Remove the operation if it fails to compile
                 definitions_to_compile.pop(op_name, None)
 
-    def _convert_raw_definitions_to_opdefs(self, raw_definitions: Dict[str, Dict]):
+    def _convert_raw_definitions_to_opdefs(self, raw_definitions: dict[str, Dict]):
         """Convert raw dictionary definitions to OpDef objects."""
         for op_name, op_def in raw_definitions.items():
             op_name = self._normalize_op_name(op_name)
@@ -258,7 +258,7 @@ class AnalysisOpDispatcher:
 
             self._op_definitions[op_name] = op_def_obj
 
-    def _apply_hub_namespacing(self, yaml_content: Dict[str, Any], yaml_file: Path) -> Dict[str, Any]:
+    def _apply_hub_namespacing(self, yaml_content: dict[str, Any], yaml_file: Path) -> dict[str, Any]:
         """Apply hub namespacing to operations from hub files."""
         rank_zero_debug(f"[DISPATCHER] Processing yaml_file: {yaml_file}")
 
@@ -360,7 +360,7 @@ class AnalysisOpDispatcher:
                             self._op_to_aliases[op_name_norm].append(alias_norm)
 
     @_ensure_loaded
-    def list_operations(self) -> List[str]:
+    def list_operations(self) -> list[str]:
         """Get a list of all available operation names.
 
         Returns:
@@ -370,7 +370,7 @@ class AnalysisOpDispatcher:
 
     @property
     @_ensure_loaded
-    def registered_ops(self) -> Dict[str, OpDef]:
+    def registered_ops(self) -> dict[str, OpDef]:
         """Get all registered operation definitions without instantiating them."""
         # TODO: return a generator here instead of a dict? May be better to provide a separate method for that
         return {name: op_def for name, op_def in self._op_definitions.items()}
@@ -384,12 +384,12 @@ class AnalysisOpDispatcher:
         return self._op_to_aliases[op_name]
 
     @_ensure_loaded
-    def get_all_aliases(self) -> Iterator[Tuple[str, str]]:
+    def get_all_aliases(self) -> Iterator[tuple[str, str]]:
         """Get all registered operation aliases."""
         for alias, op_name in self._aliases.items():
             yield (alias, op_name)
 
-    def _resolve_name_safe(self, op_name: str, visited: Optional[set] = None) -> str:
+    def _resolve_name_safe(self, op_name: str, visited: set | None = None) -> str:
         """Safely resolve names with cycle detection."""
         if visited is None:
             visited = set()
@@ -516,7 +516,7 @@ class AnalysisOpDispatcher:
         return implementation
 
     @staticmethod
-    def _function_param_from_hub_module(param_path: str, implementation: Callable) -> Optional[Callable]:
+    def _function_param_from_hub_module(param_path: str, implementation: Callable) -> Callable | None:
         # Try to use the dynamically loaded module if module names match
         func_name = param_path.rsplit(".", 1)[-1]
         param_module = param_path.rsplit(".", 1)[0]
@@ -611,9 +611,7 @@ class AnalysisOpDispatcher:
         return OpSchema(result)
 
     @_ensure_loaded
-    def get_op(
-        self, op_name: str, context: Optional[DispatchContext] = None, lazy: bool = False
-    ) -> AnalysisOp | Callable:
+    def get_op(self, op_name: str, context: DispatchContext | None = None, lazy: bool = False) -> AnalysisOp | Callable:
         """Get an operation by name, optionally instantiating it if needed.
 
         Args:
@@ -704,7 +702,7 @@ class AnalysisOpDispatcher:
             return result
 
     @_ensure_loaded
-    def instantiate_all_ops(self) -> Dict[str, AnalysisOp]:
+    def instantiate_all_ops(self) -> dict[str, AnalysisOp]:
         """Get all operations as instantiated AnalysisOp objects."""
         instantiated_ops = {}
 
@@ -726,7 +724,7 @@ class AnalysisOpDispatcher:
 
     @_ensure_loaded
     def compile_ops(
-        self, op_names: str | List[str | AnalysisOp], name: Optional[str] = None, aliases: Optional[List[str]] = None
+        self, op_names: str | list[str | AnalysisOp], name: str | None = None, aliases: list[str] | None = None
     ) -> CompositeAnalysisOp:
         """Create a composition of operations from a list of operation names."""
         # See NOTE [Composition and Compilation Limitations]
@@ -758,10 +756,10 @@ class AnalysisOpDispatcher:
     def __call__(
         self,
         op_name: str,
-        module: Optional[torch.nn.Module] = None,
-        analysis_batch: Optional[BaseAnalysisBatchProtocol] = None,
-        batch: Optional[BatchEncoding] = None,
-        batch_idx: Optional[int] = None,
+        module: torch.nn.Module | None = None,
+        analysis_batch: BaseAnalysisBatchProtocol | None = None,
+        batch: BatchEncoding | None = None,
+        batch_idx: int | None = None,
     ) -> BaseAnalysisBatchProtocol:
         """Call an operation by name."""
         # Support for dot-separated operation names (creating compositions on-demand)

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Union, Optional
+from typing import Any
 import torch
 import numpy as np
 from datasets.formatting import TorchFormatter
@@ -23,7 +23,7 @@ class OpSchemaExt:
         self._field_context = []
 
     @contextmanager
-    def field_context(self, field_info: Union[tuple[Optional[str], dict], Optional[str]]):
+    def field_context(self, field_info: tuple[str | None, dict] | str | None):
         """Context manager to track the current field being processed."""
         if isinstance(field_info, str) or field_info is None:
             field_name = field_info
@@ -35,13 +35,13 @@ class OpSchemaExt:
         finally:
             self._field_context.pop()
 
-    def is_field_non_tensor(self, field_name: Optional[str]) -> bool:
+    def is_field_non_tensor(self, field_name: str | None) -> bool:
         """Check if current field or any parent field in context is marked as non-tensor."""
         if field_name is not None and field_name in self.non_tensor_fields:
             return True
         return any(context[0] in self.non_tensor_fields for context in self._field_context if context[0] is not None)
 
-    def is_field_per_latent(self, field_name: Optional[str]) -> bool:
+    def is_field_per_latent(self, field_name: str | None) -> bool:
         """Check if current field or any parent field in context is marked as per_latent."""
         if field_name is not None and field_name in self.per_latent_fields:
             return True
@@ -58,7 +58,7 @@ class OpSchemaExt:
                 return {int(k): tensorize_fn(v) for k, v in zip(latents, per_latent_values)}
         return value
 
-    def apply_dynamic_dimension(self, tensor: torch.Tensor, field_name: Optional[str]) -> torch.Tensor:
+    def apply_dynamic_dimension(self, tensor: torch.Tensor, field_name: str | None) -> torch.Tensor:
         """Apply dynamic dimension transformation if configured."""
         dyn_dim = self.dyn_dims.get(field_name)
         curr_tensor_dim = tensor.dim()
@@ -91,7 +91,7 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
         col_cfg = format_kwargs.pop("col_cfg", {})
         super().__init__(col_cfg=col_cfg, features=features, **format_kwargs)
 
-    def _tensorize(self, value: Any, field_name: Optional[str] = None) -> Any:
+    def _tensorize(self, value: Any, field_name: str | None = None) -> Any:
         """Enhanced tensorization with support for non-tensor fields, per-latent transformations and non-zero
         dynamic dimensions."""
         if isinstance(value, (str, bytes, type(None))):
@@ -145,7 +145,7 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
         current_field = self._field_context[-1][0] if self._field_context else None
         return self._tensorize(data_struct, current_field)
 
-    # TODO: validate that we don't want to allow Union[torch.Tensor, Sequence] return type
+    # TODO: validate that we don't want to allow torch.Tensor | Sequence return type
     def format_column(self, pa_table: "pa.Table") -> torch.Tensor:  # type: ignore[override]
         """Format a column with enhanced tensorization."""
         column = self.numpy_arrow_extractor().extract_column(pa_table)

@@ -12,7 +12,7 @@ import shutil
 import filecmp
 from pathlib import Path
 from types import ModuleType
-from typing import Callable, Optional, Union, List, Set
+from typing import Callable
 
 from huggingface_hub import try_to_load_from_cache
 from transformers.dynamic_module_utils import get_relative_import_files, check_imports
@@ -22,7 +22,7 @@ from interpretune.analysis import IT_MODULES_CACHE, IT_DYNAMIC_MODULE_NAME
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 
 # Track paths we've added to sys.path to avoid duplicates
-_added_op_paths: Set[str] = set()
+_added_op_paths: set[str] = set()
 
 logger = logging.get_logger(__name__)
 _IT_REMOTE_CODE_LOCK = threading.Lock()
@@ -48,7 +48,7 @@ def init_it_modules() -> None:
         importlib.invalidate_caches()
 
 
-def create_dynamic_module_it(name: Union[str, os.PathLike]) -> None:
+def create_dynamic_module_it(name: str | os.PathLike) -> None:
     """Creates a dynamic module in the interpretune cache directory for modules.
 
     Args:
@@ -70,7 +70,7 @@ def create_dynamic_module_it(name: Union[str, os.PathLike]) -> None:
 
 def get_function_in_module(
     function_name: str,
-    module_path: Union[str, os.PathLike],
+    module_path: str | os.PathLike,
     *,
     force_reload: bool = False,
 ) -> Callable:
@@ -96,7 +96,7 @@ def get_function_in_module(
         if force_reload:
             sys.modules.pop(name, None)
             importlib.invalidate_caches()
-        cached_module: Optional[ModuleType] = sys.modules.get(name)
+        cached_module: ModuleType | None = sys.modules.get(name)
         module_spec = importlib.util.spec_from_file_location(name, location=module_file)
         if module_spec is None:
             raise ImportError(f"Could not create module spec for {name} from {module_file}")
@@ -122,17 +122,17 @@ def get_function_in_module(
 
 
 def get_cached_module_file_it(
-    op_repo_name_or_path: Union[str, os.PathLike],
+    op_repo_name_or_path: str | os.PathLike,
     module_file: str,
-    cache_dir: Optional[Union[str, os.PathLike]] = None,
+    cache_dir: str | os.PathLike | None = None,
     force_download: bool = False,
-    resume_download: Optional[bool] = None,
-    proxies: Optional[dict[str, str]] = None,
-    token: Optional[Union[bool, str]] = None,
-    revision: Optional[str] = None,
+    resume_download: bool | None = None,
+    proxies: dict[str, str] | None = None,
+    token: bool | str | None = None,
+    revision: str | None = None,
     local_files_only: bool = False,
-    repo_type: Optional[str] = None,
-    _commit_hash: Optional[str] = None,
+    repo_type: str | None = None,
+    _commit_hash: str | None = None,
     **deprecated_kwargs,
 ) -> str:
     """Downloads a module from a local folder or a distant repo and returns its path inside the cached interpretune
@@ -155,7 +155,7 @@ def get_cached_module_file_it(
             exist.
         resume_download:
             Deprecated and ignored. All downloads are now resumed by default when possible.
-        proxies (`Dict[str, str]`, *optional*):
+        proxies (`dict[str, str]`, *optional*):
             A dictionary of proxy servers to use by protocol or endpoint.
         token (`str` or *bool*, *optional*):
             The token to use as HTTP bearer authorization for remote files.
@@ -298,16 +298,16 @@ def get_cached_module_file_it(
 
 def get_function_from_dynamic_module(
     function_reference: str,
-    op_repo_name_or_path: Union[str, os.PathLike],
-    cache_dir: Optional[Union[str, os.PathLike]] = None,
+    op_repo_name_or_path: str | os.PathLike,
+    cache_dir: str | os.PathLike | None = None,
     force_download: bool = False,
-    resume_download: Optional[bool] = None,
-    proxies: Optional[dict[str, str]] = None,
-    token: Optional[Union[bool, str]] = None,
-    revision: Optional[str] = None,
+    resume_download: bool | None = None,
+    proxies: dict[str, str] | None = None,
+    token: bool | str | None = None,
+    revision: str | None = None,
     local_files_only: bool = False,
-    repo_type: Optional[str] = None,
-    code_revision: Optional[str] = None,
+    repo_type: str | None = None,
+    code_revision: str | None = None,
     **kwargs,
 ) -> Callable:
     """Extracts a function from a module file, present in the local folder or repository of an operations repo.
@@ -337,7 +337,7 @@ def get_function_from_dynamic_module(
             exist.
         resume_download:
             Deprecated and ignored. All downloads are now resumed by default when possible.
-        proxies (`Dict[str, str]`, *optional*):
+        proxies (`dict[str, str]`, *optional*):
             A dictionary of proxy servers to use by protocol or endpoint.
         token (`str` or `bool`, *optional*):
             The token to use as HTTP bearer authorization for remote files.
@@ -419,7 +419,7 @@ def get_function_from_dynamic_module(
     return get_function_in_module(function_name, final_module, force_reload=force_download)
 
 
-def ensure_op_paths_in_syspath(op_paths: List[Union[str, Path]]) -> None:
+def ensure_op_paths_in_syspath(op_paths: list[str | Path]) -> None:
     """Ensure all operation paths are in sys.path for module discovery.
 
     Args:
@@ -459,7 +459,7 @@ def ensure_op_paths_in_syspath(op_paths: List[Union[str, Path]]) -> None:
             _added_op_paths.add(path_str_resolved)
 
 
-def remove_op_paths_from_syspath(op_paths: List[Union[str, Path]]) -> None:
+def remove_op_paths_from_syspath(op_paths: list[str | Path]) -> None:
     """Remove operation paths from sys.path.
 
     Args:
@@ -503,7 +503,7 @@ def cleanup_op_paths() -> None:
     _added_op_paths.clear()
 
 
-def get_added_op_paths() -> Set[str]:
+def get_added_op_paths() -> set[str]:
     """Get the set of operation paths we've added to sys.path.
 
     Returns:

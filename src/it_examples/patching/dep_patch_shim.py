@@ -2,7 +2,7 @@ import operator
 import sys
 import os
 from enum import Enum
-from typing import NamedTuple, Tuple, Callable
+from typing import NamedTuple, Callable
 from it_examples.patching._patch_utils import lwt_compare_version
 
 
@@ -18,7 +18,7 @@ class DependencyPatch(NamedTuple):
     must default) to '1'
     """
 
-    condition: Tuple[Callable]  # typically a tuple of `lwt_compare_version` to define version dependency
+    condition: tuple[Callable]  # typically a tuple of `lwt_compare_version` to define version dependency
     env_flag: OSEnvToggle  # a tuple defining the environment variable based condition and its default if not set
     function: Callable
     patched_package: str

@@ -1,4 +1,4 @@
-from typing import Any, TypeVar, TypeAlias, Sequence, Optional
+from typing import Any, TypeVar, TypeAlias, Sequence
 from dataclasses import dataclass, field, fields, make_dataclass
 import inspect
 import logging
@@ -211,7 +211,7 @@ def issue_noncomposition_feedback(auto_comp_cfg, superclasses, subclasses):
 
 
 def issue_incomplete_composition_feedback(
-    auto_comp_cfg: AutoCompConfig, kwargs_not_in_target_type: dict, nonsubcls_mixins: Optional[tuple[type, ...]]
+    auto_comp_cfg: AutoCompConfig, kwargs_not_in_target_type: dict, nonsubcls_mixins: tuple[type, ...] | None
 ):
     no_auto_prefix = (
         f"Could not find an auto-composition for {auto_comp_cfg._orig_cfg_cls} that supports all of"

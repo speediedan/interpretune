@@ -38,7 +38,7 @@
 # BASE_DEBUG_CONFIG = IT_CONFIG_GLOBAL / "base_debug.yaml"
 # BASE_TL_CONFIG = IT_CONFIG_GLOBAL / "base_transformer_lens.yaml"
 
-# def gen_experiment_cfg_sets(test_keys: Sequence[Tuple[str, str, str, Optional[str], bool]]) -> Dict:
+# def gen_experiment_cfg_sets(test_keys: Sequence[tuple[str, str, str, str | None, bool]]) -> Dict:
 #     exp_cfg_sets = {}
 #     for exp, model, subexp, adapter_ctx, debug_mode in test_keys:
 #         base_model_cfg =  EXPERIMENTS_BASE / exp / f"{model}.yaml"

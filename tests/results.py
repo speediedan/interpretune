@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple, Union, Dict, NamedTuple
+from typing import List, Tuple, Dict, NamedTuple
 from collections import defaultdict
 from pathlib import Path
 import yaml
@@ -109,12 +109,12 @@ class MemProfResult(NamedTuple):
 
 
 class TestResult(NamedTuple):
-    result_alias: Optional[str] = None  # N.B. diff test aliases may map to the same result alias (e.g. parity tests)
-    exact_results: Optional[Dict] = None
-    close_results: Optional[Tuple] = None
-    mem_results: Optional[Dict] = None
-    tolerance_map: Optional[Dict[str, float]] = None
-    callback_results: Optional[Dict] = None
+    result_alias: str | None = None  # N.B. diff test aliases may map to the same result alias (e.g. parity tests)
+    exact_results: Dict | None = None
+    close_results: Tuple | None = None
+    mem_results: Dict | None = None
+    tolerance_map: dict[str, float] | None = None
+    callback_results: Dict | None = None
 
 
 def mem_results(results: Dict, test_alias: str):
@@ -129,7 +129,7 @@ def mem_results(results: Dict, test_alias: str):
     return {**tolerance_map, "expected_memstats": (step_key, expected_mem)}
 
 
-def close_results(close_map: Tuple, test_alias: Optional[str] = None):
+def close_results(close_map: Tuple, test_alias: str | None = None):
     """Result generation function that packages expected close results with a provided tolerance dict or generates
     a default one based upon the test_alias."""
     expected_close = defaultdict(dict)
@@ -141,25 +141,25 @@ def close_results(close_map: Tuple, test_alias: Optional[str] = None):
     return {**closestats_tol, "expected_close": expected_close}
 
 
-def exact_results(expected_exact: Tuple, test_alias: Optional[str] = None):
+def exact_results(expected_exact: Tuple, test_alias: str | None = None):
     """Result generation function that packages."""
     return {"expected_exact": expected_exact}
 
 
-def callback_results(callback_results: Dict, test_alias: Optional[str] = None):
+def callback_results(callback_results: Dict, test_alias: str | None = None):
     """Result generation function that packages."""
     return {"callback_results": callback_results}
 
 
 class DatasetState(NamedTuple):
     tokenizer_name: str
-    deterministic_token_ids: List[int]
+    deterministic_token_ids: list[int]
     expected_first_fwd_ids: List
 
 
 def def_results(
     device_type: str,
-    precision: Union[int, str],
+    precision: int | str,
     ds_cfg: str = "no_sample",
     task_name: str = default_test_task,
     tokenizer_cls_name: str = "GPT2TokenizerFast",
@@ -192,7 +192,7 @@ def parity_normalize(test_alias) -> str:
     return test_alias
 
 
-def collect_results(result_map: Dict[str, Tuple], test_alias: str, normalize: bool = True):
+def collect_results(result_map: dict[str, Tuple], test_alias: str, normalize: bool = True):
     if normalize:
         test_alias = parity_normalize(test_alias)
     test_result: TestResult = result_map[test_alias]

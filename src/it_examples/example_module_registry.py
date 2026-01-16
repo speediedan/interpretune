@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from functools import partial
 import threading
-from typing import Any, Union, Tuple, TYPE_CHECKING
+from typing import Any, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from interpretune.registry import ModuleRegistry
@@ -83,7 +83,7 @@ class LazyModuleRegistry:
 
         return registry
 
-    def get(self, target: Union[Tuple, str, Any], default: Any = None) -> Any:
+    def get(self, target: Tuple | str | Any, default: Any = None) -> Any:
         """Get item from registry, initializing if needed."""
         return self.registry.get(target, default)
 

@@ -14,7 +14,7 @@
 import os
 import logging
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Sequence
 from dataclasses import dataclass
 
 import torch
@@ -37,28 +37,28 @@ class TargetTokenAnalysis:
     """
 
     # Core token info - at least one of tokens or token_ids must be provided
-    tokens: Optional[List[str]] = None  # e.g., ['▁Dallas', '▁Austin']
-    token_ids: Optional["torch.Tensor"] = None  # e.g., tensor([26865, 22605])
+    tokens: list[str] | None = None  # e.g., ['▁Dallas', '▁Austin']
+    token_ids: torch.Tensor | None = None  # e.g., tensor([26865, 22605])
 
     # Optional tokenizer for conversion between tokens and token_ids
-    tokenizer: Optional[Any] = None  # Tokenizer handle for conversion
+    tokenizer: Any | None = None  # Tokenizer handle for conversion
 
     # Default device for tensor operations
-    default_device: Optional[str] = None  # e.g., 'cuda', 'cpu'
+    default_device: str | None = None  # e.g., 'cuda', 'cpu'
 
     # Activation matrix for feature conversion
-    act_matrix: Optional["torch.Tensor"] = None  # Activation matrix for nodes_to_features conversion
+    act_matrix: torch.Tensor | None = None  # Activation matrix for nodes_to_features conversion
 
     # Runtime-derived logit info (torch.Tensor for operations)
-    logit_indices: Optional["torch.Tensor"] = None  # e.g., tensor([0, 1]) - indices into logit arrays
-    logit_probabilities: Optional["torch.Tensor"] = None  # e.g., tensor([0.298, 0.456])
+    logit_indices: torch.Tensor | None = None  # e.g., tensor([0, 1]) - indices into logit arrays
+    logit_probabilities: torch.Tensor | None = None  # e.g., tensor([0.298, 0.456])
 
     # Edge matrix info (torch.Tensor for operations)
-    edge_matrix_indices: Optional["torch.Tensor"] = None  # e.g., tensor([7358, 8921]) - indices into edge_matrix
+    edge_matrix_indices: torch.Tensor | None = None  # e.g., tensor([7358, 8921]) - indices into edge_matrix
 
     # Optional additional analysis fields
-    top_init_edge_vals: Optional["torch.Tensor"] = None  # Shape: (n_tokens, k) - e.g., top 5 vals per token
-    top_init_edge_indices: Optional["torch.Tensor"] = None  # Shape: (n_tokens, k) - e.g., top 5 indices per token
+    top_init_edge_vals: torch.Tensor | None = None  # Shape: (n_tokens, k) - e.g., top 5 vals per token
+    top_init_edge_indices: torch.Tensor | None = None  # Shape: (n_tokens, k) - e.g., top 5 indices per token
 
     def __post_init__(self):
         """Validate and initialize fields."""
@@ -200,8 +200,8 @@ class TargetTokenAnalysis:
 
     def nodes_to_features(
         self,
-        target_nodes: Union[list[int], list[list[int]], "torch.Tensor"],
-        act_matrix: Optional["torch.Tensor"] = None,
+        target_nodes: list[int] | list[list[int]] | torch.Tensor,
+        act_matrix: torch.Tensor | None = None,
         feats_only: bool = False,
     ) -> Any:
         """Convert target nodes to feature tuples using the activation matrix.
@@ -294,7 +294,7 @@ class TargetTokenAnalysis:
                 return result_dict
 
 
-EnvVarSpec = Tuple[str, Union[str, Callable[[str], bool]]]
+EnvVarSpec = tuple[str, str | Callable[[str], bool]]
 
 
 def validate_env_vars(env_specs: Sequence[EnvVarSpec]) -> bool:
@@ -362,7 +362,7 @@ def required_os_env(env_path: str | Path | None = None, env_reqs: Sequence[EnvVa
     return True
 
 
-def collect_shapes(data: dict, local_vars: dict, var_inspects: Sequence[Union[str, VarAnnotate]]) -> dict:
+def collect_shapes(data: dict, local_vars: dict, var_inspects: Sequence[str | VarAnnotate]) -> dict:
     """Collect shape information from specified variables/attributes in local_vars context.
 
     Args:

@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # TODO: fill in this placeholder with actual core tests
-from typing import Optional, Callable, Sequence
+from typing import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
 
@@ -39,12 +39,12 @@ from tests.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS
 @dataclass(kw_only=True)
 class TLParityCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.transformer_lens)
-    model_src_key: Optional[str] = "cust"
+    model_src_key: str | None = "cust"
 
 
 @dataclass
 class TLParityTest(BaseAugTest):
-    result_gen: Optional[Callable] = partial(collect_results, tl_parity_results)
+    result_gen: Callable | None = partial(collect_results, tl_parity_results)
 
 
 PARITY_TL_CONFIGS = (
@@ -83,13 +83,13 @@ def test_parity_tl(recwarn, tmp_path, request, test_alias, test_cfg):
 
 @dataclass
 class ProfilingTest(BaseAugTest):
-    result_gen: Optional[Callable] = partial(collect_results, profiling_results)
+    result_gen: Callable | None = partial(collect_results, profiling_results)
 
 
 @dataclass(kw_only=True)
 class TLProfileCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.transformer_lens)
-    model_src_key: Optional[str] = "gpt2"
+    model_src_key: str | None = "gpt2"
 
 
 TL_PROFILING_CONFIGS = (

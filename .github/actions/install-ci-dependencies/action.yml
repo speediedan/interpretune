@@ -5,7 +5,7 @@ inputs:
   python_version:
     description: "Python version to use"
     required: false
-    default: "3.12"
+    default: "3.13"
   show_pip_list:
     description: "Whether to show package list output after installations"
     required: false

@@ -26,7 +26,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
 import warnings
 
 logger = logging.getLogger(__name__)
@@ -82,11 +81,11 @@ class PackageVersionManager:
         """
         self.package_name = package_name
         self.required_version = required_version
-        self.temp_dir: Optional[Path] = None
-        self.temp_site_packages: Optional[Path] = None
-        self._original_path_entry: Optional[str] = None
+        self.temp_dir: Path | None = None
+        self.temp_site_packages: Path | None = None
+        self._original_path_entry: str | None = None
 
-    def get_installed_version(self) -> Optional[str]:
+    def get_installed_version(self) -> str | None:
         """Get currently installed version of the package.
 
         Returns:

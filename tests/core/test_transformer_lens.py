@@ -2,7 +2,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import inspect
 import re
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict
 
 import pytest
 import torch
@@ -59,21 +59,21 @@ class ArchitectureExpectations:
     has_biases: bool = False
 
     # TL-style parameter suffixes expected per layer
-    expected_tl_attn_params: List[str] = field(default_factory=lambda: ["attn.W_Q", "attn.W_K", "attn.W_V", "attn.W_O"])
-    expected_tl_mlp_params: List[str] = field(default_factory=lambda: ["mlp.W_in", "mlp.W_out"])
-    expected_tl_embed_params: List[str] = field(default_factory=lambda: ["embed.W_E", "unembed.W_U"])
+    expected_tl_attn_params: list[str] = field(default_factory=lambda: ["attn.W_Q", "attn.W_K", "attn.W_V", "attn.W_O"])
+    expected_tl_mlp_params: list[str] = field(default_factory=lambda: ["mlp.W_in", "mlp.W_out"])
+    expected_tl_embed_params: list[str] = field(default_factory=lambda: ["embed.W_E", "unembed.W_U"])
 
     # Canonical naming patterns (regex) - architecture specific
     # These are used to validate bidirectional mapping
-    canonical_attn_pattern: Optional[str] = None
-    canonical_mlp_pattern: Optional[str] = None
-    canonical_embed_pattern: Optional[str] = None
+    canonical_attn_pattern: str | None = None
+    canonical_mlp_pattern: str | None = None
+    canonical_embed_pattern: str | None = None
 
     # Expected mapping counts for bidirectional validation
-    expected_mapped_tl_count: Optional[int] = None
+    expected_mapped_tl_count: int | None = None
     expected_unmapped_tl_count: int = 0  # All TL params should map
-    expected_mapped_canonical_count: Optional[int] = None
-    expected_unmapped_canonical_count: Optional[int] = None
+    expected_mapped_canonical_count: int | None = None
+    expected_unmapped_canonical_count: int | None = None
 
 
 # Pre-defined architecture expectations
@@ -527,12 +527,12 @@ class TestArchitectureParameterMapping:
     }
 
     @staticmethod
-    def get_tl_params_from_bridge(bridge) -> Dict[str, torch.Tensor]:
+    def get_tl_params_from_bridge(bridge) -> dict[str, torch.Tensor]:
         """Get TL-style parameters from a TransformerBridge instance."""
         return dict(bridge.tl_named_parameters())
 
     @staticmethod
-    def get_canonical_params_from_module(module) -> Dict[str, torch.Tensor]:
+    def get_canonical_params_from_module(module) -> dict[str, torch.Tensor]:
         """Get canonical parameters from a LightningModule."""
         return dict(module.named_parameters())
 
@@ -551,7 +551,7 @@ class TestArchitectureParameterMapping:
             return "other"
 
     @staticmethod
-    def validate_mapping_structure(tl_to_canonical: Dict, canonical_to_tl: Dict) -> Dict[str, Set[str]]:
+    def validate_mapping_structure(tl_to_canonical: Dict, canonical_to_tl: Dict) -> dict[str, set[str]]:
         """Validate the structure of bidirectional mappings.
 
         Returns:
@@ -617,7 +617,7 @@ class TestArchitectureParameterMapping:
 
     def _validate_tl_param_structure(
         self, bridge, module, arch_expectations: ArchitectureExpectations
-    ) -> Tuple[Dict, Dict]:
+    ) -> tuple[Dict, Dict]:
         """Verify TransformerBridge has expected TL-style parameter structure.
 
         Validates:
@@ -828,7 +828,6 @@ class TestCustomModelView:
         """Test that a simple custom ModelView can be successfully instantiated and used."""
         from interpretune.adapters.model_view import ModelView
         import os
-        from typing import Dict, List, Optional, Union
 
         # Define a simple custom ModelView that prefixes all param names
         class PrefixedModelView(ModelView):
@@ -842,21 +841,21 @@ class TestCustomModelView:
                 """No complex mapping needed for this simple test."""
                 pass
 
-            def transform_to_canonical(self, param_names: List[str], inspect_only: bool = False) -> List[str]:
+            def transform_to_canonical(self, param_names: list[str], inspect_only: bool = False) -> list[str]:
                 """Strip custom prefix to get canonical names."""
                 return [
                     name.replace(self.prefix, "", 1) if name.startswith(self.prefix) else name for name in param_names
                 ]
 
-            def transform_from_canonical(self, param_names: List[str]) -> List[str]:
+            def transform_from_canonical(self, param_names: list[str]) -> list[str]:
                 """Add custom prefix to canonical names."""
                 return [f"{self.prefix}{name}" for name in param_names]
 
-            def get_named_params(self) -> Dict[str, torch.Tensor]:
+            def get_named_params(self) -> dict[str, torch.Tensor]:
                 """Get params with custom prefix."""
                 return {f"{self.prefix}{name}": param for name, param in self.pl_module.named_parameters()}
 
-            def gen_schedule(self, dump_loc: Union[str, os.PathLike]) -> Optional[os.PathLike]:
+            def gen_schedule(self, dump_loc: str | os.PathLike) -> os.PathLike | None:
                 """Not tested in this simple test."""
                 return None
 

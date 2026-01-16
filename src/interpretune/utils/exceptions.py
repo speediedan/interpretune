@@ -6,7 +6,7 @@ import inspect
 import tempfile
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, Optional, Union, Sequence
+from typing import Any, Sequence
 
 log = logging.getLogger(__name__)
 
@@ -20,9 +20,9 @@ class MisconfigurationException(Exception):
 
 def handle_exception_with_debug_dump(
     e: Exception,
-    context_data: Union[Dict[str, Any], Sequence[Any]],
+    context_data: dict[str, Any] | Sequence[Any],
     operation_name: str = "operation",
-    debug_dir_override: Optional[Union[str, Path]] = None,
+    debug_dir_override: str | Path | None = None,
 ) -> None:
     """Handle an exception by creating a detailed debug dump file and re-raising the exception.
 
@@ -46,7 +46,7 @@ def handle_exception_with_debug_dump(
     dump_file = debug_dir / f"{operation_name}_error_{timestamp}.json"
 
     # Add exception information to debug data
-    debug_info: Dict[str, Any] = {
+    debug_info: dict[str, Any] = {
         "error": str(e),
         "traceback": traceback.format_exc(),
     }
@@ -114,7 +114,7 @@ def handle_exception_with_debug_dump(
     raise e
 
 
-def _introspect_variable(var: Any) -> Dict[str, Any]:
+def _introspect_variable(var: Any) -> dict[str, Any]:
     """Introspect a variable to create a detailed representation for debugging.
 
     Args:
@@ -123,7 +123,7 @@ def _introspect_variable(var: Any) -> Dict[str, Any]:
     Returns:
         A dictionary with detailed information about the variable
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "type": str(type(var).__name__),
     }
 

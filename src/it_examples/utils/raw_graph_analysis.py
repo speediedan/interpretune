@@ -1,6 +1,7 @@
+from __future__ import annotations
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import plotly.express as px
@@ -25,8 +26,8 @@ def get_topk_2nd_order_adjacency(
     limit_node: int,
     inspect_logit_idxs: torch.Tensor,
     n_logits: int = 10,
-    graph: Optional["Graph"] = None,
-    adjacency_matrix: Optional[torch.Tensor] = None,
+    graph: Graph | None = None,
+    adjacency_matrix: torch.Tensor | None = None,
     adj_matrix_name: str = "adjacency_matrix",
 ):
     """Returns the top-k 2nd order adjacency values and indices for non-error, non-logit nodes.
@@ -40,7 +41,7 @@ def get_topk_2nd_order_adjacency(
         adj_matrix_name (str): Name of the adjacency matrix attribute in graph.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: (topk_values, topk_indices), both of shape [n_rows, k, k]
+        tuple[torch.Tensor, torch.Tensor]: (topk_values, topk_indices), both of shape [n_rows, k, k]
     """
     if adjacency_matrix is None:
         if graph is None:
@@ -101,7 +102,7 @@ def tensor_distribution_summary_stats(tensor: torch.Tensor):
         tensor (torch.Tensor): shape (num_iterations, num_values)
 
     Returns:
-        List[dict]: List of dicts containing summary stats for each iteration.
+        list[dict]: List of dicts containing summary stats for each iteration.
     """
     stats = []
     for i in range(tensor.shape[0]):
@@ -123,7 +124,7 @@ def tensor_distribution_summary_stats(tensor: torch.Tensor):
 
 def plot_ridgeline_convergence(
     data: torch.Tensor,
-    stats: Optional[List[Dict[str, Any]]] = None,
+    stats: list[dict[str, Any]] | None = None,
     title: str = "Convergence Distribution Ridgeline Plot",
 ):
     """Plot ridgeline distributions for convergence data using Plotly.
@@ -314,8 +315,8 @@ def get_topk_edges_for_node_range(node_range: tuple, adjacency_matrix: torch.Ten
 
 def get_logit_indices_for_tokens(
     graph,
-    token_ids: Optional[torch.Tensor] = None,
-    token_strings: Optional[list] = None,
+    token_ids: torch.Tensor | None = None,
+    token_strings: list | None = None,
     tokenizer=None,
 ):
     """Given a tensor of token ids or a list of token strings (with tokenizer), return the corresponding indices in
@@ -424,7 +425,7 @@ def get_node_ids_for_adj_matrix_indices(adj_indices, node_mapping):
     """Returns the node_ids for all adjacency_matrix target nodes provided.
 
     Args:
-        adj_indices (Union[list, torch.Tensor]): Indices of nodes in the adjacency matrix.
+        adj_indices (list | torch.Tensor): Indices of nodes in the adjacency matrix.
         node_mapping (dict): Mapping from node index to node_id.
 
     Returns:
@@ -458,7 +459,7 @@ class RawGraphOverview:
     node_mapping: dict
     adj_matrix_target_logit_idxs: torch.Tensor
     target_logit_vec_idxs: torch.Tensor
-    extra: Optional[Dict[str, Any]] = None
+    extra: dict[str, Any] | None = None
 
     def node_ids_for(self, idxs):
         """Given indices (tensor or list), return corresponding node_ids using the node_mapping."""
@@ -483,12 +484,12 @@ class RawGraphOverview:
 def gen_raw_graph_overview(
     k: int,
     target_token_ids: torch.Tensor,
-    graph: Optional["Graph"] = None,
-    adjacency_matrix: Optional[torch.Tensor] = None,
+    graph: Graph | None = None,
+    adjacency_matrix: torch.Tensor | None = None,
     adj_matrix_name: str = "adjacency_matrix",
-    node_ranges: Optional[dict] = None,
-    node_mapping: Optional[dict] = None,
-    node_mask: Optional[torch.Tensor] = None,
+    node_ranges: dict | None = None,
+    node_mapping: dict | None = None,
+    node_mask: torch.Tensor | None = None,
 ):
     """Returns the top-k 2nd order adjacency values and indices for non-error, non-logit nodes, as well as the
     first order adjacency values and indices for the specified logit nodes. Also returns node_ranges, node_mapping,

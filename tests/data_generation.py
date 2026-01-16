@@ -9,7 +9,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Optional
 from functools import partial
 
 import torch
@@ -313,7 +312,7 @@ def gen_or_validate_input_data(
     input_data=None,
     num_batches=1,
     required_only=True,
-    override_req_cols: Optional[tuple] = None,
+    override_req_cols: tuple | None = None,
     predefined_indices=True,
 ):
     """Generate or validate input data based on an input schema.

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Tuple, Callable, Mapping, Type, Sequence
+from typing import Any, Dict, Callable, Mapping, Type, Sequence
 import os
 import importlib
 from dataclasses import dataclass, field
@@ -28,14 +28,14 @@ class ITMeta(type):
         component, input_cls, ctx = mcs._validate_build_ctx(kwargs)
         # TODO: add runtime checks for adherence to IT protocol here?
         composition_classes = mcs._map_composition_target(component, ctx)
-        new_bases: Tuple[type, ...] = (NamedWrapper, input_cls, *composition_classes)  # type: ignore[misc]
+        new_bases: tuple[type, ...] = (NamedWrapper, input_cls, *composition_classes)  # type: ignore[misc]
         built_class = super().__new__(mcs, name, new_bases, classdict)
         built_class._orig_module_name = input_cls.__qualname__  # type: ignore[attr-defined]  # dynamic attribute for session tracking
         built_class._composed_classes = composition_classes  # type: ignore[attr-defined]  # dynamic attribute for session tracking
         return built_class
 
     @staticmethod
-    def _validate_build_ctx(kwargs: Dict) -> Tuple[str, Callable, Tuple]:
+    def _validate_build_ctx(kwargs: dict) -> tuple[str, Callable, tuple]:
         required_kwargs = ("component", "input", "ctx")
         for kwarg in required_kwargs:
             if kwarg not in kwargs:
@@ -44,7 +44,7 @@ class ITMeta(type):
             raise ValueError(f"Specified component was {component}, should be either 'module' or 'datamodule'")
         if not callable(input := kwargs.get("input")):
             raise ValueError(f"Specified input {input} is not a callable, it should be the class to be enriched.")
-        if not isinstance(ctx := kwargs.get("ctx"), Tuple):
+        if not isinstance(ctx := kwargs.get("ctx"), tuple):
             raise ValueError(f"Specified ctx {ctx} must be a tuple specifying the desired class enrichment")
         return component, input, ctx
 
@@ -64,10 +64,10 @@ class ITMeta(type):
 class UnencapsulatedArgs(ITSerializableCfg):
     # Most use cases will encapsulate datamodule/module config by subclassing the relevant dataclasses for a given
     # experiment/application but we also allow unencapsulated args/kwargs to be passed to the datamodule and module
-    dm_args: Tuple = ()
-    dm_kwargs: Dict[str, Any] = field(default_factory=dict)
-    module_args: Tuple = ()
-    module_kwargs: Dict[str, Any] = field(default_factory=dict)
+    dm_args: tuple = ()
+    dm_kwargs: dict[str, Any] = field(default_factory=dict)
+    module_args: tuple = ()
+    module_kwargs: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(kw_only=True)
@@ -75,11 +75,11 @@ class ITSessionConfig(UnencapsulatedArgs):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     datamodule_cfg: ITDataModuleConfig
     module_cfg: ITConfig
-    shared_cfg: Optional[ITSharedConfig | Dict] = None
-    datamodule_cls: Optional[Type[DataModuleInitable] | str] = None
-    module_cls: Optional[Type[ModuleSteppable] | str] = None
-    datamodule: Optional[ITDataModuleProtocol] = None
-    module: Optional[ITModuleProtocol] = None
+    shared_cfg: ITSharedConfig | Dict | None = None
+    datamodule_cls: Type[DataModuleInitable] | str | None = None
+    module_cls: Type[ModuleSteppable] | str | None = None
+    datamodule: ITDataModuleProtocol | None = None
+    module: ITModuleProtocol | None = None
 
     def __post_init__(self):
         self.adapter_ctx = ADAPTER_REGISTRY.canonicalize_composition(self.adapter_ctx)
@@ -136,7 +136,7 @@ class ITSession(Mapping):
     def __len__(self):
         return len(self.to_dict())
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {self._ctx[0]: self.datamodule, self._ctx[1]: self.module}
 
     def __repr__(self) -> str:

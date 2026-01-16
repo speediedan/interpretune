@@ -1,4 +1,4 @@
-from typing import Optional, Literal, Dict, Any, TypeAlias, Tuple
+from typing import Literal, Any, TypeAlias
 from dataclasses import dataclass
 from functools import reduce
 
@@ -19,9 +19,9 @@ from interpretune.utils import _resolve_dtype, tl_invalid_dmap, rank_zero_warn, 
 class ITLensSharedConfig(ITSerializableCfg):
     """TransformerLens configuration shared across both `from_pretrained` and config based instantiation modes."""
 
-    move_to_device: Optional[bool] = True
-    default_padding_side: Optional[Literal["left", "right"]] = "right"
-    use_bridge: Optional[bool] = True  # Use TransformerBridge (v3) by default, set False for legacy HookedTransformer
+    move_to_device: bool | None = True
+    default_padding_side: Literal["left", "right"] | None = "right"
+    use_bridge: bool | None = True  # Use TransformerBridge (v3) by default, set False for legacy HookedTransformer
 
 
 @dataclass(kw_only=True)
@@ -71,18 +71,18 @@ class ITLensBridgeConfig(ITLensSharedConfig):
     # The model name/path for TransformerBridge - IT handles HF model instantiation via model_name_or_path
     model_name: str = "gpt2-small"
     # Optional kwargs to pass to TransformerBridgeConfig constructor
-    transformer_bridge_config_overrides: Optional[Dict[str, Any]] = None
+    transformer_bridge_config_overrides: dict[str, Any] | None = None
     # Whether to call enable_compatibility_mode on the bridge after instantiation
     # N.B.: See transformer_lens/model_bridge/bridge.py for details, among other things, this mode:
     # 1. Breaks weight tying between embed and unembed to allow separate unembed centering
     # 2. Extracts q/k/v from joint qkv matrices for compatibility with HookedTransformer parameterizations
     enable_compatibility_mode: bool = False
     # Optional kwargs for enable_compatibility_mode()
-    enable_compatibility_mode_kwargs: Optional[Dict[str, Any]] = None
+    enable_compatibility_mode_kwargs: dict[str, Any] | None = None
     # Bridge config defaults to using bridge
-    use_bridge: Optional[bool] = True
+    use_bridge: bool | None = True
     # Device is commonly set, so we provide a top-level field for convenience
-    device: Optional[str] = None
+    device: str | None = None
     # Dtype is commonly set, so we provide a top-level field for convenience
     dtype: str = "float32"
 
@@ -101,21 +101,21 @@ class ITLensBridgeConfig(ITLensSharedConfig):
 @dataclass(kw_only=True)
 class ITLensFromPretrainedConfig(ITLensSharedConfig):
     model_name: str = "gpt2-small"
-    fold_ln: Optional[bool] = True
-    center_writing_weights: Optional[bool] = True
-    center_unembed: Optional[bool] = True
-    refactor_factored_attn_matrices: Optional[bool] = False
-    checkpoint_index: Optional[int] = None
-    checkpoint_value: Optional[int] = None
+    fold_ln: bool | None = True
+    center_writing_weights: bool | None = True
+    center_unembed: bool | None = True
+    refactor_factored_attn_matrices: bool | None = False
+    checkpoint_index: int | None = None
+    checkpoint_value: int | None = None
     # for pretrained cfg, IT handles the HF model instantiation via model_name or_path
-    hf_model: Optional[AutoModelForCausalLM | str] = None
+    hf_model: AutoModelForCausalLM | str | None = None
     # currently only annotating with str due to omegaconf container dumping limitations wrt torch.device
-    device: Optional[str] = None
-    n_devices: Optional[int] = 1
+    device: str | None = None
+    n_devices: int | None = 1
     # IT handles the tokenizer instantiation via either tokenizer, tokenizer_name or model_name_or_path
-    tokenizer: Optional[PreTrainedTokenizerBase] = None  # for pretrained cfg, IT instantiates the tokenizer
-    fold_value_biases: Optional[bool] = True
-    default_prepend_bos: Optional[bool] = True
+    tokenizer: PreTrainedTokenizerBase | None = None  # for pretrained cfg, IT instantiates the tokenizer
+    fold_value_biases: bool | None = True
+    default_prepend_bos: bool | None = True
     dtype: str = "float32"
 
     def __post_init__(self) -> None:
@@ -143,14 +143,14 @@ class ITLensCustomConfig(ITLensSharedConfig):
     Set `use_bridge=False` (default) or interpretune will force the value to False and warn.
     """
 
-    cfg: HookedTransformerConfig | Dict[str, Any]
+    cfg: HookedTransformerConfig | dict[str, Any]
     # When using a custom config, default to legacy HookedTransformer behavior to prevent
     # misconfiguration. If the user explicitly sets `use_bridge=True`, Interpretune will
     # warn and force it to False in `ITLensConfig.__post_init__`.
-    use_bridge: Optional[bool] = False
+    use_bridge: bool | None = False
 
     # IT handles the tokenizer instantiation via either tokenizer, tokenizer_name or model_name_or_path
-    # tokenizer: Optional[PreTrainedTokenizerBase] = None
+    # tokenizer: PreTrainedTokenizerBase | None = None
     def __post_init__(self) -> None:
         if not isinstance(self.cfg, HookedTransformerConfig):
             # ensure the user provided a valid dtype (should be handled by HookedTransformerConfig ideally)
@@ -160,7 +160,7 @@ class ITLensCustomConfig(ITLensSharedConfig):
 
 
 ITLensCfg: TypeAlias = ITLensFromPretrainedConfig | ITLensCustomConfig | ITLensBridgeConfig  # for static typing
-ITLensCfgTypes: Tuple[type, type, type] = (
+ITLensCfgTypes: tuple[type, type, type] = (
     ITLensFromPretrainedConfig,
     ITLensCustomConfig,
     ITLensBridgeConfig,
@@ -306,11 +306,11 @@ class ITLensConfig(ITConfig):
 @dataclass(kw_only=True)
 class TLensGenerationConfig(CoreGenerationConfig):
     stop_at_eos: bool = True
-    eos_token_id: Optional[int] = None
+    eos_token_id: int | None = None
     freq_penalty: float = 0.0
     use_past_kv_cache: bool = True
-    prepend_bos: Optional[bool] = None
-    padding_side: Optional[Literal["left", "right"]] = None
-    return_type: Optional[str] = "input"
-    output_logits: Optional[bool] = None
+    prepend_bos: bool | None = None
+    padding_side: Literal["left", "right"] | None = None
+    return_type: str | None = "input"
+    output_logits: bool | None = None
     verbose: bool = True

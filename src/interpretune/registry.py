@@ -1,5 +1,4 @@
 from typing import (
-    Optional,
     Any,
     Dict,
     Tuple,
@@ -61,11 +60,11 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
         phase: str,
         model_src_key: str,
         task_name: str,
-        adapter_combinations: Tuple[Adapter] | Tuple[Tuple[Adapter]],
+        adapter_combinations: tuple[Adapter] | tuple[tuple[Adapter]],
         reg_key: str,
         registered_cfg: RegisteredCfg,
-        cfg_dict: Optional[Dict[str, Any]] = None,
-        description: Optional[str] = None,
+        cfg_dict: dict[str, Any] | None = None,
+        description: str | None = None,
     ) -> None:
         """Registers valid component + adapter compositions mapped to composition keys with required metadata.
 
@@ -76,11 +75,11 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
             task_name:
             adapter_combination: tuple identifying the valid adapter composition
             reg_key: The canonical key of the test/example module.
-            registered_cfg: Tuple[Callable],
+            registered_cfg: tuple[Callable],
             description : composition description
             cfg_dict: optionally save original configuration dictionary
         """
-        supported_composition: Dict[str | Adapter | Tuple[Adapter | str], Any] = {}
+        supported_composition: dict[str | Adapter | tuple[Adapter | str], Any] = {}
         supported_composition[reg_key] = registered_cfg
         supported_composition["description"] = description if description is not None else ""
         supported_composition["cfg_dict"] = cfg_dict
@@ -102,7 +101,7 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
     def available_keys_feedback(self, target_key: str | Tuple) -> str:
         assert isinstance(target_key, (str, tuple)), "`target_key` must be either a str or a tuple"
         # Collect entries as (displayable_key, description) and sort by the displayable key
-        entries: List[Tuple[str, str]] = []
+        entries: list[tuple[str, str]] = []
         for key in self.keys():
             if not isinstance(key, type(target_key)):
                 continue
@@ -154,11 +153,11 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
             )
             raise KeyError(err_msg)
 
-    def remove(self, composition_key: Tuple[Adapter | str]) -> None:
+    def remove(self, composition_key: tuple[Adapter | str]) -> None:
         """Removes the registered adapter composition by name."""
         del self[composition_key]
 
-    def available_compositions(self, adapter_filter: Optional[Sequence[Adapter] | Adapter] = None) -> Set:
+    def available_compositions(self, adapter_filter: Sequence[Adapter] | Adapter | None = None) -> Set:
         """Returns a list of registered compositions, optionally filtering by an adapter or sequence of
         adapters."""
         if adapter_filter is not None:
@@ -175,12 +174,12 @@ MODULE_REGISTRY = ModuleRegistry()
 
 def instantiate_and_register(
     reg_key: str,
-    rv: Dict[str, Any],
-    datamodule_cls: Optional[Type[DataModuleInitable] | str] = None,
-    module_cls: Optional[Type[ModuleSteppable] | str] = None,
+    rv: dict[str, Any],
+    datamodule_cls: Type[DataModuleInitable] | str | None = None,
+    module_cls: Type[ModuleSteppable] | str | None = None,
     target_registry: ModuleRegistry = MODULE_REGISTRY,
-    itdm_cfg_defaults_fn: Optional[Callable] = None,
-    it_cfg_defaults_fn: Optional[Callable] = None,
+    itdm_cfg_defaults_fn: Callable | None = None,
+    it_cfg_defaults_fn: Callable | None = None,
 ) -> None:
     cfg_dict = deepcopy(rv)
     reg_info, shared_cfg, registered_cfg = rv["reg_info"], rv["shared_config"], rv["registered_cfg"]
@@ -262,7 +261,7 @@ def apply_defaults(cfg: ITConfig | ITDataModuleConfig, defaults: Dict, force_ove
             setattr(cfg, k, v)
 
 
-def itdm_cfg_factory(cfg: Dict, shared_config: Dict, defaults_func: Optional[Callable] = None):
+def itdm_cfg_factory(cfg: Dict, shared_config: Dict, defaults_func: Callable | None = None):
     prompt_cfg = cfg.get("prompt_cfg", {})
     # instantiate supported class_path refs
     # TODO: add path for specifying custom datamodule_cfg subclass when necessary
@@ -274,7 +273,7 @@ def itdm_cfg_factory(cfg: Dict, shared_config: Dict, defaults_func: Optional[Cal
     return instantiated_cfg
 
 
-def it_cfg_factory(cfg: Dict, shared_config: Optional[Dict] = None, defaults_func: Optional[Callable] = None):
+def it_cfg_factory(cfg: Dict, shared_config: Dict | None = None, defaults_func: Callable | None = None):
     if "class_path" in cfg:
         cfg["init_args"] = cfg["init_args"] | shared_config if "init_args" in cfg else shared_config
         instantiated_cfg = instantiate_nested(cfg)

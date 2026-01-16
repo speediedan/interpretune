@@ -1,4 +1,4 @@
-from typing import Optional, List, Any, Dict, Tuple, Union, cast
+from typing import List, Any, Dict, cast
 from dataclasses import dataclass, field
 from copy import deepcopy
 
@@ -17,10 +17,10 @@ from interpretune.protocol import ITModuleGenDebuggable
 @dataclass(kw_only=True)
 class DebugLMConfig(ITSerializableCfg):
     enabled: bool = False
-    debug_raw_preds: Optional[np.ndarray] = None
-    debug_raw_labels: Optional[np.ndarray] = None
-    debug_raw_sequences: Optional[List[str]] = None
-    raw_debug_sequences: List = field(default_factory=list)
+    debug_raw_preds: np.ndarray | None = None
+    debug_raw_labels: np.ndarray | None = None
+    debug_raw_sequences: list[str] | None = None
+    raw_debug_sequences: list = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if len(self.raw_debug_sequences) == 0 and self.enabled:
@@ -51,7 +51,7 @@ class DebugGeneration:
     # Derive standard output attributes from HF dataclass
     DEFAULT_OUTPUT_ATTRS = tuple(list(DEFAULT_OUTPUT_DATACLS.__annotations__.keys()))
     DEFAULT_MODEL_CONFIG_ATTRS = ("cfg", "config")
-    phandle: Optional[ITModuleGenDebuggable]
+    phandle: ITModuleGenDebuggable | None
 
     def __init__(
         self,
@@ -74,11 +74,11 @@ class DebugGeneration:
         assert isinstance(self.phandle, ITModuleGenDebuggable)
         return cast(ITModuleGenDebuggable, self.phandle)
 
-    def debug_sequences(self, sequences: Optional[Union[List, str]] = None) -> List:
+    def debug_sequences(self, sequences: List | str | None = None) -> List:
         """_summary_
 
         Args:
-            sequences (Optional[List], optional): _description_. Defaults to None.
+            sequences (List | None, optional): _description_. Defaults to None.
 
         Returns:
             List: _description_
@@ -98,11 +98,11 @@ class DebugGeneration:
             sequences = [sequences]
         return [f"{ex.strip()}" for ex in sequences]
 
-    def chat_debug_sequences(self, sequences: Optional[List] = None, format: Optional[str] = None) -> List:
+    def chat_debug_sequences(self, sequences: List | None = None, format: str | None = None) -> List:
         """_summary_
 
         Args:
-            sequences (Optional[List], optional): _description_. Defaults to None.
+            sequences (List | None, optional): _description_. Defaults to None.
 
         Returns:
             List: _description_
@@ -141,16 +141,16 @@ class DebugGeneration:
     def _debug_generate(
         self,
         inputs: List | torch.Tensor,
-        gen_kwargs_override: Optional[Dict] = None,
-        gen_config_override: Optional[Dict] = None,
-        gen_output_attr: Optional[str] = None,
+        gen_kwargs_override: Dict | None = None,
+        gen_config_override: Dict | None = None,
+        gen_output_attr: str | None = None,
     ) -> Any:
         """_summary_
 
         Args:
             inputs (_type_): _description_
-            gen_kwargs_override (Optional[Dict], optional): _description_. Defaults to None.
-            gen_output_attr (Optional[str], optional): Specific attribute on the model output to use for decoding
+            gen_kwargs_override (Dict | None, optional): _description_. Defaults to None.
+            gen_output_attr (str | None, optional): Specific attribute on the model output to use for decoding
                 (e.g., `sequences`). If None, DebugGeneration.DEFAULT_OUTPUT_ATTRS are used for validation.
                 If a raw `torch.Tensor` is returned by the model generate (e.g., HookedTransformer), the
                 DebugGeneration extension will normalize the result into a `transformers.utils.ModelOutput`
@@ -178,7 +178,7 @@ class DebugGeneration:
         outputs = ph.it_generate(inputs, **gen_kwargs)
         return self._normalize_output_to_model_output(outputs, gen_output_attr)
 
-    def _normalize_output_to_model_output(self, outputs: Any, gen_output_attr: Optional[str] = None) -> Any:
+    def _normalize_output_to_model_output(self, outputs: Any, gen_output_attr: str | None = None) -> Any:
         """Normalize outputs to a Hugging Face ModelOutput if required.
 
         - If the model returns a plain torch.Tensor (e.g. legacy HookedTransformer generate), and either
@@ -221,9 +221,9 @@ class DebugGeneration:
 
     def perplexity_on_sample(
         self,
-        corpus: Optional[Dataset | Dict] = None,
-        stride: Optional[int] = None,
-        limit_chars: Optional[int] = None,
+        corpus: Dataset | Dict | None = None,
+        stride: int | None = None,
+        limit_chars: int | None = None,
     ) -> torch.Tensor:
         ph = self._check_phandle()
 
@@ -238,7 +238,7 @@ class DebugGeneration:
         perplexity_kwargs = {"stride": stride} if stride else {}
         return self.naive_perplexity(encoded_corpus, **perplexity_kwargs)
 
-    def top1_token_accuracy_on_sample(self, sample: str) -> Tuple[float, List[str]]:
+    def top1_token_accuracy_on_sample(self, sample: str) -> tuple[float, list[str]]:
         ph = self._check_phandle()
 
         sample_input_ids = ph.datamodule.tokenizer.encode(sample)  # type: ignore[attr-defined]  # protocol provides datamodule
@@ -285,15 +285,15 @@ class DebugGeneration:
         return ppl
 
     def sanitize_gen_output(
-        self, outputs: Any, gen_output_attr: Optional[str] = None, decode_cfg_override: Optional[Dict] = None
-    ) -> Tuple[Any, Dict]:
+        self, outputs: Any, gen_output_attr: str | None = None, decode_cfg_override: Dict | None = None
+    ) -> tuple[Any, Dict]:
         decode_target = self.sanitize_model_output(outputs, gen_output_attr)
         decode_kwargs = deepcopy(DEFAULT_DECODE_KWARGS)
         if decode_cfg_override:
             decode_kwargs.update(decode_cfg_override)
         return decode_target, decode_kwargs
 
-    def sanitize_model_output(self, output: Any, gen_output_attr: Optional[str] = None) -> Any:
+    def sanitize_model_output(self, output: Any, gen_output_attr: str | None = None) -> Any:
         # TODO: revisit this logic after getting TL generate PR ready
         # For simplification, sanitization returns the requested attribute if
         # specified. Otherwise, return the output directly (e.g. raw tensor or
@@ -314,18 +314,18 @@ class DebugGeneration:
         return output
 
     @property
-    def model_input_names(self) -> List[str]:
+    def model_input_names(self) -> list[str]:
         ph = self._check_phandle()
         return ph.datamodule.tokenizer.model_input_names  # type: ignore[attr-defined]  # protocol provides datamodule
 
     def debug_generate_batch(
         self,
         sequences: List,
-        gen_output_attr: Optional[str] = None,
-        gen_config_override: Optional[Dict] = None,
-        gen_kwargs_override: Optional[Dict] = None,
-        decode_cfg_override: Optional[Dict] = None,
-    ) -> Tuple[List, List]:
+        gen_output_attr: str | None = None,
+        gen_config_override: Dict | None = None,
+        gen_kwargs_override: Dict | None = None,
+        decode_cfg_override: Dict | None = None,
+    ) -> tuple[List, List]:
         ph = self._check_phandle()
 
         test_input_ids = ph.datamodule.tokenizer.batch_encode_plus(sequences)  # type: ignore[attr-defined]  # protocol provides datamodule
@@ -352,11 +352,11 @@ class DebugGeneration:
     def debug_generate_serial(
         self,
         sequences: List,
-        gen_output_attr: Optional[str] = None,
-        gen_config_override: Optional[Dict] = None,
-        gen_kwargs_override: Optional[Dict] = None,
-        decode_cfg_override: Optional[Dict] = None,
-    ) -> Tuple[List, List]:
+        gen_output_attr: str | None = None,
+        gen_config_override: Dict | None = None,
+        gen_kwargs_override: Dict | None = None,
+        decode_cfg_override: Dict | None = None,
+    ) -> tuple[List, List]:
         ph = self._check_phandle()
 
         answers = []

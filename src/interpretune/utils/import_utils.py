@@ -1,4 +1,4 @@
-from typing import Any, Union, Optional, Dict, Tuple, Callable, List
+from typing import Any, Callable
 import importlib
 from functools import lru_cache
 from importlib.util import find_spec
@@ -11,7 +11,7 @@ from interpretune.utils import MisconfigurationException
 
 
 def instantiate_class(
-    init: Dict[str, Any], args: Optional[Union[Any, Tuple[Any, ...]]] = None, import_only: bool = False
+    init: dict[str, Any], args: Any | tuple[Any, ...] | None = None, import_only: bool = False
 ) -> Any:
     """Instantiates a class with the given args and init. Accepts class definitions with a "class_path".
 
@@ -49,7 +49,7 @@ def instantiate_class(
         return args_class(**kwargs) if not args else args_class(*args, **kwargs)
 
 
-def resolve_funcs(cfg_obj: Any, func_type: str) -> List[Callable[..., Any]]:
+def resolve_funcs(cfg_obj: Any, func_type: str) -> list[Callable[..., Any]]:
     resolved_funcs = []
     funcs_to_resolve = getattr(cfg_obj, func_type)
     if not isinstance(funcs_to_resolve, list):
@@ -74,7 +74,7 @@ def resolve_funcs(cfg_obj: Any, func_type: str) -> List[Callable[..., Any]]:
     return resolved_funcs
 
 
-def _resolve_dtype(dtype: Union[torch.dtype, str]) -> Optional[torch.dtype]:
+def _resolve_dtype(dtype: torch.dtype | str) -> torch.dtype | None:
     """Resolve a dtype which may be a torch.dtype or a string to a torch.dtype."""
     if isinstance(dtype, torch.dtype):
         return dtype
@@ -82,7 +82,7 @@ def _resolve_dtype(dtype: Union[torch.dtype, str]) -> Optional[torch.dtype]:
         return _str_to_dtype(dtype)
 
 
-def _str_to_dtype(str_dtype: str) -> Optional[torch.dtype]:
+def _str_to_dtype(str_dtype: str) -> torch.dtype | None:
     if hasattr(torch, str_dtype):
         return getattr(torch, str_dtype)
     elif hasattr(torch, str_dtype.split(".")[-1]):

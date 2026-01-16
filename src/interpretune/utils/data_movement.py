@@ -1,4 +1,4 @@
-from typing import Any, Union
+from typing import Any
 
 import torch
 
@@ -12,12 +12,10 @@ import torch
 # Data movement utils
 ################################################################################
 
-_DEVICE = Union[torch.device, str, int]
+_DEVICE = torch.device | str | int
 
 
-def to_device(
-    device: _DEVICE, obj: Union[torch.nn.Module, torch.Tensor, Any]
-) -> Union[torch.nn.Module, torch.Tensor, Any]:
+def to_device(device: _DEVICE, obj: torch.nn.Module | torch.Tensor | Any) -> torch.nn.Module | torch.Tensor | Any:
     r"""Move a :class:`torch.nn.Module` or a collection of tensors to the current device, if it is not already on
     that device.
 

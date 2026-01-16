@@ -11,7 +11,7 @@ import tempfile
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, cast
+from typing import Any, Mapping, cast
 
 import yaml
 
@@ -73,14 +73,14 @@ class AnalysisInjectionConfig:
     log_to_file: bool
     log_dir: str
     analysis_log_prefix: str
-    enabled_points: List[str]
-    file_hooks: Dict[str, FileHook]
-    target_package_version: Optional[str] = None
-    analysis_points_module_path: Optional[Path] = None
-    shared_context: Optional[Dict[str, Any]] = None
+    enabled_points: list[str]
+    file_hooks: dict[str, FileHook]
+    target_package_version: str | None = None
+    analysis_points_module_path: Path | None = None
+    shared_context: dict[str, Any] | None = None
 
 
-def merge_config_dict(base: Mapping[str, Any], override: Mapping[str, Any]) -> Dict[str, Any]:
+def merge_config_dict(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
     """Deep merge two configuration dictionaries.
 
     The merge strategy is:
@@ -94,7 +94,7 @@ def merge_config_dict(base: Mapping[str, Any], override: Mapping[str, Any]) -> D
             return _merge_file_hooks(base_value, override_value)
 
         if isinstance(base_value, Mapping) and isinstance(override_value, Mapping):
-            merged: Dict[str, Any] = {k: deepcopy(v) for k, v in base_value.items()}
+            merged: dict[str, Any] = {k: deepcopy(v) for k, v in base_value.items()}
             for child_key, child_value in override_value.items():
                 existing = merged.get(child_key)
                 if existing is not None:
@@ -108,9 +108,9 @@ def merge_config_dict(base: Mapping[str, Any], override: Mapping[str, Any]) -> D
 
     def _merge_file_hooks(
         base_hooks: Mapping[str, Any], override_hooks: Mapping[str, Any]
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         """Merge file_hooks with recursive merging by point_id."""
-        merged: Dict[str, Dict[str, Any]] = {k: deepcopy(v) for k, v in base_hooks.items()}
+        merged: dict[str, dict[str, Any]] = {k: deepcopy(v) for k, v in base_hooks.items()}
 
         for point_id, hook_config in override_hooks.items():
             if isinstance(hook_config, Mapping):
@@ -119,14 +119,14 @@ def merge_config_dict(base: Mapping[str, Any], override: Mapping[str, Any]) -> D
                     merged[point_id] = _merge(merged[point_id], hook_config)
                 else:
                     # New hook
-                    merged[point_id] = cast(Dict[str, Any], deepcopy(hook_config))
+                    merged[point_id] = cast(dict[str, Any], deepcopy(hook_config))
             else:
                 # Override completely
                 merged[point_id] = deepcopy(hook_config)
 
         return merged
 
-    merged_root: Dict[str, Any] = {k: deepcopy(v) for k, v in base.items()}
+    merged_root: dict[str, Any] = {k: deepcopy(v) for k, v in base.items()}
     for top_key, override_value in override.items():
         existing_value = merged_root.get(top_key)
         if existing_value is not None:
@@ -141,7 +141,7 @@ def parse_config_dict(raw_config: Mapping[str, Any], *, source_path: Path | None
 
     raw_config = deepcopy(raw_config)
 
-    def _resolve_path(maybe_path: Optional[str]) -> Optional[Path]:
+    def _resolve_path(maybe_path: str | None) -> Path | None:
         if maybe_path is None:
             return None
         candidate = Path(maybe_path)
@@ -216,7 +216,7 @@ def parse_config_dict(raw_config: Mapping[str, Any], *, source_path: Path | None
     )
 
 
-def load_config(config_path: Path | str, overrides: Optional[Mapping[str, Any]] = None) -> AnalysisInjectionConfig:
+def load_config(config_path: Path | str, overrides: Mapping[str, Any] | None = None) -> AnalysisInjectionConfig:
     """Load and parse analysis injection configuration from YAML.
 
     Args:
@@ -242,7 +242,7 @@ def load_config(config_path: Path | str, overrides: Optional[Mapping[str, Any]] 
     return parse_config_dict(raw_config, source_path=config_path)
 
 
-def get_enabled_points(config: AnalysisInjectionConfig) -> List[str]:
+def get_enabled_points(config: AnalysisInjectionConfig) -> list[str]:
     """Get list of enabled analysis points.
 
     Args:

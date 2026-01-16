@@ -129,7 +129,7 @@ jobs:
           windows-2022,
           macos-14
           ]
-        python-version: ["3.12"]
+        python-version: ["3.13"]
     timeout-minutes: 90
     env:
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}

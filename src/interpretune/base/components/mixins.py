@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os
 import inspect
-from typing import Any, TYPE_CHECKING, List, Optional, Dict
+from typing import Any, TYPE_CHECKING, Dict
 from contextlib import contextmanager
 from functools import wraps
 
@@ -75,7 +75,7 @@ class MemProfilerHooks:
 
 class AnalysisStepMixin:
     @property
-    def analysis_cfg(self) -> Optional[AnalysisCfgProtocol]:
+    def analysis_cfg(self) -> AnalysisCfgProtocol | None:
         if not hasattr(self.it_cfg, "analysis_cfg") or self.it_cfg.analysis_cfg is None:  # type: ignore[attr-defined]  # mixin provides it_cfg
             rank_zero_warn("Analysis configuration has not been set.")
             return
@@ -268,10 +268,10 @@ class ClassificationMixin:
                 logits = logits[:, -1:, :]
         return logits
 
-    def labels_to_ids(self, labels: List[str]) -> tuple[torch.Tensor, List[str]]:
+    def labels_to_ids(self, labels: list[str]) -> tuple[torch.Tensor, list[str]]:
         return torch.take(self.it_cfg.classification_mapping_indices, labels), labels  # type: ignore[attr-defined]  # mixin provides it_cfg
 
-    def logits_and_labels(self, batch: BatchEncoding, batch_idx: int) -> tuple[torch.Tensor, torch.Tensor, List[str]]:
+    def logits_and_labels(self, batch: BatchEncoding, batch_idx: int) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
         label_ids, labels = self.labels_to_ids(batch.pop("labels"))
         logits = self(**batch)  # type: ignore[misc]  # mixin provides __call__ through composition
         # TODO: add another layer of abstraction here to handle different model output types? Tradeoffs to consider...
@@ -280,7 +280,7 @@ class ClassificationMixin:
             assert isinstance(logits, torch.Tensor), f"Expected logits to be a torch.Tensor but got {type(logits)}"
         return torch.squeeze(logits[:, -1, :], dim=1), label_ids, labels
 
-    def collect_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor, mode: str = "log") -> Optional[Dict]:
+    def collect_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor, mode: str = "log") -> Dict | None:
         logits = self.standardize_logits(logits)  # type: ignore[arg-type]  # standardize_logits handles tuple case
         per_example_answers, _ = torch.max(logits, dim=-2)
         preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]

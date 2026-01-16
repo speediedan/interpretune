@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional
 from it_examples.experiments.rte_boolq import RTEBoolqPromptConfig
 
 ####################################
@@ -21,7 +20,7 @@ class Gemma2PromptConfig:
         self.USER_ROLE_START = self.B_TURN + self.USER_ROLE + "\n"
         self.USER_ROLE_END = self.E_TURN + self.B_TURN + self.ASSISTANT_ROLE + "\n"
 
-    def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: Optional[str] = None) -> str:
+    def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: str | None = None) -> str:
         if tokenization_pattern == "gemma2-chat":
             sequence = self.USER_ROLE_START + f"{task_prompt.strip()} {self.USER_ROLE_END}"
         else:
@@ -65,7 +64,7 @@ class Llama3PromptConfig:
         )
         self.USER_ROLE_END = self.E_TURN + self.ASSISTANT_ROLE_HEADER + "\n"
 
-    def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: Optional[str] = None) -> str:
+    def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: str | None = None) -> str:
         if tokenization_pattern == "llama3-chat":
             sequence = self.SYS_ROLE_START + f"{task_prompt.strip()} {self.USER_ROLE_END}"
         else:

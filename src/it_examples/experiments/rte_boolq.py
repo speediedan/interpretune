@@ -18,7 +18,7 @@ example context, type checking is bypassed.
 # pyright: reportOptionalMemberAccess=false
 
 import os
-from typing import Any, Dict, Optional, Tuple, List, Callable, Generator
+from typing import Any, Tuple, Callable, Generator
 from dataclasses import dataclass, field
 from pprint import pformat
 import logging
@@ -64,7 +64,7 @@ INVALID_TASK_MSG = f" is an invalid task_name. Proceeding with the default task:
 @dataclass(kw_only=True)
 class RTEBoolqEntailmentMapping:
     entailment_mapping: Tuple = ("Yes", "No")  # RTE style, invert mapping for BoolQ
-    entailment_mapping_indices: Optional[torch.Tensor] = None
+    entailment_mapping_indices: torch.Tensor | None = None
 
 
 @dataclass(kw_only=True)
@@ -80,7 +80,7 @@ class RTEBoolqGenerativeClassificationConfig(RTEBoolqEntailmentMapping, Generati
 class RTEBoolqPromptConfig(PromptConfig):
     ctx_question_join: str = "Does the previous passage imply that "
     question_suffix: str = "? Answer with only one word, either Yes or No."
-    cust_task_prompt: Dict[str, Any] | None = None  # type: ignore[assignment]  # intentional override for demo
+    cust_task_prompt: dict[str, Any] | None = None  # type: ignore[assignment]  # intentional override for demo
 
 
 # add our custom model attributes
@@ -104,7 +104,7 @@ class RTEBoolqDataModule(ITDataModule):
         itdm_cfg.text_fields = TASK_TEXT_FIELD_MAP[itdm_cfg.task_name]
         super().__init__(itdm_cfg=itdm_cfg)
 
-    def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
+    def prepare_data(self, target_model: torch.nn.Module | None = None) -> None:
         """Load the SuperGLUE dataset."""
         # N.B. prepare_data is called in a single process (rank 0, either per node or globally) so do not use it to
         # assign state (e.g. self.x=y)
@@ -156,10 +156,10 @@ class RTEBoolqDataModule(ITDataModule):
     def encode_for_rteboolq(
         example_batch: LazyDict,
         tokenizer: PreTrainedTokenizerBase,
-        text_fields: List[str],
+        text_fields: list[str],
         prompt_cfg: PromptConfig,
         template_fn: Callable,
-        tokenization_pattern: Optional[str] = None,
+        tokenization_pattern: str | None = None,
     ) -> BatchEncoding:
         example_batch["sequences"] = []
         # TODO: use promptsource instead of this manual approach after tinkering
@@ -204,14 +204,14 @@ class RTEBoolqSteps:
         return loss
 
     @MemProfilerHooks.memprofilable
-    def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
+    def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> STEP_OUTPUT | None:
         answer_logits, labels, orig_labels = self.logits_and_labels(batch, batch_idx)
         val_loss = self.loss_fn(answer_logits, labels)
         self.log("val_loss", val_loss, prog_bar=True, sync_dist=True)
         self.collect_answers(answer_logits, orig_labels)
 
     @MemProfilerHooks.memprofilable
-    def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
+    def test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> STEP_OUTPUT | None:
         if self.it_cfg.generative_step_cfg.enabled:
             self.generative_classification_test_step(batch, batch_idx, dataloader_idx=dataloader_idx)
         else:
@@ -219,7 +219,7 @@ class RTEBoolqSteps:
 
     def generative_classification_test_step(
         self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0
-    ) -> Optional[STEP_OUTPUT]:
+    ) -> STEP_OUTPUT | None:
         labels = batch.pop("labels")
         outputs = self.it_generate(batch, **self.it_cfg.generative_step_cfg.lm_generation_cfg.generate_kwargs)
         # We expect a HF ModelOutput with a `.logits` attribute when `output_logits` is used.
@@ -231,12 +231,12 @@ class RTEBoolqSteps:
             raise ValueError("Expected ModelOutput with `logits` or a logits tensor from generate()")
         self.collect_answers(logits, labels)
 
-    def default_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
+    def default_test_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> STEP_OUTPUT | None:
         labels = batch.pop("labels")
         outputs = self(**batch)
         self.collect_answers(outputs.logits, labels)
 
-    def predict_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
+    def predict_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> STEP_OUTPUT | None:
         labels = batch.pop("labels")
         outputs = self(**batch)
         return self.collect_answers(outputs, labels, mode="return")
@@ -246,7 +246,7 @@ class RTEBoolqSteps:
         batch: BatchEncoding,
         batch_idx: int,
         dataloader_idx: int = 0,
-        analysis_batch: Optional[AnalysisBatch] = None,
+        analysis_batch: AnalysisBatch | None = None,
     ) -> Generator[STEP_OUTPUT, None, None]:
         """Run analysis operations on a batch and yield results."""
         # Demo mixing model methods and native IT analysis ops
@@ -280,7 +280,7 @@ class RTEBoolqModuleMixin:
         )
 
     # we override the default labels_to_ids method to demo using our module-specific attributes/logic
-    def labels_to_ids(self, labels: List[str]) -> List[int]:
+    def labels_to_ids(self, labels: list[str]) -> list[int]:
         return torch.take(self.it_cfg.entailment_mapping_indices, labels), labels
 
     # We override the default standardize_logits method to demo using custom attributes etc.

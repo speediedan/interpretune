@@ -1,6 +1,6 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from dataclasses import dataclass, field
-from typing import Literal, NamedTuple, Optional, Any, Callable, Sequence, Union, List, Dict, Type
+from typing import Literal, NamedTuple, Any, Callable, Sequence, List, Dict, Type
 from types import MappingProxyType
 import os
 from pathlib import Path
@@ -393,7 +393,7 @@ class AnalysisStore:
                     # Set default format as our custom analysis formatter
                     self.dataset.set_format(type="interpretune")  # type: ignore[attr-defined]  # datasets API supports set_format
 
-    def _format_columns(self, cols_to_fetch: list[str], indices: Optional[Union[int, slice, list[int]]] = None) -> dict:
+    def _format_columns(self, cols_to_fetch: list[str], indices: int | slice | list[int] | None = None) -> dict:
         """Internal helper to format specified columns into tensors with proper shape reconstruction.
 
         Args:
@@ -477,7 +477,7 @@ class AnalysisStore:
             or (isinstance(data, list) and all(isinstance(x, torch.Tensor) for x in data))
         )
 
-    def __getitem__(self, key: Union[str, List[str], int, slice]) -> Union[List, Dict]:
+    def __getitem__(self, key: str | list[str] | int | slice) -> List | Dict:
         """Enable direct column/row access similar to HF Dataset.
 
         Args:
@@ -540,7 +540,7 @@ class AnalysisStore:
             assert self.dataset is not None, "Dataset should be loaded before accessing rows"
             return self.dataset[key]  # type: ignore[index]  # datasets support various indexing types
 
-    def select_columns(self, column_names: List[str]) -> "AnalysisStore":
+    def select_columns(self, column_names: list[str]) -> "AnalysisStore":
         """Select a subset of columns.
 
         Args:

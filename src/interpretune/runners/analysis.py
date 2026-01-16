@@ -1,5 +1,5 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Any, TYPE_CHECKING, Union, List, Optional, Dict, Tuple
+from typing import Any, TYPE_CHECKING
 import logging
 from functools import partialmethod
 from pathlib import Path
@@ -47,7 +47,7 @@ def analysis_store_generator(
         _call_itmodule_hook(module, hook_name="on_analysis_epoch_end", hook_msg="Running analysis epoch end hooks")
 
 
-def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: Optional[AnalysisCfg] = None, **kwargs) -> dict:
+def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: AnalysisCfg | None = None, **kwargs) -> dict:
     """Initialize analysis configuration if needed and return updated kwargs.
 
     Args:
@@ -75,7 +75,7 @@ def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: Optional[AnalysisC
     return kwargs
 
 
-def dataset_features_and_format(module: "ITModule", kwargs: dict) -> Tuple[dict, dict, dict]:
+def dataset_features_and_format(module: "ITModule", kwargs: dict) -> tuple[dict, dict, dict]:
     """Generate dataset features and formatting parameters based on module configuration.
 
     Args:
@@ -162,7 +162,7 @@ def core_analysis_loop(
     limit_analysis_batches: int = -1,
     step_fn: str = "analysis_step",
     max_epochs: int = 1,
-    analysis_cfg: Optional[AnalysisCfg] = None,
+    analysis_cfg: AnalysisCfg | None = None,
     *args,
     **kwargs,
 ):
@@ -227,7 +227,7 @@ class AnalysisRunner(SessionRunner):
                         "no analysis configuration to generate one."
                     )
 
-    def _run(self, phase, loop_fn, step_fn: Optional[str] = None, *args: Any, **kwargs: Any) -> Any | None:
+    def _run(self, phase, loop_fn, step_fn: str | None = None, *args: Any, **kwargs: Any) -> Any | None:
         self.phase = AllPhases[phase]  # type: ignore[assignment]  # phase attribute assignment
         phase_artifacts = loop_fn(step_fn=step_fn, **self.run_cfg.__dict__)
         self.it_session_end()
@@ -237,11 +237,11 @@ class AnalysisRunner(SessionRunner):
 
     def run_analysis(
         self,
-        analysis_cfgs: Optional[Union[AnalysisCfg, Any, List[Union[AnalysisCfg, Any]]]] = None,
+        analysis_cfgs: AnalysisCfg | Any | list[AnalysisCfg | Any] | None = None,
         cache_dir: str | Path | None = None,
         op_output_dataset_path: str | Path | None = None,
         **kwargs,
-    ) -> AnalysisStoreProtocol | Dict[str, AnalysisStoreProtocol]:
+    ) -> AnalysisStoreProtocol | dict[str, AnalysisStoreProtocol]:
         """Unified method to run analysis operations based on the provided configuration.
 
         Args:

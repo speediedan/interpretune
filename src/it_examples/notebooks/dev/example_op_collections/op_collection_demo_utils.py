@@ -10,7 +10,7 @@ import sys
 import io
 import contextlib
 from pathlib import Path
-from typing import Tuple, Generator
+from typing import Generator
 
 from interpretune.utils import rank_zero_warn
 from interpretune.analysis import IT_ANALYSIS_OP_PATHS
@@ -197,7 +197,7 @@ def print_env_summary(
 
 def setup_local_op_collection(
     source_local_op_collection: Path, tmp_local_op_collection: Path = Path("/tmp/local_op_collection")
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Setup local operation collection by copying to /tmp/ and updating environment variables.
 
     Args:
@@ -359,7 +359,7 @@ def cleanup_hub_repository(download_result) -> None:
         print("⚠️ No download_result available - cannot determine what to clean up")
 
 
-def reimport_interpretune_with_capture() -> Tuple[str, str, object]:  # type: ignore[misc]  # DISPATCHER type unknown
+def reimport_interpretune_with_capture() -> tuple[str, str, object]:  # type: ignore[misc]  # DISPATCHER type unknown
     """Re-import interpretune with stdout and stderr capture to check for expected warnings.
 
     Returns:
@@ -400,7 +400,7 @@ def inspect_err_for_composite_op_warning(stderr_output: str) -> None:
         print(stderr_output)
 
 
-def generate_test_batches(num_batches: int = 2) -> Generator[Tuple[str, object, object], None, None]:
+def generate_test_batches(num_batches: int = 2) -> Generator[tuple[str, object, object], None, None]:
     """Generator that yields test analysis_batch objects with random orig_labels.
 
     Args:

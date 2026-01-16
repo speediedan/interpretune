@@ -55,10 +55,10 @@ jobs:
       IT_USE_CT_COMMIT_PIN: "1"
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.12
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Reset caching
         id: set_time_period
@@ -75,9 +75,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.PIP_CACHE_DIR }}/wheels
-          key: ubuntu-22.04-pip-wheels-${{ steps.set_time_period.outputs.TIME_PERIOD }}-py3.12-${{ hashFiles('requirements/ci/requirements.txt') }}
+          key: ubuntu-22.04-pip-wheels-${{ steps.set_time_period.outputs.TIME_PERIOD }}-py3.13-${{ hashFiles('requirements/ci/requirements.txt') }}
           restore-keys: |
-            ubuntu-22.04-pip-wheels-${{ steps.set_time_period.outputs.TIME_PERIOD }}-py3.12-
+            ubuntu-22.04-pip-wheels-${{ steps.set_time_period.outputs.TIME_PERIOD }}-py3.13-
 
       - name: Install CI dependencies
         uses: ./.github/actions/install-ci-dependencies

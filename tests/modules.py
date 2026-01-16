@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from jaxtyping import Float, Int
-from typing import Optional, Any, Dict, Union, Callable, List, Tuple
+from typing import Any, Dict, Callable, List, Tuple
 from unittest import mock
 from functools import reduce, partial
 from dataclasses import dataclass
@@ -57,7 +57,7 @@ class BaseTestDataModule:
     def sample_step_input(self, batch: BatchEncoding) -> List:
         return []
 
-    def prepare_data(self, target_model: Optional[torch.nn.Module] = None) -> None:
+    def prepare_data(self, target_model: torch.nn.Module | None = None) -> None:
         """Load the SuperGLUE dataset."""
 
         tokenization_func = partial(
@@ -161,11 +161,11 @@ class TestModelArgs:
     dropout_p: float = 0.1
     use_attn_mask: bool = True
     weight_tying: bool = True
-    tokenizer: Optional[Callable] = None
-    device: Optional[torch.device] = None
-    dtype: Optional[torch.dtype] = None
+    tokenizer: Callable | None = None
+    device: torch.device | None = None
+    dtype: torch.dtype | None = None
     # handle below can be used at runtime to allow this model's `generate` to adapt to various configuration contexts
-    ctx_handle: Optional[ITModuleProtocol] = None
+    ctx_handle: ITModuleProtocol | None = None
 
     def __post_init__(self):
         if self.ctx_handle:
@@ -277,19 +277,19 @@ class Transformer(torch.nn.Module):
     @torch.inference_mode()
     def generate(
         self,
-        tokens: Union[str, Float[torch.Tensor, "batch pos"]] = "",
+        tokens: str | Float[torch.Tensor, "batch pos"] = "",
         max_new_tokens: int = 5,
-        eos_token_id: Optional[int] = None,
+        eos_token_id: int | None = None,
         output_logits: bool = False,
         verbose: bool = True,
         **kwargs,
-    ) -> Union[ModelOutput, Int[torch.Tensor, "batch pos_plus_new_tokens"]]:
+    ) -> ModelOutput | Int[torch.Tensor, "batch pos_plus_new_tokens"]:
         """Toy generate function to support non-HF/TransformerLens tests with the same interface.
 
         Args:
-            tokens (Union[str, Int[torch.Tensor, "batch pos"])]): A batch of tokens ([batch, pos]).
+            tokens (str | Int[torch.Tensor, "batch pos"])): A batch of tokens ([batch, pos]).
             max_new_tokens (int): Maximum number of tokens to generate.
-            eos_token_id (Optional[Union[int, Sequence]]): The token ID to use for end of sentence.
+            eos_token_id (int | Sequence | None): The token ID to use for end of sentence.
             output_logits (`bool`, *optional*, defaults to `False`): Whether or not to return the prediction scores.
             verbose (bool): If True, show tqdm progress bars for generation.
 
@@ -369,12 +369,12 @@ class StateLogInspectMixin:
     def __init__(
         self,
         *args,
-        expected_exact: Optional[Dict] = None,
-        expected_close: Optional[Dict] = None,
-        expected_memstats: Optional[Tuple] = None,
-        tolerance_map: Optional[Dict] = None,
-        test_alias: Optional[str] = None,
-        state_log_dir: Optional[str] = None,
+        expected_exact: Dict | None = None,
+        expected_close: Dict | None = None,
+        expected_memstats: Tuple | None = None,
+        tolerance_map: Dict | None = None,
+        test_alias: str | None = None,
+        state_log_dir: str | None = None,
         **kwargs,
     ) -> None:
         self.expected_memstats = expected_memstats
@@ -432,7 +432,7 @@ class DivergeOnEpochMixin:
     current_epoch/max_epochs ratio, causing gradual loss divergence.
     """
 
-    def __init__(self, *args, diverge_on_epoch: Optional[int] = None, **kwargs) -> None:
+    def __init__(self, *args, diverge_on_epoch: int | None = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         it_cfg = reduce(lambda o, a: getattr(o, a, None), ("it_cfg", "model_cfg"), self)
         self.diverge_on_epoch = it_cfg.get("diverge_on_epoch", diverge_on_epoch) if it_cfg else diverge_on_epoch
@@ -491,7 +491,7 @@ class DivergeOnEpochMixin:
         return loss
 
     @MemProfilerHooks.memprofilable
-    def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> Optional[STEP_OUTPUT]:
+    def validation_step(self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0) -> STEP_OUTPUT | None:
         answer_logits, labels, orig_labels = self.logits_and_labels(batch, batch_idx)
         val_loss = self._compute_diverging_loss(answer_logits, labels)
         self.log("val_loss", val_loss, prog_bar=True, sync_dist=True)
@@ -499,7 +499,7 @@ class DivergeOnEpochMixin:
 
 
 class BaseTestModule(StateLogInspectMixin):
-    def __init__(self, *args, req_grad_mask: Optional[Dict] = None, **kwargs) -> None:
+    def __init__(self, *args, req_grad_mask: Dict | None = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.req_grad_mask = req_grad_mask or {}
         self.epoch_losses = {}
@@ -591,7 +591,7 @@ class BaseTestModule(StateLogInspectMixin):
     def on_train_epoch_end(self, *args, **kwargs):
         self._epoch_end_validation(*args, **kwargs)
 
-    def on_session_end(self) -> Optional[Any]:
+    def on_session_end(self) -> Any | None:
         super().on_session_end()
         if self.it_cfg.memprofiler_cfg and self.expected_memstats:
             self._validate_memory_stats()

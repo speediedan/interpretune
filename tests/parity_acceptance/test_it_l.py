@@ -9,7 +9,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Optional, Callable
+from typing import Callable
 from dataclasses import dataclass
 from functools import partial
 
@@ -46,12 +46,12 @@ from tests.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WARNS
 
 @dataclass(kw_only=True)
 class CoreCfg(BaseCfg):
-    model_src_key: Optional[str] = "cust"
+    model_src_key: str | None = "cust"
 
 
 @dataclass
 class ParityTest(BaseAugTest):
-    result_gen: Optional[Callable] = partial(collect_results, l_parity_results)
+    result_gen: Callable | None = partial(collect_results, l_parity_results)
 
 
 PARITY_BASIC_CONFIGS = (
@@ -86,13 +86,13 @@ def test_parity_l(recwarn, tmp_path, request, test_alias, test_cfg):
 
 @dataclass(kw_only=True)
 class ProfParityCfg(BaseCfg):
-    model_src_key: Optional[str] = "gpt2"
+    model_src_key: str | None = "gpt2"
     force_prepare_data: bool = True  # force data preparation for profiling and CI runner cache reproduction
 
 
 @dataclass
 class ProfilingTest(BaseAugTest):
-    result_gen: Optional[Callable] = partial(collect_results, profiling_results)
+    result_gen: Callable | None = partial(collect_results, profiling_results)
 
 
 L_PROFILING_CONFIGS = (

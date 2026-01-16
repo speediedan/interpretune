@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 import torch
 
@@ -51,7 +51,7 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
     def load_metric(self) -> None:
         """Optionally load a metric at the end of model initialization."""
 
-    def on_session_end(self) -> Optional[Any]:
+    def on_session_end(self) -> Any | None:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
         if getattr(self, "memprofiler", None):
             self.memprofiler.dump_memory_stats()

@@ -3,7 +3,7 @@ import pytest
 import torch
 from unittest.mock import MagicMock, patch
 
-from typing import Any, List, Dict, Optional
+from typing import Any, Dict
 from transformers import BatchEncoding
 from torch.testing import assert_close
 
@@ -951,7 +951,7 @@ class TestAnalysisOperationsImplementations:
         shape_info: torch.Size,
         loaded_column: torch.Tensor,
         col_cfg,
-        batch_count: Optional[int] = None,
+        batch_count: int | None = None,
         context: str = "",
     ) -> None:
         """Helper to validate column shape based on config and expected shape.
@@ -1007,7 +1007,7 @@ class TestAnalysisOperationsImplementations:
         return col_cfg is not None
 
     def _validate_format_column_path(
-        self, op_cfg: OpTestConfig, result_batches: List[AnalysisBatch], loaded_dataset, pre_serialization_shapes: Dict
+        self, op_cfg: OpTestConfig, result_batches: list[AnalysisBatch], loaded_dataset, pre_serialization_shapes: Dict
     ) -> None:
         """Validate loaded dataset using direct column access (format_column path)."""
         if not pre_serialization_shapes:
@@ -1037,7 +1037,7 @@ class TestAnalysisOperationsImplementations:
                 print(f"Warning: Column access validation failed for '{column_name}': {e}")
 
     def _validate_format_batch_path(
-        self, op_cfg: OpTestConfig, result_batches: List[AnalysisBatch], loaded_dataset, pre_serialization_shapes: Dict
+        self, op_cfg: OpTestConfig, result_batches: list[AnalysisBatch], loaded_dataset, pre_serialization_shapes: Dict
     ) -> None:
         """Validate loaded dataset using batch access (format_batch path)."""
         if not pre_serialization_shapes or len(result_batches) <= 1:
@@ -1085,7 +1085,7 @@ class TestAnalysisOperationsImplementations:
                     print(f"Warning: {method_name} access validation failed for '{column_name}': {e}")
 
     def _validate_format_row_path(
-        self, op_cfg: OpTestConfig, result_batches: List[AnalysisBatch], loaded_dataset
+        self, op_cfg: OpTestConfig, result_batches: list[AnalysisBatch], loaded_dataset
     ) -> None:
         """Validate loaded dataset using row-by-row access (format_row path)."""
         for i, original_result in enumerate(result_batches):
@@ -1145,7 +1145,7 @@ class TestAnalysisOperationsImplementations:
     def validate_loaded_dataset(
         self,
         op_cfg: OpTestConfig,
-        result_batches: List[AnalysisBatch],
+        result_batches: list[AnalysisBatch],
         loaded_dataset,
         pre_serialization_shapes: Dict = None,
     ) -> None:
