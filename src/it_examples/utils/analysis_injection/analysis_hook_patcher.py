@@ -175,16 +175,68 @@ def patch_file_with_hooks(
         else:
             lines.insert(line_num, hook_call)
 
-    # Add import at top of file (after any existing imports)
+    # Add import at top of file (after any existing imports, including from __future__)
     # Use the new package path for the in-repo analysis_injection package located under utils
     import_line = "from it_examples.utils.analysis_injection.analysis_hook_patcher import HOOK_REGISTRY\n"
 
     # Find where to insert import (after last import or at beginning)
+    # Must handle: docstrings (single/multi-line), comments, blank lines, __future__ imports,
+    # and multi-line imports using parentheses
     insert_pos = 0
+    in_multiline_string = False
+    multiline_delimiter: str | None = None
+    in_multiline_import = False
+    paren_depth = 0
+
     for i, line in enumerate(lines):
-        if line.strip().startswith(("import ", "from ")):
-            insert_pos = i + 1
-        elif line.strip() and not line.strip().startswith("#"):
+        stripped = line.strip()
+
+        # Handle multi-line strings (docstrings)
+        if in_multiline_string:
+            if multiline_delimiter and multiline_delimiter in line:
+                in_multiline_string = False
+                multiline_delimiter = None
+            continue
+
+        # Check for start of multi-line string (docstring)
+        if stripped.startswith(('"""', "'''")):
+            delimiter = '"""' if stripped.startswith('"""') else "'''"
+            # Check if it's a single-line docstring (starts and ends on same line)
+            if stripped.count(delimiter) >= 2:
+                # Single-line docstring, continue to next line
+                continue
+            else:
+                # Multi-line docstring starts here
+                in_multiline_string = True
+                multiline_delimiter = delimiter
+                continue
+
+        # Handle multi-line imports (track parenthesis depth)
+        if in_multiline_import:
+            paren_depth += line.count("(") - line.count(")")
+            if paren_depth <= 0:
+                # End of multi-line import
+                in_multiline_import = False
+                insert_pos = i + 1
+            continue
+
+        # Skip comments and blank lines
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        # Track import statements
+        if stripped.startswith(("import ", "from ")):
+            # Check if this is a multi-line import (ends with opening paren, no closing)
+            paren_depth = line.count("(") - line.count(")")
+            if paren_depth > 0:
+                # Multi-line import starts here
+                in_multiline_import = True
+                continue
+            else:
+                # Single-line import
+                insert_pos = i + 1
+        else:
+            # Hit first non-import, non-comment, non-docstring line - stop looking
             break
 
     lines.insert(insert_pos, import_line)
@@ -286,31 +338,33 @@ def install_patched_modules_with_references(patched_modules: dict[str, Path]) ->
     """Install patched modules and update all cross-references to patched functions.
 
     This function addresses the issue where modules that have already imported functions
-    from patched modules still hold references to the original (unpatched) functions.
+    or classes from patched modules still hold references to the original (unpatched) versions.
     After installing patched modules, it scans all loaded modules and updates any
-    references to functions from patched modules.
+    references to functions or classes from patched modules.
 
     Args:
         patched_modules: Dict mapping module names to patched file paths
     """
     import types
+    import inspect
 
     # First install the patched modules normally
     install_patched_modules(patched_modules)
 
-    # Then update any existing references to functions from patched modules
+    # Then update any existing references to functions/classes from patched modules
     for module_name, patched_path in patched_modules.items():
         patched_module = sys.modules.get(module_name)
         if patched_module is None:
             continue
 
-        # Find all modules that have imported functions from this patched module
+        # Find all modules that have imported functions/classes from this patched module
         for importer_name, importer_module in list(sys.modules.items()):
             if importer_module is None or not hasattr(importer_module, "__dict__") or importer_module is patched_module:
                 continue
 
             # Check each attribute in the importing module
             for attr_name, attr_value in list(importer_module.__dict__.items()):
+                # Check for functions
                 if (
                     isinstance(attr_value, types.FunctionType)
                     and getattr(attr_value, "__module__", None) == module_name
@@ -322,7 +376,19 @@ def install_patched_modules_with_references(patched_modules: dict[str, Path]) ->
 
                         # Log the update for debugging
                         logging.getLogger("analysis_injection").debug(
-                            f"Updated reference to {module_name}.{attr_name} in {importer_name}"
+                            f"Updated function reference to {module_name}.{attr_name} in {importer_name}"
+                        )
+
+                # Check for classes
+                elif inspect.isclass(attr_value) and getattr(attr_value, "__module__", None) == module_name:
+                    # Replace with the patched version if it exists
+                    if hasattr(patched_module, attr_name):
+                        patched_class = getattr(patched_module, attr_name)
+                        setattr(importer_module, attr_name, patched_class)
+
+                        # Log the update for debugging
+                        logging.getLogger("analysis_injection").debug(
+                            f"Updated class reference to {module_name}.{attr_name} in {importer_name}"
                         )
 
 

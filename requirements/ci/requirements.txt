@@ -695,7 +695,7 @@ traitlets==5.14.3
     #   nbclient
     #   nbconvert
     #   nbformat
-transformers==4.57.5
+transformers==4.57.6
     # via
     #   interpretune (pyproject.toml)
     #   peft

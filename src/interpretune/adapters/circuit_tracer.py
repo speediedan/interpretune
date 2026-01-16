@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from dataclasses import dataclass, field
 from pathlib import Path
 from copy import deepcopy
@@ -9,6 +9,7 @@ import torch
 
 from circuit_tracer import ReplacementModel, Graph, attribute
 from circuit_tracer.utils import create_graph_files
+from circuit_tracer.replacement_model.replacement_model_transformerlens import TransformerLensReplacementModel
 from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.adapters import (
@@ -23,6 +24,12 @@ from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import CircuitTracerConfig, ITConfig
 from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
+
+if TYPE_CHECKING:
+    pass
+
+# Type alias for replacement model backends (currently only TL is supported in IT)
+ReplacementModelType = TransformerLensReplacementModel  # | NNSightReplacementModel  # future support
 
 
 @dataclass(kw_only=True)
@@ -48,7 +55,7 @@ class CircuitTracerAttributeMixin(TLensAttributeMixin):
         return None
 
     @property
-    def replacement_model(self) -> ReplacementModel | None:
+    def replacement_model(self) -> ReplacementModelType | None:
         """Get the replacement model handle."""
         if hasattr(self, "_replacement_model"):
             return self._replacement_model  # type: ignore[attr-defined]  # dynamic mixin attribute
@@ -59,13 +66,14 @@ class BaseCircuitTracerModule(BaseITLensModule):
     def __init__(self, *args, **kwargs):
         # Initialize attributes that may be required in base init methods
         self.attribution_graphs: list[InstantiatedGraph] = []
-        self._replacement_model: ReplacementModel | None = None
+        self._replacement_model: ReplacementModelType | None = None
         super().__init__(*args, **kwargs)
 
     def _convert_hf_to_tl(self) -> None:
         """Convert HF model to TransformerLens/ReplacementModel."""
         # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
         tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
+        assert self.model is not None, "Model must be loaded before conversion"
         hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
 
         # TODO: we currently prune model_name, dtype and the below values from tl_cfg as CT currently forces these
@@ -78,7 +86,9 @@ class BaseCircuitTracerModule(BaseITLensModule):
         )
         loaded_model_kwargs = {"hf_model": self.model, "tokenizer": tokenizer_handle, **pruned_tl_cfg}
         self._load_replacement_model(pretrained_kwargs=loaded_model_kwargs)
-        self.model.config = hf_preconversion_config
+        # Preserve original HF config for reference (dynamic attribute on TransformerLens model)
+        assert self.model is not None, "Replacement model must be loaded"
+        self.model.config = hf_preconversion_config  # type: ignore[union-attr]  # dynamic attr on TL model
 
     def _load_replacement_model(self, pretrained_kwargs: dict | None = None) -> None:
         """Load the ReplacementModel for circuit tracing."""
@@ -89,12 +99,19 @@ class BaseCircuitTracerModule(BaseITLensModule):
             return
 
         # Use ReplacementModel.from_pretrained for simplicity
-        self._replacement_model = ReplacementModel.from_pretrained(
+        # Factory returns TransformerLensReplacementModel when backend is 'transformerlens' (default)
+        replacement_model = ReplacementModel.from_pretrained(
             model_name=cfg.model_name or self.it_cfg.model_name_or_path,
             transcoder_set=cfg.transcoder_set,
             dtype=cfg.dtype,
+            backend="transformerlens",  # Explicitly use TL backend for now
             **pretrained_kwargs,
         )
+        # Cast to specific type since we know we're using TL backend
+        assert isinstance(replacement_model, TransformerLensReplacementModel), (
+            f"Expected TransformerLensReplacementModel, got {type(replacement_model)}"
+        )
+        self._replacement_model = replacement_model
 
         # Replace the model with the replacement model for circuit tracing
         self.model = self._replacement_model
