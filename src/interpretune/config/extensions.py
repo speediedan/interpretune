@@ -1,4 +1,4 @@
-from typing import Any, Dict, Callable, NamedTuple
+from typing import Any, Callable, NamedTuple
 from dataclasses import field, make_dataclass, dataclass
 
 from interpretune.config import ITSerializableCfg
@@ -19,8 +19,8 @@ class ExtensionsContext:
     allows for easy integration of new extensions into the Interpretune framework.
     """
 
-    SUPPORTED_EXTENSIONS: Dict[str, Callable] = field(default_factory=dict)
-    SUPPORTED_EXTENSION_CFGS: Dict[str, Any] = field(default_factory=dict)
+    SUPPORTED_EXTENSIONS: dict[str, Callable] = field(default_factory=dict)
+    SUPPORTED_EXTENSION_CFGS: dict[str, Any] = field(default_factory=dict)
     BASE_EXTENSIONS: tuple = (
         ITExtension(
             "debug_lm",

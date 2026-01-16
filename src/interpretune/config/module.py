@@ -1,4 +1,6 @@
-from typing import Any, TYPE_CHECKING, Optional, Tuple, Type
+# N.B. we need to avoid annotations import here due to jsonargparse validation issues that emerge when it is used
+# from __future__ import annotations
+from typing import Any, TYPE_CHECKING, Tuple, Type
 from dataclasses import dataclass, field
 
 import torch
@@ -50,13 +52,13 @@ class OptimizerSchedulerConf(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class ClassificationConf(ITSerializableCfg):
-    classification_mapping: Optional[Tuple] = None
-    classification_mapping_indices: Optional[torch.Tensor] = None
+    classification_mapping: Tuple | None = None
+    classification_mapping_indices: torch.Tensor | None = None
 
 
 @dataclass(kw_only=True)
 class MixinsConf(ITSerializableCfg):
-    analysis_cfg: Optional["AnalysisCfgProtocol"] = None
+    analysis_cfg: "AnalysisCfgProtocol | None" = None
     generative_step_cfg: GenerativeClassificationConfig = field(default_factory=GenerativeClassificationConfig)
     hf_from_pretrained_cfg: HFFromPretrainedConfig | None = None
 
@@ -121,8 +123,8 @@ class ITState:
 
     _it_lr_scheduler_configs: list[LRSchedulerConfig] = field(default_factory=list)
     _it_optimizers: list[Optimizable] = field(default_factory=list)  # init'd via `configure_optimizers`
-    _log_dir: Optional[StrOrPath] = None
-    _datamodule: Optional["ITDataModule"] = None  # datamodule handle attached after init
+    _log_dir: StrOrPath | None = None
+    _datamodule: "ITDataModule | None" = None  # datamodule handle attached after init
     _device: torch.device | None = None  # root device (sometimes used if not handled by Lightning)
     _extensions: dict[str, Any] = field(default_factory=dict)
     _session_complete: bool = False

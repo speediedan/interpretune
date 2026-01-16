@@ -44,7 +44,7 @@ You can also fill out the list below manually.
 - TransformerLens Version (e.g., 2.16.1):
 - SAELens Version (e.g., 6.3.1):
 - Lightning Version (e.g., 2.5.1):
-- Python version (e.g., 3.12):
+- Python version (e.g., 3.13):
 - OS (e.g., Linux):
 - CUDA/cuDNN version:
 - GPU models and configuration:

@@ -2,12 +2,10 @@ from __future__ import annotations  # see PEP 749, no longer needed when 3.13 re
 from typing import (
     Protocol,
     runtime_checkable,
-    Union,
     TypeAlias,
     NamedTuple,
     TYPE_CHECKING,
     Callable,
-    Optional,
     Any,
     Sequence,
     Iterable,
@@ -47,7 +45,7 @@ else:
 # Interpretune helper types
 ################################################################################
 
-StrOrPath: TypeAlias = Union[str, Path]
+StrOrPath: TypeAlias = str | Path
 
 ################################################################################
 # Interpretune Enhanced Enums
@@ -216,12 +214,12 @@ class ReduceLROnPlateau(_Stateful[str], Protocol):
     def step(self, metrics: float | int | Tensor, epoch: int | None = None) -> None: ...
 
 
-STEP_OUTPUT = Optional[Union[Tensor, Mapping[str, Any]]]
+STEP_OUTPUT = Tensor | Mapping[str, Any] | None
 
-LRSchedulerTypeUnion = Union[torch.optim.lr_scheduler.LRScheduler, torch.optim.lr_scheduler.ReduceLROnPlateau]
+LRSchedulerTypeUnion = torch.optim.lr_scheduler.LRScheduler | torch.optim.lr_scheduler.ReduceLROnPlateau
 
 # Protocol-level union covering the scheduler Protocol and the ReduceLROnPlateau Protocol
-LRSchedulerProtocolUnion: TypeAlias = Union[LRScheduler, ReduceLROnPlateau]
+LRSchedulerProtocolUnion: TypeAlias = LRScheduler | ReduceLROnPlateau
 
 
 @dataclass
@@ -256,16 +254,15 @@ class OptimizerLRSchedulerConfig(TypedDict):
     lr_scheduler: NotRequired[LRSchedulerTypeUnion | LRSchedulerConfigType]
 
 
-OptimizerLRScheduler = Optional[
-    Union[
-        Optimizer,
-        Sequence[Optimizer],
-        tuple[Sequence[Optimizer], Sequence[Union[LRSchedulerTypeUnion, LRSchedulerConfig]]],
-        OptimizerLRSchedulerConfig,
-    ]
-]
+OptimizerLRScheduler = (
+    Optimizer
+    | Sequence[Optimizer]
+    | tuple[Sequence[Optimizer], Sequence[LRSchedulerTypeUnion | LRSchedulerConfig]]
+    | OptimizerLRSchedulerConfig
+    | None
+)
 
-ArgsType = Optional[Union[list[str], dict[str, Any], Namespace]]
+ArgsType = list[str] | dict[str, Any] | Namespace | None
 
 AnyDataClass = TypeVar("AnyDataClass")
 
@@ -383,7 +380,7 @@ ITModuleProtocol: TypeAlias = gen_protocol_variants(ModuleSteppable, ModuleInvar
 #       supported protocol variant generation. Also add an issue tracker for this approach to solicit ideas for a
 #       cleaner/more pythonic approach. As Python structural subtyping features are still evolving, if a cleaner and
 #       more pythonic approach isn't available now, one will hopefully be available in the near future.
-InterpretunableType: TypeAlias = Union[ITDataModuleProtocol, ITModuleProtocol]
+InterpretunableType: TypeAlias = ITDataModuleProtocol | ITModuleProtocol
 
 
 class InterpretunableTuple(NamedTuple):
@@ -450,7 +447,7 @@ class ITModuleGenDebuggable(ITModuleBase, GenerativeStepProtocol, Protocol):
 # Analysis Protocols
 ################################################################################
 
-NamesFilter = Optional[Union[Callable[[str], bool], Sequence[str], str]]
+NamesFilter = Callable[[str], bool] | Sequence[str] | str | None
 
 
 class SAEFqn(NamedTuple):
@@ -464,7 +461,7 @@ class AnalysisOpProtocol(Protocol):
     name: str
     description: str
     output_schema: dict
-    input_schema: Optional[dict]
+    input_schema: dict | None
 
     def save_batch(
         self,
@@ -473,7 +470,7 @@ class AnalysisOpProtocol(Protocol):
         tokenizer: PreTrainedTokenizerBase | None = None,
         save_prompts: bool = False,
         save_tokens: bool = False,
-        decode_kwargs: Optional[dict] = None,
+        decode_kwargs: dict | None = None,
     ) -> BaseAnalysisBatchProtocol: ...
 
 
@@ -493,7 +490,7 @@ class SAEDictProtocol(Protocol):
 class AnalysisStoreProtocol(Protocol):
     """Protocol verifying core analysis store functionality."""
 
-    dataset: Union[HfDataset, StrOrPath, PathLike, None]
+    dataset: HfDataset | StrOrPath | PathLike | None
     streaming: bool
     cache_dir: str | None
 
@@ -621,50 +618,50 @@ class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):
     or change existing attributes as needed.
 
     Attributes:
-        logit_diffs (Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]):
+        logit_diffs (torch.Tensor | dict[str, dict[int, torch.Tensor]] | None):
             Per batch logit differences with shape [batch_size]
-        answer_logits (Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]):
+        answer_logits (torch.Tensor | dict[str, dict[int, torch.Tensor]] | None):
             Model output logits with shape [batch_size, 1, num_classes]
-        loss (Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]):
+        loss (torch.Tensor | dict[str, dict[int, torch.Tensor]] | None):
             Loss values with shape [batch_size]
-        label_ids (Optional[torch.Tensor]):
+        label_ids (torch.Tensor | None):
             Input labels translated to token ids with shape [batch_size] (if labels provided & translation is needed)
-        orig_labels (Optional[torch.Tensor]):
+        orig_labels (torch.Tensor | None):
             Ground truth unmodified labels with shape [batch_size]
-        preds (Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]):
+        preds (torch.Tensor | dict[str, dict[int, torch.Tensor]] | None):
             Model predictions with shape [batch_size]
-        cache (Optional[ActivationCacheProtocol]):
+        cache (ActivationCacheProtocol | None):
             Forward pass activation cache
-        grad_cache (Optional[ActivationCacheProtocol]):
+        grad_cache (ActivationCacheProtocol | None):
             Backward pass gradient cache
-        answer_indices (Optional[torch.Tensor]):
+        answer_indices (torch.Tensor | None):
             Indices of answers with shape [batch_size]
-        alive_latents (Optional[dict[str, list[int]]]):
+        alive_latents (dict[str, list[int]] | None):
             Active latent indices per SAE hook
-        correct_activations (Optional[dict[str, torch.Tensor]]):
+        correct_activations (dict[str, torch.Tensor] | None):
             SAE activations after corrections with shape [batch_size, d_sae] for each SAE
-        attribution_values (Optional[dict[str, torch.Tensor]]):
+        attribution_values (dict[str, torch.Tensor] | None):
             Attribution values per SAE hook
-        tokens (Optional[torch.Tensor]):
+        tokens (torch.Tensor | None):
             Input token IDs
-        prompts (Optional[list[str]]):
+        prompts (list[str] | None):
             Text prompts
     """
 
-    logit_diffs: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
-    answer_logits: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
-    loss: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
-    preds: Optional[torch.Tensor | dict[str, dict[int, torch.Tensor]]]
-    label_ids: Optional[torch.Tensor]
-    orig_labels: Optional[torch.Tensor]
-    cache: Optional[ActivationCacheProtocol]
-    grad_cache: Optional[ActivationCacheProtocol]
-    answer_indices: Optional[torch.Tensor]
-    alive_latents: Optional[dict[str, list[int]]]
-    correct_activations: Optional[dict[str, torch.Tensor]]
-    attribution_values: Optional[dict[str, torch.Tensor]]
-    tokens: Optional[torch.Tensor]
-    prompts: Optional[list[str]]
+    logit_diffs: torch.Tensor | dict[str, dict[int, torch.Tensor]] | None
+    answer_logits: torch.Tensor | dict[str, dict[int, torch.Tensor]] | None
+    loss: torch.Tensor | dict[str, dict[int, torch.Tensor]] | None
+    preds: torch.Tensor | dict[str, dict[int, torch.Tensor]] | None
+    label_ids: torch.Tensor | None
+    orig_labels: torch.Tensor | None
+    cache: ActivationCacheProtocol | None
+    grad_cache: ActivationCacheProtocol | None
+    answer_indices: torch.Tensor | None
+    alive_latents: dict[str, list[int]] | None
+    correct_activations: dict[str, torch.Tensor] | None
+    attribution_values: dict[str, torch.Tensor] | None
+    tokens: torch.Tensor | None
+    prompts: list[str] | None
 
 
 class CircuitAnalysisBatchProtocol(DefaultAnalysisBatchProtocol):
@@ -673,17 +670,17 @@ class CircuitAnalysisBatchProtocol(DefaultAnalysisBatchProtocol):
     Extends the default protocol with circuit tracing specific attributes.
 
     Attributes:
-        attribution_graphs (Optional[list]):
+        attribution_graphs (list | None):
             Generated attribution graphs for each prompt in the batch
-        graph_metadata (Optional[list[dict]]):
+        graph_metadata (list[dict] | None):
             Metadata for each generated graph including parameters used
-        graph_paths (Optional[list[str]]):
+        graph_paths (list[str] | None):
             File paths where graphs are saved (if saved)
-        circuit_prompts (Optional[list[str]]):
+        circuit_prompts (list[str] | None):
             Prompts used for circuit attribution (may differ from input prompts)
     """
 
-    attribution_graphs: Optional[list]
-    graph_metadata: Optional[list[dict]]
-    graph_paths: Optional[list[str]]
-    circuit_prompts: Optional[list[str]]
+    attribution_graphs: list | None
+    graph_metadata: list[dict] | None
+    graph_paths: list[str] | None
+    circuit_prompts: list[str] | None

@@ -3,7 +3,7 @@ import tempfile
 import warnings
 import logging
 from datetime import datetime
-from typing import Any, Union, TYPE_CHECKING, cast, Optional
+from typing import Any, TYPE_CHECKING, cast
 from functools import reduce, partial
 from pathlib import Path
 from copy import deepcopy
@@ -279,10 +279,10 @@ class PropertyDispatcher:
         """_summary_
 
         Args:
-            non_dispatch_val (Optional[Any], optional): The value to return if we are not dispatching. Defaults to None.
+            non_dispatch_val (Any | None, optional): The value to return if we are not dispatching. Defaults to None.
 
         Returns:
-            Optional[Any]: _description_
+            Any | None: _description_
         """
         current_frame = inspect.currentframe()
         if current_frame is None or current_frame.f_back is None:
@@ -310,14 +310,14 @@ class PropertyDispatcher:
         return attr_val
 
     @property
-    def core_log_dir(self) -> Optional[StrOrPath]:
+    def core_log_dir(self) -> StrOrPath | None:
         result = self._core_or_framework(c2f_map_key="_log_dir")
-        return cast(Optional[StrOrPath], result)
+        return cast(StrOrPath | None, result)
 
     @property
     def datamodule(self) -> ITDataModule | None:
         result = self._core_or_framework(c2f_map_key="_datamodule")
-        return cast(Union[ITDataModule, None], result)
+        return cast(ITDataModule | None, result)
 
     @property
     def session_complete(self) -> bool:
@@ -328,7 +328,7 @@ class PropertyDispatcher:
         return self.it_cfg.memprofiler_cfg.enabled and self.it_cfg.memprofiler_cfg.cuda_allocator_history
 
     @property
-    def dtype(self) -> Union[torch.dtype, "str"] | None:
+    def dtype(self) -> "torch.dtype | str | None":
         try:
             # If `it_cfg` is not present on the object at all, treat this as an unexpected context and return None
             if not hasattr(self, "it_cfg"):
@@ -361,7 +361,7 @@ class PropertyDispatcher:
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a device reference (has it been set yet?): {ae}")
             device = None
-        return cast(Union[torch.device, None], device)
+        return cast(torch.device | None, device)
 
     @device.setter
     def device(self, value: str | torch.device | None) -> None:
@@ -370,7 +370,7 @@ class PropertyDispatcher:
         self._it_state._device = value
 
     @dtype.setter
-    def dtype(self, value: Union[torch.dtype, "str"] | None) -> None:
+    def dtype(self, value: "torch.dtype | str | None") -> None:
         if value is not None and not isinstance(value, torch.dtype):
             value = _resolve_dtype(value)
         self.it_cfg._dtype = value
@@ -416,7 +416,7 @@ class CoreHelperAttributes:
         return self._core_or_framework(c2f_map_key="_current_epoch")
 
     @property
-    def optimizers(self) -> Optional[list[Optimizable]]:
+    def optimizers(self) -> list[Optimizable] | None:
         return self._core_or_framework(c2f_map_key="_it_optimizers")
 
     @property

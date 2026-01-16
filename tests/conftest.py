@@ -127,7 +127,7 @@ class ITSessionFixture:
 class AnalysisSessionFixture(ITSessionFixture):
     """Dataclass for analysis session fixtures that extends ITSessionFixture."""
 
-    result: AnalysisStore | Dict[AnalysisStore] = None
+    result: AnalysisStore | dict[AnalysisStore] = None
     runner: AnalysisRunner = None
     run_config: Dict | AnalysisRunnerCfg = None
 
@@ -139,7 +139,7 @@ class FixtureCfg:
     module_cls: Type[ModuleSteppable] = TestITModule
     datamodule_cls: Type[DataModuleInitable] = TestITDataModule
     scope: str = "class"
-    variants: Dict[str, Sequence[FixtPhase]] = field(default_factory=lambda: defaultdict(list))
+    variants: dict[str, Sequence[FixtPhase]] = field(default_factory=lambda: defaultdict(list))
 
 
 FIXTURE_CFGS = {
@@ -542,7 +542,7 @@ for fixt_key, fixt_cfg in FIXTURE_CFGS.items():
 GEN_CLI_CFGS = [TEST_CONFIGS_CLI_PARITY, TEST_CONFIGS_CLI_UNIT]
 
 
-def gen_experiment_cfg_sets(test_keys: Sequence[Tuple[str, str, bool]], sess_paths: Tuple) -> Dict:
+def gen_experiment_cfg_sets(test_keys: Sequence[tuple[str, str, bool]], sess_paths: Tuple) -> Dict:
     EXPERIMENTS_BASE, BASE_DEBUG_CONFIG = sess_paths
     exp_cfg_sets = {}
     for exp, subexp, debug_mode in test_keys:

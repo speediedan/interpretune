@@ -1,7 +1,5 @@
 """Trivial example of a hub-based analysis operation for interpretune framework testing."""
 
-from typing import Optional
-
 import torch
 
 from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatchProtocol
@@ -11,8 +9,8 @@ class SomeDifferentBatchDef(BaseAnalysisBatchProtocol):
     """Example of batch definition for a trivial demo op."""
 
     # Define any additional attributes or methods specific to this batch definition
-    preds: Optional[torch.Tensor]
-    pred_sum: Optional[torch.Tensor]
+    preds: torch.Tensor | None
+    pred_sum: torch.Tensor | None
 
 
 def trivial_test_op_impl(analysis_batch: DefaultAnalysisBatchProtocol) -> DefaultAnalysisBatchProtocol:

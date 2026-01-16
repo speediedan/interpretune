@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Optional, Dict, List, Union, Tuple
+from typing import Any, Dict
 from dataclasses import dataclass, field
 from pathlib import Path
 from copy import deepcopy
@@ -50,7 +50,7 @@ if _NEURONPEDIA_AVAILABLE:
         """Default prefix for graph slugs when not specified."""
         default_slug_prefix: str = "it-generated"
         """Default metadata to add to graphs."""
-        default_metadata: Dict[str, Any] = field(
+        default_metadata: dict[str, Any] = field(
             default_factory=lambda: {
                 "info": {
                     "creator_name": "interpretune-user",
@@ -110,7 +110,7 @@ if _NEURONPEDIA_AVAILABLE:
             assert self.phandle is not None and self.phandle.it_cfg is not None, "IT configuration is not available"
             return self.phandle.it_cfg.neuronpedia_cfg
 
-        def _get_latest_graph_schema(self, schema_path: Union[str, Path] = "graph-schema.json") -> Dict[str, Any]:
+        def _get_latest_graph_schema(self, schema_path: str | Path = "graph-schema.json") -> dict[str, Any]:
             """Fetch the latest Neuronpedia graph schema and return it as a dictionary."""
             if not _NEURONPEDIA_AVAILABLE:
                 raise RuntimeError("Neuronpedia package is not available.")
@@ -178,8 +178,8 @@ if _NEURONPEDIA_AVAILABLE:
             raise FileNotFoundError("No graph-schema.json available (failed to fetch, no cache, no fallback)")
 
         def apply_qparam_transforms(
-            self, graph_dict: Dict[str, Any], in_place: bool = True, change_log_path: Optional[Union[str, Path]] = None
-        ) -> Tuple[bool, Dict[str, Any]]:
+            self, graph_dict: dict[str, Any], in_place: bool = True, change_log_path: str | Path | None = None
+        ) -> tuple[bool, dict[str, Any]]:
             """Apply transformations to qParams fields based on predefined rules.
 
             Args:
@@ -242,7 +242,7 @@ if _NEURONPEDIA_AVAILABLE:
             return was_valid, graph_dict
 
         def _log_qparam_changes(
-            self, log: List[Dict], graph_dict: Dict[str, Any], change_log_path: Optional[Union[str, Path]]
+            self, log: list[Dict], graph_dict: dict[str, Any], change_log_path: str | Path | None
         ) -> None:
             """Log qParams changes to console and file."""
             # Console logging
@@ -278,7 +278,7 @@ if _NEURONPEDIA_AVAILABLE:
             except Exception as e:
                 rank_zero_warn(f"[NeuronpediaIntegration] Failed to write change log: {e}")
 
-        def prune_unsupported_metadata(self, graph_dict: Dict[str, Any]) -> None:
+        def prune_unsupported_metadata(self, graph_dict: dict[str, Any]) -> None:
             """Prune metadata fields in graph_dict that do not conform to the graph schema."""
             np_graph_schema = self._get_latest_graph_schema()
             metadata_schema = np_graph_schema.get("properties", {}).get("metadata", {})
@@ -294,10 +294,10 @@ if _NEURONPEDIA_AVAILABLE:
 
         def prepare_graph_metadata(
             self,
-            graph_dict: Dict[str, Any],
-            slug: Optional[str] = None,
-            custom_metadata: Optional[Dict[str, Any]] = None,
-        ) -> Dict[str, Any]:
+            graph_dict: dict[str, Any],
+            slug: str | None = None,
+            custom_metadata: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
             """Prepare and enrich graph metadata for Neuronpedia.
 
             Args:
@@ -353,11 +353,11 @@ if _NEURONPEDIA_AVAILABLE:
 
         def transform_circuit_tracer_graph(
             self,
-            graph_path: Union[str, Path],
-            output_path: Optional[Union[str, Path]] = None,
-            slug: Optional[str] = None,
-            custom_metadata: Optional[Dict[str, Any]] = None,
-        ) -> Tuple[Dict[str, Any], Path]:
+            graph_path: str | Path,
+            output_path: str | Path | None = None,
+            slug: str | None = None,
+            custom_metadata: dict[str, Any] | None = None,
+        ) -> tuple[dict[str, Any], Path]:
             """Transform a Circuit Tracer graph for Neuronpedia compatibility.
 
             Args:
@@ -406,7 +406,7 @@ if _NEURONPEDIA_AVAILABLE:
 
             return graph_dict, output_path
 
-        def _save_graph_json(self, graph_dict: Dict[str, Any], output_path: Path) -> None:
+        def _save_graph_json(self, graph_dict: dict[str, Any], output_path: Path) -> None:
             """Save graph dictionary as JSON."""
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -418,7 +418,7 @@ if _NEURONPEDIA_AVAILABLE:
             with open(output_path, "w") as f:
                 f.write(json_str)
 
-        def validate_graph(self, graph_dict: Dict[str, Any]) -> bool:
+        def validate_graph(self, graph_dict: dict[str, Any]) -> bool:
             """Validate the provided graph dictionary against the Neuronpedia schema.
 
             Args:
@@ -453,7 +453,7 @@ if _NEURONPEDIA_AVAILABLE:
                 rank_zero_warn(f"[NeuronpediaIntegration] Graph validation failed: {e.message}")
                 return False
 
-        def upload_graph_to_neuronpedia(self, graph_path: Union[str, Path], api_key: Optional[str] = None) -> Any:
+        def upload_graph_to_neuronpedia(self, graph_path: str | Path, api_key: str | None = None) -> Any:
             """Upload a graph to Neuronpedia.
 
             Args:
@@ -516,12 +516,12 @@ if _NEURONPEDIA_AVAILABLE:
 
         def transform_graph_for_np(
             self,
-            graph_path: Union[str, Path],
-            slug: Optional[str] = None,
+            graph_path: str | Path,
+            slug: str | None = None,
             upload_to_np: bool = False,
-            custom_metadata: Optional[Dict[str, Any]] = None,
-            api_key: Optional[str] = None,
-        ) -> Tuple[Dict[str, Any], Any]:
+            custom_metadata: dict[str, Any] | None = None,
+            api_key: str | None = None,
+        ) -> tuple[dict[str, Any], Any]:
             """Transform and upload a Circuit Tracer graph to Neuronpedia.
 
             Args:

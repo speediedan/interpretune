@@ -1,5 +1,5 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import TYPE_CHECKING, Optional, Union, List, Iterable
+from typing import TYPE_CHECKING, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
 # Standalone functions for analysis initialization
 def to_analysis_cfgs(
-    analysis_cfgs: Optional[Union[AnalysisCfg, "AnalysisOp", Iterable[Union[AnalysisCfg, "AnalysisOp"]]]],
-) -> List[AnalysisCfg]:
+    analysis_cfgs: "AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] | None",
+) -> list[AnalysisCfg]:
     """Convert various input formats to a list of AnalysisCfg objects.
 
     Args:
@@ -72,9 +72,9 @@ def to_analysis_cfgs(
 
 def init_analysis_dirs(
     module: "SAEAnalysisModuleProtocol",
-    cache_dir: Optional[Union[str, Path]] = None,
-    op_output_dataset_path: Optional[Union[str, Path]] = None,
-    analysis_cfgs: Optional[List[AnalysisCfg]] = None,
+    cache_dir: str | Path | None = None,
+    op_output_dataset_path: str | Path | None = None,
+    analysis_cfgs: list[AnalysisCfg] | None = None,
 ) -> tuple[Path, Path]:
     """Initialize the analysis directories for the given module and analysis configurations.
 
@@ -123,10 +123,10 @@ def init_analysis_dirs(
 
 def init_analysis_cfgs(
     module: "SAEAnalysisModuleProtocol",
-    analysis_cfgs: List[AnalysisCfg],
-    cache_dir: Optional[Union[str, Path]] = None,
-    op_output_dataset_path: Optional[Union[str, Path]] = None,
-    sae_analysis_targets: Optional["SAEAnalysisTargets"] = None,
+    analysis_cfgs: list[AnalysisCfg],
+    cache_dir: str | Path | None = None,
+    op_output_dataset_path: str | Path | None = None,
+    sae_analysis_targets: "SAEAnalysisTargets | None" = None,
     ignore_manual: bool = False,
 ) -> None:
     """Initialize analysis configurations for the given module.
@@ -187,12 +187,12 @@ class SessionRunnerCfg:
 @dataclass(kw_only=True)
 class AnalysisRunnerCfg(SessionRunnerCfg):
     # Change the field to a private attribute that will store the raw value
-    analysis_cfgs: Optional[Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]]] = None
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] | None = None
     limit_analysis_batches: int = -1
-    cache_dir: Optional[str | Path] = None
-    op_output_dataset_path: Optional[str | Path] = None
+    cache_dir: str | Path | None = None
+    op_output_dataset_path: str | Path | None = None
     # Add optional sae_analysis_targets as a fallback
-    sae_analysis_targets: Optional[SAEAnalysisTargets] = None
+    sae_analysis_targets: SAEAnalysisTargets | None = None
     # Add artifact configuration
     artifact_cfg: AnalysisArtifactCfg = field(default_factory=AnalysisArtifactCfg)
     # Global override for ignore_manual setting in analysis configs
@@ -217,6 +217,6 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
             self.op_output_dataset_path = str(self.op_output_dataset_path)
 
     @property
-    def _processed_analysis_cfgs(self) -> List[AnalysisCfg]:
+    def _processed_analysis_cfgs(self) -> list[AnalysisCfg]:
         """Process and return the analysis_cfgs as a standardized list of AnalysisCfg objects."""
         return to_analysis_cfgs(self.analysis_cfgs)

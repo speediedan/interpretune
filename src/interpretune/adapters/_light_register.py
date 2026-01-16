@@ -14,10 +14,10 @@ runtime consumers that expect registrations to exist.
 
 from importlib import import_module
 from types import ModuleType
-from typing import Iterable, Optional
+from typing import Iterable
 
 
-def _import_adapter_module(module_path: str) -> Optional[ModuleType]:
+def _import_adapter_module(module_path: str) -> ModuleType | None:
     """Import an adapter module and return the module object.
 
     We rely on adapter modules to avoid importing heavy third-party dependencies at module import time (they use

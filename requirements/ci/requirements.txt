@@ -7,9 +7,7 @@ accelerate==1.12.0
 aiohappyeyeballs==2.6.1
     # via aiohttp
 aiohttp==3.13.3
-    # via
-    #   fsspec
-    #   papermill
+    # via fsspec
 aiosignal==1.4.0
     # via aiohttp
 annotated-types==0.7.0
@@ -86,7 +84,7 @@ cryptography==46.0.3 ; platform_machine != 'ppc64le' and platform_machine != 's3
     # via secretstorage
 cycler==0.12.1
     # via matplotlib
-datasets==4.4.2
+datasets==4.5.0
     # via
     #   interpretune (pyproject.toml)
     #   evaluate
@@ -137,7 +135,7 @@ fsspec[http]==2025.10.0
     #   evaluate
     #   huggingface-hub
     #   torch
-gdown==5.2.0
+gdown==5.2.1
     # via interpretune (pyproject.toml)
 gitdb==4.0.12
     # via gitpython
@@ -166,7 +164,7 @@ huggingface-hub[hf-xet]==0.36.0
     #   transformers
 id==1.5.0
     # via twine
-identify==2.6.15
+identify==2.6.16
     # via pre-commit
 idna==3.11
     # via
@@ -196,7 +194,7 @@ isoduration==20.11.0
     # via jsonschema
 jaraco-classes==3.4.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via keyring
-jaraco-context==6.0.2 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
+jaraco-context==6.1.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via keyring
 jaraco-functools==4.4.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via keyring
@@ -254,9 +252,9 @@ jupyter-server==2.17.0
     #   jupyterlab-server
     #   notebook
     #   notebook-shim
-jupyter-server-terminals==0.5.3
+jupyter-server-terminals==0.5.4
     # via jupyter-server
-jupyterlab==4.5.1
+jupyterlab==4.5.2
     # via
     #   interpretune (pyproject.toml)
     #   notebook
@@ -348,13 +346,13 @@ nodeenv==1.10.0
     # via
     #   pre-commit
     #   pyright
-notebook==7.5.1
+notebook==7.5.2
     # via interpretune (pyproject.toml)
 notebook-shim==0.2.4
     # via
     #   jupyterlab
     #   notebook
-numpy==2.4.0
+numpy==2.4.1
     # via
     #   accelerate
     #   bitsandbytes
@@ -454,7 +452,7 @@ platformdirs==4.5.1
     #   jupyter-core
     #   virtualenv
     #   wandb
-plotly==6.5.1
+plotly==6.5.2
     # via interpretune (pyproject.toml)
 pluggy==1.6.0
     # via pytest
@@ -462,7 +460,7 @@ pre-commit==4.5.1
     # via
     #   interpretune (pyproject.toml:dev)
     #   interpretune (pyproject.toml:test)
-prometheus-client==0.23.1
+prometheus-client==0.24.1
     # via jupyter-server
 prompt-toolkit==3.0.52
     # via ipython
@@ -470,7 +468,7 @@ propcache==0.4.1
     # via
     #   aiohttp
     #   yarl
-protobuf==6.33.2
+protobuf==6.33.4
     # via
     #   tensorboard
     #   wandb
@@ -568,7 +566,7 @@ referencing==0.37.0
     #   jsonschema
     #   jsonschema-specifications
     #   jupyter-events
-regex==2025.11.3
+regex==2026.1.15
     # via transformers
 requests[socks]==2.32.5
     # via
@@ -611,11 +609,11 @@ safetensors==0.7.0
     #   transformers
 scikit-learn==1.8.0
     # via interpretune (pyproject.toml)
-scipy==1.16.3
+scipy==1.17.0
     # via scikit-learn
 secretstorage==3.5.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x' and sys_platform == 'linux'
     # via keyring
-send2trash==2.0.0
+send2trash==2.1.0
     # via jupyter-server
 sentry-sdk==2.49.0
     # via wandb
@@ -697,7 +695,7 @@ traitlets==5.14.3
     #   nbclient
     #   nbconvert
     #   nbformat
-transformers==4.57.3
+transformers==4.57.5
     # via
     #   interpretune (pyproject.toml)
     #   peft
@@ -709,16 +707,12 @@ typeshed-client==2.8.2
     # via jsonargparse
 typing-extensions==4.15.0
     # via
-    #   aiosignal
-    #   anyio
     #   beautifulsoup4
     #   grpcio
     #   huggingface-hub
-    #   psycopg
     #   pydantic
     #   pydantic-core
     #   pyright
-    #   referencing
     #   torch
     #   typeshed-client
     #   typing-inspection
@@ -737,13 +731,13 @@ urllib3==2.6.3
     #   requests
     #   sentry-sdk
     #   twine
-uv==0.9.22
+uv==0.9.26
     # via
     #   interpretune (pyproject.toml:dev)
     #   interpretune (pyproject.toml:test)
 virtualenv==20.36.1
     # via pre-commit
-wandb==0.23.1
+wandb==0.24.0
     # via interpretune (pyproject.toml)
 wcwidth==0.2.14
     # via prompt-toolkit

@@ -37,7 +37,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Tuple, Optional, Any
+from typing import Any
 
 import psutil
 import torch
@@ -85,7 +85,7 @@ class FixtureMetrics:
         self.gpu_memory_before: float = 0.0
         self.gpu_memory_after: float = 0.0
         self.gpu_peak_memory: float = 0.0
-        self.error: Optional[str] = None
+        self.error: str | None = None
 
     @property
     def memory_delta(self) -> float:
@@ -111,7 +111,7 @@ def get_gpu_memory_usage_mb() -> float:
     return 0.0
 
 
-def discover_generated_fixtures() -> Dict[str, Tuple[Any, str]]:
+def discover_generated_fixtures() -> dict[str, tuple[Any, str]]:
     """Discover all dynamically generated fixtures from conftest.py."""
     fixtures = {}
 
@@ -267,7 +267,7 @@ def test_minimal():
         Path(baseline_test_path).unlink(missing_ok=True)
 
 
-def measure_baseline_pytest_startup_with_profiling() -> Tuple[float, Dict[str, str]]:
+def measure_baseline_pytest_startup_with_profiling() -> tuple[float, dict[str, str]]:
     """Measure baseline pytest startup time with import profiling.
 
     Returns:
@@ -548,7 +548,7 @@ def test_fixture_benchmark({fixture_name}):
     return metrics
 
 
-def get_fixture_analysis() -> Dict[str, Dict[str, Any]]:
+def get_fixture_analysis() -> dict[str, dict[str, Any]]:
     """Complete analysis of all fixtures with dynamic discovery and usage counts."""
     raw_fixtures = discover_generated_fixtures()
 
@@ -572,7 +572,7 @@ def get_fixture_analysis() -> Dict[str, Dict[str, Any]]:
     return processed_fixtures
 
 
-def discover_static_fixtures() -> Dict[str, Dict[str, Any]]:
+def discover_static_fixtures() -> dict[str, dict[str, Any]]:
     """Discover static fixtures from conftest.py."""
     conftest_path = Path(__file__).parent / "conftest.py"
     static_fixtures = {}
@@ -621,11 +621,11 @@ def discover_static_fixtures() -> Dict[str, Dict[str, Any]]:
 
 
 def run_full_benchmark(
-    max_fixtures: Optional[int] = None,
-) -> Tuple[
-    Dict[str, Tuple[Dict[str, Any], FixtureMetrics]],
+    max_fixtures: int | None = None,
+) -> tuple[
+    dict[str, tuple[dict[str, Any], FixtureMetrics]],
     float,
-    Dict[str, str],
+    dict[str, str],
 ]:
     """Run comprehensive benchmark of all fixtures."""
     fixtures = get_fixture_analysis()
@@ -702,9 +702,9 @@ def run_full_benchmark(
 
 
 def generate_markdown_report(
-    results: Dict[str, Tuple[Dict[str, Any], FixtureMetrics]],
+    results: dict[str, tuple[dict[str, Any], FixtureMetrics]],
     baseline_time: float = 0.0,
-    baseline_artifacts: Optional[Dict[str, str]] = None,
+    baseline_artifacts: dict[str, str] | None = None,
 ) -> str:
     """Generate comprehensive markdown report."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

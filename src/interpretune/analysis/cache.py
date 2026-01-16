@@ -22,7 +22,6 @@ import atexit
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 from datasets.fingerprint import (
     generate_random_fingerprint,
@@ -96,7 +95,7 @@ def _create_tempdir() -> Path:
     return tmpdir
 
 
-def get_analysis_cache_dir(module, explicit_cache_dir: Optional[str | Path] = None) -> Path:
+def get_analysis_cache_dir(module, explicit_cache_dir: str | Path | None = None) -> Path:
     """Return the cache directory to use for analysis for the given module.
 
     Behavior:

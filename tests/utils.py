@@ -1,4 +1,4 @@
-from typing import Tuple, List, Iterator, Dict, Optional, Union, Type, Any, Callable, NamedTuple
+from typing import Tuple, List, Iterator, Dict, Type, Any, Callable, NamedTuple
 import random
 import importlib
 from collections import defaultdict
@@ -37,7 +37,7 @@ def _recursive_defaultdict():
 
 
 # useful for manipulating segments of nested dictionaries (e.g. generating config file sets for CLI composition tests)
-def set_nested(chained_keys: List | str, orig_dict: Optional[Dict] = None):
+def set_nested(chained_keys: List | str, orig_dict: Dict | None = None):
     orig_dict = {} if orig_dict is None else orig_dict
     chained_keys = chained_keys if isinstance(chained_keys, list) else chained_keys.split(".")
     reduce(lambda d, k: d.setdefault(k, {}), chained_keys, orig_dict)
@@ -151,7 +151,7 @@ def kwargs_from_cfg_obj(cfg_obj, source_obj, base_kwargs=None):
     return kwargs
 
 
-def get_super_method(cls_path_or_type: Union[str, Type], instance: Any, method_name: str) -> Callable:
+def get_super_method(cls_path_or_type: str | Type, instance: Any, method_name: str) -> Callable:
     """Retrieves a method from a parent class by using standard super() resolution.
 
     This is useful for testing specific implementations of methods that might be overridden in subclasses.

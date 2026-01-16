@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Optional, Dict, List, Union, Tuple
+from typing import Any
 from dataclasses import dataclass, field
 from pathlib import Path
 from copy import deepcopy
@@ -28,8 +28,8 @@ from interpretune.protocol import Adapter
 @dataclass(kw_only=True)
 class InstantiatedGraph:
     handle: Graph
-    graph_path: Optional[Path] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    graph_path: Path | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 ################################################################################
@@ -58,8 +58,8 @@ class CircuitTracerAttributeMixin(TLensAttributeMixin):
 class BaseCircuitTracerModule(BaseITLensModule):
     def __init__(self, *args, **kwargs):
         # Initialize attributes that may be required in base init methods
-        self.attribution_graphs: List[InstantiatedGraph] = []
-        self._replacement_model: Optional[ReplacementModel] = None
+        self.attribution_graphs: list[InstantiatedGraph] = []
+        self._replacement_model: ReplacementModel | None = None
         super().__init__(*args, **kwargs)
 
     def _convert_hf_to_tl(self) -> None:
@@ -80,7 +80,7 @@ class BaseCircuitTracerModule(BaseITLensModule):
         self._load_replacement_model(pretrained_kwargs=loaded_model_kwargs)
         self.model.config = hf_preconversion_config
 
-    def _load_replacement_model(self, pretrained_kwargs: Optional[dict] = None) -> None:
+    def _load_replacement_model(self, pretrained_kwargs: dict | None = None) -> None:
         """Load the ReplacementModel for circuit tracing."""
         pretrained_kwargs = pretrained_kwargs or {}
         cfg = self.circuit_tracer_cfg
@@ -115,7 +115,7 @@ class BaseCircuitTracerModule(BaseITLensModule):
         # Circuit tracer handles gradient requirements internally
         rank_zero_info("Input gradient requirements handled by circuit tracer internally.")
 
-    def _get_attribution_targets(self) -> Optional[list | torch.Tensor]:
+    def _get_attribution_targets(self) -> list | torch.Tensor | None:
         """Determine the attribution_targets value based on CircuitTracerConfig.
 
         Returns:
@@ -185,7 +185,7 @@ class BaseCircuitTracerModule(BaseITLensModule):
 
         return graph
 
-    def save_graph(self, graph: Graph, output_path: Union[str, Path]) -> Path:
+    def save_graph(self, graph: Graph, output_path: str | Path) -> Path:
         """Save attribution graph to file."""
         output_path = Path(output_path)
         graph.to_pt(str(output_path))
@@ -195,7 +195,7 @@ class BaseCircuitTracerModule(BaseITLensModule):
         self,
         graph: Graph,
         slug: str,
-        output_dir: Union[str, Path],
+        output_dir: str | Path,
         node_threshold: float = 0.8,
         edge_threshold: float = 0.98,
     ) -> None:
@@ -288,10 +288,10 @@ class CircuitTracerAnalysisMixin:
     def save_graph(
         self,
         graph: Graph,
-        output_path: Union[str, Path],
-        slug: Optional[str] = None,
-        custom_metadata: Optional[Dict[str, Any]] = None,
-        use_neuronpedia: Optional[bool] = None,
+        output_path: str | Path,
+        slug: str | None = None,
+        custom_metadata: dict[str, Any] | None = None,
+        use_neuronpedia: bool | None = None,
     ) -> Path:
         """Save and optionally transform graph for Neuronpedia upload."""
         # Convert output_path to directory for processing
@@ -340,13 +340,13 @@ class CircuitTracerAnalysisMixin:
     def generate_graph(
         self,
         prompt: str,
-        slug: Optional[str] = None,
-        custom_metadata: Optional[Dict[str, Any]] = None,
+        slug: str | None = None,
+        custom_metadata: dict[str, Any] | None = None,
         upload_to_np: bool = False,
-        output_dir: Optional[Union[str, Path]] = None,
-        use_neuronpedia: Optional[bool] = None,
+        output_dir: str | Path | None = None,
+        use_neuronpedia: bool | None = None,
         **generation_kwargs,
-    ) -> Tuple[Graph, Path, Any]:
+    ) -> tuple[Graph, Path, Any]:
         """Generate attribution graph and optionally upload to Neuronpedia."""
         if use_neuronpedia is None:
             use_neuronpedia = (

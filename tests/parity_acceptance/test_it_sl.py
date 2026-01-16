@@ -9,7 +9,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Optional, Callable, Sequence
+from typing import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
 
@@ -31,7 +31,7 @@ from tests.warns import unexpected_warns, SL_CTX_WARNS, SL_LIGHTNING_CTX_WARNS
 @dataclass(kw_only=True)
 class SLParityCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
-    model_src_key: Optional[str] = "cust"
+    model_src_key: str | None = "cust"
     add_saes_on_init: bool = True
     # SAE lens doesn't support TransformerBridge yet, must use legacy HookedTransformer
     # This will be handled in the test configuration by ensuring tl_cfg has use_bridge=False
@@ -39,7 +39,7 @@ class SLParityCfg(BaseCfg):
 
 @dataclass
 class SLParityTest(BaseAugTest):
-    result_gen: Optional[Callable] = partial(collect_results, sl_parity_results)
+    result_gen: Callable | None = partial(collect_results, sl_parity_results)
 
 
 PARITY_SL_CONFIGS = (

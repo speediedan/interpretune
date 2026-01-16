@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Dict, Optional, Tuple, Callable, Type, Protocol, Set, runtime_checkable, List, Sequence, cast
+from typing import Any, Tuple, Callable, Type, Protocol, Set, runtime_checkable, Sequence, cast
 from inspect import getmembers, isclass
 from typing_extensions import override
 from types import ModuleType
@@ -17,9 +17,9 @@ class CompositionRegistry(dict):
         self,
         lead_adapter: Adapter,
         component_key: str,
-        adapter_combination: Tuple[Adapter | str],
-        composition_classes: Tuple[Callable[..., Any], ...],
-        description: Optional[str] = None,
+        adapter_combination: tuple[Adapter | str],
+        composition_classes: tuple[Callable[..., Any], ...],
+        description: str | None = None,
     ) -> None:
         """Registers valid component + adapter compositions mapped to composition keys with required metadata.
 
@@ -27,10 +27,10 @@ class CompositionRegistry(dict):
             lead_adapter: The adapter registering this set of valid compositions (e.g. LightningAdapter)
             component_key: The name of the component (e.g. "datamodule")
             adapter_combination: tuple identifying the valid adapter composition
-            composition_classes: Tuple[Callable, ...],
+            composition_classes: tuple[Callable, ...],
             description : composition description
         """
-        supported_composition: Dict[str | Adapter | Tuple[Adapter | str], Any] = {}
+        supported_composition: dict[str | Adapter | tuple[Adapter | str], Any] = {}
         composition_key = (component_key,) + self.canonicalize_composition(adapter_combination)
         supported_composition[composition_key] = composition_classes
         supported_composition["lead_adapter"] = Adapter[lead_adapter] if isinstance(lead_adapter, str) else lead_adapter
@@ -39,8 +39,8 @@ class CompositionRegistry(dict):
 
     @staticmethod
     def resolve_adapter_filter(
-        adapter_filter: Optional[Sequence[Adapter | str] | Adapter | str] = None,
-    ) -> List[Adapter]:
+        adapter_filter: Sequence[Adapter | str] | Adapter | str | None = None,
+    ) -> list[Adapter]:
         unresolved_filters = []
         if adapter_filter is None:
             return []
@@ -79,7 +79,7 @@ class CompositionRegistry(dict):
         return adapter_ctx
 
     @override
-    def get(self, composition_key: Tuple[Adapter | str], default: Any = None) -> Any:
+    def get(self, composition_key: tuple[Adapter | str], default: Any = None) -> Any:
         if composition_key in self:
             supported_composition = self[composition_key]
             return supported_composition[composition_key]
@@ -94,11 +94,11 @@ class CompositionRegistry(dict):
         )
         raise KeyError(err_msg)
 
-    def remove(self, composition_key: Tuple[Adapter | str]) -> None:
+    def remove(self, composition_key: tuple[Adapter | str]) -> None:
         """Removes the registered adapter composition by name."""
         del self[composition_key]
 
-    def available_compositions(self, adapter_filter: Optional[Sequence[Adapter | str] | Adapter | str] = None) -> Set:
+    def available_compositions(self, adapter_filter: Sequence[Adapter | str] | Adapter | str | None = None) -> Set:
         """Returns a list of registered adapters, optionally filtering by the lead adapter that registered the
         valid composition."""
         if adapter_filter is not None:

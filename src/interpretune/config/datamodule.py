@@ -1,4 +1,4 @@
-from typing import Optional, Any, Dict, Tuple, List
+from typing import Any, Tuple, List
 import logging
 import os
 from dataclasses import dataclass, field
@@ -18,30 +18,30 @@ log = logging.getLogger(__name__)
 
 @dataclass(kw_only=True)
 class PromptConfig(ITSerializableCfg):
-    cust_task_prompt: Dict[str, Any] = field(default_factory=dict)
+    cust_task_prompt: dict[str, Any] = field(default_factory=dict)
 
-    def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: Optional[str] = None) -> str:
+    def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: str | None = None) -> str:
         return task_prompt.strip()
 
 
 @dataclass(kw_only=True)
 class TokenizationConfig(ITSerializableCfg):
     tokenizers_parallelism: bool = True
-    local_fast_tokenizer_path: Optional[str] = None
-    cust_tokenization_pattern: Optional[str] = None
-    special_tokens_dict: Dict[str, Any] = field(default_factory=dict)
+    local_fast_tokenizer_path: str | None = None
+    cust_tokenization_pattern: str | None = None
+    special_tokens_dict: dict[str, Any] = field(default_factory=dict)
     max_seq_length: int = 2048  # TODO: force this to be set rather than allowing a default?
 
 
 @dataclass(kw_only=True)
 class DatasetProcessingConfig(ITSerializableCfg):
     remove_unused_columns: bool = True
-    text_fields: Optional[Tuple] = None
-    dataset_path: Optional[StrOrPath] = None
-    enable_datasets_cache: Optional[bool] = False  # disable caching unless explicitly set to improve reproducibility
-    data_collator_cfg: Dict[str, Any] = field(default_factory=dict)
-    signature_columns: Optional[List] = field(default_factory=list)
-    prepare_data_map_cfg: Dict[str, Any] = field(default_factory=dict)
+    text_fields: Tuple | None = None
+    dataset_path: StrOrPath | None = None
+    enable_datasets_cache: bool | None = False  # disable caching unless explicitly set to improve reproducibility
+    data_collator_cfg: dict[str, Any] = field(default_factory=dict)
+    signature_columns: List | None = field(default_factory=list)
+    prepare_data_map_cfg: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(kw_only=True)
@@ -49,7 +49,7 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
     train_batch_size: int = 32
     eval_batch_size: int = 32
-    dataloader_kwargs: Dict[str, Any] = field(default_factory=dict)
+    dataloader_kwargs: dict[str, Any] = field(default_factory=dict)
     # note that for prompt_cfg, we:
     #   1. use (data)classes to minimize special character yaml parsing complications (can override w/ diff init_args)
     #   2. do not provide a default dataclass to avoid current dataclass subclass limitations

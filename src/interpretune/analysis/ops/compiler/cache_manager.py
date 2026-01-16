@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import hashlib
 import importlib.util
-from typing import List, Dict, Any, Optional
+from typing import Any
 from pathlib import Path
 from dataclasses import dataclass, field
 
@@ -27,13 +27,13 @@ class OpDef:
     implementation: str
     input_schema: OpSchema
     output_schema: OpSchema
-    aliases: List[str] = field(default_factory=list)
-    importable_params: Dict[str, str] = field(default_factory=dict)
-    normal_params: Dict[str, Any] = field(default_factory=dict)
-    required_ops: List[str] = field(default_factory=list)
-    composition: Optional[List[str]] = None
+    aliases: list[str] = field(default_factory=list)
+    importable_params: dict[str, str] = field(default_factory=dict)
+    normal_params: dict[str, Any] = field(default_factory=dict)
+    required_ops: list[str] = field(default_factory=list)
+    composition: list[str] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for compatibility with existing code."""
         result = {
             "name": self.name,
@@ -67,7 +67,7 @@ class YamlFileInfo:
         return cls(path, stat.st_mtime, content_hash)
 
 
-def _get_latest_revision(repo: CachedRepoInfo) -> Optional[CachedRevisionInfo]:
+def _get_latest_revision(repo: CachedRepoInfo) -> CachedRevisionInfo | None:
     """Get the latest revision for a repository, preferring 'main' ref.
 
     Args:
@@ -102,8 +102,8 @@ class OpDefinitionsCacheManager:
     def __init__(self, cache_dir: Path):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self._yaml_files: List[YamlFileInfo] = []
-        self._fingerprint: Optional[str] = None
+        self._yaml_files: list[YamlFileInfo] = []
+        self._fingerprint: str | None = None
 
     def add_yaml_file(self, yaml_file: Path) -> None:
         """Add a YAML file to be monitored for changes."""
@@ -119,7 +119,7 @@ class OpDefinitionsCacheManager:
             # Skip files that don't exist anymore
             pass
 
-    def add_hub_yaml_files(self) -> List[Path]:
+    def add_hub_yaml_files(self) -> list[Path]:
         """Add hub YAML files to monitoring."""
         hub_yaml_files = []
         try:
@@ -146,7 +146,7 @@ class OpDefinitionsCacheManager:
         rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Returning {len(hub_yaml_files)} YAML files")
         return hub_yaml_files  # type: ignore[return-value]
 
-    def discover_hub_yaml_files(self) -> List[Path]:
+    def discover_hub_yaml_files(self) -> list[Path]:
         """Discover YAML files from the most recent revision of each hub repository.
 
         Uses HuggingFace's cache manager to efficiently find YAML files only from
@@ -352,7 +352,7 @@ class OpDefinitionsCacheManager:
         rank_zero_debug("[ANALYSIS_HUB_CACHE] Cache is valid")
         return True
 
-    def _generate_module_content(self, op_definitions: Dict[str, OpDef]) -> str:
+    def _generate_module_content(self, op_definitions: dict[str, OpDef]) -> str:
         """Generate Python module content for the cache."""
         lines = [
             "# GENERATED FILE - DO NOT EDIT",
@@ -450,7 +450,7 @@ class OpDefinitionsCacheManager:
 
         return f"ColCfg({', '.join(args)})"
 
-    def save_cache(self, op_definitions: Dict[str, OpDef]) -> Path:
+    def save_cache(self, op_definitions: dict[str, OpDef]) -> Path:
         """Save operation definitions to cache."""
         cache_path = self._get_cache_module_path()
 
@@ -465,7 +465,7 @@ class OpDefinitionsCacheManager:
 
         return cache_path
 
-    def load_cache(self) -> Optional[Dict[str, OpDef]]:
+    def load_cache(self) -> dict[str, OpDef] | None:
         """Load operation definitions from cache."""
         if not self.is_cache_valid():
             return None

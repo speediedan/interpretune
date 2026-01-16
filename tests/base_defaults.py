@@ -1,16 +1,17 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Callable, Any, Dict, Sequence, TYPE_CHECKING, Iterable, Union
+from typing import List, Tuple, Callable, Any, Dict, Sequence, TYPE_CHECKING, Iterable
 import pytest
 
 from interpretune.adapters import ADAPTER_REGISTRY
-from interpretune.config import HFFromPretrainedConfig, GenerativeClassificationConfig, AutoCompConfig
+from interpretune.config import HFFromPretrainedConfig, GenerativeClassificationConfig, AutoCompConfig, AnalysisCfg
 from interpretune.extensions import MemProfilerCfg, DebugLMConfig
 from interpretune.protocol import Adapter
 from interpretune.analysis import SAEAnalysisTargets
 from tests.runif import RunIf, RUNIF_ALIASES
 
 if TYPE_CHECKING:
-    from interpretune.analysis import AnalysisOp, AnalysisCfg
+    from interpretune.analysis import AnalysisOp
 
 default_test_task = "rte"
 
@@ -26,11 +27,11 @@ default_prof_bs = 1
 @dataclass(kw_only=True)
 class BaseAugTest:
     alias: str
-    cfg: Optional[Tuple] = None
-    marks: Optional[Dict] = None  # test instance-specific marks
-    expected: Optional[Dict] = None
-    result_gen: Optional[Callable] = None
-    function_marks: Dict[str, Any] = field(default_factory=dict)  # marks applied at test function level
+    cfg: Tuple | None = None
+    marks: Dict | None = None  # test instance-specific marks
+    expected: Dict | None = None
+    result_gen: Callable | None = None
+    function_marks: dict[str, Any] = field(default_factory=dict)  # marks applied at test function level
 
     def __post_init__(self):
         if self.expected is None and self.result_gen is not None:
@@ -41,7 +42,7 @@ class BaseAugTest:
         if self.marks or self.function_marks:
             self.marks = self._get_marks(self.marks, self.function_marks)
 
-    def _get_marks(self, marks: Optional[Dict | str], function_marks: Dict) -> Optional[RunIf]:
+    def _get_marks(self, marks: Dict | str | None, function_marks: Dict) -> RunIf | None:
         # support RunIf aliases applied to function level
         if marks:
             if isinstance(marks, Dict):
@@ -54,7 +55,7 @@ class BaseAugTest:
             return RunIf(**function_marks)
 
 
-def pytest_factory(test_configs: List[BaseAugTest], unpack: bool = True, fq_alias: bool = False) -> List:
+def pytest_factory(test_configs: list[BaseAugTest], unpack: bool = True, fq_alias: bool = False) -> List:
     return [
         pytest.param(
             config.alias,
@@ -73,28 +74,28 @@ class BaseCfg:
     model_key: str = default_test_task  # "real-model"-based acceptance/parity testing/profiling
     precision: str | int = "torch.float32"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
-    model_src_key: Optional[str] = None
-    datamodule_cls: Optional[str] = None  # Fully qualified class name (e.g., "tests.modules.DivergeTestITModule")
-    module_cls: Optional[str] = None  # Fully qualified class name (e.g., "tests.modules.DivergeTestITModule")
-    limit_train_batches: Optional[int] = 1
-    limit_val_batches: Optional[int] = 1
-    limit_test_batches: Optional[int] = 1
-    dm_override_cfg: Optional[Dict] = None
-    generative_step_cfg: Optional[GenerativeClassificationConfig] = None
-    hf_from_pretrained_cfg: Optional[HFFromPretrainedConfig] = None
-    memprofiler_cfg: Optional[MemProfilerCfg] = None
-    debug_lm_cfg: Optional[DebugLMConfig] = None
-    model_cfg: Optional[Dict] = None
-    tl_cfg: Optional[Dict] = None
-    sae_cfgs: Optional[Dict] = None
-    auto_comp_cfg: Optional[AutoCompConfig] = None
+    model_src_key: str | None = None
+    datamodule_cls: str | None = None  # Fully qualified class name (e.g., "tests.modules.DivergeTestITModule")
+    module_cls: str | None = None  # Fully qualified class name (e.g., "tests.modules.DivergeTestITModule")
+    limit_train_batches: int | None = 1
+    limit_val_batches: int | None = 1
+    limit_test_batches: int | None = 1
+    dm_override_cfg: Dict | None = None
+    generative_step_cfg: GenerativeClassificationConfig | None = None
+    hf_from_pretrained_cfg: HFFromPretrainedConfig | None = None
+    memprofiler_cfg: MemProfilerCfg | None = None
+    debug_lm_cfg: DebugLMConfig | None = None
+    model_cfg: Dict | None = None
+    tl_cfg: Dict | None = None
+    sae_cfgs: Dict | None = None
+    auto_comp_cfg: AutoCompConfig | None = None
     add_saes_on_init: bool = False
-    req_grad_mask: Optional[Tuple] = None  # used to toggle requires grad for non-fts contexts
-    max_epochs: Optional[int] = 1
-    cust_fwd_kwargs: Optional[Dict] = None
+    req_grad_mask: Tuple | None = None  # used to toggle requires grad for non-fts contexts
+    max_epochs: int | None = 1
+    cust_fwd_kwargs: Dict | None = None
     # used when adding a new test dataset or changing a test model to force re-caching of test datasets
     force_prepare_data: bool = False  # TODO: make this settable via an env variable as well
-    max_steps: Optional[int] = None
+    max_steps: int | None = None
     save_checkpoints: bool = False
     req_deterministic: bool = False
     logging_level: str | int = "INFO"  # Logging level for test runs
@@ -107,14 +108,14 @@ class BaseCfg:
 @dataclass(kw_only=True)
 class AnalysisBaseCfg(BaseCfg):
     # TODO: we may want to narrow Iterable to Sequence here
-    analysis_cfgs: Union["AnalysisCfg", "AnalysisOp", Iterable[Union["AnalysisCfg", "AnalysisOp"]]] = None
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = None
     limit_analysis_batches: int = 2
-    cache_dir: Optional[str] = None
-    op_output_dataset_path: Optional[str] = None
+    cache_dir: str | None = None
+    op_output_dataset_path: str | None = None
     # Add optional sae_analysis_targets as a fallback
-    sae_analysis_targets: Optional[SAEAnalysisTargets] = None
+    sae_analysis_targets: SAEAnalysisTargets | None = None
     # Add artifact configuration
-    artifact_cfg: Optional[Dict] = None
+    artifact_cfg: Dict | None = None
     # Global override for ignore_manual setting in analysis configs
     ignore_manual: bool = False
 
@@ -127,9 +128,9 @@ class OpTestConfig:
     """Configuration for operation testing."""
 
     target_op: Any  # The operation to test
-    resolved_op: Optional["AnalysisOp"] = None
+    resolved_op: AnalysisOp | None = None
     session_fixt: str = "get_it_session__sl_gpt2_analysis__setup"
     batch_size: int = 1
     generate_required_only: bool = True
-    override_req_cols: Optional[tuple] = None
+    override_req_cols: tuple | None = None
     deepcopy_session_fixt: bool = False

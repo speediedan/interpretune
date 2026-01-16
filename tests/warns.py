@@ -1,6 +1,6 @@
 import re
 from functools import partial
-from typing import List, Optional
+from typing import List
 from warnings import WarningMessage
 from packaging.version import Version
 from importlib.metadata import version as get_version
@@ -97,7 +97,7 @@ ADV_EXPECTED_WARNS = EXPECTED_WARNS + ["Found an `init_pg_lrs` key"]
 
 def multiwarn_check(
     rec_warns: List, expected_warns: List | str, expected_mode: bool = False
-) -> List[Optional[WarningMessage]]:
+) -> list[WarningMessage | None]:
     if isinstance(expected_warns, str):
         expected_warns = [expected_warns]
     msg_search = lambda w1, w2: re.compile(w1).search(w2.message.args[0])  # noqa: E731

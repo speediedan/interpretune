@@ -28,6 +28,7 @@ classifiers = [
             "Programming Language :: Python :: 3.10",
             "Programming Language :: Python :: 3.11",
             "Programming Language :: Python :: 3.12",
+            "Programming Language :: Python :: 3.13",
 ]
 description = "A package to support LLM reasoning and interpretability experiments at a level of abstraction that is both powerfully flexible and convenient"
 readme = "README.md"
@@ -36,7 +37,7 @@ dependencies = [
     "transformers>=4.57.1",
     "tabulate >= 0.9.0",
     "datasets >= 4.0.0",
-    "jsonargparse[signatures] >= 4.35.0,<4.42.0",  # upstream regression with 4.42, replace this req once adding fts req
+    "jsonargparse[signatures] >= 4.35.0,<4.42.0",  # TODO: investigate upstream regression w/ 4.42, remove if fts is req
     # "finetuning-scheduler[possible_future_it_plugin] >= 2.5.0",
 ]
 
@@ -93,7 +94,7 @@ examples = [
 git-deps = [
     "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@004f1b2822eca3f0c1ddd2389e9105b3abffde87",
     "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@d35d01feb9cc076a091e41255e1c9f92de2af236",
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@4aa64032c07acd34493a5c05929845bd011426c9",
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@a96d8158ee92dddb3eb5203095ce9db98c137fd0",
     "sae_lens >= 6.3.1",
 ]
 

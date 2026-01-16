@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import torch
 
@@ -21,8 +21,8 @@ from it_examples.utils.raw_graph_analysis import get_topk_2nd_order_adjacency
 # ruff: noqa: F821
 
 
-def ap_compute_attribution_end(local_vars: Dict[str, Any]) -> None:
-    data: Dict[str, Any] = {}
+def ap_compute_attribution_end(local_vars: dict[str, Any]) -> None:
+    data: dict[str, Any] = {}
 
     # Collect shapes from attribution data
     collect_shapes(
@@ -36,7 +36,7 @@ def ap_compute_attribution_end(local_vars: Dict[str, Any]) -> None:
     analysis_log_point("after attribution component computation", data)
 
 
-def ap_precomputation_phase_end(local_vars: Dict[str, Any]) -> None:
+def ap_precomputation_phase_end(local_vars: dict[str, Any]) -> None:
     # Use dict directly for cleaner access
     v = get_analysis_vars(context_keys=["target_token_analysis"], local_keys=["ctx"], local_vars=local_vars)
     v["target_token_analysis"].act_matrix = v["ctx"].activation_matrix
@@ -49,7 +49,7 @@ def ap_precomputation_phase_end(local_vars: Dict[str, Any]) -> None:
     analysis_log_point("after precomputation phase", data)
 
 
-def ap_forward_pass_end(local_vars: Dict[str, Any]) -> None:
+def ap_forward_pass_end(local_vars: dict[str, Any]) -> None:
     # Use dict directly for cleaner access
     v = get_analysis_vars(context_keys=["target_token_analysis"], local_keys=["ctx", "model"], local_vars=local_vars)
 
@@ -63,7 +63,7 @@ def ap_forward_pass_end(local_vars: Dict[str, Any]) -> None:
     analysis_log_point("after forward pass", data)
 
 
-def ap_build_input_vectors_end(local_vars: Dict[str, Any]) -> None:
+def ap_build_input_vectors_end(local_vars: dict[str, Any]) -> None:
     # Use dict directly for cleaner access
     v = get_analysis_vars(
         context_keys=["target_token_analysis"],
@@ -115,7 +115,7 @@ def ap_build_input_vectors_end(local_vars: Dict[str, Any]) -> None:
     analysis_log_point("after building input vectors w/ target logits", data)
 
 
-def ap_compute_logit_attribution_end(local_vars: Dict[str, Any]) -> None:
+def ap_compute_logit_attribution_end(local_vars: dict[str, Any]) -> None:
     # Use dict directly for cleaner access
     v = get_analysis_vars(
         context_keys=["target_token_analysis"],
@@ -148,7 +148,7 @@ def ap_compute_logit_attribution_end(local_vars: Dict[str, Any]) -> None:
     analysis_log_point("after logit attribution", data)
 
 
-def ap_compute_feature_attributions_end(local_vars: Dict[str, Any]) -> None:
+def ap_compute_feature_attributions_end(local_vars: dict[str, Any]) -> None:
     # Use dict directly for cleaner access
     v = get_analysis_vars(
         context_keys=["target_token_analysis"],
@@ -195,7 +195,7 @@ def ap_compute_feature_attributions_end(local_vars: Dict[str, Any]) -> None:
     analysis_log_point("after feature attribution", data)
 
 
-def ap_graph_creation_start(local_vars: Dict[str, Any]) -> None:
+def ap_graph_creation_start(local_vars: dict[str, Any]) -> None:
     # Use dict directly for cleaner access
     v = get_analysis_vars(
         context_keys=["target_token_analysis"],
@@ -207,7 +207,7 @@ def ap_graph_creation_start(local_vars: Dict[str, Any]) -> None:
     n_logits = v["n_logits"]
     tta.reorg_logit_indices = (v["edge_matrix"].shape[0] - n_logits) + tta.logit_indices
     tta.graph_logit_indices = (full_edge_matrix.shape[0] - n_logits) + tta.logit_indices
-    data: Dict[str, Any] = {}
+    data: dict[str, Any] = {}
     collect_shapes(data, local_vars, ["full_edge_matrix", "edge_matrix"])
     pre_normalized_logit_node_sum = full_edge_matrix[tta.graph_logit_indices.to(full_edge_matrix.device), :].sum(1)
     data["pre_normalized_logit_node_sum"] = VarAnnotate(
@@ -243,7 +243,7 @@ def ap_graph_creation_start(local_vars: Dict[str, Any]) -> None:
     analysis_log_point("Graph packaging complete", data)
 
 
-def ap_node_compute_influence_init(local_vars: Dict[str, Any]) -> None:
+def ap_node_compute_influence_init(local_vars: dict[str, Any]) -> None:
     """Collect initial current_influence vector in compute_influence."""
     # Check call stack to determine context
     context = get_caller_context(
@@ -325,7 +325,7 @@ def ap_node_compute_influence_init(local_vars: Dict[str, Any]) -> None:
     analysis_log_point("After initial compute_influence computation (node context)", data)
 
 
-def ap_node_compute_influence(local_vars: Dict[str, Any]) -> None:
+def ap_node_compute_influence(local_vars: dict[str, Any]) -> None:
     """Collect current_influence vectors after each iteration of compute_influence."""
     # Check call stack to determine context
     context = get_caller_context(
@@ -356,7 +356,7 @@ def ap_node_compute_influence(local_vars: Dict[str, Any]) -> None:
     analysis_log_point("After compute_influence iteration (node context)", data)
 
 
-def ap_graph_prune_node_influence_end(local_vars: Dict[str, Any]) -> None:
+def ap_graph_prune_node_influence_end(local_vars: dict[str, Any]) -> None:
     v = get_analysis_vars(
         local_keys=["node_influence", "node_mask", "node_threshold", "pruned_matrix", "n_logits", "n_tokens"],
         local_vars=local_vars,
@@ -402,7 +402,7 @@ def ap_graph_prune_node_influence_end(local_vars: Dict[str, Any]) -> None:
     analysis_log_point("After node_influence threshold pruning applied", data)
 
 
-def ap_graph_prune_edge_influence_post_norm(local_vars: Dict[str, Any]) -> None:
+def ap_graph_prune_edge_influence_post_norm(local_vars: dict[str, Any]) -> None:
     v = get_analysis_vars(
         context_keys=["target_token_analysis", "n_pos"],
         local_keys=["edge_scores", "normalized_pruned", "pruned_influence", "pruned_matrix", "max_n_logits"],
@@ -538,7 +538,7 @@ def ap_graph_prune_edge_influence_post_norm(local_vars: Dict[str, Any]) -> None:
     analysis_log_point("After edge influence calculation", data)
 
 
-def ap_graph_prune_edge_influence_pre_mask(local_vars: Dict[str, Any]) -> None:
+def ap_graph_prune_edge_influence_pre_mask(local_vars: dict[str, Any]) -> None:
     v = get_analysis_vars(
         # context_keys=["target_token_analysis", "n_pos"],
         local_keys=["edge_mask", "node_mask", "logit_weights", "edge_scores", "n_logits"],
@@ -596,7 +596,7 @@ def ap_graph_prune_edge_influence_pre_mask(local_vars: Dict[str, Any]) -> None:
     analysis_log_point("After edge influence calculation", data)
 
 
-def ap_graph_prune_edge_influence_end(local_vars: Dict[str, Any]) -> None:
+def ap_graph_prune_edge_influence_end(local_vars: dict[str, Any]) -> None:
     v = get_analysis_vars(
         context_keys=["target_token_analysis"],
         local_keys=[

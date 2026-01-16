@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from copy import deepcopy
 from enum import auto
 from dataclasses import dataclass, field
-from typing import Iterable, Union, Optional
+from typing import Iterable
 from pathlib import Path
 import tempfile
 
@@ -283,7 +283,7 @@ class CoreSLGPT2(BaseCfg):
             model_name="gpt2-small", default_padding_side="left", use_bridge=False
         )
     )
-    # force_prepare_data: Optional[bool] = True  # sometimes useful to enable for test debugging
+    # force_prepare_data: bool | None = True  # sometimes useful to enable for test debugging
 
 
 @dataclass(kw_only=True)
@@ -317,10 +317,10 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
         )
     )
     # TODO: customize these cache paths for testing efficiency
-    # cache_dir: Optional[str] = None
-    # op_output_dataset_path: Optional[str] = None
+    # cache_dir: str | None = None
+    # op_output_dataset_path: str | None = None
     # important for ephemeral CI runner alignment
-    force_prepare_data: Optional[bool] = True
+    force_prepare_data: bool | None = True
     dm_override_cfg: dict | None = field(
         default_factory=lambda: {
             "enable_datasets_cache": True,
@@ -340,28 +340,28 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
 
 @dataclass(kw_only=True)
 class CoreSLGPT2LogitDiffsBase(CoreSLGPT2Analysis):
-    analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = (
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
         AnalysisCfg(target_op=it.logit_diffs_base, save_prompts=False, save_tokens=False, ignore_manual=True),
     )
 
 
 @dataclass(kw_only=True)
 class CoreSLGPT2LogitDiffsSAE(CoreSLGPT2Analysis):
-    analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = (
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
         AnalysisCfg(target_op=it.logit_diffs_sae, save_prompts=True, save_tokens=True, ignore_manual=True),
     )
 
 
 @dataclass(kw_only=True)
 class CoreSLGPT2LogitDiffsAttrGrad(CoreSLGPT2Analysis):
-    analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = (
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
         AnalysisCfg(target_op=it.logit_diffs_attr_grad, save_prompts=False, save_tokens=False, ignore_manual=True),
     )
 
 
 @dataclass(kw_only=True)
 class CoreSLGPT2LogitDiffsAttrAblation(CoreSLGPT2Analysis):
-    analysis_cfgs: Union[AnalysisCfg, AnalysisOp, Iterable[Union[AnalysisCfg, AnalysisOp]]] = (
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
         AnalysisCfg(target_op=it.logit_diffs_attr_ablation, save_prompts=False, save_tokens=False, ignore_manual=True),
     )
 

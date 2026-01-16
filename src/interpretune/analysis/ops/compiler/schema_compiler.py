@@ -1,6 +1,6 @@
 """Schema compiler for analysis operations to maintain field propagation while minimizing schemas."""
 
-from typing import Dict, List, Tuple, Any, Union, TypeVar, Callable, Set
+from typing import Dict, Any, TypeVar, Callable
 from dataclasses import replace
 from copy import deepcopy
 import re
@@ -15,12 +15,12 @@ T_Field = TypeVar("T_Field")  # Field definition type (Dict or ColCfg)
 
 
 def _compile_composition_schema_core(
-    operations: List[Any],
-    get_schemas_fn: Callable[[Any], Tuple[Dict[str, T_Field], Dict[str, T_Field]]],
+    operations: list[Any],
+    get_schemas_fn: Callable[[Any], tuple[dict[str, T_Field], dict[str, T_Field]]],
     is_intermediate_fn: Callable[[T_Field], bool],
     handle_object_field_fn: Callable[[T_Field], T_Field],
-    create_schema_fn: Callable[[Dict[str, T_Field]], T_Schema],
-) -> Tuple[T_Schema, T_Schema]:
+    create_schema_fn: Callable[[dict[str, T_Field]], T_Schema],
+) -> tuple[T_Schema, T_Schema]:
     """Core logic for compiling composition schemas with customizable handling of types.
 
     Args:
@@ -33,9 +33,9 @@ def _compile_composition_schema_core(
     Returns:
         Tuple of (input_schema, output_schema)
     """
-    input_fields: Dict[str, T_Field] = {}
-    output_fields: Dict[str, T_Field] = {}
-    intermediate_fields: Dict[str, T_Field] = {}
+    input_fields: dict[str, T_Field] = {}
+    output_fields: dict[str, T_Field] = {}
+    intermediate_fields: dict[str, T_Field] = {}
 
     if not operations:
         raise ValueError("No operations provided for composite schema compilation")
@@ -62,8 +62,8 @@ def _compile_composition_schema_core(
 
 
 def jit_compile_composition_schema(
-    operations: List[Union[str, AnalysisOp]], op_definitions: Dict[str, Dict]
-) -> Tuple[OpSchema, OpSchema]:
+    operations: list[str | AnalysisOp], op_definitions: dict[str, Dict]
+) -> tuple[OpSchema, OpSchema]:
     """Compile the complete schema for a composition of operations using operation definitions.
 
     Args:
@@ -146,8 +146,8 @@ def jit_compile_composition_schema(
 
 
 def compile_operation_composition_schema(
-    operations: List[str], all_operations_dict: Dict[str, Dict]
-) -> Tuple[Dict, Dict]:
+    operations: list[str], all_operations_dict: dict[str, Dict]
+) -> tuple[Dict, Dict]:
     """Compile the complete schema for a composition of operations.
 
     Args:
@@ -210,7 +210,7 @@ def compile_operation_composition_schema(
     )
 
 
-def resolve_required_ops(op_name: str, op_def: Dict[str, Any], op_definitions: Dict[str, Dict]) -> List[str]:
+def resolve_required_ops(op_name: str, op_def: dict[str, Any], op_definitions: dict[str, Dict]) -> list[str]:
     """Resolve required_ops for an operation, handling namespaced operations.
 
     Args:
@@ -268,7 +268,7 @@ def resolve_required_ops(op_name: str, op_def: Dict[str, Any], op_definitions: D
     return resolved_ops
 
 
-def build_operation_compositions(yaml_config: Dict) -> Dict[str, Any]:
+def build_operation_compositions(yaml_config: Dict) -> dict[str, Any]:
     """Build operation compositions with compiled schemas from YAML configuration.
 
     Args:
@@ -318,7 +318,7 @@ def build_operation_compositions(yaml_config: Dict) -> Dict[str, Any]:
     return ops
 
 
-def _parse_composition_string(composition_str: str) -> List[str]:
+def _parse_composition_string(composition_str: str) -> list[str]:
     """Parse composition string to handle parentheses-wrapped namespaced operations.
 
     Examples:
@@ -359,8 +359,8 @@ def _parse_composition_string(composition_str: str) -> List[str]:
 
 
 def compile_op_schema(
-    op_name: str, op_definitions: Dict[str, Dict[str, Any]], _processing: Set[str] | None = None
-) -> Dict[str, Any]:  # type: ignore[assignment]
+    op_name: str, op_definitions: dict[str, dict[str, Any]], _processing: set[str] | None = None
+) -> dict[str, Any]:  # type: ignore[assignment]
     """Compile operation schema by merging schemas from required operations.
 
     Args:

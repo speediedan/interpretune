@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import List, Optional
 from dataclasses import dataclass
 import torch
 
@@ -17,7 +16,7 @@ class CircuitTracerConfig(ITSerializableCfg):
 
     # Model and transcoder settings
     """Model name to use for circuit tracing. If None, uses the base model name."""
-    model_name: Optional[str] = None
+    model_name: str | None = None
     """Transcoder set to use.
 
     Can be 'gemma', 'llama', or path to custom config.
@@ -34,9 +33,9 @@ class CircuitTracerConfig(ITSerializableCfg):
     """Batch size for backward passes during attribution."""
     batch_size: int = 256
     """Maximum number of feature nodes to include in attribution."""
-    max_feature_nodes: Optional[int] = None
+    max_feature_nodes: int | None = None
     """Memory optimization option ('cpu', 'disk', or None)."""
-    offload: Optional[str] = None
+    offload: str | None = None
     """Whether to display detailed progress information."""
     verbose: bool = True
 
@@ -50,14 +49,14 @@ class CircuitTracerConfig(ITSerializableCfg):
     """Whether to automatically save generated graphs."""
     save_graphs: bool = True
     """Directory to save attribution graphs.If None, uses analysis output directory."""
-    graph_output_dir: Optional[str] = None
+    graph_output_dir: str | None = None
 
     # Interpretune CT enhancement settings
     """ Specific tokens to analyze, will use tokens associated with top `max_n_logits` if `None`."""
-    analysis_target_tokens: Optional[List[str]] = None
+    analysis_target_tokens: list[str] | None = None
     """A tensor of pre-tokenized target token IDs for analysis or a module attribute to be used as a source for
     them."""
-    target_token_ids: Optional[List[int] | torch.Tensor | str] = None
+    target_token_ids: list[int] | torch.Tensor | str | None = None
     """Whether to prepare graphs for Neuronpedia graph storage and analysis."""
     use_neuronpedia: bool = False
 
@@ -67,4 +66,4 @@ class CircuitTracerConfig(ITSerializableCfg):
 class CircuitTracerITLensConfig(ITLensConfig):
     """ITLens configuration with Circuit Tracer support."""
 
-    circuit_tracer_cfg: Optional[CircuitTracerConfig] = None
+    circuit_tracer_cfg: CircuitTracerConfig | None = None

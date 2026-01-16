@@ -1,7 +1,7 @@
 """Base classes for analysis operations."""
 
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Literal, Union, Optional, Any, Dict, Callable, Sequence
+from typing import Literal, Any, Callable, Sequence
 from dataclasses import dataclass, fields
 from contextlib import contextmanager
 import os
@@ -148,14 +148,14 @@ class ColCfg:
 
     datasets_dtype: str  # Explicit datasets dtype string (e.g. "float32", "int64")
     required: bool = True
-    dyn_dim: Optional[int] = None
-    dyn_dim_ceil: Optional[DIM_VAR] = None  # helper for dynamic dimension handling in some contexts
+    dyn_dim: int | None = None
+    dyn_dim_ceil: DIM_VAR | None = None  # helper for dynamic dimension handling in some contexts
     non_tensor: bool = False
     per_latent: bool = False
     per_sae_hook: bool = False  # For fields that have per-SAE hook subfields
     intermediate_only: bool = False  # Indicates column used in processing but not written to output
     connected_obj: Literal["analysis_store", "datamodule"] = "analysis_store"
-    array_shape: tuple[Optional[Union[int, DIM_VAR]], ...] | None = None  # Shape with optional dimension variables
+    array_shape: tuple[int | DIM_VAR | None, ...] | None = None  # Shape with optional dimension variables
     sequence_type: bool = True  # Default to sequence type for most fields
     array_dtype: str | None = None  # Override for array fields, defaults to datasets_dtype
 
@@ -228,7 +228,7 @@ def wrap_summary(
     tokenizer: PreTrainedTokenizerBase | None = None,
     save_prompts: bool = False,
     save_tokens: bool = False,
-    decode_kwargs: Optional[dict[str, Any]] = None,
+    decode_kwargs: dict[str, Any] | None = None,
 ) -> BaseAnalysisBatchProtocol:
     decode_kwargs = decode_kwargs or {}
     if save_prompts:
@@ -269,9 +269,9 @@ class AnalysisOp:
         name: str,
         description: str,
         output_schema: OpSchema,
-        input_schema: Optional[OpSchema] = None,
-        aliases: Optional[Sequence[str]] = None,
-        impl_params: Optional[Dict[str, Any]] = None,
+        input_schema: OpSchema | None = None,
+        aliases: Sequence[str] | None = None,
+        impl_params: dict[str, Any] | None = None,
     ) -> None:
         self.name = name
         self.description = description
@@ -279,7 +279,7 @@ class AnalysisOp:
         self.input_schema = input_schema
         self._ctx_key = None
         self._aliases = aliases  # Store aliases for the operation
-        self._impl: Optional[Callable] = None
+        self._impl: Callable | None = None
         self.impl_params = impl_params or {}
 
     @property
@@ -302,7 +302,7 @@ class AnalysisOp:
             self._ctx_key = original_ctx_key
 
     def _validate_input_schema(
-        self, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch: Optional[BatchEncoding]
+        self, analysis_batch: BaseAnalysisBatchProtocol | None, batch: BatchEncoding | None
     ) -> None:
         """Validate that required inputs defined in input_schema exist in analysis_batch or batch."""
         if self.input_schema is None:
@@ -346,7 +346,7 @@ class AnalysisOp:
         tokenizer: PreTrainedTokenizerBase | None = None,
         save_prompts: bool = False,
         save_tokens: bool = False,
-        decode_kwargs: Optional[dict[str, Any]] = None,
+        decode_kwargs: dict[str, Any] | None = None,
     ) -> BaseAnalysisBatchProtocol:
         """Process analysis batch using provided output schema.
 
@@ -416,7 +416,7 @@ class AnalysisOp:
         tokenizer: PreTrainedTokenizerBase | None = None,
         save_prompts: bool = False,
         save_tokens: bool = False,
-        decode_kwargs: Optional[dict[str, Any]] = None,
+        decode_kwargs: dict[str, Any] | None = None,
     ) -> BaseAnalysisBatchProtocol:
         """Save analysis batch using process_batch static method."""
         return self.process_batch(
@@ -459,13 +459,13 @@ class AnalysisOp:
         return (_reconstruct_op, (self.__class__, self.__dict__.copy()))
 
     @property
-    def impl(self) -> Optional[Callable]:
+    def impl(self) -> Callable | None:
         """Get the implementation function."""
         return self._impl
 
     def _resolve_call_params(
         self, impl_func: Callable, module, analysis_batch, batch, batch_idx, **kwargs
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Resolve parameters to pass to the implementation function using smart parameter detection."""
         import inspect
 
@@ -504,10 +504,10 @@ class AnalysisOp:
 
     def __call__(
         self,
-        module: Optional[torch.nn.Module] = None,
-        analysis_batch: Optional[BaseAnalysisBatchProtocol] = None,
-        batch: Optional[BatchEncoding] = None,
-        batch_idx: Optional[int] = None,
+        module: torch.nn.Module | None = None,
+        analysis_batch: BaseAnalysisBatchProtocol | None = None,
+        batch: BatchEncoding | None = None,
+        batch_idx: int | None = None,
         **kwargs,
     ) -> BaseAnalysisBatchProtocol:
         """Execute the operation using the configured implementation."""
@@ -533,9 +533,9 @@ class CompositeAnalysisOp(AnalysisOp):
     def __init__(
         self,
         ops: Sequence[AnalysisOp],
-        name: Optional[str] = None,
-        aliases: Optional[Sequence[str]] = None,
-        description: Optional[str] = None,
+        name: str | None = None,
+        aliases: Sequence[str] | None = None,
+        description: str | None = None,
         *args,
         **kwargs,
     ) -> None:
@@ -570,10 +570,10 @@ class CompositeAnalysisOp(AnalysisOp):
 
     def __call__(
         self,
-        module: Optional[torch.nn.Module] = None,
-        analysis_batch: Optional[BaseAnalysisBatchProtocol] = None,
-        batch: Optional[BatchEncoding] = None,
-        batch_idx: Optional[int] = None,
+        module: torch.nn.Module | None = None,
+        analysis_batch: BaseAnalysisBatchProtocol | None = None,
+        batch: BatchEncoding | None = None,
+        batch_idx: int | None = None,
         **kwargs,
     ) -> BaseAnalysisBatchProtocol:
         """Execute all operations in sequence with automatic parameter resolution."""

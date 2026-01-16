@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # TODO: fill in this placeholder with actual core tests
-from typing import Optional, Callable, Dict, Any, Sequence
+from typing import Callable, Dict, Any, Sequence
 from copy import copy
 from dataclasses import dataclass, field
 from functools import partial
@@ -38,21 +38,21 @@ from tests.runif import RunIf
 @dataclass(kw_only=True)
 class FTSParityCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
-    model_src_key: Optional[str] = "gpt2"
-    callback_cfgs: Optional[Dict[Any, Dict]] = field(default_factory=lambda: {})
-    limit_train_batches: Optional[int] = 2
-    limit_val_batches: Optional[int] = 2
-    limit_test_batches: Optional[int] = 2
-    max_epochs: Optional[int] = 4
-    fts_schedule_key: Optional[tuple] = None
-    model_cfg: Optional[dict] = field(default_factory=lambda: {})
-    max_steps: Optional[int] = -1
+    model_src_key: str | None = "gpt2"
+    callback_cfgs: dict[Any, Dict] | None = field(default_factory=lambda: {})
+    limit_train_batches: int | None = 2
+    limit_val_batches: int | None = 2
+    limit_test_batches: int | None = 2
+    max_epochs: int | None = 4
+    fts_schedule_key: tuple | None = None
+    model_cfg: dict | None = field(default_factory=lambda: {})
+    max_steps: int | None = -1
     save_checkpoints: bool = True
 
 
 @dataclass
 class FTSParityTest(BaseAugTest):
-    result_gen: Optional[Callable] = partial(collect_results, fts_parity_results, normalize=False)
+    result_gen: Callable | None = partial(collect_results, fts_parity_results, normalize=False)
 
 
 PARITY_FTS_CONFIGS = (

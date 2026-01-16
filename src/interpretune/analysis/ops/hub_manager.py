@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 from pathlib import Path
-from typing import Optional, List
 from dataclasses import dataclass
 
 from huggingface_hub import HfApi, snapshot_download
@@ -44,7 +43,7 @@ class HubOpCollection:
 class HubAnalysisOpManager:
     """Manages downloading and uploading analysis operation definitions from/to Hugging Face Hub."""
 
-    def __init__(self, cache_dir: Optional[Path] = None, token: Optional[str] = None):
+    def __init__(self, cache_dir: Path | None = None, token: str | None = None):
         """Initialize the hub manager.
 
         Args:
@@ -106,7 +105,7 @@ class HubAnalysisOpManager:
         create_pr: bool = False,
         private: bool = False,
         clean_existing: bool = False,
-        delete_patterns: Optional[List[str]] = None,
+        delete_patterns: list[str] | None = None,
     ) -> str:
         """Upload analysis operations to HuggingFace Hub.
 
@@ -206,7 +205,7 @@ class HubAnalysisOpManager:
             rank_zero_warn(f"Failed to upload to {repo_id}: {e}")
             raise
 
-    def list_available_collections(self, username: Optional[str] = None) -> List[str]:
+    def list_available_collections(self, username: str | None = None) -> list[str]:
         """List available analysis operation collections on the Hub.
 
         Args:
@@ -235,7 +234,7 @@ class HubAnalysisOpManager:
             rank_zero_warn(f"Failed to list collections: {e}")
             return []
 
-    def discover_hub_ops(self, search_patterns: Optional[List[str]] = None) -> List[HubOpCollection]:
+    def discover_hub_ops(self, search_patterns: list[str] | None = None) -> list[HubOpCollection]:
         """Discover and cache analysis operations from the Hub.
 
         Args:
@@ -267,7 +266,7 @@ class HubAnalysisOpManager:
         rank_zero_info(f"Discovered {len(collections)} hub operation collections")
         return collections
 
-    def get_cached_collections(self) -> List[HubOpCollection]:
+    def get_cached_collections(self) -> list[HubOpCollection]:
         """Get analysis operation collections that are already cached locally.
 
         Returns:

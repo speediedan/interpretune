@@ -11,7 +11,7 @@
 # limitations under the License.
 # Initially based on https://bit.ly/3oQ8Vqf
 import os
-from typing import Optional, Any, Union, Dict, Sequence
+from typing import Any, Dict, Sequence
 from copy import deepcopy
 
 import torch
@@ -54,7 +54,7 @@ def apply_itdm_test_cfg(base_itdm_cfg: ITDataModuleConfig, test_cfg: BaseCfg, **
     return test_itdm_cfg
 
 
-def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: Optional[StrOrPath] = None) -> ITConfig:
+def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: StrOrPath | None = None) -> ITConfig:
     # TODO: for attributes that don't actually belong to ITConfig (and existing subclasses), we should avoid adding them
     # e.g. right now, `sae_analysis_targets` is the only one that doesn't belong to ITConfig or defined subclasses
     test_cfg_override_attrs = [
@@ -84,7 +84,7 @@ def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: Op
     return it_cfg
 
 
-def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> Dict[str, Any]:
+def configure_device_precision(cfg: Dict, device_type: str, precision: int | str) -> dict[str, Any]:
     # TODO: As we accommodate many different device/precision setting sources at the moment, it may make sense
     # to refactor hf and tl support via additional adapter functions and only test adherence to the
     # common Interpretune protocol here (testing the adapter functions separately with smaller unit tests)
@@ -108,7 +108,7 @@ def configure_device_precision(cfg: Dict, device_type: str, precision: Union[int
     return cfg
 
 
-def _update_tl_cfg_device_precision(cfg: Dict, device_type: str, precision: Union[int, str]) -> None:
+def _update_tl_cfg_device_precision(cfg: Dict, device_type: str, precision: int | str) -> None:
     dev_prec_override = {"dtype": get_model_input_dtype(precision), "device": device_type}
     if isinstance(cfg.tl_cfg, ITLensCustomConfig):  # initialized TL custom model config
         cfg.tl_cfg.cfg.__dict__.update(dev_prec_override)
@@ -120,7 +120,7 @@ def _update_tl_cfg_device_precision(cfg: Dict, device_type: str, precision: Unio
 
 
 def _update_sae_cfg_device_precision(
-    sae_cfg: SAELensCustomConfig | SAELensFromPretrainedConfig, device_type: str, precision: Union[int, str]
+    sae_cfg: SAELensCustomConfig | SAELensFromPretrainedConfig, device_type: str, precision: int | str
 ) -> None:
     dev_prec_override = {"dtype": precision, "device": device_type}  # SAEConfig currently requires strings
     if isinstance(sae_cfg, SAELensCustomConfig):
@@ -175,7 +175,7 @@ def cfg_op_env(
     input_data=None,
     batches=1,
     generate_required_only: bool = True,
-    override_req_cols: Optional[tuple] = None,
+    override_req_cols: tuple | None = None,
 ) -> tuple:
     """Set up a test environment for an operation using a real model.
 
@@ -308,7 +308,7 @@ def config_modules(
     test_alias,
     expected_results,
     tmp_path,
-    prewrapped_modules: Optional[Dict[str, Any]] = None,
+    prewrapped_modules: dict[str, Any] | None = None,
     state_log_mode: bool = False,
     cfg_only: bool = False,
 ) -> ITSessionConfig | ITSession:

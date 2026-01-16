@@ -91,7 +91,7 @@ class MemProfilerCfg(ITSerializableCfg):
 # @dataclass(kw_only=True)
 # class PyTorchProfilerCfg(ITSerializableCfg):
 #     # pytorch_profiler_enabled: bool = False
-#     # pytorch_profiler_cfg: Dict[str, Any] = field(default_factory=dict)
+#     # pytorch_profiler_cfg: dict[str, Any] = field(default_factory=dict)
 
 # accessed in global scope to track non-parameter packed bytes (npp) as a simple proxy (ceiling) for activation memory
 _npp_bytes = 0

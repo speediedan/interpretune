@@ -48,7 +48,7 @@ jobs:
     strategy:
       matrix:
         PyTorch_latest:
-          image: speediedan/interpretune:py3.12-pt2.9.1-azpl-init
+          image: speediedan/interpretune:py3.13-pt2.9.1-azpl-init
           scope: ""
     timeoutInMinutes: 100
     cancelTimeoutInMinutes: 2

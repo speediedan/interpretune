@@ -17,7 +17,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Mapping, Sequence
 
 import torch
 import yaml
@@ -82,7 +82,7 @@ class VarAnnotate:
 
 # Global analysis logger holder
 _ANALYSIS_LOGGER = None
-ANALYSIS_FUNCTIONS: Dict[str, Callable] = {}
+ANALYSIS_FUNCTIONS: dict[str, Callable] = {}
 
 # Global data collection dictionary
 ANALYSIS_DATA: OrderedDict[str, dict | None] = OrderedDict()
@@ -103,7 +103,7 @@ def clear_analysis_data():
     ANALYSIS_DATA.clear()
 
 
-def _load_analysis_functions_from_module(module_path: Path) -> Dict[str, Any]:
+def _load_analysis_functions_from_module(module_path: Path) -> dict[str, Any]:
     """Load analysis functions from a Python module.
 
     The module must define an ``AP_FUNCTIONS`` mapping. The returned dictionary
@@ -667,18 +667,18 @@ class AnalysisInjectionOrchestrator:
         self.target_package_name = target_package_name
 
         self.config = None
-        self.patched_modules: Dict[str, Path] = {}
-        self.verification_info: Dict[str, Dict[str, Any]] = {}
+        self.patched_modules: dict[str, Path] = {}
+        self.verification_info: dict[str, dict[str, Any]] = {}
 
         self._logger_initialized = False
         self._modules_patched = False
         self._hooks_registered = False
         self.logger = None  # Reference to the analysis logger
-        self._config_override_data: Optional[Dict[str, Any]] = None
-        self._config_override_source: Optional[Path] = None
-        self._version_manager: Optional[Any] = None  # PackageVersionManager instance for cleanup
+        self._config_override_data: dict[str, Any] | None = None
+        self._config_override_source: Path | None = None
+        self._version_manager: Any | None = None  # PackageVersionManager instance for cleanup
 
-    def set_config_override(self, config_data: Dict[str, Any], source_path: Optional[Path] = None) -> None:
+    def set_config_override(self, config_data: dict[str, Any], source_path: Path | None = None) -> None:
         """Provide an in-memory configuration that supersedes ``config_path``.
 
         Args:
@@ -810,7 +810,7 @@ class AnalysisInjectionOrchestrator:
             self._version_manager.cleanup()
 
     @property
-    def analysis_log(self) -> Optional[str]:
+    def analysis_log(self) -> str | None:
         """Get the path to the analysis log file if one exists.
 
         Returns:
@@ -886,7 +886,7 @@ class AnalysisInjectionOrchestrator:
         self,
         key: str,
         tablefmt: str = "html",
-        skip: Union[str, Sequence[str], None] = None,
+        skip: str | Sequence[str] | None = None,
         format_tensor_kwargs: dict | None = None,
     ) -> None:
         """Get formatted output for a specific analysis point and display/print it.
@@ -982,13 +982,13 @@ class AnalysisInjectionOrchestrator:
 
 # Convenience function for notebook usage
 def setup_analysis_injection(
-    config_path: Optional[Path | str] = None,
-    target_package: Optional[str] = None,
-    target_package_path: Optional[Path | str] = None,
-    analysis_functions: Optional[Dict] = None,
+    config_path: Path | str | None = None,
+    target_package: str | None = None,
+    target_package_path: Path | str | None = None,
+    analysis_functions: Dict | None = None,
     tokenizer=None,
     *,
-    config_overrides: Optional[str] = None,
+    config_overrides: str | None = None,
 ) -> AnalysisInjectionOrchestrator:
     """Set up analysis injection with default paths.
 
@@ -1102,7 +1102,7 @@ def setup_analysis_injection(
     merged_config_yaml = yaml.safe_dump(merged_config_dict, sort_keys=False)
     _get_pkg_logger().info("Final merged analysis injection config:\n%s", merged_config_yaml)
 
-    auto_functions: Dict[str, Any] = {}
+    auto_functions: dict[str, Any] = {}
     if config.analysis_points_module_path:
         auto_functions = _load_analysis_functions_from_module(config.analysis_points_module_path)
         _get_pkg_logger().info(
@@ -1111,7 +1111,7 @@ def setup_analysis_injection(
             config.analysis_points_module_path,
         )
 
-    combined_functions: Dict[str, Any] = dict(auto_functions)
+    combined_functions: dict[str, Any] = dict(auto_functions)
     if analysis_functions:
         combined_functions.update(analysis_functions)
         _get_pkg_logger().info("Merged %s caller-supplied analysis functions", len(analysis_functions))

@@ -13,7 +13,7 @@
 import os
 import re
 import sys
-from typing import Optional, Union, Dict, Set
+from typing import Dict, Set
 
 import pytest
 import torch
@@ -25,7 +25,7 @@ from it_examples.patching.dep_patch_shim import ExpPatch, _ACTIVE_PATCHES
 EXTENDED_VER_PAT = re.compile(r"([0-9]+\.){2}[0-9]+")
 
 
-def maybe_mark_exp(exp_patch_set: Set[ExpPatch], mark_if_false: Optional[Dict] = None):
+def maybe_mark_exp(exp_patch_set: set[ExpPatch], mark_if_false: Dict | None = None):
     """This allows us to evaluate whether an experimental patch set that is conditionally required for a given test
     is required in the current execution context.
 
@@ -96,11 +96,11 @@ class RunIf:
         self,
         *args,
         min_cuda_gpus: int = 0,
-        min_torch: Optional[str] = None,
-        max_torch: Optional[str] = None,
-        min_python: Optional[str] = None,
-        max_python: Optional[str] = None,
-        env_mask: Optional[str] = None,
+        min_torch: str | None = None,
+        max_torch: str | None = None,
+        min_python: str | None = None,
+        max_python: str | None = None,
+        env_mask: str | None = None,
         bf16_cuda: bool = False,
         skip_windows: bool = False,
         skip_mac_os: bool = False,
@@ -111,7 +111,7 @@ class RunIf:
         lightning: bool = False,
         finetuning_scheduler: bool = False,
         bitsandbytes: bool = False,
-        exp_patch: Optional[Union[ExpPatch, Set[ExpPatch]]] = None,
+        exp_patch: ExpPatch | set[ExpPatch] | None = None,
         **kwargs,
     ):
         """

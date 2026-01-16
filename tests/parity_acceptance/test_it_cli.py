@@ -4,7 +4,7 @@ import re
 import sys
 from subprocess import TimeoutExpired, PIPE
 from unittest import mock
-from typing import Optional, List, Sequence
+from typing import List, Sequence
 from dataclasses import dataclass
 
 from interpretune.adapters import ADAPTER_REGISTRY
@@ -19,14 +19,14 @@ from tests.warns import unexpected_warns, CLI_EXPECTED_WARNS
 @dataclass(kw_only=True)
 class CLICfg:
     cli_adapter: Adapter = Adapter.core
-    run: Optional[str] = None
-    env_seed: Optional[str] = None
+    run: str | None = None
+    env_seed: str | None = None
     compose_cfg: bool = False
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     debug_mode: bool = False
     use_harness: bool = False
-    bootstrap_args: Optional[List] = None
-    extra_args: Optional[ArgsType] = None
+    bootstrap_args: List | None = None
+    extra_args: ArgsType | None = None
     req_deterministic: bool = False
 
     def __post_init__(self):
@@ -109,8 +109,8 @@ def gen_cli_args(
     cli_adapter,
     compose_cfg,
     config_files,
-    bootstrap_args: Optional[ArgsType] = None,
-    extra_args: Optional[ArgsType] = None,
+    bootstrap_args: ArgsType | None = None,
+    extra_args: ArgsType | None = None,
 ):
     cli_main_kwargs = {"run_mode": run} if run else {"run_mode": False}
     cli_main_kwargs["args"] = extra_args if extra_args else None

@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Union
+from typing import Any
 
 from interpretune.base import ITDataModule, BaseITModule
 from interpretune.utils import rank_zero_info
@@ -7,7 +7,7 @@ from interpretune.protocol import AllPhases, CorePhases
 
 log = logging.getLogger(__name__)
 
-HOOKABLE_ITMODULE = Union[ITDataModule, BaseITModule]
+HOOKABLE_ITMODULE = ITDataModule | BaseITModule
 
 
 def it_init(module, datamodule, *args, **kwargs):

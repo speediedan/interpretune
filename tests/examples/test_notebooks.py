@@ -10,7 +10,7 @@ import glob
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -22,7 +22,7 @@ NOTEBOOKS_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "n
 
 def execute_notebook_with_params(
     notebook_path: Path,
-    parameters: Dict[str, Any],
+    parameters: dict[str, Any],
     output_dir: Path,
     timeout: int = 1800,  # 30 minutes
 ) -> Path:
@@ -67,7 +67,7 @@ def _cleanup_notebook_artifacts():
 
 def validate_notebook_outputs(
     output_notebook: Path,
-    params: Dict[str, Any],
+    params: dict[str, Any],
     check_prompt_errors: bool = True,
     check_analysis_points: bool = True,
     check_prompt_success: bool = True,
@@ -164,7 +164,7 @@ ATTRIBUTION_ANALYSIS_PARAMS = [
 
 @RunIf(standalone=True, bf16_cuda=True)
 @pytest.mark.parametrize("params", ATTRIBUTION_ANALYSIS_PARAMS)
-def test_attribution_analysis_notebook(params: Dict[str, Any], tmp_path: Path):
+def test_attribution_analysis_notebook(params: dict[str, Any], tmp_path: Path):
     """Test attribution analysis notebook with different parameterizations."""
     notebook_path = NOTEBOOKS_DIR / "attribution_analysis" / "attribution_analysis.ipynb"
 
@@ -236,7 +236,7 @@ CIRCUIT_TRACER_PARAMS = [
 
 @RunIf(standalone=True, bf16_cuda=True)
 @pytest.mark.parametrize("params", CIRCUIT_TRACER_PARAMS)
-def test_circuit_tracer_notebooks(params: Dict[str, Any], tmp_path: Path):
+def test_circuit_tracer_notebooks(params: dict[str, Any], tmp_path: Path):
     """Test circuit tracer notebooks with different parameterizations."""
     # Use the CLT notebook for these tests
     notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "circuit_tracer_adapter_example_basic_clt.ipynb"
