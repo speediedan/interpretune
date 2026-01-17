@@ -92,7 +92,7 @@ examples = [
 # These are separated because they cannot be included in universal lock files
 # Update commit hashes when cutting release branches to pin to tested versions
 git-deps = [
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@af101cf22373a4cbf654b980622ca0f1692aa5cc",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@2f8eb2b5121d153c761beb1568aa733cbc0b8bc9",
     "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@d35d01feb9cc076a091e41255e1c9f92de2af236",
     "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@a96d8158ee92dddb3eb5203095ce9db98c137fd0",
     "sae_lens >= 6.3.1",
