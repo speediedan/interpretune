@@ -62,6 +62,7 @@ def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: St
         "debug_lm_cfg",
         "cust_fwd_kwargs",
         "tl_cfg",
+        "circuit_tracer_cfg",
         "model_cfg",
         "sae_cfgs",
         "hf_from_pretrained_cfg",

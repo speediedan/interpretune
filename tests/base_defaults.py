@@ -1,10 +1,17 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Tuple, Callable, Any, Dict, Sequence, TYPE_CHECKING, Iterable
+from interpretune.config.transformer_lens import ITLensCfg
 import pytest
 
 from interpretune.adapters import ADAPTER_REGISTRY
-from interpretune.config import HFFromPretrainedConfig, GenerativeClassificationConfig, AutoCompConfig, AnalysisCfg
+from interpretune.config import (
+    HFFromPretrainedConfig,
+    GenerativeClassificationConfig,
+    AutoCompConfig,
+    AnalysisCfg,
+    CircuitTracerConfig,
+)
 from interpretune.extensions import MemProfilerCfg, DebugLMConfig
 from interpretune.protocol import Adapter
 from interpretune.analysis import SAEAnalysisTargets
@@ -71,12 +78,12 @@ def pytest_factory(test_configs: list[BaseAugTest], unpack: bool = True, fq_alia
 class BaseCfg:
     phase: str = "train"
     device_type: str = "cpu"
-    model_key: str = default_test_task  # "real-model"-based acceptance/parity testing/profiling
-    precision: str | int = "torch.float32"
-    adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     model_src_key: str | None = None
+    model_cfg_key: str = default_test_task  # default model cfg, "real-model"-based acceptance/parity testing/profiling
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     datamodule_cls: str | None = None  # Fully qualified class name (e.g., "tests.modules.DivergeTestITModule")
     module_cls: str | None = None  # Fully qualified class name (e.g., "tests.modules.DivergeTestITModule")
+    precision: str | int = "torch.float32"
     limit_train_batches: int | None = 1
     limit_val_batches: int | None = 1
     limit_test_batches: int | None = 1
@@ -86,7 +93,8 @@ class BaseCfg:
     memprofiler_cfg: MemProfilerCfg | None = None
     debug_lm_cfg: DebugLMConfig | None = None
     model_cfg: Dict | None = None
-    tl_cfg: Dict | None = None
+    tl_cfg: ITLensCfg | None = None
+    circuit_tracer_cfg: CircuitTracerConfig | None = None
     sae_cfgs: Dict | None = None
     auto_comp_cfg: AutoCompConfig | None = None
     add_saes_on_init: bool = False

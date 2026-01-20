@@ -4,7 +4,7 @@
 cust.rte:
   reg_info:
     model_src_key: cust
-    task_name: rte
+    model_cfg_key: rte
     adapter_combinations:
       - core
       - lightning
@@ -50,7 +50,7 @@ cust.rte:
 cust.rte.transformer_lens:
   reg_info:
     model_src_key: cust
-    task_name: rte
+    model_cfg_key: rte
     adapter_combinations:
       - [core, transformer_lens]
       - [lightning, transformer_lens]
@@ -103,7 +103,7 @@ cust.rte.transformer_lens:
 cust.rte.sae_lens:
   reg_info:
     model_src_key: cust
-    task_name: rte
+    model_cfg_key: rte
     adapter_combinations:
       - [core, sae_lens]
       - [lightning, sae_lens]
@@ -178,7 +178,7 @@ cust.rte.sae_lens:
 gpt2.rte:
   reg_info:
     model_src_key: gpt2
-    task_name: rte
+    model_cfg_key: rte
     adapter_combinations:
       - core
       - lightning
@@ -227,7 +227,7 @@ gpt2.rte:
 gpt2.rte.transformer_lens:
   reg_info:
     model_src_key: gpt2
-    task_name: rte
+    model_cfg_key: rte
     adapter_combinations:
       - [core, transformer_lens]
       - [lightning, transformer_lens]
@@ -287,7 +287,7 @@ gpt2.rte.transformer_lens:
 gpt2.rte.sae_lens:
   reg_info:
     model_src_key: gpt2
-    task_name: rte
+    model_cfg_key: rte
     adapter_combinations:
       - [core, sae_lens]
       - [lightning, sae_lens]
@@ -353,7 +353,7 @@ gpt2.rte.sae_lens:
 gpt2.rte_demo.sae_lens:
   reg_info:
     model_src_key: gpt2
-    task_name: rte_demo
+    model_cfg_key: rte_demo
     adapter_combinations:
       - [core, sae_lens]
       - [lightning, sae_lens]
@@ -426,7 +426,7 @@ gpt2.rte_demo.sae_lens:
 gemma2.rte:
   reg_info:
     model_src_key: gemma2
-    task_name: rte
+    model_cfg_key: rte
     adapter_combinations:
       - core
       - lightning
@@ -472,7 +472,7 @@ gemma2.rte:
 gemma2.rte.sae_lens:
   reg_info:
     model_src_key: gemma2
-    task_name: rte
+    model_cfg_key: rte
     adapter_combinations:
       - [core, sae_lens]
       - [lightning, sae_lens]
@@ -524,7 +524,7 @@ gemma2.rte.sae_lens:
 gemma2.rte.transformer_lens:
   reg_info:
     model_src_key: gemma2
-    task_name: rte
+    model_cfg_key: rte
     adapter_combinations:
       - [core, transformer_lens]
       - [lightning, transformer_lens]
@@ -582,14 +582,158 @@ gemma2.rte.transformer_lens:
       class_path: tests.modules.FingerprintTestITDataModule
     module_cls:
       class_path: tests.modules.TestITModule
-gemma2.rte_demo.circuit_tracer:
+gemma2.rte.circuit_tracer:
   reg_info:
     model_src_key: gemma2
-    task_name: rte
+    model_cfg_key: rte_base_test
     adapter_combinations:
       - [core, circuit_tracer]
       - [lightning, circuit_tracer]
-    description: Basic Circuit Tracer example, Gemma2-2b (non-instruction tuned) with supported adapter compositions
+    description: Basic Circuit Tracer backend-agnostic, Gemma2-2b (non-instruction tuned) w/ supported adapter compositions
+  shared_config:
+    task_name: rte
+    os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
+    model_name_or_path: google/gemma-2-2b
+    tokenizer_kwargs:
+        model_input_names: ['input']
+        padding_side: left
+        add_bos_token: true
+  registered_cfg:
+    datamodule_cfg:
+      prompt_cfg:
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+      signature_columns: ['input', 'labels']
+      text_fields: ["premise", "hypothesis"]
+      enable_datasets_cache: False
+      train_batch_size: 2
+      eval_batch_size: 2
+    module_cfg:
+      class_path: interpretune.config.module.ITConfig
+      init_args:
+        auto_comp_cfg:
+          class_path: interpretune.config.shared.AutoCompConfig
+          init_args:
+            module_cfg_name: RTEBoolqConfig
+            module_cfg_mixin:
+              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              import_only: True
+        generative_step_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          init_args:
+            enabled: True
+            lm_generation_cfg:
+              class_path: interpretune.config.mixins.HFGenerationConfig
+              init_args:
+                model_config:
+                  max_new_tokens: 3
+                  output_logits: true
+                  return_dict_in_generate: true
+        hf_from_pretrained_cfg:
+          class_path: interpretune.config.mixins.HFFromPretrainedConfig
+          init_args:
+            pretrained_kwargs:
+              device_map: cpu
+              dtype: float32
+            model_head: transformers.Gemma2ForCausalLM
+        circuit_tracer_cfg:
+          class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+          init_args:
+            transcoder_set: "gemma"
+            max_n_logits: 10
+            analysis_target_tokens: ['▁Dallas','▁Austin']
+            desired_logit_prob: 0.95
+            max_feature_nodes: 8192
+            batch_size: 256
+            offload: 'cpu'
+            verbose: true
+            use_neuronpedia: false
+    datamodule_cls:
+      class_path: tests.modules.FingerprintTestITDataModule
+    module_cls:
+      class_path: tests.modules.TestITModule
+gemma2.rte.circuit_tracer_tl:
+  reg_info:
+    model_src_key: gemma2
+    model_cfg_key: rte_base_test
+    adapter_combinations:
+      - [core, transformer_lens, circuit_tracer]
+      - [lightning, transformer_lens, circuit_tracer]
+    description: Circuit Tracer with TransformerLens backend, Gemma2-2b (non-instruction tuned)
+  shared_config:
+    task_name: rte
+    os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
+    model_name_or_path: google/gemma-2-2b
+    tokenizer_kwargs:
+        model_input_names: ['input']
+        padding_side: left
+        add_bos_token: true
+  registered_cfg:
+    datamodule_cfg:
+      prompt_cfg:
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+      signature_columns: ['input', 'labels']
+      text_fields: ["premise", "hypothesis"]
+      enable_datasets_cache: False
+      train_batch_size: 2
+      eval_batch_size: 2
+    module_cfg:
+      class_path: interpretune.config.module.ITConfig
+      init_args:
+        auto_comp_cfg:
+          class_path: interpretune.config.shared.AutoCompConfig
+          init_args:
+            module_cfg_name: RTEBoolqConfig
+            module_cfg_mixin:
+              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              import_only: True
+        generative_step_cfg:
+          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          init_args:
+            enabled: True
+            lm_generation_cfg:
+              class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+              init_args:
+                max_new_tokens: 1
+                output_logits: true
+                return_dict_in_generate: true
+        hf_from_pretrained_cfg:
+          class_path: interpretune.config.mixins.HFFromPretrainedConfig
+          init_args:
+            pretrained_kwargs:
+              device_map: cpu
+              dtype: float32
+            model_head: transformers.Gemma2ForCausalLM
+        tl_cfg:
+          class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
+          init_args:
+            model_name: gemma-2-2b
+            default_padding_side: left
+            use_bridge: false  # circuit_tracer requires HookedTransformer, not TransformerBridge
+        circuit_tracer_cfg:
+          class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+          init_args:
+            backend: "transformerlens"
+            transcoder_set: "gemma"
+            max_n_logits: 10
+            analysis_target_tokens: ['▁Dallas','▁Austin']
+            desired_logit_prob: 0.95
+            max_feature_nodes: 8192
+            batch_size: 256
+            offload: 'cpu'
+            verbose: true
+            use_neuronpedia: false
+    datamodule_cls:
+      class_path: tests.modules.FingerprintTestITDataModule
+    module_cls:
+      class_path: tests.modules.TestITModule
+gemma2.rte_demo.circuit_tracer:
+  reg_info:
+    model_src_key: gemma2
+    model_cfg_key: rte
+    adapter_combinations:
+      - [core, transformer_lens, circuit_tracer]
+      - [lightning, transformer_lens, circuit_tracer]
+    description: Circuit Tracer Example with TransformerLens backend, Gemma2-2b (non-instruction tuned)
   shared_config:
     task_name: rte
     os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
@@ -643,6 +787,7 @@ gemma2.rte_demo.circuit_tracer:
         circuit_tracer_cfg:
           class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
           init_args:
+            backend: "transformerlens"  # Explicitly use TransformerLens backend
             transcoder_set: "gemma"
             max_n_logits: 10
             analysis_target_tokens: ['▁Dallas','▁Austin']
@@ -659,11 +804,11 @@ gemma2.rte_demo.circuit_tracer:
 gemma2.rte_demo.circuit_tracer_w_neuronpedia:
   reg_info:
     model_src_key: gemma2
-    task_name: rte
+    model_cfg_key: rte
     adapter_combinations:
-      - [core, circuit_tracer]
-      - [lightning, circuit_tracer]
-    description: Basic Circuit Tracer example, Gemma2-2b (non-instruction tuned) with supported adapter compositions
+      - [core, transformer_lens, circuit_tracer]
+      - [lightning, transformer_lens, circuit_tracer]
+    description: Circuit Tracer Example with TransformerLens backend, Gemma2-2b (non-instruction tuned)
   shared_config:
     task_name: rte
     os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
@@ -715,6 +860,7 @@ gemma2.rte_demo.circuit_tracer_w_neuronpedia:
         circuit_tracer_cfg:
           class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
           init_args:
+            backend: "transformerlens"  # Explicitly use TransformerLens backend
             transcoder_set: "gemma"
             max_n_logits: 10
             analysis_target_tokens: ['▁Dallas','▁Austin']
@@ -745,14 +891,13 @@ gemma2.rte_demo.circuit_tracer_w_neuronpedia:
       class_path: it_examples.experiments.rte_boolq.RTEBoolqDataModule
     module_cls:
       class_path: it_examples.experiments.rte_boolq.RTEBoolqModule
-
 ##################################
 # Llama3
 ##################################
 llama3.rte:
   reg_info:
     model_src_key: llama3
-    task_name: rte
+    model_cfg_key: rte
     adapter_combinations:
       - core
       - lightning
@@ -816,7 +961,7 @@ llama3.rte:
 llama3.rte.transformer_lens:
   reg_info:
     model_src_key: llama3
-    task_name: rte
+    model_cfg_key: rte
     adapter_combinations:
       - [core, transformer_lens]
       - [lightning, transformer_lens]

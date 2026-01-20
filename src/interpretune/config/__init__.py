@@ -35,13 +35,12 @@ from interpretune.config.sae_lens import (
 
 # Conditionally import circuit_tracer configs
 try:
-    from interpretune.config.circuit_tracer import CircuitTracerConfig, CircuitTracerITLensConfig
+    from interpretune.config.circuit_tracer import CircuitTracerConfig
 
     _circuit_tracer_config_available = True
 except ImportError:
     # circuit_tracer not available, define placeholder classes
     CircuitTracerConfig = None
-    CircuitTracerITLensConfig = None
     _circuit_tracer_config_available = False
 
 from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg
@@ -101,6 +100,5 @@ if _circuit_tracer_config_available:
     __all__.extend(
         [
             "CircuitTracerConfig",
-            "CircuitTracerITLensConfig",
         ]
     )

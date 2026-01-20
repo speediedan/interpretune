@@ -238,8 +238,7 @@ CIRCUIT_TRACER_PARAMS = [
 @pytest.mark.parametrize("params", CIRCUIT_TRACER_PARAMS)
 def test_circuit_tracer_notebooks(params: dict[str, Any], tmp_path: Path):
     """Test circuit tracer notebooks with different parameterizations."""
-    # Use the CLT notebook for these tests
-    notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "circuit_tracer_adapter_example_basic_clt.ipynb"
+    notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "circuit_tracer_adapter_example_basic.ipynb"
 
     # Create output directory
     output_dir = tmp_path / "notebook_outputs"
@@ -260,7 +259,7 @@ def test_circuit_tracer_notebooks(params: dict[str, Any], tmp_path: Path):
 
 
 @RunIf(standalone=True, bf16_cuda=True)
-@pytest.mark.parametrize("notebook_file", ["saelens_adapter_example_registry.ipynb"])
+@pytest.mark.parametrize("notebook_file", ["saelens_adapter_example.ipynb"])
 def test_sae_lens_notebooks(notebook_file: str, tmp_path: Path):
     """Test SAE Lens adapter notebooks."""
     notebook_path = NOTEBOOKS_DIR / "saelens_adapter_example" / notebook_file
@@ -295,11 +294,9 @@ def test_notebook_discovery():
     # Verify expected notebooks exist
     expected_notebooks = [
         "attribution_analysis/attribution_analysis.ipynb",
-        "circuit_tracer_examples/circuit_tracer_adapter_example_basic_clt.ipynb",
         "circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb",
         "example_op_collections/op_collection_example.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
-        "saelens_adapter_example/saelens_adapter_example_registry.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",
     ]
 

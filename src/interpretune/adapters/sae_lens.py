@@ -12,7 +12,6 @@ from sae_lens.saes.standard_sae import StandardSAE
 from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer
 from transformer_lens.hook_points import NamesFilter
 from transformers import PreTrainedModel
-from transformers.tokenization_utils_base import BatchEncoding
 
 from interpretune.adapters import (
     CompositionRegistry,
@@ -24,7 +23,7 @@ from interpretune.adapters import (
 )
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import SAELensFromPretrainedConfig, SAELensCustomConfig, SAELensConfig
-from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info
+from interpretune.utils import rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
 
 
@@ -198,11 +197,6 @@ class SAELensAdapter(SAELensAttributeMixin):
             composition_classes=(SAELensConfig,),
             description="SAE Lens adapter that can be composed with core and l...",
         )
-
-    def batch_to_device(self, batch) -> BatchEncoding:
-        if self.input_device is not None:
-            move_data_to_device(batch, self.input_device)
-        return batch
 
 
 class SAEAnalysisMixin:

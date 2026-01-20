@@ -25,7 +25,7 @@ class TestClassModuleRegistration:
     class DegenRegKeyObj:
         phase: str = "train"
         device_type: str = "cpu"
-        model_key: str = "rte"
+        model_cfg_key: str = "rte"
 
     def test_it_cfg_factory_direct(self):
         from interpretune.config import ITConfig
@@ -43,7 +43,7 @@ class TestClassModuleRegistration:
             reg_key="cust.test_example",
             phase="train",
             model_src_key="cust",
-            task_name=default_test_task,
+            model_cfg_key=default_test_task,
             adapter_combinations=(Adapter.core,),
             registered_cfg=MagicMock(spec=RegisteredCfg),
             description="Testing example registration by both key and composition",
@@ -52,7 +52,7 @@ class TestClassModuleRegistration:
             reg_key="cust.test_example.transformer_lens",
             phase="test",
             model_src_key="cust",
-            task_name=default_test_task,
+            model_cfg_key=default_test_task,
             adapter_combinations=[
                 (Adapter.core, Adapter.transformer_lens),
                 (Adapter.lightning, Adapter.transformer_lens),
@@ -76,10 +76,10 @@ class TestClassModuleRegistration:
         superset = registry.available_compositions()
         assert superset == available_set | {("cust", "rte", "test", (Adapter.lightning, Adapter.transformer_lens))}
 
-        registry.get(BaseCfg(model_src_key="cust", model_key="rte", phase="train", adapter_ctx=(Adapter.core,)))
+        registry.get(BaseCfg(model_src_key="cust", model_cfg_key="rte", phase="train", adapter_ctx=(Adapter.core,)))
 
         with pytest.raises(AssertionError, match="Non-string/non-tuple keys must be `RegKeyQueryable`"):
-            registry.get(TestClassModuleRegistration.DegenRegKeyObj(model_key="rte", phase="train"))
+            registry.get(TestClassModuleRegistration.DegenRegKeyObj(model_cfg_key="rte", phase="train"))
 
         with pytest.raises(KeyError, match="was not found in the registry"):
             registry.get(("cust", default_test_task, "train", (Adapter.lightning, Adapter.sae_lens)))

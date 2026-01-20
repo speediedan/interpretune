@@ -19,6 +19,8 @@ from interpretune.config import (
     ITLensFromPretrainedNoProcessingConfig,
     SAELensFromPretrainedConfig,
     AnalysisCfg,
+    CircuitTracerConfig,
+    ITLensCfg,
 )
 from interpretune.extensions import DebugLMConfig, MemProfilerCfg
 from interpretune.analysis import SAEAnalysisTargets, AnalysisOp
@@ -175,6 +177,11 @@ class LightningGemma2DebugCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning,)
 
 
+################################################################################
+# Transformer Lens Test Configs
+################################################################################
+
+
 @dataclass(kw_only=True)
 class LightningTLBridgeLlama3(BaseCfg):
     """Llama3 with TransformerBridge for parameter mapping validation tests.
@@ -263,13 +270,152 @@ class LightningTLBridgeGPT2Processed(BaseCfg):
 
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
-    tl_cfg: ITLensBridgeConfig = field(
+    tl_cfg: ITLensCfg | None = field(
         default_factory=lambda: ITLensBridgeConfig(
             model_name="gpt2-small",
             default_padding_side="left",
             enable_compatibility_mode=True,
         )
     )
+
+
+################################################################################
+# Circuit Tracer Test Configs
+################################################################################
+
+
+@dataclass(kw_only=True)
+class CircuitTracerTLGemma2(BaseCfg):
+    """Circuit Tracer with TransformerLens backend on Gemma2.
+
+    Uses adapter combination (core, transformer_lens, circuit_tracer) which composes BaseCircuitTracerModule with
+    BaseITLensModule for TL-specific functionality.
+    """
+
+    phase: str = "test"
+    model_src_key: str | None = "gemma2"
+    model_cfg_key: str = "rte_base_test"
+    device_type: str = "cuda"
+    # Use transformer_lens adapter for TL backend
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.transformer_lens, Adapter.circuit_tracer)
+    tl_cfg: ITLensCfg | None = field(
+        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
+            model_name="gemma-2-2b", default_padding_side="left", use_bridge=False
+        )
+    )
+    generative_step_cfg: GenerativeClassificationConfig | None = field(
+        default_factory=lambda: GenerativeClassificationConfig(
+            enabled=True,
+            lm_generation_cfg=TLensGenerationConfig(max_new_tokens=1, output_logits=True, return_dict_in_generate=True),
+        )
+    )
+    circuit_tracer_cfg: CircuitTracerConfig | None = field(
+        default_factory=lambda: CircuitTracerConfig(
+            backend="transformerlens",  # though TL is default we explicitly set backend here for clarity
+            transcoder_set="gemma",
+            analysis_target_tokens=["▁Dallas", "▁Austin"],
+            max_feature_nodes=8192,
+            offload="cpu",
+            verbose=True,
+        )
+    )
+
+
+@dataclass(kw_only=True)
+class LightningCircuitTracerTLGemma2(BaseCfg):
+    """Lightning Circuit Tracer with TransformerLens backend on Gemma2.
+
+    Uses adapter combination (lightning, transformer_lens, circuit_tracer) which composes BaseCircuitTracerModule with
+    BaseITLensModule and Lightning adapters.
+    """
+
+    phase: str = "test"
+    model_src_key: str | None = "gemma2"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer)
+    tl_cfg: ITLensCfg | None = field(
+        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
+            model_name="gemma-2-2b", default_padding_side="left", use_bridge=False
+        )
+    )
+    circuit_tracer_cfg: CircuitTracerConfig | None = field(
+        default_factory=lambda: CircuitTracerConfig(
+            backend="transformerlens",  # though TL is default we explicitly set backend here for clarity
+            transcoder_set="gemma",
+            analysis_target_tokens=["▁Dallas", "▁Austin"],
+            max_feature_nodes=8192,
+            offload="cpu",
+            verbose=True,
+        )
+    )
+
+
+# TODO: Update and enable these configs below once basic nnsight adapter w/ composition for CT is implemented
+##############################################################################################################
+# @dataclass(kw_only=True)
+# class CircuitTracerNNSightGemma2(BaseCfg):
+#     """Circuit Tracer with NNsight backend on Gemma2."""
+
+#     phase: str = "test"
+#     model_src_key: str | None = "gemma2"
+#     model_cfg_key: str = "rte_base_test"
+#     device_type: str = "cuda"
+#     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.circuit_tracer)
+#     datamodule_cls: str | None = "tests.modules.TestITDataModule"
+#     module_cls: str | None = "tests.modules.TestITModule"
+#     circuit_tracer_cfg: CircuitTracerConfig | None = field(
+#         default_factory=lambda: CircuitTracerConfig(
+#             backend="nnsight",
+#             transcoder_set="gemma",
+#             analysis_target_tokens=["▁Dallas", "▁Austin"],
+#             max_feature_nodes=8192,
+#             offload="cpu",
+#             verbose=True,
+#         )
+#     )
+
+# @dataclass(kw_only=True)
+# class LightningCircuitTracerNNSightGemma2(BaseCfg):
+#     """Lightning Circuit Tracer with NNsight backend on Gemma2."""
+
+#     phase: str = "test"
+#     model_src_key: str | None = "gemma2"
+#     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.circuit_tracer)
+#     circuit_tracer_cfg: CircuitTracerConfig | None = field(
+#         default_factory=lambda: CircuitTracerConfig(
+#             backend="nnsight",
+#             transcoder_set="gemma",
+#             analysis_target_tokens=["▁Dallas", "▁Austin"],
+#             max_feature_nodes=8192,
+#             offload="cpu",
+#             verbose=True,
+#             nnsight_remote=True,
+#         )
+#     )
+
+
+# @dataclass(kw_only=True)
+# class CircuitTracerNNSightGemma2Remote(BaseCfg):
+#     """Circuit Tracer with NNsight backend on Gemma2 for remote mode testing."""
+
+#     phase: str = "test"
+#     model_src_key: str | None = "gemma2"
+#     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.circuit_tracer)
+#     circuit_tracer_cfg: CircuitTracerConfig | None = field(
+#         default_factory=lambda: CircuitTracerConfig(
+#             backend="nnsight",
+#             transcoder_set="gemma",
+#             analysis_target_tokens=["▁Dallas", "▁Austin"],
+#             max_feature_nodes=8192,
+#             offload="cpu",
+#             verbose=True,
+#             nnsight_remote=True,
+#         )
+#     )
+##############################################################################################################
+
+################################################################################
+# SAE Test Configs
+################################################################################
 
 
 @dataclass(kw_only=True)

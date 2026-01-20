@@ -83,6 +83,17 @@ class TLensAttributeMixin:
     def input_device(self) -> torch.device | None:
         return self.get_tl_device()
 
+    def batch_to_device(self, batch) -> BatchEncoding:
+        """Move a batch to the TL input device if one is available.
+
+        Implemented on the TL mixin so that any composition that exposes TL properties
+        (e.g., `input_device`) can reuse consistent behavior and satisfy static typing.
+        """
+        device = self.input_device
+        if device is not None:
+            move_data_to_device(batch, device)
+        return batch
+
 
 class BaseITLensModule(BaseITModule):
     """Base module for TransformerLens integration.
@@ -179,7 +190,7 @@ class BaseITLensModule(BaseITModule):
         tl_kwargs = {k: v for k, v in self.it_cfg.tl_cfg.__dict__.items() if k not in ["use_bridge"]}
         self.model = HookedTransformer(tokenizer=self.it_cfg.tokenizer, **tl_kwargs)
 
-    def _prune_tl_cfg_dict(self, prune_list: list | None = None) -> dict:
+    def _prune_tl_cfg_dict(self, normalize_device: bool = False, prune_list: list | None = None) -> dict:
         """Prunes the tl_cfg dictionary by removing IT-specific and HF-specific keys that shouldn't be passed to
         HookedTransformer/TransformerBridge constructors.
 
@@ -195,15 +206,25 @@ class BaseITLensModule(BaseITModule):
                     rank_zero_warn(f"Found non-None value for '{key}' in tl_cfg. This may cause issues.")
                 del pruned_dict[key]
 
+        if normalize_device and "device" in pruned_dict and isinstance(pruned_dict["device"], str):
+            pruned_dict["device"] = torch.device(pruned_dict["device"])
         return pruned_dict
+
+    def _prepare_hf_to_tl_conversion(self) -> tuple[Any, Any]:
+        """Prepare common state for HF -> TransformerLens conversion.
+
+        Returns a tuple of (tokenizer_handle, hf_preconversion_config).
+        """
+        tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
+        assert self.model is not None, "Model must be loaded before conversion"
+        hf_preconversion_config = deepcopy(self.model.config)
+        return tokenizer_handle, hf_preconversion_config
 
     def _convert_hf_to_tl(self) -> None:
         # TODO: decide whether to pass remaining hf_from_pretrained_cfg args to HookedTransformer
         # (other than `dtype` which should already have been processed and removed, `device_map` should also be
         # removed before passing to HookedTransformer)
-        # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
-        tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
-        hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
+        tokenizer_handle, hf_preconversion_config = self._prepare_hf_to_tl_conversion()
         pruned_cfg = self._prune_tl_cfg_dict()  # avoid edge case where conflicting keys haven't already been pruned
         self.model = HookedTransformer.from_pretrained(
             hf_model=cast(PreTrainedModel, self.model), tokenizer=tokenizer_handle, **pruned_cfg

@@ -10,7 +10,7 @@ import torch
 from circuit_tracer import ReplacementModel, Graph, attribute
 from circuit_tracer.utils import create_graph_files
 from circuit_tracer.replacement_model.replacement_model_transformerlens import TransformerLensReplacementModel
-from transformers.tokenization_utils_base import BatchEncoding
+from circuit_tracer.replacement_model.replacement_model_nnsight import NNSightReplacementModel
 
 from interpretune.adapters import (
     CompositionRegistry,
@@ -22,14 +22,14 @@ from interpretune.adapters import (
 )
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import CircuitTracerConfig, ITConfig
-from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info
+from interpretune.utils import rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
 
 if TYPE_CHECKING:
     pass
 
-# Type alias for replacement model backends (currently only TL is supported in IT)
-ReplacementModelType = TransformerLensReplacementModel  # | NNSightReplacementModel  # future support
+# Type alias for replacement model backends - supports both TransformerLens and NNsight
+ReplacementModelType = TransformerLensReplacementModel | NNSightReplacementModel
 
 
 @dataclass(kw_only=True)
@@ -44,7 +44,13 @@ class InstantiatedGraph:
 ################################################################################
 
 
-class CircuitTracerAttributeMixin(TLensAttributeMixin):
+class CircuitTracerAttributeMixin:
+    """Backend-agnostic mixin for circuit tracer attribute access.
+
+    Does NOT inherit from TLensAttributeMixin - that should be composed separately
+    when using the TransformerLens backend via adapter composition.
+    """
+
     it_cfg: ITConfig
 
     @property
@@ -62,65 +68,71 @@ class CircuitTracerAttributeMixin(TLensAttributeMixin):
         return None
 
 
-class BaseCircuitTracerModule(BaseITLensModule):
+class BaseCircuitTracerModule(BaseITModule):
+    """Backend-agnostic base module for Circuit Tracer.
+
+    This class does NOT inherit from BaseITLensModule. When using the TransformerLens backend, the adapter composition
+    system will compose this with BaseITLensModule via the (core, transformer_lens, circuit_tracer) adapter combination.
+
+    For NNsight backend, this can be used directly without TransformerLens composition.
+    """
+
     def __init__(self, *args, **kwargs):
         # Initialize attributes that may be required in base init methods
         self.attribution_graphs: list[InstantiatedGraph] = []
         self._replacement_model: ReplacementModelType | None = None
         super().__init__(*args, **kwargs)
 
-    def _convert_hf_to_tl(self) -> None:
-        """Convert HF model to TransformerLens/ReplacementModel."""
-        # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
-        tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
-        assert self.model is not None, "Model must be loaded before conversion"
-        hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
-
-        # TODO: we currently prune model_name, dtype and the below values from tl_cfg as CT currently forces these
-        #       values in from_pretrained. We prob want a sync method in the future instead.
-        #           fold_ln=False,
-        #           center_writing_weights=False,
-        #           center_unembed=False,
-        pruned_tl_cfg = self._prune_tl_cfg_dict(
-            ["hf_model", "tokenizer", "model_name", "dtype", "fold_ln", "center_writing_weights", "center_unembed"]
-        )
-        loaded_model_kwargs = {"hf_model": self.model, "tokenizer": tokenizer_handle, **pruned_tl_cfg}
-        self._load_replacement_model(pretrained_kwargs=loaded_model_kwargs)
-        # Preserve original HF config for reference (dynamic attribute on TransformerLens model)
-        assert self.model is not None, "Replacement model must be loaded"
-        self.model.config = hf_preconversion_config  # type: ignore[union-attr]  # dynamic attr on TL model
-
     def _load_replacement_model(self, pretrained_kwargs: dict | None = None) -> None:
-        """Load the ReplacementModel for circuit tracing."""
+        """Load the ReplacementModel for circuit tracing.
+
+        Supports both TransformerLens and NNsight backends. The backend is determined by the circuit_tracer_cfg.backend
+        setting.
+        """
         pretrained_kwargs = pretrained_kwargs or {}
         cfg = self.circuit_tracer_cfg
         if not cfg:
             rank_zero_warn("No circuit_tracer_cfg found, using defaults")
             return
 
-        # Use ReplacementModel.from_pretrained for simplicity
-        # Factory returns TransformerLensReplacementModel when backend is 'transformerlens' (default)
+        # Use backend from configuration (defaults to 'transformerlens')
+        backend = cfg.backend if cfg else "transformerlens"
+        rank_zero_info(f"Loading ReplacementModel with backend: {backend}")
+
+        # Add NNsight-specific kwargs if using NNsight backend
+        if backend == "nnsight" and cfg:
+            if cfg.nnsight_remote:
+                pretrained_kwargs["remote"] = True
+                rank_zero_info("Using NNsight remote execution")
+                if cfg.nnsight_api_key:
+                    pretrained_kwargs["api_key"] = cfg.nnsight_api_key
+
+        # Use ReplacementModel.from_pretrained factory
+        # Factory returns backend-specific implementation based on backend parameter
         replacement_model = ReplacementModel.from_pretrained(
             model_name=cfg.model_name or self.it_cfg.model_name_or_path,
             transcoder_set=cfg.transcoder_set,
             dtype=cfg.dtype,
-            backend="transformerlens",  # Explicitly use TL backend for now
+            backend=backend,
             **pretrained_kwargs,
         )
-        # Cast to specific type since we know we're using TL backend
-        assert isinstance(replacement_model, TransformerLensReplacementModel), (
-            f"Expected TransformerLensReplacementModel, got {type(replacement_model)}"
-        )
+
+        # Validate returned model type matches expected backend
+        if backend == "transformerlens":
+            assert isinstance(replacement_model, TransformerLensReplacementModel), (
+                f"Expected TransformerLensReplacementModel for backend '{backend}', got {type(replacement_model)}"
+            )
+        elif backend == "nnsight":
+            assert isinstance(replacement_model, NNSightReplacementModel), (
+                f"Expected NNSightReplacementModel for backend '{backend}', got {type(replacement_model)}"
+            )
+        else:
+            raise ValueError(f"Unknown backend: {backend}")
+
         self._replacement_model = replacement_model
 
         # Replace the model with the replacement model for circuit tracing
         self.model = self._replacement_model
-
-    def tl_config_model_init(self) -> None:
-        """Initialize model using TransformerLens configuration."""
-        super().tl_config_model_init()
-        if self.circuit_tracer_cfg:
-            self._load_replacement_model()
 
     def _capture_hyperparameters(self) -> None:
         """Capture hyperparameters for logging."""
@@ -231,6 +243,47 @@ class BaseCircuitTracerModule(BaseITLensModule):
 ################################################################################
 
 
+class CircuitTracerTLModuleMixin(TLensAttributeMixin):
+    """Mixin that provides TransformerLens-specific functionality for Circuit Tracer.
+
+    This mixin is composed with BaseCircuitTracerModule when using the TransformerLens backend to provide
+    _convert_hf_to_tl and other TL-specific methods.
+    """
+
+    def _convert_hf_to_tl(self) -> None:
+        """Convert HF model to TransformerLens ReplacementModel.
+
+        This method handles TransformerLens-specific conversion logic by pruning config values that circuit_tracer
+        forces in from_pretrained.
+        """
+        tokenizer_handle, hf_preconversion_config = self._prepare_hf_to_tl_conversion()  # type: ignore[attr-defined]
+
+        # TransformerLens-specific: prune config values that CT forces in from_pretrained
+        # TODO: we currently prune model_name, dtype and the below values from tl_cfg as CT currently forces these
+        #       values in from_pretrained. We prob want a sync method in the future instead.
+        #           fold_ln=False,
+        #           center_writing_weights=False,
+        #           center_unembed=False,
+        pruned_tl_cfg = self._prune_tl_cfg_dict(  # type: ignore[attr-defined]  # from BaseITLensModule
+            normalize_device=True,
+            prune_list=[
+                "hf_model",
+                "tokenizer",
+                "model_name",
+                "dtype",
+                "fold_ln",
+                "center_writing_weights",
+                "center_unembed",
+            ],
+        )
+        loaded_model_kwargs = {"hf_model": self.model, "tokenizer": tokenizer_handle, **pruned_tl_cfg}  # type: ignore[attr-defined]
+
+        self._load_replacement_model(pretrained_kwargs=loaded_model_kwargs)  # type: ignore[attr-defined]
+        # Preserve original HF config for reference (dynamic attribute on backend model)
+        assert self.model is not None, "Replacement model must be loaded"  # type: ignore[attr-defined]
+        self.model.config = hf_preconversion_config  # type: ignore[union-attr]
+
+
 class CircuitTracerAdapter(CircuitTracerAttributeMixin):
     def initialize_graph_output_dir(self, core_log_dir: Path) -> None:
         """Initialize graph_output_dir based on configuration or default to core_log_dir/graph_data."""
@@ -240,26 +293,22 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
 
     @classmethod
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
+        # ======================================================================
+        # Backend-agnostic registrations: (core, circuit_tracer)
+        # ======================================================================
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="datamodule",
             adapter_combination=(Adapter.core, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(ITDataModule,),
-            description="Circuit Tracer adapter that can be composed with core...",
-        )
-        adapter_ctx_registry.register(
-            Adapter.circuit_tracer,
-            component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),  # type: ignore[arg-type]
-            composition_classes=(ITDataModule, LightningDataModule),
-            description="Circuit Tracer adapter that can be composed with lightning...",
+            description="Circuit Tracer adapter (backend-agnostic) that can be composed with core...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module",
             adapter_combination=(Adapter.core, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(CircuitTracerModule,),
-            description="Circuit Tracer adapter that can be composed with core...",
+            description="Circuit Tracer adapter (backend-agnostic) that can be composed with core...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
@@ -267,6 +316,42 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
             adapter_combination=(Adapter.core, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(CircuitTracerConfig,),
             description="Circuit Tracer configuration that can be composed with core...",
+        )
+
+        # ======================================================================
+        # TransformerLens backend registrations: (core, transformer_lens, circuit_tracer)
+        # ======================================================================
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="datamodule",
+            adapter_combination=(Adapter.core, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(ITDataModule,),
+            description="Circuit Tracer adapter with TransformerLens backend...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="module",
+            adapter_combination=(Adapter.core, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(CircuitTracerTLModule,),
+            description="Circuit Tracer adapter with TransformerLens backend...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="module_cfg",
+            adapter_combination=(Adapter.core, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(CircuitTracerConfig,),
+            description="Circuit Tracer configuration with TransformerLens backend...",
+        )
+
+        # ======================================================================
+        # Lightning + backend-agnostic registrations: (lightning, circuit_tracer)
+        # ======================================================================
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="datamodule",
+            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(ITDataModule, LightningDataModule),
+            description="Circuit Tracer adapter (backend-agnostic) that can be composed with lightning...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
@@ -279,7 +364,7 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
                 BaseITModule,
                 LightningModule,
             ),
-            description="Circuit Tracer adapter that can be composed with lightning...",
+            description="Circuit Tracer adapter (backend-agnostic) that can be composed with lightning...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
@@ -289,10 +374,38 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
             description="Circuit Tracer configuration that can be composed with lightning...",
         )
 
-    def batch_to_device(self, batch) -> BatchEncoding:
-        if self.input_device is not None:
-            move_data_to_device(batch, self.input_device)
-        return batch
+        # ======================================================================
+        # Lightning + TransformerLens backend registrations: (lightning, transformer_lens, circuit_tracer)
+        # ======================================================================
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="datamodule",
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(ITDataModule, LightningDataModule),
+            description="Circuit Tracer adapter with TransformerLens backend and Lightning...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="module",
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(
+                CircuitTracerTLModuleMixin,
+                CircuitTracerAttributeMixin,
+                BaseCircuitTracerModule,
+                BaseITLensModule,
+                LightningAdapter,
+                BaseITModule,
+                LightningModule,
+            ),
+            description="Circuit Tracer adapter with TransformerLens backend and Lightning...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="module_cfg",
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(CircuitTracerConfig,),
+            description="Circuit Tracer configuration with TransformerLens backend and Lightning...",
+        )
 
     def setup(self, *args, **kwargs) -> None:
         super().setup(*args, **kwargs)  # type: ignore[misc]  # mixin call to super
@@ -406,6 +519,27 @@ class CircuitTracerAnalysisMixin:
         return graph, graph_path, neuronpedia_metadata
 
 
+# Backend-agnostic Circuit Tracer module (for NNsight backend or other non-TL backends)
 class CircuitTracerModule(
     CircuitTracerAnalysisMixin, CircuitTracerAdapter, CoreHelperAttributes, BaseCircuitTracerModule
 ): ...
+
+
+# TransformerLens-specific Circuit Tracer module
+class CircuitTracerTLModule(
+    CircuitTracerTLModuleMixin,
+    CircuitTracerAnalysisMixin,
+    CircuitTracerAdapter,
+    CoreHelperAttributes,
+    BaseCircuitTracerModule,
+    BaseITLensModule,
+):
+    """Circuit Tracer module with TransformerLens backend.
+
+    This module combines:
+    - CircuitTracerTLModuleMixin: Provides _convert_hf_to_tl for TL-specific conversion
+    - BaseITLensModule: Provides _prune_tl_cfg_dict and other TL utilities
+    - BaseCircuitTracerModule: Provides _load_replacement_model and circuit tracer functionality
+    """
+
+    ...

@@ -5,53 +5,53 @@
 
    ```yaml
     gpt2.rte.transformer_lens:
-    reg_info:
-      model_src_key: gpt2
-        task_name: rte
+      reg_info:
+        model_src_key: gpt2
+        model_cfg_key: rte
         adapter_combinations:
           - [core, transformer_lens]
           - [lightning, transformer_lens]
         description: Basic TL example, GPT2 with supported adapter compositions
-    shared_config:
-        task_name: pytest_rte_tl
-        model_name_or_path: gpt2
-        tokenizer_id_overrides:
-          pad_token_id: 50256
-        tokenizer_kwargs:
-          model_input_names: ['input']
-          padding_side: left
-          add_bos_token: false
-    registered_cfg:
-        datamodule_cfg:
-          prompt_cfg:
-            class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
-          signature_columns: ['input', 'labels']
-          text_fields: ["premise", "hypothesis"]
-          enable_datasets_cache: True
-          train_batch_size: 2
-          eval_batch_size: 2
-        module_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqTLConfig
-          init_args:
-            generative_step_cfg:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
-              init_args:
-                enabled: True
-                lm_generation_cfg:
-                  class_path: interpretune.config.transformer_lens.TLensGenerationConfig
-                  init_args:
-                    max_new_tokens: 1
-            hf_from_pretrained_cfg:
-              class_path: interpretune.config.mixins.HFFromPretrainedConfig
-              init_args:
-                pretrained_kwargs:
-                  device_map: cpu
-                  dtype: float32
-                model_head: transformers.GPT2LMHeadModel
-            tl_cfg:
-              class_path: interpretune.config.transformer_lens.ITLensFromPretrainedConfig
-        datamodule_cls:  # if you want to enable dataset fingerprinting, override the base test datamodule as follows:
-          class_path: tests.modules.FingerprintTestITDataModule
+      shared_config:
+          task_name: pytest_rte_tl
+          model_name_or_path: gpt2
+          tokenizer_id_overrides:
+            pad_token_id: 50256
+          tokenizer_kwargs:
+            model_input_names: ['input']
+            padding_side: left
+            add_bos_token: false
+      registered_cfg:
+          datamodule_cfg:
+            prompt_cfg:
+              class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+            signature_columns: ['input', 'labels']
+            text_fields: ["premise", "hypothesis"]
+            enable_datasets_cache: True
+            train_batch_size: 2
+            eval_batch_size: 2
+          module_cfg:
+            class_path: it_examples.experiments.rte_boolq.RTEBoolqTLConfig
+            init_args:
+              generative_step_cfg:
+                class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+                init_args:
+                  enabled: True
+                  lm_generation_cfg:
+                    class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+                    init_args:
+                      max_new_tokens: 1
+              hf_from_pretrained_cfg:
+                class_path: interpretune.config.mixins.HFFromPretrainedConfig
+                init_args:
+                  pretrained_kwargs:
+                    device_map: cpu
+                    dtype: float32
+                  model_head: transformers.GPT2LMHeadModel
+              tl_cfg:
+                class_path: interpretune.config.transformer_lens.ITLensFromPretrainedConfig
+          datamodule_cls:  # if you want to enable dataset fingerprinting, override the base test datamodule as follows:
+            class_path: tests.modules.FingerprintTestITDataModule
    ```
 
    - if the new model requires a custom prompt (most instruction tuned models will), add the relevant example model

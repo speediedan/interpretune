@@ -70,6 +70,8 @@ from tests.core.cfg_aliases import (
     CoreSLGPT2LogitDiffsBase,
     TLMechInterpCfg,
     CoreSLGPT2LogitDiffsAttrAblation,
+    CircuitTracerTLGemma2,
+    LightningCircuitTracerTLGemma2,
 )
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
@@ -135,11 +137,11 @@ class AnalysisSessionFixture(ITSessionFixture):
 # TODO: switch to namedtuple if not subclassing this in the future
 @dataclass(kw_only=True)
 class FixtureCfg:
-    test_cfg: BaseCfg = CoreCfg
+    test_cfg: Type[BaseCfg] = CoreCfg
     module_cls: Type[ModuleSteppable] = TestITModule
     datamodule_cls: Type[DataModuleInitable] = TestITDataModule
     scope: str = "class"
-    variants: dict[str, Sequence[FixtPhase]] = field(default_factory=lambda: defaultdict(list))
+    variants: dict[str, Sequence[int] | Sequence[tuple]] = field(default_factory=lambda: defaultdict(list))
 
 
 FIXTURE_CFGS = {
@@ -179,6 +181,24 @@ FIXTURE_CFGS = {
     "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg, variants={"it_session": [FixtPhase.setup]}),
     "l_gemma2_debug": FixtureCfg(test_cfg=LightningGemma2DebugCfg, variants={"it_session": [FixtPhase.setup]}),
     "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function", variants={"it_session": [FixtPhase.setup]}),
+    "ct_tl_gemma2": FixtureCfg(
+        test_cfg=CircuitTracerTLGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
+    ),
+    "l_ct_tl_gemma2": FixtureCfg(
+        test_cfg=LightningCircuitTracerTLGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
+    ),
+    # TODO: Update and enable these configs below once basic nnsight adapter w/ composition for CT is implemented
+    ##############################################################################################################
+    # "ct_nnsight_gemma2": FixtureCfg(
+    #     test_cfg=CircuitTracerNNSightGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
+    # ),
+    # "l_ct_nnsight_gemma2": FixtureCfg(
+    #     test_cfg=LightningCircuitTracerNNSightGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
+    # ),
+    # "ct_nnsight_gemma2_remote": FixtureCfg(
+    #     test_cfg=CircuitTracerNNSightGemma2Remote, scope="function", variants={"it_session": [FixtPhase.setup]}
+    # ),
+    ##############################################################################################################
     "sl_gpt2": FixtureCfg(
         test_cfg=CoreSLGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
     ),
@@ -847,6 +867,7 @@ def restore_env_variables():
         "DEV_NEURONPEDIA_API_KEY",
         "NEURONPEDIA_API_KEY",
         "USE_LOCALHOST",
+        "NNSIGHT_API_KEY",
     }
     allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)
