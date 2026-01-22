@@ -43,6 +43,17 @@ except ImportError:
     CircuitTracerConfig = None
     _circuit_tracer_config_available = False
 
+# Conditionally import nnsight configs
+try:
+    from interpretune.config.nnsight import NNsightConfig, ITNNsightConfig, NNsightCfg, NNsightCfgTypes
+
+    _nnsight_config_available = True
+except ImportError:
+    # nnsight not available, define placeholder classes
+    NNsightConfig = None
+    ITNNsightConfig = None
+    _nnsight_config_available = False
+
 from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg
 from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg, init_analysis_dirs, init_analysis_cfgs
 
@@ -85,6 +96,11 @@ __all__ = [
     "SAELensFromPretrainedConfig",
     "SAELensCustomConfig",
     "SAELensConfig",
+    # from interpretune.config.nnsight
+    "NNsightConfig",
+    "NNsightCfg",
+    "NNsightCfgTypes",
+    "ITNNsightConfig",
     # from interpretune.config.analysis
     "AnalysisCfg",
     "AnalysisArtifactCfg",
@@ -100,5 +116,16 @@ if _circuit_tracer_config_available:
     __all__.extend(
         [
             "CircuitTracerConfig",
+        ]
+    )
+
+# Add nnsight configs only if available
+if _nnsight_config_available:
+    __all__.extend(
+        [
+            "NNsightConfig",
+            "ITNNsightConfig",
+            "NNsightCfg",
+            "NNsightCfgTypes",
         ]
     )

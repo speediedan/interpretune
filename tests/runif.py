@@ -112,6 +112,7 @@ class RunIf:
         finetuning_scheduler: bool = False,
         bitsandbytes: bool = False,
         exp_patch: ExpPatch | set[ExpPatch] | None = None,
+        skip: str | None = None,
         **kwargs,
     ):
         """
@@ -140,10 +141,15 @@ class RunIf:
             finetuning_scheduler: Require that finetuning_scheduler is installed.
             bitsandbytes: Require that bitsandbytes is installed.
             exp_patch: Require that a given experimental patch is installed.
+            skip: Unconditionally skip the test with the given reason string.
             **kwargs: Any :class:`pytest.mark.skipif` keyword arguments.
         """
         conditions = []
         reasons = []
+
+        if skip:
+            conditions.append(True)
+            reasons.append(skip)
 
         if min_cuda_gpus:
             conditions.append(torch.cuda.device_count() < min_cuda_gpus)

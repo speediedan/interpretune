@@ -1,13 +1,18 @@
 """Tests for CircuitTracerAdapter backend integration.
 
-This module tests the CircuitTracerAdapter with TransformerLens backend. NNsight backend tests are currently commented
-out pending backend adapter support. Following the fixture usage patterns established in
-test_adapters_transformer_lens.py.
+This module tests the CircuitTracerAdapter with both TransformerLens and NNsight backends. Following the fixture usage
+patterns established in test_adapters_transformer_lens.py.
+
+TransformerLens backend tests run as part of the standard test suite. NNsight backend tests are marked standalone due to
+GPU/resource requirements.
 """
 
 from __future__ import annotations
 
+import os
 import pytest
+
+import nnsight
 
 from interpretune.config import CircuitTracerConfig
 from interpretune.adapters.circuit_tracer import (
@@ -16,6 +21,24 @@ from interpretune.adapters.circuit_tracer import (
     NNSightReplacementModel,
 )
 from tests.runif import RunIf
+
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def reset_pymount():
+    """Reset nnsight PYMOUNT to True for tests that need .save() on tensors.
+
+    Circuit-tracer's replacement_model_nnsight.py sets PYMOUNT=False at import time. This is needed for circuit_tracer
+    tests that use .save() on NNsight proxies.
+    """
+    original = nnsight.CONFIG.APP.PYMOUNT
+    nnsight.CONFIG.APP.PYMOUNT = True
+    yield
+    nnsight.CONFIG.APP.PYMOUNT = original
 
 
 # =============================================================================
@@ -207,148 +230,181 @@ class TestCircuitTracerTLBackendFunctionality:
         assert it_session.module.circuit_tracer_cfg.backend == "transformerlens"
         assert isinstance(it_session.module.replacement_model, TransformerLensReplacementModel)
 
-        # TODO: Enable Lightning tests after fixing Lightning adapter composition
-        # class TestCircuitTracerLightningTLBackendInitialization:
-        #     """Test Lightning + TransformerLens backend initialization."""
-        #
-        #     @RunIf(lightning=True)
-        #     @pytest.mark.parametrize(
-        #         "session_fixture",
-        #         [
-        #             pytest.param("get_it_session__l_ct_tl_gemma2__setup"),
-        #         ],
-        #         ids=["lightning_transformerlens"],
-        #     )
-        #     def test_lightning_adapter_backend_support(self, session_fixture, request):
-        #         """Verify Lightning adapter works with TransformerLens backend."""
-        #         it_session = request.getfixturevalue(session_fixture).it_session
-        #
-        #         # Should have Lightning-specific attributes
-        #         assert hasattr(it_session.module, "trainer")
-        #         # Backend should still be accessible
-        #         assert it_session.module.circuit_tracer_cfg.backend == "transformerlens"
 
-        # =============================================================================
-        # NNsight Backend Tests (Commented out pending NNsight adapter support)
-        # =============================================================================
+class TestCircuitTracerLightningTLBackendInitialization:
+    """Test Lightning + TransformerLens backend initialization."""
 
-        # TODO: Enable after NNsight adapter composition is implemented
-        # The NNsight backend will use (core, circuit_tracer) adapter combination
-        # without the transformer_lens adapter.
+    @RunIf(lightning=True, standalone=True)
+    @pytest.mark.parametrize(
+        "session_fixture",
+        [
+            pytest.param("get_it_session__l_ct_tl_gemma2__setup"),
+        ],
+        ids=["lightning_transformerlens"],
+    )
+    def test_lightning_adapter_backend_support(self, session_fixture, request):
+        """Verify Lightning adapter works with TransformerLens backend."""
+        it_session = request.getfixturevalue(session_fixture).it_session
 
-        # class TestCircuitTracerNNSightBackendInitialization:
-        #     """Test NNsight backend-specific initialization in CircuitTracerAdapter.
-        #
-        #     These tests use the (core, circuit_tracer) adapter combination.
-        #     """
-        #
-        #     @pytest.mark.parametrize(
-        #         "session_fixture",
-        #         [
-        #             pytest.param("get_it_session__ct_nnsight_gemma2__setup"),
-        #         ],
-        #         ids=["nnsight"],
-        #     )
-        #     def test_nnsight_backend_property_access(self, session_fixture, request):
-        #         """Verify backend property returns correct value from config."""
-        #         it_session = request.getfixturevalue(session_fixture).it_session
-        #
-        #         backend = it_session.module.circuit_tracer_cfg.backend
-        #         assert backend == "nnsight"
-        #
-        #     @pytest.mark.parametrize(
-        #         "session_fixture",
-        #         [
-        #             pytest.param("get_it_session__ct_nnsight_gemma2__setup"),
-        #         ],
-        #         ids=["nnsight"],
-        #     )
-        #     def test_nnsight_replacement_model_loaded(self, request, session_fixture):
-        #         """Verify replacement model is loaded for NNsight backend."""
-        #         it_session = request.getfixturevalue(session_fixture).it_session
-        #
-        #         # Replacement model should be loaded after setup
-        #         assert it_session.module.replacement_model is not None
-        #         assert isinstance(it_session.module.replacement_model, NNSightReplacementModel)
+        # Verify Lightning module composition - check for Lightning-specific private attribute
+        # Note: .trainer property raises RuntimeError when not attached, so check _trainer instead
+        assert hasattr(it_session.module, "_trainer")
+        # Backend should still be accessible
+        assert it_session.module.circuit_tracer_cfg.backend == "transformerlens"
 
-        # class TestNNsightBackendGemma2:
-        #     """Unit tests for NNsight backend using Gemma2 model."""
-        #
-        #     def test_nnsight_backend_initialization_local(self, get_it_session__ct_nnsight_gemma2__setup):
-        #         """Verify NNsight backend initializes correctly in local mode with Gemma2."""
-        #         it_session = get_it_session__ct_nnsight_gemma2__setup.it_session
-        #
-        #         assert it_session.module.circuit_tracer_cfg.backend == "nnsight"
-        #         assert it_session.module.circuit_tracer_cfg.nnsight_remote is False
-        #         assert isinstance(it_session.module.replacement_model, NNSightReplacementModel)
-        #
-        #     def test_nnsight_api_key_from_env(self, monkeypatch):
-        #         """Verify NNSIGHT_API_KEY is resolved from environment variable."""
-        #         # Set environment variable temporarily
-        #         monkeypatch.setenv("NNSIGHT_API_KEY", "test_env_key_123")
-        #
-        #         # Create config with remote=True but no explicit API key
-        #         cfg = CircuitTracerConfig(
-        #             backend="nnsight",
-        #             nnsight_remote=True
-        #         )
-        #
-        #         # __post_init__ should have resolved API key from env
-        #         assert cfg.nnsight_api_key == "test_env_key_123"
-        #
-        #     def test_nnsight_local_no_api_key_required(self, get_it_session__ct_nnsight_gemma2__setup):
-        #         """Verify local mode doesn't require API key."""
-        #         it_session = get_it_session__ct_nnsight_gemma2__setup.it_session
-        #
-        #         # Local mode should work without API key
-        #         assert it_session.module.circuit_tracer_cfg.nnsight_remote is False
-        #         assert it_session.module.circuit_tracer_cfg.nnsight_api_key is None
-        #         assert it_session.module.replacement_model is not None
+
+# =============================================================================
+# NNsight Backend Tests
+# =============================================================================
+
+
+class TestCircuitTracerNNsightBackendInitialization:
+    """Test NNsight backend-specific initialization in CircuitTracerAdapter.
+
+    These tests use the (core, circuit_tracer) adapter combination with backend="nnsight".
+    """
+
+    @pytest.mark.parametrize(
+        "session_fixture",
+        [
+            pytest.param("get_it_session__ct_nnsight_gemma2__setup", marks=RunIf(standalone=True)),
+        ],
+        ids=["nnsight"],
+    )
+    def test_nnsight_backend_property_access(self, session_fixture, request):
+        """Verify backend property returns correct value from config."""
+        it_session = request.getfixturevalue(session_fixture).it_session
+
+        backend = it_session.module.circuit_tracer_cfg.backend
+        assert backend == "nnsight"
+
+    @pytest.mark.parametrize(
+        "session_fixture",
+        [
+            pytest.param("get_it_session__ct_nnsight_gemma2__setup", marks=RunIf(standalone=True)),
+        ],
+        ids=["nnsight"],
+    )
+    def test_nnsight_replacement_model_loaded(self, request, session_fixture):
+        """Verify replacement model is loaded for NNsight backend."""
+        it_session = request.getfixturevalue(session_fixture).it_session
+
+        # Replacement model should be loaded after setup
+        assert it_session.module.replacement_model is not None
+        assert isinstance(it_session.module.replacement_model, NNSightReplacementModel)
+
+
+class TestNNsightBackendGemma2:
+    """Unit tests for NNsight backend using Gemma2 model."""
+
+    @RunIf(standalone=True)
+    def test_nnsight_backend_initialization_local(self, get_it_session__ct_nnsight_gemma2__setup):
+        """Verify NNsight backend initializes correctly in local mode with Gemma2."""
+        it_session = get_it_session__ct_nnsight_gemma2__setup.it_session
+
+        assert it_session.module.circuit_tracer_cfg.backend == "nnsight"
+        assert it_session.module.circuit_tracer_cfg.nnsight_remote is False
+        assert isinstance(it_session.module.replacement_model, NNSightReplacementModel)
+
+    def test_nnsight_api_key_from_env(self, monkeypatch):
+        """Verify NNSIGHT_API_KEY is resolved from environment variable."""
+        # Set environment variable temporarily
+        monkeypatch.setenv("NNSIGHT_API_KEY", "test_env_key_123")
+
+        # Create config with remote=True but no explicit API key
+        cfg = CircuitTracerConfig(backend="nnsight", nnsight_remote=True)
+
+        # __post_init__ should have resolved API key from env
+        assert cfg.nnsight_api_key == "test_env_key_123"
+
+    @RunIf(standalone=True)
+    def test_nnsight_local_no_api_key_required(self, get_it_session__ct_nnsight_gemma2__setup):
+        """Verify local mode doesn't require API key."""
+        it_session = get_it_session__ct_nnsight_gemma2__setup.it_session
+
+        # Local mode should work without API key
+        assert it_session.module.circuit_tracer_cfg.nnsight_remote is False
+        assert it_session.module.circuit_tracer_cfg.nnsight_api_key is None
+        assert it_session.module.replacement_model is not None
 
 
 # =============================================================================
 # Remote Execution Tests (Commented out pending NNsight adapter support)
 # =============================================================================
 
-# TODO: enable after local tests pass
-# class TestNNsightRemoteExecution:
-#     """Minimal test for NNsight remote execution.
-#
-#     This test validates the API key flow and remote configuration.
-#     Uses smallest model and minimal operations to conserve API usage.
-#     """
-#
-#     @RunIf(standalone=True)
-#     @pytest.mark.skipif(
-#         "NNSIGHT_API_KEY" not in __import__("os").environ,
-#         reason="NNSIGHT_API_KEY environment variable not set"
-#     )
-#     def test_remote_execution_api_key_flow(self, get_it_session__ct_nnsight_gemma2_remote__setup, monkeypatch):
-#         """Verify remote execution API key flows correctly from env to config to adapter.
-#
-#         This is a single minimal test to validate the full API key resolution chain:
-#         1. NNSIGHT_API_KEY environment variable
-#         2. CircuitTracerConfig.__post_init__ resolution
-#         3. Adapter layer passing to NNsight backend
-#
-#         Note: This test will make a minimal remote API call to validate the flow.
-#         """
-#         # Ensure environment variable is set (should be from fixture, but verify)
-#         import os
-#         api_key = os.environ.get("NNSIGHT_API_KEY")
-#         assert api_key is not None, "NNSIGHT_API_KEY must be set in environment"
-#
-#         it_session = get_it_session__ct_nnsight_gemma2_remote__setup.it_session
-#
-#         # Verify configuration
-#         assert it_session.module.circuit_tracer_cfg.backend == "nnsight"
-#         assert it_session.module.circuit_tracer_cfg.nnsight_remote is True
-#
-#         # API key should be resolved from environment
-#         # (CircuitTracerConfig.__post_init__ handles this)
-#         assert it_session.module.circuit_tracer_cfg.nnsight_api_key == api_key
-#
-#         # Verify model loaded (this validates API key was accepted)
-#         assert it_session.module.replacement_model is not None
-#         assert isinstance(it_session.module.replacement_model, NNSightReplacementModel)
-#
+
+class TestNNsightRemoteExecution:
+    """Tests for NNsight remote execution via NDIF.
+
+    This test validates the API key flow and remote configuration using
+    the NNsight replacement model with remote tracing capabilities.
+
+    Requirements:
+    - NNSIGHT_API_KEY must be set (dotenv is loaded on tests module import)
+    - Network access to NDIF service
+    """
+
+    @pytest.fixture
+    def ensure_nnsight_api_key(self):
+        """Check if NNSIGHT_API_KEY is set and configure nnsight.
+
+        NNsight expects NDIF_API_KEY env var, but we use NNSIGHT_API_KEY. This fixture also sets
+        nnsight.CONFIG.API.APIKEY directly.
+        """
+        api_key = os.environ.get("NNSIGHT_API_KEY")
+        if not api_key:
+            pytest.skip("NNSIGHT_API_KEY not set, skipping remote test")
+        # nnsight expects NDIF_API_KEY, but we configure directly
+        nnsight.CONFIG.API.APIKEY = api_key
+        return api_key
+
+    # Note: This test requires python 3.12 precisely until https://github.com/ndif-team/nnsight/pull/573 lands since
+    #  NDIF will only support that python version until the PR is merged
+    @RunIf(optional=True, min_python="3.12", max_python="3.13")
+    def test_remote_execution_api_key_flow(
+        self, ensure_nnsight_api_key, reset_pymount, get_it_session__ct_nnsight_gemma2_remote__setup
+    ):
+        """Verify remote execution: replacement_model loaded, activation tracing works.
+
+        Tests that:
+        1. CircuitTracerConfig reflects remote mode
+        2. NNSightReplacementModel is properly loaded
+        3. Internal activations can be traced/inspected via remote execution
+        """
+        from nnsight.intervention.backends.remote import RemoteException
+
+        it_session = get_it_session__ct_nnsight_gemma2_remote__setup.it_session
+
+        # CircuitTracerConfig should reflect remote
+        assert it_session.module.circuit_tracer_cfg.nnsight_remote is True
+        assert it_session.module.circuit_tracer_cfg.backend == "nnsight"
+
+        # Verify replacement_model was properly loaded
+        replacement_model = it_session.module.replacement_model
+        assert replacement_model is not None
+        assert isinstance(replacement_model, NNSightReplacementModel)
+
+        # Verify we can trace internal activations remotely
+        # NNSightReplacementModel inherits from nnsight.LanguageModel, supporting trace() context
+        prompt = "The capital of France is"
+
+        try:
+            with replacement_model.trace(prompt, remote=True):
+                # Access hidden states from an early layer
+                # Gemma2 uses model.layers[layer].output for hidden states
+                hidden = replacement_model.model.layers[0].output[0].save()
+                # Access final logits
+                logits = replacement_model.lm_head.output.save()
+        except RemoteException as e:
+            # Skip if model isn't available on NDIF (not scheduled/dedicated)
+            if "not dedicated" in str(e) or "not scheduled" in str(e).lower():
+                pytest.skip(f"Model not available on NDIF: {e}")
+            raise
+
+        # Validate shapes - batch=1, seq_len varies with tokenization
+        assert hidden.dim() == 3, f"Expected 3D hidden states, got shape {hidden.shape}"
+        assert hidden.shape[0] == 1, "Expected batch size 1"
+
+        # Logits should be [batch, seq, vocab]
+        assert logits.dim() == 3, f"Expected 3D logits, got shape {logits.shape}"
+        assert logits.shape[0] == 1, "Expected batch size 1"

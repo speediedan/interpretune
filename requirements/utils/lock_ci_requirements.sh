@@ -1,38 +1,297 @@
 #!/bin/bash
 # Simple wrapper around uv pip compile for CI requirements locking
-# This replaces the complex regen_reqfiles.py with a straightforward uv-based approach
+# This replaces complex requirements file chains with a straightforward uv-based approach
+#
+# Generates two lock files:
+# - requirements.txt: highest resolution (default, for latest tests)
+# - requirements-oldest.txt: lowest resolution (for oldest version testing)
+#
+# Also generates:
+# - torch-override.txt: single-package override pinning torch to current stable version
+#   Use this for simple cases where only torch needs to be pinned.
+#   For more complex cases (e.g., nnsight which also pins triton), use the manually
+#   maintained overrides.txt which can include multiple package pins.
+#
+# Dependencies are defined in pyproject.toml with explicit minimum versions,
+# which allows uv to properly resolve oldest compatible versions.
+#
+# Torch handling:
+# - When torch-pre.txt is configured:
+#   - Lock file is generated with torch pinned to the prerelease version
+#   - Uses PyTorch nightly or test index for resolution (based on channel type)
+#   - Docker image and CI both use the same prerelease version
+#   - Post-processing prunes torch-only dependencies (see prune_torch_only_deps)
+# - Without torch-pre.txt:
+#   - Uses stable torch from PyPI
+#   - CI uses --torch-backend=cpu for CPU variant
 set -eo pipefail
+
+# Unset UV_OVERRIDE to ensure clean environment for lockfile generation
+# This prevents inheriting override settings from the parent shell
+unset UV_OVERRIDE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CI_DIR="${REPO_ROOT}/requirements/ci"
+TORCH_PRE_FILE="${CI_DIR}/torch-pre.txt"
+TORCH_OVERRIDE_FILE="${CI_DIR}/torch-override.txt"
 
 # Ensure output directory exists
 mkdir -p "${CI_DIR}"
 
 echo "Generating locked CI requirements from pyproject.toml..."
 
-# uv pip compile can read directly from pyproject.toml
+# Check if torch prerelease is configured
+# Returns: "version:channel" if prerelease is enabled, empty string otherwise
+get_torch_pre_config() {
+    if [[ -f "${TORCH_PRE_FILE}" ]]; then
+        # Read 3-line config: version, CUDA target, channel type
+        readarray -t PRE_CONFIG < <(grep -v '^#' "${TORCH_PRE_FILE}" | grep -v '^$')
+        local version="${PRE_CONFIG[0]}"
+        local cuda="${PRE_CONFIG[1]}"
+        local channel="${PRE_CONFIG[2]}"
+        if [[ -n "${version}" && -n "${channel}" ]]; then
+            echo "${version}:${channel}"
+            return
+        fi
+    fi
+    echo ""
+}
+
+# uv pip compile reads directly from pyproject.toml
 # We include:
 # - Base dependencies (always included from [project.dependencies])
 # - Optional dependencies: examples, lightning
 # - Dependency groups: test, profiling, dev
 #
 # Note: git-deps group is excluded from locking because git URLs cannot be
-# included in universal lock files. It will be installed separately.
+# included in universal lock files. It will be installed separately via UV_OVERRIDE.
+#
+# Note on Python version compatibility:
+# - Lock files are generated for Python 3.10+ (our minimum supported version)
+#
+# All dependencies in pyproject.toml have explicit minimum versions (>=x.y.z),
+# which ensures uv can properly resolve oldest compatible versions with
+# --resolution=lowest-direct without needing external constraint files.
 
-uv pip compile \
-    "${REPO_ROOT}/pyproject.toml" \
-    --extra examples \
-    --extra lightning \
-    --group dev \
-    --group test \
-    --group profiling \
-    --output-file "${CI_DIR}/requirements.txt" \
-    --upgrade \
-    --no-strip-extras \
-    --universal
+# Check if torch prerelease is configured
+TORCH_PRE_CONFIG=$(get_torch_pre_config)
+if [[ -n "${TORCH_PRE_CONFIG}" ]]; then
+    TORCH_PRE_VERSION="${TORCH_PRE_CONFIG%%:*}"  # Extract version before ':'
+    TORCH_PRE_CHANNEL="${TORCH_PRE_CONFIG##*:}"  # Extract channel after ':'
+else
+    TORCH_PRE_VERSION=""
+    TORCH_PRE_CHANNEL=""
+fi
 
-echo "✓ Generated ${CI_DIR}/requirements.txt"
+# Prune packages that are ONLY dependencies of torch from the lockfile.
+# This reduces the dependency confusion attack surface when using unsafe-best-match
+# by removing any packages that could potentially be resolved from the nightly index only.
+# See prune_torch_deps.py for detailed documentation and implementation.
+prune_torch_only_deps() {
+    local lockfile=$1
+    python "${SCRIPT_DIR}/prune_torch_deps.py" "${lockfile}"
+}
+
+# Generate/update torch-override.txt for UV_OVERRIDE usage
+# This file is ALWAYS generated to support advanced use cases like --from-source
+# installations that might try to downgrade torch (e.g., nnsight).
+# For prerelease: pins to the prerelease version from torch-pre.txt
+# For stable: pins to the latest stable torch version from PyPI
+#
+# NOTE: torch-override.txt only pins torch. For packages that constrain other
+# dependencies (e.g., nnsight pins triton to an older version), use the manually
+# maintained overrides.txt which includes both torch and triton pins.
+generate_torch_override() {
+    local torch_version
+    local override_comment
+
+    if [[ -n "${TORCH_PRE_VERSION}" ]]; then
+        torch_version="${TORCH_PRE_VERSION}"
+        override_comment="prerelease from ${TORCH_PRE_CHANNEL} channel"
+    else
+        # Get latest stable torch version from PyPI
+        torch_version=$(curl -s https://pypi.org/pypi/torch/json | python3 -c "import sys, json; print(json.load(sys.stdin)['info']['version'])" 2>/dev/null || echo "")
+        if [[ -z "${torch_version}" ]]; then
+            echo "⚠ Warning: Could not fetch latest torch version from PyPI, skipping torch-override.txt generation"
+            return 0
+        fi
+        override_comment="stable from PyPI"
+    fi
+
+    cat > "${TORCH_OVERRIDE_FILE}" << EOF
+# PyTorch version override for UV_OVERRIDE
+# Generated by lock_ci_requirements.sh
+# Version: ${torch_version} (${override_comment})
+#
+# Use this file with UV_OVERRIDE to prevent from-source packages from downgrading torch.
+# This is particularly useful when installing packages like nnsight that may specify
+# older torch version constraints.
+#
+# Usage with --from-source installations:
+#   export UV_OVERRIDE=\${PWD}/requirements/ci/torch-override.txt
+#   uv pip install -e "/path/to/package[extras]"
+#
+# Or inline:
+#   UV_OVERRIDE=\${PWD}/requirements/ci/torch-override.txt uv pip install -e "/path/to/package"
+
+torch==${torch_version}
+EOF
+    echo "✓ Generated ${TORCH_OVERRIDE_FILE} (torch==${torch_version}, ${override_comment})"
+}
+
+generate_lockfile() {
+    local resolution=$1
+    local output_file=$2
+    local python_version=$3
+    local use_prerelease=$4  # "true" to use torch prerelease
+
+    echo "Generating ${output_file} with resolution=${resolution}, python=${python_version}..."
+
+    # Change to repo root for dependency group resolution
+    pushd "${REPO_ROOT}" > /dev/null
+
+    # Build the base compile command
+    # Always exclude torch from the lockfile since it's installed separately via --torch-backend
+    # This prevents nvidia/cuda packages from bloating the lockfile and CI environments
+    local compile_cmd=(
+        uv pip compile
+        pyproject.toml
+        --extra examples
+        --extra lightning
+        --group dev
+        --group test
+        --group profiling
+        --output-file "${output_file}"
+        --upgrade
+        --no-strip-extras
+        --resolution "${resolution}"
+        --universal
+        --python-version "${python_version}"
+        --no-emit-package torch
+    )
+
+    # When using torch prerelease (nightly or test):
+    # 1. Create a temporary override file to pin torch to the prerelease version for dependency resolution
+    # 2. Use --prerelease=if-necessary-or-explicit to only allow prereleases for explicitly specified packages (torch)
+    #    or where all versions of the package are pre-release
+    # 3. Use --index with prerelease CPU index for torch resolution (nightly or test channel)
+    # 4. Use --index-strategy=unsafe-best-match for lockfile GENERATION only
+    #    This is required because with first-index (default), uv would either:
+    #      - Find torch on PyPI first (no nightly version), or
+    #      - Find scipy/etc on nightly index first (missing versions)
+    #
+    #    Security rationale for using unsafe-best-match during lockfile generation:
+    #    a) User INSTALLATION uses a secure two-step approach, only ever installing torch prerelease
+    #       from the explicitly specified prerelease index (no unsafe-best-match at install time)
+    #    b) The marginal dependency confusion attack surface is limited to the closely monitored
+    #       PyTorch prerelease index, which is maintained by PyTorch team. Post-processing prunes any packages that are
+    #       ONLY dependencies of torch, eliminating potential attack vectors from torch-exclusive dependencies that
+    #       might only exist on the prerelease index. If a package is shared with other dependencies, it's already
+    #       being resolved from PyPI and subject to normal security scanning.
+    #    c) Lockfile generation runs on maintainer machines, not user machines
+    #    d) Generated lockfile pins exact package versions from PyPI
+    #
+    # 5. Use --no-emit-package=torch to exclude torch from output (installed separately with backend)
+    # 6. Post-process to prune torch-only dependencies (see prune_torch_only_deps)
+    if [[ "${use_prerelease}" == "true" && -n "${TORCH_PRE_VERSION}" ]]; then
+        # Determine channel from global variable
+        local channel="${TORCH_PRE_CHANNEL:-nightly}"  # Default to nightly if not set
+
+        local torch_override_file=$(mktemp)
+        echo "torch==${TORCH_PRE_VERSION}" > "${torch_override_file}"
+
+        compile_cmd+=(
+            --prerelease=if-necessary-or-explicit
+            --override "${torch_override_file}"
+            --index "https://download.pytorch.org/whl/${channel}/cpu"
+            --index-strategy unsafe-best-match  # for lockfile generation only, see comment above
+        )
+
+        echo "  Using torch ${channel}: ${TORCH_PRE_VERSION} (excluded from output, dependencies resolved)"
+        "${compile_cmd[@]}"
+
+        rm -f "${torch_override_file}"
+    else
+        "${compile_cmd[@]}"
+    fi
+
+    # Always prune torch-only dependencies to minimize lockfile size
+    # This removes nvidia/cuda packages that are only dependencies of torch
+    prune_torch_only_deps "${output_file}"
+
+    echo "✓ Generated ${output_file} (torch excluded, torch-only deps pruned)"
+
+    # Return to original directory
+    popd > /dev/null
+}
+
+# Generate both lock files
+# - Latest: Python 3.10 (minimum supported) to ensure proper version markers for
+#   packages like contourpy that have Python version requirements
+# - Oldest: Python 3.10 (minimum supported), lowest resolution
+#
+# When torch prerelease (nightly or test) is configured:
+# - requirements.txt excludes torch (installed separately with appropriate backend)
+# - torch dependencies are still resolved against the prerelease version
+# - requirements-oldest.txt uses stable torch (for minimum version testing)
+
+USE_PRERELEASE="false"
+if [[ -n "${TORCH_PRE_VERSION}" ]]; then
+    USE_PRERELEASE="true"
+    echo "Torch ${TORCH_PRE_CHANNEL} mode: ${TORCH_PRE_VERSION}"
+fi
+
+# Generate torch override file for manual installation
+generate_torch_override
+
+generate_lockfile "highest" "${CI_DIR}/requirements.txt" "3.10" "${USE_PRERELEASE}"
+
+# Try to generate oldest requirements, but don't fail if it doesn't work
+# (some packages may not resolve properly with lowest-direct due to missing
+# explicit minimum versions in pyproject.toml)
 echo ""
-echo "Note: git-deps group (git URL dependencies) is installed separately in CI"
+echo "Attempting to generate requirements-oldest.txt (may fail for some packages)..."
+if generate_lockfile "lowest-direct" "${CI_DIR}/requirements-oldest.txt" "3.10" "false" 2>&1; then
+    echo "✓ Generated ${CI_DIR}/requirements-oldest.txt"
+else
+    echo "⚠ Failed to generate requirements-oldest.txt (oldest version resolution failed)"
+    echo "  This is expected if pyproject.toml doesn't have explicit minimum versions for all deps"
+    echo "  Consider adding minimum version constraints to pyproject.toml if oldest testing is needed"
+fi
+
+echo ""
+echo "Generated lock files:"
+echo "  - ${CI_DIR}/requirements.txt (highest resolution, for latest tests)"
+if [[ -f "${CI_DIR}/requirements-oldest.txt" ]]; then
+    echo "  - ${CI_DIR}/requirements-oldest.txt (lowest resolution, for oldest tests)"
+fi
+echo ""
+if [[ -n "${TORCH_PRE_VERSION}" ]]; then
+    echo "⚠️  Torch ${TORCH_PRE_CHANNEL} mode: ${TORCH_PRE_VERSION}"
+    echo "   requirements.txt excludes torch (dependencies resolved against ${TORCH_PRE_CHANNEL})"
+    echo ""
+    echo "Generated override file:"
+    echo "  - ${CI_DIR}/torch-override.txt (for manual prerelease installation reference)"
+    echo ""
+    echo "Manual installation with prerelease (two-step approach):"
+    echo "  1. uv pip install --prerelease=if-necessary-or-explicit torch==${TORCH_PRE_VERSION} --index-url https://download.pytorch.org/whl/${TORCH_PRE_CHANNEL}/cu128"
+    echo "  2. uv pip install -e \".[examples,lightning]\""
+    echo ""
+    echo "Or with locked requirements:"
+    echo "  1. uv pip install --prerelease=if-necessary-or-explicit torch==${TORCH_PRE_VERSION} --index-url https://download.pytorch.org/whl/${TORCH_PRE_CHANNEL}/cu128"
+    echo "  2. uv pip install -e . -r requirements/ci/requirements.txt"
+    echo ""
+    echo "GitHub Actions (CPU):"
+    echo "  1. uv pip install --prerelease=if-necessary-or-explicit torch==${TORCH_PRE_VERSION}+cpu --index-url https://download.pytorch.org/whl/${TORCH_PRE_CHANNEL}/cpu"
+    echo "  2. uv pip install -e . -r requirements/ci/requirements.txt --group git-deps"
+else
+    echo "Standard installation (stable torch):"
+    echo "  CI:    uv pip install torch --torch-backend=cpu && uv pip install -e . --group git-deps && uv pip install -r requirements/ci/requirements.txt"
+    echo "  Local: uv pip install torch --torch-backend=auto && uv pip install -e . --group git-deps && uv pip install -r requirements/ci/requirements.txt"
+fi
+echo ""
+echo "Note: Torch must be installed BEFORE the lockfile because torch-tb-profiler and other"
+echo "      packages depend on torch but are not available on PyTorch's special index."
+echo "      The lockfile excludes torch (via --no-emit-package torch) to allow flexible"
+echo "      torch backend selection."

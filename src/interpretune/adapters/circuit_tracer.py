@@ -19,6 +19,8 @@ from interpretune.adapters import (
     LightningAdapter,
     BaseITLensModule,
     TLensAttributeMixin,
+    NNsightAttributeMixin,
+    BaseNNsightModule,
 )
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import CircuitTracerConfig, ITConfig
@@ -284,6 +286,60 @@ class CircuitTracerTLModuleMixin(TLensAttributeMixin):
         self.model.config = hf_preconversion_config  # type: ignore[union-attr]
 
 
+class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
+    """Mixin that provides NNsight-specific functionality for Circuit Tracer.
+
+    This mixin is composed with BaseCircuitTracerModule when using the NNsight backend to provide NNsight model
+    initialization for circuit tracing.
+    """
+
+    def auto_model_init(self) -> None:
+        """Initialize model using NNsight backend for Circuit Tracer.
+
+        This overrides BaseNNsightModule's auto_model_init to use the Circuit Tracer's NNSightReplacementModel instead
+        of NNsight's LanguageModel.
+        """
+        self._init_nnsight_for_circuit_tracer()
+
+    def _init_nnsight_for_circuit_tracer(self) -> None:
+        """Initialize NNsight model for Circuit Tracer.
+
+        This method handles NNsight-specific initialization logic, then loads the ReplacementModel with NNsight backend.
+        NNsight-specific kwargs are derived from circuit_tracer_cfg's nnsight_* settings.
+        """
+        # Build NNsight kwargs from circuit_tracer_cfg settings
+        nnsight_kwargs: dict[str, Any] = {}
+
+        circuit_tracer_cfg = self.circuit_tracer_cfg  # type: ignore[attr-defined]
+        if circuit_tracer_cfg and circuit_tracer_cfg.nnsight_remote:
+            nnsight_kwargs["remote"] = True
+            if circuit_tracer_cfg.nnsight_api_key:
+                nnsight_kwargs["api_key"] = circuit_tracer_cfg.nnsight_api_key
+
+        # If nnsight_cfg is available, merge its kwargs (takes precedence)
+        nnsight_cfg = self.nnsight_cfg  # type: ignore[attr-defined]
+        if nnsight_cfg:
+            nnsight_kwargs.update(nnsight_cfg.get_nnsight_kwargs())
+
+        # Load the NNsight replacement model
+        self._load_replacement_model(pretrained_kwargs=nnsight_kwargs)  # type: ignore[attr-defined]
+
+        # The replacement model is now set as self.model
+        rank_zero_info("NNsight ReplacementModel initialized for Circuit Tracer")
+
+    def _capture_hyperparameters(self) -> None:
+        """Capture hyperparameters for logging.
+
+        This overrides BaseNNsightModule's _capture_hyperparameters to avoid requiring nnsight_cfg. Circuit Tracer
+        NNsight modules use circuit_tracer_cfg instead.
+        """
+        # Call BaseCircuitTracerModule's capture (which adds circuit_tracer_cfg)
+        # Then skip to BaseITModule's capture, bypassing BaseNNsightModule which requires nnsight_cfg
+        self._it_state._init_hparams.update({"circuit_tracer_cfg": deepcopy(self.circuit_tracer_cfg)})  # type: ignore[attr-defined]
+        # Skip BaseNNsightModule._capture_hyperparameters and call BaseITModule's version
+        BaseITModule._capture_hyperparameters(self)  # type: ignore[arg-type]
+
+
 class CircuitTracerAdapter(CircuitTracerAttributeMixin):
     def initialize_graph_output_dir(self, core_log_dir: Path) -> None:
         """Initialize graph_output_dir based on configuration or default to core_log_dir/graph_data."""
@@ -405,6 +461,64 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
             adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
             composition_classes=(CircuitTracerConfig,),
             description="Circuit Tracer configuration with TransformerLens backend and Lightning...",
+        )
+
+        # ======================================================================
+        # NNsight backend registrations: (core, nnsight, circuit_tracer)
+        # ======================================================================
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="datamodule",
+            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(ITDataModule,),
+            description="Circuit Tracer adapter with NNsight backend...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="module",
+            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(CircuitTracerNNsightModule,),
+            description="Circuit Tracer adapter with NNsight backend...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="module_cfg",
+            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(CircuitTracerConfig,),
+            description="Circuit Tracer configuration with NNsight backend...",
+        )
+
+        # ======================================================================
+        # Lightning + NNsight backend registrations: (lightning, nnsight, circuit_tracer)
+        # ======================================================================
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="datamodule",
+            adapter_combination=(Adapter.lightning, Adapter.nnsight, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(ITDataModule, LightningDataModule),
+            description="Circuit Tracer adapter with NNsight backend and Lightning...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="module",
+            adapter_combination=(Adapter.lightning, Adapter.nnsight, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(
+                CircuitTracerNNsightModuleMixin,
+                CircuitTracerAttributeMixin,
+                BaseCircuitTracerModule,
+                BaseNNsightModule,
+                LightningAdapter,
+                BaseITModule,
+                LightningModule,
+            ),
+            description="Circuit Tracer adapter with NNsight backend and Lightning...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="module_cfg",
+            adapter_combination=(Adapter.lightning, Adapter.nnsight, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            composition_classes=(CircuitTracerConfig,),
+            description="Circuit Tracer configuration with NNsight backend and Lightning...",
         )
 
     def setup(self, *args, **kwargs) -> None:
@@ -539,6 +653,26 @@ class CircuitTracerTLModule(
     This module combines:
     - CircuitTracerTLModuleMixin: Provides _convert_hf_to_tl for TL-specific conversion
     - BaseITLensModule: Provides _prune_tl_cfg_dict and other TL utilities
+    - BaseCircuitTracerModule: Provides _load_replacement_model and circuit tracer functionality
+    """
+
+    ...
+
+
+# NNsight-specific Circuit Tracer module
+class CircuitTracerNNsightModule(
+    CircuitTracerNNsightModuleMixin,
+    CircuitTracerAnalysisMixin,
+    CircuitTracerAdapter,
+    CoreHelperAttributes,
+    BaseCircuitTracerModule,
+    BaseNNsightModule,
+):
+    """Circuit Tracer module with NNsight backend.
+
+    This module combines:
+    - CircuitTracerNNsightModuleMixin: Provides NNsight-specific initialization for circuit tracing
+    - BaseNNsightModule: Provides NNsight model initialization utilities
     - BaseCircuitTracerModule: Provides _load_replacement_model and circuit tracer functionality
     """
 

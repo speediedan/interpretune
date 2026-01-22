@@ -86,9 +86,9 @@ collect_dir=${collect_dir:-"tests"}
 special_test_session_log=${log_file:-"${tmp_log_dir}/special_tests_${mark_type}_${d}.log"}
 test_session_tmp_log="${tmp_log_dir}/special_tests_raw_${mark_type}_${d}.log"
 
-# default python coverage arguments
+# default python coverage arguments (using pytest-cov for early import coverage)
 
-exec_defaults='-m coverage run --source src/interpretune --append -m pytest --capture=no --no-header -v -s -rA'
+exec_defaults='-m pytest --cov=src/interpretune --cov-append --cov-report= --capture=no --no-header -v -s -rA'
 collect_defaults="-m pytest ${collect_dir} -q --collect-only --pythonwarnings ignore"
 start_time=$(date +%s)
 echo `printf "%0.s-" {1..120} && printf "\n"` | tee -a $special_test_session_log

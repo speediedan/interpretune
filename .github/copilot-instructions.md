@@ -124,11 +124,17 @@ export IT_VENV_BASE=/mnt/cache/username/.venvs
 # the same filesystem. Placing venv on same filesystem as UV cache ensures fast installs and
 # no warnings. Example UV cache location: /mnt/cache/username/.cache/uv
 
-# Build with specific PyTorch nightly version
-./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --torch_dev_ver=dev20240201
+# Build with CPU-only torch (for CI environments)
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --torch-backend=cpu
 
-# Build with PyTorch test channel
-./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --torch_test_channel
+# Torch prerelease builds (configured via requirements/ci/torch-pre.txt):
+# If torch-pre.txt exists, the build script will automatically use the prerelease version if not all of the config
+# lines are commented out
+# torch-pre.txt format (3 lines): version, CUDA target, channel (nightly or test)
+# Example torch-pre.txt: (no # in front of lines, these lines below)
+2.10.0.dev20250122
+cu128
+nightly
 
 # Build with single package from source (no extras)
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --from-source="circuit_tracer:${HOME}/repos/circuit-tracer"
@@ -202,8 +208,8 @@ source ~/.venvs/it_latest/bin/activate
 # Basic test run (requires full dependencies)
 cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpretune tests -v
 
-# With coverage
-python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v
+# With coverage (using pytest-cov ensures coverage starts before test collection imports)
+python -m pytest --cov=src/interpretune --cov-append --cov-report= src/interpretune tests -v
 python -m coverage report
 
 # Test collection only (to check test discovery)
@@ -264,32 +270,52 @@ src/it_examples/            # Example experiments
 **Timeout:** 90 minutes
 
 **CI Process:**
-1. Install interpretune in editable mode with git dependencies
-2. Install locked CI requirements (all PyPI packages)
-3. Run pytest with coverage
-4. Resource monitoring (Linux only)
-5. Upload artifacts on failure
+1. Check for torch prerelease configuration (torch-pre.txt)
+2. Install torch prerelease if configured (otherwise uses stable with --torch-backend=cpu)
+3. Install interpretune in editable mode with git dependencies
+4. Install locked CI requirements (all PyPI packages)
+5. Run pytest with coverage
+6. Resource monitoring (Linux only)
+7. Upload artifacts on failure
 
 **CI Installation Flow:**
 ```bash
-# Step 1: Install interpretune editable + git dependencies
+# Step 1: (If torch-pre.txt exists) Install torch prerelease
+uv pip install --prerelease=if-necessary-or-explicit "torch==${TORCH_PRE_VERSION}+cpu" --index-url "https://download.pytorch.org/whl/${TORCH_PRE_CHANNEL}/cpu"
+
+# Step 2: Install interpretune editable + git dependencies
 uv pip install -e . --group git-deps
 
-# Step 2: Install all locked PyPI dependencies
-uv pip install -r requirements/ci/requirements.txt
+# Step 3: Install all locked PyPI dependencies (with --torch-backend=cpu for stable torch)
+uv pip install -r requirements/ci/requirements.txt --torch-backend=cpu
 ```
 
 **Development Installation Flow (build_it_env.sh):**
 ```bash
-# Step 1: Install interpretune editable + git dependencies
+# Step 1: Install torch (prerelease from torch-pre.txt or stable via --torch-backend)
+# Prerelease: uv pip install --prerelease=if-necessary-or-explicit "torch==${VERSION}" --index-url "https://download.pytorch.org/whl/${CHANNEL}/${CUDA}"
+# Stable: uv pip install torch --torch-backend=auto
+
+# Step 2: Install interpretune editable + git dependencies
 uv pip install -e . --group git-deps
 
-# Step 2: Install locked CI requirements
+# Step 3: Install locked CI requirements
 uv pip install -r requirements/ci/requirements.txt
 
-# Step 3: Install from-source packages (if specified)
+# Step 4: Install from-source packages (if specified)
 # These override any PyPI/git versions for development
 ```
+
+**Torch Prerelease Configuration (torch-pre.txt):**
+Create `requirements/ci/torch-pre.txt` with 3 lines (no comments inline):
+```
+2.10.0.dev20250122
+cu128
+nightly
+```
+- Line 1: Torch version (e.g., `2.10.0.dev20250122`)
+- Line 2: CUDA target (e.g., `cu128`, `cpu`)
+- Line 3: Channel (`nightly` or `test`)
 
 **Environment Variables for CI:**
 - `IT_CI_LOG_LEVEL` - Defaults to "INFO", set to "DEBUG" for verbose logging
@@ -368,6 +394,7 @@ tail -f `ls -rt /tmp/gen_it_coverage_it_* | tail -1`
 - `--no-rebuild-base`: Skips environment rebuild (faster, use when dependencies haven't changed)
 - `--venv-dir`: Base directory for venvs (recommended: `/mnt/cache/${USER}/.venvs` for hardlink performance)
 - `--run-all-and-examples`: Include additional example tests (extends runtime)
+- `--torch-backend=cpu`: Force CPU-only torch (useful for testing without GPU)
 
 **Output:**
 
@@ -496,10 +523,16 @@ IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_transformer_lens.py::
 IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_transformer_lens.py::TestLlama3ParameterMapping::test_llama3_tl_param_structure -v
 unset IT_RUN_STANDALONE_TESTS
 
-# Run specific profiling test
+# Run specific profiling ci test
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
 IT_RUN_PROFILING_TESTS=1 python -m pytest tests/parity_acceptance/test_it_l.py::test_l_profiling[test_cuda_32_l] -v
+unset IT_RUN_PROFILING_TESTS
+
+# Run specific profiling (non-ci, ones that don't run by default with ci) test
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+IT_RUN_PROFILING_TESTS=2 python -m pytest tests/parity_acceptance/test_it_tl.py::test_tl_profiling[test_cuda_32] -v
 unset IT_RUN_PROFILING_TESTS
 
 # Run specific optional tests

@@ -6,6 +6,7 @@ set -eo pipefail
 unset repo_home
 unset target_env_name
 unset working_dir
+unset venv_dir
 
 usage(){
 >&2 cat << EOF
@@ -13,15 +14,18 @@ Usage: $0
   [ --repo-home input ]
   [ --target-env-name input ]
   [ --working-dir input ]
+  [ --venv-dir input ]
    [ --help ]
    Examples:
 	# update profiling memory stats for it_latest:
 	#   ./update_profiling_memory_stats.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --working-dir=/tmp
+	# with custom venv directory:
+	#   ./update_profiling_memory_stats.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --working-dir=/tmp --venv-dir=/mnt/cache/user/.venvs
 EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo-home:,target-env-name:,working-dir:,help -- "$@")
+args=$(getopt -o '' --long repo-home:,target-env-name:,working-dir:,venv-dir:,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -33,6 +37,7 @@ do
     --repo-home)  repo_home=$2    ; shift 2  ;;
     --target-env-name)  target_env_name=$2  ; shift 2 ;;
     --working-dir)  working_dir=$2    ; shift 2  ;;
+    --venv-dir)  venv_dir=$2    ; shift 2  ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
     *) >&2 echo Unsupported option: $1
@@ -40,17 +45,36 @@ do
   esac
 done
 
+# Use IT_VENV_BASE or default to ~/.venvs if venv_dir not specified
+venv_base=${venv_dir:-${IT_VENV_BASE:-~/.venvs}}
+
+# Determine full venv path using shared infra helper (venv_base + target_env_name)
+# This follows the same semantics as build_it_env.sh / infra_utils.determine_venv_path
+if [[ -z "${target_env_name}" ]]; then
+    echo "Error: --target-env-name must be provided" >&2
+    usage
+fi
+
+# Source infra utilities and compute venv path
+source ${repo_home}/scripts/infra_utils.sh
+venv_path=$(determine_venv_path "${venv_dir:-}" "${target_env_name}")
+
+if [[ -z "${venv_path}" ]]; then
+    echo "Failed to determine venv path for environment '${target_env_name}'" >&2
+    exit 1
+fi
+
 d=`date +%Y%m%d%H%M%S`
 profiling_session_log="${working_dir}/update_profiling_memory_stats_${target_env_name}_${d}.log"
 echo "Use 'tail -f ${profiling_session_log}' to monitor progress"
-source ${repo_home}/scripts/infra_utils.sh
 
 update_profiling_memory_stats(){
     # Source common utility functions
     start_time=$(date +%s)
 
     cd ${repo_home}
-    source ~/.venvs/${target_env_name}/bin/activate
+    # Activate the computed venv path
+    source ${venv_path}/bin/activate
     declare -a mark_types=("profile_ci" "profile" "optional")
     for mark_type in "${mark_types[@]}"; do
         echo "Running tests with ${mark_type} marker" >> $profiling_session_log

@@ -27,7 +27,7 @@ from interpretune.protocol import (
     Optimizable,
     LRSchedulerConfig,
     StrOrPath,
-    LRSchedulerProtocolUnion,
+    LRSchedulerTypeUnion,
 )
 
 if TYPE_CHECKING:
@@ -424,7 +424,7 @@ class CoreHelperAttributes:
         return self._core_or_framework(c2f_map_key="_it_lr_scheduler_configs")
 
     @property
-    def lr_schedulers(self) -> None | LRSchedulerProtocolUnion | list[LRSchedulerProtocolUnion]:
+    def lr_schedulers(self) -> None | LRSchedulerTypeUnion | list[LRSchedulerTypeUnion]:
         """Returns the learning rate scheduler(s) that are being used during training.
 
         Returns:
@@ -434,7 +434,7 @@ class CoreHelperAttributes:
         if not self.lr_scheduler_configs:
             return None
 
-        scheds: list[LRSchedulerProtocolUnion] = [config.scheduler for config in self.lr_scheduler_configs]
+        scheds: list[LRSchedulerTypeUnion] = [config.scheduler for config in self.lr_scheduler_configs]
         if len(scheds) == 1:
             return scheds[0]
         return scheds

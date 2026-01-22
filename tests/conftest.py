@@ -49,6 +49,7 @@ from tests.core.cfg_aliases import (
     TEST_CONFIGS_CLI_UNIT,
     unit_exp_cli_cfgs,
     TLDebugCfg,
+    NSDebugCfg,
     LightningLlama3DebugCfg,
     LightningGemma2DebugCfg,
     LightningTLBridgeLlama3,
@@ -72,6 +73,12 @@ from tests.core.cfg_aliases import (
     CoreSLGPT2LogitDiffsAttrAblation,
     CircuitTracerTLGemma2,
     LightningCircuitTracerTLGemma2,
+    CoreNNsightGPT2,
+    CoreNNsightRemoteGPT2,
+    LightningNNsightGPT2,
+    CircuitTracerNNsightGemma2,
+    LightningCircuitTracerNNsightGemma2,
+    CircuitTracerNNsightRemoteGemma2,
 )
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
@@ -187,18 +194,38 @@ FIXTURE_CFGS = {
     "l_ct_tl_gemma2": FixtureCfg(
         test_cfg=LightningCircuitTracerTLGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
     ),
-    # TODO: Update and enable these configs below once basic nnsight adapter w/ composition for CT is implemented
-    ##############################################################################################################
-    # "ct_nnsight_gemma2": FixtureCfg(
-    #     test_cfg=CircuitTracerNNSightGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
-    # ),
-    # "l_ct_nnsight_gemma2": FixtureCfg(
-    #     test_cfg=LightningCircuitTracerNNSightGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
-    # ),
-    # "ct_nnsight_gemma2_remote": FixtureCfg(
-    #     test_cfg=CircuitTracerNNSightGemma2Remote, scope="function", variants={"it_session": [FixtPhase.setup]}
-    # ),
-    ##############################################################################################################
+    # NNsight GPT2 fixtures
+    "ns_gpt2": FixtureCfg(
+        test_cfg=CoreNNsightGPT2,
+        scope="class",  # class-scoped for sharing across test methods
+        variants={
+            "it_session": [FixtPhase.initonly, FixtPhase.setup],
+            "it_session_cfg": [FixtPhase.cfgonly],
+        },
+    ),
+    "l_ns_gpt2": FixtureCfg(
+        test_cfg=LightningNNsightGPT2,
+        scope="class",
+        variants={
+            "it_session": [FixtPhase.initonly, FixtPhase.setup],
+            "it_session_cfg": [FixtPhase.cfgonly],
+        },
+    ),
+    "ns_remote_gpt2": FixtureCfg(
+        test_cfg=CoreNNsightRemoteGPT2,
+        scope="function",
+        variants={"it_session": [FixtPhase.setup]},
+    ),
+    # Circuit Tracer with NNsight backend fixtures
+    "ct_nnsight_gemma2": FixtureCfg(
+        test_cfg=CircuitTracerNNsightGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
+    ),
+    "l_ct_nnsight_gemma2": FixtureCfg(
+        test_cfg=LightningCircuitTracerNNsightGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
+    ),
+    "ct_nnsight_gemma2_remote": FixtureCfg(
+        test_cfg=CircuitTracerNNsightRemoteGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
+    ),
     "sl_gpt2": FixtureCfg(
         test_cfg=CoreSLGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
     ),
@@ -226,6 +253,7 @@ FIXTURE_CFGS = {
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg, variants={"it_session": [FixtPhase.setup]}),
+    "ns_gpt2_debug": FixtureCfg(test_cfg=NSDebugCfg, variants={"it_session": [FixtPhase.setup]}),
     # FT Schedule fixtures (function-scoped for per-test generation)
     "l_gpt2_sched": FixtureCfg(scope="function", variants={"ft_schedule": [FixtPhase.setup]}),
     "l_tl_ht_gpt2_sched": FixtureCfg(scope="function", variants={"ft_schedule": [FixtPhase.setup]}),

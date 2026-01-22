@@ -66,6 +66,17 @@ class TestClassDebugGen:
         assert_close(actual=acc.cpu().item(), expected=EXPECTED_DEBUG_BASIC[0], rtol=0.10, atol=0)
         assert_close(actual=len(correct_tokens), expected=EXPECTED_DEBUG_BASIC[1], rtol=0.10, atol=0)
 
+    @pytest.mark.usefixtures("make_deterministic")
+    def test_debug_session_top1_ns(self, get_it_session__ns_gpt2_debug__setup):
+        """Sanity check: NNsight adapter parity for DebugGeneration top1 token metric."""
+        fixture = get_it_session__ns_gpt2_debug__setup
+        debug_module = fixture.it_session.module.debug_lm
+        # Use same expected baseline as TL (sanity check for parity)
+        EXPECTED_DEBUG_BASIC = (0.25, 16)
+        acc, correct_tokens = debug_module.top1_token_accuracy_on_sample(IT_TEST_TEXT["text"][0])
+        assert_close(actual=acc.cpu().item(), expected=EXPECTED_DEBUG_BASIC[0], rtol=0.20, atol=0)
+        assert_close(actual=len(correct_tokens), expected=EXPECTED_DEBUG_BASIC[1], rtol=0.50, atol=0)
+
     # TODO: extract model-specific debug pattern logic from DebugGeneration to a pattern dispatcher fn/class
     @pytest.mark.parametrize(
         "session_fixture, format, pad_token, gen_kwargs, batch_mode, expected",

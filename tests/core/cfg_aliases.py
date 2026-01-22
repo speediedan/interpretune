@@ -12,6 +12,7 @@ from interpretune.protocol import Adapter, AutoStrEnum
 from interpretune.config import (
     HFFromPretrainedConfig,
     GenerativeClassificationConfig,
+    CoreGenerationConfig,
     ITLensCustomConfig,
     TLensGenerationConfig,
     AutoCompConfig,
@@ -21,6 +22,7 @@ from interpretune.config import (
     AnalysisCfg,
     CircuitTracerConfig,
     ITLensCfg,
+    NNsightConfig,
 )
 from interpretune.extensions import DebugLMConfig, MemProfilerCfg
 from interpretune.analysis import SAEAnalysisTargets, AnalysisOp
@@ -108,6 +110,24 @@ class TLDebugCfg(TLParityCfg):
             lm_generation_cfg=TLensGenerationConfig(
                 max_new_tokens=4,
                 generate_kwargs={"output_logits": True, "return_dict_in_generate": True},
+            ),
+        )
+    )
+
+
+@dataclass(kw_only=True)
+class NSDebugCfg(BaseCfg):
+    """NNsight debug configuration for GPT2-based sanity tests."""
+
+    debug_lm_cfg: DebugLMConfig | None = field(default_factory=lambda: DebugLMConfig(enabled=True))
+    phase: str | None = "test"
+    model_src_key: str | None = "gpt2"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.nnsight)
+    generative_step_cfg: GenerativeClassificationConfig | None = field(
+        default_factory=lambda: GenerativeClassificationConfig(
+            enabled=True,
+            lm_generation_cfg=CoreGenerationConfig(
+                max_new_tokens=4, generate_kwargs={"output_logits": True, "return_dict_in_generate": True}
             ),
         )
     )
@@ -280,6 +300,71 @@ class LightningTLBridgeGPT2Processed(BaseCfg):
 
 
 ################################################################################
+# NNsight Test Configs
+################################################################################
+
+
+@dataclass(kw_only=True)
+class CoreNNsightGPT2(BaseCfg):
+    """Core NNsight adapter with GPT-2 for unit testing.
+
+    Registered in example_module_registry.yaml as gpt2.rte.nnsight. Uses adapter combination (core, nnsight).
+    """
+
+    phase: str = "test"
+    model_src_key: str | None = "gpt2"  # Must match registry
+    model_cfg_key: str = "rte"  # Must match registry
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.nnsight)  # Must match registry
+    nnsight_cfg: "NNsightConfig | None" = field(
+        default_factory=lambda: NNsightConfig(
+            model_name="openai-community/gpt2",
+            device_map="cpu",
+            torch_dtype="float32",
+            dispatch=True,
+        )
+    )
+
+
+@dataclass(kw_only=True)
+class LightningNNsightGPT2(BaseCfg):
+    """Lightning NNsight adapter with GPT-2 for unit testing.
+
+    Registered in example_module_registry.yaml as gpt2.rte.nnsight. Uses adapter combination (lightning, nnsight).
+    """
+
+    phase: str = "test"
+    model_src_key: str | None = "gpt2"  # Must match registry
+    model_cfg_key: str = "rte"  # Must match registry
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.nnsight)  # Must match registry
+    nnsight_cfg: "NNsightConfig | None" = field(
+        default_factory=lambda: NNsightConfig(
+            model_name="openai-community/gpt2",
+            device_map="cpu",
+            torch_dtype="float32",
+            dispatch=True,
+        )
+    )
+
+
+@dataclass(kw_only=True)
+class CoreNNsightRemoteGPT2(BaseCfg):
+    """Core NNsight adapter with GPT-2 for unit testing.
+
+    Registered in example_module_registry.yaml as gpt2.rte.nnsight. Uses adapter combination (core, nnsight).
+    """
+
+    phase: str = "test"
+    model_src_key: str | None = "gpt2"  # Must match registry
+    model_cfg_key: str = "rte"  # Must match registry
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.nnsight)  # Must match registry
+    nnsight_cfg: "NNsightConfig | None" = field(
+        default_factory=lambda: NNsightConfig(
+            model_name="openai-community/gpt2", device_map="cpu", torch_dtype="float32", dispatch=True, remote=True
+        )
+    )
+
+
+################################################################################
 # Circuit Tracer Test Configs
 ################################################################################
 
@@ -331,6 +416,7 @@ class LightningCircuitTracerTLGemma2(BaseCfg):
 
     phase: str = "test"
     model_src_key: str | None = "gemma2"
+    model_cfg_key: str = "rte_base_test"  # Required to lookup registry entry
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer)
     tl_cfg: ITLensCfg | None = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
@@ -349,68 +435,84 @@ class LightningCircuitTracerTLGemma2(BaseCfg):
     )
 
 
-# TODO: Update and enable these configs below once basic nnsight adapter w/ composition for CT is implemented
+# Circuit Tracer with NNsight backend configs
 ##############################################################################################################
-# @dataclass(kw_only=True)
-# class CircuitTracerNNSightGemma2(BaseCfg):
-#     """Circuit Tracer with NNsight backend on Gemma2."""
+@dataclass(kw_only=True)
+class CircuitTracerNNsightGemma2(BaseCfg):
+    """Circuit Tracer with NNsight backend on Gemma2.
 
-#     phase: str = "test"
-#     model_src_key: str | None = "gemma2"
-#     model_cfg_key: str = "rte_base_test"
-#     device_type: str = "cuda"
-#     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.circuit_tracer)
-#     datamodule_cls: str | None = "tests.modules.TestITDataModule"
-#     module_cls: str | None = "tests.modules.TestITModule"
-#     circuit_tracer_cfg: CircuitTracerConfig | None = field(
-#         default_factory=lambda: CircuitTracerConfig(
-#             backend="nnsight",
-#             transcoder_set="gemma",
-#             analysis_target_tokens=["▁Dallas", "▁Austin"],
-#             max_feature_nodes=8192,
-#             offload="cpu",
-#             verbose=True,
-#         )
-#     )
+    Registered in example_module_registry.yaml as gemma2.rte.circuit_tracer_nnsight. Uses adapter combination (core,
+    nnsight, circuit_tracer).
+    """
 
-# @dataclass(kw_only=True)
-# class LightningCircuitTracerNNSightGemma2(BaseCfg):
-#     """Lightning Circuit Tracer with NNsight backend on Gemma2."""
-
-#     phase: str = "test"
-#     model_src_key: str | None = "gemma2"
-#     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.circuit_tracer)
-#     circuit_tracer_cfg: CircuitTracerConfig | None = field(
-#         default_factory=lambda: CircuitTracerConfig(
-#             backend="nnsight",
-#             transcoder_set="gemma",
-#             analysis_target_tokens=["▁Dallas", "▁Austin"],
-#             max_feature_nodes=8192,
-#             offload="cpu",
-#             verbose=True,
-#             nnsight_remote=True,
-#         )
-#     )
+    phase: str = "test"
+    model_src_key: str | None = "gemma2"
+    model_cfg_key: str = "rte_base_test"  # Must match registry
+    device_type: str = "cuda"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.nnsight, Adapter.circuit_tracer)
+    circuit_tracer_cfg: CircuitTracerConfig | None = field(
+        default_factory=lambda: CircuitTracerConfig(
+            backend="nnsight",
+            transcoder_set="gemma",
+            analysis_target_tokens=["▁Dallas", "▁Austin"],
+            max_feature_nodes=8192,
+            offload="cpu",
+            verbose=True,
+        )
+    )
 
 
-# @dataclass(kw_only=True)
-# class CircuitTracerNNSightGemma2Remote(BaseCfg):
-#     """Circuit Tracer with NNsight backend on Gemma2 for remote mode testing."""
+@dataclass(kw_only=True)
+class LightningCircuitTracerNNsightGemma2(BaseCfg):
+    """Lightning Circuit Tracer with NNsight backend on Gemma2.
 
-#     phase: str = "test"
-#     model_src_key: str | None = "gemma2"
-#     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.circuit_tracer)
-#     circuit_tracer_cfg: CircuitTracerConfig | None = field(
-#         default_factory=lambda: CircuitTracerConfig(
-#             backend="nnsight",
-#             transcoder_set="gemma",
-#             analysis_target_tokens=["▁Dallas", "▁Austin"],
-#             max_feature_nodes=8192,
-#             offload="cpu",
-#             verbose=True,
-#             nnsight_remote=True,
-#         )
-#     )
+    Registered in example_module_registry.yaml as gemma2.rte.circuit_tracer_nnsight. Uses adapter combination
+    (lightning, nnsight, circuit_tracer).
+    """
+
+    phase: str = "test"
+    model_src_key: str | None = "gemma2"
+    model_cfg_key: str = "rte_base_test"  # Must match registry
+    device_type: str = "cuda"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.nnsight, Adapter.circuit_tracer)
+    circuit_tracer_cfg: CircuitTracerConfig | None = field(
+        default_factory=lambda: CircuitTracerConfig(
+            backend="nnsight",
+            transcoder_set="gemma",
+            analysis_target_tokens=["▁Dallas", "▁Austin"],
+            max_feature_nodes=8192,
+            offload="cpu",
+            verbose=True,
+        )
+    )
+
+
+@dataclass(kw_only=True)
+class CircuitTracerNNsightRemoteGemma2(BaseCfg):
+    """Circuit Tracer with NNsight backend on Gemma2 for remote mode testing.
+
+    Registered in example_module_registry.yaml as gemma2.rte.circuit_tracer_nnsight_remote. Uses adapter combination
+    (core, nnsight, circuit_tracer) with nnsight_remote=True. Requires Python 3.12 for NDIF remote execution.
+    """
+
+    phase: str = "test"
+    model_src_key: str | None = "gemma2"
+    model_cfg_key: str = "rte_base_test"  # Must match registry
+    device_type: str = "cuda"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.nnsight, Adapter.circuit_tracer)
+    circuit_tracer_cfg: CircuitTracerConfig | None = field(
+        default_factory=lambda: CircuitTracerConfig(
+            backend="nnsight",
+            transcoder_set="gemma",
+            analysis_target_tokens=["▁Dallas", "▁Austin"],
+            max_feature_nodes=8192,
+            offload="cpu",
+            verbose=True,
+            nnsight_remote=True,
+        )
+    )
+
+
 ##############################################################################################################
 
 ################################################################################

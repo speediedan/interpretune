@@ -245,7 +245,9 @@ class DebugGeneration:
         sample_input_ids = torch.tensor(sample_input_ids).to(ph.device)  # type: ignore[attr-defined]  # protocol provides device
         sample_input_ids = sample_input_ids.unsqueeze(0)
         with torch.no_grad():
-            logits = ph.model(sample_input_ids)  # type: ignore[attr-defined]  # protocol provides model
+            output = ph.model(sample_input_ids)  # type: ignore[attr-defined]  # protocol provides model
+        # Handle both raw tensor logits (TransformerLens) and HF-style outputs (NNsight)
+        logits = output.logits if hasattr(output, "logits") else output
         prediction = logits.argmax(dim=-1).squeeze()[:-1]
         true_tokens = sample_input_ids.squeeze()[1:]
         num_correct = (prediction == true_tokens).sum()
@@ -269,7 +271,9 @@ class DebugGeneration:
             target_ids = inputs.clone()
             target_ids[:, :-trg_len] = -100
             with torch.inference_mode():
-                output_logits = ph.model.forward(inputs)  # type: ignore[attr-defined]  # protocol provides model
+                output = ph.model.forward(inputs)  # type: ignore[attr-defined]  # protocol provides model
+                # Handle both raw tensor logits (TransformerLens) and HF-style outputs (NNsight)
+                output_logits = output.logits if hasattr(output, "logits") else output
                 shift_logits = output_logits[..., :-1, :].contiguous()
                 shift_target_ids = target_ids[..., 1:].contiguous()
                 preds = shift_logits.view(-1, shift_logits.size(-1))

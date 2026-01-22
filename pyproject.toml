@@ -83,6 +83,7 @@ examples = [
     # "circuit-tracer>=0.1.0",
     # "transformer-lens>=3.0.0",  # v3 adds TransformerBridge architecture (git: 0.0.0, from-source: 3.0.0)
     # "sae_lens >= 6.3.1",  # use new sae_lens API
+    # "nnsight >= 0.5.15",
 ]
 
 [dependency-groups]
@@ -111,6 +112,7 @@ test = [
     # Testing framework and tools
     "coverage >= 6.4",
     "pytest >= 6.0",
+    "pytest-cov >= 6.0.0",
     "pytest-rerunfailures >= 10.2",
     # Additional test dependencies
     "twine >= 3.2",

@@ -187,7 +187,7 @@ jobs:
 
       - bash: |
           source /tmp/venvs/it_dev/bin/activate
-          python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --junitxml=$(Build.Repository.LocalPath)/test-results.xml --durations=50
+          python -m pytest --cov=src/interpretune --cov-append --cov-report= src/interpretune tests -v --junitxml=$(Build.Repository.LocalPath)/test-results.xml --durations=50
         displayName: 'Testing: standard'
 
       - bash: |

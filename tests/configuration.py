@@ -28,6 +28,7 @@ from interpretune.config import (
     ITLensBridgeConfig,
     ITLensFromPretrainedConfig,
     ITLensCustomConfig,
+    NNsightConfig,
 )
 from interpretune.session import ITSessionConfig, ITSession
 from interpretune.protocol import StrOrPath, Adapter
@@ -106,6 +107,8 @@ def configure_device_precision(cfg: Dict, device_type: str, precision: int | str
                 cfg.sae_cfgs = [cfg.sae_cfgs]
             for sae_cfg in cfg.sae_cfgs:
                 _update_sae_cfg_device_precision(sae_cfg, device_type, precision)
+    if getattr(cfg, "nnsight_cfg", None) is not None:  # if we're using an NNsight subclass of ITConfig
+        _update_nnsight_cfg_device_precision(cfg.nnsight_cfg, device_type, precision)
     return cfg
 
 
@@ -134,6 +137,27 @@ def _update_sae_cfg_device_precision(
     else:  # likely uninitialized SL custom model config, may want to remove this branch/check
         assert sae_cfg.get("cfg", None)
         sae_cfg["cfg"].update(dev_prec_override)
+
+
+def _update_nnsight_cfg_device_precision(nnsight_cfg: NNsightConfig, device_type: str, precision: int | str) -> None:
+    """Update NNsight configuration with device and precision settings.
+
+    NNsight uses device_map for device placement and torch_dtype for precision.
+    """
+    # Map device_type to device_map - NNsight uses HF-style device_map
+    device_map = 0 if device_type == "cuda" else device_type
+    nnsight_cfg.device_map = device_map
+
+    # Map precision to torch_dtype - NNsight accepts string dtype names
+    dtype = get_model_input_dtype(precision)
+    if dtype is not None:
+        # Convert torch dtype to string for NNsight
+        dtype_map = {
+            torch.float32: "float32",
+            torch.float16: "float16",
+            torch.bfloat16: "bfloat16",
+        }
+        nnsight_cfg.torch_dtype = dtype_map.get(dtype, "float32")
 
 
 def config_session(

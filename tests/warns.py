@@ -39,6 +39,7 @@ LIGHTING_CTX_WARNS = (
         "in eval mode at the start of training",  # required starting with Lightning #21446
         "does not have many workers",
         "GPU available but",
+        "treespec, LeafSpec",
         "is smaller than the logging interval",
     ]
 )
@@ -64,6 +65,14 @@ SL_EXPECTED_WARNS = [
 SL_CTX_WARNS = SL_EXPECTED_WARNS + CORE_CTX_WARNS
 SL_LIGHTNING_CTX_WARNS = SL_CTX_WARNS + LIGHTING_CTX_WARNS
 
+NS_EXPECTED_WARNS = [
+    "model_name_or_path .* differs from nnsight_cfg.model_name",  # for nnsight config sync warnings
+    "NNsight LanguageModel initialized",  # info-level but may appear as warning in some contexts
+]
+
+NS_CTX_WARNS = NS_EXPECTED_WARNS + CORE_CTX_WARNS
+NS_LIGHTNING_CTX_WARNS = NS_CTX_WARNS + LIGHTING_CTX_WARNS
+
 FTS_CTX_WARNS = [
     "You defined a `validation_step`",
     "`max_epochs` was not",
@@ -80,6 +89,8 @@ CLI_EXPECTED_WARNS = {
     (Adapter.lightning, Adapter.lightning): LIGHTING_CTX_WARNS,
     (Adapter.lightning, Adapter.lightning, Adapter.transformer_lens): TL_LIGHTNING_CTX_WARNS,
     (Adapter.core, Adapter.core, Adapter.transformer_lens): TL_CTX_WARNS,
+    (Adapter.core, Adapter.core, Adapter.nnsight): NS_CTX_WARNS,
+    (Adapter.lightning, Adapter.lightning, Adapter.nnsight): NS_LIGHTNING_CTX_WARNS,
 }
 
 MIN_VERSION_WARNS = "2.7"

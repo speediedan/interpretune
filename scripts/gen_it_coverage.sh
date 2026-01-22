@@ -1,6 +1,11 @@
 #!/bin/bash
 #
 # Utility script to generate local IT coverage for a given environment
+#
+# Torch handling:
+# - Uses torch-pre.txt if present (for nightly/test builds)
+# - Otherwise uses stable torch with automatic backend detection
+# - Use --torch-backend=cpu to force CPU-only torch
 set -eo pipefail
 
 # Source shared infrastructure utilities
@@ -8,8 +13,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/infra_utils.sh"
 
 unset repo_home
 unset target_env_name
-unset torch_dev_ver
-unset torch_test_channel
 unset no_rebuild_base
 unset from_source_spec
 unset run_all_and_examples
@@ -18,6 +21,8 @@ unset pip_install_flags
 unset self_test_only
 unset it_build_flags
 unset venv_dir
+unset python_version
+unset torch_backend
 declare -a from_source_specs
 
 usage(){
@@ -25,8 +30,8 @@ usage(){
 Usage: $0
     [ --repo-home input]
     [ --target-env-name input ]
-    [ --torch-dev-ver input ]
-    [ --torch-test-channel ]
+    [ --python-version input ]  (e.g., python3.12, default: python3.13)
+    [ --torch-backend input ]  (cpu or auto, default: auto)
     [ --no-rebuild-base ]
     [ --from-source "package:path[:extras][:env_var=value...]" ] (can be specified multiple times)
     [ --venv-dir "/path/to/venv/base" ]
@@ -42,11 +47,18 @@ Usage: $0
     - extras: optional, e.g., "all" or "dev,test"
     - env_var=value: optional, multiple env vars separated by colons
 
+    Torch Handling:
+    - Uses torch-pre.txt if present in requirements/ci/ (for nightly/test builds)
+    - Otherwise uses stable torch with automatic backend detection
+    - Use --torch-backend=cpu to force CPU-only torch (e.g., for CI environments)
+
     Examples:
     # generate it_latest coverage without rebuilding the it_latest base environment:
     #   ./gen_it_coverage.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --no-rebuild-base
-    # generate it_latest coverage with a given torch_dev_version, rebuilding base it_latest and with FTS from source:
-    #   ./gen_it_coverage.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --torch-dev-ver=dev20240201 --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1"
+    # generate it_latest coverage with CPU-only torch:
+    #   ./gen_it_coverage.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --torch-backend=cpu
+    # generate it_latest coverage with FTS from source:
+    #   ./gen_it_coverage.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1"
     # generate it_latest coverage with multiple packages from source (multiple --from-source flags):
     #   ./gen_it_coverage.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1" --from-source="circuit_tracer:${HOME}/repos/circuit-tracer" --from-source="transformer_lens:${HOME}/repos/TransformerLens"
     # generate it_latest coverage with multiple packages from source (semicolon separator):
@@ -61,7 +73,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo-home:,target-env-name:,torch-dev-ver:,torchvision-dev-ver:,torch-test-channel,no-rebuild-base,from-source:,venv-dir:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,it-build-flags:,help -- "$@")
+args=$(getopt -o '' --long repo-home:,target-env-name:,python-version:,torch-backend:,no-rebuild-base,from-source:,venv-dir:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,it-build-flags:,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -72,8 +84,8 @@ do
   case $1 in
     --repo-home)  repo_home=$2    ; shift 2  ;;
     --target-env-name)  target_env_name=$2  ; shift 2 ;;
-    --torch-dev-ver)   torch_dev_ver=$2   ; shift 2 ;;
-    --torch-test-channel)   torch_test_channel=1 ; shift  ;;
+    --python-version)  python_version=$2  ; shift 2 ;;
+    --torch-backend)   torch_backend=$2   ; shift 2 ;;
     --no-rebuild-base)   no_rebuild_base=1 ; shift  ;;
     --from-source)   from_source_specs+=("$2") ; shift 2 ;;
     --venv-dir)   venv_dir=$2 ; shift 2 ;;
@@ -133,8 +145,8 @@ env_rebuild(){
             # Build command with conditional flags
             build_cmd="${repo_home}/scripts/build_it_env.sh --repo-home=${repo_home} --target-env-name=$1"
             [[ -n ${venv_dir} ]] && build_cmd="${build_cmd} --venv-dir=${venv_dir}"
-            [[ -n ${torch_dev_ver} ]] && build_cmd="${build_cmd} --torch-dev-ver=${torch_dev_ver}"
-            [[ ${torch_test_channel} -eq 1 ]] && build_cmd="${build_cmd} --torch-test-channel"
+            [[ -n ${python_version} ]] && build_cmd="${build_cmd} --python-version=${python_version}"
+            [[ -n ${torch_backend} ]] && build_cmd="${build_cmd} --torch-backend=${torch_backend}"
 
             # Handle multiple --from-source flags
             if [[ ${#from_source_specs[@]} -gt 0 ]]; then
@@ -162,17 +174,19 @@ collect_env_coverage(){
     source ${venv_path}/bin/activate
 
     case $1 in
-        it_latest | it_latest_pt_2_4 )
+        it_latest )
             check_self_test_only "Skipping all tests and examples." && return
             python -m coverage erase
             if [[ $run_all_and_examples -eq 1 ]]; then
-                python -m coverage run --source src/interpretune -m pytest src/interpretune src/it_examples tests -v 2>&1 >> $coverage_session_log
+                # Using pytest-cov ensures coverage starts before test collection imports
+                python -m pytest --cov=src/interpretune --cov-report= src/interpretune src/it_examples tests -v 2>&1 >> $coverage_session_log
                 (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
                 (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
                 (./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
                 (./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
             else
-                python -m coverage run --append --source src/interpretune -m pytest tests -v 2>&1 >> $coverage_session_log
+                # Using pytest-cov ensures coverage starts before test collection imports
+                python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v 2>&1 >> $coverage_session_log
                 (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
                 (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
             fi

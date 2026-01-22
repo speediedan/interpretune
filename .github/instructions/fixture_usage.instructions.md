@@ -15,6 +15,44 @@ Interpretune uses a sophisticated fixture generation system that creates test fi
 3. **Scope Appropriately**: Use fixture scopes (`session`, `module`, `class`, `function`) to balance performance and isolation
 4. **Test Method Logic, Not Framework**: Focus unit tests on method behavior; use integration tests for full module lifecycle
 
+## Critical: MODULE_EXAMPLE_REGISTRY Dependency
+
+**IMPORTANT**: Most session fixtures (`it_session`, `it_session_cfg`, `analysis_session`) depend on the `MODULE_EXAMPLE_REGISTRY` defined in `src/it_examples/example_module_registry.yaml`.
+
+### How Fixture Resolution Works
+ - session fixture factory example
+```
+conftest.py fixture factories
+         ↓
+it_session_fixture_factory() / it_session_cfg_fixture_factory()
+         ↓
+config_modules() [tests/configuration.py]
+         ↓
+gen_session_cfg()
+         ↓
+MODULE_EXAMPLE_REGISTRY.get(test_cfg)  ← REGISTRY LOOKUP HERE
+         ↓
+Returns: (base_itdm_cfg, base_it_cfg, dm_cls, m_cls)
+```
+
+### Registry Lookup Keys
+
+The registry lookup uses the test configuration's attributes to form a lookup key:
+- `(model_src_key, model_cfg_key, phase, adapter_ctx)` tuple
+
+**Example**: A config with `model_src_key="gpt2"`, `model_cfg_key="rte"`, `phase="test"`, `adapter_ctx=(Adapter.core, Adapter.nnsight)` looks up:
+```
+('gpt2', 'rte', 'test', (<Adapter.core: 'core'>, <Adapter.nnsight: 'nnsight'>))
+```
+
+### Implications for New Adapters
+
+**If your adapter combination is not registered in `example_module_registry.yaml`:**
+1. Session fixtures (`it_session`, `it_session_cfg`) will fail with `KeyError`
+2. You must register the adapter combination in the registry YAML
+
+**To add a new adapter combination**, see `.github/instructions/registering_example_modules.instructions.md`.
+
 ## Fixture Architecture
 
 ### Fixture Configuration System

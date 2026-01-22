@@ -76,6 +76,9 @@ class Adapter(AutoStrEnum):
     # CIRCUIT_TRACER: The provided module and datamodule will be prepared for use with the Circuit Tracer adapter in
     #                  in combination with any supported and specified adapter.
     circuit_tracer = auto()
+    # NNSIGHT: The provided module and datamodule will be prepared for use with the NNsight adapter in
+    #          combination with any supported and specified adapter. NNsight wraps HF models directly.
+    nnsight = auto()
 
     def __lt__(self, other: "Adapter") -> bool:
         return self.value < other.value
@@ -224,7 +227,7 @@ LRSchedulerProtocolUnion: TypeAlias = LRScheduler | ReduceLROnPlateau
 
 @dataclass
 class LRSchedulerConfig:
-    scheduler: torch.optim.lr_scheduler.LRScheduler | ReduceLROnPlateau
+    scheduler: torch.optim.lr_scheduler.LRScheduler | torch.optim.lr_scheduler.ReduceLROnPlateau
     # no custom name
     name: str | None = None
     # after epoch is over
