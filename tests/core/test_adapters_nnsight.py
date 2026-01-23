@@ -390,8 +390,14 @@ class TestNNsightLightningIntegration:
 class TestNNsightTracing:
     """Basic tests for NNsight tracing functionality."""
 
+    @RunIf(standalone=True)
     def test_nnsight_trace_context(self, get_it_session__ns_gpt2__setup):
-        """Verify NNsight trace context manager works."""
+        """Verify NNsight trace context manager works.
+
+        Note: Marked standalone because NNsight's trace() uses sys.settrace() which
+        interferes with coverage.py's trace function, causing coverage data loss for
+        all tests that run after this one in the same process.
+        """
         fixture = get_it_session__ns_gpt2__setup
         module = fixture.it_session.module
 

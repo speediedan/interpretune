@@ -31,7 +31,7 @@ Usage: $0
     [ --repo-home input]
     [ --target-env-name input ]
     [ --python-version input ]  (e.g., python3.12, default: python3.13)
-    [ --torch-backend input ]  (cpu or auto, default: auto)
+    [ --torch-backend input ]  (cpu, auto, cu128, etc. default: auto)
     [ --no-rebuild-base ]
     [ --from-source "package:path[:extras][:env_var=value...]" ] (can be specified multiple times)
     [ --venv-dir "/path/to/venv/base" ]
