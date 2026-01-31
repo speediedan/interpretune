@@ -32,10 +32,16 @@ runs:
         TORCH_PRE_FILE="requirements/ci/torch-pre.txt"
         if [[ -f "${TORCH_PRE_FILE}" ]]; then
           # Read 3-line config: version, CUDA target, channel type
-          readarray -t PRE_CONFIG < <(grep -v '^#' "${TORCH_PRE_FILE}" | grep -v '^$')
-          TORCH_PRE_VERSION="${PRE_CONFIG[0]}"
-          TORCH_PRE_CUDA="${PRE_CONFIG[1]}"
-          TORCH_PRE_CHANNEL="${PRE_CONFIG[2]}"
+          # Using while-read loop instead of readarray for macOS bash 3.x compatibility
+          i=0
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            case $i in
+              0) TORCH_PRE_VERSION="$line" ;;
+              1) TORCH_PRE_CUDA="$line" ;;
+              2) TORCH_PRE_CHANNEL="$line" ;;
+            esac
+            ((i++))
+          done < <(grep -v '^#' "${TORCH_PRE_FILE}" | grep -v '^$')
           if [[ -n "${TORCH_PRE_VERSION}" && -n "${TORCH_PRE_CHANNEL}" ]]; then
             echo "use_prerelease=true" >> $GITHUB_OUTPUT
             echo "version=${TORCH_PRE_VERSION}" >> $GITHUB_OUTPUT
