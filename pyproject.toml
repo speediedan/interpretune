@@ -59,7 +59,7 @@ lightning = [
     # commenting out when installing from git urls to avoid dep conflicts
     # "finetuning-scheduler >= 2.10.0",
     "bitsandbytes; platform_system != 'Darwin'",
-    "peft",
+    "peft>=0.18",
 ]
 
 examples = [
@@ -93,8 +93,8 @@ examples = [
 # These are separated because they cannot be included in universal lock files
 # Update commit hashes when cutting release branches to pin to tested versions
 git-deps = [
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@2f8eb2b5121d153c761beb1568aa733cbc0b8bc9",
-    "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@d35d01feb9cc076a091e41255e1c9f92de2af236",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@1db54cc79ae045bcc54d20f0d4ac65926a32bd2c",
+    "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@5e6ee61d1676a4d2eee4f083b422b80c87510618",
     "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@a96d8158ee92dddb3eb5203095ce9db98c137fd0",
     "sae_lens >= 6.3.1",
 ]
@@ -154,7 +154,7 @@ profiling = [
 # from source we also include this version to ensure it is respected when installing without the
 # --override flag (e.g CI)
 override-dependencies = [
-    "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@d35d01feb9cc076a091e41255e1c9f92de2af236",
+    "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@5e6ee61d1676a4d2eee4f083b422b80c87510618",
 ]
 # exclude dependencies can be used to ignore installation of a dependency altogether (transitive or direct)
 # we occasionally use an excludes file to allow complex multiple-packages-from-source installations
@@ -264,6 +264,7 @@ omit = [
 
 [tool.pytest.ini_options]
 pythonpath = "tests"
+importmode = "importlib"
 norecursedirs = [
     ".git",
     ".github",

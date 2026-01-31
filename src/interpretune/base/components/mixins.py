@@ -412,10 +412,11 @@ class HFFromPretrainedMixin:
         #       this checks for the presence of `lm_generation_cfg` so it still works when lm_generation_cfg defaults
         #       to None
         # since some generation config depends on post-init model updates, we defer generation-related
-        # model.config and model.generation_config until post-init
+        # model.generation_config updates until post-init
         # (key assumption: generation arguments do not affect model init)
+        # NOTE: transformers v5 no longer supports setting generation parameters on model.config;
+        #       generation parameters must ONLY be set on model.generation_config
         if self.generation_cfg and isinstance(self.generation_cfg, HFGenerationConfig):  # type: ignore[attr-defined]  # mixin provides generation_cfg
-            self.model.config.update(self.generation_cfg.model_config)  # type: ignore[attr-defined]  # mixin provides model and generation_cfg
             if getattr(self.model, "generation_config", None):  # type: ignore[attr-defined]  # mixin provides model
                 for k, v in self.generation_cfg.model_config.items():  # type: ignore[attr-defined]  # mixin provides generation_cfg
                     setattr(self.model.generation_config, k, v)  # type: ignore[attr-defined]  # mixin provides model

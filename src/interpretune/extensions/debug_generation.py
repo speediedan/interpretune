@@ -251,7 +251,11 @@ class DebugGeneration:
         prediction = logits.argmax(dim=-1).squeeze()[:-1]
         true_tokens = sample_input_ids.squeeze()[1:]
         num_correct = (prediction == true_tokens).sum()
-        correct_tokens = ph.datamodule.tokenizer.batch_decode(prediction[prediction == true_tokens])  # type: ignore[attr-defined]  # protocol provides datamodule
+        # NOTE: transformers v5 batch_decode expects 2D input (batch of sequences);
+        # reshape 1D tensor of correct token IDs to 2D with each token as a separate sequence
+        # using batch_decode for efficiency instead of decode in a loop
+        correct_token_ids = prediction[prediction == true_tokens].unsqueeze(-1)
+        correct_tokens = ph.datamodule.tokenizer.batch_decode(correct_token_ids)  # type: ignore[attr-defined]  # protocol provides datamodule
         return num_correct / len(true_tokens), correct_tokens
 
     def naive_perplexity(self, encoded_corpus, stride: int = 512) -> torch.Tensor:
@@ -332,7 +336,7 @@ class DebugGeneration:
     ) -> tuple[List, List]:
         ph = self._check_phandle()
 
-        test_input_ids = ph.datamodule.tokenizer.batch_encode_plus(sequences)  # type: ignore[attr-defined]  # protocol provides datamodule
+        test_input_ids = ph.datamodule.tokenizer(sequences)  # type: ignore[attr-defined]  # protocol provides datamodule
         test_input_ids = sanitize_input_name(self.model_input_names, test_input_ids)
         test_input_ids = ph.datamodule.data_collator(test_input_ids)  # type: ignore[attr-defined]  # protocol provides datamodule
         test_input_ids = test_input_ids.to(ph.device)  # type: ignore[attr-defined]  # protocol provides device

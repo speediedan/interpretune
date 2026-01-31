@@ -32,7 +32,8 @@ test: clean
 	# run tests with coverage (cpu-only, running gpu standalone tests required for full coverage)
 	# assumes activated venv with interpretune installed
 	# Using pytest-cov ensures coverage starts before test collection imports
-	python -m pytest --cov=src/interpretune --cov-append --cov-report= src/interpretune tests -v
+	# --reruns/--reruns-delay handle transient httpx read timeouts with HF transformers v5
+	python -m pytest --cov=src/interpretune --cov-append --cov-report= src/interpretune tests -v --reruns 2 --reruns-delay 5
 	python -m coverage report
 
 docs: clean

@@ -1086,7 +1086,11 @@ def base_vs_sae_logit_diffs(
         top_k: Number of top samples to show
         max_prompt_width: Maximum width for prompt column
     """
-    translated_labels = [tokenizer.batch_decode(label_ids, **DEFAULT_DECODE_KWARGS) for label_ids in base_ref.label_ids]
+    # Reshape 1D label_ids to 2D for batch_decode (transformers v5 compatibility, batch_decode vs decode for efficiency)
+    # Each label_id becomes its own sequence: [id1, id2, id3] -> [[id1], [id2], [id3]]
+    translated_labels = [
+        tokenizer.batch_decode(label_ids.unsqueeze(-1), **DEFAULT_DECODE_KWARGS) for label_ids in base_ref.label_ids
+    ]
 
     df = pd.DataFrame(
         {

@@ -216,6 +216,12 @@ python -m coverage report
 pytest --collect-only
 ```
 
+**Test Reruns for Transient Failures:**
+
+All CI and local coverage scripts include `--reruns 2 --reruns-delay 5` by default to handle transient `httpx` read timeouts with HuggingFace `transformers` v5. The `pytest-rerunfailures` plugin is included in our test dependencies.
+
+Local scripts (`gen_it_coverage.sh`, `special_tests.sh`, `analyze_test_coverage.py`) support configurable rerun behavior via `--no-reruns`, `--reruns=N`, and `--reruns-delay=N` flags.
+
 **⚠️ Dependency Note:** Full test suite requires ML dependencies. Tests will fail without proper environment setup.
 
 **Test timing:** Most tests run quickly (<30s), but some integration tests may take 1-2 minutes.

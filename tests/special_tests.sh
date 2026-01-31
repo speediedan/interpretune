@@ -20,9 +20,16 @@ unset filter_pattern
 unset experiments_list
 unset experiment_patch_mask
 unset collect_dir
+unset no_reruns
+unset reruns_count
+unset reruns_delay
 unset IT_RUN_PROFILING_TESTS
 unset IT_RUN_STANDALONE_TESTS
 unset IT_EXPERIMENTAL_PATCH_TESTS
+
+# Default rerun settings (for transient httpx read timeouts with HF transformers v5)
+reruns_count=2
+reruns_delay=5
 
 source $(dirname "$0")/test_utils.sh
 
@@ -51,7 +58,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long mark_type:,log_file:,filter_pattern:,experiments_list:,experiment_patch_mask:,collect_dir:,help -- "$@")
+args=$(getopt -o '' --long mark_type:,log_file:,filter_pattern:,experiments_list:,experiment_patch_mask:,collect_dir:,no-reruns,reruns:,reruns-delay:,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -66,6 +73,9 @@ do
     --experiments_list)  experiments_list=$2    ; shift 2  ;;
     --experiment_patch_mask) experiment_patch_mask+=($2) ; shift 2  ;;
     --collect_dir)  collect_dir=$2    ; shift 2  ;;
+    --no-reruns)   no_reruns=1 ; shift ;;
+    --reruns)   reruns_count=$2 ; shift 2 ;;
+    --reruns-delay)   reruns_delay=$2 ; shift 2 ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
     *) >&2 echo Unsupported option: $1
@@ -86,9 +96,15 @@ collect_dir=${collect_dir:-"tests"}
 special_test_session_log=${log_file:-"${tmp_log_dir}/special_tests_${mark_type}_${d}.log"}
 test_session_tmp_log="${tmp_log_dir}/special_tests_raw_${mark_type}_${d}.log"
 
-# default python coverage arguments (using pytest-cov for early import coverage)
+# Build rerun args string (for transient httpx read timeouts with HF transformers v5)
+if [[ $no_reruns -eq 1 ]]; then
+    rerun_args=""
+else
+    rerun_args="--reruns ${reruns_count} --reruns-delay ${reruns_delay}"
+fi
 
-exec_defaults='-m pytest --cov=src/interpretune --cov-append --cov-report= --capture=no --no-header -v -s -rA'
+# default python coverage arguments (using pytest-cov for early import coverage)
+exec_defaults="-m pytest --cov=src/interpretune --cov-append --cov-report= --capture=no --no-header -v -s -rA ${rerun_args}"
 collect_defaults="-m pytest ${collect_dir} -q --collect-only --pythonwarnings ignore"
 start_time=$(date +%s)
 echo `printf "%0.s-" {1..120} && printf "\n"` | tee -a $special_test_session_log
@@ -130,7 +146,7 @@ define_configuration(){
   if [[ -n "${COVERAGE_ANALYSIS_CONFIG_FILE}" ]]; then
     echo "Using coverage rc file: ${COVERAGE_ANALYSIS_CONFIG_FILE}" | tee -a $special_test_session_log
     # Updated to use --cov-branch and --cov-context for more granular test parameterization tracking
-    exec_defaults="-m pytest --cov --cov-config=${COVERAGE_ANALYSIS_CONFIG_FILE} --cov-append --cov-context=test --cov-report= --capture=no --no-header -v -s -rA"
+    exec_defaults="-m pytest --cov --cov-config=${COVERAGE_ANALYSIS_CONFIG_FILE} --cov-append --cov-context=test --cov-report= --capture=no --no-header -v -s -rA ${rerun_args}"
   fi
 
   if [ -s "${experiments_list}" ]; then

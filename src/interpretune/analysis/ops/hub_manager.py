@@ -219,7 +219,7 @@ class HubAnalysisOpManager:
             repos = []
 
             # Use HfApi to search for models with interpretune set as the library
-            models = self.api.list_models(library="interpretune", cardData=True)
+            models = self.api.list_models(filter="interpretune", cardData=True)
 
             for model in models:
                 repo_id = model.modelId  # type: ignore[attr-defined]  # HuggingFace ModelInfo compatibility

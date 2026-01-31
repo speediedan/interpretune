@@ -10,6 +10,19 @@ from interpretune.analysis.ops.hub_manager import HubAnalysisOpManager, HubOpCol
 from huggingface_hub.utils import RepositoryNotFoundError
 
 
+def _create_mock_repository_not_found_error(message: str = "Not found") -> RepositoryNotFoundError:
+    """Create a properly mocked RepositoryNotFoundError for huggingface_hub >= 1.0.
+
+    In huggingface_hub >= 1.0, HfHubHTTPError (which RepositoryNotFoundError inherits from)
+    requires a `response` keyword argument. This helper creates a mock response object
+    to satisfy that requirement.
+    """
+    mock_response = Mock()
+    mock_response.headers = {}
+    mock_response.request = Mock()
+    return RepositoryNotFoundError(message, response=mock_response)
+
+
 class TestHubOpCollection:
     """Test cases for HubOpCollection dataclass."""
 
@@ -69,7 +82,7 @@ class TestHubAnalysisOpManager:
     @patch("interpretune.analysis.ops.hub_manager.snapshot_download")
     def test_download_ops_repository_not_found(self, mock_snapshot_download):
         """Test download when repository doesn't exist."""
-        mock_snapshot_download.side_effect = RepositoryNotFoundError("Not found")
+        mock_snapshot_download.side_effect = _create_mock_repository_not_found_error("Not found")
 
         with pytest.raises(RepositoryNotFoundError):
             self.manager.download_ops("nonexistent/repo")
@@ -87,7 +100,7 @@ class TestHubAnalysisOpManager:
         mock_commit_info = Mock()
         mock_commit_info.oid = "abc123"
         mock_api.upload_folder.return_value = mock_commit_info
-        mock_api.repo_info.side_effect = RepositoryNotFoundError("Not found")
+        mock_api.repo_info.side_effect = _create_mock_repository_not_found_error("Not found")
         mock_hf_api_class.return_value = mock_api
 
         manager = HubAnalysisOpManager(cache_dir=self.temp_dir)
@@ -547,7 +560,7 @@ class TestDynamicModuleUtils:
 
         # Mock API for new repository
         mock_api = Mock()
-        mock_api.repo_info.side_effect = RepositoryNotFoundError("Not found")
+        mock_api.repo_info.side_effect = _create_mock_repository_not_found_error("Not found")
 
         mock_commit_info = Mock()
         mock_commit_info.oid = "abc123"

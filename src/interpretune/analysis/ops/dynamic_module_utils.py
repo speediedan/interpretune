@@ -14,9 +14,9 @@ from pathlib import Path
 from types import ModuleType
 from typing import Callable
 
-from huggingface_hub import try_to_load_from_cache
+from huggingface_hub import try_to_load_from_cache, is_offline_mode
 from transformers.dynamic_module_utils import get_relative_import_files, check_imports
-from transformers.utils.hub import cached_file, extract_commit_hash, is_offline_mode
+from transformers.utils.hub import cached_file, extract_commit_hash
 from transformers.utils import logging
 from interpretune.analysis import IT_MODULES_CACHE, IT_DYNAMIC_MODULE_NAME
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn

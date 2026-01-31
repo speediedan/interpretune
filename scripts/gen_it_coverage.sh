@@ -23,7 +23,14 @@ unset it_build_flags
 unset venv_dir
 unset python_version
 unset torch_backend
+unset no_reruns
+unset reruns_count
+unset reruns_delay
 declare -a from_source_specs
+
+# Default rerun settings (for transient httpx read timeouts with HF transformers v5)
+reruns_count=2
+reruns_delay=5
 
 usage(){
 >&2 cat << EOF
@@ -40,12 +47,20 @@ Usage: $0
     [ --pip-install-flags "flags" ]
     [ --self-test-only ]
     [ --it-build-flags "flags" ]
+    [ --no-reruns ]  (disable test reruns for transient failures)
+    [ --reruns N ]  (number of reruns for transient failures, default: 2)
+    [ --reruns-delay N ]  (delay in seconds between reruns, default: 5)
     [ --help ]
 
     The --from-source flag can be specified multiple times for clarity, or use semicolons to separate specs.
     Format: "package:path[:extras][:env_var=value...]"
     - extras: optional, e.g., "all" or "dev,test"
     - env_var=value: optional, multiple env vars separated by colons
+
+    Test Rerun Options (for transient httpx read timeouts with HF transformers v5):
+    - By default, tests are rerun up to 2 times with a 5-second delay on failure
+    - Use --no-reruns to disable automatic retries
+    - Use --reruns N and --reruns-delay N to customize retry behavior
 
     Torch Handling:
     - Uses torch-pre.txt if present in requirements/ci/ (for nightly/test builds)
@@ -73,7 +88,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo-home:,target-env-name:,python-version:,torch-backend:,no-rebuild-base,from-source:,venv-dir:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,it-build-flags:,help -- "$@")
+args=$(getopt -o '' --long repo-home:,target-env-name:,python-version:,torch-backend:,no-rebuild-base,from-source:,venv-dir:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,it-build-flags:,no-reruns,reruns:,reruns-delay:,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -94,6 +109,9 @@ do
     --pip-install-flags)   pip_install_flags=$2 ; shift 2 ;;
     --self-test-only)   self_test_only=1 ; shift ;;
     --it-build-flags)   it_build_flags=$2 ; shift 2 ;;
+    --no-reruns)   no_reruns=1 ; shift ;;
+    --reruns)   reruns_count=$2 ; shift 2 ;;
+    --reruns-delay)   reruns_delay=$2 ; shift 2 ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
     *) >&2 echo Unsupported option: $1
@@ -125,6 +143,13 @@ if [[ -n "${from_source_spec}" ]]; then
 fi
 if [[ -n "${it_build_flags}" ]]; then
     it_build_flags=$(strip_quotes "$it_build_flags")
+fi
+
+# Build rerun args string (for transient httpx read timeouts with HF transformers v5)
+if [[ $no_reruns -eq 1 ]]; then
+    rerun_args=""
+else
+    rerun_args="--reruns ${reruns_count} --reruns-delay ${reruns_delay}"
 fi
 
 check_self_test_only(){
@@ -173,22 +198,28 @@ collect_env_coverage(){
     maybe_deactivate
     source ${venv_path}/bin/activate
 
+    # Build special_tests.sh rerun args to pass through
+    special_tests_rerun_args=""
+    [[ $no_reruns -eq 1 ]] && special_tests_rerun_args="--no-reruns"
+    [[ -n "${reruns_count}" && $no_reruns -ne 1 ]] && special_tests_rerun_args="${special_tests_rerun_args} --reruns=${reruns_count}"
+    [[ -n "${reruns_delay}" && $no_reruns -ne 1 ]] && special_tests_rerun_args="${special_tests_rerun_args} --reruns-delay=${reruns_delay}"
+
     case $1 in
         it_latest )
             check_self_test_only "Skipping all tests and examples." && return
             python -m coverage erase
             if [[ $run_all_and_examples -eq 1 ]]; then
                 # Using pytest-cov ensures coverage starts before test collection imports
-                python -m pytest --cov=src/interpretune --cov-report= src/interpretune src/it_examples tests -v 2>&1 >> $coverage_session_log
-                (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
-                (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
-                (./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
-                (./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
+                python -m pytest --cov=src/interpretune --cov-report= src/interpretune src/it_examples tests -v ${rerun_args} 2>&1 >> $coverage_session_log
+                (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} 2>&1 >> ${temp_special_log}) > /dev/null
+                (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} 2>&1 >> ${temp_special_log}) > /dev/null
+                (./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} ${special_tests_rerun_args} 2>&1 >> ${temp_special_log}) > /dev/null
+                (./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} 2>&1 >> ${temp_special_log}) > /dev/null
             else
                 # Using pytest-cov ensures coverage starts before test collection imports
-                python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v 2>&1 >> $coverage_session_log
-                (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
-                (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} 2>&1 >> ${temp_special_log}) > /dev/null
+                python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${rerun_args} 2>&1 >> $coverage_session_log
+                (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} 2>&1 >> ${temp_special_log}) > /dev/null
+                (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} 2>&1 >> ${temp_special_log}) > /dev/null
             fi
             ;;
         *)
