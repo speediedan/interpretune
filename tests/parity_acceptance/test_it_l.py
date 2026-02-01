@@ -47,6 +47,7 @@ from tests.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WARNS
 @dataclass(kw_only=True)
 class CoreCfg(BaseCfg):
     model_src_key: str | None = "cust"
+    force_prepare_data: bool = True  # force data preparation for CI runner HF cache consistency
 
 
 @dataclass

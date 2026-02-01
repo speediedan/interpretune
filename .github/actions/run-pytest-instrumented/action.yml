@@ -102,11 +102,11 @@ runs:
       run: |
         if [ -n "$PYTEST_FILTER_PATTERN" ]; then
           echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."
-          PYTEST_CMD="pytest src/interpretune tests -v --durations=50 --reruns 2 --reruns-delay 5 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
+          PYTEST_CMD="pytest src/interpretune tests -v --durations=50 --reruns 2 --reruns-delay 10 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
         else
           # Using pytest-cov ensures coverage starts before test collection imports
           # --reruns/--reruns-delay handle transient httpx read timeouts with HF transformers v5
-          PYTEST_CMD="python -m pytest --cov=src/interpretune --cov-append --cov-report= src/interpretune tests -v --durations=50 --reruns 2 --reruns-delay 5 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
+          PYTEST_CMD="python -m pytest --cov=src/interpretune --cov-append --cov-report= src/interpretune tests -v --durations=50 --reruns 2 --reruns-delay 10 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
         fi
         eval $PYTEST_CMD
 
