@@ -24,6 +24,10 @@ from it_examples.patching.dep_patch_shim import ExpPatch, _ACTIVE_PATCHES
 
 EXTENDED_VER_PAT = re.compile(r"([0-9]+\.){2}[0-9]+")
 
+# Detect if torch is a CPU-only build (no CUDA support compiled in)
+# This is different from torch.cuda.is_available() which checks for GPU presence
+_TORCH_CPU_ONLY = torch.version.cuda is None
+
 
 def maybe_mark_exp(exp_patch_set: set[ExpPatch], mark_if_false: Dict | None = None):
     """This allows us to evaluate whether an experimental patch set that is conditionally required for a given test
@@ -51,6 +55,7 @@ lightning_mark = {"lightning": True}
 fts_mark = {"finetuning_scheduler": True}
 bitsandbytes_mark = {"bitsandbytes": True}
 skip_win_mark = {"skip_windows": True}
+cpu_only_torch_mark = {"cpu_only_torch": True}
 
 # RunIf aliases
 RUNIF_ALIASES = {
@@ -80,6 +85,8 @@ RUNIF_ALIASES = {
     "bf16_cuda_l_prof": {**bf16_cuda_mark, **lightning_mark, **profiling_mark},
     "l_optional": {**lightning_mark, **optional_mark},
     "skip_win_optional": {**skip_win_mark, **optional_mark},
+    "cpu_only_torch": cpu_only_torch_mark,
+    "cpu_only_torch_l": {**cpu_only_torch_mark, **lightning_mark},
 }
 
 
@@ -111,6 +118,7 @@ class RunIf:
         lightning: bool = False,
         finetuning_scheduler: bool = False,
         bitsandbytes: bool = False,
+        cpu_only_torch: bool = False,
         exp_patch: ExpPatch | set[ExpPatch] | None = None,
         skip: str | None = None,
         **kwargs,
@@ -140,6 +148,7 @@ class RunIf:
             lightning: Require that lightning is installed.
             finetuning_scheduler: Require that finetuning_scheduler is installed.
             bitsandbytes: Require that bitsandbytes is installed.
+            cpu_only_torch: Require that torch is a CPU-only build (no CUDA support compiled in).
             exp_patch: Require that a given experimental patch is installed.
             skip: Unconditionally skip the test with the given reason string.
             **kwargs: Any :class:`pytest.mark.skipif` keyword arguments.
@@ -245,6 +254,10 @@ class RunIf:
         if bitsandbytes:
             conditions.append(not _BNB_AVAILABLE)
             reasons.append("BitsandBytes")
+
+        if cpu_only_torch:
+            conditions.append(not _TORCH_CPU_ONLY)
+            reasons.append("CPU-only torch build")
 
         if exp_patch:
             # since we want to ensure we separate all experimental test combinations from normal unpatched tests, we
