@@ -136,7 +136,7 @@ jobs:
         continueOnError: true
 
       - bash: |
-          if [ "$FORCE_CACHE_RESET" = "1" ] || [ "${{ parameters.reset_hf_cache }}" = "true" ]; then
+          if [ "$FORCE_CACHE_RESET" = "1" ] || [ "${{ parameters.reset_hf_cache }}" = "True" ]; then
             echo "Clearing HF cache due to: $([ "$FORCE_CACHE_RESET" = "1" ] && echo "inaccessible lock files" || echo "manual reset parameter")"
             rm -rf /opt/interpretune/hf_cache/* || true
           else
