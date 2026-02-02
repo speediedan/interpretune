@@ -167,7 +167,7 @@ class TestClassSAELens:
         for cache in cache_dict.values():
             assert isinstance(cache, ActivationCache)
             for sae_handle in sl_test_module.sae_handles:
-                assert sae_handle.name + ".hook_sae_acts_post" in cache
+                assert sae_handle.cfg.metadata.hook_name + ".hook_sae_acts_post" in cache
 
     @pytest.mark.parametrize("session_fixture", **core_l_run_w_pytest_cfg)
     def test_run_with_saes(self, request, session_fixture):
@@ -187,7 +187,7 @@ class TestClassSAELens:
         assert not torch.allclose(logits_with_saes, original_logits)
         assert isinstance(cache, ActivationCache)
         for sae_handle in sl_test_module.sae_handles:
-            assert sae_handle.name + ".hook_sae_acts_post" in cache
+            assert sae_handle.cfg.metadata.hook_name + ".hook_sae_acts_post" in cache
 
     @pytest.mark.parametrize("session_fixture", **core_l_run_w_pytest_cfg)
     def test_run_with_hooks_with_saes(self, request, session_fixture):
