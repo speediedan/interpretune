@@ -71,37 +71,37 @@ class TestCircuitTracerConfig:
 
     def test_nnsight_remote_configuration(self):
         """Verify NNsight remote execution configuration."""
-        cfg = CircuitTracerConfig(backend="nnsight", nnsight_remote=True, nnsight_api_key="test_key_123")
+        cfg = CircuitTracerConfig(backend="nnsight", nnsight_remote=True, ndif_api_key="test_key_123")
         assert cfg.backend == "nnsight"
         assert cfg.nnsight_remote is True
-        assert cfg.nnsight_api_key == "test_key_123"
+        assert cfg.ndif_api_key == "test_key_123"
 
     def test_nnsight_local_configuration(self):
         """Verify NNsight local execution configuration."""
         cfg = CircuitTracerConfig(backend="nnsight", nnsight_remote=False)
         assert cfg.backend == "nnsight"
         assert cfg.nnsight_remote is False
-        assert cfg.nnsight_api_key is None
+        assert cfg.ndif_api_key is None
 
     def test_warning_on_nnsight_remote_with_tl_backend(self):
         """Verify warning when nnsight_remote=True with transformerlens backend."""
         with pytest.warns(UserWarning, match="nnsight_remote=True but backend is not 'nnsight'"):
             CircuitTracerConfig(backend="transformerlens", nnsight_remote=True)
 
-    def test_warning_on_nnsight_api_key_with_tl_backend(self):
-        """Verify warning when nnsight_api_key provided with transformerlens backend."""
-        with pytest.warns(UserWarning, match="nnsight_api_key is set but backend is not 'nnsight'"):
-            CircuitTracerConfig(backend="transformerlens", nnsight_api_key="test_key")
+    def test_warning_on_ndif_api_key_with_tl_backend(self):
+        """Verify warning when ndif_api_key provided with transformerlens backend."""
+        with pytest.warns(UserWarning, match="ndif_api_key is set but backend is not 'nnsight'"):
+            CircuitTracerConfig(backend="transformerlens", ndif_api_key="test_key")
 
     def test_backend_serialization(self):
         """Verify backend configuration serializes correctly."""
         from dataclasses import asdict
 
-        cfg = CircuitTracerConfig(backend="nnsight", nnsight_remote=True, nnsight_api_key="test_key")
+        cfg = CircuitTracerConfig(backend="nnsight", nnsight_remote=True, ndif_api_key="test_key")
         serialized = asdict(cfg)
         assert serialized["backend"] == "nnsight"
         assert serialized["nnsight_remote"] is True
-        assert serialized["nnsight_api_key"] == "test_key"
+        assert serialized["ndif_api_key"] == "test_key"
 
     def test_all_backends_with_default_settings(self):
         """Verify both backends work with default attribution settings."""
@@ -306,16 +306,16 @@ class TestNNsightBackendGemma2:
         assert it_session.module.circuit_tracer_cfg.nnsight_remote is False
         assert isinstance(it_session.module.replacement_model, NNSightReplacementModel)
 
-    def test_nnsight_api_key_from_env(self, monkeypatch):
-        """Verify NNSIGHT_API_KEY is resolved from environment variable."""
+    def test_ndif_api_key_from_env(self, monkeypatch):
+        """Verify NDIF_API_KEY is resolved from environment variable."""
         # Set environment variable temporarily
-        monkeypatch.setenv("NNSIGHT_API_KEY", "test_env_key_123")
+        monkeypatch.setenv("NDIF_API_KEY", "test_env_key_123")
 
         # Create config with remote=True but no explicit API key
         cfg = CircuitTracerConfig(backend="nnsight", nnsight_remote=True)
 
         # __post_init__ should have resolved API key from env
-        assert cfg.nnsight_api_key == "test_env_key_123"
+        assert cfg.ndif_api_key == "test_env_key_123"
 
     @RunIf(standalone=True)
     def test_nnsight_local_no_api_key_required(self, get_it_session__ct_nnsight_gemma2__setup):
@@ -324,7 +324,7 @@ class TestNNsightBackendGemma2:
 
         # Local mode should work without API key
         assert it_session.module.circuit_tracer_cfg.nnsight_remote is False
-        assert it_session.module.circuit_tracer_cfg.nnsight_api_key is None
+        assert it_session.module.circuit_tracer_cfg.ndif_api_key is None
         assert it_session.module.replacement_model is not None
 
 
@@ -340,20 +340,20 @@ class TestNNsightRemoteExecution:
     the NNsight replacement model with remote tracing capabilities.
 
     Requirements:
-    - NNSIGHT_API_KEY must be set (dotenv is loaded on tests module import)
+    - NDIF_API_KEY must be set (dotenv is loaded on tests module import)
     - Network access to NDIF service
     """
 
     @pytest.fixture
-    def ensure_nnsight_api_key(self):
-        """Check if NNSIGHT_API_KEY is set and configure nnsight.
+    def ensure_ndif_api_key(self):
+        """Check if NDIF_API_KEY is set and configure nnsight.
 
-        NNsight expects NDIF_API_KEY env var, but we use NNSIGHT_API_KEY. This fixture also sets
-        nnsight.CONFIG.API.APIKEY directly.
+        NNsight expects NDIF_API_KEY env var, but we use NDIF_API_KEY. This fixture also sets nnsight.CONFIG.API.APIKEY
+        directly.
         """
-        api_key = os.environ.get("NNSIGHT_API_KEY")
+        api_key = os.environ.get("NDIF_API_KEY")
         if not api_key:
-            pytest.skip("NNSIGHT_API_KEY not set, skipping remote test")
+            pytest.skip("NDIF_API_KEY not set, skipping remote test")
         # nnsight expects NDIF_API_KEY, but we configure directly
         nnsight.CONFIG.API.APIKEY = api_key
         return api_key
@@ -362,7 +362,7 @@ class TestNNsightRemoteExecution:
     #  NDIF will only support that python version until the PR is merged
     @RunIf(optional=True, min_python="3.12", max_python="3.13")
     def test_remote_execution_api_key_flow(
-        self, ensure_nnsight_api_key, reset_pymount, get_it_session__ct_nnsight_gemma2_remote__setup
+        self, ensure_ndif_api_key, reset_pymount, get_it_session__ct_nnsight_gemma2_remote__setup
     ):
         """Verify remote execution: replacement_model loaded, activation tracing works.
 

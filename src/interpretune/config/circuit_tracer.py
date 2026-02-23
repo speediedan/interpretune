@@ -78,13 +78,13 @@ class CircuitTracerConfig(ITSerializableCfg):
 
     Only applicable when backend='nnsight' and nnsight_remote=True.
     """
-    nnsight_api_key: str | None = None
+    ndif_api_key: str | None = None
 
     def __post_init__(self):
         """Validate configuration after initialization."""
-        # Resolve NNsight API key from environment if not explicitly set
-        if self.nnsight_api_key is None and self.nnsight_remote:
-            self.nnsight_api_key = os.environ.get("NNSIGHT_API_KEY")
+        # Resolve NDIF API key from environment if not explicitly set
+        if self.ndif_api_key is None and self.nnsight_remote:
+            self.ndif_api_key = os.environ.get("NDIF_API_KEY")
 
         # Validate backend selection
         valid_backends = ["transformerlens", "nnsight"]
@@ -99,9 +99,9 @@ class CircuitTracerConfig(ITSerializableCfg):
                 warnings.warn(
                     "nnsight_remote=True but backend is not 'nnsight'. This setting will be ignored.", UserWarning
                 )
-            if self.nnsight_api_key is not None:
+            if self.ndif_api_key is not None:
                 import warnings
 
                 warnings.warn(
-                    "nnsight_api_key is set but backend is not 'nnsight'. This setting will be ignored.", UserWarning
+                    "ndif_api_key is set but backend is not 'nnsight'. This setting will be ignored.", UserWarning
                 )

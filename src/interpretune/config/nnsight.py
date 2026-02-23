@@ -121,14 +121,14 @@ class NNsightConfig(ITSerializableCfg):
     remote: bool = False
     """Whether to use NNsight's remote execution via NDIF.
 
-    When True, model execution happens on NDIF servers rather than locally. Requires NNSIGHT_API_KEY environment
-    variable to be set.
+    When True, model execution happens on NDIF servers rather than locally. Requires NDIF_API_KEY environment variable
+    to be set.
     """
 
     api_key: str | None = None
     """API key for NDIF remote execution.
 
-    If not provided, will be read from NNSIGHT_API_KEY environment variable. Only used when remote=True.
+    If not provided, will be read from NDIF_API_KEY environment variable. Only used when remote=True.
     """
 
     def __post_init__(self) -> None:

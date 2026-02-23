@@ -4,7 +4,7 @@ Tests NNsight adapter functionality including:
 - Configuration validation and exceptions
 - Model loading and initialization
 - Device/dtype configuration
-- NNSIGHT_API_KEY environment variable handling
+- NDIF_API_KEY environment variable handling
 - Remote/local execution consistency
 - Basic generation functionality
 
@@ -200,7 +200,7 @@ class TestITNNsightConfig:
 
 
 class TestNNsightAPIKey:
-    """Tests for NNSIGHT_API_KEY environment variable handling."""
+    """Tests for NDIF_API_KEY environment variable handling."""
 
     def test_api_key_from_config(self):
         """Verify API key from config is used when provided."""
@@ -213,10 +213,10 @@ class TestNNsightAPIKey:
         assert config.api_key == "test_api_key_123"
 
     def test_api_key_env_var_detection(self):
-        """Verify NNSIGHT_API_KEY environment variable is detected."""
+        """Verify NDIF_API_KEY environment variable is detected."""
         # This test verifies the environment variable detection logic
         # The actual API key usage is tested in integration tests
-        env_key = os.environ.get("NNSIGHT_API_KEY")
+        env_key = os.environ.get("NDIF_API_KEY")
         if env_key:
             # If env var is set, verify it's accessible
             assert len(env_key) > 0
@@ -224,14 +224,14 @@ class TestNNsightAPIKey:
             # If not set, that's also valid for this test
             pass
 
-    @patch.dict(os.environ, {"NNSIGHT_API_KEY": "env_test_key_456"})
+    @patch.dict(os.environ, {"NDIF_API_KEY": "env_test_key_456"})
     def test_api_key_env_var_fallback(self):
         """Verify environment variable is used as fallback for API key."""
         config = NNsightConfig(remote=True, api_key=None, dispatch=False)
 
         # Config doesn't have api_key, should fall back to env var in adapter
         assert config.api_key is None
-        assert os.environ.get("NNSIGHT_API_KEY") == "env_test_key_456"
+        assert os.environ.get("NDIF_API_KEY") == "env_test_key_456"
 
 
 # =============================================================================
@@ -465,31 +465,31 @@ class TestNNsightErrorHandling:
 
 
 # =============================================================================
-# Remote Execution Tests (require NNSIGHT_API_KEY)
+# Remote Execution Tests (require NDIF_API_KEY)
 # =============================================================================
 
 
 class TestNNsightRemoteExecution:
     """Tests for NNsight remote execution via NDIF.
 
-    These tests require NNSIGHT_API_KEY to be set and network access.
+    These tests require NDIF_API_KEY to be set and network access.
     """
 
     @pytest.fixture
-    def has_nnsight_api_key(self):
-        """Check if NNSIGHT_API_KEY is set and configure nnsight.
+    def has_ndif_api_key(self):
+        """Check if NDIF_API_KEY is set and configure nnsight.
 
-        NNsight expects NDIF_API_KEY env var, but we use NNSIGHT_API_KEY. This fixture also sets
-        nnsight.CONFIG.API.APIKEY directly.
+        NNsight expects NDIF_API_KEY env var, but we use NDIF_API_KEY. This fixture also sets nnsight.CONFIG.API.APIKEY
+        directly.
         """
-        api_key = os.environ.get("NNSIGHT_API_KEY")
+        api_key = os.environ.get("NDIF_API_KEY")
         if not api_key:
-            pytest.skip("NNSIGHT_API_KEY not set, skipping remote tests")
+            pytest.skip("NDIF_API_KEY not set, skipping remote tests")
         # nnsight expects NDIF_API_KEY, but we configure directly
         nnsight.CONFIG.API.APIKEY = api_key
         return api_key
 
-    def test_remote_config_initialization(self, has_nnsight_api_key):
+    def test_remote_config_initialization(self, has_ndif_api_key):
         """Verify remote config initializes with API key from environment."""
         config = NNsightConfig(
             model_name="openai-community/gpt2",
@@ -506,7 +506,7 @@ class TestNNsightRemoteExecution:
     @RunIf(optional=True, min_python="3.12", max_python="3.13")
     def test_remote_local_consistency(
         self,
-        has_nnsight_api_key,
+        has_ndif_api_key,
         reset_pymount,
         get_it_session__ns_gpt2__setup,
         get_it_session__ns_remote_gpt2__setup,

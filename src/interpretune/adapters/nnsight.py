@@ -171,16 +171,16 @@ class BaseNNsightModule(BaseITModule):
                 nnsight_kwargs["token"] = access_token
                 rank_zero_debug("Using authentication token from environment for NNsight model")
 
-        # Handle NNsight API key for remote execution
+        # Handle NDIF API key for remote execution
         if nnsight_cfg.remote:
-            api_key = nnsight_cfg.api_key or os.environ.get("NNSIGHT_API_KEY")
+            api_key = nnsight_cfg.api_key or os.environ.get("NDIF_API_KEY")
             if api_key:
                 nnsight_kwargs["api_key"] = api_key
-                rank_zero_debug("Using NNSIGHT_API_KEY for remote execution")
+                rank_zero_debug("Using NDIF_API_KEY for remote execution")
             else:
                 rank_zero_warn(
                     "NNsight remote execution enabled but no API key found. "
-                    "Set NNSIGHT_API_KEY environment variable or provide api_key in nnsight_cfg."
+                    "Set NDIF_API_KEY environment variable or provide api_key in nnsight_cfg."
                 )
 
         # Initialize NNsight LanguageModel

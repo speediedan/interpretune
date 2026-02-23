@@ -1,4 +1,6 @@
-transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@5e6ee61d1676a4d2eee4f083b422b80c87510618
+transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@fa5df3f5d689fc01942211013cac4b2d232735a7
 triton==3.6.0
 torchvision==0.25.0
 torch==2.10.0
+transformers>=5.2.0
+huggingface-hub>=1.4.1

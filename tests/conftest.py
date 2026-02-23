@@ -895,7 +895,7 @@ def restore_env_variables():
         "DEV_NEURONPEDIA_API_KEY",
         "NEURONPEDIA_API_KEY",
         "USE_LOCALHOST",
-        "NNSIGHT_API_KEY",
+        "NDIF_API_KEY",
     }
     allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)

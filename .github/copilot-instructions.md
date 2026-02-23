@@ -85,7 +85,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
 
 # Activate the environment
-source ~/.venvs/it_latest/bin/activate
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 
 # Run commands directly (no need for 'uv run')
 python --version
@@ -151,7 +152,9 @@ nightly
   --from-source="circuit_tracer:${HOME}/repos/circuit-tracer"
 
 # Build with multiple packages from source (using semicolon separator - also supported)
-./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1;circuit_tracer:${HOME}/repos/circuit-tracer"
+# it_latest with sae-lens, nnsight, and circuit-tracer from source using multiple --from-source flags
+# and multiple env variables in some cases and support for specific uv build flags via the FLAGS keyword
+./scripts/build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --from-source="sae_lens:${HOME}/repos/SAELens:all:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/overrides.txt:FLAGS=-r ~/repos/distributed-insight/project_admin/interpretune/adapter_reference/sae_lens/admin_scripts/sl_poetry_requirements.txt" --from-source="nnsight:${HOME}/repos/nnsight:all:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/overrides.txt" --from-source="circuit_tracer:${HOME}/repos/circuit-tracer:dev:UV_EXCLUDE=${HOME}/repos/interpretune/requirements/ci/excludes.txt:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/overrides.txt"
 
 # Important: When using with manage_standalone_processes.sh wrapper, use --venv-dir:
 ~/repos/interpretune/scripts/manage_standalone_processes.sh --use-nohup scripts/build_it_env.sh \
@@ -171,21 +174,13 @@ When installing from-source packages that specify git dependencies (e.g., finetu
 
 See [UV's dependency caching docs](https://docs.astral.sh/uv/concepts/cache/#dependency-caching) for details on git dependency caching behavior.
 
-**From-Source Package Version Requirements:**
-
-When installing packages from source (especially transformer-lens), ensure the package version in the source repo satisfies dependent package requirements:
-- circuit-tracer requires `transformer-lens>=v2.16.0`
-- TransformerLens repo default version (with the old v2 poetry install) is 0.0.0 in pyproject.toml (set by CI pipeline on release)
-- For local development, update TransformerLens version to 2.16.1 or higher: `sed -i 's/version="0\.0\.0"/version="2.16.1"/' ~/repos/TransformerLens/pyproject.toml`
-- This ensures circuit-tracer's dependency is satisfied without UV upgrading transformer-lens to PyPI version
-- This should not be necessary when installing transformer_lens from source with versions >= 3.0.0 as uv is used
-
 ### Linting and Code Quality
 **Always run linting before committing (assumes activated venv):**
 
 ```bash
 # Activate your environment first
-source ~/.venvs/it_latest/bin/activate
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 
 # Run ruff linting (configured in pyproject.toml)
 # we don't have ruff installed as a separate package but use it via pre-commit (with the --fix flag)
@@ -203,7 +198,8 @@ pre-commit run --all-files
 **Test command (assumes activated venv):**
 ```bash
 # Activate your environment first
-source ~/.venvs/it_latest/bin/activate
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 
 # Basic test run (requires full dependencies)
 cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpretune tests -v
@@ -392,7 +388,7 @@ tail -f `ls -rt /tmp/gen_it_coverage_it_* | tail -1`
   --target-env-name=it_latest \
   --venv-dir=/mnt/cache/${USER}/.venvs
 
-# Note: Coverage collection takes approximately 30-35 minutes
+# Note: Coverage collection takes approximately 40 minutes
 ```
 
 **Flags:**
@@ -422,7 +418,8 @@ When updating dependencies, edit `pyproject.toml` and regenerate locked requirem
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
 
 # Or update manually in an activated environment
-source ~/.venvs/it_latest/bin/activate
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 uv pip install --upgrade <package-name>
 
 # After updating, test thoroughly
@@ -437,7 +434,7 @@ Notes:
 
 ### Type-checking caveat
 
-Full repository type-checking is a work in progress. Current local checks may only include a subset of files (for example, `src/interpretune/adapters/lightning.py`). Expect that type-checking will cover most files in future updates; don't assume exhaustive static type guarantees yet.
+We currently only exclude one file from type checking in the /src tree ("src/it_examples/utils/raw_graph_analysis.py") while all files in /tests are excluded.
 
 ## Special Dependencies and Known Issues
 
@@ -465,7 +462,6 @@ Full repository type-checking is a work in progress. Current local checks may on
 - Test files mirror `src/` structure in `tests/`
 - Use pytest fixtures from `conftest.py`
 - Add coverage for new functionality
-- Avoid modifying `*_parity/` test directories (research code)
 
 #### Running Special Tests (Standalone and Profiling)
 

@@ -106,8 +106,8 @@ class BaseCircuitTracerModule(BaseITModule):
             if cfg.nnsight_remote:
                 pretrained_kwargs["remote"] = True
                 rank_zero_info("Using NNsight remote execution")
-                if cfg.nnsight_api_key:
-                    pretrained_kwargs["api_key"] = cfg.nnsight_api_key
+                if cfg.ndif_api_key:
+                    pretrained_kwargs["api_key"] = cfg.ndif_api_key
 
         # Use ReplacementModel.from_pretrained factory
         # Factory returns backend-specific implementation based on backend parameter
@@ -313,8 +313,8 @@ class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
         circuit_tracer_cfg = self.circuit_tracer_cfg  # type: ignore[attr-defined]
         if circuit_tracer_cfg and circuit_tracer_cfg.nnsight_remote:
             nnsight_kwargs["remote"] = True
-            if circuit_tracer_cfg.nnsight_api_key:
-                nnsight_kwargs["api_key"] = circuit_tracer_cfg.nnsight_api_key
+            if circuit_tracer_cfg.ndif_api_key:
+                nnsight_kwargs["api_key"] = circuit_tracer_cfg.ndif_api_key
 
         # If nnsight_cfg is available, merge its kwargs (takes precedence)
         nnsight_cfg = self.nnsight_cfg  # type: ignore[attr-defined]

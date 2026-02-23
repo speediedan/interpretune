@@ -93,8 +93,8 @@ examples = [
 # These are separated because they cannot be included in universal lock files
 # Update commit hashes when cutting release branches to pin to tested versions
 git-deps = [
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@1db54cc79ae045bcc54d20f0d4ac65926a32bd2c",
-    "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@5e6ee61d1676a4d2eee4f083b422b80c87510618",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@fe1743f10fdef947e5db62ab6edd043eb2950ec4",
+    "transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@fa5df3f5d689fc01942211013cac4b2d232735a7",
     "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@a96d8158ee92dddb3eb5203095ce9db98c137fd0",
     "sae_lens >= 6.3.1",
 ]
@@ -154,7 +154,7 @@ profiling = [
 # from source we also include this version to ensure it is respected when installing without the
 # --override flag (e.g CI)
 override-dependencies = [
-    "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@5e6ee61d1676a4d2eee4f083b422b80c87510618",
+    "transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@fa5df3f5d689fc01942211013cac4b2d232735a7",
 ]
 # exclude dependencies can be used to ignore installation of a dependency altogether (transitive or direct)
 # we occasionally use an excludes file to allow complex multiple-packages-from-source installations
@@ -230,9 +230,6 @@ include = [
     "src/",
 ]
 exclude = [
-    # patch of external code
-    "src/interpretune/utils/patched_tlens_generate.py",
-    "src/it_examples/patching/patched_sae_from_pretrained.py",
     "src/it_examples/utils/raw_graph_analysis.py",
 ]
 
