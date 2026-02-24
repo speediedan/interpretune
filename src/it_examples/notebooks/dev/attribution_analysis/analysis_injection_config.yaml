@@ -4,7 +4,7 @@
 # Individual analysis points can be toggled on/off via the `enable` flag below.
 settings:
   enabled: true
-  target_package_version: "0.1.0"  # Required circuit_tracer version for this notebook
+  target_package_version: "0.4.0"  # Required circuit_tracer version for this notebook
   log_to_console: false
   log_to_file: true
   log_dir: /tmp
@@ -62,8 +62,8 @@ file_hooks:
   ap_compute_attribution_end:
     file_path: replacement_model/replacement_model_transformerlens.py
     enable: true
-    regex_pattern: '^\\s*attribution_data\\s*=\\s*self\\.transcoders\\.compute_attribution_components\\(mlp_in_cache\\)'
-    insert_after: true
+    regex_pattern: '^\\s*error_vectors\\s*=\\s*mlp_out_cache\\s*-\\s*attribution_data\\["reconstruction"\\]'
+    insert_after: false
     description: "End of compute attribution components"
 
   ap_graph_prune_node_influence_end:
