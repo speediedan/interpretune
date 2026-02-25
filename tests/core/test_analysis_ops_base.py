@@ -89,7 +89,7 @@ class TestColCfg:
         assert cfg.dyn_dim is None
         assert cfg.non_tensor is False
         assert cfg.per_latent is False
-        assert cfg.per_sae_hook is False
+        assert cfg.per_latent_model_hook is False
         assert cfg.intermediate_only is False
         assert cfg.connected_obj == "analysis_store"
         assert cfg.array_shape is None
@@ -104,7 +104,7 @@ class TestColCfg:
             dyn_dim=1,
             non_tensor=True,
             per_latent=True,
-            per_sae_hook=True,
+            per_latent_model_hook=True,
             intermediate_only=True,
             connected_obj="datamodule",
             array_shape=(None, "batch_size", 10),
@@ -117,7 +117,7 @@ class TestColCfg:
         assert cfg.dyn_dim == 1
         assert cfg.non_tensor is True
         assert cfg.per_latent is True
-        assert cfg.per_sae_hook is True
+        assert cfg.per_latent_model_hook is True
         assert cfg.intermediate_only is True
         assert cfg.connected_obj == "datamodule"
         assert cfg.array_shape == (None, "batch_size", 10)
@@ -197,7 +197,7 @@ class TestColCfg:
             dyn_dim_ceil="batch_size",
             non_tensor=True,
             per_latent=True,
-            per_sae_hook=True,
+            per_latent_model_hook=True,
             intermediate_only=True,
             connected_obj="datamodule",
             array_shape=(None, "batch_size", 10),
@@ -212,7 +212,7 @@ class TestColCfg:
             dyn_dim_ceil="batch_size",
             non_tensor=True,
             per_latent=True,
-            per_sae_hook=True,
+            per_latent_model_hook=True,
             intermediate_only=True,
             connected_obj="datamodule",
             array_shape=(None, "batch_size", 10),
@@ -230,7 +230,7 @@ class TestColCfg:
             "dyn_dim",
             "non_tensor",
             "per_latent",
-            "per_sae_hook",
+            "per_latent_model_hook",
             "intermediate_only",
             "connected_obj",
             "array_shape",

@@ -291,9 +291,9 @@ class TestClassSAELens:
         mock_get_dir.return_value = {"gpt2-small-res-jb": mock_release}
 
         # Call the method with default parameters
-        from interpretune.adapters.sae_lens import SAEAnalysisMixin
+        from interpretune.adapters.sae_lens import SAELensAnalysisMixin
 
-        SAEAnalysisMixin.display_dashboard()
+        SAELensAnalysisMixin.display_dashboard()
 
         # Verify URL construction and IFrame parameters
         expected_url = "https://neuronpedia.org/test-neuronpedia-id/0?embed=true&embedexplanation=true&embedplots=true&embedtest=true&height=300"
@@ -306,7 +306,7 @@ class TestClassSAELens:
         mock_iframe.reset_mock()
         mock_display.reset_mock()
 
-        SAEAnalysisMixin.display_dashboard(
+        SAELensAnalysisMixin.display_dashboard(
             sae_release="gpt2-small-res-jb", sae_id="blocks.9.hook_resid_pre", latent_idx=42, width=1000, height=700
         )
 
@@ -315,11 +315,11 @@ class TestClassSAELens:
         mock_iframe.assert_called_with(expected_url, width=1000, height=700)
         mock_display.assert_called_once()
 
-    @patch("interpretune.adapters.sae_lens.SAEAnalysisMixin.display_dashboard")
+    @patch("interpretune.adapters.sae_lens.SAELensAnalysisMixin.display_dashboard")
     @patch("interpretune.adapters.sae_lens.print")
     def test_display_latent_dashboards(self, mock_print, mock_display_dashboard):
         """Test the display_latent_dashboards static method."""
-        from interpretune.adapters.sae_lens import SAEAnalysisMixin
+        from interpretune.adapters.sae_lens import SAELensAnalysisMixin
 
         # Create mock metrics for testing
         mock_metrics = MagicMock()
@@ -333,7 +333,7 @@ class TestClassSAELens:
         }
 
         # Test with default top_k=1
-        SAEAnalysisMixin.display_latent_dashboards(
+        SAELensAnalysisMixin.display_latent_dashboards(
             metrics=mock_metrics, title="Test Dashboard", sae_release="test-release"
         )
 
@@ -366,7 +366,7 @@ class TestClassSAELens:
         mock_display_dashboard.reset_mock()
 
         custom_hook_mapper = lambda hook: f"custom_mapping_for_{hook}"
-        SAEAnalysisMixin.display_latent_dashboards(
+        SAELensAnalysisMixin.display_latent_dashboards(
             metrics=mock_metrics,
             title="Custom Test",
             sae_release="custom-release",

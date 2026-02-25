@@ -8,6 +8,7 @@ from transformers import BatchEncoding
 from torch.testing import assert_close
 
 import interpretune as it
+from interpretune.analysis.backends.transformer_lens import TLModelBackend
 from interpretune.analysis.ops.definitions import (
     get_loss_preds_diffs,
     ablate_sae_latent,
@@ -362,6 +363,9 @@ class TestGradientOperations:
         # Mock loss_fn to avoid tensor operation issues
         mock_module.loss_fn = MagicMock(return_value=torch.tensor(0.5))
 
+        # Provide a real TLModelBackend so ops delegate correctly to the mocked model
+        mock_module.model_backend = TLModelBackend()
+
         return mock_module
 
     def test_model_gradient_impl_scalar_logit_diffs(self, mock_module_base, scalar_logit_setup):
@@ -487,6 +491,7 @@ class TestGradientOperations:
         mock_module = MagicMock()
         mock_module.analysis_cfg.auto_prune_batch_encoding = True
         mock_module.auto_prune_batch.return_value = {"input": torch.ones(2, 10)}
+        mock_module.model_backend = TLModelBackend()
 
         # Create mock tensor with sufficient sequence length (at least 7 to support indices 0-6)
         mock_logits = torch.zeros(2, 10, 2)  # [batch_size=2, seq_len=10, features=2]

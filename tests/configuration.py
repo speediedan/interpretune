@@ -57,7 +57,7 @@ def apply_itdm_test_cfg(base_itdm_cfg: ITDataModuleConfig, test_cfg: BaseCfg, **
 
 def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: StrOrPath | None = None) -> ITConfig:
     # TODO: for attributes that don't actually belong to ITConfig (and existing subclasses), we should avoid adding them
-    # e.g. right now, `sae_analysis_targets` is the only one that doesn't belong to ITConfig or defined subclasses
+    # e.g. right now, `latent_analysis_targets` is the only one that doesn't belong to ITConfig or defined subclasses
     test_cfg_override_attrs = [
         "memprofiler_cfg",
         "debug_lm_cfg",
@@ -70,7 +70,7 @@ def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: St
         "generative_step_cfg",
         "add_saes_on_init",
         "auto_comp_cfg",
-        "sae_analysis_targets",
+        "latent_analysis_targets",
         "analysis_cfgs",
         "sae_cfgs",
         "logging_level",
@@ -226,7 +226,7 @@ def cfg_op_env(
         target_op=op_to_test,
         ignore_manual=True,
         save_tokens=True,
-        sae_analysis_targets=fixture.test_cfg().sae_analysis_targets,
+        latent_analysis_targets=fixture.test_cfg().latent_analysis_targets,
     )
 
     # Initialize analysis config on the module

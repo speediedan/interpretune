@@ -25,7 +25,7 @@ from interpretune.config import (
     NNsightConfig,
 )
 from interpretune.extensions import DebugLMConfig, MemProfilerCfg
-from interpretune.analysis import SAEAnalysisTargets, AnalysisOp
+from interpretune.analysis import LatentAnalysisTargets, AnalysisOp
 from it_examples.experiments.rte_boolq import RTEBoolqEntailmentMapping
 from tests.base_defaults import BaseAugTest, BaseCfg, AnalysisBaseCfg
 from tests.parity_acceptance.cfg_aliases import parity_cli_cfgs, mod_initargs, CLI_TESTS
@@ -545,8 +545,8 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
             lm_generation_cfg=TLensGenerationConfig(max_new_tokens=1, output_logits=True, return_dict_in_generate=True),
         )
     )
-    sae_analysis_targets: SAEAnalysisTargets = field(
-        default_factory=lambda: SAEAnalysisTargets(sae_release="gpt2-small-hook-z-kk", target_layers=[9, 10])
+    latent_analysis_targets: LatentAnalysisTargets = field(
+        default_factory=lambda: LatentAnalysisTargets(sae_release="gpt2-small-hook-z-kk", target_layers=[9, 10])
     )
     hf_from_pretrained_cfg: HFFromPretrainedConfig = field(
         default_factory=lambda: HFFromPretrainedConfig(
@@ -578,11 +578,11 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        # Dynamically generate sae_cfgs from sae_targets.sae_fqns
-        if self.sae_analysis_targets and hasattr(self.sae_analysis_targets, "sae_fqns"):
+        # Dynamically generate sae_cfgs from sae_targets.latent_model_fqns
+        if self.latent_analysis_targets and hasattr(self.latent_analysis_targets, "latent_model_fqns"):
             self.sae_cfgs = [
                 SAELensFromPretrainedConfig(release=sae_fqn.release, sae_id=sae_fqn.sae_id)
-                for sae_fqn in self.sae_analysis_targets.sae_fqns
+                for sae_fqn in self.latent_analysis_targets.latent_model_fqns
             ]
 
 

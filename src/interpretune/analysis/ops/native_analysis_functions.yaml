@@ -49,7 +49,7 @@ get_alive_latents:
     alive_latents:
       required: false
       datasets_dtype: int64
-      per_sae_hook: true
+      per_latent_model_hook: true
       non_tensor: true
 
 model_forward:
@@ -114,7 +114,7 @@ model_ablation:
       connected_obj: datamodule
     alive_latents:
       datasets_dtype: int64
-      per_sae_hook: true
+      per_latent_model_hook: true
       non_tensor: true
     answer_indices:
       datasets_dtype: int64
@@ -260,7 +260,7 @@ sae_correct_acts:
   output_schema:
     correct_activations:
       datasets_dtype: float32
-      per_sae_hook: true
+      per_latent_model_hook: true
 
 gradient_attribution:
   description: Compute attribution values from gradients
@@ -282,10 +282,10 @@ gradient_attribution:
   output_schema:
     attribution_values:
       datasets_dtype: float32
-      per_sae_hook: true
+      per_latent_model_hook: true
     correct_activations:
       datasets_dtype: float32
-      per_sae_hook: true
+      per_latent_model_hook: true
     prompts:
       datasets_dtype: string
       required: false
@@ -307,7 +307,7 @@ ablation_attribution:
       datasets_dtype: int64
     alive_latents:
       datasets_dtype: int64
-      per_sae_hook: true
+      per_latent_model_hook: true
       non_tensor: true
     logit_diffs:
       datasets_dtype: float32
@@ -323,7 +323,7 @@ ablation_attribution:
   output_schema:
     attribution_values:
       datasets_dtype: float32
-      per_sae_hook: true
+      per_latent_model_hook: true
     logit_diffs:
       datasets_dtype: float32
       per_latent: true

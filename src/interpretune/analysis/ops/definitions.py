@@ -1,14 +1,16 @@
 """Definitions of specific analysis operations."""
 
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Callable, Literal, Any
+from typing import Callable, Literal, Any, TYPE_CHECKING
 from collections import defaultdict
 from functools import partial
 
 import torch
 from transformers import BatchEncoding
-from transformer_lens.hook_points import HookPoint
 from jaxtyping import Float
+
+if TYPE_CHECKING:
+    from transformer_lens.hook_points import HookPoint
 
 import interpretune as it
 from interpretune.protocol import DefaultAnalysisBatchProtocol
@@ -159,8 +161,11 @@ def model_cache_forward_impl(
     # Run with cache and SAEs
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
         batch = module.auto_prune_batch(batch, "forward")
-    answer_logits, cache = module.model.run_with_cache_with_saes(
-        **batch, saes=module.sae_handles, names_filter=module.analysis_cfg.names_filter
+    answer_logits, cache = module.model_backend.fwd_w_cache_and_latent_models(
+        model=module.model,
+        batch=batch,
+        latent_model_handles=module.sae_handles,
+        names_filter=module.analysis_cfg.names_filter,
     )
 
     # Get answer indices and alive latents
@@ -205,11 +210,12 @@ def model_ablation_impl(
     for name, alive in alive_latents.items():
         for latent_idx in alive:
             fwd_hooks_cfg = [(name, partial(ablate_latent_fn, latent_idx=latent_idx, seq_pos=answer_indices))]
-            answer_logits = module.model.run_with_hooks_with_saes(  # type: ignore[attr-defined]
-                **batch,
-                saes=module.sae_handles,
+            answer_logits = module.model_backend.fwd_w_hooks_and_latent_models(
+                model=module.model,
+                batch=batch,
+                latent_model_handles=module.sae_handles,
+                fwd_hooks=fwd_hooks_cfg,
                 clear_contexts=True,
-                fwd_hooks=fwd_hooks_cfg,  # type: ignore[attr-defined]
             )
             per_latent_logits[name][latent_idx] = answer_logits[torch.arange(batch["input"].size(0)), answer_indices, :]  # type: ignore[attr-defined]  # BatchEncoding tensor has size
 
@@ -245,23 +251,26 @@ def model_gradient_impl(
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
         batch = module.auto_prune_batch(batch, "forward")
     # Run with hooks and compute gradients
-    with torch.set_grad_enabled(True):
-        with module.model.saes(saes=module.sae_handles):
-            with module.model.hooks(fwd_hooks=module.analysis_cfg.fwd_hooks, bwd_hooks=module.analysis_cfg.bwd_hooks):
-                answer_logits = module.model(**batch)
-                answer_logits = torch.squeeze(
-                    answer_logits[torch.arange(batch["input"].size(0)), answer_indices],  # type: ignore[attr-defined]  # BatchEncoding tensor has size
-                    dim=1,
-                )
-                # Compute loss and logit differences using the instance's get_loss_preds_diffs method
-                loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(
-                    module, analysis_batch, answer_logits, logit_diff_fn
-                )
+    with module.model_backend.fwd_w_grads_and_latent_models(
+        model=module.model,
+        latent_model_handles=module.sae_handles,
+        fwd_hooks=module.analysis_cfg.fwd_hooks,
+        bwd_hooks=module.analysis_cfg.bwd_hooks,
+    ) as hooked_model:
+        answer_logits = hooked_model(**batch)
+        answer_logits = torch.squeeze(
+            answer_logits[torch.arange(batch["input"].size(0)), answer_indices],  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+            dim=1,
+        )
+        # Compute loss and logit differences using the instance's get_loss_preds_diffs method
+        loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(
+            module, analysis_batch, answer_logits, logit_diff_fn
+        )
 
-                # Compute gradients
-                logit_diffs.sum().backward()
-                if logit_diffs.dim() == 0:
-                    logit_diffs.unsqueeze_(0)
+        # Compute gradients
+        logit_diffs.sum().backward()
+        if logit_diffs.dim() == 0:
+            logit_diffs.unsqueeze_(0)
     analysis_batch.update(
         answer_logits=answer_logits,
         answer_indices=answer_indices,
@@ -355,8 +364,6 @@ def gradient_attribution_impl(
 
     # TODO: switch to using grad_cache from analysis_batch once that functionality is implemented
     # Get cached activations (forwards) and gradients (backwards) from analysis_cfg.cache_dict
-    from transformer_lens import ActivationCache
-
     # Prefer grad_cache on the analysis_batch, else fall back to module.analysis_cfg.cache_dict
     if getattr(analysis_batch, "grad_cache", None) is not None:
         cache_source = analysis_batch.grad_cache
@@ -367,11 +374,8 @@ def gradient_attribution_impl(
             "No cache available: neither analysis_batch.grad_cache nor module.analysis_cfg.cache_dict is set"
         )
 
-    # If it's not already an ActivationCache, wrap it
-    if isinstance(cache_source, ActivationCache):
-        batch_cache_dict = cache_source
-    else:
-        batch_cache_dict = ActivationCache(cache_source, module.model)  # type: ignore[arg-type]
+    # Wrap raw dicts into a backend-specific activation cache; already-wrapped caches pass through
+    batch_cache_dict = module.model_backend.wrap_activation_cache(cache_source, module.model)
     batch_sz = batch["input"].size(0)  # type: ignore[attr-defined]  # BatchEncoding tensor has size
 
     # Get alive latents using GetAliveLatentsOp  # TODO: clean this up so no temp batch is required

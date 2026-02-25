@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, cast
+from typing import Any, cast, TYPE_CHECKING
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import reduce
@@ -25,6 +25,9 @@ from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import SAELensFromPretrainedConfig, SAELensCustomConfig, SAELensConfig
 from interpretune.utils import rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
+
+if TYPE_CHECKING:
+    from interpretune.analysis.backends import ModelBackend
 
 
 @dataclass(kw_only=True)
@@ -60,7 +63,14 @@ class BaseSAELensModule(BaseITLensModule):
     def __init__(self, *args, **kwargs):
         # using cooperative inheritance, so initialize attributes that may be required in base init methods
         self.saes: list[InstantiatedSAE] = []
+        from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+        self._model_backend = TLModelBackend()
         super().__init__(*args, **kwargs)
+
+    @property
+    def model_backend(self) -> ModelBackend:
+        return self._model_backend
 
     def _convert_hf_to_tl(self) -> None:
         # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
@@ -113,7 +123,7 @@ class SAELensAdapter(SAELensAttributeMixin):
     def has_sae_analysis_cfg(self) -> bool:
         """Return True if this object has an analysis_run_cfg and implements construct_names_filter.
 
-        As in other places, we favor hasattr structural check instead of runtime protocol for SAEAnalysisProtocol.
+        As in other places, we favor hasattr structural check instead of runtime protocol for LatentAnalysisProtocol.
         """
         return (
             hasattr(self, "analysis_run_cfg")
@@ -131,7 +141,7 @@ class SAELensAdapter(SAELensAttributeMixin):
         # SAE-specific analysis initialization: only run when the light-weight structural checks pass
         if self.has_sae_analysis_cfg:
             # local import to avoid import cycles when adapters are imported early
-            from interpretune.protocol import SAEAnalysisProtocol, AnalysisRunnerProtocol
+            from interpretune.protocol import LatentAnalysisProtocol, AnalysisRunnerProtocol
             from interpretune.config import init_analysis_cfgs
 
             # Cast self to AnalysisRunnerProtocol to satisfy typing and access analysis_run_cfg
@@ -139,11 +149,11 @@ class SAELensAdapter(SAELensAttributeMixin):
             analysis_run_cfg = runner_holder.analysis_run_cfg
 
             init_analysis_cfgs(
-                module=cast(SAEAnalysisProtocol, self),  # type: ignore[arg-type]  # protocol compatibility
+                module=cast(LatentAnalysisProtocol, self),  # type: ignore[arg-type]  # protocol compatibility
                 analysis_cfgs=analysis_run_cfg._processed_analysis_cfgs,
                 cache_dir=analysis_run_cfg.cache_dir,
                 op_output_dataset_path=analysis_run_cfg.op_output_dataset_path,
-                sae_analysis_targets=analysis_run_cfg.sae_analysis_targets,
+                latent_analysis_targets=analysis_run_cfg.latent_analysis_targets,
                 ignore_manual=analysis_run_cfg.ignore_manual,
             )
 
@@ -199,7 +209,7 @@ class SAELensAdapter(SAELensAttributeMixin):
         )
 
 
-class SAEAnalysisMixin:
+class SAELensAnalysisMixin:
     def construct_names_filter(
         self, target_layers: int | list[int] | None, sae_hook_match_fn: Callable[[str, int | list[int] | None], bool]
     ) -> NamesFilter:
@@ -234,7 +244,7 @@ class SAEAnalysisMixin:
                         f"{activation_counts[hook_name][idx]} examples"
                     )
                     print(effect_str)
-                    SAEAnalysisMixin.display_dashboard(
+                    SAELensAnalysisMixin.display_dashboard(
                         sae_release=sae_release, sae_id=hook_to_sae_id(hook_name), latent_idx=int(idx)
                     )
 
@@ -254,4 +264,4 @@ class SAEAnalysisMixin:
         display(IFrame(url, width=width, height=height))
 
 
-class SAELensModule(SAEAnalysisMixin, SAELensAdapter, CoreHelperAttributes, BaseSAELensModule): ...
+class SAELensModule(SAELensAnalysisMixin, SAELensAdapter, CoreHelperAttributes, BaseSAELensModule): ...

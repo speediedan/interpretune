@@ -240,7 +240,7 @@ class TestAnalysisRunner:
         mock_run_cfg._processed_analysis_cfgs = [AnalysisCfg(name="test_analysis", target_op=it.model_forward)]
         mock_run_cfg.cache_dir = None
         mock_run_cfg.op_output_dataset_path = None
-        mock_run_cfg.sae_analysis_targets = None
+        mock_run_cfg.latent_analysis_targets = None
         mock_run_cfg.ignore_manual = False
         runner.run_cfg = mock_run_cfg
 
@@ -284,7 +284,7 @@ class TestAnalysisRunner:
         ]
         mock_run_cfg.cache_dir = None
         mock_run_cfg.op_output_dataset_path = None
-        mock_run_cfg.sae_analysis_targets = None
+        mock_run_cfg.latent_analysis_targets = None
         mock_run_cfg.ignore_manual = False
         runner.run_cfg = mock_run_cfg
         runner.analysis_results = {}

@@ -15,7 +15,7 @@ from interpretune.analysis.ops import AnalysisBatch as AnalysisBatch
 from interpretune.analysis import (
     AnalysisStore as AnalysisStore,
     DISPATCHER as DISPATCHER,
-    SAEAnalysisTargets as SAEAnalysisTargets,
+    LatentAnalysisTargets as LatentAnalysisTargets,
 )
 from interpretune.config import (
     ITLensConfig as ITLensConfig,

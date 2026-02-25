@@ -7,7 +7,7 @@ import warnings
 from transformers import BatchEncoding, PreTrainedTokenizerBase
 
 from interpretune.analysis import (
-    SAEAnalysisTargets,
+    LatentAnalysisTargets,
     resolve_names_filter,
     _make_simple_cache_hook,
     OpSchema,
@@ -36,7 +36,7 @@ class AnalysisCfg(ITSerializableCfg):
     save_prompts: bool = False
     save_tokens: bool = False
     decode_kwargs: dict = field(default_factory=lambda: DEFAULT_DECODE_KWARGS)
-    sae_analysis_targets: SAEAnalysisTargets | None = None
+    latent_analysis_targets: LatentAnalysisTargets | None = None
     ignore_manual: bool = False  # When True, ignore existing analysis_step and use op to generate one
     step_fn: str = "analysis_step"  # Name of the method to use/generate for analysis
     auto_prune_batch_encoding: bool = True  # Automatically prune encoded batches to only include relevant keys
@@ -176,27 +176,27 @@ class AnalysisCfg(ITSerializableCfg):
 
         # Otherwise leave as-is; callers will raise clear errors if this is invalid
 
-    def materialize_names_filter(self, module, fallback_sae_targets: SAEAnalysisTargets | None = None) -> None:
-        """Set names_filter using sae_analysis_targets if not already set.
+    def materialize_names_filter(self, module, fallback_sae_targets: LatentAnalysisTargets | None = None) -> None:
+        """Set names_filter using latent_analysis_targets if not already set.
 
         Args:
             module: The module to construct the names_filter for.
-            fallback_sae_targets: Optional fallback SAEAnalysisTargets to use if this config doesn't have one.
+            fallback_sae_targets: Optional fallback LatentAnalysisTargets to use if this config doesn't have one.
         """
         # Skip if names_filter is already set
         if self.names_filter is not None:
             self.names_filter = resolve_names_filter(self.names_filter)
             return
 
-        # Choose the appropriate SAEAnalysisTargets
-        sae_targets = self.sae_analysis_targets or fallback_sae_targets
+        # Choose the appropriate LatentAnalysisTargets
+        sae_targets = self.latent_analysis_targets or fallback_sae_targets
 
         if sae_targets is not None:
             target_layers = sae_targets.target_layers
             match_fn = sae_targets.sae_hook_match_fn
             self.names_filter = module.construct_names_filter(target_layers, match_fn)
         else:
-            raise ValueError("No SAEAnalysisTargets available to create names_filter")
+            raise ValueError("No LatentAnalysisTargets available to create names_filter")
         self.names_filter = resolve_names_filter(self.names_filter)
 
     def maybe_set_hooks(self) -> None:
@@ -204,18 +204,18 @@ class AnalysisCfg(ITSerializableCfg):
         if not self.fwd_hooks and not self.bwd_hooks:
             self.check_add_default_hooks()
 
-    def prepare_model_ctx(self, module, fallback_sae_targets: SAEAnalysisTargets | None = None) -> None:
+    def prepare_model_ctx(self, module, fallback_sae_targets: LatentAnalysisTargets | None = None) -> None:
         """Configure names_filter and hooks for a specific module.
 
         Args:
             module: The module to configure for.
-            fallback_sae_targets: Optional fallback SAEAnalysisTargets to use if this config doesn't have one.
+            fallback_sae_targets: Optional fallback LatentAnalysisTargets to use if this config doesn't have one.
         """
 
-        # Ensure sae_analysis_targets, fallback_sae_targets, or names_filter are set before materializing names_filter
-        if not (self.sae_analysis_targets or fallback_sae_targets or self.names_filter):
+        # Ensure latent_analysis_targets, fallback_sae_targets, or names_filter are set before materializing
+        if not (self.latent_analysis_targets or fallback_sae_targets or self.names_filter):
             rank_zero_debug(
-                "None of (sae_analysis_targets, fallback_sae_targets, names_filter) are set. "
+                "None of (latent_analysis_targets, fallback_sae_targets, names_filter) are set. "
                 "Proceeding without materializing names_filter."
             )
         else:
@@ -351,7 +351,7 @@ class AnalysisCfg(ITSerializableCfg):
         module,
         cache_dir: str | None = None,
         op_output_dataset_path: str | None = None,
-        fallback_sae_targets: SAEAnalysisTargets | None = None,
+        fallback_sae_targets: LatentAnalysisTargets | None = None,
     ):
         """Set up analysis configuration and configure for the given module.
 
@@ -363,7 +363,7 @@ class AnalysisCfg(ITSerializableCfg):
             module: The module to configure for.
             cache_dir: Optional cache directory.
             op_output_dataset_path: Optional output path.
-            fallback_sae_targets: Optional fallback SAEAnalysisTargets to use if this config doesn't have one.
+            fallback_sae_targets: Optional fallback LatentAnalysisTargets to use if this config doesn't have one.
         """
         # Short-circuit if already applied to this module (though apply should be idempotent)
         module_id = id(module)
@@ -431,7 +431,7 @@ class AnalysisArtifactCfg(ITSerializableCfg):
 
     latent_effects_graphs: bool = True
     latent_effects_graphs_per_batch: bool = False  # can be overwhelming with many batches
-    latents_table_per_sae: bool = True
+    table_per_latent_model: bool = True
     top_k_latents_table: int = 2
     top_k_latent_dashboards: int = 1  # (don't set too high, num dashboards = top_k_latent_dashboards * num_hooks * 2)
     top_k_clean_logit_diffs: int = 10

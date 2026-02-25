@@ -14,7 +14,7 @@ from interpretune.config import (
 )
 from interpretune.extensions import MemProfilerCfg, DebugLMConfig
 from interpretune.protocol import Adapter
-from interpretune.analysis import SAEAnalysisTargets
+from interpretune.analysis import LatentAnalysisTargets
 from tests.runif import RunIf, RUNIF_ALIASES
 
 if TYPE_CHECKING:
@@ -120,8 +120,8 @@ class AnalysisBaseCfg(BaseCfg):
     limit_analysis_batches: int = 2
     cache_dir: str | None = None
     op_output_dataset_path: str | None = None
-    # Add optional sae_analysis_targets as a fallback
-    sae_analysis_targets: SAEAnalysisTargets | None = None
+    # Add optional latent_analysis_targets as a fallback
+    latent_analysis_targets: LatentAnalysisTargets | None = None
     # Add artifact configuration
     artifact_cfg: Dict | None = None
     # Global override for ignore_manual setting in analysis configs

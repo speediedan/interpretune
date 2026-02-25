@@ -278,7 +278,7 @@ class AnalysisRunner(SessionRunner):
             analysis_cfgs=self.run_cfg._processed_analysis_cfgs,  # type: ignore[attr-defined]  # dynamic config attribute
             cache_dir=self.run_cfg.cache_dir,  # type: ignore[attr-defined]  # dynamic config attribute
             op_output_dataset_path=self.run_cfg.op_output_dataset_path,  # type: ignore[attr-defined]  # dynamic config attribute
-            sae_analysis_targets=self.run_cfg.sae_analysis_targets,  # type: ignore[attr-defined]  # dynamic config attribute
+            latent_analysis_targets=self.run_cfg.latent_analysis_targets,  # type: ignore[attr-defined]  # dynamic config attribute
             ignore_manual=self.run_cfg.ignore_manual,  # type: ignore[attr-defined]  # dynamic config attribute
         )
 

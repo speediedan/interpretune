@@ -102,7 +102,7 @@ def initialized_analysis_cfg():
             target_op=target_op,
             ignore_manual=True,
             save_tokens=False,
-            sae_analysis_targets=fixture.test_cfg().sae_analysis_targets,
+            latent_analysis_targets=fixture.test_cfg().latent_analysis_targets,
         )
         # Initialize analysis config on the module
         maybe_init_analysis_cfg(it_session.module, analysis_cfg)

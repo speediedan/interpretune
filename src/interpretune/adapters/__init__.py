@@ -24,7 +24,7 @@ _LAZY_ADAPTER_ATTRS = {
     "BaseITLensModule": "interpretune.adapters.transformer_lens.BaseITLensModule",
     # SAE Lens
     "SAELensAdapter": "interpretune.adapters.sae_lens.SAELensAdapter",
-    "SAEAnalysisMixin": "interpretune.adapters.sae_lens.SAEAnalysisMixin",
+    "SAELensAnalysisMixin": "interpretune.adapters.sae_lens.SAELensAnalysisMixin",
     "SAELensModule": "interpretune.adapters.sae_lens.SAELensModule",
     "SAELensAttributeMixin": "interpretune.adapters.sae_lens.SAELensAttributeMixin",
     "BaseSAELensModule": "interpretune.adapters.sae_lens.BaseSAELensModule",

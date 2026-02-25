@@ -220,6 +220,25 @@ Local scripts (`gen_it_coverage.sh`, `special_tests.sh`, `analyze_test_coverage.
 
 **⚠️ Dependency Note:** Full test suite requires ML dependencies. Tests will fail without proper environment setup.
 
+**Logging test output:** When running manual tests (especially full test suites), always redirect output to a log file in `/tmp/` for later inspection in case terminal access is interrupted or corrupted.
+Note normal tests may run a little over 10 minutes, the full test suite with all special tests that run in CI (e.g. using gen_it_coverage.sh) can take around 45 minutes:
+
+```bash
+# Full (non-special marked) test suite with redirect entirely
+python -m pytest src/interpretune tests -v > /tmp/it_test_results.txt 2>&1; echo "EXIT_CODE: $?"
+
+# full test suite
+# Generate coverage with no rebuild (recommended for quick iteration) Outputs full logs to /tmp dir with timestamp for later inspection and avoids terminal issues/timeouts
+${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
+  ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
+  --repo-home=${IT_REPO_DIR} \
+  --target-env-name=${IT_TARGET_VENV} \
+  --venv-dir=${IT_VENV_BASE} \
+  --no-rebuild-base
+
+# Note: Coverage collection takes approximately 45 minutes
+```
+
 **Test timing:** Most tests run quickly (<30s), but some integration tests may take 1-2 minutes.
 
 **Test structure:** Tests are in `tests/` with special subdirectories:

@@ -21,7 +21,7 @@ from interpretune.protocol import (
     DefaultAnalysisBatchProtocol,
     BaseAnalysisBatchProtocol,
     NamesFilter,
-    SAEFqn,
+    LatentModelFqn,
     AnalysisCfgProtocol,
     StrOrPath,
 )
@@ -30,12 +30,12 @@ from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.utils import rank_zero_warn, DEFAULT_DECODE_KWARGS
 
 
-class SAEAnalysisDict(dict):
-    """Dictionary for SAE-specific data where values must be torch.Tensor or list[torch.Tensor]."""
+class LatentAnalysisDict(dict):
+    """Dictionary for latent model analysis data where values must be torch.Tensor or list[torch.Tensor]."""
 
     def __setitem__(self, key: str, value: torch.Tensor | Sequence[torch.Tensor] | None) -> None:
         if value is None:
-            super().__setitem__(key, None)  # type: ignore[arg-type]  # SAEAnalysisDict allows None values for empty SAE data
+            super().__setitem__(key, None)  # type: ignore[arg-type]  # LatentAnalysisDict allows None values for empty SAE data
             return
         # Handle namedtuple-like torch.return_types.<op> objects
         if not isinstance(value, (torch.Tensor, list)):
@@ -71,7 +71,7 @@ class SAEAnalysisDict(dict):
         """Return shapes for each tensor or list of tensors in the dictionary.
 
         Returns:
-            Dictionary mapping SAE names to either single tensor shapes or lists of tensor shapes
+            Dictionary mapping latent model names to either single tensor shapes or lists of tensor shapes
         """
         shapes = {}
         for sae, values in self.items():
@@ -83,7 +83,7 @@ class SAEAnalysisDict(dict):
 
     def batch_join(
         self, across_saes: bool = False, join_fn: Callable = torch.cat
-    ) -> SAEAnalysisDict | list[torch.Tensor]:
+    ) -> LatentAnalysisDict | list[torch.Tensor]:
         """Join field values either by SAE or across SAEs.
 
         Args:
@@ -93,7 +93,7 @@ class SAEAnalysisDict(dict):
 
         Returns:
             If join_across_saes=True: List of tensors, one per batch, with values joined across SAEs
-            If join_across_saes=False: SAEAnalysisDict with batches joined for each SAE
+            If join_across_saes=False: LatentAnalysisDict with batches joined for each SAE
         """
         if across_saes:
             # Get number of batches from first SAE's values
@@ -113,7 +113,7 @@ class SAEAnalysisDict(dict):
             return result
         else:
             # Join batches for each SAE separately
-            result = SAEAnalysisDict()
+            result = LatentAnalysisDict()
             for k, v in self.items():
                 # Filter out None values before joining
                 valid_batches = [batch for batch in v if batch is not None]
@@ -123,24 +123,24 @@ class SAEAnalysisDict(dict):
                     result[k] = None
             return result
 
-    def apply_op_by_sae(self, operation: Callable | str, *args, **kwargs) -> SAEAnalysisDict:
-        """Apply an operation to each tensor value while preserving SAE keys.
+    def apply_op_by_latent_model(self, operation: Callable | str, *args, **kwargs) -> LatentAnalysisDict:
+        """Apply an operation to each tensor value while preserving latent model keys.
 
         Args:
             operation: Either callable or string name of torch.Tensor method
             *args, **kwargs: Additional arguments passed to the operation
 
         Returns:
-            SAEAnalysisDict: New dictionary mapping SAE names to operated tensor values
+            LatentAnalysisDict: New dictionary mapping latent model names to operated tensor values
 
         Examples:
             # Apply mean
-            my_dict.batch_join().apply_op_by_sae('mean', dim=0)
+            my_dict.batch_join().apply_op_by_latent_model('mean', dim=0)
 
             # Apply custom function
-            my_dict.batch_join().apply_op_by_sae(torch.mean, dim=0)
+            my_dict.batch_join().apply_op_by_latent_model(torch.mean, dim=0)
         """
-        result = SAEAnalysisDict()
+        result = LatentAnalysisDict()
 
         for k, v in self.items():
             if isinstance(operation, str):
@@ -277,8 +277,8 @@ def schema_to_features(
 
         dtype = col_cfg.array_dtype or col_cfg.datasets_dtype
 
-        # Handle per-SAE hook fields first
-        if col_cfg.per_sae_hook:
+        # Handle per-latent-model hook fields first
+        if col_cfg.per_latent_model_hook:
             # Check if names_filter is available
             if not _check_names_filter_available(module, col_name, col_cfg):
                 features_dict[col_name] = {}  # Set to empty dict instead of skipping
@@ -596,27 +596,27 @@ class AnalysisStore:
 
         raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
 
-    def by_sae(self, field_name: str, stack_latents: bool = True) -> SAEAnalysisDict:
-        """Transform batch-oriented field values into per-SAE lists of batch values.
+    def by_latent_model(self, field_name: str, stack_latents: bool = True) -> LatentAnalysisDict:
+        """Transform batch-oriented field values into per-latent-model lists of batch values.
 
         Args:
             field_name: Name of the field to process (e.g. 'correct_activations', 'preds')
             stack_latents: Whether to stack latent values using torch.stack for nested dictionary fields
 
         Returns:
-            SAEAnalysisDict: Dictionary mapping SAE names to lists of batch values.
+            LatentAnalysisDict: Dictionary mapping latent model names to lists of batch values.
             For nested dictionary fields, latent values within each batch are stacked if stack_latents=True.
 
         Raises:
-            TypeError: If the values are not dictionaries and thus cannot be transformed into an SAEAnalysisDict
+            TypeError: If the values are not dictionaries and thus cannot be transformed into an LatentAnalysisDict
         """
         values = self.__getattr__(field_name)
         assert values, f"No values found for field {field_name}"
         if not isinstance(values[0], dict):
             raise TypeError(
-                f"Values for field {field_name} must be dictionaries to be transformed into an SAEAnalysisDict"
+                f"Values for field {field_name} must be dictionaries to be transformed into an LatentAnalysisDict"
             )
-        result = SAEAnalysisDict()
+        result = LatentAnalysisDict()
         sae_names = values[0].keys()
         for sae in sae_names:
             if isinstance(values[0][sae], dict) and stack_latents:
@@ -625,35 +625,37 @@ class AnalysisStore:
                 for batch in values:
                     latent_tensors = [t for t in batch[sae].values()]
                     batch_tensors.append(torch.stack(latent_tensors) if latent_tensors else None)
-                result[sae] = batch_tensors  # type: ignore[assignment]  # SAEAnalysisDict accepts list of tensor batches
+                result[sae] = batch_tensors  # type: ignore[assignment]  # LatentAnalysisDict accepts list of tensor batches
             else:
                 # Handle both non-nested and non-stacked nested cases
-                result[sae] = [  # type: ignore[assignment]  # SAEAnalysisDict handles mixed tensor/None lists
+                result[sae] = [  # type: ignore[assignment]  # LatentAnalysisDict handles mixed tensor/None lists
                     None if isinstance(batch[sae], list) and not batch[sae] else batch[sae] for batch in values
                 ]
         return result
 
     def calc_activation_summary(self) -> ActivationSumm:
-        """Calculate per-SAE activation summary from analysis cache.
+        """Calculate per-latent model activation summary from analysis cache.
 
-        Computes mean activations and number of non-zero activations per SAE based on activation data
+        Computes mean activations and number of non-zero activations per latent model based on activation data
         stored in AnalysisStore. The cache must contain 'correct_activations' data.
 
         Returns:
             ActivationSumm: Container with:
-                - mean_activation: Mean activation values per SAE
-                - num_samples_active: Number of non-zero activations per SAE
+                - mean_activation: Mean activation values per latent model
+                - num_samples_active: Number of non-zero activations per latent model
 
         Raises:
             ValueError: If no 'correct_activations' data is present in analysis_store.
         """
         if not self.correct_activations:
-            raise ValueError("Analysis cache requires 'correct_activations' data to calculate per-SAE activation stats")
+            raise ValueError(
+                "Analysis cache requires 'correct_activations' data to calculate per-latent model activation stats"
+            )
 
-        sae_data = self.by_sae("correct_activations").batch_join()
-        assert isinstance(sae_data, SAEAnalysisDict), "batch_join should return SAEAnalysisDict"
-        mean_activation = sae_data.apply_op_by_sae(operation="mean", dim=0)
-        num_samples_active = sae_data.apply_op_by_sae(operation=torch.count_nonzero, dim=0)
+        sae_data = self.by_latent_model("correct_activations").batch_join()
+        assert isinstance(sae_data, LatentAnalysisDict), "batch_join should return LatentAnalysisDict"
+        mean_activation = sae_data.apply_op_by_latent_model(operation="mean", dim=0)
+        num_samples_active = sae_data.apply_op_by_latent_model(operation=torch.count_nonzero, dim=0)
 
         return ActivationSumm(mean_activation=mean_activation, num_samples_active=num_samples_active)
 
@@ -690,26 +692,26 @@ class AnalysisStore:
                 correct_mask = torch.cat([(diffs > 0) for diffs in self.logit_diffs])
             total_examples = correct_mask.sum()
 
-        assert isinstance(activation_summary.num_samples_active, SAEAnalysisDict), (
-            "num_samples_active should be SAEAnalysisDict"
+        assert isinstance(activation_summary.num_samples_active, LatentAnalysisDict), (
+            "num_samples_active should be LatentAnalysisDict"
         )
-        proportion_samples_active = activation_summary.num_samples_active.apply_op_by_sae(
+        proportion_samples_active = activation_summary.num_samples_active.apply_op_by_latent_model(
             operation=torch.div, other=total_examples
         )
 
-        attribution_values = self.by_sae("attribution_values").batch_join()
-        assert isinstance(attribution_values, SAEAnalysisDict), "batch_join should return SAEAnalysisDict"
+        attribution_values = self.by_latent_model("attribution_values").batch_join()
+        assert isinstance(attribution_values, LatentAnalysisDict), "batch_join should return LatentAnalysisDict"
 
         if filter_by_correct:
-            per_example_latent_effects = attribution_values.apply_op_by_sae(
+            per_example_latent_effects = attribution_values.apply_op_by_latent_model(
                 operation=lambda x, mask: x[mask], mask=correct_mask
             )
         else:
-            per_example_latent_effects = attribution_values  # type: ignore[assignment]  # attribution_values is SAEAnalysisDict
+            per_example_latent_effects = attribution_values  # type: ignore[assignment]  # attribution_values is LatentAnalysisDict
 
-        total_effect = per_example_latent_effects.apply_op_by_sae(operation=torch.sum, dim=0)
+        total_effect = per_example_latent_effects.apply_op_by_latent_model(operation=torch.sum, dim=0)
         # TODO: make mean effect normalized by num samples active?
-        mean_effect = per_example_latent_effects.apply_op_by_sae(operation=torch.mean, dim=0)
+        mean_effect = per_example_latent_effects.apply_op_by_latent_model(operation=torch.mean, dim=0)
 
         return LatentMetrics(
             total_effect=total_effect,
@@ -743,15 +745,15 @@ class AnalysisStore:
                         width=1000,
                     ).update_layout(showlegend=False).show()
         else:
-            # Aggregate across all batches using SAEAnalysisDict operations
-            stacked_values = self.by_sae("attribution_values").batch_join()
-            assert isinstance(stacked_values, SAEAnalysisDict), "batch_join should return SAEAnalysisDict"
+            # Aggregate across all batches using LatentAnalysisDict operations
+            stacked_values = self.by_latent_model("attribution_values").batch_join()
+            assert isinstance(stacked_values, LatentAnalysisDict), "batch_join should return LatentAnalysisDict"
             len_alives = {
                 act_name: len({latent for batch in self.alive_latents for latent in batch.get(act_name, [])})
                 for act_name in stacked_values.keys()
             }
 
-            mean_effects = stacked_values.apply_op_by_sae(operation="mean", dim=0)
+            mean_effects = stacked_values.apply_op_by_latent_model(operation="mean", dim=0)
 
             for act_name, effects in mean_effects.items():
                 px.line(
@@ -807,11 +809,11 @@ def default_sae_hook_match_fn(
 
 
 @dataclass
-class SAEAnalysisTargets:
-    """Encapsulation of SAE IDs and specific hooks involved in an SAE-mediated analysis, along with helper
-    functions for explicit or pattern based matching by name and/or layer."""
+class LatentAnalysisTargets:
+    """Encapsulation of latent model FQNs and specific hooks involved in a latent-model-mediated analysis, along
+    with helper functions for explicit or pattern based matching by name and/or layer."""
 
-    sae_fqns: list[SAEFqn] = field(default_factory=list)
+    latent_model_fqns: list[LatentModelFqn] = field(default_factory=list)
     sae_release: str = "gpt2-small-hook-z-kk"
     target_sae_ids: Sequence[str] = field(default_factory=list)  # explicit sae_id list
     sae_id_factory_fn: Callable = default_sae_id_factory_fn  # function to generate sae_ids based on layer
@@ -820,32 +822,34 @@ class SAEAnalysisTargets:
     sae_hook_match_fn: Callable = default_sae_hook_match_fn
 
     def __post_init__(self):
-        self.validate_sae_fqns()
+        self.validate_latent_model_fqns()
 
-    def validate_sae_fqns(self):
-        # Validate provided sae_fqns or generate them based on target_sae_ids or target_layers
-        if self.sae_fqns:
-            new_sae_fqns = []
-            for s in self.sae_fqns:
-                if isinstance(s, SAEFqn):
-                    new_sae_fqns.append(s)
+    def validate_latent_model_fqns(self):
+        # Validate provided latent_model_fqns or generate them based on target_sae_ids or target_layers
+        if self.latent_model_fqns:
+            new_latent_model_fqns = []
+            for s in self.latent_model_fqns:
+                if isinstance(s, LatentModelFqn):
+                    new_latent_model_fqns.append(s)
                 elif isinstance(s, tuple) and len(s) == 2:
-                    new_sae_fqns.append(SAEFqn(release=s[0], sae_id=s[1]))
+                    new_latent_model_fqns.append(LatentModelFqn(release=s[0], sae_id=s[1]))
                 else:
-                    raise TypeError("All elements in sae_fqns must be instances of SAEFqn or 2-tuples")
-            self.sae_fqns = tuple(new_sae_fqns)  # type: ignore[misc]  # assignment to dataclass field with SAEFqn tuple
+                    raise TypeError("All elements in latent_model_fqns must be instances of LatentModelFqn or 2-tuples")
+            self.latent_model_fqns = tuple(new_latent_model_fqns)  # type: ignore[misc]  # assignment to dataclass field with LatentModelFqn tuple
         else:
             if self.target_sae_ids:
-                self.sae_fqns = tuple(SAEFqn(release=self.sae_release, sae_id=s) for s in self.target_sae_ids)  # type: ignore[misc]  # assignment to dataclass field
+                self.latent_model_fqns = tuple(  # type: ignore[misc]  # assignment to dataclass field
+                    LatentModelFqn(release=self.sae_release, sae_id=s) for s in self.target_sae_ids
+                )
             elif self.target_layers:
-                self.sae_fqns = tuple(  # type: ignore[misc]  # assignment to dataclass field
-                    SAEFqn(release=self.sae_release, sae_id=self.sae_id_factory_fn(layer))
+                self.latent_model_fqns = tuple(  # type: ignore[misc]  # assignment to dataclass field
+                    LatentModelFqn(release=self.sae_release, sae_id=self.sae_id_factory_fn(layer))
                     for layer in self.target_layers
                 )
             else:
-                rank_zero_warn("SAEFqns could not be resolved based on provided configuration")
-                self.sae_fqns = tuple()  # type: ignore[misc]  # assignment to dataclass field
-        return self.sae_fqns
+                rank_zero_warn("LatentModelFqns could not be resolved based on provided configuration")
+                self.latent_model_fqns = tuple()  # type: ignore[misc]  # assignment to dataclass field
+        return self.latent_model_fqns
 
 
 @dataclass(kw_only=True)
@@ -940,16 +944,15 @@ class LatentMetrics(ActivationSumm):
         sort_by: str = "total_effect",
         top_k: int = 10,
         filter_type: Literal["positive", "negative", "both"] = "both",
-        per_sae: bool | None = False,
+        per_latent_model: bool | None = False,
     ) -> dict[str, str]:
         """Creates formatted tables of attribution metrics.
 
         Args:
-            metrics: Instance of LatentMetrics or subclass containing attribution data
             sort_by: Attribute name from metrics instance to sort by
             top_k: Number of top entries to include
             filter_type: Which values to include ('positive', 'negative', or 'both')
-            per_hook: Whether to create separate tables per hook
+            per_latent_model: Whether to create separate tables per latent model
         """
         # Validate sort_by attribute exists
         if not hasattr(self, sort_by):
@@ -958,7 +961,7 @@ class LatentMetrics(ActivationSumm):
 
         sort_metric = getattr(self, sort_by)
         tables = {}
-        hooks = list(sort_metric.keys()) if per_sae else ["all"]
+        hooks = list(sort_metric.keys()) if per_latent_model else ["all"]
 
         # Get metric names and their display representations
         metric_names = self.get_field_names(dict_only=True)
@@ -966,7 +969,7 @@ class LatentMetrics(ActivationSumm):
         for hook in hooks:
             for sign in ["positive", "negative"] if filter_type == "both" else [filter_type]:
                 largest = sign == "positive"
-                if per_sae:
+                if per_latent_model:
                     values = sort_metric[hook]
                     topk_values, indices = torch.topk(values, min(top_k, len(values)), largest=largest)
                     table_data = []
@@ -1004,7 +1007,7 @@ class LatentMetrics(ActivationSumm):
 
                 if table_data:
                     title = f"Top {top_k} {sign} {sort_by} "
-                    title += f"for {hook}" if per_sae else "across all hooks"
+                    title += f"for {hook}" if per_latent_model else "across all hooks"
                     tables[title] = tabulate(table_data, headers="keys", tablefmt="pipe")
 
         return tables
@@ -1142,7 +1145,9 @@ def compute_correct(
 
     # TODO: this is another location where we should be conditioning behavior on op functionality, not name
     if hasattr(op, "ctx_key") and op.ctx_key == "logit_diffs_attr_ablation":  # type: ignore[attr-defined]  # AnalysisOp has ctx_key
-        batch_preds = [b.mode(dim=0).values.cpu() for b in analysis_store.by_sae("preds").batch_join(across_saes=True)]  # type: ignore[attr-defined]  # analysis_store has by_sae method
+        batch_preds = [  # type: ignore[attr-defined]  # analysis_store has by_latent_model method
+            b.mode(dim=0).values.cpu() for b in analysis_store.by_latent_model("preds").batch_join(across_saes=True)
+        ]
     else:
         batch_preds = analysis_store.preds  # type: ignore[attr-defined]  # analysis_store has preds attribute
     correct_statuses = [

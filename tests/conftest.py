@@ -31,7 +31,7 @@ import torch.distributed
 from interpretune.base import _call_itmodule_hook, ITDataModule
 from interpretune.runners import AnalysisRunner
 from interpretune.config.runner import AnalysisRunnerCfg
-from interpretune.analysis import AnalysisStore, SAEAnalysisDict
+from interpretune.analysis import AnalysisStore, LatentAnalysisDict
 from interpretune.session import ITMeta, ITSession
 from interpretune.protocol import ModuleSteppable, DataModuleInitable
 from interpretune.utils import rank_zero_only
@@ -1046,7 +1046,7 @@ def mock_analysis_store():
     mock_store.logit_diffs = [torch.tensor([0.5, -0.3]), torch.tensor([-0.1, 0.7])]
     mock_store.prompts = ["prompt1", "prompt2", "prompt3", "prompt4"]
 
-    # Set up attribution values for by_sae testing
+    # Set up attribution values for by_latent_model testing
     mock_store.attribution_values = [
         {"sae1": torch.rand(2, 10), "sae2": torch.rand(2, 10)},
         {"sae1": torch.rand(2, 10), "sae2": torch.rand(2, 10)},
@@ -1061,21 +1061,21 @@ def mock_analysis_store():
     # Set up alive_latents for plot_latent_effects
     mock_store.alive_latents = [{"sae1": [0, 1, 2], "sae2": [0, 1]}, {"sae1": [0, 3, 4], "sae2": [1, 2]}]
 
-    # Mock the by_sae method to return an SAEAnalysisDict
+    # Mock the by_latent_model method to return an LatentAnalysisDict
     def mock_by_sae(field_name, stack_latents=True):
         if field_name == "correct_activations":
-            result = SAEAnalysisDict()
+            result = LatentAnalysisDict()
             result["sae1"] = [torch.rand(2, 10), torch.rand(2, 10)]
             result["sae2"] = [torch.rand(2, 10), torch.rand(2, 10)]
             return result
         elif field_name == "attribution_values":
-            result = SAEAnalysisDict()
+            result = LatentAnalysisDict()
             result["sae1"] = [torch.rand(2, 10), torch.rand(2, 10)]
             result["sae2"] = [torch.rand(2, 10), torch.rand(2, 10)]
             return result
         else:
             raise ValueError(f"Unexpected field_name: {field_name}")
 
-    mock_store.by_sae = mock_by_sae
+    mock_store.by_latent_model = mock_by_sae
 
     return mock_store

@@ -81,7 +81,7 @@ _LAZY_MODULE_ATTRS = {
     "AnalysisStore": "interpretune.analysis.AnalysisStore",
     "AnalysisBatch": "interpretune.analysis.AnalysisBatch",
     "DISPATCHER": "interpretune.analysis.DISPATCHER",
-    "SAEAnalysisTargets": "interpretune.analysis.SAEAnalysisTargets",
+    "LatentAnalysisTargets": "interpretune.analysis.LatentAnalysisTargets",
     # config
     "ITConfig": "interpretune.config.ITConfig",
     "ITDataModuleConfig": "interpretune.config.ITDataModuleConfig",
@@ -185,7 +185,7 @@ __all__ = [
     "AnalysisStore",
     "AnalysisBatch",
     "DISPATCHER",
-    "SAEAnalysisTargets",
+    "LatentAnalysisTargets",
     # Config Module
     "ITConfig",
     "ITDataModuleConfig",
@@ -259,7 +259,7 @@ if TYPE_CHECKING:
         ADAPTER_REGISTRY,
         CompositionRegistry,
     )
-    from interpretune.analysis import AnalysisStore, AnalysisBatch, DISPATCHER, SAEAnalysisTargets
+    from interpretune.analysis import AnalysisStore, AnalysisBatch, DISPATCHER, LatentAnalysisTargets
     from interpretune.config import (
         ITConfig,
         ITDataModuleConfig,

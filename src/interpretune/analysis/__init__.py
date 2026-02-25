@@ -31,8 +31,8 @@ from interpretune.analysis.ops import ColCfg, OpSchema, AnalysisBatch, DISPATCHE
 from interpretune.analysis.ops.hub_manager import HubAnalysisOpManager
 from interpretune.analysis.core import (
     AnalysisStore,
-    SAEAnalysisTargets,
-    SAEAnalysisDict,
+    LatentAnalysisTargets,
+    LatentAnalysisDict,
     LatentMetrics,
     ActivationSumm,
     PredSumm,
@@ -45,7 +45,7 @@ from interpretune.analysis.core import (
 )
 from interpretune.analysis.formatters import ITAnalysisFormatter
 from interpretune.protocol import (
-    SAEFqn,
+    LatentModelFqn,
     DefaultAnalysisBatchProtocol,
     BaseAnalysisBatchProtocol,
     AnalysisOpProtocol,
@@ -59,11 +59,11 @@ _register_formatter(ITAnalysisFormatter, "interpretune", aliases=["it", "itanaly
 __all__ = [
     # Core Analysis Classes
     "AnalysisStore",
-    "SAEAnalysisTargets",
+    "LatentAnalysisTargets",
     "schema_to_features",
     "_make_simple_cache_hook",
     "resolve_names_filter",
-    "SAEAnalysisDict",
+    "LatentAnalysisDict",
     # Metric Containers
     "LatentMetrics",
     "ActivationSumm",
@@ -88,7 +88,7 @@ __all__ = [
     # Formatters
     "ITAnalysisFormatter",
     # Protocol Definitions
-    "SAEFqn",
+    "LatentModelFqn",
     "DefaultAnalysisBatchProtocol",
     "BaseAnalysisBatchProtocol",
     "AnalysisOpProtocol",

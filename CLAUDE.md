@@ -22,7 +22,7 @@ These are used by dev scripts and can be set in your shell profile. `IT_VENV_BAS
 
 ```bash
 # Build dev environment
-./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=${IT_TARGET_VENV}
 
 # Activate
 source ${IT_VENV_BASE:-~/.venvs}/${IT_TARGET_VENV}/bin/activate
@@ -62,6 +62,25 @@ unset IT_RUN_PROFILING_TESTS
 ```
 
 Test reruns (`--reruns 2 --reruns-delay 5`) are used in CI for transient httpx/HF timeouts.
+
+**Logging test output:** When running manual tests (especially full test suites), always redirect output to a log file in `/tmp/` for later inspection in case terminal access is interrupted or corrupted.
+Note normal tests may run a little over 10 minutes, the full test suite with all special tests that run in CI (e.g. using gen_it_coverage.sh) can take around 45 minutes:
+
+```bash
+# Full (non-special marked) test suite with redirect entirely
+python -m pytest src/interpretune tests -v > /tmp/it_test_results.txt 2>&1; echo "EXIT_CODE: $?"
+
+# full test suite
+# Generate coverage with no rebuild (recommended for quick iteration) Outputs full logs to /tmp dir with timestamp for later inspection and avoids terminal issues/timeouts
+${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
+  ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
+  --repo-home=${IT_REPO_DIR} \
+  --target-env-name=${IT_TARGET_VENV} \
+  --venv-dir=${IT_VENV_BASE} \
+  --no-rebuild-base
+
+# Note: Coverage collection takes approximately 45 minutes
+```
 
 ## Linting & Code Quality
 

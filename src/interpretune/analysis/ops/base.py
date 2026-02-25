@@ -152,7 +152,7 @@ class ColCfg:
     dyn_dim_ceil: DIM_VAR | None = None  # helper for dynamic dimension handling in some contexts
     non_tensor: bool = False
     per_latent: bool = False
-    per_sae_hook: bool = False  # For fields that have per-SAE hook subfields
+    per_latent_model_hook: bool = False  # For fields that have per-latent-model hook subfields
     intermediate_only: bool = False  # Indicates column used in processing but not written to output
     connected_obj: Literal["analysis_store", "datamodule"] = "analysis_store"
     array_shape: tuple[int | DIM_VAR | None, ...] | None = None  # Shape with optional dimension variables
@@ -189,7 +189,7 @@ class ColCfg:
                 self.dyn_dim,
                 self.non_tensor,
                 self.per_latent,
-                self.per_sae_hook,
+                self.per_latent_model_hook,
                 self.intermediate_only,
                 self.connected_obj,
                 hashable_shape,
