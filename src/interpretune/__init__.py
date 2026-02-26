@@ -74,7 +74,8 @@ _LAZY_MODULE_ATTRS = {
     "LightningDataModule": "interpretune.adapters.LightningDataModule",
     "LightningModule": "interpretune.adapters.LightningModule",
     "ITLensModule": "interpretune.adapters.ITLensModule",
-    "SAELensModule": "interpretune.adapters.SAELensModule",
+    "SAELensTLModule": "interpretune.adapters.SAELensTLModule",
+    "SAELensNNsightModule": "interpretune.adapters.SAELensNNsightModule",
     "ADAPTER_REGISTRY": "interpretune.adapters.ADAPTER_REGISTRY",
     "CompositionRegistry": "interpretune.adapters.CompositionRegistry",
     # analysis
@@ -178,7 +179,8 @@ __all__ = [
     "LightningDataModule",
     "LightningModule",
     "ITLensModule",
-    "SAELensModule",
+    "SAELensTLModule",
+    "SAELensNNsightModule",
     "ADAPTER_REGISTRY",
     "CompositionRegistry",
     # Analysis Module
@@ -255,7 +257,8 @@ if TYPE_CHECKING:
         LightningDataModule,
         LightningModule,
         ITLensModule,
-        SAELensModule,
+        SAELensTLModule,
+        SAELensNNsightModule,
         ADAPTER_REGISTRY,
         CompositionRegistry,
     )

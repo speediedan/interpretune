@@ -23,6 +23,7 @@ unset collect_dir
 unset no_reruns
 unset reruns_count
 unset reruns_delay
+unset allow_failures
 unset IT_RUN_PROFILING_TESTS
 unset IT_RUN_STANDALONE_TESTS
 unset IT_EXPERIMENTAL_PATCH_TESTS
@@ -42,6 +43,7 @@ Usage: $0
    [ --experiments_list input]
    [ --experiment_patch_mask input]
    [ --collect_dir input]
+   [ --allow-failures ]          # Continue running tests after failures
    [ --help ]
    Examples:
 	# run profile tests marked to run with CI following a filter pattern:
@@ -58,7 +60,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long mark_type:,log_file:,filter_pattern:,experiments_list:,experiment_patch_mask:,collect_dir:,no-reruns,reruns:,reruns-delay:,help -- "$@")
+args=$(getopt -o '' --long mark_type:,log_file:,filter_pattern:,experiments_list:,experiment_patch_mask:,collect_dir:,no-reruns,reruns:,reruns-delay:,allow-failures,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -76,6 +78,7 @@ do
     --no-reruns)   no_reruns=1 ; shift ;;
     --reruns)   reruns_count=$2 ; shift 2 ;;
     --reruns-delay)   reruns_delay=$2 ; shift 2 ;;
+    --allow-failures)  allow_failures=1    ; shift  ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
     *) >&2 echo Unsupported option: $1
@@ -170,4 +173,7 @@ trap 'show_test_results "$special_test_session_log" "$test_session_tmp_log"' EXI
 ## Special coverage collection flow
 define_configuration
 collect_tests "$collect_defaults" "$special_test_session_log"
-execute_tests "$exec_defaults" "$special_test_session_log" "$test_session_tmp_log"
+if [[ ${allow_failures:-0} -eq 1 ]]; then
+    echo "Running in --allow-failures mode: tests will continue past failures." | tee -a $special_test_session_log
+fi
+execute_tests "$exec_defaults" "$special_test_session_log" "$test_session_tmp_log" "${allow_failures:-0}"

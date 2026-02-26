@@ -216,7 +216,7 @@ pytest --collect-only
 
 All CI and local coverage scripts include `--reruns 2 --reruns-delay 5` by default to handle transient `httpx` read timeouts with HuggingFace `transformers` v5. The `pytest-rerunfailures` plugin is included in our test dependencies.
 
-Local scripts (`gen_it_coverage.sh`, `special_tests.sh`, `analyze_test_coverage.py`) support configurable rerun behavior via `--no-reruns`, `--reruns=N`, and `--reruns-delay=N` flags.
+Local scripts (`gen_it_coverage.sh`, `special_tests.sh`, `analyze_test_coverage.py`) support configurable rerun behavior via `--no-reruns`, `--reruns=N`, and `--reruns-delay=N` flags. Use `--allow-failures` with `gen_it_coverage.sh` and `special_tests.sh` to continue collecting coverage past test failures — preferred for faster debugging iterations.
 
 **⚠️ Dependency Note:** Full test suite requires ML dependencies. Tests will fail without proper environment setup.
 
@@ -235,6 +235,15 @@ ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
   --target-env-name=${IT_TARGET_VENV} \
   --venv-dir=${IT_VENV_BASE} \
   --no-rebuild-base
+
+# Preferred for debugging: use --allow-failures to continue past failures and see all results
+${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
+  ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
+  --repo-home=${IT_REPO_DIR} \
+  --target-env-name=${IT_TARGET_VENV} \
+  --venv-dir=${IT_VENV_BASE} \
+  --no-rebuild-base \
+  --allow-failures
 
 # Note: Coverage collection takes approximately 45 minutes
 ```
@@ -400,6 +409,15 @@ tail -f `ls -rt /tmp/gen_it_coverage_it_* | tail -1`
   --venv-dir=/mnt/cache/${USER}/.venvs \
   --no-rebuild-base
 
+# Preferred for debugging: use --allow-failures to continue past failures and see all results
+~/repos/interpretune/scripts/manage_standalone_processes.sh --use-nohup \
+  ~/repos/interpretune/scripts/gen_it_coverage.sh \
+  --repo-home=${HOME}/repos/interpretune \
+  --target-env-name=it_latest \
+  --venv-dir=/mnt/cache/${USER}/.venvs \
+  --no-rebuild-base \
+  --allow-failures
+
 # Generate coverage with rebuild (use when dependencies changed)
 ~/repos/interpretune/scripts/manage_standalone_processes.sh --use-nohup \
   ~/repos/interpretune/scripts/gen_it_coverage.sh \
@@ -413,6 +431,7 @@ tail -f `ls -rt /tmp/gen_it_coverage_it_* | tail -1`
 **Flags:**
 
 - `--no-rebuild-base`: Skips environment rebuild (faster, use when dependencies haven't changed)
+- `--allow-failures`: Continue collecting coverage even if tests fail; preferred for debugging to see all failures at once
 - `--venv-dir`: Base directory for venvs (recommended: `/mnt/cache/${USER}/.venvs` for hardlink performance)
 - `--run-all-and-examples`: Include additional example tests (extends runtime)
 - `--torch-backend=cpu`: Force CPU-only torch (useful for testing without GPU)

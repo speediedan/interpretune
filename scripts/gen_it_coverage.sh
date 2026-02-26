@@ -26,6 +26,7 @@ unset torch_backend
 unset no_reruns
 unset reruns_count
 unset reruns_delay
+unset allow_failures
 declare -a from_source_specs
 
 # Default rerun settings (for transient httpx read timeouts with HF transformers v5)
@@ -50,6 +51,7 @@ Usage: $0
     [ --no-reruns ]  (disable test reruns for transient failures)
     [ --reruns N ]  (number of reruns for transient failures, default: 2)
     [ --reruns-delay N ]  (delay in seconds between reruns, default: 5)
+    [ --allow-failures ]  (continue collecting coverage even if tests fail; useful for debugging)
     [ --help ]
 
     The --from-source flag can be specified multiple times for clarity, or use semicolons to separate specs.
@@ -88,7 +90,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo-home:,target-env-name:,python-version:,torch-backend:,no-rebuild-base,from-source:,venv-dir:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,it-build-flags:,no-reruns,reruns:,reruns-delay:,help -- "$@")
+args=$(getopt -o '' --long repo-home:,target-env-name:,python-version:,torch-backend:,no-rebuild-base,from-source:,venv-dir:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,it-build-flags:,no-reruns,reruns:,reruns-delay:,allow-failures,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -112,6 +114,7 @@ do
     --no-reruns)   no_reruns=1 ; shift ;;
     --reruns)   reruns_count=$2 ; shift 2 ;;
     --reruns-delay)   reruns_delay=$2 ; shift 2 ;;
+    --allow-failures)  allow_failures=1 ; shift ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
     *) >&2 echo Unsupported option: $1
@@ -204,22 +207,28 @@ collect_env_coverage(){
     [[ -n "${reruns_count}" && $no_reruns -ne 1 ]] && special_tests_rerun_args="${special_tests_rerun_args} --reruns=${reruns_count}"
     [[ -n "${reruns_delay}" && $no_reruns -ne 1 ]] && special_tests_rerun_args="${special_tests_rerun_args} --reruns-delay=${reruns_delay}"
 
+    # Prepare allow_failures flag for special_tests.sh
+    local failures_flag=""
+    if [[ $allow_failures -eq 1 ]]; then
+        failures_flag="--allow-failures"
+        echo "Running in --allow-failures mode: coverage collection will continue past test failures." >> $coverage_session_log
+    fi
     case $1 in
         it_latest )
             check_self_test_only "Skipping all tests and examples." && return
             python -m coverage erase
             if [[ $run_all_and_examples -eq 1 ]]; then
                 # Using pytest-cov ensures coverage starts before test collection imports
-                python -m pytest --cov=src/interpretune --cov-report= src/interpretune src/it_examples tests -v ${rerun_args} 2>&1 >> $coverage_session_log
-                (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} 2>&1 >> ${temp_special_log}) > /dev/null
-                (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} 2>&1 >> ${temp_special_log}) > /dev/null
-                (./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} ${special_tests_rerun_args} 2>&1 >> ${temp_special_log}) > /dev/null
-                (./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} 2>&1 >> ${temp_special_log}) > /dev/null
+                python -m pytest --cov=src/interpretune --cov-report= src/interpretune src/it_examples tests -v ${rerun_args} 2>&1 >> $coverage_session_log || [[ $allow_failures -eq 1 ]]
+                (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} 2>&1 >> ${temp_special_log}) > /dev/null || [[ $allow_failures -eq 1 ]]
+                (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} 2>&1 >> ${temp_special_log}) > /dev/null || [[ $allow_failures -eq 1 ]]
+                (./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} 2>&1 >> ${temp_special_log}) > /dev/null || [[ $allow_failures -eq 1 ]]
+                (./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} 2>&1 >> ${temp_special_log}) > /dev/null || [[ $allow_failures -eq 1 ]]
             else
                 # Using pytest-cov ensures coverage starts before test collection imports
-                python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${rerun_args} 2>&1 >> $coverage_session_log
-                (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} 2>&1 >> ${temp_special_log}) > /dev/null
-                (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} 2>&1 >> ${temp_special_log}) > /dev/null
+                python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${rerun_args} 2>&1 >> $coverage_session_log || [[ $allow_failures -eq 1 ]]
+                (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} 2>&1 >> ${temp_special_log}) > /dev/null || [[ $allow_failures -eq 1 ]]
+                (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} 2>&1 >> ${temp_special_log}) > /dev/null || [[ $allow_failures -eq 1 ]]
             fi
             ;;
         *)

@@ -79,6 +79,15 @@ ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
   --venv-dir=${IT_VENV_BASE} \
   --no-rebuild-base
 
+# Preferred for debugging: use --allow-failures to continue past failures and see all results
+${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
+  ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
+  --repo-home=${IT_REPO_DIR} \
+  --target-env-name=${IT_TARGET_VENV} \
+  --venv-dir=${IT_VENV_BASE} \
+  --no-rebuild-base \
+  --allow-failures
+
 # Note: Coverage collection takes approximately 45 minutes
 ```
 

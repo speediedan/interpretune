@@ -20,6 +20,8 @@ from interpretune.adapters import (
     LightningAdapter,
     BaseITLensModule,
     TLensAttributeMixin,
+    NNsightAttributeMixin,
+    BaseNNsightModule,
 )
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import SAELensFromPretrainedConfig, SAELensCustomConfig, SAELensConfig
@@ -42,7 +44,12 @@ class InstantiatedSAE:
 ################################################################################
 
 
-class SAELensAttributeMixin(TLensAttributeMixin):
+class SAELensAttributeMixin:
+    """Backend-agnostic mixin for SAE Lens attribute access.
+
+    Provides consistent attribute access patterns for SAE-related state.
+    """
+
     @property
     def sae_cfgs(self) -> SAEConfig | None:
         try:
@@ -59,29 +66,23 @@ class SAELensAttributeMixin(TLensAttributeMixin):
         return [sae.handle for sae in self.saes]  # type: ignore[attr-defined]  # provided by mixing class
 
 
-class BaseSAELensModule(BaseITLensModule):
+class BaseSAELensModule(BaseITModule):
+    """Backend-agnostic base module for SAE Lens.
+
+    Provides SAE/transcoder loading and state management that works with both TransformerLens and NNsight backends, e.g.
+    when using the TransformerLens backend, compose with BaseITLensModule via the adapter composition system.
+    """
+
     def __init__(self, *args, **kwargs):
         # using cooperative inheritance, so initialize attributes that may be required in base init methods
         self.saes: list[InstantiatedSAE] = []
-        from interpretune.analysis.backends.transformer_lens import TLModelBackend
-
-        self._model_backend = TLModelBackend()
+        self._model_backend: ModelBackend | None = getattr(self, "_model_backend", None)
         super().__init__(*args, **kwargs)
 
     @property
     def model_backend(self) -> ModelBackend:
+        assert self._model_backend is not None, "model_backend not set — ensure a backend mixin is composed"
         return self._model_backend
-
-    def _convert_hf_to_tl(self) -> None:
-        # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
-        tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
-        hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
-        pruned_cfg = self._prune_tl_cfg_dict()  # avoid edge case where conflicting keys haven't already been pruned
-        self.model = HookedSAETransformer.from_pretrained(
-            hf_model=cast(PreTrainedModel, self.model), tokenizer=tokenizer_handle, **pruned_cfg
-        )
-        self.model.config = hf_preconversion_config
-        self.instantiate_saes()
 
     def instantiate_saes(self) -> None:
         for sae_cfg in self.it_cfg.sae_cfgs:
@@ -95,22 +96,135 @@ class BaseSAELensModule(BaseITLensModule):
                 original_cfg = original_cfg or {}
                 sparsity = sparsity or {}
             self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))  # type: ignore[arg-type]
-            if self.it_cfg.add_saes_on_init:
+            if self.it_cfg.add_saes_on_init and hasattr(self.model, "add_sae"):
                 self.model.add_sae(added_sae.handle)  # type: ignore[operator]
-
-    def tl_config_model_init(self) -> None:
-        # Filter out IT-specific keys (e.g., 'use_bridge') that HookedSAETransformer doesn't accept
-        pruned_cfg = self._prune_tl_cfg_dict()
-        self.model = HookedSAETransformer(tokenizer=self.it_cfg.tokenizer, **pruned_cfg)
-        self.instantiate_saes()
 
     def _capture_hyperparameters(self) -> None:
         self._it_state._init_hparams = {"sae_cfgs": deepcopy(self.it_cfg.sae_cfgs)}
         super()._capture_hyperparameters()
 
     def set_input_require_grads(self) -> None:
-        # not currently supported by ITLensModule
-        rank_zero_info("Setting input require grads not currently supported by BASESAELensModule.")
+        rank_zero_info("Setting input require grads not currently supported by BaseSAELensModule.")
+
+
+class SAELensTLModuleMixin(TLensAttributeMixin):
+    """Mixin that provides TransformerLens-specific functionality for SAE Lens.
+
+    This mixin is composed with BaseSAELensModule and BaseITLensModule when using the TransformerLens backend to
+    provide _convert_hf_to_tl, tl_config_model_init, and TLModelBackend initialization.
+
+    Supports model_wrapper selection via ``it_cfg.model_wrapper``:
+    - ``"hooked_transformer"`` → ``HookedSAETransformer.from_pretrained()`` (default)
+    - ``"transformer_bridge"`` → ``SAETransformerBridge`` (not yet implemented)
+    """
+
+    def __init__(self, *args, **kwargs):
+        from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+        self._model_backend = TLModelBackend()
+        super().__init__(*args, **kwargs)
+
+    def _convert_hf_to_tl(self) -> None:
+        """Convert HF model to HookedSAETransformer (or SAETransformerBridge when available)."""
+        model_wrapper = getattr(self.it_cfg, "model_wrapper", "hooked_transformer")
+        if model_wrapper == "transformer_bridge":
+            raise NotImplementedError(
+                "SAETransformerBridge is not yet implemented. Use model_wrapper='hooked_transformer' "
+                "(or omit it for the default) until TransformerBridge SAE support is available."
+            )
+        # HookedSAETransformer path (existing behavior)
+        # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
+        tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer  # type: ignore[attr-defined]
+        hf_preconversion_config = deepcopy(self.model.config)  # type: ignore[attr-defined]  # capture original hf config before conversion
+        pruned_cfg = self._prune_tl_cfg_dict()  # type: ignore[attr-defined]  # from BaseITLensModule
+        self.model = HookedSAETransformer.from_pretrained(
+            hf_model=cast(PreTrainedModel, self.model), tokenizer=tokenizer_handle, **pruned_cfg
+        )
+        self.model.config = hf_preconversion_config
+        self.instantiate_saes()  # type: ignore[attr-defined]  # from BaseSAELensModule
+
+    def tl_config_model_init(self) -> None:
+        """Initialize model from TL config (custom/non-pretrained path)."""
+        # Filter out IT-specific keys (e.g., 'use_bridge') that HookedSAETransformer doesn't accept
+        pruned_cfg = self._prune_tl_cfg_dict()  # type: ignore[attr-defined]  # from BaseITLensModule
+        self.model = HookedSAETransformer(tokenizer=self.it_cfg.tokenizer, **pruned_cfg)
+        self.instantiate_saes()  # type: ignore[attr-defined]  # from BaseSAELensModule
+
+
+class SAELensNNsightModuleMixin(NNsightAttributeMixin):
+    """Mixin that provides NNsight-specific functionality for SAE Lens.
+
+    This mixin is composed with BaseSAELensModule and BaseNNsightModule when using the NNsight backend to handle NNsight
+    LanguageModel initialization and SAE loading.
+    """
+
+    def auto_model_init(self) -> None:
+        """Initialize model using NNsight backend for SAE Lens.
+
+        This overrides BaseNNsightModule's auto_model_init to additionally load SAEs after the NNsight LanguageModel is
+        initialized.
+        """
+        self._init_nnsight_for_sae_lens()
+
+    def _init_nnsight_for_sae_lens(self) -> None:
+        """Initialize NNsight LanguageModel and load SAEs.
+
+        This method handles NNsight-specific initialization logic, then loads SAEs using sae_lens (pure PyTorch).
+        """
+        import os
+
+        from nnsight import LanguageModel
+
+        from interpretune.utils import rank_zero_debug
+
+        nnsight_cfg = self.nnsight_cfg  # type: ignore[attr-defined]  # from NNsightAttributeMixin
+        if nnsight_cfg is None:
+            raise ValueError("nnsight_cfg must be set for NNsight SAE Lens model initialization")
+
+        model_name = nnsight_cfg.model_name or self.it_cfg.model_name_or_path  # type: ignore[attr-defined]
+        if model_name is None:
+            raise ValueError("model_name must be specified in nnsight_cfg or model_name_or_path in it_cfg")
+
+        rank_zero_info(f"Initializing NNsight LanguageModel for SAE Lens with model: {model_name}")
+
+        nnsight_kwargs = nnsight_cfg.get_nnsight_kwargs()
+
+        # Handle authentication token
+        if self.it_cfg.os_env_model_auth_key:  # type: ignore[attr-defined]
+            access_token = os.environ.get(self.it_cfg.os_env_model_auth_key.upper())  # type: ignore[attr-defined]
+            if access_token:
+                nnsight_kwargs["token"] = access_token
+                rank_zero_debug("Using authentication token from environment for NNsight model")
+
+        # Handle NDIF API key for remote execution
+        if nnsight_cfg.remote:
+            api_key = nnsight_cfg.api_key or os.environ.get("NDIF_API_KEY")
+            if api_key:
+                nnsight_kwargs["api_key"] = api_key
+
+        # Initialize NNsight LanguageModel
+        self.model = LanguageModel(model_name, **nnsight_kwargs)
+
+        # Store tokenizer reference
+        if self.it_cfg.tokenizer is None and hasattr(self.model, "tokenizer"):  # type: ignore[attr-defined]
+            self.it_cfg.tokenizer = self.model.tokenizer  # type: ignore[attr-defined]
+
+        rank_zero_info("NNsight LanguageModel initialized for SAE Lens")
+
+        # Load SAEs (pure PyTorch, backend-agnostic)
+        self.instantiate_saes()  # type: ignore[attr-defined]  # from BaseSAELensModule
+
+    def _capture_hyperparameters(self) -> None:
+        """Capture hyperparameters for NNsight SAE Lens module.
+
+        This overrides BaseNNsightModule's _capture_hyperparameters to avoid requiring nnsight_cfg on the base module.
+        SAE Lens NNsight modules use SAELensConfig which manages nnsight_cfg.
+        """
+        self._it_state._init_hparams = {"sae_cfgs": deepcopy(self.it_cfg.sae_cfgs)}  # type: ignore[attr-defined]
+        if self.it_cfg.nnsight_cfg is not None:  # type: ignore[attr-defined]
+            self._it_state._init_hparams.update({"nnsight_cfg": deepcopy(self.it_cfg.nnsight_cfg)})  # type: ignore[attr-defined]
+        # Skip BaseNNsightModule._capture_hyperparameters and call BaseITModule's version
+        BaseITModule._capture_hyperparameters(self)  # type: ignore[arg-type]
 
 
 ################################################################################
@@ -159,53 +273,178 @@ class SAELensAdapter(SAELensAttributeMixin):
 
     @classmethod
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
+        # ======================================================================
+        # Backend-agnostic registrations: (core, sae_lens) — defaults to TL backend
+        # ======================================================================
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="datamodule",
             adapter_combination=(Adapter.core, Adapter.sae_lens),  # type: ignore[arg-type]
             composition_classes=(ITDataModule,),
-            description="SAE Lens adapter that can be composed with core and l...",
-        )
-        adapter_ctx_registry.register(
-            Adapter.sae_lens,
-            component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.sae_lens),  # type: ignore[arg-type]
-            composition_classes=(ITDataModule, LightningDataModule),
-            description="SAE Lens adapter that can be composed with core and l...",
+            description="SAE Lens adapter (default TL backend) that can be composed with core...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module",
             adapter_combination=(Adapter.core, Adapter.sae_lens),  # type: ignore[arg-type]
-            composition_classes=(SAELensModule,),
-            description="SAE Lens adapter that can be composed with core and l...",
+            composition_classes=(SAELensTLModule,),
+            description="SAE Lens adapter (default TL backend) that can be composed with core...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module_cfg",
             adapter_combination=(Adapter.core, Adapter.sae_lens),  # type: ignore[arg-type]
             composition_classes=(SAELensConfig,),
-            description="SAE Lens configuration that can be composed with core and l...",
+            description="SAE Lens configuration that can be composed with core...",
+        )
+
+        # ======================================================================
+        # TransformerLens backend registrations: (core, transformer_lens, sae_lens)
+        # ======================================================================
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="datamodule",
+            adapter_combination=(Adapter.core, Adapter.transformer_lens, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(ITDataModule,),
+            description="SAE Lens adapter with explicit TransformerLens backend...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="module",
+            adapter_combination=(Adapter.core, Adapter.transformer_lens, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(SAELensTLModule,),
+            description="SAE Lens adapter with explicit TransformerLens backend...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="module_cfg",
+            adapter_combination=(Adapter.core, Adapter.transformer_lens, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(SAELensConfig,),
+            description="SAE Lens configuration with explicit TransformerLens backend...",
+        )
+
+        # ======================================================================
+        # Lightning + default TL backend registrations: (lightning, sae_lens)
+        # ======================================================================
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="datamodule",
+            adapter_combination=(Adapter.lightning, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(ITDataModule, LightningDataModule),
+            description="SAE Lens adapter (default TL backend) with Lightning...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module",
             adapter_combination=(Adapter.lightning, Adapter.sae_lens),  # type: ignore[arg-type]
             composition_classes=(
+                SAELensTLModuleMixin,
                 SAELensAttributeMixin,
                 BaseSAELensModule,
+                BaseITLensModule,
                 LightningAdapter,
                 BaseITModule,
                 LightningModule,
             ),
-            description="SAE Lens adapter that can be composed with core and l...",
+            description="SAE Lens adapter (default TL backend) with Lightning...",
         )
         adapter_ctx_registry.register(
             Adapter.sae_lens,
             component_key="module_cfg",
             adapter_combination=(Adapter.lightning, Adapter.sae_lens),  # type: ignore[arg-type]
             composition_classes=(SAELensConfig,),
-            description="SAE Lens adapter that can be composed with core and l...",
+            description="SAE Lens configuration with Lightning...",
+        )
+
+        # ======================================================================
+        # Lightning + explicit TL backend registrations: (lightning, transformer_lens, sae_lens)
+        # ======================================================================
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="datamodule",
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(ITDataModule, LightningDataModule),
+            description="SAE Lens adapter with explicit TransformerLens backend and Lightning...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="module",
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(
+                SAELensTLModuleMixin,
+                SAELensAttributeMixin,
+                BaseSAELensModule,
+                BaseITLensModule,
+                LightningAdapter,
+                BaseITModule,
+                LightningModule,
+            ),
+            description="SAE Lens adapter with explicit TransformerLens backend and Lightning...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="module_cfg",
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(SAELensConfig,),
+            description="SAE Lens configuration with explicit TransformerLens backend and Lightning...",
+        )
+
+        # ======================================================================
+        # NNsight backend registrations: (core, nnsight, sae_lens)
+        # ======================================================================
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="datamodule",
+            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(ITDataModule,),
+            description="SAE Lens adapter with NNsight backend...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="module",
+            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(SAELensNNsightModule,),
+            description="SAE Lens adapter with NNsight backend...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="module_cfg",
+            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(SAELensConfig,),
+            description="SAE Lens configuration with NNsight backend...",
+        )
+
+        # ======================================================================
+        # Lightning + NNsight backend registrations: (lightning, nnsight, sae_lens)
+        # ======================================================================
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="datamodule",
+            adapter_combination=(Adapter.lightning, Adapter.nnsight, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(ITDataModule, LightningDataModule),
+            description="SAE Lens adapter with NNsight backend and Lightning...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="module",
+            adapter_combination=(Adapter.lightning, Adapter.nnsight, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(
+                SAELensNNsightModuleMixin,
+                SAELensAttributeMixin,
+                BaseSAELensModule,
+                BaseNNsightModule,
+                LightningAdapter,
+                BaseITModule,
+                LightningModule,
+            ),
+            description="SAE Lens adapter with NNsight backend and Lightning...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.sae_lens,
+            component_key="module_cfg",
+            adapter_combination=(Adapter.lightning, Adapter.nnsight, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(SAELensConfig,),
+            description="SAE Lens configuration with NNsight backend and Lightning...",
         )
 
 
@@ -264,4 +503,21 @@ class SAELensAnalysisMixin:
         display(IFrame(url, width=width, height=height))
 
 
-class SAELensModule(SAELensAnalysisMixin, SAELensAdapter, CoreHelperAttributes, BaseSAELensModule): ...
+class SAELensTLModule(
+    SAELensTLModuleMixin,
+    SAELensAnalysisMixin,
+    SAELensAdapter,
+    CoreHelperAttributes,
+    BaseSAELensModule,
+    BaseITLensModule,
+): ...
+
+
+class SAELensNNsightModule(
+    SAELensNNsightModuleMixin,
+    SAELensAnalysisMixin,
+    SAELensAdapter,
+    CoreHelperAttributes,
+    BaseSAELensModule,
+    BaseNNsightModule,
+): ...
