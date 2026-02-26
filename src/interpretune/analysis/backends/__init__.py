@@ -6,8 +6,7 @@ frameworks (TransformerLens, nnsight, etc.).
 
 from __future__ import annotations
 
-from contextlib import AbstractContextManager
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 import torch
 
@@ -67,24 +66,40 @@ class ModelBackend(Protocol):
     def fwd_w_grads_and_latent_models(
         self,
         model: Any,
+        batch: dict[str, Any],
         latent_model_handles: list[Any],
-        fwd_hooks: list[tuple[str, Any]],
-        bwd_hooks: list[tuple[str, Any]],
-    ) -> AbstractContextManager[Any]:
-        """Context manager for gradient computation with latent model and gradient hooks.
+        fwd_hooks: list[tuple[Any, Any]],
+        bwd_hooks: list[tuple[Any, Any]],
+        backward_fn: Callable[[torch.Tensor], torch.Tensor],
+    ) -> torch.Tensor:
+        """Run forward + backward with latent model hooks and gradient caching.
 
-        Sets up the model with gradient tracking, latent model hooks, and forward/backward
-        gradient caching hooks. Yields the model ready for forward calls. The caller runs
-        forward + backward inside the context.
+        The backend owns the entire forward+backward execution flow.  This enables both
+        eager execution (TransformerLens) and deferred/traced execution (NNsight) to
+        use the same op-level code.
+
+        The ``backward_fn`` closure is provided by the analysis op and computes a scalar
+        metric from raw model logits.  The backend calls ``backward_fn(logits)`` to obtain
+        the scalar, then runs ``.backward()`` on it (eager for TL, deferred via
+        ``with scalar.backward():`` for NNsight).
+
+        Forward and backward cache hooks (``fwd_hooks``, ``bwd_hooks``) are structured as
+        ``[(names_filter, cache_fn), ...]`` and are invoked by the backend to populate
+        ``analysis_cfg.cache_dict``.  For TL, hooks fire during execution.  For NNsight,
+        the backend calls them after the trace completes with materialised tensors.
 
         Args:
-            model: The model to prepare.
-            latent_model_handles: Latent model handles to attach.
-            fwd_hooks: Forward hooks for gradient caching.
-            bwd_hooks: Backward hooks for gradient caching.
+            model: The model to run.
+            batch: Input batch dict (unpacked as ``**batch`` for the model call).
+            latent_model_handles: Latent model handles (e.g., SAE objects) to attach.
+            fwd_hooks: Forward cache hooks ``[(names_filter, cache_fn), ...]``.
+            bwd_hooks: Backward cache hooks ``[(names_filter, cache_fn), ...]``.
+            backward_fn: ``raw_logits -> scalar``.  Takes the full model output logits and
+                returns a scalar tensor to call ``.backward()`` on.  Must be compatible with
+                both real tensors (TL) and NNsight proxy objects.
 
-        Yields:
-            The model with all hooks attached, ready for forward calls.
+        Returns:
+            Raw model output logits (always a real tensor, even for NNsight).
         """
         ...
 

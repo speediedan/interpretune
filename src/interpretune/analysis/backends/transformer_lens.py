@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from typing import Any, Generator
+from typing import Any, Callable
 
 import torch
 
@@ -47,23 +46,42 @@ class TLModelBackend:
             fwd_hooks=fwd_hooks,
         )
 
-    @contextmanager
     def fwd_w_grads_and_latent_models(
         self,
         model: Any,
+        batch: dict[str, Any],
         latent_model_handles: list[Any],
-        fwd_hooks: list[tuple[str, Any]],
-        bwd_hooks: list[tuple[str, Any]],
-    ) -> Generator[Any, None, None]:
-        """Context manager for gradient computation with latent model and gradient hooks.
+        fwd_hooks: list[tuple[Any, Any]],
+        bwd_hooks: list[tuple[Any, Any]],
+        backward_fn: Callable[[torch.Tensor], torch.Tensor],
+    ) -> torch.Tensor:
+        """Run forward + backward with latent models and gradient hooks via TransformerLens.
 
         Sets up TransformerLens ``saes()`` and ``hooks()`` context managers with gradient
-        tracking enabled. Yields the model ready for forward calls.
+        tracking enabled.  Calls ``model(**batch)`` for the forward pass, applies
+        ``backward_fn`` to the logits to obtain a scalar, and calls ``.backward()`` on it.
+
+        TL's hook system populates the analysis config's ``cache_dict`` as a side effect
+        during forward and backward execution.
+
+        Args:
+            model: TransformerLens model (HookedSAETransformer or SAETransformerBridge).
+            batch: Input batch dict.
+            latent_model_handles: SAE/transcoder handles.
+            fwd_hooks: Forward cache hooks ``[(names_filter, cache_fn), ...]``.
+            bwd_hooks: Backward cache hooks ``[(names_filter, cache_fn), ...]``.
+            backward_fn: ``logits -> scalar`` to backpropagate.
+
+        Returns:
+            Raw model output logits.
         """
         with torch.set_grad_enabled(True):
             with model.saes(saes=latent_model_handles):
                 with model.hooks(fwd_hooks=fwd_hooks, bwd_hooks=bwd_hooks):
-                    yield model
+                    logits = model(**batch)
+                    scalar = backward_fn(logits)
+                    scalar.backward()
+        return logits
 
     def wrap_activation_cache(
         self,

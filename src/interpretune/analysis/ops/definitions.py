@@ -231,7 +231,12 @@ def model_gradient_impl(
     logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
     get_loss_preds_diffs: Callable = get_loss_preds_diffs,
 ) -> DefaultAnalysisBatchProtocol:
-    """Implementation for gradient-based attribution."""
+    """Implementation for gradient-based attribution.
+
+    Defines a ``backward_fn`` closure that extracts answer logits, computes logit diffs,
+    and returns their sum as the scalar to backpropagate.  The backend handles the entire
+    forward + backward flow (enabling both eager and trace-based execution).
+    """
 
     # Ensure we have answer indices
     if not hasattr(analysis_batch, "answer_indices") or analysis_batch.answer_indices is None:
@@ -250,27 +255,36 @@ def model_gradient_impl(
     #       but for now controlling manually here
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
         batch = module.auto_prune_batch(batch, "forward")
-    # Run with hooks and compute gradients
-    with module.model_backend.fwd_w_grads_and_latent_models(
+
+    # ---- backward_fn closure: captures op-specific state ---------------------
+    # Applied to raw logits inside the backend.  Must use only standard PyTorch ops
+    # so NNsight can trace through it (all operations intercepted via __torch_function__).
+    def backward_fn(raw_logits: torch.Tensor) -> torch.Tensor:
+        """Extract answer logits, compute logit diffs via get_loss_preds_diffs, return scalar."""
+        sliced = raw_logits[torch.arange(raw_logits.size(0)), answer_indices]
+        squeezed = torch.squeeze(sliced, dim=1)
+        _, logit_diffs, _, _ = get_loss_preds_diffs(module, analysis_batch, squeezed, logit_diff_fn)
+        return logit_diffs.sum()
+
+    # ---- Run forward + backward via backend ----------------------------------
+    raw_logits = module.model_backend.fwd_w_grads_and_latent_models(
         model=module.model,
+        batch=batch,
         latent_model_handles=module.sae_handles,
         fwd_hooks=module.analysis_cfg.fwd_hooks,
         bwd_hooks=module.analysis_cfg.bwd_hooks,
-    ) as hooked_model:
-        answer_logits = hooked_model(**batch)
-        answer_logits = torch.squeeze(
-            answer_logits[torch.arange(batch["input"].size(0)), answer_indices],  # type: ignore[attr-defined]  # BatchEncoding tensor has size
-            dim=1,
-        )
-        # Compute loss and logit differences using the instance's get_loss_preds_diffs method
-        loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(
-            module, analysis_batch, answer_logits, logit_diff_fn
-        )
+        backward_fn=backward_fn,
+    )
 
-        # Compute gradients
-        logit_diffs.sum().backward()
-        if logit_diffs.dim() == 0:
-            logit_diffs.unsqueeze_(0)
+    # ---- Recompute metrics from returned real logits -------------------------
+    answer_logits = torch.squeeze(
+        raw_logits[torch.arange(batch["input"].size(0)), answer_indices],  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+        dim=1,
+    )
+    loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn)
+    if logit_diffs.dim() == 0:
+        logit_diffs.unsqueeze_(0)
+
     analysis_batch.update(
         answer_logits=answer_logits,
         answer_indices=answer_indices,
