@@ -1145,8 +1145,9 @@ def compute_correct(
 
     # TODO: this is another location where we should be conditioning behavior on op functionality, not name
     if hasattr(op, "ctx_key") and op.ctx_key == "logit_diffs_attr_ablation":  # type: ignore[attr-defined]  # AnalysisOp has ctx_key
-        batch_preds = [  # type: ignore[attr-defined]  # analysis_store has by_latent_model method
-            b.mode(dim=0).values.cpu() for b in analysis_store.by_latent_model("preds").batch_join(across_saes=True)
+        batch_preds = [
+            b.mode(dim=0).values.cpu()
+            for b in analysis_store.by_latent_model("preds").batch_join(across_saes=True)  # type: ignore[attr-defined]  # analysis_store has by_latent_model method
         ]
     else:
         batch_preds = analysis_store.preds  # type: ignore[attr-defined]  # analysis_store has preds attribute

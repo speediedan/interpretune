@@ -216,8 +216,8 @@ class NNsightModelBackend:
         return model.get_submodule(path)
 
     @staticmethod
-    def _read_activation(data: Any, io_type: Literal["input", "output"]) -> torch.Tensor:
-        """Extract the hidden-state tensor from a module's input or output.
+    def _read_activation(data: Any, io_type: Literal["input", "output"]) -> Any:
+        """Extract the hidden-state tensor (or NNsight proxy) from a module's input or output.
 
         For **output**: most HF transformer layers return a tuple ``(hidden_states, ...)``;
         MLP/LayerNorm layers may return a single tensor.
@@ -449,7 +449,7 @@ class NNsightModelBackend:
                 logits_proxy = model.output.logits
                 scalar = backward_fn(logits_proxy)
 
-                with scalar.backward():
+                with scalar.backward():  # type: ignore[union-attr]  # nnsight patches Tensor.backward() to return BackwardsTracer context manager
                     # Capture gradients for each proxy we stored above
                     for proxy_key in list(saved_grad.keys()):
                         if proxy_key.startswith("_proxy_"):

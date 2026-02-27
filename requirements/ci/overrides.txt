@@ -1,5 +1,5 @@
 transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@fa5df3f5d689fc01942211013cac4b2d232735a7
-nnsight>=0.5.15
+nnsight>=0.6.0
 triton==3.6.0
 torchvision==0.25.0
 torch==2.10.0

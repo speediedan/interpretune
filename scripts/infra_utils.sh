@@ -251,8 +251,9 @@ install_from_source_packages(){
         IFS='|' read -r pkg_path pkg_extras pkg_env_vars <<< "${pkg_spec}"
 
         # Uninstall any existing installations (try both package name formats)
+        # Note: uv pip uninstall does not support -y flag (no confirmation prompt needed)
         local pkg_underscore="${pkg//-/_}"
-        uv pip uninstall -y "${pkg}" "${pkg_underscore}" 2>/dev/null || true
+        uv pip uninstall "${pkg}" "${pkg_underscore}" 2>/dev/null || true
 
         cd "${pkg_path}"
 
@@ -281,7 +282,29 @@ install_from_source_packages(){
             done
         fi
 
+        # If UV_OVERRIDE is set and contains the package being installed, filter
+        # that entry out to a temp file. uv uses the override to resolve the
+        # package from PyPI instead of the local "-e ." source when the package
+        # name appears in the override file, preventing editable installs.
+        local _orig_uv_override=""
+        if [[ -n "${UV_OVERRIDE:-}" && -f "${UV_OVERRIDE}" ]]; then
+            if grep -qiE "^${pkg}([^a-zA-Z0-9_-]|$)|^${pkg_underscore}([^a-zA-Z0-9_-]|$)" "${UV_OVERRIDE}"; then
+                _orig_uv_override="${UV_OVERRIDE}"
+                local _tmp_override
+                _tmp_override=$(mktemp)
+                grep -viE "^${pkg}([^a-zA-Z0-9_-]|$)|^${pkg_underscore}([^a-zA-Z0-9_-]|$)" "${UV_OVERRIDE}" > "${_tmp_override}"
+                export UV_OVERRIDE="${_tmp_override}"
+                echo "  (filtered ${pkg} from UV_OVERRIDE for editable install)"
+            fi
+        fi
+
         uv pip install ${uv_install_flags} -e "${install_target}"
+
+        # Restore original UV_OVERRIDE if we created a temp filtered version
+        if [[ -n "${_orig_uv_override}" ]]; then
+            rm -f "${UV_OVERRIDE}"
+            export UV_OVERRIDE="${_orig_uv_override}"
+        fi
 
         # Unset environment variables after installation
         if [[ ${#env_vars_set[@]} -gt 0 ]]; then
