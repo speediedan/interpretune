@@ -204,20 +204,28 @@ def model_ablation_impl(
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
         batch = module.auto_prune_batch(batch, "forward")
 
-    # Run ablation for each latent
+    # Build hook configs for every (name, latent_idx) pair, then run them in batch.
     per_latent_logits: dict[str, dict[Any, torch.Tensor]] = defaultdict(dict)
     assert alive_latents is not None and isinstance(alive_latents, dict), "alive_latents must be a dict"
+
+    hook_configs: list[list[tuple[str, Any]]] = []
+    index_map: list[tuple[str, Any]] = []  # parallel list: (name, latent_idx) per config
     for name, alive in alive_latents.items():
         for latent_idx in alive:
-            fwd_hooks_cfg = [(name, partial(ablate_latent_fn, latent_idx=latent_idx, seq_pos=answer_indices))]
-            answer_logits = module.model_backend.fwd_w_hooks_and_latent_models(
-                model=module.model,
-                batch=batch,
-                latent_model_handles=module.sae_handles,
-                fwd_hooks=fwd_hooks_cfg,
-                clear_contexts=True,
-            )
-            per_latent_logits[name][latent_idx] = answer_logits[torch.arange(batch["input"].size(0)), answer_indices, :]  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+            hook_configs.append([(name, partial(ablate_latent_fn, latent_idx=latent_idx, seq_pos=answer_indices))])
+            index_map.append((name, latent_idx))
+
+    all_logits = module.model_backend.fwd_w_hooks_batched(
+        model=module.model,
+        batch=batch,
+        latent_model_handles=module.sae_handles,
+        hook_configs=hook_configs,
+        clear_contexts=True,
+    )
+
+    batch_indices = torch.arange(batch["input"].size(0))  # type: ignore[attr-defined]
+    for (name, latent_idx), answer_logits in zip(index_map, all_logits, strict=True):
+        per_latent_logits[name][latent_idx] = answer_logits[batch_indices, answer_indices, :]
 
     analysis_batch.update(answer_logits=per_latent_logits)
     return analysis_batch
