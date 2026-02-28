@@ -462,7 +462,8 @@ class NNsightModelBackend:
                         saved_cache[f"{hook_name}.hook_sae_input"] = _nnsight.save(act_proxy)
                     if _matches_names_filter(f"{hook_name}.hook_sae_acts_post", names_filter):
                         saved_cache[f"{hook_name}.hook_sae_acts_post"] = _nnsight.save(feature_acts)
-
+                # NOTE: model.output.logits is safe for single-invoke contexts.
+                # For multi-invoke, use model.lm_head.output (see fwd_w_hooks_batched).
                 saved_logits = _nnsight.save(model.output.logits)
 
         # After trace exits: nnsight.save() resolves to real tensors directly
@@ -531,6 +532,8 @@ class NNsightModelBackend:
 
                     self._splice_sae(model, sae, hook_fn=composite_fn)
 
+                # NOTE: model.output.logits is safe for single-invoke contexts.
+                # For multi-invoke, use model.lm_head.output (see fwd_w_hooks_batched).
                 saved_logits = _nnsight.save(model.output.logits)
 
         return saved_logits
@@ -548,14 +551,26 @@ class NNsightModelBackend:
         clear_contexts: bool = True,
         max_invokes_per_trace: int | None = None,
     ) -> list[torch.Tensor]:
-        """Run multiple forward passes with different hook configs via NNsight.
+        """Run multiple forward passes with different hook configs via NNsight multi-invoke.
 
-        Each element of ``hook_configs`` is executed in its own ``model.trace()``
-        context.  NNsight's multi-invoke mechanism stacks inputs for a single
-        physical forward pass, but **does not scope interventions per invoke** —
-        all interventions are applied globally.  Because each ablation variant
-        requires a *different* set of SAE-splice + user-hook interventions, we
-        must use separate traces to ensure correct per-variant results.
+        Batches all ``hook_configs`` into a single ``model.trace()`` context with one
+        NNsight **input invoke** per config.  NNsight's ``Batcher`` scopes each invoke's
+        interventions to its own batch slice (via ``narrow()`` / ``swap()``), so different
+        SAE-splice + user-hook configurations in each invoke produce correctly isolated
+        results — empirically verified to match separate-trace execution exactly.
+
+        .. note::
+
+            Logits are read via ``model.lm_head.output`` (not ``model.output.logits``)
+            because NNsight only narrows outputs of envoy-wrapped ``nn.Module`` instances.
+            The top-level model output (``CausalLMOutputWithCrossAttentions``) bypasses
+            envoy narrowing and would return the full stacked batch.
+
+        ``max_invokes_per_trace`` controls how many configs are batched per trace to
+        limit peak memory (total batch = ``len(chunk) × batch_size``).  When ``None``
+        (default), all configs are batched in one trace.
+
+        See ``docs/nnsight_multi_invoke_analysis.md`` for detailed empirical evidence.
 
         Args:
             model: NNsight ``LanguageModel``.
@@ -563,7 +578,8 @@ class NNsightModelBackend:
             latent_model_handles: SAE/transcoder handles.
             hook_configs: Sequence of ``fwd_hooks`` lists, one per ablation variant.
             clear_contexts: Unused (present for protocol compatibility).
-            max_invokes_per_trace: Unused (kept for protocol compatibility).
+            max_invokes_per_trace: Maximum number of configs to batch per trace context.
+                ``None`` means unbounded (all configs in one trace).
 
         Returns:
             List of logits tensors, one per element in ``hook_configs``.
@@ -572,41 +588,48 @@ class NNsightModelBackend:
             return []
 
         all_results: list[torch.Tensor] = []
+        chunk_size = max_invokes_per_trace or len(hook_configs)
 
-        for fwd_hooks in hook_configs:
+        for chunk_start in range(0, len(hook_configs), chunk_size):
+            chunk = hook_configs[chunk_start : chunk_start + chunk_size]
+            chunk_results: list[Any] = []
+
             with model.trace() as tracer:
-                with tracer.invoke(**batch):
-                    for sae in latent_model_handles:
-                        hook_name: str = sae.cfg.metadata.hook_name
+                for fwd_hooks in chunk:
+                    with tracer.invoke(**batch):
+                        for sae in latent_model_handles:
+                            hook_name: str = sae.cfg.metadata.hook_name
 
-                        # Collect user hooks relevant to this SAE
-                        relevant_user_hooks = [
-                            (name, fn)
-                            for name, fn in fwd_hooks
-                            if name.startswith("blocks.") and _base_hook_matches(name, hook_name)
-                        ]
+                            # Collect user hooks relevant to this SAE
+                            relevant_user_hooks = [
+                                (name, fn)
+                                for name, fn in fwd_hooks
+                                if name.startswith("blocks.") and _base_hook_matches(name, hook_name)
+                            ]
 
-                        # Build composite hook_fn
-                        composite_fn: Callable | None = None
-                        if relevant_user_hooks:
+                            # Build composite hook_fn
+                            composite_fn: Callable | None = None
+                            if relevant_user_hooks:
 
-                            def _make_composite(hooks: list[tuple[str, Any]]) -> Callable:
-                                def _apply(tensor: Any, _hook: _DummyHookPoint) -> Any:
-                                    result = tensor
-                                    for uhook_name, uhook_fn in hooks:
-                                        dummy = _DummyHookPoint(name=uhook_name)
-                                        result = uhook_fn(result, dummy)
-                                    return result
+                                def _make_composite(hooks: list[tuple[str, Any]]) -> Callable:
+                                    def _apply(tensor: Any, _hook: _DummyHookPoint) -> Any:
+                                        result = tensor
+                                        for uhook_name, uhook_fn in hooks:
+                                            dummy = _DummyHookPoint(name=uhook_name)
+                                            result = uhook_fn(result, dummy)
+                                        return result
 
-                                return _apply
+                                    return _apply
 
-                            composite_fn = _make_composite(relevant_user_hooks)
+                                composite_fn = _make_composite(relevant_user_hooks)
 
-                        self._splice_sae(model, sae, hook_fn=composite_fn)
+                            self._splice_sae(model, sae, hook_fn=composite_fn)
 
-                    saved_logits = _nnsight.save(model.output.logits)
+                        # Use model.lm_head.output (narrowed per invoke) instead of
+                        # model.output.logits (not narrowed, returns full stacked batch).
+                        chunk_results.append(_nnsight.save(model.lm_head.output))
 
-            all_results.append(saved_logits)
+            all_results.extend(chunk_results)
 
         return all_results
 
