@@ -69,6 +69,27 @@ class ModelBackend(Protocol):
         """
         ...
 
+    def fwd(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+    ) -> torch.Tensor:
+        """Run a minimal forward pass and return logits.
+
+        Each backend handles any necessary batch-key mapping (e.g., the NNsight
+        backend wraps the call in a trace context so that
+        ``LanguageModel._prepare_input`` correctly routes ``input`` →
+        ``input_ids`` for HuggingFace models).
+
+        Args:
+            model: The model to run.
+            batch: Input batch dict.
+
+        Returns:
+            Model output logits tensor.
+        """
+        ...
+
     def fwd_w_cache_and_latent_models(
         self,
         model: Any,

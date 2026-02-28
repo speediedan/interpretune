@@ -59,6 +59,13 @@ class HFGenerationConfig(BaseGenerationConfig):
             if k not in self.model_config.keys() and k in valid_hf_keys:
                 self.model_config[k] = v
 
+    def __getattr__(self, name: str):
+        """Expose model_config entries as direct attributes for API compatibility with CoreGenerationConfig."""
+        mc = self.__dict__.get("model_config", {})
+        if name in mc:
+            return mc[name]
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
 
 @dataclass(kw_only=True)
 class GenerativeClassificationConfig(ITSerializableCfg):

@@ -30,6 +30,10 @@ class TLModelBackend:
         """Check whether this backend supports a given capability."""
         return capability in self.capabilities
 
+    def fwd(self, model: Any, batch: dict[str, Any]) -> torch.Tensor:
+        """Minimal forward pass via TransformerLens — returns logits directly."""
+        return model(**batch)
+
     def fwd_w_cache_and_latent_models(
         self,
         model: Any,

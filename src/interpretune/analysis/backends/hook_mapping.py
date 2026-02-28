@@ -71,6 +71,8 @@ GPT2_HOOK_MAPPINGS: dict[str, HookMapping] = {
     # Component output hooks
     "hook_attn_out": HookMapping(envoy_path="transformer.h.{layer}.attn", io_type="output"),
     "hook_mlp_out": HookMapping(envoy_path="transformer.h.{layer}.mlp", io_type="output", tuple_output=False),
+    # Attention internal hooks (hook_z = attention output before output projection)
+    "attn.hook_z": HookMapping(envoy_path="transformer.h.{layer}.attn.c_proj", io_type="input"),
     # Component input hooks
     "mlp.hook_pre": HookMapping(envoy_path="transformer.h.{layer}.mlp", io_type="input"),
 }
@@ -88,6 +90,8 @@ LLAMA_HOOK_MAPPINGS: dict[str, HookMapping] = {
     "hook_resid_mid": HookMapping(envoy_path="model.layers.{layer}.post_attention_layernorm", io_type="input"),
     "hook_mlp_out": HookMapping(envoy_path="model.layers.{layer}.mlp", io_type="output", tuple_output=False),
     "hook_attn_out": HookMapping(envoy_path="model.layers.{layer}.self_attn", io_type="output"),
+    # Attention internal hooks (hook_z = attention output before output projection)
+    "attn.hook_z": HookMapping(envoy_path="model.layers.{layer}.self_attn.o_proj", io_type="input"),
     "mlp.hook_pre": HookMapping(envoy_path="model.layers.{layer}.mlp", io_type="input"),
     "mlp.hook_in": HookMapping(
         envoy_path="model.layers.{layer}.post_attention_layernorm", io_type="output", tuple_output=False
@@ -110,6 +114,8 @@ GEMMA2_HOOK_MAPPINGS: dict[str, HookMapping] = {
         envoy_path="model.layers.{layer}.post_feedforward_layernorm", io_type="output", tuple_output=False
     ),
     "hook_attn_out": HookMapping(envoy_path="model.layers.{layer}.self_attn", io_type="output"),
+    # Attention internal hooks (hook_z = attention output before output projection)
+    "attn.hook_z": HookMapping(envoy_path="model.layers.{layer}.self_attn.o_proj", io_type="input"),
     "ln2.hook_normalized": HookMapping(
         envoy_path="model.layers.{layer}.pre_feedforward_layernorm", io_type="output", tuple_output=False
     ),

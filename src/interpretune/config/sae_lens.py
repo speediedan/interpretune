@@ -186,6 +186,39 @@ class SAELensConfig(ITLensConfig):
         # Skip ITLensConfig.__post_init__ and call ITConfig.__post_init__ directly
         ITConfig.__post_init__(self)
 
+        # Sync SAE device config with NNsight model device
+        self._sync_sl_nnsight_device_cfg()
+
+    def _sync_sl_nnsight_device_cfg(self) -> None:
+        """Sync SAE config devices with the NNsight model's target device.
+
+        Mirrors :meth:`_sync_sl_tl_device_cfg` for the NNsight backend.
+        ``SAELensFromPretrainedConfig.__post_init__`` calls ``tl_get_device()`` which may
+        resolve to CUDA even when the NNsight model is on CPU.  This method corrects
+        the SAE configs to match the NNsight device.
+        """
+        assert self.nnsight_cfg is not None
+        device_map = self.nnsight_cfg.device_map
+        # Resolve a simple target device string from the NNsight device_map
+        if isinstance(device_map, str) and device_map not in ("auto", "balanced", "sequential"):
+            target_device = device_map  # e.g. "cpu", "cuda", "cuda:0"
+        else:
+            # For auto / dict / None, fall back to auto-detection
+            target_device = str(tl_get_device())
+
+        if isinstance(self.sae_cfgs, (SAELensFromPretrainedConfig, SAELensCustomConfig)):
+            sae_cfgs: Sequence[SAECfgType] = [self.sae_cfgs]
+        else:
+            sae_cfgs = self.sae_cfgs
+        for sae_cfg in sae_cfgs:
+            if hasattr(sae_cfg, "cfg"):
+                assert isinstance(sae_cfg, SAELensCustomConfig)
+                assert isinstance(sae_cfg.cfg, SAEConfig)
+                setattr(sae_cfg.cfg, "device", target_device)
+            else:
+                assert isinstance(sae_cfg, SAELensFromPretrainedConfig)
+                setattr(sae_cfg, "device", target_device)
+
     def _sync_nnsight_model_name(self) -> None:
         """Synchronize model_name_or_path with nnsight_cfg.model_name."""
         assert self.nnsight_cfg is not None  # validated in _init_nnsight_backend

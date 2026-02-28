@@ -79,6 +79,10 @@ from tests.core.cfg_aliases import (
     CircuitTracerNNsightGemma2,
     LightningCircuitTracerNNsightGemma2,
     CircuitTracerNNsightRemoteGemma2,
+    CoreSLNNsightGPT2LogitDiffsBase,
+    CoreSLNNsightGPT2LogitDiffsSAE,
+    CoreSLNNsightGPT2LogitDiffsAttrGrad,
+    CoreSLNNsightGPT2LogitDiffsAttrAblation,
 )
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
@@ -249,6 +253,27 @@ FIXTURE_CFGS = {
     ),
     "sl_gpt2_logit_diffs_attr_ablation": FixtureCfg(
         test_cfg=CoreSLGPT2LogitDiffsAttrAblation,
+        scope="class",
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    # NNsight SAE analysis fixtures (backend parity testing)
+    "sl_ns_gpt2_logit_diffs_base": FixtureCfg(
+        test_cfg=CoreSLNNsightGPT2LogitDiffsBase,
+        scope="session",
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_ns_gpt2_logit_diffs_sae": FixtureCfg(
+        test_cfg=CoreSLNNsightGPT2LogitDiffsSAE,
+        scope="session",
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_ns_gpt2_logit_diffs_attr_grad": FixtureCfg(
+        test_cfg=CoreSLNNsightGPT2LogitDiffsAttrGrad,
+        scope="session",
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_ns_gpt2_logit_diffs_attr_ablation": FixtureCfg(
+        test_cfg=CoreSLNNsightGPT2LogitDiffsAttrAblation,
         scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),

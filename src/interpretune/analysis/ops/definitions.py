@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from transformer_lens.hook_points import HookPoint
 
 import interpretune as it
+from interpretune.analysis.ops.base import get_batch_input
 from interpretune.protocol import DefaultAnalysisBatchProtocol
 from interpretune.analysis.ops.base import AnalysisBatch
 
@@ -95,7 +96,7 @@ def get_answer_indices_impl(
         answer_indices = module.analysis_cfg.input_store.answer_indices[batch_idx]
     else:
         # Otherwise compute it
-        tokens = batch["input"].detach().cpu()  # type: ignore[attr-defined]  # BatchEncoding tensor has detach/cpu
+        tokens = get_batch_input(batch).detach().cpu()  # type: ignore[attr-defined]  # BatchEncoding tensor has detach/cpu
         if module.datamodule.tokenizer.padding_side == "left":
             answer_indices = torch.full((tokens.size(0),), -1)  # type: ignore[attr-defined]  # BatchEncoding tensor has size
         else:
@@ -138,6 +139,20 @@ def get_alive_latents_impl(
     return analysis_batch
 
 
+def _extract_logits(output: Any) -> torch.Tensor:
+    """Extract logits tensor from a model forward-pass result.
+
+    TransformerLens models return raw logit tensors, while HuggingFace models
+    (used by the NNsight backend) return ``ModelOutput`` objects with a
+    ``.logits`` attribute.  This helper normalises both cases.
+    """
+    if isinstance(output, torch.Tensor):
+        return output
+    if hasattr(output, "logits"):
+        return output.logits
+    raise TypeError(f"Cannot extract logits from model output of type {type(output).__name__}")
+
+
 def model_forward_impl(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
@@ -149,7 +164,11 @@ def model_forward_impl(
     # Run forward pass
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
         batch = module.auto_prune_batch(batch, "forward")
-    answer_logits = module(**batch)
+    _backend = getattr(module, "_model_backend", None)
+    if _backend is not None:
+        answer_logits = _backend.fwd(model=module.model, batch=batch)
+    else:
+        answer_logits = _extract_logits(module(**batch))
     analysis_batch.update(answer_logits=answer_logits)
     return analysis_batch
 
@@ -223,7 +242,7 @@ def model_ablation_impl(
         clear_contexts=True,
     )
 
-    batch_indices = torch.arange(batch["input"].size(0))  # type: ignore[attr-defined]
+    batch_indices = torch.arange(get_batch_input(batch).size(0))  # type: ignore[attr-defined]
     for (name, latent_idx), answer_logits in zip(index_map, all_logits, strict=True):
         per_latent_logits[name][latent_idx] = answer_logits[batch_indices, answer_indices, :]
 
@@ -286,7 +305,7 @@ def model_gradient_impl(
 
     # ---- Recompute metrics from returned real logits -------------------------
     answer_logits = torch.squeeze(
-        raw_logits[torch.arange(batch["input"].size(0)), answer_indices],  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+        raw_logits[torch.arange(get_batch_input(batch).size(0)), answer_indices],  # type: ignore[attr-defined]  # BatchEncoding tensor has size
         dim=1,
     )
     loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn)
@@ -316,7 +335,7 @@ def logit_diffs_impl(
     logits, indices = analysis_batch.answer_logits, analysis_batch.answer_indices
     assert logits is not None and indices is not None, "answer_logits and answer_indices must not be None"
     assert isinstance(logits, torch.Tensor) and isinstance(indices, torch.Tensor), "logits and indices must be tensors"
-    indexed_logits = logits[torch.arange(batch["input"].size(0)), indices]  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+    indexed_logits = logits[torch.arange(get_batch_input(batch).size(0)), indices]  # type: ignore[attr-defined]  # BatchEncoding tensor has size
     answer_logits = torch.squeeze(indexed_logits, dim=1)
     loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn)
     if logit_diffs.dim() == 0:
@@ -398,7 +417,7 @@ def gradient_attribution_impl(
 
     # Wrap raw dicts into a backend-specific activation cache; already-wrapped caches pass through
     batch_cache_dict = module.model_backend.wrap_activation_cache(cache_source, module.model)
-    batch_sz = batch["input"].size(0)  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+    batch_sz = get_batch_input(batch).size(0)  # type: ignore[attr-defined]  # BatchEncoding tensor has size
 
     # Get alive latents using GetAliveLatentsOp  # TODO: clean this up so no temp batch is required
     # Create a temporary analysis batch with the cache for GetAliveLatentsOp
@@ -480,7 +499,7 @@ def ablation_attribution_impl(
     )
     assert isinstance(analysis_batch.answer_logits, dict), "Expected answer_logits to be a dictionary"
     for act_name, logits in analysis_batch.answer_logits.items():
-        attribution_values[act_name] = torch.zeros(batch["input"].size(0), module.sae_handles[0].cfg.d_sae)  # type: ignore[attr-defined]
+        attribution_values[act_name] = torch.zeros(get_batch_input(batch).size(0), module.sae_handles[0].cfg.d_sae)  # type: ignore[attr-defined]
         for latent_idx in analysis_batch.alive_latents[act_name]:
             # Calculate metrics for this latent using the instance's get_loss_preds_diffs method
             loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(

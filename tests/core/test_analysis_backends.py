@@ -472,7 +472,7 @@ class TestNNsightModelBackendSAESplicing:
         assert "bwd_hooks" in param_names
 
     def test_apply_saved_to_cache_hooks_populates_cache(self):
-        """Test that _apply_saved_to_cache_hooks calls matching cache functions with real tensors."""
+        """Test that _apply_saved_to_cache_hooks calls matching cache functions with resolved tensors."""
         cache_dict: dict[str, torch.Tensor] = {}
 
         def cache_fn(tensor: torch.Tensor, hook: _DummyHookPoint) -> None:
@@ -480,17 +480,15 @@ class TestNNsightModelBackendSAESplicing:
 
         names_filter = lambda name: "hook_sae_acts_post" in name  # noqa: E731
 
-        # Create a mock SaveProxy with a .value attribute
-        save_proxy = MagicMock()
-        save_proxy.value = torch.randn(2, 10, 768)
-
-        saved = {"blocks.0.hook_resid_post.hook_sae_acts_post": save_proxy}
+        # saved dict maps sub-hook names directly to resolved tensors (after nnsight.save())
+        expected_tensor = torch.randn(2, 10, 768)
+        saved = {"blocks.0.hook_resid_post.hook_sae_acts_post": expected_tensor}
         hooks = [(names_filter, cache_fn)]
 
         _apply_saved_to_cache_hooks(saved, hooks)
 
         assert "blocks.0.hook_resid_post.hook_sae_acts_post" in cache_dict
-        assert torch.equal(cache_dict["blocks.0.hook_resid_post.hook_sae_acts_post"], save_proxy.value)
+        assert torch.equal(cache_dict["blocks.0.hook_resid_post.hook_sae_acts_post"], expected_tensor)
 
     def test_apply_saved_to_cache_hooks_filter_excludes_non_matching(self):
         """Test that non-matching sub-hook names are not cached."""
@@ -610,15 +608,12 @@ class TestNNsightEnvoyHelpers:
         assert result is envoy.output
 
     def test_read_envoy_activation_input(self):
-        """For input hooks, should access .input[0]."""
+        """For input hooks, should access .input directly (NNsight 0.6+ returns first positional arg)."""
         envoy = MagicMock()
-        tensor_proxy = MagicMock()
-        envoy.input.__getitem__ = MagicMock(return_value=tensor_proxy)
         resolved = ResolvedHook(module_path="dummy", io_type="input", tuple_output=True)
 
         result = _read_envoy_activation(envoy, resolved)
-        envoy.input.__getitem__.assert_called_with(0)
-        assert result is tensor_proxy
+        assert result is envoy.input
 
     def test_write_envoy_activation_output_tuple(self):
         """For tuple-output hooks, should assign to .output[0]."""
@@ -641,13 +636,14 @@ class TestNNsightEnvoyHelpers:
         assert not envoy.output.__setitem__.called
 
     def test_write_envoy_activation_input(self):
-        """For input hooks, should assign to .input[0]."""
+        """For input hooks, should assign to .input directly (NNsight 0.6+ attribute assignment)."""
         envoy = MagicMock()
         resolved = ResolvedHook(module_path="dummy", io_type="input", tuple_output=True)
         new_value = MagicMock()
 
         _write_envoy_activation(envoy, resolved, new_value)
-        envoy.input.__setitem__.assert_called_with(0, new_value)
+        # NNsight 0.6+: envoy.input = value (direct attribute assignment, not __setitem__)
+        assert not envoy.input.__setitem__.called
 
 
 # ==============================================================================

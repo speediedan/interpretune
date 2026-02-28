@@ -12,7 +12,6 @@ compatible with analysis op expectations (``items()``, ``keys()``, ``__getitem__
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Sequence
 
@@ -26,6 +25,30 @@ from interpretune.protocol import NamesFilter
 # Disable PYMOUNT C extension — this backend uses nnsight.save() exclusively.
 # Must be set before the first trace context is entered.
 _nnsight.CONFIG.APP.PYMOUNT = False
+
+
+# ==============================================================================
+# Model introspection helpers
+# ==============================================================================
+
+# Common backbone attribute names shared by many HF causal-LM wrappers
+# (GPT2LMHeadModel.transformer, LlamaForCausalLM.model, etc.).
+_BACKBONE_ATTR_NAMES = ("transformer", "model")
+
+
+def _find_backbone_module(hf_model: Any) -> Any | None:
+    """Return the decoder backbone module inside an HF ``*ForCausalLM`` wrapper.
+
+    Many HF causal-LM classes (``GPT2LMHeadModel``, ``LlamaForCausalLM``, …) store
+    the core decoder body under a well-known attribute (``transformer``, ``model``).
+    This helper tries each known attribute name and returns the first match, or
+    ``None`` if no backbone is found.
+    """
+    for attr in _BACKBONE_ATTR_NAMES:
+        backbone = getattr(hf_model, attr, None)
+        if backbone is not None:
+            return backbone
+    return None
 
 
 # ==============================================================================
@@ -145,7 +168,9 @@ def _read_envoy_activation(envoy: Any, resolved: ResolvedHook) -> Any:
     (transformer blocks, attention) or ``envoy.output`` for single-tensor modules
     (MLP, LayerNorm).
 
-    For **input** hooks: accesses ``envoy.input[0]`` (first positional arg).
+    For **input** hooks: accesses ``envoy.input`` directly.  In NNsight 0.6+,
+    ``.input`` already returns the **first positional argument** (a tensor), so
+    indexing with ``[0]`` would incorrectly slice into dimension 0 of that tensor.
 
     Args:
         envoy: NNsight envoy for the target module.
@@ -158,13 +183,16 @@ def _read_envoy_activation(envoy: Any, resolved: ResolvedHook) -> Any:
         if resolved.tuple_output:
             return envoy.output[0]
         return envoy.output
-    return envoy.input[0]
+    return envoy.input
 
 
 def _write_envoy_activation(envoy: Any, resolved: ResolvedHook, value: Any) -> None:
     """Replace the hidden-state activation in an NNsight envoy via proxy assignment.
 
     Creates an NNsight intervention that substitutes the activation during trace execution.
+    For input hooks, assigns to ``envoy.input`` directly (the first positional argument)
+    rather than ``envoy.input[0]`` which would be an in-place modification of the tensor's
+    first element along dimension 0.
 
     Args:
         envoy: NNsight envoy for the target module.
@@ -177,7 +205,7 @@ def _write_envoy_activation(envoy: Any, resolved: ResolvedHook, value: Any) -> N
         else:
             envoy.output = value
     else:
-        envoy.input[0] = value
+        envoy.input = value
 
 
 class NNsightModelBackend:
@@ -214,6 +242,56 @@ class NNsightModelBackend:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def register_model_hooks(self, model: Any) -> None:
+        """Register forward pre-hooks needed for correct model execution.
+
+        Starting with ``transformers`` v5, ``GPT2Model.forward()`` derives
+        ``position_ids`` from an internal ``cache_position = arange(0, seq_len)``
+        which **ignores padding**.  This means left-padded real tokens receive
+        incorrect absolute position IDs, producing wrong position embeddings and
+        fundamentally different logits compared to TransformerLens.
+
+        This method registers a forward pre-hook on the underlying HF model that
+        restores the legacy ``transformers`` v4 behaviour::
+
+            position_ids = attention_mask.cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 0)
+
+        Using a hook (rather than mutating the batch dict) is essential because
+        NNsight's multi-invoke batching (:pymethod:`LanguageModel._batch`) only
+        stacks ``input_ids``, ``attention_mask``, and ``labels``.  Any extra keys
+        (like ``position_ids``) are silently kept at their original shape,
+        causing a dimension mismatch when multiple invocations are stacked.
+        The hook fires *inside* the physical forward pass so it sees the
+        correctly stacked ``attention_mask`` regardless of the number of invokes.
+
+        Args:
+            model: NNsight ``LanguageModel`` whose underlying HF model should
+                be hooked.
+        """
+        self._hook_handles: list[Any] = getattr(self, "_hook_handles", [])
+
+        hf_model = self._get_hf_model(model)
+        # Identify the decoder backbone module (GPT2Model, LlamaModel, etc.)
+        backbone = _find_backbone_module(hf_model)
+        if backbone is None:
+            return
+
+        def _fix_position_ids(
+            _module: Any,
+            args: tuple[Any, ...],
+            kwargs: dict[str, Any],
+        ) -> tuple[tuple[Any, ...], dict[str, Any]]:
+            if kwargs.get("position_ids") is None and kwargs.get("attention_mask") is not None:
+                am = kwargs["attention_mask"]
+                position_ids = am.long().cumsum(-1) - 1
+                position_ids = position_ids.masked_fill(am == 0, 0)
+                return args, {**kwargs, "position_ids": position_ids}
+            return args, kwargs
+
+        handle = backbone.register_forward_pre_hook(_fix_position_ids, with_kwargs=True)
+        self._hook_handles.append(handle)
+
     def _splice_sae(
         self,
         model: Any,
@@ -244,14 +322,29 @@ class NNsightModelBackend:
         envoy = _navigate_envoy(model, resolved.module_path)
 
         act_proxy = _read_envoy_activation(envoy, resolved)
-        feature_acts = sae.encode(act_proxy)
 
-        if hook_fn is not None:
-            dummy = _DummyHookPoint(name=f"{hook_name}.hook_sae_acts_post")
-            feature_acts = hook_fn(feature_acts, dummy)
+        # NNsight reads post-merge activations (3D: [batch, seq, n_heads*d_head])
+        # for hook_z hooks because HF attention merges heads before calling
+        # c_proj.  The SAE's reshape_fn_in expects pre-merge 4D input
+        # ([batch, seq, n_heads, d_head]) and would misinterpret the 3D tensor.
+        # Temporarily disable reshaping since the activation is already in the
+        # merged format the SAE weights operate on.
+        _disable_hz = getattr(sae, "hook_z_reshaping_mode", False)
+        if _disable_hz:
+            sae.turn_off_forward_pass_hook_z_reshaping()
 
-        sae_out = sae.decode(feature_acts)
-        _write_envoy_activation(envoy, resolved, sae_out)
+        try:
+            feature_acts = sae.encode(act_proxy)
+
+            if hook_fn is not None:
+                dummy = _DummyHookPoint(name=f"{hook_name}.hook_sae_acts_post")
+                feature_acts = hook_fn(feature_acts, dummy)
+
+            sae_out = sae.decode(feature_acts)
+            _write_envoy_activation(envoy, resolved, sae_out)
+        finally:
+            if _disable_hz:
+                sae.turn_on_forward_pass_hook_z_reshaping()
 
         return feature_acts, act_proxy, resolved
 
@@ -309,6 +402,23 @@ class NNsightModelBackend:
             return replacement
 
     # ------------------------------------------------------------------
+    # Protocol: fwd (minimal forward pass)
+    # ------------------------------------------------------------------
+
+    def fwd(self, model: Any, batch: dict[str, Any]) -> torch.Tensor:
+        """Minimal forward pass via NNsight trace — returns logits.
+
+        Wraps the model call in a trace context so that
+        ``LanguageModel._prepare_input`` correctly maps batch keys (e.g.,
+        ``input`` → ``input_ids`` for HuggingFace models).  Calling the
+        NNsight model directly (outside a trace) would bypass this mapping.
+        """
+        with model.trace() as tracer:
+            with tracer.invoke(**batch):
+                saved_logits = _nnsight.save(model.output.logits)
+        return saved_logits
+
+    # ------------------------------------------------------------------
     # Protocol: fwd_w_cache_and_latent_models
     # ------------------------------------------------------------------
 
@@ -355,9 +465,8 @@ class NNsightModelBackend:
 
                 saved_logits = _nnsight.save(model.output.logits)
 
-        # After trace exits: saved proxies hold real tensors
-        cache_dict = {k: v.value for k, v in saved_cache.items()}
-        return saved_logits.value, NNsightActivationCacheAdapter(cache_dict)
+        # After trace exits: nnsight.save() resolves to real tensors directly
+        return saved_logits, NNsightActivationCacheAdapter(saved_cache)
 
     # ------------------------------------------------------------------
     # Protocol: fwd_w_hooks_and_latent_models
@@ -424,7 +533,7 @@ class NNsightModelBackend:
 
                 saved_logits = _nnsight.save(model.output.logits)
 
-        return saved_logits.value
+        return saved_logits
 
     # ------------------------------------------------------------------
     # Protocol: fwd_w_hooks_batched
@@ -439,14 +548,14 @@ class NNsightModelBackend:
         clear_contexts: bool = True,
         max_invokes_per_trace: int | None = None,
     ) -> list[torch.Tensor]:
-        """Run multiple forward passes with different hook configs batched via NNsight multi-invoke.
+        """Run multiple forward passes with different hook configs via NNsight.
 
-        Each element of ``hook_configs`` becomes a separate ``tracer.invoke()`` within a
-        single ``model.trace()`` context.  NNsight batches all invokes into one physical
-        forward pass, achieving substantial speedup over the N-serial-traces alternative.
-
-        When ``max_invokes_per_trace`` is set, the configs are chunked across multiple
-        trace contexts to limit memory usage.
+        Each element of ``hook_configs`` is executed in its own ``model.trace()``
+        context.  NNsight's multi-invoke mechanism stacks inputs for a single
+        physical forward pass, but **does not scope interventions per invoke** —
+        all interventions are applied globally.  Because each ablation variant
+        requires a *different* set of SAE-splice + user-hook interventions, we
+        must use separate traces to ensure correct per-variant results.
 
         Args:
             model: NNsight ``LanguageModel``.
@@ -454,7 +563,7 @@ class NNsightModelBackend:
             latent_model_handles: SAE/transcoder handles.
             hook_configs: Sequence of ``fwd_hooks`` lists, one per ablation variant.
             clear_contexts: Unused (present for protocol compatibility).
-            max_invokes_per_trace: Max configs per trace context.  ``None`` = unbounded.
+            max_invokes_per_trace: Unused (kept for protocol compatibility).
 
         Returns:
             List of logits tensors, one per element in ``hook_configs``.
@@ -463,51 +572,41 @@ class NNsightModelBackend:
             return []
 
         all_results: list[torch.Tensor] = []
-        chunk_size = max_invokes_per_trace if max_invokes_per_trace is not None else len(hook_configs)
-        n_chunks = math.ceil(len(hook_configs) / chunk_size)
 
-        for chunk_idx in range(n_chunks):
-            chunk_start = chunk_idx * chunk_size
-            chunk_end = min(chunk_start + chunk_size, len(hook_configs))
-            chunk = hook_configs[chunk_start:chunk_end]
-
-            saved_logits_list: list[Any] = []
-
+        for fwd_hooks in hook_configs:
             with model.trace() as tracer:
-                for fwd_hooks in chunk:
-                    with tracer.invoke(**batch):
-                        for sae in latent_model_handles:
-                            hook_name: str = sae.cfg.metadata.hook_name
+                with tracer.invoke(**batch):
+                    for sae in latent_model_handles:
+                        hook_name: str = sae.cfg.metadata.hook_name
 
-                            # Collect user hooks relevant to this SAE
-                            relevant_user_hooks = [
-                                (name, fn)
-                                for name, fn in fwd_hooks
-                                if name.startswith("blocks.") and _base_hook_matches(name, hook_name)
-                            ]
+                        # Collect user hooks relevant to this SAE
+                        relevant_user_hooks = [
+                            (name, fn)
+                            for name, fn in fwd_hooks
+                            if name.startswith("blocks.") and _base_hook_matches(name, hook_name)
+                        ]
 
-                            # Build composite hook_fn
-                            composite_fn: Callable | None = None
-                            if relevant_user_hooks:
+                        # Build composite hook_fn
+                        composite_fn: Callable | None = None
+                        if relevant_user_hooks:
 
-                                def _make_composite(hooks: list[tuple[str, Any]]) -> Callable:
-                                    def _apply(tensor: Any, _hook: _DummyHookPoint) -> Any:
-                                        result = tensor
-                                        for uhook_name, uhook_fn in hooks:
-                                            dummy = _DummyHookPoint(name=uhook_name)
-                                            result = uhook_fn(result, dummy)
-                                        return result
+                            def _make_composite(hooks: list[tuple[str, Any]]) -> Callable:
+                                def _apply(tensor: Any, _hook: _DummyHookPoint) -> Any:
+                                    result = tensor
+                                    for uhook_name, uhook_fn in hooks:
+                                        dummy = _DummyHookPoint(name=uhook_name)
+                                        result = uhook_fn(result, dummy)
+                                    return result
 
-                                    return _apply
+                                return _apply
 
-                                composite_fn = _make_composite(relevant_user_hooks)
+                            composite_fn = _make_composite(relevant_user_hooks)
 
-                            self._splice_sae(model, sae, hook_fn=composite_fn)
+                        self._splice_sae(model, sae, hook_fn=composite_fn)
 
-                        saved_logits_list.append(_nnsight.save(model.output.logits))
+                    saved_logits = _nnsight.save(model.output.logits)
 
-            # Materialise logits from saved proxies
-            all_results.extend(proxy.value for proxy in saved_logits_list)
+            all_results.append(saved_logits)
 
         return all_results
 
@@ -557,7 +656,10 @@ class NNsightModelBackend:
         saved_fwd: dict[str, Any] = {}  # name -> SaveProxy (fwd activations)
         saved_grad: dict[str, Any] = {}  # name -> SaveProxy (gradients)
 
-        with model.trace() as tracer:
+        # Guard grad state: NNsight's trace + backward execution may leave
+        # torch.is_grad_enabled() as False.  The context manager restores the
+        # original state on exit.
+        with torch.set_grad_enabled(True), model.trace() as tracer:
             with tracer.invoke(**batch):
                 # ---- SAE splicing via _splice_sae ----
                 for sae in latent_model_handles:
@@ -583,11 +685,16 @@ class NNsightModelBackend:
                 scalar = backward_fn(logits_proxy)
 
                 with scalar.backward():  # type: ignore[union-attr]  # nnsight patches Tensor.backward() to return BackwardsTracer context manager
-                    # Capture gradients for each proxy we stored above
-                    for proxy_key in list(saved_grad.keys()):
-                        if proxy_key.startswith("_proxy_"):
-                            real_key = proxy_key[len("_proxy_") :]
-                            saved_grad[real_key] = _nnsight.save(saved_grad.pop(proxy_key).grad)
+                    # Capture gradients for each proxy we stored above.
+                    # IMPORTANT: NNsight's BackwardsMediator processes .grad
+                    # requests sequentially. During backward(), gradient hooks
+                    # fire in reverse layer order (deeper layers first). To
+                    # avoid a dangling mediator error we must request .grad in
+                    # the same reverse order.
+                    proxy_keys = [k for k in saved_grad if k.startswith("_proxy_")]
+                    for proxy_key in reversed(proxy_keys):
+                        real_key = proxy_key[len("_proxy_") :]
+                        saved_grad[real_key] = _nnsight.save(saved_grad.pop(proxy_key).grad)
 
                 saved_logits = _nnsight.save(logits_proxy)
 
@@ -595,7 +702,7 @@ class NNsightModelBackend:
         _apply_saved_to_cache_hooks(saved_fwd, fwd_hooks)
         _apply_saved_to_cache_hooks(saved_grad, bwd_hooks)
 
-        return saved_logits.value
+        return saved_logits
 
     # ------------------------------------------------------------------
     # Protocol: wrap_activation_cache
@@ -645,17 +752,16 @@ def _apply_saved_to_cache_hooks(
     """Feed materialised saved-proxy tensors through TL-style cache hooks.
 
     After an NNsight trace exits, ``saved`` maps TL-style sub-hook names to
-    ``SaveProxy`` objects whose ``.value`` is a real tensor. This function
-    iterates the ``hooks`` list (``[(names_filter, cache_fn), ...]``) and
-    calls matching ``cache_fn(tensor, dummy_hook)`` for each saved activation.
+    tensors (resolved by ``nnsight.save()``).  This function iterates the
+    ``hooks`` list (``[(names_filter, cache_fn), ...]``) and calls matching
+    ``cache_fn(tensor, dummy_hook)`` for each saved activation.
 
     Args:
         saved: Dict mapping sub-hook names (e.g., ``"blocks.5.hook_resid_post.hook_sae_input"``)
-            to NNsight ``SaveProxy`` objects.
+            to resolved tensors.
         hooks: TL-style hook list ``[(names_filter, cache_fn), ...]``.
     """
-    for sub_name, save_proxy in saved.items():
-        tensor = save_proxy.value
+    for sub_name, tensor in saved.items():
         for names_filter, cache_fn in hooks:
             if _matches_names_filter(sub_name, names_filter):
                 dummy = _DummyHookPoint(name=sub_name)

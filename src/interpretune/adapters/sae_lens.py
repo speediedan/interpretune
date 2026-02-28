@@ -76,7 +76,9 @@ class BaseSAELensModule(BaseITModule):
     def __init__(self, *args, **kwargs):
         # using cooperative inheritance, so initialize attributes that may be required in base init methods
         self.saes: list[InstantiatedSAE] = []
-        self._model_backend: ModelBackend | None = getattr(self, "_model_backend", None)
+        # N.B. use __dict__.get() rather than getattr() to avoid triggering __getattr__ chains during early
+        # cooperative init (before ITExtensionsConfigMixin.__init__ has set extensions_context)
+        self._model_backend: ModelBackend | None = self.__dict__.get("_model_backend", None)
         super().__init__(*args, **kwargs)
 
     @property
@@ -229,6 +231,7 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
 
         resolver = HookNameResolver(model_arch)
         self._model_backend = NNsightModelBackend(resolver)  # type: ignore[attr-defined]
+        self._model_backend.register_model_hooks(self.model)  # type: ignore[attr-defined]
         rank_zero_info(f"NNsight model backend initialized with architecture: {model_arch}")
 
     def _capture_hyperparameters(self) -> None:

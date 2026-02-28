@@ -11,6 +11,7 @@ import interpretune as it
 from interpretune.protocol import Adapter, AutoStrEnum
 from interpretune.config import (
     HFFromPretrainedConfig,
+    HFGenerationConfig,
     GenerativeClassificationConfig,
     CoreGenerationConfig,
     ITLensCustomConfig,
@@ -609,6 +610,106 @@ class CoreSLGPT2LogitDiffsAttrGrad(CoreSLGPT2Analysis):
 
 @dataclass(kw_only=True)
 class CoreSLGPT2LogitDiffsAttrAblation(CoreSLGPT2Analysis):
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
+        AnalysisCfg(target_op=it.logit_diffs_attr_ablation, save_prompts=False, save_tokens=False, ignore_manual=True),
+    )
+
+
+################################################################################
+# NNsight SAE Analysis Test Configs (Backend Parity)
+################################################################################
+
+
+@dataclass(kw_only=True)
+class CoreSLNNsightGPT2Analysis(AnalysisBaseCfg):
+    """NNsight backend variant of CoreSLGPT2Analysis for SAE backend parity testing.
+
+    Uses (core, nnsight, sae_lens) adapter composition with SAELensConfig(backend='nnsight').
+    """
+
+    phase: str | None = "analysis"
+    model_src_key: str | None = "gpt2"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.nnsight, Adapter.sae_lens)
+    generative_step_cfg: GenerativeClassificationConfig = field(
+        default_factory=lambda: GenerativeClassificationConfig(
+            enabled=True,
+            lm_generation_cfg=HFGenerationConfig(
+                model_config={"max_new_tokens": 1, "output_logits": True, "return_dict_in_generate": True}
+            ),
+        )
+    )
+    latent_analysis_targets: LatentAnalysisTargets = field(
+        default_factory=lambda: LatentAnalysisTargets(sae_release="gpt2-small-hook-z-kk", target_layers=[9, 10])
+    )
+    hf_from_pretrained_cfg: HFFromPretrainedConfig = field(
+        default_factory=lambda: HFFromPretrainedConfig(
+            pretrained_kwargs={"dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
+        )
+    )
+    nnsight_cfg: NNsightConfig | None = field(
+        default_factory=lambda: NNsightConfig(
+            model_name="openai-community/gpt2",
+            device_map="cpu",
+            torch_dtype="float32",
+            dispatch=True,
+        )
+    )
+    sae_cfgs: list = field(default_factory=lambda: [])
+    auto_comp_cfg: AutoCompConfig = field(
+        default_factory=lambda: AutoCompConfig(
+            module_cfg_name="RTEBoolqConfig", module_cfg_mixin=RTEBoolqEntailmentMapping, target_adapters="nnsight"
+        )
+    )
+    force_prepare_data: bool | None = True
+    dm_override_cfg: dict | None = field(
+        default_factory=lambda: {
+            "enable_datasets_cache": True,
+            "dataset_path": str(Path(tempfile.gettempdir()) / "force_prepare_analysis_ns_ds"),
+            # NOTE: attention_mask MUST be in signature_columns.  Without it,
+            # _remove_unused_columns strips the proper mask created during
+            # tokenization.  DataCollatorWithPadding then synthesizes an
+            # all-ones mask (sequences are already pre-padded to max_length),
+            # so GPT-2 via NNsight never masks the left-padding tokens.
+            # TL computes its own correct left-padding mask internally
+            # (default_padding_side="left"), so both backends agree when
+            # NNsight receives the original tokenization mask.
+            "signature_columns": ["input_ids", "attention_mask", "labels"],
+        }
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Dynamically generate sae_cfgs from sae_targets.latent_model_fqns
+        if self.latent_analysis_targets and hasattr(self.latent_analysis_targets, "latent_model_fqns"):
+            self.sae_cfgs = [
+                SAELensFromPretrainedConfig(release=sae_fqn.release, sae_id=sae_fqn.sae_id)
+                for sae_fqn in self.latent_analysis_targets.latent_model_fqns
+            ]
+
+
+@dataclass(kw_only=True)
+class CoreSLNNsightGPT2LogitDiffsBase(CoreSLNNsightGPT2Analysis):
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
+        AnalysisCfg(target_op=it.logit_diffs_base, save_prompts=False, save_tokens=False, ignore_manual=True),
+    )
+
+
+@dataclass(kw_only=True)
+class CoreSLNNsightGPT2LogitDiffsSAE(CoreSLNNsightGPT2Analysis):
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
+        AnalysisCfg(target_op=it.logit_diffs_sae, save_prompts=True, save_tokens=True, ignore_manual=True),
+    )
+
+
+@dataclass(kw_only=True)
+class CoreSLNNsightGPT2LogitDiffsAttrGrad(CoreSLNNsightGPT2Analysis):
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
+        AnalysisCfg(target_op=it.logit_diffs_attr_grad, save_prompts=False, save_tokens=False, ignore_manual=True),
+    )
+
+
+@dataclass(kw_only=True)
+class CoreSLNNsightGPT2LogitDiffsAttrAblation(CoreSLNNsightGPT2Analysis):
     analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
         AnalysisCfg(target_op=it.logit_diffs_attr_ablation, save_prompts=False, save_tokens=False, ignore_manual=True),
     )
