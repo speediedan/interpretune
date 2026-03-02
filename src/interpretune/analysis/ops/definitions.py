@@ -381,8 +381,10 @@ def sae_correct_acts_impl(
             continue
 
         # Get activations at answer indices and select only for examples with positive logit diffs
-        acts_at_answer = acts[torch.arange(acts.size(0)), answer_indices]
-        correct_activations[name] = acts_at_answer[correct_mask].cpu()
+        # Ensure index tensors are on the same device as acts to avoid cross-device indexing errors
+        acts_device = acts.device
+        acts_at_answer = acts[torch.arange(acts.size(0), device=acts_device), answer_indices.to(acts_device)]
+        correct_activations[name] = acts_at_answer[correct_mask.to(acts_device)].cpu()
 
     analysis_batch.update(correct_activations=correct_activations)
     return analysis_batch

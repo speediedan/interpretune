@@ -410,7 +410,7 @@ test_op:
         """Test dispatcher integration with an analysis session."""
         try:
             # Use existing analysis session fixture if available
-            fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis")
+            fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis")
 
             # Verify the fixture contains expected data
             assert fixture.result is not None

@@ -245,52 +245,33 @@ class NNsightModelBackend:
     def register_model_hooks(self, model: Any) -> None:
         """Register forward pre-hooks needed for correct model execution.
 
-        Starting with ``transformers`` v5, ``GPT2Model.forward()`` derives
-        ``position_ids`` from an internal ``cache_position = arange(0, seq_len)``
-        which **ignores padding**.  This means left-padded real tokens receive
-        incorrect absolute position IDs, producing wrong position embeddings and
-        fundamentally different logits compared to TransformerLens.
+        Currently a **no-op**.  Reserved for future backend-specific hooks.
 
-        This method registers a forward pre-hook on the underlying HF model that
-        restores the legacy ``transformers`` v4 behaviour::
+        .. note:: Position IDs
 
-            position_ids = attention_mask.cumsum(-1) - 1
-            position_ids.masked_fill_(attention_mask == 0, 0)
+            An earlier version of this method registered a hook that applied
+            the legacy ``transformers`` v4 position-ID computation::
 
-        Using a hook (rather than mutating the batch dict) is essential because
-        NNsight's multi-invoke batching (:pymethod:`LanguageModel._batch`) only
-        stacks ``input_ids``, ``attention_mask``, and ``labels``.  Any extra keys
-        (like ``position_ids``) are silently kept at their original shape,
-        causing a dimension mismatch when multiple invocations are stacked.
-        The hook fires *inside* the physical forward pass so it sees the
-        correctly stacked ``attention_mask`` regardless of the number of invokes.
+                position_ids = attention_mask.cumsum(-1) - 1
+                position_ids.masked_fill_(attention_mask == 0, 0)
+
+            This was removed because **both TransformerBridge and
+            HookedTransformer use the default ``transformers`` v5 sequential
+            position IDs** (``arange(0, seq_len)``), which ignore padding.
+            Applying the cumsum fix only to the NNsight backend produced
+            fundamentally different position embeddings for left-padded
+            inputs, breaking Tier 1 (Bridge ↔ NNsight) parity.
+
+            With the hook removed, all three backends (Bridge, HT, NNsight)
+            use the same ``arange`` position IDs.  Attention masking
+            (via ``attention_mask`` in the batch) prevents padding tokens
+            from contributing to the output regardless of their position
+            embeddings.
 
         Args:
-            model: NNsight ``LanguageModel`` whose underlying HF model should
-                be hooked.
+            model: NNsight ``LanguageModel`` (unused, retained for API
+                compatibility).
         """
-        self._hook_handles: list[Any] = getattr(self, "_hook_handles", [])
-
-        hf_model = self._get_hf_model(model)
-        # Identify the decoder backbone module (GPT2Model, LlamaModel, etc.)
-        backbone = _find_backbone_module(hf_model)
-        if backbone is None:
-            return
-
-        def _fix_position_ids(
-            _module: Any,
-            args: tuple[Any, ...],
-            kwargs: dict[str, Any],
-        ) -> tuple[tuple[Any, ...], dict[str, Any]]:
-            if kwargs.get("position_ids") is None and kwargs.get("attention_mask") is not None:
-                am = kwargs["attention_mask"]
-                position_ids = am.long().cumsum(-1) - 1
-                position_ids = position_ids.masked_fill(am == 0, 0)
-                return args, {**kwargs, "position_ids": position_ids}
-            return args, kwargs
-
-        handle = backbone.register_forward_pre_hook(_fix_position_ids, with_kwargs=True)
-        self._hook_handles.append(handle)
 
     def _splice_sae(
         self,

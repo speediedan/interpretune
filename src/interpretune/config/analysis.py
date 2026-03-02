@@ -22,6 +22,76 @@ from interpretune.utils import DEFAULT_DECODE_KWARGS
 from interpretune.utils import rank_zero_warn, rank_zero_debug
 
 
+def _extend_names_for_bridge(module, names_list: list[str]) -> tuple[list[str], dict[str, str]]:
+    """Extend a names_filter list with canonical-name equivalents for TransformerBridge models.
+
+    :func:`construct_names_filter` builds alias-based hook names (e.g.
+    ``blocks.9.attn.hook_z.hook_sae_acts_post``) but TransformerBridge's
+    ``hook_dict`` and ``run_with_cache`` use canonical names (e.g.
+    ``blocks.9.attn.o.hook_in.hook_sae_acts_post``).  When the resolved callable
+    is passed to ``run_with_cache``, Bridge doesn't resolve aliases for callables
+    (only for list inputs).  This helper adds the canonical equivalents to the
+    filter list so the callable matches both alias and canonical keys.
+
+    For non-Bridge models this is a no-op that returns the input list unchanged
+    and an empty mapping.
+
+    Args:
+        module: The IT module whose ``model`` attribute is checked for Bridge type.
+        names_list: Original names_filter list with alias-based names.
+
+    Returns:
+        Tuple of (extended_list, canonical_to_alias_map) where:
+        - extended_list includes canonical-name equivalents (or original list for non-Bridge)
+        - canonical_to_alias_map maps canonical names back to their alias originals
+          (empty dict for non-Bridge models)
+    """
+    try:
+        from transformer_lens.model_bridge.bridge import TransformerBridge
+    except ImportError:
+        return names_list, {}
+
+    model = getattr(module, "model", None)
+    if model is None or not isinstance(model, TransformerBridge):
+        return names_list, {}
+
+    # Build combined alias→canonical mapping from the bridge.
+    # ``hook_aliases`` contains static aliases (embed/pos_embed/unembed).
+    # ``_collect_hook_aliases_from_registry`` (on SAETransformerBridge) contains
+    # dynamic aliases including the critical hook_z→o.hook_in mappings.
+    alias_to_canonical: dict[str, str] = {}
+    if hasattr(model, "hook_aliases"):
+        alias_to_canonical.update(model.hook_aliases)
+    if hasattr(model, "_collect_hook_aliases_from_registry"):
+        alias_to_canonical.update(model._collect_hook_aliases_from_registry())
+
+    if not alias_to_canonical:
+        return names_list, {}
+
+    extended = list(names_list)
+    canonical_to_alias: dict[str, str] = {}
+    for name in names_list:
+        # Try each alias prefix: if the name starts with an alias prefix (possibly with a suffix),
+        # add the canonical equivalent.  e.g. "blocks.9.attn.hook_z.hook_sae_acts_post"
+        # → alias "blocks.9.attn.hook_z" maps to "blocks.9.attn.o.hook_in"
+        # → canonical equiv: "blocks.9.attn.o.hook_in.hook_sae_acts_post"
+        for alias, canonical in alias_to_canonical.items():
+            if name == alias:
+                if canonical not in extended:
+                    extended.append(canonical)
+                canonical_to_alias[canonical] = name
+                break
+            elif name.startswith(alias + "."):
+                suffix = name[len(alias) :]
+                canonical_name = canonical + suffix
+                if canonical_name not in extended:
+                    extended.append(canonical_name)
+                canonical_to_alias[canonical_name] = name
+                break
+
+    return extended, canonical_to_alias
+
+
 @dataclass(kw_only=True)
 class AnalysisCfg(ITSerializableCfg):
     output_store: AnalysisStoreProtocol | None = None  # usually constructed on setup()
@@ -179,6 +249,12 @@ class AnalysisCfg(ITSerializableCfg):
     def materialize_names_filter(self, module, fallback_sae_targets: LatentAnalysisTargets | None = None) -> None:
         """Set names_filter using latent_analysis_targets if not already set.
 
+        For :class:`~transformer_lens.model_bridge.bridge.TransformerBridge` models the constructed
+        filter is automatically extended with canonical-name equivalents so that both
+        ``run_with_cache`` (which iterates canonical ``hook_dict`` keys) and downstream filtering
+        (e.g. ``get_alive_latents_impl``) can match activations regardless of whether the cache
+        uses alias or canonical naming.
+
         Args:
             module: The module to construct the names_filter for.
             fallback_sae_targets: Optional fallback LatentAnalysisTargets to use if this config doesn't have one.
@@ -197,6 +273,22 @@ class AnalysisCfg(ITSerializableCfg):
             self.names_filter = module.construct_names_filter(target_layers, match_fn)
         else:
             raise ValueError("No LatentAnalysisTargets available to create names_filter")
+
+        # For TransformerBridge models, extend the filter list with canonical-name equivalents.
+        # construct_names_filter builds alias-based names (e.g. blocks.9.attn.hook_z.hook_sae_acts_post)
+        # but Bridge's hook_dict and run_with_cache use canonical names
+        # (e.g. blocks.9.attn.o.hook_in.hook_sae_acts_post).
+        # Without this, the callable names_filter doesn't match canonical names → cache is empty →
+        # alive_latents empty.
+        # TODO: revisit names_filter handling for TransformerBridge — currently we extend the list
+        # with both alias and canonical names and remap keys post-hoc (_remap_bridge_hook_keys). A
+        # cleaner approach would be to resolve the naming scheme once at config time so downstream
+        # code only ever sees one consistent set of hook names.
+        if isinstance(self.names_filter, list):
+            self.names_filter, self._canonical_to_alias_names = _extend_names_for_bridge(module, self.names_filter)
+        else:
+            self._canonical_to_alias_names = {}
+
         self.names_filter = resolve_names_filter(self.names_filter)
 
     def maybe_set_hooks(self) -> None:
@@ -278,7 +370,60 @@ class AnalysisCfg(ITSerializableCfg):
                 decode_kwargs=self.decode_kwargs,
             )
 
+        # For TransformerBridge models, remap canonical hook-name keys to alias-based
+        # keys at the serialization boundary so the HF dataset matches its schema.
+        analysis_batch = self._remap_bridge_hook_keys(analysis_batch)
+
         yield analysis_batch
+
+    def _remap_bridge_hook_keys(self, analysis_batch: BaseAnalysisBatchProtocol) -> BaseAnalysisBatchProtocol:
+        """Remap canonical hook-name dict keys to alias-based keys for Bridge models.
+
+        TransformerBridge models use canonical hook names internally (e.g.
+        ``blocks.9.attn.o.hook_in.hook_sae_acts_post``) while the dataset schema
+        uses alias-based names from SAE metadata (e.g.
+        ``blocks.9.attn.hook_z.hook_sae_acts_post``).
+
+        This remapping is applied once at the serialization boundary so all
+        internal analysis operations can use consistent canonical names from the
+        activation cache.
+
+        Args:
+            analysis_batch: The analysis batch whose per-hook dict fields may need
+                key remapping.
+
+        Returns:
+            The analysis batch with remapped keys (modified in-place via setattr).
+        """
+        canonical_to_alias = getattr(self, "_canonical_to_alias_names", None)
+        if not canonical_to_alias:
+            return analysis_batch
+
+        # Determine output schema to identify per-hook dict fields
+        from interpretune.analysis.ops.base import AnalysisOpLike, OpSchema
+
+        schema = None
+        if self.op is not None and hasattr(self.op, "output_schema"):
+            schema = self.op.output_schema
+        elif hasattr(self, "output_schema") and self.output_schema is not None:
+            schema = self.output_schema
+        if isinstance(schema, AnalysisOpLike):
+            schema = schema.output_schema
+        if not isinstance(schema, OpSchema):
+            return analysis_batch
+
+        for col_name, col_cfg in schema.items():
+            if col_cfg.intermediate_only:
+                continue
+            if not (col_cfg.per_latent_model_hook or col_cfg.per_latent):
+                continue
+            val = getattr(analysis_batch, col_name, None)
+            if not isinstance(val, dict):
+                continue
+            remapped = {canonical_to_alias.get(k, k): v for k, v in val.items()}
+            setattr(analysis_batch, col_name, remapped)
+
+        return analysis_batch
 
     def add_default_cache_hooks(self, include_backward: bool = True) -> None:
         """Add default caching hooks for forward and optionally backward passes.

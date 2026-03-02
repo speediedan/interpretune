@@ -522,11 +522,11 @@ class CircuitTracerNNsightRemoteGemma2(BaseCfg):
 
 
 @dataclass(kw_only=True)
-class CoreSLGPT2(BaseCfg):
+class CoreSLHTGPT2(BaseCfg):
     phase: str | None = "test"
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
-    # sae_lens does not yet support TransformerBridge, so we set use_bridge=False
+    use_bridge: bool = False  # Explicitly use legacy HookedSAETransformer path
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
             model_name="gpt2-small", default_padding_side="left", use_bridge=False
@@ -536,10 +536,11 @@ class CoreSLGPT2(BaseCfg):
 
 
 @dataclass(kw_only=True)
-class CoreSLGPT2Analysis(AnalysisBaseCfg):
+class CoreSLHTGPT2Analysis(AnalysisBaseCfg):
     phase: str | None = "analysis"
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
+    use_bridge: bool = False  # Explicitly use legacy HookedSAETransformer path
     generative_step_cfg: GenerativeClassificationConfig = field(
         default_factory=lambda: GenerativeClassificationConfig(
             enabled=True,
@@ -588,28 +589,28 @@ class CoreSLGPT2Analysis(AnalysisBaseCfg):
 
 
 @dataclass(kw_only=True)
-class CoreSLGPT2LogitDiffsBase(CoreSLGPT2Analysis):
+class CoreSLHTGPT2LogitDiffsBase(CoreSLHTGPT2Analysis):
     analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
         AnalysisCfg(target_op=it.logit_diffs_base, save_prompts=False, save_tokens=False, ignore_manual=True),
     )
 
 
 @dataclass(kw_only=True)
-class CoreSLGPT2LogitDiffsSAE(CoreSLGPT2Analysis):
+class CoreSLHTGPT2LogitDiffsSAE(CoreSLHTGPT2Analysis):
     analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
         AnalysisCfg(target_op=it.logit_diffs_sae, save_prompts=True, save_tokens=True, ignore_manual=True),
     )
 
 
 @dataclass(kw_only=True)
-class CoreSLGPT2LogitDiffsAttrGrad(CoreSLGPT2Analysis):
+class CoreSLHTGPT2LogitDiffsAttrGrad(CoreSLHTGPT2Analysis):
     analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
         AnalysisCfg(target_op=it.logit_diffs_attr_grad, save_prompts=False, save_tokens=False, ignore_manual=True),
     )
 
 
 @dataclass(kw_only=True)
-class CoreSLGPT2LogitDiffsAttrAblation(CoreSLGPT2Analysis):
+class CoreSLHTGPT2LogitDiffsAttrAblation(CoreSLHTGPT2Analysis):
     analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
         AnalysisCfg(target_op=it.logit_diffs_attr_ablation, save_prompts=False, save_tokens=False, ignore_manual=True),
     )
@@ -622,7 +623,7 @@ class CoreSLGPT2LogitDiffsAttrAblation(CoreSLGPT2Analysis):
 
 @dataclass(kw_only=True)
 class CoreSLNNsightGPT2Analysis(AnalysisBaseCfg):
-    """NNsight backend variant of CoreSLGPT2Analysis for SAE backend parity testing.
+    """NNsight backend variant of CoreSLHTGPT2Analysis for SAE backend parity testing.
 
     Uses (core, nnsight, sae_lens) adapter composition with SAELensConfig(backend='nnsight').
     """
@@ -715,6 +716,109 @@ class CoreSLNNsightGPT2LogitDiffsAttrAblation(CoreSLNNsightGPT2Analysis):
     )
 
 
+################################################################################
+# TransformerBridge SAE Analysis Test Configs (Bridge vs Hooked Parity)
+################################################################################
+
+
+@dataclass(kw_only=True)
+class CoreSLBridgeGPT2Analysis(AnalysisBaseCfg):
+    """TransformerBridge variant of CoreSLHTGPT2Analysis for Bridge vs Hooked parity testing.
+
+    Uses (core, sae_lens) adapter composition with use_bridge=True and ITLensBridgeConfig instead of
+    ITLensFromPretrainedNoProcessingConfig.
+    """
+
+    phase: str | None = "analysis"
+    model_src_key: str | None = "gpt2"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
+    use_bridge: bool = True
+    generative_step_cfg: GenerativeClassificationConfig = field(
+        default_factory=lambda: GenerativeClassificationConfig(
+            enabled=True,
+            lm_generation_cfg=TLensGenerationConfig(max_new_tokens=1, output_logits=True, return_dict_in_generate=True),
+        )
+    )
+    latent_analysis_targets: LatentAnalysisTargets = field(
+        default_factory=lambda: LatentAnalysisTargets(sae_release="gpt2-small-hook-z-kk", target_layers=[9, 10])
+    )
+    hf_from_pretrained_cfg: HFFromPretrainedConfig = field(
+        default_factory=lambda: HFFromPretrainedConfig(
+            pretrained_kwargs={"dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
+        )
+    )
+    tl_cfg: ITLensBridgeConfig = field(
+        default_factory=lambda: ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left")
+    )
+    sae_cfgs: list = field(default_factory=lambda: [])
+    auto_comp_cfg: AutoCompConfig = field(
+        default_factory=lambda: AutoCompConfig(
+            module_cfg_name="RTEBoolqConfig", module_cfg_mixin=RTEBoolqEntailmentMapping
+        )
+    )
+    force_prepare_data: bool | None = True
+    dm_override_cfg: dict | None = field(
+        default_factory=lambda: {
+            "enable_datasets_cache": True,
+            "dataset_path": str(Path(tempfile.gettempdir()) / "force_prepare_analysis_br_ds"),
+            # NOTE: TransformerBridge requires explicit attention_mask in the data pipeline.
+            # Unlike HookedTransformer, which auto-creates an attention mask from
+            # tokenizer.padding_side in ``input_to_embed()``, TransformerBridge passes
+            # tokens directly to the underlying HF model.  Without an explicit mask the
+            # HF model treats left-padding tokens as real content, introducing a
+            # systematic logit shift (~5 logit-units for GPT-2 on RTE).
+            # Two changes are needed:
+            # 1) tokenizer_kwargs must include 'attention_mask' in model_input_names so
+            #    the tokenizer actually PRODUCES the mask (HF tokenizers check
+            #    model_input_names to decide whether to generate attention_mask).
+            # 2) signature_columns must include 'attention_mask' so
+            #    _remove_unused_columns keeps it in the saved dataset.
+            "tokenizer_kwargs": {
+                "model_input_names": ["input", "attention_mask"],
+                "padding_side": "left",
+                "add_bos_token": True,
+            },
+            "signature_columns": ["input", "attention_mask", "labels"],
+        }
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.latent_analysis_targets and hasattr(self.latent_analysis_targets, "latent_model_fqns"):
+            self.sae_cfgs = [
+                SAELensFromPretrainedConfig(release=sae_fqn.release, sae_id=sae_fqn.sae_id)
+                for sae_fqn in self.latent_analysis_targets.latent_model_fqns
+            ]
+
+
+@dataclass(kw_only=True)
+class CoreSLBridgeGPT2LogitDiffsBase(CoreSLBridgeGPT2Analysis):
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
+        AnalysisCfg(target_op=it.logit_diffs_base, save_prompts=False, save_tokens=False, ignore_manual=True),
+    )
+
+
+@dataclass(kw_only=True)
+class CoreSLBridgeGPT2LogitDiffsSAE(CoreSLBridgeGPT2Analysis):
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
+        AnalysisCfg(target_op=it.logit_diffs_sae, save_prompts=True, save_tokens=True, ignore_manual=True),
+    )
+
+
+@dataclass(kw_only=True)
+class CoreSLBridgeGPT2LogitDiffsAttrGrad(CoreSLBridgeGPT2Analysis):
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
+        AnalysisCfg(target_op=it.logit_diffs_attr_grad, save_prompts=False, save_tokens=False, ignore_manual=True),
+    )
+
+
+@dataclass(kw_only=True)
+class CoreSLBridgeGPT2LogitDiffsAttrAblation(CoreSLBridgeGPT2Analysis):
+    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
+        AnalysisCfg(target_op=it.logit_diffs_attr_ablation, save_prompts=False, save_tokens=False, ignore_manual=True),
+    )
+
+
 @dataclass(kw_only=True)
 class CoreSLCust(BaseCfg):
     phase: str | None = "test"
@@ -724,9 +828,10 @@ class CoreSLCust(BaseCfg):
 
 
 @dataclass(kw_only=True)
-class LightningSLGPT2(BaseCfg):
+class LightningSLHTGPT2(BaseCfg):
     phase: str | None = "test"
     model_src_key: str | None = "gpt2"
+    use_bridge: bool = False
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.sae_lens)
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(

@@ -167,13 +167,38 @@ ITLensCfgTypes: tuple[type, type, type] = (
 )  # for runtime checks
 
 
-@dataclass(kw_only=True)
-class ITLensConfig(ITConfig):
-    """Dataclass to encapsulate the ITModule internal state."""
+class TLConfigInitMixin:
+    """Mixin providing TransformerLens config initialization logic.
 
-    tl_cfg: ITLensFromPretrainedConfig | ITLensCustomConfig | ITLensBridgeConfig
+    Shared by :class:`ITLensConfig` (pure TL config) and :class:`SAELensConfig` (multi-backend config
+    that delegates to TL when ``backend="transformerlens"``).  Separating these helpers avoids code
+    duplication without requiring SAELensConfig to inherit from ITLensConfig.
 
-    def __post_init__(self) -> None:
+    Note: This mixin always co-inherits with :class:`ITConfig`, which provides
+    ``hf_from_pretrained_cfg``, ``model_name_or_path``, ``tokenizer_kwargs``, etc.
+    Only attributes unique to TL initialization are declared here.
+    """
+
+    # Attributes unique to TL initialization (not provided by ITConfig).
+    # ``tl_cfg`` is typed as ``Any`` to avoid invariance conflicts — consuming
+    # dataclasses narrow the type (non-optional on ITLensConfig, optional on
+    # SAELensConfig).
+    tl_cfg: Any
+    _load_from_pretrained: bool
+    _dtype: torch.dtype | None
+
+    # ------------------------------------------------------------------
+    # Core TL config state initialization (called by __post_init__ or
+    # backend-specific init methods on consuming classes).
+    # ------------------------------------------------------------------
+
+    def _init_tl_cfg_state(self) -> None:
+        """Validate ``tl_cfg`` and initialize TL-specific state.
+
+        This method encapsulates the logic that was previously in ``ITLensConfig.__post_init__``
+        (minus the final ``super().__post_init__()`` call, which remains the caller's responsibility
+        so each consuming class can control its own MRO chain).
+        """
         if not self.tl_cfg:
             raise MisconfigurationException(
                 "A valid tl_cfg (ITLensFromPretrainedConfig, ITLensCustomConfig, or ITLensBridgeConfig) must be"
@@ -213,7 +238,10 @@ class ITLensConfig(ITConfig):
                     )
             self._sync_pretrained_cfg()
         self._translate_tl_config()
-        super().__post_init__()
+
+    # ------------------------------------------------------------------
+    # TL config helper methods
+    # ------------------------------------------------------------------
 
     def _map_tl_fallback(self, target_key: str, tl_cfg_key: str):
         qual_sub_key = tl_cfg_key.split(".")
@@ -299,6 +327,17 @@ class ITLensConfig(ITConfig):
                 f" specified TL dtype: {tl_dtype}."
             )
             self.hf_from_pretrained_cfg.pretrained_kwargs["dtype"] = tl_dtype
+
+
+@dataclass(kw_only=True)
+class ITLensConfig(ITConfig, TLConfigInitMixin):
+    """Dataclass to encapsulate the ITModule internal state."""
+
+    tl_cfg: ITLensFromPretrainedConfig | ITLensCustomConfig | ITLensBridgeConfig
+
+    def __post_init__(self) -> None:
+        self._init_tl_cfg_state()
+        super().__post_init__()
 
 
 # TODO: we should be able to standardize on the HF GenerationConfig interface and remove TLensGenerationConfig once

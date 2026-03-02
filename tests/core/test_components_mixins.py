@@ -214,20 +214,20 @@ class TestITStateMixin:
 
 
 class TestAnalysisStepMixin:
-    def test_on_analysis_epoch_end(self, get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis):
+    def test_on_analysis_epoch_end(self, get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis):
         """Test the on_analysis_epoch_end method in AnalysisStepMixin."""
 
-        fixture = get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis
+        fixture = get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis
         module = fixture.it_session.module
 
         # Simply verify the method can be called without errors
         module.on_analysis_epoch_end()
 
-    def test_analysis_start_end(self, get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis):
+    def test_analysis_start_end(self, get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis):
         """Test the on_analysis_start and on_analysis_end methods."""
         import interpretune as it
 
-        fixture = get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis
+        fixture = get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis
         module = fixture.it_session.module
 
         with ablate_cls_attrs(module.it_cfg, "analysis_cfg"):

@@ -23,6 +23,7 @@ from interpretune.adapters.model_view import ModelView, CanonicalModelView
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.base.components.mixins import _import_class
 from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info, rank_zero_debug, _FTS_AVAILABLE
+from interpretune.utils.import_utils import _resolve_dtype
 from interpretune.protocol import Adapter
 
 
@@ -262,7 +263,8 @@ class BaseITLensModule(BaseITModule):
         if "device" in pruned_cfg:
             bridge_config.device = pruned_cfg["device"]
         if "dtype" in pruned_cfg:
-            bridge_config.dtype = pruned_cfg["dtype"]
+            # TransformerBridgeConfig.dtype expects torch.dtype; pruned_cfg may contain a string (e.g. "float32")
+            bridge_config.dtype = _resolve_dtype(pruned_cfg["dtype"]) or bridge_config.dtype
 
         # Apply ITLensBridgeConfig-specific overrides if using that config type
         if isinstance(self.it_cfg.tl_cfg, ITLensBridgeConfig):

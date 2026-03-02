@@ -20,17 +20,17 @@ class TestAnalysisRunner:
         "session_fixture, test_cfg_override_kwargs",
         [
             pytest.param(
-                "get_it_session__sl_gpt2_analysis__setup",
+                "get_it_session__sl_ht_gpt2_analysis__setup",
                 {"analysis_cfgs": [AnalysisCfg(output_schema=it.sae_correct_acts)]},
             ),
             # we need to set ignore_manual=True at both the analysis_cfg and the test_cfg levels since we always want
             # test_cfg to override nested configs (analysis_cfg here) but also want to leverage an existing
             # fixture test_cfg in this case.
             pytest.param(
-                "get_it_session__sl_gpt2_analysis__setup",
+                "get_it_session__sl_ht_gpt2_analysis__setup",
                 {"analysis_cfgs": [AnalysisCfg(target_op=it.model_forward, ignore_manual=True)], "ignore_manual": True},
             ),
-            pytest.param("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis", {}),
+            pytest.param("get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis", {}),
         ],
         ids=["manual_step", "api_generated_step_with_op", "analysis_store_fixt"],
     )
@@ -160,7 +160,7 @@ class TestAnalysisRunner:
     def test_run_method_partialmethod(self, mock_init, request):
         """Test the _run method and analysis partialmethod in AnalysisRunner."""
         # Use a real session fixture to avoid pickling issues with MagicMock
-        fixture = request.getfixturevalue("get_it_session__sl_gpt2_analysis__setup")
+        fixture = request.getfixturevalue("get_it_session__sl_ht_gpt2_analysis__setup")
         it_session, _ = fixture.it_session, fixture.test_cfg()
 
         # Create a runner with the real session

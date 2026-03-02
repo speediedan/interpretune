@@ -62,15 +62,15 @@ from tests.core.cfg_aliases import (
     LightningTLGPT2,
     LightningTLBridgeGPT2,
     LightningTLBridgeGPT2Processed,
-    CoreSLGPT2,
-    CoreSLGPT2Analysis,
+    CoreSLHTGPT2,
+    CoreSLHTGPT2Analysis,
     CoreSLCust,
-    LightningSLGPT2,
-    CoreSLGPT2LogitDiffsSAE,
-    CoreSLGPT2LogitDiffsAttrGrad,
-    CoreSLGPT2LogitDiffsBase,
+    LightningSLHTGPT2,
+    CoreSLHTGPT2LogitDiffsSAE,
+    CoreSLHTGPT2LogitDiffsAttrGrad,
+    CoreSLHTGPT2LogitDiffsBase,
     TLMechInterpCfg,
-    CoreSLGPT2LogitDiffsAttrAblation,
+    CoreSLHTGPT2LogitDiffsAttrAblation,
     CircuitTracerTLGemma2,
     LightningCircuitTracerTLGemma2,
     CoreNNsightGPT2,
@@ -83,6 +83,10 @@ from tests.core.cfg_aliases import (
     CoreSLNNsightGPT2LogitDiffsSAE,
     CoreSLNNsightGPT2LogitDiffsAttrGrad,
     CoreSLNNsightGPT2LogitDiffsAttrAblation,
+    CoreSLBridgeGPT2LogitDiffsBase,
+    CoreSLBridgeGPT2LogitDiffsSAE,
+    CoreSLBridgeGPT2LogitDiffsAttrGrad,
+    CoreSLBridgeGPT2LogitDiffsAttrAblation,
 )
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
@@ -188,7 +192,7 @@ FIXTURE_CFGS = {
     "l_tl_bridge_gemma2": FixtureCfg(
         test_cfg=LightningTLBridgeGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
     ),
-    "l_sl_gpt2": FixtureCfg(test_cfg=LightningSLGPT2, variants={"it_session": [FixtPhase.initonly]}),
+    "l_sl_ht_gpt2": FixtureCfg(test_cfg=LightningSLHTGPT2, variants={"it_session": [FixtPhase.initonly]}),
     "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg, variants={"it_session": [FixtPhase.setup]}),
     "l_gemma2_debug": FixtureCfg(test_cfg=LightningGemma2DebugCfg, variants={"it_session": [FixtPhase.setup]}),
     "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function", variants={"it_session": [FixtPhase.setup]}),
@@ -230,29 +234,29 @@ FIXTURE_CFGS = {
     "ct_nnsight_gemma2_remote": FixtureCfg(
         test_cfg=CircuitTracerNNsightRemoteGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
     ),
-    "sl_gpt2": FixtureCfg(
-        test_cfg=CoreSLGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
+    "sl_ht_gpt2": FixtureCfg(
+        test_cfg=CoreSLHTGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
     ),
-    "sl_gpt2_analysis": FixtureCfg(
-        test_cfg=CoreSLGPT2Analysis, scope="session", variants={"it_session": [FixtPhase.initonly, FixtPhase.setup]}
+    "sl_ht_gpt2_analysis": FixtureCfg(
+        test_cfg=CoreSLHTGPT2Analysis, scope="session", variants={"it_session": [FixtPhase.initonly, FixtPhase.setup]}
     ),
-    "sl_gpt2_logit_diffs_base": FixtureCfg(
-        test_cfg=CoreSLGPT2LogitDiffsBase,
+    "sl_ht_gpt2_logit_diffs_base": FixtureCfg(
+        test_cfg=CoreSLHTGPT2LogitDiffsBase,
         scope="session",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
-    "sl_gpt2_logit_diffs_sae": FixtureCfg(
-        test_cfg=CoreSLGPT2LogitDiffsSAE,
+    "sl_ht_gpt2_logit_diffs_sae": FixtureCfg(
+        test_cfg=CoreSLHTGPT2LogitDiffsSAE,
         scope="session",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
-    "sl_gpt2_logit_diffs_attr_grad": FixtureCfg(
-        test_cfg=CoreSLGPT2LogitDiffsAttrGrad,
+    "sl_ht_gpt2_logit_diffs_attr_grad": FixtureCfg(
+        test_cfg=CoreSLHTGPT2LogitDiffsAttrGrad,
         scope="session",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
-    "sl_gpt2_logit_diffs_attr_ablation": FixtureCfg(
-        test_cfg=CoreSLGPT2LogitDiffsAttrAblation,
+    "sl_ht_gpt2_logit_diffs_attr_ablation": FixtureCfg(
+        test_cfg=CoreSLHTGPT2LogitDiffsAttrAblation,
         scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
@@ -274,6 +278,27 @@ FIXTURE_CFGS = {
     ),
     "sl_ns_gpt2_logit_diffs_attr_ablation": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsAttrAblation,
+        scope="class",
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    # TransformerBridge SAE analysis fixtures (Bridge vs Hooked parity testing)
+    "sl_br_gpt2_logit_diffs_base": FixtureCfg(
+        test_cfg=CoreSLBridgeGPT2LogitDiffsBase,
+        scope="session",
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_br_gpt2_logit_diffs_sae": FixtureCfg(
+        test_cfg=CoreSLBridgeGPT2LogitDiffsSAE,
+        scope="session",
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_br_gpt2_logit_diffs_attr_grad": FixtureCfg(
+        test_cfg=CoreSLBridgeGPT2LogitDiffsAttrGrad,
+        scope="session",
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_br_gpt2_logit_diffs_attr_ablation": FixtureCfg(
+        test_cfg=CoreSLBridgeGPT2LogitDiffsAttrAblation,
         scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),

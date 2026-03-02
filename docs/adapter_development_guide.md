@@ -202,6 +202,59 @@ class ITMyConfig(ITConfig):
         super().__post_init__()
 ```
 
+### Pattern 3: Model Wrapper Selection (SAE Lens)
+
+The SAE Lens adapter supports multiple TL model wrappers via the ``model_wrapper`` field on
+``SAELensConfig``.  This pattern enables adapters to dispatch to different model initialization
+paths from a single configuration:
+
+| ``model_wrapper`` value | Model class | Notes |
+|-------------------------|-------------|-------|
+| ``"transformer_bridge"`` (default) | ``SAETransformerBridge`` | Wraps HF model without weight conversion; more memory efficient |
+| ``"hooked_transformer"`` | ``HookedSAETransformer`` | Legacy path with weight conversion |
+
+**Dispatch implementation** (in ``BaseSAELensTLModule``):
+
+```python
+def _convert_hf_to_tl(self) -> None:
+    model_wrapper = getattr(self.it_cfg, "model_wrapper", "transformer_bridge")
+    if model_wrapper == "transformer_bridge":
+        self._convert_hf_to_bridge()
+    else:
+        self._convert_hf_to_hooked()
+```
+
+**Key constraints:**
+
+- ``model_wrapper`` is only meaningful when ``backend="transformerlens"`` — the NNsight
+  backend ignores it.
+- TransformerBridge requires an HF model instance — it **cannot** be initialized from a
+  config dict alone.  Config-based initialization (``ITLensCustomConfig``) always uses
+  ``HookedSAETransformer`` regardless of ``model_wrapper``.
+- When using the hooked path, set ``model_wrapper="hooked_transformer"`` explicitly in
+  your test or production config since the default is now ``"transformer_bridge"``.
+
+**Configuration example (Bridge — default):**
+
+```python
+from interpretune.config import SAELensConfig, ITLensBridgeConfig
+
+cfg = SAELensConfig(
+    tl_cfg=ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left"),
+    sae_cfgs=[SAELensFromPretrainedConfig(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre")],
+)
+```
+
+**Configuration example (legacy hooked path):**
+
+```python
+cfg = SAELensConfig(
+    model_wrapper="hooked_transformer",
+    tl_cfg=ITLensFromPretrainedNoProcessingConfig(model_name="gpt2-small", use_bridge=False),
+    sae_cfgs=[SAELensFromPretrainedConfig(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre")],
+)
+```
+
 ## Light Registration
 
 Adapters must be registered for light import in `_light_register.py`:

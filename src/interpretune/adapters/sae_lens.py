@@ -23,6 +23,7 @@ from interpretune.adapters import (
     NNsightAttributeMixin,
     BaseNNsightModule,
 )
+from interpretune.utils.import_utils import _resolve_dtype
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import SAELensFromPretrainedConfig, SAELensCustomConfig, SAELensConfig
 from interpretune.utils import rank_zero_warn, rank_zero_info
@@ -115,9 +116,9 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
     This mixin is composed with BaseSAELensModule and BaseITLensModule when using the TransformerLens backend to
     provide _convert_hf_to_tl, tl_config_model_init, and TLModelBackend initialization.
 
-    Supports model_wrapper selection via ``it_cfg.model_wrapper``:
-    - ``"hooked_transformer"`` → ``HookedSAETransformer.from_pretrained()`` (default)
-    - ``"transformer_bridge"`` → ``SAETransformerBridge`` (not yet implemented)
+    Supports model wrapper selection via ``it_cfg.use_bridge``:
+    - ``True`` (default) → ``SAETransformerBridge`` (memory-efficient)
+    - ``False`` → ``HookedSAETransformer.from_pretrained()``
     """
 
     def __init__(self, *args, **kwargs):
@@ -127,14 +128,15 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
         super().__init__(*args, **kwargs)
 
     def _convert_hf_to_tl(self) -> None:
-        """Convert HF model to HookedSAETransformer (or SAETransformerBridge when available)."""
-        model_wrapper = getattr(self.it_cfg, "model_wrapper", "hooked_transformer")
-        if model_wrapper == "transformer_bridge":
-            raise NotImplementedError(
-                "SAETransformerBridge is not yet implemented. Use model_wrapper='hooked_transformer' "
-                "(or omit it for the default) until TransformerBridge SAE support is available."
-            )
-        # HookedSAETransformer path (existing behavior)
+        """Convert HF model to SAETransformerBridge or HookedSAETransformer based on use_bridge config."""
+        use_bridge = getattr(self.it_cfg, "use_bridge", True)
+        if use_bridge:
+            self._convert_hf_to_bridge()
+        else:
+            self._convert_hf_to_hooked()
+
+    def _convert_hf_to_hooked(self) -> None:
+        """Convert HF model to HookedSAETransformer (legacy path)."""
         # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
         tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer  # type: ignore[attr-defined]
         hf_preconversion_config = deepcopy(self.model.config)  # type: ignore[attr-defined]  # capture original hf config before conversion
@@ -143,6 +145,89 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
             hf_model=cast(PreTrainedModel, self.model), tokenizer=tokenizer_handle, **pruned_cfg
         )
         self.model.config = hf_preconversion_config
+        self.instantiate_saes()  # type: ignore[attr-defined]  # from BaseSAELensModule
+
+    def _convert_hf_to_bridge(self) -> None:
+        """Convert HF model to SAETransformerBridge (preferred path).
+
+        Constructs a ``TransformerBridge`` from the pre-loaded HF model, then swaps ``__class__`` to
+        ``SAETransformerBridge`` (mirroring the pattern used by ``SAETransformerBridge.boot_transformers()``).
+        This avoids re-downloading/re-loading the model and reuses the same approach as the TL adapter's
+        ``_convert_hf_to_bridge()``.
+
+        If ``it_cfg.tl_cfg`` is an ``ITLensBridgeConfig``, any ``transformer_bridge_config_overrides`` and
+        ``enable_compatibility_mode`` settings will be applied.
+        """
+        from sae_lens.analysis.sae_transformer_bridge import SAETransformerBridge
+        from transformer_lens.config import TransformerBridgeConfig
+        from transformer_lens.factories.architecture_adapter_factory import ArchitectureAdapterFactory
+        from transformer_lens.model_bridge import TransformerBridge
+        from transformer_lens.model_bridge.sources.transformers import (
+            determine_architecture_from_hf_config,
+            map_default_transformer_lens_config,
+        )
+
+        from interpretune.config.transformer_lens import ITLensBridgeConfig
+
+        tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer  # type: ignore[attr-defined]
+        hf_model = self.model
+        hf_preconversion_config = deepcopy(hf_model.config)  # type: ignore[attr-defined]
+
+        # Map HF config to TransformerLens config
+        tl_config = map_default_transformer_lens_config(hf_model.config)  # type: ignore[attr-defined]
+
+        # Determine architecture from HF config
+        architecture = determine_architecture_from_hf_config(hf_model.config)  # type: ignore[attr-defined]
+
+        # Convert to TransformerBridgeConfig
+        bridge_config = TransformerBridgeConfig.from_dict(tl_config.__dict__)
+        bridge_config.architecture = architecture
+
+        # Apply device/dtype overrides from IT config
+        pruned_cfg = self._prune_tl_cfg_dict()  # type: ignore[attr-defined]
+        if "device" in pruned_cfg:
+            bridge_config.device = pruned_cfg["device"]
+        if "dtype" in pruned_cfg:
+            # TransformerBridgeConfig.dtype expects torch.dtype; pruned_cfg may contain a string (e.g. "float32")
+            bridge_config.dtype = _resolve_dtype(pruned_cfg["dtype"]) or bridge_config.dtype
+
+        # Apply ITLensBridgeConfig-specific overrides if using that config type
+        if isinstance(self.it_cfg.tl_cfg, ITLensBridgeConfig):
+            if self.it_cfg.tl_cfg.transformer_bridge_config_overrides:
+                for key, value in self.it_cfg.tl_cfg.transformer_bridge_config_overrides.items():
+                    if hasattr(bridge_config, key):
+                        setattr(bridge_config, key, value)
+                    else:
+                        rank_zero_warn(
+                            f"transformer_bridge_config_overrides key '{key}' not found in "
+                            f"TransformerBridgeConfig, ignoring."
+                        )
+
+        # Create adapter and TransformerBridge
+        adapter = ArchitectureAdapterFactory.select_architecture_adapter(bridge_config)
+        self.model = TransformerBridge(model=hf_model, adapter=adapter, tokenizer=tokenizer_handle)
+
+        # Swap class to SAETransformerBridge (same pattern as SAETransformerBridge.boot_transformers())
+        self.model.__class__ = SAETransformerBridge
+        self.model._acts_to_saes = {}  # type: ignore[attr-defined]
+        self.model._transcoder_output_hooks = {}  # type: ignore[attr-defined]
+
+        # Enable compatibility mode if requested (ITLensBridgeConfig only)
+        if isinstance(self.it_cfg.tl_cfg, ITLensBridgeConfig) and self.it_cfg.tl_cfg.enable_compatibility_mode:
+            compat_kwargs = self.it_cfg.tl_cfg.enable_compatibility_mode_kwargs or {}
+            rank_zero_info(f"Enabling TransformerBridge compatibility mode with kwargs: {compat_kwargs}")
+            self.model.enable_compatibility_mode(**compat_kwargs)
+
+        # Move model to device if move_to_device is enabled (default True)
+        if pruned_cfg.get("move_to_device", True) and "device" in pruned_cfg:
+            device = pruned_cfg["device"]
+            rank_zero_info(f"Moving SAETransformerBridge to device: {device}")
+            self.model.to(device)
+
+        # Preserve original HF config for reference
+        self.model.config = hf_preconversion_config
+
+        # Load and attach SAEs
         self.instantiate_saes()  # type: ignore[attr-defined]  # from BaseSAELensModule
 
     def tl_config_model_init(self) -> None:

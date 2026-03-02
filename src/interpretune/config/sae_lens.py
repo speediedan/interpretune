@@ -10,21 +10,19 @@ from transformer_lens.config import HookedTransformerConfig
 
 from interpretune.config import (
     ITConfig,
-    ITLensConfig,
     ITSerializableCfg,
     ITLensCfgTypes,
     ITLensCustomConfig,
     ITLensFromPretrainedConfig,
 )
-from interpretune.utils import rank_zero_warn, MisconfigurationException
+from interpretune.config.transformer_lens import ITLensBridgeConfig, TLConfigInitMixin
+from interpretune.utils import rank_zero_warn, MisconfigurationException, _resolve_dtype
 
 if TYPE_CHECKING:
     from interpretune.config.nnsight import NNsightConfig
-    from interpretune.config.transformer_lens import ITLensBridgeConfig
 
-# Valid backend and model_wrapper identifiers
+# Valid backend identifiers
 _VALID_SAE_BACKENDS = ("transformerlens", "nnsight")
-_VALID_SAE_MODEL_WRAPPERS = ("hooked_transformer", "transformer_bridge")
 
 ################################################################################
 # SAE Lens Configuration Encapsulation
@@ -62,23 +60,27 @@ SAECfgType: TypeAlias = SAELensFromPretrainedConfig | SAELensCustomConfig
 
 
 @dataclass(kw_only=True)
-class SAELensConfig(ITLensConfig):
+class SAELensConfig(ITConfig, TLConfigInitMixin):
     """Configuration for SAE Lens adapter.
 
     Supports both TransformerLens and NNsight backends via the ``backend`` field.
     When ``backend="transformerlens"`` (default), ``tl_cfg`` must be provided.
     When ``backend="nnsight"``, ``nnsight_cfg`` must be provided instead.
 
-    The ``model_wrapper`` field is only meaningful when ``backend="transformerlens"``
-    and controls whether a HookedSAETransformer or SAETransformerBridge is used.
+    Inherits from :class:`ITConfig` (not ``ITLensConfig``) so that it is backend-agnostic
+    at the type level.  TL-specific initialization logic is provided by
+    :class:`TLConfigInitMixin`, which is shared with ``ITLensConfig``.
+
+    The ``use_bridge`` field is only meaningful when ``backend="transformerlens"``
+    and controls whether a SAETransformerBridge (True) or HookedSAETransformer (False) is used.
     """
 
     # Backend selection
     backend: str = "transformerlens"
-    model_wrapper: str = "hooked_transformer"
+    use_bridge: bool = True
 
-    # Override tl_cfg to be optional (parent ITLensConfig requires it, but NNsight backend doesn't need it)
-    tl_cfg: ITLensFromPretrainedConfig | ITLensCustomConfig | ITLensBridgeConfig | None = None  # type: ignore[assignment]
+    # TL backend configuration (required when backend="transformerlens")
+    tl_cfg: ITLensFromPretrainedConfig | ITLensCustomConfig | ITLensBridgeConfig | None = None
 
     # NNsight backend configuration (required when backend="nnsight")
     nnsight_cfg: NNsightConfig | None = None
@@ -105,17 +107,12 @@ class SAELensConfig(ITLensConfig):
         return normalized_names
 
     def __post_init__(self) -> None:
-        # Validate backend and model_wrapper
+        # Validate backend
         if self.backend not in _VALID_SAE_BACKENDS:
             raise ValueError(f"Invalid backend '{self.backend}'. Must be one of {_VALID_SAE_BACKENDS}")
-        if self.model_wrapper not in _VALID_SAE_MODEL_WRAPPERS:
-            raise ValueError(
-                f"Invalid model_wrapper '{self.model_wrapper}'. Must be one of {_VALID_SAE_MODEL_WRAPPERS}"
-            )
-        if self.backend != "transformerlens" and self.model_wrapper != "hooked_transformer":
+        if self.backend != "transformerlens" and self.use_bridge:
             rank_zero_warn(
-                f"model_wrapper='{self.model_wrapper}' is only meaningful when backend='transformerlens'. "
-                "This setting will be ignored."
+                "use_bridge=True is only meaningful when backend='transformerlens'. This setting will be ignored."
             )
 
         # Validate and normalize sae_cfgs (backend-agnostic)
@@ -145,8 +142,11 @@ class SAELensConfig(ITLensConfig):
         if self.nnsight_cfg is not None:
             rank_zero_warn("nnsight_cfg is set but backend is 'transformerlens'. This setting will be ignored.")
 
-        # Call ITLensConfig.__post_init__ for TL-specific setup (handles tl_cfg validation,
-        # pretrained config sync, config translation, and ITConfig.__post_init__)
+        # Initialize TL config state (validation, pretrained sync, config translation)
+        # via TLConfigInitMixin — shared with ITLensConfig
+        self._init_tl_cfg_state()
+
+        # Call ITConfig.__post_init__ for base config setup (dtype resolution etc.)
         super().__post_init__()
 
         # Sync SAE device config with TL device
@@ -181,10 +181,10 @@ class SAELensConfig(ITLensConfig):
         # Set dtype from nnsight_cfg if available
         assert self.nnsight_cfg is not None  # narrowing for type checker; validated above
         if self.nnsight_cfg.resolved_dtype is not None:
-            self._dtype = self.nnsight_cfg.resolved_dtype
+            self._dtype = _resolve_dtype(self.nnsight_cfg.resolved_dtype)
 
-        # Skip ITLensConfig.__post_init__ and call ITConfig.__post_init__ directly
-        ITConfig.__post_init__(self)
+        # Call ITConfig.__post_init__ for base config setup (dtype resolution etc.)
+        super().__post_init__()
 
         # Sync SAE device config with NNsight model device
         self._sync_sl_nnsight_device_cfg()
@@ -245,6 +245,8 @@ class SAELensConfig(ITLensConfig):
             assert isinstance(self.tl_cfg, ITLensCustomConfig)
             assert isinstance(self.tl_cfg.cfg, HookedTransformerConfig)
             tl_device = self.tl_cfg.cfg.device
+        elif isinstance(self.tl_cfg, ITLensBridgeConfig):
+            tl_device = self.tl_cfg.device
         else:
             assert isinstance(self.tl_cfg, ITLensFromPretrainedConfig)
             tl_device = self.tl_cfg.device

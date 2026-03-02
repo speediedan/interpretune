@@ -98,7 +98,7 @@ def validate_sae_operations(
 class TestAnalysisStore:
     def test_format_columns_all_indices(self, request):
         # Use the real AnalysisStore from fixture
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis")
         store = deepcopy(fixture.result)
 
         # Get a sample of column names from the dataset to use for the test
@@ -187,7 +187,7 @@ class TestAnalysisStore:
         from interpretune.analysis import core
 
         # Get a real dataset from the fixture
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis")
         real_dataset = deepcopy(fixture.result.dataset)
 
         # Create a mock for load_dataset that returns our real dataset
@@ -221,7 +221,7 @@ class TestAnalysisStore:
     def test_reset_clears_settings(self, request):
         """Test that reset maintains custom attributes according to implementation."""
         # Use real fixture instead of mocks
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis")
         store = deepcopy(fixture.result)
 
         # Add test attribute
@@ -258,7 +258,7 @@ class TestAnalysisStore:
 
     def test_getitem_else(self, request):
         # Use a real AnalysisStore from the session fixture
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis")
         store = fixture.result
         # Using an integer index that's not a valid key should raise an exception
         with pytest.raises(Exception):
@@ -348,7 +348,7 @@ class TestAnalysisStore:
 
     def test_select_columns(self, request):
         # Use real fixture instead of mock
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis")
         store = deepcopy(fixture.result)
         column_subset = store.select_columns(column_names=["orig_labels", "answer_logits"])
         assert isinstance(column_subset, AnalysisStore)
@@ -363,7 +363,7 @@ class TestAnalysisStore:
 
     def test_getattr_protocol(self, request):
         # Use real fixture instead of mock
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis")
 
         # Test with stack_batches=False (default behavior)
         store_unstacked = deepcopy(fixture.result)
@@ -413,7 +413,7 @@ class TestAnalysisStore:
 
     def test_getattr_dataset_attr(self, request):
         # Use real fixture
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis")
         store = deepcopy(fixture.result)
 
         # Set a test attribute
@@ -427,7 +427,7 @@ class TestAnalysisStore:
 
     def test_getattr_not_found(self, request):
         # Use real fixture
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis")
         store = deepcopy(fixture.result)
 
         # Make sure the attribute doesn't exist anywhere
@@ -547,7 +547,7 @@ class TestAnalysisStore:
     def test_deepcopy_memo_shortcircuit(self, request):
         """Test that __deepcopy__ handles exceptions for non-deepcopyable attributes."""
         # Get a real AnalysisStore to work with
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis")
         store = deepcopy(fixture.result)
         shortcircuit_memo_store = store.__deepcopy__(memo={id(store): store})
         assert shortcircuit_memo_store is store
@@ -555,7 +555,7 @@ class TestAnalysisStore:
     def test_deepcopy_handles_exceptions(self, request):
         """Test that __deepcopy__ handles exceptions for non-deepcopyable attributes."""
         # Get a real AnalysisStore to work with
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis")
         store = deepcopy(fixture.result)
 
         # Add a non-deepcopyable attribute that will raise an exception
@@ -631,7 +631,7 @@ class TestAnalysisStore:
     def test_custom_protocol_cls_backward_compatibility(self, request):
         """Test that existing code works with default protocol_cls parameter."""
         # Use real fixture to ensure backward compatibility
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis")
         original_store = fixture.result
 
         # Create new store without protocol_cls parameter (should use default)
@@ -809,10 +809,10 @@ class TestCoreFunctionality:
         with pytest.raises(ValueError, match="must be a string, list of strings, or function"):
             resolve_names_filter(123)
 
-    def test_sl_default_sae_match_fn(self, get_it_session__sl_gpt2__initonly):
+    def test_sl_default_sae_match_fn(self, get_it_session__sl_ht_gpt2__initonly):
         from interpretune.analysis.core import default_sae_hook_match_fn
 
-        fixture = get_it_session__sl_gpt2__initonly
+        fixture = get_it_session__sl_ht_gpt2__initonly
         sl_test_module = fixture.it_session.module
         name_filter_list = sl_test_module.construct_names_filter(
             target_layers=0, sae_hook_match_fn=default_sae_hook_match_fn
@@ -840,8 +840,10 @@ class TestCoreFunctionality:
 
     def test_base_vs_sae_logit_diffs(self, monkeypatch, request):
         # Use a real AnalysisStore fixture for fidelity
-        base_fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
-        sae_fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis")
+        base_fixture = request.getfixturevalue(
+            "get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis"
+        )
+        sae_fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis")
         base_analysis_store = deepcopy(base_fixture.result)
         sae_analysis_store = deepcopy(sae_fixture.result)
         # Patch tabulate to avoid printing
@@ -1340,10 +1342,10 @@ class TestMetricsAndTargets:
         """Test calculate_latent_metrics with a proper PredSumm object."""
         # Get a real fixture for this test
         attr_fixture = request.getfixturevalue(
-            "get_analysis_session__sl_gpt2_logit_diffs_attr_grad__initonly_runanalysis"
+            "get_analysis_session__sl_ht_gpt2_logit_diffs_attr_grad__initonly_runanalysis"
         )
         base_sae_fixture = request.getfixturevalue(
-            "get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis"
+            "get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis"
         )
 
         attr_store = deepcopy(attr_fixture.result)
@@ -1394,9 +1396,9 @@ class TestSAEAnalysisDict:
     @pytest.mark.parametrize(
         "session_fixture, analysis_cfgs",
         [
-            pytest.param("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis", None),
+            pytest.param("get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis", None),
         ],
-        ids=["sl_gpt2_logit_diffs_sae"],
+        ids=["sl_ht_gpt2_logit_diffs_sae"],
     )
     def test_core_sae_analysis_dict(self, request, session_fixture, analysis_cfgs):
         fixture = request.getfixturevalue(session_fixture)
@@ -1645,7 +1647,7 @@ class TestSAEAnalysisDict:
     def test_getattr_protocol_and_dataset(self, request):
         """Test __getattr__ for protocol and dataset attributes using a real AnalysisStore fixture."""
         # Use a real AnalysisStore fixture for fidelity
-        fixture = request.getfixturevalue("get_analysis_session__sl_gpt2_logit_diffs_base__initonly_runanalysis")
+        fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis")
         analysis_store = deepcopy(fixture.result)
 
         # Protocol field: should exist in DefaultAnalysisBatchProtocol.__annotations__
@@ -1719,8 +1721,8 @@ class TestSAEAnalysisDict:
     @pytest.mark.parametrize(
         "attr_fixture_name",
         [
-            "get_analysis_session__sl_gpt2_logit_diffs_attr_ablation__initonly_runanalysis",
-            "get_analysis_session__sl_gpt2_logit_diffs_attr_grad__initonly_runanalysis",
+            "get_analysis_session__sl_ht_gpt2_logit_diffs_attr_ablation__initonly_runanalysis",
+            "get_analysis_session__sl_ht_gpt2_logit_diffs_attr_grad__initonly_runanalysis",
         ],
         ids=["attr_ablation", "attr_grad"],
     )
@@ -1729,7 +1731,7 @@ class TestSAEAnalysisDict:
         # Use a real AnalysisStore fixture for fidelity
         attr_fixture = request.getfixturevalue(attr_fixture_name)
         base_sae_fixture = request.getfixturevalue(
-            "get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis"
+            "get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis"
         )
         attr_analysis_store = deepcopy(attr_fixture.result)
         base_sae_analysis_store = deepcopy(base_sae_fixture.result)
