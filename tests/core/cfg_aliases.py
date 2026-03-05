@@ -198,6 +198,16 @@ class LightningGemma2DebugCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning,)
 
 
+@dataclass(kw_only=True)
+class LightningGemma3DebugCfg(BaseCfg):
+    debug_lm_cfg: DebugLMConfig | None = field(default_factory=lambda: DebugLMConfig(enabled=True))
+    phase: str | None = "test"
+    device_type: str | None = "cuda"
+    model_src_key: str | None = "gemma3"
+    precision: str | int | None = "bf16-true"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning,)
+
+
 ################################################################################
 # Transformer Lens Test Configs
 ################################################################################
@@ -516,6 +526,61 @@ class CircuitTracerNNsightRemoteGemma2(BaseCfg):
 
 ##############################################################################################################
 
+
+# Circuit Tracer with NNsight backend configs (Gemma3)
+##############################################################################################################
+@dataclass(kw_only=True)
+class CircuitTracerNNsightGemma3(BaseCfg):
+    """Circuit Tracer with NNsight backend on Gemma3-1B-PT.
+
+    Registered in example_module_registry.yaml as gemma3.rte.circuit_tracer_nnsight. Uses adapter combination (core,
+    nnsight, circuit_tracer). Gemma3 only supports NNsight backend in circuit-tracer (no TL/HookedTransformer path).
+    """
+
+    phase: str = "test"
+    model_src_key: str | None = "gemma3"
+    model_cfg_key: str = "rte_base_test"  # Must match registry
+    device_type: str = "cuda"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.nnsight, Adapter.circuit_tracer)
+    circuit_tracer_cfg: CircuitTracerConfig | None = field(
+        default_factory=lambda: CircuitTracerConfig(
+            backend="nnsight",
+            transcoder_set="mwhanna/gemma-scope-2-1b-pt/transcoder_all/width_16k_l0_small_affine",
+            analysis_target_tokens=["▁Dallas", "▁Austin"],
+            max_feature_nodes=8192,
+            offload="cpu",
+            verbose=True,
+        )
+    )
+
+
+@dataclass(kw_only=True)
+class LightningCircuitTracerNNsightGemma3(BaseCfg):
+    """Lightning Circuit Tracer with NNsight backend on Gemma3-1B-PT.
+
+    Registered in example_module_registry.yaml as gemma3.rte.circuit_tracer_nnsight. Uses adapter combination
+    (lightning, nnsight, circuit_tracer).
+    """
+
+    phase: str = "test"
+    model_src_key: str | None = "gemma3"
+    model_cfg_key: str = "rte_base_test"  # Must match registry
+    device_type: str = "cuda"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.nnsight, Adapter.circuit_tracer)
+    circuit_tracer_cfg: CircuitTracerConfig | None = field(
+        default_factory=lambda: CircuitTracerConfig(
+            backend="nnsight",
+            transcoder_set="mwhanna/gemma-scope-2-1b-pt/transcoder_all/width_16k_l0_small_affine",
+            analysis_target_tokens=["▁Dallas", "▁Austin"],
+            max_feature_nodes=8192,
+            offload="cpu",
+            verbose=True,
+        )
+    )
+
+
+##############################################################################################################
+
 ################################################################################
 # SAE Test Configs
 ################################################################################
@@ -533,6 +598,58 @@ class CoreSLHTGPT2(BaseCfg):
         )
     )
     # force_prepare_data: bool | None = True  # sometimes useful to enable for test debugging
+
+
+@dataclass(kw_only=True)
+class CoreSLNNsightGPT2(BaseCfg):
+    """NNsight backend variant of CoreSLHTGPT2 for basic SAE adapter tests."""
+
+    phase: str | None = "test"
+    model_src_key: str | None = "gpt2"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.nnsight, Adapter.sae_lens)
+    generative_step_cfg: GenerativeClassificationConfig = field(
+        default_factory=lambda: GenerativeClassificationConfig(
+            enabled=True,
+            lm_generation_cfg=HFGenerationConfig(
+                model_config={"max_new_tokens": 1, "output_logits": True, "return_dict_in_generate": True}
+            ),
+        )
+    )
+    hf_from_pretrained_cfg: HFFromPretrainedConfig = field(
+        default_factory=lambda: HFFromPretrainedConfig(
+            pretrained_kwargs={"dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
+        )
+    )
+    nnsight_cfg: NNsightConfig | None = field(
+        default_factory=lambda: NNsightConfig(
+            model_name="openai-community/gpt2",
+            device_map="cpu",
+            torch_dtype="float32",
+            dispatch=True,
+        )
+    )
+    auto_comp_cfg: AutoCompConfig = field(
+        default_factory=lambda: AutoCompConfig(
+            module_cfg_name="RTEBoolqConfig", module_cfg_mixin=RTEBoolqEntailmentMapping, target_adapters="nnsight"
+        )
+    )
+
+
+@dataclass(kw_only=True)
+class CoreSLBridgeGPT2(BaseCfg):
+    """TransformerBridge variant of CoreSLHTGPT2 for basic SAE adapter tests."""
+
+    phase: str | None = "test"
+    model_src_key: str | None = "gpt2"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
+    tl_cfg: ITLensBridgeConfig = field(
+        default_factory=lambda: ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left")
+    )
+    hf_from_pretrained_cfg: HFFromPretrainedConfig = field(
+        default_factory=lambda: HFFromPretrainedConfig(
+            pretrained_kwargs={"device_map": "cpu", "dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
+        )
+    )
 
 
 @dataclass(kw_only=True)

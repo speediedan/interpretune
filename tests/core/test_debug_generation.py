@@ -82,8 +82,8 @@ class TestClassDebugGen:
         "session_fixture, format, pad_token, gen_kwargs, batch_mode, expected",
         [
             pytest.param(
-                "get_it_session__l_gemma2_debug__setup",
-                "gemma2-chat",
+                "get_it_session__l_gemma3_debug__setup",
+                "gemma-chat",
                 "<pad>",
                 {
                     "gen_config_override": {"max_new_tokens": 4, "pad_token_id": 0},
@@ -106,7 +106,7 @@ class TestClassDebugGen:
                 marks=RunIf(standalone=True, lightning=True, bf16_cuda=True),
             ),
             pytest.param(
-                "get_it_session__l_gemma2_debug__setup",
+                "get_it_session__l_gemma3_debug__setup",
                 None,
                 "<pad>",
                 {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 0}},
@@ -125,9 +125,9 @@ class TestClassDebugGen:
             ),
         ],
         ids=[
-            "gemma2_decode_override_no_skip_special_batch",
+            "gemma3_decode_override_no_skip_special_batch",
             "llama3_decode_override_no_skip_special_batch",
-            "gemma2_default_serial",
+            "gemma3_default_serial",
             "llama3_default_serial",
         ],
     )

@@ -4,9 +4,11 @@ from functools import reduce, partial
 import pytest
 
 import torch
+from torch.testing import assert_close
 from transformer_lens.ActivationCache import ActivationCache
 from transformer_lens.utils import get_device as tl_get_device
-from sae_lens.saes.sae import SAEMetadata
+from sae_lens.saes.sae import SAE, SAEMetadata
+from sae_lens.saes.transcoder import Transcoder, TranscoderConfig
 
 from interpretune.utils import MisconfigurationException
 from interpretune.session import ITSession
@@ -17,6 +19,8 @@ from interpretune.config import (
     ITLensFromPretrainedConfig,
     ITLensCustomConfig,
 )
+from interpretune.config.nnsight import NNsightConfig
+from interpretune.config.transformer_lens import ITLensBridgeConfig
 from tests.utils import ablate_cls_attrs
 from tests.base_defaults import default_test_task
 from tests.runif import RunIf
@@ -44,18 +48,39 @@ def sl_ht_gpt2_w_ref_logits(get_it_session__sl_ht_gpt2__initonly):
 
 
 @pytest.fixture(scope="class")
+def sl_br_gpt2_w_ref_logits(get_it_session__sl_br_gpt2__initonly):
+    fixture = get_it_session__sl_br_gpt2__initonly
+    sl_test_module = fixture.it_session.module
+    return sl_test_module, TestClassSAELens.get_ref_logits(sl_test_module)
+
+
+@pytest.fixture(scope="class")
 def l_sl_ht_gpt2_w_ref_logits(get_it_session__l_sl_ht_gpt2__initonly):
     fixture = get_it_session__l_sl_ht_gpt2__initonly
     sl_test_module = fixture.it_session.module
     return sl_test_module, TestClassSAELens.get_ref_logits(sl_test_module)
 
 
+# NOTE: Hook-name-sensitive tests (cache_fwd_bwd, run_with_cache, run_with_hooks) use HookedTransformer
+# because TransformerBridge uses different hook names (e.g. blocks.0.hook_in vs blocks.0.hook_resid_pre).
+# Bridge SAE functionality is covered by TestBridgeSAEBackend, TestCrossBackendSAEInit, and
+# TestBridgeTranscoderSupport test classes.
 core_l_run_w_pytest_cfg = {
     "argvalues": [
         pytest.param("sl_ht_gpt2_w_ref_logits"),
         pytest.param("l_sl_ht_gpt2_w_ref_logits", marks=RunIf(lightning=True)),
     ],
     "ids": ["core", "lightning"],
+}
+
+# Extended parametrization including Bridge for tests that don't depend on HT-specific hook names
+core_l_bridge_run_w_pytest_cfg = {
+    "argvalues": [
+        pytest.param("sl_ht_gpt2_w_ref_logits"),
+        pytest.param("sl_br_gpt2_w_ref_logits"),
+        pytest.param("l_sl_ht_gpt2_w_ref_logits", marks=RunIf(lightning=True)),
+    ],
+    "ids": ["core", "core_bridge", "lightning"],
 }
 
 
@@ -169,7 +194,7 @@ class TestClassSAELens:
             for sae_handle in sl_test_module.sae_handles:
                 assert sae_handle.cfg.metadata.hook_name + ".hook_sae_acts_post" in cache
 
-    @pytest.mark.parametrize("session_fixture", **core_l_run_w_pytest_cfg)
+    @pytest.mark.parametrize("session_fixture", **core_l_bridge_run_w_pytest_cfg)
     def test_run_with_saes(self, request, session_fixture):
         sl_test_module, original_logits = request.getfixturevalue(session_fixture)
         assert len(sl_test_module.model.acts_to_saes) == 0
@@ -381,3 +406,234 @@ class TestClassSAELens:
 
         # Verify top_k=2 resulted in more display calls (4 per hook: 2 positive + 2 negative)
         assert mock_display_dashboard.call_count == 8
+
+
+################################################################################
+# Cross-backend SAE module initialization tests
+################################################################################
+
+
+@pytest.fixture(scope="class")
+def sl_ns_gpt2_module(get_it_session__sl_ns_gpt2__initonly):
+    """NNsight SAE module from initonly fixture."""
+    return get_it_session__sl_ns_gpt2__initonly.it_session.module
+
+
+@pytest.fixture(scope="class")
+def sl_ht_gpt2_module(get_it_session__sl_ht_gpt2__initonly):
+    """HookedSAETransformer SAE module from initonly fixture (cross-backend init verification)."""
+    return get_it_session__sl_ht_gpt2__initonly.it_session.module
+
+
+@pytest.fixture(scope="class")
+def sl_br_gpt2_module(get_it_session__sl_br_gpt2__initonly):
+    """TransformerBridge SAE module from initonly fixture."""
+    return get_it_session__sl_br_gpt2__initonly.it_session.module
+
+
+cross_backend_init_pytest_cfg = {
+    "argvalues": [
+        pytest.param("sl_ht_gpt2_module", id="hooked_transformer"),
+        pytest.param("sl_ns_gpt2_module", id="nnsight"),
+        pytest.param("sl_br_gpt2_module", id="bridge"),
+    ],
+}
+
+
+class TestCrossBackendSAEInit:
+    """Tests that verify SAE initialization works across all three backends."""
+
+    @pytest.mark.parametrize("session_fixture", **cross_backend_init_pytest_cfg)
+    def test_sae_handles_loaded(self, request, session_fixture):
+        """Verify SAE handles are loaded and non-empty for all backends."""
+        module = request.getfixturevalue(session_fixture)
+        assert len(module.sae_handles) > 0
+        assert all(isinstance(h, SAE) for h in module.sae_handles)
+
+    @pytest.mark.parametrize("session_fixture", **cross_backend_init_pytest_cfg)
+    def test_saes_list_matches_handles(self, request, session_fixture):
+        """Verify saes list and sae_handles are consistent."""
+        module = request.getfixturevalue(session_fixture)
+        assert len(module.saes) == len(module.sae_handles)
+        for inst_sae, handle in zip(module.saes, module.sae_handles):
+            assert inst_sae.handle is handle
+
+    @pytest.mark.parametrize("session_fixture", **cross_backend_init_pytest_cfg)
+    def test_model_initialized(self, request, session_fixture):
+        """Verify model is initialized and accessible for all backends."""
+        module = request.getfixturevalue(session_fixture)
+        assert module.model is not None
+
+
+class TestNNsightSAEBackend:
+    """Tests specific to the NNsight SAE Lens backend."""
+
+    def test_nnsight_config_validation(self):
+        """Verify SAELensConfig with backend='nnsight' requires nnsight_cfg."""
+        sae_cfg = SAELensFromPretrainedConfig(
+            release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre", device="cpu"
+        )
+        with pytest.raises(MisconfigurationException, match="valid nnsight_cfg"):
+            SAELensConfig(backend="nnsight", sae_cfgs=sae_cfg)
+
+    def test_nnsight_config_rejects_invalid_backend(self):
+        """Verify SAELensConfig rejects invalid backend strings."""
+        sae_cfg = SAELensFromPretrainedConfig(
+            release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre", device="cpu"
+        )
+        with pytest.raises(ValueError, match="Invalid backend"):
+            SAELensConfig(backend="invalid_backend", sae_cfgs=sae_cfg)
+
+    def test_nnsight_config_creation(self):
+        """Verify SAELensConfig with backend='nnsight' initializes correctly."""
+        sae_cfg = SAELensFromPretrainedConfig(
+            release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre", device="cpu"
+        )
+        ns_cfg = NNsightConfig(
+            model_name="openai-community/gpt2", device_map="cpu", torch_dtype="float32", dispatch=True
+        )
+        it_cfg = SAELensConfig(backend="nnsight", sae_cfgs=sae_cfg, nnsight_cfg=ns_cfg)
+        assert it_cfg.backend == "nnsight"
+        assert it_cfg.nnsight_cfg is not None
+        assert it_cfg.model_name_or_path == "openai-community/gpt2"
+
+    def test_nnsight_module_has_model_backend(self, sl_ns_gpt2_module):
+        """Verify NNsight SAE module has a model_backend initialized."""
+        from interpretune.analysis.backends.nnsight import NNsightModelBackend
+
+        assert isinstance(sl_ns_gpt2_module.model_backend, NNsightModelBackend)
+
+    def test_nnsight_module_tokenizer(self, sl_ns_gpt2_module):
+        """Verify NNsight SAE module has a tokenizer available."""
+        assert hasattr(sl_ns_gpt2_module.model, "tokenizer")
+        assert sl_ns_gpt2_module.model.tokenizer is not None
+
+
+class TestBridgeSAEBackend:
+    """Tests specific to the TransformerBridge SAE Lens backend."""
+
+    def test_bridge_config_creation(self):
+        """Verify SAELensConfig with ITLensBridgeConfig initializes correctly."""
+        sae_cfg = SAELensFromPretrainedConfig(
+            release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre", device="cpu"
+        )
+        bridge_cfg = ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left")
+        it_cfg = SAELensConfig(backend="transformerlens", tl_cfg=bridge_cfg, sae_cfgs=sae_cfg, use_bridge=True)
+        assert it_cfg.backend == "transformerlens"
+        assert isinstance(it_cfg.tl_cfg, ITLensBridgeConfig)
+
+    def test_bridge_module_model_type(self, sl_br_gpt2_module):
+        """Verify Bridge SAE module wraps an SAETransformerBridge."""
+        from sae_lens.analysis.sae_transformer_bridge import SAETransformerBridge
+
+        assert isinstance(sl_br_gpt2_module.model, SAETransformerBridge)
+
+    def test_bridge_module_has_tl_backend(self, sl_br_gpt2_module):
+        """Verify Bridge SAE module has a TL model backend initialized."""
+        from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+        assert isinstance(sl_br_gpt2_module.model_backend, TLModelBackend)
+
+
+################################################################################
+# TransformerBridge transcoder tests (lightweight, TINYSTORIES-based)
+################################################################################
+
+TINYSTORIES_MODEL = "tiny-stories-1M"
+TRANSCODER_PROMPT = "Hello World!"
+
+
+def _make_transcoder(d_model: int) -> Transcoder:
+    """Create a transcoder: blocks.0.mlp.hook_in -> blocks.0.hook_mlp_out."""
+    cfg = TranscoderConfig(
+        d_in=d_model,
+        d_sae=d_model * 2,
+        d_out=d_model,
+        apply_b_dec_to_input=False,
+        metadata=SAEMetadata(
+            hook_name="blocks.0.mlp.hook_in",
+            hook_name_out="blocks.0.hook_mlp_out",
+        ),
+    )
+    return Transcoder(cfg)
+
+
+@pytest.fixture(scope="module")
+def tinystories_bridge_model():
+    """Lightweight SAETransformerBridge using tiny-stories-1M for transcoder tests."""
+    from sae_lens.analysis.sae_transformer_bridge import SAETransformerBridge
+
+    model = SAETransformerBridge.boot_transformers(TINYSTORIES_MODEL, device="cpu")
+    yield model
+    model.reset_saes()
+
+
+@pytest.fixture(scope="module")
+def tinystories_transcoder(tinystories_bridge_model):
+    return _make_transcoder(tinystories_bridge_model.cfg.d_model)
+
+
+@pytest.fixture(scope="module")
+def tinystories_original_logits(tinystories_bridge_model):
+    return tinystories_bridge_model(TRANSCODER_PROMPT)
+
+
+class TestBridgeTranscoderSupport:
+    """Tests for SAE transcoder support via SAETransformerBridge.
+
+    Uses a lightweight tiny-stories-1M model booted directly as a TransformerBridge (bypassing the full Interpretune
+    fixture factory) for fast, focused transcoder validation.
+    """
+
+    def test_add_transcoder_changes_output(
+        self, tinystories_bridge_model, tinystories_transcoder, tinystories_original_logits
+    ):
+        """Adding a transcoder should change model output."""
+        tinystories_bridge_model.add_sae(tinystories_transcoder)
+        assert len(tinystories_bridge_model._acts_to_saes) == 1
+        logits_with_transcoder = tinystories_bridge_model(TRANSCODER_PROMPT)
+        assert not torch.allclose(tinystories_original_logits, logits_with_transcoder)
+        tinystories_bridge_model.reset_saes()
+
+    def test_transcoder_with_error_term_preserves_output(
+        self, tinystories_bridge_model, tinystories_transcoder, tinystories_original_logits
+    ):
+        """Adding a transcoder with use_error_term=True should preserve output."""
+        tinystories_bridge_model.add_sae(tinystories_transcoder, use_error_term=True)
+        assert len(tinystories_bridge_model._acts_to_saes) == 1
+        logits_with_transcoder = tinystories_bridge_model(TRANSCODER_PROMPT)
+        tinystories_bridge_model.reset_saes()
+        assert_close(tinystories_original_logits, logits_with_transcoder, atol=1e-4, rtol=0)
+
+    def test_transcoder_reset_removes_transcoder(self, tinystories_bridge_model, tinystories_transcoder):
+        """Resetting SAEs should remove the transcoder."""
+        act_name = tinystories_transcoder.cfg.metadata.hook_name
+        tinystories_bridge_model.add_sae(tinystories_transcoder)
+        assert len(tinystories_bridge_model._acts_to_saes) == 1
+        assert act_name in tinystories_bridge_model._acts_to_saes
+        tinystories_bridge_model.reset_saes()
+        assert len(tinystories_bridge_model._acts_to_saes) == 0
+
+    def test_transcoder_context_manager(
+        self, tinystories_bridge_model, tinystories_transcoder, tinystories_original_logits
+    ):
+        """Test transcoders via the saes() context manager."""
+        assert len(tinystories_bridge_model._acts_to_saes) == 0
+        with tinystories_bridge_model.saes(saes=[tinystories_transcoder]):
+            assert len(tinystories_bridge_model._acts_to_saes) == 1
+            logits_with_transcoder = tinystories_bridge_model(TRANSCODER_PROMPT)
+            assert not torch.allclose(tinystories_original_logits, logits_with_transcoder)
+        assert len(tinystories_bridge_model._acts_to_saes) == 0
+
+    def test_transcoder_run_with_cache(
+        self, tinystories_bridge_model, tinystories_transcoder, tinystories_original_logits
+    ):
+        """Test transcoders with run_with_cache_with_saes."""
+        logits_with_transcoder, cache = tinystories_bridge_model.run_with_cache_with_saes(
+            TRANSCODER_PROMPT, saes=[tinystories_transcoder]
+        )
+        assert logits_with_transcoder is not None
+        assert isinstance(logits_with_transcoder, torch.Tensor)
+        assert not torch.allclose(tinystories_original_logits, logits_with_transcoder)
+        assert "blocks.0.mlp.hook_out.hook_sae_acts_post" in cache
+        assert len(tinystories_bridge_model._acts_to_saes) == 0

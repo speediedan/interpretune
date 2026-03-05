@@ -258,20 +258,33 @@ def test_circuit_tracer_notebooks(params: dict[str, Any], tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+# Test parameters for SAE Lens notebooks (parameterized by backend)
+SAE_LENS_PARAMS = [
+    pytest.param(
+        {"backend": "transformerlens"},
+        id="sae_lens_tl",
+    ),
+    pytest.param(
+        {"backend": "nnsight"},
+        id="sae_lens_nnsight",
+    ),
+]
+
+
 @RunIf(standalone=True, bf16_cuda=True)
-@pytest.mark.parametrize("notebook_file", ["saelens_adapter_example.ipynb"])
-def test_sae_lens_notebooks(notebook_file: str, tmp_path: Path):
-    """Test SAE Lens adapter notebooks."""
-    notebook_path = NOTEBOOKS_DIR / "saelens_adapter_example" / notebook_file
+@pytest.mark.parametrize("params", SAE_LENS_PARAMS)
+def test_sae_lens_notebooks(params: dict[str, Any], tmp_path: Path):
+    """Test SAE Lens adapter notebooks with different backend parameterizations."""
+    notebook_path = NOTEBOOKS_DIR / "saelens_adapter_example" / "saelens_adapter_example.ipynb"
 
     # Create output directory
     output_dir = tmp_path / "notebook_outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Execute notebook (no parameters needed for registry test)
+    # Execute notebook with backend parameter
     output_notebook = execute_notebook_with_params(
         notebook_path=notebook_path,
-        parameters={},
+        parameters=params,
         output_dir=output_dir,
     )
 

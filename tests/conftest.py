@@ -13,8 +13,10 @@ from __future__ import annotations
 # limitations under the License.
 # initially based on: https://bit.ly/3GDHDcI
 import os
+import gc
 import threading
 from collections import defaultdict, namedtuple
+from contextlib import contextmanager
 from typing import Dict, Tuple, Type, Sequence
 from functools import partial
 from http.server import SimpleHTTPRequestHandler
@@ -26,6 +28,7 @@ from dataclasses import dataclass, field
 from enum import auto, IntEnum
 import pytest
 import yaml
+import torch
 import torch.distributed
 
 from interpretune.base import _call_itmodule_hook, ITDataModule
@@ -52,6 +55,7 @@ from tests.core.cfg_aliases import (
     NSDebugCfg,
     LightningLlama3DebugCfg,
     LightningGemma2DebugCfg,
+    LightningGemma3DebugCfg,
     LightningTLBridgeLlama3,
     LightningTLBridgeGemma2,
     CoreMemProfCfg,
@@ -65,6 +69,8 @@ from tests.core.cfg_aliases import (
     CoreSLHTGPT2,
     CoreSLHTGPT2Analysis,
     CoreSLCust,
+    CoreSLNNsightGPT2,
+    CoreSLBridgeGPT2,
     LightningSLHTGPT2,
     CoreSLHTGPT2LogitDiffsSAE,
     CoreSLHTGPT2LogitDiffsAttrGrad,
@@ -79,6 +85,8 @@ from tests.core.cfg_aliases import (
     CircuitTracerNNsightGemma2,
     LightningCircuitTracerNNsightGemma2,
     CircuitTracerNNsightRemoteGemma2,
+    CircuitTracerNNsightGemma3,
+    LightningCircuitTracerNNsightGemma3,
     CoreSLNNsightGPT2LogitDiffsBase,
     CoreSLNNsightGPT2LogitDiffsSAE,
     CoreSLNNsightGPT2LogitDiffsAttrGrad,
@@ -93,6 +101,83 @@ from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
 test_cli_cfgs = deepcopy(parity_cli_cfgs)
 test_cli_cfgs["exp_cfgs"].update(unit_exp_cli_cfgs)
+
+# ---------------------------------------------------------------------------
+# Memory / CUDA cleanup helpers
+# ---------------------------------------------------------------------------
+
+
+def _force_gc():
+    """Run Python garbage collection."""
+    gc.collect()
+
+
+def _cleanup_cuda_memory():
+    """Release CUDA memory if available, then run gc."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+@contextmanager
+def clean_cuda(model, min_bytes: int = 1 << 20):
+    """Move *model* to CUDA; on exit automatically free large transient CUDA tensors.
+
+    Snapshots data_ptrs of all large CUDA tensors after the model moves to CUDA
+    (capturing model weights as 'known'). On exit, any new large CUDA tensor not
+    in the snapshot has its storage replaced via ``set_(torch.empty(0))``, freeing
+    VRAM even while Python references remain alive. Then ``gc.collect()`` +
+    ``empty_cache()`` flush remaining allocations before the model moves back to CPU.
+
+    Adapted from circuit-tracer's ``clean_cuda`` context manager for use in
+    Interpretune's test infrastructure (S9.9 circuit-tracer integration prep).
+
+    Args:
+        model: The model to move to CUDA for the duration of the context.
+        min_bytes: Minimum tensor size to track (default 1 MiB).
+    """
+    model.to("cuda")
+
+    def _is_large_dense_cuda(t: object) -> bool:
+        return isinstance(t, torch.Tensor) and t.is_cuda and t.layout == torch.strided and t.nbytes >= min_bytes
+
+    known_ptrs: set[int] = {obj.data_ptr() for obj in gc.get_objects() if _is_large_dense_cuda(obj)}
+    try:
+        yield
+    finally:
+        freed_ptrs: set[int] = set()
+        for obj in gc.get_objects():
+            if _is_large_dense_cuda(obj) and obj.data_ptr() not in known_ptrs and obj.data_ptr() not in freed_ptrs:
+                freed_ptrs.add(obj.data_ptr())
+                try:
+                    obj.set_(torch.empty(0))
+                except Exception:
+                    pass
+        gc.collect()
+        torch.cuda.empty_cache()
+        model.to("cpu")
+
+
+@pytest.fixture
+def cleanup_cuda():
+    """Fixture that frees CUDA memory and runs gc after each test.
+
+    Non-autouse; apply explicitly to test classes/functions that allocate GPU tensors.
+    Adapted from circuit-tracer's ``cleanup_cuda`` fixture.
+    """
+    yield
+    _cleanup_cuda_memory()
+
+
+@pytest.fixture
+def cleanup_memory():
+    """Fixture that forces garbage collection after each test (CPU or GPU).
+
+    Non-autouse; apply explicitly to memory-intensive test classes/functions.
+    """
+    yield
+    _force_gc()
+
 
 # NOTE [Datamodule/Module/Session Fixture Caching]:
 # We note when instantiating module and datamodule manually (as is done in our datamodule/module fixture factories)
@@ -195,6 +280,7 @@ FIXTURE_CFGS = {
     "l_sl_ht_gpt2": FixtureCfg(test_cfg=LightningSLHTGPT2, variants={"it_session": [FixtPhase.initonly]}),
     "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg, variants={"it_session": [FixtPhase.setup]}),
     "l_gemma2_debug": FixtureCfg(test_cfg=LightningGemma2DebugCfg, variants={"it_session": [FixtPhase.setup]}),
+    "l_gemma3_debug": FixtureCfg(test_cfg=LightningGemma3DebugCfg, variants={"it_session": [FixtPhase.setup]}),
     "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function", variants={"it_session": [FixtPhase.setup]}),
     "ct_tl_gemma2": FixtureCfg(
         test_cfg=CircuitTracerTLGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
@@ -234,8 +320,21 @@ FIXTURE_CFGS = {
     "ct_nnsight_gemma2_remote": FixtureCfg(
         test_cfg=CircuitTracerNNsightRemoteGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
     ),
+    # Circuit Tracer with NNsight backend fixtures (Gemma3)
+    "ct_nnsight_gemma3": FixtureCfg(
+        test_cfg=CircuitTracerNNsightGemma3, scope="function", variants={"it_session": [FixtPhase.setup]}
+    ),
+    "l_ct_nnsight_gemma3": FixtureCfg(
+        test_cfg=LightningCircuitTracerNNsightGemma3, scope="function", variants={"it_session": [FixtPhase.setup]}
+    ),
     "sl_ht_gpt2": FixtureCfg(
         test_cfg=CoreSLHTGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
+    ),
+    "sl_ns_gpt2": FixtureCfg(
+        test_cfg=CoreSLNNsightGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
+    ),
+    "sl_br_gpt2": FixtureCfg(
+        test_cfg=CoreSLBridgeGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
     ),
     "sl_ht_gpt2_analysis": FixtureCfg(
         test_cfg=CoreSLHTGPT2Analysis, scope="session", variants={"it_session": [FixtPhase.initonly, FixtPhase.setup]}
@@ -461,6 +560,11 @@ def analysis_session_fixture_factory(config_key, phase):
         yield AnalysisSessionFixture(
             result=result, it_session=it_s, runner=runner, run_config=run_config, test_cfg=deepcopy(test_sess_config)
         )
+        # Teardown: free references and run gc to reclaim memory promptly,
+        # especially for class-scoped analysis fixtures (e.g., ablation ops)
+        # that create large intermediate tensors.
+        del result, runner, run_config, it_s
+        _cleanup_cuda_memory()
 
     return get_analysis_session
 

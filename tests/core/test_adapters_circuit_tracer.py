@@ -328,6 +328,33 @@ class TestNNsightBackendGemma2:
         assert it_session.module.replacement_model is not None
 
 
+class TestNNsightBackendGemma3:
+    """Unit tests for NNsight backend using Gemma3 model.
+
+    Gemma3 is supported via the NNsight backend in circuit-tracer (no TL/HookedTransformer path exists for Gemma3). Uses
+    gemma-scope transcoders from mwhanna/gemma-scope-2-1b-pt.
+    """
+
+    @RunIf(optional=True)
+    def test_nnsight_backend_initialization_local(self, get_it_session__ct_nnsight_gemma3__setup):
+        """Verify NNsight backend initializes correctly in local mode with Gemma3."""
+        it_session = get_it_session__ct_nnsight_gemma3__setup.it_session
+
+        assert it_session.module.circuit_tracer_cfg.backend == "nnsight"
+        assert it_session.module.circuit_tracer_cfg.nnsight_remote is False
+        assert isinstance(it_session.module.replacement_model, NNSightReplacementModel)
+
+    @RunIf(optional=True)
+    def test_gemma3_transcoder_set(self, get_it_session__ct_nnsight_gemma3__setup):
+        """Verify Gemma3 uses full HF hub path for transcoder_set (not shortcut like Gemma2 'gemma')."""
+        it_session = get_it_session__ct_nnsight_gemma3__setup.it_session
+
+        transcoder_set = it_session.module.circuit_tracer_cfg.transcoder_set
+        assert transcoder_set == "mwhanna/gemma-scope-2-1b-pt/transcoder_all/width_16k_l0_small_affine"
+        # Verify replacement model was loaded successfully with the transcoder set
+        assert it_session.module.replacement_model is not None
+
+
 # =============================================================================
 # Remote Execution Tests (Commented out pending NNsight adapter support)
 # =============================================================================

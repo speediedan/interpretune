@@ -63,15 +63,33 @@ unset IT_RUN_PROFILING_TESTS
 
 Test reruns (`--reruns 2 --reruns-delay 5`) are used in CI for transient httpx/HF timeouts.
 
-**Logging test output:** When running manual tests (especially full test suites), always redirect output to a log file in `/tmp/` for later inspection in case terminal access is interrupted or corrupted.
-Note normal tests may run a little over 10 minutes, the full test suite with all special tests that run in CI (e.g. using gen_it_coverage.sh) can take around 45 minutes:
+**⚠️ CRITICAL: Running Tests in Background to Avoid Truncation/OOM Kills**
+
+The basic test suite runs ~30 minutes; the full suite with `gen_it_coverage.sh` ~50 minutes. **Always run tests in the background with `nohup`/`disown`** — foreground terminal sessions and piped output (`tee`) will be killed by terminal lifecycle management or OOM before completion. Set prudent timeouts and check progress periodically.
 
 ```bash
-# Full (non-special marked) test suite with redirect entirely
-python -m pytest src/interpretune tests -v > /tmp/it_test_results.txt 2>&1; echo "EXIT_CODE: $?"
+# RECOMMENDED: Run basic test suite in the background (avoids truncation/OOM kills)
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+nohup python -m pytest src/interpretune tests -v > /tmp/it_test_results.txt 2>&1 &
+disown
+echo "Test PID: $!"
 
-# full test suite
-# Generate coverage with no rebuild (recommended for quick iteration) Outputs full logs to /tmp dir with timestamp for later inspection and avoids terminal issues/timeouts
+# Monitor progress (check periodically)
+tail -20 /tmp/it_test_results.txt
+grep -c "PASSED\|FAILED\|ERROR" /tmp/it_test_results.txt
+# Check if process is still running
+ps -p <PID> -o pid,etime,rss,cmd
+
+# IMPORTANT: Kill the process before starting another test run to avoid conflicts
+kill <PID>  # or: pkill -f "pytest.*src/interpretune"
+```
+
+**Full coverage run (background via harness):**
+
+```bash
+# Generate coverage with no rebuild (recommended for quick iteration)
+# Outputs full logs to /tmp dir with timestamp for later inspection
 ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
   ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
   --repo-home=${IT_REPO_DIR} \
@@ -79,7 +97,7 @@ ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
   --venv-dir=${IT_VENV_BASE} \
   --no-rebuild-base
 
-# Preferred for debugging: use --allow-failures to continue past failures and see all results
+# Preferred for debugging: use --allow-failures to continue past failures
 ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
   ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
   --repo-home=${IT_REPO_DIR} \
@@ -88,7 +106,10 @@ ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
   --no-rebuild-base \
   --allow-failures
 
-# Note: Coverage collection takes approximately 45 minutes
+# Monitor coverage progress
+tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
+
+# Note: Coverage collection takes approximately 50 minutes
 ```
 
 ## Linting & Code Quality
@@ -171,6 +192,17 @@ tests/                      # 744 test functions
 - CPU coverage >= existing coverage
 - Docstrings for all public functions/classes
 - Unit tests for new functionality
+
+## Notebook Publishing
+
+**⚠️ CRITICAL: Notebook tests run against PUBLISHED notebooks, not dev notebooks.** If you edit any dev notebook, you **MUST** run `python scripts/publish_notebooks.py --force` before testing or committing. The pre-commit hook only triggers when `.ipynb` files in `dev/` are staged — if the dev notebook was changed in a prior commit or by another tool, the published copy will be stale and notebook tests will fail.
+
+Dev notebooks live in `src/it_examples/notebooks/dev/` and are auto-published to `src/it_examples/notebooks/publish/` via `scripts/publish_notebooks.py`.
+
+- **Pre-commit hook** (`publish-notebooks`): Triggered on changes to `^src/it_examples/notebooks/dev/.*\.ipynb$`. Automatically strips `remove-cell` tagged cells, adds Colab badges + install cells, fixes import paths, and tracks hashes in `.notebook_hashes.json`.
+- **CLI flags:** `--dry-run` (preview), `--check-only` (CI validation), `--force` (republish all). Launch.json has debug configs for each mode.
+- **Workflow:** Edit dev notebooks only → commit → pre-commit publishes automatically. Never edit publish notebooks directly.
+- **Verification:** After any notebook changes, run `python scripts/publish_notebooks.py --check-only` to verify published notebooks are in sync.
 
 ## Important Caveats
 

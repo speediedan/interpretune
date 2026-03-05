@@ -282,6 +282,7 @@ class TestLogitDiffsAttrGradBackendParity:
                 assert sorted(d_br[hook_name]) == sorted(d_ns[hook_name])
 
 
+@pytest.mark.usefixtures("cleanup_memory")
 class TestLogitDiffsAttrAblationBackendParity:
     """logit_diffs_attr_ablation: TransformerBridge ↔ NNsight ablation (``model_ablation``).
 
