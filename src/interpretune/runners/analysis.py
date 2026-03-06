@@ -130,24 +130,22 @@ def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, sp
     Raises:
         Exception: If dataset generation fails, with detailed debug information
     """
-    # NOTE: default split changed from "test" to "validation" for consistency
-    from_gen_kwargs = dict(
-        generator=analysis_store_generator,
-        gen_kwargs=gen_kwargs,
-        features=features,
-        split=split,
-        cache_dir=module.analysis_cfg.output_store.cache_dir,  # type: ignore[attr-defined]  # protocol provides output_store
-    )
-
-    # Create dataset with ITAnalysisFormatter
+    # Materialize generator results directly instead of using Dataset.from_generator().
+    # from_generator() hashes gen_kwargs (including the module with all model weights) via dill
+    # serialization for fingerprinting, which causes MemoryError on memory-constrained CI runners.
+    # Since the dataset is immediately saved to disk by the caller, lazy generation has no benefit.
     try:
-        dataset = Dataset.from_generator(**from_gen_kwargs).with_format("interpretune", **it_format_kwargs)  # type: ignore[arg-type]  # datasets compatibility
+        records = list(analysis_store_generator(**gen_kwargs))
+        dataset = Dataset.from_list(  # type: ignore[arg-type]  # datasets compatibility
+            records,
+            features=features if features else None,
+            split=split,
+        ).with_format("interpretune", **it_format_kwargs)
         return dataset  # type: ignore[return-value]  # datasets compatibility
     except Exception as e:
         # improve visibility of errors since they can otherwise be obscured by the dataset generator
         context_data = (
             features,  # Features derived from schema
-            from_gen_kwargs,  # Arguments for Dataset.from_generator
             gen_kwargs,  # Arguments for the analysis generator
             it_format_kwargs,  # Arguments for interpretune format
             kwargs,  # Additional user-provided arguments
