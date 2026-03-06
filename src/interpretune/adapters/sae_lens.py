@@ -129,6 +129,20 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
         self._model_backend = TLModelBackend()
         super().__init__(*args, **kwargs)
 
+    def resolve_sae_hook_name(self, sae_handle: SAE, internal: str = "hook_sae_acts_post") -> str:
+        """Resolve the full hook name for an SAE's internal hook point.
+
+        HookedTransformer uses alias-based hook names (e.g., ``blocks.0.hook_resid_pre``) while TransformerBridge
+        resolves them to canonical names (e.g., ``blocks.0.hook_in``).  SAE internal hooks are registered under the
+        resolved path, so cache lookups and hook targeting must use the resolved name.
+
+        Delegates to ``SAETransformerBridge.get_sae_hook_name()`` when the model is a Bridge, otherwise constructs the
+        compound name directly (HookedTransformer models).
+        """
+        if hasattr(self.model, "get_sae_hook_name"):
+            return self.model.get_sae_hook_name(sae_handle, internal)
+        return f"{sae_handle.cfg.metadata.hook_name}.{internal}"
+
     def _convert_hf_to_tl(self) -> None:
         """Convert HF model to SAETransformerBridge or HookedSAETransformer based on use_bridge config."""
         use_bridge = getattr(self.it_cfg, "use_bridge", True)
