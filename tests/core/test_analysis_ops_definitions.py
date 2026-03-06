@@ -947,6 +947,7 @@ SERIALIZATION_TEST_CONFIGS = (
 )
 
 
+@pytest.mark.usefixtures("cleanup_memory")
 class TestAnalysisOperationsImplementations:
     """Tests for the core analysis operation implementation functions."""
 

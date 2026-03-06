@@ -1,9 +1,6 @@
-import operator
-import sys
 import os
 from enum import Enum
 from typing import NamedTuple, Callable
-from it_examples.patching._patch_utils import lwt_compare_version
 
 
 class OSEnvToggle(NamedTuple):
@@ -35,30 +32,25 @@ DependencyPatch.__repr__ = _dep_patch_repr
 # after those calling modules have already secured the original (unpatched) references.
 
 
-def _patch_sae_from_pretrained():
-    from it_examples.patching.patched_sae_from_pretrained import from_pretrained_with_cfg_and_sparsity
-
-    target_mod = "sae_lens.saes.sae"
-    sys.modules.get(target_mod).__dict__.get(
-        "SAE"
-    ).from_pretrained_with_cfg_and_sparsity = from_pretrained_with_cfg_and_sparsity
+def _placeholder():
+    pass
 
 
-sae_from_pretrained_patch = DependencyPatch(
-    condition=(lambda: lwt_compare_version("sae_lens", operator.ge, "4.4.1"),),
-    env_flag=OSEnvToggle("ENABLE_IT_SAE_FROM_PRETRAINED_PATCH", default="0"),
-    function=_patch_sae_from_pretrained,
-    patched_package="sae_lens",
+placeholder_patch = DependencyPatch(
+    condition=(lambda: False,),  # always False — placeholder never activates via condition
+    env_flag=OSEnvToggle("ENABLE_IT_SOME_DEP_PATCH", default="0"),
+    function=_placeholder,
+    patched_package="placeholder",
     description=(
-        "SAELens `from_pretrained` patch. Only enabled if the the OS env"
-        " variable `ENABLE_IT_SOME_DEP_PATCH` is set to `1` and `sae_lens` >= 4.4.1."
+        "Placeholder dependency patch. No-op template for future patches. See the DependencyPatch docstring and"
+        " `_patch_utils.lwt_compare_version` for defining real version-gated conditions."
     ),
 )
 
 
 # when adding patches in the future, ensure they're included in this enum
 class ExpPatch(Enum):
-    SAE_FROM_PRETRAINED = sae_from_pretrained_patch
+    PLACEHOLDER = placeholder_patch
 
 
 _DEFINED_PATCHES = set(ExpPatch)

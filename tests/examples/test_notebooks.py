@@ -16,6 +16,13 @@ import pytest
 
 from tests.runif import RunIf
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).parent.parent.parent / ".env")
+except ImportError:
+    pass
+
 # Directory containing published notebooks (processed versions without dev cells)
 NOTEBOOKS_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "notebooks" / "publish"
 
@@ -189,7 +196,10 @@ def test_attribution_analysis_notebook(params: dict[str, Any], tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
-# S9: removed standalone mark — notebook doesn't load models or use GPU
+_hf_token_available = bool(os.environ.get("HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY") or os.environ.get("HF_TOKEN"))
+
+
+@pytest.mark.skipif(not _hf_token_available, reason="HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY or HF_TOKEN required")
 @pytest.mark.parametrize("notebook_file", ["op_collection_example.ipynb"])
 def test_op_collection_notebooks(notebook_file: str, tmp_path: Path):
     """Test operation collection notebooks."""

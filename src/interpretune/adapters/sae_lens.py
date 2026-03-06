@@ -92,7 +92,9 @@ class BaseSAELensModule(BaseITModule):
             assert isinstance(sae_cfg, (SAELensFromPretrainedConfig, SAELensCustomConfig))
             original_cfg, sparsity = None, None
             if isinstance(sae_cfg, SAELensFromPretrainedConfig):
-                handle, original_cfg, sparsity = SAE.from_pretrained_with_cfg_and_sparsity(**sae_cfg.__dict__)
+                # Filter None values so sae_lens defaults (e.g. dtype="float32") take effect
+                sae_kwargs = {k: v for k, v in sae_cfg.__dict__.items() if v is not None}
+                handle, original_cfg, sparsity = SAE.from_pretrained_with_cfg_and_sparsity(**sae_kwargs)
             else:
                 # TODO: enable configuration of SAE subclass to use
                 handle = StandardSAE(cfg=sae_cfg.cfg)  # type: ignore[arg-type]
