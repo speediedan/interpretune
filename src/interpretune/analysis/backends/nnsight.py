@@ -24,7 +24,7 @@ from interpretune.protocol import NamesFilter
 
 # Disable PYMOUNT C extension — this backend uses nnsight.save() exclusively.
 # Must be set before the first trace context is entered.
-_nnsight.CONFIG.APP.PYMOUNT = False
+_nnsight.CONFIG.APP.PYMOUNT = False  # type: ignore[attr-defined]  # nnsight CONFIG attrs are dynamic
 
 
 # ==============================================================================

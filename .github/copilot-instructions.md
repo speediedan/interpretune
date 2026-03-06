@@ -72,6 +72,10 @@ cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpret
 - Write unit tests for new functionality and ensure existing tests pass.
 - Ensure the cpu coverage reported by our `ci_test-full.yml` workflow is >= the existing coverage.
 
+### Avoid Test-Environment Bandaids in Application Code
+- When test failures stem from environment issues (e.g., `isinstance()` failures due to importlib double-loading modules), **never** degrade application code with workarounds for test-specific problems.
+- Instead, fix the problem in the test infrastructure or use an app-level registry pattern (like `CT_BACKEND_REGISTRY` in `circuit_tracer.py`) that validates by class name without `isinstance()`.
+
 ## Build and Validation Commands
 
 ### Environment Setup

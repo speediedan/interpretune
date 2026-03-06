@@ -97,17 +97,6 @@ SAE analysis operations (`logit_diffs_sae`, `logit_diffs_attr_grad`, `logit_diff
 
 Backend selection is automatic via `get_backend_for_module()` — if the module has `nnsight_cfg`, NNsight backend is used.
 
-### isinstance Caveat with pytest importlib Mode
-
-**Critical**: Avoid `isinstance()` checks against classes from editable-installed external packages (e.g., circuit-tracer). With `importmode = "importlib"` in pytest config, module double-loading creates duplicate class objects that break `isinstance`. Use class-name string comparison instead:
-
-```python
-# WRONG — fails under pytest importlib mode
-assert isinstance(obj, ExternalClass)
-
-# CORRECT — robust to module double-loading
-assert type(obj).__name__ == "ExternalClass"
-```
 
 ## Common Mistakes to Avoid
 
@@ -116,4 +105,3 @@ assert type(obj).__name__ == "ExternalClass"
 3. **Wrong MRO order**: Mixins before base classes
 4. **Incomplete exports**: Add to both lazy exports and light registration
 5. **Missing config sync**: Handle model_name_or_path synchronization
-6. **isinstance with external packages**: Use class name comparison, not isinstance (see above)

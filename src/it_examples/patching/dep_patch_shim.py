@@ -46,7 +46,7 @@ def _patch_sae_from_pretrained():
 
 sae_from_pretrained_patch = DependencyPatch(
     condition=(lambda: lwt_compare_version("sae_lens", operator.ge, "4.4.1"),),
-    env_flag=OSEnvToggle("ENABLE_IT_SAE_FROM_PRETRAINED_PATCH", default="1"),
+    env_flag=OSEnvToggle("ENABLE_IT_SAE_FROM_PRETRAINED_PATCH", default="0"),
     function=_patch_sae_from_pretrained,
     patched_package="sae_lens",
     description=(

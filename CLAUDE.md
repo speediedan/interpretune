@@ -210,6 +210,7 @@ Dev notebooks live in `src/it_examples/notebooks/dev/` and are auto-published to
 - **Type checking:** Enabled for all `src/` files except `src/it_examples/utils/raw_graph_analysis.py`; all `tests/` files are excluded
 - **Full test suite requires ML dependencies** — tests will fail without proper env setup
 - **Import guards:** `tests/core/test_import_time_and_adapters.py` prevents accidental eager imports
+- **No test-environment bandaids in application code:** When test failures stem from environment issues (e.g., `isinstance()` failures due to importlib double-loading modules), fix the problem in the test infrastructure or use an app-level registry pattern (like `CT_BACKEND_REGISTRY` in `circuit_tracer.py`) — never degrade application code with workarounds for test-specific problems
 
 ## Detailed Instruction Files
 

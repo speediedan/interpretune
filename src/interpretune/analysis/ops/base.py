@@ -45,7 +45,7 @@ def get_batch_input(batch: BatchEncoding) -> torch.Tensor:
     Supports both TransformerLens convention (``batch["input"]``) and HuggingFace/NNsight convention
     (``batch["input_ids"]``).
     """
-    return batch[resolve_batch_input_key(batch, "input")]
+    return batch[resolve_batch_input_key(batch, "input")]  # type: ignore[return-value]  # BatchEncoding __getitem__ is untyped
 
 
 # Module-level constants for default operation parameters

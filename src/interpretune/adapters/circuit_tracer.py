@@ -33,6 +33,12 @@ if TYPE_CHECKING:
 # Type alias for replacement model backends - supports both TransformerLens and NNsight
 ReplacementModelType = TransformerLensReplacementModel | NNSightReplacementModel
 
+# Registry mapping circuit-tracer backend names to expected ReplacementModel class names.
+CT_BACKEND_REGISTRY: dict[str, str] = {
+    "transformerlens": "TransformerLensReplacementModel",
+    "nnsight": "NNSightReplacementModel",
+}
+
 
 @dataclass(kw_only=True)
 class InstantiatedGraph:
@@ -119,20 +125,13 @@ class BaseCircuitTracerModule(BaseITModule):
             **pretrained_kwargs,
         )
 
-        # Validate returned model type matches expected backend
-        # Note: Use class name comparison rather than isinstance() to avoid false failures from module
-        # double-loading (e.g., pytest importlib mode + editable installs creating two class objects).
-        actual_cls_name = type(replacement_model).__name__
-        if backend == "transformerlens":
-            assert actual_cls_name == "TransformerLensReplacementModel", (
-                f"Expected TransformerLensReplacementModel for backend '{backend}', got {type(replacement_model)}"
+        # Validate returned model type matches expected backend using CT_BACKEND_REGISTRY.
+        expected_name = CT_BACKEND_REGISTRY.get(backend)
+        if not expected_name or type(replacement_model).__name__ != expected_name:
+            raise ValueError(
+                f"Invalid replacement model for backend '{backend}': expected {expected_name}, "
+                f"got {type(replacement_model).__name__}"
             )
-        elif backend == "nnsight":
-            assert actual_cls_name == "NNSightReplacementModel", (
-                f"Expected NNSightReplacementModel for backend '{backend}', got {type(replacement_model)}"
-            )
-        else:
-            raise ValueError(f"Unknown backend: {backend}")
 
         self._replacement_model = replacement_model
 
