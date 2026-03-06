@@ -1,4 +1,4 @@
-transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@fa5df3f5d689fc01942211013cac4b2d232735a7
+transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@330b4bb78e69a5f63d7f2ca79b50872ef0213903
 nnsight>=0.6.0
 triton==3.6.0
 torchvision==0.25.0

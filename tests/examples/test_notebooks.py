@@ -305,7 +305,6 @@ def test_sae_lens_notebooks(params: dict[str, Any], tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
-# S9: removed standalone mark — pure filesystem check, no model/GPU needed
 def test_notebook_discovery():
     """Test that notebooks can be discovered in the publish directory."""
     assert NOTEBOOKS_DIR.exists(), f"Notebooks directory not found: {NOTEBOOKS_DIR}"

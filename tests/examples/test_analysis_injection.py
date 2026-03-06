@@ -11,10 +11,7 @@ from pathlib import Path
 
 import pytest
 
-# S9: RunIf import removed — both test functions no longer need standalone mark
 
-
-# S9: removed standalone mark — pure Python config/patching test, no model/GPU needed
 def test_framework():
     """Test the generalized analysis injection framework."""
     print("=" * 80)
@@ -50,7 +47,7 @@ def test_framework():
     """
     )
     cfg_path.write_text(cfg_text)
-    print(f"   ✓ Config written to: {cfg_path}")
+    print(f"   [OK] Config written to: {cfg_path}")
 
     # Step 2: Import and test the new API
     print("\n2. Testing new API...")
@@ -61,20 +58,20 @@ def test_framework():
             HOOK_REGISTRY,
         )
 
-        print("   ✓ Successfully imported analysis_injection module")
+        print("   [OK] Successfully imported analysis_injection module")
     except ImportError as e:
-        print(f"   ✗ Failed to import: {e}")
+        print(f"   [FAIL] Failed to import: {e}")
         pytest.fail(f"Failed to import analysis_injection module: {e}")
 
     # Step 3: Test orchestrator initialization
     print("\n3. Testing orchestrator initialization...")
     try:
         orchestrator = setup_analysis_injection(config_path=cfg_path, target_package="circuit_tracer")
-        print("   ✓ Orchestrator created successfully")
-        print(f"   ✓ Target package: {orchestrator.target_package_name}")
-        print(f"   ✓ Target path: {orchestrator.target_package_path}")
+        print("   [OK] Orchestrator created successfully")
+        print(f"   [OK] Target package: {orchestrator.target_package_name}")
+        print(f"   [OK] Target path: {orchestrator.target_package_path}")
     except Exception as e:
-        print(f"   ✗ Failed to create orchestrator: {e}")
+        print(f"   [FAIL] Failed to create orchestrator: {e}")
         import traceback
 
         traceback.print_exc()
@@ -83,20 +80,20 @@ def test_framework():
     # Step 4: Verify patched modules
     print("\n4. Verifying patched modules...")
     if orchestrator.patched_modules:
-        print(f"   ✓ {len(orchestrator.patched_modules)} module(s) patched:")
+        print(f"   [OK] {len(orchestrator.patched_modules)} module(s) patched:")
         for module_name in orchestrator.patched_modules:
             print(f"     - {module_name}")
     else:
-        print("   ⚠ No modules were patched (this is expected for minimal config)")
+        print("   [WARN] No modules were patched (this is expected for minimal config)")
 
     # Step 5: Test verification report
     print("\n5. Testing verification report...")
     try:
         report = orchestrator.get_verification_report()
-        print("   ✓ Verification report generated:")
+        print("   [OK] Verification report generated:")
         print(textwrap.indent(report, "     "))
     except Exception as e:
-        print(f"   ✗ Failed to generate report: {e}")
+        print(f"   [FAIL] Failed to generate report: {e}")
         import traceback
 
         traceback.print_exc()
@@ -109,13 +106,13 @@ def test_framework():
 
         target_module = "circuit_tracer.attribution.attribute"
         info = get_module_debug_info(target_module)
-        print(f"   ✓ Debug info for {target_module}:")
+        print(f"   [OK] Debug info for {target_module}:")
         print(f"     - Loaded: {info['loaded']}")
         print(f"     - File: {info.get('file_path', 'N/A')}")
         print(f"     - Hook calls: {info.get('hook_call_count', 0)}")
         print(f"     - Has HOOK_REGISTRY: {info.get('has_hook_registry', False)}")
     except Exception as e:
-        print(f"   ✗ Failed to get debug info: {e}")
+        print(f"   [FAIL] Failed to get debug info: {e}")
         import traceback
 
         traceback.print_exc()
@@ -125,25 +122,24 @@ def test_framework():
     print("\n7. Verifying HOOK_REGISTRY state...")
     from it_examples.utils.analysis_injection import HOOK_REGISTRY
 
-    print(f"   ✓ Enabled: {HOOK_REGISTRY._enabled}")
-    print(f"   ✓ Registered hooks: {len(HOOK_REGISTRY._hooks)}")
+    print(f"   [OK] Enabled: {HOOK_REGISTRY._enabled}")
+    print(f"   [OK] Registered hooks: {len(HOOK_REGISTRY._hooks)}")
 
     # Step 8: Test teardown
     print("\n8. Testing teardown...")
     try:
         orchestrator.teardown()
-        print("   ✓ Teardown successful")
-        print(f"   ✓ Hooks disabled: {not HOOK_REGISTRY._enabled}")
+        print("   [OK] Teardown successful")
+        print(f"   [OK] Hooks disabled: {not HOOK_REGISTRY._enabled}")
     except Exception as e:
-        print(f"   ✗ Teardown failed: {e}")
+        print(f"   [FAIL] Teardown failed: {e}")
         pytest.fail(f"Teardown failed: {e}")
 
     print("\n" + "=" * 80)
-    print("✅ All tests passed!")
+    print("[PASS] All tests passed!")
     print("=" * 80)
 
 
-# S9: removed standalone mark — pure Python orchestrator test, no model/GPU needed
 def test_orchestrator_access():
     """Test that orchestrator supports key access for analysis point data."""
     print("=" * 80)
@@ -184,7 +180,7 @@ def test_orchestrator_access():
         """
     )
     cfg_path.write_text(cfg_text)
-    print(f"   ✓ Config written to: {cfg_path}")
+    print(f"   [OK] Config written to: {cfg_path}")
 
     # Step 2: Define test analysis functions
     print("\n2. Defining test analysis functions...")
@@ -217,9 +213,9 @@ def test_orchestrator_access():
         orchestrator_obj.load_config()
         orchestrator_obj.register_hooks()
 
-        print("   ✓ Orchestrator created and hooks registered")
+        print("   [OK] Orchestrator created and hooks registered")
     except Exception as e:
-        print(f"   ✗ Failed to create orchestrator: {e}")
+        print(f"   [FAIL] Failed to create orchestrator: {e}")
         import traceback
 
         traceback.print_exc()
@@ -228,7 +224,7 @@ def test_orchestrator_access():
     # Step 4: Verify ANALYSIS_DATA initialization
     print("\n4. Verifying ANALYSIS_DATA initialization...")
     analysis_data = orchestrator.get_analysis_data()
-    print(f"   ✓ ANALYSIS_DATA keys: {list(analysis_data.keys())}")
+    print(f"   [OK] ANALYSIS_DATA keys: {list(analysis_data.keys())}")
     assert len(analysis_data) == 3, f"Expected 3 points, got {len(analysis_data)}"
     assert "test_point_1" in analysis_data, "test_point_1 should be initialized"
     assert "test_point_2" in analysis_data, "test_point_2 should be initialized"
@@ -236,7 +232,7 @@ def test_orchestrator_access():
     assert analysis_data["test_point_1"] is None, "test_point_1 should be None initially"
     assert analysis_data["test_point_2"] is None, "test_point_2 should be None initially"
     assert analysis_data["test_point_3"] is None, "test_point_3 should be None initially"
-    print("   ✓ All points initialized with None")
+    print("   [OK] All points initialized with None")
 
     # Step 5: Test key access via orchestrator
     print("\n5. Testing key access via orchestrator...")
@@ -244,18 +240,18 @@ def test_orchestrator_access():
         # Test accessing initialized but not executed points
         result1 = orchestrator_obj["test_point_1"]
         assert result1 is None, f"Expected None for test_point_1, got {result1}"
-        print("   ✓ test_point_1 accessible and returns None")
+        print("   [OK] test_point_1 accessible and returns None")
 
         result2 = orchestrator_obj["test_point_2"]
         assert result2 is None, f"Expected None for test_point_2, got {result2}"
-        print("   ✓ test_point_2 accessible and returns None")
+        print("   [OK] test_point_2 accessible and returns None")
 
         result3 = orchestrator_obj["test_point_3"]
         assert result3 is None, f"Expected None for test_point_3, got {result3}"
-        print("   ✓ test_point_3 accessible and returns None")
+        print("   [OK] test_point_3 accessible and returns None")
 
     except Exception as e:
-        print(f"   ✗ Key access failed: {e}")
+        print(f"   [FAIL] Key access failed: {e}")
         import traceback
 
         traceback.print_exc()
@@ -268,9 +264,9 @@ def test_orchestrator_access():
         test_point_1({})
         test_point_2({})
 
-        print("   ✓ Analysis functions executed")
+        print("   [OK] Analysis functions executed")
     except Exception as e:
-        print(f"   ✗ Failed to execute analysis functions: {e}")
+        print(f"   [FAIL] Failed to execute analysis functions: {e}")
         import traceback
 
         traceback.print_exc()
@@ -279,7 +275,7 @@ def test_orchestrator_access():
     # Step 7: Verify executed points have data
     print("\n7. Verifying executed points have data...")
     analysis_data_after = orchestrator.get_analysis_data()
-    print(f"   ✓ ANALYSIS_DATA after execution: {dict(analysis_data_after)}")
+    print(f"   [OK] ANALYSIS_DATA after execution: {dict(analysis_data_after)}")
 
     # Check executed points
     expected_1 = {"value": 1, "status": "executed"}
@@ -295,25 +291,25 @@ def test_orchestrator_access():
     assert analysis_data_after["test_point_3"] is None, (
         f"test_point_3 should still be None: {analysis_data_after['test_point_3']}"
     )
-    print("   ✓ Executed points have correct data")
+    print("   [OK] Executed points have correct data")
 
     # Step 8: Test key access for executed points
     print("\n8. Testing key access for executed points...")
     try:
         result1_exec = orchestrator_obj["test_point_1"]
         assert result1_exec == {"value": 1, "status": "executed"}, f"test_point_1 access failed: {result1_exec}"
-        print("   ✓ test_point_1 accessible with execution data")
+        print("   [OK] test_point_1 accessible with execution data")
 
         result2_exec = orchestrator_obj["test_point_2"]
         assert result2_exec == {"value": 2, "status": "executed"}, f"test_point_2 access failed: {result2_exec}"
-        print("   ✓ test_point_2 accessible with execution data")
+        print("   [OK] test_point_2 accessible with execution data")
 
         result3_none = orchestrator_obj["test_point_3"]
         assert result3_none is None, f"test_point_3 should be None: {result3_none}"
-        print("   ✓ test_point_3 accessible and still None")
+        print("   [OK] test_point_3 accessible and still None")
 
     except Exception as e:
-        print(f"   ✗ Key access for executed points failed: {e}")
+        print(f"   [FAIL] Key access for executed points failed: {e}")
         import traceback
 
         traceback.print_exc()
@@ -324,9 +320,9 @@ def test_orchestrator_access():
         _ = orchestrator_obj["non_existent_point"]
         pytest.fail("Should have raised KeyError for non-existent point")
     except KeyError:
-        print("   ✓ Correctly raised for non-existent point")
+        print("   [OK] Correctly raised for non-existent point")
     except Exception as e:
-        print(f"   ✗ Unexpected error: {e}")
+        print(f"   [FAIL] Unexpected error: {e}")
         pytest.fail(f"Unexpected error for non-existent point: {e}")
 
     # Step 10: Test iteration methods
@@ -336,24 +332,24 @@ def test_orchestrator_access():
         keys_list = list(orchestrator_obj.keys())
         expected_keys = ["test_point_1", "test_point_2", "test_point_3"]
         assert set(keys_list) == set(expected_keys), f"Keys mismatch: {keys_list} vs {expected_keys}"
-        print("   ✓ keys() returns correct point IDs")
+        print("   [OK] keys() returns correct point IDs")
 
         # Test values()
         values_list = list(orchestrator_obj.values())
         expected_values = [expected_1, expected_2, None]
         assert values_list == expected_values, f"Values mismatch: {values_list}"
-        print("   ✓ values() returns correct data values")
+        print("   [OK] values() returns correct data values")
 
         # Test items()
         items_list = list(orchestrator_obj.items())
         expected_items = [("test_point_1", expected_1), ("test_point_2", expected_2), ("test_point_3", None)]
         assert items_list == expected_items, f"Items mismatch: {items_list} vs {expected_items}"
-        print("   ✓ items() returns correct (key, value) pairs")
+        print("   [OK] items() returns correct (key, value) pairs")
 
         # Test direct iteration
         iterated_keys = list(orchestrator_obj)
         assert set(iterated_keys) == set(expected_keys), f"Iteration mismatch: {iterated_keys} vs {expected_keys}"
-        print("   ✓ Direct iteration works correctly")
+        print("   [OK] Direct iteration works correctly")
 
         # Test dict comprehension syntax
         comprehension_result = {ap: data for ap, data in orchestrator_obj.items()}
@@ -361,10 +357,10 @@ def test_orchestrator_access():
         assert comprehension_result == expected_dict, (
             f"Dict comprehension mismatch: {comprehension_result} vs {expected_dict}"
         )
-        print("   ✓ Dict comprehension syntax works")
+        print("   [OK] Dict comprehension syntax works")
 
     except Exception as e:
-        print(f"   ✗ Iteration methods failed: {e}")
+        print(f"   [FAIL] Iteration methods failed: {e}")
         import traceback
 
         traceback.print_exc()
@@ -373,8 +369,8 @@ def test_orchestrator_access():
     # Step 11: Clean up
     print("\n11. Cleaning up...")
     orchestrator.clear_analysis_data()
-    print("   ✓ Analysis data cleared")
+    print("   [OK] Analysis data cleared")
 
     print("\n" + "=" * 80)
-    print("✅ Orchestrator iteration test passed!")
+    print("[PASS] Orchestrator iteration test passed!")
     print("=" * 80)

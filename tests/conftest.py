@@ -54,7 +54,6 @@ from tests.core.cfg_aliases import (
     TLDebugCfg,
     NSDebugCfg,
     LightningLlama3DebugCfg,
-    # LightningGemma2DebugCfg,  # S9: commented out with l_gemma2_debug fixture
     LightningGemma3DebugCfg,
     LightningTLBridgeLlama3,
     LightningTLBridgeGemma2,
@@ -83,10 +82,8 @@ from tests.core.cfg_aliases import (
     CoreNNsightRemoteGPT2,
     LightningNNsightGPT2,
     CircuitTracerNNsightGemma2,
-    # LightningCircuitTracerNNsightGemma2,  # S9: commented out with l_ct_nnsight_gemma2 fixture
     CircuitTracerNNsightRemoteGemma2,
     CircuitTracerNNsightGemma3,
-    # LightningCircuitTracerNNsightGemma3,  # S9: commented out with l_ct_nnsight_gemma3 fixture
     CoreSLNNsightGPT2LogitDiffsBase,
     CoreSLNNsightGPT2LogitDiffsSAE,
     CoreSLNNsightGPT2LogitDiffsAttrGrad,
@@ -130,7 +127,7 @@ def clean_cuda(model, min_bytes: int = 1 << 20):
     ``empty_cache()`` flush remaining allocations before the model moves back to CPU.
 
     Adapted from circuit-tracer's ``clean_cuda`` context manager for use in
-    Interpretune's test infrastructure (S9.9 circuit-tracer integration prep).
+    Interpretune's test infrastructure.
 
     Args:
         model: The model to move to CUDA for the duration of the context.
@@ -279,8 +276,6 @@ FIXTURE_CFGS = {
     ),
     "l_sl_ht_gpt2": FixtureCfg(test_cfg=LightningSLHTGPT2, variants={"it_session": [FixtPhase.initonly]}),
     "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg, variants={"it_session": [FixtPhase.setup]}),
-    # S9: commented out - unused (Gemma3 debug replaced it, see l_gemma3_debug)
-    # "l_gemma2_debug": FixtureCfg(test_cfg=LightningGemma2DebugCfg, variants={"it_session": [FixtPhase.setup]}),
     "l_gemma3_debug": FixtureCfg(test_cfg=LightningGemma3DebugCfg, variants={"it_session": [FixtPhase.setup]}),
     "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function", variants={"it_session": [FixtPhase.setup]}),
     "ct_tl_gemma2": FixtureCfg(
@@ -294,7 +289,7 @@ FIXTURE_CFGS = {
         test_cfg=CoreNNsightGPT2,
         scope="class",  # class-scoped for sharing across test methods
         variants={
-            "it_session": [FixtPhase.setup],  # S9: removed unused initonly variant
+            "it_session": [FixtPhase.setup],
             "it_session_cfg": [FixtPhase.cfgonly],
         },
     ),
@@ -302,7 +297,7 @@ FIXTURE_CFGS = {
         test_cfg=LightningNNsightGPT2,
         scope="class",
         variants={
-            "it_session": [FixtPhase.setup],  # S9: removed unused initonly and cfgonly variants
+            "it_session": [FixtPhase.setup],
         },
     ),
     "ns_remote_gpt2": FixtureCfg(
@@ -314,10 +309,6 @@ FIXTURE_CFGS = {
     "ct_nnsight_gemma2": FixtureCfg(
         test_cfg=CircuitTracerNNsightGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
     ),
-    # S9: commented out - unused Lightning variant (non-Lightning ct_nnsight_gemma2 is used)
-    # "l_ct_nnsight_gemma2": FixtureCfg(
-    #     test_cfg=LightningCircuitTracerNNsightGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
-    # ),
     "ct_nnsight_gemma2_remote": FixtureCfg(
         test_cfg=CircuitTracerNNsightRemoteGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
     ),
@@ -325,16 +316,12 @@ FIXTURE_CFGS = {
     "ct_nnsight_gemma3": FixtureCfg(
         test_cfg=CircuitTracerNNsightGemma3, scope="function", variants={"it_session": [FixtPhase.setup]}
     ),
-    # S9: commented out - unused Lightning variant (non-Lightning ct_nnsight_gemma3 is used)
-    # "l_ct_nnsight_gemma3": FixtureCfg(
-    #     test_cfg=LightningCircuitTracerNNsightGemma3, scope="function", variants={"it_session": [FixtPhase.setup]}
-    # ),
     "sl_ht_gpt2": FixtureCfg(
         test_cfg=CoreSLHTGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
     ),
     "sl_ns_gpt2": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2,
-        variants={"it_session": [FixtPhase.initonly]},  # S9: removed unused cfgonly
+        variants={"it_session": [FixtPhase.initonly]},
     ),
     "sl_br_gpt2": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
@@ -342,7 +329,7 @@ FIXTURE_CFGS = {
     "sl_ht_gpt2_analysis": FixtureCfg(
         test_cfg=CoreSLHTGPT2Analysis,
         scope="session",
-        variants={"it_session": [FixtPhase.setup]},  # S9: removed unused initonly
+        variants={"it_session": [FixtPhase.setup]},
     ),
     "sl_ht_gpt2_logit_diffs_base": FixtureCfg(
         test_cfg=CoreSLHTGPT2LogitDiffsBase,
