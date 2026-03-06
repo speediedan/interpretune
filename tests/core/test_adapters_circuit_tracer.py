@@ -166,7 +166,9 @@ class TestCircuitTracerTLBackend:
         assert it_session.module.replacement_model is not None
 
         # Replacement model type matches backend
-        assert isinstance(it_session.module.replacement_model, TransformerLensReplacementModel)
+        # Use class-name string comparison instead of isinstance to avoid pytest-importlib mode
+        # module double-loading issues (see issue #201 and circuit_tracer.py adapter for details)
+        assert type(it_session.module.replacement_model).__name__ == "TransformerLensReplacementModel"
 
         # Original HF config preserved after conversion
         assert hasattr(it_session.module.model, "config")
@@ -222,7 +224,9 @@ class TestCircuitTracerNNsightBackend:
 
         # Replacement model loaded and correctly typed
         assert it_session.module.replacement_model is not None
-        assert isinstance(it_session.module.replacement_model, NNSightReplacementModel)
+        # Use class-name string comparison instead of isinstance to avoid pytest-importlib mode
+        # module double-loading issues (see issue #201 and circuit_tracer.py adapter for details)
+        assert type(it_session.module.replacement_model).__name__ == "NNSightReplacementModel"
 
         # Local mode configuration
         assert it_session.module.circuit_tracer_cfg.nnsight_remote is False
@@ -249,7 +253,8 @@ class TestNNsightBackendGemma3:
 
         assert it_session.module.circuit_tracer_cfg.backend == "nnsight"
         assert it_session.module.circuit_tracer_cfg.nnsight_remote is False
-        assert isinstance(it_session.module.replacement_model, NNSightReplacementModel)
+        # Use class-name string comparison instead of isinstance (see issue #201)
+        assert type(it_session.module.replacement_model).__name__ == "NNSightReplacementModel"
 
     @RunIf(optional=True)
     def test_gemma3_transcoder_set(self, get_it_session__ct_nnsight_gemma3__setup):
@@ -316,7 +321,8 @@ class TestNNsightRemoteExecution:
         # Verify replacement_model was properly loaded
         replacement_model = it_session.module.replacement_model
         assert replacement_model is not None
-        assert isinstance(replacement_model, NNSightReplacementModel)
+        # Use class-name string comparison instead of isinstance (see issue #201)
+        assert type(replacement_model).__name__ == "NNSightReplacementModel"
 
         # Verify we can trace internal activations remotely
         # NNSightReplacementModel inherits from nnsight.LanguageModel, supporting trace() context
