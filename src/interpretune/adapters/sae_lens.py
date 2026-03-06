@@ -140,7 +140,7 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
         compound name directly (HookedTransformer models).
         """
         if hasattr(self.model, "get_sae_hook_name"):
-            return self.model.get_sae_hook_name(sae_handle, internal)
+            return self.model.get_sae_hook_name(sae_handle, internal)  # type: ignore[operator]
         return f"{sae_handle.cfg.metadata.hook_name}.{internal}"
 
     def _convert_hf_to_tl(self) -> None:
