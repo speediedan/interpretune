@@ -120,12 +120,15 @@ class BaseCircuitTracerModule(BaseITModule):
         )
 
         # Validate returned model type matches expected backend
+        # Note: Use class name comparison rather than isinstance() to avoid false failures from module
+        # double-loading (e.g., pytest importlib mode + editable installs creating two class objects).
+        actual_cls_name = type(replacement_model).__name__
         if backend == "transformerlens":
-            assert isinstance(replacement_model, TransformerLensReplacementModel), (
+            assert actual_cls_name == "TransformerLensReplacementModel", (
                 f"Expected TransformerLensReplacementModel for backend '{backend}', got {type(replacement_model)}"
             )
         elif backend == "nnsight":
-            assert isinstance(replacement_model, NNSightReplacementModel), (
+            assert actual_cls_name == "NNSightReplacementModel", (
                 f"Expected NNSightReplacementModel for backend '{backend}', got {type(replacement_model)}"
             )
         else:

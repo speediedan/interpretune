@@ -91,7 +91,7 @@ class TestClassDebugGen:
                 },
                 True,
                 (2, True),
-                marks=RunIf(standalone=True, lightning=True, bf16_cuda=True),
+                marks=RunIf(lightning=True, bf16_cuda=True),
             ),
             pytest.param(
                 "get_it_session__l_llama3_debug__setup",
@@ -103,7 +103,7 @@ class TestClassDebugGen:
                 },
                 True,
                 (2, True),
-                marks=RunIf(standalone=True, lightning=True, bf16_cuda=True),
+                marks=RunIf(lightning=True, bf16_cuda=True),
             ),
             pytest.param(
                 "get_it_session__l_gemma3_debug__setup",

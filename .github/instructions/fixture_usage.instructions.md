@@ -593,3 +593,86 @@ class TestSAELensAdapters:
 4. **Test Appropriately**: Unit tests for logic, integration tests for workflows
 5. **Scope Wisely**: Balance performance (session/module) vs isolation (function)
 6. **Avoid Complex Mocks**: Use real objects via fixtures for better test fidelity
+
+## NNsight and Backend Parity Fixtures
+
+### Analysis Session Fixtures for Backend Parity
+
+The NNsight adapter introduces dual-backend analysis fixtures used for Bridge ↔ NNsight parity testing. Each analysis operation has both a Bridge and NNsight variant:
+
+| NNsight Fixture Key | Bridge Fixture Key | Operation |
+|---|---|---|
+| `sl_ns_gpt2_logit_diffs_base` | `sl_br_gpt2_logit_diffs_base` | Base forward (no SAE) |
+| `sl_ns_gpt2_logit_diffs_sae` | `sl_br_gpt2_logit_diffs_sae` | SAE-spliced forward |
+| `sl_ns_gpt2_logit_diffs_attr_grad` | `sl_br_gpt2_logit_diffs_attr_grad` | Gradient attribution |
+| `sl_ns_gpt2_logit_diffs_attr_ablation` | `sl_br_gpt2_logit_diffs_attr_ablation` | Ablation attribution |
+
+All are `analysis_session` fixtures with `FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)`.
+
+### Pattern: Backend Parity Testing with deepcopy
+
+From `test_sae_backend_parity.py`:
+
+```python
+_NS_BASE = "get_analysis_session__sl_ns_gpt2_logit_diffs_base__initonly_runanalysis"
+_BR_BASE = "get_analysis_session__sl_br_gpt2_logit_diffs_base__initonly_runanalysis"
+
+def _get_result(request, fixture_key: str) -> AnalysisStore:
+    """Retrieve and deepcopy the AnalysisStore result from a fixture."""
+    fixture = request.getfixturevalue(fixture_key)
+    return deepcopy(fixture.result)
+
+class TestLogitDiffsBaseBackendParity:
+    def test_logit_diffs_match(self, request):
+        br_store = _get_result(request, _BR_BASE)
+        ns_store = _get_result(request, _NS_BASE)
+        _compare_tensor_lists(br_store.logit_diffs, ns_store.logit_diffs, label="logit_diffs")
+```
+
+**Key points:**
+- Always `deepcopy` analysis results to avoid cross-test mutation
+- Bridge is the source of truth (canonical HF behavior)
+- Forward-pass parity: `rtol=1e-4, atol=1e-4`
+- Gradient parity uses relaxed tolerances: `rtol=5e-3, atol=5e-3`
+
+### Memory Cleanup Fixtures
+
+For tests involving large models or CUDA memory:
+
+```python
+@pytest.mark.usefixtures("cleanup_memory")
+class TestAblationParity:
+    """cleanup_memory fixture ensures gc + CUDA cache emptying between tests."""
+    def test_ablation(self, request):
+        ...
+```
+
+- `cleanup_memory`: Runs `gc.collect()` + `torch.cuda.empty_cache()` after each test
+- `cleanup_cuda`: More aggressive CUDA cleanup for GPU-intensive tests (e.g., circuit-tracer)
+
+### NNsight Session Fixtures
+
+Standard NNsight fixtures for adapter testing:
+
+```python
+# Core NNsight (class-scoped for test method sharing)
+"ns_gpt2": FixtureCfg(
+    test_cfg=CoreNNsightGPT2,
+    scope="class",
+    variants={"it_session": [FixtPhase.setup], "it_session_cfg": [FixtPhase.cfgonly]},
+)
+
+# Lightning NNsight
+"l_ns_gpt2": FixtureCfg(
+    test_cfg=LightningNNsightGPT2,
+    scope="class",
+    variants={"it_session": [FixtPhase.setup]},
+)
+
+# Circuit Tracer with NNsight backend (GPU-required)
+"ct_nnsight_gemma2": FixtureCfg(
+    test_cfg=CircuitTracerNNsightGemma2,
+    scope="function",
+    variants={"it_session": [FixtPhase.setup]},
+)
+```

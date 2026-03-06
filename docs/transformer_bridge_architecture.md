@@ -179,6 +179,51 @@ identical numerical results for the same inputs.  This makes Bridge the
 natural reference point for validating NNsight parity — they share the same
 computation graph.
 
+## Hook Name Resolution
+
+### The Problem
+
+TransformerBridge uses canonical hook names (e.g., `blocks.0.hook_in`) while
+SAE metadata stores the legacy alias (e.g., `blocks.0.hook_resid_pre`).
+When SAE internal hooks are registered at compound paths like
+`blocks.0.hook_in.hook_sae_acts_post`, cache lookups using the alias-based
+compound name (`blocks.0.hook_resid_pre.hook_sae_acts_post`) fail silently.
+
+HookedTransformer does not have this mismatch — its hook names and aliases
+are interchangeable because HT implements the hooks directly under alias
+names.
+
+### Resolution Layers
+
+Hook name resolution is handled at two architectural layers:
+
+**Layer 1 — SAETransformerBridge (SAELens upstream):**
+`SAETransformerBridge.get_sae_hook_name(sae, internal)` resolves the base
+hook name alias to the canonical path and constructs the full compound name.
+This is the authoritative resolution for Bridge SAE hooks.
+
+**Layer 2 — HookNameResolver (interpretune, future):**
+`HookNameResolver` in `interpretune.analysis.backends.hook_mapping` maps
+TL hook names to HF module paths for NNsight analysis.  It already parses
+SAE sub-hook suffixes via `parse_hook_name()`.  A future extension could
+add alias→canonical resolution to provide unified hook resolution across
+all backends.
+
+### Hook Access Patterns by Backend
+
+| Backend | Base Hook Name | SAE Compound Name | Resolution |
+|---------|---------------|-------------------|------------|
+| HookedTransformer | `blocks.0.hook_resid_pre` (alias = name) | `blocks.0.hook_resid_pre.hook_sae_acts_post` | None needed |
+| TransformerBridge | `blocks.0.hook_in` (canonical) | `blocks.0.hook_in.hook_sae_acts_post` | `get_sae_hook_name()` |
+| NNsight | `model.transformer.h.0` (HF path) | N/A (direct tensor access) | `HookNameResolver` |
+| Circuit Tracer | Backend-dependent (TL or NNsight) | N/A (graph-level analysis) | Defers to backend |
+
+### Design Reference
+
+See [sae_hook_resolution_design.md](sae_hook_resolution_design.md) for the
+full design analysis, including the evaluation of alternative approaches and
+the long-term vision for unified hook resolution.
+
 ## Recommendations for Testing Strategy
 
 ### TransformerBridge as Source of Truth

@@ -315,3 +315,41 @@ If tests require `@RunIf(standalone=True)` despite registry entry:
 - `tests/conftest.py` - `FIXTURE_CFGS` dictionary
 - `tests/core/cfg_aliases.py` - Test configuration classes
 - `.github/instructions/fixture_usage.instructions.md` - Fixture usage guide
+
+## Dual-Backend Analysis Registration
+
+Analysis operations can run on multiple backends (TransformerBridge, NNsight). For backend parity testing, register separate analysis config classes that share the same `model_src_key` and `model_cfg_key` but differ in `adapter_ctx`:
+
+### Bridge SAE Analysis Config
+
+```python
+@dataclass(kw_only=True)
+class CoreSLBridgeGPT2LogitDiffsSAE(BaseCfg):
+    """TransformerBridge backend for SAE logit_diffs analysis."""
+    model_src_key: str | None = "gpt2"
+    model_cfg_key: str = "rte"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens, Adapter.transformer_lens)
+    tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
+        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
+            model_name="gpt2-small", default_padding_side="left", use_bridge=True  # Bridge for parity testing
+        )
+    )
+    analysis_cfg: AnalysisConfig = field(default_factory=lambda: AnalysisConfig(ops=["logit_diffs_sae"]))
+```
+
+### NNsight SAE Analysis Config
+
+```python
+@dataclass(kw_only=True)
+class CoreSLNNsightGPT2LogitDiffsSAE(BaseCfg):
+    """NNsight backend for SAE logit_diffs analysis."""
+    model_src_key: str | None = "gpt2"
+    model_cfg_key: str = "rte"
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens, Adapter.nnsight)
+    nnsight_cfg: NNsightConfig | None = field(
+        default_factory=lambda: NNsightConfig(model_name="openai-community/gpt2", ...)
+    )
+    analysis_cfg: AnalysisConfig = field(default_factory=lambda: AnalysisConfig(ops=["logit_diffs_sae"]))
+```
+
+Both resolve to the same `gpt2.rte` registry entry but use different adapter stacks. The registry entry must list both `[core, sae_lens, transformer_lens]` and `[core, sae_lens, nnsight]` in `adapter_combinations`.

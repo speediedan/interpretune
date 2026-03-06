@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from tests.runif import RunIf
+# S9: RunIf import removed — both test functions no longer need standalone mark
 
 
-@RunIf(standalone=True)
+# S9: removed standalone mark — pure Python config/patching test, no model/GPU needed
 def test_framework():
     """Test the generalized analysis injection framework."""
     print("=" * 80)
@@ -143,7 +143,7 @@ def test_framework():
     print("=" * 80)
 
 
-@RunIf(standalone=True)
+# S9: removed standalone mark — pure Python orchestrator test, no model/GPU needed
 def test_orchestrator_access():
     """Test that orchestrator supports key access for analysis point data."""
     print("=" * 80)

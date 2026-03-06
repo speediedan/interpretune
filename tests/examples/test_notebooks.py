@@ -162,7 +162,7 @@ ATTRIBUTION_ANALYSIS_PARAMS = [
 ]
 
 
-@RunIf(standalone=True, bf16_cuda=True)
+@RunIf(bf16_cuda=True)
 @pytest.mark.parametrize("params", ATTRIBUTION_ANALYSIS_PARAMS)
 def test_attribution_analysis_notebook(params: dict[str, Any], tmp_path: Path):
     """Test attribution analysis notebook with different parameterizations."""
@@ -189,7 +189,7 @@ def test_attribution_analysis_notebook(params: dict[str, Any], tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
-@RunIf(standalone=True)
+# S9: removed standalone mark — notebook doesn't load models or use GPU
 @pytest.mark.parametrize("notebook_file", ["op_collection_example.ipynb"])
 def test_op_collection_notebooks(notebook_file: str, tmp_path: Path):
     """Test operation collection notebooks."""
@@ -234,7 +234,7 @@ CIRCUIT_TRACER_PARAMS = [
 ]
 
 
-@RunIf(standalone=True, bf16_cuda=True)
+@RunIf(bf16_cuda=True)
 @pytest.mark.parametrize("params", CIRCUIT_TRACER_PARAMS)
 def test_circuit_tracer_notebooks(params: dict[str, Any], tmp_path: Path):
     """Test circuit tracer notebooks with different parameterizations."""
@@ -271,7 +271,7 @@ SAE_LENS_PARAMS = [
 ]
 
 
-@RunIf(standalone=True, bf16_cuda=True)
+@RunIf(bf16_cuda=True)
 @pytest.mark.parametrize("params", SAE_LENS_PARAMS)
 def test_sae_lens_notebooks(params: dict[str, Any], tmp_path: Path):
     """Test SAE Lens adapter notebooks with different backend parameterizations."""
@@ -295,7 +295,7 @@ def test_sae_lens_notebooks(params: dict[str, Any], tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
-@RunIf(standalone=True)
+# S9: removed standalone mark — pure filesystem check, no model/GPU needed
 def test_notebook_discovery():
     """Test that notebooks can be discovered in the publish directory."""
     assert NOTEBOOKS_DIR.exists(), f"Notebooks directory not found: {NOTEBOOKS_DIR}"

@@ -91,6 +91,7 @@ class NNsightAttributeMixin:
 
     @device.setter
     def device(self, value: str | torch.device | None) -> None:
+        """Set the device for the NNsight model."""
         if value is not None and not isinstance(value, torch.device):
             value = torch.device(value)
         self._it_state._device = value  # type: ignore[attr-defined]

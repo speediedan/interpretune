@@ -69,6 +69,46 @@ class MyLightningModule(
 ): ...
 ```
 
+## NNsight Adapter Patterns
+
+### NNsightForwardContext
+
+NNsight analysis operations use `NNsightForwardContext` to manage trace invocations:
+
+```python
+from interpretune.adapters.nnsight import NNsightForwardContext
+
+# Context limits invocations per trace to avoid memory exhaustion
+ctx = NNsightForwardContext(model=nnsight_model, max_invokes_per_trace=8)
+```
+
+### Hook Name Mapping (TL ↔ NNsight)
+
+The `HookNameResolver` translates between TransformerLens hook names and NNsight module paths:
+
+- TL hook: `blocks.0.hook_resid_pre` → NNsight path: `model.transformer.h.0` (resolved via architecture mapping)
+- The resolver uses `_TL_HOOK_NNSIGHT_MAP` with regex patterns for standard HookedTransformer hooks
+
+### Dual-Backend SAE Analysis
+
+SAE analysis operations (`logit_diffs_sae`, `logit_diffs_attr_grad`, `logit_diffs_attr_ablation`) support both:
+- **TransformerBridge backend**: SAE splicing via TL hook-based injection
+- **NNsight backend**: SAE splicing via thread-interleaved tracing
+
+Backend selection is automatic via `get_backend_for_module()` — if the module has `nnsight_cfg`, NNsight backend is used.
+
+### isinstance Caveat with pytest importlib Mode
+
+**Critical**: Avoid `isinstance()` checks against classes from editable-installed external packages (e.g., circuit-tracer). With `importmode = "importlib"` in pytest config, module double-loading creates duplicate class objects that break `isinstance`. Use class-name string comparison instead:
+
+```python
+# WRONG — fails under pytest importlib mode
+assert isinstance(obj, ExternalClass)
+
+# CORRECT — robust to module double-loading
+assert type(obj).__name__ == "ExternalClass"
+```
+
 ## Common Mistakes to Avoid
 
 1. **Circular imports**: Use `TYPE_CHECKING` for type hints
@@ -76,3 +116,4 @@ class MyLightningModule(
 3. **Wrong MRO order**: Mixins before base classes
 4. **Incomplete exports**: Add to both lazy exports and light registration
 5. **Missing config sync**: Handle model_name_or_path synchronization
+6. **isinstance with external packages**: Use class name comparison, not isinstance (see above)

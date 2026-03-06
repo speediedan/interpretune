@@ -358,3 +358,89 @@ See the following files for complete examples:
 - `src/interpretune/adapters/transformer_lens.py` - TransformerLens adapter
 - `src/interpretune/config/nnsight.py` - NNsight configuration
 - `tests/parity_acceptance/test_it_ns.py` - NNsight parity tests
+
+## Analysis Backend Integration
+
+Adapters that provide model access patterns (TransformerLens, NNsight) must also integrate with the
+analysis backend system in `interpretune.analysis.backends`.
+
+### Backend Protocol
+
+Implement the `ModelBackend` protocol for the analysis system:
+
+```python
+class ModelBackend(Protocol):
+    def fwd_w_hooks(self, model, tokens, hooks, **kwargs) -> Any: ...
+    def cache_activations(self, model, tokens, hook_names, **kwargs) -> dict: ...
+    def get_hook_name(self, hook_point: str) -> str: ...
+```
+
+### Backend Selection
+
+The analysis runner auto-detects the appropriate backend from the module's adapter context:
+
+```python
+from interpretune.analysis.backends import get_backend_for_module
+
+backend = get_backend_for_module(it_module)
+# Returns TransformerLensBackend or NNsightBackend
+```
+
+### Hook Name Mapping
+
+The `HookNameResolver` translates hook names between backends:
+
+```python
+from interpretune.analysis.backends.hook_mapping import HookNameResolver
+
+resolver = HookNameResolver(model_architecture="gpt2")
+tl_name = "blocks.0.hook_resid_pre"
+nn_name = resolver.tl_to_nnsight(tl_name)  # -> "transformer.h.0"
+```
+
+### NNsight Forward Context
+
+For batched analysis operations, the NNsight backend uses `NNsightForwardContext` which manages
+multi-invoke tracing with memory-efficient chunking:
+
+```python
+# The max_invokes_per_trace parameter controls memory vs throughput tradeoff
+# Smaller chunks = less peak memory, more forward passes
+context = NNsightForwardContext(
+    model=model,
+    max_invokes_per_trace=16,  # Default: 16 invokes per trace
+)
+```
+
+## TransformerBridge and `use_bridge` Selection
+
+TransformerLens v3 introduced `TransformerBridge` as an alternative to `HookedTransformer`.
+Understanding when each is appropriate is important for adapter development.
+
+### TransformerBridge (default, `use_bridge=True`)
+
+- Wraps an existing HuggingFace model without weight conversion
+- More memory efficient (no weight duplication)
+- Better HF ecosystem compatibility
+- **Requires** a pre-loaded HF model — cannot be initialized from config alone
+- Used by default in `ITLensFromPretrainedConfig` and `ITLensBridgeConfig`
+
+### HookedTransformer (legacy, `use_bridge=False`)
+
+- Traditional TransformerLens with weight conversion
+- Can be initialized from config dictionaries (`ITLensCustomConfig`)
+- Required for circuit-tracer's TransformerLens backend (circuit-tracer expects `HookedTransformer`)
+- Some analysis operations may have subtle behavioral differences
+
+### Selection Guidelines
+
+| Use Case | `use_bridge` | Config Class |
+|----------|-------------|--------------|
+| Standard analysis with TL | `True` (default) | `ITLensFromPretrainedConfig` |
+| SAE-Lens with TransformerBridge | `True` | `ITLensBridgeConfig` |
+| Circuit-tracer TL backend | `False` | `ITLensFromPretrainedNoProcessingConfig` |
+| Config-based initialization | forced `False` | `ITLensCustomConfig` |
+| NNsight backend | N/A | `NNsightConfig` (no TL involved) |
+
+**Important:** Setting `use_bridge=True` with `ITLensCustomConfig` is silently ignored — IT
+will warn and force `use_bridge=False` because TransformerBridge requires an HF model instance.

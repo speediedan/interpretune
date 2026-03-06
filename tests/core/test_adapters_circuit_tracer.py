@@ -3,8 +3,9 @@
 This module tests the CircuitTracerAdapter with both TransformerLens and NNsight backends. Following the fixture usage
 patterns established in test_adapters_transformer_lens.py.
 
-TransformerLens backend tests run as part of the standard test suite. NNsight backend tests are marked standalone due to
-GPU/resource requirements.
+GPU-dependent tests use RunIf(bf16_cuda=True) to require CUDA+bf16 support, consistent with the bidirectional mapping
+tests in test_adapters_transformer_lens.py. Function-scoped fixtures ensure proper model cleanup between tests.
+cleanup_cuda fixture ensures GPU memory is freed after each test.
 """
 
 from __future__ import annotations
@@ -145,96 +146,41 @@ class TestCircuitTracerBackendTypes:
 # =============================================================================
 
 
-class TestCircuitTracerTLBackendInitialization:
-    """Test TransformerLens backend-specific initialization in CircuitTracerAdapter.
+@pytest.mark.usefixtures("cleanup_cuda")
+class TestCircuitTracerTLBackend:
+    """TransformerLens backend integration tests for CircuitTracerAdapter.
 
-    These tests use the (core, transformer_lens, circuit_tracer) adapter combination.
+    Verifies backend property access, replacement model loading, type matching, and config preservation. Uses the (core,
+    transformer_lens, circuit_tracer) adapter combination. Requires CUDA with bf16 support (Gemma2 model).
     """
 
-    @pytest.mark.parametrize(
-        "session_fixture",
-        [
-            pytest.param("get_it_session__ct_tl_gemma2__setup", marks=RunIf(standalone=True)),
-        ],
-        ids=["transformerlens"],
-    )
-    def test_backend_property_access(self, session_fixture, request):
-        """Verify backend property returns correct value from config."""
-        it_session = request.getfixturevalue(session_fixture).it_session
+    @RunIf(bf16_cuda=True)
+    def test_tl_backend_integration(self, get_it_session__ct_tl_gemma2__setup):
+        """Verify TL backend initialization: property access, model loading, typing, and config preservation."""
+        it_session = get_it_session__ct_tl_gemma2__setup.it_session
 
-        # Access backend through circuit_tracer_cfg
-        backend = it_session.module.circuit_tracer_cfg.backend
-        assert backend == "transformerlens"
+        # Backend property access
+        assert it_session.module.circuit_tracer_cfg.backend == "transformerlens"
 
-    @pytest.mark.parametrize(
-        "session_fixture",
-        [
-            pytest.param("get_it_session__ct_tl_gemma2__setup", marks=RunIf(standalone=True)),
-        ],
-        ids=["transformerlens"],
-    )
-    def test_replacement_model_loaded(self, request, session_fixture):
-        """Verify replacement model is loaded for TransformerLens backend."""
-        it_session = request.getfixturevalue(session_fixture).it_session
-
-        # Replacement model should be loaded after setup
+        # Replacement model loaded
         assert it_session.module.replacement_model is not None
 
-    @pytest.mark.parametrize(
-        "session_fixture",
-        [
-            pytest.param("get_it_session__ct_tl_gemma2__setup", marks=RunIf(standalone=True)),
-        ],
-        ids=["transformerlens"],
-    )
-    def test_replacement_model_type_matches_backend(self, session_fixture, request):
-        """Verify replacement model type matches TransformerLens backend."""
-        it_session = request.getfixturevalue(session_fixture).it_session
+        # Replacement model type matches backend
+        assert isinstance(it_session.module.replacement_model, TransformerLensReplacementModel)
 
-        backend = it_session.module.circuit_tracer_cfg.backend
-        replacement_model = it_session.module.replacement_model
-
-        assert backend == "transformerlens"
-        assert isinstance(replacement_model, TransformerLensReplacementModel)
-
-    @pytest.mark.parametrize(
-        "session_fixture",
-        [
-            pytest.param("get_it_session__ct_tl_gemma2__setup", marks=RunIf(standalone=True)),
-        ],
-        ids=["transformerlens"],
-    )
-    def test_model_config_preserved(self, session_fixture, request):
-        """Verify original HF config is preserved after conversion."""
-        it_session = request.getfixturevalue(session_fixture).it_session
-
-        # The model should have a config attribute
+        # Original HF config preserved after conversion
         assert hasattr(it_session.module.model, "config")
         assert it_session.module.model.config is not None
 
 
-class TestCircuitTracerTLBackendFunctionality:
-    """Test TransformerLens backend-specific functionality beyond initialization."""
-
-    @pytest.mark.parametrize(
-        "session_fixture",
-        [
-            pytest.param("get_it_session__ct_tl_gemma2__setup", marks=RunIf(standalone=True)),
-        ],
-        ids=["transformerlens"],
-    )
-    def test_transformerlens_backend_loads(self, request, session_fixture):
-        """Verify TransformerLens backend loads successfully."""
-        it_session = request.getfixturevalue(session_fixture).it_session
-
-        assert it_session.module.circuit_tracer_cfg.backend == "transformerlens"
-        assert isinstance(it_session.module.replacement_model, TransformerLensReplacementModel)
-
-
+@pytest.mark.usefixtures("cleanup_cuda")
 class TestCircuitTracerLightningTLBackendInitialization:
-    """Test Lightning + TransformerLens backend initialization."""
+    """Test Lightning + TransformerLens backend initialization.
 
-    @RunIf(lightning=True, standalone=True)
+    Requires CUDA with bf16 support (Gemma2 model) and Lightning.
+    """
+
+    @RunIf(lightning=True, bf16_cuda=True)
     @pytest.mark.parametrize(
         "session_fixture",
         [
@@ -258,74 +204,35 @@ class TestCircuitTracerLightningTLBackendInitialization:
 # =============================================================================
 
 
-class TestCircuitTracerNNsightBackendInitialization:
-    """Test NNsight backend-specific initialization in CircuitTracerAdapter.
+@pytest.mark.usefixtures("cleanup_cuda")
+class TestCircuitTracerNNsightBackend:
+    """NNsight backend integration tests for CircuitTracerAdapter.
 
-    These tests use the (core, circuit_tracer) adapter combination with backend="nnsight".
+    Verifies backend property access, replacement model loading and typing, and local mode configuration. Uses the
+    (core, circuit_tracer) adapter combination with backend="nnsight". Requires CUDA with bf16 support (Gemma2 model).
     """
 
-    @pytest.mark.parametrize(
-        "session_fixture",
-        [
-            pytest.param("get_it_session__ct_nnsight_gemma2__setup", marks=RunIf(standalone=True)),
-        ],
-        ids=["nnsight"],
-    )
-    def test_nnsight_backend_property_access(self, session_fixture, request):
-        """Verify backend property returns correct value from config."""
-        it_session = request.getfixturevalue(session_fixture).it_session
+    @RunIf(bf16_cuda=True)
+    def test_nnsight_backend_integration(self, get_it_session__ct_nnsight_gemma2__setup):
+        """Verify NNsight backend initialization: property access, model loading, typing, and local mode config."""
+        it_session = get_it_session__ct_nnsight_gemma2__setup.it_session
 
-        backend = it_session.module.circuit_tracer_cfg.backend
-        assert backend == "nnsight"
+        # Backend property access
+        assert it_session.module.circuit_tracer_cfg.backend == "nnsight"
 
-    @pytest.mark.parametrize(
-        "session_fixture",
-        [
-            pytest.param("get_it_session__ct_nnsight_gemma2__setup", marks=RunIf(standalone=True)),
-        ],
-        ids=["nnsight"],
-    )
-    def test_nnsight_replacement_model_loaded(self, request, session_fixture):
-        """Verify replacement model is loaded for NNsight backend."""
-        it_session = request.getfixturevalue(session_fixture).it_session
-
-        # Replacement model should be loaded after setup
+        # Replacement model loaded and correctly typed
         assert it_session.module.replacement_model is not None
         assert isinstance(it_session.module.replacement_model, NNSightReplacementModel)
 
-
-class TestNNsightBackendGemma2:
-    """Unit tests for NNsight backend using Gemma2 model."""
-
-    @RunIf(standalone=True)
-    def test_nnsight_backend_initialization_local(self, get_it_session__ct_nnsight_gemma2__setup):
-        """Verify NNsight backend initializes correctly in local mode with Gemma2."""
-        it_session = get_it_session__ct_nnsight_gemma2__setup.it_session
-
-        assert it_session.module.circuit_tracer_cfg.backend == "nnsight"
+        # Local mode configuration
         assert it_session.module.circuit_tracer_cfg.nnsight_remote is False
-        assert isinstance(it_session.module.replacement_model, NNSightReplacementModel)
+        assert it_session.module.circuit_tracer_cfg.ndif_api_key is None
 
     def test_ndif_api_key_from_env(self, monkeypatch):
         """Verify NDIF_API_KEY is resolved from environment variable."""
-        # Set environment variable temporarily
         monkeypatch.setenv("NDIF_API_KEY", "test_env_key_123")
-
-        # Create config with remote=True but no explicit API key
         cfg = CircuitTracerConfig(backend="nnsight", nnsight_remote=True)
-
-        # __post_init__ should have resolved API key from env
         assert cfg.ndif_api_key == "test_env_key_123"
-
-    @RunIf(standalone=True)
-    def test_nnsight_local_no_api_key_required(self, get_it_session__ct_nnsight_gemma2__setup):
-        """Verify local mode doesn't require API key."""
-        it_session = get_it_session__ct_nnsight_gemma2__setup.it_session
-
-        # Local mode should work without API key
-        assert it_session.module.circuit_tracer_cfg.nnsight_remote is False
-        assert it_session.module.circuit_tracer_cfg.ndif_api_key is None
-        assert it_session.module.replacement_model is not None
 
 
 class TestNNsightBackendGemma3:

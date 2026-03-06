@@ -81,6 +81,7 @@ class HubAnalysisOpManager:
                     cache_dir=str(self.cache_dir),
                     revision=revision,
                     force_download=force_download,
+                    token=self.api.token,
                 )
             )
 
