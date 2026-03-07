@@ -161,19 +161,34 @@ diff <(grep "TransformerLens\|SAELens" pyproject.toml) <(cat requirements/ci/ove
 
 **Root Cause**: `Dataset.from_generator()` (HuggingFace `datasets` library) hashes all `gen_kwargs` via `dill` serialization to build a fingerprint for caching. When `gen_kwargs` contains a full model module (with all weights), dill tries to serialize the entire model into memory — causing `MemoryError` on memory-constrained CI runners.
 
-**Fix**: Replace `Dataset.from_generator()` with `Dataset.from_list()`:
+**Fix**: Replace `Dataset.from_generator()` with `Dataset.from_list()`, and filter features to match actual record keys (see Category G below):
 ```python
 # Before (OOMs on CI):
-dataset = Dataset.from_generator(generator_fn, gen_kwargs=gen_kwargs, ...)
+dataset = Dataset.from_generator(generator_fn, gen_kwargs=gen_kwargs, features=features, ...)
 
-# After (no dill serialization):
+# After (no dill serialization, features filtered):
 records = list(generator_fn(**gen_kwargs))
-dataset = Dataset.from_list(records, ...)
+if records and features:
+    record_keys = set(records[0].keys())
+    features = Features({k: v for k, v in features.items() if k in record_keys})
+dataset = Dataset.from_list(records, features=features if features else None, ...)
 ```
 
 This works when the dataset is immediately saved to disk after creation (so lazy generation provides no benefit). The fix also avoids pulling in HF datasets caching infrastructure which is typically disabled in test environments anyway.
 
 **Example from PR #197**: `generate_analysis_dataset()` in `analysis.py` passed `gen_kwargs` containing the entire ITModule (with model weights). Switching to `Dataset.from_list()` eliminated the MemoryError.
+
+### Category G: Feature Key Mismatch With Dataset.from_list()
+
+**Pattern**: `ValueError: Keys mismatch: between {source features} and {target arrow columns}. {'prompts', 'tokens'} are missing from target`
+
+**Typical OS**: All (macOS, Windows, Ubuntu)
+
+**Root Cause**: `Dataset.from_list()` strictly validates that the `features` specification matches the keys in the actual data records. If the schema includes optional columns (like `prompts`, `tokens`) that certain analysis ops don't populate, `from_list()` raises a `ValueError`. The previous `from_generator()` inferred features from the yielded data and was more tolerant of extra features in the spec.
+
+**Fix**: Filter the `features` dict to only include keys present in the generated records before passing to `from_list()`. See the code example in Category E above.
+
+**Lesson**: When switching from `from_generator()` to `from_list()`, you lose the implicit feature inference. Any schema that defines optional columns must be filtered to match the actual data.
 
 ### Category F: Unexplained Step Cancellation (No Log Output)
 
@@ -331,6 +346,10 @@ TransformerBridge resolves hook aliases to canonical names (e.g., `blocks.0.hook
 ### 8. "Cancelled" Steps With No Output Usually Mean OOM Kill
 
 When a CI step shows `conclusion: "cancelled"` with zero log lines, the process was likely killed by the OS (e.g., Linux OOM killer). This is different from GitHub Actions "cancel-in-progress" which cancels the entire run. Look for round job durations (exactly 60m, 90m) and check if other OS jobs in the same run completed normally.
+
+### 9. from_list() Is Stricter Than from_generator() on Features
+
+`Dataset.from_generator()` infers features from yielded data and tolerates mismatches between the `features` spec and actual columns. `Dataset.from_list()` validates strictly — any extra keys in the features spec that aren't in the data will raise `ValueError`. When migrating between these APIs (e.g., to avoid dill serialization), always filter the features spec to match the actual record keys.
 
 ---
 

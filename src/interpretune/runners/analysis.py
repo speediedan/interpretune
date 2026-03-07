@@ -136,6 +136,15 @@ def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, sp
     # Since the dataset is immediately saved to disk by the caller, lazy generation has no benefit.
     try:
         records = list(analysis_store_generator(**gen_kwargs))
+        # Filter features to only include keys present in the actual records.
+        # The schema may define optional columns (e.g. prompts, tokens) that some
+        # analysis ops don't populate.  from_generator() inferred features from
+        # yielded data and tolerated mismatches; from_list() is strict.
+        if records and features:
+            from datasets import Features
+
+            record_keys = set(records[0].keys())
+            features = Features({k: v for k, v in features.items() if k in record_keys})
         dataset = Dataset.from_list(
             records,
             features=features if features else None,
