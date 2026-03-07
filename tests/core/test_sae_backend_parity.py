@@ -42,7 +42,6 @@ from interpretune.analysis.core import (
     base_vs_sae_logit_diffs,
     compute_correct,
 )
-from tests.runif import RunIf
 
 # ---------------------------------------------------------------------------
 # Fixture key constants
@@ -283,21 +282,27 @@ class TestLogitDiffsAttrGradBackendParity:
                 assert sorted(d_br[hook_name]) == sorted(d_ns[hook_name])
 
 
-@RunIf(standalone=True)  # multi-trace ablation OOMs CI runners; segfaults on Windows
-@pytest.mark.usefixtures("cleanup_memory")
 class TestLogitDiffsAttrAblationBackendParity:
     """logit_diffs_attr_ablation: TransformerBridge ↔ NNsight ablation (``model_ablation``).
 
     Compares per-latent ablation results — model runs once per alive latent
     with that latent zeroed out.  Bridge and NNsight should agree closely.
+
+    Note: Memory cleanup is applied at the individual test level (not class level) to ensure
+    gc.collect() runs after each test.  This avoids the need for standalone isolation while
+    still limiting peak RSS on memory-constrained CI runners.  The fixture caching tradeoff
+    (module-scoped ablation fixtures are shared across methods) is intentional — we prefer
+    cross-platform coverage over marginal memory savings from per-test fixture teardown.
     """
 
+    @pytest.mark.usefixtures("cleanup_memory")
     def test_logit_diffs_match(self, request):
         """Ablation logit diffs should match across backends."""
         br_store = _get_result(request, _BR_ABLATION)
         ns_store = _get_result(request, _NS_ABLATION)
         _compare_tensor_lists(br_store.logit_diffs, ns_store.logit_diffs, label="logit_diffs")
 
+    @pytest.mark.usefixtures("cleanup_memory")
     def test_attribution_values_match(self, request):
         """Per-latent ablation attribution values should match."""
         br_store = _get_result(request, _BR_ABLATION)
@@ -308,6 +313,7 @@ class TestLogitDiffsAttrAblationBackendParity:
             label="attribution_values",
         )
 
+    @pytest.mark.usefixtures("cleanup_memory")
     def test_alive_latents_match(self, request):
         """Alive latents should be identical."""
         br_store = _get_result(request, _BR_ABLATION)
@@ -320,6 +326,7 @@ class TestLogitDiffsAttrAblationBackendParity:
             for hook_name in d_br:
                 assert sorted(d_br[hook_name]) == sorted(d_ns[hook_name])
 
+    @pytest.mark.usefixtures("cleanup_memory")
     def test_compute_correct_parity(self, request):
         """compute_correct should return equivalent summaries for both backends."""
         br_fixture = request.getfixturevalue(_BR_ABLATION)
@@ -361,13 +368,14 @@ class TestBackendParityEdgeCases:
         ns_store = _get_result(request, ns_key)
         assert len(br_store.dataset) == len(ns_store.dataset), f"Row count mismatch for {op_name}"
 
+    @pytest.mark.usefixtures("cleanup_memory")
     @pytest.mark.parametrize(
         ("br_key", "ns_key"),
         [
             pytest.param(_BR_BASE, _NS_BASE, id="base"),
             pytest.param(_BR_SAE, _NS_SAE, id="sae"),
             pytest.param(_BR_GRAD, _NS_GRAD, id="attr_grad"),
-            pytest.param(_BR_ABLATION, _NS_ABLATION, id="attr_ablation", marks=RunIf(standalone=True)),
+            pytest.param(_BR_ABLATION, _NS_ABLATION, id="attr_ablation"),
         ],
     )
     def test_answer_logits_dtype_match(self, request, br_key, ns_key):

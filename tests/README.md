@@ -95,3 +95,40 @@ We include a couple of developer-facing documents under `tests/` for profiling a
 - `tests/PROFILING.md` — How-to for generating pytest flamegraphs, speedscope captures, and using `scripts/speedscope_top_packages.py` to parse and sample top stacks by package.
 
 These are intended for maintainers and contributors performing performance investigations and are particularly useful for managing the complexity of our numerous package integrations.
+
+## Memory Management for NNsight Tests
+
+Some NNsight-related parity tests (e.g., `test_parity_ns`, `TestLogitDiffsAttrAblationBackendParity`)
+are memory-intensive. Each parametrized test variant loads and retains NNsight model state, and on
+memory-constrained CI runners (e.g., Ubuntu with ~7 GB available RAM) the cumulative footprint can
+trigger OOM errors.
+
+### Strategy: `cleanup_memory` at the Test Method Level
+
+Rather than isolating these tests with `@RunIf(standalone=True)` — which removes them from regular
+CI runs and reduces cross-platform coverage signal — we apply `@pytest.mark.usefixtures("cleanup_memory")`
+at the **individual test method** level.
+
+The `cleanup_memory` fixture (defined in `tests/conftest.py`) yields and then calls `gc.collect()` to
+free dangling references after each test, limiting peak RSS growth across parametrized variants.
+
+**Tradeoff:** Using `cleanup_memory` at the function level means fixtures with wider scope (e.g.,
+`module`- or `class`-scoped fixtures) are still shared across test methods — fixture teardown is not
+accelerated. However, forcing a `gc.collect()` sweep after each test prevents reference accumulation
+beyond what the fixture cache itself holds.
+
+**When standalone isolation is still warranted:** Some tests genuinely require subprocess isolation,
+e.g., when a library uses `sys.settrace()` (which interferes with pytest-cov). The current canonical
+example is `test_nnsight_trace_context` in `tests/core/test_adapters_nnsight.py`, which must stay
+`@RunIf(standalone=True)`.
+
+### Known Bug: Class-Level Standalone Marks Are Silently Ignored
+
+`pytest_collection_modifyitems` in `tests/conftest.py` uses `item.own_markers`, which only contains
+markers directly on the test *function* — not those inherited from a parent class. Class-level
+`@RunIf(standalone=True)` decorators are invisible to the standalone collection filter, causing those
+tests to be silently excluded from standalone runs.
+
+**Fix (TODO):** Change `item.own_markers` → `item.iter_markers()` (or equivalent) in
+`pytest_collection_modifyitems`. Until this is fixed, **always apply standalone marks at the
+individual test method level, not at the class level**.

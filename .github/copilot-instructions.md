@@ -626,6 +626,14 @@ unset IT_RUN_OPTIONAL_TESTS
 - Adjust these paths to match your local development environment
 - The `special_tests.sh` harness handles environment setup automatically
 - Standalone tests may take longer and require more resources than regular tests
+- `@RunIf(standalone=True)` must be applied at the **test method** level, never at the class level.
+  `pytest_collection_modifyitems` uses `item.own_markers` (method-level only); class-level markers are
+  invisible to the standalone filter and those tests are silently excluded from standalone runs.
+- For memory-intensive tests, prefer `@pytest.mark.usefixtures("cleanup_memory")` at the method level over
+  standalone marks when possible — this triggers `gc.collect()` after each test without sacrificing
+  cross-platform CI signal.
+- **TODO/BUG:** Fix `pytest_collection_modifyitems` in `tests/conftest.py` to use `item.iter_markers()`
+  instead of `item.own_markers` so class-level standalone marks are properly collected.
 
 ### Configuration
 - YAML configs in `src/it_examples/config/`

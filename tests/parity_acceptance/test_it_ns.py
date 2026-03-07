@@ -65,22 +65,20 @@ class NSParityTest(BaseAugTest):
 
 
 # Core + NNsight parity tests
-# All CPU NNsight parity tests are standalone: cumulative NNsight model loads OOM CI runners
-# and prevent subsequent TransformerLens parity tests from completing.
 PARITY_NS_CONFIGS = (
-    NSParityTest(alias="test_cpu_32", cfg=NSParityCfg(phase="test"), marks="standalone"),
+    NSParityTest(alias="test_cpu_32", cfg=NSParityCfg(phase="test")),
     NSParityTest(
         alias="test_cpu_32_l",
         cfg=NSParityCfg(
             phase="test",
             **w_l_ns,
         ),
-        marks="l_standalone",
+        marks="lightning",
     ),
     NSParityTest(alias="test_cuda_32", cfg=NSParityCfg(phase="test", **req_det_cuda), marks="cuda"),
     NSParityTest(alias="test_cuda_32_l", cfg=NSParityCfg(phase="test", **req_det_cuda, **w_l_ns), marks="cuda_l"),
-    NSParityTest(alias="train_cpu_32", cfg=NSParityCfg(), marks="standalone"),
-    NSParityTest(alias="train_cpu_32_l", cfg=NSParityCfg(**w_l_ns), marks="l_standalone"),
+    NSParityTest(alias="train_cpu_32", cfg=NSParityCfg()),
+    NSParityTest(alias="train_cpu_32_l", cfg=NSParityCfg(**w_l_ns), marks="lightning"),
     NSParityTest(alias="train_cuda_32", cfg=NSParityCfg(**req_det_cuda), marks="cuda"),
     NSParityTest(alias="train_cuda_32_l", cfg=NSParityCfg(**req_det_cuda, **w_l_ns), marks="cuda_l"),
 )
@@ -89,6 +87,7 @@ EXPECTED_PARITY_NS = {cfg.alias: cfg.expected for cfg in PARITY_NS_CONFIGS}
 
 
 @pytest.mark.usefixtures("make_deterministic")
+@pytest.mark.usefixtures("cleanup_memory")
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(PARITY_NS_CONFIGS, unpack=False))
 def test_parity_ns(recwarn, tmp_path, request, test_alias, test_cfg):
     """Test NNsight adapter parity across core and Lightning contexts.
