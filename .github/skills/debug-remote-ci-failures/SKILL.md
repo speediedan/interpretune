@@ -209,11 +209,11 @@ gh api "repos/<owner>/<repo>/actions/jobs/${job_id}/logs" > /tmp/windows_log.txt
 grep -n "Segmentation fault\|Current thread\|faulthandler" /tmp/windows_log.txt
 ```
 
-**Fix**: This is an upstream nnsight issue, not fixable in interpretune code. Skip the affected tests on Windows using `@RunIf(skip_windows=True)`. The non-ablation NNsight tests (base, SAE, gradient attribution) typically pass fine — only the heavy multi-trace ablation tests trigger the crash.
+**Fix**: This is an upstream nnsight issue, not fixable in interpretune code. The multi-trace ablation analysis is also memory-intensive enough to OOM GitHub CI runners (~7GB RAM on Ubuntu). Mark the affected tests as standalone (`@RunIf(standalone=True)`) so they only run with `IT_RUN_STANDALONE_TESTS=1` (locally or on GPU CI). The non-ablation NNsight tests (base, SAE, gradient attribution) typically pass fine in regular CI.
 
-### Category F: Unexplained Step Cancellation (No Log Output)
+### Category F: Unexplained Step Cancellation / Runner Shutdown
 
-**Pattern**: A CI step shows `conclusion: "cancelled"` with `startedAt: null` and zero log output
+**Pattern**: A CI step shows `conclusion: "cancelled"` with `startedAt: null` and zero log output, OR `conclusion: "failure"` with `##[error]The runner has received a shutdown signal`
 
 **Typical OS**: Ubuntu (observed), potentially any
 
@@ -374,7 +374,7 @@ When a CI step shows `conclusion: "cancelled"` with zero log lines, the process 
 
 ### 10. Upstream Threading Crashes May Only Surface on Specific Platforms
 
-A segfault in an upstream library's threading layer (e.g., nnsight's interleaver on Windows) is not reproducible locally if your development machine runs Linux/macOS. When you see a segfault with faulthandler output showing threads stuck in wait/send chains, it's likely an upstream platform-specific bug. The correct fix is `@RunIf(skip_windows=True)` (or equivalent platform skip), not a code change in your project.
+A segfault in an upstream library's threading layer (e.g., nnsight's interleaver on Windows) is not reproducible locally if your development machine runs Linux/macOS. When you see a segfault with faulthandler output showing threads stuck in wait/send chains, it's likely an upstream platform-specific bug. Similarly, memory-intensive upstream operations (multi-trace ablation creating many threads) may OOM CI runners without affecting local machines with more RAM. The correct fix is `@RunIf(standalone=True)` — moving resource-heavy tests out of standard CI — rather than a code change in your project.
 
 ---
 

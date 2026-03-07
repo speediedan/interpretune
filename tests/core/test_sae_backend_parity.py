@@ -283,7 +283,7 @@ class TestLogitDiffsAttrGradBackendParity:
                 assert sorted(d_br[hook_name]) == sorted(d_ns[hook_name])
 
 
-@RunIf(skip_windows=True)  # nnsight interleaver segfaults on Windows during multi-trace ablation
+@RunIf(standalone=True)  # multi-trace ablation OOMs CI runners; segfaults on Windows
 @pytest.mark.usefixtures("cleanup_memory")
 class TestLogitDiffsAttrAblationBackendParity:
     """logit_diffs_attr_ablation: TransformerBridge ↔ NNsight ablation (``model_ablation``).
@@ -367,7 +367,7 @@ class TestBackendParityEdgeCases:
             pytest.param(_BR_BASE, _NS_BASE, id="base"),
             pytest.param(_BR_SAE, _NS_SAE, id="sae"),
             pytest.param(_BR_GRAD, _NS_GRAD, id="attr_grad"),
-            pytest.param(_BR_ABLATION, _NS_ABLATION, id="attr_ablation", marks=RunIf(skip_windows=True)),
+            pytest.param(_BR_ABLATION, _NS_ABLATION, id="attr_ablation", marks=RunIf(standalone=True)),
         ],
     )
     def test_answer_logits_dtype_match(self, request, br_key, ns_key):
