@@ -191,6 +191,26 @@ The previous `from_generator()` inferred features lazily from yielded data and t
 
 **Lesson**: When switching from `from_generator()` to `from_list()`, you lose implicit feature inference. Passing a pre-built `features` spec to `from_list()` will break if **any** column is added or removed by analysis ops. The safe approach is to omit `features` entirely.
 
+### Category H: CPython Segfault in Upstream Threading (nnsight interleaver)
+
+**Pattern**: `Segmentation fault` (exit code 139) during nnsight thread-interleaved analysis. Faulthandler dump shows multiple threads stuck in `interleaver.py wait` → `send` → `request` → `envoy.py inputs/input` chains.
+
+**Typical OS**: Windows (observed on 3.13.12). May affect other platforms under memory pressure.
+
+**Root Cause**: The nnsight interleaver creates worker threads for each trace invocation. During multi-trace analysis operations (e.g., SAE ablation attribution, which runs one trace per alive latent), many threads accumulate. On Windows, this can trigger a CPython-level segfault in the threading layer — not a Python exception, but a process crash.
+
+**Diagnosis**:
+```bash
+# Download full job log (artifacts may not contain useful data for segfaults)
+job_id=$(gh api "repos/<owner>/<repo>/actions/runs/<run_id>/jobs" --jq '.jobs[] | select(.name | contains("windows")) | .id')
+gh api "repos/<owner>/<repo>/actions/jobs/${job_id}/logs" > /tmp/windows_log.txt
+
+# Look for segfault and thread dumps
+grep -n "Segmentation fault\|Current thread\|faulthandler" /tmp/windows_log.txt
+```
+
+**Fix**: This is an upstream nnsight issue, not fixable in interpretune code. Skip the affected tests on Windows using `@RunIf(skip_windows=True)`. The non-ablation NNsight tests (base, SAE, gradient attribution) typically pass fine — only the heavy multi-trace ablation tests trigger the crash.
+
 ### Category F: Unexplained Step Cancellation (No Log Output)
 
 **Pattern**: A CI step shows `conclusion: "cancelled"` with `startedAt: null` and zero log output
@@ -351,6 +371,10 @@ When a CI step shows `conclusion: "cancelled"` with zero log lines, the process 
 ### 9. from_list() Is Stricter Than from_generator() on Features
 
 `Dataset.from_generator()` infers features lazily from yielded data and tolerates mismatches between the `features` spec and actual columns. `Dataset.from_list()` (via `from_dict()`) validates strictly in **both directions** — extra keys in the features spec raise `ValueError`, and extra keys in the data raise `KeyError`. When migrating between these APIs (e.g., to avoid dill serialization), the safest approach is to omit the `features` argument entirely and let HF datasets infer types from the data.
+
+### 10. Upstream Threading Crashes May Only Surface on Specific Platforms
+
+A segfault in an upstream library's threading layer (e.g., nnsight's interleaver on Windows) is not reproducible locally if your development machine runs Linux/macOS. When you see a segfault with faulthandler output showing threads stuck in wait/send chains, it's likely an upstream platform-specific bug. The correct fix is `@RunIf(skip_windows=True)` (or equivalent platform skip), not a code change in your project.
 
 ---
 
