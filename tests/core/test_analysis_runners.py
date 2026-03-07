@@ -131,11 +131,11 @@ class TestAnalysisRunner:
         # But unknown params remain
         assert "unknown_param" in result_kwargs
 
-    @patch("datasets.Dataset.from_generator")
-    def test_generate_analysis_dataset_error(self, mock_from_generator, mock_analysis_module, mock_analysis_datamodule):
+    @patch("datasets.Dataset.from_list")
+    def test_generate_analysis_dataset_error(self, mock_from_list, mock_analysis_module, mock_analysis_datamodule):
         """Test error handling in generate_analysis_dataset."""
         # Set up to simulate an error during dataset generation
-        mock_from_generator.side_effect = ValueError("Test error")
+        mock_from_list.side_effect = ValueError("Test error")
 
         # Prepare module with needed attributes
         mock_analysis_module.analysis_cfg = MagicMock()
