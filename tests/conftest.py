@@ -354,43 +354,43 @@ FIXTURE_CFGS = {
     # NNsight SAE analysis fixtures (backend parity testing)
     "sl_ns_gpt2_logit_diffs_base": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsBase,
-        scope="session",
+        scope="function",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_ns_gpt2_logit_diffs_sae": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsSAE,
-        scope="session",
+        scope="function",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_ns_gpt2_logit_diffs_attr_grad": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsAttrGrad,
-        scope="session",
+        scope="function",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_ns_gpt2_logit_diffs_attr_ablation": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsAttrAblation,
-        scope="class",
+        scope="function",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     # TransformerBridge SAE analysis fixtures (Bridge vs Hooked parity testing)
     "sl_br_gpt2_logit_diffs_base": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsBase,
-        scope="session",
+        scope="function",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_br_gpt2_logit_diffs_sae": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsSAE,
-        scope="session",
+        scope="function",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_br_gpt2_logit_diffs_attr_grad": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsAttrGrad,
-        scope="session",
+        scope="function",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_br_gpt2_logit_diffs_attr_ablation": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsAttrAblation,
-        scope="class",
+        scope="function",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg, variants={"it_session": [FixtPhase.setup]}),

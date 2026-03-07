@@ -112,10 +112,18 @@ at the **individual test method** level.
 The `cleanup_memory` fixture (defined in `tests/conftest.py`) yields and then calls `gc.collect()` to
 free dangling references after each test, limiting peak RSS growth across parametrized variants.
 
-**Tradeoff:** Using `cleanup_memory` at the function level means fixtures with wider scope (e.g.,
-`module`- or `class`-scoped fixtures) are still shared across test methods — fixture teardown is not
-accelerated. However, forcing a `gc.collect()` sweep after each test prevents reference accumulation
-beyond what the fixture cache itself holds.
+**Fixture scope narrowing:** In addition to `cleanup_memory`, a number of analysis-oriented fixtures
+(SAE backend parity analysis sessions in `FIXTURE_CFGS`) have been narrowed from `session`/`class`
+scope to `function` scope. This further reduces peak resource usage at the cost of fixture reuse —
+each test method gets a fresh fixture instance rather than sharing one across the test session.
+This tradeoff intentionally prioritises cross-platform validation in the normal CI suite over
+runtime efficiency; the self-hosted standalone runner is reserved for tests that require subprocess
+isolation for correctness reasons (e.g., `sys.settrace` / coverage conflicts).
+
+**Tradeoff summary:** Using `cleanup_memory` at the function level means some fixtures with wider
+scope are still shared across test methods — fixture teardown is not accelerated by the gc sweep
+alone. The combination of `cleanup_memory` + `function`-scoped fixtures provides the strongest
+memory containment short of standalone isolation.
 
 **When standalone isolation is still warranted:** Some tests genuinely require subprocess isolation,
 e.g., when a library uses `sys.settrace()` (which interferes with pytest-cov). The current canonical

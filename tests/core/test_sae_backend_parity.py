@@ -290,8 +290,8 @@ class TestLogitDiffsAttrAblationBackendParity:
 
     Note: Memory cleanup is applied at the individual test level (not class level) to ensure
     gc.collect() runs after each test.  This avoids the need for standalone isolation while
-    still limiting peak RSS on memory-constrained CI runners.  The fixture caching tradeoff
-    (module-scoped ablation fixtures are shared across methods) is intentional — we prefer
+    still limiting peak RSS on memory-constrained CI runners.  The fixture caching tradeoff is intentional (even as
+    some fixtures may be class or module scoped rather than function scoped and shared across methods) — we prefer
     cross-platform coverage over marginal memory savings from per-test fixture teardown.
     """
 
