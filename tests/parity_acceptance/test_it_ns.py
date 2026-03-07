@@ -78,7 +78,7 @@ PARITY_NS_CONFIGS = (
     NSParityTest(alias="test_cuda_32", cfg=NSParityCfg(phase="test", **req_det_cuda), marks="cuda"),
     NSParityTest(alias="test_cuda_32_l", cfg=NSParityCfg(phase="test", **req_det_cuda, **w_l_ns), marks="cuda_l"),
     NSParityTest(alias="train_cpu_32", cfg=NSParityCfg()),
-    NSParityTest(alias="train_cpu_32_l", cfg=NSParityCfg(**w_l_ns), marks="lightning"),
+    NSParityTest(alias="train_cpu_32_l", cfg=NSParityCfg(**w_l_ns), marks="l_standalone"),  # OOMs CI runners
     NSParityTest(alias="train_cuda_32", cfg=NSParityCfg(**req_det_cuda), marks="cuda"),
     NSParityTest(alias="train_cuda_32_l", cfg=NSParityCfg(**req_det_cuda, **w_l_ns), marks="cuda_l"),
 )

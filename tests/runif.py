@@ -83,6 +83,7 @@ RUNIF_ALIASES = {
     "bf16_cuda_profci": {**bf16_cuda_mark, **profiling_ci_mark},
     "bf16_cuda_l": {**bf16_cuda_mark, **lightning_mark},
     "bf16_cuda_l_prof": {**bf16_cuda_mark, **lightning_mark, **profiling_mark},
+    "l_standalone": {**lightning_mark, **standalone_mark},
     "l_optional": {**lightning_mark, **optional_mark},
     "skip_win_optional": {**skip_win_mark, **optional_mark},
     "cpu_only_torch": cpu_only_torch_mark,
