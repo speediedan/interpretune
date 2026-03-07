@@ -520,6 +520,31 @@ class TestAnalysisInjectionConfigs:
         cfg.reset_applied_state()
         assert len(cfg._applied_to) == 0
 
+    def test_analysis_cfg_no_step_fn_accumulation(self):
+        """Verify _generated_ prefix doesn't accumulate when a shared AnalysisCfg is apply()ed to multiple modules.
+
+        This is the regression test for the bug where class-level tuple defaults in test config dataclasses (e.g.
+        CoreSLHTGPT2LogitDiffsBase) caused a shared AnalysisCfg instance to have its step_fn mutated on every
+        apply() call (analysis_step → _generated_analysis_step → _generated__generated_analysis_step → ...).
+        """
+        # Simulate the shared-default scenario: one AnalysisCfg applied to N successive modules
+        from unittest.mock import MagicMock, patch
+
+        cfg = AnalysisCfg(target_op=it.logit_diffs_base, ignore_manual=True)
+        assert cfg.step_fn == "analysis_step"
+        assert cfg._original_step_fn is None
+
+        for i in range(3):
+            mock_module = MagicMock()
+            # patch prepare_model_ctx to avoid needing a real module with SAE targets
+            with patch.object(cfg, "prepare_model_ctx"):
+                cfg.apply(mock_module)
+            # After every apply(), step_fn must be exactly one level deep – never accumulating
+            assert cfg.step_fn == "_generated_analysis_step", (
+                f"step_fn accumulated to '{cfg.step_fn}' after apply() #{i + 1}"
+            )
+            assert cfg._original_step_fn == "analysis_step"
+
     def test_analysis_artifact_cfg(self):
         # Test default initialization
         cfg = AnalysisArtifactCfg()

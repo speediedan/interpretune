@@ -37,11 +37,17 @@ import pytest
 import torch
 from torch.testing import assert_close
 
+from tests.runif import RunIf
 from interpretune.analysis.core import (
     AnalysisStore,
     base_vs_sae_logit_diffs,
     compute_correct,
 )
+
+# All tests in this module require both NNsight and TransformerBridge analysis
+# sessions to be loaded simultaneously, which can exceed 7 GB RAM on the
+# ubuntu-22.04 and windows-2022 CI runners.
+pytestmark = RunIf(min_ram_gb=16)
 
 # ---------------------------------------------------------------------------
 # Fixture key constants

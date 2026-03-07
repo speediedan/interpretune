@@ -15,6 +15,7 @@ import re
 import sys
 from typing import Dict, Set
 
+import psutil
 import pytest
 import torch
 from interpretune.utils import _LIGHTNING_AVAILABLE, _BNB_AVAILABLE, _FTS_AVAILABLE
@@ -56,6 +57,7 @@ fts_mark = {"finetuning_scheduler": True}
 bitsandbytes_mark = {"bitsandbytes": True}
 skip_win_mark = {"skip_windows": True}
 cpu_only_torch_mark = {"cpu_only_torch": True}
+skip16GB_mark = {"min_ram_gb": 16}
 
 # RunIf aliases
 RUNIF_ALIASES = {
@@ -88,6 +90,7 @@ RUNIF_ALIASES = {
     "skip_win_optional": {**skip_win_mark, **optional_mark},
     "cpu_only_torch": cpu_only_torch_mark,
     "cpu_only_torch_l": {**cpu_only_torch_mark, **lightning_mark},
+    "skip16gb": skip16GB_mark,
 }
 
 
@@ -120,6 +123,7 @@ class RunIf:
         finetuning_scheduler: bool = False,
         bitsandbytes: bool = False,
         cpu_only_torch: bool = False,
+        min_ram_gb: int = 0,
         exp_patch: ExpPatch | set[ExpPatch] | None = None,
         skip: str | None = None,
         **kwargs,
@@ -150,6 +154,7 @@ class RunIf:
             finetuning_scheduler: Require that finetuning_scheduler is installed.
             bitsandbytes: Require that bitsandbytes is installed.
             cpu_only_torch: Require that torch is a CPU-only build (no CUDA support compiled in).
+            min_ram_gb: Require at least this many GB of total system RAM (skips on runners with less).
             exp_patch: Require that a given experimental patch is installed.
             skip: Unconditionally skip the test with the given reason string.
             **kwargs: Any :class:`pytest.mark.skipif` keyword arguments.
@@ -259,6 +264,11 @@ class RunIf:
         if cpu_only_torch:
             conditions.append(not _TORCH_CPU_ONLY)
             reasons.append("CPU-only torch build")
+
+        if min_ram_gb:
+            total_ram_gb = psutil.virtual_memory().total / (1024**3)
+            conditions.append(total_ram_gb < min_ram_gb)
+            reasons.append(f"at least {min_ram_gb} GB RAM (found {total_ram_gb:.1f} GB)")
 
         if exp_patch:
             # since we want to ensure we separate all experimental test combinations from normal unpatched tests, we

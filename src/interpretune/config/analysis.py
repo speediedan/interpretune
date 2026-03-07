@@ -109,6 +109,9 @@ class AnalysisCfg(ITSerializableCfg):
     latent_analysis_targets: LatentAnalysisTargets | None = None
     ignore_manual: bool = False  # When True, ignore existing analysis_step and use op to generate one
     step_fn: str = "analysis_step"  # Name of the method to use/generate for analysis
+    # Preserved original step_fn name for idempotent re-application across module instances
+    # (prevents _generated_ prefix accumulation when this cfg is shared via class-level defaults)
+    _original_step_fn: str | None = field(default=None, init=False, repr=False, compare=False)
     auto_prune_batch_encoding: bool = True  # Automatically prune encoded batches to only include relevant keys
     _applied_to: dict = field(default_factory=dict)  # Dictionary tracking which modules this cfg has been applied to
     _op: str | AnalysisOp | Callable | list[AnalysisOp] | None = None  # op via generated analysis step
@@ -515,15 +518,22 @@ class AnalysisCfg(ITSerializableCfg):
         if module_id in self._applied_to:
             return
 
-        # Check if module has an analysis step method with the specified name
-        has_custom_step = hasattr(module, self.step_fn) and not getattr(module, f"_generated_{self.step_fn}", False)
+        # Store original step_fn name before any mutation to prevent _generated_ prefix accumulation
+        # when this AnalysisCfg instance is shared across multiple module instantiations (e.g. via
+        # class-level tuple defaults in test configs with function-scoped fixtures)
+        if self._original_step_fn is None:
+            self._original_step_fn = self.step_fn
+        base_step_fn = self._original_step_fn
+
+        # Check if module has a manually-defined analysis step (using the original/base name)
+        has_custom_step = hasattr(module, base_step_fn) and not getattr(module, f"_generated_{base_step_fn}", False)
 
         # Only warn about custom step if we're not going to ignore it
         if has_custom_step and not self.ignore_manual:
             warnings.warn(
-                f"Module {module.__class__.__name__} already has a {self.step_fn} method. "
+                f"Module {module.__class__.__name__} already has a {base_step_fn} method. "
                 "The provided operation configuration will be used for hooks and filters, "
-                f"but the execution flow will be determined by the existing {self.step_fn} method."
+                f"but the execution flow will be determined by the existing {base_step_fn} method."
             )
 
         # Generate a new step if no custom step exists OR we're explicitly ignoring manual steps
@@ -543,11 +553,12 @@ class AnalysisCfg(ITSerializableCfg):
                 yield from self.analysis_cfg.save_batch(analysis_batch, batch, tokenizer=self.datamodule.tokenizer)
 
             # TODO: separate some of this more ephemeral state to an AnalysisState object
-            # Add the method to the module with a _generated version of the specified step_fn name
-            # (to avoid potentially clobbering the manual version)
-            setattr(module, f"_generated_{self.step_fn}", generated_analysis_step.__get__(module))
-            # update the analysis_cfg step_fn method name to the generated step_fn name
-            setattr(self, "step_fn", f"_generated_{self.step_fn}")
+            # Add the method to the module with a _generated version of the base step_fn name
+            # (to avoid potentially clobbering the manual version; always uses base_step_fn so
+            # the generated name is stable even when this cfg is shared across module instances)
+            setattr(module, f"_generated_{base_step_fn}", generated_analysis_step.__get__(module))
+            # update the analysis_cfg step_fn to the generated name (idempotent: always single prefix)
+            setattr(self, "step_fn", f"_generated_{base_step_fn}")
 
         # Always set up the analysis store, even for manual analysis steps
         if not self.output_store:
