@@ -136,18 +136,14 @@ def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, sp
     # Since the dataset is immediately saved to disk by the caller, lazy generation has no benefit.
     try:
         records = list(analysis_store_generator(**gen_kwargs))
-        # Filter features to only include keys present in the actual records.
-        # The schema may define optional columns (e.g. prompts, tokens) that some
-        # analysis ops don't populate.  from_generator() inferred features from
-        # yielded data and tolerated mismatches; from_list() is strict.
-        if records and features:
-            from datasets import Features
-
-            record_keys = set(records[0].keys())
-            features = Features({k: v for k, v in features.items() if k in record_keys})
+        # Don't pass features to from_list(). The schema-derived features may not
+        # exactly match the record keys (ops may add/omit columns freely).
+        # from_generator() handled this via lazy feature inference; from_list()
+        # delegates to from_dict() which strictly validates both directions.
+        # Letting HF infer types from data is safe — the dataset is immediately
+        # saved to disk and the interpretune format handler uses col_cfg for typing.
         dataset = Dataset.from_list(
             records,
-            features=features if features else None,
             split=split,  # type: ignore[arg-type]  # str acceptable for NamedSplit at runtime
         ).with_format("interpretune", **it_format_kwargs)
         return dataset  # type: ignore[return-value]  # datasets compatibility

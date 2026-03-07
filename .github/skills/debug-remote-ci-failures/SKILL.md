@@ -161,17 +161,14 @@ diff <(grep "TransformerLens\|SAELens" pyproject.toml) <(cat requirements/ci/ove
 
 **Root Cause**: `Dataset.from_generator()` (HuggingFace `datasets` library) hashes all `gen_kwargs` via `dill` serialization to build a fingerprint for caching. When `gen_kwargs` contains a full model module (with all weights), dill tries to serialize the entire model into memory — causing `MemoryError` on memory-constrained CI runners.
 
-**Fix**: Replace `Dataset.from_generator()` with `Dataset.from_list()`, and filter features to match actual record keys (see Category G below):
+**Fix**: Replace `Dataset.from_generator()` with `Dataset.from_list()` and do **not** pass a `features` argument:
 ```python
 # Before (OOMs on CI):
 dataset = Dataset.from_generator(generator_fn, gen_kwargs=gen_kwargs, features=features, ...)
 
-# After (no dill serialization, features filtered):
+# After (no dill serialization, no feature validation):
 records = list(generator_fn(**gen_kwargs))
-if records and features:
-    record_keys = set(records[0].keys())
-    features = Features({k: v for k, v in features.items() if k in record_keys})
-dataset = Dataset.from_list(records, features=features if features else None, ...)
+dataset = Dataset.from_list(records, split=split)
 ```
 
 This works when the dataset is immediately saved to disk after creation (so lazy generation provides no benefit). The fix also avoids pulling in HF datasets caching infrastructure which is typically disabled in test environments anyway.
@@ -180,15 +177,19 @@ This works when the dataset is immediately saved to disk after creation (so lazy
 
 ### Category G: Feature Key Mismatch With Dataset.from_list()
 
-**Pattern**: `ValueError: Keys mismatch: between {source features} and {target arrow columns}. {'prompts', 'tokens'} are missing from target`
+**Pattern**: `ValueError: Keys mismatch` or `KeyError: '<column_name>'` when passing `features` to `Dataset.from_list()`
 
 **Typical OS**: All (macOS, Windows, Ubuntu)
 
-**Root Cause**: `Dataset.from_list()` strictly validates that the `features` specification matches the keys in the actual data records. If the schema includes optional columns (like `prompts`, `tokens`) that certain analysis ops don't populate, `from_list()` raises a `ValueError`. The previous `from_generator()` inferred features from the yielded data and was more tolerant of extra features in the spec.
+**Root Cause**: `Dataset.from_list()` delegates to `from_dict()`, which strictly validates `features` against data keys in **both directions**:
+1. Features keys missing from data → `ValueError: Keys mismatch` (e.g., schema defines `prompts`/`tokens` but an op doesn't populate them)
+2. Data keys missing from features → `KeyError` (e.g., an op adds a `cache` column not in the schema)
 
-**Fix**: Filter the `features` dict to only include keys present in the generated records before passing to `from_list()`. See the code example in Category E above.
+The previous `from_generator()` inferred features lazily from yielded data and tolerated mismatches in both directions.
 
-**Lesson**: When switching from `from_generator()` to `from_list()`, you lose the implicit feature inference. Any schema that defines optional columns must be filtered to match the actual data.
+**Fix**: Don't pass `features` to `from_list()` at all. Let HF datasets infer types from the data — this mirrors `from_generator()`'s effective behavior. If downstream code needs typed features, handle that separately after dataset creation.
+
+**Lesson**: When switching from `from_generator()` to `from_list()`, you lose implicit feature inference. Passing a pre-built `features` spec to `from_list()` will break if **any** column is added or removed by analysis ops. The safe approach is to omit `features` entirely.
 
 ### Category F: Unexplained Step Cancellation (No Log Output)
 
@@ -349,7 +350,7 @@ When a CI step shows `conclusion: "cancelled"` with zero log lines, the process 
 
 ### 9. from_list() Is Stricter Than from_generator() on Features
 
-`Dataset.from_generator()` infers features from yielded data and tolerates mismatches between the `features` spec and actual columns. `Dataset.from_list()` validates strictly — any extra keys in the features spec that aren't in the data will raise `ValueError`. When migrating between these APIs (e.g., to avoid dill serialization), always filter the features spec to match the actual record keys.
+`Dataset.from_generator()` infers features lazily from yielded data and tolerates mismatches between the `features` spec and actual columns. `Dataset.from_list()` (via `from_dict()`) validates strictly in **both directions** — extra keys in the features spec raise `ValueError`, and extra keys in the data raise `KeyError`. When migrating between these APIs (e.g., to avoid dill serialization), the safest approach is to omit the `features` argument entirely and let HF datasets infer types from the data.
 
 ---
 
