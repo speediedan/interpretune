@@ -136,10 +136,10 @@ def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, sp
     # Since the dataset is immediately saved to disk by the caller, lazy generation has no benefit.
     try:
         records = list(analysis_store_generator(**gen_kwargs))
-        dataset = Dataset.from_list(  # type: ignore[arg-type]  # datasets compatibility
+        dataset = Dataset.from_list(
             records,
             features=features if features else None,
-            split=split,
+            split=split,  # type: ignore[arg-type]  # str acceptable for NamedSplit at runtime
         ).with_format("interpretune", **it_format_kwargs)
         return dataset  # type: ignore[return-value]  # datasets compatibility
     except Exception as e:
