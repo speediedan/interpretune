@@ -134,8 +134,9 @@ def conditional_clean_cpu(fixture, min_ram_gb: int = 16):
         yield fixture
     finally:
         if get_runner_ram_gb() < min_ram_gb:
-            if hasattr(fixture, "result"):
-                fixture.result = None
+            for attr in ("result", "runner", "run_config", "it_session"):
+                if hasattr(fixture, attr):
+                    setattr(fixture, attr, None)
             gc.collect()
 
 

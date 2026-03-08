@@ -206,15 +206,19 @@ class TestLogitDiffsSAEBackendParity:
 
     def _extract_values(self, request) -> dict[str, Any]:
         if type(self)._extracted is None:
+            ns_sae_payload = _extract_fixture_data(
+                request,
+                _NS_SAE,
+                lambda fixture: {
+                    "store": deepcopy(fixture.result),
+                    "tokenizer": fixture.it_session.datamodule.tokenizer,
+                },
+            )
             type(self)._extracted = {
                 "br_sae": _extract_fixture_result(request, _BR_SAE),
-                "ns_sae": _extract_fixture_result(request, _NS_SAE),
+                "ns_sae": ns_sae_payload["store"],
                 "ns_base": _extract_fixture_result(request, _NS_BASE),
-                "tokenizer": _extract_fixture_data(
-                    request,
-                    _NS_SAE,
-                    lambda fixture: fixture.it_session.datamodule.tokenizer,
-                ),
+                "tokenizer": ns_sae_payload["tokenizer"],
             }
         extracted = type(self)._extracted
         assert extracted is not None
