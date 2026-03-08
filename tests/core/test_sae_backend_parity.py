@@ -44,7 +44,8 @@ from interpretune.analysis.core import (
     base_vs_sae_logit_diffs,
     compute_correct,
 )
-from tests.conftest import conditional_clean_cpu
+from tests.conftest import conditional_clean_cpu, transient_analysis_session
+from tests.runif import get_runner_ram_gb
 
 _PARITY_MIN_RAM_GB = 16
 
@@ -76,6 +77,11 @@ def _get_result(request, fixture_key: str) -> AnalysisStore:
 def _extract_fixture_result(request, fixture_key: str, min_ram_gb: int = _PARITY_MIN_RAM_GB) -> AnalysisStore:
     """Deepcopy a fixture result and clear the backing fixture on low-RAM runners."""
 
+    if get_runner_ram_gb() < min_ram_gb:
+        with transient_analysis_session(request, fixture_key) as fixture:
+            with conditional_clean_cpu(fixture, min_ram_gb=min_ram_gb) as active_fixture:
+                return deepcopy(active_fixture.result)
+
     fixture = request.getfixturevalue(fixture_key)
     with conditional_clean_cpu(fixture, min_ram_gb=min_ram_gb) as active_fixture:
         return deepcopy(active_fixture.result)
@@ -88,6 +94,11 @@ def _extract_fixture_data(
     min_ram_gb: int = _PARITY_MIN_RAM_GB,
 ) -> Any:
     """Extract arbitrary data from a fixture and clear the fixture on low-RAM runners."""
+
+    if get_runner_ram_gb() < min_ram_gb:
+        with transient_analysis_session(request, fixture_key) as fixture:
+            with conditional_clean_cpu(fixture, min_ram_gb=min_ram_gb) as active_fixture:
+                return extractor(active_fixture)
 
     fixture = request.getfixturevalue(fixture_key)
     with conditional_clean_cpu(fixture, min_ram_gb=min_ram_gb) as active_fixture:
