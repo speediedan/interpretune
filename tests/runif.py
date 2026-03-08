@@ -13,6 +13,7 @@
 import os
 import re
 import sys
+from functools import lru_cache
 from typing import Dict, Set
 
 import psutil
@@ -28,6 +29,16 @@ EXTENDED_VER_PAT = re.compile(r"([0-9]+\.){2}[0-9]+")
 # Detect if torch is a CPU-only build (no CUDA support compiled in)
 # This is different from torch.cuda.is_available() which checks for GPU presence
 _TORCH_CPU_ONLY = torch.version.cuda is None
+
+
+@lru_cache(maxsize=None)
+def get_runner_ram_gb() -> float:
+    """Return total system RAM in GB.
+
+    Cached so repeated checks from RunIf and test helpers do not repeatedly re-query system memory.
+    """
+
+    return psutil.virtual_memory().total / (1024**3)
 
 
 def maybe_mark_exp(exp_patch_set: set[ExpPatch], mark_if_false: Dict | None = None):
@@ -266,7 +277,7 @@ class RunIf:
             reasons.append("CPU-only torch build")
 
         if min_ram_gb:
-            total_ram_gb = psutil.virtual_memory().total / (1024**3)
+            total_ram_gb = get_runner_ram_gb()
             conditions.append(total_ram_gb < min_ram_gb)
             reasons.append(f"at least {min_ram_gb} GB RAM (found {total_ram_gb:.1f} GB)")
 

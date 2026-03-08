@@ -46,6 +46,7 @@ from tests.parity_acceptance.test_it_cli import TEST_CONFIGS_CLI_PARITY
 from tests.base_defaults import BaseCfg
 from tests.parity_acceptance.test_it_l import CoreCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg
+from tests.runif import get_runner_ram_gb
 from tests.utils import kwargs_from_cfg_obj, deterministic_context
 
 from tests.core.cfg_aliases import (
@@ -114,6 +115,28 @@ def _cleanup_cuda_memory():
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+
+@contextmanager
+def conditional_clean_cpu(fixture, min_ram_gb: int = 16):
+    """Clear large fixture result payloads on low-memory runners after extraction.
+
+    Use this around fixture access when callers deepcopy or otherwise extract the
+    values they need inside the context. On runners with sufficient RAM this is a
+    no-op, allowing normal class-scoped fixture reuse.
+
+    Args:
+        fixture: Fixture object with an optional ``result`` payload to clear.
+        min_ram_gb: Minimum RAM threshold below which cleanup is performed.
+    """
+
+    try:
+        yield fixture
+    finally:
+        if get_runner_ram_gb() < min_ram_gb:
+            if hasattr(fixture, "result"):
+                fixture.result = None
+            gc.collect()
 
 
 @contextmanager
@@ -354,43 +377,43 @@ FIXTURE_CFGS = {
     # NNsight SAE analysis fixtures (backend parity testing)
     "sl_ns_gpt2_logit_diffs_base": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsBase,
-        scope="function",
+        scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_ns_gpt2_logit_diffs_sae": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsSAE,
-        scope="function",
+        scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_ns_gpt2_logit_diffs_attr_grad": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsAttrGrad,
-        scope="function",
+        scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_ns_gpt2_logit_diffs_attr_ablation": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsAttrAblation,
-        scope="function",
+        scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     # TransformerBridge SAE analysis fixtures (Bridge vs Hooked parity testing)
     "sl_br_gpt2_logit_diffs_base": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsBase,
-        scope="function",
+        scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_br_gpt2_logit_diffs_sae": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsSAE,
-        scope="function",
+        scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_br_gpt2_logit_diffs_attr_grad": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsAttrGrad,
-        scope="function",
+        scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_br_gpt2_logit_diffs_attr_ablation": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsAttrAblation,
-        scope="function",
+        scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg, variants={"it_session": [FixtPhase.setup]}),
