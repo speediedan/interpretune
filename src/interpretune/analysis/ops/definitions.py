@@ -205,8 +205,6 @@ def model_ablation_impl(
     ablate_latent_fn: Callable = ablate_sae_latent,
 ) -> DefaultAnalysisBatchProtocol:
     """Implementation for model ablation analysis."""
-    nnsight_max_invokes_per_trace = 32
-
     # Ensure we have answer indices and alive latents
     if not hasattr(analysis_batch, "answer_indices") or analysis_batch.answer_indices is None:
         analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
@@ -236,18 +234,12 @@ def model_ablation_impl(
             hook_configs.append([(name, partial(ablate_latent_fn, latent_idx=latent_idx, seq_pos=answer_indices))])
             index_map.append((name, latent_idx))
 
-    max_invokes_per_trace = None
-    if module.model_backend.__class__.__name__ == "NNsightModelBackend":
-        # Keep NNsight ablations bounded to reduce per-trace thread buildup on constrained runners.
-        max_invokes_per_trace = nnsight_max_invokes_per_trace
-
     all_logits = module.model_backend.fwd_w_hooks_batched(
         model=module.model,
         batch=batch,
         latent_model_handles=module.sae_handles,
         hook_configs=hook_configs,
         clear_contexts=True,
-        max_invokes_per_trace=max_invokes_per_trace,
     )
 
     batch_indices = torch.arange(get_batch_input(batch).size(0))  # type: ignore[attr-defined]

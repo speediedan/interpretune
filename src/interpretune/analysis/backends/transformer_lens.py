@@ -67,12 +67,12 @@ class TLModelBackend:
         latent_model_handles: list[Any],
         hook_configs: Sequence[list[tuple[str, Any]]],
         clear_contexts: bool = True,
-        max_invokes_per_trace: int | None = None,
+        configs_per_pass: int | None = None,
     ) -> list[torch.Tensor]:
         """Run multiple forward passes sequentially (TL does not support native batching).
 
         Falls back to calling ``fwd_w_hooks_and_latent_models`` once per config.
-        ``max_invokes_per_trace`` is accepted for API compatibility but has no effect.
+        ``configs_per_pass`` is accepted for API compatibility but has no effect.
 
         Args:
             model: TransformerLens model.
@@ -80,7 +80,7 @@ class TLModelBackend:
             latent_model_handles: SAE/transcoder handles.
             hook_configs: Sequence of ``fwd_hooks`` lists.
             clear_contexts: Passed through to each ``fwd_w_hooks_and_latent_models`` call.
-            max_invokes_per_trace: Ignored (present for protocol compatibility).
+            configs_per_pass: Ignored (present for protocol compatibility).
 
         Returns:
             List of logits tensors, one per element in ``hook_configs``.

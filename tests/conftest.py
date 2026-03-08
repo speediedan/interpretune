@@ -17,7 +17,7 @@ import gc
 import threading
 from collections import defaultdict, namedtuple
 from contextlib import contextmanager
-from typing import Any, Dict, Tuple, Type, Sequence, cast
+from typing import Dict, Tuple, Type, Sequence
 from functools import partial
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
@@ -46,7 +46,7 @@ from tests.parity_acceptance.test_it_cli import TEST_CONFIGS_CLI_PARITY
 from tests.base_defaults import BaseCfg
 from tests.parity_acceptance.test_it_l import CoreCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg
-from tests.runif import get_runner_ram_gb
+from tests.analysis_resource_utils import AnalysisExtractionMixin, analysis_fixture_scope
 from tests.utils import kwargs_from_cfg_obj, deterministic_context
 
 from tests.core.cfg_aliases import (
@@ -115,29 +115,6 @@ def _cleanup_cuda_memory():
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-
-
-@contextmanager
-def conditional_clean_cpu(fixture, min_ram_gb: int = 16):
-    """Clear large fixture result payloads on low-memory runners after extraction.
-
-    Use this around fixture access when callers deepcopy or otherwise extract the
-    values they need inside the context. On runners with sufficient RAM this is a
-    no-op, allowing normal class-scoped fixture reuse.
-
-    Args:
-        fixture: Fixture object with an optional ``result`` payload to clear.
-        min_ram_gb: Minimum RAM threshold below which cleanup is performed.
-    """
-
-    try:
-        yield fixture
-    finally:
-        if get_runner_ram_gb() < min_ram_gb:
-            for attr in ("result", "runner", "run_config", "it_session"):
-                if hasattr(fixture, attr):
-                    setattr(fixture, attr, None)
-            gc.collect()
 
 
 @contextmanager
@@ -375,46 +352,47 @@ FIXTURE_CFGS = {
         scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
+    # Low-RAM runners use function scope for prompt teardown; higher-RAM runners keep class reuse.
     # NNsight SAE analysis fixtures (backend parity testing)
     "sl_ns_gpt2_logit_diffs_base": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsBase,
-        scope="class",
+        scope=analysis_fixture_scope(),
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_ns_gpt2_logit_diffs_sae": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsSAE,
-        scope="class",
+        scope=analysis_fixture_scope(),
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_ns_gpt2_logit_diffs_attr_grad": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsAttrGrad,
-        scope="class",
+        scope=analysis_fixture_scope(),
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_ns_gpt2_logit_diffs_attr_ablation": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsAttrAblation,
-        scope="class",
+        scope=analysis_fixture_scope(),
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     # TransformerBridge SAE analysis fixtures (Bridge vs Hooked parity testing)
     "sl_br_gpt2_logit_diffs_base": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsBase,
-        scope="class",
+        scope=analysis_fixture_scope(),
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_br_gpt2_logit_diffs_sae": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsSAE,
-        scope="class",
+        scope=analysis_fixture_scope(),
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_br_gpt2_logit_diffs_attr_grad": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsAttrGrad,
-        scope="class",
+        scope=analysis_fixture_scope(),
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "sl_br_gpt2_logit_diffs_attr_ablation": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsAttrAblation,
-        scope="class",
+        scope=analysis_fixture_scope(),
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
     "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg, variants={"it_session": [FixtPhase.setup]}),
@@ -436,6 +414,17 @@ def mock_dm():
         mock_uninit_dm = create_autospec(dm_cls)
         mock_uninit_dm.tokenizer = mock_tok
         yield mock_uninit_dm
+
+
+@pytest.fixture(scope="class", autouse=True)
+def clear_extracted_cache_after_class(request):
+    """Release class-level extracted analysis caches after each test class."""
+
+    yield
+
+    cls = request.cls
+    if cls is not None and issubclass(cls, AnalysisExtractionMixin):
+        cls.clear_extracted_values()
 
 
 @pytest.fixture(scope="class")
@@ -551,57 +540,6 @@ def runner_fixture_init(sess_fixture, fixt_cfg, run_phase: RunPhase):
         result = runner.run_analysis()
 
     return result, runner, run_config
-
-
-@contextmanager
-def transient_analysis_session(request, fixture_key: str):
-    """Build and tear down an analysis session immediately for low-RAM callers.
-
-    Unlike pytest-scoped fixtures, this helper does not retain generator-frame references until class teardown, which
-    allows large analysis sessions to be released as soon as the caller has extracted the values it needs.
-    """
-
-    fixture_prefix = "get_analysis_session__"
-    if not fixture_key.startswith(fixture_prefix):
-        raise ValueError(f"Unsupported analysis fixture key: {fixture_key}")
-
-    config_phase = fixture_key[len(fixture_prefix) :]
-    config_key, phase_str = config_phase.rsplit("__", 1)
-    fixt_phase_name, run_phase_name = phase_str.split("_", 1)
-    phase = FixtRunPhase(FixtPhase[fixt_phase_name], RunPhase[run_phase_name])
-
-    tmp_path_factory = request.getfixturevalue("tmp_path_factory")
-    test_sess_config = setup_fixture_env(config_key)
-    fixt_phase, run_phase, resolved_phase_str = parse_phase(phase)
-    typed_run_phase = cast(RunPhase, run_phase)
-
-    instantiated_test_cfg = test_sess_config()
-    it_s = cast(
-        ITSession,
-        config_modules(
-            instantiated_test_cfg,
-            f"{config_key}_{resolved_phase_str}_transient_analysis_session",
-            {},
-            tmp_path_factory.mktemp(f"{config_key}_{resolved_phase_str}_transient_analysis_session"),
-            {},
-            False,
-        ),
-    )
-    session_fixture_hook_exec(it_s, fixt_phase)
-    result, runner, run_config = runner_fixture_init(it_s, instantiated_test_cfg, typed_run_phase)
-    fixture = AnalysisSessionFixture(
-        result=cast(AnalysisStore | dict[str, Any] | None, result),
-        it_session=it_s,
-        runner=runner,
-        run_config=run_config,
-        test_cfg=deepcopy(instantiated_test_cfg),
-    )
-
-    try:
-        yield fixture
-    finally:
-        del fixture, result, runner, run_config, it_s
-        _cleanup_cuda_memory()
 
 
 def analysis_session_fixture_factory(config_key, phase):

@@ -114,6 +114,57 @@ Analysis fixtures also support `RunPhase`:
 - `initrunner` - Runner initialized
 - `runanalysis` - Analysis executed
 
+## Memory-Aware Analysis Fixture Pattern
+
+Some analysis fixtures retain large `AnalysisStore` payloads, runners, and sessions. For parity tests and other
+memory-heavy analysis workflows, prefer the shared helpers in `tests/analysis_resource_utils.py`.
+
+Use this pattern when:
+- A test class reuses the same analysis results across multiple methods
+- Low-RAM runners need prompt teardown of heavyweight fixture state
+- You want one implementation that still preserves class-scoped reuse on higher-RAM runners
+
+Preferred approach:
+- Set fixture scope dynamically with `analysis_fixture_scope()` in `tests/conftest.py`
+- Subclass `AnalysisExtractionMixin` in the test class
+- Implement `build_extracted_values()` to deep-copy only the values needed by the test class
+- Call the public `extract_values()` helper inside test methods
+
+Example:
+
+```python
+from typing import ClassVar, cast
+
+from interpretune.analysis.core import AnalysisStore
+from tests.analysis_resource_utils import AnalysisExtractionMixin, extract_fixture_result
+
+
+class TestBackendParity(AnalysisExtractionMixin):
+    _extracted: ClassVar[dict[str, AnalysisStore] | None] = None
+
+    def build_extracted_values(self, request) -> dict[str, AnalysisStore]:
+        return {
+            "bridge": extract_fixture_result(request, "get_analysis_session__bridge_fixture__initonly_runanalysis"),
+            "nnsight": extract_fixture_result(request, "get_analysis_session__nnsight_fixture__initonly_runanalysis"),
+        }
+
+    def extract_values(self, request) -> dict[str, AnalysisStore]:
+        return cast(dict[str, AnalysisStore], super().extract_values(request))
+
+    def test_outputs_match(self, request):
+        extracted = self.extract_values(request)
+        assert extracted["bridge"].logit_diffs
+        assert extracted["nnsight"].logit_diffs
+```
+
+Why this is preferred over transient analysis-session builders:
+- Fixture lifecycle stays inside pytest instead of duplicating fixture-construction logic in helpers
+- Low-RAM runners can switch to function scope without changing test bodies
+- High-RAM runners keep class-scoped reuse for throughput
+
+Avoid reintroducing parity-local helpers such as private `_extract_values()` wrappers or ad hoc transient
+analysis-session reconstruction unless the shared helper module cannot cover the use case.
+
 ## Adding New Fixtures
 
 ### Step 1: Define Configuration Class

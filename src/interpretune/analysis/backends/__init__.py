@@ -139,7 +139,7 @@ class ModelBackend(Protocol):
         latent_model_handles: list[Any],
         hook_configs: Sequence[list[tuple[str, Any]]],
         clear_contexts: bool = True,
-        max_invokes_per_trace: int | None = None,
+        configs_per_pass: int | None = None,
     ) -> list[torch.Tensor]:
         """Run multiple forward passes with different hook configurations, batched when possible.
 
@@ -149,7 +149,7 @@ class ModelBackend(Protocol):
         execution context (e.g., NNsight multi-invoke within one trace) for efficiency.
         Other backends loop over configs sequentially.
 
-        ``max_invokes_per_trace`` limits how many configs are batched per execution context.
+        ``configs_per_pass`` limits how many configs are batched per execution context.
         When ``None`` (default), the entire ``hook_configs`` list is batched in one context.
         Setting a value (e.g., 64) chunks the work to avoid OOM with very large alive-latent
         counts.
@@ -165,7 +165,7 @@ class ModelBackend(Protocol):
             latent_model_handles: Latent model handles to attach.
             hook_configs: Sequence of ``fwd_hooks`` lists, one per forward pass.
             clear_contexts: Whether to clear hook contexts (for TL backend compatibility).
-            max_invokes_per_trace: Maximum number of configs to batch per trace context.
+            configs_per_pass: Maximum number of configs to batch per execution context.
                 ``None`` means unbounded (all configs in one trace).
 
         Returns:

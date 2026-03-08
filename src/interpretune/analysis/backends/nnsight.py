@@ -220,10 +220,13 @@ class NNsightModelBackend:
 
     Args:
         hook_resolver: A :class:`HookNameResolver` initialised for the model's architecture.
+        configs_per_pass: Default maximum number of hook configurations to batch per
+            execution context. ``None`` means unbounded.
     """
 
-    def __init__(self, hook_resolver: HookNameResolver) -> None:
+    def __init__(self, hook_resolver: HookNameResolver, configs_per_pass: int | None = 32) -> None:
         self._resolver = hook_resolver
+        self._configs_per_pass = configs_per_pass
 
     # ------------------------------------------------------------------
     # Capabilities
@@ -530,7 +533,7 @@ class NNsightModelBackend:
         latent_model_handles: list[Any],
         hook_configs: Sequence[list[tuple[str, Any]]],
         clear_contexts: bool = True,
-        max_invokes_per_trace: int | None = None,
+        configs_per_pass: int | None = None,
     ) -> list[torch.Tensor]:
         """Run multiple forward passes with different hook configs via NNsight multi-invoke.
 
@@ -547,9 +550,10 @@ class NNsightModelBackend:
             The top-level model output (``CausalLMOutputWithCrossAttentions``) bypasses
             envoy narrowing and would return the full stacked batch.
 
-        ``max_invokes_per_trace`` controls how many configs are batched per trace to
+        ``configs_per_pass`` controls how many configs are batched per trace to
         limit peak memory (total batch = ``len(chunk) × batch_size``).  When ``None``
-        (default), all configs are batched in one trace.
+        is passed, the backend falls back to its configured default. If both are
+        ``None``, all configs are batched in one trace.
 
         See ``docs/nnsight_multi_invoke_analysis.md`` for detailed empirical evidence.
 
@@ -559,8 +563,9 @@ class NNsightModelBackend:
             latent_model_handles: SAE/transcoder handles.
             hook_configs: Sequence of ``fwd_hooks`` lists, one per ablation variant.
             clear_contexts: Unused (present for protocol compatibility).
-            max_invokes_per_trace: Maximum number of configs to batch per trace context.
-                ``None`` means unbounded (all configs in one trace).
+            configs_per_pass: Maximum number of configs to batch per execution context.
+                ``None`` falls back to the backend default; if that is also ``None``,
+                all configs are batched in one trace.
 
         Returns:
             List of logits tensors, one per element in ``hook_configs``.
@@ -569,7 +574,8 @@ class NNsightModelBackend:
             return []
 
         all_results: list[torch.Tensor] = []
-        chunk_size = max_invokes_per_trace or len(hook_configs)
+        chunk_size = configs_per_pass if configs_per_pass is not None else self._configs_per_pass
+        chunk_size = chunk_size or len(hook_configs)
 
         for chunk_start in range(0, len(hook_configs), chunk_size):
             chunk = hook_configs[chunk_start : chunk_start + chunk_size]
