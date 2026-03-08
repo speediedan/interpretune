@@ -31,6 +31,7 @@ Fixture mapping (NNsight → Bridge):
 
 from __future__ import annotations
 
+import gc
 from copy import deepcopy
 from typing import Any, ClassVar, cast
 
@@ -129,6 +130,18 @@ def _compare_dict_tensor_lists(
                 atol=atol,
                 msg=f"{label} batch {i} hook {hook_name}",
             )
+
+
+@pytest.fixture(scope="class", autouse=True)
+def _clear_extracted_cache_after_class(request):
+    """Drop class-level extracted parity caches once each test class completes."""
+
+    yield
+
+    cls = request.cls
+    if cls is not None and hasattr(cls, "_extracted"):
+        cls._extracted = None
+    gc.collect()
 
 
 class TestLogitDiffsBaseBackendParity:
