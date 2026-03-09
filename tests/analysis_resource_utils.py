@@ -3,10 +3,12 @@
 Preferred pattern for expensive analysis-session tests:
 
 1. Choose fixture scope dynamically: ``class`` on higher-RAM runners and
-   ``function`` on lower-RAM runners.
-2. Deep-copy only the values a test class needs.
-3. Reuse those copied values across methods via the public ``extract_values()``
-   helper on ``AnalysisExtractionMixin``.
+    ``function`` on lower-RAM runners.
+2. Declare fixture extraction needs at the class level with
+    ``AnalysisFixtureSpec``.
+3. Reuse the copied values across methods via ``extract_values()`` for eager
+    whole-class caches or via ``extract_field_store()`` /
+    ``extract_dataset_metadata()`` for lazy per-fixture access.
 
 Tradeoff summary:
 - Dynamic fixture scope is preferred over ad hoc transient session builders
@@ -23,6 +25,7 @@ import os
 import shutil
 from contextlib import contextmanager
 from copy import deepcopy
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Literal, Mapping
 
@@ -36,6 +39,24 @@ from tests.runif import get_runner_ram_gb
 ANALYSIS_LOW_RAM_GB = 32
 FixtureScope = Literal["function", "class", "module", "session"]
 RESOURCE_DEBUG_ENV_VARS = ("IT_ANALYSIS_RESOURCE_DEBUG", "IT_OP_SERIALIZATION_RESOURCE_DEBUG")
+
+
+@dataclass(frozen=True, kw_only=True)
+class AnalysisFixtureSpec:
+    """Declarative configuration for extracting and caching a test fixture payload."""
+
+    fixture_key: str
+    field_names: tuple[str, ...] = ()
+    include_dataset_metadata: bool = False
+    include_result: bool = False
+    result_field_name: str = "result"
+    extra_extractors: Mapping[str, Callable[[Any], Any]] = field(default_factory=dict)
+    cache_key: Any | None = None
+    min_ram_gb: int = ANALYSIS_LOW_RAM_GB
+
+    @property
+    def uses_payload_extractor(self) -> bool:
+        return bool(self.field_names or self.include_dataset_metadata or self.include_result or self.extra_extractors)
 
 
 class ExtractedAnalysisStore:
@@ -154,6 +175,8 @@ def build_analysis_fixture_payload_extractor(
     *,
     field_names: list[str] | tuple[str, ...] = (),
     include_dataset_metadata: bool = False,
+    include_result: bool = False,
+    result_field_name: str = "result",
     extra_extractors: Mapping[str, Callable[[Any], Any]] | None = None,
 ) -> Callable[[Any], ExtractedFixturePayload]:
     """Build a reusable extractor for lightweight, cacheable analysis-fixture payloads."""
@@ -165,6 +188,8 @@ def build_analysis_fixture_payload_extractor(
         payload_fields: dict[str, Any] = {}
         if include_dataset_metadata:
             payload_fields["metadata"] = extract_result_dataset_metadata(fixture.result)
+        if include_result:
+            payload_fields[result_field_name] = fixture.result
         if selected_fields:
             payload_fields["store"] = ExtractedAnalysisStore(
                 **{field_name: getattr(fixture.result, field_name) for field_name in selected_fields}
@@ -245,15 +270,59 @@ def extract_analysis_store_fields(
 class AnalysisExtractionMixin:
     """Class-level cache helper for memory-heavy analysis tests.
 
-    Subclasses implement ``build_extracted_values()`` and test methods call the
-    public ``extract_values()`` helper to populate and reuse the copied payloads.
+    Subclasses can either override ``build_extracted_values()`` directly or set
+    ``_analysis_fixture_specs`` so the mixin can lazily extract full results,
+    lightweight stores, dataset metadata, and custom payloads on their behalf.
     """
 
     _extracted: ClassVar[Any | None] = None
     _fixture_payload_cache: ClassVar[dict[Any, Any]] = {}
+    _analysis_fixture_specs: ClassVar[dict[str, AnalysisFixtureSpec]] = {}
+
+    @classmethod
+    def get_analysis_fixture_specs(cls) -> dict[str, AnalysisFixtureSpec]:
+        """Return the configured fixture specs for the test class."""
+
+        return dict(getattr(cls, "_analysis_fixture_specs", {}))
+
+    @classmethod
+    def resolve_fixture_alias(cls, fixture_ref: str) -> str:
+        """Resolve an alias or raw fixture key to the configured alias name."""
+
+        specs = cls.get_analysis_fixture_specs()
+        if fixture_ref in specs:
+            return fixture_ref
+        for alias, spec in specs.items():
+            if spec.fixture_key == fixture_ref:
+                return alias
+        raise KeyError(f"Unknown fixture alias or key: {fixture_ref}")
+
+    @classmethod
+    def get_analysis_fixture_spec(cls, fixture_ref: str) -> AnalysisFixtureSpec:
+        """Return the declarative fixture spec for an alias or raw fixture key."""
+
+        return cls.get_analysis_fixture_specs()[cls.resolve_fixture_alias(fixture_ref)]
+
+    @staticmethod
+    def build_fixture_payload_extractor(spec: AnalysisFixtureSpec) -> Callable[[Any], Any]:
+        """Build the effective extractor for a configured analysis fixture."""
+
+        if spec.uses_payload_extractor:
+            return build_analysis_fixture_payload_extractor(
+                field_names=spec.field_names,
+                include_dataset_metadata=spec.include_dataset_metadata,
+                include_result=spec.include_result,
+                result_field_name=spec.result_field_name,
+                extra_extractors=spec.extra_extractors,
+            )
+        return lambda fixture: fixture.result
 
     def build_extracted_values(self, request: Any) -> Any:
-        raise NotImplementedError
+        specs = type(self).get_analysis_fixture_specs()
+        if not specs:
+            raise NotImplementedError
+
+        return {alias: self.extract_fixture_value(request, alias) for alias in specs}
 
     def extract_values(self, request: Any) -> Any:
         cls = type(self)
@@ -284,6 +353,55 @@ class AnalysisExtractionMixin:
             cached = extract_fixture_data(request, fixture_key, extractor, min_ram_gb=min_ram_gb)
             cache[resolved_cache_key] = cached
         return cached
+
+    def extract_fixture_value(self, request: Any, fixture_ref: str) -> Any:
+        """Extract and cache the configured value for a fixture alias or raw fixture key."""
+
+        cls = type(self)
+        alias = cls.resolve_fixture_alias(fixture_ref)
+        spec = cls.get_analysis_fixture_spec(alias)
+        cache_key = alias if spec.cache_key is None else spec.cache_key
+        return self.extract_cached_fixture_data(
+            request,
+            spec.fixture_key,
+            cls.build_fixture_payload_extractor(spec),
+            cache_key=cache_key,
+            min_ram_gb=spec.min_ram_gb,
+        )
+
+    def extract_payload(self, request: Any, fixture_ref: str) -> ExtractedFixturePayload:
+        """Return the configured lightweight payload for a fixture alias or raw key."""
+
+        payload = self.extract_fixture_value(request, fixture_ref)
+        if not isinstance(payload, ExtractedFixturePayload):
+            raise TypeError(f"Fixture {fixture_ref} is configured for full-result extraction, not payload extraction")
+        return payload
+
+    def extract_dataset_metadata(self, request: Any, fixture_ref: str) -> dict[str, list[str] | int]:
+        """Return cached dataset metadata for a configured payload fixture."""
+
+        payload = self.extract_payload(request, fixture_ref)
+        metadata = getattr(payload, "metadata", None)
+        if metadata is None:
+            raise AttributeError(f"Fixture {fixture_ref} does not include dataset metadata")
+        return metadata
+
+    def extract_field_store(
+        self,
+        request: Any,
+        fixture_ref: str,
+        *field_names: str,
+    ) -> ExtractedAnalysisStore:
+        """Return a cached lightweight store and validate required extracted fields."""
+
+        payload = self.extract_payload(request, fixture_ref)
+        store = getattr(payload, "store", None)
+        if not isinstance(store, ExtractedAnalysisStore):
+            raise AttributeError(f"Fixture {fixture_ref} does not include an extracted store")
+
+        missing_fields = [field_name for field_name in field_names if not hasattr(store, field_name)]
+        assert not missing_fields, f"Fixture {fixture_ref} missing requested extracted fields: {missing_fields}"
+        return store
 
     @classmethod
     def clear_extracted_values(cls) -> None:

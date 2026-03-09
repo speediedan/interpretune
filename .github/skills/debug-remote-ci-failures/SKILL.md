@@ -77,6 +77,13 @@ When resource-monitor or debug artifacts are skipped, grep the raw job log for i
 grep -nE "analysis_resource_debug|op_serialization_resource_debug|shutdown signal|exit code 143" /tmp/ci_job_<job_id>.log
 ```
 
+When a prior successful run uploaded `ci_resource_monitor.log`, treat it as a coarse baseline only:
+
+- It captures whole-run snapshots of top-process `%MEM`, whole-system free memory, and disk usage.
+- It does **not** replace inline `log_resource_snapshot(...)` markers for per-test RSS analysis.
+- Compare the failed raw log against the successful monitor artifact to distinguish real resource
+  growth from an external cancellation on the same commit.
+
 ---
 
 ## Step 2: Categorize Failures
@@ -244,6 +251,11 @@ gh run view <run_id> --json jobs --jq '.jobs[] | {name: .name, started: .started
 ```
 
 **Fix**: Often transient — push a new commit and re-run. If persistent, investigate memory usage during test collection (may need to add resource monitoring or reduce parallel test load).
+
+If the exact same commit previously passed and the rerun dies at a different point without a rising
+resource trend in the inline markers, treat that as likely runner instability first. Still prefer a
+small stabilizing change if you can reduce peak fixture retention, but do not assume every cancellation
+is a deterministic code regression.
 
 **Important follow-up from PR #197**: GitHub Actions can report the pytest step as `failure` with
 `Process completed with exit code 143` and `The runner has received a shutdown signal`, then still skip

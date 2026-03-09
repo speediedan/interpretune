@@ -142,9 +142,9 @@ def get_alive_latents_impl(
 def _extract_logits(output: Any) -> torch.Tensor:
     """Extract logits tensor from a model forward-pass result.
 
-    TransformerLens models return raw logit tensors, while HuggingFace models
+    TransformerLens models may return raw logit tensors, while HuggingFace models
     (used by the NNsight backend) return ``ModelOutput`` objects with a
-    ``.logits`` attribute.  This helper normalises both cases.
+    ``.logits`` attribute.  This helper normalizes both cases.
     """
     if isinstance(output, torch.Tensor):
         return output

@@ -180,16 +180,24 @@ while still preserving `by_latent_model(...)` for downstream helpers like `compu
 When a test class needs to reuse a lightweight projection of the same heavyweight fixture across
 multiple test methods, prefer the generalized cached-payload helpers:
 
+- `AnalysisFixtureSpec` lets a test class declare, at the class level, which fixture aliases it
+  needs, whether each alias should materialize a full result or a lightweight payload, which
+  `AnalysisStore` fields should be copied, and whether dataset metadata should be captured.
 - `build_analysis_fixture_payload_extractor(...)` builds a reusable extractor that can bundle
-  selected `AnalysisStore` fields, dataset metadata, and optional custom payloads.
-- `AnalysisExtractionMixin.extract_cached_fixture_data(...)` caches those lightweight payloads by
-  fixture key (or custom cache key) so function-scoped analysis fixtures are only materialized once
-  per test class.
+-  selected `AnalysisStore` fields, dataset metadata, optional full-result copies, and custom
+  payloads.
+- `AnalysisExtractionMixin.extract_values(...)` now falls back to those declarative fixture specs,
+  so simple parity classes only need class-level configuration.
+- `AnalysisExtractionMixin.extract_field_store(...)` and
+  `AnalysisExtractionMixin.extract_dataset_metadata(...)` provide lazy, per-alias access to cached
+  payloads without re-introducing class-local fixture maps and helper wrappers.
+- `AnalysisExtractionMixin.extract_cached_fixture_data(...)` remains available for truly custom
+  cases, but should no longer be the default pattern for new parity classes.
 - `ExtractedFixturePayload` provides a minimal attribute-style wrapper for the cached payload.
 
-This pattern is now used by `TestBackendParityEdgeCases` to keep Bridge/NNsight parity checks below
-GitHub-hosted runner memory limits without re-instantiating every heavy analysis fixture for each
-assertion.
+This pattern is now used by `TestBackendParityEdgeCases` and the simpler Bridge/NNsight parity
+classes to keep GitHub-hosted runner memory usage bounded while removing parity-local extraction
+bookkeeping.
 
 The current low-memory threshold in `analysis_resource_utils.py` is `32 GB`, which intentionally
 forces GitHub-hosted Ubuntu and Windows runners down the low-memory fixture path. This is more
@@ -209,6 +217,16 @@ The adaptive default now uses `4` on CPU Linux and `2` on CPU Windows, while ret
 CUDA is available. Under `CUDA_VISIBLE_DEVICES=''` and `IT_MOCK_RUNNER_RAM_GB=32`, the attr-ablation
 parity test completed locally with peak RSS about `10.81 GB`, which is below the `16 GB` memory on
 standard GitHub-hosted Ubuntu runners.
+
+### Successful Linux Monitor Baseline
+
+The Linux `ci_resource_monitor` artifact from successful run `22870543454` is useful as a coarse
+runner-health baseline, but not as a precise substitute for inline RSS markers:
+
+- The hosted Ubuntu runner reported roughly `15 GiB` total memory at startup.
+- The sampled `python -m pytest` process reached about `94.3%` of system memory during the run.
+- The artifact reports top-process `%MEM` snapshots and whole-disk usage, not per-test RSS. Keep
+  using `log_resource_snapshot(...)` for precise analysis-test instrumentation.
 
 ### Known Bug: Class-Level Standalone Marks Are Silently Ignored
 

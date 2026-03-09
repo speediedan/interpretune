@@ -666,9 +666,9 @@ class NNsightModelBackend:
         2. ``backward_fn`` is applied to the logits proxy, producing a scalar proxy.
         3. NNsight's ``with scalar.backward():`` context captures gradients via proxy
            ``.grad`` access (backed by ``BackwardsTracer`` which patches ``torch.Tensor.grad``).
-        4. Forward activations and gradients are materialised via ``nnsight.save()``.
+        4. Forward activations and gradients are materialized via ``nnsight.save()``.
 
-        After the trace exits, the materialised tensors are fed through the TL-style
+        After the trace exits, the materialized tensors are fed through the TL-style
         ``fwd_hooks`` / ``bwd_hooks`` cache functions to populate ``analysis_cfg.cache_dict``.
 
         Args:
@@ -781,7 +781,7 @@ def _apply_saved_to_cache_hooks(
     saved: dict[str, Any],
     hooks: list[tuple[Any, Callable]],
 ) -> None:
-    """Feed materialised saved-proxy tensors through TL-style cache hooks.
+    """Feed materialized saved-proxy tensors through TL-style cache hooks.
 
     After an NNsight trace exits, ``saved`` maps TL-style sub-hook names to
     tensors (resolved by ``nnsight.save()``).  This function iterates the

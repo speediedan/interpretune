@@ -196,7 +196,7 @@ class ModelBackend(Protocol):
         Forward and backward cache hooks (``fwd_hooks``, ``bwd_hooks``) are structured as
         ``[(names_filter, cache_fn), ...]`` and are invoked by the backend to populate
         ``analysis_cfg.cache_dict``.  For TL, hooks fire during execution.  For NNsight,
-        the backend calls them after the trace completes with materialised tensors.
+        the backend calls them after the trace completes with materialized tensors.
 
         Args:
             model: The model to run.

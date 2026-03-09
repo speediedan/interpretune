@@ -127,14 +127,16 @@ Use this pattern when:
 Preferred approach:
 - Set fixture scope dynamically with `analysis_fixture_scope()` in `tests/conftest.py`
 - Subclass `AnalysisExtractionMixin` in the test class
-- Implement `build_extracted_values()` to deep-copy only the values needed by the test class
+- Prefer declarative `AnalysisFixtureSpec` entries on the test class so the mixin can manage full
+  result copies, lightweight stores, and dataset metadata without parity-local helper methods
 - Prefer `extract_analysis_store_fields(...)` + `ExtractedAnalysisStore` when only a subset of
     `AnalysisStore` fields is required but `by_latent_model(...)` still needs to work
-- When the same heavyweight fixture must support multiple lightweight assertions, use
-    `build_analysis_fixture_payload_extractor(...)` together with
-    `AnalysisExtractionMixin.extract_cached_fixture_data(...)` so the fixture is instantiated once
-    and reused through an `ExtractedFixturePayload`
-- Call the public `extract_values()` helper inside test methods
+- Use `extract_values()` when the class wants an eager alias → value cache assembled from its
+    `AnalysisFixtureSpec` configuration
+- Use `extract_field_store()` and `extract_dataset_metadata()` when the class wants lazy per-alias
+    access to cached lightweight payloads
+- Fall back to overriding `build_extracted_values()` or calling
+    `extract_cached_fixture_data(...)` directly only for genuinely custom cases
 
 Example:
 
@@ -142,23 +144,17 @@ Example:
 from typing import ClassVar, cast
 
 from interpretune.analysis.core import AnalysisStore
-from tests.analysis_resource_utils import AnalysisExtractionMixin, extract_fixture_result
+from tests.analysis_resource_utils import AnalysisExtractionMixin, AnalysisFixtureSpec
 
 
 class TestBackendParity(AnalysisExtractionMixin):
-    _extracted: ClassVar[dict[str, AnalysisStore] | None] = None
-
-    def build_extracted_values(self, request) -> dict[str, AnalysisStore]:
-        return {
-            "bridge": extract_fixture_result(request, "get_analysis_session__bridge_fixture__initonly_runanalysis"),
-            "nnsight": extract_fixture_result(request, "get_analysis_session__nnsight_fixture__initonly_runanalysis"),
-        }
-
-    def extract_values(self, request) -> dict[str, AnalysisStore]:
-        return cast(dict[str, AnalysisStore], super().extract_values(request))
+    _analysis_fixture_specs: ClassVar[dict[str, AnalysisFixtureSpec]] = {
+        "bridge": AnalysisFixtureSpec(fixture_key="get_analysis_session__bridge_fixture__initonly_runanalysis"),
+        "nnsight": AnalysisFixtureSpec(fixture_key="get_analysis_session__nnsight_fixture__initonly_runanalysis"),
+    }
 
     def test_outputs_match(self, request):
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, AnalysisStore], self.extract_values(request))
         assert extracted["bridge"].logit_diffs
         assert extracted["nnsight"].logit_diffs
 ```
@@ -167,6 +163,8 @@ Why this is preferred over transient analysis-session builders:
 - Fixture lifecycle stays inside pytest instead of duplicating fixture-construction logic in helpers
 - Low-RAM runners can switch to function scope without changing test bodies
 - High-RAM runners keep class-scoped reuse for throughput
+- Declarative fixture specs keep the test body focused on assertions rather than alias maps,
+    extraction wrappers, and cache plumbing
 - Cached fixture payloads let one test class reuse a low-memory projection of a function-scoped
     analysis fixture without retaining the full `result` / `runner` / `it_session` object graph
 

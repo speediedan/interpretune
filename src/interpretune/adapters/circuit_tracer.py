@@ -53,11 +53,7 @@ class InstantiatedGraph:
 
 
 class CircuitTracerAttributeMixin:
-    """Backend-agnostic mixin for circuit tracer attribute access.
-
-    Does NOT inherit from TLensAttributeMixin - that should be composed separately
-    when using the TransformerLens backend via adapter composition.
-    """
+    """Backend-agnostic mixin for circuit tracer attribute access."""
 
     it_cfg: ITConfig
 
@@ -79,10 +75,10 @@ class CircuitTracerAttributeMixin:
 class BaseCircuitTracerModule(BaseITModule):
     """Backend-agnostic base module for Circuit Tracer.
 
-    This class does NOT inherit from BaseITLensModule. When using the TransformerLens backend, the adapter composition
-    system will compose this with BaseITLensModule via the (core, transformer_lens, circuit_tracer) adapter combination.
+    When using the TransformerLens backend, the adapter composition system will compose this with BaseITLensModule via
+    the (core, transformer_lens, circuit_tracer) adapter combination.
 
-    For NNsight backend, this can be used directly without TransformerLens composition.
+    For NNsight backend, this can currently be used directly without TransformerLens composition.
     """
 
     def __init__(self, *args, **kwargs):

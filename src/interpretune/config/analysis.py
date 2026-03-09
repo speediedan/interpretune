@@ -519,8 +519,7 @@ class AnalysisCfg(ITSerializableCfg):
             return
 
         # Store original step_fn name before any mutation to prevent _generated_ prefix accumulation
-        # when this AnalysisCfg instance is shared across multiple module instantiations (e.g. via
-        # class-level tuple defaults in test configs with function-scoped fixtures)
+        # when this AnalysisCfg instance is shared across multiple module instantiations
         if self._original_step_fn is None:
             self._original_step_fn = self.step_fn
         base_step_fn = self._original_step_fn

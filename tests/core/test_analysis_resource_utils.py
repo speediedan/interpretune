@@ -9,6 +9,7 @@ import torch
 
 from tests.analysis_resource_utils import (
     ANALYSIS_LOW_RAM_GB,
+    AnalysisFixtureSpec,
     AnalysisExtractionMixin,
     ExtractedAnalysisStore,
     ExtractedFixturePayload,
@@ -142,8 +143,51 @@ class TestExtractedFixturePayload:
         assert payload.metadata == {"column_names": ["answer_logits"], "num_rows": 1}
         assert torch.equal(payload.store.answer_logits[0], torch.tensor([1.0, 2.0]))
 
+    def test_build_analysis_fixture_payload_extractor_can_include_full_result(self):
+        analysis_result = _DummyAnalysisResult(
+            logit_diffs=[torch.tensor([1.0])],
+            preds=[{"sae_a": {0: torch.tensor([1.0])}}],
+        )
+        fixture = _DummyFixture(result=analysis_result)
+        extractor = build_analysis_fixture_payload_extractor(include_result=True)
+
+        payload = extractor(fixture)
+
+        assert payload.result is analysis_result
+
 
 class TestAnalysisExtractionMixin:
+    def test_extract_values_uses_declarative_fixture_specs(self):
+        br_result = _DummyAnalysisResult(
+            logit_diffs=[torch.tensor([1.0])],
+            preds=[{"sae_a": {0: torch.tensor([1.0])}}],
+        )
+        ns_result = _DummyAnalysisResult(
+            logit_diffs=[torch.tensor([2.0])],
+            preds=[{"sae_a": {0: torch.tensor([2.0])}}],
+        )
+
+        class _DummyRequest:
+            fixtures = {
+                "bridge": _DummyFixture(result=br_result),
+                "nnsight": _DummyFixture(result=ns_result),
+            }
+
+            def getfixturevalue(self, fixture_key):
+                return self.fixtures[fixture_key]
+
+        class _ExtractionHarness(AnalysisExtractionMixin):
+            _analysis_fixture_specs = {
+                "br": AnalysisFixtureSpec(fixture_key="bridge"),
+                "ns": AnalysisFixtureSpec(fixture_key="nnsight"),
+            }
+
+        extracted = _ExtractionHarness().extract_values(_DummyRequest())
+
+        assert torch.equal(extracted["br"].logit_diffs[0], torch.tensor([1.0]))
+        assert torch.equal(extracted["ns"].logit_diffs[0], torch.tensor([2.0]))
+        _ExtractionHarness.clear_extracted_values()
+
     def test_extract_cached_fixture_data_reuses_cached_payload(self):
         analysis_result = _DummyAnalysisResult(
             logit_diffs=[torch.tensor([1.0])],
@@ -176,6 +220,42 @@ class TestAnalysisExtractionMixin:
         assert request.calls == 1
         assert first is second
         assert first.metadata == {"column_names": ["answer_logits"], "num_rows": 1}
+        _ExtractionHarness.clear_extracted_values()
+
+    def test_extract_field_store_and_metadata_use_declarative_specs(self):
+        analysis_result = _DummyAnalysisResult(
+            logit_diffs=[torch.tensor([1.0])],
+            preds=[{"sae_a": {0: torch.tensor([1.0])}}],
+            answer_logits=[torch.tensor([1.0, 2.0])],
+            dataset=_DummyDataset(column_names=["answer_logits"], num_rows=1),
+        )
+
+        class _DummyRequest:
+            def __init__(self):
+                self.calls = 0
+
+            def getfixturevalue(self, _fixture_key):
+                self.calls += 1
+                return _DummyFixture(result=analysis_result)
+
+        class _ExtractionHarness(AnalysisExtractionMixin):
+            _analysis_fixture_specs = {
+                "payload": AnalysisFixtureSpec(
+                    fixture_key="dummy",
+                    field_names=("answer_logits",),
+                    include_dataset_metadata=True,
+                )
+            }
+
+        harness = _ExtractionHarness()
+        request = _DummyRequest()
+
+        metadata = harness.extract_dataset_metadata(request, "payload")
+        store = harness.extract_field_store(request, "dummy", "answer_logits")
+
+        assert request.calls == 1
+        assert metadata == {"column_names": ["answer_logits"], "num_rows": 1}
+        assert torch.equal(store.answer_logits[0], torch.tensor([1.0, 2.0]))
         _ExtractionHarness.clear_extracted_values()
 
 

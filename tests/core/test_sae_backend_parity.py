@@ -43,13 +43,8 @@ from interpretune.analysis.core import (
     compute_correct,
 )
 from tests.analysis_resource_utils import (
+    AnalysisFixtureSpec,
     AnalysisExtractionMixin,
-    ExtractedAnalysisStore,
-    ExtractedFixturePayload,
-    build_analysis_fixture_payload_extractor,
-    extract_analysis_store_fields,
-    extract_fixture_data,
-    extract_fixture_result,
 )
 
 # ---------------------------------------------------------------------------
@@ -112,41 +107,35 @@ class TestLogitDiffsBaseBackendParity(AnalysisExtractionMixin):
     should produce very close results.
     """
 
-    _extracted: ClassVar[dict[str, AnalysisStore] | None] = None
-
-    def build_extracted_values(self, request) -> dict[str, AnalysisStore]:
-        return {
-            "br": extract_fixture_result(request, _BR_BASE),
-            "ns": extract_fixture_result(request, _NS_BASE),
-        }
-
-    def extract_values(self, request) -> dict[str, AnalysisStore]:
-        return cast(dict[str, AnalysisStore], super().extract_values(request))
+    _analysis_fixture_specs: ClassVar[dict[str, AnalysisFixtureSpec]] = {
+        "br": AnalysisFixtureSpec(fixture_key=_BR_BASE),
+        "ns": AnalysisFixtureSpec(fixture_key=_NS_BASE),
+    }
 
     def test_logit_diffs_match(self, request):
         """Core logit_diffs values should match across backends."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, AnalysisStore], self.extract_values(request))
         br_store = extracted["br"]
         ns_store = extracted["ns"]
         _compare_tensor_lists(br_store.logit_diffs, ns_store.logit_diffs, label="logit_diffs")
 
     def test_answer_logits_match(self, request):
         """Answer logits should match across backends."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, AnalysisStore], self.extract_values(request))
         br_store = extracted["br"]
         ns_store = extracted["ns"]
         _compare_tensor_lists(br_store.answer_logits, ns_store.answer_logits, label="answer_logits")
 
     def test_predictions_match(self, request):
         """Model predictions should be identical across backends."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, AnalysisStore], self.extract_values(request))
         br_store = extracted["br"]
         ns_store = extracted["ns"]
         _compare_tensor_lists(br_store.preds, ns_store.preds, label="preds", rtol=0, atol=0)
 
     def test_labels_match(self, request):
         """Ground truth labels should be identical (dataset-level sanity check)."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, AnalysisStore], self.extract_values(request))
         br_store = extracted["br"]
         ns_store = extracted["ns"]
         _compare_tensor_lists(br_store.orig_labels, ns_store.orig_labels, label="orig_labels", rtol=0, atol=0)
@@ -161,53 +150,42 @@ class TestLogitDiffsSAEBackendParity(AnalysisExtractionMixin):
     NNsight uses thread-interleaved SAE splicing.
     """
 
-    _extracted: ClassVar[dict[str, Any] | None] = None
-
-    def build_extracted_values(self, request) -> dict[str, Any]:
-        ns_sae_payload = extract_fixture_data(
-            request,
-            _NS_SAE,
-            lambda fixture: {
-                "store": fixture.result,
-                "tokenizer": fixture.it_session.datamodule.tokenizer,
-            },
-        )
-        return {
-            "br_sae": extract_fixture_result(request, _BR_SAE),
-            "ns_sae": ns_sae_payload["store"],
-            "ns_base": extract_fixture_result(request, _NS_BASE),
-            "tokenizer": ns_sae_payload["tokenizer"],
-        }
-
-    def extract_values(self, request) -> dict[str, Any]:
-        return cast(dict[str, Any], super().extract_values(request))
+    _analysis_fixture_specs: ClassVar[dict[str, AnalysisFixtureSpec]] = {
+        "br_sae": AnalysisFixtureSpec(fixture_key=_BR_SAE),
+        "ns_sae": AnalysisFixtureSpec(
+            fixture_key=_NS_SAE,
+            include_result=True,
+            extra_extractors={"tokenizer": lambda fixture: fixture.it_session.datamodule.tokenizer},
+        ),
+        "ns_base": AnalysisFixtureSpec(fixture_key=_NS_BASE),
+    }
 
     def test_logit_diffs_match(self, request):
         """Logit diffs with SAE should match across backends."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, Any], self.extract_values(request))
         br_store = extracted["br_sae"]
-        ns_store = extracted["ns_sae"]
+        ns_store = extracted["ns_sae"].result
         _compare_tensor_lists(br_store.logit_diffs, ns_store.logit_diffs, label="logit_diffs")
 
     def test_answer_logits_match(self, request):
         """Answer logits with SAE should match across backends."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, Any], self.extract_values(request))
         br_store = extracted["br_sae"]
-        ns_store = extracted["ns_sae"]
+        ns_store = extracted["ns_sae"].result
         _compare_tensor_lists(br_store.answer_logits, ns_store.answer_logits, label="answer_logits")
 
     def test_predictions_match(self, request):
         """Predictions with SAE should match across backends."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, Any], self.extract_values(request))
         br_store = extracted["br_sae"]
-        ns_store = extracted["ns_sae"]
+        ns_store = extracted["ns_sae"].result
         _compare_tensor_lists(br_store.preds, ns_store.preds, label="preds", rtol=0, atol=0)
 
     def test_alive_latents_match(self, request):
         """Alive latent indices should be identical across backends."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, Any], self.extract_values(request))
         br_store = extracted["br_sae"]
-        ns_store = extracted["ns_sae"]
+        ns_store = extracted["ns_sae"].result
         br_alive = br_store.alive_latents
         ns_alive = ns_store.alive_latents
         assert len(br_alive) == len(ns_alive), (
@@ -222,9 +200,9 @@ class TestLogitDiffsSAEBackendParity(AnalysisExtractionMixin):
 
     def test_prompts_and_tokens_saved(self, request):
         """Verify prompts/tokens are saved for SAE op (save_prompts=True, save_tokens=True)."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, Any], self.extract_values(request))
         br_store = extracted["br_sae"]
-        ns_store = extracted["ns_sae"]
+        ns_store = extracted["ns_sae"].result
         # Both stores should have prompts and tokens
         assert br_store.prompts is not None and ns_store.prompts is not None
         assert br_store.tokens is not None and ns_store.tokens is not None
@@ -233,15 +211,15 @@ class TestLogitDiffsSAEBackendParity(AnalysisExtractionMixin):
 
     def test_base_vs_sae_comparison_works(self, monkeypatch, request):
         """``base_vs_sae_logit_diffs`` should work with NNsight backend results."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, Any], self.extract_values(request))
         ns_base = extracted["ns_base"]
-        ns_sae = extracted["ns_sae"]
+        ns_sae = extracted["ns_sae"].result
         monkeypatch.setattr("tabulate.tabulate", lambda *a, **k: "table")
         base_vs_sae_logit_diffs(
             sae=ns_sae,
             base_ref=ns_base,
             top_k=3,
-            tokenizer=extracted["tokenizer"],
+            tokenizer=extracted["ns_sae"].tokenizer,
         )
 
 
@@ -257,20 +235,14 @@ class TestLogitDiffsAttrGradBackendParity(AnalysisExtractionMixin):
     # between Bridge hooks and NNsight tracing can yield small numerical differences.
     _GRAD_RTOL: float = 5e-3
     _GRAD_ATOL: float = 5e-3
-    _extracted: ClassVar[dict[str, AnalysisStore] | None] = None
-
-    def build_extracted_values(self, request) -> dict[str, AnalysisStore]:
-        return {
-            "br": extract_fixture_result(request, _BR_GRAD),
-            "ns": extract_fixture_result(request, _NS_GRAD),
-        }
-
-    def extract_values(self, request) -> dict[str, AnalysisStore]:
-        return cast(dict[str, AnalysisStore], super().extract_values(request))
+    _analysis_fixture_specs: ClassVar[dict[str, AnalysisFixtureSpec]] = {
+        "br": AnalysisFixtureSpec(fixture_key=_BR_GRAD),
+        "ns": AnalysisFixtureSpec(fixture_key=_NS_GRAD),
+    }
 
     def test_logit_diffs_match(self, request):
         """Logit diffs from the gradient forward pass should match."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, AnalysisStore], self.extract_values(request))
         br_store = extracted["br"]
         ns_store = extracted["ns"]
         _compare_tensor_lists(
@@ -283,7 +255,7 @@ class TestLogitDiffsAttrGradBackendParity(AnalysisExtractionMixin):
 
     def test_attribution_values_match(self, request):
         """Gradient-based attribution values should match within tolerance."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, AnalysisStore], self.extract_values(request))
         br_store = extracted["br"]
         ns_store = extracted["ns"]
         _compare_dict_tensor_lists(
@@ -296,7 +268,7 @@ class TestLogitDiffsAttrGradBackendParity(AnalysisExtractionMixin):
 
     def test_correct_activations_match(self, request):
         """Correct activations (subset where logit_diff > 0) should match."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, AnalysisStore], self.extract_values(request))
         br_store = extracted["br"]
         ns_store = extracted["ns"]
         _compare_dict_tensor_lists(
@@ -309,7 +281,7 @@ class TestLogitDiffsAttrGradBackendParity(AnalysisExtractionMixin):
 
     def test_alive_latents_match(self, request):
         """Alive latents should be identical (same SAE, same data)."""
-        extracted = self.extract_values(request)
+        extracted = cast(dict[str, AnalysisStore], self.extract_values(request))
         br_store = extracted["br"]
         ns_store = extracted["ns"]
         br_alive = br_store.alive_latents
@@ -332,37 +304,27 @@ class TestLogitDiffsAttrAblationBackendParity(AnalysisExtractionMixin):
     class-scoped reuse.
     """
 
-    _extracted: ClassVar[dict[str, ExtractedAnalysisStore] | None] = None
-
-    def build_extracted_values(self, request) -> dict[str, ExtractedAnalysisStore]:
-        return {
-            "br": extract_analysis_store_fields(
-                request,
-                _BR_ABLATION,
-                ("logit_diffs", "attribution_values", "alive_latents", "orig_labels", "preds"),
-            ),
-            "ns": extract_analysis_store_fields(
-                request,
-                _NS_ABLATION,
-                ("logit_diffs", "attribution_values", "alive_latents", "orig_labels", "preds"),
-            ),
-        }
-
-    def extract_values(self, request) -> dict[str, ExtractedAnalysisStore]:
-        return cast(dict[str, ExtractedAnalysisStore], super().extract_values(request))
+    _analysis_fixture_specs: ClassVar[dict[str, AnalysisFixtureSpec]] = {
+        "br": AnalysisFixtureSpec(
+            fixture_key=_BR_ABLATION,
+            field_names=("logit_diffs", "attribution_values", "alive_latents", "orig_labels", "preds"),
+        ),
+        "ns": AnalysisFixtureSpec(
+            fixture_key=_NS_ABLATION,
+            field_names=("logit_diffs", "attribution_values", "alive_latents", "orig_labels", "preds"),
+        ),
+    }
 
     def test_logit_diffs_match(self, request):
         """Ablation logit diffs should match across backends."""
-        extracted = self.extract_values(request)
-        br_store = extracted["br"]
-        ns_store = extracted["ns"]
+        br_store = self.extract_field_store(request, "br", "logit_diffs")
+        ns_store = self.extract_field_store(request, "ns", "logit_diffs")
         _compare_tensor_lists(br_store.logit_diffs, ns_store.logit_diffs, label="logit_diffs")
 
     def test_attribution_values_match(self, request):
         """Per-latent ablation attribution values should match."""
-        extracted = self.extract_values(request)
-        br_store = extracted["br"]
-        ns_store = extracted["ns"]
+        br_store = self.extract_field_store(request, "br", "attribution_values")
+        ns_store = self.extract_field_store(request, "ns", "attribution_values")
         _compare_dict_tensor_lists(
             br_store.attribution_values,
             ns_store.attribution_values,
@@ -371,9 +333,8 @@ class TestLogitDiffsAttrAblationBackendParity(AnalysisExtractionMixin):
 
     def test_alive_latents_match(self, request):
         """Alive latents should be identical."""
-        extracted = self.extract_values(request)
-        br_store = extracted["br"]
-        ns_store = extracted["ns"]
+        br_store = self.extract_field_store(request, "br", "alive_latents")
+        ns_store = self.extract_field_store(request, "ns", "alive_latents")
         br_alive = br_store.alive_latents
         ns_alive = ns_store.alive_latents
         assert len(br_alive) == len(ns_alive)
@@ -384,9 +345,14 @@ class TestLogitDiffsAttrAblationBackendParity(AnalysisExtractionMixin):
 
     def test_compute_correct_parity(self, request):
         """compute_correct should return equivalent summaries for both backends."""
-        extracted = self.extract_values(request)
-        br_summ = compute_correct(cast(Any, extracted["br"]), op="logit_diffs_attr_ablation")
-        ns_summ = compute_correct(cast(Any, extracted["ns"]), op="logit_diffs_attr_ablation")
+        br_summ = compute_correct(
+            cast(Any, self.extract_field_store(request, "br", "orig_labels", "preds")),
+            op="logit_diffs_attr_ablation",
+        )
+        ns_summ = compute_correct(
+            cast(Any, self.extract_field_store(request, "ns", "orig_labels", "preds")),
+            op="logit_diffs_attr_ablation",
+        )
         assert br_summ.total_correct == ns_summ.total_correct
         assert br_summ.percentage_correct == pytest.approx(ns_summ.percentage_correct, abs=1e-4)
 
@@ -394,71 +360,60 @@ class TestLogitDiffsAttrAblationBackendParity(AnalysisExtractionMixin):
 class TestBackendParityEdgeCases(AnalysisExtractionMixin):
     """Cross-cutting edge-case and structural checks (TransformerBridge ↔ NNsight)."""
 
-    _fixture_map: ClassVar[dict[str, str]] = {
-        "base_br": _BR_BASE,
-        "base_ns": _NS_BASE,
-        "sae_br": _BR_SAE,
-        "sae_ns": _NS_SAE,
-        "grad_br": _BR_GRAD,
-        "grad_ns": _NS_GRAD,
-        "ablation_br": _BR_ABLATION,
-        "ablation_ns": _NS_ABLATION,
+    _analysis_fixture_specs: ClassVar[dict[str, AnalysisFixtureSpec]] = {
+        "base_br": AnalysisFixtureSpec(
+            fixture_key=_BR_BASE,
+            field_names=("answer_logits", "loss"),
+            include_dataset_metadata=True,
+        ),
+        "base_ns": AnalysisFixtureSpec(
+            fixture_key=_NS_BASE,
+            field_names=("answer_logits", "loss"),
+            include_dataset_metadata=True,
+        ),
+        "sae_br": AnalysisFixtureSpec(
+            fixture_key=_BR_SAE,
+            field_names=("answer_logits",),
+            include_dataset_metadata=True,
+        ),
+        "sae_ns": AnalysisFixtureSpec(
+            fixture_key=_NS_SAE,
+            field_names=("answer_logits",),
+            include_dataset_metadata=True,
+        ),
+        "grad_br": AnalysisFixtureSpec(
+            fixture_key=_BR_GRAD,
+            field_names=("answer_logits",),
+            include_dataset_metadata=True,
+        ),
+        "grad_ns": AnalysisFixtureSpec(
+            fixture_key=_NS_GRAD,
+            field_names=("answer_logits",),
+            include_dataset_metadata=True,
+        ),
+        "ablation_br": AnalysisFixtureSpec(
+            fixture_key=_BR_ABLATION,
+            field_names=("answer_logits",),
+            include_dataset_metadata=True,
+        ),
+        "ablation_ns": AnalysisFixtureSpec(
+            fixture_key=_NS_ABLATION,
+            field_names=("answer_logits",),
+            include_dataset_metadata=True,
+        ),
     }
-    _fixture_fields: ClassVar[dict[str, tuple[str, ...]]] = {
-        _BR_BASE: ("answer_logits", "loss"),
-        _NS_BASE: ("answer_logits", "loss"),
-        _BR_SAE: ("answer_logits",),
-        _NS_SAE: ("answer_logits",),
-        _BR_GRAD: ("answer_logits",),
-        _NS_GRAD: ("answer_logits",),
-        _BR_ABLATION: ("answer_logits",),
-        _NS_ABLATION: ("answer_logits",),
-    }
-
-    @classmethod
-    def _resolve_key_name(cls, fixture_key: str) -> str:
-        for name, mapped_fixture in cls._fixture_map.items():
-            if mapped_fixture == fixture_key:
-                return name
-        raise KeyError(f"Unknown fixture key: {fixture_key}")
-
-    def _extract_payload(self, request, fixture_key: str) -> ExtractedFixturePayload:
-        return cast(
-            ExtractedFixturePayload,
-            self.extract_cached_fixture_data(
-                request,
-                fixture_key,
-                build_analysis_fixture_payload_extractor(
-                    field_names=TestBackendParityEdgeCases._fixture_fields[fixture_key],
-                    include_dataset_metadata=True,
-                ),
-                cache_key=fixture_key,
-            ),
-        )
-
-    def _extract_dataset_metadata(self, request, fixture_key: str) -> dict[str, list[str] | int]:
-        return cast(
-            dict[str, list[str] | int],
-            self._extract_payload(request, fixture_key).metadata,
-        )
-
-    def _extract_field_store(self, request, fixture_key: str, *field_names: str) -> ExtractedAnalysisStore:
-        store = cast(ExtractedAnalysisStore, self._extract_payload(request, fixture_key).store)
-        missing_fields = [field_name for field_name in field_names if not hasattr(store, field_name)]
-        assert not missing_fields, f"Fixture {fixture_key} missing requested extracted fields: {missing_fields}"
-        return store
 
     @pytest.mark.parametrize(
         ("br_key", "ns_key", "op_name"),
         [
-            pytest.param(_BR_BASE, _NS_BASE, "logit_diffs_base", id="base"),
-            pytest.param(_BR_SAE, _NS_SAE, "logit_diffs_sae", id="sae"),
+            pytest.param("base_br", "base_ns", "logit_diffs_base", id="base"),
+            pytest.param("sae_br", "sae_ns", "logit_diffs_sae", id="sae"),
         ],
     )
     def test_result_column_names_match(self, request, br_key, ns_key, op_name):
         """AnalysisStore dataset column names should be identical across backends."""
-        br_meta = self._extract_dataset_metadata(request, br_key)
-        ns_meta = self._extract_dataset_metadata(request, ns_key)
+        br_meta = self.extract_dataset_metadata(request, br_key)
+        ns_meta = self.extract_dataset_metadata(request, ns_key)
         assert set(cast(list[str], br_meta["column_names"])) == set(cast(list[str], ns_meta["column_names"])), (
             f"Column name mismatch for {op_name}"
         )
@@ -466,29 +421,29 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
     @pytest.mark.parametrize(
         ("br_key", "ns_key", "op_name"),
         [
-            pytest.param(_BR_BASE, _NS_BASE, "logit_diffs_base", id="base"),
-            pytest.param(_BR_SAE, _NS_SAE, "logit_diffs_sae", id="sae"),
+            pytest.param("base_br", "base_ns", "logit_diffs_base", id="base"),
+            pytest.param("sae_br", "sae_ns", "logit_diffs_sae", id="sae"),
         ],
     )
     def test_result_row_counts_match(self, request, br_key, ns_key, op_name):
         """AnalysisStore datasets should have the same number of rows."""
-        br_meta = self._extract_dataset_metadata(request, br_key)
-        ns_meta = self._extract_dataset_metadata(request, ns_key)
+        br_meta = self.extract_dataset_metadata(request, br_key)
+        ns_meta = self.extract_dataset_metadata(request, ns_key)
         assert cast(int, br_meta["num_rows"]) == cast(int, ns_meta["num_rows"]), f"Row count mismatch for {op_name}"
 
     @pytest.mark.parametrize(
         ("br_key", "ns_key"),
         [
-            pytest.param(_BR_BASE, _NS_BASE, id="base"),
-            pytest.param(_BR_SAE, _NS_SAE, id="sae"),
-            pytest.param(_BR_GRAD, _NS_GRAD, id="attr_grad"),
-            pytest.param(_BR_ABLATION, _NS_ABLATION, id="attr_ablation"),
+            pytest.param("base_br", "base_ns", id="base"),
+            pytest.param("sae_br", "sae_ns", id="sae"),
+            pytest.param("grad_br", "grad_ns", id="attr_grad"),
+            pytest.param("ablation_br", "ablation_ns", id="attr_ablation"),
         ],
     )
     def test_answer_logits_dtype_match(self, request, br_key, ns_key):
         """Output tensor dtypes should be consistent across backends."""
-        br_store = self._extract_field_store(request, br_key, "answer_logits")
-        ns_store = self._extract_field_store(request, ns_key, "answer_logits")
+        br_store = self.extract_field_store(request, br_key, "answer_logits")
+        ns_store = self.extract_field_store(request, ns_key, "answer_logits")
         # Check first batch answer_logits dtype
         br_logits = br_store.answer_logits
         ns_logits = ns_store.answer_logits
@@ -502,14 +457,14 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
     @pytest.mark.parametrize(
         ("br_key", "ns_key"),
         [
-            pytest.param(_BR_BASE, _NS_BASE, id="base"),
-            pytest.param(_BR_SAE, _NS_SAE, id="sae"),
+            pytest.param("base_br", "base_ns", id="base"),
+            pytest.param("sae_br", "sae_ns", id="sae"),
         ],
     )
     def test_answer_logits_shape_match(self, request, br_key, ns_key):
         """Output tensor shapes should match across backends."""
-        br_store = self._extract_field_store(request, br_key, "answer_logits")
-        ns_store = self._extract_field_store(request, ns_key, "answer_logits")
+        br_store = self.extract_field_store(request, br_key, "answer_logits")
+        ns_store = self.extract_field_store(request, ns_key, "answer_logits")
         br_logits = br_store.answer_logits
         ns_logits = ns_store.answer_logits
         assert len(br_logits) == len(ns_logits), "batch count mismatch"
@@ -518,6 +473,6 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
 
     def test_loss_values_close(self, request):
         """Loss values from logit_diffs_base should be close across backends."""
-        br_store = self._extract_field_store(request, _BR_BASE, "loss")
-        ns_store = self._extract_field_store(request, _NS_BASE, "loss")
+        br_store = self.extract_field_store(request, "base_br", "loss")
+        ns_store = self.extract_field_store(request, "base_ns", "loss")
         _compare_tensor_lists(br_store.loss, ns_store.loss, label="loss")
