@@ -30,6 +30,7 @@ Use this skill when:
 ## Workflow Overview
 
 1. **Download and parse CI artifacts** to see exact failure output
+2. **Fall back to raw job logs** when a runner shutdown prevents artifact upload
 2. **Categorize failures** by root cause pattern
 3. **Prioritize fixes** — some categories may resolve others
 4. **Fix, commit, push, verify** — iterative loop
@@ -49,6 +50,10 @@ gh run download <run_id> --dir /tmp/ci_artifacts_<run_id>
 
 # If artifacts aren't available, use run logs directly
 gh run view <run_id> --log > /tmp/ci_run_<run_id>.log 2>&1
+
+# For runner-shutdown cases, download the raw job log directly
+job_id=$(gh api "repos/<owner>/<repo>/actions/runs/<run_id>/jobs" --jq '.jobs[] | select(.name | contains("ubuntu")) | .id')
+gh api "repos/<owner>/<repo>/actions/jobs/${job_id}/logs" > /tmp/ci_job_<job_id>.log
 ```
 
 ### Extracting Test Results from Logs
@@ -64,6 +69,12 @@ grep -c "FAILED" /tmp/ci_artifacts_<run_id>/<os>-*/output.txt
 
 # Get unique test names that failed
 grep "^FAILED" /tmp/ci_artifacts_<run_id>/<os>-*/output.txt | sort -u
+```
+
+When resource-monitor or debug artifacts are skipped, grep the raw job log for inline markers:
+
+```bash
+grep -nE "analysis_resource_debug|op_serialization_resource_debug|shutdown signal|exit code 143" /tmp/ci_job_<job_id>.log
 ```
 
 ---
@@ -233,6 +244,54 @@ gh run view <run_id> --json jobs --jq '.jobs[] | {name: .name, started: .started
 ```
 
 **Fix**: Often transient — push a new commit and re-run. If persistent, investigate memory usage during test collection (may need to add resource monitoring or reduce parallel test load).
+
+**Important follow-up from PR #197**: GitHub Actions can report the pytest step as `failure` with
+`Process completed with exit code 143` and `The runner has received a shutdown signal`, then still skip
+every downstream `if: always()` upload step while the job remains temporarily marked `in_progress`.
+When this happens, do not wait on artifacts that will never appear. Pull the raw job log directly and rely on
+inline debug markers.
+
+### Category I: Analysis Setup Dies Before the Existing Serialization Marker
+
+**Pattern**: A targeted analysis test logs the test name, then the runner dies before the existing
+`before_save_reload` marker appears.
+
+**Typical OS**: Ubuntu (observed on GitHub-hosted 22.04)
+
+**Root Cause**: The crash occurs during analysis setup or `run_op_with_config(...)`, not during the later
+dataset serialization boundary you were already instrumenting.
+
+**Fix / Diagnosis**:
+1. Add earlier inline snapshots before and after `run_op_with_config(...)`.
+2. Add a fixture-entry snapshot inside the serialization helper before `save_reload_results_dataset(...)`.
+3. Emit snapshots inline to stdout via `log_resource_snapshot(...)` so they survive missing artifacts.
+
+Relevant helpers now live in `tests/analysis_resource_utils.py`:
+- `log_resource_snapshot(...)`
+- `analysis_resource_debug_enabled()`
+- `IT_ANALYSIS_RESOURCE_DEBUG=1`
+
+This lets you answer three distinct questions from the raw log:
+- Did the test die before the analysis run started?
+- Did it die after the analysis run but before save/reload?
+- Did it die during save/reload itself?
+
+### Category J: Function-Scoped Analysis Fixtures Need Reuse Without Rehydrating Heavy State
+
+**Pattern**: Switching an analysis fixture from class scope to function scope avoids OOM, but a follow-on
+test class becomes too slow or re-instantiates the same heavyweight Bridge/NNsight fixture for each method.
+
+**Root Cause**: The test needs only a tiny projection of the fixture result, but it keeps asking pytest to build
+the full fixture again for each assertion.
+
+**Fix**: Use the resource-aware extraction helpers from `tests/analysis_resource_utils.py`:
+
+- `build_analysis_fixture_payload_extractor(...)`
+- `AnalysisExtractionMixin.extract_cached_fixture_data(...)`
+- `ExtractedFixturePayload`
+
+This pattern caches one lightweight payload per fixture key and reuses it across test methods while still
+allowing low-RAM runners to clean up the heavyweight `result` / `runner` / `it_session` graph immediately.
 
 ---
 

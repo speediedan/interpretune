@@ -130,6 +130,10 @@ Preferred approach:
 - Implement `build_extracted_values()` to deep-copy only the values needed by the test class
 - Prefer `extract_analysis_store_fields(...)` + `ExtractedAnalysisStore` when only a subset of
     `AnalysisStore` fields is required but `by_latent_model(...)` still needs to work
+- When the same heavyweight fixture must support multiple lightweight assertions, use
+    `build_analysis_fixture_payload_extractor(...)` together with
+    `AnalysisExtractionMixin.extract_cached_fixture_data(...)` so the fixture is instantiated once
+    and reused through an `ExtractedFixturePayload`
 - Call the public `extract_values()` helper inside test methods
 
 Example:
@@ -163,6 +167,8 @@ Why this is preferred over transient analysis-session builders:
 - Fixture lifecycle stays inside pytest instead of duplicating fixture-construction logic in helpers
 - Low-RAM runners can switch to function scope without changing test bodies
 - High-RAM runners keep class-scoped reuse for throughput
+- Cached fixture payloads let one test class reuse a low-memory projection of a function-scoped
+    analysis fixture without retaining the full `result` / `runner` / `it_session` object graph
 
 Avoid reintroducing parity-local helpers such as private `_extract_values()` wrappers or ad hoc transient
 analysis-session reconstruction unless the shared helper module cannot cover the use case.

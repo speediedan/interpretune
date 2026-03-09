@@ -45,6 +45,8 @@ from interpretune.analysis.core import (
 from tests.analysis_resource_utils import (
     AnalysisExtractionMixin,
     ExtractedAnalysisStore,
+    ExtractedFixturePayload,
+    build_analysis_fixture_payload_extractor,
     extract_analysis_store_fields,
     extract_fixture_data,
     extract_fixture_result,
@@ -412,7 +414,6 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
         _BR_ABLATION: ("answer_logits",),
         _NS_ABLATION: ("answer_logits",),
     }
-    _fixture_payload_cache: ClassVar[dict[str, dict[str, Any]]] = {}
 
     @classmethod
     def _resolve_key_name(cls, fixture_key: str) -> str:
@@ -421,39 +422,28 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
                 return name
         raise KeyError(f"Unknown fixture key: {fixture_key}")
 
-    @staticmethod
-    def _extract_payload(request, fixture_key: str) -> dict[str, Any]:
-        cached = TestBackendParityEdgeCases._fixture_payload_cache.get(fixture_key)
-        if cached is not None:
-            return cached
-
-        field_names = TestBackendParityEdgeCases._fixture_fields[fixture_key]
-        extracted = extract_fixture_data(
-            request,
-            fixture_key,
-            lambda fixture: {
-                "metadata": {
-                    "column_names": list(getattr(fixture.result.dataset, "column_names", [])),
-                    "num_rows": int(getattr(fixture.result.dataset, "num_rows", 0)),
-                },
-                "store": ExtractedAnalysisStore(
-                    **{field_name: getattr(fixture.result, field_name) for field_name in field_names}
+    def _extract_payload(self, request, fixture_key: str) -> ExtractedFixturePayload:
+        return cast(
+            ExtractedFixturePayload,
+            self.extract_cached_fixture_data(
+                request,
+                fixture_key,
+                build_analysis_fixture_payload_extractor(
+                    field_names=TestBackendParityEdgeCases._fixture_fields[fixture_key],
+                    include_dataset_metadata=True,
                 ),
-            },
+                cache_key=fixture_key,
+            ),
         )
-        TestBackendParityEdgeCases._fixture_payload_cache[fixture_key] = extracted
-        return extracted
 
-    @staticmethod
-    def _extract_dataset_metadata(request, fixture_key: str) -> dict[str, list[str] | int]:
+    def _extract_dataset_metadata(self, request, fixture_key: str) -> dict[str, list[str] | int]:
         return cast(
             dict[str, list[str] | int],
-            TestBackendParityEdgeCases._extract_payload(request, fixture_key)["metadata"],
+            self._extract_payload(request, fixture_key).metadata,
         )
 
-    @staticmethod
-    def _extract_field_store(request, fixture_key: str, *field_names: str) -> ExtractedAnalysisStore:
-        store = cast(ExtractedAnalysisStore, TestBackendParityEdgeCases._extract_payload(request, fixture_key)["store"])
+    def _extract_field_store(self, request, fixture_key: str, *field_names: str) -> ExtractedAnalysisStore:
+        store = cast(ExtractedAnalysisStore, self._extract_payload(request, fixture_key).store)
         missing_fields = [field_name for field_name in field_names if not hasattr(store, field_name)]
         assert not missing_fields, f"Fixture {fixture_key} missing requested extracted fields: {missing_fields}"
         return store

@@ -9,10 +9,14 @@ import torch
 
 from tests.analysis_resource_utils import (
     ANALYSIS_LOW_RAM_GB,
+    AnalysisExtractionMixin,
     ExtractedAnalysisStore,
+    ExtractedFixturePayload,
     analysis_fixture_scope,
+    build_analysis_fixture_payload_extractor,
     conditional_clean_cpu,
     extract_analysis_store_fields,
+    extract_result_dataset_metadata,
 )
 from tests.runif import get_runner_ram_gb
 
@@ -29,6 +33,15 @@ class _DummyFixture:
 class _DummyAnalysisResult:
     logit_diffs: list[torch.Tensor]
     preds: list[dict[str, dict[int, torch.Tensor]]]
+    answer_logits: list[torch.Tensor] | None = None
+    loss: list[torch.Tensor] | None = None
+    dataset: object | None = None
+
+
+@dataclass
+class _DummyDataset:
+    column_names: list[str]
+    num_rows: int
 
 
 class TestAnalysisFixtureScope:
@@ -96,6 +109,74 @@ class TestExtractedAnalysisStore:
         with pytest.raises(AttributeError):
             _ = extracted.logit_diffs
         assert torch.equal(extracted.by_latent_model("preds")["sae_a"][0], torch.stack([torch.tensor([1.0])]))
+
+
+class TestExtractedFixturePayload:
+    def test_extract_result_dataset_metadata_reads_dataset_shape_info(self):
+        result = _DummyAnalysisResult(
+            logit_diffs=[torch.tensor([1.0])],
+            preds=[{"sae_a": {0: torch.tensor([1.0])}}],
+            dataset=_DummyDataset(column_names=["a", "b"], num_rows=3),
+        )
+
+        metadata = extract_result_dataset_metadata(result)
+
+        assert metadata == {"column_names": ["a", "b"], "num_rows": 3}
+
+    def test_build_analysis_fixture_payload_extractor_includes_metadata_and_store(self):
+        analysis_result = _DummyAnalysisResult(
+            logit_diffs=[torch.tensor([1.0])],
+            preds=[{"sae_a": {0: torch.tensor([1.0])}}],
+            answer_logits=[torch.tensor([1.0, 2.0])],
+            dataset=_DummyDataset(column_names=["answer_logits"], num_rows=1),
+        )
+        fixture = _DummyFixture(result=analysis_result)
+        extractor = build_analysis_fixture_payload_extractor(
+            field_names=("answer_logits",),
+            include_dataset_metadata=True,
+        )
+
+        payload = extractor(fixture)
+
+        assert isinstance(payload, ExtractedFixturePayload)
+        assert payload.metadata == {"column_names": ["answer_logits"], "num_rows": 1}
+        assert torch.equal(payload.store.answer_logits[0], torch.tensor([1.0, 2.0]))
+
+
+class TestAnalysisExtractionMixin:
+    def test_extract_cached_fixture_data_reuses_cached_payload(self):
+        analysis_result = _DummyAnalysisResult(
+            logit_diffs=[torch.tensor([1.0])],
+            preds=[{"sae_a": {0: torch.tensor([1.0])}}],
+            answer_logits=[torch.tensor([1.0, 2.0])],
+            dataset=_DummyDataset(column_names=["answer_logits"], num_rows=1),
+        )
+
+        class _DummyRequest:
+            def __init__(self):
+                self.calls = 0
+
+            def getfixturevalue(self, _fixture_key):
+                self.calls += 1
+                return _DummyFixture(result=analysis_result)
+
+        class _ExtractionHarness(AnalysisExtractionMixin):
+            pass
+
+        harness = _ExtractionHarness()
+        request = _DummyRequest()
+        extractor = build_analysis_fixture_payload_extractor(
+            field_names=("answer_logits",),
+            include_dataset_metadata=True,
+        )
+
+        first = harness.extract_cached_fixture_data(request, "dummy", extractor)
+        second = harness.extract_cached_fixture_data(request, "dummy", extractor)
+
+        assert request.calls == 1
+        assert first is second
+        assert first.metadata == {"column_names": ["answer_logits"], "num_rows": 1}
+        _ExtractionHarness.clear_extracted_values()
 
 
 class TestRunnerRamOverride:

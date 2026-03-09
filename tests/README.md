@@ -6,9 +6,14 @@
 
 - **CI_RESOURCE_MONITOR**: Defaults to `0` at the repository level. You can override this variable at the workflow or step levels to enable basic CI resource logging. This is useful for debugging resource exhaustion issues on default GitHub Actions runners.
 
+- **IT_ANALYSIS_RESOURCE_DEBUG**: When set to `1`, analysis-oriented tests can emit inline RSS and disk-usage snapshots via
+  `tests.analysis_resource_utils.log_resource_snapshot(...)`. This is the preferred generic flag for resource-aware
+  debugging in analysis contexts.
+
 - **IT_OP_SERIALIZATION_RESOURCE_DEBUG**: When set to `1`, the serialization helper used by
   `tests/core/test_analysis_ops_definitions.py::TestAnalysisOperationsImplementations::test_op_serialization[...]`
-  prints targeted RSS and disk-usage snapshots immediately before and after `save_reload_results_dataset(...)`.
+  prints targeted RSS and disk-usage snapshots around the full serialization path, including the pre-analysis run,
+  fixture entry, and `save_reload_results_dataset(...)` boundaries.
   The `Test full` workflow now enables this automatically on Linux when `CI_RESOURCE_MONITOR=1`.
 
 For more details, see the main CI workflow configuration in `.github/workflows/ci_test-full.yml`.
@@ -22,7 +27,8 @@ The test suite now exposes a small set of environment variables specifically for
   This forces the same low-memory fixture-scope and cleanup paths used in CI without requiring a
   physically constrained machine.
 - `IT_NNSIGHT_CONFIGS_PER_PASS`: Overrides the default `NNsightModelBackend` multi-invoke batch size.
-  This is useful when probing the `model_ablation` / `logit_diffs_attr_ablation` memory tradeoff.
+  This is useful when probing resource intensive ops like `model_ablation` / `logit_diffs_attr_ablation` memory tradeoff.
+- `IT_ANALYSIS_RESOURCE_DEBUG`: Enables generic inline resource snapshots from `log_resource_snapshot(...)`.
 - `IT_OP_SERIALIZATION_RESOURCE_DEBUG`: Emits targeted RSS and disk-usage logging around
   `save_reload_results_dataset(...)` from the serialization fixture helper.
 
@@ -34,7 +40,7 @@ CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=32 \
   python -m pytest tests/core/test_sae_backend_parity.py::TestLogitDiffsAttrAblationBackendParity::test_logit_diffs_match -q
 
 # Add serialization resource snapshots around the logit_diffs serialization test
-CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=16 IT_OP_SERIALIZATION_RESOURCE_DEBUG=1 \
+CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=16 IT_ANALYSIS_RESOURCE_DEBUG=1 IT_OP_SERIALIZATION_RESOURCE_DEBUG=1 \
   python -m pytest tests/core/test_analysis_ops_definitions.py::TestAnalysisOperationsImplementations::test_op_serialization[logit_diffs] -s -q
 
 # Manually compare different NNsight multi-invoke batch sizes
@@ -170,6 +176,20 @@ Heavy analysis-parity tests should prefer the shared helpers in `tests/analysis_
 over ad hoc lightweight test dataclasses. `ExtractedAnalysisStore` and
 `extract_analysis_store_fields(...)` allow tests to copy only the `AnalysisStore` fields they need
 while still preserving `by_latent_model(...)` for downstream helpers like `compute_correct()`.
+
+When a test class needs to reuse a lightweight projection of the same heavyweight fixture across
+multiple test methods, prefer the generalized cached-payload helpers:
+
+- `build_analysis_fixture_payload_extractor(...)` builds a reusable extractor that can bundle
+  selected `AnalysisStore` fields, dataset metadata, and optional custom payloads.
+- `AnalysisExtractionMixin.extract_cached_fixture_data(...)` caches those lightweight payloads by
+  fixture key (or custom cache key) so function-scoped analysis fixtures are only materialized once
+  per test class.
+- `ExtractedFixturePayload` provides a minimal attribute-style wrapper for the cached payload.
+
+This pattern is now used by `TestBackendParityEdgeCases` to keep Bridge/NNsight parity checks below
+GitHub-hosted runner memory limits without re-instantiating every heavy analysis fixture for each
+assertion.
 
 The current low-memory threshold in `analysis_resource_utils.py` is `32 GB`, which intentionally
 forces GitHub-hosted Ubuntu and Windows runners down the low-memory fixture path. This is more
