@@ -31,7 +31,7 @@ Fixture mapping (NNsight → Bridge):
 
 from __future__ import annotations
 
-from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
 import pytest
@@ -40,6 +40,7 @@ from torch.testing import assert_close
 
 from interpretune.analysis.core import (
     AnalysisStore,
+    LatentAnalysisDict,
     base_vs_sae_logit_diffs,
     compute_correct,
 )
@@ -95,6 +96,35 @@ def _compare_dict_tensor_lists(
                 atol=atol,
                 msg=f"{label} batch {i} hook {hook_name}",
             )
+
+
+@dataclass
+class _AttrAblationParityStore:
+    logit_diffs: list[torch.Tensor]
+    attribution_values: list[dict[str, torch.Tensor]]
+    alive_latents: list[dict[str, list[int]]]
+    orig_labels: list[torch.Tensor]
+    preds: list[dict[str, dict[Any, torch.Tensor]]]
+
+    def by_latent_model(self, field_name: str, stack_latents: bool = True) -> LatentAnalysisDict:
+        assert field_name == "preds"
+        assert stack_latents is True
+        assert self.preds, "No preds found for attr-ablation parity payload"
+
+        result = LatentAnalysisDict()
+        sae_names = self.preds[0].keys()
+        for sae in sae_names:
+            batch_tensors = []
+            for batch in self.preds:
+                latent_tensors = [tensor for tensor in batch[sae].values()]
+                batch_tensors.append(torch.stack(latent_tensors) if latent_tensors else None)
+            result[sae] = batch_tensors  # type: ignore[assignment]
+        return result
+
+
+@dataclass
+class _AblationAnswerLogitsStore:
+    answer_logits: list[dict[str, dict[Any, torch.Tensor]]]
 
 
 class TestLogitDiffsBaseBackendParity(AnalysisExtractionMixin):
@@ -325,16 +355,36 @@ class TestLogitDiffsAttrAblationBackendParity(AnalysisExtractionMixin):
     class-scoped reuse.
     """
 
-    _extracted: ClassVar[dict[str, AnalysisStore] | None] = None
+    _extracted: ClassVar[dict[str, _AttrAblationParityStore] | None] = None
 
-    def build_extracted_values(self, request) -> dict[str, AnalysisStore]:
+    def build_extracted_values(self, request) -> dict[str, _AttrAblationParityStore]:
         return {
-            "br": extract_fixture_result(request, _BR_ABLATION),
-            "ns": extract_fixture_result(request, _NS_ABLATION),
+            "br": extract_fixture_data(
+                request,
+                _BR_ABLATION,
+                lambda fixture: _AttrAblationParityStore(
+                    logit_diffs=fixture.result.logit_diffs,
+                    attribution_values=fixture.result.attribution_values,
+                    alive_latents=fixture.result.alive_latents,
+                    orig_labels=fixture.result.orig_labels,
+                    preds=fixture.result.preds,
+                ),
+            ),
+            "ns": extract_fixture_data(
+                request,
+                _NS_ABLATION,
+                lambda fixture: _AttrAblationParityStore(
+                    logit_diffs=fixture.result.logit_diffs,
+                    attribution_values=fixture.result.attribution_values,
+                    alive_latents=fixture.result.alive_latents,
+                    orig_labels=fixture.result.orig_labels,
+                    preds=fixture.result.preds,
+                ),
+            ),
         }
 
-    def extract_values(self, request) -> dict[str, AnalysisStore]:
-        return cast(dict[str, AnalysisStore], super().extract_values(request))
+    def extract_values(self, request) -> dict[str, _AttrAblationParityStore]:
+        return cast(dict[str, _AttrAblationParityStore], super().extract_values(request))
 
     def test_logit_diffs_match(self, request):
         """Ablation logit diffs should match across backends."""
@@ -370,8 +420,8 @@ class TestLogitDiffsAttrAblationBackendParity(AnalysisExtractionMixin):
     def test_compute_correct_parity(self, request):
         """compute_correct should return equivalent summaries for both backends."""
         extracted = self.extract_values(request)
-        br_summ = compute_correct(deepcopy(extracted["br"]), op="logit_diffs_attr_ablation")
-        ns_summ = compute_correct(deepcopy(extracted["ns"]), op="logit_diffs_attr_ablation")
+        br_summ = compute_correct(cast(Any, extracted["br"]), op="logit_diffs_attr_ablation")
+        ns_summ = compute_correct(cast(Any, extracted["ns"]), op="logit_diffs_attr_ablation")
         assert br_summ.total_correct == ns_summ.total_correct
         assert br_summ.percentage_correct == pytest.approx(ns_summ.percentage_correct, abs=1e-4)
 
@@ -391,11 +441,21 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
     }
     _extracted: ClassVar[dict[str, AnalysisStore] | None] = None
 
-    def build_extracted_values(self, request) -> dict[str, AnalysisStore]:
-        return {name: extract_fixture_result(request, fixture_key) for name, fixture_key in self._fixture_map.items()}
+    def build_extracted_values(self, request) -> dict[str, AnalysisStore | _AblationAnswerLogitsStore]:
+        extracted: dict[str, AnalysisStore | _AblationAnswerLogitsStore] = {}
+        for name, fixture_key in self._fixture_map.items():
+            if name in {"ablation_br", "ablation_ns"}:
+                extracted[name] = extract_fixture_data(
+                    request,
+                    fixture_key,
+                    lambda fixture: _AblationAnswerLogitsStore(answer_logits=fixture.result.answer_logits),
+                )
+            else:
+                extracted[name] = extract_fixture_result(request, fixture_key)
+        return extracted
 
-    def extract_values(self, request) -> dict[str, AnalysisStore]:
-        return cast(dict[str, AnalysisStore], super().extract_values(request))
+    def extract_values(self, request) -> dict[str, AnalysisStore | _AblationAnswerLogitsStore]:
+        return cast(dict[str, AnalysisStore | _AblationAnswerLogitsStore], super().extract_values(request))
 
     @classmethod
     def _resolve_key_name(cls, fixture_key: str) -> str:
@@ -414,8 +474,8 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
     def test_result_column_names_match(self, request, br_key, ns_key, op_name):
         """AnalysisStore dataset column names should be identical across backends."""
         extracted = self.extract_values(request)
-        br_store = extracted[self._resolve_key_name(br_key)]
-        ns_store = extracted[self._resolve_key_name(ns_key)]
+        br_store = cast(AnalysisStore, extracted[self._resolve_key_name(br_key)])
+        ns_store = cast(AnalysisStore, extracted[self._resolve_key_name(ns_key)])
         assert br_store.dataset is not None
         assert ns_store.dataset is not None
         br_column_names = getattr(br_store.dataset, "column_names", None)
@@ -434,8 +494,8 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
     def test_result_row_counts_match(self, request, br_key, ns_key, op_name):
         """AnalysisStore datasets should have the same number of rows."""
         extracted = self.extract_values(request)
-        br_store = extracted[self._resolve_key_name(br_key)]
-        ns_store = extracted[self._resolve_key_name(ns_key)]
+        br_store = cast(AnalysisStore, extracted[self._resolve_key_name(br_key)])
+        ns_store = cast(AnalysisStore, extracted[self._resolve_key_name(ns_key)])
         assert br_store.dataset is not None
         assert ns_store.dataset is not None
         br_num_rows = getattr(br_store.dataset, "num_rows", None)
@@ -478,8 +538,8 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
     def test_answer_logits_shape_match(self, request, br_key, ns_key):
         """Output tensor shapes should match across backends."""
         extracted = self.extract_values(request)
-        br_store = extracted[self._resolve_key_name(br_key)]
-        ns_store = extracted[self._resolve_key_name(ns_key)]
+        br_store = cast(AnalysisStore, extracted[self._resolve_key_name(br_key)])
+        ns_store = cast(AnalysisStore, extracted[self._resolve_key_name(ns_key)])
         br_logits = br_store.answer_logits
         ns_logits = ns_store.answer_logits
         assert len(br_logits) == len(ns_logits), "batch count mismatch"
@@ -489,6 +549,6 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
     def test_loss_values_close(self, request):
         """Loss values from logit_diffs_base should be close across backends."""
         extracted = self.extract_values(request)
-        br_store = extracted["base_br"]
-        ns_store = extracted["base_ns"]
+        br_store = cast(AnalysisStore, extracted["base_br"])
+        ns_store = cast(AnalysisStore, extracted["base_ns"])
         _compare_tensor_lists(br_store.loss, ns_store.loss, label="loss")
