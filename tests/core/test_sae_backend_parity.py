@@ -402,19 +402,17 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
         "ablation_br": _BR_ABLATION,
         "ablation_ns": _NS_ABLATION,
     }
-    _extracted: ClassVar[dict[str, AnalysisStore | ExtractedAnalysisStore] | None] = None
-
-    def build_extracted_values(self, request) -> dict[str, AnalysisStore | ExtractedAnalysisStore]:
-        extracted: dict[str, AnalysisStore | ExtractedAnalysisStore] = {}
-        for name, fixture_key in self._fixture_map.items():
-            if name in {"ablation_br", "ablation_ns"}:
-                extracted[name] = extract_analysis_store_fields(request, fixture_key, ("answer_logits",))
-            else:
-                extracted[name] = extract_fixture_result(request, fixture_key)
-        return extracted
-
-    def extract_values(self, request) -> dict[str, AnalysisStore | ExtractedAnalysisStore]:
-        return cast(dict[str, AnalysisStore | ExtractedAnalysisStore], super().extract_values(request))
+    _fixture_fields: ClassVar[dict[str, tuple[str, ...]]] = {
+        _BR_BASE: ("answer_logits", "loss"),
+        _NS_BASE: ("answer_logits", "loss"),
+        _BR_SAE: ("answer_logits",),
+        _NS_SAE: ("answer_logits",),
+        _BR_GRAD: ("answer_logits",),
+        _NS_GRAD: ("answer_logits",),
+        _BR_ABLATION: ("answer_logits",),
+        _NS_ABLATION: ("answer_logits",),
+    }
+    _fixture_payload_cache: ClassVar[dict[str, dict[str, Any]]] = {}
 
     @classmethod
     def _resolve_key_name(cls, fixture_key: str) -> str:
@@ -422,6 +420,43 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
             if mapped_fixture == fixture_key:
                 return name
         raise KeyError(f"Unknown fixture key: {fixture_key}")
+
+    @staticmethod
+    def _extract_payload(request, fixture_key: str) -> dict[str, Any]:
+        cached = TestBackendParityEdgeCases._fixture_payload_cache.get(fixture_key)
+        if cached is not None:
+            return cached
+
+        field_names = TestBackendParityEdgeCases._fixture_fields[fixture_key]
+        extracted = extract_fixture_data(
+            request,
+            fixture_key,
+            lambda fixture: {
+                "metadata": {
+                    "column_names": list(getattr(fixture.result.dataset, "column_names", [])),
+                    "num_rows": int(getattr(fixture.result.dataset, "num_rows", 0)),
+                },
+                "store": ExtractedAnalysisStore(
+                    **{field_name: getattr(fixture.result, field_name) for field_name in field_names}
+                ),
+            },
+        )
+        TestBackendParityEdgeCases._fixture_payload_cache[fixture_key] = extracted
+        return extracted
+
+    @staticmethod
+    def _extract_dataset_metadata(request, fixture_key: str) -> dict[str, list[str] | int]:
+        return cast(
+            dict[str, list[str] | int],
+            TestBackendParityEdgeCases._extract_payload(request, fixture_key)["metadata"],
+        )
+
+    @staticmethod
+    def _extract_field_store(request, fixture_key: str, *field_names: str) -> ExtractedAnalysisStore:
+        store = cast(ExtractedAnalysisStore, TestBackendParityEdgeCases._extract_payload(request, fixture_key)["store"])
+        missing_fields = [field_name for field_name in field_names if not hasattr(store, field_name)]
+        assert not missing_fields, f"Fixture {fixture_key} missing requested extracted fields: {missing_fields}"
+        return store
 
     @pytest.mark.parametrize(
         ("br_key", "ns_key", "op_name"),
@@ -432,16 +467,11 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
     )
     def test_result_column_names_match(self, request, br_key, ns_key, op_name):
         """AnalysisStore dataset column names should be identical across backends."""
-        extracted = self.extract_values(request)
-        br_store = cast(AnalysisStore, extracted[self._resolve_key_name(br_key)])
-        ns_store = cast(AnalysisStore, extracted[self._resolve_key_name(ns_key)])
-        assert br_store.dataset is not None
-        assert ns_store.dataset is not None
-        br_column_names = getattr(br_store.dataset, "column_names", None)
-        ns_column_names = getattr(ns_store.dataset, "column_names", None)
-        assert br_column_names is not None
-        assert ns_column_names is not None
-        assert set(br_column_names) == set(ns_column_names), f"Column name mismatch for {op_name}"
+        br_meta = self._extract_dataset_metadata(request, br_key)
+        ns_meta = self._extract_dataset_metadata(request, ns_key)
+        assert set(cast(list[str], br_meta["column_names"])) == set(cast(list[str], ns_meta["column_names"])), (
+            f"Column name mismatch for {op_name}"
+        )
 
     @pytest.mark.parametrize(
         ("br_key", "ns_key", "op_name"),
@@ -452,16 +482,9 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
     )
     def test_result_row_counts_match(self, request, br_key, ns_key, op_name):
         """AnalysisStore datasets should have the same number of rows."""
-        extracted = self.extract_values(request)
-        br_store = cast(AnalysisStore, extracted[self._resolve_key_name(br_key)])
-        ns_store = cast(AnalysisStore, extracted[self._resolve_key_name(ns_key)])
-        assert br_store.dataset is not None
-        assert ns_store.dataset is not None
-        br_num_rows = getattr(br_store.dataset, "num_rows", None)
-        ns_num_rows = getattr(ns_store.dataset, "num_rows", None)
-        assert br_num_rows is not None
-        assert ns_num_rows is not None
-        assert br_num_rows == ns_num_rows, f"Row count mismatch for {op_name}"
+        br_meta = self._extract_dataset_metadata(request, br_key)
+        ns_meta = self._extract_dataset_metadata(request, ns_key)
+        assert cast(int, br_meta["num_rows"]) == cast(int, ns_meta["num_rows"]), f"Row count mismatch for {op_name}"
 
     @pytest.mark.parametrize(
         ("br_key", "ns_key"),
@@ -474,9 +497,8 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
     )
     def test_answer_logits_dtype_match(self, request, br_key, ns_key):
         """Output tensor dtypes should be consistent across backends."""
-        extracted = self.extract_values(request)
-        br_store = extracted[self._resolve_key_name(br_key)]
-        ns_store = extracted[self._resolve_key_name(ns_key)]
+        br_store = self._extract_field_store(request, br_key, "answer_logits")
+        ns_store = self._extract_field_store(request, ns_key, "answer_logits")
         # Check first batch answer_logits dtype
         br_logits = br_store.answer_logits
         ns_logits = ns_store.answer_logits
@@ -496,9 +518,8 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
     )
     def test_answer_logits_shape_match(self, request, br_key, ns_key):
         """Output tensor shapes should match across backends."""
-        extracted = self.extract_values(request)
-        br_store = cast(AnalysisStore, extracted[self._resolve_key_name(br_key)])
-        ns_store = cast(AnalysisStore, extracted[self._resolve_key_name(ns_key)])
+        br_store = self._extract_field_store(request, br_key, "answer_logits")
+        ns_store = self._extract_field_store(request, ns_key, "answer_logits")
         br_logits = br_store.answer_logits
         ns_logits = ns_store.answer_logits
         assert len(br_logits) == len(ns_logits), "batch count mismatch"
@@ -507,7 +528,6 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
 
     def test_loss_values_close(self, request):
         """Loss values from logit_diffs_base should be close across backends."""
-        extracted = self.extract_values(request)
-        br_store = cast(AnalysisStore, extracted["base_br"])
-        ns_store = cast(AnalysisStore, extracted["base_ns"])
+        br_store = self._extract_field_store(request, _BR_BASE, "loss")
+        ns_store = self._extract_field_store(request, _NS_BASE, "loss")
         _compare_tensor_lists(br_store.loss, ns_store.loss, label="loss")
