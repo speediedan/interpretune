@@ -37,7 +37,7 @@ def analysis_fixture_scope(
 ) -> FixtureScope:
     """Return a pytest fixture scope based on available system RAM."""
 
-    return low_ram_scope if get_runner_ram_gb() < min_ram_gb else high_ram_scope
+    return low_ram_scope if get_runner_ram_gb() <= min_ram_gb else high_ram_scope
 
 
 @contextmanager
@@ -47,7 +47,7 @@ def conditional_clean_cpu(fixture: Any, min_ram_gb: int = ANALYSIS_LOW_RAM_GB):
     try:
         yield fixture
     finally:
-        if get_runner_ram_gb() < min_ram_gb:
+        if get_runner_ram_gb() <= min_ram_gb:
             for attr in ("result", "runner", "run_config", "it_session"):
                 if hasattr(fixture, attr):
                     setattr(fixture, attr, None)

@@ -801,7 +801,7 @@ class TestNNsightFwdWHooksBatched:
         assert "latent_model_handles" in param_names
         assert "hook_configs" in param_names
         assert "clear_contexts" in param_names
-        assert "max_invokes_per_trace" in param_names
+        assert "configs_per_pass" in param_names
 
     def test_empty_hook_configs_returns_empty_list(self, backend):
         result = backend.fwd_w_hooks_batched(
@@ -812,9 +812,12 @@ class TestNNsightFwdWHooksBatched:
         )
         assert result == []
 
-    def test_max_invokes_per_trace_default_is_none(self, backend):
+    def test_configs_per_pass_call_override_defaults_to_none(self, backend):
         sig = inspect.signature(backend.fwd_w_hooks_batched)
-        assert sig.parameters["max_invokes_per_trace"].default is None
+        assert sig.parameters["configs_per_pass"].default is None
+
+    def test_backend_default_configs_per_pass_is_32(self, backend):
+        assert backend._configs_per_pass == 32
 
 
 # ==============================================================================
@@ -865,7 +868,7 @@ class TestTLFwdWHooksBatched:
         assert "model" in param_names
         assert "batch" in param_names
         assert "hook_configs" in param_names
-        assert "max_invokes_per_trace" in param_names
+        assert "configs_per_pass" in param_names
 
     def test_empty_hook_configs_returns_empty_list(self, backend):
         result = backend.fwd_w_hooks_batched(
@@ -901,8 +904,8 @@ class TestTLFwdWHooksBatched:
         assert torch.equal(result[0], fake_logits_1)
         assert torch.equal(result[1], fake_logits_2)
 
-    def test_max_invokes_per_trace_ignored(self, backend):
-        """max_invokes_per_trace should be accepted but have no effect on TL backend."""
+    def test_configs_per_pass_ignored(self, backend):
+        """configs_per_pass should be accepted but have no effect on TL backend."""
         mock_model = MagicMock()
         mock_model.run_with_hooks_with_saes.return_value = torch.randn(2, 5, 100)
 
@@ -912,13 +915,13 @@ class TestTLFwdWHooksBatched:
             [("hook", lambda t, h: t)],
         ]
 
-        # Should work identically with any max_invokes_per_trace value
+        # Should work identically with any configs_per_pass value
         result = backend.fwd_w_hooks_batched(
             model=mock_model,
             batch={"input": torch.randn(2, 5)},
             latent_model_handles=[],
             hook_configs=hook_configs,
-            max_invokes_per_trace=1,
+            configs_per_pass=1,
         )
 
         assert len(result) == 3
