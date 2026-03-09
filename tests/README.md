@@ -6,7 +6,41 @@
 
 - **CI_RESOURCE_MONITOR**: Defaults to `0` at the repository level. You can override this variable at the workflow or step levels to enable basic CI resource logging. This is useful for debugging resource exhaustion issues on default GitHub Actions runners.
 
+- **IT_OP_SERIALIZATION_RESOURCE_DEBUG**: When set to `1`, the serialization helper used by
+  `tests/core/test_analysis_ops_definitions.py::TestAnalysisOperationsImplementations::test_op_serialization[...]`
+  prints targeted RSS and disk-usage snapshots immediately before and after `save_reload_results_dataset(...)`.
+  The `Test full` workflow now enables this automatically on Linux when `CI_RESOURCE_MONITOR=1`.
+
 For more details, see the main CI workflow configuration in `.github/workflows/ci_test-full.yml`.
+
+## Local CI Reproduction Knobs
+
+The test suite now exposes a small set of environment variables specifically for reproducing
+ GitHub Actions memory behavior locally:
+
+- `IT_MOCK_RUNNER_RAM_GB`: Overrides `tests.runif.get_runner_ram_gb()` for the current process.
+  This forces the same low-memory fixture-scope and cleanup paths used in CI without requiring a
+  physically constrained machine.
+- `IT_NNSIGHT_CONFIGS_PER_PASS`: Overrides the default `NNsightModelBackend` multi-invoke batch size.
+  This is useful when probing the `model_ablation` / `logit_diffs_attr_ablation` memory tradeoff.
+- `IT_OP_SERIALIZATION_RESOURCE_DEBUG`: Emits targeted RSS and disk-usage logging around
+  `save_reload_results_dataset(...)` from the serialization fixture helper.
+
+Example low-memory reproduction commands:
+
+```bash
+# Reproduce the heavy attr-ablation parity path with CI-like low-memory behavior
+CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=32 \
+  python -m pytest tests/core/test_sae_backend_parity.py::TestLogitDiffsAttrAblationBackendParity::test_logit_diffs_match -q
+
+# Add serialization resource snapshots around the logit_diffs serialization test
+CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=16 IT_OP_SERIALIZATION_RESOURCE_DEBUG=1 \
+  python -m pytest tests/core/test_analysis_ops_definitions.py::TestAnalysisOperationsImplementations::test_op_serialization[logit_diffs] -s -q
+
+# Manually compare different NNsight multi-invoke batch sizes
+CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=32 IT_NNSIGHT_CONFIGS_PER_PASS=2 \
+  python -m pytest tests/core/test_sae_backend_parity.py::TestLogitDiffsAttrAblationBackendParity::test_logit_diffs_match -q
+```
 
 ## HuggingFace Token Configuration
 
@@ -129,6 +163,32 @@ memory containment short of standalone isolation.
 e.g., when a library uses `sys.settrace()` (which interferes with pytest-cov). The current canonical
 example is `test_nnsight_trace_context` in `tests/core/test_adapters_nnsight.py`, which must stay
 `@RunIf(standalone=True)`.
+
+### Shared Low-Memory Extraction Helpers
+
+Heavy analysis-parity tests should prefer the shared helpers in `tests/analysis_resource_utils.py`
+over ad hoc lightweight test dataclasses. `ExtractedAnalysisStore` and
+`extract_analysis_store_fields(...)` allow tests to copy only the `AnalysisStore` fields they need
+while still preserving `by_latent_model(...)` for downstream helpers like `compute_correct()`.
+
+The current low-memory threshold in `analysis_resource_utils.py` is `32 GB`, which intentionally
+forces GitHub-hosted Ubuntu and Windows runners down the low-memory fixture path. This is more
+conservative than the raw hosted-runner memory spec and is intended to leave margin for pytest,
+coverage, dataset serialization, and worker-thread overhead.
+
+### Current Local Memory Baselines
+
+Using the local reproduction knobs above, the NNsight attr-ablation parity path has been measured on
+CPU-only runs with mocked CI-like RAM constraints:
+
+- `IT_NNSIGHT_CONFIGS_PER_PASS=8`: peak RSS about `11.28 GB`
+- `IT_NNSIGHT_CONFIGS_PER_PASS=4`: peak RSS about `10.67 GB`
+- `IT_NNSIGHT_CONFIGS_PER_PASS=2`: peak RSS about `10.43 GB`
+
+The adaptive default now uses `4` on CPU Linux and `2` on CPU Windows, while retaining `32` when
+CUDA is available. Under `CUDA_VISIBLE_DEVICES=''` and `IT_MOCK_RUNNER_RAM_GB=32`, the attr-ablation
+parity test completed locally with peak RSS about `10.81 GB`, which is below the `16 GB` memory on
+standard GitHub-hosted Ubuntu runners.
 
 ### Known Bug: Class-Level Standalone Marks Are Silently Ignored
 

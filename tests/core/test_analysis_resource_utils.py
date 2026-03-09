@@ -106,3 +106,11 @@ class TestRunnerRamOverride:
             assert get_runner_ram_gb() == 12.5
         finally:
             get_runner_ram_gb.cache_clear()
+
+    def test_env_override_at_new_threshold_uses_low_ram_scope(self, monkeypatch):
+        monkeypatch.setenv("IT_MOCK_RUNNER_RAM_GB", str(ANALYSIS_LOW_RAM_GB))
+        get_runner_ram_gb.cache_clear()
+        try:
+            assert analysis_fixture_scope() == "function"
+        finally:
+            get_runner_ram_gb.cache_clear()

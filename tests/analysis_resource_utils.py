@@ -29,7 +29,7 @@ from interpretune.analysis.core import LatentAnalysisDict
 
 from tests.runif import get_runner_ram_gb
 
-ANALYSIS_LOW_RAM_GB = 16
+ANALYSIS_LOW_RAM_GB = 32
 FixtureScope = Literal["function", "class", "module", "session"]
 
 

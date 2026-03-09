@@ -2,9 +2,12 @@ from __future__ import annotations
 import pytest
 import tempfile
 import os
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Any
+
+import psutil
 
 import interpretune as it
 from tests.configuration import get_deepcopied_session
@@ -19,6 +22,20 @@ from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
 @pytest.fixture
 def op_serialization_fixt():
     """Create a test utility for serializing and loading analysis results."""
+
+    def _resource_snapshot(label: str, save_dir: Path) -> None:
+        if os.environ.get("IT_OP_SERIALIZATION_RESOURCE_DEBUG", "0") != "1":
+            return
+
+        process = psutil.Process(os.getpid())
+        rss_gb = process.memory_info().rss / (1024**3)
+        disk_usage = shutil.disk_usage(save_dir.parent)
+        free_gb = disk_usage.free / (1024**3)
+        used_gb = disk_usage.used / (1024**3)
+        print(
+            f"[op_serialization_resource_debug] {label}: rss_gb={rss_gb:.2f} used_gb={used_gb:.2f} "
+            f"free_gb={free_gb:.2f} save_dir={save_dir}"
+        )
 
     def _op_serialization_fixt(
         it_session,
@@ -83,7 +100,10 @@ def op_serialization_fixt():
                 result_batches = [result_batches]
                 batches = [batches]
 
-            return save_reload_results_dataset(it_session, result_batches, batches)
+            _resource_snapshot("before_save_reload", save_dir)
+            loaded_dataset = save_reload_results_dataset(it_session, result_batches, batches)
+            _resource_snapshot("after_save_reload", save_dir)
+            return loaded_dataset
 
         finally:
             # Restore original save_dir if needed

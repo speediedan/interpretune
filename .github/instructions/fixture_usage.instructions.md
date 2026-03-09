@@ -128,6 +128,8 @@ Preferred approach:
 - Set fixture scope dynamically with `analysis_fixture_scope()` in `tests/conftest.py`
 - Subclass `AnalysisExtractionMixin` in the test class
 - Implement `build_extracted_values()` to deep-copy only the values needed by the test class
+- Prefer `extract_analysis_store_fields(...)` + `ExtractedAnalysisStore` when only a subset of
+    `AnalysisStore` fields is required but `by_latent_model(...)` still needs to work
 - Call the public `extract_values()` helper inside test methods
 
 Example:
