@@ -2,6 +2,7 @@ from __future__ import annotations
 import pytest
 import torch
 from unittest.mock import MagicMock, patch
+from datasets import Features, Value
 
 from interpretune.runners.analysis import analysis_store_generator, generate_analysis_dataset, maybe_init_analysis_cfg
 import interpretune as it
@@ -131,11 +132,11 @@ class TestAnalysisRunner:
         # But unknown params remain
         assert "unknown_param" in result_kwargs
 
-    @patch("datasets.Dataset.from_list")
-    def test_generate_analysis_dataset_error(self, mock_from_list, mock_analysis_module, mock_analysis_datamodule):
+    @patch("datasets.Dataset.from_generator")
+    def test_generate_analysis_dataset_error(self, mock_from_generator, mock_analysis_module, mock_analysis_datamodule):
         """Test error handling in generate_analysis_dataset."""
         # Set up to simulate an error during dataset generation
-        mock_from_list.side_effect = ValueError("Test error")
+        mock_from_generator.side_effect = ValueError("Test error")
 
         # Prepare module with needed attributes
         mock_analysis_module.analysis_cfg = MagicMock()
@@ -155,6 +156,35 @@ class TestAnalysisRunner:
 
             # Verify error handling was called
             mock_handle_error.assert_called_once()
+
+    def test_generate_analysis_dataset_uses_explicit_fingerprint(self, monkeypatch, tmp_path):
+        """Explicit fingerprints must bypass datasets hashing of unpicklable generator kwargs."""
+
+        class UnpicklableModule:
+            def __init__(self):
+                self.analysis_cfg = MagicMock()
+                self.analysis_cfg.output_store = MagicMock()
+                self.analysis_cfg.output_store.cache_dir = tmp_path / "analysis_cache"
+
+            def __getstate__(self):
+                raise RuntimeError("module should not be pickled")
+
+        module = UnpicklableModule()
+
+        def fake_analysis_store_generator(**_kwargs):
+            yield {"value": 1}
+
+        monkeypatch.setattr("interpretune.runners.analysis.analysis_store_generator", fake_analysis_store_generator)
+
+        dataset = generate_analysis_dataset(
+            module=module,
+            features=Features({"value": Value("int64")}),
+            it_format_kwargs={},
+            gen_kwargs={"module": module, "datamodule": object()},
+        )
+
+        assert len(dataset) == 1
+        assert dataset.column_names == ["value"]
 
     @patch.object(it.runners.analysis.AnalysisRunner, "__init__", return_value=None)
     def test_run_method_partialmethod(self, mock_init, request):

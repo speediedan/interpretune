@@ -13,6 +13,10 @@ Current behavior (MVP)
 - This temporary directory behavior uses HuggingFace `datasets` helpers when
   available, and falls back to using the Python `tempfile` module with an
   `atexit` cleanup if not.
+- The runtime analysis path uses `Dataset.from_generator(...)` with an
+  explicit per-run `fingerprint=`. This preserves generator-backed writes
+  without forcing HF datasets to hash `gen_kwargs` that contain the module,
+  datamodule, and model weights.
 
 Planned future behavior
 - When implemented, enabling Interpretune AnalysisStore caching will cause
@@ -42,6 +46,10 @@ Post-MVP hashing and determinism considerations
   hashing across runs. Implementing a custom hash function that focuses
   on the semantically relevant variables from `it_session` and the
   generator would enable reliable caching in the future.
+- The explicit runtime fingerprint used today is intentionally not reused as
+  a persistent cache key. It is a per-run escape hatch that restores
+  generator-backed dataset construction without reintroducing the prior
+  dill-based `MemoryError`.
 
 Example test generator-driven dataset creation:
 

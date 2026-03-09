@@ -7,6 +7,7 @@ from inspect import signature
 
 from tqdm.auto import tqdm
 from datasets import Dataset
+from datasets.fingerprint import generate_random_fingerprint
 
 from interpretune.analysis import schema_to_features
 from interpretune.base import _call_itmodule_hook, ITDataModule
@@ -130,21 +131,18 @@ def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, sp
     Raises:
         Exception: If dataset generation fails, with detailed debug information
     """
-    # Materialize generator results directly instead of using Dataset.from_generator().
-    # from_generator() hashes gen_kwargs (including the module with all model weights) via dill
-    # serialization for fingerprinting, which causes MemoryError on memory-constrained CI runners.
-    # Since the dataset is immediately saved to disk by the caller, lazy generation has no benefit.
+    # Use an explicit fingerprint so datasets doesn't hash gen_kwargs via dill.
+    # gen_kwargs includes the module/datamodule, and hashing those objects can serialize model
+    # weights and fail on memory-constrained runners. The fingerprint is intentionally per-run
+    # until issue #183 implements a deterministic AnalysisStore cache key.
     try:
-        records = list(analysis_store_generator(**gen_kwargs))
-        # Don't pass features to from_list(). The schema-derived features may not
-        # exactly match the record keys (ops may add/omit columns freely).
-        # from_generator() handled this via lazy feature inference; from_list()
-        # delegates to from_dict() which strictly validates both directions.
-        # Letting HF infer types from data is safe — the dataset is immediately
-        # saved to disk and the interpretune format handler uses col_cfg for typing.
-        dataset = Dataset.from_list(
-            records,
+        dataset = Dataset.from_generator(
+            analysis_store_generator,
+            features=features,
+            cache_dir=str(module.analysis_cfg.output_store.cache_dir),  # type: ignore[attr-defined]  # protocol provides output_store
+            gen_kwargs=gen_kwargs,
             split=split,  # type: ignore[arg-type]  # str acceptable for NamedSplit at runtime
+            fingerprint=generate_random_fingerprint(),
         ).with_format("interpretune", **it_format_kwargs)
         return dataset  # type: ignore[return-value]  # datasets compatibility
     except Exception as e:
