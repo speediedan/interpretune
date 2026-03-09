@@ -31,7 +31,6 @@ Fixture mapping (NNsight → Bridge):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
 import pytest
@@ -40,11 +39,16 @@ from torch.testing import assert_close
 
 from interpretune.analysis.core import (
     AnalysisStore,
-    LatentAnalysisDict,
     base_vs_sae_logit_diffs,
     compute_correct,
 )
-from tests.analysis_resource_utils import AnalysisExtractionMixin, extract_fixture_data, extract_fixture_result
+from tests.analysis_resource_utils import (
+    AnalysisExtractionMixin,
+    ExtractedAnalysisStore,
+    extract_analysis_store_fields,
+    extract_fixture_data,
+    extract_fixture_result,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture key constants
@@ -96,35 +100,6 @@ def _compare_dict_tensor_lists(
                 atol=atol,
                 msg=f"{label} batch {i} hook {hook_name}",
             )
-
-
-@dataclass
-class _AttrAblationParityStore:
-    logit_diffs: list[torch.Tensor]
-    attribution_values: list[dict[str, torch.Tensor]]
-    alive_latents: list[dict[str, list[int]]]
-    orig_labels: list[torch.Tensor]
-    preds: list[dict[str, dict[Any, torch.Tensor]]]
-
-    def by_latent_model(self, field_name: str, stack_latents: bool = True) -> LatentAnalysisDict:
-        assert field_name == "preds"
-        assert stack_latents is True
-        assert self.preds, "No preds found for attr-ablation parity payload"
-
-        result = LatentAnalysisDict()
-        sae_names = self.preds[0].keys()
-        for sae in sae_names:
-            batch_tensors = []
-            for batch in self.preds:
-                latent_tensors = [tensor for tensor in batch[sae].values()]
-                batch_tensors.append(torch.stack(latent_tensors) if latent_tensors else None)
-            result[sae] = batch_tensors  # type: ignore[assignment]
-        return result
-
-
-@dataclass
-class _AblationAnswerLogitsStore:
-    answer_logits: list[dict[str, dict[Any, torch.Tensor]]]
 
 
 class TestLogitDiffsBaseBackendParity(AnalysisExtractionMixin):
@@ -355,36 +330,24 @@ class TestLogitDiffsAttrAblationBackendParity(AnalysisExtractionMixin):
     class-scoped reuse.
     """
 
-    _extracted: ClassVar[dict[str, _AttrAblationParityStore] | None] = None
+    _extracted: ClassVar[dict[str, ExtractedAnalysisStore] | None] = None
 
-    def build_extracted_values(self, request) -> dict[str, _AttrAblationParityStore]:
+    def build_extracted_values(self, request) -> dict[str, ExtractedAnalysisStore]:
         return {
-            "br": extract_fixture_data(
+            "br": extract_analysis_store_fields(
                 request,
                 _BR_ABLATION,
-                lambda fixture: _AttrAblationParityStore(
-                    logit_diffs=fixture.result.logit_diffs,
-                    attribution_values=fixture.result.attribution_values,
-                    alive_latents=fixture.result.alive_latents,
-                    orig_labels=fixture.result.orig_labels,
-                    preds=fixture.result.preds,
-                ),
+                ("logit_diffs", "attribution_values", "alive_latents", "orig_labels", "preds"),
             ),
-            "ns": extract_fixture_data(
+            "ns": extract_analysis_store_fields(
                 request,
                 _NS_ABLATION,
-                lambda fixture: _AttrAblationParityStore(
-                    logit_diffs=fixture.result.logit_diffs,
-                    attribution_values=fixture.result.attribution_values,
-                    alive_latents=fixture.result.alive_latents,
-                    orig_labels=fixture.result.orig_labels,
-                    preds=fixture.result.preds,
-                ),
+                ("logit_diffs", "attribution_values", "alive_latents", "orig_labels", "preds"),
             ),
         }
 
-    def extract_values(self, request) -> dict[str, _AttrAblationParityStore]:
-        return cast(dict[str, _AttrAblationParityStore], super().extract_values(request))
+    def extract_values(self, request) -> dict[str, ExtractedAnalysisStore]:
+        return cast(dict[str, ExtractedAnalysisStore], super().extract_values(request))
 
     def test_logit_diffs_match(self, request):
         """Ablation logit diffs should match across backends."""
@@ -439,23 +402,19 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
         "ablation_br": _BR_ABLATION,
         "ablation_ns": _NS_ABLATION,
     }
-    _extracted: ClassVar[dict[str, AnalysisStore] | None] = None
+    _extracted: ClassVar[dict[str, AnalysisStore | ExtractedAnalysisStore] | None] = None
 
-    def build_extracted_values(self, request) -> dict[str, AnalysisStore | _AblationAnswerLogitsStore]:
-        extracted: dict[str, AnalysisStore | _AblationAnswerLogitsStore] = {}
+    def build_extracted_values(self, request) -> dict[str, AnalysisStore | ExtractedAnalysisStore]:
+        extracted: dict[str, AnalysisStore | ExtractedAnalysisStore] = {}
         for name, fixture_key in self._fixture_map.items():
             if name in {"ablation_br", "ablation_ns"}:
-                extracted[name] = extract_fixture_data(
-                    request,
-                    fixture_key,
-                    lambda fixture: _AblationAnswerLogitsStore(answer_logits=fixture.result.answer_logits),
-                )
+                extracted[name] = extract_analysis_store_fields(request, fixture_key, ("answer_logits",))
             else:
                 extracted[name] = extract_fixture_result(request, fixture_key)
         return extracted
 
-    def extract_values(self, request) -> dict[str, AnalysisStore | _AblationAnswerLogitsStore]:
-        return cast(dict[str, AnalysisStore | _AblationAnswerLogitsStore], super().extract_values(request))
+    def extract_values(self, request) -> dict[str, AnalysisStore | ExtractedAnalysisStore]:
+        return cast(dict[str, AnalysisStore | ExtractedAnalysisStore], super().extract_values(request))
 
     @classmethod
     def _resolve_key_name(cls, fixture_key: str) -> str:

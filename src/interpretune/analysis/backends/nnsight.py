@@ -13,6 +13,8 @@ compatible with analysis op expectations (``items()``, ``keys()``, ``__getitem__
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+import platform
 from typing import Any, Callable, Literal, Sequence
 
 import nnsight as _nnsight
@@ -34,6 +36,26 @@ _nnsight.CONFIG.APP.PYMOUNT = False  # type: ignore[attr-defined]  # nnsight CON
 # Common backbone attribute names shared by many HF causal-LM wrappers
 # (GPT2LMHeadModel.transformer, LlamaForCausalLM.model, etc.).
 _BACKBONE_ATTR_NAMES = ("transformer", "model")
+
+_CONFIGS_PER_PASS_ENV = "IT_NNSIGHT_CONFIGS_PER_PASS"
+
+
+def get_default_configs_per_pass() -> int:
+    """Return a conservative default multi-invoke batch size for the current runtime.
+
+    CPU-only runs are substantially more memory-sensitive for attr-ablation than GPU-backed execution, and hosted
+    Windows runners have been the most fragile path in CI. Allow an explicit env override for local profiling while
+    defaulting to smaller CPU batches.
+    """
+
+    env_value = os.environ.get(_CONFIGS_PER_PASS_ENV)
+    if env_value is not None:
+        return int(env_value)
+
+    if not torch.cuda.is_available():
+        return 2 if platform.system() == "Windows" else 4
+
+    return 32
 
 
 def _find_backbone_module(hf_model: Any) -> Any | None:

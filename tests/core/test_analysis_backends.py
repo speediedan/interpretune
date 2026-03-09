@@ -29,6 +29,7 @@ from interpretune.analysis.backends.nnsight import (
     NNsightModelBackend,
     _DummyHookPoint,
     _apply_saved_to_cache_hooks,
+    get_default_configs_per_pass,
     _matches_names_filter,
     _navigate_envoy,
     _read_envoy_activation,
@@ -68,6 +69,22 @@ class TestNNsightBackendConfig:
         assert callable(restored)
         # Verify the restored function name matches
         assert restored.__name__ == "sample_trace_body"
+
+    def test_default_configs_per_pass_cpu_linux(self, monkeypatch):
+        monkeypatch.delenv("IT_NNSIGHT_CONFIGS_PER_PASS", raising=False)
+        monkeypatch.setattr("interpretune.analysis.backends.nnsight.platform.system", lambda: "Linux")
+        monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+        assert get_default_configs_per_pass() == 4
+
+    def test_default_configs_per_pass_cpu_windows(self, monkeypatch):
+        monkeypatch.delenv("IT_NNSIGHT_CONFIGS_PER_PASS", raising=False)
+        monkeypatch.setattr("interpretune.analysis.backends.nnsight.platform.system", lambda: "Windows")
+        monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+        assert get_default_configs_per_pass() == 2
+
+    def test_default_configs_per_pass_env_override(self, monkeypatch):
+        monkeypatch.setenv("IT_NNSIGHT_CONFIGS_PER_PASS", "6")
+        assert get_default_configs_per_pass() == 6
 
 
 # ==============================================================================

@@ -23,10 +23,56 @@ from contextlib import contextmanager
 from copy import deepcopy
 from typing import Any, ClassVar, Literal
 
+import torch
+
+from interpretune.analysis.core import LatentAnalysisDict
+
 from tests.runif import get_runner_ram_gb
 
 ANALYSIS_LOW_RAM_GB = 16
 FixtureScope = Literal["function", "class", "module", "session"]
+
+
+class ExtractedAnalysisStore:
+    """Minimal ``AnalysisStore`` view backed by a selected subset of fields."""
+
+    def __init__(self, **fields: Any) -> None:
+        self._fields = fields
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> ExtractedAnalysisStore:
+        copied = type(self)(**deepcopy(self._fields, memo))
+        memo[id(self)] = copied
+        return copied
+
+    def __getattr__(self, name: str) -> Any:
+        if name in self._fields:
+            return self._fields[name]
+        raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
+
+    def by_latent_model(self, field_name: str, stack_latents: bool = True) -> LatentAnalysisDict:
+        """Match ``AnalysisStore.by_latent_model`` for selected nested fields."""
+
+        values = getattr(self, field_name)
+        assert values, f"No values found for field {field_name}"
+        if not isinstance(values[0], dict):
+            raise TypeError(
+                f"Values for field {field_name} must be dictionaries to be transformed into a LatentAnalysisDict"
+            )
+
+        result = LatentAnalysisDict()
+        sae_names = values[0].keys()
+        for sae in sae_names:
+            if isinstance(values[0][sae], dict) and stack_latents:
+                batch_tensors = []
+                for batch in values:
+                    latent_tensors = [tensor for tensor in batch[sae].values()]
+                    batch_tensors.append(torch.stack(latent_tensors) if latent_tensors else None)
+                result[sae] = batch_tensors  # type: ignore[assignment]
+            else:
+                result[sae] = [  # type: ignore[assignment]
+                    None if isinstance(batch[sae], list) and not batch[sae] else batch[sae] for batch in values
+                ]
+        return result
 
 
 def analysis_fixture_scope(
@@ -74,6 +120,25 @@ def extract_fixture_data(
     with conditional_clean_cpu(fixture, min_ram_gb=min_ram_gb) as active_fixture:
         extracted = extractor(active_fixture)
     return deepcopy(extracted)
+
+
+def extract_analysis_store_fields(
+    request: Any,
+    fixture_key: str,
+    field_names: list[str] | tuple[str, ...],
+    min_ram_gb: int = ANALYSIS_LOW_RAM_GB,
+) -> ExtractedAnalysisStore:
+    """Copy selected ``fixture.result`` fields into a lightweight analysis-store view."""
+
+    selected_fields = tuple(field_names)
+    return extract_fixture_data(
+        request,
+        fixture_key,
+        lambda fixture: ExtractedAnalysisStore(
+            **{field_name: getattr(fixture.result, field_name) for field_name in selected_fields}
+        ),
+        min_ram_gb=min_ram_gb,
+    )
 
 
 class AnalysisExtractionMixin:

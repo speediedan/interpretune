@@ -280,7 +280,7 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
         from nnsight import LanguageModel
 
         from interpretune.analysis.backends.hook_mapping import HookNameResolver
-        from interpretune.analysis.backends.nnsight import NNsightModelBackend
+        from interpretune.analysis.backends.nnsight import NNsightModelBackend, get_default_configs_per_pass
         from interpretune.utils import rank_zero_debug
 
         nnsight_cfg = self.nnsight_cfg  # type: ignore[attr-defined]  # from NNsightAttributeMixin
@@ -331,7 +331,10 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
             model_arch = type(hf_model).__name__
 
         resolver = HookNameResolver(model_arch)
-        self._model_backend = NNsightModelBackend(resolver)  # type: ignore[attr-defined]
+        self._model_backend = NNsightModelBackend(
+            resolver,
+            configs_per_pass=get_default_configs_per_pass(),
+        )  # type: ignore[attr-defined]
         self._model_backend.register_model_hooks(self.model)  # type: ignore[attr-defined]
         rank_zero_info(f"NNsight model backend initialized with architecture: {model_arch}")
 

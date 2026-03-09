@@ -38,6 +38,10 @@ def get_runner_ram_gb() -> float:
     Cached so repeated checks from RunIf and test helpers do not repeatedly re-query system memory.
     """
 
+    mocked_total_ram = os.environ.get("IT_MOCK_RUNNER_RAM_GB")
+    if mocked_total_ram is not None:
+        return float(mocked_total_ram)
+
     return psutil.virtual_memory().total / (1024**3)
 
 
