@@ -1,1 +1,2 @@
 transformer-lens
+# nnsight # uncomment to enable SAELens from source

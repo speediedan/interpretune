@@ -1,4 +1,5 @@
-from typing import Any, TypeAlias
+from __future__ import annotations
+from typing import Any, TypeAlias, TYPE_CHECKING
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -8,13 +9,20 @@ from transformer_lens.utilities import get_device as tl_get_device
 from transformer_lens.config import HookedTransformerConfig
 
 from interpretune.config import (
-    ITLensConfig,
+    ITConfig,
     ITSerializableCfg,
     ITLensCfgTypes,
     ITLensCustomConfig,
     ITLensFromPretrainedConfig,
 )
-from interpretune.utils import rank_zero_warn, MisconfigurationException
+from interpretune.config.transformer_lens import ITLensBridgeConfig, TLConfigInitMixin
+from interpretune.utils import rank_zero_warn, MisconfigurationException, _resolve_dtype
+
+if TYPE_CHECKING:
+    from interpretune.config.nnsight import NNsightConfig
+
+# Valid backend identifiers
+_VALID_SAE_BACKENDS = ("transformerlens", "nnsight")
 
 ################################################################################
 # SAE Lens Configuration Encapsulation
@@ -52,7 +60,32 @@ SAECfgType: TypeAlias = SAELensFromPretrainedConfig | SAELensCustomConfig
 
 
 @dataclass(kw_only=True)
-class SAELensConfig(ITLensConfig):
+class SAELensConfig(ITConfig, TLConfigInitMixin):
+    """Configuration for SAE Lens adapter.
+
+    Supports both TransformerLens and NNsight backends via the ``backend`` field.
+    When ``backend="transformerlens"`` (default), ``tl_cfg`` must be provided.
+    When ``backend="nnsight"``, ``nnsight_cfg`` must be provided instead.
+
+    Inherits from :class:`ITConfig` (not ``ITLensConfig``) so that it is backend-agnostic
+    at the type level.  TL-specific initialization logic is provided by
+    :class:`TLConfigInitMixin`, which is shared with ``ITLensConfig``.
+
+    The ``use_bridge`` field is only meaningful when ``backend="transformerlens"``
+    and controls whether a SAETransformerBridge (True) or HookedSAETransformer (False) is used.
+    """
+
+    # Backend selection
+    backend: str = "transformerlens"
+    use_bridge: bool = True
+
+    # TL backend configuration (required when backend="transformerlens")
+    tl_cfg: ITLensFromPretrainedConfig | ITLensCustomConfig | ITLensBridgeConfig | None = None
+
+    # NNsight backend configuration (required when backend="nnsight")
+    nnsight_cfg: NNsightConfig | None = None
+
+    # SAE-specific fields
     sae_cfgs: SAECfgType | Sequence[SAECfgType]
     add_saes_on_init: bool = False  # TODO: may push this down to SAE config level instead of setting for all saes
     # use_error_term: bool = False  # TODO: add support for use_error_term with on_init stateful SAEs
@@ -74,15 +107,137 @@ class SAELensConfig(ITLensConfig):
         return normalized_names
 
     def __post_init__(self) -> None:
-        super().__post_init__()
+        # Validate backend
+        if self.backend not in _VALID_SAE_BACKENDS:
+            raise ValueError(f"Invalid backend '{self.backend}'. Must be one of {_VALID_SAE_BACKENDS}")
+        if self.backend != "transformerlens" and self.use_bridge:
+            rank_zero_warn(
+                "use_bridge=True is only meaningful when backend='transformerlens'. This setting will be ignored."
+            )
+
+        # Validate and normalize sae_cfgs (backend-agnostic)
         if not self.sae_cfgs:
             raise MisconfigurationException(
                 "At least one `SAELensFromPretrainedConfig` or `SAELensCustomConfig` must be provided to "
-                "initialize a HookedSAETransformer and use SAE Lens."
+                "initialize SAE Lens."
             )
         if isinstance(self.sae_cfgs, (SAELensFromPretrainedConfig, SAELensCustomConfig)):
             self.sae_cfgs = [self.sae_cfgs]
+
+        # Backend-specific initialization
+        if self.backend == "transformerlens":
+            self._init_tl_backend()
+        else:
+            self._init_nnsight_backend()
+
+    def _init_tl_backend(self) -> None:
+        """Initialize TransformerLens backend configuration."""
+        if not self.tl_cfg:
+            raise MisconfigurationException(
+                "A valid tl_cfg (ITLensFromPretrainedConfig, ITLensCustomConfig, or ITLensBridgeConfig) must be "
+                "provided when backend='transformerlens'."
+            )
+
+        # Warn if nnsight_cfg is set but not used
+        if self.nnsight_cfg is not None:
+            rank_zero_warn("nnsight_cfg is set but backend is 'transformerlens'. This setting will be ignored.")
+
+        # Initialize TL config state (validation, pretrained sync, config translation)
+        # via TLConfigInitMixin — shared with ITLensConfig
+        self._init_tl_cfg_state()
+
+        # Call ITConfig.__post_init__ for base config setup (dtype resolution etc.)
+        super().__post_init__()
+
+        # Sync SAE device config with TL device
         self._sync_sl_tl_device_cfg()
+
+    def _init_nnsight_backend(self) -> None:
+        """Initialize NNsight backend configuration."""
+        from interpretune.config.nnsight import NNsightConfig
+
+        if not self.nnsight_cfg:
+            raise MisconfigurationException(
+                "A valid nnsight_cfg (NNsightConfig) must be provided when backend='nnsight'."
+            )
+
+        if not isinstance(self.nnsight_cfg, NNsightConfig):
+            try:
+                self.nnsight_cfg = NNsightConfig(**self.nnsight_cfg)
+            except Exception as e:
+                raise MisconfigurationException(
+                    f"Failed to initialize NNsightConfig from provided nnsight_cfg. "
+                    f"nnsight_cfg should be either a NNsightConfig instance or a dict "
+                    f"convertible to one. Error: {e}"
+                )
+
+        # Warn if tl_cfg is set but not used
+        if self.tl_cfg is not None:
+            rank_zero_warn("tl_cfg is set but backend is 'nnsight'. This setting will be ignored.")
+
+        # Sync model_name_or_path with nnsight_cfg.model_name
+        self._sync_nnsight_model_name()
+
+        # Set dtype from nnsight_cfg if available
+        assert self.nnsight_cfg is not None  # narrowing for type checker; validated above
+        if self.nnsight_cfg.resolved_dtype is not None:
+            self._dtype = _resolve_dtype(self.nnsight_cfg.resolved_dtype)
+
+        # Call ITConfig.__post_init__ for base config setup (dtype resolution etc.)
+        super().__post_init__()
+
+        # Sync SAE device config with NNsight model device
+        self._sync_sl_nnsight_device_cfg()
+
+    def _sync_sl_nnsight_device_cfg(self) -> None:
+        """Sync SAE config devices with the NNsight model's target device.
+
+        Mirrors :meth:`_sync_sl_tl_device_cfg` for the NNsight backend.
+        ``SAELensFromPretrainedConfig.__post_init__`` calls ``tl_get_device()`` which may
+        resolve to CUDA even when the NNsight model is on CPU.  This method corrects
+        the SAE configs to match the NNsight device.
+        """
+        assert self.nnsight_cfg is not None
+        device_map = self.nnsight_cfg.device_map
+        # Resolve a simple target device string from the NNsight device_map
+        if isinstance(device_map, str) and device_map not in ("auto", "balanced", "sequential"):
+            target_device = device_map  # e.g. "cpu", "cuda", "cuda:0"
+        else:
+            # For auto / dict / None, fall back to auto-detection
+            target_device = str(tl_get_device())
+
+        if isinstance(self.sae_cfgs, (SAELensFromPretrainedConfig, SAELensCustomConfig)):
+            sae_cfgs: Sequence[SAECfgType] = [self.sae_cfgs]
+        else:
+            sae_cfgs = self.sae_cfgs
+        for sae_cfg in sae_cfgs:
+            if hasattr(sae_cfg, "cfg"):
+                assert isinstance(sae_cfg, SAELensCustomConfig)
+                assert isinstance(sae_cfg.cfg, SAEConfig)
+                setattr(sae_cfg.cfg, "device", target_device)
+            else:
+                assert isinstance(sae_cfg, SAELensFromPretrainedConfig)
+                setattr(sae_cfg, "device", target_device)
+
+    def _sync_nnsight_model_name(self) -> None:
+        """Synchronize model_name_or_path with nnsight_cfg.model_name."""
+        assert self.nnsight_cfg is not None  # validated in _init_nnsight_backend
+        it_model = self.model_name_or_path
+        ns_model = self.nnsight_cfg.model_name
+
+        if not it_model and not ns_model:
+            raise MisconfigurationException("Either model_name_or_path or nnsight_cfg.model_name must be provided.")
+
+        if not it_model and ns_model:
+            self.model_name_or_path = ns_model
+        elif it_model and not ns_model:
+            self.nnsight_cfg.model_name = it_model
+        elif it_model != ns_model:
+            rank_zero_warn(
+                f"model_name_or_path ('{it_model}') differs from nnsight_cfg.model_name ('{ns_model}'). "
+                f"Using model_name_or_path. Set nnsight_cfg.model_name=None to silence this warning."
+            )
+            self.nnsight_cfg.model_name = it_model
 
     def _sync_sl_tl_device_cfg(self):
         assert isinstance(self.tl_cfg, ITLensCfgTypes)
@@ -90,6 +245,8 @@ class SAELensConfig(ITLensConfig):
             assert isinstance(self.tl_cfg, ITLensCustomConfig)
             assert isinstance(self.tl_cfg.cfg, HookedTransformerConfig)
             tl_device = self.tl_cfg.cfg.device
+        elif isinstance(self.tl_cfg, ITLensBridgeConfig):
+            tl_device = self.tl_cfg.device
         else:
             assert isinstance(self.tl_cfg, ITLensFromPretrainedConfig)
             tl_device = self.tl_cfg.device

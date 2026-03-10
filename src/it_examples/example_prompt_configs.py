@@ -2,15 +2,16 @@ from dataclasses import dataclass
 from it_examples.experiments.rte_boolq import RTEBoolqPromptConfig
 
 ####################################
-# Gemma2
+# Gemma (unified for Gemma2/Gemma3)
 ####################################
-# TODO: add option for using HF `tokenizer.apply_chat_template` api?
-#       We usually want full control so lower priority atm, but will likely be valuable in the future.
+# Gemma2 and Gemma3 instruction-tuned models use the same <start_of_turn>/<end_of_turn> chat template.
+# TODO: consider using HF `tokenizer.apply_chat_template` api instead of manual template construction
+#       (see docs/apply_chat_template_proposal.md for details)
 
 
 @dataclass(kw_only=True)
-class Gemma2PromptConfig:
-    # see https://huggingface.co/google/gemma-2-2b-it for more details
+class GemmaPromptConfig:
+    # see https://huggingface.co/google/gemma-2-2b-it and https://huggingface.co/google/gemma-3-1b-it
     B_TURN: str = "<start_of_turn>"
     E_TURN: str = "<end_of_turn>"
     USER_ROLE: str = "user"
@@ -21,15 +22,25 @@ class Gemma2PromptConfig:
         self.USER_ROLE_END = self.E_TURN + self.B_TURN + self.ASSISTANT_ROLE + "\n"
 
     def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: str | None = None) -> str:
-        if tokenization_pattern == "gemma2-chat":
+        if tokenization_pattern == "gemma-chat":
             sequence = self.USER_ROLE_START + f"{task_prompt.strip()} {self.USER_ROLE_END}"
         else:
             sequence = task_prompt.strip()
         return sequence
 
 
+# Backward-compatible aliases
+Gemma2PromptConfig = GemmaPromptConfig
+Gemma3PromptConfig = GemmaPromptConfig
+
+
 @dataclass(kw_only=True)
-class RTEBoolqGemma2PromptConfig(Gemma2PromptConfig, RTEBoolqPromptConfig): ...
+class RTEBoolqGemmaPromptConfig(GemmaPromptConfig, RTEBoolqPromptConfig): ...
+
+
+# Backward-compatible aliases
+RTEBoolqGemma2PromptConfig = RTEBoolqGemmaPromptConfig
+RTEBoolqGemma3PromptConfig = RTEBoolqGemmaPromptConfig
 
 
 ####################################

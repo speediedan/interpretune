@@ -6,12 +6,12 @@ from pathlib import Path
 from interpretune.utils import rank_zero_warn, rank_zero_debug, MisconfigurationException
 from interpretune.analysis import AnalysisOp
 from interpretune.analysis.cache import get_analysis_cache_dir
-from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg, SAEAnalysisTargets
+from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg, LatentAnalysisTargets
 from interpretune.protocol import StrOrPath
 
 if TYPE_CHECKING:
     from interpretune.session import ITSession
-    from interpretune.protocol import ITModuleProtocol, ITDataModuleProtocol, SAEAnalysisModuleProtocol
+    from interpretune.protocol import ITModuleProtocol, ITDataModuleProtocol, LatentAnalysisModuleProtocol
 
 
 # Standalone functions for analysis initialization
@@ -71,7 +71,7 @@ def to_analysis_cfgs(
 
 
 def init_analysis_dirs(
-    module: "SAEAnalysisModuleProtocol",
+    module: "LatentAnalysisModuleProtocol",
     cache_dir: str | Path | None = None,
     op_output_dataset_path: str | Path | None = None,
     analysis_cfgs: list[AnalysisCfg] | None = None,
@@ -122,11 +122,11 @@ def init_analysis_dirs(
 
 
 def init_analysis_cfgs(
-    module: "SAEAnalysisModuleProtocol",
+    module: "LatentAnalysisModuleProtocol",
     analysis_cfgs: list[AnalysisCfg],
     cache_dir: str | Path | None = None,
     op_output_dataset_path: str | Path | None = None,
-    sae_analysis_targets: "SAEAnalysisTargets | None" = None,
+    latent_analysis_targets: "LatentAnalysisTargets | None" = None,
     ignore_manual: bool = False,
 ) -> None:
     """Initialize analysis configurations for the given module.
@@ -136,7 +136,7 @@ def init_analysis_cfgs(
         analysis_cfgs: List of analysis configurations to initialize
         cache_dir: Optional path to cache directory
         op_output_dataset_path: Optional path for analysis outputs
-        sae_analysis_targets: Optional analysis targets to use
+        latent_analysis_targets: Optional analysis targets to use
         ignore_manual: Whether to ignore existing manual analysis steps
     """
     # Initialize directories
@@ -150,7 +150,7 @@ def init_analysis_cfgs(
     # Apply each analysis configuration to the module, respecting already-applied configs
     for cfg in analysis_cfgs:
         if not cfg.applied_to(module):
-            cfg.apply(module, str(cache_dir), str(op_output_dataset_path), sae_analysis_targets)
+            cfg.apply(module, str(cache_dir), str(op_output_dataset_path), latent_analysis_targets)
 
 
 @dataclass(kw_only=True)
@@ -191,8 +191,8 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
     limit_analysis_batches: int = -1
     cache_dir: str | Path | None = None
     op_output_dataset_path: str | Path | None = None
-    # Add optional sae_analysis_targets as a fallback
-    sae_analysis_targets: SAEAnalysisTargets | None = None
+    # Add optional latent_analysis_targets as a fallback
+    latent_analysis_targets: LatentAnalysisTargets | None = None
     # Add artifact configuration
     artifact_cfg: AnalysisArtifactCfg = field(default_factory=AnalysisArtifactCfg)
     # Global override for ignore_manual setting in analysis configs

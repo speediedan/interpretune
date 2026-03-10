@@ -1,0 +1,459 @@
+---
+name: debug-remote-ci-failures
+description: Systematic workflow for debugging remote CI test failures across multiple OS runners (Ubuntu, Windows, macOS). Covers artifact analysis, failure categorization, root cause isolation, and iterative fix/push/verify cycles.
+license: Apache-2.0
+metadata:
+  author: speediedan
+  version: '1.0'
+compatibility: Requires bash, git, gh CLI, Python 3.10+, and access to the Interpretune repository.
+---
+
+# Debug Remote CI Failures Skill
+
+This skill documents the systematic process for debugging CI test failures that occur on remote GitHub Actions runners but may not reproduce locally. It was distilled from debugging interpretune PR #197 (nnsight-support branch) across Ubuntu 22.04, Windows 2022, and macOS 14 runners.
+
+## When to Use This Skill
+
+Use this skill when:
+
+- CI tests fail on one or more OS runners but pass locally
+- You need to analyze failures across multiple platforms systematically
+- Failures span multiple categories (encoding, dependency versions, numerical precision, etc.)
+- You need to decide between fixing application code vs test infrastructure vs dependency pins
+
+## Prerequisites
+
+- `gh` CLI authenticated with repo access
+- Local development environment matching CI Python version (3.13)
+- Access to push to the branch under test
+
+## Workflow Overview
+
+1. **Download and parse CI artifacts** to see exact failure output
+2. **Fall back to raw job logs** when a runner shutdown prevents artifact upload
+2. **Categorize failures** by root cause pattern
+3. **Prioritize fixes** — some categories may resolve others
+4. **Fix, commit, push, verify** — iterative loop
+5. **Document findings** for future reference
+
+---
+
+## Step 1: Download CI Artifacts
+
+```bash
+# Find the failed workflow run
+gh run list --branch <branch-name> --limit 10
+
+# Download all artifacts from the run
+mkdir -p /tmp/ci_artifacts_<run_id>
+gh run download <run_id> --dir /tmp/ci_artifacts_<run_id>
+
+# If artifacts aren't available, use run logs directly
+gh run view <run_id> --log > /tmp/ci_run_<run_id>.log 2>&1
+
+# For runner-shutdown cases, download the raw job log directly
+job_id=$(gh api "repos/<owner>/<repo>/actions/runs/<run_id>/jobs" --jq '.jobs[] | select(.name | contains("ubuntu")) | .id')
+gh api "repos/<owner>/<repo>/actions/jobs/${job_id}/logs" > /tmp/ci_job_<job_id>.log
+```
+
+### Extracting Test Results from Logs
+
+When artifacts contain raw pytest output, extract the failure summary:
+
+```bash
+# Get just the FAILURES section
+grep -A 200 "^FAILURES" /tmp/ci_artifacts_<run_id>/<artifact>/output.txt
+
+# Count failures per OS
+grep -c "FAILED" /tmp/ci_artifacts_<run_id>/<os>-*/output.txt
+
+# Get unique test names that failed
+grep "^FAILED" /tmp/ci_artifacts_<run_id>/<os>-*/output.txt | sort -u
+```
+
+When resource-monitor or debug artifacts are skipped, grep the raw job log for inline markers:
+
+```bash
+grep -nE "analysis_resource_debug|op_serialization_resource_debug|shutdown signal|exit code 143" /tmp/ci_job_<job_id>.log
+```
+
+When a prior successful run uploaded `ci_resource_monitor.log`, treat it as a coarse baseline only:
+
+- It captures whole-run snapshots of top-process `%MEM`, whole-system free memory, and disk usage.
+- It does **not** replace inline `log_resource_snapshot(...)` markers for per-test RSS analysis.
+- Compare the failed raw log against the successful monitor artifact to distinguish real resource
+  growth from an external cancellation on the same commit.
+
+---
+
+## Step 2: Categorize Failures
+
+Group failures by root cause pattern, not by test name. Common categories:
+
+### Category A: Platform-Specific Encoding Issues
+
+**Pattern**: `UnicodeEncodeError: 'charmap' codec can't encode character`
+
+**Typical OS**: Windows only (cp1252 encoding)
+
+**Root Cause**: Source files contain Unicode characters (arrows, checkmarks, emojis) that Windows default encoding cannot handle.
+
+**Fix**: Replace Unicode symbols with ASCII equivalents in test output strings:
+- `\u2713` (checkmark) -> `[OK]`
+- `\u2717` (cross) -> `[FAIL]`
+- `\u2705` (green check) -> `[PASS]`
+- `\u26A0` (warning) -> `[WARN]`
+- `\u2192` (arrow) -> `->`
+
+**Example from PR #197**:
+```python
+# Before (Windows fails)
+summary.append(f"  \u2713 {name}: validated")
+
+# After (cross-platform)
+summary.append(f"  [OK] {name}: validated")
+```
+
+### Category B: Dependency Version Mismatch
+
+**Pattern**: Shape mismatches, missing methods/attributes, unexpected API behavior
+
+**Typical OS**: All platforms
+
+**Root Cause**: CI installs different dependency versions than local development. Common when:
+- `pyproject.toml` pins point to old commits
+- Override files (`overrides.txt`) are out of sync with `pyproject.toml`
+- Local env has from-source installs that haven't been pushed as CI dependency pins
+
+**Diagnosis**:
+```bash
+# Compare local vs CI package versions
+# Local:
+pip show transformer-lens sae-lens circuit-tracer nnsight
+
+# CI (from log artifacts):
+grep "transformer.lens\|sae.lens\|circuit.tracer\|nnsight" /tmp/ci_artifacts_<run_id>/*/output.txt
+```
+
+**Fix**: Update dependency pins in `pyproject.toml` and ensure override-dependencies use the same fork/commit:
+
+```bash
+# Check for discrepancies between pyproject.toml pins and override files
+diff <(grep "TransformerLens\|SAELens" pyproject.toml) <(cat requirements/ci/overrides.txt)
+
+# Regenerate lock file after updating pins
+./requirements/utils/lock_ci_requirements.sh
+```
+
+**Key Lesson from PR #197**: The `override-dependencies` section in `pyproject.toml` must match the actual dependency pins. Having `TransformerLensOrg` in overrides while the main dependency points to `speediedan` fork causes CI to install the wrong version, even though both forks share commit history.
+
+### Category C: Numerical Precision / Backend Parity
+
+**Pattern**: `AssertionError: Tensor close check failed: max diff = 0.09...`
+
+**Typical OS**: All platforms (may vary by CPU architecture)
+
+**Root Cause**: Different backends (TransformerBridge vs NNsight vs HookedTransformer) produce slightly different numerical results due to:
+- Different computation order
+- Float32 accumulation differences
+- Bridge vs HookedTransformer weight conversion path differences
+
+**Fix Options**:
+1. Relax tolerances if the difference is mathematically acceptable
+2. Fix the computation path if there's a genuine bug
+3. Accept platform-specific tolerances via parametrize marks
+
+### Category D: Test Infrastructure Issues
+
+**Pattern**: Varied — fixture resolution failures, import errors, mock failures
+
+**Root Cause**: Test helpers or fixtures that make assumptions about the environment.
+
+**Fix**: Address the specific infrastructure issue. See the `fixture_usage.instructions.md` for fixture patterns.
+
+### Category E: Memory Exhaustion During Dataset Fingerprinting
+
+**Pattern**: `MemoryError` during `dill.Pickler` → `_save_torchTensor` → `write_large_bytes`
+
+**Typical OS**: Windows (most memory-constrained CI runners), potentially Ubuntu
+
+**Root Cause**: `Dataset.from_generator()` (HuggingFace `datasets` library) hashes all `gen_kwargs` via `dill` serialization to build a fingerprint for caching. When `gen_kwargs` contains a full model module (with all weights), dill tries to serialize the entire model into memory — causing `MemoryError` on memory-constrained CI runners.
+
+**Fix**: Keep `Dataset.from_generator()` but provide an explicit `fingerprint=` so HuggingFace datasets does not dill-hash `gen_kwargs`:
+```python
+# Before (OOMs on CI when datasets hashes gen_kwargs):
+dataset = Dataset.from_generator(generator_fn, gen_kwargs=gen_kwargs, features=features, ...)
+
+# After (generator-backed, no dill hashing of module/model state):
+dataset = Dataset.from_generator(
+  generator_fn,
+  gen_kwargs=gen_kwargs,
+  features=features,
+  fingerprint=generate_random_fingerprint(),
+)
+```
+
+This preserves generator-backed writes and avoids the old CI failure mode without materializing the full dataset in memory first.
+
+**Example from PR #197**: `generate_analysis_dataset()` in `analysis.py` passes `gen_kwargs` containing the ITModule and datamodule. Supplying an explicit per-run `fingerprint=` prevents datasets from hashing those heavyweight objects.
+
+### Category G: Fingerprint Scope vs Persistent Cache Semantics
+
+**Pattern**: runtime dataset creation succeeds, but there is pressure to reuse the same fingerprint across runs for caching.
+
+**Typical OS**: All (macOS, Windows, Ubuntu)
+
+**Root Cause**: the explicit fingerprint used to avoid dill-hashing `gen_kwargs` is a runtime safety mechanism, not a semantically meaningful cache key. Reusing it across runs would risk stale AnalysisStore data unless the fingerprint accounts for the full analysis contract.
+
+**Fix**: Use a per-run fingerprint for the immediate runtime path and keep deterministic cross-run caching as a separate design problem.
+
+**Lesson**: treat the runtime fingerprint and the future AnalysisStore cache key as two different concerns. The runtime fix prevents memory blowups; it does not solve persistent cache reuse.
+
+### Category H: CPython Segfault in Upstream Threading (nnsight interleaver)
+
+**Pattern**: `Segmentation fault` (exit code 139) during nnsight thread-interleaved analysis. Faulthandler dump shows multiple threads stuck in `interleaver.py wait` → `send` → `request` → `envoy.py inputs/input` chains.
+
+**Typical OS**: Windows (observed on 3.13.12). May affect other platforms under memory pressure.
+
+**Root Cause**: The nnsight interleaver creates worker threads for each trace invocation. During multi-trace analysis operations (e.g., SAE ablation attribution, which runs one trace per alive latent), many threads accumulate. On Windows, this can trigger a CPython-level segfault in the threading layer — not a Python exception, but a process crash.
+
+**Diagnosis**:
+```bash
+# Download full job log (artifacts may not contain useful data for segfaults)
+job_id=$(gh api "repos/<owner>/<repo>/actions/runs/<run_id>/jobs" --jq '.jobs[] | select(.name | contains("windows")) | .id')
+gh api "repos/<owner>/<repo>/actions/jobs/${job_id}/logs" > /tmp/windows_log.txt
+
+# Look for segfault and thread dumps
+grep -n "Segmentation fault\|Current thread\|faulthandler" /tmp/windows_log.txt
+```
+
+**Fix**: This is an upstream nnsight issue, not fixable in interpretune code. The multi-trace ablation analysis is also memory-intensive enough to OOM GitHub CI runners (~7GB RAM on Ubuntu). Mark the affected tests as standalone (`@RunIf(standalone=True)`) so they only run with `IT_RUN_STANDALONE_TESTS=1` (locally or on GPU CI). The non-ablation NNsight tests (base, SAE, gradient attribution) typically pass fine in regular CI.
+
+### Category F: Unexplained Step Cancellation / Runner Shutdown
+
+**Pattern**: A CI step shows `conclusion: "cancelled"` with `startedAt: null` and zero log output, OR `conclusion: "failure"` with `##[error]The runner has received a shutdown signal`
+
+**Typical OS**: Ubuntu (observed), potentially any
+
+**Root Cause**: Usually OOM-kill by the Linux kernel or a transient runner infrastructure issue. The process is killed before producing any output. Key indicators:
+- Job ran for a round number of minutes (e.g., exactly 60m)
+- No error artifacts uploaded
+- Install step succeeded but the test step produced zero lines of output
+- Other OS jobs on the same run completed normally
+
+**Diagnosis**:
+```bash
+# Check step conclusions
+gh run view <run_id> --json jobs --jq '.jobs[] | select(.name | contains("ubuntu")) | .steps[] | {name: .name, conclusion: .conclusion}'
+
+# Compare job duration (suspiciously round = likely killed)
+gh run view <run_id> --json jobs --jq '.jobs[] | {name: .name, started: .startedAt, completed: .completedAt}'
+```
+
+**Fix**: Often transient — push a new commit and re-run. If persistent, investigate memory usage during test collection (may need to add resource monitoring or reduce parallel test load).
+
+If the exact same commit previously passed and the rerun dies at a different point without a rising
+resource trend in the inline markers, treat that as likely runner instability first. Still prefer a
+small stabilizing change if you can reduce peak fixture retention, but do not assume every cancellation
+is a deterministic code regression.
+
+**Important follow-up from PR #197**: GitHub Actions can report the pytest step as `failure` with
+`Process completed with exit code 143` and `The runner has received a shutdown signal`, then still skip
+every downstream `if: always()` upload step while the job remains temporarily marked `in_progress`.
+When this happens, do not wait on artifacts that will never appear. Pull the raw job log directly and rely on
+inline debug markers.
+
+### Category I: Analysis Setup Dies Before the Existing Serialization Marker
+
+**Pattern**: A targeted analysis test logs the test name, then the runner dies before the existing
+`before_save_reload` marker appears.
+
+**Typical OS**: Ubuntu (observed on GitHub-hosted 22.04)
+
+**Root Cause**: The crash occurs during analysis setup or `run_op_with_config(...)`, not during the later
+dataset serialization boundary you were already instrumenting.
+
+**Fix / Diagnosis**:
+1. Add earlier inline snapshots before and after `run_op_with_config(...)`.
+2. Add a fixture-entry snapshot inside the serialization helper before `save_reload_results_dataset(...)`.
+3. Emit snapshots inline to stdout via `log_resource_snapshot(...)` so they survive missing artifacts.
+
+Relevant helpers now live in `tests/analysis_resource_utils.py`:
+- `log_resource_snapshot(...)`
+- `analysis_resource_debug_enabled()`
+- `IT_ANALYSIS_RESOURCE_DEBUG=1`
+
+This lets you answer three distinct questions from the raw log:
+- Did the test die before the analysis run started?
+- Did it die after the analysis run but before save/reload?
+- Did it die during save/reload itself?
+
+### Category J: Function-Scoped Analysis Fixtures Need Reuse Without Rehydrating Heavy State
+
+**Pattern**: Switching an analysis fixture from class scope to function scope avoids OOM, but a follow-on
+test class becomes too slow or re-instantiates the same heavyweight Bridge/NNsight fixture for each method.
+
+**Root Cause**: The test needs only a tiny projection of the fixture result, but it keeps asking pytest to build
+the full fixture again for each assertion.
+
+**Fix**: Use the resource-aware extraction helpers from `tests/analysis_resource_utils.py`:
+
+- `build_analysis_fixture_payload_extractor(...)`
+- `AnalysisExtractionMixin.extract_cached_fixture_data(...)`
+- `ExtractedFixturePayload`
+
+This pattern caches one lightweight payload per fixture key and reuses it across test methods while still
+allowing low-RAM runners to clean up the heavyweight `result` / `runner` / `it_session` graph immediately.
+
+---
+
+## Step 3: Prioritize Fixes
+
+Apply fixes in dependency order:
+
+1. **Dependency pins first** — Updating dependency versions may resolve many failures at once (Category B often triggers symptoms that look like Category C or D)
+2. **Encoding/platform fixes** — Quick wins that are clearly correct
+3. **Refactors** — Changes that improve code organization (e.g., moving test helpers to adapter methods)
+4. **Precision/tolerance fixes** — Only after dependencies are correct
+
+### Decision Framework
+
+```
+Is the failure caused by wrong dependency version?
+  Yes -> Update pins, push, wait for CI before fixing other failures
+  No  -> Is it a platform encoding issue?
+    Yes -> Replace Unicode with ASCII, commit with other changes
+    No  -> Is it a test infrastructure issue?
+      Yes -> Fix test code, not application code
+      No  -> Investigate application code
+```
+
+---
+
+## Step 4: Fix, Commit, Push, Verify Loop
+
+### Efficient CI Iteration
+
+```bash
+# Commit and push
+git add -A && git commit -m "fix: <descriptive message>"
+git push origin <branch>
+
+# Find the new Test full run
+gh run list --branch <branch> --limit 5
+
+# Monitor progress
+gh run view <run_id> --json jobs --jq '.jobs[] | {name: .name, status: .status, conclusion: .conclusion}'
+
+# Once complete, check results
+gh run view <run_id> --json jobs --jq '.jobs[] | select(.conclusion == "failure") | .name'
+```
+
+### Pre-commit Hook Awareness
+
+The interpretune pre-commit hooks include `end-of-file-fixer` and `trailing-whitespace`. These may modify files during the first commit attempt:
+
+```bash
+# First attempt may fail
+git add -A && git commit -m "fix: ..."
+# Output: "fix end of files... Failed"
+
+# Files were auto-fixed — just re-add and commit
+git add -A && git commit -m "fix: ..."
+```
+
+### Handling Auto-Cancellation
+
+GitHub Actions auto-cancels in-progress runs when a new push arrives on the same branch (if configured with `concurrency` groups). If you need results from a specific run:
+- Wait for it to complete before pushing again, OR
+- Push only non-test changes (like type annotations) that won't trigger cancellation of the test workflow
+
+---
+
+## Step 5: Analyzing CI Results
+
+### Quick Status Check
+
+```bash
+# Get pass/fail counts from a completed run
+gh run view <run_id> --log 2>/dev/null | grep -E "passed|failed|error" | tail -5
+```
+
+### Downloading Failure Artifacts
+
+```bash
+# Download artifacts from failed run
+gh run download <run_id> --dir /tmp/ci_artifacts_<run_id>
+
+# Parse test results
+for f in /tmp/ci_artifacts_<run_id>/*/output.txt; do
+  echo "=== $(dirname $f | xargs basename) ==="
+  grep "^FAILED" "$f" | wc -l
+  grep "^FAILED" "$f"
+done
+```
+
+### Cross-Platform Failure Comparison
+
+```bash
+# Compare failures across OS runners
+diff <(grep "^FAILED" /tmp/ci_artifacts/windows-*/output.txt | sed 's/.*FAILED //' | sort) \
+     <(grep "^FAILED" /tmp/ci_artifacts/macos-*/output.txt | sed 's/.*FAILED //' | sort)
+```
+
+---
+
+## Lessons Learned from PR #197
+
+### 1. Dependency Pin Consistency is Critical
+
+The `override-dependencies` section in `pyproject.toml` serves a specific purpose: it replaces git URL dependencies with version constraints so that editable installations work correctly. If these overrides point to a different fork than the main dependency pins, CI will install the wrong package version silently.
+
+**Always verify**: `pyproject.toml` dependency URLs, `requirements/ci/overrides.txt`, and `override-dependencies` all reference the same fork and commit.
+
+### 2. Don't Chase Symptoms Before Fixing Dependencies
+
+When dependency versions are wrong, failures cascade. A single wrong TransformerLens version can cause 20+ tensor shape failures, 3 cache key failures, and 3 numerical parity failures — all from the same root cause. Fix dependency pins first and re-run CI before investigating individual test failures.
+
+### 3. Unicode in Test Output is a Windows Landmine
+
+Even when tests pass on Linux and macOS, Windows CI runners use `cp1252` encoding by default. Any Unicode characters in test assertion messages, logging output, or summary strings will cause `UnicodeEncodeError`. Use ASCII-only characters in all test output.
+
+### 4. Type Checking is a Separate CI Job
+
+The interpretune CI runs `pyright` type checking as a separate job from pytest. Adding new methods or modifying existing ones may trigger type errors even if tests pass. Check the "Stale Stubs and Type Checks" workflow alongside "Test full".
+
+### 5. Pre-commit Hooks May Modify Files
+
+The `end-of-file-fixer` and `trailing-whitespace` hooks can modify files during commit, causing the first `git commit` to fail. This is expected — just re-stage and commit again.
+
+### 6. SAE Hook Name Resolution Varies by Model Backend
+
+TransformerBridge resolves hook aliases to canonical names (e.g., `blocks.0.hook_resid_pre` -> `blocks.0.hook_in`), while HookedTransformer uses aliases directly. Any code that constructs SAE hook paths must account for this via `SAELensTLModuleMixin.resolve_sae_hook_name()` (or equivalent) rather than hardcoding the alias + suffix pattern.
+
+### 7. Avoid Passing Full Modules Through HF Datasets Fingerprinting
+
+`Dataset.from_generator()` uses `dill` to serialize all `gen_kwargs` for cache fingerprinting. If `gen_kwargs` contains a PyTorch module with model weights, this serializes the entire model into memory — an instant OOM on CI runners. Prefer keeping `Dataset.from_generator()` and supplying an explicit per-run `fingerprint=` so the runtime path stays generator-backed without hashing heavyweight objects.
+
+### 8. "Cancelled" Steps With No Output Usually Mean OOM Kill
+
+When a CI step shows `conclusion: "cancelled"` with zero log lines, the process was likely killed by the OS (e.g., Linux OOM killer). This is different from GitHub Actions "cancel-in-progress" which cancels the entire run. Look for round job durations (exactly 60m, 90m) and check if other OS jobs in the same run completed normally.
+
+### 9. Runtime Fingerprints Do Not Solve Persistent Caching
+
+An explicit runtime `fingerprint=` solves the immediate `Dataset.from_generator()` dill-serialization problem, but it should not be reused as a persistent AnalysisStore cache key. The runtime fingerprint is intentionally per-run right now; deterministic cross-run cache reuse still requires a separate, semantically meaningful hashing design.
+
+### 10. Upstream Threading Crashes May Only Surface on Specific Platforms
+
+A segfault in an upstream library's threading layer (e.g., nnsight's interleaver on Windows) is not reproducible locally if your development machine runs Linux/macOS. When you see a segfault with faulthandler output showing threads stuck in wait/send chains, it's likely an upstream platform-specific bug. Similarly, memory-intensive upstream operations (multi-trace ablation creating many threads) may OOM CI runners without affecting local machines with more RAM. The correct fix is `@RunIf(standalone=True)` — moving resource-heavy tests out of standard CI — rather than a code change in your project.
+
+---
+
+## Related Files
+
+- `.github/workflows/ci_test-full.yml` — Main CI workflow
+- `.github/workflows/ci_stubs_types.yml` — Type checking workflow
+- `pyproject.toml` — Dependency pins and override-dependencies
+- `requirements/ci/overrides.txt` — CI dependency overrides
+- `requirements/ci/requirements.txt` — Locked CI requirements
+- `.github/instructions/fixture_usage.instructions.md` — Test fixture patterns

@@ -44,6 +44,61 @@ expand_tilde(){
     fi
 }
 
+# Read torch prerelease configuration from torch-pre.txt
+# This function reads the torch-pre.txt file and sets global variables:
+#   TORCH_PRE_VERSION: The torch version to install (e.g., "2.10.0.dev20250122")
+#   TORCH_PRE_CUDA: The CUDA target (e.g., "cu128")
+#   TORCH_PRE_CHANNEL: The channel type (e.g., "nightly" or "test")
+# If torch-pre.txt doesn't exist or is empty, these variables will be empty.
+# Usage:
+#   read_torch_pre_config "/path/to/torch-pre.txt"
+#   if [[ -n "${TORCH_PRE_VERSION}" ]]; then
+#       echo "Using torch prerelease: ${TORCH_PRE_VERSION}"
+#   fi
+read_torch_pre_config(){
+    local torch_pre_file="$1"
+    TORCH_PRE_VERSION=""
+    TORCH_PRE_CUDA=""
+    TORCH_PRE_CHANNEL=""
+
+    if [[ -f "${torch_pre_file}" ]]; then
+        # Read 3-line config: version, CUDA target, channel type
+        readarray -t PRE_CONFIG < <(grep -v '^#' "${torch_pre_file}" | grep -v '^$')
+        TORCH_PRE_VERSION="${PRE_CONFIG[0]}"
+        TORCH_PRE_CUDA="${PRE_CONFIG[1]}"
+        TORCH_PRE_CHANNEL="${PRE_CONFIG[2]}"
+    fi
+}
+
+# Get the PyTorch index URL for a given channel and CUDA target
+# Arguments:
+#   $1: channel - "nightly", "test", or "stable"
+#   $2: cuda_target - e.g., "cu128", "cu126", "cpu"
+# Returns: The index URL (e.g., "https://download.pytorch.org/whl/nightly/cu128")
+# Usage:
+#   index_url=$(get_torch_index_url "nightly" "cu128")
+get_torch_index_url(){
+    local channel="$1"
+    local cuda_target="$2"
+
+    case "${channel}" in
+        nightly)
+            echo "https://download.pytorch.org/whl/nightly/${cuda_target}"
+            ;;
+        test)
+            echo "https://download.pytorch.org/whl/test/${cuda_target}"
+            ;;
+        stable|"")
+            # Stable channel uses different URL format
+            echo "https://download.pytorch.org/whl/${cuda_target}"
+            ;;
+        *)
+            echo "Error: Unknown torch channel: ${channel}" >&2
+            return 1
+            ;;
+    esac
+}
+
 # Determine venv path based on priority: --venv-dir > IT_VENV_BASE > default ~/.venvs
 # Usage: venv_path=$(determine_venv_path "$venv_dir" "$target_env_name")
 # Arguments:
@@ -196,8 +251,9 @@ install_from_source_packages(){
         IFS='|' read -r pkg_path pkg_extras pkg_env_vars <<< "${pkg_spec}"
 
         # Uninstall any existing installations (try both package name formats)
+        # Note: uv pip uninstall does not support -y flag (no confirmation prompt needed)
         local pkg_underscore="${pkg//-/_}"
-        uv pip uninstall -y "${pkg}" "${pkg_underscore}" 2>/dev/null || true
+        uv pip uninstall "${pkg}" "${pkg_underscore}" 2>/dev/null || true
 
         cd "${pkg_path}"
 
@@ -226,7 +282,29 @@ install_from_source_packages(){
             done
         fi
 
+        # If UV_OVERRIDE is set and contains the package being installed, filter
+        # that entry out to a temp file. uv uses the override to resolve the
+        # package from PyPI instead of the local "-e ." source when the package
+        # name appears in the override file, preventing editable installs.
+        local _orig_uv_override=""
+        if [[ -n "${UV_OVERRIDE:-}" && -f "${UV_OVERRIDE}" ]]; then
+            if grep -qiE "^${pkg}([^a-zA-Z0-9_-]|$)|^${pkg_underscore}([^a-zA-Z0-9_-]|$)" "${UV_OVERRIDE}"; then
+                _orig_uv_override="${UV_OVERRIDE}"
+                local _tmp_override
+                _tmp_override=$(mktemp)
+                grep -viE "^${pkg}([^a-zA-Z0-9_-]|$)|^${pkg_underscore}([^a-zA-Z0-9_-]|$)" "${UV_OVERRIDE}" > "${_tmp_override}"
+                export UV_OVERRIDE="${_tmp_override}"
+                echo "  (filtered ${pkg} from UV_OVERRIDE for editable install)"
+            fi
+        fi
+
         uv pip install ${uv_install_flags} -e "${install_target}"
+
+        # Restore original UV_OVERRIDE if we created a temp filtered version
+        if [[ -n "${_orig_uv_override}" ]]; then
+            rm -f "${UV_OVERRIDE}"
+            export UV_OVERRIDE="${_orig_uv_override}"
+        fi
 
         # Unset environment variables after installation
         if [[ ${#env_vars_set[@]} -gt 0 ]]; then

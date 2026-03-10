@@ -49,7 +49,7 @@ class RegisteredCfg(NamedTuple):
 @runtime_checkable
 class RegKeyQueryable(Protocol):
     model_src_key: str
-    model_key: str
+    model_cfg_key: str
     phase: str
     adapter_ctx: Tuple
 
@@ -59,7 +59,7 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
         self,
         phase: str,
         model_src_key: str,
-        task_name: str,
+        model_cfg_key: str,
         adapter_combinations: tuple[Adapter] | tuple[tuple[Adapter]],
         reg_key: str,
         registered_cfg: RegisteredCfg,
@@ -72,7 +72,7 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
             lead_adapter: The adapter registering this set of valid compositions (e.g. LightningAdapter)
             phase:
             model_src_key:
-            task_name:
+            model_cfg_key:
             adapter_combination: tuple identifying the valid adapter composition
             reg_key: The canonical key of the test/example module.
             registered_cfg: tuple[Callable],
@@ -86,7 +86,7 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
         self[reg_key] = supported_composition
         for a_combo in adapter_combinations:
             a_combo = (a_combo,) if not isinstance(a_combo, tuple) else a_combo
-            composition_key = (model_src_key, task_name, phase, self.canonicalize_composition(a_combo))
+            composition_key = (model_src_key, model_cfg_key, phase, self.canonicalize_composition(a_combo))
             supported_composition[composition_key] = registered_cfg  # type: ignore[assignment]
             self[composition_key] = supported_composition  # type: ignore[assignment]
 
@@ -130,11 +130,10 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
         if not isinstance(target, (tuple, str)):
             assert isinstance(target, RegKeyQueryable), (
                 f"Non-string/non-tuple keys must be `RegKeyQueryable` (i.e. an object "
-                "with at least these 4 attributes: `model_src_key`, `model_key`, `phase`, `adapter_ctx`): but got "
+                "with at least these 4 attributes: `model_src_key`, `model_cfg_key`, `phase`, `adapter_ctx`): but got "
                 f"{type(target)}."
             )
-            # TODO: change "model_key" references to "task_key" to avoid confusion
-            target = (target.model_src_key, target.model_key, target.phase, target.adapter_ctx)
+            target = (target.model_src_key, target.model_cfg_key, target.phase, target.adapter_ctx)
         try:
             if target in self:
                 supported_composition = self[target]

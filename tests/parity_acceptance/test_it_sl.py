@@ -33,8 +33,6 @@ class SLParityCfg(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
     model_src_key: str | None = "cust"
     add_saes_on_init: bool = True
-    # SAE lens doesn't support TransformerBridge yet, must use legacy HookedTransformer
-    # This will be handled in the test configuration by ensuring tl_cfg has use_bridge=False
 
 
 @dataclass

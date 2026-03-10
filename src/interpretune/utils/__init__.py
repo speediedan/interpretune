@@ -11,6 +11,7 @@ from interpretune.utils.import_utils import (
     _SL_AVAILABLE,
     _CT_AVAILABLE,
     _NEURONPEDIA_AVAILABLE,
+    _NNSIGHT_AVAILABLE,
 )
 from interpretune.utils.logging import (
     rank_zero_only,
@@ -42,6 +43,7 @@ __all__ = [
     "_SL_AVAILABLE",
     "_CT_AVAILABLE",
     "_NEURONPEDIA_AVAILABLE",
+    "_NNSIGHT_AVAILABLE",
     "_import_class",
     "instantiate_class",
     "_resolve_dtype",

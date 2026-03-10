@@ -23,6 +23,7 @@ from interpretune.adapters.model_view import ModelView, CanonicalModelView
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.base.components.mixins import _import_class
 from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info, rank_zero_debug, _FTS_AVAILABLE
+from interpretune.utils.import_utils import _resolve_dtype
 from interpretune.protocol import Adapter
 
 
@@ -82,6 +83,17 @@ class TLensAttributeMixin:
     @property
     def input_device(self) -> torch.device | None:
         return self.get_tl_device()
+
+    def batch_to_device(self, batch) -> BatchEncoding:
+        """Move a batch to the TL input device if one is available.
+
+        Implemented on the TL mixin so that any composition that exposes TL properties
+        (e.g., `input_device`) can reuse consistent behavior and satisfy static typing.
+        """
+        device = self.input_device
+        if device is not None:
+            move_data_to_device(batch, device)
+        return batch
 
 
 class BaseITLensModule(BaseITModule):
@@ -153,11 +165,22 @@ class BaseITLensModule(BaseITModule):
         )
 
         model_cls = cast(Type[PreTrainedModel], self.it_cfg.model_class)
-        model = model_cls.from_pretrained(
-            **self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs,
-            config=cust_config,
-            token=access_token,
-        )
+        restore_async_load_env = False
+        if os.name == "nt" and "HF_DEACTIVATE_ASYNC_LOAD" not in os.environ:
+            # Transformers v5 uses async thread-based tensor materialization by default.
+            # Force sequential loading on Windows to avoid the upstream crash seen in CI.
+            os.environ["HF_DEACTIVATE_ASYNC_LOAD"] = "1"
+            restore_async_load_env = True
+
+        try:
+            model = model_cls.from_pretrained(
+                **self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs,
+                config=cust_config,
+                token=access_token,
+            )
+        finally:
+            if restore_async_load_env:
+                del os.environ["HF_DEACTIVATE_ASYNC_LOAD"]
         # perhaps explore initializing on the meta device and then materializing as needed layer by layer during
         # loading/processing into hookedtransformer
         # with torch.device("meta"):
@@ -179,7 +202,7 @@ class BaseITLensModule(BaseITModule):
         tl_kwargs = {k: v for k, v in self.it_cfg.tl_cfg.__dict__.items() if k not in ["use_bridge"]}
         self.model = HookedTransformer(tokenizer=self.it_cfg.tokenizer, **tl_kwargs)
 
-    def _prune_tl_cfg_dict(self, prune_list: list | None = None) -> dict:
+    def _prune_tl_cfg_dict(self, normalize_device: bool = False, prune_list: list | None = None) -> dict:
         """Prunes the tl_cfg dictionary by removing IT-specific and HF-specific keys that shouldn't be passed to
         HookedTransformer/TransformerBridge constructors.
 
@@ -195,15 +218,25 @@ class BaseITLensModule(BaseITModule):
                     rank_zero_warn(f"Found non-None value for '{key}' in tl_cfg. This may cause issues.")
                 del pruned_dict[key]
 
+        if normalize_device and "device" in pruned_dict and isinstance(pruned_dict["device"], str):
+            pruned_dict["device"] = torch.device(pruned_dict["device"])
         return pruned_dict
+
+    def _prepare_hf_to_tl_conversion(self) -> tuple[Any, Any]:
+        """Prepare common state for HF -> TransformerLens conversion.
+
+        Returns a tuple of (tokenizer_handle, hf_preconversion_config).
+        """
+        tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
+        assert self.model is not None, "Model must be loaded before conversion"
+        hf_preconversion_config = deepcopy(self.model.config)
+        return tokenizer_handle, hf_preconversion_config
 
     def _convert_hf_to_tl(self) -> None:
         # TODO: decide whether to pass remaining hf_from_pretrained_cfg args to HookedTransformer
         # (other than `dtype` which should already have been processed and removed, `device_map` should also be
         # removed before passing to HookedTransformer)
-        # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
-        tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
-        hf_preconversion_config = deepcopy(self.model.config)  # capture original hf config before conversion
+        tokenizer_handle, hf_preconversion_config = self._prepare_hf_to_tl_conversion()
         pruned_cfg = self._prune_tl_cfg_dict()  # avoid edge case where conflicting keys haven't already been pruned
         self.model = HookedTransformer.from_pretrained(
             hf_model=cast(PreTrainedModel, self.model), tokenizer=tokenizer_handle, **pruned_cfg
@@ -241,7 +274,8 @@ class BaseITLensModule(BaseITModule):
         if "device" in pruned_cfg:
             bridge_config.device = pruned_cfg["device"]
         if "dtype" in pruned_cfg:
-            bridge_config.dtype = pruned_cfg["dtype"]
+            # TransformerBridgeConfig.dtype expects torch.dtype; pruned_cfg may contain a string (e.g. "float32")
+            bridge_config.dtype = _resolve_dtype(pruned_cfg["dtype"]) or bridge_config.dtype
 
         # Apply ITLensBridgeConfig-specific overrides if using that config type
         if isinstance(self.it_cfg.tl_cfg, ITLensBridgeConfig):

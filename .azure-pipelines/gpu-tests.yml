@@ -48,7 +48,7 @@ jobs:
     strategy:
       matrix:
         PyTorch_latest:
-          image: speediedan/interpretune:py3.13-pt2.9.1-azpl-init
+          image: speediedan/interpretune:py3.13-pt2.10.0-azpl-init
           scope: ""
     timeoutInMinutes: 100
     cancelTimeoutInMinutes: 2
@@ -67,7 +67,6 @@ jobs:
         HF_HOME: /opt/interpretune/hf_cache
         HF_DATASETS_CACHE: /opt/interpretune/hf_cache/datasets
         HF_HUB_CACHE: /opt/interpretune/hf_cache/hub
-        TRANSFORMERS_CACHE: /opt/interpretune/hf_cache/transformers
         XDG_CACHE_HOME: /opt/interpretune/hf_cache
         APPLY_POST_UPGRADES: "false"
 
@@ -137,7 +136,7 @@ jobs:
         continueOnError: true
 
       - bash: |
-          if [ "$FORCE_CACHE_RESET" = "1" ] || [ "${{ parameters.reset_hf_cache }}" = "true" ]; then
+          if [ "$FORCE_CACHE_RESET" = "1" ] || [ "${{ parameters.reset_hf_cache }}" = "True" ]; then
             echo "Clearing HF cache due to: $([ "$FORCE_CACHE_RESET" = "1" ] && echo "inaccessible lock files" || echo "manual reset parameter")"
             rm -rf /opt/interpretune/hf_cache/* || true
           else
@@ -187,8 +186,19 @@ jobs:
 
       - bash: |
           source /tmp/venvs/it_dev/bin/activate
-          python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --junitxml=$(Build.Repository.LocalPath)/test-results.xml --durations=50
+          # Keep the baseline coverage pass CPU-only on GPU runners.
+          # GPU-specific coverage is collected in the dedicated CUDA, standalone, and profile_ci phases below.
+          export CUDA_VISIBLE_DEVICES=''
+          # --reruns/--reruns-delay handle transient httpx read timeouts with HF transformers v5
+          python -m pytest --cov=src/interpretune --cov-append --cov-report= src/interpretune tests -v --junitxml=$(Build.Repository.LocalPath)/test-results.xml --durations=50 --reruns 2 --reruns-delay 5
         displayName: 'Testing: standard'
+
+      - bash: |
+          source /tmp/venvs/it_dev/bin/activate
+          export IT_RUN_CUDA_TESTS=1
+          # Run regular CUDA-gated tests separately to reduce peak memory pressure while preserving GPU coverage.
+          python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v --durations=50 --reruns 2 --reruns-delay 5
+        displayName: 'Testing: standard gpu cuda-marked'
 
       - bash: |
           source /tmp/venvs/it_dev/bin/activate

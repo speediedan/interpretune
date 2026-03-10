@@ -8,12 +8,14 @@ from transformers import BatchEncoding
 from torch.testing import assert_close
 
 import interpretune as it
+from interpretune.analysis.backends.transformer_lens import TLModelBackend
 from interpretune.analysis.ops.definitions import (
     get_loss_preds_diffs,
     ablate_sae_latent,
     boolean_logits_to_avg_logit_diff,
 )
 from interpretune.analysis.ops.base import AnalysisBatch
+from tests.analysis_resource_utils import log_resource_snapshot
 from tests.utils import _unwrap_one
 from tests.base_defaults import BaseAugTest, pytest_factory, OpTestConfig
 from tests.orchestration import run_op_with_config
@@ -362,6 +364,9 @@ class TestGradientOperations:
         # Mock loss_fn to avoid tensor operation issues
         mock_module.loss_fn = MagicMock(return_value=torch.tensor(0.5))
 
+        # Provide a real TLModelBackend so ops delegate correctly to the mocked model
+        mock_module.model_backend = TLModelBackend()
+
         return mock_module
 
     def test_model_gradient_impl_scalar_logit_diffs(self, mock_module_base, scalar_logit_setup):
@@ -487,6 +492,7 @@ class TestGradientOperations:
         mock_module = MagicMock()
         mock_module.analysis_cfg.auto_prune_batch_encoding = True
         mock_module.auto_prune_batch.return_value = {"input": torch.ones(2, 10)}
+        mock_module.model_backend = TLModelBackend()
 
         # Create mock tensor with sufficient sequence length (at least 7 to support indices 0-6)
         mock_logits = torch.zeros(2, 10, 2)  # [batch_size=2, seq_len=10, features=2]
@@ -942,6 +948,7 @@ SERIALIZATION_TEST_CONFIGS = (
 )
 
 
+@pytest.mark.usefixtures("cleanup_memory")
 class TestAnalysisOperationsImplementations:
     """Tests for the core analysis operation implementation functions."""
 
@@ -1171,11 +1178,26 @@ class TestAnalysisOperationsImplementations:
     @pytest.mark.parametrize(("test_alias", "test_config"), pytest_factory(SERIALIZATION_TEST_CONFIGS, unpack=False))
     def test_op_serialization(self, request, op_serialization_fixt, test_alias, test_config):
         """Test multiple operations using schema-driven column validation."""
+        log_resource_snapshot("before_run_op_with_config", prefix="op_serialization_resource_debug")
+
         # Run operation and get results
         it_session, batches, result_batches, pre_serialization_shapes = run_op_with_config(request, test_config)
 
+        save_dir = getattr(getattr(it_session.module.analysis_cfg, "output_store", None), "save_dir", None)
+        snapshot_paths = (save_dir,) if save_dir is not None else ()
+        log_resource_snapshot(
+            "after_run_op_with_config",
+            paths=snapshot_paths,
+            prefix="op_serialization_resource_debug",
+        )
+
         # Test dataset serialization and loading
         loaded_dataset = op_serialization_fixt(it_session, _unwrap_one(result_batches), _unwrap_one(batches), request)
+        log_resource_snapshot(
+            "after_op_serialization",
+            paths=snapshot_paths,
+            prefix="op_serialization_resource_debug",
+        )
 
         # Validate loaded dataset against original results
         self.validate_loaded_dataset(test_config, result_batches, loaded_dataset, pre_serialization_shapes)

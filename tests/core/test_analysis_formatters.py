@@ -276,7 +276,7 @@ class TestITAnalysisFormatter:
 
     def test_tensorize_per_latent(self, request, initialized_analysis_cfg):
         """Test _tensorize with lists and tuples."""
-        fixture = request.getfixturevalue("get_it_session__sl_gpt2_analysis__setup")
+        fixture = request.getfixturevalue("get_it_session__sl_ht_gpt2_analysis__setup")
         it_session, dim_vars = initialized_analysis_cfg(fixture)
 
         shared_defaults = {"datasets_dtype": "float32", "per_latent": True}

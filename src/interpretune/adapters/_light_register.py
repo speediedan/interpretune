@@ -47,6 +47,7 @@ def register_all_adapters(registry) -> None:
         "interpretune.adapters.sae_lens",
         "interpretune.adapters.transformer_lens",
         "interpretune.adapters.circuit_tracer",
+        "interpretune.adapters.nnsight",
     )
 
     for mod_path in adapter_modules:

@@ -1,9 +1,9 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import os
 import torch
 
 from interpretune.config.shared import ITSerializableCfg
-from interpretune.config.transformer_lens import ITLensConfig
 
 
 @dataclass(kw_only=True)
@@ -14,8 +14,16 @@ class CircuitTracerConfig(ITSerializableCfg):
     using ReplacementModel and transcoders.
     """
 
+    """Backend to use for attribution.
+
+    Options:
+        - 'transformerlens': Use TransformerLens/HookedTransformer backend (default)
+        - 'nnsight': Use NNsight/LanguageModel backend
+    """
+    backend: str = "transformerlens"
+
     # Model and transcoder settings
-    """Model name to use for circuit tracing. If None, uses the base model name."""
+    """Model name to use for attribution. If None, uses the base model name."""
     model_name: str | None = None
     """Transcoder set to use.
 
@@ -60,10 +68,40 @@ class CircuitTracerConfig(ITSerializableCfg):
     """Whether to prepare graphs for Neuronpedia graph storage and analysis."""
     use_neuronpedia: bool = False
 
+    # NNsight backend-specific settings
+    """Whether to use remote execution for NNsight backend.
 
-# Add configuration mixins that extend existing configs
-@dataclass(kw_only=True)
-class CircuitTracerITLensConfig(ITLensConfig):
-    """ITLens configuration with Circuit Tracer support."""
+    Only applicable when backend='nnsight'. Enables running models on NNsight's remote infrastructure.
+    """
+    nnsight_remote: bool = False
+    """API key for NNsight remote execution.
 
-    circuit_tracer_cfg: CircuitTracerConfig | None = None
+    Only applicable when backend='nnsight' and nnsight_remote=True.
+    """
+    ndif_api_key: str | None = None
+
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        # Resolve NDIF API key from environment if not explicitly set
+        if self.ndif_api_key is None and self.nnsight_remote:
+            self.ndif_api_key = os.environ.get("NDIF_API_KEY")
+
+        # Validate backend selection
+        valid_backends = ["transformerlens", "nnsight"]
+        if self.backend not in valid_backends:
+            raise ValueError(f"Invalid backend '{self.backend}'. Must be one of {valid_backends}")
+
+        # Warn if NNsight-specific settings are configured but backend is not NNsight
+        if self.backend != "nnsight":
+            if self.nnsight_remote:
+                import warnings
+
+                warnings.warn(
+                    "nnsight_remote=True but backend is not 'nnsight'. This setting will be ignored.", UserWarning
+                )
+            if self.ndif_api_key is not None:
+                import warnings
+
+                warnings.warn(
+                    "ndif_api_key is set but backend is not 'nnsight'. This setting will be ignored.", UserWarning
+                )

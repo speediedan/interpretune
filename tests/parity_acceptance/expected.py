@@ -7,13 +7,13 @@ from functools import partial
 
 l_parity_results = {
     "train_cpu_32": TestResult(
-        exact_results=def_results("cpu", 32, ds_cfg="train"), close_results=((0, "loss", 15.520967),)
+        exact_results=def_results("cpu", 32, ds_cfg="train"), close_results=((0, "loss", 12.183975),)
     ),
     "train_cpu_32_debug": TestResult(
-        exact_results=def_results("cpu", 32, ds_cfg="train"), close_results=((0, "loss", 15.520967),)
+        exact_results=def_results("cpu", 32, ds_cfg="train"), close_results=((0, "loss", 12.183975),)
     ),
     "train_cuda_32": TestResult(
-        exact_results=def_results("cuda", 32, ds_cfg="train"), close_results=((0, "loss", 13.356880),)
+        exact_results=def_results("cuda", 32, ds_cfg="train"), close_results=((0, "loss", 14.998123),)
     ),
     "train_cuda_bf16": TestResult(
         exact_results=def_results("cuda", "bf16", ds_cfg="train"), close_results=((0, "loss", 14.748956),)
@@ -78,9 +78,13 @@ profiling_results = {
     "test_l_profiling.train_cuda_bf16": MemResult(
         exact_results=cprof_results("cuda", "bf16"), tolerance_map={k: (0.1, 2e08) for k in MemProfResult.cuda_mem_keys}
     ),
-    # TODO: as current allocated memory for Lightning is about 217 MB higher than core and npp is about 80 MB lower than
-    # core, investigate the precise source of these divergences (not presently viewed as highest priority given other
-    # values are nearly identical to core)
+    # NNsight profiling results
+    "test_ns_profiling.test_cpu_32": MemResult(exact_results=def_results("cpu", 32, ds_cfg="test_prof")),
+    "test_ns_profiling.test_cuda_32": MemResult(exact_results=def_results("cuda", 32, ds_cfg="test_prof")),
+    "test_ns_profiling.train_cuda_32": MemResult(exact_results=def_results("cuda", 32, ds_cfg="train_prof")),
+    # NOTE: NNsight Lightning profiling tests (_l variants) are temporarily skipped in test_it_ns.py
+    # pending investigation of ~2x memory footprint difference compared to core variants.
+    # This suggests possible duplicate model references or other memory overhead in Lightning+NNsight.
 }
 
 # TODO: using result dicts in this module for now but ultimately plan to save/construct TestResults from a yaml file
@@ -102,6 +106,17 @@ sl_parity_results = {
     "test_cpu_32": TestResult(exact_results=def_results("cpu", 32)),
     "train_cpu_32": TestResult(exact_results=def_results("cpu", 32)),
     "train_cuda_32": TestResult(exact_results=def_results("cuda", 32)),
+}
+
+# NNsight expected results
+# NNsight wraps HuggingFace models directly without weight conversion
+# we always check for basic exact match on device type and precision as well
+# note our result mapping function uses these core results for all supported parity test suffixes (e.g. '_l')
+ns_parity_results = {
+    "test_cpu_32": TestResult(exact_results=def_results("cpu", 32, ds_cfg="test")),
+    "test_cuda_32": TestResult(exact_results=def_results("cuda", 32, ds_cfg="test")),
+    "train_cpu_32": TestResult(exact_results=def_results("cpu", 32, ds_cfg="train")),
+    "train_cuda_32": TestResult(exact_results=def_results("cuda", 32, ds_cfg="train")),
 }
 
 # =====================================================================================

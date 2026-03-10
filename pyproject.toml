@@ -59,7 +59,7 @@ lightning = [
     # commenting out when installing from git urls to avoid dep conflicts
     # "finetuning-scheduler >= 2.10.0",
     "bitsandbytes; platform_system != 'Darwin'",
-    "peft",
+    "peft>=0.18",
 ]
 
 examples = [
@@ -83,6 +83,7 @@ examples = [
     # "circuit-tracer>=0.1.0",
     # "transformer-lens>=3.0.0",  # v3 adds TransformerBridge architecture (git: 0.0.0, from-source: 3.0.0)
     # "sae_lens >= 6.3.1",  # use new sae_lens API
+    # "nnsight >= 0.5.15",
 ]
 
 [dependency-groups]
@@ -92,10 +93,11 @@ examples = [
 # These are separated because they cannot be included in universal lock files
 # Update commit hashes when cutting release branches to pin to tested versions
 git-deps = [
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@004f1b2822eca3f0c1ddd2389e9105b3abffde87",
-    "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@d35d01feb9cc076a091e41255e1c9f92de2af236",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@14cc3e8443d6bca1fc58752aca28207ba2128a3c",
+    "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@330b4bb78e69a5f63d7f2ca79b50872ef0213903",
     "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@a96d8158ee92dddb3eb5203095ce9db98c137fd0",
-    "sae_lens >= 6.3.1",
+    # "sae_lens >= 6.3.1",
+    "sae-lens @ git+https://github.com/speediedan/SAELens.git@4c554845c6c7be63a94fb3e13a8c21d69ef84f07",
 ]
 
 dev = [
@@ -111,6 +113,7 @@ test = [
     # Testing framework and tools
     "coverage >= 6.4",
     "pytest >= 6.0",
+    "pytest-cov >= 6.0.0",
     "pytest-rerunfailures >= 10.2",
     # Additional test dependencies
     "twine >= 3.2",
@@ -152,7 +155,7 @@ profiling = [
 # from source we also include this version to ensure it is respected when installing without the
 # --override flag (e.g CI)
 override-dependencies = [
-    "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@d35d01feb9cc076a091e41255e1c9f92de2af236",
+    "transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@330b4bb78e69a5f63d7f2ca79b50872ef0213903",
 ]
 # exclude dependencies can be used to ignore installation of a dependency altogether (transitive or direct)
 # we occasionally use an excludes file to allow complex multiple-packages-from-source installations
@@ -228,9 +231,6 @@ include = [
     "src/",
 ]
 exclude = [
-    # patch of external code
-    "src/interpretune/utils/patched_tlens_generate.py",
-    "src/it_examples/patching/patched_sae_from_pretrained.py",
     "src/it_examples/utils/raw_graph_analysis.py",
 ]
 
@@ -262,6 +262,7 @@ omit = [
 
 [tool.pytest.ini_options]
 pythonpath = "tests"
+importmode = "importlib"
 norecursedirs = [
     ".git",
     ".github",

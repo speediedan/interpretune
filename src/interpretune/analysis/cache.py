@@ -27,7 +27,6 @@ from datasets.fingerprint import (
     generate_random_fingerprint,
     is_caching_enabled as _hf_is_caching_enabled,
     get_temporary_cache_files_directory as _hf_get_temp_cache_dir,
-    maybe_register_dataset_for_temp_dir_deletion as _hf_maybe_register_tempdir,
 )
 
 from interpretune.utils import rank_zero_warn
@@ -75,18 +74,11 @@ def _create_tempdir() -> Path:
     """
     if _hf_get_temp_cache_dir is not None:
         tmpdir = Path(_hf_get_temp_cache_dir())
-        # Register for cleanup if HF exposes the register helper
-        if _hf_maybe_register_tempdir is not None:
-            try:
-                _hf_maybe_register_tempdir(str(tmpdir))
-            except Exception as e:
-                # Fall back to local atexit registration if HF helper fails
-                rank_zero_warn(
-                    f"_hf_maybe_register_tempdir failed with exception: {e!r}; falling back to local atexit cleanup."
-                )
-                atexit.register(lambda p=tmpdir: shutil.rmtree(p, ignore_errors=True))
-        else:
-            atexit.register(lambda p=tmpdir: shutil.rmtree(p, ignore_errors=True))
+        # Register for cleanup at process exit; the HF helper
+        # ``maybe_register_dataset_for_temp_dir_deletion`` expects HF Dataset
+        # objects (with ``cache_files``), not bare paths, so we always use a
+        # local atexit handler for our own temp directories.
+        atexit.register(lambda p=tmpdir: shutil.rmtree(p, ignore_errors=True))
         return tmpdir
 
     # Fallback path

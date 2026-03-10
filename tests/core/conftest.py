@@ -6,7 +6,9 @@ from pathlib import Path
 from datetime import datetime
 from typing import Any
 
+
 import interpretune as it
+from tests.analysis_resource_utils import log_resource_snapshot
 from tests.configuration import get_deepcopied_session
 from tests.orchestration import save_reload_results_dataset
 from interpretune.config import AnalysisCfg
@@ -59,6 +61,12 @@ def op_serialization_fixt():
             base_dir = Path(tmp_dir)
             save_dir = base_dir / dataset_name
 
+        log_resource_snapshot(
+            "fixture_entry",
+            paths=(save_dir.parent,),
+            prefix="op_serialization_resource_debug",
+        )
+
         # Store the original save_dir and restore it after the test
         original_save_dir = None
         if hasattr(module.analysis_cfg.output_store, "save_dir"):
@@ -83,7 +91,18 @@ def op_serialization_fixt():
                 result_batches = [result_batches]
                 batches = [batches]
 
-            return save_reload_results_dataset(it_session, result_batches, batches)
+            log_resource_snapshot(
+                "before_save_reload",
+                paths=(save_dir, save_dir.parent),
+                prefix="op_serialization_resource_debug",
+            )
+            loaded_dataset = save_reload_results_dataset(it_session, result_batches, batches)
+            log_resource_snapshot(
+                "after_save_reload",
+                paths=(save_dir, save_dir.parent),
+                prefix="op_serialization_resource_debug",
+            )
+            return loaded_dataset
 
         finally:
             # Restore original save_dir if needed
@@ -102,7 +121,7 @@ def initialized_analysis_cfg():
             target_op=target_op,
             ignore_manual=True,
             save_tokens=False,
-            sae_analysis_targets=fixture.test_cfg().sae_analysis_targets,
+            latent_analysis_targets=fixture.test_cfg().latent_analysis_targets,
         )
         # Initialize analysis config on the module
         maybe_init_analysis_cfg(it_session.module, analysis_cfg)

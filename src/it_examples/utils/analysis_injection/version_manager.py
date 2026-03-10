@@ -37,7 +37,7 @@ GIT_FALLBACK_URLS = {
     (
         "circuit-tracer",
         "0.1.0",
-    ): "git+https://github.com/speediedan/circuit-tracer.git@004f1b2822eca3f0c1ddd2389e9105b3abffde87",
+    ): "git+https://github.com/speediedan/circuit-tracer.git@14cc3e8443d6bca1fc58752aca28207ba2128a3c",
 }
 
 

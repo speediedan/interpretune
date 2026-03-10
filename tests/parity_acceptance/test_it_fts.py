@@ -56,26 +56,25 @@ class FTSParityTest(BaseAugTest):
 
 
 PARITY_FTS_CONFIGS = (
-    # NOTE: train_cpu_32_l_fts marked as standalone due to disk space constraints on GitHub runners.
-    # This test creates large checkpoint files and may cause out-of-space errors when run alongside other tests.
-    # Consider switching to a trivial custom model if this becomes problematic.
-    FTSParityTest(alias="train_cpu_32_l_fts", cfg=FTSParityCfg(**l_gpt2_fts), marks="standalone"),
+    # NOTE: train_cpu_32_l_fts was previously standalone due to disk space concerns from checkpoint creation.
+    # Now runs in main CI with tmp_path cleanup — GPT2 checkpoints (~500MB each) fit within runner disk limits.
+    FTSParityTest(alias="train_cpu_32_l_fts", cfg=FTSParityCfg(**l_gpt2_fts)),
     FTSParityTest(alias="train_cuda_32_l_fts", cfg=FTSParityCfg(**l_gpt2_fts, **cuda), marks="cuda_l_optional"),
     FTSParityTest(
         alias="train_cpu_32_l_tl_ht_fts", cfg=FTSParityCfg(**l_tl_ht_gpt2_fts_multiphase), marks="l_optional"
     ),
     FTSParityTest(
-        alias="train_cuda_32_l_tl_ht_fts", cfg=FTSParityCfg(**l_tl_ht_gpt2_fts_multiphase, **cuda), marks="cuda_alone"
+        alias="train_cuda_32_l_tl_ht_fts", cfg=FTSParityCfg(**l_tl_ht_gpt2_fts_multiphase, **cuda), marks="cuda"
     ),
     FTSParityTest(
         alias="train_cuda_32_l_tl_bridge_fts",
         cfg=FTSParityCfg(**l_tl_bridge_gpt2_fts_multiphase, **cuda),
-        marks="cuda_alone",
+        marks="cuda",
     ),
     FTSParityTest(
         alias="train_cuda_32_l_tl_bridge_tl_names_fts",
         cfg=FTSParityCfg(**l_tl_bridge_gpt2_tl_names_fts, **cuda),
-        marks="cuda_alone",
+        marks="cuda",
     ),
 )
 

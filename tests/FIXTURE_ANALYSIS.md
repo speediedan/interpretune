@@ -26,16 +26,20 @@ The benchmark uses a comparative approach to measure fixture overhead:
 ## Usage
 
 ```bash
+export IT_VENV_BASE=/mnt/cache/${USER}/.venvs
+export IT_TARGET_VENV=it_latest
+export IT_REPO_DIR=${HOME}/repos/interpretune
+
 # From the repository root:
-cd /path/to/interpretune
-source ~/.venvs/it_latest/bin/activate  # Activate your environment
+cd ${IT_REPO_DIR}
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate  # Activate your environment
 python tests/dynamic_fixture_benchmark.py
 
 # For faster iteration during development:
 python tests/dynamic_fixture_benchmark.py --max-fixtures=10
 
 # For background execution:
-~/repos/interpretune/scripts/manage_standalone_processes.sh --use_nohup ~/repos/interpretune/tests/dynamic_fixture_benchmark.py
+${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use_nohup ${IT_REPO_DIR}/tests/dynamic_fixture_benchmark.py
 ```
 
 ## Generated Artifacts
@@ -43,3 +47,5 @@ python tests/dynamic_fixture_benchmark.py --max-fixtures=10
 - **`tests/fixture_benchmark_report.md`** - Main enumeration/analysis report is dynamically generated/overwritten on each run
 - **`tests/profiling_artifacts/pytest_startup_speedscope_<timestampe>.json`** - Pytest startup baseline speedscope profile (see `tests/PROFILING.md` for more)
 - log of the benchmark generation `/tmp/dynamic_fixture_benchmark.py_<timestamp>_wrapper.out`
+
+---

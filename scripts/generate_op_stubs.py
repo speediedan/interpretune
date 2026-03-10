@@ -258,7 +258,7 @@ def generate_stubs(yaml_path: Path, output_path: Path) -> None:
         "from interpretune.analysis import (",
         "    AnalysisStore as AnalysisStore,",
         "    DISPATCHER as DISPATCHER,",
-        "    SAEAnalysisTargets as SAEAnalysisTargets,",
+        "    LatentAnalysisTargets as LatentAnalysisTargets,",
         ")",
         "from interpretune.config import (",
         "    ITLensConfig as ITLensConfig,",

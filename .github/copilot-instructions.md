@@ -72,6 +72,10 @@ cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpret
 - Write unit tests for new functionality and ensure existing tests pass.
 - Ensure the cpu coverage reported by our `ci_test-full.yml` workflow is >= the existing coverage.
 
+### Avoid Test-Environment Bandaids in Application Code
+- When test failures stem from environment issues (e.g., `isinstance()` failures due to importlib double-loading modules), **never** degrade application code with workarounds for test-specific problems.
+- Instead, fix the problem in the test infrastructure or use an app-level registry pattern (like `CT_BACKEND_REGISTRY` in `circuit_tracer.py`) that validates by class name without `isinstance()`.
+
 ## Build and Validation Commands
 
 ### Environment Setup
@@ -85,7 +89,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
 
 # Activate the environment
-source ~/.venvs/it_latest/bin/activate
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 
 # Run commands directly (no need for 'uv run')
 python --version
@@ -124,11 +129,17 @@ export IT_VENV_BASE=/mnt/cache/username/.venvs
 # the same filesystem. Placing venv on same filesystem as UV cache ensures fast installs and
 # no warnings. Example UV cache location: /mnt/cache/username/.cache/uv
 
-# Build with specific PyTorch nightly version
-./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --torch_dev_ver=dev20240201
+# Build with CPU-only torch (for CI environments)
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --torch-backend=cpu
 
-# Build with PyTorch test channel
-./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --torch_test_channel
+# Torch prerelease builds (configured via requirements/ci/torch-pre.txt):
+# If torch-pre.txt exists, the build script will automatically use the prerelease version if not all of the config
+# lines are commented out
+# torch-pre.txt format (3 lines): version, CUDA target, channel (nightly or test)
+# Example torch-pre.txt: (no # in front of lines, these lines below)
+2.10.0.dev20250122
+cu128
+nightly
 
 # Build with single package from source (no extras)
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --from-source="circuit_tracer:${HOME}/repos/circuit-tracer"
@@ -145,7 +156,9 @@ export IT_VENV_BASE=/mnt/cache/username/.venvs
   --from-source="circuit_tracer:${HOME}/repos/circuit-tracer"
 
 # Build with multiple packages from source (using semicolon separator - also supported)
-./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1;circuit_tracer:${HOME}/repos/circuit-tracer"
+# it_latest with sae-lens, nnsight, and circuit-tracer from source using multiple --from-source flags
+# and multiple env variables in some cases and support for specific uv build flags via the FLAGS keyword
+./scripts/build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --from-source="sae_lens:${HOME}/repos/SAELens:all:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/overrides.txt:FLAGS=-r ~/repos/distributed-insight/project_admin/interpretune/adapter_reference/sae_lens/admin_scripts/sl_poetry_requirements.txt" --from-source="nnsight:${HOME}/repos/nnsight:all:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/overrides.txt" --from-source="circuit_tracer:${HOME}/repos/circuit-tracer:dev:UV_EXCLUDE=${HOME}/repos/interpretune/requirements/ci/excludes.txt:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/overrides.txt"
 
 # Important: When using with manage_standalone_processes.sh wrapper, use --venv-dir:
 ~/repos/interpretune/scripts/manage_standalone_processes.sh --use-nohup scripts/build_it_env.sh \
@@ -165,21 +178,13 @@ When installing from-source packages that specify git dependencies (e.g., finetu
 
 See [UV's dependency caching docs](https://docs.astral.sh/uv/concepts/cache/#dependency-caching) for details on git dependency caching behavior.
 
-**From-Source Package Version Requirements:**
-
-When installing packages from source (especially transformer-lens), ensure the package version in the source repo satisfies dependent package requirements:
-- circuit-tracer requires `transformer-lens>=v2.16.0`
-- TransformerLens repo default version (with the old v2 poetry install) is 0.0.0 in pyproject.toml (set by CI pipeline on release)
-- For local development, update TransformerLens version to 2.16.1 or higher: `sed -i 's/version="0\.0\.0"/version="2.16.1"/' ~/repos/TransformerLens/pyproject.toml`
-- This ensures circuit-tracer's dependency is satisfied without UV upgrading transformer-lens to PyPI version
-- This should not be necessary when installing transformer_lens from source with versions >= 3.0.0 as uv is used
-
 ### Linting and Code Quality
 **Always run linting before committing (assumes activated venv):**
 
 ```bash
 # Activate your environment first
-source ~/.venvs/it_latest/bin/activate
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 
 # Run ruff linting (configured in pyproject.toml)
 # we don't have ruff installed as a separate package but use it via pre-commit (with the --fix flag)
@@ -197,20 +202,76 @@ pre-commit run --all-files
 **Test command (assumes activated venv):**
 ```bash
 # Activate your environment first
-source ~/.venvs/it_latest/bin/activate
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 
 # Basic test run (requires full dependencies)
 cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpretune tests -v
 
-# With coverage
-python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v
+# With coverage (using pytest-cov ensures coverage starts before test collection imports)
+python -m pytest --cov=src/interpretune --cov-append --cov-report= src/interpretune tests -v
 python -m coverage report
 
 # Test collection only (to check test discovery)
 pytest --collect-only
 ```
 
+**Test Reruns for Transient Failures:**
+
+All CI and local coverage scripts include `--reruns 2 --reruns-delay 5` by default to handle transient `httpx` read timeouts with HuggingFace `transformers` v5. The `pytest-rerunfailures` plugin is included in our test dependencies.
+
+Local scripts (`gen_it_coverage.sh`, `special_tests.sh`, `analyze_test_coverage.py`) support configurable rerun behavior via `--no-reruns`, `--reruns=N`, and `--reruns-delay=N` flags. Use `--allow-failures` with `gen_it_coverage.sh` and `special_tests.sh` to continue collecting coverage past test failures — preferred for faster debugging iterations.
+
 **⚠️ Dependency Note:** Full test suite requires ML dependencies. Tests will fail without proper environment setup.
+
+**⚠️ CRITICAL: Running Tests in Background to Avoid Truncation/OOM Kills**
+
+The basic test suite runs ~30 minutes; the full suite with `gen_it_coverage.sh` ~50 minutes. **Always run tests in the background with `nohup`/`disown`** — foreground terminal sessions and piped output (`tee`) will be killed by terminal lifecycle management or OOM before completion. Set prudent timeouts and check progress periodically.
+
+```bash
+# RECOMMENDED: Run basic test suite in the background (avoids truncation/OOM kills)
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+nohup python -m pytest src/interpretune tests -v > /tmp/it_test_results.txt 2>&1 &
+disown
+echo "Test PID: $!"
+
+# Monitor progress (check periodically)
+tail -20 /tmp/it_test_results.txt
+grep -c "PASSED\|FAILED\|ERROR" /tmp/it_test_results.txt
+# Check if process is still running
+ps -p <PID> -o pid,etime,rss,cmd
+
+# IMPORTANT: Kill the process before starting another test run to avoid conflicts
+kill <PID>  # or: pkill -f "pytest.*src/interpretune"
+```
+
+**Full coverage run (background via harness):**
+
+```bash
+# Generate coverage with no rebuild (recommended for quick iteration)
+# Outputs full logs to /tmp dir with timestamp for later inspection
+${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
+  ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
+  --repo-home=${IT_REPO_DIR} \
+  --target-env-name=${IT_TARGET_VENV} \
+  --venv-dir=${IT_VENV_BASE} \
+  --no-rebuild-base
+
+# Preferred for debugging: use --allow-failures to continue past failures
+${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
+  ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
+  --repo-home=${IT_REPO_DIR} \
+  --target-env-name=${IT_TARGET_VENV} \
+  --venv-dir=${IT_VENV_BASE} \
+  --no-rebuild-base \
+  --allow-failures
+
+# Monitor coverage progress
+tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
+
+# Note: Coverage collection takes approximately 50 minutes
+```
 
 **Test timing:** Most tests run quickly (<30s), but some integration tests may take 1-2 minutes.
 
@@ -254,6 +315,17 @@ src/it_examples/            # Example experiments
 ### Key Entry Points
 - Console script: `interpretune` → `interpretune.base.components.cli:bootstrap_cli`
 
+### Notebook Publishing
+
+**⚠️ CRITICAL: Notebook tests run against PUBLISHED notebooks, not dev notebooks.** If you edit any dev notebook, you **MUST** run `python scripts/publish_notebooks.py --force` before testing or committing. The pre-commit hook only triggers when `.ipynb` files in `dev/` are staged — if the dev notebook was changed in a prior commit or by another tool, the published copy will be stale and notebook tests will fail.
+
+Dev notebooks live in `src/it_examples/notebooks/dev/` and are auto-published to `src/it_examples/notebooks/publish/` via `scripts/publish_notebooks.py`.
+
+- **Pre-commit hook** (`publish-notebooks`): Triggered on changes to `^src/it_examples/notebooks/dev/.*\.ipynb$`. Automatically strips `remove-cell` tagged cells, adds Colab badges + install cells, fixes import paths, and tracks hashes in `.notebook_hashes.json`.
+- **CLI flags:** `--dry-run` (preview), `--check-only` (CI validation), `--force` (republish all). Launch.json has debug configs for each mode.
+- **Workflow:** Edit dev notebooks only → commit → pre-commit publishes automatically. Never edit publish notebooks directly.
+- **Verification:** After any notebook changes, run `python scripts/publish_notebooks.py --check-only` to verify published notebooks are in sync.
+
 ## CI and Validation Pipeline
 
 ### GitHub Actions Workflow
@@ -264,32 +336,52 @@ src/it_examples/            # Example experiments
 **Timeout:** 90 minutes
 
 **CI Process:**
-1. Install interpretune in editable mode with git dependencies
-2. Install locked CI requirements (all PyPI packages)
-3. Run pytest with coverage
-4. Resource monitoring (Linux only)
-5. Upload artifacts on failure
+1. Check for torch prerelease configuration (torch-pre.txt)
+2. Install torch prerelease if configured (otherwise uses stable with --torch-backend=cpu)
+3. Install interpretune in editable mode with git dependencies
+4. Install locked CI requirements (all PyPI packages)
+5. Run pytest with coverage
+6. Resource monitoring (Linux only)
+7. Upload artifacts on failure
 
 **CI Installation Flow:**
 ```bash
-# Step 1: Install interpretune editable + git dependencies
+# Step 1: (If torch-pre.txt exists) Install torch prerelease
+uv pip install --prerelease=if-necessary-or-explicit "torch==${TORCH_PRE_VERSION}+cpu" --index-url "https://download.pytorch.org/whl/${TORCH_PRE_CHANNEL}/cpu"
+
+# Step 2: Install interpretune editable + git dependencies
 uv pip install -e . --group git-deps
 
-# Step 2: Install all locked PyPI dependencies
-uv pip install -r requirements/ci/requirements.txt
+# Step 3: Install all locked PyPI dependencies (with --torch-backend=cpu for stable torch)
+uv pip install -r requirements/ci/requirements.txt --torch-backend=cpu
 ```
 
 **Development Installation Flow (build_it_env.sh):**
 ```bash
-# Step 1: Install interpretune editable + git dependencies
+# Step 1: Install torch (prerelease from torch-pre.txt or stable via --torch-backend)
+# Prerelease: uv pip install --prerelease=if-necessary-or-explicit "torch==${VERSION}" --index-url "https://download.pytorch.org/whl/${CHANNEL}/${CUDA}"
+# Stable: uv pip install torch --torch-backend=auto
+
+# Step 2: Install interpretune editable + git dependencies
 uv pip install -e . --group git-deps
 
-# Step 2: Install locked CI requirements
+# Step 3: Install locked CI requirements
 uv pip install -r requirements/ci/requirements.txt
 
-# Step 3: Install from-source packages (if specified)
+# Step 4: Install from-source packages (if specified)
 # These override any PyPI/git versions for development
 ```
+
+**Torch Prerelease Configuration (torch-pre.txt):**
+Create `requirements/ci/torch-pre.txt` with 3 lines (no comments inline):
+```
+2.10.0.dev20250122
+cu128
+nightly
+```
+- Line 1: Torch version (e.g., `2.10.0.dev20250122`)
+- Line 2: CUDA target (e.g., `cu128`, `cpu`)
+- Line 3: Channel (`nightly` or `test`)
 
 **Environment Variables for CI:**
 - `IT_CI_LOG_LEVEL` - Defaults to "INFO", set to "DEBUG" for verbose logging
@@ -301,6 +393,26 @@ uv pip install -r requirements/ci/requirements.txt
 We now have a separate Azure DevOps pipeline that runs GPU/standalone tests on a self-hosted runner: `.azure-pipelines/gpu-tests.yml`.
 - This pipeline is intentionally restrictive: it only triggers for PRs that are marked "ready for review" and must be explicitly approved by a repository administrator before the self-hosted GPU job will run (currently: speediedan).
 - Because self-hosted GPU capacity is limited, aim to rely on feedback from the normal GitHub Actions CPU CI workflow for as long as possible while iterating on an issue. Defer switching the PR to "ready for review" until you believe GPU testing is necessary. Copilot should prefer this conservative approach when suggesting CI runs or opening PRs.
+- The self-hosted approval gate can be driven from the shell when `AZURE_DEVOPS_EXT_PAT` is present. Prefer PAT-backed Azure DevOps CLI or REST calls over manual UI approval when you need to release a queued GPU run during active debugging.
+- A queued build can stay in `notStarted` until its approval is granted. Check the build first, then inspect pending approvals before changing runner configuration:
+  ```bash
+  az pipelines build show --id <build_id> --organization https://dev.azure.com/speediedan --project interpretune -o table
+  curl -sS -u ":${AZURE_DEVOPS_EXT_PAT}" \
+    "https://dev.azure.com/speediedan/interpretune/_apis/pipelines/approvals?state=pending&api-version=7.1-preview.1"
+  ```
+- Approve a pending run with a PATCH to the approvals endpoint:
+  ```bash
+  curl -sS -X PATCH -u ":${AZURE_DEVOPS_EXT_PAT}" \
+    -H "Content-Type: application/json" \
+    -d '[{"approvalId":"<approval_id>","status":"approved","comment":"Approved via CLI for GPU validation."}]' \
+    "https://dev.azure.com/speediedan/interpretune/_apis/pipelines/approvals?api-version=7.1-preview.1"
+  ```
+- The build-level queue shown by `az pipelines build show` may still display `Azure Pipelines` even when the YAML job uses the self-hosted `Default` pool. Treat approval state and actual worker dispatch as the source of truth before editing the pool stanza.
+- The current GPU test flow is intentionally phase-split to reduce peak memory while preserving CUDA coverage:
+  1. `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''`
+  2. `Testing: standard gpu cuda-marked` runs regular CUDA-gated tests under `IT_RUN_CUDA_TESTS=1`
+  3. `Testing: standalone gpu` runs standalone GPU tests
+  4. `Testing: CI Profiling` runs `profile_ci` GPU tests
 
 Note: the GPU pipeline runs only when a PR is ready for review and an admin approves the run — do not expect it to run automatically for draft PRs or early-stage work.
 
@@ -353,6 +465,15 @@ tail -f `ls -rt /tmp/gen_it_coverage_it_* | tail -1`
   --venv-dir=/mnt/cache/${USER}/.venvs \
   --no-rebuild-base
 
+# Preferred for debugging: use --allow-failures to continue past failures and see all results
+~/repos/interpretune/scripts/manage_standalone_processes.sh --use-nohup \
+  ~/repos/interpretune/scripts/gen_it_coverage.sh \
+  --repo-home=${HOME}/repos/interpretune \
+  --target-env-name=it_latest \
+  --venv-dir=/mnt/cache/${USER}/.venvs \
+  --no-rebuild-base \
+  --allow-failures
+
 # Generate coverage with rebuild (use when dependencies changed)
 ~/repos/interpretune/scripts/manage_standalone_processes.sh --use-nohup \
   ~/repos/interpretune/scripts/gen_it_coverage.sh \
@@ -360,14 +481,16 @@ tail -f `ls -rt /tmp/gen_it_coverage_it_* | tail -1`
   --target-env-name=it_latest \
   --venv-dir=/mnt/cache/${USER}/.venvs
 
-# Note: Coverage collection takes approximately 30-35 minutes
+# Note: Coverage collection takes approximately 40 minutes
 ```
 
 **Flags:**
 
 - `--no-rebuild-base`: Skips environment rebuild (faster, use when dependencies haven't changed)
+- `--allow-failures`: Continue collecting coverage even if tests fail; preferred for debugging to see all failures at once
 - `--venv-dir`: Base directory for venvs (recommended: `/mnt/cache/${USER}/.venvs` for hardlink performance)
 - `--run-all-and-examples`: Include additional example tests (extends runtime)
+- `--torch-backend=cpu`: Force CPU-only torch (useful for testing without GPU)
 
 **Output:**
 
@@ -389,7 +512,8 @@ When updating dependencies, edit `pyproject.toml` and regenerate locked requirem
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
 
 # Or update manually in an activated environment
-source ~/.venvs/it_latest/bin/activate
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 uv pip install --upgrade <package-name>
 
 # After updating, test thoroughly
@@ -404,7 +528,7 @@ Notes:
 
 ### Type-checking caveat
 
-Full repository type-checking is a work in progress. Current local checks may only include a subset of files (for example, `src/interpretune/adapters/lightning.py`). Expect that type-checking will cover most files in future updates; don't assume exhaustive static type guarantees yet.
+We currently only exclude one file from type checking in the /src tree ("src/it_examples/utils/raw_graph_analysis.py") while all files in /tests are excluded.
 
 ## Special Dependencies and Known Issues
 
@@ -432,7 +556,6 @@ Full repository type-checking is a work in progress. Current local checks may on
 - Test files mirror `src/` structure in `tests/`
 - Use pytest fixtures from `conftest.py`
 - Add coverage for new functionality
-- Avoid modifying `*_parity/` test directories (research code)
 
 #### Running Special Tests (Standalone and Profiling)
 
@@ -496,10 +619,16 @@ IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_transformer_lens.py::
 IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_transformer_lens.py::TestLlama3ParameterMapping::test_llama3_tl_param_structure -v
 unset IT_RUN_STANDALONE_TESTS
 
-# Run specific profiling test
+# Run specific profiling ci test
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
 IT_RUN_PROFILING_TESTS=1 python -m pytest tests/parity_acceptance/test_it_l.py::test_l_profiling[test_cuda_32_l] -v
+unset IT_RUN_PROFILING_TESTS
+
+# Run specific profiling (non-ci, ones that don't run by default with ci) test
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+IT_RUN_PROFILING_TESTS=2 python -m pytest tests/parity_acceptance/test_it_tl.py::test_tl_profiling[test_cuda_32] -v
 unset IT_RUN_PROFILING_TESTS
 
 # Run specific optional tests
@@ -517,6 +646,14 @@ unset IT_RUN_OPTIONAL_TESTS
 - Adjust these paths to match your local development environment
 - The `special_tests.sh` harness handles environment setup automatically
 - Standalone tests may take longer and require more resources than regular tests
+- `@RunIf(standalone=True)` must be applied at the **test method** level, never at the class level.
+  `pytest_collection_modifyitems` uses `item.own_markers` (method-level only); class-level markers are
+  invisible to the standalone filter and those tests are silently excluded from standalone runs.
+- For memory-intensive tests, prefer `@pytest.mark.usefixtures("cleanup_memory")` at the method level over
+  standalone marks when possible — this triggers `gc.collect()` after each test without sacrificing
+  cross-platform CI signal.
+- **TODO/BUG:** Fix `pytest_collection_modifyitems` in `tests/conftest.py` to use `item.iter_markers()`
+  instead of `item.own_markers` so class-level standalone marks are properly collected.
 
 ### Configuration
 - YAML configs in `src/it_examples/config/`

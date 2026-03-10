@@ -18,7 +18,7 @@ from interpretune.config import (
     AnalysisCfg,
     AnalysisArtifactCfg,
 )
-from interpretune.analysis import SAEAnalysisTargets, OpSchema, ColCfg, AnalysisBatch, AnalysisStore
+from interpretune.analysis import LatentAnalysisTargets, OpSchema, ColCfg, AnalysisBatch, AnalysisStore
 from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 
@@ -311,7 +311,7 @@ class TestAnalysisInjectionConfigs:
 
     def test_analysis_cfg_materialize_names_filter(self):
         mock_module = Mock()
-        mock_sae_targets = Mock(spec=SAEAnalysisTargets)
+        mock_sae_targets = Mock(spec=LatentAnalysisTargets)
         mock_sae_targets.target_layers = ["layer1", "layer2"]
         mock_sae_targets.sae_hook_match_fn = lambda x: True
 
@@ -321,8 +321,8 @@ class TestAnalysisInjectionConfigs:
             cfg.materialize_names_filter(mock_module)
             assert cfg.names_filter("test_resolved")
 
-        # Test with sae_analysis_targets
-        cfg = AnalysisCfg(sae_analysis_targets=mock_sae_targets)
+        # Test with latent_analysis_targets
+        cfg = AnalysisCfg(latent_analysis_targets=mock_sae_targets)
         mock_module = Mock()  # Create a new mock to avoid call count issues
         mock_module.construct_names_filter.return_value = lambda x: x.startswith("constructed")
         with patch(
@@ -338,7 +338,7 @@ class TestAnalysisInjectionConfigs:
         # Test with fallback sae_targets
         cfg = AnalysisCfg()
         mock_module = Mock()  # Create a new mock to avoid call count issues
-        mock_fallback = Mock(spec=SAEAnalysisTargets)
+        mock_fallback = Mock(spec=LatentAnalysisTargets)
         mock_fallback.target_layers = ["fallback1", "fallback2"]
         mock_fallback.sae_hook_match_fn = lambda x: True
         mock_module.construct_names_filter.return_value = lambda x: x.startswith("fallback")
@@ -355,7 +355,7 @@ class TestAnalysisInjectionConfigs:
         # Test with no targets
         cfg = AnalysisCfg()
         mock_module = Mock()  # Create a new mock to avoid call count issues
-        with pytest.raises(ValueError, match="No SAEAnalysisTargets available"):
+        with pytest.raises(ValueError, match="No LatentAnalysisTargets available"):
             cfg.materialize_names_filter(mock_module)
 
     def test_analysis_cfg_maybe_set_hooks(self):
@@ -377,7 +377,7 @@ class TestAnalysisInjectionConfigs:
         test_op = AnalysisOp(name="test_op", description="my desc", output_schema=test_schema)
 
         # Test with op
-        cfg = AnalysisCfg(target_op=test_op, sae_analysis_targets=Mock())
+        cfg = AnalysisCfg(target_op=test_op, latent_analysis_targets=Mock())
         with (
             patch.object(cfg, "materialize_names_filter") as mock_material,
             patch.object(cfg, "maybe_set_hooks") as mock_hooks,
@@ -387,7 +387,7 @@ class TestAnalysisInjectionConfigs:
             mock_hooks.assert_called_once()
 
         # Test without op
-        cfg = AnalysisCfg(sae_analysis_targets=Mock())
+        cfg = AnalysisCfg(latent_analysis_targets=Mock())
         with (
             patch.object(cfg, "materialize_names_filter") as mock_material,
             patch.object(cfg, "maybe_set_hooks") as mock_hooks,
@@ -520,12 +520,37 @@ class TestAnalysisInjectionConfigs:
         cfg.reset_applied_state()
         assert len(cfg._applied_to) == 0
 
+    def test_analysis_cfg_no_step_fn_accumulation(self):
+        """Verify _generated_ prefix doesn't accumulate when a shared AnalysisCfg is apply()ed to multiple modules.
+
+        This is the regression test for the bug where class-level tuple defaults in test config dataclasses (e.g.
+        CoreSLHTGPT2LogitDiffsBase) caused a shared AnalysisCfg instance to have its step_fn mutated on every
+        apply() call (analysis_step → _generated_analysis_step → _generated__generated_analysis_step → ...).
+        """
+        # Simulate the shared-default scenario: one AnalysisCfg applied to N successive modules
+        from unittest.mock import MagicMock, patch
+
+        cfg = AnalysisCfg(target_op=it.logit_diffs_base, ignore_manual=True)
+        assert cfg.step_fn == "analysis_step"
+        assert cfg._original_step_fn is None
+
+        for i in range(3):
+            mock_module = MagicMock()
+            # patch prepare_model_ctx to avoid needing a real module with SAE targets
+            with patch.object(cfg, "prepare_model_ctx"):
+                cfg.apply(mock_module)
+            # After every apply(), step_fn must be exactly one level deep – never accumulating
+            assert cfg.step_fn == "_generated_analysis_step", (
+                f"step_fn accumulated to '{cfg.step_fn}' after apply() #{i + 1}"
+            )
+            assert cfg._original_step_fn == "analysis_step"
+
     def test_analysis_artifact_cfg(self):
         # Test default initialization
         cfg = AnalysisArtifactCfg()
         assert cfg.latent_effects_graphs is True
         assert cfg.latent_effects_graphs_per_batch is False
-        assert cfg.latents_table_per_sae is True
+        assert cfg.table_per_latent_model is True
 
         # Test post_init forcing latent_effects_graphs to True
         with patch("builtins.print") as mock_print:

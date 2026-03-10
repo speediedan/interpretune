@@ -16,6 +16,13 @@ import pytest
 
 from tests.runif import RunIf
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).parent.parent.parent / ".env")
+except ImportError:
+    pass
+
 # Directory containing published notebooks (processed versions without dev cells)
 NOTEBOOKS_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "notebooks" / "publish"
 
@@ -162,7 +169,7 @@ ATTRIBUTION_ANALYSIS_PARAMS = [
 ]
 
 
-@RunIf(standalone=True, bf16_cuda=True)
+@RunIf(bf16_cuda=True)
 @pytest.mark.parametrize("params", ATTRIBUTION_ANALYSIS_PARAMS)
 def test_attribution_analysis_notebook(params: dict[str, Any], tmp_path: Path):
     """Test attribution analysis notebook with different parameterizations."""
@@ -189,7 +196,10 @@ def test_attribution_analysis_notebook(params: dict[str, Any], tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
-@RunIf(standalone=True)
+_hf_token_available = bool(os.environ.get("HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY") or os.environ.get("HF_TOKEN"))
+
+
+@pytest.mark.skipif(not _hf_token_available, reason="HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY or HF_TOKEN required")
 @pytest.mark.parametrize("notebook_file", ["op_collection_example.ipynb"])
 def test_op_collection_notebooks(notebook_file: str, tmp_path: Path):
     """Test operation collection notebooks."""
@@ -234,12 +244,11 @@ CIRCUIT_TRACER_PARAMS = [
 ]
 
 
-@RunIf(standalone=True, bf16_cuda=True)
+@RunIf(bf16_cuda=True)
 @pytest.mark.parametrize("params", CIRCUIT_TRACER_PARAMS)
 def test_circuit_tracer_notebooks(params: dict[str, Any], tmp_path: Path):
     """Test circuit tracer notebooks with different parameterizations."""
-    # Use the CLT notebook for these tests
-    notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "circuit_tracer_adapter_example_basic_clt.ipynb"
+    notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "circuit_tracer_adapter_example_basic.ipynb"
 
     # Create output directory
     output_dir = tmp_path / "notebook_outputs"
@@ -259,20 +268,33 @@ def test_circuit_tracer_notebooks(params: dict[str, Any], tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
-@RunIf(standalone=True, bf16_cuda=True)
-@pytest.mark.parametrize("notebook_file", ["saelens_adapter_example_registry.ipynb"])
-def test_sae_lens_notebooks(notebook_file: str, tmp_path: Path):
-    """Test SAE Lens adapter notebooks."""
-    notebook_path = NOTEBOOKS_DIR / "saelens_adapter_example" / notebook_file
+# Test parameters for SAE Lens notebooks (parameterized by backend)
+SAE_LENS_PARAMS = [
+    pytest.param(
+        {"backend": "transformerlens"},
+        id="sae_lens_tl",
+    ),
+    pytest.param(
+        {"backend": "nnsight"},
+        id="sae_lens_nnsight",
+    ),
+]
+
+
+@RunIf(bf16_cuda=True)
+@pytest.mark.parametrize("params", SAE_LENS_PARAMS)
+def test_sae_lens_notebooks(params: dict[str, Any], tmp_path: Path):
+    """Test SAE Lens adapter notebooks with different backend parameterizations."""
+    notebook_path = NOTEBOOKS_DIR / "saelens_adapter_example" / "saelens_adapter_example.ipynb"
 
     # Create output directory
     output_dir = tmp_path / "notebook_outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Execute notebook (no parameters needed for registry test)
+    # Execute notebook with backend parameter
     output_notebook = execute_notebook_with_params(
         notebook_path=notebook_path,
-        parameters={},
+        parameters=params,
         output_dir=output_dir,
     )
 
@@ -283,7 +305,6 @@ def test_sae_lens_notebooks(notebook_file: str, tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
-@RunIf(standalone=True)
 def test_notebook_discovery():
     """Test that notebooks can be discovered in the publish directory."""
     assert NOTEBOOKS_DIR.exists(), f"Notebooks directory not found: {NOTEBOOKS_DIR}"
@@ -295,11 +316,9 @@ def test_notebook_discovery():
     # Verify expected notebooks exist
     expected_notebooks = [
         "attribution_analysis/attribution_analysis.ipynb",
-        "circuit_tracer_examples/circuit_tracer_adapter_example_basic_clt.ipynb",
         "circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb",
         "example_op_collections/op_collection_example.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
-        "saelens_adapter_example/saelens_adapter_example_registry.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",
     ]
 

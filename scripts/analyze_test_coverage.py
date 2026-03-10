@@ -36,6 +36,9 @@ class TestCoverageAnalyzer:
         optional_subset=None,
         mark_types_to_run=None,
         branch_level=False,
+        no_reruns=False,
+        reruns=2,
+        reruns_delay=5,
     ):
         """Initialize the analyzer with configuration options.
 
@@ -49,6 +52,9 @@ class TestCoverageAnalyzer:
             optional_subset: Filter expression for optional tests (e.g., "test_9 or test_10")
             mark_types_to_run: Comma-separated string of mark types to run (default: "normal,standalone,profile_ci")
             branch_level: Whether to perform branch-level analysis instead of statement-level
+            no_reruns: Disable test reruns for transient failures (default: False)
+            reruns: Number of reruns for transient failures (default: 2)
+            reruns_delay: Delay in seconds between reruns (default: 5)
         """
         self.output_dir = Path(output_dir or ".")
         self.max_candidates = max_candidates
@@ -59,6 +65,9 @@ class TestCoverageAnalyzer:
         self.optional_subset = optional_subset
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.branch_level = branch_level
+        self.no_reruns = no_reruns
+        self.reruns = reruns
+        self.reruns_delay = reruns_delay
 
         # Parse mark_types_to_run
         # Default comes from argparse, so mark_types_to_run is always a string.
@@ -149,6 +158,10 @@ show_contexts = True
                 "-v",
             ]
 
+            # Add rerun args for transient failures (unless disabled)
+            if not self.no_reruns:
+                cmd.extend(["--reruns", str(self.reruns), "--reruns-delay", str(self.reruns_delay)])
+
             # Add normal subset filter if specified
             if self.normal_subset:
                 # Remove any surrounding quotes that might have been carried over from the shell
@@ -214,6 +227,12 @@ show_contexts = True
             # Add filter pattern if subset is specified
             if subset_cleaned:
                 cmd.extend([f"--filter_pattern={subset_cleaned}"])
+
+            # Add rerun args for transient failures
+            if self.no_reruns:
+                cmd.append("--no-reruns")
+            else:
+                cmd.extend([f"--reruns={self.reruns}", f"--reruns-delay={self.reruns_delay}"])
 
             print(f"Running command: {' '.join(cmd)}")
             subprocess.run(cmd, env=env, check=True)
@@ -845,6 +864,13 @@ def main():
     parser.add_argument(
         "--branch-level", action="store_true", help="Perform branch-level analysis instead of statement-level (default)"
     )
+    parser.add_argument(
+        "--no-reruns",
+        action="store_true",
+        help="Disable test reruns for transient failures (default: reruns enabled with --reruns=2 --reruns-delay=5)",
+    )
+    parser.add_argument("--reruns", type=int, default=2, help="Number of reruns for transient failures (default: 2)")
+    parser.add_argument("--reruns-delay", type=int, default=5, help="Delay in seconds between reruns (default: 5)")
     args = parser.parse_args()
 
     analyzer = TestCoverageAnalyzer(
@@ -857,6 +883,9 @@ def main():
         optional_subset=args.optional_subset,
         mark_types_to_run=args.mark_types_to_run,
         branch_level=args.branch_level,
+        no_reruns=args.no_reruns,
+        reruns=args.reruns,
+        reruns_delay=args.reruns_delay,
     )
 
     try:

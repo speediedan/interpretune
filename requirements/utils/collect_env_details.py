@@ -74,6 +74,7 @@ def info_packages():
         "transformer_lens": _pkg_version("transformer_lens", "transformer_lens"),
         "sae_lens": _pkg_version("sae_lens", "sae_lens"),
         "circuit_tracer": _pkg_version("circuit_tracer", "circuit_tracer"),
+        "nnsight": _pkg_version("nnsight", "nnsight"),
         "neuronpedia": _pkg_version("neuronpedia", "neuronpedia"),
         "finetuning_scheduler": _pkg_version("finetuning_scheduler", "finetuning_scheduler"),
         "transformers": _pkg_version("transformers", "transformers"),

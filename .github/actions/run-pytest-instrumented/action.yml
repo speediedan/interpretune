@@ -99,12 +99,16 @@ runs:
         PYTHONPATH: ${{ inputs.workspace }}/src
         PYTEST_ADDOPTS: "--log-cli-level=${{ inputs.it_ci_log_level }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"
         PYTEST_FILTER_PATTERN: ${{ inputs.pytest_filter_pattern }}
+        IT_ANALYSIS_RESOURCE_DEBUG: ${{ runner.os == 'Linux' && inputs.run_resource_monitor == '1' && '1' || '0' }}
+        IT_OP_SERIALIZATION_RESOURCE_DEBUG: ${{ runner.os == 'Linux' && inputs.run_resource_monitor == '1' && '1' || '0' }}
       run: |
         if [ -n "$PYTEST_FILTER_PATTERN" ]; then
           echo "PYTEST_FILTER_PATTERN is set to '$PYTEST_FILTER_PATTERN'. Disabling coverage collection and running filtered tests only."
-          PYTEST_CMD="pytest src/interpretune tests -v --durations=50 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
+          PYTEST_CMD="pytest src/interpretune tests -v --durations=50 --reruns 2 --reruns-delay 10 -k \"$PYTEST_FILTER_PATTERN\" --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
         else
-          PYTEST_CMD="python -m coverage run --append --source src/interpretune -m pytest src/interpretune tests -v --durations=50 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
+          # Using pytest-cov ensures coverage starts before test collection imports
+          # --reruns/--reruns-delay handle transient httpx read timeouts with HF transformers v5
+          PYTEST_CMD="python -m pytest --cov=src/interpretune --cov-append --cov-report= src/interpretune tests -v --durations=50 --reruns 2 --reruns-delay 10 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
         fi
         eval $PYTEST_CMD
 

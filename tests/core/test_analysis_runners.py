@@ -2,6 +2,7 @@ from __future__ import annotations
 import pytest
 import torch
 from unittest.mock import MagicMock, patch
+from datasets import Features, Value
 
 from interpretune.runners.analysis import analysis_store_generator, generate_analysis_dataset, maybe_init_analysis_cfg
 import interpretune as it
@@ -20,17 +21,17 @@ class TestAnalysisRunner:
         "session_fixture, test_cfg_override_kwargs",
         [
             pytest.param(
-                "get_it_session__sl_gpt2_analysis__setup",
+                "get_it_session__sl_ht_gpt2_analysis__setup",
                 {"analysis_cfgs": [AnalysisCfg(output_schema=it.sae_correct_acts)]},
             ),
             # we need to set ignore_manual=True at both the analysis_cfg and the test_cfg levels since we always want
             # test_cfg to override nested configs (analysis_cfg here) but also want to leverage an existing
             # fixture test_cfg in this case.
             pytest.param(
-                "get_it_session__sl_gpt2_analysis__setup",
+                "get_it_session__sl_ht_gpt2_analysis__setup",
                 {"analysis_cfgs": [AnalysisCfg(target_op=it.model_forward, ignore_manual=True)], "ignore_manual": True},
             ),
-            pytest.param("get_analysis_session__sl_gpt2_logit_diffs_sae__initonly_runanalysis", {}),
+            pytest.param("get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis", {}),
         ],
         ids=["manual_step", "api_generated_step_with_op", "analysis_store_fixt"],
     )
@@ -156,11 +157,40 @@ class TestAnalysisRunner:
             # Verify error handling was called
             mock_handle_error.assert_called_once()
 
+    def test_generate_analysis_dataset_uses_explicit_fingerprint(self, monkeypatch, tmp_path):
+        """Explicit fingerprints must bypass datasets hashing of unpicklable generator kwargs."""
+
+        class UnpicklableModule:
+            def __init__(self):
+                self.analysis_cfg = MagicMock()
+                self.analysis_cfg.output_store = MagicMock()
+                self.analysis_cfg.output_store.cache_dir = tmp_path / "analysis_cache"
+
+            def __getstate__(self):
+                raise RuntimeError("module should not be pickled")
+
+        module = UnpicklableModule()
+
+        def fake_analysis_store_generator(**_kwargs):
+            yield {"value": 1}
+
+        monkeypatch.setattr("interpretune.runners.analysis.analysis_store_generator", fake_analysis_store_generator)
+
+        dataset = generate_analysis_dataset(
+            module=module,
+            features=Features({"value": Value("int64")}),
+            it_format_kwargs={},
+            gen_kwargs={"module": module, "datamodule": object()},
+        )
+
+        assert len(dataset) == 1
+        assert dataset.column_names == ["value"]
+
     @patch.object(it.runners.analysis.AnalysisRunner, "__init__", return_value=None)
     def test_run_method_partialmethod(self, mock_init, request):
         """Test the _run method and analysis partialmethod in AnalysisRunner."""
         # Use a real session fixture to avoid pickling issues with MagicMock
-        fixture = request.getfixturevalue("get_it_session__sl_gpt2_analysis__setup")
+        fixture = request.getfixturevalue("get_it_session__sl_ht_gpt2_analysis__setup")
         it_session, _ = fixture.it_session, fixture.test_cfg()
 
         # Create a runner with the real session
@@ -240,7 +270,7 @@ class TestAnalysisRunner:
         mock_run_cfg._processed_analysis_cfgs = [AnalysisCfg(name="test_analysis", target_op=it.model_forward)]
         mock_run_cfg.cache_dir = None
         mock_run_cfg.op_output_dataset_path = None
-        mock_run_cfg.sae_analysis_targets = None
+        mock_run_cfg.latent_analysis_targets = None
         mock_run_cfg.ignore_manual = False
         runner.run_cfg = mock_run_cfg
 
@@ -284,7 +314,7 @@ class TestAnalysisRunner:
         ]
         mock_run_cfg.cache_dir = None
         mock_run_cfg.op_output_dataset_path = None
-        mock_run_cfg.sae_analysis_targets = None
+        mock_run_cfg.latent_analysis_targets = None
         mock_run_cfg.ignore_manual = False
         runner.run_cfg = mock_run_cfg
         runner.analysis_results = {}

@@ -79,9 +79,12 @@ class ITExtensionsConfigMixin:
 
     def __getattr__(self, name: str) -> Any:
         # we make extension handles available as direct root module attributes for convenience
-        # filter only the supported extension attributes, ensuring `_it_state`` has been initialized
+        # filter only the supported extension attributes, ensuring both `extensions_context` and `_it_state` have
+        # been initialized (guard against __getattr__ calls during cooperative __init__ before extensions_context
+        # is set, which would otherwise cause infinite recursion)
         if (
-            self.extensions_context.SUPPORTED_EXTENSIONS.get(name)
+            "extensions_context" in self.__dict__
+            and self.extensions_context.SUPPORTED_EXTENSIONS.get(name)
             and (ext_attrs := self.__dict__.get("_it_state", None)) is not None
         ):
             return ext_attrs._extensions[name]

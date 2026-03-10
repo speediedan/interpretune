@@ -82,8 +82,8 @@ def _generate_cache_data(module, field, cfg, num_batches, dim_vars, is_grad_cach
     return batch_data_list
 
 
-def _generate_per_sae_hook_data(module, field, cfg, num_batches, dim_vars, predefined_indices=True):
-    """Generate data for fields with per_sae_hook=True.
+def _generate_per_latent_model_hook_data(module, field, cfg, num_batches, dim_vars, predefined_indices=True):
+    """Generate data for fields with per_latent_model_hook=True.
 
     Args:
         module: The module being analyzed
@@ -327,7 +327,7 @@ def gen_or_validate_input_data(
         override_req_cols: Tuple of field names to override the required_only behavior.
                           When required_only=True, these fields will be generated even if not required.
                           When required_only=False, these fields represent the only non-required fields to process.
-        predefined_indices: Whether to use predefined indices for per_latent and per_sae_hook data
+        predefined_indices: Whether to use predefined indices for per_latent and per_latent_model_hook data
                            to ensure alignment between fields that need to reference same indices
 
     Returns:
@@ -387,8 +387,8 @@ def gen_or_validate_input_data(
             # Skip regular field processing for this field
             continue
 
-        # Handle per_sae_hook fields
-        elif getattr(cfg, "per_sae_hook", False):
+        # Handle per_latent_model_hook fields
+        elif getattr(cfg, "per_latent_model_hook", False):
             if field in input_data:
                 # Just validate batch count if data already exists
                 if len(input_data[field]) != num_batches:
@@ -396,8 +396,8 @@ def gen_or_validate_input_data(
                         f"Input field '{field}' has {len(input_data[field])} batches but expected {num_batches}"
                     )
             else:
-                # Generate data for per_sae_hook fields
-                batch_data_list = _generate_per_sae_hook_data(
+                # Generate data for per_latent_model_hook fields
+                batch_data_list = _generate_per_latent_model_hook_data(
                     module, field, cfg, num_batches, dim_vars, predefined_indices
                 )
 

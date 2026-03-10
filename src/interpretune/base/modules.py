@@ -29,7 +29,9 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         if self.cuda_allocator_history:
             torch.cuda.memory._record_memory_history()
         self.auto_model_init()
-        if self.model:
+        # Use `is not None` to avoid triggering __bool__/__len__ on special model wrappers
+        # (e.g., NNsight's LanguageModel/Envoy which don't support truthiness checks)
+        if self.model is not None:
             self.post_auto_model_init()  # allow modification of a configuration-driven model
         else:
             self.model_init()  # load a custom model

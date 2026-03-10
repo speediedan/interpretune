@@ -7,6 +7,7 @@ from inspect import signature
 
 from tqdm.auto import tqdm
 from datasets import Dataset
+from datasets.fingerprint import generate_random_fingerprint
 
 from interpretune.analysis import schema_to_features
 from interpretune.base import _call_itmodule_hook, ITDataModule
@@ -130,24 +131,24 @@ def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, sp
     Raises:
         Exception: If dataset generation fails, with detailed debug information
     """
-    # NOTE: default split changed from "test" to "validation" for consistency
-    from_gen_kwargs = dict(
-        generator=analysis_store_generator,
-        gen_kwargs=gen_kwargs,
-        features=features,
-        split=split,
-        cache_dir=module.analysis_cfg.output_store.cache_dir,  # type: ignore[attr-defined]  # protocol provides output_store
-    )
-
-    # Create dataset with ITAnalysisFormatter
+    # Use an explicit fingerprint so datasets doesn't hash gen_kwargs via dill.
+    # gen_kwargs includes the module/datamodule, and hashing those objects can serialize model
+    # weights and fail on memory-constrained runners. The fingerprint is intentionally per-run
+    # until issue #183 implements a deterministic AnalysisStore cache key.
     try:
-        dataset = Dataset.from_generator(**from_gen_kwargs).with_format("interpretune", **it_format_kwargs)  # type: ignore[arg-type]  # datasets compatibility
+        dataset = Dataset.from_generator(
+            analysis_store_generator,
+            features=features,
+            cache_dir=str(module.analysis_cfg.output_store.cache_dir),  # type: ignore[attr-defined]  # protocol provides output_store
+            gen_kwargs=gen_kwargs,
+            split=split,  # type: ignore[arg-type]  # str acceptable for NamedSplit at runtime
+            fingerprint=generate_random_fingerprint(),
+        ).with_format("interpretune", **it_format_kwargs)
         return dataset  # type: ignore[return-value]  # datasets compatibility
     except Exception as e:
         # improve visibility of errors since they can otherwise be obscured by the dataset generator
         context_data = (
             features,  # Features derived from schema
-            from_gen_kwargs,  # Arguments for Dataset.from_generator
             gen_kwargs,  # Arguments for the analysis generator
             it_format_kwargs,  # Arguments for interpretune format
             kwargs,  # Additional user-provided arguments
@@ -278,7 +279,7 @@ class AnalysisRunner(SessionRunner):
             analysis_cfgs=self.run_cfg._processed_analysis_cfgs,  # type: ignore[attr-defined]  # dynamic config attribute
             cache_dir=self.run_cfg.cache_dir,  # type: ignore[attr-defined]  # dynamic config attribute
             op_output_dataset_path=self.run_cfg.op_output_dataset_path,  # type: ignore[attr-defined]  # dynamic config attribute
-            sae_analysis_targets=self.run_cfg.sae_analysis_targets,  # type: ignore[attr-defined]  # dynamic config attribute
+            latent_analysis_targets=self.run_cfg.latent_analysis_targets,  # type: ignore[attr-defined]  # dynamic config attribute
             ignore_manual=self.run_cfg.ignore_manual,  # type: ignore[attr-defined]  # dynamic config attribute
         )
 

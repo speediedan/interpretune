@@ -10,6 +10,10 @@ inputs:
     description: "Whether to show package list output after installations"
     required: false
     default: "false"
+  requirements_file:
+    description: "Requirements file to install (requirements.txt or requirements-oldest.txt)"
+    required: false
+    default: "requirements.txt"
 
 runs:
   using: "composite"
@@ -21,15 +25,67 @@ runs:
         activate-environment: true
         enable-cache: true
 
+    - name: Check for torch prerelease configuration
+      id: torch_pre
+      shell: bash
+      run: |
+        TORCH_PRE_FILE="requirements/ci/torch-pre.txt"
+        if [[ -f "${TORCH_PRE_FILE}" ]]; then
+          # Read 3-line config: version, CUDA target, channel type
+          # Using while-read loop instead of readarray for macOS bash 3.x compatibility
+          i=0
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            case $i in
+              0) TORCH_PRE_VERSION="$line" ;;
+              1) TORCH_PRE_CUDA="$line" ;;
+              2) TORCH_PRE_CHANNEL="$line" ;;
+            esac
+            ((i++))
+          done < <(grep -v '^#' "${TORCH_PRE_FILE}" | grep -v '^$')
+          if [[ -n "${TORCH_PRE_VERSION}" && -n "${TORCH_PRE_CHANNEL}" ]]; then
+            echo "use_prerelease=true" >> $GITHUB_OUTPUT
+            echo "version=${TORCH_PRE_VERSION}" >> $GITHUB_OUTPUT
+            echo "channel=${TORCH_PRE_CHANNEL}" >> $GITHUB_OUTPUT
+            echo "Torch prerelease configured: ${TORCH_PRE_VERSION} from ${TORCH_PRE_CHANNEL}"
+          else
+            echo "use_prerelease=false" >> $GITHUB_OUTPUT
+            echo "No torch prerelease configured (incomplete torch-pre.txt)"
+          fi
+        else
+          echo "use_prerelease=false" >> $GITHUB_OUTPUT
+          echo "No torch prerelease configured (torch-pre.txt not found)"
+        fi
+
+    - name: Install torch prerelease (if configured)
+      if: steps.torch_pre.outputs.use_prerelease == 'true'
+      shell: bash
+      run: |
+        TORCH_VERSION="${{ steps.torch_pre.outputs.version }}"
+        TORCH_CHANNEL="${{ steps.torch_pre.outputs.channel }}"
+        # CI uses CPU-only torch for GitHub Actions runners
+        INDEX_URL="https://download.pytorch.org/whl/${TORCH_CHANNEL}/cpu"
+        echo "Installing torch prerelease: ${TORCH_VERSION}+cpu from ${TORCH_CHANNEL} channel..."
+        uv pip install --prerelease=if-necessary-or-explicit "torch==${TORCH_VERSION}+cpu" --index-url "${INDEX_URL}"
+
+    - name: Install stable torch (if not using prerelease)
+      if: steps.torch_pre.outputs.use_prerelease != 'true'
+      shell: bash
+      run: |
+        echo "Installing stable torch with CPU backend..."
+        uv pip install torch --torch-backend=cpu
+
     - name: Install project dependencies
       shell: bash
       run: |
         # interpretune editable with git-deps group (uv doesn't currently support url deps in locked reqs)
         echo "Installing interpretune in editable mode with any git url dependencies..."
         uv pip install -e . --group git-deps
-        echo "Installing locked CI requirements..."
-        uv pip install -r requirements/ci/requirements.txt
 
+        # Install locked requirements WITHOUT --torch-backend since torch is already installed.
+        # The lockfile excludes torch (via --no-emit-package) but includes packages like
+        # torch-tb-profiler that depend on torch but aren't on PyTorch's special index.
+        echo "Installing locked CI requirements from ${{ inputs.requirements_file }}..."
+        uv pip install -r "requirements/ci/${{ inputs.requirements_file }}"
 
     - name: Show package list
       if: inputs.show_pip_list == 'true'

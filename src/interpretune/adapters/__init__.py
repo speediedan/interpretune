@@ -1,7 +1,7 @@
 """Adapters package lazy exports.
 
 This module exposes adapter classes/registries lazily to avoid importing heavy third-party dependencies (e.g.,
-transformer_lens, sae_lens) at package import time.
+transformer_lens, sae_lens, nnsight) at package import time.
 """
 
 _LAZY_ADAPTER_ATTRS = {
@@ -24,11 +24,19 @@ _LAZY_ADAPTER_ATTRS = {
     "BaseITLensModule": "interpretune.adapters.transformer_lens.BaseITLensModule",
     # SAE Lens
     "SAELensAdapter": "interpretune.adapters.sae_lens.SAELensAdapter",
-    "SAEAnalysisMixin": "interpretune.adapters.sae_lens.SAEAnalysisMixin",
-    "SAELensModule": "interpretune.adapters.sae_lens.SAELensModule",
+    "SAELensAnalysisMixin": "interpretune.adapters.sae_lens.SAELensAnalysisMixin",
+    "SAELensTLModule": "interpretune.adapters.sae_lens.SAELensTLModule",
+    "SAELensNNsightModule": "interpretune.adapters.sae_lens.SAELensNNsightModule",
+    "SAELensTLModuleMixin": "interpretune.adapters.sae_lens.SAELensTLModuleMixin",
+    "SAELensNNsightModuleMixin": "interpretune.adapters.sae_lens.SAELensNNsightModuleMixin",
     "SAELensAttributeMixin": "interpretune.adapters.sae_lens.SAELensAttributeMixin",
     "BaseSAELensModule": "interpretune.adapters.sae_lens.BaseSAELensModule",
     "InstantiatedSAE": "interpretune.adapters.sae_lens.InstantiatedSAE",
+    # NNsight
+    "NNsightAdapter": "interpretune.adapters.nnsight.NNsightAdapter",
+    "NNsightModule": "interpretune.adapters.nnsight.NNsightModule",
+    "NNsightAttributeMixin": "interpretune.adapters.nnsight.NNsightAttributeMixin",
+    "BaseNNsightModule": "interpretune.adapters.nnsight.BaseNNsightModule",
 }
 
 

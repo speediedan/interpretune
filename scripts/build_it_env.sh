@@ -3,10 +3,18 @@
 # Interpretune environment builder using uv
 # Uses uv pip with traditional venv activation for maximum control
 #
+# Torch handling:
+# - By default, installs stable torch with CUDA 12.8 from PyTorch stable channel (--torch-backend=cu128)
+# - If requirements/ci/torch-pre.txt exists, installs torch prerelease (nightly or test)
+# - Use --torch-backend=cpu for CPU-only environments (e.g., GitHub Actions runners)
+# - Use --torch-backend=auto for automatic backend detection
+#
 # Usage examples:
-#   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest
-#   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --torch_dev_ver=dev20240201
-#   ./build_it_env.sh --repo_home=${HOME}/repos/interpretune --target_env_name=it_latest --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler"
+#   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest
+#   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler"
+#   # With UV_OVERRIDE to prevent torch downgrade from from-source packages:
+#   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest \
+#     --from-source="nnsight:${HOME}/repos/nnsight:all:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/torch-override.txt"
 set -eo pipefail
 
 # Source shared infrastructure utilities
@@ -14,11 +22,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/infra_utils.sh"
 
 unset repo_home
 unset target_env_name
-unset torch_dev_ver
-unset torch_test_channel
 unset uv_install_flags
 unset from_source_spec
 unset venv_dir
+unset python_version
+unset torch_backend
 declare -a from_source_specs
 declare -A from_source_packages
 
@@ -28,8 +36,8 @@ Usage: $0
    [ --repo-home input]
    [ --target-env-name input ]
    [ --venv-dir input ]
-   [ --torch-dev-ver input ]
-   [ --torch-test-channel ]
+   [ --python-version input ]  (e.g., python3.12, default: python3.13)
+   [ --torch-backend input ]  (cpu, cu128, auto; default: cu128 for CUDA 12.8)
    [ --from-source "package:path[:extras][:env_var=value...]" ] (can be specified multiple times)
    [ --uv-install-flags "flags" ]
    [ --help ]
@@ -42,6 +50,27 @@ Usage: $0
    Paths will be expanded if they start with ~.
    Environment variables are set only during that package's installation and unset afterward.
 
+   Common environment variables for --from-source:
+   - UV_OVERRIDE: Path to override file to prevent dependency downgrades
+     Two override files are available:
+     * torch-override.txt: Auto-generated, pins only torch. Use for simple cases.
+     * overrides.txt: Manually maintained, pins torch AND triton. Use for packages
+       like nnsight that constrain multiple dependencies.
+     Example with torch-override.txt (torch only):
+       --from-source="some_package:\${HOME}/repos/some-package:all:UV_OVERRIDE=\${HOME}/repos/interpretune/requirements/ci/torch-override.txt"
+     Example with overrides.txt (torch + triton + transformer-lens):
+       --from-source="nnsight:\${HOME}/repos/nnsight:all:UV_OVERRIDE=\${HOME}/repos/interpretune/requirements/ci/overrides.txt"
+   - UV_EXCLUDE: Path to file listing packages to exclude from installation
+     Useful when a from-source package would reinstall a package you want to keep:
+     --from-source="circuit_tracer:\${HOME}/repos/circuit-tracer:dev:UV_EXCLUDE=\${HOME}/repos/interpretune/requirements/ci/excludes.txt"
+
+   Torch Handling:
+   - By default, uses stable torch with CUDA 12.8 (--torch-backend=cu128) to match Docker images
+   - If requirements/ci/torch-pre.txt exists, installs torch prerelease from nightly or test channel
+   - torch-pre.txt format (3 lines): version, CUDA target (e.g., cu128), channel (nightly or test)
+   - Use --torch-backend=cpu to force CPU-only torch (e.g., for CI environments)
+   - Use --torch-backend=auto for automatic backend detection
+
    Venv Directory:
    - Use --venv-dir to explicitly set the venv BASE directory (recommended when using with manage_standalone_processes.sh)
    - The venv will be created at: <venv-dir>/<target-env-name>
@@ -53,14 +82,11 @@ Usage: $0
      Example: export IT_VENV_BASE=/mnt/cache/username/.venvs
 
    Examples:
-    # build latest:
+    # build latest (auto-selects CUDA or CPU torch):
     #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest
 
-    # build latest with specific pytorch nightly:
-    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --torch-dev-ver=dev20240201
-
-    # build latest with torch test channel:
-    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --torch-test-channel
+    # build latest with CPU-only torch (for CI):
+    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --torch-backend=cpu
 
     # build latest with single package from source (no extras):
     #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --from-source="circuit_tracer:${HOME}/repos/circuit-tracer"
@@ -89,7 +115,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo-home:,target-env-name:,venv-dir:,torch-dev-ver:,torch-test-channel,from-source:,uv-install-flags:,help -- "$@")
+args=$(getopt -o '' --long repo-home:,target-env-name:,venv-dir:,python-version:,torch-backend:,from-source:,uv-install-flags:,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -101,8 +127,8 @@ do
     --repo-home)  repo_home=$2    ; shift 2  ;;
     --target-env-name)  target_env_name=$2  ; shift 2 ;;
     --venv-dir)  venv_dir=$2  ; shift 2 ;;
-    --torch-dev-ver)   torch_dev_ver=$2   ; shift 2 ;;
-    --torch-test-channel)   torch_test_channel=1 ; shift  ;;
+    --python-version)  python_version=$2  ; shift 2 ;;
+    --torch-backend)   torch_backend=$2   ; shift 2 ;;
     --from-source)   from_source_specs+=("$2") ; shift 2 ;;
     --uv-install-flags)   uv_install_flags=$2 ; shift 2 ;;
     --help)    usage      ; shift   ;;
@@ -143,37 +169,41 @@ done
 # Placing venvs on same filesystem as UV cache avoids hardlink warnings and improves performance
 venv_path=$(determine_venv_path "${venv_dir}" "${target_env_name}")
 
+# Set default Python version if not specified
+python_version=${python_version:-"python3.13"}
+
+# Set default torch backend if not specified (auto = auto-detect CUDA/CPU)
+torch_backend=${torch_backend:-"cu128"}
+
+# Torch prerelease configuration file
+torch_pre_file="${repo_home}/requirements/ci/torch-pre.txt"
+
 clear_activate_env(){
-    local python_cmd=$1
-    echo "Creating/clearing venv at ${venv_path} with ${python_cmd}"
-    uv venv --clear "${venv_path}" --python ${python_cmd}
+    echo "Creating/clearing venv at ${venv_path} with ${python_version}"
+    uv venv --clear "${venv_path}" --python ${python_version}
     source "${venv_path}/bin/activate"
     echo "Current venv prompt is now ${VIRTUAL_ENV_PROMPT}"
     uv pip install ${uv_install_flags} --upgrade pip setuptools wheel
 }
 
 base_env_build(){
-    case ${target_env_name} in
-        it_latest)
-            clear_activate_env python3.13
-            if [[ -n ${torch_dev_ver} ]]; then
-                # temporarily remove torchvision until it supports cu128 in nightly binary
-                uv pip install ${uv_install_flags} --pre torch==2.10.0.${torch_dev_ver} --index-url https://download.pytorch.org/whl/nightly/cu128
-            elif [[ ${torch_test_channel} -eq 1 ]]; then
-                uv pip install ${uv_install_flags} --pre torch==2.10.0 --index-url https://download.pytorch.org/whl/test/cu128
-            else
-                uv pip install ${uv_install_flags} torch --index-url https://download.pytorch.org/whl/cu128
-            fi
-            ;;
-        it_release)
-            clear_activate_env python3.13
-            uv pip install ${uv_install_flags} torch --index-url https://download.pytorch.org/whl/cu128
-            ;;
-        *)
-            echo "no matching environment found, exiting..."
-            exit 1
-            ;;
-    esac
+    clear_activate_env
+
+    # Read torch prerelease configuration if it exists
+    read_torch_pre_config "${torch_pre_file}"
+
+    if [[ -n "${TORCH_PRE_VERSION}" ]]; then
+        # Install torch prerelease from nightly/test channel
+        local cuda_target="${TORCH_PRE_CUDA:-cu128}"
+        local index_url
+        index_url=$(get_torch_index_url "${TORCH_PRE_CHANNEL}" "${cuda_target}")
+        echo "Installing torch prerelease: ${TORCH_PRE_VERSION} from ${TORCH_PRE_CHANNEL}/${cuda_target}..."
+        uv pip install ${uv_install_flags} --prerelease=if-necessary-or-explicit "torch==${TORCH_PRE_VERSION}" --index-url "${index_url}"
+    else
+        # Install stable torch - use --torch-backend for automatic backend selection
+        echo "Installing stable torch with --torch-backend=${torch_backend}..."
+        uv pip install ${uv_install_flags} torch --torch-backend=${torch_backend}
+    fi
 }
 
 it_install(){
@@ -196,6 +226,10 @@ it_install(){
     uv pip install ${uv_install_flags} -e . --group git-deps
 
     # 2. Install locked CI requirements (all PyPI packages)
+    # Note: Torch is already installed in base_env_build, so we don't use --torch-backend here.
+    # The lockfile excludes torch (generated with --no-emit-package torch) but includes packages
+    # that depend on torch. Using --torch-backend would try to resolve those packages against
+    # PyTorch's special index, which doesn't have all packages (e.g., torch-tb-profiler).
     echo "Installing locked dependencies..."
     uv pip install ${uv_install_flags} -r "${ci_reqs_file}"
 

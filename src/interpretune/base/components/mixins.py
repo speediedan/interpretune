@@ -131,7 +131,21 @@ class AnalysisStepMixin:
             self.on_session_end()  # type: ignore[attr-defined]  # mixin provides on_session_end
 
     def model_sig_keys(self, target_method: str) -> list:
-        return [param.name for param in inspect.signature(getattr(self.model, target_method)).parameters.values()]  # type: ignore[attr-defined]  # mixin provides model
+        sig = inspect.signature(getattr(self.model, target_method))  # type: ignore[attr-defined]  # mixin provides model
+        params = list(sig.parameters.values())
+        concrete = [
+            p for p in params if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        ]
+        if not concrete:
+            # The model exposes only ``*args, **kwargs`` (e.g. NNsight LanguageModel wrapper).
+            # Resolve through to the underlying model so we can prune batch keys meaningfully.
+            underlying = getattr(self.model, "_model", None) or getattr(self.model, "_module", None)  # type: ignore[attr-defined]
+            if underlying is not None:
+                underlying_method = getattr(underlying, target_method, None)
+                if underlying_method is not None:
+                    sig = inspect.signature(underlying_method)
+                    params = list(sig.parameters.values())
+        return [p.name for p in params]
 
     def auto_prune_batch(self, batch: BatchEncoding, target_method: str) -> dict[str, Any]:
         # since we're abstracting the same generative classification logic to be used with different frameworks, models
@@ -412,10 +426,11 @@ class HFFromPretrainedMixin:
         #       this checks for the presence of `lm_generation_cfg` so it still works when lm_generation_cfg defaults
         #       to None
         # since some generation config depends on post-init model updates, we defer generation-related
-        # model.config and model.generation_config until post-init
+        # model.generation_config updates until post-init
         # (key assumption: generation arguments do not affect model init)
+        # NOTE: transformers v5 no longer supports setting generation parameters on model.config;
+        #       generation parameters must ONLY be set on model.generation_config
         if self.generation_cfg and isinstance(self.generation_cfg, HFGenerationConfig):  # type: ignore[attr-defined]  # mixin provides generation_cfg
-            self.model.config.update(self.generation_cfg.model_config)  # type: ignore[attr-defined]  # mixin provides model and generation_cfg
             if getattr(self.model, "generation_config", None):  # type: ignore[attr-defined]  # mixin provides model
                 for k, v in self.generation_cfg.model_config.items():  # type: ignore[attr-defined]  # mixin provides generation_cfg
                     setattr(self.model.generation_config, k, v)  # type: ignore[attr-defined]  # mixin provides model

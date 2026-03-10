@@ -9,7 +9,7 @@ session_cfg:
       task_name: rte
       train_batch_size: 2
       eval_batch_size: 2
-      cust_tokenization_pattern: gemma2-chat
+      cust_tokenization_pattern: gemma-chat
       os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
       tokenizer_id_overrides:
         eos_token_id: 1

@@ -164,6 +164,21 @@ class MemProfiler:
         assert self._module is not None and self._module.it_cfg is not None, "Module or IT config is not available"
         return self._module.it_cfg.memprofiler_cfg.schedule
 
+    def _get_pytorch_model(self) -> torch.nn.Module:
+        """Get the actual PyTorch module for hook registration and attribute access.
+
+        For NNsight LanguageModel, we need to access the underlying _module. For other models (TransformerLens, plain
+        HF), we use the model directly.
+        """
+        # TODO: refactor this to property wrapping to be a property/part of our adapter/model abstraction system
+        # in our NNsight adapter attribute mixin
+        assert self._module is not None and self._module.model is not None, self.MODEL_MISSING_MSG
+        model = self._module.model
+        if hasattr(model, "_module"):
+            # NNsight LanguageModel wraps the actual model in _module
+            return model._module
+        return model
+
     def remove_memprofiler_hooks(self) -> None:
         for handle_list in self._hook_handles.values():
             for handle in handle_list:
@@ -171,8 +186,7 @@ class MemProfiler:
 
     def exec_reset_state_hooks(self) -> None:
         for hook in self._configured_hooks["reset_state_hooks"]:
-            assert self._module is not None and self._module.model is not None, self.MODEL_MISSING_MSG
-            hook(self._module.model, self.memprofiler_cfg.save_hook_attrs)
+            hook(self._get_pytorch_model(), self.memprofiler_cfg.save_hook_attrs)
 
     def add_memprofiler_hooks(self) -> None:
         # TODO: extend supported hook points (e.g. backward, etc.) and if/once supporting additional hook points,
@@ -184,11 +198,11 @@ class MemProfiler:
                     cfg_obj=memory_hooks_cfg, func_type=supported_hooks.name
                 )
 
-        assert self._module is not None and self._module.model is not None, self.MODEL_MISSING_MSG
         assert self._curr_pid is not None, "Memory profiling process not initialized"
+        pytorch_model = self._get_pytorch_model()
 
-        for module in self._module.model.modules():
-            module.mem_info_handle = self._curr_pid.memory_info
+        for module in pytorch_model.modules():
+            module.mem_info_handle = self._curr_pid.memory_info  # type: ignore[assignment]
             for hook_func in self._configured_hooks["pre_forward_hooks"]:
                 self._hook_handles[hook_func].append(module.register_forward_pre_hook(hook_func))
             for hook_func in self._configured_hooks["post_forward_hooks"]:
@@ -222,8 +236,8 @@ class MemProfiler:
         if self.memprofiler_cfg.enable_memory_hooks:
             if len(self._hook_handles) == 0:
                 self.add_memprofiler_hooks()
-            assert self._module is not None and self._module.model is not None, self.MODEL_MISSING_MSG
-            collected = {attr: getattr(self._module.model, attr, None) for attr in self.memprofiler_cfg.save_hook_attrs}
+            pytorch_model = self._get_pytorch_model()
+            collected = {attr: getattr(pytorch_model, attr, None) for attr in self.memprofiler_cfg.save_hook_attrs}
             self.memory_stats[snap_key].update(collected)
 
     def _collect_snap(self, snap_key, reset_mem_hooks: bool = False) -> None:

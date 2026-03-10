@@ -13,8 +13,10 @@
 import os
 import re
 import sys
+from functools import lru_cache
 from typing import Dict, Set
 
+import psutil
 import pytest
 import torch
 from interpretune.utils import _LIGHTNING_AVAILABLE, _BNB_AVAILABLE, _FTS_AVAILABLE
@@ -23,6 +25,24 @@ from importlib.metadata import version as get_version
 from it_examples.patching.dep_patch_shim import ExpPatch, _ACTIVE_PATCHES
 
 EXTENDED_VER_PAT = re.compile(r"([0-9]+\.){2}[0-9]+")
+
+# Detect if torch is a CPU-only build (no CUDA support compiled in)
+# This is different from torch.cuda.is_available() which checks for GPU presence
+_TORCH_CPU_ONLY = torch.version.cuda is None
+
+
+@lru_cache(maxsize=None)
+def get_runner_ram_gb() -> float:
+    """Return total system RAM in GB.
+
+    Cached so repeated checks from RunIf and test helpers do not repeatedly re-query system memory.
+    """
+
+    mocked_total_ram = os.environ.get("IT_MOCK_RUNNER_RAM_GB")
+    if mocked_total_ram is not None:
+        return float(mocked_total_ram)
+
+    return psutil.virtual_memory().total / (1024**3)
 
 
 def maybe_mark_exp(exp_patch_set: set[ExpPatch], mark_if_false: Dict | None = None):
@@ -51,6 +71,8 @@ lightning_mark = {"lightning": True}
 fts_mark = {"finetuning_scheduler": True}
 bitsandbytes_mark = {"bitsandbytes": True}
 skip_win_mark = {"skip_windows": True}
+cpu_only_torch_mark = {"cpu_only_torch": True}
+skip16GB_mark = {"min_ram_gb": 16}
 
 # RunIf aliases
 RUNIF_ALIASES = {
@@ -78,8 +100,12 @@ RUNIF_ALIASES = {
     "bf16_cuda_profci": {**bf16_cuda_mark, **profiling_ci_mark},
     "bf16_cuda_l": {**bf16_cuda_mark, **lightning_mark},
     "bf16_cuda_l_prof": {**bf16_cuda_mark, **lightning_mark, **profiling_mark},
+    "l_standalone": {**lightning_mark, **standalone_mark},
     "l_optional": {**lightning_mark, **optional_mark},
     "skip_win_optional": {**skip_win_mark, **optional_mark},
+    "cpu_only_torch": cpu_only_torch_mark,
+    "cpu_only_torch_l": {**cpu_only_torch_mark, **lightning_mark},
+    "skip16gb": skip16GB_mark,
 }
 
 
@@ -111,7 +137,10 @@ class RunIf:
         lightning: bool = False,
         finetuning_scheduler: bool = False,
         bitsandbytes: bool = False,
+        cpu_only_torch: bool = False,
+        min_ram_gb: int = 0,
         exp_patch: ExpPatch | set[ExpPatch] | None = None,
+        skip: str | None = None,
         **kwargs,
     ):
         """
@@ -139,11 +168,18 @@ class RunIf:
             lightning: Require that lightning is installed.
             finetuning_scheduler: Require that finetuning_scheduler is installed.
             bitsandbytes: Require that bitsandbytes is installed.
+            cpu_only_torch: Require that torch is a CPU-only build (no CUDA support compiled in).
+            min_ram_gb: Require at least this many GB of total system RAM (skips on runners with less).
             exp_patch: Require that a given experimental patch is installed.
+            skip: Unconditionally skip the test with the given reason string.
             **kwargs: Any :class:`pytest.mark.skipif` keyword arguments.
         """
         conditions = []
         reasons = []
+
+        if skip:
+            conditions.append(True)
+            reasons.append(skip)
 
         if min_cuda_gpus:
             conditions.append(torch.cuda.device_count() < min_cuda_gpus)
@@ -239,6 +275,15 @@ class RunIf:
         if bitsandbytes:
             conditions.append(not _BNB_AVAILABLE)
             reasons.append("BitsandBytes")
+
+        if cpu_only_torch:
+            conditions.append(not _TORCH_CPU_ONLY)
+            reasons.append("CPU-only torch build")
+
+        if min_ram_gb:
+            total_ram_gb = get_runner_ram_gb()
+            conditions.append(total_ram_gb < min_ram_gb)
+            reasons.append(f"at least {min_ram_gb} GB RAM (found {total_ram_gb:.1f} GB)")
 
         if exp_patch:
             # since we want to ensure we separate all experimental test combinations from normal unpatched tests, we

@@ -45,8 +45,9 @@ rte_fields = ("premise", "hypothesis")
 TEST_TASK_NUM_LABELS = {k: 2 for k in example_test_datasets}
 TEST_TASK_TEXT_FIELD_MAP = {k: rte_fields for k in example_test_datasets}
 # note that we also sample the 'test' split after 'train' and 'validation' though we aren't yet using it
+# NOTE: transformers v5 unified fast/slow tokenizer naming - GPT2TokenizerFast is now GPT2Tokenizer
 deterministic_token_ids = {
-    ("rte", "GPT2TokenizerFast"): [5674, 24140, 373, 666, 2233, 303, 783, 783, 2055, 319, 373, 910, 17074, 284, 6108]
+    ("rte", "GPT2Tokenizer"): [5674, 24140, 373, 666, 2233, 303, 783, 783, 2055, 319, 373, 910, 17074, 284, 6108]
 }
 
 
@@ -162,7 +163,7 @@ def def_results(
     precision: int | str,
     ds_cfg: str = "no_sample",
     task_name: str = default_test_task,
-    tokenizer_cls_name: str = "GPT2TokenizerFast",
+    tokenizer_cls_name: str = "GPT2Tokenizer",  # NOTE: transformers v5 unified fast/slow tokenizer naming
 ):
     test_dataset_state = DatasetState(tokenizer_cls_name, *get_exp_token_ids(ds_cfg, task_name, tokenizer_cls_name))
     # wrap result dict such that only the first epoch is checked

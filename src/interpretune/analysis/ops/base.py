@@ -11,6 +11,43 @@ from transformers import BatchEncoding, PreTrainedTokenizerBase
 
 from interpretune.protocol import BaseAnalysisBatchProtocol
 
+# Cross-backend batch key aliases. Different backends store tokenized input under different keys:
+# TransformerLens (HookedTransformer) uses 'input', HuggingFace/NNsight uses 'input_ids'.
+_BATCH_INPUT_KEY_ALIASES: dict[str, tuple[str, ...]] = {
+    "input": ("input_ids",),
+}
+
+
+def resolve_batch_input_key(batch: BatchEncoding, key: str = "input") -> str:
+    """Resolve the actual batch key, checking aliases for cross-backend compatibility.
+
+    Args:
+        batch: The batch to check for the key.
+        key: The canonical key name to resolve (default: ``"input"``).
+
+    Returns:
+        The actual key present in the batch (either the canonical key or one of its aliases).
+
+    Raises:
+        KeyError: If neither the key nor any of its aliases are present in the batch.
+    """
+    if key in batch:
+        return key
+    for alias in _BATCH_INPUT_KEY_ALIASES.get(key, ()):
+        if alias in batch:
+            return alias
+    raise KeyError(f"Batch must contain '{key}' or one of its aliases {_BATCH_INPUT_KEY_ALIASES.get(key, ())}")
+
+
+def get_batch_input(batch: BatchEncoding) -> torch.Tensor:
+    """Get the tokenized input tensor from the batch, handling cross-backend key differences.
+
+    Supports both TransformerLens convention (``batch["input"]``) and HuggingFace/NNsight convention
+    (``batch["input_ids"]``).
+    """
+    return batch[resolve_batch_input_key(batch, "input")]  # type: ignore[return-value]  # BatchEncoding __getitem__ is untyped
+
+
 # Module-level constants for default operation parameters
 DEFAULT_OP_PARAMS = {"module": None, "analysis_batch": None, "batch": None, "batch_idx": None}
 
@@ -152,7 +189,7 @@ class ColCfg:
     dyn_dim_ceil: DIM_VAR | None = None  # helper for dynamic dimension handling in some contexts
     non_tensor: bool = False
     per_latent: bool = False
-    per_sae_hook: bool = False  # For fields that have per-SAE hook subfields
+    per_latent_model_hook: bool = False  # For fields that have per-latent-model hook subfields
     intermediate_only: bool = False  # Indicates column used in processing but not written to output
     connected_obj: Literal["analysis_store", "datamodule"] = "analysis_store"
     array_shape: tuple[int | DIM_VAR | None, ...] | None = None  # Shape with optional dimension variables
@@ -189,7 +226,7 @@ class ColCfg:
                 self.dyn_dim,
                 self.non_tensor,
                 self.per_latent,
-                self.per_sae_hook,
+                self.per_latent_model_hook,
                 self.intermediate_only,
                 self.connected_obj,
                 hashable_shape,
@@ -232,15 +269,17 @@ def wrap_summary(
 ) -> BaseAnalysisBatchProtocol:
     decode_kwargs = decode_kwargs or {}
     if save_prompts:
-        assert batch["input"] is not None, "Input batch must contain 'input' field for decoding prompts"
+        batch_input = get_batch_input(batch)
+        assert batch_input is not None, "Input batch must contain 'input' (or 'input_ids') field for decoding prompts"
         assert tokenizer is not None, "Tokenizer is required to decode prompts"
-        analysis_batch.prompts = tokenizer.batch_decode(batch["input"], **decode_kwargs)  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
+        analysis_batch.prompts = tokenizer.batch_decode(batch_input, **decode_kwargs)  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
     elif hasattr(analysis_batch, "prompts"):
         del analysis_batch.prompts  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
 
     if save_tokens:
-        assert batch["input"] is not None, "Input batch must contain 'input' field for saving tokens"
-        analysis_batch.tokens = batch["input"].detach().cpu()  # type: ignore[attr-defined]  # dynamic attribute for batch protocol, tensor-like object
+        batch_input = get_batch_input(batch)
+        assert batch_input is not None, "Input batch must contain 'input' (or 'input_ids') field for saving tokens"
+        analysis_batch.tokens = batch_input.detach().cpu()  # type: ignore[attr-defined]  # dynamic attribute for batch protocol, tensor-like object
     elif hasattr(analysis_batch, "tokens"):
         del analysis_batch.tokens  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
 
@@ -326,10 +365,13 @@ class AnalysisOp:
                 continue
 
             if col_cfg.connected_obj == "datamodule":
-                # Check in batch for fields from datamodule
+                # Check in batch for fields from datamodule, including cross-backend key aliases
+                # (e.g., 'input' may be stored as 'input_ids' for HF/NNsight backends)
                 # TODO: decide whether to allow this fallback behavior or require explicit mapping by the op definitions
                 # We don't raise an error until we also check if it's already been processed and moved to analysis_batch
-                if (batch is None or key not in batch) and (
+                keys_to_check = (key,) + _BATCH_INPUT_KEY_ALIASES.get(key, ())
+                key_in_batch = batch is not None and any(k in batch for k in keys_to_check)
+                if not key_in_batch and (
                     analysis_batch is None or not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None
                 ):
                     raise ValueError(f"Missing required input '{key}' for {self.name} operation")

@@ -7,7 +7,7 @@ import warnings
 from transformers import BatchEncoding, PreTrainedTokenizerBase
 
 from interpretune.analysis import (
-    SAEAnalysisTargets,
+    LatentAnalysisTargets,
     resolve_names_filter,
     _make_simple_cache_hook,
     OpSchema,
@@ -20,6 +20,76 @@ from interpretune.config import ITSerializableCfg
 from interpretune.protocol import NamesFilter, AnalysisStoreProtocol, BaseAnalysisBatchProtocol, STEP_OUTPUT
 from interpretune.utils import DEFAULT_DECODE_KWARGS
 from interpretune.utils import rank_zero_warn, rank_zero_debug
+
+
+def _extend_names_for_bridge(module, names_list: list[str]) -> tuple[list[str], dict[str, str]]:
+    """Extend a names_filter list with canonical-name equivalents for TransformerBridge models.
+
+    :func:`construct_names_filter` builds alias-based hook names (e.g.
+    ``blocks.9.attn.hook_z.hook_sae_acts_post``) but TransformerBridge's
+    ``hook_dict`` and ``run_with_cache`` use canonical names (e.g.
+    ``blocks.9.attn.o.hook_in.hook_sae_acts_post``).  When the resolved callable
+    is passed to ``run_with_cache``, Bridge doesn't resolve aliases for callables
+    (only for list inputs).  This helper adds the canonical equivalents to the
+    filter list so the callable matches both alias and canonical keys.
+
+    For non-Bridge models this is a no-op that returns the input list unchanged
+    and an empty mapping.
+
+    Args:
+        module: The IT module whose ``model`` attribute is checked for Bridge type.
+        names_list: Original names_filter list with alias-based names.
+
+    Returns:
+        Tuple of (extended_list, canonical_to_alias_map) where:
+        - extended_list includes canonical-name equivalents (or original list for non-Bridge)
+        - canonical_to_alias_map maps canonical names back to their alias originals
+          (empty dict for non-Bridge models)
+    """
+    try:
+        from transformer_lens.model_bridge.bridge import TransformerBridge
+    except ImportError:
+        return names_list, {}
+
+    model = getattr(module, "model", None)
+    if model is None or not isinstance(model, TransformerBridge):
+        return names_list, {}
+
+    # Build combined alias→canonical mapping from the bridge.
+    # ``hook_aliases`` contains static aliases (embed/pos_embed/unembed).
+    # ``_collect_hook_aliases_from_registry`` (on SAETransformerBridge) contains
+    # dynamic aliases including the critical hook_z→o.hook_in mappings.
+    alias_to_canonical: dict[str, str] = {}
+    if hasattr(model, "hook_aliases"):
+        alias_to_canonical.update(model.hook_aliases)  # type: ignore[arg-type]  # TL hook_aliases is Dict[str, str | List[str]]
+    if hasattr(model, "_collect_hook_aliases_from_registry"):
+        alias_to_canonical.update(model._collect_hook_aliases_from_registry())  # type: ignore[arg-type]
+
+    if not alias_to_canonical:
+        return names_list, {}
+
+    extended = list(names_list)
+    canonical_to_alias: dict[str, str] = {}
+    for name in names_list:
+        # Try each alias prefix: if the name starts with an alias prefix (possibly with a suffix),
+        # add the canonical equivalent.  e.g. "blocks.9.attn.hook_z.hook_sae_acts_post"
+        # → alias "blocks.9.attn.hook_z" maps to "blocks.9.attn.o.hook_in"
+        # → canonical equiv: "blocks.9.attn.o.hook_in.hook_sae_acts_post"
+        for alias, canonical in alias_to_canonical.items():
+            if name == alias:
+                if canonical not in extended:
+                    extended.append(canonical)
+                canonical_to_alias[canonical] = name
+                break
+            elif name.startswith(alias + "."):
+                suffix = name[len(alias) :]
+                canonical_name = canonical + suffix
+                if canonical_name not in extended:
+                    extended.append(canonical_name)
+                canonical_to_alias[canonical_name] = name
+                break
+
+    return extended, canonical_to_alias
 
 
 @dataclass(kw_only=True)
@@ -36,9 +106,12 @@ class AnalysisCfg(ITSerializableCfg):
     save_prompts: bool = False
     save_tokens: bool = False
     decode_kwargs: dict = field(default_factory=lambda: DEFAULT_DECODE_KWARGS)
-    sae_analysis_targets: SAEAnalysisTargets | None = None
+    latent_analysis_targets: LatentAnalysisTargets | None = None
     ignore_manual: bool = False  # When True, ignore existing analysis_step and use op to generate one
     step_fn: str = "analysis_step"  # Name of the method to use/generate for analysis
+    # Preserved original step_fn name for idempotent re-application across module instances
+    # (prevents _generated_ prefix accumulation when this cfg is shared via class-level defaults)
+    _original_step_fn: str | None = field(default=None, init=False, repr=False, compare=False)
     auto_prune_batch_encoding: bool = True  # Automatically prune encoded batches to only include relevant keys
     _applied_to: dict = field(default_factory=dict)  # Dictionary tracking which modules this cfg has been applied to
     _op: str | AnalysisOp | Callable | list[AnalysisOp] | None = None  # op via generated analysis step
@@ -176,27 +249,49 @@ class AnalysisCfg(ITSerializableCfg):
 
         # Otherwise leave as-is; callers will raise clear errors if this is invalid
 
-    def materialize_names_filter(self, module, fallback_sae_targets: SAEAnalysisTargets | None = None) -> None:
-        """Set names_filter using sae_analysis_targets if not already set.
+    def materialize_names_filter(self, module, fallback_sae_targets: LatentAnalysisTargets | None = None) -> None:
+        """Set names_filter using latent_analysis_targets if not already set.
+
+        For :class:`~transformer_lens.model_bridge.bridge.TransformerBridge` models the constructed
+        filter is automatically extended with canonical-name equivalents so that both
+        ``run_with_cache`` (which iterates canonical ``hook_dict`` keys) and downstream filtering
+        (e.g. ``get_alive_latents_impl``) can match activations regardless of whether the cache
+        uses alias or canonical naming.
 
         Args:
             module: The module to construct the names_filter for.
-            fallback_sae_targets: Optional fallback SAEAnalysisTargets to use if this config doesn't have one.
+            fallback_sae_targets: Optional fallback LatentAnalysisTargets to use if this config doesn't have one.
         """
         # Skip if names_filter is already set
         if self.names_filter is not None:
             self.names_filter = resolve_names_filter(self.names_filter)
             return
 
-        # Choose the appropriate SAEAnalysisTargets
-        sae_targets = self.sae_analysis_targets or fallback_sae_targets
+        # Choose the appropriate LatentAnalysisTargets
+        sae_targets = self.latent_analysis_targets or fallback_sae_targets
 
         if sae_targets is not None:
             target_layers = sae_targets.target_layers
             match_fn = sae_targets.sae_hook_match_fn
             self.names_filter = module.construct_names_filter(target_layers, match_fn)
         else:
-            raise ValueError("No SAEAnalysisTargets available to create names_filter")
+            raise ValueError("No LatentAnalysisTargets available to create names_filter")
+
+        # For TransformerBridge models, extend the filter list with canonical-name equivalents.
+        # construct_names_filter builds alias-based names (e.g. blocks.9.attn.hook_z.hook_sae_acts_post)
+        # but Bridge's hook_dict and run_with_cache use canonical names
+        # (e.g. blocks.9.attn.o.hook_in.hook_sae_acts_post).
+        # Without this, the callable names_filter doesn't match canonical names → cache is empty →
+        # alive_latents empty.
+        # TODO: revisit names_filter handling for TransformerBridge — currently we extend the list
+        # with both alias and canonical names and remap keys post-hoc (_remap_bridge_hook_keys). A
+        # cleaner approach would be to resolve the naming scheme once at config time so downstream
+        # code only ever sees one consistent set of hook names.
+        if isinstance(self.names_filter, list):
+            self.names_filter, self._canonical_to_alias_names = _extend_names_for_bridge(module, self.names_filter)
+        else:
+            self._canonical_to_alias_names = {}
+
         self.names_filter = resolve_names_filter(self.names_filter)
 
     def maybe_set_hooks(self) -> None:
@@ -204,18 +299,18 @@ class AnalysisCfg(ITSerializableCfg):
         if not self.fwd_hooks and not self.bwd_hooks:
             self.check_add_default_hooks()
 
-    def prepare_model_ctx(self, module, fallback_sae_targets: SAEAnalysisTargets | None = None) -> None:
+    def prepare_model_ctx(self, module, fallback_sae_targets: LatentAnalysisTargets | None = None) -> None:
         """Configure names_filter and hooks for a specific module.
 
         Args:
             module: The module to configure for.
-            fallback_sae_targets: Optional fallback SAEAnalysisTargets to use if this config doesn't have one.
+            fallback_sae_targets: Optional fallback LatentAnalysisTargets to use if this config doesn't have one.
         """
 
-        # Ensure sae_analysis_targets, fallback_sae_targets, or names_filter are set before materializing names_filter
-        if not (self.sae_analysis_targets or fallback_sae_targets or self.names_filter):
+        # Ensure latent_analysis_targets, fallback_sae_targets, or names_filter are set before materializing
+        if not (self.latent_analysis_targets or fallback_sae_targets or self.names_filter):
             rank_zero_debug(
-                "None of (sae_analysis_targets, fallback_sae_targets, names_filter) are set. "
+                "None of (latent_analysis_targets, fallback_sae_targets, names_filter) are set. "
                 "Proceeding without materializing names_filter."
             )
         else:
@@ -278,7 +373,60 @@ class AnalysisCfg(ITSerializableCfg):
                 decode_kwargs=self.decode_kwargs,
             )
 
+        # For TransformerBridge models, remap canonical hook-name keys to alias-based
+        # keys at the serialization boundary so the HF dataset matches its schema.
+        analysis_batch = self._remap_bridge_hook_keys(analysis_batch)
+
         yield analysis_batch
+
+    def _remap_bridge_hook_keys(self, analysis_batch: BaseAnalysisBatchProtocol) -> BaseAnalysisBatchProtocol:
+        """Remap canonical hook-name dict keys to alias-based keys for Bridge models.
+
+        TransformerBridge models use canonical hook names internally (e.g.
+        ``blocks.9.attn.o.hook_in.hook_sae_acts_post``) while the dataset schema
+        uses alias-based names from SAE metadata (e.g.
+        ``blocks.9.attn.hook_z.hook_sae_acts_post``).
+
+        This remapping is applied once at the serialization boundary so all
+        internal analysis operations can use consistent canonical names from the
+        activation cache.
+
+        Args:
+            analysis_batch: The analysis batch whose per-hook dict fields may need
+                key remapping.
+
+        Returns:
+            The analysis batch with remapped keys (modified in-place via setattr).
+        """
+        canonical_to_alias = getattr(self, "_canonical_to_alias_names", None)
+        if not canonical_to_alias:
+            return analysis_batch
+
+        # Determine output schema to identify per-hook dict fields
+        from interpretune.analysis.ops.base import AnalysisOpLike, OpSchema
+
+        schema = None
+        if self.op is not None and hasattr(self.op, "output_schema"):
+            schema = self.op.output_schema  # type: ignore[union-attr]  # guarded by hasattr
+        elif hasattr(self, "output_schema") and self.output_schema is not None:
+            schema = self.output_schema
+        if isinstance(schema, AnalysisOpLike):
+            schema = schema.output_schema
+        if not isinstance(schema, OpSchema):
+            return analysis_batch
+
+        for col_name, col_cfg in schema.items():
+            if col_cfg.intermediate_only:
+                continue
+            if not (col_cfg.per_latent_model_hook or col_cfg.per_latent):
+                continue
+            val = getattr(analysis_batch, col_name, None)
+            if not isinstance(val, dict):
+                continue
+            remapped = {canonical_to_alias.get(k, k): v for k, v in val.items()}
+            setattr(analysis_batch, col_name, remapped)
+
+        return analysis_batch
 
     def add_default_cache_hooks(self, include_backward: bool = True) -> None:
         """Add default caching hooks for forward and optionally backward passes.
@@ -351,7 +499,7 @@ class AnalysisCfg(ITSerializableCfg):
         module,
         cache_dir: str | None = None,
         op_output_dataset_path: str | None = None,
-        fallback_sae_targets: SAEAnalysisTargets | None = None,
+        fallback_sae_targets: LatentAnalysisTargets | None = None,
     ):
         """Set up analysis configuration and configure for the given module.
 
@@ -363,22 +511,28 @@ class AnalysisCfg(ITSerializableCfg):
             module: The module to configure for.
             cache_dir: Optional cache directory.
             op_output_dataset_path: Optional output path.
-            fallback_sae_targets: Optional fallback SAEAnalysisTargets to use if this config doesn't have one.
+            fallback_sae_targets: Optional fallback LatentAnalysisTargets to use if this config doesn't have one.
         """
         # Short-circuit if already applied to this module (though apply should be idempotent)
         module_id = id(module)
         if module_id in self._applied_to:
             return
 
-        # Check if module has an analysis step method with the specified name
-        has_custom_step = hasattr(module, self.step_fn) and not getattr(module, f"_generated_{self.step_fn}", False)
+        # Store original step_fn name before any mutation to prevent _generated_ prefix accumulation
+        # when this AnalysisCfg instance is shared across multiple module instantiations
+        if self._original_step_fn is None:
+            self._original_step_fn = self.step_fn
+        base_step_fn = self._original_step_fn
+
+        # Check if module has a manually-defined analysis step (using the original/base name)
+        has_custom_step = hasattr(module, base_step_fn) and not getattr(module, f"_generated_{base_step_fn}", False)
 
         # Only warn about custom step if we're not going to ignore it
         if has_custom_step and not self.ignore_manual:
             warnings.warn(
-                f"Module {module.__class__.__name__} already has a {self.step_fn} method. "
+                f"Module {module.__class__.__name__} already has a {base_step_fn} method. "
                 "The provided operation configuration will be used for hooks and filters, "
-                f"but the execution flow will be determined by the existing {self.step_fn} method."
+                f"but the execution flow will be determined by the existing {base_step_fn} method."
             )
 
         # Generate a new step if no custom step exists OR we're explicitly ignoring manual steps
@@ -398,11 +552,12 @@ class AnalysisCfg(ITSerializableCfg):
                 yield from self.analysis_cfg.save_batch(analysis_batch, batch, tokenizer=self.datamodule.tokenizer)
 
             # TODO: separate some of this more ephemeral state to an AnalysisState object
-            # Add the method to the module with a _generated version of the specified step_fn name
-            # (to avoid potentially clobbering the manual version)
-            setattr(module, f"_generated_{self.step_fn}", generated_analysis_step.__get__(module))
-            # update the analysis_cfg step_fn method name to the generated step_fn name
-            setattr(self, "step_fn", f"_generated_{self.step_fn}")
+            # Add the method to the module with a _generated version of the base step_fn name
+            # (to avoid potentially clobbering the manual version; always uses base_step_fn so
+            # the generated name is stable even when this cfg is shared across module instances)
+            setattr(module, f"_generated_{base_step_fn}", generated_analysis_step.__get__(module))
+            # update the analysis_cfg step_fn to the generated name (idempotent: always single prefix)
+            setattr(self, "step_fn", f"_generated_{base_step_fn}")
 
         # Always set up the analysis store, even for manual analysis steps
         if not self.output_store:
@@ -431,7 +586,7 @@ class AnalysisArtifactCfg(ITSerializableCfg):
 
     latent_effects_graphs: bool = True
     latent_effects_graphs_per_batch: bool = False  # can be overwhelming with many batches
-    latents_table_per_sae: bool = True
+    table_per_latent_model: bool = True
     top_k_latents_table: int = 2
     top_k_latent_dashboards: int = 1  # (don't set too high, num dashboards = top_k_latent_dashboards * num_hooks * 2)
     top_k_clean_logit_diffs: int = 10

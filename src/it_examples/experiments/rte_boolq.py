@@ -178,9 +178,7 @@ class RTEBoolqDataModule(ITDataModule):
                 task_prompt = field1 + prompt_cfg.ctx_question_join + field2 + prompt_cfg.question_suffix
             sequence = template_fn(task_prompt=task_prompt, tokenization_pattern=tokenization_pattern)
             example_batch["sequences"].append(sequence)
-        features = tokenizer.batch_encode_plus(
-            example_batch["sequences"], padding="longest", padding_side=tokenizer.padding_side
-        )
+        features = tokenizer(example_batch["sequences"], padding="longest", padding_side=tokenizer.padding_side)
         features["labels"] = example_batch["label"]  # Rename label to labels, easier to pass to model forward
         features = sanitize_input_name(tokenizer.model_input_names, features)
         return features

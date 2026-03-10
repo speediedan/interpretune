@@ -27,8 +27,15 @@ from tests.utils import get_nested, set_nested
 ################################################################################
 w_lit = {"adapter_ctx": (Adapter.lightning,)}
 w_l_tl = {"adapter_ctx": (Adapter.lightning, Adapter.transformer_lens)}
-# SAE lens doesn't support TransformerBridge yet, must use legacy HookedTransformer
-w_l_sl = {"adapter_ctx": (Adapter.lightning, Adapter.sae_lens), "tl_cfg": ITLensFromPretrainedConfig(use_bridge=False)}
+# Lightning + SAE lens using legacy HookedTransformer path
+w_l_sl = {
+    "adapter_ctx": (Adapter.lightning, Adapter.sae_lens),
+    "use_bridge": False,
+    "tl_cfg": ITLensFromPretrainedConfig(use_bridge=False),
+}
+# NNsight adapter contexts
+w_ns = {"adapter_ctx": (Adapter.core, Adapter.nnsight)}
+w_l_ns = {"adapter_ctx": (Adapter.lightning, Adapter.nnsight)}
 
 ################################################################################
 # Device and Precision cfg aliases

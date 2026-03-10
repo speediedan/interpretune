@@ -13,8 +13,10 @@ from __future__ import annotations
 # limitations under the License.
 # initially based on: https://bit.ly/3GDHDcI
 import os
+import gc
 import threading
 from collections import defaultdict, namedtuple
+from contextlib import contextmanager
 from typing import Dict, Tuple, Type, Sequence
 from functools import partial
 from http.server import SimpleHTTPRequestHandler
@@ -26,12 +28,13 @@ from dataclasses import dataclass, field
 from enum import auto, IntEnum
 import pytest
 import yaml
+import torch
 import torch.distributed
 
 from interpretune.base import _call_itmodule_hook, ITDataModule
 from interpretune.runners import AnalysisRunner
 from interpretune.config.runner import AnalysisRunnerCfg
-from interpretune.analysis import AnalysisStore, SAEAnalysisDict
+from interpretune.analysis import AnalysisStore, LatentAnalysisDict
 from interpretune.session import ITMeta, ITSession
 from interpretune.protocol import ModuleSteppable, DataModuleInitable
 from interpretune.utils import rank_zero_only
@@ -43,14 +46,16 @@ from tests.parity_acceptance.test_it_cli import TEST_CONFIGS_CLI_PARITY
 from tests.base_defaults import BaseCfg
 from tests.parity_acceptance.test_it_l import CoreCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg
+from tests.analysis_resource_utils import AnalysisExtractionMixin, analysis_fixture_scope
 from tests.utils import kwargs_from_cfg_obj, deterministic_context
 
 from tests.core.cfg_aliases import (
     TEST_CONFIGS_CLI_UNIT,
     unit_exp_cli_cfgs,
     TLDebugCfg,
+    NSDebugCfg,
     LightningLlama3DebugCfg,
-    LightningGemma2DebugCfg,
+    LightningGemma3DebugCfg,
     LightningTLBridgeLlama3,
     LightningTLBridgeGemma2,
     CoreMemProfCfg,
@@ -61,21 +66,116 @@ from tests.core.cfg_aliases import (
     LightningTLGPT2,
     LightningTLBridgeGPT2,
     LightningTLBridgeGPT2Processed,
-    CoreSLGPT2,
-    CoreSLGPT2Analysis,
+    CoreSLHTGPT2,
+    CoreSLHTGPT2Analysis,
     CoreSLCust,
-    LightningSLGPT2,
-    CoreSLGPT2LogitDiffsSAE,
-    CoreSLGPT2LogitDiffsAttrGrad,
-    CoreSLGPT2LogitDiffsBase,
+    CoreSLNNsightGPT2,
+    CoreSLBridgeGPT2,
+    LightningSLHTGPT2,
+    CoreSLHTGPT2LogitDiffsSAE,
+    CoreSLHTGPT2LogitDiffsAttrGrad,
+    CoreSLHTGPT2LogitDiffsBase,
     TLMechInterpCfg,
-    CoreSLGPT2LogitDiffsAttrAblation,
+    CoreSLHTGPT2LogitDiffsAttrAblation,
+    CircuitTracerTLGemma2,
+    LightningCircuitTracerTLGemma2,
+    CoreNNsightGPT2,
+    CoreNNsightRemoteGPT2,
+    LightningNNsightGPT2,
+    CircuitTracerNNsightGemma2,
+    CircuitTracerNNsightRemoteGemma2,
+    CircuitTracerNNsightGemma3,
+    CoreSLNNsightGPT2LogitDiffsBase,
+    CoreSLNNsightGPT2LogitDiffsSAE,
+    CoreSLNNsightGPT2LogitDiffsAttrGrad,
+    CoreSLNNsightGPT2LogitDiffsAttrAblation,
+    CoreSLBridgeGPT2LogitDiffsBase,
+    CoreSLBridgeGPT2LogitDiffsSAE,
+    CoreSLBridgeGPT2LogitDiffsAttrGrad,
+    CoreSLBridgeGPT2LogitDiffsAttrAblation,
 )
 from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
 
 test_cli_cfgs = deepcopy(parity_cli_cfgs)
 test_cli_cfgs["exp_cfgs"].update(unit_exp_cli_cfgs)
+
+# ---------------------------------------------------------------------------
+# Memory / CUDA cleanup helpers
+# ---------------------------------------------------------------------------
+
+
+def _force_gc():
+    """Run Python garbage collection."""
+    gc.collect()
+
+
+def _cleanup_cuda_memory():
+    """Release CUDA memory if available, then run gc."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+@contextmanager
+def clean_cuda(model, min_bytes: int = 1 << 20):
+    """Move *model* to CUDA; on exit automatically free large transient CUDA tensors.
+
+    Snapshots data_ptrs of all large CUDA tensors after the model moves to CUDA
+    (capturing model weights as 'known'). On exit, any new large CUDA tensor not
+    in the snapshot has its storage replaced via ``set_(torch.empty(0))``, freeing
+    VRAM even while Python references remain alive. Then ``gc.collect()`` +
+    ``empty_cache()`` flush remaining allocations before the model moves back to CPU.
+
+    Adapted from circuit-tracer's ``clean_cuda`` context manager for use in
+    Interpretune's test infrastructure.
+
+    Args:
+        model: The model to move to CUDA for the duration of the context.
+        min_bytes: Minimum tensor size to track (default 1 MiB).
+    """
+    model.to("cuda")
+
+    def _is_large_dense_cuda(t: object) -> bool:
+        return isinstance(t, torch.Tensor) and t.is_cuda and t.layout == torch.strided and t.nbytes >= min_bytes
+
+    known_ptrs: set[int] = {obj.data_ptr() for obj in gc.get_objects() if _is_large_dense_cuda(obj)}
+    try:
+        yield
+    finally:
+        freed_ptrs: set[int] = set()
+        for obj in gc.get_objects():
+            if _is_large_dense_cuda(obj) and obj.data_ptr() not in known_ptrs and obj.data_ptr() not in freed_ptrs:
+                freed_ptrs.add(obj.data_ptr())
+                try:
+                    obj.set_(torch.empty(0))
+                except Exception:
+                    pass
+        gc.collect()
+        torch.cuda.empty_cache()
+        model.to("cpu")
+
+
+@pytest.fixture
+def cleanup_cuda():
+    """Fixture that frees CUDA memory and runs gc after each test.
+
+    Non-autouse; apply explicitly to test classes/functions that allocate GPU tensors.
+    Adapted from circuit-tracer's ``cleanup_cuda`` fixture.
+    """
+    yield
+    _cleanup_cuda_memory()
+
+
+@pytest.fixture
+def cleanup_memory():
+    """Fixture that forces garbage collection after each test (CPU or GPU).
+
+    Non-autouse; apply explicitly to memory-intensive test classes/functions.
+    """
+    yield
+    _force_gc()
+
 
 # NOTE [Datamodule/Module/Session Fixture Caching]:
 # We note when instantiating module and datamodule manually (as is done in our datamodule/module fixture factories)
@@ -135,11 +235,11 @@ class AnalysisSessionFixture(ITSessionFixture):
 # TODO: switch to namedtuple if not subclassing this in the future
 @dataclass(kw_only=True)
 class FixtureCfg:
-    test_cfg: BaseCfg = CoreCfg
+    test_cfg: Type[BaseCfg] = CoreCfg
     module_cls: Type[ModuleSteppable] = TestITModule
     datamodule_cls: Type[DataModuleInitable] = TestITDataModule
     scope: str = "class"
-    variants: dict[str, Sequence[FixtPhase]] = field(default_factory=lambda: defaultdict(list))
+    variants: dict[str, Sequence[int] | Sequence[tuple]] = field(default_factory=lambda: defaultdict(list))
 
 
 FIXTURE_CFGS = {
@@ -175,37 +275,128 @@ FIXTURE_CFGS = {
     "l_tl_bridge_gemma2": FixtureCfg(
         test_cfg=LightningTLBridgeGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
     ),
-    "l_sl_gpt2": FixtureCfg(test_cfg=LightningSLGPT2, variants={"it_session": [FixtPhase.initonly]}),
+    "l_sl_ht_gpt2": FixtureCfg(test_cfg=LightningSLHTGPT2, variants={"it_session": [FixtPhase.initonly]}),
     "l_llama3_debug": FixtureCfg(test_cfg=LightningLlama3DebugCfg, variants={"it_session": [FixtPhase.setup]}),
-    "l_gemma2_debug": FixtureCfg(test_cfg=LightningGemma2DebugCfg, variants={"it_session": [FixtPhase.setup]}),
+    "l_gemma3_debug": FixtureCfg(test_cfg=LightningGemma3DebugCfg, variants={"it_session": [FixtPhase.setup]}),
     "tl_cust_mi": FixtureCfg(test_cfg=TLMechInterpCfg, scope="function", variants={"it_session": [FixtPhase.setup]}),
-    "sl_gpt2": FixtureCfg(
-        test_cfg=CoreSLGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
+    "ct_tl_gemma2": FixtureCfg(
+        test_cfg=CircuitTracerTLGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
     ),
-    "sl_gpt2_analysis": FixtureCfg(
-        test_cfg=CoreSLGPT2Analysis, scope="session", variants={"it_session": [FixtPhase.initonly, FixtPhase.setup]}
+    "l_ct_tl_gemma2": FixtureCfg(
+        test_cfg=LightningCircuitTracerTLGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
     ),
-    "sl_gpt2_logit_diffs_base": FixtureCfg(
-        test_cfg=CoreSLGPT2LogitDiffsBase,
+    # NNsight GPT2 fixtures
+    "ns_gpt2": FixtureCfg(
+        test_cfg=CoreNNsightGPT2,
+        scope="class",  # class-scoped for sharing across test methods
+        variants={
+            "it_session": [FixtPhase.setup],
+            "it_session_cfg": [FixtPhase.cfgonly],
+        },
+    ),
+    "l_ns_gpt2": FixtureCfg(
+        test_cfg=LightningNNsightGPT2,
+        scope="class",
+        variants={
+            "it_session": [FixtPhase.setup],
+        },
+    ),
+    "ns_remote_gpt2": FixtureCfg(
+        test_cfg=CoreNNsightRemoteGPT2,
+        scope="function",
+        variants={"it_session": [FixtPhase.setup]},
+    ),
+    # Circuit Tracer with NNsight backend fixtures
+    "ct_nnsight_gemma2": FixtureCfg(
+        test_cfg=CircuitTracerNNsightGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
+    ),
+    "ct_nnsight_gemma2_remote": FixtureCfg(
+        test_cfg=CircuitTracerNNsightRemoteGemma2, scope="function", variants={"it_session": [FixtPhase.setup]}
+    ),
+    # Circuit Tracer with NNsight backend fixtures (Gemma3)
+    "ct_nnsight_gemma3": FixtureCfg(
+        test_cfg=CircuitTracerNNsightGemma3, scope="function", variants={"it_session": [FixtPhase.setup]}
+    ),
+    "sl_ht_gpt2": FixtureCfg(
+        test_cfg=CoreSLHTGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
+    ),
+    "sl_ns_gpt2": FixtureCfg(
+        test_cfg=CoreSLNNsightGPT2,
+        variants={"it_session": [FixtPhase.initonly]},
+    ),
+    "sl_br_gpt2": FixtureCfg(
+        test_cfg=CoreSLBridgeGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}
+    ),
+    "sl_ht_gpt2_analysis": FixtureCfg(
+        test_cfg=CoreSLHTGPT2Analysis,
+        scope="session",
+        variants={"it_session": [FixtPhase.setup]},
+    ),
+    "sl_ht_gpt2_logit_diffs_base": FixtureCfg(
+        test_cfg=CoreSLHTGPT2LogitDiffsBase,
         scope="session",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
-    "sl_gpt2_logit_diffs_sae": FixtureCfg(
-        test_cfg=CoreSLGPT2LogitDiffsSAE,
+    "sl_ht_gpt2_logit_diffs_sae": FixtureCfg(
+        test_cfg=CoreSLHTGPT2LogitDiffsSAE,
         scope="session",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
-    "sl_gpt2_logit_diffs_attr_grad": FixtureCfg(
-        test_cfg=CoreSLGPT2LogitDiffsAttrGrad,
+    "sl_ht_gpt2_logit_diffs_attr_grad": FixtureCfg(
+        test_cfg=CoreSLHTGPT2LogitDiffsAttrGrad,
         scope="session",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
-    "sl_gpt2_logit_diffs_attr_ablation": FixtureCfg(
-        test_cfg=CoreSLGPT2LogitDiffsAttrAblation,
+    "sl_ht_gpt2_logit_diffs_attr_ablation": FixtureCfg(
+        test_cfg=CoreSLHTGPT2LogitDiffsAttrAblation,
         scope="class",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
+    # Low-RAM runners use function scope for prompt teardown; higher-RAM runners keep class reuse.
+    # NNsight SAE analysis fixtures (backend parity testing)
+    "sl_ns_gpt2_logit_diffs_base": FixtureCfg(
+        test_cfg=CoreSLNNsightGPT2LogitDiffsBase,
+        scope=analysis_fixture_scope(),
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_ns_gpt2_logit_diffs_sae": FixtureCfg(
+        test_cfg=CoreSLNNsightGPT2LogitDiffsSAE,
+        scope=analysis_fixture_scope(),
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_ns_gpt2_logit_diffs_attr_grad": FixtureCfg(
+        test_cfg=CoreSLNNsightGPT2LogitDiffsAttrGrad,
+        scope=analysis_fixture_scope(),
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_ns_gpt2_logit_diffs_attr_ablation": FixtureCfg(
+        test_cfg=CoreSLNNsightGPT2LogitDiffsAttrAblation,
+        scope=analysis_fixture_scope(),
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    # TransformerBridge SAE analysis fixtures (Bridge vs Hooked parity testing)
+    "sl_br_gpt2_logit_diffs_base": FixtureCfg(
+        test_cfg=CoreSLBridgeGPT2LogitDiffsBase,
+        scope=analysis_fixture_scope(),
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_br_gpt2_logit_diffs_sae": FixtureCfg(
+        test_cfg=CoreSLBridgeGPT2LogitDiffsSAE,
+        scope=analysis_fixture_scope(),
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_br_gpt2_logit_diffs_attr_grad": FixtureCfg(
+        test_cfg=CoreSLBridgeGPT2LogitDiffsAttrGrad,
+        scope=analysis_fixture_scope(),
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
+    "sl_br_gpt2_logit_diffs_attr_ablation": FixtureCfg(
+        test_cfg=CoreSLBridgeGPT2LogitDiffsAttrAblation,
+        scope=analysis_fixture_scope(),
+        variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
+    ),
     "tl_gpt2_debug": FixtureCfg(test_cfg=TLDebugCfg, variants={"it_session": [FixtPhase.setup]}),
+    "ns_gpt2_debug": FixtureCfg(test_cfg=NSDebugCfg, variants={"it_session": [FixtPhase.setup]}),
     # FT Schedule fixtures (function-scoped for per-test generation)
     "l_gpt2_sched": FixtureCfg(scope="function", variants={"ft_schedule": [FixtPhase.setup]}),
     "l_tl_ht_gpt2_sched": FixtureCfg(scope="function", variants={"ft_schedule": [FixtPhase.setup]}),
@@ -223,6 +414,17 @@ def mock_dm():
         mock_uninit_dm = create_autospec(dm_cls)
         mock_uninit_dm.tokenizer = mock_tok
         yield mock_uninit_dm
+
+
+@pytest.fixture(scope="class", autouse=True)
+def clear_extracted_cache_after_class(request):
+    """Release class-level extracted analysis caches after each test class."""
+
+    yield
+
+    cls = request.cls
+    if cls is not None and issubclass(cls, AnalysisExtractionMixin):
+        cls.clear_extracted_values()
 
 
 @pytest.fixture(scope="class")
@@ -363,6 +565,11 @@ def analysis_session_fixture_factory(config_key, phase):
         yield AnalysisSessionFixture(
             result=result, it_session=it_s, runner=runner, run_config=run_config, test_cfg=deepcopy(test_sess_config)
         )
+        # Teardown: free references and run gc to reclaim memory promptly,
+        # especially for class-scoped analysis fixtures (e.g., ablation ops)
+        # that create large intermediate tensors.
+        del result, runner, run_config, it_s
+        _cleanup_cuda_memory()
 
     return get_analysis_session
 
@@ -806,6 +1013,7 @@ def restore_env_variables():
         "IT_LIGHTNING_SHARED",
         "WANDB_API_KEY",
         "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+        "HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY",
         "HF_TOKEN",
         "IDE_PROJECT_ROOTS",
     }
@@ -847,6 +1055,7 @@ def restore_env_variables():
         "DEV_NEURONPEDIA_API_KEY",
         "NEURONPEDIA_API_KEY",
         "USE_LOCALHOST",
+        "NDIF_API_KEY",
     }
     allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)
@@ -909,6 +1118,7 @@ def tmpdir_server(tmpdir):
 # - CI doesn't run all `profiling` marked tests by default, only the subset of profiling tests that are marked both
 #   `profiling` and `profiling_ci`
 # - The standalone marks run with CI by default and take precedence over profiling marks
+# - Regular CUDA-marked tests can be isolated from the baseline suite by setting `IT_RUN_CUDA_TESTS=1`
 # - To run all profiling tests, set `IT_RUN_PROFILING_TESTS` to `2`
 
 
@@ -923,6 +1133,18 @@ def pytest_collection_modifyitems(items):
             for marker in item.own_markers
             # has `@RunIf(standalone=True)`
             if marker.name == "skipif" and marker.kwargs.get("standalone")
+        ]
+    elif os.getenv("IT_RUN_CUDA_TESTS", "0") == "1":
+        items[:] = [
+            item
+            for item in items
+            for marker in item.own_markers
+            if marker.name == "skipif"
+            and not marker.kwargs.get("standalone")
+            and not marker.kwargs.get("profiling")
+            and not marker.kwargs.get("profiling_ci")
+            and not marker.kwargs.get("optional")
+            and (marker.kwargs.get("min_cuda_gpus") or marker.kwargs.get("bf16_cuda"))
         ]
     elif os.getenv("IT_RUN_PROFILING_TESTS", "0") == "2":
         items[:] = [
@@ -997,7 +1219,7 @@ def mock_analysis_store():
     mock_store.logit_diffs = [torch.tensor([0.5, -0.3]), torch.tensor([-0.1, 0.7])]
     mock_store.prompts = ["prompt1", "prompt2", "prompt3", "prompt4"]
 
-    # Set up attribution values for by_sae testing
+    # Set up attribution values for by_latent_model testing
     mock_store.attribution_values = [
         {"sae1": torch.rand(2, 10), "sae2": torch.rand(2, 10)},
         {"sae1": torch.rand(2, 10), "sae2": torch.rand(2, 10)},
@@ -1012,21 +1234,21 @@ def mock_analysis_store():
     # Set up alive_latents for plot_latent_effects
     mock_store.alive_latents = [{"sae1": [0, 1, 2], "sae2": [0, 1]}, {"sae1": [0, 3, 4], "sae2": [1, 2]}]
 
-    # Mock the by_sae method to return an SAEAnalysisDict
+    # Mock the by_latent_model method to return an LatentAnalysisDict
     def mock_by_sae(field_name, stack_latents=True):
         if field_name == "correct_activations":
-            result = SAEAnalysisDict()
+            result = LatentAnalysisDict()
             result["sae1"] = [torch.rand(2, 10), torch.rand(2, 10)]
             result["sae2"] = [torch.rand(2, 10), torch.rand(2, 10)]
             return result
         elif field_name == "attribution_values":
-            result = SAEAnalysisDict()
+            result = LatentAnalysisDict()
             result["sae1"] = [torch.rand(2, 10), torch.rand(2, 10)]
             result["sae2"] = [torch.rand(2, 10), torch.rand(2, 10)]
             return result
         else:
             raise ValueError(f"Unexpected field_name: {field_name}")
 
-    mock_store.by_sae = mock_by_sae
+    mock_store.by_latent_model = mock_by_sae
 
     return mock_store

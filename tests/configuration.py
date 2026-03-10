@@ -28,6 +28,7 @@ from interpretune.config import (
     ITLensBridgeConfig,
     ITLensFromPretrainedConfig,
     ITLensCustomConfig,
+    NNsightConfig,
 )
 from interpretune.session import ITSessionConfig, ITSession
 from interpretune.protocol import StrOrPath, Adapter
@@ -56,22 +57,23 @@ def apply_itdm_test_cfg(base_itdm_cfg: ITDataModuleConfig, test_cfg: BaseCfg, **
 
 def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: StrOrPath | None = None) -> ITConfig:
     # TODO: for attributes that don't actually belong to ITConfig (and existing subclasses), we should avoid adding them
-    # e.g. right now, `sae_analysis_targets` is the only one that doesn't belong to ITConfig or defined subclasses
+    # e.g. right now, `latent_analysis_targets` is the only one that doesn't belong to ITConfig or defined subclasses
     test_cfg_override_attrs = [
         "memprofiler_cfg",
         "debug_lm_cfg",
         "cust_fwd_kwargs",
         "tl_cfg",
+        "circuit_tracer_cfg",
         "model_cfg",
         "sae_cfgs",
         "hf_from_pretrained_cfg",
         "generative_step_cfg",
         "add_saes_on_init",
         "auto_comp_cfg",
-        "sae_analysis_targets",
+        "latent_analysis_targets",
         "analysis_cfgs",
-        "sae_cfgs",
         "logging_level",
+        "use_bridge",
     ]
     test_it_cfg = deepcopy(base_it_cfg)
     for attr in test_cfg_override_attrs:
@@ -105,6 +107,8 @@ def configure_device_precision(cfg: Dict, device_type: str, precision: int | str
                 cfg.sae_cfgs = [cfg.sae_cfgs]
             for sae_cfg in cfg.sae_cfgs:
                 _update_sae_cfg_device_precision(sae_cfg, device_type, precision)
+    if getattr(cfg, "nnsight_cfg", None) is not None:  # if we're using an NNsight subclass of ITConfig
+        _update_nnsight_cfg_device_precision(cfg.nnsight_cfg, device_type, precision)
     return cfg
 
 
@@ -133,6 +137,27 @@ def _update_sae_cfg_device_precision(
     else:  # likely uninitialized SL custom model config, may want to remove this branch/check
         assert sae_cfg.get("cfg", None)
         sae_cfg["cfg"].update(dev_prec_override)
+
+
+def _update_nnsight_cfg_device_precision(nnsight_cfg: NNsightConfig, device_type: str, precision: int | str) -> None:
+    """Update NNsight configuration with device and precision settings.
+
+    NNsight uses device_map for device placement and torch_dtype for precision.
+    """
+    # Map device_type to device_map - NNsight uses HF-style device_map
+    device_map = 0 if device_type == "cuda" else device_type
+    nnsight_cfg.device_map = device_map
+
+    # Map precision to torch_dtype - NNsight accepts string dtype names
+    dtype = get_model_input_dtype(precision)
+    if dtype is not None:
+        # Convert torch dtype to string for NNsight
+        dtype_map = {
+            torch.float32: "float32",
+            torch.float16: "float16",
+            torch.bfloat16: "bfloat16",
+        }
+        nnsight_cfg.torch_dtype = dtype_map.get(dtype, "float32")
 
 
 def config_session(
@@ -201,7 +226,7 @@ def cfg_op_env(
         target_op=op_to_test,
         ignore_manual=True,
         save_tokens=True,
-        sae_analysis_targets=fixture.test_cfg().sae_analysis_targets,
+        latent_analysis_targets=fixture.test_cfg().latent_analysis_targets,
     )
 
     # Initialize analysis config on the module

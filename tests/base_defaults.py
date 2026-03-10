@@ -1,13 +1,20 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Tuple, Callable, Any, Dict, Sequence, TYPE_CHECKING, Iterable
+from interpretune.config.transformer_lens import ITLensCfg
 import pytest
 
 from interpretune.adapters import ADAPTER_REGISTRY
-from interpretune.config import HFFromPretrainedConfig, GenerativeClassificationConfig, AutoCompConfig, AnalysisCfg
+from interpretune.config import (
+    HFFromPretrainedConfig,
+    GenerativeClassificationConfig,
+    AutoCompConfig,
+    AnalysisCfg,
+    CircuitTracerConfig,
+)
 from interpretune.extensions import MemProfilerCfg, DebugLMConfig
 from interpretune.protocol import Adapter
-from interpretune.analysis import SAEAnalysisTargets
+from interpretune.analysis import LatentAnalysisTargets
 from tests.runif import RunIf, RUNIF_ALIASES
 
 if TYPE_CHECKING:
@@ -71,12 +78,12 @@ def pytest_factory(test_configs: list[BaseAugTest], unpack: bool = True, fq_alia
 class BaseCfg:
     phase: str = "train"
     device_type: str = "cpu"
-    model_key: str = default_test_task  # "real-model"-based acceptance/parity testing/profiling
-    precision: str | int = "torch.float32"
-    adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     model_src_key: str | None = None
+    model_cfg_key: str = default_test_task  # default model cfg, "real-model"-based acceptance/parity testing/profiling
+    adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     datamodule_cls: str | None = None  # Fully qualified class name (e.g., "tests.modules.DivergeTestITModule")
     module_cls: str | None = None  # Fully qualified class name (e.g., "tests.modules.DivergeTestITModule")
+    precision: str | int = "torch.float32"
     limit_train_batches: int | None = 1
     limit_val_batches: int | None = 1
     limit_test_batches: int | None = 1
@@ -86,8 +93,10 @@ class BaseCfg:
     memprofiler_cfg: MemProfilerCfg | None = None
     debug_lm_cfg: DebugLMConfig | None = None
     model_cfg: Dict | None = None
-    tl_cfg: Dict | None = None
+    tl_cfg: ITLensCfg | None = None
+    circuit_tracer_cfg: CircuitTracerConfig | None = None
     sae_cfgs: Dict | None = None
+    use_bridge: bool | None = None  # Override for SAELensConfig.use_bridge (True=Bridge, False=Hooked)
     auto_comp_cfg: AutoCompConfig | None = None
     add_saes_on_init: bool = False
     req_grad_mask: Tuple | None = None  # used to toggle requires grad for non-fts contexts
@@ -112,8 +121,8 @@ class AnalysisBaseCfg(BaseCfg):
     limit_analysis_batches: int = 2
     cache_dir: str | None = None
     op_output_dataset_path: str | None = None
-    # Add optional sae_analysis_targets as a fallback
-    sae_analysis_targets: SAEAnalysisTargets | None = None
+    # Add optional latent_analysis_targets as a fallback
+    latent_analysis_targets: LatentAnalysisTargets | None = None
     # Add artifact configuration
     artifact_cfg: Dict | None = None
     # Global override for ignore_manual setting in analysis configs
@@ -129,7 +138,7 @@ class OpTestConfig:
 
     target_op: Any  # The operation to test
     resolved_op: AnalysisOp | None = None
-    session_fixt: str = "get_it_session__sl_gpt2_analysis__setup"
+    session_fixt: str = "get_it_session__sl_ht_gpt2_analysis__setup"
     batch_size: int = 1
     generate_required_only: bool = True
     override_req_cols: tuple | None = None

@@ -33,6 +33,7 @@ from transformers import BatchEncoding, PreTrainedTokenizerBase
 # type-checking and should not be imported at top-level to avoid slowing down package import.
 if TYPE_CHECKING:
     from sae_lens.config import HfDataset
+    from interpretune.analysis.backends import ModelBackend
     from interpretune.config import ITDataModuleConfig, ITConfig
 else:
     # Provide light-weight stand-ins for typing at runtime without importing heavy packages.
@@ -76,6 +77,9 @@ class Adapter(AutoStrEnum):
     # CIRCUIT_TRACER: The provided module and datamodule will be prepared for use with the Circuit Tracer adapter in
     #                  in combination with any supported and specified adapter.
     circuit_tracer = auto()
+    # NNSIGHT: The provided module and datamodule will be prepared for use with the NNsight adapter in
+    #          combination with any supported and specified adapter. NNsight wraps HF models directly.
+    nnsight = auto()
 
     def __lt__(self, other: "Adapter") -> bool:
         return self.value < other.value
@@ -224,7 +228,7 @@ LRSchedulerProtocolUnion: TypeAlias = LRScheduler | ReduceLROnPlateau
 
 @dataclass
 class LRSchedulerConfig:
-    scheduler: torch.optim.lr_scheduler.LRScheduler | ReduceLROnPlateau
+    scheduler: torch.optim.lr_scheduler.LRScheduler | torch.optim.lr_scheduler.ReduceLROnPlateau
     # no custom name
     name: str | None = None
     # after epoch is over
@@ -450,7 +454,7 @@ class ITModuleGenDebuggable(ITModuleBase, GenerativeStepProtocol, Protocol):
 NamesFilter = Callable[[str], bool] | Sequence[str] | str | None
 
 
-class SAEFqn(NamedTuple):
+class LatentModelFqn(NamedTuple):
     release: str
     sae_id: str
 
@@ -474,17 +478,17 @@ class AnalysisOpProtocol(Protocol):
     ) -> BaseAnalysisBatchProtocol: ...
 
 
-class SAEDictProtocol(Protocol):
-    """Protocol for SAE analysis dictionary operations."""
+class LatentDictProtocol(Protocol):
+    """Protocol for latent model analysis dictionary operations."""
 
     @property
     def shapes(self) -> dict[str, torch.Size | list[torch.Size]]: ...
 
     def batch_join(
         self, across_saes: bool = False, join_fn: Callable = torch.cat
-    ) -> "SAEDictProtocol" | list[torch.Tensor]: ...
+    ) -> "LatentDictProtocol" | list[torch.Tensor]: ...
 
-    def apply_op_by_sae(self, operation: Callable | str, *args, **kwargs) -> "SAEDictProtocol": ...
+    def apply_op_by_latent_model(self, operation: Callable | str, *args, **kwargs) -> "LatentDictProtocol": ...
 
 
 class AnalysisStoreProtocol(Protocol):
@@ -507,7 +511,7 @@ class AnalysisStoreProtocol(Protocol):
     # op_output_dataset_path may be a string path, a pathlib.Path, or None at runtime
     op_output_dataset_path: str | Path | None
 
-    def by_sae(self, field_name: str, stack_latents: bool = True) -> SAEDictProtocol: ...
+    def by_latent_model(self, field_name: str, stack_latents: bool = True) -> LatentDictProtocol: ...
     # __getattr__ may return dataset columns (lists/tensors), callables, or other attributes — accept Any
     def __getattr__(self, name: str) -> Any: ...
     def reset_dataset(self) -> None: ...
@@ -533,22 +537,22 @@ class AnalysisCfgProtocol(Protocol):
     ) -> tuple[list[tuple], list[tuple]]: ...
 
 
-class SAEAnalysisProtocol(Protocol):
-    """Protocol for SAE analysis components requiring a subset of SAEAnalysisMixin methods."""
+class LatentAnalysisProtocol(Protocol):
+    """Protocol for latent analysis components requiring a subset of SAELensAnalysisMixin methods."""
 
     def construct_names_filter(
         self, target_layers: list[int], sae_hook_match_fn: Callable[[str, list[int] | None], bool]
     ) -> NamesFilter: ...
 
 
-class SAEAnalysisModuleProtocol(ITModuleBase, SAEAnalysisProtocol, Protocol):
-    """Protocol that requires both the ITModuleProtocol surface and SAEAnalysisProtocol methods.
+class LatentAnalysisModuleProtocol(ITModuleBase, LatentAnalysisProtocol, Protocol):
+    """Protocol requiring both the ITModuleProtocol surface and LatentAnalysisProtocol methods.
 
-    Using a Protocol that inherits both interfaces expresses the intersection of the two required structural surfaces so
-    static checkers (like pyright) will require both sets of attributes/methods.
+    Inheriting both interfaces expresses the intersection of the two required structural surfaces so static checkers
+    (like pyright) will require both sets of attributes/methods.
     """
 
-    ...
+    model_backend: ModelBackend
 
 
 class RunnerCfgProtocol(Protocol):
@@ -569,7 +573,7 @@ class AnalysisRunnerCfgProtocol(RunnerCfgProtocol, Protocol):
     limit_analysis_batches: int
     cache_dir: Any
     op_output_dataset_path: Any
-    sae_analysis_targets: Any
+    latent_analysis_targets: Any
     artifact_cfg: Any
     ignore_manual: bool
     # The processed, canonicalized list of AnalysisCfg that the runner exposes
@@ -637,11 +641,11 @@ class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):
         answer_indices (torch.Tensor | None):
             Indices of answers with shape [batch_size]
         alive_latents (dict[str, list[int]] | None):
-            Active latent indices per SAE hook
+            Active latent indices per latent model hook
         correct_activations (dict[str, torch.Tensor] | None):
-            SAE activations after corrections with shape [batch_size, d_sae] for each SAE
+            Latent model activations after corrections with shape [batch_size, d_sae] for each latent model
         attribution_values (dict[str, torch.Tensor] | None):
-            Attribution values per SAE hook
+            Attribution values per latent model hook
         tokens (torch.Tensor | None):
             Input token IDs
         prompts (list[str] | None):
