@@ -216,8 +216,7 @@ class HubAnalysisOpManager:
             List of repository IDs for analysis operation collections
         """
         try:
-            # The installed huggingface_hub API in CI does not expose a dedicated library
-            # keyword here, so continue using the tag-style filter for compatibility.
+            # Use HFApi to search for models using tag-style interpretune filter.
             repos = []
 
             models = self.api.list_models(filter="interpretune", cardData=True)
