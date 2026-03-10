@@ -216,10 +216,11 @@ class HubAnalysisOpManager:
             List of repository IDs for analysis operation collections
         """
         try:
-            # Search for repositories tagged with interpretune as the library.
+            # The installed huggingface_hub API in CI does not expose a dedicated library
+            # keyword here, so continue using the tag-style filter for compatibility.
             repos = []
 
-            models = self.api.list_models(library="interpretune", cardData=True)
+            models = self.api.list_models(filter="interpretune", cardData=True)
 
             for model in models:
                 repo_id = model.modelId  # type: ignore[attr-defined]  # HuggingFace ModelInfo compatibility
