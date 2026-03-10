@@ -1118,6 +1118,7 @@ def tmpdir_server(tmpdir):
 # - CI doesn't run all `profiling` marked tests by default, only the subset of profiling tests that are marked both
 #   `profiling` and `profiling_ci`
 # - The standalone marks run with CI by default and take precedence over profiling marks
+# - Regular CUDA-marked tests can be isolated from the baseline suite by setting `IT_RUN_CUDA_TESTS=1`
 # - To run all profiling tests, set `IT_RUN_PROFILING_TESTS` to `2`
 
 
@@ -1132,6 +1133,18 @@ def pytest_collection_modifyitems(items):
             for marker in item.own_markers
             # has `@RunIf(standalone=True)`
             if marker.name == "skipif" and marker.kwargs.get("standalone")
+        ]
+    elif os.getenv("IT_RUN_CUDA_TESTS", "0") == "1":
+        items[:] = [
+            item
+            for item in items
+            for marker in item.own_markers
+            if marker.name == "skipif"
+            and not marker.kwargs.get("standalone")
+            and not marker.kwargs.get("profiling")
+            and not marker.kwargs.get("profiling_ci")
+            and not marker.kwargs.get("optional")
+            and (marker.kwargs.get("min_cuda_gpus") or marker.kwargs.get("bf16_cuda"))
         ]
     elif os.getenv("IT_RUN_PROFILING_TESTS", "0") == "2":
         items[:] = [
