@@ -94,7 +94,7 @@ cryptography==46.0.5 ; platform_machine != 'ppc64le' and platform_machine != 's3
     # via secretstorage
 cycler==0.12.1
     # via matplotlib
-datasets==4.6.1
+datasets==4.7.0
     # via
     #   interpretune (pyproject.toml)
     #   evaluate
@@ -128,7 +128,7 @@ executing==2.2.1
     # via stack-data
 fastjsonschema==2.21.2
     # via nbformat
-filelock==3.25.0
+filelock==3.25.1
     # via
     #   datasets
     #   gdown
@@ -136,7 +136,7 @@ filelock==3.25.0
     #   python-discovery
     #   torch
     #   virtualenv
-fonttools==4.61.1
+fonttools==4.62.0
     # via matplotlib
 fqdn==1.5.1
     # via jsonschema
@@ -220,7 +220,7 @@ isoduration==20.11.0
     # via jsonschema
 jaraco-classes==3.4.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via keyring
-jaraco-context==6.1.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
+jaraco-context==6.1.1 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via keyring
 jaraco-functools==4.4.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via keyring
@@ -296,7 +296,7 @@ jupytext==1.19.1
     # via interpretune (pyproject.toml)
 keyring==25.7.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via twine
-kiwisolver==1.4.9
+kiwisolver==1.5.0
     # via matplotlib
 lark==1.3.1
     # via rfc3987-syntax
@@ -336,7 +336,7 @@ multiprocess==0.70.18
     # via
     #   datasets
     #   evaluate
-narwhals==2.17.0
+narwhals==2.18.0
     # via plotly
 nbclient==0.10.4
     # via
@@ -388,7 +388,7 @@ numpy==2.2.6 ; python_full_version < '3.11'
     #   scipy
     #   tensorboard
     #   transformers
-numpy==2.4.2 ; python_full_version >= '3.11'
+numpy==2.4.3 ; python_full_version >= '3.11'
     # via
     #   accelerate
     #   bitsandbytes
@@ -536,7 +536,7 @@ python-dateutil==2.9.0.post0
     #   jupyter-client
     #   matplotlib
     #   pandas
-python-discovery==1.1.0
+python-discovery==1.1.3
     # via virtualenv
 python-dotenv==1.2.2
     # via
@@ -632,7 +632,7 @@ send2trash==2.1.0
     # via jupyter-server
 sentry-sdk==2.54.0
     # via wandb
-setuptools==82.0.0
+setuptools==82.0.1
     # via
     #   jupyterlab
     #   tensorboard
@@ -643,7 +643,7 @@ six==1.17.0
     # via
     #   python-dateutil
     #   rfc3339-validator
-smmap==5.0.2
+smmap==5.0.3
     # via gitdb
 soupsieve==2.8.3
     # via beautifulsoup4
@@ -764,7 +764,7 @@ uv==0.10.9
     # via
     #   interpretune (pyproject.toml:dev)
     #   interpretune (pyproject.toml:test)
-virtualenv==21.1.0
+virtualenv==21.2.0
     # via pre-commit
 wandb==0.25.0
     # via interpretune (pyproject.toml)

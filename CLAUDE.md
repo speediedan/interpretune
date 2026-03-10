@@ -195,6 +195,26 @@ tests/                      # 744 test functions
 
 - **GitHub Actions** (`ci_test-full.yml`): Ubuntu 22.04, Windows 2022, macOS 14, Python 3.13, 90-min timeout
 - **Azure GPU pipeline** (`.azure-pipelines/gpu-tests.yml`): Self-hosted, requires admin approval, only for ready-for-review PRs. Use CPU CI as long as possible before requesting GPU runs.
+- The self-hosted approval gate can be driven from the shell when `AZURE_DEVOPS_EXT_PAT` is present. Prefer PAT-backed Azure DevOps CLI or REST calls over manual UI approval when you need to release a queued GPU run during active debugging.
+- A queued build can stay in `notStarted` until its approval is granted. Check the build first, then inspect pending approvals before changing runner configuration:
+  ```bash
+  az pipelines build show --id <build_id> --organization https://dev.azure.com/speediedan --project interpretune -o table
+  curl -sS -u ":${AZURE_DEVOPS_EXT_PAT}" \
+    "https://dev.azure.com/speediedan/interpretune/_apis/pipelines/approvals?state=pending&api-version=7.1-preview.1"
+  ```
+- Approve a pending run with a PATCH to the approvals endpoint:
+  ```bash
+  curl -sS -X PATCH -u ":${AZURE_DEVOPS_EXT_PAT}" \
+    -H "Content-Type: application/json" \
+    -d '[{"approvalId":"<approval_id>","status":"approved","comment":"Approved via CLI for GPU validation."}]' \
+    "https://dev.azure.com/speediedan/interpretune/_apis/pipelines/approvals?api-version=7.1-preview.1"
+  ```
+- The build-level queue shown by `az pipelines build show` may still display `Azure Pipelines` even when the YAML job uses the self-hosted `Default` pool. Treat approval state and actual worker dispatch as the source of truth before editing the pool stanza.
+- The current GPU test flow is intentionally phase-split to reduce peak memory while preserving CUDA coverage:
+  1. `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''`
+  2. `Testing: standard gpu cuda-marked` runs regular CUDA-gated tests under `IT_RUN_CUDA_TESTS=1`
+  3. `Testing: standalone gpu` runs standalone GPU tests
+  4. `Testing: CI Profiling` runs `profile_ci` GPU tests
 - **Coverage target:** 90% on commits, 50% on patches (`.codecov.yml`)
 - **Torch prerelease:** Configured via `requirements/ci/torch-pre.txt` (version, CUDA target, channel)
 - **Dependencies:** Locked in `requirements/ci/requirements.txt`; regenerate with `./requirements/utils/lock_ci_requirements.sh`
