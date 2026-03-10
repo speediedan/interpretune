@@ -96,8 +96,8 @@ jobs:
           # toggle comments here as desired to force more granular logging for this workflow
           IT_CI_LOG_LEVEL: ${{ vars.IT_CI_LOG_LEVEL || 'INFO' }}
           # IT_CI_LOG_LEVEL: "DEBUG"
-          CI_RESOURCE_MONITOR: "1"
-          # CI_RESOURCE_MONITOR: ${{ vars.CI_RESOURCE_MONITOR || '0' }}
+          # CI_RESOURCE_MONITOR: "1"
+          CI_RESOURCE_MONITOR: ${{ vars.CI_RESOURCE_MONITOR || '0' }}
           ENABLE_OS_TRACE: "0"
           # ENABLE_OS_TRACE: "1"
           PYTEST_FILTER_PATTERN: ""

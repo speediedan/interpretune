@@ -800,40 +800,6 @@ def _apply_saved_to_cache_hooks(
                 cache_fn(tensor, dummy)
 
 
-def _apply_tl_cache_hooks(
-    hook_name: str,
-    feature_acts: torch.Tensor,
-    sae_input: torch.Tensor,
-    tl_hooks: list[tuple[Any, Callable]],
-    *,
-    is_backward: bool = False,
-) -> None:
-    """Apply TL-style cache hooks for SAE sub-hook names.
-
-    ``tl_hooks`` come from ``analysis_cfg.fwd_hooks`` / ``analysis_cfg.bwd_hooks`` and are
-    structured as ``[(names_filter, cache_fn), ...]``.  ``cache_fn`` has signature
-    ``(tensor, hook) -> None`` where ``hook.name`` provides the TL-style key.
-
-    This generates the SAE sub-hook names (``hook_sae_input``, ``hook_sae_acts_post``)
-    and calls matching cache functions.
-
-    .. note::
-
-        Retained for the ``fwd_w_hooks_and_latent_models`` user-hook matching path.
-        Gradient methods now use :func:`_apply_saved_to_cache_hooks` instead.
-    """
-    sub_hooks = {
-        f"{hook_name}.hook_sae_acts_post": feature_acts,
-        f"{hook_name}.hook_sae_input": sae_input,
-    }
-
-    for names_filter, cache_fn in tl_hooks:
-        for sub_name, tensor in sub_hooks.items():
-            if _matches_names_filter(sub_name, names_filter):
-                dummy = _DummyHookPoint(name=sub_name)
-                cache_fn(tensor, dummy)
-
-
 __all__ = [
     "NNsightActivationCacheAdapter",
     "NNsightModelBackend",

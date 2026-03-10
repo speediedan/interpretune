@@ -71,16 +71,27 @@ class MyLightningModule(
 
 ## NNsight Adapter Patterns
 
-### NNsightForwardContext
+### Batched NNsight analysis
 
-NNsight analysis operations use `NNsightForwardContext` to manage trace invocations:
+NNsight analysis operations chunk batched hook configurations through the
+backend layer rather than a public `NNsightForwardContext` helper:
 
 ```python
-from interpretune.adapters.nnsight import NNsightForwardContext
+from interpretune.analysis.backends.nnsight import NNsightModelBackend
 
-# Context limits invocations per trace to avoid memory exhaustion
-ctx = NNsightForwardContext(model=nnsight_model, max_invokes_per_trace=8)
+backend = NNsightModelBackend(hook_resolver=resolver, configs_per_pass=8)
+
+logits_per_config = backend.fwd_w_hooks_batched(
+    model=nnsight_model,
+    batch=batch,
+    latent_model_handles=latent_model_handles,
+    hook_configs=hook_configs,
+    configs_per_pass=8,
+)
 ```
+
+`configs_per_pass` is the current branch name for the old per-trace invoke
+limit concept. Use smaller values when debugging memory pressure.
 
 ### Hook Name Mapping (TL ↔ NNsight)
 

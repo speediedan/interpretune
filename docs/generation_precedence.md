@@ -1,6 +1,22 @@
 # Generation flags precedence and semantics
 
-This document describes how Interpretune resolves generation settings between model-level configuration and per-call `generate` kwargs.
+This document describes how Interpretune resolves generation behavior between model-level configuration, configured per-call generation kwargs, and debug-time overrides.
+
+## Precedence
+
+Interpretune currently resolves generation behavior in this order:
+
+1. Model-level defaults stored on `model.generation_config`
+2. Configured per-call kwargs in `generative_step_cfg.lm_generation_cfg.generate_kwargs`
+3. Debug-time overrides passed into `DebugGeneration._debug_generate(...)`
+
+The important implementation detail is that Interpretune does not try to synthesize HuggingFace generation flags implicitly.
+
+- `generate_kwargs` are passed directly to `it_generate(...)`
+- `gen_kwargs_override` mutates that per-call kwargs dict for the debug invocation
+- `gen_config_override` writes directly onto `model.generation_config` when the model exposes one
+
+That means configured per-call kwargs remain the preferred place for request-scoped behavior such as `output_logits` or `return_dict_in_generate`, while model-level `generation_config` remains useful for broad defaults.
 
 ## Examples
 
@@ -21,10 +37,27 @@ lm_generation_cfg:
     return_dict_in_generate: true
 ```
 
-Remember: per-call kwargs in `generate_kwargs` take precedence and are recommended for limited-scope behaviors and debug flows.
+Remember: per-call kwargs in `generate_kwargs` take precedence over model defaults for the actual `generate(...)` call and are recommended for limited-scope behaviors and debug flows.
 
+## DebugGeneration behavior
+
+`DebugGeneration` adds one more layer: output normalization for debugging utilities.
+
+- It reads `generate_kwargs` from `ph.it_cfg.generative_step_cfg.lm_generation_cfg.generate_kwargs`
+- It applies `gen_kwargs_override` on top of those kwargs
+- It applies `gen_config_override` directly to `model.generation_config` when available
+- It then calls `ph.it_generate(inputs, **gen_kwargs)`
+
+## Output normalization
 
 ### Debugging generation outputs with Interpretune's DebugGeneration extension
 
- For TransformerLens legacy `HookedTransformer` models, the `generate` method does not accept HF `return_dict_in_generate` semantics by default and often returns bare tensors. Interpretune's debug helpers will wrap tensor outputs into a ModelOutput-like object exposing `sequences` when those are explicitly requested or when DebugGeneration's default output attributes include `sequences`.
- Additionally, the `DebugGeneration` extension normalizes raw tensor outputs into a `ModelOutput` dataclass when appropriate. This normalization occurs when the caller did not specify a `gen_output_attr` (so defaults are applied) or when the `gen_output_attr` itself requests one of the attributes listed in `DebugGeneration.DEFAULT_OUTPUT_ATTRS` (i.e., `sequences`). This preserves behavior for debug utilities that expect `.sequences` while avoiding implicit HF flag injection.
+For legacy TransformerLens `HookedTransformer` generation, raw outputs may still be bare tensors rather than HuggingFace-style `ModelOutput` objects.
+
+Interpretune handles that in `DebugGeneration._normalize_output_to_model_output(...)`.
+
+- If the returned object already exposes one of the requested output attributes, it is normalized into a `ModelOutput` wrapper only when needed.
+- If the output is a plain tensor, it is left as a tensor unless debug consumers requested an attribute path that requires normalization.
+- This keeps debug helpers compatible with `.sequences`-style expectations without injecting HuggingFace generation semantics into the runtime call path.
+
+In practice, this means the debug layer is responsible for making heterogeneous backend outputs easier to inspect, while the generation call itself stays explicit and backend-driven.

@@ -503,7 +503,7 @@ class CircuitTracerNNsightRemoteGemma2(BaseCfg):
     """Circuit Tracer with NNsight backend on Gemma2 for remote mode testing.
 
     Registered in example_module_registry.yaml as gemma2.rte.circuit_tracer_nnsight_remote. Uses adapter combination
-    (core, nnsight, circuit_tracer) with nnsight_remote=True. Requires Python 3.12 for NDIF remote execution.
+    (core, nnsight, circuit_tracer) with nnsight_remote=True.
     """
 
     phase: str = "test"

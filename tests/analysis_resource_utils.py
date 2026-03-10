@@ -86,17 +86,18 @@ class ExtractedAnalysisStore:
             )
 
         result = LatentAnalysisDict()
-        sae_names = values[0].keys()
-        for sae in sae_names:
-            if isinstance(values[0][sae], dict) and stack_latents:
+        latent_model_names = values[0].keys()
+        for latent_model in latent_model_names:
+            if isinstance(values[0][latent_model], dict) and stack_latents:
                 batch_tensors = []
                 for batch in values:
-                    latent_tensors = [tensor for tensor in batch[sae].values()]
+                    latent_tensors = [tensor for tensor in batch[latent_model].values()]
                     batch_tensors.append(torch.stack(latent_tensors) if latent_tensors else None)
-                result[sae] = batch_tensors  # type: ignore[assignment]
+                result[latent_model] = batch_tensors  # type: ignore[assignment]
             else:
-                result[sae] = [  # type: ignore[assignment]
-                    None if isinstance(batch[sae], list) and not batch[sae] else batch[sae] for batch in values
+                result[latent_model] = [  # type: ignore[assignment]
+                    None if isinstance(batch[latent_model], list) and not batch[latent_model] else batch[latent_model]
+                    for batch in values
                 ]
         return result
 

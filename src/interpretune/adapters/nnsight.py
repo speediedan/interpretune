@@ -282,13 +282,6 @@ class NNsightAdapter(NNsightAttributeMixin):
             description="NNsight adapter that can be composed with Lightning for NNsight model support.",
         )
 
-    def batch_to_device(self, batch: BatchEncoding) -> BatchEncoding:
-        """Move batch to device."""
-        device = self.input_device
-        if device is not None:
-            move_data_to_device(batch, device)
-        return batch
-
 
 class NNsightModule(NNsightAdapter, CoreHelperAttributes, BaseNNsightModule):  # type: ignore[misc]
     """NNsight module combining adapter, core helpers, and base functionality.

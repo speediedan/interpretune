@@ -20,7 +20,7 @@ whether the TransformerBridge or NNsight backend is used for SAE analysis.
     diverge by ~85 units and alive-latent Jaccard overlap drops to 0%.
     HT functional correctness is validated separately by existing
     HookedTransformer-specific tests in the test suite; see
-    docs/bridge_ht_divergence_analysis.md for the full analysis.
+    docs/ht_bridge_parity_behavior.md for the full analysis.
 
 Fixture mapping (NNsight → Bridge):
     sl_ns_gpt2_logit_diffs_base          → sl_br_gpt2_logit_diffs_base

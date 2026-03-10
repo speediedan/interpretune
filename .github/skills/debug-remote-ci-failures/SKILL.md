@@ -179,35 +179,35 @@ diff <(grep "TransformerLens\|SAELens" pyproject.toml) <(cat requirements/ci/ove
 
 **Root Cause**: `Dataset.from_generator()` (HuggingFace `datasets` library) hashes all `gen_kwargs` via `dill` serialization to build a fingerprint for caching. When `gen_kwargs` contains a full model module (with all weights), dill tries to serialize the entire model into memory — causing `MemoryError` on memory-constrained CI runners.
 
-**Fix**: Replace `Dataset.from_generator()` with `Dataset.from_list()` and do **not** pass a `features` argument:
+**Fix**: Keep `Dataset.from_generator()` but provide an explicit `fingerprint=` so HuggingFace datasets does not dill-hash `gen_kwargs`:
 ```python
-# Before (OOMs on CI):
+# Before (OOMs on CI when datasets hashes gen_kwargs):
 dataset = Dataset.from_generator(generator_fn, gen_kwargs=gen_kwargs, features=features, ...)
 
-# After (no dill serialization, no feature validation):
-records = list(generator_fn(**gen_kwargs))
-dataset = Dataset.from_list(records, split=split)
+# After (generator-backed, no dill hashing of module/model state):
+dataset = Dataset.from_generator(
+  generator_fn,
+  gen_kwargs=gen_kwargs,
+  features=features,
+  fingerprint=generate_random_fingerprint(),
+)
 ```
 
-This works when the dataset is immediately saved to disk after creation (so lazy generation provides no benefit). The fix also avoids pulling in HF datasets caching infrastructure which is typically disabled in test environments anyway.
+This preserves generator-backed writes and avoids the old CI failure mode without materializing the full dataset in memory first.
 
-**Example from PR #197**: `generate_analysis_dataset()` in `analysis.py` passed `gen_kwargs` containing the entire ITModule (with model weights). Switching to `Dataset.from_list()` eliminated the MemoryError.
+**Example from PR #197**: `generate_analysis_dataset()` in `analysis.py` passes `gen_kwargs` containing the ITModule and datamodule. Supplying an explicit per-run `fingerprint=` prevents datasets from hashing those heavyweight objects.
 
-### Category G: Feature Key Mismatch With Dataset.from_list()
+### Category G: Fingerprint Scope vs Persistent Cache Semantics
 
-**Pattern**: `ValueError: Keys mismatch` or `KeyError: '<column_name>'` when passing `features` to `Dataset.from_list()`
+**Pattern**: runtime dataset creation succeeds, but there is pressure to reuse the same fingerprint across runs for caching.
 
 **Typical OS**: All (macOS, Windows, Ubuntu)
 
-**Root Cause**: `Dataset.from_list()` delegates to `from_dict()`, which strictly validates `features` against data keys in **both directions**:
-1. Features keys missing from data → `ValueError: Keys mismatch` (e.g., schema defines `prompts`/`tokens` but an op doesn't populate them)
-2. Data keys missing from features → `KeyError` (e.g., an op adds a `cache` column not in the schema)
+**Root Cause**: the explicit fingerprint used to avoid dill-hashing `gen_kwargs` is a runtime safety mechanism, not a semantically meaningful cache key. Reusing it across runs would risk stale AnalysisStore data unless the fingerprint accounts for the full analysis contract.
 
-The previous `from_generator()` inferred features lazily from yielded data and tolerated mismatches in both directions.
+**Fix**: Use a per-run fingerprint for the immediate runtime path and keep deterministic cross-run caching as a separate design problem.
 
-**Fix**: Don't pass `features` to `from_list()` at all. Let HF datasets infer types from the data — this mirrors `from_generator()`'s effective behavior. If downstream code needs typed features, handle that separately after dataset creation.
-
-**Lesson**: When switching from `from_generator()` to `from_list()`, you lose implicit feature inference. Passing a pre-built `features` spec to `from_list()` will break if **any** column is added or removed by analysis ops. The safe approach is to omit `features` entirely.
+**Lesson**: treat the runtime fingerprint and the future AnalysisStore cache key as two different concerns. The runtime fix prevents memory blowups; it does not solve persistent cache reuse.
 
 ### Category H: CPython Segfault in Upstream Threading (nnsight interleaver)
 
@@ -433,15 +433,15 @@ TransformerBridge resolves hook aliases to canonical names (e.g., `blocks.0.hook
 
 ### 7. Avoid Passing Full Modules Through HF Datasets Fingerprinting
 
-`Dataset.from_generator()` uses `dill` to serialize all `gen_kwargs` for cache fingerprinting. If `gen_kwargs` contains a PyTorch module with model weights, this serializes the entire model into memory — an instant OOM on CI runners. Prefer `Dataset.from_list()` when the dataset will be saved to disk immediately after creation.
+`Dataset.from_generator()` uses `dill` to serialize all `gen_kwargs` for cache fingerprinting. If `gen_kwargs` contains a PyTorch module with model weights, this serializes the entire model into memory — an instant OOM on CI runners. Prefer keeping `Dataset.from_generator()` and supplying an explicit per-run `fingerprint=` so the runtime path stays generator-backed without hashing heavyweight objects.
 
 ### 8. "Cancelled" Steps With No Output Usually Mean OOM Kill
 
 When a CI step shows `conclusion: "cancelled"` with zero log lines, the process was likely killed by the OS (e.g., Linux OOM killer). This is different from GitHub Actions "cancel-in-progress" which cancels the entire run. Look for round job durations (exactly 60m, 90m) and check if other OS jobs in the same run completed normally.
 
-### 9. from_list() Is Stricter Than from_generator() on Features
+### 9. Runtime Fingerprints Do Not Solve Persistent Caching
 
-`Dataset.from_generator()` infers features lazily from yielded data and tolerates mismatches between the `features` spec and actual columns. `Dataset.from_list()` (via `from_dict()`) validates strictly in **both directions** — extra keys in the features spec raise `ValueError`, and extra keys in the data raise `KeyError`. When migrating between these APIs (e.g., to avoid dill serialization), the safest approach is to omit the `features` argument entirely and let HF datasets infer types from the data.
+An explicit runtime `fingerprint=` solves the immediate `Dataset.from_generator()` dill-serialization problem, but it should not be reused as a persistent AnalysisStore cache key. The runtime fingerprint is intentionally per-run right now; deterministic cross-run cache reuse still requires a separate, semantically meaningful hashing design.
 
 ### 10. Upstream Threading Crashes May Only Surface on Specific Platforms
 

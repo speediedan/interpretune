@@ -11,6 +11,8 @@ cleanup_cuda fixture ensures GPU memory is freed after each test.
 from __future__ import annotations
 
 import os
+
+import httpx
 import pytest
 
 import nnsight
@@ -22,24 +24,6 @@ from interpretune.adapters.circuit_tracer import (
     NNSightReplacementModel,
 )
 from tests.runif import RunIf
-
-
-# =============================================================================
-# Fixtures
-# =============================================================================
-
-
-@pytest.fixture
-def reset_pymount():
-    """Reset nnsight PYMOUNT to True for tests that need .save() on tensors.
-
-    Circuit-tracer's replacement_model_nnsight.py sets PYMOUNT=False at import time. This is needed for circuit_tracer
-    tests that use .save() on NNsight proxies.
-    """
-    original = nnsight.CONFIG.APP.PYMOUNT
-    nnsight.CONFIG.APP.PYMOUNT = True
-    yield
-    nnsight.CONFIG.APP.PYMOUNT = original
 
 
 # =============================================================================
@@ -292,12 +276,8 @@ class TestNNsightRemoteExecution:
         nnsight.CONFIG.API.APIKEY = api_key
         return api_key
 
-    # Note: This test requires python 3.12 precisely until https://github.com/ndif-team/nnsight/pull/573 lands since
-    #  NDIF will only support that python version until the PR is merged
-    @RunIf(optional=True, min_python="3.12", max_python="3.13")
-    def test_remote_execution_api_key_flow(
-        self, ensure_ndif_api_key, reset_pymount, get_it_session__ct_nnsight_gemma2_remote__setup
-    ):
+    @RunIf(optional=True)
+    def test_remote_execution_api_key_flow(self, ensure_ndif_api_key, get_it_session__ct_nnsight_gemma2_remote__setup):
         """Verify remote execution: replacement_model loaded, activation tracing works.
 
         Tests that:
@@ -322,18 +302,23 @@ class TestNNsightRemoteExecution:
         # NNSightReplacementModel inherits from nnsight.LanguageModel, supporting trace() context
         prompt = "The capital of France is"
 
-        try:
-            with replacement_model.trace(prompt, remote=True):
-                # Access hidden states from an early layer
-                # Gemma2 uses model.layers[layer].output for hidden states
-                hidden = replacement_model.model.layers[0].output[0].save()
-                # Access final logits
-                logits = replacement_model.lm_head.output.save()
-        except RemoteException as e:
-            # Skip if model isn't available on NDIF (not scheduled/dedicated)
-            if "not dedicated" in str(e) or "not scheduled" in str(e).lower():
-                pytest.skip(f"Model not available on NDIF: {e}")
-            raise
+        for attempt in range(2):
+            try:
+                with replacement_model.trace(prompt, remote=True):
+                    # Access hidden states from an early layer
+                    # Gemma2 uses model.layers[layer].output for hidden states
+                    hidden = nnsight.save(replacement_model.model.layers[0].output[0])
+                    # Access final logits
+                    logits = nnsight.save(replacement_model.lm_head.output)
+                break
+            except httpx.TimeoutException as error:
+                if attempt == 1:
+                    pytest.skip(f"NDIF request timed out twice: {error}")
+            except RemoteException as e:
+                # Skip if model isn't available on NDIF (not scheduled/dedicated)
+                if "not dedicated" in str(e) or "not scheduled" in str(e).lower():
+                    pytest.skip(f"Model not available on NDIF: {e}")
+                raise
 
         # Validate shapes - batch=1, seq_len varies with tokenization
         assert hidden.dim() == 3, f"Expected 3D hidden states, got shape {hidden.shape}"

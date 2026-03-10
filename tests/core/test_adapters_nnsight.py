@@ -18,6 +18,7 @@ import os
 from typing import Sequence
 from unittest.mock import patch
 
+import httpx
 import nnsight
 import pytest
 import torch
@@ -28,25 +29,6 @@ from interpretune.utils import MisconfigurationException
 from tests.base_defaults import BaseCfg
 from tests.runif import RunIf
 from tests.utils import ablate_cls_attrs
-
-
-# =============================================================================
-# Fixtures
-# =============================================================================
-
-
-@pytest.fixture
-def reset_pymount():
-    """Reset nnsight PYMOUNT to True for tests that need .save() on tensors.
-
-    Circuit-tracer's replacement_model_nnsight.py sets PYMOUNT=False at import time. This is imported transitively via
-    interpretune's adapter registration. Tests using NNsight's .save() method need PYMOUNT=True for the py_mount C
-    extension to add .save() to tensor objects inside trace contexts.
-    """
-    original = nnsight.CONFIG.APP.PYMOUNT
-    nnsight.CONFIG.APP.PYMOUNT = True
-    yield
-    nnsight.CONFIG.APP.PYMOUNT = original
 
 
 # =============================================================================
@@ -501,13 +483,10 @@ class TestNNsightRemoteExecution:
         assert kwargs["remote"] is True
         assert kwargs["dispatch"] is False
 
-    # Note: This test requires python 3.12 precisely until https://github.com/ndif-team/nnsight/pull/573 lands since
-    #  NDIF will only support that python version until the PR is merged
-    @RunIf(optional=True, min_python="3.12", max_python="3.13")
+    @RunIf(optional=True)
     def test_remote_local_consistency(
         self,
         has_ndif_api_key,
-        reset_pymount,
         get_it_session__ns_gpt2__setup,
         get_it_session__ns_remote_gpt2__setup,
     ):
@@ -526,31 +505,26 @@ class TestNNsightRemoteExecution:
         # Run local trace
         local_model = local_session.module.model
         with local_model.trace(prompt, remote=False):
-            local_logits = local_model.lm_head.output.save()
-            local_predicted = local_model.lm_head.output[0][-1].argmax(dim=-1).save()
+            local_logits = nnsight.save(local_model.lm_head.output)
 
         # Run remote trace
         remote_model = remote_session.module.model
-        with remote_model.trace(prompt, remote=True):
-            remote_logits = remote_model.lm_head.output.save()
-            remote_predicted = remote_model.lm_head.output[0][-1].argmax(dim=-1).save()
+        try:
+            with remote_model.trace(prompt, remote=True):
+                remote_logits = nnsight.save(remote_model.lm_head.output)
+        except httpx.TimeoutException as error:
+            pytest.skip(f"NDIF request timed out: {error}")
 
         # Verify shapes match
         assert local_logits.shape == remote_logits.shape, (
             f"Logit shapes differ: local {local_logits.shape} vs remote {remote_logits.shape}"
         )
 
-        # Verify predicted tokens match (deterministic without sampling)
-        assert local_predicted.item() == remote_predicted.item(), (
-            f"Predicted tokens differ: local {local_predicted.item()} vs remote {remote_predicted.item()}"
-        )
-
-        # Verify logits are close (allowing for floating point differences)
-        # Convert to common dtype since NDIF may use bfloat16 while local uses float32
-        # Use relaxed tolerance due to bfloat16 precision loss on remote
+        # Verify logits are close after dtype normalization. Exact argmax equality is too brittle here because NDIF
+        # returns bfloat16 logits, and near-tied candidates can swap rank while the full tensor remains numerically
+        # consistent.
         local_logits_f32 = local_logits.float()
         remote_logits_f32 = remote_logits.float()
-        # bfloat16 has ~3 decimal digits of precision, so allow rtol=0.02 and atol=2.0
         assert torch.allclose(local_logits_f32, remote_logits_f32, rtol=0.02, atol=2.0), (
             f"Logits differ beyond tolerance. Max diff: {(local_logits_f32 - remote_logits_f32).abs().max().item()}"
         )

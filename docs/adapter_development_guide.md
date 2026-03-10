@@ -370,9 +370,10 @@ Implement the `ModelBackend` protocol for the analysis system:
 
 ```python
 class ModelBackend(Protocol):
-    def fwd_w_hooks(self, model, tokens, hooks, **kwargs) -> Any: ...
-    def cache_activations(self, model, tokens, hook_names, **kwargs) -> dict: ...
-    def get_hook_name(self, hook_point: str) -> str: ...
+    def fwd_w_cache_and_latent_models(...): ...
+    def fwd_w_hooks_and_latent_models(...): ...
+    def fwd_w_grads_and_latent_models(...): ...
+    def fwd_w_hooks_batched(..., configs_per_pass: int | None = None) -> list[torch.Tensor]: ...
 ```
 
 ### Backend Selection
@@ -400,17 +401,31 @@ nn_name = resolver.tl_to_nnsight(tl_name)  # -> "transformer.h.0"
 
 ### NNsight Forward Context
 
-For batched analysis operations, the NNsight backend uses `NNsightForwardContext` which manages
-multi-invoke tracing with memory-efficient chunking:
+For batched ablation-style analysis operations, the NNsight backend batches hook configurations via
+`NNsightModelBackend.fwd_w_hooks_batched(...)` and chunks them with `configs_per_pass`.
 
 ```python
-# The max_invokes_per_trace parameter controls memory vs throughput tradeoff
-# Smaller chunks = less peak memory, more forward passes
-context = NNsightForwardContext(
+# Smaller chunks = less peak memory, more traces
+backend = NNsightModelBackend(
+    hook_resolver=resolver,
+    configs_per_pass=4,
+)
+
+logits_per_config = backend.fwd_w_hooks_batched(
     model=model,
-    max_invokes_per_trace=16,  # Default: 16 invokes per trace
+    batch=batch,
+    latent_model_handles=handles,
+    hook_configs=hook_configs,
+    configs_per_pass=4,
 )
 ```
+
+Current behavior:
+
+- `configs_per_pass` is the backend-agnostic name for the old `max_invokes_per_trace` concept.
+- `NNsightModelBackend` uses it to cap hook configs per trace and reduce peak memory.
+- `TLModelBackend` accepts the argument for protocol compatibility but ignores it and runs sequentially.
+- `IT_NNSIGHT_CONFIGS_PER_PASS` can override the default chunk size for local repro and CI debugging.
 
 ## TransformerBridge and `use_bridge` Selection
 

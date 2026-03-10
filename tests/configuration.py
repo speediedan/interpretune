@@ -72,7 +72,6 @@ def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: St
         "auto_comp_cfg",
         "latent_analysis_targets",
         "analysis_cfgs",
-        "sae_cfgs",
         "logging_level",
         "use_bridge",
     ]
