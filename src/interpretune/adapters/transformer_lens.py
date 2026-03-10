@@ -165,11 +165,22 @@ class BaseITLensModule(BaseITModule):
         )
 
         model_cls = cast(Type[PreTrainedModel], self.it_cfg.model_class)
-        model = model_cls.from_pretrained(
-            **self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs,
-            config=cust_config,
-            token=access_token,
-        )
+        restore_async_load_env = False
+        if os.name == "nt" and "HF_DEACTIVATE_ASYNC_LOAD" not in os.environ:
+            # Transformers v5 uses async thread-based tensor materialization by default.
+            # Force sequential loading on Windows to avoid the upstream crash seen in CI.
+            os.environ["HF_DEACTIVATE_ASYNC_LOAD"] = "1"
+            restore_async_load_env = True
+
+        try:
+            model = model_cls.from_pretrained(
+                **self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs,
+                config=cust_config,
+                token=access_token,
+            )
+        finally:
+            if restore_async_load_env:
+                del os.environ["HF_DEACTIVATE_ASYNC_LOAD"]
         # perhaps explore initializing on the meta device and then materializing as needed layer by layer during
         # loading/processing into hookedtransformer
         # with torch.device("meta"):
