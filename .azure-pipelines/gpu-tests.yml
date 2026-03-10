@@ -186,6 +186,9 @@ jobs:
 
       - bash: |
           source /tmp/venvs/it_dev/bin/activate
+          # Keep the baseline coverage pass CPU-only on GPU runners.
+          # GPU-specific coverage is collected in the standalone and profile_ci phases below.
+          export CUDA_VISIBLE_DEVICES=''
           # --reruns/--reruns-delay handle transient httpx read timeouts with HF transformers v5
           python -m pytest --cov=src/interpretune --cov-append --cov-report= src/interpretune tests -v --junitxml=$(Build.Repository.LocalPath)/test-results.xml --durations=50 --reruns 2 --reruns-delay 5
         displayName: 'Testing: standard'
