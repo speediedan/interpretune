@@ -228,6 +228,52 @@ runner-health baseline, but not as a precise substitute for inline RSS markers:
 - The artifact reports top-process `%MEM` snapshots and whole-disk usage, not per-test RSS. Keep
   using `log_resource_snapshot(...)` for precise analysis-test instrumentation.
 
+### Flaky Ubuntu Hosted-Runner Shutdowns
+
+We have also seen a distinct Linux CI failure mode that does not present as a normal pytest failure.
+On GitHub Actions run `22924129626`, job `66530036090` (`cpu (ubuntu-22.04, 3.13)`), the pytest
+coverage step was marked failed even though the raw job log showed normal test progress and no
+assertion failure. The final lines were:
+
+- `##[error]The runner has received a shutdown signal.`
+- `##[error]The operation was canceled.`
+
+Key characteristics of this failure mode:
+
+- artifact upload steps are usually skipped, so the raw job log is the primary source of truth
+- GitHub may report the step as `failure` even when the underlying cause is hosted-runner loss of
+  communication rather than a deterministic test regression
+- the surviving raw log may end mid-test without a pytest summary or traceback
+- other OS jobs, or the Azure self-hosted GPU workflow, may pass on the same commit
+
+Recommended triage flow:
+
+```bash
+# Inspect the failed job summary first
+gh run view --repo speediedan/interpretune --job <job_id>
+
+# Download the raw job log when artifacts are missing or upload steps were skipped
+gh api "repos/speediedan/interpretune/actions/jobs/<job_id>/logs" > /tmp/ci_job_<job_id>.log
+
+# Search for runner-loss markers
+grep -nE "shutdown signal|lost communication|operation was canceled|exit code 143" /tmp/ci_job_<job_id>.log
+
+# If the log survived, inspect the last emitted lines
+tail -80 /tmp/ci_job_<job_id>.log
+```
+
+Interpretation guidance:
+
+- if the last surviving log lines show normal test execution and then a runner shutdown/cancel,
+  treat the event as probable runner instability first
+- if the rerun on the same commit fails again with a real traceback, switch from infrastructure
+  triage to a code/test fix
+- compare against a successful Linux `ci_resource_monitor` artifact only as a coarse baseline;
+  continue to rely on inline `IT_ANALYSIS_RESOURCE_DEBUG=1` and
+  `IT_OP_SERIALIZATION_RESOURCE_DEBUG=1` snapshots for precise per-test memory analysis
+- for heavy analysis cases, combine the resource flags with `IT_MOCK_RUNNER_RAM_GB` and, when
+  relevant, `IT_NNSIGHT_CONFIGS_PER_PASS` to reproduce GitHub-hosted memory conditions locally
+
 ### Known Bug: Class-Level Standalone Marks Are Silently Ignored
 
 `pytest_collection_modifyitems` in `tests/conftest.py` uses `item.own_markers`, which only contains
