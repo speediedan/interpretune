@@ -33,7 +33,7 @@ class TestAnalysisOpDispatcher:
         # Create dispatcher with string path
         dispatcher = AnalysisOpDispatcher(yaml_paths=[sub_dir, string_path])
 
-        # The dispatcher now always includes the built-in YAML file, so expect 3 paths
+        # The dispatcher now always includes the built-in native YAML file, so expect 3 paths
         assert len(dispatcher.yaml_paths) == 3
 
         # Check that the built-in YAML file is present by matching the filename

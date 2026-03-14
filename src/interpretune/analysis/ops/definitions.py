@@ -538,3 +538,69 @@ def ablation_attribution_impl(
     analysis_batch.update(attribution_values=attribution_values)
 
     return analysis_batch
+
+
+def concept_direction_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Placeholder implementation for semantic concept direction analysis."""
+    raise NotImplementedError("concept_direction_impl is scaffolded in IG-1 and will be implemented in IG-2")
+
+
+def compute_attribution_graph_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Placeholder implementation for circuit-tracer attribution graph generation."""
+    raise NotImplementedError("compute_attribution_graph_impl is scaffolded in IG-1 and will be implemented in IG-2")
+
+
+def extract_top_features_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Placeholder implementation for top-feature extraction from circuit-tracer outputs."""
+    raise NotImplementedError("extract_top_features_impl is scaffolded in IG-1 and will be implemented in IG-2")
+
+
+def graph_prune_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Placeholder implementation for graph pruning."""
+    raise NotImplementedError("graph_prune_impl is scaffolded in IG-1 and will be implemented in IG-2")
+
+
+def graph_node_influence_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Placeholder implementation for graph node influence scoring."""
+    raise NotImplementedError("graph_node_influence_impl is scaffolded in IG-1 and will be implemented in IG-2")
+
+
+def feature_intervention_forward_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Placeholder implementation for circuit-tracer feature interventions."""
+    raise NotImplementedError("feature_intervention_forward_impl is scaffolded in IG-1 and will be implemented in IG-3")

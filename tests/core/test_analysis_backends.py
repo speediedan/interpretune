@@ -677,8 +677,14 @@ class TestBackendCapability:
     def test_gradients_value(self):
         assert BackendCapability.GRADIENTS.value == "gradients"
 
+    def test_attribution_value(self):
+        assert BackendCapability.ATTRIBUTION.value == "attribution"
+
+    def test_feature_intervention_value(self):
+        assert BackendCapability.FEATURE_INTERVENTION.value == "feature_intervention"
+
     def test_enum_members_count(self):
-        assert len(BackendCapability) == 2
+        assert len(BackendCapability) == 4
 
     def test_membership_in_frozenset(self):
         caps = frozenset({BackendCapability.BATCHED_HOOKS, BackendCapability.GRADIENTS})

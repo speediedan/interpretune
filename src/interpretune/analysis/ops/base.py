@@ -48,6 +48,11 @@ def get_batch_input(batch: BatchEncoding) -> torch.Tensor:
     return batch[resolve_batch_input_key(batch, "input")]  # type: ignore[return-value]  # BatchEncoding __getitem__ is untyped
 
 
+def capability_value(capability: Any) -> str:
+    """Return a stable string key for a backend capability-like object."""
+    return str(getattr(capability, "value", capability))
+
+
 # Module-level constants for default operation parameters
 DEFAULT_OP_PARAMS = {"module": None, "analysis_batch": None, "batch": None, "batch_idx": None}
 
@@ -311,6 +316,7 @@ class AnalysisOp:
         input_schema: OpSchema | None = None,
         aliases: Sequence[str] | None = None,
         impl_params: dict[str, Any] | None = None,
+        required_capabilities: Sequence[str | Any] | None = None,
     ) -> None:
         self.name = name
         self.description = description
@@ -320,6 +326,18 @@ class AnalysisOp:
         self._aliases = aliases  # Store aliases for the operation
         self._impl: Callable | None = None
         self.impl_params = impl_params or {}
+        self.required_capabilities = self._normalize_required_capabilities(required_capabilities)
+
+    @staticmethod
+    def _normalize_required_capabilities(
+        required_capabilities: Sequence[str | Any] | None,
+    ) -> frozenset[Any]:
+        if not required_capabilities:
+            return frozenset()
+
+        from interpretune.analysis.backends import normalize_backend_capability
+
+        return frozenset(normalize_backend_capability(capability) for capability in required_capabilities)
 
     @property
     def ctx_key(self) -> str:
@@ -379,6 +397,45 @@ class AnalysisOp:
                 # Check in analysis_batch for fields from previous operations
                 if analysis_batch is None or not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None:
                     raise ValueError(f"Missing required analysis input '{key}' for {self.name} operation")
+
+    def _validate_capabilities(self, module: torch.nn.Module | None) -> None:
+        """Validate that the target module exposes all required capabilities."""
+        if not self.required_capabilities:
+            return
+
+        if module is None:
+            required = ", ".join(
+                capability_value(cap) for cap in sorted(self.required_capabilities, key=capability_value)
+            )
+            raise ValueError(
+                f"Operation '{self.name}' requires module capabilities [{required}] but no module was provided"
+            )
+
+        from interpretune.analysis.backends import get_module_capabilities
+
+        available = get_module_capabilities(module)
+        required_values = {capability_value(cap) for cap in self.required_capabilities}
+        available_values = {capability_value(cap) for cap in available}
+        missing_values = required_values.difference(available_values)
+        if missing_values:
+            required = ", ".join(sorted(required_values))
+            available_str = ", ".join(sorted(available_values)) or "none"
+            missing_str = ", ".join(sorted(missing_values))
+            raise ValueError(
+                f"Operation '{self.name}' requires capabilities [{required}] but module only provides "
+                f"[{available_str}]; "
+                f"missing [{missing_str}]"
+            )
+
+    def _validate_call(
+        self,
+        module: torch.nn.Module | None,
+        analysis_batch: BaseAnalysisBatchProtocol | None,
+        batch: BatchEncoding | None,
+    ) -> None:
+        self._validate_capabilities(module)
+        if self.input_schema:
+            self._validate_input_schema(analysis_batch, batch)
 
     @staticmethod
     def process_batch(
@@ -481,7 +538,7 @@ class AnalysisOp:
 
     def __hash__(self) -> int:
         # Updated hash to use input_schema instead of description.
-        return hash((self.name, self.output_schema, self.input_schema))
+        return hash((self.name, self.output_schema, self.input_schema, self.required_capabilities))
 
     def __repr__(self) -> str:
         """Detailed representation showing schema and input requirements."""
@@ -489,7 +546,8 @@ class AnalysisOp:
             f"AnalysisOp(name='{self.name}', "
             f"description='{self.description}', "
             f"output_schema={self.output_schema}, "
-            f"input_schema={self.input_schema})"
+            f"input_schema={self.input_schema}, "
+            f"required_capabilities={sorted(cap.value for cap in self.required_capabilities)})"
         )
 
     def __str__(self) -> str:
@@ -555,9 +613,7 @@ class AnalysisOp:
         """Execute the operation using the configured implementation."""
         analysis_batch = analysis_batch or AnalysisBatch()
 
-        # Validate input schema if provided
-        if self.input_schema:
-            self._validate_input_schema(analysis_batch, batch)
+        self._validate_call(module, analysis_batch, batch)
 
         # Use unified call interface
         result = self._call_with_resolved_params(module, analysis_batch, batch, batch_idx, **kwargs)
@@ -623,6 +679,7 @@ class CompositeAnalysisOp(AnalysisOp):
 
         for op in self.composition:
             with op.active_ctx_key(self.name):
+                op._validate_call(module, current_batch, batch)
                 # Use centralized parameter building and resolution
                 current_batch = op._call_with_resolved_params(module, current_batch, batch, batch_idx, **kwargs)
 

@@ -340,6 +340,169 @@ ablation_attribution:
       datasets_dtype: int64
       per_latent: true
 
+concept_direction:
+  description: Compute semantic concept direction vector from token group embeddings
+  implementation: interpretune.analysis.ops.definitions.concept_direction_impl
+  aliases: [semantic_direction]
+  input_schema:
+    concept_group_a:
+      datasets_dtype: string
+      non_tensor: true
+    concept_group_b:
+      datasets_dtype: string
+      non_tensor: true
+  output_schema:
+    concept_direction:
+      datasets_dtype: float32
+      dyn_dim: 0
+      dyn_dim_ceil: vocab_size
+      sequence_type: true
+    concept_label:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_metadata:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+
+compute_attribution_graph:
+  description: Generate an attribution graph with circuit-tracer
+  implementation: interpretune.analysis.ops.definitions.compute_attribution_graph_impl
+  required_capabilities: [attribution]
+  aliases: [ct_graph]
+  input_schema:
+    concept_direction:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+  output_schema:
+    graph_pt_bytes:
+      datasets_dtype: binary
+      non_tensor: true
+    active_features:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    selected_features:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    logit_probabilities:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    input_tokens:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    graph_metadata:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+
+extract_top_features:
+  description: Extract top-N influential features from an attribution graph
+  implementation: interpretune.analysis.ops.definitions.extract_top_features_impl
+  aliases: [ct_top_features]
+  input_schema:
+    active_features:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    activation_values:
+      datasets_dtype: float32
+      sequence_type: true
+  output_schema:
+    top_feature_ids:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    top_feature_scores:
+      datasets_dtype: float32
+      sequence_type: true
+
+graph_prune:
+  description: Prune a circuit-tracer attribution graph
+  implementation: interpretune.analysis.ops.definitions.graph_prune_impl
+  aliases: [ct_graph_prune]
+  input_schema:
+    graph_pt_bytes:
+      datasets_dtype: binary
+      non_tensor: true
+  output_schema:
+    graph_pt_bytes:
+      datasets_dtype: binary
+      non_tensor: true
+    active_features:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    selected_features:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+
+graph_node_influence:
+  description: Compute node influence scores for an attribution graph
+  implementation: interpretune.analysis.ops.definitions.graph_node_influence_impl
+  aliases: [ct_node_influence]
+  input_schema:
+    graph_pt_bytes:
+      datasets_dtype: binary
+      non_tensor: true
+  output_schema:
+    node_influence_scores:
+      datasets_dtype: float32
+      sequence_type: true
+    node_feature_ids:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+
+feature_intervention_forward:
+  description: Run feature interventions and return pre/post intervention outputs
+  implementation: interpretune.analysis.ops.definitions.feature_intervention_forward_impl
+  required_capabilities: [feature_intervention]
+  aliases: [ct_feature_intervention]
+  input_schema:
+    top_feature_ids:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    top_feature_scores:
+      datasets_dtype: float32
+      sequence_type: true
+  output_schema:
+    intervention_config:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    pre_intervention_logits:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    post_intervention_logits:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    logit_diff:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+
 # Composite operations
 composite_operations:
   logit_diffs_base:
@@ -354,3 +517,15 @@ composite_operations:
   logit_diffs_attr_ablation:
     composition: labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.ablation_attribution
     aliases: [logit_diffs_ablation]
+
+  ct_attribution_from_concept:
+    description: Concept direction through graph attribution and top-feature extraction
+    composition: concept_direction.compute_attribution_graph.graph_prune.extract_top_features
+
+  ct_intervention_from_features:
+    description: Feature intervention from extracted top features
+    composition: feature_intervention_forward
+
+  ct_full_analysis:
+    description: Full analysis-level concept attribution and intervention pipeline
+    composition: concept_direction.compute_attribution_graph.graph_prune.extract_top_features.feature_intervention_forward

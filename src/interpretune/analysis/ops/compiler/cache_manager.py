@@ -18,6 +18,9 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 from interpretune.analysis import IT_TRUST_REMOTE_CODE
 
 
+CACHE_FORMAT_VERSION = "2"
+
+
 @dataclass(frozen=True)
 class OpDef:
     """Frozen dataclass representing a pre-compiled operation definition."""
@@ -31,6 +34,7 @@ class OpDef:
     importable_params: dict[str, str] = field(default_factory=dict)
     normal_params: dict[str, Any] = field(default_factory=dict)
     required_ops: list[str] = field(default_factory=list)
+    required_capabilities: list[str] = field(default_factory=list)
     composition: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +49,7 @@ class OpDef:
             "importable_params": self.importable_params,
             "normal_params": self.normal_params,
             "required_ops": self.required_ops,
+            "required_capabilities": self.required_capabilities,
             "composition": self.composition,
         }
         return result
@@ -291,10 +296,10 @@ class OpDefinitionsCacheManager:
         """Get a fingerprint representing the current state of all YAML files."""
         if self._fingerprint is None:
             if not self._yaml_files:
-                self._fingerprint = "empty"
+                self._fingerprint = f"empty_v{CACHE_FORMAT_VERSION}"
             else:
                 # Create a combined hash of all file information
-                combined_info = []
+                combined_info = [f"cache_format:{CACHE_FORMAT_VERSION}"]
                 for file_info in self._yaml_files:
                     # Include path, mtime, and content hash
                     combined_info.append(f"{file_info.path}:{file_info.mtime}:{file_info.content_hash}")
@@ -403,6 +408,8 @@ class OpDefinitionsCacheManager:
             fields.append(f"normal_params={op_def.normal_params!r}")
         if op_def.required_ops:
             fields.append(f"required_ops={op_def.required_ops!r}")
+        if op_def.required_capabilities:
+            fields.append(f"required_capabilities={op_def.required_capabilities!r}")
         if op_def.composition:
             fields.append(f"composition={op_def.composition!r}")
 

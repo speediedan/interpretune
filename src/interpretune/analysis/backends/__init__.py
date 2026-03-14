@@ -29,9 +29,51 @@ class BackendCapability(Enum):
     GRADIENTS = "gradients"
     """Backend supports forward + backward with gradient caching."""
 
+    ATTRIBUTION = "attribution"
+    """Module exposes attribution analysis support via an attached analysis adapter."""
+
+    FEATURE_INTERVENTION = "feature_intervention"
+    """Module exposes feature intervention support via an attached analysis adapter."""
+
     # Future capabilities (reserved):
     # REMOTE_EXECUTION = "remote_execution"
     # SOURCE_TRACING = "source_tracing"
+
+
+def normalize_backend_capability(capability: Any) -> BackendCapability:
+    """Normalize capability-like values to the local BackendCapability enum."""
+
+    if isinstance(capability, BackendCapability):
+        return capability
+
+    raw_value = getattr(capability, "value", capability)
+    try:
+        return BackendCapability(str(raw_value))
+    except ValueError:
+        if isinstance(raw_value, str) and "." in raw_value:
+            return BackendCapability(raw_value.split(".")[-1].lower())
+        raise
+
+
+def get_module_capabilities(module: Any) -> frozenset[BackendCapability]:
+    """Aggregate execution and analysis capabilities exposed by a module."""
+
+    capabilities: set[BackendCapability] = set()
+    backend = getattr(module, "_model_backend", None)
+    if backend is None and hasattr(module, "model_backend"):
+        try:
+            backend = module.model_backend
+        except (AssertionError, AttributeError):
+            backend = None
+
+    if backend is not None and hasattr(backend, "capabilities"):
+        capabilities.update(normalize_backend_capability(capability) for capability in backend.capabilities)
+
+    analysis_capabilities = getattr(module, "analysis_capabilities", None)
+    if analysis_capabilities:
+        capabilities.update(normalize_backend_capability(capability) for capability in analysis_capabilities)
+
+    return frozenset(capabilities)
 
 
 @runtime_checkable
@@ -235,5 +277,7 @@ class ModelBackend(Protocol):
 
 __all__ = [
     "BackendCapability",
+    "get_module_capabilities",
     "ModelBackend",
+    "normalize_backend_capability",
 ]
