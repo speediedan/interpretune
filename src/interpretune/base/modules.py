@@ -53,6 +53,11 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
     def load_metric(self) -> None:
         """Optionally load a metric at the end of model initialization."""
 
+    @property
+    def analysis_backend(self) -> Any | None:
+        """Optional analysis backend attached by higher-level adapters."""
+        return getattr(self, "_analysis_backend", None)
+
     def on_session_end(self) -> Any | None:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
         if getattr(self, "memprofiler", None):

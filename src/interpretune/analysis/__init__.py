@@ -29,6 +29,12 @@ IT_ANALYSIS_OP_PATHS = os.getenv("IT_ANALYSIS_OP_PATHS", "").split(":") if os.ge
 
 from interpretune.analysis.ops import ColCfg, OpSchema, AnalysisBatch, DISPATCHER, AnalysisOp, OpWrapper, AnalysisOpLike
 from interpretune.analysis.ops.hub_manager import HubAnalysisOpManager
+from interpretune.analysis.backends import (
+    AnalysisBackend,
+    AnalysisBackendCapability,
+    BackendCapability,
+    ModuleCapabilities,
+)
 from interpretune.analysis.core import (
     AnalysisStore,
     LatentAnalysisTargets,
@@ -87,6 +93,10 @@ __all__ = [
     "IT_ANALYSIS_OP_PATHS",
     # Formatters
     "ITAnalysisFormatter",
+    "BackendCapability",
+    "AnalysisBackendCapability",
+    "AnalysisBackend",
+    "ModuleCapabilities",
     # Protocol Definitions
     "LatentModelFqn",
     "DefaultAnalysisBatchProtocol",

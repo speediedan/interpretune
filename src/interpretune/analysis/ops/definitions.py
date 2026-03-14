@@ -4,6 +4,7 @@ from __future__ import annotations  # see PEP 749, no longer needed when 3.13 re
 from typing import Callable, Literal, Any, TYPE_CHECKING
 from collections import defaultdict
 from functools import partial
+import json
 
 import torch
 from transformers import BatchEncoding
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
     from transformer_lens.hook_points import HookPoint
 
 import interpretune as it
+from interpretune.analysis.backends import _get_analysis_backend
 from interpretune.analysis.ops.base import get_batch_input
 from interpretune.protocol import DefaultAnalysisBatchProtocol
 from interpretune.analysis.ops.base import AnalysisBatch
@@ -153,6 +155,27 @@ def _extract_logits(output: Any) -> torch.Tensor:
     raise TypeError(f"Cannot extract logits from model output of type {type(output).__name__}")
 
 
+def _last_token_logits(logits: torch.Tensor) -> torch.Tensor:
+    if logits.dim() == 1:
+        return logits.detach().cpu()
+    if logits.dim() == 2:
+        return logits[-1].detach().cpu()
+    if logits.dim() >= 3:
+        return logits[0, -1].detach().cpu()
+    raise ValueError(f"Unsupported logits rank for feature intervention output: {logits.dim()}")
+
+
+def _mean_target_logit_delta(
+    pre_logits: torch.Tensor,
+    post_logits: torch.Tensor,
+    target_ids: torch.Tensor | None,
+) -> torch.Tensor:
+    if target_ids is not None and torch.numel(target_ids) > 0:
+        target_ids = target_ids.to(dtype=torch.long).reshape(-1)
+        return (post_logits.index_select(0, target_ids) - pre_logits.index_select(0, target_ids)).mean()
+    return (post_logits - pre_logits).mean()
+
+
 def model_forward_impl(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
@@ -169,6 +192,7 @@ def model_forward_impl(
         answer_logits = _backend.fwd(model=module.model, batch=batch)
     else:
         answer_logits = _extract_logits(module(**batch))
+
     analysis_batch.update(answer_logits=answer_logits)
     return analysis_batch
 
@@ -547,8 +571,39 @@ def concept_direction_impl(
     batch_idx: int,
     **kwargs,
 ) -> AnalysisBatch:
-    """Placeholder implementation for semantic concept direction analysis."""
-    raise NotImplementedError("concept_direction_impl is scaffolded in IG-1 and will be implemented in IG-2")
+    """Compute a normalized embedding direction between two concept groups."""
+    analysis_backend = _get_analysis_backend(module)
+    if analysis_backend is None:
+        raise ValueError("concept_direction requires a module with an analysis_backend")
+    tokenizer = analysis_backend.get_tokenizer(module)
+    embed_weight = analysis_backend.get_embedding_weight(module)
+    group_a = list(getattr(analysis_batch, "concept_group_a", []) or [])
+    group_b = list(getattr(analysis_batch, "concept_group_b", []) or [])
+    if not group_a or not group_b:
+        raise ValueError("concept_direction requires non-empty concept_group_a and concept_group_b")
+
+    group_a_ids = analysis_backend.token_strings_to_ids(tokenizer, group_a)
+    group_b_ids = analysis_backend.token_strings_to_ids(tokenizer, group_b)
+    group_a_embed = embed_weight[torch.tensor(group_a_ids, device=embed_weight.device)].float().mean(dim=0)
+    group_b_embed = embed_weight[torch.tensor(group_b_ids, device=embed_weight.device)].float().mean(dim=0)
+    direction_vector = group_a_embed - group_b_embed
+    direction_norm = torch.linalg.vector_norm(direction_vector)
+    if torch.isfinite(direction_norm) and direction_norm.item() > 0:
+        direction_vector = direction_vector / direction_norm
+
+    analysis_batch.update(
+        concept_direction=direction_vector.detach().cpu(),
+        concept_label=f"{' / '.join(group_a)} -> {' / '.join(group_b)}",
+        concept_metadata=json.dumps(
+            {
+                "group_a": group_a,
+                "group_b": group_b,
+                "group_a_token_ids": group_a_ids,
+                "group_b_token_ids": group_b_ids,
+            }
+        ),
+    )
+    return analysis_batch
 
 
 def compute_attribution_graph_impl(
@@ -558,8 +613,14 @@ def compute_attribution_graph_impl(
     batch_idx: int,
     **kwargs,
 ) -> AnalysisBatch:
-    """Placeholder implementation for circuit-tracer attribution graph generation."""
-    raise NotImplementedError("compute_attribution_graph_impl is scaffolded in IG-1 and will be implemented in IG-2")
+    """Generate and decompose a circuit-tracer attribution graph."""
+    analysis_backend = _get_analysis_backend(module)
+    if analysis_backend is None:
+        raise ValueError("compute_attribution_graph requires a module with an analysis_backend")
+    prompt = kwargs.pop("prompt", None) or analysis_backend.resolve_prompt(module, analysis_batch, batch)
+    graph = module.generate_attribution_graph(prompt, **kwargs)
+    analysis_batch.update(**analysis_backend.decompose_graph(graph, extra_metadata={"batch_idx": batch_idx}))
+    return analysis_batch
 
 
 def extract_top_features_impl(
@@ -569,8 +630,42 @@ def extract_top_features_impl(
     batch_idx: int,
     **kwargs,
 ) -> AnalysisBatch:
-    """Placeholder implementation for top-feature extraction from circuit-tracer outputs."""
-    raise NotImplementedError("extract_top_features_impl is scaffolded in IG-1 and will be implemented in IG-2")
+    """Extract the top scoring features from analysis-batch feature rows."""
+    analysis_backend = _get_analysis_backend(module)
+    if analysis_backend is None:
+        raise ValueError("extract_top_features requires a module with an analysis_backend")
+    active_features = torch.as_tensor(getattr(analysis_batch, "active_features", []), dtype=torch.long)
+    selected_features = torch.as_tensor(getattr(analysis_batch, "selected_features", []), dtype=torch.long)
+    if active_features.numel() == 0:
+        analysis_batch.update(
+            top_feature_ids=torch.empty((0, 3), dtype=torch.long),
+            top_feature_scores=torch.empty((0,), dtype=torch.float32),
+        )
+        return analysis_batch
+    active_features = active_features.reshape(-1, 3)
+
+    score_values = getattr(analysis_batch, "node_influence_scores", None)
+    if score_values is None:
+        score_values = getattr(analysis_batch, "activation_values", None)
+    scores = torch.as_tensor(score_values, dtype=torch.float32)
+    if scores.dim() > 1:
+        scores = scores.reshape(-1)
+
+    feature_rows = active_features
+    if selected_features.numel() > 0 and selected_features.shape[0] == scores.shape[0]:
+        feature_rows = analysis_backend.select_feature_rows(active_features, selected_features)
+    elif active_features.shape[0] != scores.shape[0]:
+        raise ValueError(
+            "extract_top_features requires active_features to match score length directly or via selected_features"
+        )
+
+    top_n = min(int(kwargs.get("top_n", scores.shape[0])), scores.shape[0])
+    top_indices = torch.argsort(scores, descending=True)[:top_n]
+    analysis_batch.update(
+        top_feature_ids=feature_rows.index_select(0, top_indices).detach().cpu(),
+        top_feature_scores=scores.index_select(0, top_indices).detach().cpu(),
+    )
+    return analysis_batch
 
 
 def graph_prune_impl(
@@ -580,8 +675,20 @@ def graph_prune_impl(
     batch_idx: int,
     **kwargs,
 ) -> AnalysisBatch:
-    """Placeholder implementation for graph pruning."""
-    raise NotImplementedError("graph_prune_impl is scaffolded in IG-1 and will be implemented in IG-2")
+    """Prune a structured circuit-tracer graph and refresh decomposed outputs."""
+    analysis_backend = _get_analysis_backend(module)
+    if analysis_backend is None:
+        raise ValueError("graph_prune requires a module with an analysis_backend")
+    graph = analysis_backend.hydrate_graph_from_batch(analysis_batch)
+    pruned_graph = analysis_backend.build_pruned_graph(
+        graph,
+        node_threshold=float(kwargs.get("node_threshold", 0.8)),
+        edge_threshold=float(kwargs.get("edge_threshold", 0.98)),
+    )
+    analysis_batch.update(
+        **analysis_backend.decompose_graph(pruned_graph, extra_metadata={"batch_idx": batch_idx, "pruned": True})
+    )
+    return analysis_batch
 
 
 def graph_node_influence_impl(
@@ -591,8 +698,23 @@ def graph_node_influence_impl(
     batch_idx: int,
     **kwargs,
 ) -> AnalysisBatch:
-    """Placeholder implementation for graph node influence scoring."""
-    raise NotImplementedError("graph_node_influence_impl is scaffolded in IG-1 and will be implemented in IG-2")
+    """Compute feature-node influence scores from a structured graph."""
+    from circuit_tracer.graph import compute_node_influence
+
+    analysis_backend = _get_analysis_backend(module)
+    if analysis_backend is None:
+        raise ValueError("graph_node_influence requires a module with an analysis_backend")
+    graph = analysis_backend.hydrate_graph_from_batch(analysis_batch)
+    n_logits = len(graph.logit_targets)
+    n_features = len(graph.selected_features)
+    logit_weights = torch.zeros(graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device)
+    logit_weights[-n_logits:] = graph.logit_probabilities
+    node_scores = compute_node_influence(graph.adjacency_matrix, logit_weights)[:n_features]
+    analysis_batch.update(
+        node_influence_scores=node_scores.detach().cpu(),
+        node_feature_ids=analysis_backend.select_feature_rows(graph.active_features, graph.selected_features),
+    )
+    return analysis_batch
 
 
 def feature_intervention_forward_impl(
@@ -602,5 +724,44 @@ def feature_intervention_forward_impl(
     batch_idx: int,
     **kwargs,
 ) -> AnalysisBatch:
-    """Placeholder implementation for circuit-tracer feature interventions."""
-    raise NotImplementedError("feature_intervention_forward_impl is scaffolded in IG-1 and will be implemented in IG-3")
+    """Run circuit-tracer feature interventions against the module replacement model.
+
+    This op currently implements forward-only intervention analysis and stores an Arrow-safe summary of the intervention
+    tuples so downstream AnalysisStore consumers can inspect or rehydrate the canonical intervention list.
+    """
+    analysis_backend = _get_analysis_backend(module)
+    if analysis_backend is None:
+        raise ValueError("feature_intervention_forward requires a module with an analysis_backend")
+
+    replacement_model = getattr(module, "replacement_model", None)
+    if replacement_model is None:
+        raise ValueError("feature_intervention_forward requires module.replacement_model")
+
+    prompt = kwargs.pop("prompt", None) or analysis_backend.resolve_prompt(module, analysis_batch, batch)
+    settings = analysis_backend.resolve_feature_intervention_settings(module, kwargs)
+    interventions, intervention_payload = analysis_backend.build_feature_interventions(analysis_batch, settings)
+
+    pre_logits_raw, _ = replacement_model.get_activations(prompt)
+    pre_logits = _last_token_logits(pre_logits_raw)
+
+    if interventions:
+        post_logits_raw, _ = replacement_model.feature_intervention(
+            prompt,
+            interventions,
+            **analysis_backend.feature_intervention_call_kwargs(settings),
+        )
+        post_logits = _last_token_logits(post_logits_raw)
+    else:
+        post_logits = pre_logits.clone()
+
+    target_ids = getattr(analysis_batch, "logit_target_ids", None)
+    target_ids_tensor = None if target_ids is None else torch.as_tensor(target_ids, dtype=torch.long).reshape(-1)
+    logit_diff = _mean_target_logit_delta(pre_logits, post_logits, target_ids_tensor)
+
+    analysis_batch.update(
+        **intervention_payload,
+        pre_intervention_logits=pre_logits,
+        post_intervention_logits=post_logits,
+        logit_diff=logit_diff.detach().cpu(),
+    )
+    return analysis_batch

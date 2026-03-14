@@ -6,8 +6,9 @@ for different model execution frameworks (TransformerLens, nnsight, etc.).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Protocol, Sequence, runtime_checkable
+from typing import Any, Callable, Protocol, Sequence, TypeAlias, runtime_checkable
 
 import torch
 
@@ -29,36 +30,90 @@ class BackendCapability(Enum):
     GRADIENTS = "gradients"
     """Backend supports forward + backward with gradient caching."""
 
-    ATTRIBUTION = "attribution"
-    """Module exposes attribution analysis support via an attached analysis adapter."""
+
+class AnalysisBackendCapability(Enum):
+    """Capabilities exposed by analysis adapters/backends rather than model execution backends."""
+
+    ATTRIBUTION_GRAPH = "attribution_graph"
+    """Module exposes attribution graph analysis support via an attached analysis backend."""
 
     FEATURE_INTERVENTION = "feature_intervention"
-    """Module exposes feature intervention support via an attached analysis adapter."""
+    """Module exposes feature intervention support via an attached analysis backend."""
 
     # Future capabilities (reserved):
     # REMOTE_EXECUTION = "remote_execution"
     # SOURCE_TRACING = "source_tracing"
 
 
-def normalize_backend_capability(capability: Any) -> BackendCapability:
-    """Normalize capability-like values to the local BackendCapability enum."""
+Capability: TypeAlias = BackendCapability | AnalysisBackendCapability
 
-    if isinstance(capability, BackendCapability):
+
+@dataclass(frozen=True)
+class ModuleCapabilities:
+    """Execution and analysis capabilities exposed by a module."""
+
+    model: frozenset[BackendCapability]
+    analysis: frozenset[AnalysisBackendCapability]
+
+    @property
+    def all(self) -> frozenset[Capability]:
+        return frozenset({*self.model, *self.analysis})
+
+    @property
+    def values(self) -> frozenset[str]:
+        return frozenset(cap.value for cap in self.all)
+
+    def supports(self, capability: Capability) -> bool:
+        if isinstance(capability, BackendCapability):
+            return capability in self.model
+        return capability in self.analysis
+
+
+def normalize_backend_capability(capability: Any) -> Capability:
+    """Normalize capability-like values to the local execution or analysis capability enums."""
+
+    if isinstance(capability, (BackendCapability, AnalysisBackendCapability)):
         return capability
 
     raw_value = getattr(capability, "value", capability)
+    normalized_value = str(raw_value)
+    if normalized_value == "attribution":
+        normalized_value = AnalysisBackendCapability.ATTRIBUTION_GRAPH.value
+
     try:
-        return BackendCapability(str(raw_value))
+        return BackendCapability(normalized_value)
+    except ValueError:
+        pass
+
+    try:
+        return AnalysisBackendCapability(normalized_value)
     except ValueError:
         if isinstance(raw_value, str) and "." in raw_value:
-            return BackendCapability(raw_value.split(".")[-1].lower())
+            suffix = raw_value.split(".")[-1].lower()
+            if suffix == "attribution":
+                suffix = AnalysisBackendCapability.ATTRIBUTION_GRAPH.value
+            try:
+                return BackendCapability(suffix)
+            except ValueError:
+                return AnalysisBackendCapability(suffix)
         raise
 
 
-def get_module_capabilities(module: Any) -> frozenset[BackendCapability]:
+def _get_analysis_backend(module: Any) -> Any | None:
+    backend = getattr(module, "_analysis_backend", None)
+    if backend is None and hasattr(module, "analysis_backend"):
+        try:
+            backend = module.analysis_backend
+        except (AssertionError, AttributeError):
+            backend = None
+    return backend
+
+
+def get_module_capabilities(module: Any) -> ModuleCapabilities:
     """Aggregate execution and analysis capabilities exposed by a module."""
 
-    capabilities: set[BackendCapability] = set()
+    model_capabilities: set[BackendCapability] = set()
+    analysis_capabilities: set[AnalysisBackendCapability] = set()
     backend = getattr(module, "_model_backend", None)
     if backend is None and hasattr(module, "model_backend"):
         try:
@@ -67,13 +122,47 @@ def get_module_capabilities(module: Any) -> frozenset[BackendCapability]:
             backend = None
 
     if backend is not None and hasattr(backend, "capabilities"):
-        capabilities.update(normalize_backend_capability(capability) for capability in backend.capabilities)
+        model_capabilities.update(
+            capability
+            for capability in (normalize_backend_capability(raw_capability) for raw_capability in backend.capabilities)
+            if isinstance(capability, BackendCapability)
+        )
 
-    analysis_capabilities = getattr(module, "analysis_capabilities", None)
-    if analysis_capabilities:
-        capabilities.update(normalize_backend_capability(capability) for capability in analysis_capabilities)
+    analysis_backend = _get_analysis_backend(module)
+    if analysis_backend is not None and hasattr(analysis_backend, "capabilities"):
+        analysis_capabilities.update(
+            capability
+            for capability in (
+                normalize_backend_capability(raw_capability) for raw_capability in analysis_backend.capabilities
+            )
+            if isinstance(capability, AnalysisBackendCapability)
+        )
 
-    return frozenset(capabilities)
+    legacy_analysis_capabilities = getattr(module, "analysis_capabilities", None)
+    if legacy_analysis_capabilities:
+        analysis_capabilities.update(
+            capability
+            for capability in (
+                normalize_backend_capability(raw_capability) for raw_capability in legacy_analysis_capabilities
+            )
+            if isinstance(capability, AnalysisBackendCapability)
+        )
+
+    return ModuleCapabilities(model=frozenset(model_capabilities), analysis=frozenset(analysis_capabilities))
+
+
+@runtime_checkable
+class AnalysisBackend(Protocol):
+    """Protocol defining analysis-adapter functionality layered above model execution backends."""
+
+    @property
+    def capabilities(self) -> frozenset[AnalysisBackendCapability]:
+        """Return the set of analysis capabilities this backend supports."""
+        ...
+
+    def supports(self, capability: AnalysisBackendCapability) -> bool:
+        """Check whether this backend supports a given analysis capability."""
+        ...
 
 
 @runtime_checkable
@@ -277,7 +366,11 @@ class ModelBackend(Protocol):
 
 __all__ = [
     "BackendCapability",
+    "AnalysisBackend",
+    "AnalysisBackendCapability",
+    "Capability",
     "get_module_capabilities",
     "ModelBackend",
+    "ModuleCapabilities",
     "normalize_backend_capability",
 ]

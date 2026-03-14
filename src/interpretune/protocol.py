@@ -48,6 +48,32 @@ else:
 
 StrOrPath: TypeAlias = str | Path
 
+
+class GraphComponentPayload(TypedDict):
+    """Primitive graph payload used for Arrow-native graph serialization."""
+
+    input_string: str
+    input_tokens: Tensor
+    active_features: Tensor
+    adjacency_matrix: Tensor
+    selected_features: Tensor
+    activation_values: Tensor
+    logit_target_ids: Tensor
+    logit_target_tokens: list[str]
+    logit_probabilities: Tensor
+    graph_cfg: Mapping[str, Any]
+    scan: str | list[str] | None
+    vocab_size: int
+
+
+@runtime_checkable
+class GraphComponentFactoryProtocol(Protocol):
+    """Protocol for graph-like objects that can be hydrated from primitive components."""
+
+    @classmethod
+    def from_graph_components(cls, components: GraphComponentPayload) -> Any: ...
+
+
 ################################################################################
 # Interpretune Enhanced Enums
 ################################################################################
@@ -345,6 +371,9 @@ class PredictSteppable(Protocol):
 @runtime_checkable
 class ModuleInvariants(Protocol):
     it_cfg: ITConfig
+
+    @property
+    def analysis_backend(self) -> Any | None: ...
 
     def setup(self, *args, **kwargs) -> None: ...
 
@@ -688,3 +717,24 @@ class CircuitAnalysisBatchProtocol(DefaultAnalysisBatchProtocol):
     graph_metadata: list[dict] | None
     graph_paths: list[str] | None
     circuit_prompts: list[str] | None
+    input_string: str | None
+    adjacency_matrix: torch.Tensor | None
+    active_features: torch.Tensor | None
+    selected_features: torch.Tensor | None
+    activation_values: torch.Tensor | None
+    logit_target_ids: torch.Tensor | None
+    logit_target_tokens: list[str] | None
+    logit_probabilities: torch.Tensor | None
+    input_tokens: torch.Tensor | None
+    graph_cfg_json: str | None
+    graph_scan_json: str | None
+    graph_vocab_size: int | None
+    intervention_config: str | None
+    intervention_specs_json: str | None
+    intervention_layers: list[int] | torch.Tensor | None
+    intervention_positions: list[int] | torch.Tensor | None
+    intervention_feature_ids: list[int] | torch.Tensor | None
+    intervention_values: list[float] | torch.Tensor | None
+    pre_intervention_logits: torch.Tensor | None
+    post_intervention_logits: torch.Tensor | None
+    logit_diff: torch.Tensor | float | None

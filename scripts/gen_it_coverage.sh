@@ -200,6 +200,21 @@ collect_env_coverage(){
     cd ${repo_home}
     maybe_deactivate
     source ${venv_path}/bin/activate
+    export PYTHONFAULTHANDLER=1
+
+    run_logged_phase(){
+        local phase_name=$1
+        shift
+        set +e
+        "$@"
+        local phase_status=$?
+        set -e
+        echo "${phase_name} exit code: ${phase_status}" >> "$coverage_session_log"
+        if [[ $phase_status -ne 0 && $allow_failures -ne 1 ]]; then
+            return $phase_status
+        fi
+        return 0
+    }
 
     # Build special_tests.sh rerun args to pass through
     special_tests_rerun_args=""
@@ -219,16 +234,34 @@ collect_env_coverage(){
             python -m coverage erase
             if [[ $run_all_and_examples -eq 1 ]]; then
                 # Using pytest-cov ensures coverage starts before test collection imports
-                python -m pytest --cov=src/interpretune --cov-report= src/interpretune src/it_examples tests -v ${rerun_args} 2>&1 >> $coverage_session_log || [[ $allow_failures -eq 1 ]]
-                (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} 2>&1 >> ${temp_special_log}) > /dev/null || [[ $allow_failures -eq 1 ]]
-                (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} 2>&1 >> ${temp_special_log}) > /dev/null || [[ $allow_failures -eq 1 ]]
-                (./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} 2>&1 >> ${temp_special_log}) > /dev/null || [[ $allow_failures -eq 1 ]]
-                (./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} 2>&1 >> ${temp_special_log}) > /dev/null || [[ $allow_failures -eq 1 ]]
+                run_logged_phase \
+                    "base pytest" \
+                    python -X faulthandler -m pytest --cov=src/interpretune --cov-report= src/interpretune src/it_examples tests -v ${rerun_args} \
+                    >> "$coverage_session_log" 2>&1
+                run_logged_phase \
+                    "special tests standalone" \
+                    bash -lc "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} >> ${temp_special_log} 2>&1"
+                run_logged_phase \
+                    "special tests profile_ci" \
+                    bash -lc "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} >> ${temp_special_log} 2>&1"
+                run_logged_phase \
+                    "special tests profile" \
+                    bash -lc "./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} >> ${temp_special_log} 2>&1"
+                run_logged_phase \
+                    "special tests optional" \
+                    bash -lc "./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} >> ${temp_special_log} 2>&1"
             else
                 # Using pytest-cov ensures coverage starts before test collection imports
-                python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${rerun_args} 2>&1 >> $coverage_session_log || [[ $allow_failures -eq 1 ]]
-                (./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} 2>&1 >> ${temp_special_log}) > /dev/null || [[ $allow_failures -eq 1 ]]
-                (./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} 2>&1 >> ${temp_special_log}) > /dev/null || [[ $allow_failures -eq 1 ]]
+                run_logged_phase \
+                    "base pytest" \
+                    python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${rerun_args} \
+                    >> "$coverage_session_log" 2>&1
+                run_logged_phase \
+                    "special tests standalone" \
+                    bash -lc "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} >> ${temp_special_log} 2>&1"
+                run_logged_phase \
+                    "special tests profile_ci" \
+                    bash -lc "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} >> ${temp_special_log} 2>&1"
             fi
             ;;
         *)

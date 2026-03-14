@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from interpretune.analysis.backends import BackendCapability, ModelBackend
+from interpretune.analysis.backends import AnalysisBackendCapability, BackendCapability, ModelBackend
 from interpretune.analysis.backends.hook_mapping import (
     ArchitectureMapping,
     HookMapping,
@@ -678,13 +678,14 @@ class TestBackendCapability:
         assert BackendCapability.GRADIENTS.value == "gradients"
 
     def test_attribution_value(self):
-        assert BackendCapability.ATTRIBUTION.value == "attribution"
+        assert AnalysisBackendCapability.ATTRIBUTION_GRAPH.value == "attribution_graph"
 
     def test_feature_intervention_value(self):
-        assert BackendCapability.FEATURE_INTERVENTION.value == "feature_intervention"
+        assert AnalysisBackendCapability.FEATURE_INTERVENTION.value == "feature_intervention"
 
     def test_enum_members_count(self):
-        assert len(BackendCapability) == 4
+        assert len(BackendCapability) == 2
+        assert len(AnalysisBackendCapability) == 2
 
     def test_membership_in_frozenset(self):
         caps = frozenset({BackendCapability.BATCHED_HOOKS, BackendCapability.GRADIENTS})

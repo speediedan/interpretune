@@ -88,6 +88,7 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
     extensions."""
 
     def __init__(self, features=None, **format_kwargs):
+        self.analysis_backend = format_kwargs.pop("analysis_backend", None)
         col_cfg = format_kwargs.pop("col_cfg", {})
         super().__init__(col_cfg=col_cfg, features=features, **format_kwargs)
 
@@ -170,6 +171,9 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
             with self.field_context((field_name, col_dict)):
                 result[field_name] = self._recursive_tensorize(field_value)
 
+        if self.analysis_backend is not None and hasattr(self.analysis_backend, "maybe_hydrate_row"):
+            result = self.analysis_backend.maybe_hydrate_row(result)
+
         return result
 
     def format_batch(self, pa_table: pa.Table) -> Mapping:
@@ -185,5 +189,8 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
             with self.field_context((column_name, col_dict)):
                 processed_column = self._recursive_tensorize(column_values)
                 result[column_name] = self._consolidate(processed_column)
+
+        if self.analysis_backend is not None and hasattr(self.analysis_backend, "maybe_hydrate_batch"):
+            result = self.analysis_backend.maybe_hydrate_batch(result)
 
         return result

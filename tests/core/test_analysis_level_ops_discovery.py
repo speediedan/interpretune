@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-from interpretune.analysis.backends import BackendCapability, get_module_capabilities
+from interpretune.analysis.backends import AnalysisBackendCapability, BackendCapability, get_module_capabilities
 from interpretune.analysis.ops.base import AnalysisBatch, AnalysisOp, CompositeAnalysisOp
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 
@@ -20,7 +20,7 @@ class _DummyModule(torch.nn.Module):
     def __init__(
         self,
         backend_capabilities: frozenset[BackendCapability] | None = None,
-        analysis_capabilities: frozenset[BackendCapability] | None = None,
+        analysis_capabilities: frozenset[AnalysisBackendCapability] | None = None,
     ) -> None:
         super().__init__()
         self._model_backend = _DummyBackend(backend_capabilities or frozenset())
@@ -38,7 +38,7 @@ def test_analysis_level_ops_are_discoverable() -> None:
 
 
 def test_analysis_level_composite_ops_resolve() -> None:
-    op = DISPATCHER.get_op("ct_full_analysis")
+    op = DISPATCHER.get_op("intervention_from_concept")
     assert isinstance(op, CompositeAnalysisOp)
     assert [sub_op.name for sub_op in op.composition] == [
         "concept_direction",
@@ -52,7 +52,7 @@ def test_analysis_level_composite_ops_resolve() -> None:
 def test_required_capabilities_are_parsed() -> None:
     op = DISPATCHER.get_op("compute_attribution_graph")
     assert isinstance(op, AnalysisOp)
-    assert {cap.value for cap in op.required_capabilities} == {"attribution"}
+    assert {cap.value for cap in op.required_capabilities} == {"attribution_graph"}
 
     intervention_op = DISPATCHER.get_op("feature_intervention_forward")
     assert isinstance(intervention_op, AnalysisOp)
@@ -62,10 +62,13 @@ def test_required_capabilities_are_parsed() -> None:
 def test_get_module_capabilities_aggregates_backend_and_adapter_capabilities() -> None:
     module = _DummyModule(
         backend_capabilities=frozenset({BackendCapability.GRADIENTS}),
-        analysis_capabilities=frozenset({BackendCapability.ATTRIBUTION}),
+        analysis_capabilities=frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH}),
     )
 
-    assert get_module_capabilities(module) == frozenset({BackendCapability.GRADIENTS, BackendCapability.ATTRIBUTION})
+    capabilities = get_module_capabilities(module)
+    assert capabilities.model == frozenset({BackendCapability.GRADIENTS})
+    assert capabilities.analysis == frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH})
+    assert capabilities.values == frozenset({"gradients", "attribution_graph"})
 
 
 def test_capability_validation_rejects_missing_module_capability() -> None:
@@ -80,7 +83,7 @@ def test_capability_validation_rejects_missing_module_capability() -> None:
 def test_capability_validation_allows_matching_analysis_capability() -> None:
     op = DISPATCHER.get_op("compute_attribution_graph")
     assert isinstance(op, AnalysisOp)
-    module = _DummyModule(analysis_capabilities=frozenset({BackendCapability.ATTRIBUTION}))
+    module = _DummyModule(analysis_capabilities=frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH}))
     mock_impl = MagicMock(return_value=AnalysisBatch(ok=True))
     op._impl = mock_impl
 
@@ -91,9 +94,9 @@ def test_capability_validation_allows_matching_analysis_capability() -> None:
 
 
 def test_composite_ops_validate_capabilities_per_stage() -> None:
-    op = DISPATCHER.get_op("ct_full_analysis")
+    op = DISPATCHER.get_op("intervention_from_concept")
     assert isinstance(op, CompositeAnalysisOp)
-    module = _DummyModule(analysis_capabilities=frozenset({BackendCapability.ATTRIBUTION}))
+    module = _DummyModule(analysis_capabilities=frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH}))
 
     def noop_impl(module, analysis_batch, batch, batch_idx, **kwargs):
         return analysis_batch
@@ -104,9 +107,24 @@ def test_composite_ops_validate_capabilities_per_stage() -> None:
     analysis_batch = AnalysisBatch(
         concept_group_a=["Paris"],
         concept_group_b=["London"],
-        graph_pt_bytes=b"graph-bytes",
+        input_string="Paris London",
+        adjacency_matrix=[[0.0]],
         active_features=[[0, 0, 0]],
+        selected_features=[0],
         activation_values=[0.1],
+        logit_target_ids=[0],
+        logit_target_tokens=["Paris"],
+        logit_probabilities=[1.0],
+        input_tokens=[0],
+        graph_cfg_json=(
+            "{"
+            '"n_layers": 1, "d_model": 1, "d_head": 1, "n_heads": 1, '
+            '"d_mlp": 1, "d_vocab": 1, "tokenizer_name": "fake", '
+            '"model_name": "fake", "original_architecture": "Fake"'
+            "}"
+        ),
+        graph_scan_json='"scan"',
+        graph_vocab_size=1,
         top_feature_ids=[[0, 0, 0]],
         top_feature_scores=[0.1],
     )

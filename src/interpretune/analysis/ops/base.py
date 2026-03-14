@@ -415,7 +415,7 @@ class AnalysisOp:
 
         available = get_module_capabilities(module)
         required_values = {capability_value(cap) for cap in self.required_capabilities}
-        available_values = {capability_value(cap) for cap in available}
+        available_values = available.values
         missing_values = required_values.difference(available_values)
         if missing_values:
             required = ", ".join(sorted(required_values))

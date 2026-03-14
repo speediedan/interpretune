@@ -68,6 +68,27 @@ class CircuitTracerConfig(ITSerializableCfg):
     """Whether to prepare graphs for Neuronpedia graph storage and analysis."""
     use_neuronpedia: bool = False
 
+    # Analysis-level feature intervention settings
+    """Scale factor applied to each constructed intervention value."""
+    intervention_scale_factor: float = 1.0
+    """Optional constant value for all interventions.
+
+    When ``None``, the op uses per-feature values from ``top_feature_scores``.
+    """
+    intervention_value: float | None = None
+    """Source for per-feature intervention values when ``intervention_value`` is unset."""
+    intervention_value_source: str = "top_feature_scores"
+    """Optional explicit constrained layer list passed to circuit-tracer intervention APIs."""
+    intervention_constrained_layers: list[int] | None = None
+    """Optional passthrough for circuit-tracer attention freezing during intervention."""
+    intervention_freeze_attention: bool | None = None
+    """Optional passthrough controlling activation-function application during intervention."""
+    intervention_apply_activation_function: bool | None = None
+    """Whether to request sparse intervention activations from circuit-tracer."""
+    intervention_sparse: bool = False
+    """Whether to request intervention activations alongside logits from circuit-tracer."""
+    intervention_return_activations: bool = False
+
     # NNsight backend-specific settings
     """Whether to use remote execution for NNsight backend.
 
@@ -90,6 +111,16 @@ class CircuitTracerConfig(ITSerializableCfg):
         valid_backends = ["transformerlens", "nnsight"]
         if self.backend not in valid_backends:
             raise ValueError(f"Invalid backend '{self.backend}'. Must be one of {valid_backends}")
+
+        valid_intervention_value_sources = ["top_feature_scores", "constant"]
+        if self.intervention_value_source not in valid_intervention_value_sources:
+            raise ValueError(
+                "Invalid intervention_value_source "
+                f"'{self.intervention_value_source}'. Must be one of {valid_intervention_value_sources}"
+            )
+
+        if self.intervention_value_source == "constant" and self.intervention_value is None:
+            raise ValueError("intervention_value must be set when intervention_value_source='constant'")
 
         # Warn if NNsight-specific settings are configured but backend is not NNsight
         if self.backend != "nnsight":

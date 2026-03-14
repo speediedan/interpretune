@@ -28,7 +28,7 @@ from interpretune.utils import rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
 
 if TYPE_CHECKING:
-    from interpretune.analysis.backends import BackendCapability
+    from interpretune.analysis.backends import AnalysisBackendCapability
 
 # Type alias for replacement model backends - supports both TransformerLens and NNsight
 ReplacementModelType = TransformerLensReplacementModel | NNSightReplacementModel
@@ -85,14 +85,15 @@ class BaseCircuitTracerModule(BaseITModule):
         # Initialize attributes that may be required in base init methods
         self.attribution_graphs: list[InstantiatedGraph] = []
         self._replacement_model: ReplacementModelType | None = None
+        from interpretune.analysis.backends.circuit_tracer import DEFAULT_CT_ANALYSIS_BACKEND
+
+        self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
         super().__init__(*args, **kwargs)
 
     @property
-    def analysis_capabilities(self) -> frozenset[BackendCapability]:
+    def analysis_capabilities(self) -> frozenset[AnalysisBackendCapability]:
         """Analysis-level capabilities provided by the circuit-tracer adapter."""
-        from interpretune.analysis.backends import BackendCapability
-
-        return frozenset({BackendCapability.ATTRIBUTION, BackendCapability.FEATURE_INTERVENTION})
+        return self.analysis_backend.capabilities
 
     def _load_replacement_model(self, pretrained_kwargs: dict | None = None) -> None:
         """Load the ReplacementModel for circuit tracing.

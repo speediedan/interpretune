@@ -369,7 +369,7 @@ concept_direction:
 compute_attribution_graph:
   description: Generate an attribution graph with circuit-tracer
   implementation: interpretune.analysis.ops.definitions.compute_attribution_graph_impl
-  required_capabilities: [attribution]
+  required_capabilities: [attribution_graph]
   aliases: [ct_graph]
   input_schema:
     concept_direction:
@@ -377,9 +377,14 @@ compute_attribution_graph:
       required: false
       sequence_type: true
   output_schema:
-    graph_pt_bytes:
-      datasets_dtype: binary
+    input_string:
+      datasets_dtype: string
       non_tensor: true
+      sequence_type: false
+    adjacency_matrix:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
     active_features:
       datasets_dtype: int64
       array_shape: [null, 3]
@@ -396,6 +401,10 @@ compute_attribution_graph:
       datasets_dtype: int64
       required: false
       sequence_type: true
+    logit_target_tokens:
+      datasets_dtype: string
+      required: false
+      sequence_type: true
     logit_probabilities:
       datasets_dtype: float32
       required: false
@@ -404,10 +413,25 @@ compute_attribution_graph:
       datasets_dtype: int64
       required: false
       sequence_type: true
+    graph_cfg_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_scan_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_vocab_size:
+      datasets_dtype: int64
+      required: false
+      sequence_type: false
     graph_metadata:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
 
 extract_top_features:
   description: Extract top-N influential features from an attribution graph
@@ -435,13 +459,14 @@ graph_prune:
   implementation: interpretune.analysis.ops.definitions.graph_prune_impl
   aliases: [ct_graph_prune]
   input_schema:
-    graph_pt_bytes:
-      datasets_dtype: binary
+    input_string:
+      datasets_dtype: string
       non_tensor: true
-  output_schema:
-    graph_pt_bytes:
-      datasets_dtype: binary
-      non_tensor: true
+      sequence_type: false
+    adjacency_matrix:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
     active_features:
       datasets_dtype: int64
       array_shape: [null, 3]
@@ -454,15 +479,149 @@ graph_prune:
       datasets_dtype: float32
       required: false
       sequence_type: true
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    logit_target_tokens:
+      datasets_dtype: string
+      required: false
+      sequence_type: true
+    logit_probabilities:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    input_tokens:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    graph_cfg_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_scan_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_vocab_size:
+      datasets_dtype: int64
+      required: false
+      sequence_type: false
+  output_schema:
+    input_string:
+      datasets_dtype: string
+      non_tensor: true
+      sequence_type: false
+    adjacency_matrix:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    active_features:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    selected_features:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    logit_target_tokens:
+      datasets_dtype: string
+      required: false
+      sequence_type: true
+    logit_probabilities:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    input_tokens:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    graph_cfg_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_scan_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_vocab_size:
+      datasets_dtype: int64
+      required: false
+      sequence_type: false
+    graph_metadata:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
 
 graph_node_influence:
   description: Compute node influence scores for an attribution graph
   implementation: interpretune.analysis.ops.definitions.graph_node_influence_impl
   aliases: [ct_node_influence]
   input_schema:
-    graph_pt_bytes:
-      datasets_dtype: binary
+    adjacency_matrix:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    active_features:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    selected_features:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    logit_target_tokens:
+      datasets_dtype: string
+      required: false
+      sequence_type: true
+    logit_probabilities:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    input_string:
+      datasets_dtype: string
+      required: false
       non_tensor: true
+      sequence_type: false
+    input_tokens:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    graph_cfg_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_scan_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_vocab_size:
+      datasets_dtype: int64
+      required: false
+      sequence_type: false
   output_schema:
     node_influence_scores:
       datasets_dtype: float32
@@ -490,6 +649,26 @@ feature_intervention_forward:
       datasets_dtype: string
       required: false
       non_tensor: true
+    intervention_specs_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    intervention_layers:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    intervention_positions:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    intervention_feature_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    intervention_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
     pre_intervention_logits:
       datasets_dtype: float32
       required: false
@@ -518,14 +697,14 @@ composite_operations:
     composition: labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.ablation_attribution
     aliases: [logit_diffs_ablation]
 
-  ct_attribution_from_concept:
+  attribution_from_concept:
     description: Concept direction through graph attribution and top-feature extraction
     composition: concept_direction.compute_attribution_graph.graph_prune.extract_top_features
 
-  ct_intervention_from_features:
+  intervention_from_features:
     description: Feature intervention from extracted top features
     composition: feature_intervention_forward
 
-  ct_full_analysis:
+  intervention_from_concept:
     description: Full analysis-level concept attribution and intervention pipeline
     composition: concept_direction.compute_attribution_graph.graph_prune.extract_top_features.feature_intervention_forward
