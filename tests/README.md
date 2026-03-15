@@ -37,7 +37,7 @@ Example low-memory reproduction commands:
 ```bash
 # Reproduce the heavy attr-ablation parity path with CI-like low-memory behavior
 CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=32 \
-  python -m pytest tests/core/test_sae_backend_parity.py::TestLogitDiffsAttrAblationBackendParity::test_logit_diffs_match -q
+  python -m pytest tests/core/test_model_backend_parity.py::TestLogitDiffsAttrAblationBackendParity::test_logit_diffs_match -q
 
 # Add serialization resource snapshots around the logit_diffs serialization test
 CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=16 IT_ANALYSIS_RESOURCE_DEBUG=1 IT_OP_SERIALIZATION_RESOURCE_DEBUG=1 \
@@ -45,7 +45,7 @@ CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=16 IT_ANALYSIS_RESOURCE_DEBUG=1 IT
 
 # Manually compare different NNsight multi-invoke batch sizes
 CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=32 IT_NNSIGHT_CONFIGS_PER_PASS=2 \
-  python -m pytest tests/core/test_sae_backend_parity.py::TestLogitDiffsAttrAblationBackendParity::test_logit_diffs_match -q
+  python -m pytest tests/core/test_model_backend_parity.py::TestLogitDiffsAttrAblationBackendParity::test_logit_diffs_match -q
 ```
 
 ## HuggingFace Token Configuration

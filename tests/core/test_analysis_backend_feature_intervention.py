@@ -1,3 +1,10 @@
+"""Synthetic analysis-backend intervention tests.
+
+These currently exercise the circuit-tracer analysis backend because it is the only native analysis backend with
+intervention support. The fixtures are intentionally backend-shaped so additional analysis backends can reuse the same
+test surface later.
+"""
+
 from __future__ import annotations
 
 from typing import Any, cast

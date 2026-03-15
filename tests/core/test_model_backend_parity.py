@@ -1,7 +1,7 @@
-"""SAE Backend Parity Tests: TransformerBridge ↔ NNsight.
+"""Model Backend Parity Tests: TransformerBridge ↔ NNsight.
 
 Validates that analysis operations produce equivalent results regardless of
-whether the TransformerBridge or NNsight backend is used for SAE analysis.
+whether the TransformerBridge or NNsight model backend is used for SAE analysis.
 
 **Parity validation (TransformerBridge ↔ NNsight on GPT-2):**
 

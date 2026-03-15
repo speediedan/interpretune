@@ -411,7 +411,11 @@ class AnalysisOp:
                 f"Operation '{self.name}' requires module capabilities [{required}] but no module was provided"
             )
 
-        from interpretune.analysis.backends import get_module_capabilities
+        from interpretune.analysis.backends import (
+            AnalysisBackendCapability,
+            get_analysis_backend,
+            get_module_capabilities,
+        )
 
         available = get_module_capabilities(module)
         required_values = {capability_value(cap) for cap in self.required_capabilities}
@@ -421,9 +425,13 @@ class AnalysisOp:
             required = ", ".join(sorted(required_values))
             available_str = ", ".join(sorted(available_values)) or "none"
             missing_str = ", ".join(sorted(missing_values))
+            backend_detail = ""
+            if any(isinstance(cap, AnalysisBackendCapability) for cap in self.required_capabilities):
+                if get_analysis_backend(module) is None:
+                    backend_detail = "; module does not expose an analysis_backend"
             raise ValueError(
                 f"Operation '{self.name}' requires capabilities [{required}] but module only provides "
-                f"[{available_str}]; "
+                f"[{available_str}]{backend_detail}; "
                 f"missing [{missing_str}]"
             )
 

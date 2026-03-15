@@ -99,13 +99,22 @@ def normalize_backend_capability(capability: Any) -> Capability:
         raise
 
 
-def _get_analysis_backend(module: Any) -> Any | None:
+def get_analysis_backend(module: Any) -> AnalysisBackend | None:
     backend = getattr(module, "_analysis_backend", None)
     if backend is None and hasattr(module, "analysis_backend"):
         try:
             backend = module.analysis_backend
         except (AssertionError, AttributeError):
             backend = None
+    return backend
+
+
+def require_analysis_backend(module: Any) -> AnalysisBackend:
+    """Return the module's analysis backend or raise if it is unavailable."""
+
+    backend = get_analysis_backend(module)
+    if backend is None:
+        raise ValueError("Target module must expose an analysis_backend for this operation")
     return backend
 
 
@@ -128,7 +137,7 @@ def get_module_capabilities(module: Any) -> ModuleCapabilities:
             if isinstance(capability, BackendCapability)
         )
 
-    analysis_backend = _get_analysis_backend(module)
+    analysis_backend = get_analysis_backend(module)
     if analysis_backend is not None and hasattr(analysis_backend, "capabilities"):
         analysis_capabilities.update(
             capability
@@ -163,6 +172,38 @@ class AnalysisBackend(Protocol):
     def supports(self, capability: AnalysisBackendCapability) -> bool:
         """Check whether this backend supports a given analysis capability."""
         ...
+
+    def get_tokenizer(self, module: Any) -> Any: ...
+
+    def get_embedding_weight(self, module: Any) -> torch.Tensor: ...
+
+    def token_strings_to_ids(self, tokenizer: Any, token_strings: list[str]) -> list[int]: ...
+
+    def resolve_prompt(self, module: Any, analysis_batch: Any, batch: Any) -> str: ...
+
+    def resolve_feature_intervention_settings(
+        self,
+        module: Any,
+        overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+
+    def build_feature_interventions(
+        self,
+        analysis_batch: Any,
+        settings: dict[str, Any],
+    ) -> tuple[list[tuple[int, int, int, float]], dict[str, Any]]: ...
+
+    def feature_intervention_call_kwargs(self, settings: dict[str, Any]) -> dict[str, Any]: ...
+
+    def decompose_graph(self, graph: Any, extra_metadata: dict[str, Any] | None = None) -> dict[str, Any]: ...
+
+    def hydrate_graph_from_batch(self, analysis_batch: Any) -> Any: ...
+
+    def build_pruned_graph(self, graph: Any, node_threshold: float, edge_threshold: float) -> Any: ...
+
+    def select_feature_rows(self, active_features: torch.Tensor, selected_features: torch.Tensor) -> torch.Tensor: ...
+
+    def compute_node_influence_scores(self, graph: Any) -> tuple[torch.Tensor, torch.Tensor]: ...
 
 
 @runtime_checkable

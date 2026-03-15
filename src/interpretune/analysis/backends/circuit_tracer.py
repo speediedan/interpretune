@@ -372,6 +372,19 @@ class CircuitTracerAnalysisBackend:
             vocab_size=graph.vocab_size,
         )
 
+    def compute_node_influence_scores(self, graph: Any) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute node influence scores and the corresponding feature rows for a graph."""
+
+        from circuit_tracer.graph import compute_node_influence
+
+        n_logits = len(graph.logit_targets)
+        n_features = len(graph.selected_features)
+        logit_weights = torch.zeros(graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device)
+        logit_weights[-n_logits:] = graph.logit_probabilities
+        node_scores = compute_node_influence(graph.adjacency_matrix, logit_weights)[:n_features]
+        node_feature_ids = self.select_feature_rows(graph.active_features, graph.selected_features)
+        return node_scores.detach().cpu(), node_feature_ids
+
 
 DEFAULT_CT_ANALYSIS_BACKEND = CircuitTracerAnalysisBackend()
 

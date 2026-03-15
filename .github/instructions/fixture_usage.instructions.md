@@ -668,7 +668,7 @@ All are `analysis_session` fixtures with `FixtRunPhase(FixtPhase.initonly, RunPh
 
 ### Pattern: Backend Parity Testing with deepcopy
 
-From `test_sae_backend_parity.py`:
+From `test_model_backend_parity.py`:
 
 ```python
 _NS_BASE = "get_analysis_session__sl_ns_gpt2_logit_diffs_base__initonly_runanalysis"

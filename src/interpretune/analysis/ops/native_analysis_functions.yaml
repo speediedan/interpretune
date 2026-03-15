@@ -343,6 +343,7 @@ ablation_attribution:
 concept_direction:
   description: Compute semantic concept direction vector from token group embeddings
   implementation: interpretune.analysis.ops.definitions.concept_direction_impl
+  required_capabilities: [attribution_graph]
   aliases: [semantic_direction]
   input_schema:
     concept_group_a:
@@ -457,6 +458,7 @@ extract_top_features:
 graph_prune:
   description: Prune a circuit-tracer attribution graph
   implementation: interpretune.analysis.ops.definitions.graph_prune_impl
+  required_capabilities: [attribution_graph]
   aliases: [ct_graph_prune]
   input_schema:
     input_string:
@@ -569,6 +571,7 @@ graph_prune:
 graph_node_influence:
   description: Compute node influence scores for an attribution graph
   implementation: interpretune.analysis.ops.definitions.graph_node_influence_impl
+  required_capabilities: [attribution_graph]
   aliases: [ct_node_influence]
   input_schema:
     adjacency_matrix:

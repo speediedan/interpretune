@@ -13,11 +13,11 @@ from jaxtyping import Float
 if TYPE_CHECKING:
     from transformer_lens.hook_points import HookPoint
 
-import interpretune as it
-from interpretune.analysis.backends import _get_analysis_backend
-from interpretune.analysis.ops.base import get_batch_input
-from interpretune.protocol import DefaultAnalysisBatchProtocol
 from interpretune.analysis.ops.base import AnalysisBatch
+from interpretune.analysis.ops.base import get_batch_input
+from interpretune.analysis.backends import require_analysis_backend
+from interpretune.protocol import DefaultAnalysisBatchProtocol
+import interpretune as it
 
 
 def boolean_logits_to_avg_logit_diff(
@@ -572,9 +572,7 @@ def concept_direction_impl(
     **kwargs,
 ) -> AnalysisBatch:
     """Compute a normalized embedding direction between two concept groups."""
-    analysis_backend = _get_analysis_backend(module)
-    if analysis_backend is None:
-        raise ValueError("concept_direction requires a module with an analysis_backend")
+    analysis_backend = require_analysis_backend(module)
     tokenizer = analysis_backend.get_tokenizer(module)
     embed_weight = analysis_backend.get_embedding_weight(module)
     group_a = list(getattr(analysis_batch, "concept_group_a", []) or [])
@@ -614,9 +612,7 @@ def compute_attribution_graph_impl(
     **kwargs,
 ) -> AnalysisBatch:
     """Generate and decompose a circuit-tracer attribution graph."""
-    analysis_backend = _get_analysis_backend(module)
-    if analysis_backend is None:
-        raise ValueError("compute_attribution_graph requires a module with an analysis_backend")
+    analysis_backend = require_analysis_backend(module)
     prompt = kwargs.pop("prompt", None) or analysis_backend.resolve_prompt(module, analysis_batch, batch)
     graph = module.generate_attribution_graph(prompt, **kwargs)
     analysis_batch.update(**analysis_backend.decompose_graph(graph, extra_metadata={"batch_idx": batch_idx}))
@@ -631,9 +627,6 @@ def extract_top_features_impl(
     **kwargs,
 ) -> AnalysisBatch:
     """Extract the top scoring features from analysis-batch feature rows."""
-    analysis_backend = _get_analysis_backend(module)
-    if analysis_backend is None:
-        raise ValueError("extract_top_features requires a module with an analysis_backend")
     active_features = torch.as_tensor(getattr(analysis_batch, "active_features", []), dtype=torch.long)
     selected_features = torch.as_tensor(getattr(analysis_batch, "selected_features", []), dtype=torch.long)
     if active_features.numel() == 0:
@@ -653,7 +646,7 @@ def extract_top_features_impl(
 
     feature_rows = active_features
     if selected_features.numel() > 0 and selected_features.shape[0] == scores.shape[0]:
-        feature_rows = analysis_backend.select_feature_rows(active_features, selected_features)
+        feature_rows = require_analysis_backend(module).select_feature_rows(active_features, selected_features)
     elif active_features.shape[0] != scores.shape[0]:
         raise ValueError(
             "extract_top_features requires active_features to match score length directly or via selected_features"
@@ -676,9 +669,7 @@ def graph_prune_impl(
     **kwargs,
 ) -> AnalysisBatch:
     """Prune a structured circuit-tracer graph and refresh decomposed outputs."""
-    analysis_backend = _get_analysis_backend(module)
-    if analysis_backend is None:
-        raise ValueError("graph_prune requires a module with an analysis_backend")
+    analysis_backend = require_analysis_backend(module)
     graph = analysis_backend.hydrate_graph_from_batch(analysis_batch)
     pruned_graph = analysis_backend.build_pruned_graph(
         graph,
@@ -699,20 +690,12 @@ def graph_node_influence_impl(
     **kwargs,
 ) -> AnalysisBatch:
     """Compute feature-node influence scores from a structured graph."""
-    from circuit_tracer.graph import compute_node_influence
-
-    analysis_backend = _get_analysis_backend(module)
-    if analysis_backend is None:
-        raise ValueError("graph_node_influence requires a module with an analysis_backend")
+    analysis_backend = require_analysis_backend(module)
     graph = analysis_backend.hydrate_graph_from_batch(analysis_batch)
-    n_logits = len(graph.logit_targets)
-    n_features = len(graph.selected_features)
-    logit_weights = torch.zeros(graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device)
-    logit_weights[-n_logits:] = graph.logit_probabilities
-    node_scores = compute_node_influence(graph.adjacency_matrix, logit_weights)[:n_features]
+    node_scores, node_feature_ids = analysis_backend.compute_node_influence_scores(graph)
     analysis_batch.update(
-        node_influence_scores=node_scores.detach().cpu(),
-        node_feature_ids=analysis_backend.select_feature_rows(graph.active_features, graph.selected_features),
+        node_influence_scores=node_scores,
+        node_feature_ids=node_feature_ids,
     )
     return analysis_batch
 
@@ -729,9 +712,7 @@ def feature_intervention_forward_impl(
     This op currently implements forward-only intervention analysis and stores an Arrow-safe summary of the intervention
     tuples so downstream AnalysisStore consumers can inspect or rehydrate the canonical intervention list.
     """
-    analysis_backend = _get_analysis_backend(module)
-    if analysis_backend is None:
-        raise ValueError("feature_intervention_forward requires a module with an analysis_backend")
+    analysis_backend = require_analysis_backend(module)
 
     replacement_model = getattr(module, "replacement_model", None)
     if replacement_model is None:

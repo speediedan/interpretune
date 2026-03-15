@@ -1,3 +1,9 @@
+"""Synthetic analysis-backend graph serialization tests.
+
+These currently target the circuit-tracer analysis backend, while keeping the test surface framed around generic
+analysis-backend graph responsibilities so future backends can extend the same coverage.
+"""
+
 from __future__ import annotations
 
 import torch
