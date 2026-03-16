@@ -3,6 +3,7 @@ from typing import Generator, Callable
 from dataclasses import dataclass, field
 import datetime
 import warnings
+from weakref import WeakKeyDictionary
 
 from transformers import BatchEncoding, PreTrainedTokenizerBase
 
@@ -113,7 +114,12 @@ class AnalysisCfg(ITSerializableCfg):
     # (prevents _generated_ prefix accumulation when this cfg is shared via class-level defaults)
     _original_step_fn: str | None = field(default=None, init=False, repr=False, compare=False)
     auto_prune_batch_encoding: bool = True  # Automatically prune encoded batches to only include relevant keys
-    _applied_to: dict = field(default_factory=dict)  # Dictionary tracking which modules this cfg has been applied to
+    _applied_to: WeakKeyDictionary = field(  # type: ignore[type-arg]
+        default_factory=WeakKeyDictionary,
+        init=False,
+        repr=False,
+        compare=False,
+    )  # Tracks which live module instances this cfg has been applied to
     _op: str | AnalysisOp | Callable | list[AnalysisOp] | None = None  # op via generated analysis step
 
     @property
@@ -478,8 +484,7 @@ class AnalysisCfg(ITSerializableCfg):
         Returns:
             bool: True if this configuration has been applied to the module, False otherwise.
         """
-        # Use module id as key to track unique module instances
-        return id(module) in self._applied_to
+        return module in self._applied_to
 
     def reset_applied_state(self, module=None) -> None:
         """Reset the applied state tracking.
@@ -489,7 +494,7 @@ class AnalysisCfg(ITSerializableCfg):
         """
         if module is not None:
             # Reset for specific module
-            self._applied_to.pop(id(module), None)
+            self._applied_to.pop(module, None)
         else:
             # Reset for all modules
             self._applied_to.clear()
@@ -514,8 +519,7 @@ class AnalysisCfg(ITSerializableCfg):
             fallback_sae_targets: Optional fallback LatentAnalysisTargets to use if this config doesn't have one.
         """
         # Short-circuit if already applied to this module (though apply should be idempotent)
-        module_id = id(module)
-        if module_id in self._applied_to:
+        if module in self._applied_to:
             return
 
         # Store original step_fn name before any mutation to prevent _generated_ prefix accumulation
@@ -577,7 +581,7 @@ class AnalysisCfg(ITSerializableCfg):
         self.prepare_model_ctx(module, fallback_sae_targets)
 
         # Mark as applied to this specific module, storing module class name for debugging
-        self._applied_to[module_id] = module.__class__.__name__
+        self._applied_to[module] = module.__class__.__name__
 
 
 @dataclass(kw_only=True)

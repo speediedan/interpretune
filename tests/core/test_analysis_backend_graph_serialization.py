@@ -6,10 +6,12 @@ analysis-backend graph responsibilities so future backends can extend the same c
 
 from __future__ import annotations
 
+import json
+
 import torch
 from datasets import Dataset, load_from_disk
 
-from circuit_tracer.attribution.targets import LogitTarget
+from circuit_tracer.attribution.targets import CustomTarget, LogitTarget
 from circuit_tracer.graph import Graph
 from circuit_tracer.utils.tl_nnsight_mapping import UnifiedConfig
 
@@ -53,6 +55,10 @@ class _FakeReplacementModel:
             ],
             dtype=torch.float32,
         )
+
+    def get_activations(self, prompt: str):
+        assert prompt == "Paris Austin"
+        return torch.tensor([[[0.1, 0.2, 0.3, 0.4]]], dtype=torch.float32), None
 
 
 class _FakeModule:
@@ -167,6 +173,36 @@ def test_compute_attribution_graph_impl_decomposes_graph() -> None:
     assert torch.equal(result.logit_target_ids, graph.logit_token_ids.cpu())
 
 
+def test_compute_attribution_graph_impl_builds_custom_target_from_concept_direction() -> None:
+    graph = _make_graph()
+    module = _FakeModule(graph=graph)
+    analysis_batch = AnalysisBatch(
+        prompts=[graph.input_string],
+        concept_direction=torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32),
+        concept_label="Concept: Capitals - States",
+        concept_metadata=json.dumps({"group_a_token_ids": [0, 3], "direction_mode": "paired_rejection"}),
+    )
+
+    captured: dict[str, object] = {}
+
+    def _capture_generate(prompt: str, **kwargs) -> Graph:
+        captured["prompt"] = prompt
+        captured.update(kwargs)
+        return graph
+
+    module.generate_attribution_graph = _capture_generate  # type: ignore[method-assign]
+
+    result = compute_attribution_graph_impl(module, analysis_batch, batch=None, batch_idx=0)
+
+    targets = captured["attribution_targets"]
+    assert isinstance(targets, list)
+    assert len(targets) == 1
+    assert isinstance(targets[0], CustomTarget)
+    assert targets[0].token_str == "Concept: Capitals - States"
+    assert torch.allclose(targets[0].vec, torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32))
+    assert json.loads(result.graph_metadata)["concept_label"] == "Concept: Capitals - States"
+
+
 def test_graph_prune_impl_round_trips_serialized_graph() -> None:
     graph = _make_graph()
     analysis_batch = _graph_batch_from_graph(graph)
@@ -192,6 +228,22 @@ def test_extract_top_features_impl_prefers_node_influence_scores() -> None:
 
     assert torch.equal(result.top_feature_ids, torch.tensor([[0, 0, 10]], dtype=torch.long))
     assert torch.allclose(result.top_feature_scores, torch.tensor([0.9], dtype=torch.float32))
+
+
+def test_extract_top_features_impl_preserves_activation_values_for_selected_rows() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=torch.tensor([[0, 0, 10], [1, 1, 13], [2, 2, 21]], dtype=torch.long),
+        selected_features=torch.tensor([0, 2], dtype=torch.long),
+        activation_values=torch.tensor([0.25, 0.75], dtype=torch.float32),
+        node_influence_scores=torch.tensor([0.1, 0.9], dtype=torch.float32),
+    )
+
+    result = extract_top_features_impl(module, analysis_batch, batch=None, batch_idx=0, top_n=1)
+
+    assert torch.equal(result.top_feature_ids, torch.tensor([[2, 2, 21]], dtype=torch.long))
+    assert torch.allclose(result.top_feature_scores, torch.tensor([0.9], dtype=torch.float32))
+    assert torch.allclose(result.top_feature_activation_values, torch.tensor([0.75], dtype=torch.float32))
 
 
 def test_graph_node_influence_impl_returns_feature_rows() -> None:

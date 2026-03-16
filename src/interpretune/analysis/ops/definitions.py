@@ -1,14 +1,15 @@
 """Definitions of specific analysis operations."""
 
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Callable, Literal, Any, TYPE_CHECKING
+
+import json
 from collections import defaultdict
 from functools import partial
-import json
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 import torch
-from transformers import BatchEncoding
 from jaxtyping import Float
+from transformers import BatchEncoding
 
 if TYPE_CHECKING:
     from transformer_lens.hook_points import HookPoint
@@ -16,6 +17,15 @@ if TYPE_CHECKING:
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.base import get_batch_input
 from interpretune.analysis.backends import require_analysis_backend
+from interpretune.analysis.ops.helpers import (
+    extract_logits,
+    get_analysis_value,
+    last_token_logits,
+    mean_target_logit_delta,
+    resolve_embedding_weight,
+    resolve_tokenizer,
+    token_strings_to_last_ids,
+)
 from interpretune.protocol import DefaultAnalysisBatchProtocol
 import interpretune as it
 
@@ -141,41 +151,6 @@ def get_alive_latents_impl(
     return analysis_batch
 
 
-def _extract_logits(output: Any) -> torch.Tensor:
-    """Extract logits tensor from a model forward-pass result.
-
-    TransformerLens models may return raw logit tensors, while HuggingFace models
-    (used by the NNsight backend) return ``ModelOutput`` objects with a
-    ``.logits`` attribute.  This helper normalizes both cases.
-    """
-    if isinstance(output, torch.Tensor):
-        return output
-    if hasattr(output, "logits"):
-        return output.logits
-    raise TypeError(f"Cannot extract logits from model output of type {type(output).__name__}")
-
-
-def _last_token_logits(logits: torch.Tensor) -> torch.Tensor:
-    if logits.dim() == 1:
-        return logits.detach().cpu()
-    if logits.dim() == 2:
-        return logits[-1].detach().cpu()
-    if logits.dim() >= 3:
-        return logits[0, -1].detach().cpu()
-    raise ValueError(f"Unsupported logits rank for feature intervention output: {logits.dim()}")
-
-
-def _mean_target_logit_delta(
-    pre_logits: torch.Tensor,
-    post_logits: torch.Tensor,
-    target_ids: torch.Tensor | None,
-) -> torch.Tensor:
-    if target_ids is not None and torch.numel(target_ids) > 0:
-        target_ids = target_ids.to(dtype=torch.long).reshape(-1)
-        return (post_logits.index_select(0, target_ids) - pre_logits.index_select(0, target_ids)).mean()
-    return (post_logits - pre_logits).mean()
-
-
 def model_forward_impl(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
@@ -191,7 +166,7 @@ def model_forward_impl(
     if _backend is not None:
         answer_logits = _backend.fwd(model=module.model, batch=batch)
     else:
-        answer_logits = _extract_logits(module(**batch))
+        answer_logits = extract_logits(module(**batch))
 
     analysis_batch.update(answer_logits=answer_logits)
     return analysis_batch
@@ -572,32 +547,56 @@ def concept_direction_impl(
     **kwargs,
 ) -> AnalysisBatch:
     """Compute a normalized embedding direction between two concept groups."""
-    analysis_backend = require_analysis_backend(module)
-    tokenizer = analysis_backend.get_tokenizer(module)
-    embed_weight = analysis_backend.get_embedding_weight(module)
-    group_a = list(getattr(analysis_batch, "concept_group_a", []) or [])
-    group_b = list(getattr(analysis_batch, "concept_group_b", []) or [])
+    tokenizer = resolve_tokenizer(module)
+    embed_weight = resolve_embedding_weight(module)
+    group_a = list(get_analysis_value(analysis_batch, module, "concept_group_a", batch_idx=batch_idx, default=[]) or [])
+    group_b = list(get_analysis_value(analysis_batch, module, "concept_group_b", batch_idx=batch_idx, default=[]) or [])
+    direction_mode = str(
+        get_analysis_value(
+            analysis_batch,
+            module,
+            "concept_direction_mode",
+            batch_idx=batch_idx,
+            default="mean_difference",
+        )
+    )
+    concept_label = get_analysis_value(analysis_batch, module, "concept_label", batch_idx=batch_idx, default=None)
     if not group_a or not group_b:
         raise ValueError("concept_direction requires non-empty concept_group_a and concept_group_b")
 
-    group_a_ids = analysis_backend.token_strings_to_ids(tokenizer, group_a)
-    group_b_ids = analysis_backend.token_strings_to_ids(tokenizer, group_b)
-    group_a_embed = embed_weight[torch.tensor(group_a_ids, device=embed_weight.device)].float().mean(dim=0)
-    group_b_embed = embed_weight[torch.tensor(group_b_ids, device=embed_weight.device)].float().mean(dim=0)
-    direction_vector = group_a_embed - group_b_embed
+    group_a_ids = token_strings_to_last_ids(tokenizer, group_a)
+    group_b_ids = token_strings_to_last_ids(tokenizer, group_b)
+    group_a_embed = embed_weight[torch.tensor(group_a_ids, device=embed_weight.device)].float()
+    group_b_embed = embed_weight[torch.tensor(group_b_ids, device=embed_weight.device)].float()
+
+    if direction_mode == "mean_difference":
+        direction_vector = group_a_embed.mean(dim=0) - group_b_embed.mean(dim=0)
+    elif direction_mode == "paired_rejection":
+        if len(group_a_ids) != len(group_b_ids):
+            raise ValueError("paired_rejection requires concept groups of equal length")
+        residuals = []
+        for embed_a, embed_b in zip(group_a_embed, group_b_embed):
+            denom = torch.dot(embed_b, embed_b).clamp_min(1e-12)
+            proj = (torch.dot(embed_a, embed_b) / denom) * embed_b
+            residuals.append(embed_a - proj)
+        direction_vector = torch.stack(residuals).mean(dim=0)
+    else:
+        raise ValueError(f"Unsupported concept_direction_mode: {direction_mode}")
+
     direction_norm = torch.linalg.vector_norm(direction_vector)
     if torch.isfinite(direction_norm) and direction_norm.item() > 0:
         direction_vector = direction_vector / direction_norm
 
     analysis_batch.update(
         concept_direction=direction_vector.detach().cpu(),
-        concept_label=f"{' / '.join(group_a)} -> {' / '.join(group_b)}",
+        concept_label=concept_label or f"{' / '.join(group_a)} -> {' / '.join(group_b)}",
         concept_metadata=json.dumps(
             {
                 "group_a": group_a,
                 "group_b": group_b,
                 "group_a_token_ids": group_a_ids,
                 "group_b_token_ids": group_b_ids,
+                "direction_mode": direction_mode,
             }
         ),
     )
@@ -614,8 +613,26 @@ def compute_attribution_graph_impl(
     """Generate and decompose a circuit-tracer attribution graph."""
     analysis_backend = require_analysis_backend(module)
     prompt = kwargs.pop("prompt", None) or analysis_backend.resolve_prompt(module, analysis_batch, batch)
+    concept_direction = get_analysis_value(analysis_batch, module, "concept_direction", batch_idx=batch_idx)
+    concept_label = get_analysis_value(analysis_batch, module, "concept_label", batch_idx=batch_idx)
+    concept_metadata = get_analysis_value(analysis_batch, module, "concept_metadata", batch_idx=batch_idx)
+    if concept_direction is not None and "attribution_targets" not in kwargs:
+        kwargs["attribution_targets"] = analysis_backend.build_concept_attribution_targets(
+            module,
+            prompt,
+            concept_direction,
+            concept_label,
+            concept_metadata,
+        )
+
     graph = module.generate_attribution_graph(prompt, **kwargs)
-    analysis_batch.update(**analysis_backend.decompose_graph(graph, extra_metadata={"batch_idx": batch_idx}))
+    extra_metadata: dict[str, Any] = {}
+    extra_metadata["batch_idx"] = batch_idx
+    if concept_label is not None:
+        extra_metadata["concept_label"] = concept_label
+    if concept_metadata is not None:
+        extra_metadata["concept_metadata"] = concept_metadata
+    analysis_batch.update(**analysis_backend.decompose_graph(graph, extra_metadata=extra_metadata))
     return analysis_batch
 
 
@@ -624,11 +641,16 @@ def extract_top_features_impl(
     analysis_batch: AnalysisBatch,
     batch: BatchEncoding,
     batch_idx: int,
+    top_n: int | None = None,
     **kwargs,
 ) -> AnalysisBatch:
     """Extract the top scoring features from analysis-batch feature rows."""
     active_features = torch.as_tensor(getattr(analysis_batch, "active_features", []), dtype=torch.long)
     selected_features = torch.as_tensor(getattr(analysis_batch, "selected_features", []), dtype=torch.long)
+    activation_values = getattr(analysis_batch, "activation_values", None)
+    activation_tensor = (
+        None if activation_values is None else torch.as_tensor(activation_values, dtype=torch.float32).reshape(-1)
+    )
     if active_features.numel() == 0:
         analysis_batch.update(
             top_feature_ids=torch.empty((0, 3), dtype=torch.long),
@@ -645,19 +667,31 @@ def extract_top_features_impl(
         scores = scores.reshape(-1)
 
     feature_rows = active_features
+    aligned_activation_values = None
     if selected_features.numel() > 0 and selected_features.shape[0] == scores.shape[0]:
         feature_rows = require_analysis_backend(module).select_feature_rows(active_features, selected_features)
+        if activation_tensor is not None and activation_tensor.shape[0] == active_features.shape[0]:
+            aligned_activation_values = activation_tensor.index_select(0, selected_features.reshape(-1))
+        elif activation_tensor is not None and activation_tensor.shape[0] == selected_features.shape[0]:
+            aligned_activation_values = activation_tensor
     elif active_features.shape[0] != scores.shape[0]:
         raise ValueError(
             "extract_top_features requires active_features to match score length directly or via selected_features"
         )
+    elif activation_tensor is not None and activation_tensor.shape[0] == active_features.shape[0]:
+        aligned_activation_values = activation_tensor
 
-    top_n = min(int(kwargs.get("top_n", scores.shape[0])), scores.shape[0])
+    top_n = scores.shape[0] if top_n is None else min(int(top_n), scores.shape[0])
     top_indices = torch.argsort(scores, descending=True)[:top_n]
-    analysis_batch.update(
-        top_feature_ids=feature_rows.index_select(0, top_indices).detach().cpu(),
-        top_feature_scores=scores.index_select(0, top_indices).detach().cpu(),
-    )
+    update_payload: dict[str, Any] = {
+        "top_feature_ids": feature_rows.index_select(0, top_indices).detach().cpu(),
+        "top_feature_scores": scores.index_select(0, top_indices).detach().cpu(),
+    }
+    if aligned_activation_values is not None:
+        update_payload["top_feature_activation_values"] = (
+            aligned_activation_values.index_select(0, top_indices).detach().cpu()
+        )
+    analysis_batch.update(**update_payload)
     return analysis_batch
 
 
@@ -720,10 +754,35 @@ def feature_intervention_forward_impl(
 
     prompt = kwargs.pop("prompt", None) or analysis_backend.resolve_prompt(module, analysis_batch, batch)
     settings = analysis_backend.resolve_feature_intervention_settings(module, kwargs)
-    interventions, intervention_payload = analysis_backend.build_feature_interventions(analysis_batch, settings)
+    resolved_top_feature_ids = get_analysis_value(analysis_batch, module, "top_feature_ids", batch_idx=batch_idx)
+    resolved_top_feature_scores = get_analysis_value(analysis_batch, module, "top_feature_scores", batch_idx=batch_idx)
+    resolved_top_feature_activation_values = get_analysis_value(
+        analysis_batch,
+        module,
+        "top_feature_activation_values",
+        batch_idx=batch_idx,
+    )
+    resolved_logit_target_ids = get_analysis_value(analysis_batch, module, "logit_target_ids", batch_idx=batch_idx)
+    if resolved_top_feature_ids is None:
+        raise ValueError("feature_intervention_forward requires top_feature_ids in analysis_batch or input_store")
+
+    intervention_inputs = {
+        "top_feature_ids": resolved_top_feature_ids,
+        "top_feature_scores": resolved_top_feature_scores,
+        "top_feature_activation_values": resolved_top_feature_activation_values,
+        "logit_target_ids": resolved_logit_target_ids,
+    }
+    analysis_batch.update(
+        **{
+            key: value
+            for key, value in intervention_inputs.items()
+            if value is not None and getattr(analysis_batch, key, None) is None
+        }
+    )
+    interventions, intervention_payload = analysis_backend.build_feature_interventions(intervention_inputs, settings)
 
     pre_logits_raw, _ = replacement_model.get_activations(prompt)
-    pre_logits = _last_token_logits(pre_logits_raw)
+    pre_logits = last_token_logits(pre_logits_raw)
 
     if interventions:
         post_logits_raw, _ = replacement_model.feature_intervention(
@@ -731,13 +790,14 @@ def feature_intervention_forward_impl(
             interventions,
             **analysis_backend.feature_intervention_call_kwargs(settings),
         )
-        post_logits = _last_token_logits(post_logits_raw)
+        post_logits = last_token_logits(post_logits_raw)
     else:
         post_logits = pre_logits.clone()
 
-    target_ids = getattr(analysis_batch, "logit_target_ids", None)
-    target_ids_tensor = None if target_ids is None else torch.as_tensor(target_ids, dtype=torch.long).reshape(-1)
-    logit_diff = _mean_target_logit_delta(pre_logits, post_logits, target_ids_tensor)
+    target_ids_tensor = None
+    if resolved_logit_target_ids is not None:
+        target_ids_tensor = torch.as_tensor(resolved_logit_target_ids, dtype=torch.long).reshape(-1)
+    logit_diff = mean_target_logit_delta(pre_logits, post_logits, target_ids_tensor)
 
     analysis_batch.update(
         **intervention_payload,

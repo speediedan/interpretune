@@ -112,7 +112,7 @@ class CircuitTracerConfig(ITSerializableCfg):
         if self.backend not in valid_backends:
             raise ValueError(f"Invalid backend '{self.backend}'. Must be one of {valid_backends}")
 
-        valid_intervention_value_sources = ["top_feature_scores", "constant"]
+        valid_intervention_value_sources = ["top_feature_scores", "top_feature_activation_values", "constant"]
         if self.intervention_value_source not in valid_intervention_value_sources:
             raise ValueError(
                 "Invalid intervention_value_source "

@@ -236,7 +236,7 @@ collect_env_coverage(){
                 # Using pytest-cov ensures coverage starts before test collection imports
                 run_logged_phase \
                     "base pytest" \
-                    python -X faulthandler -m pytest --cov=src/interpretune --cov-report= src/interpretune src/it_examples tests -v ${rerun_args} \
+                    env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-report= src/interpretune src/it_examples tests -v ${rerun_args} \
                     >> "$coverage_session_log" 2>&1
                 run_logged_phase \
                     "special tests standalone" \
@@ -254,7 +254,7 @@ collect_env_coverage(){
                 # Using pytest-cov ensures coverage starts before test collection imports
                 run_logged_phase \
                     "base pytest" \
-                    python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${rerun_args} \
+                    env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${rerun_args} \
                     >> "$coverage_session_log" 2>&1
                 run_logged_phase \
                     "special tests standalone" \

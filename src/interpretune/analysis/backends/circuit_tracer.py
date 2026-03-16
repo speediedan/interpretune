@@ -42,6 +42,9 @@ class CircuitTracerAnalysisBackend:
     def get_embedding_weight(self, module: Any) -> torch.Tensor:
         for attr_name in ("replacement_model", "model"):
             model = getattr(module, attr_name, None)
+            unembed_weight = getattr(model, "unembed_weight", None)
+            if isinstance(unembed_weight, torch.Tensor):
+                return unembed_weight
             embed_weight = getattr(model, "embed_weight", None)
             if isinstance(embed_weight, torch.Tensor):
                 return embed_weight
@@ -96,6 +99,38 @@ class CircuitTracerAnalysisBackend:
         prompt_tokens = input_ids[0] if input_ids.dim() > 1 else input_ids
         return str(tokenizer.decode(prompt_tokens.detach().cpu().tolist(), skip_special_tokens=True))
 
+    def build_concept_attribution_targets(
+        self,
+        module: Any,
+        prompt: str,
+        concept_direction: Any,
+        concept_label: Any,
+        concept_metadata: Any,
+    ) -> list[Any] | None:
+        from circuit_tracer.attribution.targets import CustomTarget
+
+        concept_meta_dict = json.loads(concept_metadata) if concept_metadata else {}
+        group_a_token_ids = [int(token_id) for token_id in concept_meta_dict.get("group_a_token_ids", [])]
+        if group_a_token_ids:
+            concept_logits = module.replacement_model.get_activations(prompt)[0]
+            concept_probs = torch.softmax(concept_logits.squeeze(0)[-1].float(), dim=-1)
+            concept_prob = max(
+                sum(concept_probs[token_id].item() for token_id in group_a_token_ids) / len(group_a_token_ids),
+                1e-6,
+            )
+        else:
+            concept_prob = 1e-6
+        concept_direction_tensor = torch.as_tensor(concept_direction, dtype=torch.float32).to(
+            self.get_embedding_weight(module).device
+        )
+        return [
+            CustomTarget(
+                token_str=str(concept_label or concept_meta_dict.get("direction_mode", "concept_direction")),
+                prob=float(concept_prob),
+                vec=concept_direction_tensor,
+            )
+        ]
+
     def resolve_feature_intervention_settings(
         self,
         module: Any,
@@ -125,9 +160,10 @@ class CircuitTracerAnalysisBackend:
             "return_activations": bool(_resolve("intervention_return_activations", False)),
         }
 
-        if settings["value_source"] not in {"top_feature_scores", "constant"}:
+        if settings["value_source"] not in {"top_feature_scores", "top_feature_activation_values", "constant"}:
             raise ValueError(
-                "feature_intervention_forward only supports value_source values 'top_feature_scores' and 'constant'"
+                "feature_intervention_forward only supports value_source values "
+                "'top_feature_scores', 'top_feature_activation_values', and 'constant'"
             )
         if settings["value_source"] == "constant" and settings["value"] is None:
             raise ValueError("feature_intervention_forward requires a constant intervention_value for constant mode")
@@ -145,16 +181,29 @@ class CircuitTracerAnalysisBackend:
 
         top_feature_ids = torch.as_tensor(_value("top_feature_ids", []), dtype=torch.long).reshape(-1, 3)
         top_feature_scores = _value("top_feature_scores", None)
+        top_feature_activation_values = _value("top_feature_activation_values", None)
         if top_feature_scores is None and settings["value_source"] == "top_feature_scores":
             raise ValueError("feature_intervention_forward requires top_feature_scores when using score-derived values")
+        if top_feature_activation_values is None and settings["value_source"] == "top_feature_activation_values":
+            raise ValueError(
+                "feature_intervention_forward requires top_feature_activation_values "
+                "when using activation-derived values"
+            )
 
         score_tensor = (
             torch.as_tensor(top_feature_scores, dtype=torch.float32).reshape(-1)
             if top_feature_scores is not None
             else None
         )
+        activation_value_tensor = (
+            torch.as_tensor(top_feature_activation_values, dtype=torch.float32).reshape(-1)
+            if top_feature_activation_values is not None
+            else None
+        )
         if score_tensor is not None and score_tensor.shape[0] != top_feature_ids.shape[0]:
             raise ValueError("top_feature_ids and top_feature_scores must have matching lengths")
+        if activation_value_tensor is not None and activation_value_tensor.shape[0] != top_feature_ids.shape[0]:
+            raise ValueError("top_feature_ids and top_feature_activation_values must have matching lengths")
 
         intervention_specs: list[dict[str, Any]] = []
         interventions: list[tuple[int, int, int, float]] = []
@@ -162,6 +211,10 @@ class CircuitTracerAnalysisBackend:
             layer, position, feature_id = (int(value) for value in feature_row)
             if settings["value"] is not None:
                 base_value = settings["value"]
+            elif settings["value_source"] == "top_feature_activation_values":
+                if activation_value_tensor is None:
+                    raise ValueError("Unable to resolve activation-derived intervention value for feature row")
+                base_value = float(activation_value_tensor[index].item())
             elif score_tensor is not None:
                 base_value = float(score_tensor[index].item())
             else:

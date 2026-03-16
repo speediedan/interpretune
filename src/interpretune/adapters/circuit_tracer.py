@@ -191,7 +191,7 @@ class BaseCircuitTracerModule(BaseITModule):
 
     def generate_attribution_graph(self, prompt: str, **kwargs) -> Graph:
         """Generate attribution graph for a given prompt."""
-        if not self.replacement_model:
+        if self.replacement_model is None:
             raise ValueError("ReplacementModel not loaded. Call _load_replacement_model() first.")
 
         cfg = self.circuit_tracer_cfg
@@ -326,6 +326,16 @@ class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
         nnsight_cfg = self.nnsight_cfg  # type: ignore[attr-defined]
         if nnsight_cfg:
             nnsight_kwargs.update(nnsight_cfg.get_nnsight_kwargs())
+            if "device" not in nnsight_kwargs and "device_map" in nnsight_kwargs:
+                device_map = nnsight_kwargs["device_map"]
+                if isinstance(device_map, dict):
+                    device_entry = next(iter(device_map.values())) if device_map else None
+                else:
+                    device_entry = device_map
+                if isinstance(device_entry, int):
+                    nnsight_kwargs["device"] = f"cuda:{device_entry}"
+                elif device_entry is not None:
+                    nnsight_kwargs["device"] = str(device_entry)
 
         # Load the NNsight replacement model
         self._load_replacement_model(pretrained_kwargs=nnsight_kwargs)  # type: ignore[attr-defined]

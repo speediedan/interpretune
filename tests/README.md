@@ -138,6 +138,40 @@ These are intended for maintainers and contributors performing performance inves
 
 ## Memory Management for NNsight Tests
 
+## Semantic Intervention Parity Pattern
+
+The semantic concept-direction intervention parity coverage now uses a three-anchor pattern for the
+NNsight circuit-tracer backend:
+
+1. Upstream reference: `circuit-tracer/tests/test_tutorial_notebook_backends.py::test_attribution_targets_semantic_intervention`
+  runs TransformerLens and NNsight serially under explicit cleanup, verifies that both backends widen
+  the Austin-vs-Dallas logit gap after semantic feature intervention, and accepts a backend-to-backend
+  post-gap difference below `0.5`.
+2. Interpretune native CT path: `tests/core/test_analysis_backend_parity.py` rebuilds the semantic
+  `CustomTarget` directly against `CircuitTracerNNsightGemma2`, runs `generate_attribution_graph(...)`,
+  extracts top features from node influence, and applies native `feature_intervention(...)` values using
+  the same `10.0 * activation` scaling used upstream.
+3. Interpretune analysis-op path: the same test creates a second fresh NNsight session, computes
+  `concept_direction -> compute_attribution_graph -> graph_node_influence -> extract_top_features ->
+  feature_intervention_forward`, and compares those results against the native CT baseline.
+
+The current Interpretune parity tolerances are intentionally stricter than the upstream TL-vs-NNsight
+comparison because both local paths execute against the same NNsight backend and should agree nearly
+exactly:
+
+- Concept direction: cosine similarity must exceed `0.999`.
+- Top feature identities: exact tuple equality.
+- Top-feature activation values: `torch.testing.assert_close(..., rtol=1e-6, atol=1e-6)`.
+- Intervention feature ids and positions: exact equality.
+- Intervention values: `torch.testing.assert_close(..., rtol=1e-6, atol=1e-6)`.
+- Pre- and post-intervention final logits: `torch.testing.assert_close(..., rtol=1e-6, atol=1e-6)`.
+- Semantic intervention effect: both paths must widen the Austin-vs-Dallas gap.
+
+Implementation detail: the Interpretune test no longer shells out to subprocess helpers. It now uses
+fresh in-process `CircuitTracerNNsightGemma2` sessions separated by `serial_test_cleanup(...)` from
+`tests/analysis_resource_utils.py`, which performs best-effort NNsight tracing-state cleanup plus GC /
+CUDA cache release between the native and analysis-op phases.
+
 Some NNsight-related parity tests (e.g., `test_parity_ns`, `TestLogitDiffsAttrAblationBackendParity`)
 are memory-intensive. Each parametrized test variant loads and retains NNsight model state, and on
 memory-constrained CI runners (e.g., Ubuntu with ~7 GB available RAM) the cumulative footprint can

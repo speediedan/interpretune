@@ -456,6 +456,8 @@ def module_fixture_factory(module_key, init_key):
         if init_key == FixtPhase.setup:
             _call_itmodule_hook(it_m, hook_name="setup", hook_msg="Setting up model", datamodule=mock_dm)
         yield it_m
+        del it_m
+        _cleanup_cuda_memory()
 
     return get_it_module
 
@@ -588,7 +590,10 @@ def it_session_fixture_factory(config_key, phase):
             False,
         )
         session_fixture_hook_exec(it_s, phase)
-        yield ITSessionFixture(it_session=it_s, test_cfg=deepcopy(test_sess_config))
+        fixture = ITSessionFixture(it_session=it_s, test_cfg=deepcopy(test_sess_config))
+        yield fixture
+        del fixture, it_s
+        _cleanup_cuda_memory()
 
     return get_it_session
 
@@ -1056,6 +1061,7 @@ def restore_env_variables():
         "NEURONPEDIA_API_KEY",
         "USE_LOCALHOST",
         "NDIF_API_KEY",
+        "HF_MCP_TOKEN_RW",
     }
     allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)

@@ -352,6 +352,10 @@ concept_direction:
     concept_group_b:
       datasets_dtype: string
       non_tensor: true
+    concept_direction_mode:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
   output_schema:
     concept_direction:
       datasets_dtype: float32
@@ -453,6 +457,10 @@ extract_top_features:
       sequence_type: false
     top_feature_scores:
       datasets_dtype: float32
+      sequence_type: true
+    top_feature_activation_values:
+      datasets_dtype: float32
+      required: false
       sequence_type: true
 
 graph_prune:
@@ -647,6 +655,10 @@ feature_intervention_forward:
     top_feature_scores:
       datasets_dtype: float32
       sequence_type: true
+    top_feature_activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
   output_schema:
     intervention_config:
       datasets_dtype: string
@@ -702,7 +714,7 @@ composite_operations:
 
   attribution_from_concept:
     description: Concept direction through graph attribution and top-feature extraction
-    composition: concept_direction.compute_attribution_graph.graph_prune.extract_top_features
+    composition: concept_direction.compute_attribution_graph.graph_node_influence.extract_top_features
 
   intervention_from_features:
     description: Feature intervention from extracted top features
@@ -710,4 +722,4 @@ composite_operations:
 
   intervention_from_concept:
     description: Full analysis-level concept attribution and intervention pipeline
-    composition: concept_direction.compute_attribution_graph.graph_prune.extract_top_features.feature_intervention_forward
+    composition: concept_direction.compute_attribution_graph.graph_node_influence.extract_top_features.feature_intervention_forward

@@ -146,3 +146,29 @@ def test_feature_intervention_store_round_trip_hydrates_intervention_specs(tmp_p
     assert row["intervention_specs"] == [(1, 2, 11, 1.0)]
     assert torch.equal(cast(torch.Tensor, row["intervention_layers"]), torch.tensor([1], dtype=torch.int64))
     assert torch.allclose(cast(torch.Tensor, row["intervention_values"]), torch.tensor([1.0], dtype=torch.float32))
+
+
+def test_feature_intervention_forward_impl_can_use_activation_values() -> None:
+    module = _FakeModule()
+    module.circuit_tracer_cfg.intervention_value_source = "top_feature_activation_values"
+    module.circuit_tracer_cfg.intervention_scale_factor = 10.0
+    analysis_batch = AnalysisBatch(
+        prompts=["Paris Austin"],
+        top_feature_ids=torch.tensor([[1, 2, 11], [0, 1, 7]], dtype=torch.long),
+        top_feature_scores=torch.tensor([0.5, -0.25], dtype=torch.float32),
+        top_feature_activation_values=torch.tensor([0.25, -0.1], dtype=torch.float32),
+        logit_target_ids=torch.tensor([2], dtype=torch.long),
+    )
+
+    result = feature_intervention_forward_impl(module, analysis_batch, batch=cast(BatchEncoding, None), batch_idx=0)
+
+    assert len(module.replacement_model.calls) == 1
+    prompt, interventions, kwargs = module.replacement_model.calls[0]
+    assert prompt == "Paris Austin"
+    assert kwargs == {"sparse": True, "return_activations": False, "constrained_layers": [0, 1]}
+    assert [(layer, position, feature) for layer, position, feature, _ in interventions] == [(1, 2, 11), (0, 1, 7)]
+    assert torch.allclose(
+        torch.tensor([value for _, _, _, value in interventions], dtype=torch.float32),
+        torch.tensor([2.5, -1.0], dtype=torch.float32),
+    )
+    assert torch.allclose(torch.tensor(result.intervention_values, dtype=torch.float32), torch.tensor([2.5, -1.0]))

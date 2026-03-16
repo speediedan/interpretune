@@ -181,6 +181,15 @@ class AnalysisBackend(Protocol):
 
     def resolve_prompt(self, module: Any, analysis_batch: Any, batch: Any) -> str: ...
 
+    def build_concept_attribution_targets(
+        self,
+        module: Any,
+        prompt: str,
+        concept_direction: Any,
+        concept_label: Any,
+        concept_metadata: Any,
+    ) -> list[Any] | None: ...
+
     def resolve_feature_intervention_settings(
         self,
         module: Any,

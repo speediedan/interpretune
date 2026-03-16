@@ -15,9 +15,11 @@ from tests.analysis_resource_utils import (
     ExtractedFixturePayload,
     analysis_fixture_scope,
     build_analysis_fixture_payload_extractor,
+    clear_nnsight_test_state,
     conditional_clean_cpu,
     extract_analysis_store_fields,
     extract_result_dataset_metadata,
+    serial_test_cleanup,
 )
 from tests.runif import get_runner_ram_gb
 
@@ -43,6 +45,16 @@ class _DummyAnalysisResult:
 class _DummyDataset:
     column_names: list[str]
     num_rows: int
+
+
+class _DummyEnvoy:
+    def __init__(self, children: list[object] | None = None):
+        self._children = children or []
+        self._source = object()
+        self.clear_edits_calls = 0
+
+    def clear_edits(self):
+        self.clear_edits_calls += 1
 
 
 class TestAnalysisFixtureScope:
@@ -79,6 +91,54 @@ class TestConditionalCleanCpu:
         assert fixture.runner == "runner"
         assert fixture.run_config == "run_config"
         assert fixture.it_session == "it_session"
+
+
+class TestSerialTestCleanup:
+    def test_clear_nnsight_test_state_clears_envoy_tree_and_globals(self, monkeypatch):
+        globals_calls = []
+
+        class _DummyGlobals:
+            @staticmethod
+            def clear():
+                globals_calls.append("cleared")
+
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "nnsight.intervention.tracing.globals",
+            type("_GlobalsModule", (), {"Globals": _DummyGlobals})(),
+        )
+
+        child = _DummyEnvoy()
+        root = _DummyEnvoy(children=[child])
+
+        clear_nnsight_test_state(root)
+
+        assert root.clear_edits_calls == 1
+        assert child.clear_edits_calls == 1
+        assert root._source is None
+        assert child._source is None
+        assert globals_calls == ["cleared"]
+
+    def test_serial_test_cleanup_releases_fixture_like_attrs(self, monkeypatch):
+        empty_cache_calls = []
+        monkeypatch.setattr("tests.analysis_resource_utils.torch.cuda.is_available", lambda: True)
+        monkeypatch.setattr(
+            "tests.analysis_resource_utils.torch.cuda.empty_cache", lambda: empty_cache_calls.append("emptied")
+        )
+
+        fixture = _DummyFixture()
+        fixture.model = _DummyEnvoy()
+
+        with serial_test_cleanup(fixture):
+            assert fixture.result == "result"
+
+        assert fixture.result is None
+        assert fixture.runner is None
+        assert fixture.run_config is None
+        assert fixture.it_session is None
+        assert fixture.model._source is None
+        assert fixture.model.clear_edits_calls == 1
+        assert empty_cache_calls == ["emptied"]
 
 
 class TestExtractedAnalysisStore:

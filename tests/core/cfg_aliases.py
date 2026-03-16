@@ -461,6 +461,16 @@ class CircuitTracerNNsightGemma2(BaseCfg):
     model_cfg_key: str = "rte_base_test"  # Must match registry
     device_type: str = "cuda"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.nnsight, Adapter.circuit_tracer)
+    nnsight_cfg: NNsightConfig | None = field(
+        default_factory=lambda: NNsightConfig(
+            model_name="google/gemma-2-2b",
+            device_map="cuda",
+            torch_dtype="float32",
+            dispatch=True,
+            attn_implementation="eager",
+            tokenizer_kwargs={"padding_side": "left", "add_bos_token": True},
+        )
+    )
     circuit_tracer_cfg: CircuitTracerConfig | None = field(
         default_factory=lambda: CircuitTracerConfig(
             backend="nnsight",
@@ -486,6 +496,16 @@ class LightningCircuitTracerNNsightGemma2(BaseCfg):
     model_cfg_key: str = "rte_base_test"  # Must match registry
     device_type: str = "cuda"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.nnsight, Adapter.circuit_tracer)
+    nnsight_cfg: NNsightConfig | None = field(
+        default_factory=lambda: NNsightConfig(
+            model_name="google/gemma-2-2b",
+            device_map="cuda",
+            torch_dtype="float32",
+            dispatch=True,
+            attn_implementation="eager",
+            tokenizer_kwargs={"padding_side": "left", "add_bos_token": True},
+        )
+    )
     circuit_tracer_cfg: CircuitTracerConfig | None = field(
         default_factory=lambda: CircuitTracerConfig(
             backend="nnsight",
@@ -511,6 +531,16 @@ class CircuitTracerNNsightRemoteGemma2(BaseCfg):
     model_cfg_key: str = "rte_base_test"  # Must match registry
     device_type: str = "cuda"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.nnsight, Adapter.circuit_tracer)
+    nnsight_cfg: NNsightConfig | None = field(
+        default_factory=lambda: NNsightConfig(
+            model_name="google/gemma-2-2b",
+            torch_dtype="float32",
+            dispatch=False,
+            remote=True,
+            attn_implementation="eager",
+            tokenizer_kwargs={"padding_side": "left", "add_bos_token": True},
+        )
+    )
     circuit_tracer_cfg: CircuitTracerConfig | None = field(
         default_factory=lambda: CircuitTracerConfig(
             backend="nnsight",

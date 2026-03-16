@@ -41,6 +41,78 @@ FixtureScope = Literal["function", "class", "module", "session"]
 RESOURCE_DEBUG_ENV_VARS = ("IT_ANALYSIS_RESOURCE_DEBUG", "IT_OP_SERIALIZATION_RESOURCE_DEBUG")
 
 
+def clear_nnsight_test_state(obj: Any) -> None:
+    """Best-effort reset of test-visible NNsight tracing state on an object graph.
+
+    This is intended for test teardown after in-process serial execution patterns.
+    It clears cached ``Envoy.source`` state and default edit mediators when those
+    attributes are present, then resets NNsight's global tracing cache/stack.
+    """
+
+    visited: set[int] = set()
+
+    def _visit(candidate: Any) -> None:
+        if candidate is None:
+            return
+        candidate_id = id(candidate)
+        if candidate_id in visited:
+            return
+        visited.add(candidate_id)
+
+        if hasattr(candidate, "clear_edits"):
+            try:
+                candidate.clear_edits()
+            except Exception:
+                pass
+
+        if hasattr(candidate, "_source"):
+            try:
+                setattr(candidate, "_source", None)
+            except Exception:
+                pass
+
+        for attr_name in ("module", "replacement_model", "model"):
+            nested = getattr(candidate, attr_name, None)
+            if nested is not None and nested is not candidate:
+                _visit(nested)
+
+        for child in getattr(candidate, "_children", ()) or ():
+            _visit(child)
+
+    _visit(obj)
+
+    try:
+        from nnsight.intervention.tracing.globals import Globals
+    except ImportError:
+        return
+
+    Globals.clear()
+
+
+@contextmanager
+def serial_test_cleanup(*objects: Any, clear_cuda: bool = True):
+    """Release heavyweight test objects between serial in-process execution phases.
+
+    Use this around temporary sessions or model wrappers that should not retain CUDA allocations or NNsight trace/source
+    state after a phase completes.
+    """
+
+    try:
+        yield
+    finally:
+        for obj in objects:
+            clear_nnsight_test_state(obj)
+            for attr in ("result", "runner", "run_config", "it_session"):
+                if hasattr(obj, attr):
+                    try:
+                        setattr(obj, attr, None)
+                    except Exception:
+                        pass
+        gc.collect()
+        if clear_cuda and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
 @dataclass(frozen=True, kw_only=True)
 class AnalysisFixtureSpec:
     """Declarative configuration for extracting and caching a test fixture payload."""

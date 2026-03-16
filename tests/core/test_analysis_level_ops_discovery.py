@@ -43,7 +43,7 @@ def test_analysis_level_composite_ops_resolve() -> None:
     assert [sub_op.name for sub_op in op.composition] == [
         "concept_direction",
         "compute_attribution_graph",
-        "graph_prune",
+        "graph_node_influence",
         "extract_top_features",
         "feature_intervention_forward",
     ]

@@ -74,6 +74,7 @@ def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: St
         "analysis_cfgs",
         "logging_level",
         "use_bridge",
+        "nnsight_cfg",
     ]
     test_it_cfg = deepcopy(base_it_cfg)
     for attr in test_cfg_override_attrs:
