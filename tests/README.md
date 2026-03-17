@@ -6,19 +6,68 @@
 
 - **CI_RESOURCE_MONITOR**: Defaults to `0` at the repository level. You can override this variable at the workflow or step levels to enable basic CI resource logging. This is useful for debugging resource exhaustion issues on default GitHub Actions runners.
 
-- **IT_ANALYSIS_RESOURCE_DEBUG**: When set to `1`, analysis-oriented tests can emit inline RSS and disk-usage snapshots via
-  `tests.analysis_resource_utils.log_resource_snapshot(...)`. This is the preferred generic flag for resource-aware
-  debugging in analysis contexts.
+- **IT_RESOURCE_DEBUG**: Canonical opt-in flag for resource diagnostics. When set to `1`, shell helpers, pytest hooks,
+  fixture factories, analysis helpers, and serialization helpers all emit structured resource lines. When CUDA is
+  available, those same structured lines also include per-GPU allocated/reserved/peak VRAM fields so the local
+  harness can append a GPU summary table to the final coverage log.
 
-- **IT_OP_SERIALIZATION_RESOURCE_DEBUG**: When set to `1`, the serialization helper used by
-  `tests/core/test_analysis_ops_definitions.py::TestAnalysisOperationsImplementations::test_op_serialization[...]`
-  prints targeted RSS and disk-usage snapshots around the full serialization path, including the pre-analysis run,
-  fixture entry, and `save_reload_results_dataset(...)` boundaries.
-  The `Test full` workflow now enables this automatically on Linux when `CI_RESOURCE_MONITOR=1`.
+Representative output from `/tmp/gen_it_coverage_it_latest_20260317150318.log`:
+
+```text
+[shell_resource_debug] coverage:bootstrap:it_latest: context=shell rss_gb=0.01 vms_gb=0.02 cuda_available=true cuda_device_count=2 cuda_gpu0_total_gb=23.52 cuda_gpu0_current_allocated_gb=0.00 cuda_gpu0_current_reserved_gb=0.00 cuda_gpu0_peak_allocated_gb=0.00 cuda_gpu0_peak_reserved_gb=0.00 cuda_gpu1_total_gb=7.60 cuda_gpu1_current_allocated_gb=0.00 cuda_gpu1_current_reserved_gb=0.00 cuda_gpu1_peak_allocated_gb=0.00 cuda_gpu1_peak_reserved_gb=0.00
+[test_resource_debug] test:start:tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerConfig::test_default_backend_is_transformerlens: context=test nodeid=tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerConfig::test_default_backend_is_transformerlens lifecycle=start rss_gb=1.06 vms_gb=11.67 cuda_available=false cuda_device_count=0
+[fixture_resource_debug] it_session_cfg_fixture:ns_gpt2:setup:start: context=fixture kind=it_session_cfg_fixture key=ns_gpt2 scope=class lifecycle=setup_start rss_gb=1.06 vms_gb=11.67 cuda_available=false cuda_device_count=0 path0=/tmp/pytest-of-speediedan/pytest-1671/ns_gpt2_it_session_cfg_fixture0 used_gb0=377.22 free_gb0=491.54
+```
+
+The log prefixes remain context-specific (`shell_resource_debug`, `fixture_resource_debug`, `test_resource_debug`,
+`analysis_resource_debug`, `op_serialization_resource_debug`), but those prefixes are now controlled by the same
+environment variable rather than by separate per-context flags.
 
 For more details, see the main CI workflow configuration in `.github/workflows/ci_test-full.yml`.
 
 ## Local CI Reproduction Knobs
+
+## Local Coverage Harness Split
+
+The local `scripts/gen_it_coverage.sh` harness now mirrors the Azure GPU pipeline's phase split:
+
+1. Base pytest runs with `CUDA_VISIBLE_DEVICES=''` so the normal suite remains CPU-only and avoids GPU OOM churn.
+2. A second `IT_RUN_CUDA_TESTS=1` pytest pass re-enables regular CUDA/bf16-marked tests that should contribute to
+   coverage but do not require standalone isolation.
+3. `tests/special_tests.sh --mark_type=standalone` handles the standalone-only slice.
+4. `tests/special_tests.sh --mark_type=profile_ci` handles the CI profiling slice.
+
+This split is deliberate: regular CUDA tests still append to the same coverage file, but they run after the CPU-only
+baseline has released its fixture state.
+
+Example local run:
+
+```bash
+./scripts/manage_standalone_processes.sh --use-nohup \
+  ./scripts/gen_it_coverage.sh \
+  --repo-home=${PWD} \
+  --target-env-name=it_latest \
+  --venv-dir=/mnt/cache/${USER}/.venvs \
+  --no-rebuild-base \
+  --allow-failures \
+  --no-reruns
+```
+
+Add `--resource-debug` when you want the harness to export `IT_RESOURCE_DEBUG=1` automatically.
+
+Latest validated run from `/tmp/gen_it_coverage_it_latest_20260317150318.log`:
+
+- CPU-only base pytest phase: `979 passed`, `90 skipped`
+- CUDA-marked pytest phase: `42 passed`
+- standalone special tests: `1 passed`
+- `profile_ci` special tests: `6 passed`
+- total coverage: `88%`
+- GPU 0 peak usage from the generated summary: `3.21 GB` allocated and `3.32 GB` reserved out of `23.52 GB`
+  total VRAM, or about `13.6%` / `14.1%`
+- GPU 1 remained unused during this run (`0.00 GB` allocated / reserved out of `7.60 GB` total VRAM)
+- Largest setup-time reserved-VRAM deltas came from `core_gpt2_peft` (`0.49 GB`) and `core_gpt2_peft_seq` (`0.16 GB`)
+- Heaviest peak-reserved fixture observations were `l_tl_bridge_gpt2`, `l_tl_ht_gpt2_sched`, and
+  `l_tl_ht_gpt2`, each peaking at about `3.32 GB` reserved VRAM
 
 The test suite now exposes a small set of environment variables specifically for reproducing
  GitHub Actions memory behavior locally:
@@ -28,9 +77,7 @@ The test suite now exposes a small set of environment variables specifically for
   physically constrained machine.
 - `IT_NNSIGHT_CONFIGS_PER_PASS`: Overrides the default `NNsightModelBackend` multi-invoke batch size.
   This is useful when probing resource intensive ops like `model_ablation` / `logit_diffs_attr_ablation` memory tradeoff.
-- `IT_ANALYSIS_RESOURCE_DEBUG`: Enables generic inline resource snapshots from `log_resource_snapshot(...)`.
-- `IT_OP_SERIALIZATION_RESOURCE_DEBUG`: Emits targeted RSS and disk-usage logging around
-  `save_reload_results_dataset(...)` from the serialization fixture helper.
+- `IT_RESOURCE_DEBUG`: Enables all structured shell / test / fixture / analysis / serialization resource logs.
 
 Example low-memory reproduction commands:
 
@@ -40,7 +87,7 @@ CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=32 \
   python -m pytest tests/core/test_model_backend_parity.py::TestLogitDiffsAttrAblationBackendParity::test_logit_diffs_match -q
 
 # Add serialization resource snapshots around the logit_diffs serialization test
-CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=16 IT_ANALYSIS_RESOURCE_DEBUG=1 IT_OP_SERIALIZATION_RESOURCE_DEBUG=1 \
+CUDA_VISIBLE_DEVICES='' IT_MOCK_RUNNER_RAM_GB=16 IT_RESOURCE_DEBUG=1 \
   python -m pytest tests/core/test_analysis_ops_definitions.py::TestAnalysisOperationsImplementations::test_op_serialization[logit_diffs] -s -q
 
 # Manually compare different NNsight multi-invoke batch sizes
@@ -136,6 +183,10 @@ We include a couple of developer-facing documents under `tests/` for profiling a
 
 These are intended for maintainers and contributors performing performance investigations and are particularly useful for managing the complexity of our numerous package integrations.
 
+- `tests/upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md` — Manual upstream circuit-tracer semantic-intervention
+  sanity-check workflow,
+  including the one-off extractor script and the current three-way reference table.
+
 ## Memory Management for NNsight Tests
 
 ## Semantic Intervention Parity Pattern
@@ -154,6 +205,11 @@ NNsight circuit-tracer backend:
 3. Interpretune analysis-op path: the same test creates a second fresh NNsight session, computes
   `concept_direction -> compute_attribution_graph -> graph_node_influence -> extract_top_features ->
   feature_intervention_forward`, and compares those results against the native CT baseline.
+
+When the regular parity test fails in a way that suggests an upstream package drift rather than a local regression,
+use the manual extractor documented in [tests/upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md](upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md).
+That script replays the actual upstream semantic-intervention logic and records current upstream CT NNsight,
+Interpretune native CT, and Interpretune analysis-op values into a single JSON payload for sanity checking.
 
 The current Interpretune parity tolerances are intentionally stricter than the upstream TL-vs-NNsight
 comparison because both local paths execute against the same NNsight backend and should agree nearly
@@ -303,8 +359,7 @@ Interpretation guidance:
 - if the rerun on the same commit fails again with a real traceback, switch from infrastructure
   triage to a code/test fix
 - compare against a successful Linux `ci_resource_monitor` artifact only as a coarse baseline;
-  continue to rely on inline `IT_ANALYSIS_RESOURCE_DEBUG=1` and
-  `IT_OP_SERIALIZATION_RESOURCE_DEBUG=1` snapshots for precise per-test memory analysis
+  continue to rely on inline `IT_RESOURCE_DEBUG=1` snapshots for precise per-test memory analysis
 - for heavy analysis cases, combine the resource flags with `IT_MOCK_RUNNER_RAM_GB` and, when
   relevant, `IT_NNSIGHT_CONFIGS_PER_PASS` to reproduce GitHub-hosted memory conditions locally
 

@@ -24,6 +24,7 @@ unset no_reruns
 unset reruns_count
 unset reruns_delay
 unset allow_failures
+unset resource_debug
 unset IT_RUN_PROFILING_TESTS
 unset IT_RUN_STANDALONE_TESTS
 unset IT_EXPERIMENTAL_PATCH_TESTS
@@ -43,6 +44,7 @@ Usage: $0
    [ --experiments_list input]
    [ --experiment_patch_mask input]
    [ --collect_dir input]
+   [ --resource-debug ]          # Enable opt-in per-test/fixture resource diagnostics
    [ --allow-failures ]          # Continue running tests after failures
    [ --help ]
    Examples:
@@ -60,7 +62,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long mark_type:,log_file:,filter_pattern:,experiments_list:,experiment_patch_mask:,collect_dir:,no-reruns,reruns:,reruns-delay:,allow-failures,help -- "$@")
+args=$(getopt -o '' --long mark_type:,log_file:,filter_pattern:,experiments_list:,experiment_patch_mask:,collect_dir:,resource-debug,no-reruns,reruns:,reruns-delay:,allow-failures,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -75,6 +77,7 @@ do
     --experiments_list)  experiments_list=$2    ; shift 2  ;;
     --experiment_patch_mask) experiment_patch_mask+=($2) ; shift 2  ;;
     --collect_dir)  collect_dir=$2    ; shift 2  ;;
+    --resource-debug)  resource_debug=1    ; shift  ;;
     --no-reruns)   no_reruns=1 ; shift ;;
     --reruns)   reruns_count=$2 ; shift 2 ;;
     --reruns-delay)   reruns_delay=$2 ; shift 2 ;;
@@ -98,6 +101,10 @@ fi
 collect_dir=${collect_dir:-"tests"}
 special_test_session_log=${log_file:-"${tmp_log_dir}/special_tests_${mark_type}_${d}.log"}
 test_session_tmp_log="${tmp_log_dir}/special_tests_raw_${mark_type}_${d}.log"
+
+if [[ ${resource_debug:-0} -eq 1 ]]; then
+  enable_resource_debug_env
+fi
 
 # Build rerun args string (for transient httpx read timeouts with HF transformers v5)
 if [[ $no_reruns -eq 1 ]]; then

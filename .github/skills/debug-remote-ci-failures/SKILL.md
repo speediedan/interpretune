@@ -77,6 +77,17 @@ When resource-monitor or debug artifacts are skipped, grep the raw job log for i
 grep -nE "analysis_resource_debug|op_serialization_resource_debug|shutdown signal|exit code 143" /tmp/ci_job_<job_id>.log
 ```
 
+When debugging the newer phase-split GPU coverage flow, also grep for the explicit CUDA phase boundary and the new opt-in resource markers:
+
+```bash
+grep -nE "Testing: standard gpu cuda-marked|fixture_resource_debug|test_resource_debug|shell_resource_debug" /tmp/ci_job_<job_id>.log
+```
+
+Interpret these markers with the current coverage split in mind:
+- `Testing: standard` is intentionally CPU-only via `CUDA_VISIBLE_DEVICES=''`
+- `Testing: standard gpu cuda-marked` is where regular CUDA / bf16-marked tests now run under `IT_RUN_CUDA_TESTS=1`
+- `Testing: standalone gpu` and `Testing: CI Profiling` still execute through `tests/special_tests.sh`
+
 When a prior successful run uploaded `ci_resource_monitor.log`, treat it as a coarse baseline only:
 
 - It captures whole-run snapshots of top-process `%MEM`, whole-system free memory, and disk usage.
@@ -281,7 +292,7 @@ dataset serialization boundary you were already instrumenting.
 Relevant helpers now live in `tests/analysis_resource_utils.py`:
 - `log_resource_snapshot(...)`
 - `analysis_resource_debug_enabled()`
-- `IT_ANALYSIS_RESOURCE_DEBUG=1`
+- `IT_RESOURCE_DEBUG=1`
 
 This lets you answer three distinct questions from the raw log:
 - Did the test die before the analysis run started?

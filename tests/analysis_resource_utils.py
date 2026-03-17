@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import gc
 import os
+import shlex
 import shutil
 from contextlib import contextmanager
 from copy import deepcopy
@@ -38,7 +39,6 @@ from tests.runif import get_runner_ram_gb
 
 ANALYSIS_LOW_RAM_GB = 32
 FixtureScope = Literal["function", "class", "module", "session"]
-RESOURCE_DEBUG_ENV_VARS = ("IT_ANALYSIS_RESOURCE_DEBUG", "IT_OP_SERIALIZATION_RESOURCE_DEBUG")
 
 
 def clear_nnsight_test_state(obj: Any) -> None:
@@ -102,7 +102,18 @@ def serial_test_cleanup(*objects: Any, clear_cuda: bool = True):
     finally:
         for obj in objects:
             clear_nnsight_test_state(obj)
-            for attr in ("result", "runner", "run_config", "it_session"):
+            for attr in (
+                "result",
+                "runner",
+                "run_config",
+                "it_session",
+                "module",
+                "datamodule",
+                "model",
+                "replacement_model",
+                "_replacement_model",
+                "_model",
+            ):
                 if hasattr(obj, attr):
                     try:
                         setattr(obj, attr, None)
@@ -191,10 +202,51 @@ class ExtractedFixturePayload:
         raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
 
 
-def analysis_resource_debug_enabled(env_var_names: tuple[str, ...] = RESOURCE_DEBUG_ENV_VARS) -> bool:
-    """Return ``True`` when any configured resource-debug environment flag is enabled."""
+def analysis_resource_debug_enabled() -> bool:
+    """Return ``True`` when resource-debug logging is enabled."""
 
-    return any(os.environ.get(env_name, "0") == "1" for env_name in env_var_names)
+    return os.environ.get("IT_RESOURCE_DEBUG", "0") == "1"
+
+
+def get_resource_snapshot(*, include_cuda: bool = True) -> dict[str, float | int | bool]:
+    """Capture a compact process and optional CUDA resource snapshot."""
+
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    snapshot: dict[str, float | int | bool] = {
+        "rss_gb": memory_info.rss / (1024**3),
+        "vms_gb": memory_info.vms / (1024**3),
+    }
+
+    if include_cuda:
+        cuda_available = torch.cuda.is_available()
+        snapshot["cuda_available"] = cuda_available
+        snapshot["cuda_device_count"] = torch.cuda.device_count() if cuda_available else 0
+        if cuda_available:
+            for device_idx in range(torch.cuda.device_count()):
+                device_prefix = f"cuda_gpu{device_idx}"
+                device_props = torch.cuda.get_device_properties(device_idx)
+                snapshot[f"{device_prefix}_total_gb"] = device_props.total_memory / (1024**3)
+                snapshot[f"{device_prefix}_current_allocated_gb"] = torch.cuda.memory_allocated(device_idx) / (1024**3)
+                snapshot[f"{device_prefix}_current_reserved_gb"] = torch.cuda.memory_reserved(device_idx) / (1024**3)
+                snapshot[f"{device_prefix}_peak_allocated_gb"] = torch.cuda.max_memory_allocated(device_idx) / (1024**3)
+                snapshot[f"{device_prefix}_peak_reserved_gb"] = torch.cuda.max_memory_reserved(device_idx) / (1024**3)
+
+    return snapshot
+
+
+def _format_snapshot_value(value: float | int | bool | str) -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    if isinstance(value, str):
+        return shlex.quote(value) if any(char.isspace() for char in value) else value
+    return str(value)
+
+
+def _resource_parts(snapshot: Mapping[str, float | int | bool | str], *, delta_prefix: str = "") -> list[str]:
+    return [f"{delta_prefix}{key}={_format_snapshot_value(value)}" for key, value in snapshot.items()]
 
 
 def _existing_disk_target(path: Path) -> Path:
@@ -209,16 +261,17 @@ def log_resource_snapshot(
     *,
     paths: list[str | Path] | tuple[str | Path, ...] = (),
     prefix: str = "analysis_resource_debug",
-    env_var_names: tuple[str, ...] = RESOURCE_DEBUG_ENV_VARS,
+    metadata: Mapping[str, Any] | None = None,
 ) -> None:
     """Emit a compact RSS and disk-usage snapshot when resource debugging is enabled."""
 
-    if not analysis_resource_debug_enabled(env_var_names=env_var_names):
+    if not analysis_resource_debug_enabled():
         return
 
-    process = psutil.Process(os.getpid())
-    rss_gb = process.memory_info().rss / (1024**3)
-    parts = [f"rss_gb={rss_gb:.2f}"]
+    parts: list[str] = []
+    if metadata:
+        parts.extend(_resource_parts({key: str(value) for key, value in metadata.items()}))
+    parts.extend(_resource_parts(get_resource_snapshot()))
 
     for index, raw_path in enumerate(paths):
         path = Path(raw_path)
@@ -231,6 +284,38 @@ def log_resource_snapshot(
                 f"free_gb{index}={disk_usage.free / (1024**3):.2f}",
             ]
         )
+
+    print(f"[{prefix}] {label}: " + " ".join(parts))
+
+
+def log_resource_delta(
+    label: str,
+    *,
+    before: dict[str, float | int | bool] | None,
+    after: dict[str, float | int | bool] | None = None,
+    prefix: str = "analysis_resource_debug",
+    metadata: Mapping[str, Any] | None = None,
+) -> None:
+    """Emit the current resource snapshot plus numeric deltas from a prior snapshot."""
+
+    if not analysis_resource_debug_enabled():
+        return
+
+    current = after or get_resource_snapshot()
+    parts: list[str] = []
+    if metadata:
+        parts.extend(_resource_parts({key: str(value) for key, value in metadata.items()}))
+    parts.extend(_resource_parts(current))
+
+    if before is not None:
+        deltas: dict[str, float] = {}
+        for key, value in current.items():
+            prev = before.get(key)
+            if isinstance(value, bool) or isinstance(prev, bool):
+                continue
+            if isinstance(value, (float, int)) and isinstance(prev, (float, int)):
+                deltas[key] = float(value) - float(prev)
+        parts.extend(_resource_parts(deltas, delta_prefix="delta_"))
 
     print(f"[{prefix}] {label}: " + " ".join(parts))
 

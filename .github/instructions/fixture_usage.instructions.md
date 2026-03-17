@@ -171,6 +171,27 @@ Why this is preferred over transient analysis-session builders:
 Avoid reintroducing parity-local helpers such as private `_extract_values()` wrappers or ad hoc transient
 analysis-session reconstruction unless the shared helper module cannot cover the use case.
 
+## Resource Debugging for Fixtures
+
+When investigating fixture-related RSS / VRAM growth, prefer the shared opt-in resource debug flags over ad hoc
+`print(torch.cuda.memory_allocated())` statements in tests.
+
+Available flags:
+- `IT_RESOURCE_DEBUG=1` enables all generic resource logging.
+- When CUDA is available, the same `IT_RESOURCE_DEBUG=1` flag also includes CUDA allocated/reserved/max-memory details.
+
+These flags drive all structured prefixes emitted by the shared helpers:
+- `fixture_resource_debug` for generated fixture setup/teardown snapshots in `tests/conftest.py`
+- `test_resource_debug` for per-test setup/teardown snapshots from pytest hooks
+- `analysis_resource_debug` for focused helper-level snapshots in `tests/analysis_resource_utils.py`
+- `op_serialization_resource_debug` for serialization-path snapshots layered on the same helper surface
+
+Preferred workflow:
+- Start with `IT_RESOURCE_DEBUG=1` when running a narrow repro under `pytest` or `special_tests.sh`.
+- Use fixture snapshots to identify which generated fixture retains memory across tests.
+- Use per-test snapshots to confirm whether memory growth is happening during fixture setup, test execution, or teardown.
+- Remove the env flag after debugging; these logs are intentionally opt-in and should not be enabled by default.
+
 ## Adding New Fixtures
 
 ### Step 1: Define Configuration Class

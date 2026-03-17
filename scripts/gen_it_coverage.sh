@@ -27,6 +27,7 @@ unset no_reruns
 unset reruns_count
 unset reruns_delay
 unset allow_failures
+unset resource_debug
 declare -a from_source_specs
 
 # Default rerun settings (for transient httpx read timeouts with HF transformers v5)
@@ -52,6 +53,7 @@ Usage: $0
     [ --reruns N ]  (number of reruns for transient failures, default: 2)
     [ --reruns-delay N ]  (delay in seconds between reruns, default: 5)
     [ --allow-failures ]  (continue collecting coverage even if tests fail; useful for debugging)
+    [ --resource-debug ]  (enable opt-in CPU/CUDA per-test and per-fixture resource diagnostics)
     [ --help ]
 
     The --from-source flag can be specified multiple times for clarity, or use semicolons to separate specs.
@@ -90,7 +92,7 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo-home:,target-env-name:,python-version:,torch-backend:,no-rebuild-base,from-source:,venv-dir:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,it-build-flags:,no-reruns,reruns:,reruns-delay:,allow-failures,help -- "$@")
+args=$(getopt -o '' --long repo-home:,target-env-name:,python-version:,torch-backend:,no-rebuild-base,from-source:,venv-dir:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,it-build-flags:,no-reruns,reruns:,reruns-delay:,allow-failures,resource-debug,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -115,6 +117,7 @@ do
     --reruns)   reruns_count=$2 ; shift 2 ;;
     --reruns-delay)   reruns_delay=$2 ; shift 2 ;;
     --allow-failures)  allow_failures=1 ; shift ;;
+    --resource-debug)  resource_debug=1 ; shift ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
     *) >&2 echo Unsupported option: $1
@@ -130,6 +133,7 @@ fi
 d=`date +%Y%m%d%H%M%S`
 tmp_coverage_dir="/tmp"
 coverage_session_log="${tmp_coverage_dir}/gen_it_coverage_${target_env_name}_${d}.log"
+resource_summary_json="${coverage_session_log%.log}_resource_summary.json"
 echo "Use 'tail -f ${coverage_session_log}' to monitor progress"
 
 # Expand leading ~ in common path arguments
@@ -201,19 +205,46 @@ collect_env_coverage(){
     maybe_deactivate
     source ${venv_path}/bin/activate
     export PYTHONFAULTHANDLER=1
+    if [[ ${resource_debug:-0} -eq 1 ]]; then
+        enable_resource_debug_env
+        log_shell_resource_snapshot "coverage:bootstrap:$1" >> "$coverage_session_log" 2>&1 || true
+    fi
+
+    cuda_phase_available(){
+        python - <<'PY'
+import sys
+
+import torch
+
+raise SystemExit(0 if torch.cuda.is_available() else 1)
+PY
+    }
 
     run_logged_phase(){
         local phase_name=$1
         shift
+        log_shell_resource_snapshot "coverage-phase:start:${phase_name}" >> "$coverage_session_log" 2>&1 || true
         set +e
         "$@"
         local phase_status=$?
         set -e
         echo "${phase_name} exit code: ${phase_status}" >> "$coverage_session_log"
+        log_shell_resource_snapshot "coverage-phase:end:${phase_name}" >> "$coverage_session_log" 2>&1 || true
         if [[ $phase_status -ne 0 && $allow_failures -ne 1 ]]; then
             return $phase_status
         fi
         return 0
+    }
+
+    run_logged_cuda_phase(){
+        local phase_name=$1
+        shift
+        if cuda_phase_available; then
+            run_logged_phase "$phase_name" "$@"
+        else
+            echo "${phase_name} skipped: CUDA unavailable in current environment" >> "$coverage_session_log"
+            return 0
+        fi
     }
 
     # Build special_tests.sh rerun args to pass through
@@ -221,6 +252,10 @@ collect_env_coverage(){
     [[ $no_reruns -eq 1 ]] && special_tests_rerun_args="--no-reruns"
     [[ -n "${reruns_count}" && $no_reruns -ne 1 ]] && special_tests_rerun_args="${special_tests_rerun_args} --reruns=${reruns_count}"
     [[ -n "${reruns_delay}" && $no_reruns -ne 1 ]] && special_tests_rerun_args="${special_tests_rerun_args} --reruns-delay=${reruns_delay}"
+    pytest_resource_args=""
+    if [[ ${resource_debug:-0} -eq 1 ]]; then
+        pytest_resource_args="-s"
+    fi
 
     # Prepare allow_failures flag for special_tests.sh
     local failures_flag=""
@@ -236,32 +271,40 @@ collect_env_coverage(){
                 # Using pytest-cov ensures coverage starts before test collection imports
                 run_logged_phase \
                     "base pytest" \
-                    env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-report= src/interpretune src/it_examples tests -v ${rerun_args} \
+                    env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-report= src/interpretune src/it_examples tests -v ${pytest_resource_args} ${rerun_args} \
+                    >> "$coverage_session_log" 2>&1
+                run_logged_cuda_phase \
+                    "base pytest cuda-marked" \
+                    env -u CUDA_VISIBLE_DEVICES IT_RUN_CUDA_TESTS=1 python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${pytest_resource_args} ${rerun_args} \
                     >> "$coverage_session_log" 2>&1
                 run_logged_phase \
                     "special tests standalone" \
-                    bash -lc "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} >> ${temp_special_log} 2>&1"
+                    bash -lc "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
                 run_logged_phase \
                     "special tests profile_ci" \
-                    bash -lc "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} >> ${temp_special_log} 2>&1"
+                    bash -lc "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
                 run_logged_phase \
                     "special tests profile" \
-                    bash -lc "./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} >> ${temp_special_log} 2>&1"
+                    bash -lc "./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
                 run_logged_phase \
                     "special tests optional" \
-                    bash -lc "./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} >> ${temp_special_log} 2>&1"
+                    bash -lc "./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
             else
                 # Using pytest-cov ensures coverage starts before test collection imports
                 run_logged_phase \
                     "base pytest" \
-                    env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${rerun_args} \
+                    env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${pytest_resource_args} ${rerun_args} \
+                    >> "$coverage_session_log" 2>&1
+                run_logged_cuda_phase \
+                    "base pytest cuda-marked" \
+                    env -u CUDA_VISIBLE_DEVICES IT_RUN_CUDA_TESTS=1 python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${pytest_resource_args} ${rerun_args} \
                     >> "$coverage_session_log" 2>&1
                 run_logged_phase \
                     "special tests standalone" \
-                    bash -lc "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} >> ${temp_special_log} 2>&1"
+                    bash -lc "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
                 run_logged_phase \
                     "special tests profile_ci" \
-                    bash -lc "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} >> ${temp_special_log} 2>&1"
+                    bash -lc "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
             fi
             ;;
         *)
@@ -309,4 +352,12 @@ echo "Writing collected coverage stats for IT env ${target_env_name}" >> $covera
 # Reactivate the environment for coverage report (in case it was deactivated)
 source ${venv_path}/bin/activate
 python -m coverage report -m >> $coverage_session_log
+if [[ ${resource_debug:-0} -eq 1 ]]; then
+    printf "\n" >> "$coverage_session_log"
+    python "${repo_home}/scripts/resource_debug_summary.py" \
+        --log-file "$coverage_session_log" \
+        --json-output "$resource_summary_json" \
+        >> "$coverage_session_log"
+    echo "Resource summary JSON: ${resource_summary_json}" >> "$coverage_session_log"
+fi
 show_elapsed_time $coverage_session_log "IT coverage collection"

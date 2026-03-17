@@ -33,6 +33,7 @@ toggle_experimental_patches() {
 collect_tests(){
   local collect_def="$1"
   local collect_log="$2"
+  log_shell_resource_snapshot "special-tests:collect:start" | tee -a "$collect_log"
   if special_tests=$(python3 ${collect_def}); then
     # match only lines with tests
     declare -a -g parameterizations=($(grep -oP '\S+::test_\S+' <<< "$special_tests"))
@@ -43,6 +44,7 @@ collect_tests(){
     num_collected_tests="${#parameterizations[@]}"
     echo "Total number of tests: ${#parameterizations[@]}" | tee -a  $collect_log
     printf '\n' | tee -a  $collect_log
+    log_shell_resource_snapshot "special-tests:collect:end" | tee -a "$collect_log"
   else
     printf "No tests were found with the following collection command: python3 ${collect_def} \n" | tee -a $collect_log
     printf "If running that command directly works as expected, run special tests with 'bash -x tests/special_tests.sh' to debug potential collection errors." | tee -a $collect_log
@@ -76,7 +78,9 @@ execute_tests(){
 
     # run the test (|| true prevents set -e from killing the script; pass/fail is detected via log grep below)
     echo "Running ${parameterization}" | tee -a $execute_log
+    log_shell_resource_snapshot "special-tests:test:start:${parameterization}" | tee -a "$execute_log"
     (python ${execute_def} ${parameterization} 2>&1 | sed "s,\x1b\[[0-9;]*[a-zA-Z],,g" >> $tmp_raw_log) > /dev/null || true
+    log_shell_resource_snapshot "special-tests:test:end:${parameterization}" | tee -a "$execute_log"
     test_to_find=`echo ${parameterization} | sed 's/\[/\\\[/g; s/\]/\\\]/g'`
     if pass_or_fail=$(grep -E "(PASSED|FAILED|XPASS|XFAIL) .*${test_to_find}" $tmp_raw_log); then
       parameterization_result=`echo $pass_or_fail | awk 'NR==1 {print $2 ": "  $1}'`;

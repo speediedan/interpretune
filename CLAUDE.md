@@ -111,20 +111,37 @@ ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
   --venv-dir=${IT_VENV_BASE} \
   --no-rebuild-base
 
-# Preferred for debugging: use --allow-failures to continue past failures
+# Preferred for debugging: use --allow-failures to continue past failures and --no-reruns to expedite debugging
 ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
   ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
   --repo-home=${IT_REPO_DIR} \
   --target-env-name=${IT_TARGET_VENV} \
   --venv-dir=${IT_VENV_BASE} \
   --no-rebuild-base \
-  --allow-failures
+  --allow-failures \
+  --no-reruns
 
 # Monitor coverage progress
 tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
 
 # Note: Coverage collection takes approximately 50 minutes
 ```
+
+The local coverage harness now mirrors the Azure GPU pipeline's phase split:
+- `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''`
+- `Testing: standard gpu cuda-marked` reruns only regular CUDA / bf16-marked tests with `IT_RUN_CUDA_TESTS=1`
+- `Testing: standalone gpu` and `Testing: CI Profiling` remain separate special-test phases
+
+When debugging fixture or CUDA memory growth locally, add `--resource-debug` to `gen_it_coverage.sh` or
+`special_tests.sh`. That exports the canonical `IT_RESOURCE_DEBUG=1`
+flags used by `tests/conftest.py`, `tests/analysis_resource_utils.py`, and the coverage harness summary
+parser for per-test / per-fixture / per-GPU logging.
+
+If semantic concept-direction intervention parity drifts unexpectedly, use the normal gate in
+`tests/core/test_analysis_backend_parity.py` first. For deeper upstream sanity checking, run
+`tests/upstream_parity/extract_upstream_ct_semantic_reference.py` and consult `tests/upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md`
+for the current three-way upstream/native/op reference snapshot. Keep this as a manual debugging
+tool rather than part of the regular test suite.
 
 ## Linting & Code Quality
 

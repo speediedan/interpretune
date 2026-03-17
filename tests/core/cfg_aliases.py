@@ -6,6 +6,7 @@ from typing import Iterable
 from pathlib import Path
 import tempfile
 
+import torch
 
 import interpretune as it
 from interpretune.protocol import Adapter, AutoStrEnum
@@ -475,6 +476,7 @@ class CircuitTracerNNsightGemma2(BaseCfg):
         default_factory=lambda: CircuitTracerConfig(
             backend="nnsight",
             transcoder_set="gemma",
+            dtype=torch.float32,
             analysis_target_tokens=["▁Dallas", "▁Austin"],
             max_feature_nodes=8192,
             offload="cpu",
@@ -510,6 +512,7 @@ class LightningCircuitTracerNNsightGemma2(BaseCfg):
         default_factory=lambda: CircuitTracerConfig(
             backend="nnsight",
             transcoder_set="gemma",
+            dtype=torch.float32,
             analysis_target_tokens=["▁Dallas", "▁Austin"],
             max_feature_nodes=8192,
             offload="cpu",

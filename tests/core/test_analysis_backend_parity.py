@@ -27,7 +27,7 @@ from tests.runif import RunIf
 CONCEPT_DIRECTION_COSINE_MIN = 0.999
 VALUE_RTOL = 1e-6
 VALUE_ATOL = 1e-6
-MIN_FREE_CUDA_BYTES_FOR_PARITY = 6 * 1024**3
+MIN_FREE_CUDA_BYTES_FOR_PARITY = 10 * 1024**3
 
 
 @dataclass(frozen=True)
