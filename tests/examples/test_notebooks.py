@@ -301,19 +301,19 @@ def test_ct_analysis_backend_notebook(params: dict[str, Any], tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
-# Test parameters for CT Cross-Backend Demo notebook
-CT_CROSS_BACKEND_PARAMS = [
+# Test parameters for CT RTE Concept Direction Demo notebook (formerly cross-backend)
+CT_RTE_CONCEPT_PARAMS = [
     pytest.param(
-        {"backend": "nnsight"},
-        id="ct_cross_backend_nnsight",
+        {},
+        id="ct_rte_concept_nnsight",
     ),
 ]
 
 
 @RunIf(bf16_cuda=True)
-@pytest.mark.parametrize("params", CT_CROSS_BACKEND_PARAMS)
+@pytest.mark.parametrize("params", CT_RTE_CONCEPT_PARAMS)
 def test_ct_cross_backend_notebook(params: dict[str, Any], tmp_path: Path):
-    """Test CT cross-backend composition demo notebook."""
+    """Test CT RTE concept direction demo notebook (NNsight backend)."""
     notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "ct_cross_backend_demo.ipynb"
 
     # Create output directory

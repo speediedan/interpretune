@@ -187,7 +187,10 @@ class AnalysisBackend(Protocol):
         prompt: str,
         concept_direction: Any,
         concept_label: Any,
-        concept_metadata: Any,
+        *,
+        concept_group_a_token_ids: Any = None,
+        concept_group_b_token_ids: Any = None,
+        concept_direction_mode: Any = None,
     ) -> list[Any] | None: ...
 
     def resolve_feature_intervention_settings(

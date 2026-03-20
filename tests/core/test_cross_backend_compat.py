@@ -208,9 +208,8 @@ def test_concept_direction_supports_non_ct_native_modules(module_factory, expect
     expected = torch.tensor([1.0, -1.0, 0.0], dtype=torch.float32)
     expected = expected / torch.linalg.vector_norm(expected)
     assert torch.allclose(result.concept_direction, expected)
-    metadata = json.loads(result.concept_metadata)
-    assert metadata["group_a_token_ids"] == [0]
-    assert metadata["group_b_token_ids"] == [1]
+    assert result.concept_group_a_token_ids == [0]
+    assert result.concept_group_b_token_ids == [1]
     assert int(torch.argmax(torch.abs(result.concept_direction)).item()) == 0
     assert expected_first_id == 2
 
@@ -230,7 +229,9 @@ def test_transformerlens_store_round_trip_can_feed_ct_attribution_op(tmp_path) -
             {
                 "concept_direction": [produced.concept_direction.tolist()],
                 "concept_label": [produced.concept_label],
-                "concept_metadata": [produced.concept_metadata],
+                "concept_group_a_token_ids": [produced.concept_group_a_token_ids],
+                "concept_group_b_token_ids": [produced.concept_group_b_token_ids],
+                "concept_direction_mode": [produced.concept_direction_mode],
             }
         ),
     )
@@ -288,3 +289,59 @@ def test_ct_feature_intervention_consumes_round_tripped_store_across_backends(tm
     assert result.intervention_feature_ids == [11, 7]
     assert result.intervention_positions == [2, 1]
     assert torch.isclose(result.logit_diff, torch.tensor(0.5, dtype=torch.float32))
+
+
+@pytest.mark.parametrize(
+    "module_factory",
+    [
+        pytest.param(_TLLikeProducerModule, id="transformerlens"),
+        pytest.param(_NNsightLikeProducerModule, id="nnsight"),
+    ],
+)
+def test_concept_direction_multi_batch_accumulation(tmp_path, module_factory) -> None:
+    """Multiple dataloader batches produce per-batch direction rows that can be averaged."""
+    module = module_factory()
+    concept_batches = [
+        {"concept_group_a": ["Paris"], "concept_group_b": ["London"]},
+        {"concept_group_a": ["Dallas"], "concept_group_b": ["Austin"]},
+    ]
+    directions = []
+    rows: dict[str, list] = {
+        "concept_direction": [],
+        "concept_label": [],
+        "concept_group_a_token_ids": [],
+        "concept_group_b_token_ids": [],
+        "concept_direction_mode": [],
+    }
+    for batch_idx, groups in enumerate(concept_batches):
+        result = concept_direction_impl(
+            module,
+            AnalysisBatch(**groups),
+            batch=None,
+            batch_idx=batch_idx,
+        )
+        directions.append(result.concept_direction)
+        rows["concept_direction"].append(result.concept_direction.tolist())
+        rows["concept_label"].append(result.concept_label)
+        rows["concept_group_a_token_ids"].append(result.concept_group_a_token_ids)
+        rows["concept_group_b_token_ids"].append(result.concept_group_b_token_ids)
+        rows["concept_direction_mode"].append(result.concept_direction_mode)
+
+    # Each batch produces a unit-norm direction
+    for d in directions:
+        assert torch.isclose(torch.linalg.vector_norm(d), torch.tensor(1.0)), "each per-batch direction should be unit"
+
+    # Store round-trips all rows
+    store = _round_trip_store(tmp_path, "multi_batch_concept", Dataset.from_dict(rows))
+    assert len(store.dataset) == len(concept_batches)
+
+    # Average + renormalize (mirroring the notebook pattern)
+    stacked = torch.stack(directions)
+    avg_dir = stacked.mean(dim=0)
+    avg_dir = avg_dir / torch.linalg.vector_norm(avg_dir)
+    assert torch.isclose(torch.linalg.vector_norm(avg_dir), torch.tensor(1.0))
+
+    # The averaged direction should correlate positively with each per-batch direction
+    for d in directions:
+        cos = torch.nn.functional.cosine_similarity(avg_dir.unsqueeze(0), d.unsqueeze(0)).item()
+        assert cos > 0, f"averaged direction should be positively aligned with each batch direction, got {cos}"

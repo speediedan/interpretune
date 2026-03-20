@@ -105,12 +105,14 @@ class CircuitTracerAnalysisBackend:
         prompt: str,
         concept_direction: Any,
         concept_label: Any,
-        concept_metadata: Any,
+        *,
+        concept_group_a_token_ids: Any = None,
+        concept_group_b_token_ids: Any = None,
+        concept_direction_mode: Any = None,
     ) -> list[Any] | None:
         from circuit_tracer.attribution.targets import CustomTarget
 
-        concept_meta_dict = json.loads(concept_metadata) if concept_metadata else {}
-        group_a_token_ids = [int(token_id) for token_id in concept_meta_dict.get("group_a_token_ids", [])]
+        group_a_token_ids = [int(token_id) for token_id in (concept_group_a_token_ids or [])]
         if group_a_token_ids:
             concept_logits = module.replacement_model.get_activations(prompt)[0]
             concept_probs = torch.softmax(concept_logits.squeeze(0)[-1].float(), dim=-1)
@@ -125,7 +127,7 @@ class CircuitTracerAnalysisBackend:
         )
         return [
             CustomTarget(
-                token_str=str(concept_label or concept_meta_dict.get("direction_mode", "concept_direction")),
+                token_str=str(concept_label or concept_direction_mode or "concept_direction"),
                 prob=float(concept_prob),
                 vec=concept_direction_tensor,
             )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import gc
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -235,7 +234,9 @@ def _build_op_baseline(it_session, case: SemanticInterventionParityCase) -> OpSe
                 prompts=[case.prompt],
                 concept_direction=concept_result.concept_direction,
                 concept_label=concept_result.concept_label,
-                concept_metadata=concept_result.concept_metadata,
+                concept_group_a_token_ids=concept_result.concept_group_a_token_ids,
+                concept_group_b_token_ids=concept_result.concept_group_b_token_ids,
+                concept_direction_mode=concept_result.concept_direction_mode,
             ),
             None,
             0,
@@ -270,15 +271,11 @@ def _build_op_baseline(it_session, case: SemanticInterventionParityCase) -> OpSe
         ),
     )
 
-    concept_metadata = concept_result.concept_metadata
-    if isinstance(concept_metadata, str):
-        concept_metadata = json.loads(concept_metadata)
-
     pre_final = intervention_result.pre_intervention_logits.float().cpu()
     post_final = intervention_result.post_intervention_logits.float().cpu()
     return OpSemanticBaseline(
-        direction_mode=concept_metadata["direction_mode"],
-        group_a_token_ids=concept_metadata["group_a_token_ids"],
+        direction_mode=concept_result.concept_direction_mode,
+        group_a_token_ids=concept_result.concept_group_a_token_ids,
         concept_direction=concept_result.concept_direction.float().cpu(),
         top_feature_ids=[tuple(row.tolist()) for row in top_features_result.top_feature_ids],
         activation_values=top_features_result.top_feature_activation_values.float().cpu(),

@@ -2,7 +2,6 @@
 
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 
-import json
 from collections import defaultdict
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Literal
@@ -590,15 +589,9 @@ def concept_direction_impl(
     analysis_batch.update(
         concept_direction=direction_vector.detach().cpu(),
         concept_label=concept_label or f"{' / '.join(group_a)} -> {' / '.join(group_b)}",
-        concept_metadata=json.dumps(
-            {
-                "group_a": group_a,
-                "group_b": group_b,
-                "group_a_token_ids": group_a_ids,
-                "group_b_token_ids": group_b_ids,
-                "direction_mode": direction_mode,
-            }
-        ),
+        concept_group_a_token_ids=group_a_ids,
+        concept_group_b_token_ids=group_b_ids,
+        concept_direction_mode=direction_mode,
     )
     return analysis_batch
 
@@ -615,14 +608,22 @@ def compute_attribution_graph_impl(
     prompt = kwargs.pop("prompt", None) or analysis_backend.resolve_prompt(module, analysis_batch, batch)
     concept_direction = get_analysis_value(analysis_batch, module, "concept_direction", batch_idx=batch_idx)
     concept_label = get_analysis_value(analysis_batch, module, "concept_label", batch_idx=batch_idx)
-    concept_metadata = get_analysis_value(analysis_batch, module, "concept_metadata", batch_idx=batch_idx)
+    concept_group_a_token_ids = get_analysis_value(
+        analysis_batch, module, "concept_group_a_token_ids", batch_idx=batch_idx
+    )
+    concept_group_b_token_ids = get_analysis_value(
+        analysis_batch, module, "concept_group_b_token_ids", batch_idx=batch_idx
+    )
+    concept_direction_mode = get_analysis_value(analysis_batch, module, "concept_direction_mode", batch_idx=batch_idx)
     if concept_direction is not None and "attribution_targets" not in kwargs:
         kwargs["attribution_targets"] = analysis_backend.build_concept_attribution_targets(
             module,
             prompt,
             concept_direction,
             concept_label,
-            concept_metadata,
+            concept_group_a_token_ids=concept_group_a_token_ids,
+            concept_group_b_token_ids=concept_group_b_token_ids,
+            concept_direction_mode=concept_direction_mode,
         )
 
     graph = module.generate_attribution_graph(prompt, **kwargs)
@@ -630,9 +631,25 @@ def compute_attribution_graph_impl(
     extra_metadata["batch_idx"] = batch_idx
     if concept_label is not None:
         extra_metadata["concept_label"] = concept_label
-    if concept_metadata is not None:
-        extra_metadata["concept_metadata"] = concept_metadata
     analysis_batch.update(**analysis_backend.decompose_graph(graph, extra_metadata=extra_metadata))
+
+    # Resolve virtual logit_target_ids from concept-direction graphs.
+    # Circuit-tracer assigns virtual IDs (>= vocab_size) to custom concept targets.
+    # Replace them with the real concept group token IDs so downstream ops can index logits.
+    logit_target_ids = getattr(analysis_batch, "logit_target_ids", None)
+    if logit_target_ids is not None and concept_direction is not None:
+        ids_tensor = torch.as_tensor(logit_target_ids, dtype=torch.long).reshape(-1)
+        vocab_size = getattr(analysis_batch, "graph_vocab_size", None)
+        if vocab_size is not None and (ids_tensor >= int(vocab_size)).any():
+            real_ids = list(concept_group_a_token_ids or []) + list(concept_group_b_token_ids or [])
+            if not real_ids:
+                raise ValueError(
+                    "logit_target_ids contain virtual IDs (>= vocab_size) but no concept group "
+                    "token IDs are available for resolution. Provide concept_group_a_token_ids / "
+                    "concept_group_b_token_ids or explicit logit_target_ids."
+                )
+            analysis_batch.update(logit_target_ids=torch.tensor(real_ids, dtype=torch.long))
+
     return analysis_batch
 
 
@@ -763,6 +780,15 @@ def feature_intervention_forward_impl(
         batch_idx=batch_idx,
     )
     resolved_logit_target_ids = get_analysis_value(analysis_batch, module, "logit_target_ids", batch_idx=batch_idx)
+
+    # If no explicit logit_target_ids, try to resolve from concept group token IDs
+    if resolved_logit_target_ids is None:
+        concept_a_ids = get_analysis_value(analysis_batch, module, "concept_group_a_token_ids", batch_idx=batch_idx)
+        concept_b_ids = get_analysis_value(analysis_batch, module, "concept_group_b_token_ids", batch_idx=batch_idx)
+        real_ids = list(concept_a_ids or []) + list(concept_b_ids or [])
+        if real_ids:
+            resolved_logit_target_ids = torch.tensor(real_ids, dtype=torch.long)
+
     if resolved_top_feature_ids is None:
         raise ValueError("feature_intervention_forward requires top_feature_ids in analysis_batch or input_store")
 

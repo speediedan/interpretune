@@ -148,6 +148,13 @@ def generate_operation_stub(op_name: str, op_def: Dict[str, Any], yaml_content: 
             if annotation:
                 annotation = f": {annotation}"
 
+            # Handle *args and **kwargs
+            prefix = ""
+            if param.kind == inspect.Parameter.VAR_POSITIONAL:
+                prefix = "*"
+            elif param.kind == inspect.Parameter.VAR_KEYWORD:
+                prefix = "**"
+
             default = ""
             if param.default is not param.empty:
                 # Check if this parameter has a corresponding importable_param in the YAML definition
@@ -163,7 +170,7 @@ def generate_operation_stub(op_name: str, op_def: Dict[str, Any], yaml_content: 
                 else:
                     default = f" = {param.default}"
 
-            params.append(f"{name}{annotation}{default}")
+            params.append(f"{prefix}{name}{annotation}{default}")
 
         # Get return type
         return_type = format_type_annotation(sig.return_annotation)

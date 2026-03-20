@@ -215,6 +215,7 @@ output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff
 [tool.ruff.lint.per-file-ignores]
 #"src/fts_examples/stable/ipynb_src/fts_superglue_nb.py" = ["E501","F401","F821"]
 #"src/fts_examples/legacy/ipynb_src/fts_superglue_nb.py" = ["E501","F401","F821"]
+"src/it_examples/notebooks/publish/**/*.ipynb" = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["docs", "interpretune","tests"]

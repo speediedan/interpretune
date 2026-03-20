@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
 import torch
 from datasets import Dataset, load_from_disk
 from transformers import BatchEncoding
@@ -18,6 +19,7 @@ from interpretune.analysis.core import AnalysisStore, schema_to_features
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.definitions import feature_intervention_forward_impl
 from interpretune.analysis.ops.dispatcher import DISPATCHER
+from interpretune.analysis.ops.helpers import mean_target_logit_delta
 from interpretune.config.circuit_tracer import CircuitTracerConfig
 
 
@@ -172,3 +174,54 @@ def test_feature_intervention_forward_impl_can_use_activation_values() -> None:
         torch.tensor([2.5, -1.0], dtype=torch.float32),
     )
     assert torch.allclose(torch.tensor(result.intervention_values, dtype=torch.float32), torch.tensor([2.5, -1.0]))
+
+
+def test_feature_intervention_resolves_logit_target_ids_from_concept_groups() -> None:
+    """When no explicit logit_target_ids, concept group token IDs are used as fallback."""
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        prompts=["Paris Austin"],
+        top_feature_ids=torch.tensor([[1, 2, 11]], dtype=torch.long),
+        top_feature_scores=torch.tensor([0.5], dtype=torch.float32),
+        concept_group_a_token_ids=[2],
+        concept_group_b_token_ids=[3],
+    )
+
+    result = feature_intervention_forward_impl(module, analysis_batch, batch=cast(BatchEncoding, None), batch_idx=0)
+
+    # logit_diff should be computed over token IDs 2 and 3 (from concept groups)
+    # pre_logits = [0.1, 0.2, 0.3, 0.4], post_logits = [0.1, 0.2, 0.3+delta, 0.4]
+    # delta = 0.5 * 2.0 = 1.0 (scale_factor=2.0)
+    # diff on id=2: (0.3+1.0 - 0.3) = 1.0; diff on id=3: (0.4 - 0.4) = 0.0
+    # mean = (1.0 + 0.0) / 2 = 0.5
+    assert torch.isclose(result.logit_diff, torch.tensor(0.5, dtype=torch.float32))
+
+
+def test_feature_intervention_explicit_logit_target_ids_override_concept_groups() -> None:
+    """Explicit logit_target_ids take precedence over concept group token IDs."""
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        prompts=["Paris Austin"],
+        top_feature_ids=torch.tensor([[1, 2, 11]], dtype=torch.long),
+        top_feature_scores=torch.tensor([0.5], dtype=torch.float32),
+        logit_target_ids=torch.tensor([2], dtype=torch.long),
+        concept_group_a_token_ids=[0],
+        concept_group_b_token_ids=[1],
+    )
+
+    result = feature_intervention_forward_impl(module, analysis_batch, batch=cast(BatchEncoding, None), batch_idx=0)
+
+    # logit_diff should use explicit logit_target_ids=[2], not concept group IDs [0, 1]
+    # pre_logits = [0.1, 0.2, 0.3, 0.4], post_logits = [0.1, 0.2, 1.3, 0.4]
+    # diff on id=2 only: (1.3 - 0.3) = 1.0
+    assert torch.isclose(result.logit_diff, torch.tensor(1.0, dtype=torch.float32))
+
+
+def test_mean_target_logit_delta_raises_on_virtual_ids() -> None:
+    """Virtual IDs (>= vocab_size) in mean_target_logit_delta raise a descriptive error."""
+    pre_logits = torch.tensor([0.1, 0.2, 0.3, 0.4], dtype=torch.float32)
+    post_logits = torch.tensor([0.1, 0.2, 0.3, 0.4], dtype=torch.float32)
+    virtual_ids = torch.tensor([4, 5], dtype=torch.long)  # vocab_size=4, so 4 and 5 are out of bounds
+
+    with pytest.raises(ValueError, match="out-of-bounds indices"):
+        mean_target_logit_delta(pre_logits, post_logits, virtual_ids)

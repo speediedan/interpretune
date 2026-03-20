@@ -38,6 +38,14 @@ def mean_target_logit_delta(
     """Return the mean delta over requested target ids, or over all logits if none are given."""
     if target_ids is not None and torch.numel(target_ids) > 0:
         target_ids = target_ids.to(dtype=torch.long).reshape(-1)
+        vocab_size = pre_logits.size(0)
+        oob = target_ids >= vocab_size
+        if oob.any():
+            raise ValueError(
+                f"logit_target_ids contain out-of-bounds indices (>= vocab_size {vocab_size}): "
+                f"{target_ids[oob].tolist()}. Virtual IDs from concept-direction targets must be "
+                "resolved before intervention."
+            )
         return (post_logits.index_select(0, target_ids) - pre_logits.index_select(0, target_ids)).mean()
     return (post_logits - pre_logits).mean()
 

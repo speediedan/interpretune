@@ -180,7 +180,8 @@ def test_compute_attribution_graph_impl_builds_custom_target_from_concept_direct
         prompts=[graph.input_string],
         concept_direction=torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32),
         concept_label="Concept: Capitals - States",
-        concept_metadata=json.dumps({"group_a_token_ids": [0, 3], "direction_mode": "paired_rejection"}),
+        concept_group_a_token_ids=[0, 3],
+        concept_direction_mode="paired_rejection",
     )
 
     captured: dict[str, object] = {}
@@ -300,6 +301,60 @@ def test_graph_fields_round_trip_through_analysis_store(tmp_path) -> None:
     assert [target.token_str for target in restored_graph.logit_targets] == [
         target.token_str for target in graph.logit_targets
     ]
+
+
+def test_compute_attribution_graph_impl_resolves_virtual_logit_target_ids() -> None:
+    """Virtual IDs from CustomTarget (>= vocab_size) are resolved to real concept group token IDs."""
+    vocab_size = 32
+    concept_group_a_ids = [0, 3]
+    concept_group_b_ids = [1]
+
+    cfg = UnifiedConfig(
+        n_layers=2,
+        d_model=4,
+        d_head=2,
+        n_heads=2,
+        d_mlp=8,
+        d_vocab=vocab_size,
+        tokenizer_name="fake-tokenizer",
+        model_name="fake-model",
+        original_architecture="FakeForCausalLM",
+    )
+    # Build a graph whose logit_targets use virtual IDs (>= vocab_size), mimicking CustomTarget output
+    graph = Graph(
+        input_string="Paris Austin",
+        input_tokens=torch.tensor([0, 3], dtype=torch.long),
+        active_features=torch.tensor([[0, 0, 10], [1, 0, 12]], dtype=torch.long),
+        adjacency_matrix=torch.eye(6, dtype=torch.float32),
+        cfg=cfg,
+        selected_features=torch.tensor([0], dtype=torch.long),
+        activation_values=torch.tensor([0.5], dtype=torch.float32),
+        logit_targets=[
+            LogitTarget("concept_a", vocab_size + 0),
+            LogitTarget("concept_b", vocab_size + 1),
+            LogitTarget("concept_c", vocab_size + 2),
+        ],
+        logit_probabilities=torch.tensor([0.5, 0.3, 0.2], dtype=torch.float32),
+        scan="gemma",
+        vocab_size=vocab_size,
+    )
+    # Verify the graph indeed produces virtual IDs
+    assert (graph.logit_token_ids >= vocab_size).all()
+
+    module = _FakeModule(graph=graph)
+    analysis_batch = AnalysisBatch(
+        prompts=[graph.input_string],
+        concept_direction=torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32),
+        concept_label="test concept",
+        concept_group_a_token_ids=concept_group_a_ids,
+        concept_group_b_token_ids=concept_group_b_ids,
+    )
+
+    result = compute_attribution_graph_impl(module, analysis_batch, batch=None, batch_idx=0)
+
+    # Virtual IDs should have been replaced with real concept group token IDs
+    expected_ids = torch.tensor(concept_group_a_ids + concept_group_b_ids, dtype=torch.long)
+    assert torch.equal(result.logit_target_ids, expected_ids)
 
 
 def test_extract_top_features_impl_uses_selected_feature_mapping() -> None:

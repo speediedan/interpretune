@@ -366,10 +366,21 @@ concept_direction:
       datasets_dtype: string
       required: false
       non_tensor: true
-    concept_metadata:
+    concept_group_a_token_ids:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
+    concept_group_b_token_ids:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
+    concept_direction_mode:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
 
 compute_attribution_graph:
   description: Generate an attribution graph with circuit-tracer

@@ -105,11 +105,16 @@ def add_colab_badge_and_install_cell(notebook: Dict[str, Any], relative_path: st
     # Convert dev path to publish path for the URL
     publish_relative_path = relative_path.replace("/dev/", "/publish/")
     colab_url = f"https://colab.research.google.com/github/{org}/{repo}/blob/main/{publish_relative_path}"
+    colab_badge_url = "https://colab.research.google.com/assets/colab-badge.svg"
 
     badge_cell = {
         "cell_type": "markdown",
         "metadata": {},
-        "source": [f"[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)]({colab_url})"],
+        "source": [
+            f'<a href="{colab_url}">\n',
+            f'  <img src="{colab_badge_url}" alt="Open In Colab" />\n',
+            "</a>",
+        ],
     }
 
     # Create a single, commented-out installation cell that preserves editable
