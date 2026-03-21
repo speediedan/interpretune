@@ -99,8 +99,22 @@ def normalize_backend_capability(capability: Any) -> Capability:
         raise
 
 
+def get_model_backend(module: Any) -> ModelBackend | None:
+    """Return the module's model backend while avoiding mock-created private attrs."""
+
+    module_dict = getattr(module, "__dict__", None)
+    backend = module_dict.get("_model_backend") if isinstance(module_dict, dict) else None
+    if backend is None and hasattr(module, "model_backend"):
+        try:
+            backend = module.model_backend
+        except (AssertionError, AttributeError):
+            backend = None
+    return backend
+
+
 def get_analysis_backend(module: Any) -> AnalysisBackend | None:
-    backend = getattr(module, "_analysis_backend", None)
+    module_dict = getattr(module, "__dict__", None)
+    backend = module_dict.get("_analysis_backend") if isinstance(module_dict, dict) else None
     if backend is None and hasattr(module, "analysis_backend"):
         try:
             backend = module.analysis_backend
@@ -123,12 +137,7 @@ def get_module_capabilities(module: Any) -> ModuleCapabilities:
 
     model_capabilities: set[BackendCapability] = set()
     analysis_capabilities: set[AnalysisBackendCapability] = set()
-    backend = getattr(module, "_model_backend", None)
-    if backend is None and hasattr(module, "model_backend"):
-        try:
-            backend = module.model_backend
-        except (AssertionError, AttributeError):
-            backend = None
+    backend = get_model_backend(module)
 
     if backend is not None and hasattr(backend, "capabilities"):
         model_capabilities.update(

@@ -130,6 +130,45 @@ Generated analysis steps are best when:
 
 If you need aggregate or run-scoped values, write the orchestration explicitly for now.
 
+### Prefer the shared execution helper for notebook-triggered op runs
+
+The first IG-7 slice adds shared execution helpers:
+
+- `interpretune.analysis.execute_analysis_op(...)`
+- `interpretune.analysis.execute_analysis_step(...)`
+
+These helpers use the same scoped analysis-input machinery as generated analysis steps.
+
+Recommended pattern for notebook code that wants built-in op behavior without duplicating the generated-step path:
+
+- keep durable upstream artifacts in `AnalysisStore`
+- pass notebook-static values through `AnalysisCfg.run_inputs` or explicit `AnalysisInputs(run=...)`
+- call the shared execution helper instead of open-coding `analysis_cfg.op(...)` plus `save_batch(...)`
+- prefer routed op execution over calling native `*_impl(...)` functions directly, since the shared helper path is
+    where scoped `AnalysisBatch` resolution is bound by default
+
+Inside the op implementation itself, prefer asking the bound `analysis_batch` for values rather than manually building resolver helpers. The shared execution path now binds row, batch, run, and store scopes onto `AnalysisBatch.get(...)` and `AnalysisBatch.require(...)` using the default lookup precedence.
+
+For most op code, prefer attribute-style access first:
+
+- `analysis_batch.concept_group_a`
+- `analysis_batch.logit_diffs`
+- `analysis_batch.answer_indices`
+
+Use `analysis_batch.get(...)` for values that are truly optional, and `analysis_batch.require(...)` when a missing value should be treated as an error.
+
+The default scoped lookup order is:
+
+- `analysis_batch`
+- `batch`
+- `run`
+- `row`
+- `store`
+
+This does not bypass `AnalysisStore` formatting or serialization. The custom datasets formatter still controls row and column materialization, and `AnalysisBatch` only provides execution-time access to whichever scoped inputs were already bound for the current op call.
+
+That distinction matters because `batch` in this section means the dataloader batch argument, while `analysis_batch` means the op-local resolved input view. `AnalysisStore` remains a Hugging Face Dataset-backed persistence layer with its own row and column indexing semantics.
+
 ## Current Limitations
 
 ### Module-only sessions are not yet ergonomic enough

@@ -1,5 +1,5 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Generator, Callable
+from typing import Any, Generator, Callable
 from dataclasses import dataclass, field
 import datetime
 import warnings
@@ -16,6 +16,7 @@ from interpretune.analysis import (
     OpWrapper,
     AnalysisOpLike,
 )
+from interpretune.analysis.execution import execute_analysis_step
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.config import ITSerializableCfg
 from interpretune.protocol import NamesFilter, AnalysisStoreProtocol, BaseAnalysisBatchProtocol, STEP_OUTPUT
@@ -97,6 +98,8 @@ def _extend_names_for_bridge(module, names_list: list[str]) -> tuple[list[str], 
 class AnalysisCfg(ITSerializableCfg):
     output_store: AnalysisStoreProtocol | None = None  # usually constructed on setup()
     input_store: AnalysisStoreProtocol | None = None  # store containing input data from previous op
+    batch_inputs: dict[str, Any] = field(default_factory=dict)  # batch-scoped inputs for the active invocation
+    run_inputs: dict[str, Any] = field(default_factory=dict)  # run-scoped inputs shared across the invocation
     target_op: str | AnalysisOp | Callable | list[AnalysisOp] | None = None  # input op to be resolved
     output_schema: OpSchema | str | AnalysisOp | None = None  # Schema, op, or op name to define schema
     name: str | None = None  # Name for this analysis configuration
@@ -546,14 +549,13 @@ class AnalysisCfg(ITSerializableCfg):
                 self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0
             ) -> Generator[STEP_OUTPUT, None, None]:
                 """Dynamically generated analysis_step method."""
-                analysis_batch = None
-
-                # TODO: move this code to a separate function to allow for reuse outside of the generated method
-                # Handle composite ops or compositions
-                op = self.analysis_cfg.op
-                analysis_batch = op(self, analysis_batch, batch, batch_idx)
-
-                yield from self.analysis_cfg.save_batch(analysis_batch, batch, tokenizer=self.datamodule.tokenizer)
+                yield from execute_analysis_step(
+                    self,
+                    batch,
+                    batch_idx,
+                    dataloader_idx=dataloader_idx,
+                    analysis_cfg=self.analysis_cfg,
+                )
 
             # TODO: separate some of this more ephemeral state to an AnalysisState object
             # Add the method to the module with a _generated version of the base step_fn name

@@ -278,7 +278,8 @@ class RTEBoolqModuleMixin:
         )
 
     # we override the default labels_to_ids method to demo using our module-specific attributes/logic
-    def labels_to_ids(self, labels: list[str]) -> list[int]:
+    def labels_to_ids(self, labels: torch.Tensor | list[int]) -> tuple[torch.Tensor, torch.Tensor]:
+        labels = torch.as_tensor(labels, device=self.it_cfg.entailment_mapping_indices.device)
         return torch.take(self.it_cfg.entailment_mapping_indices, labels), labels
 
     # We override the default standardize_logits method to demo using custom attributes etc.

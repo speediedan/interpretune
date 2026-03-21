@@ -3,6 +3,7 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 
 from collections import defaultdict
+from collections.abc import Sequence
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
@@ -14,16 +15,19 @@ if TYPE_CHECKING:
     from transformer_lens.hook_points import HookPoint
 
 from interpretune.analysis.ops.base import AnalysisBatch
-from interpretune.analysis.ops.base import get_batch_input
+from interpretune.analysis.ops.base import get_batch_input, with_analysis_batch_context
 from interpretune.analysis.backends import require_analysis_backend
 from interpretune.analysis.ops.helpers import (
     extract_logits,
-    get_analysis_value,
     last_token_logits,
     mean_target_logit_delta,
+    require_model_backend,
     resolve_embedding_weight,
+    resolve_aggregate_input,
     resolve_tokenizer,
+    stack_column_tensors,
     token_strings_to_last_ids,
+    weighted_mean,
 )
 from interpretune.protocol import DefaultAnalysisBatchProtocol
 import interpretune as it
@@ -150,6 +154,88 @@ def get_alive_latents_impl(
     return analysis_batch
 
 
+def extract_concept_latent_examples_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Extract per-example latent states and metadata for downstream concept-direction aggregation."""
+
+    cache = analysis_batch.cache
+    answer_indices = analysis_batch.answer_indices
+    orig_labels = analysis_batch.orig_labels
+    logit_diffs = analysis_batch.logit_diffs
+    if cache is None or answer_indices is None or orig_labels is None or logit_diffs is None:
+        raise ValueError("extract_concept_latent_examples requires cache, answer_indices, orig_labels, and logit_diffs")
+
+    cache_key = str(analysis_batch.get("concept_cache_key") or "unembed.hook_in.hook_sae_input")
+    if cache_key not in cache:
+        raise ValueError(f"extract_concept_latent_examples could not find cache key '{cache_key}'")
+
+    group_a_label_ids = torch.as_tensor(analysis_batch.concept_group_a_label_ids, dtype=torch.long).reshape(-1)
+    group_b_label_ids = torch.as_tensor(analysis_batch.concept_group_b_label_ids, dtype=torch.long).reshape(-1)
+    group_a_name = str(analysis_batch.get("concept_group_a_name") or "group_a")
+    group_b_name = str(analysis_batch.get("concept_group_b_name") or "group_b")
+    keep_correct_only = bool(analysis_batch.get("concept_correct_only", True))
+    weight_by_logit_diff = bool(analysis_batch.get("concept_weight_by_logit_diff", False))
+
+    labels = torch.as_tensor(orig_labels, dtype=torch.long).reshape(-1)
+    diffs = torch.as_tensor(logit_diffs, dtype=torch.float32).reshape(-1)
+    cache_tensor = torch.as_tensor(cache[cache_key])
+    if cache_tensor.dim() < 2:
+        raise ValueError(f"Expected cached latent states for '{cache_key}' to be rank >= 2, got {cache_tensor.dim()}")
+
+    if cache_tensor.dim() >= 3:
+        index_tensor = torch.as_tensor(answer_indices, dtype=torch.long, device=cache_tensor.device).reshape(-1)
+        batch_indices = torch.arange(cache_tensor.size(0), device=cache_tensor.device)
+        latent_states = cache_tensor[batch_indices, index_tensor].detach().cpu().float()
+    else:
+        latent_states = cache_tensor.detach().cpu().float()
+
+    if latent_states.shape[0] != labels.shape[0]:
+        raise ValueError(
+            "extract_concept_latent_examples requires the cached latent rows to align with orig_labels "
+            f"({latent_states.shape[0]} vs {labels.shape[0]})"
+        )
+
+    group_ids = torch.full((labels.shape[0],), -1, dtype=torch.long)
+    if group_a_label_ids.numel() > 0:
+        group_ids[torch.isin(labels, group_a_label_ids)] = 0
+    if group_b_label_ids.numel() > 0:
+        group_ids[torch.isin(labels, group_b_label_ids)] = 1
+
+    selection_mask = group_ids >= 0
+    correct_mask = diffs > 0
+    if keep_correct_only:
+        selection_mask &= correct_mask
+
+    feature_shape = tuple(latent_states.shape[1:])
+    empty_states = torch.empty((0, *feature_shape), dtype=latent_states.dtype)
+    selected_states = latent_states[selection_mask] if selection_mask.any() else empty_states
+    selected_group_ids = group_ids[selection_mask]
+    selected_logit_diffs = diffs[selection_mask].detach().cpu()
+    if weight_by_logit_diff:
+        selected_weights = selected_logit_diffs.abs()
+    else:
+        selected_weights = torch.ones(selected_logit_diffs.shape, dtype=selected_logit_diffs.dtype)
+    selected_group_names = [group_a_name if int(group_id) == 0 else group_b_name for group_id in selected_group_ids]
+
+    analysis_batch.update(
+        concept_latent_state=selected_states,
+        concept_group_id=selected_group_ids,
+        concept_group_name=selected_group_names,
+        concept_example_logit_diff=selected_logit_diffs,
+        concept_example_weight=selected_weights,
+        concept_cache_key=cache_key,
+        concept_group_a_name=group_a_name,
+        concept_group_b_name=group_b_name,
+        concept_correct_mask=correct_mask.detach().cpu(),
+    )
+    return analysis_batch
+
+
 def model_forward_impl(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
@@ -175,10 +261,11 @@ def model_cache_forward_impl(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
     """Implementation for forward pass with cache."""
-    # Run with cache and SAEs
+    # Run with cache and latent models
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
         batch = module.auto_prune_batch(batch, "forward")
-    answer_logits, cache = module.model_backend.fwd_w_cache_and_latent_models(
+    model_backend = require_model_backend(module)
+    answer_logits, cache = model_backend.fwd_w_cache_and_latent_models(
         model=module.model,
         batch=batch,
         latent_model_handles=module.sae_handles,
@@ -232,7 +319,8 @@ def model_ablation_impl(
             hook_configs.append([(name, partial(ablate_latent_fn, latent_idx=latent_idx, seq_pos=answer_indices))])
             index_map.append((name, latent_idx))
 
-    all_logits = module.model_backend.fwd_w_hooks_batched(
+    model_backend = require_model_backend(module)
+    all_logits = model_backend.fwd_w_hooks_batched(
         model=module.model,
         batch=batch,
         latent_model_handles=module.sae_handles,
@@ -292,7 +380,8 @@ def model_gradient_impl(
         return logit_diffs.sum()
 
     # ---- Run forward + backward via backend ----------------------------------
-    raw_logits = module.model_backend.fwd_w_grads_and_latent_models(
+    model_backend = require_model_backend(module)
+    raw_logits = model_backend.fwd_w_grads_and_latent_models(
         model=module.model,
         batch=batch,
         latent_model_handles=module.sae_handles,
@@ -417,7 +506,8 @@ def gradient_attribution_impl(
         )
 
     # Wrap raw dicts into a backend-specific activation cache; already-wrapped caches pass through
-    batch_cache_dict = module.model_backend.wrap_activation_cache(cache_source, module.model)
+    model_backend = require_model_backend(module)
+    batch_cache_dict = model_backend.wrap_activation_cache(cache_source, module.model)
     batch_sz = get_batch_input(batch).size(0)  # type: ignore[attr-defined]  # BatchEncoding tensor has size
 
     # Get alive latents using GetAliveLatentsOp  # TODO: clean this up so no temp batch is required
@@ -538,6 +628,7 @@ def ablation_attribution_impl(
     return analysis_batch
 
 
+@with_analysis_batch_context()
 def concept_direction_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -545,21 +636,92 @@ def concept_direction_impl(
     batch_idx: int,
     **kwargs,
 ) -> AnalysisBatch:
-    """Compute a normalized embedding direction between two concept groups."""
+    """Compute a concept direction from latent-example rows, or fall back to token-group embeddings."""
+    latent_state_rows = resolve_aggregate_input(module, analysis_batch, "concept_latent_state")
+    group_id_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_id")
+    if latent_state_rows is not None and group_id_rows is not None:
+        direction_mode = str(analysis_batch.concept_direction_mode)
+        concept_label = analysis_batch.get("concept_label")
+        group_name_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_name")
+        example_weight_rows = resolve_aggregate_input(module, analysis_batch, "concept_example_weight")
+
+        latent_states = stack_column_tensors(latent_state_rows, dtype=torch.float32)
+        if latent_states.dim() == 1:
+            latent_states = latent_states.unsqueeze(0)
+        group_ids = stack_column_tensors(group_id_rows, dtype=torch.long).reshape(-1)
+        if latent_states.shape[0] != group_ids.shape[0]:
+            raise ValueError(
+                "concept_direction requires concept_latent_state and concept_group_id to have matching rows"
+            )
+
+        if example_weight_rows is None:
+            example_weights = torch.ones(group_ids.shape[0], dtype=torch.float32)
+        else:
+            example_weights = stack_column_tensors(example_weight_rows, dtype=torch.float32).reshape(-1)
+            if example_weights.shape[0] != group_ids.shape[0]:
+                raise ValueError(
+                    "concept_direction requires concept_example_weight to have the same row count as concept_group_id"
+                )
+
+        group_a_mask = group_ids == 0
+        group_b_mask = group_ids == 1
+        if not group_a_mask.any() or not group_b_mask.any():
+            raise ValueError("concept_direction requires at least one example from each concept group")
+
+        if direction_mode == "mean_difference":
+            direction_vector = weighted_mean(
+                latent_states[group_a_mask], example_weights[group_a_mask]
+            ) - weighted_mean(latent_states[group_b_mask], example_weights[group_b_mask])
+        elif direction_mode == "paired_rejection":
+            group_a_states = latent_states[group_a_mask]
+            group_b_states = latent_states[group_b_mask]
+            group_a_weights = example_weights[group_a_mask]
+            group_b_weights = example_weights[group_b_mask]
+            if group_a_states.shape[0] != group_b_states.shape[0]:
+                raise ValueError("paired_rejection requires equal numbers of group-a and group-b latent examples")
+            residuals = []
+            pair_weights = []
+            for state_a, state_b, weight_a, weight_b in zip(
+                group_a_states, group_b_states, group_a_weights, group_b_weights, strict=True
+            ):
+                denom = torch.dot(state_b, state_b).clamp_min(1e-12)
+                proj = (torch.dot(state_a, state_b) / denom) * state_b
+                residuals.append(state_a - proj)
+                pair_weights.append((weight_a + weight_b) / 2)
+            direction_vector = weighted_mean(torch.stack(residuals), torch.stack(pair_weights))
+        else:
+            raise ValueError(f"Unsupported concept_direction_mode: {direction_mode}")
+
+        direction_norm = torch.linalg.vector_norm(direction_vector)
+        if torch.isfinite(direction_norm) and direction_norm.item() > 0:
+            direction_vector = direction_vector / direction_norm
+
+        group_a_name = str(analysis_batch.get("concept_group_a_name") or "group_a")
+        group_b_name = str(analysis_batch.get("concept_group_b_name") or "group_b")
+        if isinstance(group_name_rows, Sequence) and not isinstance(group_name_rows, (str, bytes)):
+            names = [str(name) for name in group_name_rows]
+            group_a_matches = [name for name, group_id in zip(names, group_ids.tolist(), strict=True) if group_id == 0]
+            group_b_matches = [name for name, group_id in zip(names, group_ids.tolist(), strict=True) if group_id == 1]
+            if group_a_matches:
+                group_a_name = group_a_matches[0]
+            if group_b_matches:
+                group_b_name = group_b_matches[0]
+
+        analysis_batch.update(
+            concept_direction=direction_vector.detach().cpu(),
+            concept_label=concept_label or f"{group_a_name} -> {group_b_name}",
+            concept_direction_mode=direction_mode,
+            concept_group_a_name=group_a_name,
+            concept_group_b_name=group_b_name,
+        )
+        return analysis_batch
+
     tokenizer = resolve_tokenizer(module)
     embed_weight = resolve_embedding_weight(module)
-    group_a = list(get_analysis_value(analysis_batch, module, "concept_group_a", batch_idx=batch_idx, default=[]) or [])
-    group_b = list(get_analysis_value(analysis_batch, module, "concept_group_b", batch_idx=batch_idx, default=[]) or [])
-    direction_mode = str(
-        get_analysis_value(
-            analysis_batch,
-            module,
-            "concept_direction_mode",
-            batch_idx=batch_idx,
-            default="mean_difference",
-        )
-    )
-    concept_label = get_analysis_value(analysis_batch, module, "concept_label", batch_idx=batch_idx, default=None)
+    group_a = list(analysis_batch.concept_group_a)
+    group_b = list(analysis_batch.concept_group_b)
+    direction_mode = str(analysis_batch.concept_direction_mode)
+    concept_label = analysis_batch.get("concept_label")
     if not group_a or not group_b:
         raise ValueError("concept_direction requires non-empty concept_group_a and concept_group_b")
 
@@ -596,6 +758,7 @@ def concept_direction_impl(
     return analysis_batch
 
 
+@with_analysis_batch_context()
 def compute_attribution_graph_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -606,15 +769,11 @@ def compute_attribution_graph_impl(
     """Generate and decompose a circuit-tracer attribution graph."""
     analysis_backend = require_analysis_backend(module)
     prompt = kwargs.pop("prompt", None) or analysis_backend.resolve_prompt(module, analysis_batch, batch)
-    concept_direction = get_analysis_value(analysis_batch, module, "concept_direction", batch_idx=batch_idx)
-    concept_label = get_analysis_value(analysis_batch, module, "concept_label", batch_idx=batch_idx)
-    concept_group_a_token_ids = get_analysis_value(
-        analysis_batch, module, "concept_group_a_token_ids", batch_idx=batch_idx
-    )
-    concept_group_b_token_ids = get_analysis_value(
-        analysis_batch, module, "concept_group_b_token_ids", batch_idx=batch_idx
-    )
-    concept_direction_mode = get_analysis_value(analysis_batch, module, "concept_direction_mode", batch_idx=batch_idx)
+    concept_direction = analysis_batch.get("concept_direction")
+    concept_label = analysis_batch.get("concept_label")
+    concept_group_a_token_ids = analysis_batch.get("concept_group_a_token_ids")
+    concept_group_b_token_ids = analysis_batch.get("concept_group_b_token_ids")
+    concept_direction_mode = analysis_batch.get("concept_direction_mode")
     if concept_direction is not None and "attribution_targets" not in kwargs:
         kwargs["attribution_targets"] = analysis_backend.build_concept_attribution_targets(
             module,
@@ -653,6 +812,7 @@ def compute_attribution_graph_impl(
     return analysis_batch
 
 
+@with_analysis_batch_context()
 def extract_top_features_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -751,6 +911,7 @@ def graph_node_influence_impl(
     return analysis_batch
 
 
+@with_analysis_batch_context()
 def feature_intervention_forward_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -771,32 +932,27 @@ def feature_intervention_forward_impl(
 
     prompt = kwargs.pop("prompt", None) or analysis_backend.resolve_prompt(module, analysis_batch, batch)
     settings = analysis_backend.resolve_feature_intervention_settings(module, kwargs)
-    resolved_top_feature_ids = get_analysis_value(analysis_batch, module, "top_feature_ids", batch_idx=batch_idx)
-    resolved_top_feature_scores = get_analysis_value(analysis_batch, module, "top_feature_scores", batch_idx=batch_idx)
-    resolved_top_feature_activation_values = get_analysis_value(
-        analysis_batch,
-        module,
-        "top_feature_activation_values",
-        batch_idx=batch_idx,
+    feature_rows = analysis_batch.require(
+        "top_feature_ids",
+        message="feature_intervention_forward requires top_feature_ids in analysis_batch or scoped inputs",
     )
-    resolved_logit_target_ids = get_analysis_value(analysis_batch, module, "logit_target_ids", batch_idx=batch_idx)
+    feature_scores = analysis_batch.get("top_feature_scores")
+    feature_activation_values = analysis_batch.get("top_feature_activation_values")
+    target_ids = analysis_batch.get("logit_target_ids")
 
     # If no explicit logit_target_ids, try to resolve from concept group token IDs
-    if resolved_logit_target_ids is None:
-        concept_a_ids = get_analysis_value(analysis_batch, module, "concept_group_a_token_ids", batch_idx=batch_idx)
-        concept_b_ids = get_analysis_value(analysis_batch, module, "concept_group_b_token_ids", batch_idx=batch_idx)
+    if target_ids is None:
+        concept_a_ids = analysis_batch.get("concept_group_a_token_ids")
+        concept_b_ids = analysis_batch.get("concept_group_b_token_ids")
         real_ids = list(concept_a_ids or []) + list(concept_b_ids or [])
         if real_ids:
-            resolved_logit_target_ids = torch.tensor(real_ids, dtype=torch.long)
-
-    if resolved_top_feature_ids is None:
-        raise ValueError("feature_intervention_forward requires top_feature_ids in analysis_batch or input_store")
+            target_ids = torch.tensor(real_ids, dtype=torch.long)
 
     intervention_inputs = {
-        "top_feature_ids": resolved_top_feature_ids,
-        "top_feature_scores": resolved_top_feature_scores,
-        "top_feature_activation_values": resolved_top_feature_activation_values,
-        "logit_target_ids": resolved_logit_target_ids,
+        "top_feature_ids": feature_rows,
+        "top_feature_scores": feature_scores,
+        "top_feature_activation_values": feature_activation_values,
+        "logit_target_ids": target_ids,
     }
     analysis_batch.update(
         **{
@@ -821,8 +977,8 @@ def feature_intervention_forward_impl(
         post_logits = pre_logits.clone()
 
     target_ids_tensor = None
-    if resolved_logit_target_ids is not None:
-        target_ids_tensor = torch.as_tensor(resolved_logit_target_ids, dtype=torch.long).reshape(-1)
+    if target_ids is not None:
+        target_ids_tensor = torch.as_tensor(target_ids, dtype=torch.long).reshape(-1)
     logit_diff = mean_target_logit_delta(pre_logits, post_logits, target_ids_tensor)
 
     analysis_batch.update(

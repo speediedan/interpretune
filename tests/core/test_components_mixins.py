@@ -599,3 +599,20 @@ class TestClassificationMixin:
         assert torch.equal(label_ids, torch.tensor([10, 20, 30, 10], device=module.device))
         # Verify original labels are returned as the second value
         assert torch.equal(returned_labels, labels)
+
+    def test_labels_to_ids_accepts_cpu_label_tensor(self, get_it_session__core_cust__setup):
+        """Test the labels_to_ids method with label indices on a different device."""
+        fixture = get_it_session__core_cust__setup
+        module = fixture.it_session.module
+
+        target_labels_to_ids = get_super_method(
+            "it_examples.experiments.rte_boolq.RTEBoolqModuleMixin", module, "labels_to_ids"
+        )
+        module.it_cfg.entailment_mapping_indices = torch.tensor([10, 20, 30], device=module.device)
+
+        labels = torch.tensor([0, 1, 2, 0], device="cpu")
+        label_ids, returned_labels = target_labels_to_ids(labels)
+
+        assert torch.equal(label_ids, torch.tensor([10, 20, 30, 10], device=module.device))
+        assert returned_labels.device == module.device
+        assert torch.equal(returned_labels, labels.to(module.device))

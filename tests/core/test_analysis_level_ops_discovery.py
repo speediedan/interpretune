@@ -85,12 +85,16 @@ def test_capability_validation_allows_matching_analysis_capability() -> None:
     assert isinstance(op, AnalysisOp)
     module = _DummyModule(analysis_capabilities=frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH}))
     mock_impl = MagicMock(return_value=AnalysisBatch(ok=True))
-    op._impl = mock_impl
+    original_impl = op._impl
+    try:
+        op._impl = mock_impl
 
-    result = cast(AnalysisBatch, op(module=module, analysis_batch=AnalysisBatch(), batch=None, batch_idx=0))
+        result = cast(AnalysisBatch, op(module=module, analysis_batch=AnalysisBatch(), batch=None, batch_idx=0))
 
-    assert result.ok is True
-    mock_impl.assert_called_once()
+        assert result.ok is True
+        mock_impl.assert_called_once()
+    finally:
+        op._impl = original_impl
 
 
 def test_composite_ops_validate_capabilities_per_stage() -> None:
@@ -101,33 +105,38 @@ def test_composite_ops_validate_capabilities_per_stage() -> None:
     def noop_impl(module, analysis_batch, batch, batch_idx, **kwargs):
         return analysis_batch
 
-    for sub_op in op.composition[:-1]:
-        sub_op._impl = noop_impl
+    original_impls = [sub_op._impl for sub_op in op.composition[:-1]]
+    try:
+        for sub_op in op.composition[:-1]:
+            sub_op._impl = noop_impl
 
-    analysis_batch = AnalysisBatch(
-        concept_group_a=["Paris"],
-        concept_group_b=["London"],
-        input_string="Paris London",
-        adjacency_matrix=[[0.0]],
-        active_features=[[0, 0, 0]],
-        selected_features=[0],
-        activation_values=[0.1],
-        logit_target_ids=[0],
-        logit_target_tokens=["Paris"],
-        logit_probabilities=[1.0],
-        input_tokens=[0],
-        graph_cfg_json=(
-            "{"
-            '"n_layers": 1, "d_model": 1, "d_head": 1, "n_heads": 1, '
-            '"d_mlp": 1, "d_vocab": 1, "tokenizer_name": "fake", '
-            '"model_name": "fake", "original_architecture": "Fake"'
-            "}"
-        ),
-        graph_scan_json='"scan"',
-        graph_vocab_size=1,
-        top_feature_ids=[[0, 0, 0]],
-        top_feature_scores=[0.1],
-    )
+        analysis_batch = AnalysisBatch(
+            concept_group_a=["Paris"],
+            concept_group_b=["London"],
+            input_string="Paris London",
+            adjacency_matrix=[[0.0]],
+            active_features=[[0, 0, 0]],
+            selected_features=[0],
+            activation_values=[0.1],
+            logit_target_ids=[0],
+            logit_target_tokens=["Paris"],
+            logit_probabilities=[1.0],
+            input_tokens=[0],
+            graph_cfg_json=(
+                "{"
+                '"n_layers": 1, "d_model": 1, "d_head": 1, "n_heads": 1, '
+                '"d_mlp": 1, "d_vocab": 1, "tokenizer_name": "fake", '
+                '"model_name": "fake", "original_architecture": "Fake"'
+                "}"
+            ),
+            graph_scan_json='"scan"',
+            graph_vocab_size=1,
+            top_feature_ids=[[0, 0, 0]],
+            top_feature_scores=[0.1],
+        )
 
-    with pytest.raises(ValueError, match="feature_intervention"):
-        op(module=module, analysis_batch=analysis_batch, batch=None, batch_idx=0)
+        with pytest.raises(ValueError, match="feature_intervention"):
+            op(module=module, analysis_batch=analysis_batch, batch=None, batch_idx=0)
+    finally:
+        for sub_op, original_impl in zip(op.composition[:-1], original_impls, strict=True):
+            sub_op._impl = original_impl

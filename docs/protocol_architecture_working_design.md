@@ -148,7 +148,7 @@ The current session design still assumes that a datamodule and module pair is th
 
 Current ops often resolve values through helper functions rather than through a first-class execution context.
 
-The most visible example is `get_analysis_value(...)`, which falls back from `analysis_batch` to `input_store`, and then relies on container heuristics for batch indexing.
+The most visible example used to be `get_analysis_value(...)`, which fell back from `analysis_batch` to `input_store` and then relied on container heuristics for batch indexing. The IG-7 direction is to bind that lookup behavior onto `AnalysisBatch` itself so op authors ask the batch for values directly while scopes stay explicit in the execution context.
 
 This is the main reason notebook-static list values such as concept groups do not fit naturally today.
 
@@ -178,6 +178,7 @@ Interpretune can serialize per-batch analysis outputs well enough, but aggregate
 ### Anti-patterns or fragile patterns
 
 - treating `get_analysis_value(...)` as the long-term public abstraction for value resolution
+- coupling execution-time lookup convenience to `AnalysisStore` serialization details instead of keeping formatter and persistence behavior in the dataset layer
 - encoding rich structured metadata as JSON strings when Arrow-native typed columns are feasible
 - designing notebook workflows around runner internals instead of a shared public analysis execution helper
 - assuming all list-like analysis values are row-scoped

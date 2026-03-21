@@ -28,6 +28,7 @@ IT_ANALYSIS_HUB_CACHE = Path(os.getenv("IT_ANALYSIS_HUB_CACHE", DEFAULT_IT_ANALY
 IT_ANALYSIS_OP_PATHS = os.getenv("IT_ANALYSIS_OP_PATHS", "").split(":") if os.getenv("IT_ANALYSIS_OP_PATHS") else []
 
 from interpretune.analysis.ops import ColCfg, OpSchema, AnalysisBatch, DISPATCHER, AnalysisOp, OpWrapper, AnalysisOpLike
+from interpretune.analysis.execution import AnalysisInputs, execute_analysis_op, execute_analysis_step
 from interpretune.analysis.ops.hub_manager import HubAnalysisOpManager
 from interpretune.analysis.backends import (
     AnalysisBackend,
@@ -86,8 +87,11 @@ __all__ = [
     "ColCfg",
     "OpSchema",
     "AnalysisBatch",
+    "AnalysisInputs",
     "IT_ANALYSIS_CACHE",
     "HubAnalysisOpManager",
+    "execute_analysis_op",
+    "execute_analysis_step",
     # Hub Configuration
     "IT_ANALYSIS_HUB_CACHE",
     "IT_ANALYSIS_OP_PATHS",

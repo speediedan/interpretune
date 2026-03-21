@@ -68,6 +68,21 @@ Over:
 
 - one large op that mixes caching, aggregation, intervention, logging, and formatting
 
+### 2.1 Let `AnalysisOp` own scoped batch context by default
+
+When an op runs through the normal dispatcher / `AnalysisOp` surface, scoped
+`AnalysisBatch` lookup is already bound for that execution. That means op
+implementations should prefer:
+
+- `analysis_batch.get(...)`
+- `analysis_batch.require(...)`
+- shared execution helpers such as `execute_analysis_op(...)`
+
+Avoid building new per-op context decorators as the default pattern.
+
+`with_analysis_batch_context(...)` still exists, but only as a compatibility
+shim for direct `*_impl(...)` calls that intentionally bypass `AnalysisOp`.
+
 ### 3. Use capability checks instead of backend-name checks
 
 Prefer:
@@ -175,9 +190,71 @@ Design custom ops so they are compatible with that future:
 
 ## Current Open Gaps
 
-### Analysis value resolution is still evolving
+### Prefer AnalysisBatch-scoped lookup for mixed batch, run, and store inputs
 
-If your op currently needs both `analysis_batch` values and `input_store` fallback, keep the logic localized and expect a future migration toward a first-class scoped resolver.
+The current IG-7 execution path binds scoped input resolution directly onto `AnalysisBatch`.
+
+Prefer:
+
+- using `analysis_batch.field_name` as the primary access pattern for declared or required inputs
+- using `analysis_batch.get("field_name")` when the value is genuinely optional
+- using `analysis_batch.require("field_name")` when the value is mandatory
+- overriding `scopes=` only when custom precedence is genuinely needed
+- treating notebook variables and aggregate artifacts as `run` scope instead of relying on list indexing heuristics
+
+Example:
+
+```python
+group_a = list(analysis_batch.concept_group_a)
+target_ids = analysis_batch.require("logit_target_ids")
+custom_value = analysis_batch.get("foo", scopes=("analysis_batch", "run", "store"))
+```
+
+Attribute-style access is execution-time resolution only. It uses the currently bound scope precedence:
+
+- `analysis_batch`
+- `batch`
+- `run`
+- `row`
+- `store`
+
+If the active op input schema declares a default value, attribute access will also use that default before raising.
+
+Avoid:
+
+- adding new direct `_value_for_batch(...)` style logic inside ops
+- manually constructing resolver handles in op implementations unless you are extending framework internals
+- assuming that every list-like value coming from an input store is row-scoped
+
+`get_analysis_value(...)` and `get_analysis_resolver(...)` still exist during the transition, but new op code should prefer the `AnalysisBatch` access surface.
+
+### Serialization and formatter boundary
+
+This lookup API is an execution-time convenience only.
+
+It does not change how `AnalysisStore` persists data or how the custom datasets formatter materializes rows, batches, or columns. The existing serialization path still lives in:
+
+- `src/interpretune/analysis/core.py`
+- `src/interpretune/analysis/formatters.py`
+- `src/interpretune/analysis/ops/auto_columns.py`
+
+That means:
+
+- `analysis_batch.field_name`, `analysis_batch.get(...)`, and `analysis_batch.require(...)` resolve against already-bound row, batch, run, and store objects
+- `AnalysisStore` still owns dataset-backed column access, `set_format(...)`, and custom tensorization behavior
+- op authors should treat scoped lookup as a read layer over already-prepared inputs, not as a new persistence mechanism
+
+In particular, this does not change Hugging Face Dataset semantics:
+
+- string access is still column access on `AnalysisStore`
+- integer or slice access is still row or row-range access on the underlying dataset
+- `_format_columns(...)` and the Interpretune dataset formatter still control how persisted columns are materialized back into tensors or lists
+
+Keep the conceptual split clear:
+
+- `analysis_batch` means the execution-time resolved input surface for one op call
+- `batch` means the dataloader batch argument passed into the op
+- `AnalysisStore` means the persisted dataset-backed artifact layer
 
 ### Aggregate analysis patterns need a cleaner framework home
 

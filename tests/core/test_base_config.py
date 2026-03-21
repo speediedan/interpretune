@@ -542,6 +542,29 @@ class TestAnalysisInjectionConfigs:
             )
             assert cfg._original_step_fn == "analysis_step"
 
+    def test_analysis_cfg_generated_step_uses_shared_execution_helper(self):
+        cfg = AnalysisCfg(target_op=it.logit_diffs_base, ignore_manual=True)
+        mock_module = MagicMock()
+        mock_module.analysis_cfg = cfg
+        batch = MagicMock()
+
+        with patch.object(cfg, "prepare_model_ctx"):
+            with patch("interpretune.config.analysis.execute_analysis_step") as mock_execute:
+                expected_batch = AnalysisBatch(logit_diffs=torch.tensor([0.5]))
+                mock_execute.return_value = iter([expected_batch])
+
+                cfg.apply(mock_module)
+                result = list(mock_module._generated_analysis_step(batch=batch, batch_idx=3, dataloader_idx=1))
+
+        assert result == [expected_batch]
+        mock_execute.assert_called_once_with(
+            mock_module,
+            batch,
+            3,
+            dataloader_idx=1,
+            analysis_cfg=cfg,
+        )
+
     def test_analysis_artifact_cfg(self):
         # Test default initialization
         cfg = AnalysisArtifactCfg()

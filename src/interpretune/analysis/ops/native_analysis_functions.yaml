@@ -340,22 +340,123 @@ ablation_attribution:
       datasets_dtype: int64
       per_latent: true
 
+extract_concept_latent_examples:
+  description: Extract per-example latent states and metadata for concept-direction aggregation
+  implementation: interpretune.analysis.ops.definitions.extract_concept_latent_examples_impl
+  aliases: [concept_latent_examples]
+  input_schema:
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    answer_indices:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+    logit_diffs:
+      datasets_dtype: float32
+    concept_group_a_label_ids:
+      datasets_dtype: int64
+      non_tensor: true
+      sequence_type: true
+    concept_group_b_label_ids:
+      datasets_dtype: int64
+      non_tensor: true
+      sequence_type: true
+    concept_group_a_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_group_b_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      default: unembed.hook_in.hook_sae_input
+    concept_correct_only:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      default: 1
+    concept_weight_by_logit_diff:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      default: 0
+  output_schema:
+    concept_latent_state:
+      datasets_dtype: float32
+      sequence_type: true
+    concept_group_id:
+      datasets_dtype: int64
+    concept_group_name:
+      datasets_dtype: string
+      non_tensor: true
+    concept_example_logit_diff:
+      datasets_dtype: float32
+    concept_example_weight:
+      datasets_dtype: float32
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_group_a_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_group_b_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+
 concept_direction:
-  description: Compute semantic concept direction vector from token group embeddings
+  description: Aggregate latent concept examples into a normalized concept direction vector
   implementation: interpretune.analysis.ops.definitions.concept_direction_impl
   required_capabilities: [attribution_graph]
   aliases: [semantic_direction]
   input_schema:
+    concept_latent_state:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    concept_group_id:
+      datasets_dtype: int64
+      required: false
+    concept_group_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_example_weight:
+      datasets_dtype: float32
+      required: false
+    concept_group_a_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_group_b_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_label:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
     concept_group_a:
+      required: false
       datasets_dtype: string
       non_tensor: true
     concept_group_b:
+      required: false
       datasets_dtype: string
       non_tensor: true
     concept_direction_mode:
       datasets_dtype: string
       required: false
       non_tensor: true
+      default: mean_difference
   output_schema:
     concept_direction:
       datasets_dtype: float32
@@ -376,6 +477,16 @@ concept_direction:
       required: false
       non_tensor: true
       sequence_type: true
+    concept_group_a_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    concept_group_b_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
     concept_direction_mode:
       datasets_dtype: string
       required: false
