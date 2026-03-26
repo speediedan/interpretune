@@ -35,6 +35,7 @@ if _LIGHTNING_AVAILABLE:
                     "dispatch": _DeviceDtypeModuleMixin.device,
                 }
             },
+            gen_prepares_inputs_sigs=("_prepare_model_inputs",),
         )
 
         def on_train_start(self) -> None:

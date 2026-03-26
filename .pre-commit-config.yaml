@@ -87,6 +87,12 @@ repos:
         language: system
         files: ^src/it_examples/notebooks/dev/.*\.ipynb$
         pass_filenames: false
+      - id: check-benchmark-registry-isolation
+        name: Benchmark registry must be committed in isolation
+        entry: python scripts/check_benchmark_registry_isolation.py
+        language: system
+        files: ^tests/benchmarks/benchmark_registry\.yaml$
+        pass_filenames: false
 
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: 'v0.12.10'

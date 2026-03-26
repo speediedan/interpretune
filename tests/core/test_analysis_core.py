@@ -967,7 +967,7 @@ class TestCoreFunctionality:
                 wrapper = getattr(interpretune, alias)
                 assert isinstance(wrapper, OpWrapper), f"'{alias}' is not an OpWrapper instance"
                 assert DISPATCHER.get_op(wrapper._op_name).name == op_name, (
-                    f"Alias '{alias}' points to '{wrapper.op_name}' instead of '{op_name}'"
+                    f"Alias '{alias}' points to '{wrapper._op_name}' instead of '{op_name}'"
                 )
 
         finally:

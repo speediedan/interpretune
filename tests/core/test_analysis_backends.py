@@ -125,6 +125,12 @@ class TestHookNameResolver:
         assert base == "hook_mlp_out"
         assert subhook == "hook_sae_error"
 
+    def test_parse_global_hook(self):
+        layer, base, subhook = HookNameResolver.parse_hook_name("unembed.hook_in.hook_sae_input")
+        assert layer == -1
+        assert base == "unembed.hook_in"
+        assert subhook == "hook_sae_input"
+
     def test_parse_invalid_format_raises(self):
         with pytest.raises(ValueError, match="Cannot parse"):
             HookNameResolver.parse_hook_name("not_a_valid_hook")
@@ -167,6 +173,12 @@ class TestHookNameResolver:
         resolver = HookNameResolver("GPT2LMHeadModel")
         path, io_type = resolver.resolve("blocks.4.mlp.hook_pre")
         assert path == "transformer.h.4.mlp"
+        assert io_type == "input"
+
+    def test_resolve_global_unembed_hook(self):
+        resolver = HookNameResolver("Gemma2ForCausalLM")
+        path, io_type = resolver.resolve("unembed.hook_in")
+        assert path == "lm_head"
         assert io_type == "input"
 
     def test_resolve_sae_subhook_resolves_to_base(self):
@@ -265,6 +277,13 @@ class TestHookNameResolver:
         resolved = resolver.resolve_for_envoy("blocks.0.hook_resid_pre")
         assert resolved.io_type == "input"
         # tuple_output is True (default) but irrelevant for input hooks
+
+    def test_resolve_for_envoy_global_unembed_hook(self):
+        resolver = HookNameResolver("Gemma2ForCausalLM")
+        resolved = resolver.resolve_for_envoy("unembed.hook_in.hook_sae_input")
+        assert resolved.module_path == "lm_head"
+        assert resolved.io_type == "input"
+        assert resolved.tuple_output is False
 
     def test_resolve_for_envoy_sae_subhook_resolves_to_base(self):
         resolver = HookNameResolver("GPT2LMHeadModel")

@@ -1,0 +1,43 @@
+name: Check benchmark registry isolation
+
+on:
+  pull_request:
+    branches: [main, "release/*"]
+    paths:
+      - "tests/benchmarks/benchmark_registry.yaml"
+
+jobs:
+  check-registry-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check registry commits are isolated
+        run: |
+          # For each commit in the PR that touches the registry, verify
+          # the only other file allowed is benchmark_update.allow.
+          ALLOWED="tests/benchmarks/benchmark_registry.yaml tests/benchmarks/benchmark_update.allow"
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+
+          FAILED=0
+          for SHA in $(git log --format=%H "${BASE}..${HEAD}" -- tests/benchmarks/benchmark_registry.yaml); do
+            FILES=$(git diff-tree --no-commit-id --name-only -r "$SHA")
+            for F in $FILES; do
+              if ! echo "$ALLOWED" | grep -qw "$F"; then
+                echo "ERROR: Commit $SHA modifies benchmark_registry.yaml alongside unrelated file: $F"
+                FAILED=1
+              fi
+            done
+          done
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "Registry updates must be committed in isolation."
+            echo "See tests/benchmarks/README.md for details."
+            exit 1
+          fi
+          echo "All registry commits are properly isolated."

@@ -40,6 +40,34 @@ Relevant code:
 - `/home/speediedan/repos/interpretune/src/interpretune/analysis/ops/dispatcher.py`
 - `/home/speediedan/repos/interpretune/src/interpretune/analysis/ops/definitions.py`
 
+## Preferred Notebook And Script Surface
+
+For user-facing notebooks, examples, and ad hoc research scripts, prefer the top-level op wrappers on `interpretune` instead of reaching into the dispatcher directly.
+
+Preferred pattern:
+
+```python
+import interpretune as it
+import interpretune.analysis  # registers top-level op wrappers
+
+analysis_batch = it.AnalysisBatch(prompts=[prompt])
+analysis_batch = it.model_fwd_w_cache_latent_models(module=module, analysis_batch=analysis_batch, batch=batch, batch_idx=0)
+analysis_batch = it.logit_diffs_cache(module=module, analysis_batch=analysis_batch, batch=batch, batch_idx=0)
+```
+
+Avoid this in notebook or experiment code unless you are extending dispatcher internals themselves:
+
+```python
+op = DISPATCHER.get_op("logit_diffs_cache")
+analysis_batch = op(module, analysis_batch, batch, batch_idx)
+```
+
+Why this is preferred:
+
+- it matches the public API surface we expect users to learn
+- it keeps notebook code aligned with in-tree example usage
+- it avoids local dispatcher plumbing in research harnesses that are not actually implementing new dispatch behavior
+
 ## Best Practices
 
 ### 1. Make schemas explicit

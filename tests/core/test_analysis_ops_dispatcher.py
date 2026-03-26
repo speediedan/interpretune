@@ -163,7 +163,7 @@ test_op:
         op = DISPATCHER._instantiate_op("logit_diffs_sae")
         assert isinstance(op, CompositeAnalysisOp)
         assert op.name == "logit_diffs_sae"
-        assert op.composition_name == "labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts"
+        assert op.composition_name == "labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.sae_correct_acts"
         assert op.ctx_key == "logit_diffs_sae"
         assert len(op.composition) == 4
 
@@ -176,7 +176,7 @@ test_op:
         # Test with normal op
         op = DISPATCHER.get_op("model_forward")
         assert isinstance(op, AnalysisOp)
-        assert op.name == "model_forward"
+        assert op.name == "model_fwd"
 
         # Test with composite op
         op = DISPATCHER.get_op("logit_diffs_sae")
@@ -225,15 +225,15 @@ test_op:
         composition = DISPATCHER.compile_ops(["labels_to_ids", "model_forward", "logit_diffs"])
         assert isinstance(composition, CompositeAnalysisOp)
         assert len(composition.composition) == 3
-        assert composition.name == "labels_to_ids.model_forward.logit_diffs"
+        assert composition.name == "labels_to_ids.model_fwd.logit_diffs"
         assert composition.composition[0].name == "labels_to_ids"
-        assert composition.composition[1].name == "model_forward"
+        assert composition.composition[1].name == "model_fwd"
         assert composition.composition[2].name == "logit_diffs"
 
         # Test with dot notation and custom name
         composition = DISPATCHER.compile_ops("labels_to_ids.model_forward.logit_diffs", name="dot_composite")
         assert composition.name == "dot_composite"
-        assert composition.composition_name == "labels_to_ids.model_forward.logit_diffs"
+        assert composition.composition_name == "labels_to_ids.model_fwd.logit_diffs"
         assert composition.ctx_key == "dot_composite"
         assert len(composition.composition) == 3
 
@@ -245,14 +245,14 @@ test_op:
         composition = DISPATCHER.compile_ops([op1, "model_forward"], name="test_mixed")
         assert isinstance(composition, CompositeAnalysisOp)
         assert composition.name == "test_mixed"
-        assert composition.composition_name == "labels_to_ids.model_forward"
+        assert composition.composition_name == "labels_to_ids.model_fwd"
         assert composition.ctx_key == "test_mixed"
 
         # Create composition from operations only
         composition = DISPATCHER.compile_ops([op1, op2], name="test_ops")
         assert isinstance(composition, CompositeAnalysisOp)
         assert composition.name == "test_ops"
-        assert composition.composition_name == "labels_to_ids.model_forward"
+        assert composition.composition_name == "labels_to_ids.model_fwd"
         assert composition.ctx_key == "test_ops"
         assert len(composition.composition) == 2
 
@@ -260,7 +260,7 @@ test_op:
         composition = DISPATCHER.compile_ops([op1, "model_forward.logit_diffs"], name="test_mixed_w_op")
         assert isinstance(composition, CompositeAnalysisOp)
         assert composition.name == "test_mixed_w_op"
-        assert composition.composition_name == "labels_to_ids.model_forward.logit_diffs"
+        assert composition.composition_name == "labels_to_ids.model_fwd.logit_diffs"
         assert composition.ctx_key == "test_mixed_w_op"
         assert len(composition.composition) == 3
 
@@ -370,7 +370,7 @@ test_op:
 
         # With lazy loading, operations are OpWrapper instances until accessed
         # Access an attribute to trigger instantiation
-        assert it.model_forward.name == "model_forward"
+        assert it.model_forward.name == "model_fwd"
 
         # Test composite operations
         assert hasattr(it, "logit_diffs_sae")
@@ -382,7 +382,7 @@ test_op:
         "op_name",
         [
             "model_forward",
-            "model_cache_forward",
+            "model_fwd_w_cache_latent_models",
             "logit_diffs",
             "sae_correct_acts",
             "logit_diffs_sae",
@@ -870,9 +870,9 @@ test_op:
         """Test that transitive dependencies are properly resolved."""
         DISPATCHER.load_definitions()
 
-        # Check model_cache_forward which requires both get_answer_indices and get_alive_latents
+        # Check model_fwd_w_cache_latent_models which requires both get_answer_indices and get_alive_latents
         # get_alive_latents also requires get_answer_indices
-        cache_forward_def = DISPATCHER._op_definitions["model_cache_forward"]
+        cache_forward_def = DISPATCHER._op_definitions["model_fwd_w_cache_latent_models"]
 
         # Should have its own schemas
         assert "input" in cache_forward_def.input_schema
@@ -948,16 +948,16 @@ test_op:
         """Test that required_ops compilation works correctly with aliases."""
         DISPATCHER.load_definitions()
 
-        # Test with model_cache_forward which has an alias
-        cache_forward_def = DISPATCHER._op_definitions["model_forward_cache"]
+        # Test with model_fwd which retains the model_forward alias
+        cache_forward_def = DISPATCHER._op_definitions["model_forward"]
 
         # Should be the same as the main operation definition
-        main_def = DISPATCHER._op_definitions["model_cache_forward"]
+        main_def = DISPATCHER._op_definitions["model_fwd"]
         assert cache_forward_def is main_def
 
         # Should have compiled schemas
         assert "answer_indices" in cache_forward_def.input_schema
-        assert "alive_latents" in cache_forward_def.output_schema
+        assert "tokens" in cache_forward_def.output_schema
 
     def test_required_ops_error_handling(self):
         """Test error handling for invalid required_ops."""
@@ -1923,7 +1923,7 @@ dependent_op:
         # Test instantiation still works
         op = dispatcher.get_op("model_forward")
         assert isinstance(op, AnalysisOp)
-        assert op.name == "model_forward"
+        assert op.name == "model_fwd"
 
         # Test composition still works
         composition = dispatcher.compile_ops(["labels_to_ids", "model_forward"])

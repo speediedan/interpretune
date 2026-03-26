@@ -59,12 +59,20 @@ def _call_itmodule_hook(
     hook_name: str,
     hook_msg: str | None = None,
     connect_output: bool = False,
+    optional: bool = False,
     *args: Any,
     **kwargs: Any,
 ) -> Any | None:
     hook_msg = hook_msg + ": " if hook_msg else ""
 
-    fn = getattr(hookable_module, hook_name)
+    fn = getattr(hookable_module, hook_name, None)
+    if fn is None:
+        if optional:
+            return None
+        raise AttributeError(
+            f"Hook '{hook_name}' not found on {hookable_module.__class__.__name__}. "
+            f"Either implement the hook or pass optional=True."
+        )
 
     with _hookNameContextManager(hookable_module, hook_name):
         rank_zero_info(f"{hook_msg}{hookable_module.__class__.__name__}")

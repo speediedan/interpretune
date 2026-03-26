@@ -38,6 +38,7 @@ from interpretune.analysis import AnalysisStore, LatentAnalysisDict
 from interpretune.session import ITMeta, ITSession
 from interpretune.protocol import ModuleSteppable, DataModuleInitable
 from interpretune.utils import rank_zero_only
+from interpretune.utils.resource_mgmt import cleanup_python_cuda
 from tests import _PATH_DATASETS, seed_everything, load_dotenv, FinetuningScheduler, get_fts, Trainer
 from tests.configuration import config_modules, apply_it_test_cfg
 from tests.modules import TestITDataModule, TestITModule
@@ -119,9 +120,7 @@ def _force_gc():
 
 def _cleanup_cuda_memory():
     """Release CUDA memory if available, then run gc."""
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    cleanup_python_cuda()
 
 
 _TEST_RESOURCE_SNAPSHOT_ATTR = "_it_test_resource_snapshot"
@@ -190,39 +189,19 @@ def _log_fixture_resource_delta(
 def clean_cuda(model, min_bytes: int = 1 << 20):
     """Move *model* to CUDA; on exit automatically free large transient CUDA tensors.
 
-    Snapshots data_ptrs of all large CUDA tensors after the model moves to CUDA
-    (capturing model weights as 'known'). On exit, any new large CUDA tensor not
-    in the snapshot has its storage replaced via ``set_(torch.empty(0))``, freeing
-    VRAM even while Python references remain alive. Then ``gc.collect()`` +
-    ``empty_cache()`` flush remaining allocations before the model moves back to CPU.
-
-    Adapted from circuit-tracer's ``clean_cuda`` context manager for use in
-    Interpretune's test infrastructure.
+    Thin wrapper around :func:`interpretune.utils.resource_mgmt.safe_clean_cuda`
+    for use in test fixtures. Unlike ``safe_clean_cuda``, this variant does **not**
+    guard against ``ReferenceError`` since the test environment controls object
+    lifecycles more tightly than interactive notebooks.
 
     Args:
         model: The model to move to CUDA for the duration of the context.
         min_bytes: Minimum tensor size to track (default 1 MiB).
     """
-    model.to("cuda")
+    from interpretune.utils.resource_mgmt import safe_clean_cuda as _safe_clean_cuda
 
-    def _is_large_dense_cuda(t: object) -> bool:
-        return isinstance(t, torch.Tensor) and t.is_cuda and t.layout == torch.strided and t.nbytes >= min_bytes
-
-    known_ptrs: set[int] = {obj.data_ptr() for obj in gc.get_objects() if _is_large_dense_cuda(obj)}
-    try:
+    with _safe_clean_cuda(model, min_bytes=min_bytes):
         yield
-    finally:
-        freed_ptrs: set[int] = set()
-        for obj in gc.get_objects():
-            if _is_large_dense_cuda(obj) and obj.data_ptr() not in known_ptrs and obj.data_ptr() not in freed_ptrs:
-                freed_ptrs.add(obj.data_ptr())
-                try:
-                    obj.set_(torch.empty(0))
-                except Exception:
-                    pass
-        gc.collect()
-        torch.cuda.empty_cache()
-        model.to("cpu")
 
 
 @pytest.fixture
@@ -1434,6 +1413,14 @@ def pytest_collection_modifyitems(items):
             for marker in item.own_markers
             # has `@RunIf(optional=True)`
             if marker.name == "skipif" and marker.kwargs.get("optional")
+        ]
+    elif os.getenv("IT_RUN_BENCHMARK_TESTS", "0") == "1":
+        items[:] = [
+            item
+            for item in items
+            for marker in item.own_markers
+            # has `@RunIf(benchmark=True)`
+            if marker.name == "skipif" and marker.kwargs.get("benchmark")
         ]
 
 

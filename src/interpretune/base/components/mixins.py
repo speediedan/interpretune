@@ -155,7 +155,18 @@ class AnalysisStepMixin:
         # TODO: consider adding further upstream configuration validation that warns the user if the provided dataset
         # and step logic are incompatible
         # TODO: handle regular dicts in addition to BatchEncoding?
-        return {bk: batch[bk] for bk in list(batch.data) if bk in self.model_sig_keys(target_method)}  # type: ignore[attr-defined]  # mixin provides model_sig_keys
+        sig_keys = set(self.model_sig_keys(target_method))  # type: ignore[attr-defined]  # mixin provides model_sig_keys
+        pruned_batch = {bk: batch[bk] for bk in list(batch.data) if bk in sig_keys}
+
+        # Interpretune dataloaders often expose token IDs as ``input`` while HuggingFace-style
+        # forwards expect ``input_ids``. Preserve that payload under the accepted key so
+        # backend-driven forwards do not lose their primary model input during pruning.
+        if "input" in batch and "input_ids" in sig_keys and "input_ids" not in pruned_batch:
+            pruned_batch["input_ids"] = batch["input"]
+        if "input_ids" in batch and "input" in sig_keys and "input" not in pruned_batch:
+            pruned_batch["input"] = batch["input_ids"]
+
+        return pruned_batch
 
 
 class GenerativeStepMixin:
@@ -218,7 +229,7 @@ class GenerativeStepMixin:
         return self.it_cfg.generative_step_cfg.input_inspection_enabled and not self._generate_prepares_inputs()  # type: ignore[attr-defined]  # mixin provides it_cfg
 
     def _generate_prepares_inputs(self) -> bool:
-        # match sentinal methods indicating that a given model's generate function prepares inputs
+        # match sentinel methods indicating that a given model's generate function prepares inputs
         sigs = type(self)._it_cls_metadata.gen_prepares_inputs_sigs
         return any(hasattr(self.model, prep_method) for prep_method in sigs)  # type: ignore[attr-defined]  # mixin provides model
 
@@ -254,6 +265,13 @@ class GenerativeStepMixin:
 
 class ClassificationMixin:
     # Default classification helper methods
+
+    def setup(self, *args, **kwargs) -> None:
+        """Initialize classification mapping if configured. Cooperative super() ensures all mixins in the MRO chain
+        contribute their setup logic."""
+        super().setup(*args, **kwargs)  # type: ignore[misc]  # MRO cooperative call
+        if self.it_cfg.classification_mapping is not None:  # type: ignore[attr-defined]  # mixin provides it_cfg
+            self.init_classification_mapping()
 
     def init_classification_mapping(self) -> None:
         it_cfg, tokenizer = self.it_cfg, self.datamodule.tokenizer  # type: ignore[attr-defined]  # mixin provides it_cfg and datamodule

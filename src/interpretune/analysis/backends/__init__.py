@@ -303,6 +303,24 @@ class ModelBackend(Protocol):
         """
         ...
 
+    def fwd_w_cache(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        names_filter: NamesFilter,
+    ) -> tuple[torch.Tensor, Any]:
+        """Run a forward pass with activation caching but without latent model hooks.
+
+        Args:
+            model: The model to run.
+            batch: Input batch dict.
+            names_filter: Filter specifying which hook activations to cache.
+
+        Returns:
+            Tuple of (logits, activation_cache).
+        """
+        ...
+
     def fwd_w_hooks_and_latent_models(
         self,
         model: Any,

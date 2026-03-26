@@ -44,6 +44,15 @@ class TLModelBackend:
         """Run forward pass with activation caching and latent model hooks via TransformerLens."""
         return model.run_with_cache_with_saes(**batch, saes=latent_model_handles, names_filter=names_filter)
 
+    def fwd_w_cache(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        names_filter: NamesFilter,
+    ) -> tuple[torch.Tensor, Any]:
+        """Run forward pass with activation caching via TransformerLens."""
+        return model.run_with_cache(**batch, names_filter=names_filter)
+
     def fwd_w_hooks_and_latent_models(
         self,
         model: Any,

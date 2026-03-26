@@ -75,6 +75,7 @@ GPT2_HOOK_MAPPINGS: dict[str, HookMapping] = {
     "attn.hook_z": HookMapping(envoy_path="transformer.h.{layer}.attn.c_proj", io_type="input"),
     # Component input hooks
     "mlp.hook_pre": HookMapping(envoy_path="transformer.h.{layer}.mlp", io_type="input"),
+    "unembed.hook_in": HookMapping(envoy_path="lm_head", io_type="input", tuple_output=False),
 }
 
 GPT2_MAPPING = ArchitectureMapping(
@@ -97,6 +98,7 @@ LLAMA_HOOK_MAPPINGS: dict[str, HookMapping] = {
         envoy_path="model.layers.{layer}.post_attention_layernorm", io_type="output", tuple_output=False
     ),
     "mlp.hook_out": HookMapping(envoy_path="model.layers.{layer}.mlp", io_type="output", tuple_output=False),
+    "unembed.hook_in": HookMapping(envoy_path="lm_head", io_type="input", tuple_output=False),
 }
 
 LLAMA_MAPPING = ArchitectureMapping(
@@ -119,10 +121,16 @@ GEMMA2_HOOK_MAPPINGS: dict[str, HookMapping] = {
     "ln2.hook_normalized": HookMapping(
         envoy_path="model.layers.{layer}.pre_feedforward_layernorm", io_type="output", tuple_output=False
     ),
+    "unembed.hook_in": HookMapping(envoy_path="lm_head", io_type="input", tuple_output=False),
 }
 
 GEMMA2_MAPPING = ArchitectureMapping(
     model_architecture="Gemma2ForCausalLM",
+    hook_mappings=GEMMA2_HOOK_MAPPINGS,
+)
+
+GEMMA3_MAPPING = ArchitectureMapping(
+    model_architecture="Gemma3ForCausalLM",
     hook_mappings=GEMMA2_HOOK_MAPPINGS,
 )
 
@@ -143,7 +151,7 @@ class ResolvedHook(NamedTuple):
 
 # Registry of all supported architectures
 _ARCHITECTURE_REGISTRY: dict[str, ArchitectureMapping] = {
-    mapping.model_architecture: mapping for mapping in [GPT2_MAPPING, LLAMA_MAPPING, GEMMA2_MAPPING]
+    mapping.model_architecture: mapping for mapping in [GPT2_MAPPING, LLAMA_MAPPING, GEMMA2_MAPPING, GEMMA3_MAPPING]
 }
 
 
@@ -300,12 +308,17 @@ class HookNameResolver:
         """
         match = _TL_HOOK_NAME_RE.match(tl_hook_name)
         if match is None:
-            raise ValueError(
-                f"Cannot parse TL hook name {tl_hook_name!r}. Expected format: 'blocks.{{layer}}.{{hook_name}}'"
-            )
-
-        layer = int(match.group(1))
-        rest = match.group(2)
+            if "." not in tl_hook_name or tl_hook_name.startswith("blocks."):
+                raise ValueError(
+                    "Cannot parse TL hook name "
+                    f"{tl_hook_name!r}. Expected format: 'blocks.{{layer}}.{{hook_name}}' or a "
+                    "supported global hook name like 'unembed.hook_in'"
+                )
+            layer = -1
+            rest = tl_hook_name
+        else:
+            layer = int(match.group(1))
+            rest = match.group(2)
 
         # Separate base hook name from SAE sub-hook suffix
         parts = rest.split(".")
@@ -318,6 +331,11 @@ class HookNameResolver:
             base_parts.append(part)
 
         base_name = ".".join(base_parts)
+        if not base_name:
+            raise ValueError(
+                f"Cannot parse TL hook name {tl_hook_name!r}. Expected format: 'blocks.{{layer}}.{{hook_name}}' or a "
+                "supported global hook name like 'unembed.hook_in'"
+            )
         return layer, base_name, sae_subhook
 
     @staticmethod

@@ -64,17 +64,33 @@ def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batche
             if batch_idx >= limit_test_batches >= 0:
                 break
             run_step(step_fn="test_step", module=module, batch=batch, batch_idx=batch_idx, **test_ctx)
-    _call_itmodule_hook(module, hook_name="on_test_epoch_end", hook_msg="Running test epoch end hooks")
+    # Print accumulated metrics from log/log_dict calls (core framework epoch-end reporting)
+    if hasattr(module, "_logged_metrics") and module._logged_metrics:
+        epoch_metrics = {k: sum(v) / len(v) for k, v in module._logged_metrics.items()}
+        metrics_str = ", ".join(f"'{k}': {v:.4f}" for k, v in epoch_metrics.items())
+        print(f"\nTest epoch end: {{{metrics_str}}}")
+        module._logged_metrics.clear()
+    _call_itmodule_hook(module, hook_name="on_test_epoch_end", hook_msg="Running test epoch end hooks", optional=True)
 
 
 def run_step(step_fn, module, batch, batch_idx, optimizer: Optimizable | None = None, as_generator: bool = False):
     batch = module.batch_to_device(batch)
     step_func = getattr(module, step_fn)
-    if module.global_step == 0 and step_fn in ("training_step", "test_step"):
+    if module.global_step == 0 and step_fn == "test_step":
         _call_itmodule_hook(
             module,
-            hook_name="_on_test_or_train_batch_start",
-            hook_msg="Running custom test or train batch start hook",
+            hook_name="on_test_batch_start",
+            hook_msg="Running test batch start hook",
+            optional=True,
+            batch=batch,
+            batch_idx=batch_idx,
+        )
+    elif module.global_step == 0 and step_fn == "training_step":
+        _call_itmodule_hook(
+            module,
+            hook_name="on_train_batch_start",
+            hook_msg="Running train batch start hook",
+            optional=True,
             batch=batch,
             batch_idx=batch_idx,
         )

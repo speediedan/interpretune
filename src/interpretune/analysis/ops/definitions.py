@@ -3,7 +3,7 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
@@ -14,10 +14,12 @@ from transformers import BatchEncoding
 if TYPE_CHECKING:
     from transformer_lens.hook_points import HookPoint
 
-from interpretune.analysis.ops.base import AnalysisBatch
-from interpretune.analysis.ops.base import get_batch_input, with_analysis_batch_context
+from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
 from interpretune.analysis.backends import require_analysis_backend
 from interpretune.analysis.ops.helpers import (
+    _extract_concept_latent_state_from_cache,
+    _flatten_concept_store_rows,
+    _resolve_concept_cache_key,
     extract_logits,
     last_token_logits,
     mean_target_logit_delta,
@@ -25,7 +27,6 @@ from interpretune.analysis.ops.helpers import (
     resolve_embedding_weight,
     resolve_aggregate_input,
     resolve_tokenizer,
-    stack_column_tensors,
     token_strings_to_last_ids,
     weighted_mean,
 )
@@ -154,6 +155,21 @@ def get_alive_latents_impl(
     return analysis_batch
 
 
+def extract_concept_latent_state_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Extract per-example latent rows from the configured cache key for downstream concept-direction ops."""
+    del module, batch, batch_idx, kwargs
+
+    latent_states, cache_key = _extract_concept_latent_state_from_cache(analysis_batch)
+    analysis_batch.update(concept_latent_state=latent_states, concept_cache_key=cache_key)
+    return analysis_batch
+
+
 def extract_concept_latent_examples_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -161,42 +177,39 @@ def extract_concept_latent_examples_impl(
     batch_idx: int,
     **kwargs,
 ) -> AnalysisBatch:
-    """Extract per-example latent states and metadata for downstream concept-direction aggregation."""
+    """Filter and annotate concept latent rows for downstream concept-direction aggregation.
 
-    cache = analysis_batch.cache
-    answer_indices = analysis_batch.answer_indices
+    Consumes ``concept_latent_state`` rows produced by the upstream ``extract_concept_latent_state`` op.
+    That op must run first to populate ``concept_latent_state`` on the batch.
+    """
+
     orig_labels = analysis_batch.orig_labels
     logit_diffs = analysis_batch.logit_diffs
-    if cache is None or answer_indices is None or orig_labels is None or logit_diffs is None:
-        raise ValueError("extract_concept_latent_examples requires cache, answer_indices, orig_labels, and logit_diffs")
+    if orig_labels is None or logit_diffs is None:
+        raise ValueError("extract_concept_latent_examples requires orig_labels and logit_diffs")
 
-    cache_key = str(analysis_batch.get("concept_cache_key") or "unembed.hook_in.hook_sae_input")
-    if cache_key not in cache:
-        raise ValueError(f"extract_concept_latent_examples could not find cache key '{cache_key}'")
+    cache_key = _resolve_concept_cache_key(analysis_batch)
+    latent_states = analysis_batch.get("concept_latent_state")
+    if latent_states is None:
+        raise ValueError(
+            "extract_concept_latent_examples requires 'concept_latent_state' on the batch. "
+            "Run extract_concept_latent_state first."
+        )
+    latent_states = torch.as_tensor(latent_states).detach().cpu().float()
 
-    group_a_label_ids = torch.as_tensor(analysis_batch.concept_group_a_label_ids, dtype=torch.long).reshape(-1)
-    group_b_label_ids = torch.as_tensor(analysis_batch.concept_group_b_label_ids, dtype=torch.long).reshape(-1)
     group_a_name = str(analysis_batch.get("concept_group_a_name") or "group_a")
     group_b_name = str(analysis_batch.get("concept_group_b_name") or "group_b")
     keep_correct_only = bool(analysis_batch.get("concept_correct_only", True))
     weight_by_logit_diff = bool(analysis_batch.get("concept_weight_by_logit_diff", False))
 
-    labels = torch.as_tensor(orig_labels, dtype=torch.long).reshape(-1)
-    diffs = torch.as_tensor(logit_diffs, dtype=torch.float32).reshape(-1)
-    cache_tensor = torch.as_tensor(cache[cache_key])
-    if cache_tensor.dim() < 2:
-        raise ValueError(f"Expected cached latent states for '{cache_key}' to be rank >= 2, got {cache_tensor.dim()}")
-
-    if cache_tensor.dim() >= 3:
-        index_tensor = torch.as_tensor(answer_indices, dtype=torch.long, device=cache_tensor.device).reshape(-1)
-        batch_indices = torch.arange(cache_tensor.size(0), device=cache_tensor.device)
-        latent_states = cache_tensor[batch_indices, index_tensor].detach().cpu().float()
-    else:
-        latent_states = cache_tensor.detach().cpu().float()
+    labels = torch.as_tensor(orig_labels, dtype=torch.long).reshape(-1).detach().cpu()
+    diffs = torch.as_tensor(logit_diffs, dtype=torch.float32).reshape(-1).detach().cpu()
+    group_a_label_ids = torch.as_tensor(analysis_batch.concept_group_a_label_ids, dtype=torch.long).reshape(-1)
+    group_b_label_ids = torch.as_tensor(analysis_batch.concept_group_b_label_ids, dtype=torch.long).reshape(-1)
 
     if latent_states.shape[0] != labels.shape[0]:
         raise ValueError(
-            "extract_concept_latent_examples requires the cached latent rows to align with orig_labels "
+            "extract_concept_latent_examples requires the latent rows to align with orig_labels "
             f"({latent_states.shape[0]} vs {labels.shape[0]})"
         )
 
@@ -236,7 +249,7 @@ def extract_concept_latent_examples_impl(
     return analysis_batch
 
 
-def model_forward_impl(
+def model_fwd_impl(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
     """Implementation for basic model forward pass."""
@@ -257,29 +270,58 @@ def model_forward_impl(
     return analysis_batch
 
 
-def model_cache_forward_impl(
+# Keep backward-compatible alias
+model_forward_impl = model_fwd_impl
+
+
+def model_fwd_w_cache_impl(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
-    """Implementation for forward pass with cache."""
-    # Run with cache and latent models
+    """Implementation for forward pass with activation caching (no latent model hooks)."""
     if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
         batch = module.auto_prune_batch(batch, "forward")
+
     model_backend = require_model_backend(module)
-    answer_logits, cache = model_backend.fwd_w_cache_and_latent_models(
+    answer_logits, cache = model_backend.fwd_w_cache(
         model=module.model,
         batch=batch,
-        latent_model_handles=module.sae_handles,
         names_filter=module.analysis_cfg.names_filter,
     )
 
-    # Get answer indices and alive latents
+    analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
+    analysis_batch.update(cache=cache, alive_latents={}, answer_logits=answer_logits)
+    return analysis_batch
+
+
+def model_fwd_w_cache_latent_models_impl(
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
+    """Implementation for forward pass with activation caching and latent model (SAE) hooks."""
+    if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
+        batch = module.auto_prune_batch(batch, "forward")
+
+    model_backend = require_model_backend(module)
+    latent_model_handles = getattr(module, "sae_handles", None)
+    if not latent_model_handles:
+        raise ValueError("model_fwd_w_cache_latent_models requires sae_handles on the module")
+
+    answer_logits, cache = model_backend.fwd_w_cache_and_latent_models(
+        model=module.model,
+        batch=batch,
+        latent_model_handles=latent_model_handles,
+        names_filter=module.analysis_cfg.names_filter,
+    )
+
     analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
     analysis_batch.update(cache=cache)
     # See NOTE [Op-Driven Transitive Dependency Atomicity]
     analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)  # type: ignore[call-arg]
-
     analysis_batch.update(answer_logits=answer_logits)
     return analysis_batch
+
+
+# Keep backward-compatible alias
+model_cache_forward_impl = model_fwd_w_cache_latent_models_impl
 
 
 def model_ablation_impl(
@@ -294,6 +336,9 @@ def model_ablation_impl(
     if not hasattr(analysis_batch, "answer_indices") or analysis_batch.answer_indices is None:
         analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
 
+    if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
+        batch = module.auto_prune_batch(batch, "forward")
+
     if not hasattr(analysis_batch, "alive_latents") or analysis_batch.alive_latents is None:
         # TODO: remove this leaky abstraction, alive_latents should only be in analysis_batch
         assert module.analysis_cfg.input_store and getattr(module.analysis_cfg.input_store, "alive_latents", None), (
@@ -304,9 +349,6 @@ def model_ablation_impl(
 
     answer_indices = analysis_batch.answer_indices
     alive_latents = analysis_batch.alive_latents
-
-    if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
-        batch = module.auto_prune_batch(batch, "forward")
 
     # Build hook configs for every (name, latent_idx) pair, then run them in batch.
     per_latent_logits: dict[str, dict[Any, torch.Tensor]] = defaultdict(dict)
@@ -355,6 +397,9 @@ def model_gradient_impl(
     if not hasattr(analysis_batch, "answer_indices") or analysis_batch.answer_indices is None:
         analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
 
+    if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
+        batch = module.auto_prune_batch(batch, "forward")
+
     answer_indices = analysis_batch.answer_indices
 
     # if we're running a manual analysis_step context, we may need to manually set hooks
@@ -366,9 +411,6 @@ def model_gradient_impl(
 
     # TODO: In the future, we will likely use IT dispatch logic to control toggling autograd/inference mode etc.
     #       but for now controlling manually here
-    if module.analysis_cfg.auto_prune_batch_encoding and isinstance(batch, BatchEncoding):
-        batch = module.auto_prune_batch(batch, "forward")
-
     # ---- backward_fn closure: captures op-specific state ---------------------
     # Applied to raw logits inside the backend.  Must use only standard PyTorch ops
     # so NNsight can trace through it (all operations intercepted via __torch_function__).
@@ -628,7 +670,6 @@ def ablation_attribution_impl(
     return analysis_batch
 
 
-@with_analysis_batch_context()
 def concept_direction_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -645,23 +686,12 @@ def concept_direction_impl(
         group_name_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_name")
         example_weight_rows = resolve_aggregate_input(module, analysis_batch, "concept_example_weight")
 
-        latent_states = stack_column_tensors(latent_state_rows, dtype=torch.float32)
-        if latent_states.dim() == 1:
-            latent_states = latent_states.unsqueeze(0)
-        group_ids = stack_column_tensors(group_id_rows, dtype=torch.long).reshape(-1)
-        if latent_states.shape[0] != group_ids.shape[0]:
-            raise ValueError(
-                "concept_direction requires concept_latent_state and concept_group_id to have matching rows"
-            )
-
-        if example_weight_rows is None:
-            example_weights = torch.ones(group_ids.shape[0], dtype=torch.float32)
-        else:
-            example_weights = stack_column_tensors(example_weight_rows, dtype=torch.float32).reshape(-1)
-            if example_weights.shape[0] != group_ids.shape[0]:
-                raise ValueError(
-                    "concept_direction requires concept_example_weight to have the same row count as concept_group_id"
-                )
+        latent_states, group_ids, example_weights, flattened_group_names = _flatten_concept_store_rows(
+            latent_state_rows,
+            group_id_rows,
+            group_name_rows,
+            example_weight_rows,
+        )
 
         group_a_mask = group_ids == 0
         group_b_mask = group_ids == 1
@@ -698,10 +728,11 @@ def concept_direction_impl(
 
         group_a_name = str(analysis_batch.get("concept_group_a_name") or "group_a")
         group_b_name = str(analysis_batch.get("concept_group_b_name") or "group_b")
-        if isinstance(group_name_rows, Sequence) and not isinstance(group_name_rows, (str, bytes)):
-            names = [str(name) for name in group_name_rows]
-            group_a_matches = [name for name, group_id in zip(names, group_ids.tolist(), strict=True) if group_id == 0]
-            group_b_matches = [name for name, group_id in zip(names, group_ids.tolist(), strict=True) if group_id == 1]
+        if flattened_group_names:
+            paired = zip(flattened_group_names, group_ids.tolist(), strict=False)
+            group_a_matches = [name for name, group_id in paired if group_id == 0 and name]
+            paired = zip(flattened_group_names, group_ids.tolist(), strict=False)
+            group_b_matches = [name for name, group_id in paired if group_id == 1 and name]
             if group_a_matches:
                 group_a_name = group_a_matches[0]
             if group_b_matches:
@@ -720,7 +751,7 @@ def concept_direction_impl(
     embed_weight = resolve_embedding_weight(module)
     group_a = list(analysis_batch.concept_group_a)
     group_b = list(analysis_batch.concept_group_b)
-    direction_mode = str(analysis_batch.concept_direction_mode)
+    direction_mode = str(analysis_batch.get("concept_direction_mode", "mean_difference"))
     concept_label = analysis_batch.get("concept_label")
     if not group_a or not group_b:
         raise ValueError("concept_direction requires non-empty concept_group_a and concept_group_b")
@@ -758,7 +789,6 @@ def concept_direction_impl(
     return analysis_batch
 
 
-@with_analysis_batch_context()
 def compute_attribution_graph_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -812,7 +842,6 @@ def compute_attribution_graph_impl(
     return analysis_batch
 
 
-@with_analysis_batch_context()
 def extract_top_features_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -911,7 +940,6 @@ def graph_node_influence_impl(
     return analysis_batch
 
 
-@with_analysis_batch_context()
 def feature_intervention_forward_impl(
     module,
     analysis_batch: AnalysisBatch,

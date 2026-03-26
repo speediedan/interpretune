@@ -97,9 +97,16 @@ ct_graph = compute_attribution_graph
 def concept_direction(
     module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
 ) -> AnalysisBatch:
-    """Compute semantic concept direction vector from token group embeddings
+    """Aggregate latent concept examples into a normalized concept direction vector
 
     Input Schema:
+        concept_latent_state (float32)
+        concept_group_id (int64)
+        concept_group_name (string)
+        concept_example_weight (float32)
+        concept_group_a_name (string)
+        concept_group_b_name (string)
+        concept_label (string)
         concept_group_a (string)
         concept_group_b (string)
         concept_direction_mode (string)
@@ -109,11 +116,64 @@ def concept_direction(
         concept_label (string)
         concept_group_a_token_ids (int64)
         concept_group_b_token_ids (int64)
+        concept_group_a_name (string)
+        concept_group_b_name (string)
         concept_direction_mode (string)
     """
     ...
 
 semantic_direction = concept_direction
+
+def extract_concept_latent_examples(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Filter and annotate latent rows for concept-direction aggregation
+
+    Input Schema:
+        concept_latent_state (float32)
+        cache (object)
+        answer_indices (int64)
+        orig_labels (int64)
+        logit_diffs (float32)
+        concept_group_a_label_ids (int64)
+        concept_group_b_label_ids (int64)
+        concept_group_a_name (string)
+        concept_group_b_name (string)
+        concept_cache_key (string)
+        concept_correct_only (int64)
+        concept_weight_by_logit_diff (int64)
+
+    Output Schema:
+        concept_latent_state (float32)
+        concept_group_id (int64)
+        concept_group_name (string)
+        concept_example_logit_diff (float32)
+        concept_example_weight (float32)
+        concept_cache_key (string)
+        concept_group_a_name (string)
+        concept_group_b_name (string)
+    """
+    ...
+
+concept_latent_examples = extract_concept_latent_examples
+
+def extract_concept_latent_state(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Extract per-example latent rows from the configured cache key
+
+    Input Schema:
+        cache (object)
+        answer_indices (int64)
+        concept_cache_key (string)
+
+    Output Schema:
+        concept_latent_state (float32)
+        concept_cache_key (string)
+    """
+    ...
+
+concept_latent_state_from_cache = extract_concept_latent_state
 
 def extract_top_features(
     module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, top_n: int | None = None, **kwargs
@@ -360,10 +420,27 @@ def model_ablation(
     """
     ...
 
-def model_cache_forward(
+def model_fwd(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
-    """Model forward pass with cache
+    """Basic model forward pass
+
+    Input Schema:
+        input (int64)
+        answer_indices (int64)
+
+    Output Schema:
+        answer_logits (float32)
+        prompts (string)
+    """
+    ...
+
+model_forward = model_fwd
+
+def model_fwd_w_cache(
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
+    """Model forward pass with activation caching (no latent model hooks)
 
     Input Schema:
         input (int64)
@@ -375,19 +452,17 @@ def model_cache_forward(
     """
     ...
 
-model_forward_cache = model_cache_forward
-
-def model_forward(
+def model_fwd_w_cache_latent_models(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
-    """Basic model forward pass
+    """Model forward pass with activation caching and latent model (SAE) hooks
 
     Input Schema:
         input (int64)
-        answer_indices (int64)
 
     Output Schema:
         answer_logits (float32)
+        cache (object)
         prompts (string)
     """
     ...
@@ -473,7 +548,7 @@ def logit_diffs_attr_ablation(
     module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
 ) -> BaseAnalysisBatchProtocol:
     """Composition of operations:
-    labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.ablation_attribution
+    labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.model_ablation.ablation_attribution
     """
     ...
 
@@ -489,7 +564,7 @@ def logit_diffs_base(
     module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
 ) -> BaseAnalysisBatchProtocol:
     """Composition of operations:
-    labels_to_ids.model_forward.logit_diffs
+    labels_to_ids.model_fwd.logit_diffs
     """
     ...
 
@@ -497,6 +572,6 @@ def logit_diffs_sae(
     module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
 ) -> BaseAnalysisBatchProtocol:
     """Composition of operations:
-    labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts
+    labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.sae_correct_acts
     """
     ...

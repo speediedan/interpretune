@@ -527,6 +527,15 @@ class TestBridgeSAEBackend:
         assert it_cfg.backend == "transformerlens"
         assert isinstance(it_cfg.tl_cfg, ITLensBridgeConfig)
 
+    def test_use_bridge_with_from_pretrained_cfg_warns(self):
+        """Verify warning when use_bridge=True but tl_cfg is ITLensFromPretrainedConfig."""
+        sae_cfg = SAELensFromPretrainedConfig(
+            release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre", device="cpu"
+        )
+        tl_cfg = ITLensFromPretrainedConfig(model_name="gpt2-small", use_bridge=False)
+        with pytest.warns(UserWarning, match=r"use_bridge=True but tl_cfg is an ITLensFromPretrainedConfig"):
+            SAELensConfig(backend="transformerlens", tl_cfg=tl_cfg, sae_cfgs=sae_cfg, use_bridge=True)
+
     def test_bridge_module_model_type(self, sl_br_gpt2_module):
         """Verify Bridge SAE module wraps an SAETransformerBridge."""
         from sae_lens.analysis.sae_transformer_bridge import SAETransformerBridge

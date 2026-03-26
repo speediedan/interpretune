@@ -289,6 +289,9 @@ PY
                 run_logged_phase \
                     "special tests optional" \
                     bash -lc "./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+                run_logged_cuda_phase \
+                    "special tests benchmark" \
+                    bash -lc "./tests/special_tests.sh --mark_type=benchmark --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
             else
                 # Using pytest-cov ensures coverage starts before test collection imports
                 run_logged_phase \

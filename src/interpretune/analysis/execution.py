@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from collections.abc import Generator, Mapping
 from typing import Any
 
@@ -14,10 +15,11 @@ from interpretune.protocol import STEP_OUTPUT
 
 def build_analysis_inputs(
     module: Any,
+    analysis_cfg: Any | None = None,
     analysis_inputs: AnalysisInputs | Mapping[str, Any] | None = None,
 ) -> AnalysisInputs:
     """Combine config-backed and caller-provided analysis inputs into one scoped input object."""
-    analysis_cfg = getattr(module, "analysis_cfg", None)
+    analysis_cfg = analysis_cfg or getattr(module, "analysis_cfg", None)
     config_inputs = AnalysisInputs(
         batch=getattr(analysis_cfg, "batch_inputs", None),
         run=getattr(analysis_cfg, "run_inputs", None),
@@ -26,10 +28,40 @@ def build_analysis_inputs(
     return config_inputs.merged(coerce_analysis_inputs(analysis_inputs))
 
 
+@contextmanager
+def activated_analysis_cfg(
+    module: Any,
+    analysis_cfg: Any | None,
+    *,
+    ignore_manual: bool | None = None,
+) -> Generator[Any, None, None]:
+    """Temporarily activate an analysis cfg on a module for manual or runner execution."""
+    resolved_cfg = analysis_cfg or getattr(module, "analysis_cfg", None)
+    if resolved_cfg is None:
+        raise ValueError("An active analysis_cfg is required")
+
+    from interpretune.config.runner import init_analysis_cfgs
+
+    has_previous_cfg = hasattr(module, "analysis_cfg")
+    previous_cfg = getattr(module, "analysis_cfg", None)
+    if ignore_manual is None:
+        ignore_manual = bool(getattr(resolved_cfg, "ignore_manual", False))
+
+    init_analysis_cfgs(module, resolved_cfg, ignore_manual=ignore_manual)
+    module.analysis_cfg = resolved_cfg
+    try:
+        yield resolved_cfg
+    finally:
+        if has_previous_cfg:
+            module.analysis_cfg = previous_cfg
+        else:
+            delattr(module, "analysis_cfg")
+
+
 def execute_analysis_op(
     module: Any,
-    batch: BatchEncoding,
-    batch_idx: int,
+    batch: BatchEncoding | None = None,
+    batch_idx: int = 0,
     *,
     analysis_batch: AnalysisBatch | None = None,
     analysis_cfg: Any | None = None,
@@ -42,21 +74,22 @@ def execute_analysis_op(
         raise ValueError("execute_analysis_op requires an analysis_cfg with a resolved op")
 
     active_batch = analysis_batch or AnalysisBatch()
-    resolved_inputs = build_analysis_inputs(module, analysis_inputs=analysis_inputs)
-    return resolved_cfg.op(
-        module,
-        active_batch,
-        batch,
-        batch_idx,
-        analysis_inputs=resolved_inputs,
-        **kwargs,
-    )
+    with activated_analysis_cfg(module, resolved_cfg) as active_cfg:
+        resolved_inputs = build_analysis_inputs(module, analysis_cfg=active_cfg, analysis_inputs=analysis_inputs)
+        return active_cfg.op(
+            module,
+            active_batch,
+            batch,
+            batch_idx,
+            analysis_inputs=resolved_inputs,
+            **kwargs,
+        )
 
 
 def execute_analysis_step(
     module: Any,
-    batch: BatchEncoding,
-    batch_idx: int,
+    batch: BatchEncoding | None = None,
+    batch_idx: int = 0,
     *,
     dataloader_idx: int = 0,
     analysis_batch: AnalysisBatch | None = None,
@@ -83,4 +116,10 @@ def execute_analysis_step(
     yield from resolved_cfg.save_batch(result, batch, tokenizer=tokenizer)
 
 
-__all__ = ["AnalysisInputs", "build_analysis_inputs", "execute_analysis_op", "execute_analysis_step"]
+__all__ = [
+    "AnalysisInputs",
+    "activated_analysis_cfg",
+    "build_analysis_inputs",
+    "execute_analysis_op",
+    "execute_analysis_step",
+]

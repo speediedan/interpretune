@@ -31,10 +31,8 @@ from interpretune.analysis.backends.circuit_tracer import DEFAULT_CT_ANALYSIS_BA
 from interpretune.analysis.core import AnalysisStore
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.definitions import (
-    compute_attribution_graph_impl,
-    concept_direction_impl,
+    extract_concept_latent_state_impl,
     extract_concept_latent_examples_impl,
-    feature_intervention_forward_impl,
 )
 from interpretune.config.circuit_tracer import CircuitTracerConfig
 from interpretune.config import init_analysis_cfgs
@@ -100,12 +98,14 @@ class _TLLikeProducerModule:
     def __init__(self) -> None:
         self.model = _TLLikeModel()
         self.datamodule = SimpleNamespace(tokenizer=self.model.tokenizer)
+        self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
 
 
 class _NNsightLikeProducerModule:
     def __init__(self) -> None:
         self.model = _NNsightLikeModel()
         self.datamodule = SimpleNamespace(tokenizer=self.model.tokenizer)
+        self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
 
 
 class _FakeITSession(dict):
@@ -135,9 +135,13 @@ class _FakeConceptExtractionBackend:
             else:
                 latent_rows.append([0.0, 4.0] if idx == 1 else [1.0, 3.0])
                 answer_logits[idx, 1] = torch.tensor([1.0, 2.0] if idx == 1 else [1.0, 1.5], dtype=torch.float32)
-        cache_key = "unembed.hook_in.hook_sae_input"
+        cache_key = "unembed.hook_in.hook_sae_acts_post"
         cache_rows = [[[0.0, 0.0], row] for row in latent_rows]
-        cache = {cache_key: torch.tensor(cache_rows, dtype=torch.float32)} if names_filter(cache_key) else {}
+        cache = {}
+        if names_filter("unembed.hook_in.hook_sae_input"):
+            cache["unembed.hook_in.hook_sae_input"] = torch.tensor(cache_rows, dtype=torch.float32)
+        if names_filter(cache_key):
+            cache[cache_key] = torch.tensor(cache_rows, dtype=torch.float32)
         return answer_logits, cache
 
 
@@ -327,7 +331,7 @@ def _round_trip_store(tmp_path, name: str, dataset: Dataset, *, it_format_kwargs
 def test_concept_direction_supports_non_ct_native_modules(module_factory, expected_first_id) -> None:
     module = module_factory()
 
-    result = concept_direction_impl(
+    result = it.concept_direction(
         module,
         AnalysisBatch(concept_group_a=["Paris"], concept_group_b=["London"]),
         batch=None,
@@ -350,10 +354,10 @@ def test_concept_direction_supports_non_ct_native_modules(module_factory, expect
         pytest.param(_NNsightLikeProducerModule, id="nnsight"),
     ],
 )
-def test_concept_direction_direct_impl_uses_schema_default_mode(module_factory) -> None:
+def test_concept_direction_public_op_uses_schema_default_mode(module_factory) -> None:
     module = module_factory()
 
-    result = concept_direction_impl(
+    result = it.concept_direction(
         module,
         AnalysisBatch(concept_group_a=["Paris"], concept_group_b=["London"]),
         batch=None,
@@ -367,7 +371,7 @@ def test_extract_concept_latent_examples_filters_correct_rows_and_applies_logit_
     module = SimpleNamespace()
     analysis_batch = AnalysisBatch(
         cache={
-            "unembed.hook_in.hook_sae_input": torch.tensor(
+            "unembed.hook_in.hook_sae_acts_post": torch.tensor(
                 [
                     [[0.0, 0.0], [3.0, 0.0]],
                     [[0.0, 0.0], [0.0, 4.0]],
@@ -384,10 +388,12 @@ def test_extract_concept_latent_examples_filters_correct_rows_and_applies_logit_
         concept_group_b_label_ids=[1],
         concept_group_a_name="capital",
         concept_group_b_name="state",
+        concept_cache_key="unembed.hook_in.hook_sae_acts_post",
         concept_weight_by_logit_diff=1,
     )
 
-    result = extract_concept_latent_examples_impl(module, analysis_batch, batch=None, batch_idx=0)
+    source_batch = extract_concept_latent_state_impl(module, analysis_batch, batch=None, batch_idx=0)
+    result = extract_concept_latent_examples_impl(module, source_batch, batch=None, batch_idx=0)
 
     assert torch.equal(
         result.concept_latent_state,
@@ -419,7 +425,7 @@ def test_concept_direction_aggregates_round_tripped_synthetic_hf_dataset(tmp_pat
     producer = _TLLikeProducerModule()
     producer.analysis_cfg = SimpleNamespace(input_store=extracted_store, batch_inputs={}, run_inputs={})
 
-    result = concept_direction_impl(
+    result = it.concept_direction(
         producer,
         AnalysisBatch(concept_direction_mode="mean_difference"),
         batch=None,
@@ -446,7 +452,7 @@ def test_concept_direction_aggregates_round_tripped_synthetic_hf_dataset(tmp_pat
     )
     consumer = _FakeCircuitTracerConsumerModule(backend="nnsight", input_store=aggregated_store)
 
-    graph_result = compute_attribution_graph_impl(
+    graph_result = it.compute_attribution_graph(
         consumer,
         AnalysisBatch(prompts=["Paris Austin"]),
         batch=None,
@@ -472,8 +478,8 @@ def test_concept_direction_runner_store_workflow_aggregates_latent_examples(tmp_
     datamodule = module.datamodule
     extraction_inputs = SimpleNamespace(
         cache=[
-            {"unembed.hook_in.hook_sae_input": torch.tensor([[[0.0, 0.0], [3.0, 0.0]], [[0.0, 0.0], [0.0, 4.0]]])},
-            {"unembed.hook_in.hook_sae_input": torch.tensor([[[0.0, 0.0], [1.0, 1.0]], [[0.0, 0.0], [1.0, 3.0]]])},
+            {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [3.0, 0.0]], [[0.0, 0.0], [0.0, 4.0]]])},
+            {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [1.0, 1.0]], [[0.0, 0.0], [1.0, 3.0]]])},
         ],
         answer_indices=[torch.tensor([1, 1], dtype=torch.long), torch.tensor([1, 1], dtype=torch.long)],
         orig_labels=[torch.tensor([0, 1], dtype=torch.long), torch.tensor([0, 1], dtype=torch.long)],
@@ -481,10 +487,10 @@ def test_concept_direction_runner_store_workflow_aggregates_latent_examples(tmp_
     )
     analysis_cfg = it.AnalysisCfg(
         name="latent_example_rows",
-        target_op=it.extract_concept_latent_examples,
+        target_op=[it.extract_concept_latent_state, it.extract_concept_latent_examples],
         ignore_manual=True,
     )
-    init_analysis_cfgs(module, [analysis_cfg], ignore_manual=True)
+    init_analysis_cfgs(module, analysis_cfg, ignore_manual=True)
 
     concept_rows = []
     for batch_idx, batch in enumerate(datamodule.test_dataloader()):
@@ -497,6 +503,7 @@ def test_concept_direction_runner_store_workflow_aggregates_latent_examples(tmp_
                 concept_group_b_label_ids=[1],
                 concept_group_a_name="capital",
                 concept_group_b_name="state",
+                concept_cache_key="unembed.hook_in.hook_sae_acts_post",
                 concept_weight_by_logit_diff=True,
             ),
             analysis_cfg=analysis_cfg,
@@ -524,19 +531,14 @@ def test_concept_direction_runner_store_workflow_aggregates_latent_examples(tmp_
         ignore_manual=True,
         save_tokens=False,
     )
-    init_analysis_cfgs(module, [aggregate_cfg], ignore_manual=True)
-    previous_analysis_cfg = module.analysis_cfg
-    module.analysis_cfg = aggregate_cfg
-    try:
-        result = execute_analysis_op(
-            module,
-            BatchEncoding({}),
-            0,
-            analysis_batch=AnalysisBatch(concept_direction_mode="mean_difference"),
-            analysis_cfg=aggregate_cfg,
-        )
-    finally:
-        module.analysis_cfg = previous_analysis_cfg
+    init_analysis_cfgs(module, aggregate_cfg, ignore_manual=True)
+    previous_cfg = module.analysis_cfg
+    result = execute_analysis_op(
+        module,
+        analysis_batch=AnalysisBatch(concept_direction_mode="mean_difference"),
+        analysis_cfg=aggregate_cfg,
+    )
+    assert module.analysis_cfg is previous_cfg
 
     expected = torch.tensor([8.0 / 3.0, -11.0 / 3.0], dtype=torch.float32)
     expected = expected / torch.linalg.vector_norm(expected)
@@ -545,9 +547,50 @@ def test_concept_direction_runner_store_workflow_aggregates_latent_examples(tmp_
     assert result.concept_direction_mode == "mean_difference"
 
 
+def test_concept_direction_ignores_empty_store_rows(tmp_path) -> None:
+    module = _FakeConceptExtractionModule()
+    module.core_log_dir = tmp_path
+
+    concept_store = AnalysisStore(
+        dataset=Dataset.from_dict(
+            {
+                "concept_latent_state": [
+                    [[3.0, 0.0]],
+                    [],
+                    [[1.0, 1.0], [1.0, 3.0]],
+                ],
+                "concept_group_id": [[0], [], [0, 1]],
+                "concept_group_name": [["capital"], [], ["capital", "state"]],
+                "concept_example_weight": [[2.0], [], [1.0, 0.5]],
+            }
+        ),
+        op_output_dataset_path=str(tmp_path / "rows_with_empty_batches"),
+    )
+
+    aggregate_cfg = it.AnalysisCfg(
+        target_op=it.concept_direction,
+        input_store=concept_store,
+        ignore_manual=True,
+        save_tokens=False,
+    )
+    init_analysis_cfgs(module, aggregate_cfg, ignore_manual=True)
+
+    result = execute_analysis_op(
+        module,
+        analysis_batch=AnalysisBatch(concept_direction_mode="mean_difference"),
+        analysis_cfg=aggregate_cfg,
+    )
+
+    expected = torch.tensor([4.0 / 3.0, -8.0 / 3.0], dtype=torch.float32)
+    expected = expected / torch.linalg.vector_norm(expected)
+    assert torch.allclose(result.concept_direction, expected, atol=1e-4)
+    assert result.concept_label == "capital -> state"
+    assert result.concept_direction_mode == "mean_difference"
+
+
 def test_transformerlens_store_round_trip_can_feed_ct_attribution_op(tmp_path) -> None:
     producer = _TLLikeProducerModule()
-    produced = concept_direction_impl(
+    produced = it.concept_direction(
         producer,
         AnalysisBatch(concept_group_a=["Paris"], concept_group_b=["London"]),
         batch=None,
@@ -568,7 +611,7 @@ def test_transformerlens_store_round_trip_can_feed_ct_attribution_op(tmp_path) -
     )
     consumer = _FakeCircuitTracerConsumerModule(backend="nnsight", input_store=concept_store)
 
-    result = compute_attribution_graph_impl(
+    result = it.compute_attribution_graph(
         consumer,
         AnalysisBatch(prompts=["Paris Austin"]),
         batch=None,
@@ -606,7 +649,7 @@ def test_concept_direction_prefers_run_scoped_inputs_over_row_store_values(tmp_p
         run_inputs={"concept_group_a": ["Paris"], "concept_group_b": ["London"]},
     )
 
-    result = concept_direction_impl(module, AnalysisBatch(), batch=None, batch_idx=1)
+    result = it.concept_direction(module, AnalysisBatch(), batch=None, batch_idx=1)
 
     expected = torch.tensor([1.0, -1.0, 0.0], dtype=torch.float32)
     expected = expected / torch.linalg.vector_norm(expected)
@@ -629,7 +672,7 @@ def test_ct_feature_intervention_consumes_round_tripped_store_across_backends(tm
     )
     consumer = _FakeCircuitTracerConsumerModule(backend=backend, input_store=input_store)
 
-    result = feature_intervention_forward_impl(
+    result = it.feature_intervention_forward(
         consumer,
         AnalysisBatch(prompts=["Paris Austin"]),
         batch=None,
@@ -671,7 +714,7 @@ def test_concept_direction_multi_batch_accumulation(tmp_path, module_factory) ->
         "concept_direction_mode": [],
     }
     for batch_idx, groups in enumerate(concept_batches):
-        result = concept_direction_impl(
+        result = it.concept_direction(
             module,
             AnalysisBatch(**groups),
             batch=None,
@@ -702,3 +745,366 @@ def test_concept_direction_multi_batch_accumulation(tmp_path, module_factory) ->
     for d in directions:
         cos = torch.nn.functional.cosine_similarity(avg_dir.unsqueeze(0), d.unsqueeze(0)).item()
         assert cos > 0, f"averaged direction should be positively aligned with each batch direction, got {cos}"
+
+
+# ---------------------------------------------------------------------------
+# Concept-direction quality validation: embed-based vs store-based equivalence
+# ---------------------------------------------------------------------------
+
+
+class _EmbedStoreEquivalenceModule:
+    """Module wired so the embed-based path returns vectors from a controlled 8-dim embedding."""
+
+    def __init__(self, embed_weight: torch.Tensor, *, input_store: AnalysisStore | None = None) -> None:
+        self._embed = embed_weight
+        self.tokenizer = self._build_tokenizer()
+        self.model = SimpleNamespace(
+            tokenizer=self.tokenizer,
+            W_E=embed_weight,
+        )
+        self.datamodule = SimpleNamespace(tokenizer=self.tokenizer)
+        self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
+        self.analysis_cfg = SimpleNamespace(
+            input_store=input_store, batch_inputs={}, run_inputs={}
+        ) if input_store is not None else None
+
+    @staticmethod
+    def _build_tokenizer():
+        tok = _FakeTokenizer()
+        tok._vocab = {
+            "▁Austin": 0,
+            "▁Sacramento": 1,
+            "▁Olympia": 2,
+            "▁Atlanta": 3,
+            "▁Texas": 4,
+            "▁California": 5,
+            "▁Washington": 6,
+            "▁Georgia": 7,
+        }
+        tok.vocab_size = 8
+        return tok
+
+
+def _build_capitals_states_embed_weight() -> torch.Tensor:
+    """8-token embedding matrix with controlled geometry for capital/state distinction."""
+    return torch.tensor(
+        [
+            # Capitals (group_a): positive in dims 0-3
+            [3.0, 1.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0],  # ▁Austin
+            [2.5, 0.5, 1.0, 0.0, 0.0, 0.5, 0.0, 0.0],  # ▁Sacramento
+            [2.0, 1.5, 0.5, 0.0, 0.0, 0.0, 0.5, 0.0],  # ▁Olympia
+            [2.5, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.5],  # ▁Atlanta
+            # States (group_b): positive in dims 4-7
+            [0.5, 0.0, 0.0, 0.0, 3.0, 1.0, 0.0, 0.0],  # ▁Texas
+            [0.0, 0.5, 0.0, 0.0, 2.5, 0.5, 1.0, 0.0],  # ▁California
+            [0.0, 0.0, 0.5, 0.0, 2.0, 1.5, 0.5, 0.0],  # ▁Washington
+            [0.0, 0.0, 0.0, 0.5, 2.5, 1.0, 0.0, 1.0],  # ▁Georgia
+        ],
+        dtype=torch.float32,
+    )
+
+
+def _compute_embed_paired_rejection(embed_weight: torch.Tensor, ids_a: list[int], ids_b: list[int]) -> torch.Tensor:
+    """Reference implementation of paired_rejection on embedding vectors (mirrors parity test)."""
+    group_a_embed = embed_weight[torch.tensor(ids_a)].float()
+    group_b_embed = embed_weight[torch.tensor(ids_b)].float()
+    residuals = []
+    for embed_a, embed_b in zip(group_a_embed, group_b_embed):
+        denom = torch.dot(embed_b, embed_b).clamp_min(1e-12)
+        proj = (torch.dot(embed_a, embed_b) / denom) * embed_b
+        residuals.append(embed_a - proj)
+    direction = torch.stack(residuals).mean(dim=0)
+    return direction / torch.linalg.vector_norm(direction)
+
+
+def test_concept_direction_store_vs_embed_algebraic_equivalence(tmp_path) -> None:
+    """When the store-based path receives embedding vectors as latent states, paired_rejection
+    must produce the same direction as the direct embed-based path."""
+    embed_weight = _build_capitals_states_embed_weight()
+    capitals = ["▁Austin", "▁Sacramento", "▁Olympia", "▁Atlanta"]
+    states = ["▁Texas", "▁California", "▁Washington", "▁Georgia"]
+
+    # --- embed-based direction (direct path) ---
+    module_embed = _EmbedStoreEquivalenceModule(embed_weight)
+    embed_result = it.concept_direction(
+        module_embed,
+        AnalysisBatch(
+            concept_group_a=capitals,
+            concept_group_b=states,
+            concept_direction_mode="paired_rejection",
+        ),
+        batch=None,
+        batch_idx=0,
+    )
+    embed_direction = embed_result.concept_direction
+
+    # --- store-based direction (feeding embedding vectors as latent states) ---
+    tok = module_embed.tokenizer
+    ids_a = [tok.get_vocab()[c] for c in capitals]
+    ids_b = [tok.get_vocab()[s] for s in states]
+    latent_states_a = embed_weight[torch.tensor(ids_a)]
+    latent_states_b = embed_weight[torch.tensor(ids_b)]
+
+    concept_store = _round_trip_store(
+        tmp_path,
+        "embed_as_latent",
+        Dataset.from_dict(
+            {
+                "concept_latent_state": (
+                    latent_states_a.tolist() + latent_states_b.tolist()
+                ),
+                "concept_group_id": [0] * len(capitals) + [1] * len(states),
+                "concept_group_name": ["capital"] * len(capitals) + ["state"] * len(states),
+                "concept_example_weight": [1.0] * (len(capitals) + len(states)),
+            }
+        ),
+    )
+    module_store = _EmbedStoreEquivalenceModule(embed_weight, input_store=concept_store)
+    store_result = it.concept_direction(
+        module_store,
+        AnalysisBatch(concept_direction_mode="paired_rejection"),
+        batch=None,
+        batch_idx=0,
+    )
+    store_direction = store_result.concept_direction
+
+    # --- reference direction ---
+    ref_direction = _compute_embed_paired_rejection(embed_weight, ids_a, ids_b)
+
+    # All three should agree
+    cos_embed_ref = torch.nn.functional.cosine_similarity(
+        embed_direction.unsqueeze(0), ref_direction.unsqueeze(0)
+    ).item()
+    cos_store_ref = torch.nn.functional.cosine_similarity(
+        store_direction.unsqueeze(0), ref_direction.unsqueeze(0)
+    ).item()
+    cos_embed_store = torch.nn.functional.cosine_similarity(
+        embed_direction.unsqueeze(0), store_direction.unsqueeze(0)
+    ).item()
+
+    assert cos_embed_ref > 0.999, f"embed vs reference cosine {cos_embed_ref}"
+    assert cos_store_ref > 0.999, f"store vs reference cosine {cos_store_ref}"
+    assert cos_embed_store > 0.999, f"embed vs store cosine {cos_embed_store}"
+
+    # Both paths should be unit-normalized
+    assert torch.isclose(torch.linalg.vector_norm(embed_direction), torch.tensor(1.0), atol=1e-5)
+    assert torch.isclose(torch.linalg.vector_norm(store_direction), torch.tensor(1.0), atol=1e-5)
+
+    # paired_rejection captures what's unique to group_a; group_a vectors should
+    # project higher on average than group_b, but not every group_b vector need
+    # be negative (shared components can keep some slightly positive).
+    projs_a = torch.stack([torch.dot(embed_weight[i].float(), embed_direction) for i in ids_a])
+    projs_b = torch.stack([torch.dot(embed_weight[i].float(), embed_direction) for i in ids_b])
+    assert projs_a.mean() > projs_b.mean(), "capital tokens should project higher than state tokens on average"
+    assert projs_a.mean() > 0, "capital mean projection should be positive"
+
+
+def test_concept_direction_store_path_quality_with_distinct_latent_space(tmp_path) -> None:
+    """When SAE activations inhabit a distinct space from embeddings, the store-based path
+    must still produce a direction that correctly separates the two concept groups."""
+    embed_weight = _build_capitals_states_embed_weight()
+
+    # Synthetic SAE activations: intentionally different from embedding space
+    # but with clear group structure (capitals vs states)
+    capitals_latent = torch.tensor(
+        [
+            [5.0, 2.0, 0.0],  # ▁Austin
+            [4.0, 3.0, 0.0],  # ▁Sacramento
+            [4.5, 2.5, 0.0],  # ▁Olympia
+            [5.0, 1.5, 0.5],  # ▁Atlanta
+        ],
+        dtype=torch.float32,
+    )
+    states_latent = torch.tensor(
+        [
+            [0.0, 2.0, 5.0],  # ▁Texas
+            [0.0, 3.0, 4.0],  # ▁California
+            [0.0, 2.5, 4.5],  # ▁Washington
+            [0.5, 1.5, 5.0],  # ▁Georgia
+        ],
+        dtype=torch.float32,
+    )
+
+    concept_store = _round_trip_store(
+        tmp_path,
+        "sae_latent",
+        Dataset.from_dict(
+            {
+                "concept_latent_state": (
+                    capitals_latent.tolist() + states_latent.tolist()
+                ),
+                "concept_group_id": [0, 0, 0, 0, 1, 1, 1, 1],
+                "concept_group_name": ["capital"] * 4 + ["state"] * 4,
+                "concept_example_weight": [1.0] * 8,
+            }
+        ),
+    )
+    module = _EmbedStoreEquivalenceModule(embed_weight, input_store=concept_store)
+    result = it.concept_direction(
+        module,
+        AnalysisBatch(concept_direction_mode="paired_rejection"),
+        batch=None,
+        batch_idx=0,
+    )
+    direction = result.concept_direction
+
+    assert torch.isclose(torch.linalg.vector_norm(direction), torch.tensor(1.0), atol=1e-5)
+
+    # paired_rejection captures what's unique to capitals; capitals should project
+    # higher than states on average, and the mean gap should be substantial.
+    projs_cap = torch.stack([torch.dot(row, direction) for row in capitals_latent])
+    projs_st = torch.stack([torch.dot(row, direction) for row in states_latent])
+    gap = projs_cap.mean() - projs_st.mean()
+    assert gap > 0.5, f"mean projection gap should be substantial, got {gap}"
+    assert projs_cap.mean() > 0, "capital mean projection should be positive"
+
+    # dim-0 (the unique capital dimension) should dominate the direction
+    abs_direction = direction.abs()
+    assert abs_direction[0] > abs_direction[1], "dim-0 (capital-unique) should dominate over shared dim-1"
+    assert abs_direction[0] > abs_direction[2], "dim-0 (capital-unique) should dominate over dim-2"
+
+
+def test_concept_direction_paired_rejection_separates_overlapping_groups(tmp_path) -> None:
+    """paired_rejection on partially overlapping groups correctly extracts the discriminative signal."""
+    embed_weight = _build_capitals_states_embed_weight()
+    # Construct latent states with a large shared component and a small discriminative signal
+    shared = torch.tensor([10.0, 10.0, 10.0], dtype=torch.float32)
+    signal_a = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
+    signal_b = torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32)
+
+    capitals_latent = torch.stack([shared + signal_a * (1 + i * 0.1) for i in range(4)])
+    states_latent = torch.stack([shared + signal_b * (1 + i * 0.1) for i in range(4)])
+
+    concept_store = _round_trip_store(
+        tmp_path,
+        "overlapping",
+        Dataset.from_dict(
+            {
+                "concept_latent_state": (
+                    capitals_latent.tolist() + states_latent.tolist()
+                ),
+                "concept_group_id": [0, 0, 0, 0, 1, 1, 1, 1],
+                "concept_group_name": ["capital"] * 4 + ["state"] * 4,
+                "concept_example_weight": [1.0] * 8,
+            }
+        ),
+    )
+    module = _EmbedStoreEquivalenceModule(embed_weight, input_store=concept_store)
+    result = it.concept_direction(
+        module,
+        AnalysisBatch(concept_direction_mode="paired_rejection"),
+        batch=None,
+        batch_idx=0,
+    )
+    direction = result.concept_direction
+
+    # paired_rejection should project out the shared component and pick up the discriminative signal
+    # dim-0 (positive for capitals) and dim-2 (negative, projected out from states)
+    assert direction[0] > 0, "paired_rejection should identify dim-0 as capital-discriminative"
+    assert direction[2] < 0, "paired_rejection should identify dim-2 as state-discriminative (subtracted)"
+    # dim-1 should be near-zero (shared component projected out)
+    assert abs(float(direction[1])) < 0.1, f"shared dim-1 should be near-zero, got {direction[1]}"
+
+
+def test_concept_direction_contextual_store_diverges_from_embed(tmp_path) -> None:
+    """When the store receives contextual representations (not raw embeddings), the
+    resulting direction diverges from the embed-based direction while each approach
+    still correctly separates its own concept groups.
+
+    This validates the empirical finding that contextual representations encode
+    concept identity differently from static unembedding vectors, so direct
+    substitution of store-based contextual directions for embed-based directions
+    is expected to produce meaningfully different steering vectors.
+    """
+    embed_weight = _build_capitals_states_embed_weight()
+    capitals = ["▁Austin", "▁Sacramento", "▁Olympia", "▁Atlanta"]
+    states = ["▁Texas", "▁California", "▁Washington", "▁Georgia"]
+
+    # --- embed-based direction ---
+    module_embed = _EmbedStoreEquivalenceModule(embed_weight)
+    embed_result = it.concept_direction(
+        module_embed,
+        AnalysisBatch(
+            concept_group_a=capitals,
+            concept_group_b=states,
+            concept_direction_mode="paired_rejection",
+        ),
+        batch=None,
+        batch_idx=0,
+    )
+    embed_direction = embed_result.concept_direction
+
+    # --- contextual latent states: group structure preserved but geometry differs ---
+    # These simulate what a model's hidden-state extraction would produce:
+    # clear group separation, but the discriminative dimensions don't align with
+    # the embedding matrix's layout.
+    contextual_capitals = torch.tensor(
+        [
+            [0.5, 4.0, 0.3, 1.0, 0.0, 0.0, 0.0, 0.0],  # ▁Austin
+            [0.3, 3.5, 0.8, 1.2, 0.0, 0.0, 0.0, 0.0],  # ▁Sacramento
+            [0.6, 3.8, 0.5, 0.8, 0.0, 0.0, 0.0, 0.0],  # ▁Olympia
+            [0.4, 4.2, 0.2, 1.1, 0.0, 0.0, 0.0, 0.0],  # ▁Atlanta
+        ],
+        dtype=torch.float32,
+    )
+    contextual_states = torch.tensor(
+        [
+            [0.5, 0.0, 0.0, 0.0, 4.0, 0.3, 1.0, 0.2],  # ▁Texas
+            [0.3, 0.0, 0.0, 0.0, 3.5, 0.8, 1.2, 0.1],  # ▁California
+            [0.6, 0.0, 0.0, 0.0, 3.8, 0.5, 0.8, 0.3],  # ▁Washington
+            [0.4, 0.0, 0.0, 0.0, 4.2, 0.2, 1.1, 0.15],  # ▁Georgia
+        ],
+        dtype=torch.float32,
+    )
+
+    concept_store = _round_trip_store(
+        tmp_path,
+        "contextual_latent",
+        Dataset.from_dict(
+            {
+                "concept_latent_state": (
+                    contextual_capitals.tolist() + contextual_states.tolist()
+                ),
+                "concept_group_id": [0] * 4 + [1] * 4,
+                "concept_group_name": ["capital"] * 4 + ["state"] * 4,
+                "concept_example_weight": [1.0] * 8,
+            }
+        ),
+    )
+    module_store = _EmbedStoreEquivalenceModule(embed_weight, input_store=concept_store)
+    store_result = it.concept_direction(
+        module_store,
+        AnalysisBatch(concept_direction_mode="paired_rejection"),
+        batch=None,
+        batch_idx=0,
+    )
+    store_direction = store_result.concept_direction
+
+    # Both should be unit-normalized
+    assert torch.isclose(torch.linalg.vector_norm(embed_direction), torch.tensor(1.0), atol=1e-5)
+    assert torch.isclose(torch.linalg.vector_norm(store_direction), torch.tensor(1.0), atol=1e-5)
+
+    # Directions should diverge: cosine well below 0.999 (the algebraic-equivalence
+    # threshold). With real models this is ~0.15; the synthetic geometry here
+    # produces an even starker divergence.
+    cos_embed_store = torch.nn.functional.cosine_similarity(
+        embed_direction.unsqueeze(0), store_direction.unsqueeze(0)
+    ).item()
+    assert cos_embed_store < 0.5, (
+        f"contextual store direction should diverge from embed direction, "
+        f"but cosine was {cos_embed_store:.4f}"
+    )
+
+    # Each direction should still separate its own concept groups correctly.
+    # Embed direction separates embedding vectors:
+    tok = module_embed.tokenizer
+    ids_a = [tok.get_vocab()[c] for c in capitals]
+    ids_b = [tok.get_vocab()[s] for s in states]
+    embed_projs_a = torch.stack([torch.dot(embed_weight[i].float(), embed_direction) for i in ids_a])
+    embed_projs_b = torch.stack([torch.dot(embed_weight[i].float(), embed_direction) for i in ids_b])
+    assert embed_projs_a.mean() > embed_projs_b.mean(), "embed direction should separate embedding vectors"
+
+    # Store direction separates contextual vectors:
+    store_projs_cap = torch.stack([torch.dot(row, store_direction) for row in contextual_capitals])
+    store_projs_st = torch.stack([torch.dot(row, store_direction) for row in contextual_states])
+    assert store_projs_cap.mean() > store_projs_st.mean(), "store direction should separate contextual vectors"

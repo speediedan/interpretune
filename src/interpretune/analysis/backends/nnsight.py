@@ -21,7 +21,7 @@ import nnsight as _nnsight
 import torch
 
 from interpretune.analysis.backends import BackendCapability
-from interpretune.analysis.backends.hook_mapping import HookNameResolver, ResolvedHook
+from interpretune.analysis.backends.hook_mapping import HookNameResolver, ResolvedHook, _SAE_SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
 
 # Disable PYMOUNT C extension — this backend uses nnsight.save() exclusively.
@@ -230,6 +230,68 @@ def _write_envoy_activation(envoy: Any, resolved: ResolvedHook, value: Any) -> N
         envoy.input = value
 
 
+def _infer_num_layers(model: Any) -> int:
+    """Infer decoder layer count for enumerating cacheable TL hook names."""
+    hf_model = NNsightModelBackend._get_hf_model(model)
+    config = getattr(hf_model, "config", None)
+    for attr_name in ("num_hidden_layers", "n_layer", "n_layers"):
+        value = getattr(config, attr_name, None)
+        if value is not None:
+            return int(value)
+
+    backbone = _find_backbone_module(hf_model)
+    layers = getattr(backbone, "layers", None) or getattr(backbone, "h", None)
+    if layers is not None:
+        return int(len(layers))
+    raise ValueError("Unable to infer model layer count for NNsight activation caching")
+
+
+def _iter_requested_hook_names(model: Any, resolver: HookNameResolver, names_filter: NamesFilter) -> list[str]:
+    """Enumerate TL hook names requested by a names_filter."""
+    requested: list[str] = []
+    num_layers = _infer_num_layers(model)
+
+    for base_name in resolver.supported_hooks:
+        if "{layer}" in resolver._mapping.hook_mappings[base_name].envoy_path:  # type: ignore[attr-defined]
+            candidates = [f"blocks.{layer}.{base_name}" for layer in range(num_layers)]
+        else:
+            candidates = [base_name]
+
+        for candidate in candidates:
+            if _matches_names_filter(candidate, names_filter):
+                requested.append(candidate)
+            for suffix in sorted(_SAE_SUBHOOK_SUFFIXES):
+                cache_name = f"{candidate}.{suffix}"
+                if _matches_names_filter(cache_name, names_filter):
+                    requested.append(cache_name)
+
+    return requested
+
+
+def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
+    """Invoke an NNsight trace with only model-consumable batch fields."""
+    tracer_model = getattr(tracer, "model", None)
+    invoke_kwargs = {
+        key: value
+        for key, value in batch.items()
+        if key in {"attention_mask", "position_ids", "token_type_ids"}
+    }
+    if "input" in batch:
+        if hasattr(tracer_model, "pre_logit_location"):
+            return tracer.invoke(batch["input"])
+        return tracer.invoke(batch["input"], **invoke_kwargs)
+    if "input_ids" in batch:
+        if hasattr(tracer_model, "pre_logit_location"):
+            return tracer.invoke(batch["input_ids"])
+        return tracer.invoke(batch["input_ids"], **invoke_kwargs)
+    if not invoke_kwargs:
+        raise ValueError(
+            "NNsight trace invocation requires 'input' or 'input_ids'; "
+            f"got batch keys: {sorted(batch.keys())}"
+        )
+    return tracer.invoke(**invoke_kwargs)
+
+
 class NNsightModelBackend:
     """NNsight model execution backend.
 
@@ -420,7 +482,7 @@ class NNsightModelBackend:
         NNsight model directly (outside a trace) would bypass this mapping.
         """
         with model.trace() as tracer:
-            with tracer.invoke(**batch):
+            with _invoke_trace(tracer, batch):
                 saved_logits = _nnsight.save(model.output.logits)
         return saved_logits
 
@@ -456,9 +518,8 @@ class NNsightModelBackend:
         """
         saved_cache: dict[str, Any] = {}
         saved_logits: Any = None
-
         with model.trace() as tracer:
-            with tracer.invoke(**batch):
+            with _invoke_trace(tracer, batch):
                 for sae in latent_model_handles:
                     hook_name: str = sae.cfg.metadata.hook_name
                     feature_acts, act_proxy, _ = self._splice_sae(model, sae)
@@ -468,11 +529,30 @@ class NNsightModelBackend:
                         saved_cache[f"{hook_name}.hook_sae_input"] = _nnsight.save(act_proxy)
                     if _matches_names_filter(f"{hook_name}.hook_sae_acts_post", names_filter):
                         saved_cache[f"{hook_name}.hook_sae_acts_post"] = _nnsight.save(feature_acts)
-                # NOTE: model.output.logits is safe for single-invoke contexts.
-                # For multi-invoke, use model.lm_head.output (see fwd_w_hooks_batched).
                 saved_logits = _nnsight.save(model.output.logits)
 
         # After trace exits: nnsight.save() resolves to real tensors directly
+        return saved_logits, NNsightActivationCacheAdapter(saved_cache)
+
+    def fwd_w_cache(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        names_filter: NamesFilter,
+    ) -> tuple[torch.Tensor, Any]:
+        """Run a forward pass with activation caching but without latent model hooks."""
+        requested_hooks = _iter_requested_hook_names(model, self._resolver, names_filter)
+        saved_cache: dict[str, Any] = {}
+        saved_logits: Any = None
+        with model.trace() as tracer:
+            with _invoke_trace(tracer, batch):
+                for hook_name in requested_hooks:
+                    resolved = self._resolver.resolve_for_envoy(hook_name)
+                    envoy = _navigate_envoy(model, resolved.module_path)
+                    act_proxy = _read_envoy_activation(envoy, resolved)
+                    saved_cache[hook_name] = _nnsight.save(act_proxy)
+                saved_logits = _nnsight.save(model.output.logits)
+
         return saved_logits, NNsightActivationCacheAdapter(saved_cache)
 
     # ------------------------------------------------------------------
@@ -507,20 +587,17 @@ class NNsightModelBackend:
             Model output logits.
         """
         saved_logits: Any = None
-
         with model.trace() as tracer:
-            with tracer.invoke(**batch):
+            with _invoke_trace(tracer, batch):
                 for sae in latent_model_handles:
                     hook_name: str = sae.cfg.metadata.hook_name
 
-                    # Collect user hooks relevant to this SAE
                     relevant_user_hooks = [
                         (name, fn)
                         for name, fn in fwd_hooks
                         if name.startswith("blocks.") and _base_hook_matches(name, hook_name)
                     ]
 
-                    # Build a composite hook_fn if any user hooks apply
                     composite_fn: Callable | None = None
                     if relevant_user_hooks:
 
@@ -538,8 +615,6 @@ class NNsightModelBackend:
 
                     self._splice_sae(model, sae, hook_fn=composite_fn)
 
-                # NOTE: model.output.logits is safe for single-invoke contexts.
-                # For multi-invoke, use model.lm_head.output (see fwd_w_hooks_batched).
                 saved_logits = _nnsight.save(model.output.logits)
 
         return saved_logits
@@ -605,7 +680,7 @@ class NNsightModelBackend:
 
             with model.trace() as tracer:
                 for fwd_hooks in chunk:
-                    with tracer.invoke(**batch):
+                    with _invoke_trace(tracer, batch):
                         for sae in latent_model_handles:
                             hook_name: str = sae.cfg.metadata.hook_name
 
@@ -692,13 +767,12 @@ class NNsightModelBackend:
         # torch.is_grad_enabled() as False.  The context manager restores the
         # original state on exit.
         with torch.set_grad_enabled(True), model.trace() as tracer:
-            with tracer.invoke(**batch):
+            with _invoke_trace(tracer, batch):
                 # ---- SAE splicing via _splice_sae ----
                 for sae in latent_model_handles:
                     hook_name: str = sae.cfg.metadata.hook_name
                     feature_acts, act_proxy, _ = self._splice_sae(model, sae)
 
-                    # Save forward activations that match any names_filter
                     input_key = f"{hook_name}.hook_sae_input"
                     acts_key = f"{hook_name}.hook_sae_acts_post"
                     if any(_matches_names_filter(input_key, nf) for nf, _ in fwd_hooks):
@@ -706,13 +780,11 @@ class NNsightModelBackend:
                     if any(_matches_names_filter(acts_key, nf) for nf, _ in fwd_hooks):
                         saved_fwd[acts_key] = _nnsight.save(feature_acts)
 
-                    # Store proxy refs for gradient capture below
                     if any(_matches_names_filter(input_key, nf) for nf, _ in bwd_hooks):
                         saved_grad[f"_proxy_{input_key}"] = act_proxy
                     if any(_matches_names_filter(acts_key, nf) for nf, _ in bwd_hooks):
                         saved_grad[f"_proxy_{acts_key}"] = feature_acts
 
-                # ---- Forward + backward ----
                 logits_proxy = model.output.logits
                 scalar = backward_fn(logits_proxy)
 

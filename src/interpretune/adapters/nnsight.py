@@ -192,7 +192,35 @@ class BaseNNsightModule(BaseITModule):
         if self.it_cfg.tokenizer is None and hasattr(self.model, "tokenizer"):
             self.it_cfg.tokenizer = self.model.tokenizer
 
+        # Apply generation config to the underlying HF model (equivalent to _hf_post_init_cfg for NNsight)
+        self._apply_generation_config()
+
         rank_zero_info("NNsight LanguageModel initialized successfully")
+
+    def _apply_generation_config(self) -> None:
+        """Apply HFGenerationConfig settings to the underlying HF model's generation_config.
+
+        NNsight wraps HF models directly, so we apply generation config to the underlying model
+        the same way _hf_post_init_cfg does for standard HF models.
+        """
+        from interpretune.config.mixins import HFGenerationConfig
+
+        gen_cfg = getattr(self.it_cfg, "generative_step_cfg", None)
+        if gen_cfg is None:
+            return
+        lm_gen_cfg = getattr(gen_cfg, "lm_generation_cfg", None)
+        if not isinstance(lm_gen_cfg, HFGenerationConfig):
+            return
+        # Get the underlying HF model from NNsight LanguageModel
+        underlying_model = getattr(self.model, "_model", None)
+        if underlying_model is None:
+            return
+        hf_gen_config = getattr(underlying_model, "generation_config", None)
+        if hf_gen_config is None:
+            return
+        for k, v in lm_gen_cfg.model_config.items():
+            setattr(hf_gen_config, k, v)
+        rank_zero_debug(f"Applied HFGenerationConfig to NNsight underlying model: {lm_gen_cfg.model_config}")
 
     def _capture_hyperparameters(self) -> None:
         """Capture hyperparameters for logging.

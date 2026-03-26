@@ -2,7 +2,7 @@
 
 Adapted from ``circuit_tracer.utils.demo_utils`` for use within Interpretune
 example notebooks.  See the upstream ``demo_utils.py`` for additional display
-functions (attribution config, ablation charts, generation comparisons).
+functions (attribution config, generation comparisons).
 """
 
 from __future__ import annotations
@@ -38,6 +38,81 @@ def get_topk(
     probs = torch.softmax(_ensure_1d_logits(logits), dim=-1)
     topk = torch.topk(probs, k)
     return [(tokenizer.decode([topk.indices[i]]), topk.values[i].item()) for i in range(k)]
+
+
+# ---------------------------------------------------------------------------
+# Candidate example review
+# ---------------------------------------------------------------------------
+
+
+def display_candidate_examples(
+    examples: list[dict],
+    title: str = "Candidate Examples",
+) -> None:
+    """Display Phase A candidate examples in a styled HTML table with full prompts.
+
+    Each dict in *examples* should have at least:
+    ``batch_idx``, ``prompt``, ``label``, ``predicted``, ``yes_logit``, ``no_logit``,
+    ``gap``, ``is_correct``.
+
+    Args:
+        examples: List of example dicts from the validation loop.
+        title: Heading for the table.
+    """
+    n_correct = sum(1 for ex in examples if ex["is_correct"])
+    n_total = len(examples)
+    accuracy_pct = 100 * n_correct / n_total if n_total else 0
+
+    rows = ""
+    for i, ex in enumerate(examples):
+        mark = "&#x2713;" if ex["is_correct"] else "&#x2717;"
+        mark_color = "#27AE60" if ex["is_correct"] else "#C0392B"
+        row_bg = "rgba(240,240,240,0.1)" if i % 2 == 0 else "rgba(255,255,255,0.1)"
+        rows += (
+            f'<tr style="background:{row_bg};">'
+            f'<td style="text-align:center;">{ex["batch_idx"]}</td>'
+            f'<td>{html.escape(str(ex["label"]))}</td>'
+            f'<td>{html.escape(str(ex["predicted"]))}</td>'
+            f'<td style="text-align:right;font-family:monospace;">{ex["gap"]:+.4f}</td>'
+            f'<td style="text-align:center;color:{mark_color};font-weight:bold;">{mark}</td>'
+            f'<td style="white-space:pre-wrap;word-break:break-word;font-family:monospace;'
+            f'font-size:12px;max-width:500px;">{html.escape(str(ex["prompt"]))}</td>'
+            f"</tr>\n"
+        )
+
+    markup = f"""
+    <div style="font-family:system-ui,-apple-system,sans-serif;margin-bottom:12px;font-size:13px;">
+        <div style="font-weight:bold;font-size:14px;margin-bottom:6px;padding:4px 8px;
+            border-radius:3px;background:#555;color:white;display:inline-block;">
+            {html.escape(title)}</div>
+        <div style="margin-bottom:6px;">
+            Accuracy: <b>{n_correct}/{n_total}</b> ({accuracy_pct:.1f}%)
+            &mdash; Correct examples available for intervention: <b>{n_correct}</b>
+        </div>
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align:center;padding:4px 6px;border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);width:50px;">Batch</th>
+                    <th style="text-align:left;padding:4px 6px;border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);width:60px;">Label</th>
+                    <th style="text-align:left;padding:4px 6px;border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);width:60px;">Pred</th>
+                    <th style="text-align:right;padding:4px 6px;border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);width:90px;">Yes&minus;No</th>
+                    <th style="text-align:center;padding:4px 6px;border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);width:30px;">&#10003;</th>
+                    <th style="text-align:left;padding:4px 6px;border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">Prompt</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows}
+            </tbody>
+        </table>
+    </div>
+    """
+    display(HTML(markup))
 
 
 # ---------------------------------------------------------------------------
@@ -426,4 +501,161 @@ def display_topk_token_predictions(
     </div>
     """
 
+    display(HTML(markup))
+
+
+# ---------------------------------------------------------------------------
+# Ablation chart
+# ---------------------------------------------------------------------------
+
+
+def display_ablation_chart(
+    groups: dict[str, dict[str, float]],
+    logit_diffs: dict[str, float] | None = None,
+    title: str = "",
+    colors: list[str] | None = None,
+) -> None:
+    """Display ablation results as a grouped bar chart with optional logit-difference line.
+
+    Adapted from ``circuit_tracer.utils.demo_utils.display_ablation_chart``.
+
+    Args:
+        groups: Mapping from condition label (e.g. ``"baseline"``, ``"top-10"``)
+            to a dict of ``{token_label: probability}``.
+        logit_diffs: Optional mapping from condition label to a scalar logit
+            difference value.  When provided, a dashed line overlay is drawn on
+            a secondary y-axis.
+        title: Chart title.
+        colors: Optional list of bar colors (one per token label).
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    group_labels = list(groups.keys())
+    token_labels = list(next(iter(groups.values())).keys())
+    n_groups = len(group_labels)
+    n_tokens = len(token_labels)
+
+    if colors is None:
+        colors = ["#2471A3", "#E67E22", "#27AE60", "#C0392B", "#8E44AD"][:n_tokens]
+
+    x = np.arange(n_groups)
+    width = 0.8 / n_tokens
+
+    fig, ax1 = plt.subplots(figsize=(8, 5.0))
+
+    for i, tok in enumerate(token_labels):
+        vals = [groups[g].get(tok, 0) for g in group_labels]
+        offset = (i - (n_tokens - 1) / 2) * width
+        bars = ax1.bar(x + offset, vals, width * 0.9, label=tok, color=colors[i], alpha=0.85)
+        for bar, v in zip(bars, vals):
+            ax1.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.005,
+                f"{v:.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
+
+    ax1.set_ylabel("Probability")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(group_labels)
+    max_prob = max(max(groups[g].get(t, 0) for t in token_labels) for g in group_labels)
+    ax1.set_ylim(0, max_prob * 1.4)
+
+    if logit_diffs is not None:
+        ax2 = ax1.twinx()
+        diff_vals = [logit_diffs.get(g, 0) for g in group_labels]
+        ax2.plot(x, diff_vals, "k--o", label="Logit diff", linewidth=1.5, markersize=5)
+        ax2.set_ylabel("Logit difference")
+        ax2.legend(loc="upper right")
+
+    ax1.legend(loc="upper left")
+    if title:
+        ax1.set_title(title, fontsize=13, fontweight="bold")
+    fig.tight_layout()
+    plt.show()
+
+
+# ---------------------------------------------------------------------------
+# Key-token logit table
+# ---------------------------------------------------------------------------
+
+
+def display_key_token_logits(
+    pre_logits: torch.Tensor,
+    post_logits: torch.Tensor,
+    token_ids: list[int],
+    token_labels: list[str],
+    title: str = "Key-Token Logit Analysis",
+) -> None:
+    """Display a styled HTML table of per-token logit changes before/after intervention.
+
+    Accepts 1-D logit vectors (vocab dimension).
+
+    Args:
+        pre_logits: Logits before intervention (1-D, vocab size).
+        post_logits: Logits after intervention (1-D, vocab size).
+        token_ids: Vocabulary indices to display.
+        token_labels: Human-readable label for each token.
+        title: Heading rendered above the table.
+    """
+    pre = pre_logits.float().cpu()
+    post = post_logits.float().cpu()
+
+    # Compute ranks
+    _, pre_sorted = torch.sort(pre, descending=True)
+    _, post_sorted = torch.sort(post, descending=True)
+    pre_rank = {int(idx): r for r, idx in enumerate(pre_sorted.tolist())}
+    post_rank = {int(idx): r for r, idx in enumerate(post_sorted.tolist())}
+
+    rows = ""
+    for i, (tid, label) in enumerate(zip(token_ids, token_labels)):
+        pre_v = pre[tid].item()
+        post_v = post[tid].item()
+        delta = post_v - pre_v
+        pr = pre_rank.get(tid, -1)
+        por = post_rank.get(tid, -1)
+        delta_color = "#27AE60" if delta > 0 else "#C0392B" if delta < 0 else "#888"
+        row_bg = "rgba(240,240,240,0.1)" if i % 2 == 0 else "rgba(255,255,255,0.1)"
+        rows += (
+            f'<tr style="background:{row_bg};">'
+            f'<td style="font-family:monospace;">{html.escape(label)}</td>'
+            f'<td style="text-align:right;">{pre_v:.4f}</td>'
+            f'<td style="text-align:center;">{pr}</td>'
+            f'<td style="text-align:right;">{post_v:.4f}</td>'
+            f'<td style="text-align:center;">{por}</td>'
+            f'<td style="text-align:right;color:{delta_color};font-weight:bold;">{delta:+.4f}</td>'
+            f"</tr>\n"
+        )
+
+    markup = f"""
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:650px;margin-bottom:12px;font-size:13px;">
+        <div style="font-weight:bold;font-size:14px;margin-bottom:6px;padding:4px 8px;
+            border-radius:3px;background:#555;color:white;display:inline-block;">
+            {html.escape(title)}</div>
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align:left;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">Token</th>
+                    <th style="text-align:right;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">Pre Logit</th>
+                    <th style="text-align:center;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">Rank</th>
+                    <th style="text-align:right;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">Post Logit</th>
+                    <th style="text-align:center;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">Rank</th>
+                    <th style="text-align:right;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">Δ Logit</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows}
+            </tbody>
+        </table>
+    </div>
+    """
     display(HTML(markup))

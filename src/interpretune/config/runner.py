@@ -123,7 +123,7 @@ def init_analysis_dirs(
 
 def init_analysis_cfgs(
     module: "LatentAnalysisModuleProtocol",
-    analysis_cfgs: list[AnalysisCfg],
+    analysis_cfgs: "AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] | None",
     cache_dir: str | Path | None = None,
     op_output_dataset_path: str | Path | None = None,
     latent_analysis_targets: "LatentAnalysisTargets | None" = None,
@@ -133,12 +133,14 @@ def init_analysis_cfgs(
 
     Args:
         module: The module to initialize configurations for
-        analysis_cfgs: List of analysis configurations to initialize
+        analysis_cfgs: Analysis configuration(s) to initialize
         cache_dir: Optional path to cache directory
         op_output_dataset_path: Optional path for analysis outputs
         latent_analysis_targets: Optional analysis targets to use
         ignore_manual: Whether to ignore existing manual analysis steps
     """
+    analysis_cfgs = to_analysis_cfgs(analysis_cfgs)
+
     # Initialize directories
     cache_dir, op_output_dataset_path = init_analysis_dirs(module, cache_dir, op_output_dataset_path, analysis_cfgs)
 

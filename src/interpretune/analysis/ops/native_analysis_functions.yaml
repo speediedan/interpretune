@@ -52,11 +52,11 @@ get_alive_latents:
       per_latent_model_hook: true
       non_tensor: true
 
-model_forward:
+model_fwd:
   description: Basic model forward pass
-  implementation: interpretune.analysis.ops.definitions.model_forward_impl
+  implementation: interpretune.analysis.ops.definitions.model_fwd_impl
   required_ops: [get_answer_indices]
-  aliases: []
+  aliases: ['model_forward']
   input_schema:
     input:
       datasets_dtype: int64
@@ -76,11 +76,36 @@ model_forward:
       required: false
       non_tensor: true
 
-model_cache_forward:
-  description: Model forward pass with cache
-  implementation: interpretune.analysis.ops.definitions.model_cache_forward_impl
+model_fwd_w_cache:
+  description: Model forward pass with activation caching (no latent model hooks)
+  implementation: interpretune.analysis.ops.definitions.model_fwd_w_cache_impl
+  required_ops: [get_answer_indices]
+  aliases: []
+  input_schema:
+    input:
+      datasets_dtype: int64
+      connected_obj: datamodule
+  output_schema:
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      dyn_dim: 1
+      dyn_dim_ceil: max_seq_len
+      array_shape: [null, batch_size, vocab_size]
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+
+model_fwd_w_cache_latent_models:
+  description: Model forward pass with activation caching and latent model (SAE) hooks
+  implementation: interpretune.analysis.ops.definitions.model_fwd_w_cache_latent_models_impl
   required_ops: [get_answer_indices, get_alive_latents]
-  aliases: ['model_forward_cache']
+  aliases: []
   input_schema:
     input:
       datasets_dtype: int64
@@ -340,10 +365,10 @@ ablation_attribution:
       datasets_dtype: int64
       per_latent: true
 
-extract_concept_latent_examples:
-  description: Extract per-example latent states and metadata for concept-direction aggregation
-  implementation: interpretune.analysis.ops.definitions.extract_concept_latent_examples_impl
-  aliases: [concept_latent_examples]
+extract_concept_latent_state:
+  description: Extract per-example latent rows from the configured cache key
+  implementation: interpretune.analysis.ops.definitions.extract_concept_latent_state_impl
+  aliases: [concept_latent_state_from_cache]
   input_schema:
     cache:
       datasets_dtype: object
@@ -351,6 +376,40 @@ extract_concept_latent_examples:
       intermediate_only: true
     answer_indices:
       datasets_dtype: int64
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      default: unembed.hook_in
+  output_schema:
+    concept_latent_state:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+
+extract_concept_latent_examples:
+  description: Filter and annotate latent rows for concept-direction aggregation
+  implementation: interpretune.analysis.ops.definitions.extract_concept_latent_examples_impl
+  aliases: [concept_latent_examples]
+  input_schema:
+    concept_latent_state:
+      datasets_dtype: float32
+      required: false
+      array_shape: [null, null]
+      sequence_type: false
+    cache:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+      intermediate_only: true
+    answer_indices:
+      datasets_dtype: int64
+      required: false
     orig_labels:
       datasets_dtype: int64
     logit_diffs:
@@ -375,7 +434,7 @@ extract_concept_latent_examples:
       datasets_dtype: string
       required: false
       non_tensor: true
-      default: unembed.hook_in.hook_sae_input
+      default: unembed.hook_in
     concept_correct_only:
       datasets_dtype: int64
       required: false
@@ -389,28 +448,39 @@ extract_concept_latent_examples:
   output_schema:
     concept_latent_state:
       datasets_dtype: float32
-      sequence_type: true
+      array_shape: [null, null]
+      sequence_type: false
     concept_group_id:
       datasets_dtype: int64
+      array_shape: [null]
+      sequence_type: false
     concept_group_name:
       datasets_dtype: string
       non_tensor: true
+      sequence_type: true
     concept_example_logit_diff:
       datasets_dtype: float32
+      array_shape: [null]
+      sequence_type: false
     concept_example_weight:
       datasets_dtype: float32
+      array_shape: [null]
+      sequence_type: false
     concept_cache_key:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
     concept_group_a_name:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
     concept_group_b_name:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
 
 concept_direction:
   description: Aggregate latent concept examples into a normalized concept direction vector
@@ -822,16 +892,16 @@ feature_intervention_forward:
 # Composite operations
 composite_operations:
   logit_diffs_base:
-    composition: labels_to_ids.model_forward.logit_diffs
+    composition: labels_to_ids.model_fwd.logit_diffs
 
   logit_diffs_sae:
-    composition: labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts
+    composition: labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.sae_correct_acts
 
   logit_diffs_attr_grad:
     composition: labels_to_ids.model_gradient.gradient_attribution
 
   logit_diffs_attr_ablation:
-    composition: labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.ablation_attribution
+    composition: labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.model_ablation.ablation_attribution
     aliases: [logit_diffs_ablation]
 
   attribution_from_concept:

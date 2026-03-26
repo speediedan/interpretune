@@ -837,6 +837,13 @@ class TestRunnerConfig:
         analysis_cfg1.apply.assert_not_called()
         analysis_cfg2.apply.assert_called_once()
 
+        analysis_cfg1.apply.reset_mock()
+        analysis_cfg1.applied_to.return_value = False
+
+        init_analysis_cfgs(module=module, analysis_cfgs=analysis_cfg1)
+
+        analysis_cfg1.apply.assert_called_once()
+
     def test_session_runner_cfg(self):
         """Test the SessionRunnerCfg class."""
         from interpretune.config.runner import SessionRunnerCfg

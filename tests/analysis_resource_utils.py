@@ -34,6 +34,7 @@ import psutil
 import torch
 
 from interpretune.analysis.core import LatentAnalysisDict
+from interpretune.utils.resource_mgmt import cleanup_python_cuda
 
 from tests.runif import get_runner_ram_gb
 
@@ -121,7 +122,7 @@ def serial_test_cleanup(*objects: Any, clear_cuda: bool = True):
                         pass
         gc.collect()
         if clear_cuda and torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            cleanup_python_cuda()
 
 
 @dataclass(frozen=True, kw_only=True)

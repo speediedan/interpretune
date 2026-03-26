@@ -4,8 +4,6 @@ from __future__ import annotations  # see PEP 749, no longer needed when 3.13 re
 from typing import Literal, Any, Callable, Sequence
 from dataclasses import dataclass, fields
 from contextlib import contextmanager
-from functools import wraps
-import inspect
 import os
 
 import torch
@@ -345,8 +343,9 @@ class ColCfg:
         hashable_shape = None
         if self.array_shape is not None:
             # Convert any unhashable elements in array_shape to their string representation
-            hashable_shape = tuple(str(dim) if isinstance(dim, (list, dict)) else dim for dim in self.array_shape)
-
+            hashable_shape = tuple(
+                repr(item) if isinstance(item, (list, dict, set)) else item for item in self.array_shape
+            )
         hashable_default = self.default
         if isinstance(hashable_default, (list, dict, set)):
             hashable_default = repr(hashable_default)
@@ -368,55 +367,6 @@ class ColCfg:
                 hashable_default,
             )
         )
-
-
-def _resolve_bound_input_schema(op_name: str) -> OpSchema | None:
-    """Resolve an op input schema lazily without creating a hard dispatcher import edge."""
-    from interpretune.analysis.ops.dispatcher import DISPATCHER
-
-    try:
-        op = DISPATCHER.get_op(op_name)
-    except Exception:
-        return None
-
-    return getattr(op, "input_schema", None)
-
-
-def with_analysis_batch_context(op_name: str | None = None):
-    """Compatibility shim for direct impl calls that bypass ``AnalysisOp`` execution.
-
-    Normal dispatcher-driven execution binds scoped ``AnalysisBatch`` resolution in
-    ``AnalysisOp.__call__`` by default. This decorator remains for tests or other
-    direct implementation invocations that intentionally call ``*_impl`` functions
-    without going through the standard op execution surface.
-    """
-
-    def decorator(func: Callable):
-        signature = inspect.signature(func)
-        inferred_name = op_name or func.__name__.removesuffix("_impl")
-
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            bound = signature.bind_partial(*args, **kwargs)
-            analysis_batch = bound.arguments.get("analysis_batch")
-            if not isinstance(analysis_batch, AnalysisBatch):
-                return func(*args, **kwargs)
-
-            module = bound.arguments.get("module")
-            batch_idx = bound.arguments.get("batch_idx")
-            analysis_inputs = bound.arguments.get("analysis_inputs", kwargs.get("analysis_inputs"))
-            input_schema = _resolve_bound_input_schema(inferred_name)
-            with analysis_batch.resolution_context(
-                module,
-                analysis_inputs=analysis_inputs,
-                batch_idx=batch_idx,
-                input_schema=input_schema,
-            ):
-                return func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
 
 
 class OpSchema(dict):
@@ -915,15 +865,21 @@ class CompositeAnalysisOp(AnalysisOp):
 
         for op in self.composition:
             with op.active_ctx_key(self.name):
-                op._validate_call(
+                with op._bound_analysis_batch_context(
                     module,
                     current_batch,
-                    batch,
                     batch_idx=batch_idx,
                     analysis_inputs=kwargs.get("analysis_inputs"),
-                )
-                # Use centralized parameter building and resolution
-                current_batch = op._call_with_resolved_params(module, current_batch, batch, batch_idx, **kwargs)
+                ):
+                    op._validate_call(
+                        module,
+                        current_batch,
+                        batch,
+                        batch_idx=batch_idx,
+                        analysis_inputs=kwargs.get("analysis_inputs"),
+                    )
+                    # Use centralized parameter building and resolution
+                    current_batch = op._call_with_resolved_params(module, current_batch, batch, batch_idx, **kwargs)
 
         return current_batch
 

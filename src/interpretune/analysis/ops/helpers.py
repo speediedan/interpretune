@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from interpretune.analysis.ops.base import AnalysisBatch
 
 import torch
 
@@ -58,6 +61,14 @@ def mean_target_logit_delta(
 
 def stack_column_tensors(values: Any, *, dtype: torch.dtype | None = None) -> torch.Tensor:
     """Normalize dataset or run-input column values into a tensor."""
+    def _combine_tensors(tensors: list[torch.Tensor]) -> torch.Tensor:
+        if tensors[0].ndim > 1:
+            try:
+                return torch.cat(tensors, dim=0)
+            except RuntimeError:
+                return torch.stack(tensors)
+        return torch.stack(tensors)
+
     if isinstance(values, torch.Tensor):
         return values.to(dtype=dtype) if dtype is not None else values
     if isinstance(values, list | tuple):
@@ -66,8 +77,15 @@ def stack_column_tensors(values: Any, *, dtype: torch.dtype | None = None) -> to
             target_dtype = dtype if dtype is not None else torch.float32
             return torch.empty((0,), dtype=target_dtype)
         if all(isinstance(value, torch.Tensor) for value in values):
-            stacked = torch.stack([value.detach().cpu() for value in values])
+            tensors = [value.detach().cpu() for value in values]
+            stacked = _combine_tensors(tensors)
             return stacked.to(dtype=dtype) if dtype is not None else stacked
+        tensor_values = []
+        for value in values:
+            tensor_value = torch.as_tensor(value)
+            tensor_values.append(tensor_value.detach().cpu())
+        stacked = _combine_tensors(tensor_values)
+        return stacked.to(dtype=dtype) if dtype is not None else stacked
     return torch.as_tensor(values, dtype=dtype)
 
 
@@ -456,6 +474,119 @@ def concept_target_token_ids(module: Any, concept_direction: torch.Tensor, top_k
     return torch.topk(scores, k=top_k).indices.detach().cpu()
 
 
+def _resolve_concept_cache_key(analysis_batch: AnalysisBatch) -> str:
+    return str(analysis_batch.get("concept_cache_key") or "unembed.hook_in")
+
+
+def _extract_concept_latent_state_from_cache(analysis_batch: AnalysisBatch) -> tuple[torch.Tensor, str]:
+    cache = analysis_batch.cache
+    answer_indices = analysis_batch.answer_indices
+    if cache is None or answer_indices is None:
+        raise ValueError("extract_concept_latent_state requires cache and answer_indices")
+
+    cache_key = _resolve_concept_cache_key(analysis_batch)
+    if cache_key not in cache:
+        raise ValueError(f"extract_concept_latent_state could not find cache key '{cache_key}'")
+
+    cache_tensor = torch.as_tensor(cache[cache_key])
+    if cache_tensor.dim() < 2:
+        raise ValueError(f"Expected cached latent states for '{cache_key}' to be rank >= 2, got {cache_tensor.dim()}")
+
+    if cache_tensor.dim() >= 3:
+        index_tensor = torch.as_tensor(answer_indices, dtype=torch.long, device=cache_tensor.device).reshape(-1)
+        batch_indices = torch.arange(cache_tensor.size(0), device=cache_tensor.device)
+        latent_states = cache_tensor[batch_indices, index_tensor].detach().cpu().float()
+    else:
+        latent_states = cache_tensor.detach().cpu().float()
+
+    return latent_states, cache_key
+
+
+def _flatten_concept_store_rows(
+    latent_state_rows: Any,
+    group_id_rows: Any,
+    group_name_rows: Any = None,
+    example_weight_rows: Any = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
+    """Flatten stored concept-direction rows while skipping empty per-batch entries."""
+
+    def _ensure_row_sequence(values: Any) -> list[Any]:
+        if values is None:
+            return []
+        if isinstance(values, (list, tuple)):
+            return list(values)
+        if hasattr(values, "__iter__") and not isinstance(values, (Mapping, str, bytes, torch.Tensor)):
+            return list(values)
+        return [values]
+
+    latent_rows = _ensure_row_sequence(latent_state_rows)
+    group_rows = _ensure_row_sequence(group_id_rows)
+    name_rows = _ensure_row_sequence(group_name_rows)
+    weight_rows = _ensure_row_sequence(example_weight_rows)
+
+    flattened_states: list[torch.Tensor] = []
+    flattened_groups: list[torch.Tensor] = []
+    flattened_weights: list[torch.Tensor] = []
+    flattened_names: list[str] = []
+
+    for row_idx, state_row in enumerate(latent_rows):
+        state_tensor = torch.as_tensor(state_row, dtype=torch.float32).detach().cpu()
+        if state_tensor.numel() == 0:
+            continue
+        if state_tensor.dim() == 1:
+            state_tensor = state_tensor.unsqueeze(0)
+
+        if row_idx >= len(group_rows):
+            raise ValueError("concept_direction requires concept_group_id rows for every concept_latent_state row")
+        group_tensor = torch.as_tensor(group_rows[row_idx], dtype=torch.long).detach().cpu().reshape(-1)
+        if group_tensor.numel() == 0:
+            continue
+        if state_tensor.shape[0] != group_tensor.shape[0]:
+            raise ValueError(
+                "concept_direction requires concept_latent_state and concept_group_id row lengths to match"
+            )
+
+        if row_idx < len(weight_rows) and weight_rows[row_idx] is not None:
+            weight_tensor = torch.as_tensor(weight_rows[row_idx], dtype=torch.float32).detach().cpu().reshape(-1)
+            if weight_tensor.numel() == 0:
+                weight_tensor = torch.ones(state_tensor.shape[0], dtype=torch.float32)
+        else:
+            weight_tensor = torch.ones(state_tensor.shape[0], dtype=torch.float32)
+        if weight_tensor.shape[0] != state_tensor.shape[0]:
+            raise ValueError(
+                "concept_direction requires concept_example_weight row lengths to match concept_latent_state"
+            )
+
+        row_names: list[str] = []
+        if row_idx < len(name_rows):
+            raw_names = name_rows[row_idx]
+            if isinstance(raw_names, Sequence) and not isinstance(raw_names, (str, bytes)):
+                row_names = [str(item) for item in raw_names]
+            elif raw_names is not None:
+                row_names = [str(raw_names)]
+        if row_names and len(row_names) != state_tensor.shape[0]:
+            raise ValueError(
+                "concept_direction requires concept_group_name row lengths to match concept_latent_state"
+            )
+        if not row_names:
+            row_names = [""] * state_tensor.shape[0]
+
+        flattened_states.append(state_tensor)
+        flattened_groups.append(group_tensor)
+        flattened_weights.append(weight_tensor)
+        flattened_names.extend(row_names)
+
+    if not flattened_states:
+        raise ValueError("concept_direction requires at least one non-empty concept_latent_state row")
+
+    return (
+        torch.cat(flattened_states, dim=0),
+        torch.cat(flattened_groups, dim=0),
+        torch.cat(flattened_weights, dim=0),
+        flattened_names,
+    )
+
+
 __all__ = [
     "AnalysisInputs",
     "AnalysisValueResolver",
@@ -477,4 +608,7 @@ __all__ = [
     "token_strings_to_ids",
     "token_strings_to_last_ids",
     "weighted_mean",
+    "_resolve_concept_cache_key",
+    "_extract_concept_latent_state_from_cache",
+    "_flatten_concept_store_rows",
 ]

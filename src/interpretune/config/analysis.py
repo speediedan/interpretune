@@ -100,8 +100,8 @@ class AnalysisCfg(ITSerializableCfg):
     input_store: AnalysisStoreProtocol | None = None  # store containing input data from previous op
     batch_inputs: dict[str, Any] = field(default_factory=dict)  # batch-scoped inputs for the active invocation
     run_inputs: dict[str, Any] = field(default_factory=dict)  # run-scoped inputs shared across the invocation
-    target_op: str | AnalysisOp | Callable | list[AnalysisOp] | None = None  # input op to be resolved
-    output_schema: OpSchema | str | AnalysisOp | None = None  # Schema, op, or op name to define schema
+    target_op: str | AnalysisOp | Callable | list[AnalysisOp | Callable] | None = None  # input op to be resolved
+    output_schema: OpSchema | str | AnalysisOp | Callable | None = None  # Schema, op, or op name to define schema
     name: str | None = None  # Name for this analysis configuration
     fwd_hooks: list[tuple] = field(default_factory=list)
     bwd_hooks: list[tuple] = field(default_factory=list)

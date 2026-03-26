@@ -93,7 +93,10 @@ class BaseCircuitTracerModule(BaseITModule):
     @property
     def analysis_capabilities(self) -> frozenset[AnalysisBackendCapability]:
         """Analysis-level capabilities provided by the circuit-tracer adapter."""
-        return self.analysis_backend.capabilities
+        from interpretune.analysis.backends import get_analysis_backend
+
+        analysis_backend = get_analysis_backend(self)
+        return analysis_backend.capabilities if analysis_backend is not None else frozenset()
 
     def _load_replacement_model(self, pretrained_kwargs: dict | None = None) -> None:
         """Load the ReplacementModel for circuit tracing.
@@ -141,6 +144,25 @@ class BaseCircuitTracerModule(BaseITModule):
 
         # Replace the model with the replacement model for circuit tracing
         self.model = self._replacement_model
+
+        if backend == "nnsight":
+            from interpretune.analysis.backends.hook_mapping import HookNameResolver
+            from interpretune.analysis.backends.nnsight import NNsightModelBackend, get_default_configs_per_pass
+
+            hf_model = NNsightModelBackend._get_hf_model(self.model)
+            hf_config = getattr(hf_model, "config", None)
+            architectures = getattr(hf_config, "architectures", None) if hf_config else None
+            model_arch = architectures[0] if architectures else type(hf_model).__name__
+            resolver = HookNameResolver(model_arch)
+            self._model_backend = NNsightModelBackend(  # type: ignore[attr-defined]
+                resolver,
+                configs_per_pass=get_default_configs_per_pass(),
+            )
+            self._model_backend.register_model_hooks(self.model)  # type: ignore[attr-defined]
+        else:
+            from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+            self._model_backend = TLModelBackend()  # type: ignore[attr-defined]
 
     def _capture_hyperparameters(self) -> None:
         """Capture hyperparameters for logging."""
@@ -339,6 +361,9 @@ class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
 
         # Load the NNsight replacement model
         self._load_replacement_model(pretrained_kwargs=nnsight_kwargs)  # type: ignore[attr-defined]
+
+        # Apply generation config to the underlying HF model (NNSightReplacementModel extends LanguageModel)
+        self._apply_generation_config()  # type: ignore[attr-defined]  # provided by BaseNNsightModule
 
         # The replacement model is now set as self.model
         rank_zero_info("NNsight ReplacementModel initialized for Circuit Tracer")

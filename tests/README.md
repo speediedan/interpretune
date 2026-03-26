@@ -183,6 +183,14 @@ We include a couple of developer-facing documents under `tests/` for profiling a
 
 These are intended for maintainers and contributors performing performance investigations and are particularly useful for managing the complexity of our numerous package integrations.
 
+## Benchmark Tests
+
+End-to-end experiment benchmarks live in `tests/benchmarks/`. These validate that experiment configs
+produce expected accuracy and are gated by the `benchmark` RunIf mark (`IT_RUN_BENCHMARK_TESTS=1`).
+
+See [`tests/benchmarks/README.md`](benchmarks/README.md) for full usage, registry format, how to add new experiments,
+and debug diagnostics.
+
 - `tests/upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md` — Manual upstream circuit-tracer semantic-intervention
   sanity-check workflow,
   including the one-off extractor script and the current three-way reference table.

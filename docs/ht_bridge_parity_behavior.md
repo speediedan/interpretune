@@ -111,5 +111,6 @@ For developers and researchers using Interpretune today, the consequence is stra
 - if you want backend parity expectations across the generalized analysis stack, compare NNsight against TransformerBridge
 - if you use HookedTransformer, expect valid analysis behavior but do not assume raw numerical parity with HuggingFace-native execution on padded workloads
 - when debugging divergences, first identify which forward family the run belongs to
+- when configuring TransformerBridge mode in SAELensConfig, use `ITLensBridgeConfig` as `tl_cfg` (not `ITLensFromPretrainedConfig` with `use_bridge=True` — that will emit a misconfiguration warning since the config fields are HookedTransformer-specific)
 
 That framing aligns the implementation, the tests, and the observed model behavior.

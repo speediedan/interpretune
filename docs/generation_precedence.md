@@ -61,3 +61,13 @@ Interpretune handles that in `DebugGeneration._normalize_output_to_model_output(
 - This keeps debug helpers compatible with `.sequences`-style expectations without injecting HuggingFace generation semantics into the runtime call path.
 
 In practice, this means the debug layer is responsible for making heterogeneous backend outputs easier to inspect, while the generation call itself stays explicit and backend-driven.
+
+## Backend-specific generation notes
+
+### TransformerBridge (ITLensBridgeConfig)
+
+TransformerBridge delegates generation to the wrapped HuggingFace model, so standard HF generation kwargs (`output_logits`, `return_dict_in_generate`, etc.) work natively. Use `ITLensBridgeConfig` as `tl_cfg` in `SAELensConfig` for the Bridge path; using `ITLensFromPretrainedConfig` with `use_bridge=True` will emit a misconfiguration warning.
+
+### HookedTransformer (ITLensFromPretrainedConfig)
+
+HookedTransformer uses TransformerLens's own `generate()` implementation with `TLensGenerationConfig` fields. Some HF generation flags may not be supported or may behave differently. Set `use_bridge=False` explicitly when targeting HookedTransformer.

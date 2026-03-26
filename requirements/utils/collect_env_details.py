@@ -21,6 +21,10 @@ import platform
 import argparse
 import importlib
 import importlib.metadata as md
+import json
+import subprocess
+from pathlib import Path
+
 import torch
 
 LEVEL_OFFSET = "\t"
@@ -46,27 +50,83 @@ def info_cuda():
 
 
 def info_packages():
+    def _editable_git_info(pkg_name: str) -> str | None:
+        """Return ``'(branch:<branch>, sha:<short_sha>)'`` if *pkg_name* is an editable install, else ``None``."""
+        src_dir = _editable_src_dir(pkg_name)
+        if src_dir is None:
+            return None
+        try:
+            branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True, cwd=src_dir, timeout=5,
+            )
+            sha = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, cwd=src_dir, timeout=5,
+            )
+            if branch.returncode == 0 and sha.returncode == 0:
+                return f"(branch:{branch.stdout.strip()}, sha:{sha.stdout.strip()})"
+        except Exception:
+            pass
+        return None
+
+    def _editable_src_dir(pkg_name: str) -> str | None:
+        """Return the source directory for an editable install, or ``None``."""
+        # Method 1: PEP 610 direct_url.json (uv editable installs)
+        try:
+            dist = md.distribution(pkg_name)
+            du_text = dist.read_text("direct_url.json")
+            if du_text:
+                du = json.loads(du_text)
+                if du.get("dir_info", {}).get("editable", False):
+                    url = du.get("url", "")
+                    if url.startswith("file://"):
+                        d = url[len("file://"):]
+                        if Path(d).is_dir():
+                            return d
+        except (md.PackageNotFoundError, json.JSONDecodeError, TypeError):
+            pass
+        # Method 2: setuptools __editable__.<pkg>*.pth files
+        import site
+        for sp in site.getsitepackages():
+            if not Path(sp).is_dir():
+                continue
+            for entry in Path(sp).iterdir():
+                if entry.name.startswith(f"__editable__.{pkg_name}") and entry.suffix == ".pth":
+                    src = entry.read_text().strip()
+                    # The .pth content is the src directory; walk up to find git root
+                    if Path(src).is_dir():
+                        # Try the directory itself and its parent as git root candidates
+                        for candidate in (Path(src), Path(src).parent):
+                            if (candidate / ".git").exists():
+                                return str(candidate)
+        return None
+
     def _pkg_version(pkg_name: str, module_name: str | None = None) -> str:
         """Return a best-effort version for a package.
 
         Tries to import the module and read __version__, then falls back to importlib.metadata.version(pkg_name).
+        For editable installs, appends ``(branch:<branch>, sha:<sha>)``.
         Returns a readable failure string on error.
         """
+        ver = None
         try:
             if module_name:
                 mod = importlib.import_module(module_name)
             else:
                 mod = importlib.import_module(pkg_name)
             ver = getattr(mod, "__version__", None)
-            if ver:
-                return ver
         except Exception:
-            # ignore and try metadata lookup
             pass
-        try:
-            return md.version(pkg_name)
-        except Exception as e:
-            return f"not found ({e})"
+        if not ver:
+            try:
+                ver = md.version(pkg_name)
+            except Exception as e:
+                return f"not found ({e})"
+        git_info = _editable_git_info(pkg_name)
+        if git_info:
+            return f"{ver} {git_info}"
+        return ver
 
     packages = {
         "interpretune": _pkg_version("interpretune", "interpretune"),

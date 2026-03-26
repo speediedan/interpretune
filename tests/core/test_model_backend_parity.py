@@ -143,7 +143,7 @@ class TestLogitDiffsBaseBackendParity(AnalysisExtractionMixin):
 
 
 class TestLogitDiffsSAEBackendParity(AnalysisExtractionMixin):
-    """logit_diffs_sae: TransformerBridge ↔ NNsight SAE-spliced forward (``model_cache_forward``).
+    """logit_diffs_sae: TransformerBridge ↔ NNsight SAE-spliced forward (``model_fwd_w_cache_latent_models``).
 
     Compares SAE-spliced forward pass results including cached activations,
     alive latents, and logit diffs.  Bridge uses TL hook-based SAE splicing;
