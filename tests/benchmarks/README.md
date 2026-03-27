@@ -61,13 +61,21 @@ benchmarks:
       last_validated: "..."    # YYYYMMDD_HH24MMSS local time
       commit_sha: "..."        # Short git SHA at validation time
       salient_pkg_versions:    # Package versions at validation time
-        interpretune: "..."
+        interpretune: "0.1.0.dev... (fork:speediedan/interpretune, branch:circuit-tracer-backend, sha:abcd123)"
+        circuit_tracer: "0.4.0 (fork:speediedan/circuit-tracer, sha:14cc3e8)"
         torch: "..."
         # ... etc
       notes: "..."             # Additional context
       tags: [...]              # Filtering tags
       debug_utils_module: ...  # Optional: experiment-specific debug module
 ```
+
+`salient_pkg_versions` keeps plain versions for ordinary PyPI installs and appends best-effort git provenance when it is
+recoverable:
+
+- Editable installs use the live checkout to record `fork`, `branch`, and `sha`.
+- Git-backed non-editable installs use `direct_url.json` to record the source fork and pinned commit SHA.
+- Packages without git provenance remain plain version strings.
 
 ## Running Benchmarks
 
@@ -192,7 +200,22 @@ A **pre-commit hook** (`check-benchmark-registry-isolation`) enforces this: if `
 
 **Workflow:**
 1. Commit all code changes first.
-2. Run benchmarks with `--update-registry` (requires clean tree) or `--force-update-registry`.
-3. Commit the registry update separately.
+2. If benchmark tooling, docs, or `requirements/utils/collect_env_details.py` changed, commit that work before touching the registry.
+3. Run benchmarks with `--update-registry` (requires clean tree) or `--force-update-registry`.
+4. Commit the registry update separately so the commit only contains `benchmark_registry.yaml` plus any explicitly allowed docs or sentinel files.
+
+For a clean full-suite refresh, prefer this sequence:
+
+```bash
+# First commit the tooling/docs changes
+git commit -m "Improve benchmark registry provenance capture"
+
+# Then regenerate the registry from a clean tree
+python tests/benchmarks/run_benchmarks.py --all --update-registry
+
+# Confirm the diff is registry-only and commit it separately
+git status --short
+git commit -m "Update benchmark registry"
+```
 
 The `benchmark_update.allow` sentinel file can be created to bypass the clean working tree check when `--update-registry` is used (without `--force`). It is automatically allowed in the same commit as the registry.

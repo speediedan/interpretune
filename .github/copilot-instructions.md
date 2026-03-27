@@ -109,6 +109,8 @@ cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpret
 - Registry updates (`benchmark_registry.yaml`) must be committed in isolation — no unrelated code changes in the same commit.
 - A pre-commit hook (`check-benchmark-registry-isolation`) and CI workflow enforce this.
 - Use `--update-registry` (requires clean working tree) or `--force-update-registry` (bypasses check) when running benchmarks.
+- `salient_pkg_versions` should preserve best-effort git provenance for salient dependencies. Editable installs should capture live checkout metadata (`fork`, `branch`, `sha`), while git-backed non-editable installs should use `direct_url.json` to record the source fork and pinned commit.
+- If benchmark tooling, documentation, or the environment collector changes, commit that work first. Then run the benchmark refresh from a clean tree and commit the resulting `benchmark_registry.yaml` diff separately.
 
 ## Build and Validation Commands
 

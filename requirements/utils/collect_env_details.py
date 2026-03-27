@@ -22,13 +22,215 @@ import argparse
 import importlib
 import importlib.metadata as md
 import json
+import re
+import site
 import subprocess
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import torch
 
 LEVEL_OFFSET = "\t"
 KEY_PADDING = 20
+
+
+def _distribution_name_candidates(pkg_name: str) -> tuple[str, ...]:
+    candidates = [pkg_name]
+    dash_name = pkg_name.replace("_", "-")
+    underscore_name = pkg_name.replace("-", "_")
+    for candidate in (dash_name, underscore_name):
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return tuple(candidates)
+
+
+def _get_distribution(pkg_name: str) -> md.Distribution | None:
+    for candidate in _distribution_name_candidates(pkg_name):
+        try:
+            return md.distribution(candidate)
+        except md.PackageNotFoundError:
+            continue
+    return None
+
+
+def _short_sha(sha: str | None) -> str | None:
+    if not sha:
+        return None
+    return sha[:7]
+
+
+def _looks_like_git_sha(value: str | None) -> bool:
+    return bool(value and re.fullmatch(r"[0-9a-f]{7,40}", value))
+
+
+def _repo_slug_from_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    if ":" in url and "//" not in url and "@" in url:
+        path = url.split(":", 1)[1]
+    else:
+        path = urlparse(url).path
+    path = path.lstrip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    return path or None
+
+
+def _distribution_direct_url(pkg_name: str) -> dict | None:
+    dist = _get_distribution(pkg_name)
+    if dist is None:
+        return None
+    du_text = dist.read_text("direct_url.json")
+    if not du_text:
+        return None
+    try:
+        return json.loads(du_text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _editable_src_dir_from_direct_url(direct_url: dict | None) -> Path | None:
+    if not direct_url:
+        return None
+    if not direct_url.get("dir_info", {}).get("editable", False):
+        return None
+    url = direct_url.get("url", "")
+    if not url.startswith("file://"):
+        return None
+    parsed = urlparse(url)
+    path = Path(unquote(parsed.path))
+    return path if path.is_dir() else None
+
+
+def _editable_src_dir_from_pth(pkg_name: str) -> Path | None:
+    prefixes = tuple(f"__editable__.{candidate}" for candidate in _distribution_name_candidates(pkg_name))
+    for sp in site.getsitepackages():
+        site_packages_dir = Path(sp)
+        if not site_packages_dir.is_dir():
+            continue
+        for entry in site_packages_dir.iterdir():
+            if not any(entry.name.startswith(prefix) for prefix in prefixes) or entry.suffix != ".pth":
+                continue
+            src = entry.read_text().strip()
+            src_path = Path(src)
+            if not src_path.is_dir():
+                continue
+            for candidate in (src_path, src_path.parent):
+                if (candidate / ".git").exists():
+                    return candidate
+    return None
+
+
+def _editable_src_dir(pkg_name: str) -> Path | None:
+    direct_url = _distribution_direct_url(pkg_name)
+    return _editable_src_dir_from_direct_url(direct_url) or _editable_src_dir_from_pth(pkg_name)
+
+
+def _run_git(repo_dir: Path, *args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            cwd=repo_dir,
+            timeout=5,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value or None
+
+
+def _git_checkout_metadata(repo_dir: Path) -> dict[str, str] | None:
+    sha = _short_sha(_run_git(repo_dir, "rev-parse", "HEAD"))
+    branch = _run_git(repo_dir, "rev-parse", "--abbrev-ref", "HEAD")
+    origin_url = _run_git(repo_dir, "remote", "get-url", "origin")
+
+    metadata: dict[str, str] = {}
+    fork = _repo_slug_from_url(origin_url)
+    if fork:
+        metadata["fork"] = fork
+    if branch:
+        metadata["branch"] = branch
+    if sha:
+        metadata["sha"] = sha
+    return metadata or None
+
+
+def _direct_url_git_metadata(direct_url: dict | None) -> dict[str, str] | None:
+    if not direct_url:
+        return None
+
+    editable_src_dir = _editable_src_dir_from_direct_url(direct_url)
+    if editable_src_dir is not None:
+        return _git_checkout_metadata(editable_src_dir)
+
+    vcs_info = direct_url.get("vcs_info") or {}
+    if vcs_info.get("vcs") != "git":
+        return None
+
+    metadata: dict[str, str] = {}
+    fork = _repo_slug_from_url(direct_url.get("url"))
+    if fork:
+        metadata["fork"] = fork
+
+    requested_revision = vcs_info.get("requested_revision")
+    if requested_revision and not _looks_like_git_sha(requested_revision):
+        metadata["branch"] = requested_revision
+
+    sha = _short_sha(vcs_info.get("commit_id") or requested_revision)
+    if sha:
+        metadata["sha"] = sha
+
+    return metadata or None
+
+
+def _package_git_metadata(pkg_name: str) -> dict[str, str] | None:
+    direct_url_metadata = _direct_url_git_metadata(_distribution_direct_url(pkg_name))
+    if direct_url_metadata is not None:
+        return direct_url_metadata
+
+    editable_src_dir = _editable_src_dir(pkg_name)
+    if editable_src_dir is not None:
+        return _git_checkout_metadata(editable_src_dir)
+    return None
+
+
+def _format_git_metadata(metadata: dict[str, str] | None) -> str | None:
+    if not metadata:
+        return None
+    ordered_keys = ("fork", "branch", "sha")
+    details = [f"{key}:{metadata[key]}" for key in ordered_keys if metadata.get(key)]
+    return f"({', '.join(details)})" if details else None
+
+
+def _pkg_version(pkg_name: str, module_name: str | None = None) -> str:
+    """Return a best-effort version for a package.
+
+    Tries to import the module and read __version__, then falls back to importlib.metadata.version(pkg_name).
+    For editable installs or git-backed wheel installs, appends git provenance such as
+    ``(fork:speediedan/circuit-tracer, sha:14cc3e8)``.
+    Returns a readable failure string on error.
+    """
+    version = None
+    try:
+        module = importlib.import_module(module_name or pkg_name)
+        version = getattr(module, "__version__", None)
+    except Exception:
+        pass
+    if not version:
+        for candidate in _distribution_name_candidates(pkg_name):
+            try:
+                version = md.version(candidate)
+                break
+            except md.PackageNotFoundError:
+                continue
+        if not version:
+            return f"not found ({pkg_name})"
+    git_metadata = _format_git_metadata(_package_git_metadata(pkg_name))
+    return f"{version} {git_metadata}" if git_metadata else str(version)
 
 
 def info_system():
@@ -50,84 +252,6 @@ def info_cuda():
 
 
 def info_packages():
-    def _editable_git_info(pkg_name: str) -> str | None:
-        """Return ``'(branch:<branch>, sha:<short_sha>)'`` if *pkg_name* is an editable install, else ``None``."""
-        src_dir = _editable_src_dir(pkg_name)
-        if src_dir is None:
-            return None
-        try:
-            branch = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                capture_output=True, text=True, cwd=src_dir, timeout=5,
-            )
-            sha = subprocess.run(
-                ["git", "rev-parse", "--short", "HEAD"],
-                capture_output=True, text=True, cwd=src_dir, timeout=5,
-            )
-            if branch.returncode == 0 and sha.returncode == 0:
-                return f"(branch:{branch.stdout.strip()}, sha:{sha.stdout.strip()})"
-        except Exception:
-            pass
-        return None
-
-    def _editable_src_dir(pkg_name: str) -> str | None:
-        """Return the source directory for an editable install, or ``None``."""
-        # Method 1: PEP 610 direct_url.json (uv editable installs)
-        try:
-            dist = md.distribution(pkg_name)
-            du_text = dist.read_text("direct_url.json")
-            if du_text:
-                du = json.loads(du_text)
-                if du.get("dir_info", {}).get("editable", False):
-                    url = du.get("url", "")
-                    if url.startswith("file://"):
-                        d = url[len("file://"):]
-                        if Path(d).is_dir():
-                            return d
-        except (md.PackageNotFoundError, json.JSONDecodeError, TypeError):
-            pass
-        # Method 2: setuptools __editable__.<pkg>*.pth files
-        import site
-        for sp in site.getsitepackages():
-            if not Path(sp).is_dir():
-                continue
-            for entry in Path(sp).iterdir():
-                if entry.name.startswith(f"__editable__.{pkg_name}") and entry.suffix == ".pth":
-                    src = entry.read_text().strip()
-                    # The .pth content is the src directory; walk up to find git root
-                    if Path(src).is_dir():
-                        # Try the directory itself and its parent as git root candidates
-                        for candidate in (Path(src), Path(src).parent):
-                            if (candidate / ".git").exists():
-                                return str(candidate)
-        return None
-
-    def _pkg_version(pkg_name: str, module_name: str | None = None) -> str:
-        """Return a best-effort version for a package.
-
-        Tries to import the module and read __version__, then falls back to importlib.metadata.version(pkg_name).
-        For editable installs, appends ``(branch:<branch>, sha:<sha>)``.
-        Returns a readable failure string on error.
-        """
-        ver = None
-        try:
-            if module_name:
-                mod = importlib.import_module(module_name)
-            else:
-                mod = importlib.import_module(pkg_name)
-            ver = getattr(mod, "__version__", None)
-        except Exception:
-            pass
-        if not ver:
-            try:
-                ver = md.version(pkg_name)
-            except Exception as e:
-                return f"not found ({e})"
-        git_info = _editable_git_info(pkg_name)
-        if git_info:
-            return f"{ver} {git_info}"
-        return ver
-
     packages = {
         "interpretune": _pkg_version("interpretune", "interpretune"),
         "lightning": _pkg_version("lightning", "lightning"),

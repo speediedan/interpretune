@@ -183,6 +183,11 @@ Before running this skill, gather the following:
    python tests/benchmarks/run_benchmarks.py --benchmark <experiment>/<benchmark_id> --update-registry
    ```
 
+   This records the observed accuracy, the current commit SHA, and `salient_pkg_versions` metadata.
+   The provenance field should retain best-effort git details for salient dependencies: editable installs
+   should contribute live checkout metadata (`fork`, `branch`, `sha`), while git-backed non-editable installs
+   should derive the source fork and pinned commit from `direct_url.json`.
+
 2. **If the run fails**, debug systematically:
 
    - **Config parse errors**: Check YAML syntax, class paths, required fields (e.g., `save_dir` for TensorBoardLogger)
@@ -207,7 +212,13 @@ Before running this skill, gather the following:
    python tests/benchmarks/run_benchmarks.py --benchmark <experiment>/<benchmark_id>
    ```
 
-5. **Update notes** in the registry with validation context:
+5. **Keep the registry update clean**:
+
+   - Commit benchmark tooling, environment-collector, and documentation changes before running `--update-registry`.
+   - Re-run the benchmark from a clean working tree.
+   - Commit the resulting `benchmark_registry.yaml` diff separately so the registry commit stays traceable to one validated run.
+
+6. **Update notes** in the registry with validation context:
 
    ```yaml
    notes: >

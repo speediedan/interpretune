@@ -251,6 +251,9 @@ Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeli
 - All pre-commit hooks passing
 - CPU coverage >= existing coverage
 - Docstrings for all public functions/classes
+- `tests/benchmarks/benchmark_registry.yaml` updates should be committed in isolation.
+- `salient_pkg_versions` should retain best-effort git provenance for salient dependencies: editable installs should include live checkout metadata (`fork`, `branch`, `sha`), while git-backed non-editable installs should derive the source fork and pinned commit from `direct_url.json`.
+- If benchmark tooling, the environment collector, or benchmark docs change, commit that work first. Only then run `python tests/benchmarks/run_benchmarks.py --all --update-registry` from a clean tree and commit the resulting registry-only diff.
 - Unit tests for new functionality
 
 ## Notebook Publishing
