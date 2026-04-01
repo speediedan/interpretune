@@ -34,6 +34,7 @@ from interpretune.analysis.ops.definitions import (
     extract_concept_latent_state_impl,
     extract_concept_latent_examples_impl,
 )
+from interpretune.analysis.ops.helpers import _extract_concept_latent_state_from_cache
 from interpretune.config.circuit_tracer import CircuitTracerConfig
 from interpretune.config import init_analysis_cfgs
 
@@ -764,9 +765,11 @@ class _EmbedStoreEquivalenceModule:
         )
         self.datamodule = SimpleNamespace(tokenizer=self.tokenizer)
         self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
-        self.analysis_cfg = SimpleNamespace(
-            input_store=input_store, batch_inputs={}, run_inputs={}
-        ) if input_store is not None else None
+        self.analysis_cfg = (
+            SimpleNamespace(input_store=input_store, batch_inputs={}, run_inputs={})
+            if input_store is not None
+            else None
+        )
 
     @staticmethod
     def _build_tokenizer():
@@ -818,8 +821,8 @@ def _compute_embed_paired_rejection(embed_weight: torch.Tensor, ids_a: list[int]
 
 
 def test_concept_direction_store_vs_embed_algebraic_equivalence(tmp_path) -> None:
-    """When the store-based path receives embedding vectors as latent states, paired_rejection
-    must produce the same direction as the direct embed-based path."""
+    """When the store-based path receives embedding vectors as latent states, paired_rejection must produce the
+    same direction as the direct embed-based path."""
     embed_weight = _build_capitals_states_embed_weight()
     capitals = ["▁Austin", "▁Sacramento", "▁Olympia", "▁Atlanta"]
     states = ["▁Texas", "▁California", "▁Washington", "▁Georgia"]
@@ -850,9 +853,7 @@ def test_concept_direction_store_vs_embed_algebraic_equivalence(tmp_path) -> Non
         "embed_as_latent",
         Dataset.from_dict(
             {
-                "concept_latent_state": (
-                    latent_states_a.tolist() + latent_states_b.tolist()
-                ),
+                "concept_latent_state": (latent_states_a.tolist() + latent_states_b.tolist()),
                 "concept_group_id": [0] * len(capitals) + [1] * len(states),
                 "concept_group_name": ["capital"] * len(capitals) + ["state"] * len(states),
                 "concept_example_weight": [1.0] * (len(capitals) + len(states)),
@@ -900,8 +901,8 @@ def test_concept_direction_store_vs_embed_algebraic_equivalence(tmp_path) -> Non
 
 
 def test_concept_direction_store_path_quality_with_distinct_latent_space(tmp_path) -> None:
-    """When SAE activations inhabit a distinct space from embeddings, the store-based path
-    must still produce a direction that correctly separates the two concept groups."""
+    """When SAE activations inhabit a distinct space from embeddings, the store-based path must still produce a
+    direction that correctly separates the two concept groups."""
     embed_weight = _build_capitals_states_embed_weight()
 
     # Synthetic SAE activations: intentionally different from embedding space
@@ -930,9 +931,7 @@ def test_concept_direction_store_path_quality_with_distinct_latent_space(tmp_pat
         "sae_latent",
         Dataset.from_dict(
             {
-                "concept_latent_state": (
-                    capitals_latent.tolist() + states_latent.tolist()
-                ),
+                "concept_latent_state": (capitals_latent.tolist() + states_latent.tolist()),
                 "concept_group_id": [0, 0, 0, 0, 1, 1, 1, 1],
                 "concept_group_name": ["capital"] * 4 + ["state"] * 4,
                 "concept_example_weight": [1.0] * 8,
@@ -980,9 +979,7 @@ def test_concept_direction_paired_rejection_separates_overlapping_groups(tmp_pat
         "overlapping",
         Dataset.from_dict(
             {
-                "concept_latent_state": (
-                    capitals_latent.tolist() + states_latent.tolist()
-                ),
+                "concept_latent_state": (capitals_latent.tolist() + states_latent.tolist()),
                 "concept_group_id": [0, 0, 0, 0, 1, 1, 1, 1],
                 "concept_group_name": ["capital"] * 4 + ["state"] * 4,
                 "concept_example_weight": [1.0] * 8,
@@ -1007,14 +1004,12 @@ def test_concept_direction_paired_rejection_separates_overlapping_groups(tmp_pat
 
 
 def test_concept_direction_contextual_store_diverges_from_embed(tmp_path) -> None:
-    """When the store receives contextual representations (not raw embeddings), the
-    resulting direction diverges from the embed-based direction while each approach
-    still correctly separates its own concept groups.
+    """When the store receives contextual representations (not raw embeddings), the resulting direction diverges
+    from the embed-based direction while each approach still correctly separates its own concept groups.
 
-    This validates the empirical finding that contextual representations encode
-    concept identity differently from static unembedding vectors, so direct
-    substitution of store-based contextual directions for embed-based directions
-    is expected to produce meaningfully different steering vectors.
+    This validates the empirical finding that contextual representations encode concept identity differently from static
+    unembedding vectors, so direct substitution of store-based contextual directions for embed-based directions is
+    expected to produce meaningfully different steering vectors.
     """
     embed_weight = _build_capitals_states_embed_weight()
     capitals = ["▁Austin", "▁Sacramento", "▁Olympia", "▁Atlanta"]
@@ -1062,9 +1057,7 @@ def test_concept_direction_contextual_store_diverges_from_embed(tmp_path) -> Non
         "contextual_latent",
         Dataset.from_dict(
             {
-                "concept_latent_state": (
-                    contextual_capitals.tolist() + contextual_states.tolist()
-                ),
+                "concept_latent_state": (contextual_capitals.tolist() + contextual_states.tolist()),
                 "concept_group_id": [0] * 4 + [1] * 4,
                 "concept_group_name": ["capital"] * 4 + ["state"] * 4,
                 "concept_example_weight": [1.0] * 8,
@@ -1091,8 +1084,7 @@ def test_concept_direction_contextual_store_diverges_from_embed(tmp_path) -> Non
         embed_direction.unsqueeze(0), store_direction.unsqueeze(0)
     ).item()
     assert cos_embed_store < 0.5, (
-        f"contextual store direction should diverge from embed direction, "
-        f"but cosine was {cos_embed_store:.4f}"
+        f"contextual store direction should diverge from embed direction, but cosine was {cos_embed_store:.4f}"
     )
 
     # Each direction should still separate its own concept groups correctly.
@@ -1108,3 +1100,106 @@ def test_concept_direction_contextual_store_diverges_from_embed(tmp_path) -> Non
     store_projs_cap = torch.stack([torch.dot(row, store_direction) for row in contextual_capitals])
     store_projs_st = torch.stack([torch.dot(row, store_direction) for row in contextual_states])
     assert store_projs_cap.mean() > store_projs_st.mean(), "store direction should separate contextual vectors"
+
+
+# -- Context-enhanced extraction mode tests --------------------------------------------------
+
+
+def test_context_enhanced_projection_math() -> None:
+    """Verify context-enhanced extraction projects scaled answer onto context direction via dot product."""
+    # Synthetic cache: 1 example, 3 tokens, d_model=4
+    # Use non-orthogonal answer/context so the projection is non-trivial.
+    cache_tensor = torch.tensor(
+        [[[1.0, 0.0, 0.0, 0.0], [3.0, 4.0, 0.0, 0.0], [1.0, 2.0, 0.0, 0.0]]],
+        dtype=torch.float32,
+    )
+    answer_indices = torch.tensor([2], dtype=torch.long)
+    batch = AnalysisBatch(cache={"unembed.hook_in": cache_tensor}, answer_indices=answer_indices)
+
+    latent_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=2.0)
+
+    # answer = cache[0, 2] = [1, 2, 0, 0]; context = cache[0, prev=1] = [3, 4, 0, 0]
+    # scaled_answer = 2.0 * [1, 2, 0, 0] = [2, 4, 0, 0]
+    # dot(scaled, context) = 6 + 16 = 22
+    # dot(context, context) = 9 + 16 = 25
+    # projected = (22/25) * [3, 4, 0, 0] = [2.64, 3.52, 0, 0]
+    expected = torch.tensor([[2.64, 3.52, 0.0, 0.0]], dtype=torch.float32)
+    assert torch.allclose(latent_states, expected, atol=1e-5), f"Expected {expected}, got {latent_states}"
+
+
+def test_context_enhanced_projection_default_scale() -> None:
+    """With default scale=1.0 the dot-product projection formula still applies."""
+    cache_tensor = torch.tensor(
+        [[[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]]],
+        dtype=torch.float32,
+    )
+    answer_indices = torch.tensor([2], dtype=torch.long)
+    batch = AnalysisBatch(cache={"unembed.hook_in": cache_tensor}, answer_indices=answer_indices)
+
+    latent_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=1.0)
+
+    # answer = [50, 60]; context = [30, 40]
+    # dot(answer, context) = 1500 + 2400 = 3900
+    # dot(context, context) = 900 + 1600 = 2500
+    # projected = (3900/2500) * [30, 40] = [46.8, 62.4]
+    expected = torch.tensor([[46.8, 62.4]], dtype=torch.float32)
+    assert torch.allclose(latent_states, expected, atol=1e-5)
+
+
+def test_context_enhanced_projection_skips_ans_idx_zero() -> None:
+    """When the answer is at position 0 there is no preceding token — returns raw answer."""
+    cache_tensor = torch.tensor(
+        [[[5.0, 5.0], [6.0, 6.0]]],
+        dtype=torch.float32,
+    )
+    answer_indices = torch.tensor([0], dtype=torch.long)
+    batch = AnalysisBatch(cache={"unembed.hook_in": cache_tensor}, answer_indices=answer_indices)
+
+    latent_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=1.0)
+
+    # answer at position 0 → no valid preceding position → raw answer returned
+    expected = torch.tensor([[5.0, 5.0]], dtype=torch.float32)
+    assert torch.allclose(latent_states, expected)
+
+
+def test_context_enhanced_projection_differs_from_default() -> None:
+    """Context-enhanced produces a different latent than the raw answer-position extraction."""
+    cache_tensor = torch.tensor(
+        [[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]],
+        dtype=torch.float32,
+    )
+    answer_indices = torch.tensor([2], dtype=torch.long)
+    batch = AnalysisBatch(cache={"unembed.hook_in": cache_tensor}, answer_indices=answer_indices)
+
+    default_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=False)
+    enhanced_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=1.0)
+
+    assert not torch.equal(enhanced_states, default_states), (
+        "Context-enhanced latent should differ from raw answer-position state"
+    )
+
+
+def test_context_enhanced_projection_multiple_examples() -> None:
+    """Verify context-enhanced extraction handles a multi-example batch correctly."""
+    # 2-example batch: each example has 3 tokens, d_model=2
+    cache_tensor = torch.tensor(
+        [
+            [[1.0, 0.0], [0.0, 1.0], [2.0, 3.0]],  # example 0
+            [[0.5, 0.5], [1.0, 1.0], [4.0, 5.0]],  # example 1
+        ],
+        dtype=torch.float32,
+    )
+    answer_indices = torch.tensor([2, 2], dtype=torch.long)
+    batch = AnalysisBatch(cache={"unembed.hook_in": cache_tensor}, answer_indices=answer_indices)
+
+    latent_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=1.0)
+
+    # Example 0: answer=[2,3], context=[0,1]
+    # dot([2,3],[0,1])=3, dot([0,1],[0,1])=1 → (3/1)*[0,1] = [0, 3]
+    expected_0 = torch.tensor([0.0, 3.0], dtype=torch.float32)
+    assert torch.allclose(latent_states[0], expected_0, atol=1e-5)
+
+    # Example 1: answer=[4,5], context=[1,1]
+    # dot([4,5],[1,1])=9, dot([1,1],[1,1])=2 → (9/2)*[1,1] = [4.5, 4.5]
+    expected_1 = torch.tensor([4.5, 4.5], dtype=torch.float32)
+    assert torch.allclose(latent_states[1], expected_1, atol=1e-5)

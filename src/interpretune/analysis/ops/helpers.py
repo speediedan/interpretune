@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -15,6 +15,105 @@ from interpretune.analysis.backends import get_analysis_backend, get_model_backe
 
 
 _MISSING = object()
+
+
+# ---------------------------------------------------------------------------
+# Feature selection filtering
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FeatureSelectionSpec:
+    """Pre-filter specification for :func:`extract_top_features_impl`.
+
+    All criteria use **OR** semantics: a feature row ``(layer, position, feature_id)``
+    passes the filter if it matches *any* of the non-empty criteria.
+
+    Slice notation is supported for ``layers`` and ``positions`` — pass a Python
+    ``slice`` object alongside (or instead of) explicit ``int`` lists.  The slice
+    is expanded against the observed values in *active_features* so callers need
+    not know the exact range ahead of time.
+
+    Attributes:
+        layers: Explicit layer indices to include.
+        positions: Explicit token-position indices to include.
+        feature_ids: Explicit feature-ID values to include.
+        layer_slice: A ``slice`` expanded over observed layer values.
+        position_slice: A ``slice`` expanded over observed position values.
+        triples: Exact ``(layer, position, feature_id)`` tuples to include.
+    """
+
+    layers: list[int] = field(default_factory=list)
+    positions: list[int] = field(default_factory=list)
+    feature_ids: list[int] = field(default_factory=list)
+    layer_slice: slice | None = None
+    position_slice: slice | None = None
+    triples: list[tuple[int, int, int]] = field(default_factory=list)
+
+
+def _expand_slice(s: slice, observed: torch.Tensor) -> list[int]:
+    """Expand a ``slice`` into concrete indices from the unique observed values."""
+    unique_vals = sorted(observed.unique().tolist())
+    return unique_vals[s] if unique_vals else []
+
+
+def apply_feature_selection_filter(
+    active_features: torch.Tensor,
+    spec: FeatureSelectionSpec,
+) -> torch.Tensor:
+    """Return a boolean mask (length *N*) selecting rows of *active_features* that match *spec*.
+
+    ``active_features`` has shape ``(N, 3)`` with columns ``[layer, position, feature_id]``.
+    """
+    n = active_features.shape[0]
+    if n == 0:
+        return torch.zeros(0, dtype=torch.bool)
+
+    mask = torch.zeros(n, dtype=torch.bool)
+
+    layers_col = active_features[:, 0]
+    positions_col = active_features[:, 1]
+    features_col = active_features[:, 2]
+
+    # Explicit layer list
+    if spec.layers:
+        layer_set = torch.tensor(spec.layers, dtype=layers_col.dtype)
+        mask |= torch.isin(layers_col, layer_set)
+
+    # Layer slice
+    if spec.layer_slice is not None:
+        expanded = _expand_slice(spec.layer_slice, layers_col)
+        if expanded:
+            layer_set = torch.tensor(expanded, dtype=layers_col.dtype)
+            mask |= torch.isin(layers_col, layer_set)
+
+    # Explicit position list
+    if spec.positions:
+        pos_set = torch.tensor(spec.positions, dtype=positions_col.dtype)
+        mask |= torch.isin(positions_col, pos_set)
+
+    # Position slice
+    if spec.position_slice is not None:
+        expanded = _expand_slice(spec.position_slice, positions_col)
+        if expanded:
+            pos_set = torch.tensor(expanded, dtype=positions_col.dtype)
+            mask |= torch.isin(positions_col, pos_set)
+
+    # Explicit feature IDs
+    if spec.feature_ids:
+        fid_set = torch.tensor(spec.feature_ids, dtype=features_col.dtype)
+        mask |= torch.isin(features_col, fid_set)
+
+    # Exact (layer, position, feature_id) triples
+    if spec.triples:
+        triple_tensor = torch.tensor(spec.triples, dtype=active_features.dtype)  # (T, 3)
+        # Compare every row against every triple: (N, 1, 3) == (T, 3) → (N, T, 3)
+        matches = (active_features.unsqueeze(1) == triple_tensor.unsqueeze(0)).all(dim=2)  # (N, T)
+        mask |= matches.any(dim=1)
+
+    return mask
+
+
 AnalysisScope = str
 DEFAULT_ANALYSIS_SCOPES: tuple[AnalysisScope, ...] = ("analysis_batch", "batch", "run", "row", "store")
 
@@ -61,6 +160,7 @@ def mean_target_logit_delta(
 
 def stack_column_tensors(values: Any, *, dtype: torch.dtype | None = None) -> torch.Tensor:
     """Normalize dataset or run-input column values into a tensor."""
+
     def _combine_tensors(tensors: list[torch.Tensor]) -> torch.Tensor:
         if tensors[0].ndim > 1:
             try:
@@ -478,7 +578,12 @@ def _resolve_concept_cache_key(analysis_batch: AnalysisBatch) -> str:
     return str(analysis_batch.get("concept_cache_key") or "unembed.hook_in")
 
 
-def _extract_concept_latent_state_from_cache(analysis_batch: AnalysisBatch) -> tuple[torch.Tensor, str]:
+# TODO: This may be better cast as a separate op itself rather than a helper, we should revisit
+def _extract_concept_latent_state_from_cache(
+    analysis_batch: AnalysisBatch,
+    context_enhanced: bool = False,
+    context_scale: float = 1.0,
+) -> tuple[torch.Tensor, str]:
     cache = analysis_batch.cache
     answer_indices = analysis_batch.answer_indices
     if cache is None or answer_indices is None:
@@ -496,6 +601,20 @@ def _extract_concept_latent_state_from_cache(analysis_batch: AnalysisBatch) -> t
         index_tensor = torch.as_tensor(answer_indices, dtype=torch.long, device=cache_tensor.device).reshape(-1)
         batch_indices = torch.arange(cache_tensor.size(0), device=cache_tensor.device)
         latent_states = cache_tensor[batch_indices, index_tensor].detach().cpu().float()
+
+        if context_enhanced:
+            prev_indices = index_tensor - 1
+            valid = prev_indices >= 0
+            prev_clamped = prev_indices.clamp(min=0)
+            context_states = cache_tensor[batch_indices, prev_clamped].detach().cpu().float()
+
+            scaled_answer = context_scale * latent_states
+            dot_num = (scaled_answer * context_states).sum(dim=-1, keepdim=True)
+            dot_den = (context_states * context_states).sum(dim=-1, keepdim=True).clamp(min=1e-12)
+            projected = (dot_num / dot_den) * context_states
+
+            valid_expanded = valid.unsqueeze(-1).expand_as(latent_states)
+            latent_states = torch.where(valid_expanded, projected, latent_states)
     else:
         latent_states = cache_tensor.detach().cpu().float()
 
@@ -565,9 +684,7 @@ def _flatten_concept_store_rows(
             elif raw_names is not None:
                 row_names = [str(raw_names)]
         if row_names and len(row_names) != state_tensor.shape[0]:
-            raise ValueError(
-                "concept_direction requires concept_group_name row lengths to match concept_latent_state"
-            )
+            raise ValueError("concept_direction requires concept_group_name row lengths to match concept_latent_state")
         if not row_names:
             row_names = [""] * state_tensor.shape[0]
 

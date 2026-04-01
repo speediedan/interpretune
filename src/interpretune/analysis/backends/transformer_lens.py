@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Sequence
 
 import torch
 
-from interpretune.analysis.backends import BackendCapability
+from interpretune.analysis.backends import BackendCapability, InterventionSpec
 from interpretune.protocol import NamesFilter
 
 
@@ -156,3 +157,68 @@ class TLModelBackend:
         if isinstance(cache_dict, ActivationCache):
             return cache_dict
         return ActivationCache(cache_dict, model)
+
+    def fwd_w_intervention(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        interventions: dict[str, InterventionSpec | Sequence[InterventionSpec]],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Apply interventions at the last token position via TL forward hooks.
+
+        Performs two forward passes:
+
+        1. **Baseline**: ``run_with_cache`` to capture pre-intervention logits.
+        2. **Intervention**: ``run_with_hooks`` with forward hooks built from *interventions*.
+        """
+        # Collect the union of hook names for the baseline cache filter
+        hook_names: set[str] = set()
+        for pattern in interventions:
+            if "*" in pattern:
+                pat = re.compile(pattern.replace("*", ".*"))
+                hook_names.update(n for n in model.hook_dict if pat.fullmatch(n))
+            else:
+                hook_names.add(pattern)
+
+        names_filter = list(hook_names) if len(hook_names) > 1 else next(iter(hook_names))
+
+        # --- Baseline forward pass ---
+        pre_logits, _ = model.run_with_cache(**batch, names_filter=names_filter)
+        last_pos = int(pre_logits.shape[1] - 1)
+
+        # --- Build hook list ---
+        fwd_hooks: list[tuple[str, Callable]] = []
+        for pattern, specs in interventions.items():
+            matched = (
+                hook_names
+                if "*" not in pattern
+                else {n for n in hook_names if re.fullmatch(pattern.replace("*", ".*"), n)}
+            )
+            if "*" not in pattern:
+                matched = {pattern}
+            spec_list = [specs] if isinstance(specs, InterventionSpec) else list(specs)
+            for hook_name in matched:
+                for spec in spec_list:
+                    vec = torch.as_tensor(spec.vector, device=pre_logits.device, dtype=torch.float32)
+                    sf = spec.scale_factor
+
+                    if spec.mode == "add":
+
+                        def _hook(
+                            value: torch.Tensor, hook: Any, _v: torch.Tensor = vec, _sf: float = sf
+                        ) -> torch.Tensor:
+                            value[:, last_pos, :] = value[:, last_pos, :] + _v * _sf
+                            return value
+                    elif spec.mode == "scale":
+
+                        def _hook(
+                            value: torch.Tensor, hook: Any, _v: torch.Tensor = vec, _sf: float = sf
+                        ) -> torch.Tensor:
+                            value[:, last_pos, :] = value[:, last_pos, :] * (_v * _sf)
+                            return value
+                    else:
+                        raise ValueError(f"Unknown intervention mode: {spec.mode!r}")
+                    fwd_hooks.append((hook_name, _hook))
+
+        post_logits = model.run_with_hooks(**batch, fwd_hooks=fwd_hooks)
+        return pre_logits, post_logits

@@ -8,6 +8,7 @@ Provides model loading, tokenizer inspection, dataset checks, and generation dia
 
 Experiment-specific diagnostics live in ``debug_utils/<experiment_name>/dbg_<experiment_name>.py``.
 """
+
 from __future__ import annotations
 
 import json
@@ -65,7 +66,9 @@ def load_cli_session(config_path: str, cli_mode: str = "lightning"):
 
     orig_argv = _sys.argv
     if cli_mode == "lightning":
-        _sys.argv = ["diagnostics", "test", "--config", config_path]
+        # Note: l_cli_main(run_mode=False) uses a flat parser without subcommands,
+        # so "test" should NOT be in argv (it would be an unrecognized argument).
+        _sys.argv = ["diagnostics", "--config", config_path]
         try:
             from interpretune.base.components.cli import l_cli_main
 
@@ -121,7 +124,10 @@ def check_tokenizer(tokenizer, buf: StringIO) -> None:
 
 
 def check_dataset(datamodule, trainer, tokenizer, buf: StringIO, results: dict) -> dict:
-    """Run dataset/dataloader diagnostics. Returns the first batch."""
+    """Run dataset/dataloader diagnostics.
+
+    Returns the first batch.
+    """
     buf.write(section("Dataset Check"))
     if trainer is not None:
         trainer.datamodule = datamodule
@@ -185,6 +191,10 @@ def check_sanity_reasoning(model, tokenizer, datamodule, buf: StringIO, results:
 
     Uses the Dallas→Austin reasoning prompt from the circuit-tracer analysis demo.
     Selects a chat-style prompt when the datamodule uses a chat tokenization pattern.
+    Generation kwargs are sourced from the model's ``lm_generation_cfg`` when available,
+    with sensible defaults for introspection (``output_logits`` and ``return_dict_in_generate``).
+    Token encoding uses a leading space (" Austin") so SentencePiece-based tokenizers
+    produce the correct "▁Austin" token.
     """
     buf.write(section("Model Sanity Check: Multi-Hop Reasoning"))
 
@@ -200,9 +210,23 @@ def check_sanity_reasoning(model, tokenizer, datamodule, buf: StringIO, results:
     enc = tokenizer(prompt, return_tensors="pt")
     enc = {k: v.to(model.device) for k, v in enc.items()}
 
+    # Build generation kwargs from the model's config, falling back to safe defaults
+    gen_kwargs: dict = {}
+    gen_cfg = getattr(getattr(getattr(model, "it_cfg", None), "generative_step_cfg", None), "lm_generation_cfg", None)
+    if gen_cfg is not None:
+        if hasattr(gen_cfg, "generate_kwargs"):
+            gen_kwargs.update(gen_cfg.generate_kwargs)
+        elif hasattr(gen_cfg, "model_config"):
+            gen_kwargs.update(gen_cfg.model_config)
+    gen_kwargs.setdefault("max_new_tokens", 5)
+    gen_kwargs.setdefault("do_sample", False)
+    # Always request logits for introspection
+    gen_kwargs["output_logits"] = True
+    gen_kwargs["return_dict_in_generate"] = True
+    buf.write(f"Generation kwargs: {gen_kwargs}\n")
+
     with torch.inference_mode():
-        gen_out = model.model.generate(**enc, max_new_tokens=5, do_sample=False, output_logits=True,
-                                       return_dict_in_generate=True)
+        gen_out = model.model.generate(**enc, **gen_kwargs)
 
     gen_text = tokenizer.decode(gen_out.sequences[0], skip_special_tokens=True)
     buf.write(f"Generated: '{gen_text}'\n")
@@ -212,7 +236,8 @@ def check_sanity_reasoning(model, tokenizer, datamodule, buf: StringIO, results:
     probs = torch.softmax(first_logits.float(), dim=-1)
 
     # Key tokens: Austin (correct), Dallas, Texas
-    key_tokens = {"Austin": "Austin", "Dallas": "Dallas", "Texas": "Texas"}
+    # Use space-prefixed strings so SentencePiece tokenizers produce the ▁-prefixed tokens
+    key_tokens = {"Austin": " Austin", "Dallas": " Dallas", "Texas": " Texas"}
     key_ids: dict[str, int | None] = {}
     for label, text in key_tokens.items():
         ids = tokenizer.encode(text, add_special_tokens=False)
@@ -245,7 +270,7 @@ def check_generation(model, batch, tokenizer, buf: StringIO, results: dict) -> N
     """Run the it_generate path and inspect output shape/content."""
     buf.write(section("Single-Example Generation via it_generate"))
     device_batch = {k: v.to(model.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-    labels = device_batch.pop("labels")
+    device_batch.pop("labels")
 
     gen_kwargs = model.it_cfg.generative_step_cfg.lm_generation_cfg.generate_kwargs
     buf.write(f"Generate kwargs: {gen_kwargs}\n")
@@ -268,7 +293,7 @@ def check_generation(model, batch, tokenizer, buf: StringIO, results: dict) -> N
             logits = outputs.logits
 
         if logits is not None:
-            buf.write(f"\nLogits analysis:\n")
+            buf.write("\nLogits analysis:\n")
             if isinstance(logits, tuple):
                 stacked = torch.stack(list(logits), dim=1)
                 buf.write(f"  Stacked logits shape: {stacked.shape}\n")
@@ -303,25 +328,55 @@ def check_dataset_caching(datamodule, buf: StringIO) -> None:
             dp = datamodule.itdm_cfg.dataset_path
             buf.write(f"dataset_path: {dp}\n")
             if dp and Path(dp).exists():
-                buf.write(f"  Path exists: True\n")
+                buf.write("  Path exists: True\n")
                 mtime = Path(dp).stat().st_mtime
                 from datetime import datetime
 
                 buf.write(f"  Last modified: {datetime.fromtimestamp(mtime)}\n")
 
 
-def run_shared_diagnostics(config_path: str, output_path: str | None = None) -> dict:
+def _detect_cli_mode_from_config(config_path: str) -> str:
+    """Detect CLI mode from a YAML config's adapter_ctx field.
+
+    Checks both top-level and ``session_cfg``-nested ``adapter_ctx``.
+    Falls back to ``"lightning"`` when adapter_ctx cannot be determined.
+    """
+    try:
+        with open(config_path) as fh:
+            import yaml as _yaml
+
+            cfg = _yaml.safe_load(fh)
+        # adapter_ctx may be at top level or nested under session_cfg
+        adapter_ctx = cfg.get("adapter_ctx") or cfg.get("session_cfg", {}).get("adapter_ctx", [])
+        if isinstance(adapter_ctx, list) and "lightning" not in adapter_ctx:
+            return "core"
+    except Exception:
+        pass
+    return "lightning"
+
+
+def run_shared_diagnostics(config_path: str, output_path: str | None = None, cli_mode: str | None = None) -> dict:
     """Run shared diagnostic checks (no experiment-specific logic).
 
-    Returns (results_dict, output_text) tuple.
+    Args:
+        config_path: Path to the YAML config file.
+        output_path: Optional path to write diagnostic log.
+        cli_mode: ``"lightning"`` or ``"core"``. Auto-detected from config if not provided.
+
+    Returns:
+        dict of diagnostic results.
     """
+    if cli_mode is None:
+        cli_mode = _detect_cli_mode_from_config(config_path)
+
     results = {}
     buf = StringIO()
 
     try:
         buf.write(section("Loading Config and Model"))
         buf.write(f"Config: {config_path}\n")
-        cli, trainer, model, datamodule = load_cli_session(config_path)
+        buf.write(f"CLI mode: {cli_mode}\n")
+        cli, trainer, model, datamodule = load_cli_session(config_path, cli_mode=cli_mode)
         tokenizer = datamodule.tokenizer
 
         check_model_info(model, buf, results)

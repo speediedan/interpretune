@@ -26,6 +26,7 @@ from interpretune.analysis.ops.definitions import (
     graph_node_influence_impl,
     graph_prune_impl,
 )
+from interpretune.analysis.ops.helpers import FeatureSelectionSpec, apply_feature_selection_filter
 
 
 class _FakeTokenizer:
@@ -370,3 +371,86 @@ def test_extract_top_features_impl_uses_selected_feature_mapping() -> None:
 
     expected = graph.active_features.index_select(0, torch.tensor([0], dtype=torch.long))
     assert torch.equal(result.top_feature_ids, expected)
+
+
+# ---------------------------------------------------------------------------
+# FeatureSelectionSpec / apply_feature_selection_filter tests
+# ---------------------------------------------------------------------------
+
+# Shared fixture: 6 rows over 3 layers, 2 positions, diverse feature IDs.
+_FEATURES = torch.tensor(
+    [
+        [0, 0, 100],
+        [0, 1, 101],
+        [1, 0, 200],
+        [1, 1, 201],
+        [2, 0, 300],
+        [2, 1, 301],
+    ],
+    dtype=torch.long,
+)
+
+
+def test_feature_selection_filter_by_layers() -> None:
+    mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec(layers=[0, 2]))
+    assert mask.tolist() == [True, True, False, False, True, True]
+
+
+def test_feature_selection_filter_by_positions() -> None:
+    mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec(positions=[1]))
+    assert mask.tolist() == [False, True, False, True, False, True]
+
+
+def test_feature_selection_filter_by_feature_ids() -> None:
+    mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec(feature_ids=[200, 301]))
+    assert mask.tolist() == [False, False, True, False, False, True]
+
+
+def test_feature_selection_filter_by_triples() -> None:
+    mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec(triples=[(1, 0, 200), (2, 1, 301)]))
+    assert mask.tolist() == [False, False, True, False, False, True]
+
+
+def test_feature_selection_filter_or_semantics() -> None:
+    spec = FeatureSelectionSpec(layers=[0], positions=[1])
+    mask = apply_feature_selection_filter(_FEATURES, spec)
+    # layer==0 (rows 0,1) OR position==1 (rows 1,3,5) → union: 0,1,3,5
+    assert mask.tolist() == [True, True, False, True, False, True]
+
+
+def test_feature_selection_filter_layer_slice() -> None:
+    spec = FeatureSelectionSpec(layer_slice=slice(0, 2))
+    mask = apply_feature_selection_filter(_FEATURES, spec)
+    # unique layers sorted: [0, 1, 2]; slice(0,2) → [0, 1]
+    assert mask.tolist() == [True, True, True, True, False, False]
+
+
+def test_feature_selection_filter_position_slice() -> None:
+    spec = FeatureSelectionSpec(position_slice=slice(1, None))
+    mask = apply_feature_selection_filter(_FEATURES, spec)
+    # unique positions sorted: [0, 1]; slice(1, None) → [1]
+    assert mask.tolist() == [False, True, False, True, False, True]
+
+
+def test_feature_selection_empty_features() -> None:
+    empty = torch.empty((0, 3), dtype=torch.long)
+    mask = apply_feature_selection_filter(empty, FeatureSelectionSpec(layers=[0]))
+    assert mask.numel() == 0
+
+
+def test_feature_selection_no_criteria_matches_nothing() -> None:
+    mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec())
+    assert not mask.any()
+
+
+def test_extract_top_features_with_feature_selection() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=_FEATURES,
+        activation_values=torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5, 0.6], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(layers=[1])  # keeps rows 2,3 (layer==1)
+    result = extract_top_features_impl(module, analysis_batch, batch=None, batch_idx=0, top_n=1, feature_selection=spec)
+    # Row 3 (layer=1, pos=1, fid=201) has score 0.4 > row 2 score 0.3
+    assert torch.equal(result.top_feature_ids, torch.tensor([[1, 1, 201]], dtype=torch.long))
+    assert torch.allclose(result.top_feature_scores, torch.tensor([0.4], dtype=torch.float32))

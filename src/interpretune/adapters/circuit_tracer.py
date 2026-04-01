@@ -124,11 +124,15 @@ class BaseCircuitTracerModule(BaseITModule):
 
         # Use ReplacementModel.from_pretrained factory
         # Factory returns backend-specific implementation based on backend parameter
+        # Determine lazy_encoder: explicit config takes precedence, otherwise auto-enable when offloading
+        lazy_encoder = cfg.lazy_encoder if cfg.lazy_encoder is not None else (cfg.offload == "cpu")
         replacement_model = ReplacementModel.from_pretrained(
             model_name=cfg.model_name or self.it_cfg.model_name_or_path,
             transcoder_set=cfg.transcoder_set,
             dtype=cfg.dtype,
             backend=backend,
+            lazy_encoder=lazy_encoder,
+            lazy_decoder=cfg.lazy_decoder,
             **pretrained_kwargs,
         )
 

@@ -889,6 +889,41 @@ feature_intervention_forward:
       required: false
       sequence_type: false
 
+direct_concept_direction_intervention:
+  description: Add a scaled concept-direction vector to the residual stream at a configurable hook location and return pre/post intervention logits
+  implementation: interpretune.analysis.ops.definitions.direct_concept_direction_intervention_impl
+  aliases: [direction_intervention]
+  input_schema:
+    concept_direction:
+      datasets_dtype: float32
+      sequence_type: true
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    direction_scale_factor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+  output_schema:
+    pre_intervention_logits:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    post_intervention_logits:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    logit_diff:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+
 # Composite operations
 composite_operations:
   logit_diffs_base:

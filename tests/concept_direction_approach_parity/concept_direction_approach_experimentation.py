@@ -139,8 +139,7 @@ CAPITALS_STATES = ConceptPair(
     concept_label="Concept: Capitals − States",
     classification_question=CLASSIFICATION_QUESTION_V3,
     intervention_prompt="Fact: the capital of the state containing Dallas is",
-    key_tokens=["▁Austin", "▁Dallas", "▁Texas", "▁Capital", "▁State",
-                "▁capital", "▁state", "▁City", "▁city"],
+    key_tokens=["▁Austin", "▁Dallas", "▁Texas", "▁Capital", "▁State", "▁capital", "▁state", "▁City", "▁city"],
     chat_intervention_prompt=(
         "Answer with only the missing city name. Fact: the capital of the state containing Dallas is"
     ),
@@ -168,13 +167,42 @@ DOG_CAT = ConceptPair(
     concept_label="Concept: Dogs − Cats",
     classification_question='Is this a Dog or a Cat breed? Answer with one word: "Dog" or "Cat".',
     intervention_prompt="My favorite kind of common four-legged domestic pet is the",
-    key_tokens=["▁Dog", "▁Cat", "▁dog", "▁cat", "▁Labrador", "▁Siamese",
-                "▁puppy", "▁kitten"],
+    key_tokens=["▁Dog", "▁Cat", "▁dog", "▁cat", "▁Labrador", "▁Siamese", "▁puppy", "▁kitten"],
+)
+
+CAT_DOG = ConceptPair(
+    name="cat_dog",
+    description="Cat breeds vs dog breeds (reversed direction: Cat − Dog)",
+    group_a_tokens=["▁Siamese", "▁Persian", "▁Tabby", "▁Sphynx"],
+    group_b_tokens=["▁Labrador", "▁Poodle", "▁Beagle", "▁Bulldog"],
+    group_a_entities=[
+        ("Siamese", "Cat"),
+        ("Persian", "Cat"),
+        ("Tabby", "Cat"),
+        ("Sphynx", "Cat"),
+    ],
+    group_b_entities=[
+        ("Labrador", "Dog"),
+        ("Poodle", "Dog"),
+        ("Beagle", "Dog"),
+        ("Bulldog", "Dog"),
+    ],
+    group_a_name="cats",
+    group_b_name="dogs",
+    concept_label="Concept: Cats − Dogs",
+    classification_question='Is this a Cat or a Dog breed? Answer with one word: " Cat" or " Dog".',
+    intervention_prompt="My favorite kind of common four-legged domestic pet is the",
+    key_tokens=["▁Cat", "▁Dog", "▁cat", "▁dog", "▁Siamese", "▁Labrador", "▁kitten", "▁puppy"],
+    chat_intervention_prompt=(
+        'Answer with only the missing animal type (e.g. " Cat", " Dog").'
+        " My favorite kind of common four-legged domestic pet is the"
+    ),
 )
 
 CONCEPT_PAIRS: dict[str, ConceptPair] = {
     "capitals_states": CAPITALS_STATES,
     "dog_cat": DOG_CAT,
+    "cat_dog": CAT_DOG,
 }
 
 
@@ -266,12 +294,13 @@ class HarnessConfig:
 # Logging helpers
 # ---------------------------------------------------------------------------
 
+
 class TeeLogger:
     """Write to both stdout and a log file."""
 
     def __init__(self, log_path: Path):
         self.log_path = log_path
-        self._file = open(log_path, "w")  # noqa: SIM115
+        self._file = open(log_path, "w")
         self._stdout = sys.stdout
 
     def write(self, data: str):
@@ -460,12 +489,14 @@ def _extract_key_token_logits(
         tid = ids[-1]
         logit_val = float(logits[tid].item())
         rank = rank_map.get(tid, -1)
-        results.append(KeyTokenLogits(
-            token_name=token_str,
-            token_id=tid,
-            logit_value=logit_val,
-            rank=rank,
-        ))
+        results.append(
+            KeyTokenLogits(
+                token_name=token_str,
+                token_id=tid,
+                logit_value=logit_val,
+                rank=rank,
+            )
+        )
     return results
 
 
@@ -477,7 +508,7 @@ def _print_key_token_table(
     """Print a table of key token logit values, pre- and post-intervention."""
     print(f"\n  {label} Key-Token Logit Analysis:")
     print(f"  {'Token':<15} {'Pre Logit':>10} {'Pre Rank':>9} {'Post Logit':>11} {'Post Rank':>10} {'Δ Logit':>9}")
-    print(f"  {'-'*15} {'-'*10} {'-'*9} {'-'*11} {'-'*10} {'-'*9}")
+    print(f"  {'-' * 15} {'-' * 10} {'-' * 9} {'-' * 11} {'-' * 10} {'-' * 9}")
     post_map = {ktl.token_name: ktl for ktl in post_ktl}
     for pre in pre_ktl:
         post = post_map.get(pre.token_name)
@@ -583,17 +614,19 @@ def _run_individual_forward_passes(
         else:
             results["all_correct"] = False
 
-        results["examples"].append({
-            "idx": idx,
-            "group": group,
-            "prompt": prompt_text[:80] + ("..." if len(prompt_text) > 80 else ""),
-            "expected": expected_answer,
-            "expected_id": expected_id,
-            "correct": correct,
-            "rank": rank,
-            "top5_tokens": topk_tokens[:5],
-            "top5_ids": topk_ids[:5],
-        })
+        results["examples"].append(
+            {
+                "idx": idx,
+                "group": group,
+                "prompt": prompt_text[:80] + ("..." if len(prompt_text) > 80 else ""),
+                "expected": expected_answer,
+                "expected_id": expected_id,
+                "correct": correct,
+                "rank": rank,
+                "top5_tokens": topk_tokens[:5],
+                "top5_ids": topk_ids[:5],
+            }
+        )
 
     return results, latent_states
 
@@ -654,10 +687,12 @@ def build_store_direction(
     n_b = len(cp.group_b_entities)
     n_total = n_a + n_b
 
-    group_ids = torch.cat([
-        torch.zeros(n_a, dtype=torch.long),
-        torch.ones(n_b, dtype=torch.long),
-    ])
+    group_ids = torch.cat(
+        [
+            torch.zeros(n_a, dtype=torch.long),
+            torch.ones(n_b, dtype=torch.long),
+        ]
+    )
     group_names = ([cp.group_a_name] * n_a) + ([cp.group_b_name] * n_b)
 
     concept_op = DISPATCHER.get_op("concept_direction")
@@ -842,6 +877,7 @@ def _probe_direction_consistency(
     if unembed is None:
         try:
             from interpretune.analysis.backends.circuit_tracer import CircuitTracerAnalysisBackend
+
             backend = CircuitTracerAnalysisBackend()
             embed_w = backend.get_embedding_weight(module).float().detach()
             # embed_w is typically (vocab, d_model) — transpose to (d_model, vocab)
@@ -952,27 +988,37 @@ def compare_directions(
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--model-variant", default="it", choices=list(MODEL_VARIANTS),
-                        help="Model variant: 'it' for gemma-2-2b-it, 'base' for gemma-2-2b (default: it)")
-    parser.add_argument("--concept-pair", default="capitals_states", choices=list(CONCEPT_PAIRS),
-                        help="Concept pair to test (default: capitals_states)")
-    parser.add_argument("--prompt", default=None,
-                        help="Override intervention prompt (default: from concept pair)")
+    parser.add_argument(
+        "--model-variant",
+        default="it",
+        choices=list(MODEL_VARIANTS),
+        help="Model variant: 'it' for gemma-2-2b-it, 'base' for gemma-2-2b (default: it)",
+    )
+    parser.add_argument(
+        "--concept-pair",
+        default="capitals_states",
+        choices=list(CONCEPT_PAIRS),
+        help="Concept pair to test (default: capitals_states)",
+    )
+    parser.add_argument("--prompt", default=None, help="Override intervention prompt (default: from concept pair)")
     parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
     parser.add_argument("--skip-intervention", action="store_true", help="Skip full pipeline comparison")
-    parser.add_argument("--no-chat-template", action="store_true",
-                        help="Disable chat template even for IT model")
+    parser.add_argument("--no-chat-template", action="store_true", help="Disable chat template even for IT model")
     parser.add_argument(
         "--chat-template-method",
         default="apply_chat_template",
         choices=["apply_chat_template", "gemma_dataclass"],
         help="Chat template method (default: apply_chat_template)",
     )
-    parser.add_argument("--test-direction-reversal", action="store_true",
-                        help="Also test with negated concept_direction to check for reversal issues")
+    parser.add_argument(
+        "--test-direction-reversal",
+        action="store_true",
+        help="Also test with negated concept_direction to check for reversal issues",
+    )
     parser.add_argument("--output", type=str, default=None, help="Output JSON path")
-    parser.add_argument("--log-dir", type=str, default=None,
-                        help="Log directory (default: concept_direction_approach_parity folder)")
+    parser.add_argument(
+        "--log-dir", type=str, default=None, help="Log directory (default: concept_direction_approach_parity folder)"
+    )
     args = parser.parse_args()
 
     harness_cfg = HarnessConfig(
@@ -1013,9 +1059,9 @@ def _run_experiment(harness_cfg: HarnessConfig):
         n_top=harness_cfg.top_n,
     )
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("Concept Direction Approach Experimentation - V3")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(f"Model: {harness_cfg.model_name}")
     print(f"Model variant: {harness_cfg.model_variant}")
     print(f"Concept pair: {cp.name} ({cp.description})")
@@ -1029,9 +1075,9 @@ def _run_experiment(harness_cfg: HarnessConfig):
         tmp_path = Path(tmp_dir)
 
         # --- Phase 1: Build embed-based direction ---
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print("Phase 1: Embed-based concept_direction")
-        print(f"{'='*80}")
+        print(f"{'=' * 80}")
 
         with _session_factory(tmp_path, "embed_direction", harness_cfg) as session:
             print("\n--- Tokenizer verification ---")
@@ -1049,23 +1095,30 @@ def _run_experiment(harness_cfg: HarnessConfig):
             if not harness_cfg.skip_intervention:
                 print("\n--- Running full embed pipeline (graph → features → intervention) ---")
                 embed_intervention = run_full_pipeline(
-                    session.module, case, embed_dir.direction_vector, "embed", harness_cfg,
+                    session.module,
+                    case,
+                    embed_dir.direction_vector,
+                    "embed",
+                    harness_cfg,
                     group_a_token_ids=embed_dir.group_a_token_ids,
                     group_b_token_ids=embed_dir.group_b_token_ids,
                 )
                 print(f"  Top features: {embed_intervention.top_feature_ids}")
                 _print_gap_result("Embed", embed_intervention, cp)
-                _print_key_token_table("Embed", embed_intervention.pre_key_token_logits,
-                                       embed_intervention.post_key_token_logits)
+                _print_key_token_table(
+                    "Embed", embed_intervention.pre_key_token_logits, embed_intervention.post_key_token_logits
+                )
 
         # --- Phase 2: Build store-based direction ---
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print("Phase 2: Store-based concept_direction (classification prompts)")
-        print(f"{'='*80}")
+        print(f"{'=' * 80}")
 
         with _session_factory(tmp_path, "store_direction", harness_cfg) as session:
             store_dir, prediction_info, sanity_info = build_store_direction(
-                session.module, case, harness_cfg,
+                session.module,
+                case,
+                harness_cfg,
             )
             print(f"\nStore direction: norm={torch.linalg.vector_norm(store_dir.direction_vector):.6f}")
             print(f"  mode={store_dir.direction_mode}")
@@ -1086,42 +1139,54 @@ def _run_experiment(harness_cfg: HarnessConfig):
             if not harness_cfg.skip_intervention:
                 print("\n--- Running full store pipeline (graph → features → intervention) ---")
                 store_intervention = run_full_pipeline(
-                    session.module, case, store_dir.direction_vector, "store", harness_cfg,
+                    session.module,
+                    case,
+                    store_dir.direction_vector,
+                    "store",
+                    harness_cfg,
                     group_a_token_ids=store_dir.group_a_token_ids,
                     group_b_token_ids=store_dir.group_b_token_ids,
                 )
                 print(f"  Top features: {store_intervention.top_feature_ids}")
                 _print_gap_result("Store", store_intervention, cp)
-                _print_key_token_table("Store", store_intervention.pre_key_token_logits,
-                                       store_intervention.post_key_token_logits)
+                _print_key_token_table(
+                    "Store", store_intervention.pre_key_token_logits, store_intervention.post_key_token_logits
+                )
 
             # --- Direction consistency probes ---
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print("Phase 2b: Direction Consistency Probes")
-            print(f"{'='*80}")
+            print(f"{'=' * 80}")
             probes = _probe_direction_consistency(embed_dir, store_dir, session.module, cp)
             _print_direction_probes(probes)
 
             # --- Phase 2c: Direction reversal test ---
             reversed_intervention = None
             if harness_cfg.test_direction_reversal and not harness_cfg.skip_intervention:
-                print(f"\n{'='*80}")
+                print(f"\n{'=' * 80}")
                 print("Phase 2c: Direction Reversal Test (negated embed direction)")
-                print(f"{'='*80}")
+                print(f"{'=' * 80}")
                 negated_direction = -embed_dir.direction_vector
                 reversed_intervention = run_full_pipeline(
-                    session.module, case, negated_direction, "embed_negated", harness_cfg,
+                    session.module,
+                    case,
+                    negated_direction,
+                    "embed_negated",
+                    harness_cfg,
                     group_a_token_ids=embed_dir.group_a_token_ids,
                     group_b_token_ids=embed_dir.group_b_token_ids,
                 )
                 _print_gap_result("Embed-Negated", reversed_intervention, cp)
-                _print_key_token_table("Embed-Negated", reversed_intervention.pre_key_token_logits,
-                                       reversed_intervention.post_key_token_logits)
+                _print_key_token_table(
+                    "Embed-Negated",
+                    reversed_intervention.pre_key_token_logits,
+                    reversed_intervention.post_key_token_logits,
+                )
 
         # --- Phase 3: Compare ---
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print("Phase 3: Comparison")
-        print(f"{'='*80}")
+        print(f"{'=' * 80}")
 
         comparison = compare_directions(embed_dir, store_dir, embed_intervention, store_intervention)
 
@@ -1155,15 +1220,19 @@ def _run_experiment(harness_cfg: HarnessConfig):
             # The embed approach uses SentencePiece-encoded IDs while the store approach
             # resolves them separately. Check if using store's token IDs with embed's direction
             # (or vice versa) changes the result.
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print("Phase 4: Agent Hypothesis — Cross Token-ID Test")
             print("  Testing: embed direction + store token IDs")
-            print(f"{'='*80}")
+            print(f"{'=' * 80}")
 
             # Re-use the last session for this
             with _session_factory(tmp_path, "cross_token_test", harness_cfg) as session:
                 cross_intervention = run_full_pipeline(
-                    session.module, case, embed_dir.direction_vector, "embed_w_store_ids", harness_cfg,
+                    session.module,
+                    case,
+                    embed_dir.direction_vector,
+                    "embed_w_store_ids",
+                    harness_cfg,
                     group_a_token_ids=store_dir.group_a_token_ids,
                     group_b_token_ids=store_dir.group_b_token_ids,
                 )
@@ -1171,12 +1240,15 @@ def _run_experiment(harness_cfg: HarnessConfig):
                 print(f"  Pre-gap:  {cross_intervention.pre_gap:.4f}")
                 print(f"  Post-gap: {cross_intervention.post_gap:.4f}")
                 print(f"  Gap Δ:    {cross_delta:+.4f}")
-                _print_key_token_table("Cross-Token-ID", cross_intervention.pre_key_token_logits,
-                                       cross_intervention.post_key_token_logits)
+                _print_key_token_table(
+                    "Cross-Token-ID", cross_intervention.pre_key_token_logits, cross_intervention.post_key_token_logits
+                )
 
                 # Check if token IDs actually differ
-                ids_match = (embed_dir.group_a_token_ids == store_dir.group_a_token_ids and
-                             embed_dir.group_b_token_ids == store_dir.group_b_token_ids)
+                ids_match = (
+                    embed_dir.group_a_token_ids == store_dir.group_a_token_ids
+                    and embed_dir.group_b_token_ids == store_dir.group_b_token_ids
+                )
                 print(f"\n  Token IDs match between approaches: {ids_match}")
                 if not ids_match:
                     print(f"    Embed group_a IDs: {embed_dir.group_a_token_ids}")
@@ -1207,27 +1279,37 @@ def _run_experiment(harness_cfg: HarnessConfig):
             "direction_probes": probes,
         }
         if embed_intervention and store_intervention:
-            output.update({
-                "feature_jaccard": comparison.feature_jaccard,
-                "n_shared_features": comparison.n_shared_features,
-                "n_total_features": comparison.n_total_features,
-                "embed_pre_gap": comparison.embed_pre_gap,
-                "embed_post_gap": comparison.embed_post_gap,
-                "store_pre_gap": comparison.store_pre_gap,
-                "store_post_gap": comparison.store_post_gap,
-                "embed_key_token_logits": {
-                    "pre": [{"token": k.token_name, "logit": k.logit_value, "rank": k.rank}
-                            for k in embed_intervention.pre_key_token_logits],
-                    "post": [{"token": k.token_name, "logit": k.logit_value, "rank": k.rank}
-                             for k in embed_intervention.post_key_token_logits],
-                },
-                "store_key_token_logits": {
-                    "pre": [{"token": k.token_name, "logit": k.logit_value, "rank": k.rank}
-                            for k in store_intervention.pre_key_token_logits],
-                    "post": [{"token": k.token_name, "logit": k.logit_value, "rank": k.rank}
-                             for k in store_intervention.post_key_token_logits],
-                },
-            })
+            output.update(
+                {
+                    "feature_jaccard": comparison.feature_jaccard,
+                    "n_shared_features": comparison.n_shared_features,
+                    "n_total_features": comparison.n_total_features,
+                    "embed_pre_gap": comparison.embed_pre_gap,
+                    "embed_post_gap": comparison.embed_post_gap,
+                    "store_pre_gap": comparison.store_pre_gap,
+                    "store_post_gap": comparison.store_post_gap,
+                    "embed_key_token_logits": {
+                        "pre": [
+                            {"token": k.token_name, "logit": k.logit_value, "rank": k.rank}
+                            for k in embed_intervention.pre_key_token_logits
+                        ],
+                        "post": [
+                            {"token": k.token_name, "logit": k.logit_value, "rank": k.rank}
+                            for k in embed_intervention.post_key_token_logits
+                        ],
+                    },
+                    "store_key_token_logits": {
+                        "pre": [
+                            {"token": k.token_name, "logit": k.logit_value, "rank": k.rank}
+                            for k in store_intervention.pre_key_token_logits
+                        ],
+                        "post": [
+                            {"token": k.token_name, "logit": k.logit_value, "rank": k.rank}
+                            for k in store_intervention.post_key_token_logits
+                        ],
+                    },
+                }
+            )
         if reversed_intervention:
             rev_delta = reversed_intervention.post_gap - reversed_intervention.pre_gap
             output["reversed_embed_pre_gap"] = reversed_intervention.pre_gap

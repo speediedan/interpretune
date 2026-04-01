@@ -3,7 +3,6 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 
 from collections import defaultdict
-from collections.abc import Mapping
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
@@ -15,11 +14,13 @@ if TYPE_CHECKING:
     from transformer_lens.hook_points import HookPoint
 
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
-from interpretune.analysis.backends import require_analysis_backend
+from interpretune.analysis.backends import InterventionSpec, require_analysis_backend
 from interpretune.analysis.ops.helpers import (
+    FeatureSelectionSpec,
     _extract_concept_latent_state_from_cache,
     _flatten_concept_store_rows,
     _resolve_concept_cache_key,
+    apply_feature_selection_filter,
     extract_logits,
     last_token_logits,
     mean_target_logit_delta,
@@ -163,9 +164,12 @@ def extract_concept_latent_state_impl(
     **kwargs,
 ) -> AnalysisBatch:
     """Extract per-example latent rows from the configured cache key for downstream concept-direction ops."""
-    del module, batch, batch_idx, kwargs
+    context_enhanced = bool(kwargs.get("context_enhanced", False))
+    context_scale = float(kwargs.get("context_scale", 1.0))
 
-    latent_states, cache_key = _extract_concept_latent_state_from_cache(analysis_batch)
+    latent_states, cache_key = _extract_concept_latent_state_from_cache(
+        analysis_batch, context_enhanced=context_enhanced, context_scale=context_scale
+    )
     analysis_batch.update(concept_latent_state=latent_states, concept_cache_key=cache_key)
     return analysis_batch
 
@@ -789,6 +793,66 @@ def concept_direction_impl(
     return analysis_batch
 
 
+def direct_concept_direction_intervention_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Add a scaled concept-direction vector to the residual stream and return pre/post logits.
+
+    Delegates the intervention mechanics to the model backend's
+    ``fwd_w_intervention`` method so the same op works for both
+    NNsight (traced execution) and TransformerLens (eager hook execution).
+    """
+    concept_direction = analysis_batch.require(
+        "concept_direction",
+        message="direct_concept_direction_intervention requires concept_direction on the analysis_batch",
+    )
+    hook_qualifier = str(analysis_batch.get("concept_cache_key") or "unembed.hook_in")
+    scale_factor = float(analysis_batch.get("direction_scale_factor") or kwargs.get("scale_factor") or 1.0)
+
+    model_backend = require_model_backend(module)
+    direction_tensor = torch.as_tensor(concept_direction, dtype=torch.float32)
+
+    if (
+        getattr(module, "analysis_cfg", None)
+        and module.analysis_cfg.auto_prune_batch_encoding
+        and isinstance(batch, BatchEncoding)
+    ):
+        batch = module.auto_prune_batch(batch, "forward")
+
+    with torch.no_grad():
+        spec = InterventionSpec(vector=direction_tensor, mode="add", scale_factor=scale_factor)
+        pre_logits, post_logits = model_backend.fwd_w_intervention(
+            model=module.model,
+            batch=batch,
+            interventions={hook_qualifier: spec},
+        )
+
+    # Extract last-token logits
+    pre_lt = last_token_logits(pre_logits)
+    post_lt = last_token_logits(post_logits)
+
+    target_ids = analysis_batch.get("logit_target_ids")
+    if target_ids is None:
+        concept_a_ids = analysis_batch.get("concept_group_a_token_ids")
+        concept_b_ids = analysis_batch.get("concept_group_b_token_ids")
+        real_ids = list(concept_a_ids or []) + list(concept_b_ids or [])
+        if real_ids:
+            target_ids = torch.tensor(real_ids, dtype=torch.long)
+    target_ids_tensor = None if target_ids is None else torch.as_tensor(target_ids, dtype=torch.long).reshape(-1)
+    logit_diff = mean_target_logit_delta(pre_lt, post_lt, target_ids_tensor)
+
+    analysis_batch.update(
+        pre_intervention_logits=pre_lt.detach().cpu(),
+        post_intervention_logits=post_lt.detach().cpu(),
+        logit_diff=logit_diff.detach().cpu(),
+    )
+    return analysis_batch
+
+
 def compute_attribution_graph_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -850,7 +914,14 @@ def extract_top_features_impl(
     top_n: int | None = None,
     **kwargs,
 ) -> AnalysisBatch:
-    """Extract the top scoring features from analysis-batch feature rows."""
+    """Extract the top scoring features from analysis-batch feature rows.
+
+    An optional ``feature_selection`` kwarg (:class:`FeatureSelectionSpec`) pre-filters
+    ``active_features`` rows before score sorting.  The filter uses **OR** semantics —
+    a row is kept if it matches *any* criterion in the spec.
+    """
+    feature_selection: FeatureSelectionSpec | None = kwargs.get("feature_selection", None)
+
     active_features = torch.as_tensor(getattr(analysis_batch, "active_features", []), dtype=torch.long)
     selected_features = torch.as_tensor(getattr(analysis_batch, "selected_features", []), dtype=torch.long)
     activation_values = getattr(analysis_batch, "activation_values", None)
@@ -886,6 +957,16 @@ def extract_top_features_impl(
         )
     elif activation_tensor is not None and activation_tensor.shape[0] == active_features.shape[0]:
         aligned_activation_values = activation_tensor
+
+    # ---- apply optional pre-filter before score ranking ----
+    if feature_selection is not None:
+        sel_mask = apply_feature_selection_filter(feature_rows, feature_selection)
+        if sel_mask.any():
+            sel_idx = sel_mask.nonzero(as_tuple=False).reshape(-1)
+            feature_rows = feature_rows.index_select(0, sel_idx)
+            scores = scores.index_select(0, sel_idx)
+            if aligned_activation_values is not None:
+                aligned_activation_values = aligned_activation_values.index_select(0, sel_idx)
 
     top_n = scores.shape[0] if top_n is None else min(int(top_n), scores.shape[0])
     top_indices = torch.argsort(scores, descending=True)[:top_n]

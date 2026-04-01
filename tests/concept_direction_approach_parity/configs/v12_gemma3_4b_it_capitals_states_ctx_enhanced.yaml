@@ -1,6 +1,6 @@
-EXPERIMENT_NAME: gemma3_it_capitals_states
+EXPERIMENT_NAME: v12_gemma3_4b_it_capitals_states_ctx_enhanced
 MODEL_FAMILY: gemma3
-MODEL_VARIANT: it
+MODEL_VARIANT: 4b_it
 CONCEPT_PAIR_NAME: capitals_states
 PROMPT_OVERRIDE: null
 TOP_N: 10
@@ -10,6 +10,8 @@ ABLATION_N_LIST: [5, 10, 25, 50, 100]
 ENABLE_SIGN_AWARE: false
 PROMPT_RENDER_MODE: apply_chat_template
 TARGET_TOKENS: [▁Austin, ▁Dallas]
-TARGET_TOKEN_IDS: [24278, 26057]
+TARGET_TOKEN_IDS: null
+BATCH_SIZE: 64
 VERBOSE: true
-FORCE_DEVICE: null
+STORE_LATENT_EXTRACTION_MODE: context_enhanced
+CONTEXT_ENHANCED_SCALE: 10.0

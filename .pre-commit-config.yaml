@@ -19,7 +19,7 @@ ci:
   autoupdate_schedule: quarterly
   # submodules: true
 
-exclude: 'tests/(ioi_parity|mech_interp_parity)/.*'
+exclude: 'tests/(ioi_parity|mech_interp_parity|concept_direction_approach_parity)/.*'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

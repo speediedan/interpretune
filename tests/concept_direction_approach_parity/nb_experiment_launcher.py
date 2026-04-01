@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -58,9 +59,21 @@ def parse_args() -> argparse.Namespace:
         help="Render parameterized notebooks without executing them.",
     )
     parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="Continue running remaining configs if one fails.",
+    )
+    parser.add_argument(
         "--all-configs",
         action="store_true",
         help="Run every YAML file under the config directory.",
+    )
+    parser.add_argument(
+        "--config-pattern",
+        help=(
+            "Optional regular expression applied to config filenames. "
+            "If provided without explicit configs, all configs are discovered first and then filtered."
+        ),
     )
     return parser.parse_args()
 
@@ -81,11 +94,18 @@ def _resolve_config_path(raw_value: str, config_dir: Path) -> Path:
 
 
 def discover_config_paths(args: argparse.Namespace, config_dir: Path) -> list[Path]:
-    if args.all_configs:
-        return sorted(config_dir.glob("*.y*ml"))
-    if not args.configs:
+    use_all_configs = args.all_configs or bool(args.config_pattern and not args.configs)
+    if use_all_configs:
+        config_paths = sorted(config_dir.glob("*.y*ml"))
+    elif args.configs:
+        config_paths = [_resolve_config_path(raw_value, config_dir) for raw_value in args.configs]
+    else:
         raise SystemExit("No configs provided. Pass one or more config files or use --all-configs.")
-    return [_resolve_config_path(raw_value, config_dir) for raw_value in args.configs]
+
+    if args.config_pattern:
+        pattern = re.compile(args.config_pattern)
+        config_paths = [path for path in config_paths if pattern.search(path.name)]
+    return config_paths
 
 
 def load_flat_yaml(path: Path) -> dict[str, Any]:
@@ -145,16 +165,23 @@ def main() -> int:
         raise SystemExit(f"No config files found in {config_dir}")
 
     outputs: list[Path] = []
+    failures: list[tuple[Path, str]] = []
     for config_path in config_paths:
-        output_path = execute_config(
-            notebook_path,
-            config_path,
-            output_dir,
-            timeout=args.timeout,
-            kernel_name=args.kernel_name,
-            prepare_only=args.prepare_only,
-        )
-        outputs.append(output_path)
+        try:
+            output_path = execute_config(
+                notebook_path,
+                config_path,
+                output_dir,
+                timeout=args.timeout,
+                kernel_name=args.kernel_name,
+                prepare_only=args.prepare_only,
+            )
+            outputs.append(output_path)
+        except Exception as exc:
+            if not args.continue_on_error:
+                raise
+            failures.append((config_path, str(exc)))
+            print(f"ERROR: Config {config_path.name} failed: {exc}")
         gc.collect()
         try:
             import torch
@@ -167,7 +194,11 @@ def main() -> int:
     print("Completed notebook executions:")
     for output_path in outputs:
         print(f"  - {output_path}")
-    return 0
+    if failures:
+        print(f"\nFailed configs ({len(failures)}):")
+        for config_path, err_msg in failures:
+            print(f"  - {config_path.name}: {err_msg[:200]}")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

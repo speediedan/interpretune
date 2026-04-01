@@ -18,6 +18,27 @@ from IPython.display import HTML, display
 # ---------------------------------------------------------------------------
 
 
+def format_prob(p: float, *, precision: int = 4) -> str:
+    """Format a probability with automatic scientific notation for small values.
+
+    Values >= 1e-3 are shown as percentages; smaller values use scientific notation.
+    """
+    if p >= 1e-3:
+        return f"{p * 100:.{precision}f}%"
+    return f"{p:.{min(precision, 2)}e}"
+
+
+def format_score(v: float, *, precision: int = 4) -> str:
+    """Format a raw score with automatic scientific notation for small magnitudes.
+
+    Values with ``|v| >= 1e-3`` use fixed-point notation; smaller magnitudes use
+    scientific notation so that near-zero attribution scores remain readable.
+    """
+    if abs(v) >= 1e-3:
+        return f"{v:.{precision}f}"
+    return f"{v:.{min(precision, 2)}e}"
+
+
 def _ensure_1d_logits(logits: torch.Tensor) -> torch.Tensor:
     """Squeeze logits to a 1-D vocab vector, taking the last sequence position if multi-dimensional."""
     if logits.dim() > 1:
@@ -71,8 +92,8 @@ def display_candidate_examples(
         rows += (
             f'<tr style="background:{row_bg};">'
             f'<td style="text-align:center;">{ex["batch_idx"]}</td>'
-            f'<td>{html.escape(str(ex["label"]))}</td>'
-            f'<td>{html.escape(str(ex["predicted"]))}</td>'
+            f"<td>{html.escape(str(ex['label']))}</td>"
+            f"<td>{html.escape(str(ex['predicted']))}</td>"
             f'<td style="text-align:right;font-family:monospace;">{ex["gap"]:+.4f}</td>'
             f'<td style="text-align:center;color:{mark_color};font-weight:bold;">{mark}</td>'
             f'<td style="white-space:pre-wrap;word-break:break-word;font-family:monospace;'
@@ -198,7 +219,7 @@ def display_top_features_comparison(
             body += "<th>Score</th>"
         body += "</tr></thead><tbody>"
         for j, (layer, pos, feat_idx) in enumerate(features):
-            score_cell = f"<td>{scores[j]:.4f}</td>" if scores is not None else ""
+            score_cell = f"<td>{format_score(scores[j])}</td>" if scores is not None else ""
             if neuronpedia_model is not None:
                 np_url = (
                     f"https://www.neuronpedia.org/{html.escape(neuronpedia_model)}/"
@@ -242,9 +263,6 @@ def display_token_probs(
     logits_1d = _ensure_1d_logits(logits)
     probs = torch.softmax(logits_1d, dim=-1)
 
-    def _fmt(p: float) -> str:
-        return f"{p * 100:.3f}%" if p >= 1e-3 else f"{p:.2e}"
-
     rows = ""
     for i, (tid, label) in enumerate(zip(token_ids, labels)):
         p = probs[tid].item()
@@ -253,7 +271,7 @@ def display_token_probs(
         rows += (
             f'<tr class="{row_class}">'
             f'<td class="monospace">{html.escape(label)}</td>'
-            f'<td style="text-align:right;">{_fmt(p)}</td>'
+            f'<td style="text-align:right;">{format_prob(p, precision=3)}</td>'
             f'<td style="text-align:right;">{logit_val:.4f}</td>'
             f"</tr>\n"
         )
@@ -413,7 +431,7 @@ def display_topk_token_predictions(
         markup += (
             f'<tr class="{row_class}">'
             f'<td class="monospace token-col" title="{html.escape(token)}">{html.escape(token)}</td>'
-            f'<td class="prob-col" style="text-align: right;">{prob:.3f}</td>'
+            f'<td class="prob-col" style="text-align: right;">{format_prob(prob, precision=3)}</td>'
             f'<td class="dist-col"><div class="bar-container">'
             f'<div class="bar" style="background-color: #2471A3; width: {bar_width}%;"></div>'
             f'<span class="bar-text">{prob * 100:.1f}%</span>'
@@ -442,7 +460,7 @@ def display_topk_token_predictions(
         markup += (
             f'<tr class="{row_class}">'
             f'<td class="monospace token-col" title="{html.escape(token)}">{html.escape(token)}</td>'
-            f'<td class="prob-col" style="text-align: right;">{prob:.3f}</td>'
+            f'<td class="prob-col" style="text-align: right;">{format_prob(prob, precision=3)}</td>'
             f'<td class="dist-col"><div class="bar-container">'
             f'<div class="bar" style="background-color: #27AE60; width: {bar_width}%;"></div>'
             f'<span class="bar-text">{prob * 100:.1f}%</span>'
@@ -460,6 +478,15 @@ def display_topk_token_predictions(
         orig_probs = torch.softmax(_ensure_1d_logits(original_logits), dim=-1)
         new_probs = torch.softmax(_ensure_1d_logits(new_logits), dim=-1)
 
+        # Sort key tokens by influence: most positive change first, most negative last
+        key_token_data = []
+        for label, tid in key_tokens:
+            p_orig = orig_probs[tid].item()
+            p_new = new_probs[tid].item()
+            change = p_new - p_orig
+            key_token_data.append((label, tid, p_orig, p_new, change))
+        key_token_data.sort(key=lambda x: x[4], reverse=True)
+
         markup += """
         <div>
             <div class="header" style="background-color: #8E44AD;">Key Tokens</div>
@@ -474,21 +501,19 @@ def display_topk_token_predictions(
                 </thead>
                 <tbody>
         """
-        for i, (label, tid) in enumerate(key_tokens):
-            p_orig = orig_probs[tid].item()
-            p_new = new_probs[tid].item()
-            relative = (p_new - p_orig) / max(p_orig, 1e-9)
-            sign = "+" if relative >= 0 else ""
+        for i, (label, tid, p_orig, p_new, change) in enumerate(key_token_data):
+            sign = "+" if change >= 0 else ""
+            bar_color = "#27AE60" if change >= 0 else "#C0392B"
             bar_width = int(p_new / max(max_prob, 1e-9) * 100)
             row_class = "even-row" if i % 2 == 0 else "odd-row"
             markup += (
                 f'<tr class="{row_class}">'
                 f'<td class="monospace token-col" title="{html.escape(label)}">{html.escape(label)}</td>'
-                f'<td class="prob-col" style="text-align: right;">{p_orig:.4f}</td>'
-                f'<td class="prob-col" style="text-align: right;">{p_new:.4f}</td>'
+                f'<td class="prob-col" style="text-align: right;">{format_prob(p_orig)}</td>'
+                f'<td class="prob-col" style="text-align: right;">{format_prob(p_new)}</td>'
                 f'<td class="dist-col"><div class="bar-container">'
-                f'<div class="bar" style="background-color: #8E44AD; width: {bar_width}%;"></div>'
-                f'<span class="bar-text">{sign}{relative * 100:.1f}%</span>'
+                f'<div class="bar" style="background-color: {bar_color}; width: {bar_width}%;"></div>'
+                f'<span class="bar-text">{sign}{format_score(abs(change))}</span>'
                 f"</div></td></tr>\n"
             )
         markup += """
@@ -531,6 +556,9 @@ def display_ablation_chart(
     import matplotlib.pyplot as plt
     import numpy as np
 
+    # Close any leaked figures to avoid corrupted renderer state.
+    plt.close("all")
+
     group_labels = list(groups.keys())
     token_labels = list(next(iter(groups.values())).keys())
     n_groups = len(group_labels)
@@ -539,13 +567,18 @@ def display_ablation_chart(
     if colors is None:
         colors = ["#2471A3", "#E67E22", "#27AE60", "#C0392B", "#8E44AD"][:n_tokens]
 
+    def _safe_probability(value: float) -> float:
+        if not np.isfinite(value):
+            return 0.0
+        return float(np.clip(value, 0.0, 1.0))
+
     x = np.arange(n_groups)
     width = 0.8 / n_tokens
 
     fig, ax1 = plt.subplots(figsize=(8, 5.0))
 
     for i, tok in enumerate(token_labels):
-        vals = [groups[g].get(tok, 0) for g in group_labels]
+        vals = [_safe_probability(groups[g].get(tok, 0.0)) for g in group_labels]
         offset = (i - (n_tokens - 1) / 2) * width
         bars = ax1.bar(x + offset, vals, width * 0.9, label=tok, color=colors[i], alpha=0.85)
         for bar, v in zip(bars, vals):
@@ -561,12 +594,14 @@ def display_ablation_chart(
     ax1.set_ylabel("Probability")
     ax1.set_xticks(x)
     ax1.set_xticklabels(group_labels)
-    max_prob = max(max(groups[g].get(t, 0) for t in token_labels) for g in group_labels)
-    ax1.set_ylim(0, max_prob * 1.4)
+    max_prob = max(max(_safe_probability(groups[g].get(t, 0.0)) for t in token_labels) for g in group_labels)
+    ax1.set_ylim(0, max(0.05, max_prob * 1.4))
 
     if logit_diffs is not None:
         ax2 = ax1.twinx()
-        diff_vals = [logit_diffs.get(g, 0) for g in group_labels]
+        diff_vals = [
+            float(logit_diffs.get(g, 0.0)) if np.isfinite(logit_diffs.get(g, 0.0)) else 0.0 for g in group_labels
+        ]
         ax2.plot(x, diff_vals, "k--o", label="Logit diff", linewidth=1.5, markersize=5)
         ax2.set_ylabel("Logit difference")
         ax2.legend(loc="upper right")
@@ -574,8 +609,12 @@ def display_ablation_chart(
     ax1.legend(loc="upper left")
     if title:
         ax1.set_title(title, fontsize=13, fontweight="bold")
-    fig.tight_layout()
+    try:
+        fig.tight_layout()
+    except Exception:
+        fig.subplots_adjust(left=0.12, right=0.88, top=0.88, bottom=0.18)
     plt.show()
+    plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -610,13 +649,19 @@ def display_key_token_logits(
     pre_rank = {int(idx): r for r, idx in enumerate(pre_sorted.tolist())}
     post_rank = {int(idx): r for r, idx in enumerate(post_sorted.tolist())}
 
-    rows = ""
-    for i, (tid, label) in enumerate(zip(token_ids, token_labels)):
+    # Sort by delta: most positive first, most negative last
+    token_data = []
+    for tid, label in zip(token_ids, token_labels):
         pre_v = pre[tid].item()
         post_v = post[tid].item()
         delta = post_v - pre_v
         pr = pre_rank.get(tid, -1)
         por = post_rank.get(tid, -1)
+        token_data.append((tid, label, pre_v, post_v, delta, pr, por))
+    token_data.sort(key=lambda x: x[4], reverse=True)
+
+    rows = ""
+    for i, (tid, label, pre_v, post_v, delta, pr, por) in enumerate(token_data):
         delta_color = "#27AE60" if delta > 0 else "#C0392B" if delta < 0 else "#888"
         row_bg = "rgba(240,240,240,0.1)" if i % 2 == 0 else "rgba(255,255,255,0.1)"
         rows += (

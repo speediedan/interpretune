@@ -124,6 +124,26 @@ def concept_direction(
 
 semantic_direction = concept_direction
 
+def direct_concept_direction_intervention(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Add a scaled concept-direction vector to the residual stream and return pre/post intervention logits
+
+    Input Schema:
+        concept_direction (float32)
+        concept_cache_key (string)
+        direction_scale_factor (float32)
+        logit_target_ids (int64)
+
+    Output Schema:
+        pre_intervention_logits (float32)
+        post_intervention_logits (float32)
+        logit_diff (float32)
+    """
+    ...
+
+direction_intervention = direct_concept_direction_intervention
+
 def extract_concept_latent_examples(
     module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
 ) -> AnalysisBatch:

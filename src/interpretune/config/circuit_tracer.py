@@ -44,6 +44,14 @@ class CircuitTracerConfig(ITSerializableCfg):
     max_feature_nodes: int | None = None
     """Memory optimization option ('cpu', 'disk', or None)."""
     offload: str | None = None
+    """Lazily load transcoder encoder weights from disk on access.
+
+    When ``None`` (default), auto-enabled when ``offload='cpu'`` to avoid OOM during transcoder
+    loading for large transcoder widths (e.g. 262k with 4B+ models).
+    """
+    lazy_encoder: bool | None = None
+    """Lazily load transcoder decoder weights from disk on access (default ``True``)."""
+    lazy_decoder: bool = True
     """Whether to display detailed progress information."""
     verbose: bool = True
 

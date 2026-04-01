@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gc
 import tempfile
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
@@ -10,7 +9,7 @@ from typing import Any, Iterator, cast
 import torch
 
 from interpretune.config.nnsight import NNsightConfig
-from interpretune.utils.resource_mgmt import cleanup_python_cuda, safe_clean_cuda  # noqa: F401 – re-export
+from interpretune.utils.resource_mgmt import cleanup_python_cuda, safe_clean_cuda  # – re-export
 from tests import load_dotenv
 from tests.analysis_resource_utils import clear_nnsight_test_state, serial_test_cleanup
 from tests.configuration import config_modules
@@ -27,6 +26,7 @@ class ModelSpec:
     neuronpedia_model: str
     neuronpedia_set: str
     use_chat_template: bool
+    hf_model_head: str | None = None
 
 
 MODEL_SPECS: dict[tuple[str, str], ModelSpec] = {
@@ -65,6 +65,46 @@ MODEL_SPECS: dict[tuple[str, str], ModelSpec] = {
         neuronpedia_model="gemma-3-1b-it",
         neuronpedia_set="gemmascope-2-res-16k",
         use_chat_template=True,
+    ),
+    ("gemma3", "4b_pt"): ModelSpec(
+        family="gemma3",
+        variant="4b_pt",
+        model_name="google/gemma-3-4b-pt",
+        transcoder_set="mwhanna/gemma-scope-2-4b-pt/transcoder_all/width_16k_l0_small_affine",
+        neuronpedia_model="gemma-3-4b",
+        neuronpedia_set="gemmascope-2-transcoder-16k",
+        use_chat_template=False,
+        hf_model_head="transformers.Gemma3ForConditionalGeneration",
+    ),
+    ("gemma3", "4b_it"): ModelSpec(
+        family="gemma3",
+        variant="4b_it",
+        model_name="google/gemma-3-4b-it",
+        transcoder_set="mwhanna/gemma-scope-2-4b-it/transcoder_all/width_16k_l0_small_affine",
+        neuronpedia_model="gemma-3-4b-it",
+        neuronpedia_set="gemmascope-2-transcoder-16k",
+        use_chat_template=True,
+        hf_model_head="transformers.Gemma3ForConditionalGeneration",
+    ),
+    ("gemma3", "4b_262k_pt"): ModelSpec(
+        family="gemma3",
+        variant="4b_262k_pt",
+        model_name="google/gemma-3-4b-pt",
+        transcoder_set="mwhanna/gemma-scope-2-4b-pt/transcoder_all/width_262k_l0_small_affine",
+        neuronpedia_model="gemma-3-4b",
+        neuronpedia_set="gemmascope-2-transcoder-262k",
+        use_chat_template=False,
+        hf_model_head="transformers.Gemma3ForConditionalGeneration",
+    ),
+    ("gemma3", "4b_262k_it"): ModelSpec(
+        family="gemma3",
+        variant="4b_262k_it",
+        model_name="google/gemma-3-4b-it",
+        transcoder_set="mwhanna/gemma-scope-2-4b-it/transcoder_all/width_262k_l0_small_affine",
+        neuronpedia_model="gemma-3-4b-it",
+        neuronpedia_set="gemmascope-2-transcoder-262k",
+        use_chat_template=True,
+        hf_model_head="transformers.Gemma3ForConditionalGeneration",
     ),
 }
 
@@ -109,6 +149,9 @@ def build_test_cfg(
     model_name: str,
     transcoder_set: str,
     force_device: str | None = None,
+    hf_model_head: str | None = None,
+    batch_size: int | None = None,
+    max_feature_nodes: int | None = None,
 ) -> CircuitTracerNNsightGemma2 | CircuitTracerNNsightGemma3:
     device_type = force_device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -118,6 +161,10 @@ def build_test_cfg(
         assert cfg.nnsight_cfg is not None
         cfg.circuit_tracer_cfg.model_name = model_name
         cfg.circuit_tracer_cfg.transcoder_set = transcoder_set
+        if batch_size is not None:
+            cfg.circuit_tracer_cfg.batch_size = batch_size
+        if max_feature_nodes is not None:
+            cfg.circuit_tracer_cfg.max_feature_nodes = max_feature_nodes
         cfg.nnsight_cfg.model_name = model_name
         cfg.nnsight_cfg.device_map = device_type
         return cfg
@@ -127,13 +174,18 @@ def build_test_cfg(
         assert cfg.circuit_tracer_cfg is not None
         cfg.circuit_tracer_cfg.model_name = model_name
         cfg.circuit_tracer_cfg.transcoder_set = transcoder_set
-        cfg.nnsight_cfg = NNsightConfig(
-            model_name=model_name,
-            device_map=device_type,
-            torch_dtype="float32",
-            dispatch=True,
-            tokenizer_kwargs={"padding_side": "left", "add_bos_token": True},
-        )
+        if batch_size is not None:
+            cfg.circuit_tracer_cfg.batch_size = batch_size
+        if max_feature_nodes is not None:
+            cfg.circuit_tracer_cfg.max_feature_nodes = max_feature_nodes
+        nnsight_kwargs: dict[str, Any] = {
+            "model_name": model_name,
+            "device_map": device_type,
+            "torch_dtype": "float32",
+            "dispatch": True,
+            "tokenizer_kwargs": {"padding_side": "left", "add_bos_token": True},
+        }
+        cfg.nnsight_cfg = NNsightConfig(**nnsight_kwargs)
         return cfg
 
     raise ValueError(f"Unsupported model family: {model_family}")
@@ -149,6 +201,9 @@ def experiment_session(
     transcoder_set: str,
     force_device: str | None = None,
     use_cuda_cleanup: bool = True,
+    hf_model_head: str | None = None,
+    batch_size: int | None = None,
+    max_feature_nodes: int | None = None,
 ) -> Iterator[tuple[Any, Any, Any]]:
     session_dir = work_root / run_name
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -162,6 +217,9 @@ def experiment_session(
         model_name=model_name,
         transcoder_set=transcoder_set,
         force_device=force_device,
+        hf_model_head=hf_model_head,
+        batch_size=batch_size,
+        max_feature_nodes=max_feature_nodes,
     )
     it_session = config_modules(cfg, run_name, {}, session_dir, {}, False)
     session_fixture_hook_exec(it_session, cast(FixtPhase, FixtPhase.setup))

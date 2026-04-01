@@ -1,0 +1,61 @@
+session_cfg:
+  adapter_ctx: [core, nnsight, circuit_tracer]
+  datamodule_cls: it_examples.experiments.rte_boolq.RTEBoolqDataModule
+  module_cls: it_examples.experiments.rte_boolq.RTEBoolqModule
+  datamodule_cfg:
+    class_path: interpretune.config.datamodule.ITDataModuleConfig
+    init_args:
+      model_name_or_path: google/gemma-3-4b-it
+      task_name: rte
+      train_batch_size: 2
+      eval_batch_size: 2
+      cust_tokenization_pattern: gemma-chat
+      os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
+      enable_datasets_cache: true
+      prepare_data_map_cfg:
+        batched: true
+      data_collator_cfg:
+        collator_class: transformers.DataCollatorWithPadding
+      prompt_cfg:
+        class_path: it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig
+      tokenizers_parallelism: false
+      signature_columns: ['input_ids', 'attention_mask', 'labels']
+      tokenizer_kwargs:
+        padding_side: left
+        add_bos_token: true
+        local_files_only: false
+        model_input_names: ['input_ids', 'attention_mask']
+  module_cfg:
+    class_path: it_examples.experiments.rte_boolq.RTEBoolqCTConfig
+    init_args:
+      experiment_tag: gemma3_4b_it_ct_ns_zs_test
+      hf_from_pretrained_cfg:
+        class_path: interpretune.config.mixins.HFFromPretrainedConfig
+        init_args:
+          pretrained_kwargs:
+            device_map: auto
+            dtype: float32
+          model_head: transformers.Gemma3ForConditionalGeneration
+      circuit_tracer_cfg:
+        class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+        init_args:
+          backend: "nnsight"
+          transcoder_set: "mwhanna/gemma-scope-2-4b-it/transcoder_all/width_16k_l0_small_affine"
+          analysis_target_tokens: ['▁Yes', '▁No']
+          max_feature_nodes: 8192
+          batch_size: 64
+          offload: 'cpu'
+          verbose: true
+      generative_step_cfg:
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+        init_args:
+          enabled: true
+          lm_generation_cfg:
+            class_path: interpretune.config.mixins.HFGenerationConfig
+            init_args:
+              model_config:
+                max_new_tokens: 3
+                do_sample: true
+                top_k: 50
+                output_logits: true
+                return_dict_in_generate: true

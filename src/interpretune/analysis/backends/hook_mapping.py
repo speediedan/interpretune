@@ -134,6 +134,11 @@ GEMMA3_MAPPING = ArchitectureMapping(
     hook_mappings=GEMMA2_HOOK_MAPPINGS,
 )
 
+GEMMA3_MULTIMODAL_MAPPING = ArchitectureMapping(
+    model_architecture="Gemma3ForConditionalGeneration",
+    hook_mappings=GEMMA2_HOOK_MAPPINGS,
+)
+
 
 class ResolvedHook(NamedTuple):
     """Result of resolving a TL hook name for NNsight envoy navigation.
@@ -151,7 +156,8 @@ class ResolvedHook(NamedTuple):
 
 # Registry of all supported architectures
 _ARCHITECTURE_REGISTRY: dict[str, ArchitectureMapping] = {
-    mapping.model_architecture: mapping for mapping in [GPT2_MAPPING, LLAMA_MAPPING, GEMMA2_MAPPING, GEMMA3_MAPPING]
+    mapping.model_architecture: mapping
+    for mapping in [GPT2_MAPPING, LLAMA_MAPPING, GEMMA2_MAPPING, GEMMA3_MAPPING, GEMMA3_MULTIMODAL_MAPPING]
 }
 
 

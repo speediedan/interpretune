@@ -20,7 +20,7 @@ from typing import Any, Callable, Literal, Sequence
 import nnsight as _nnsight
 import torch
 
-from interpretune.analysis.backends import BackendCapability
+from interpretune.analysis.backends import BackendCapability, InterventionSpec
 from interpretune.analysis.backends.hook_mapping import HookNameResolver, ResolvedHook, _SAE_SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
 
@@ -240,9 +240,18 @@ def _infer_num_layers(model: Any) -> int:
             return int(value)
 
     backbone = _find_backbone_module(hf_model)
-    layers = getattr(backbone, "layers", None) or getattr(backbone, "h", None)
-    if layers is not None:
-        return int(len(layers))
+    candidate_modules = [
+        backbone,
+        getattr(backbone, "language_model", None),
+        getattr(backbone, "model", None),
+        getattr(getattr(backbone, "language_model", None), "model", None),
+        getattr(hf_model, "language_model", None),
+        getattr(getattr(hf_model, "language_model", None), "model", None),
+    ]
+    for candidate in candidate_modules:
+        layers = getattr(candidate, "layers", None) or getattr(candidate, "h", None)
+        if layers is not None:
+            return int(len(layers))
     raise ValueError("Unable to infer model layer count for NNsight activation caching")
 
 
@@ -272,9 +281,7 @@ def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
     """Invoke an NNsight trace with only model-consumable batch fields."""
     tracer_model = getattr(tracer, "model", None)
     invoke_kwargs = {
-        key: value
-        for key, value in batch.items()
-        if key in {"attention_mask", "position_ids", "token_type_ids"}
+        key: value for key, value in batch.items() if key in {"attention_mask", "position_ids", "token_type_ids"}
     }
     if "input" in batch:
         if hasattr(tracer_model, "pre_logit_location"):
@@ -286,8 +293,7 @@ def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
         return tracer.invoke(batch["input_ids"], **invoke_kwargs)
     if not invoke_kwargs:
         raise ValueError(
-            "NNsight trace invocation requires 'input' or 'input_ids'; "
-            f"got batch keys: {sorted(batch.keys())}"
+            f"NNsight trace invocation requires 'input' or 'input_ids'; got batch keys: {sorted(batch.keys())}"
         )
     return tracer.invoke(**invoke_kwargs)
 
@@ -831,6 +837,61 @@ class NNsightModelBackend:
         if isinstance(cache_dict, NNsightActivationCacheAdapter):
             return cache_dict
         return NNsightActivationCacheAdapter(cache_dict)
+
+    # ------------------------------------------------------------------
+    # Protocol: fwd_w_intervention
+    # ------------------------------------------------------------------
+
+    def fwd_w_intervention(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        interventions: dict[str, InterventionSpec | Sequence[InterventionSpec]],
+    ) -> tuple[Any, Any]:
+        """Apply interventions at the last token position via NNsight trace.
+
+        Performs two forward passes:
+
+        1. **Baseline** (via ``fwd_w_cache``): captures pre-intervention logits.
+        2. **Intervention** (via ``model.trace()``): for each entry in *interventions*,
+           resolves the envoy, reads the activation proxy, applies the spec, and writes
+           back.
+        """
+        import torch as _torch
+
+        # --- Collect a single names_filter for the baseline cache pass ---
+        hook_names = list(interventions.keys())
+        names_filter: str | list[str] = hook_names[0] if len(hook_names) == 1 else hook_names
+
+        # --- Baseline forward pass (pre-intervention) ---
+        pre_logits, _ = self.fwd_w_cache(model=model, batch=batch, names_filter=names_filter)
+
+        last_pos = int(pre_logits.shape[1] - 1)
+
+        # --- Intervention forward pass ---
+        saved_post_logits: Any = None
+        with model.trace() as tracer:
+            with _invoke_trace(tracer, batch):
+                for hook_qualifier, specs in interventions.items():
+                    resolved = self._resolver.resolve_for_envoy(hook_qualifier)
+                    envoy = _navigate_envoy(model, resolved.module_path)
+                    act_proxy = _read_envoy_activation(envoy, resolved)
+
+                    spec_list = [specs] if isinstance(specs, InterventionSpec) else list(specs)
+                    for spec in spec_list:
+                        vec = _torch.as_tensor(spec.vector, device=pre_logits.device, dtype=_torch.float32)
+                        if spec.mode == "add":
+                            act_proxy[:, last_pos, :] = act_proxy[:, last_pos, :] + vec * spec.scale_factor
+                        elif spec.mode == "scale":
+                            act_proxy[:, last_pos, :] = act_proxy[:, last_pos, :] * (vec * spec.scale_factor)
+                        else:
+                            raise ValueError(f"Unknown intervention mode: {spec.mode!r}")
+
+                    _write_envoy_activation(envoy, resolved, act_proxy)
+
+                saved_post_logits = _nnsight.save(model.output.logits)
+
+        return pre_logits, saved_post_logits
 
 
 # ==============================================================================

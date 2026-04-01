@@ -29,6 +29,7 @@ Usage:
     # Limit batches for quick smoke test
     python tests/benchmarks/run_benchmarks.py --benchmark rte_boolq/gemma2_2b_it_l --limit-batches 5
 """
+
 from __future__ import annotations
 
 import argparse
@@ -50,6 +51,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REGISTRY_PATH = Path(__file__).resolve().parent / "benchmark_registry.yaml"
 ALLOW_FILE = Path(__file__).resolve().parent / "benchmark_update.allow"
 DEBUG_LOG_DIR = Path("/tmp/benchmark_debug")
+DEFAULT_TIMEOUT = 1800
 
 
 def load_registry() -> dict:
@@ -178,7 +180,7 @@ def run_cli_benchmark(
         text=True,
         cwd=str(REPO_ROOT),
         env=env,
-        timeout=1800,  # 30 min max
+        timeout=DEFAULT_TIMEOUT,
     )
     duration = time.monotonic() - start
 
@@ -208,12 +210,20 @@ def run_cli_benchmark(
     }
 
 
-def run_debug_diagnostics(config_path: str, log_dir: Path, debug_utils_module: str | None = None) -> dict:
+def run_debug_diagnostics(
+    config_path: str,
+    log_dir: Path,
+    debug_utils_module: str | None = None,
+    cli_mode: str = "lightning",
+) -> dict:
     """Run detailed diagnostics for debugging a benchmark config.
 
     If ``debug_utils_module`` is specified, runs the experiment-specific debug script
     from ``tests/benchmarks/debug_utils/<module>/dbg_<module>.py``. Otherwise runs
     only the shared diagnostics.
+
+    Args:
+        cli_mode: ``"lightning"`` or ``"core"``. Passed through to ``run_shared_diagnostics``.
     """
     abs_config = REPO_ROOT / config_path
     ts = timestamp()
@@ -232,7 +242,7 @@ def run_debug_diagnostics(config_path: str, log_dir: Path, debug_utils_module: s
             sys.executable,
             "-c",
             f"from tests.benchmarks.benchmark_utils import run_shared_diagnostics; "
-            f"run_shared_diagnostics('{abs_config}', '{diag_log}')",
+            f"run_shared_diagnostics('{abs_config}', '{diag_log}', cli_mode='{cli_mode}')",
         ]
 
     log.info(f"Running diagnostics: {' '.join(cmd)}")
@@ -241,7 +251,7 @@ def run_debug_diagnostics(config_path: str, log_dir: Path, debug_utils_module: s
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
-        timeout=1800,
+        timeout=DEFAULT_TIMEOUT,
     )
 
     combined = result.stdout + "\n--- STDERR ---\n" + result.stderr
@@ -370,7 +380,8 @@ def main():
         if args.debug:
             print("\n--- Debug Diagnostics ---")
             debug_module = entry.get("debug_utils_module")
-            diag = run_debug_diagnostics(entry["config_path"], log_dir, debug_module)
+            cli_mode = _detect_cli_mode(entry)
+            diag = run_debug_diagnostics(entry["config_path"], log_dir, debug_module, cli_mode=cli_mode)
             print(f"  Diagnostics log: {diag['log_file']}")
             if diag["return_code"] != 0:
                 print(f"  WARNING: Diagnostics exited with code {diag['return_code']}")

@@ -8,11 +8,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Protocol, Sequence, TypeAlias, runtime_checkable
+from typing import Any, Callable, NamedTuple, Protocol, Sequence, TypeAlias, runtime_checkable
 
 import torch
 
 from interpretune.protocol import NamesFilter
+
+
+class InterventionSpec(NamedTuple):
+    """Specification for a single hook-point intervention.
+
+    Attributes:
+        vector: Intervention vector, shape ``(d_model,)``.
+        mode: ``"add"`` adds ``vector * scale_factor`` to the activation;
+              ``"scale"`` element-wise multiplies the activation by ``vector * scale_factor``.
+        scale_factor: Scalar multiplier applied to *vector* before the intervention.
+    """
+
+    vector: torch.Tensor
+    mode: str = "add"
+    scale_factor: float = 1.0
 
 
 class BackendCapability(Enum):
@@ -443,12 +458,40 @@ class ModelBackend(Protocol):
         """
         ...
 
+    def fwd_w_intervention(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        interventions: dict[str, InterventionSpec | Sequence[InterventionSpec]],
+    ) -> tuple[Any, Any]:
+        """Run baseline + intervention forward passes using the given hook specs.
+
+        Performs two forward passes:
+
+        1. **Baseline**: captures pre-intervention logits.
+        2. **Intervention**: for each key in *interventions*, matches the key (which may
+           contain ``*`` wildcards) against available hook names, then applies each
+           ``InterventionSpec`` at the last sequence position according to its ``mode``.
+
+        Args:
+            model: The model to run.
+            batch: Input batch dict.
+            interventions: Mapping from hook-name patterns to one or more
+                ``InterventionSpec`` instances.  Patterns may use ``*`` as a glob-style
+                wildcard (translated to ``.*`` for regex matching).
+
+        Returns:
+            ``(pre_intervention_logits, post_intervention_logits)`` — both real tensors.
+        """
+        ...
+
 
 __all__ = [
     "BackendCapability",
     "AnalysisBackend",
     "AnalysisBackendCapability",
     "Capability",
+    "InterventionSpec",
     "get_module_capabilities",
     "ModelBackend",
     "ModuleCapabilities",

@@ -11,6 +11,7 @@ Usage:
         --config src/it_examples/config/experiments/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml \
         --output /tmp/rte_boolq_diagnostics.log
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,6 +23,7 @@ from pathlib import Path
 import torch
 
 from tests.benchmarks.benchmark_utils import (
+    _detect_cli_mode_from_config,
     load_cli_session,
     run_shared_diagnostics,
     section,
@@ -72,7 +74,10 @@ def check_entailment_predictions(model, batch, buf: StringIO, results: dict) -> 
             if logits_for_analysis.ndim == 2:
                 logits_for_analysis = logits_for_analysis.unsqueeze(1)
 
-            if hasattr(model.it_cfg, "entailment_mapping_indices") and model.it_cfg.entailment_mapping_indices is not None:
+            if (
+                hasattr(model.it_cfg, "entailment_mapping_indices")
+                and model.it_cfg.entailment_mapping_indices is not None
+            ):
                 emi = model.it_cfg.entailment_mapping_indices
                 buf.write(f"  entailment_mapping_indices: {emi}\n")
                 selected = torch.index_select(logits_for_analysis, -1, emi)
@@ -92,21 +97,23 @@ def check_entailment_predictions(model, batch, buf: StringIO, results: dict) -> 
 
 def run_rte_boolq_diagnostics(config_path: str, output_path: str | None = None) -> dict:
     """Run full diagnostics including RTE-specific checks."""
+    cli_mode = _detect_cli_mode_from_config(config_path)
     # Run shared diagnostics first
-    shared_results = run_shared_diagnostics(config_path)
+    shared_results = run_shared_diagnostics(config_path, cli_mode=cli_mode)
 
     # Now run experiment-specific checks
     results = {**shared_results}
     buf = StringIO()
 
     try:
-        cli, trainer, model, datamodule = load_cli_session(config_path)
+        cli, trainer, model, datamodule = load_cli_session(config_path, cli_mode=cli_mode)
         tokenizer = datamodule.tokenizer
 
         check_entailment_mapping(model, tokenizer, buf, results)
 
         # Get a batch for prediction check
-        trainer.datamodule = datamodule
+        if trainer is not None:
+            trainer.datamodule = datamodule
         datamodule.prepare_data()
         datamodule.setup(stage="test")
         batch = next(iter(datamodule.test_dataloader()))
@@ -121,7 +128,7 @@ def run_rte_boolq_diagnostics(config_path: str, output_path: str | None = None) 
         with open(output_path, "a") as f:
             f.write(f"\n\n{'=' * 70}\nRTE/BoolQ Specific Diagnostics\n{'=' * 70}\n")
             f.write(output)
-            f.write(f"\n\nResults JSON:\n")
+            f.write("\n\nResults JSON:\n")
             f.write(json.dumps(results, indent=2, default=str))
 
     print(output)

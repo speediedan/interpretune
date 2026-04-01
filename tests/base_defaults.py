@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Tuple, Callable, Any, Dict, Sequence, TYPE_CHECKING, Iterable
 from interpretune.config.transformer_lens import ITLensCfg
+from interpretune.config.nnsight import NNsightConfig
 import pytest
 
 from interpretune.adapters import ADAPTER_REGISTRY
@@ -95,6 +96,7 @@ class BaseCfg:
     model_cfg: Dict | None = None
     tl_cfg: ITLensCfg | None = None
     circuit_tracer_cfg: CircuitTracerConfig | None = None
+    nnsight_cfg: NNsightConfig | None = None
     sae_cfgs: Dict | None = None
     use_bridge: bool | None = None  # Override for SAELensConfig.use_bridge (True=Bridge, False=Hooked)
     auto_comp_cfg: AutoCompConfig | None = None
