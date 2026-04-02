@@ -535,8 +535,10 @@ class TestDirectionInterventionBackendParity:
         if hasattr(module, "auto_prune_batch") and hasattr(batch, "data"):
             batch = module.auto_prune_batch(batch, "forward")
         analysis_batch = AnalysisBatch(
-            concept_direction=direction,
-            direction_scale_factor=scale_factor,
+            intervention_hook_pattern="unembed.hook_in",
+            intervention_tensor=direction,
+            intervention_mode="add",
+            intervention_scale_factor=scale_factor,
         )
         return it.model_fwd_intervention(module, analysis_batch, batch=batch, batch_idx=0)
 

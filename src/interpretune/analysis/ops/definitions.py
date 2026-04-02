@@ -4,6 +4,7 @@ from __future__ import annotations  # see PEP 749, no longer needed when 3.13 re
 
 from collections import defaultdict
 from functools import partial
+import json
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 import torch
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
 from interpretune.analysis.backends import (
     FeatureSelectionSpec,
-    InterventionSpec,
+    InterventionDict,
     apply_feature_selection_filter,
     require_analysis_backend,
 )
@@ -803,21 +804,76 @@ def model_fwd_intervention_impl(
     batch_idx: int,
     **kwargs,
 ) -> AnalysisBatch:
-    """Add a scaled concept-direction vector to the residual stream and return pre/post logits.
+    """Apply generalized hook-point interventions and return pre/post logits.
 
     Delegates the intervention mechanics to the model backend's
     ``fwd_w_intervention`` method so the same op works for both
     NNsight (traced execution) and TransformerLens (eager hook execution).
     """
-    concept_direction = analysis_batch.require(
-        "concept_direction",
-        message="model_fwd_intervention requires concept_direction on the analysis_batch",
-    )
-    hook_qualifier = str(analysis_batch.get("concept_cache_key") or "unembed.hook_in")
-    scale_factor = float(analysis_batch.get("direction_scale_factor") or kwargs.get("scale_factor") or 1.0)
+
+    def _load_json_field(field_name: str) -> Any:
+        raw_value = resolve_aggregate_input(module, analysis_batch, field_name)
+        if isinstance(raw_value, str):
+            return json.loads(raw_value)
+        return raw_value
+
+    def _resolve_interventions() -> InterventionDict | dict[str, Any]:
+        raw_interventions = _load_json_field("interventions_json")
+        if raw_interventions is None:
+            raw_interventions = resolve_aggregate_input(module, analysis_batch, "interventions")
+
+        if raw_interventions is not None:
+            if isinstance(raw_interventions, InterventionDict):
+                return raw_interventions
+            if not isinstance(raw_interventions, dict):
+                raise TypeError("interventions_json/interventions must resolve to a mapping or InterventionDict")
+            return raw_interventions
+
+        hook_qualifier = str(
+            resolve_aggregate_input(module, analysis_batch, "intervention_hook_pattern")
+            or analysis_batch.get("concept_cache_key")
+            or "unembed.hook_in"
+        )
+        intervention_mode = resolve_aggregate_input(module, analysis_batch, "intervention_mode") or kwargs.get("mode")
+        scale_factor = (
+            resolve_aggregate_input(module, analysis_batch, "intervention_scale_factor")
+            or analysis_batch.get("direction_scale_factor")
+            or kwargs.get("scale_factor")
+            or 1.0
+        )
+
+        intervention_tensor = resolve_aggregate_input(module, analysis_batch, "intervention_tensor")
+        intervention_tensors = _load_json_field("intervention_tensors_json")
+        if intervention_tensors is None:
+            intervention_tensors = resolve_aggregate_input(module, analysis_batch, "intervention_tensors")
+
+        if intervention_tensor is None and intervention_tensors is None:
+            concept_direction = analysis_batch.get("concept_direction")
+            if concept_direction is None:
+                raise ValueError(
+                    "model_fwd_intervention requires either explicit interventions "
+                    "or shorthand intervention tensor inputs"
+                )
+            intervention_tensor = concept_direction
+            intervention_mode = intervention_mode or "add"
+
+        payload: dict[str, Any] = {
+            "mode": str(intervention_mode or "replace"),
+            "scale_factor": float(scale_factor),
+        }
+        if intervention_tensors is not None:
+            payload["intervention_tensors"] = intervention_tensors
+        else:
+            payload["intervention_tensor"] = intervention_tensor
+
+        return {hook_qualifier: payload}
 
     model_backend = require_model_backend(module)
-    direction_tensor = torch.as_tensor(concept_direction, dtype=torch.float32)
+    interventions = _resolve_interventions()
+    use_latent_models = bool(
+        resolve_aggregate_input(module, analysis_batch, "use_latent_models") or kwargs.get("use_latent_models", False)
+    )
+    latent_model_handles = getattr(module, "sae_handles", None) if use_latent_models else None
 
     if (
         getattr(module, "analysis_cfg", None)
@@ -827,18 +883,18 @@ def model_fwd_intervention_impl(
         batch = module.auto_prune_batch(batch, "forward")
 
     with torch.no_grad():
-        spec = InterventionSpec(intervention_tensor=direction_tensor, mode="add", scale_factor=scale_factor)
         pre_logits, post_logits = model_backend.fwd_w_intervention(
             model=module.model,
             batch=batch,
-            interventions={hook_qualifier: spec},
+            interventions=interventions,
+            latent_model_handles=latent_model_handles,
         )
 
     # Extract last-token logits
     pre_lt = last_token_logits(pre_logits)
     post_lt = last_token_logits(post_logits)
 
-    target_ids = analysis_batch.get("logit_target_ids")
+    target_ids = resolve_aggregate_input(module, analysis_batch, "logit_target_ids")
     if target_ids is None:
         concept_a_ids = analysis_batch.get("concept_group_a_token_ids")
         concept_b_ids = analysis_batch.get("concept_group_b_token_ids")

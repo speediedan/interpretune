@@ -890,12 +890,49 @@ feature_intervention_forward:
       sequence_type: false
 
 model_fwd_intervention:
-  description: Apply intervention tensors at configurable hook locations in the residual stream and return pre/post intervention logits
+  description: Apply generalized hook-point interventions and return pre/post intervention logits
   implementation: interpretune.analysis.ops.definitions.model_fwd_intervention_impl
   aliases: [direction_intervention, direct_concept_direction_intervention]
   input_schema:
+    interventions:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+    interventions_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_hook_pattern:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_tensor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    intervention_tensors_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_mode:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_scale_factor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    use_latent_models:
+      datasets_dtype: bool
+      required: false
+      sequence_type: false
     concept_direction:
       datasets_dtype: float32
+      required: false
       sequence_type: true
     concept_cache_key:
       datasets_dtype: string

@@ -130,6 +130,14 @@ def model_fwd_intervention(
     """Apply intervention tensors at configurable hook locations and return pre/post intervention logits.
 
     Input Schema:
+        interventions (object)
+        interventions_json (string)
+        intervention_hook_pattern (string)
+        intervention_tensor (float32)
+        intervention_tensors_json (string)
+        intervention_mode (string)
+        intervention_scale_factor (float32)
+        use_latent_models (bool)
         concept_direction (float32)
         concept_cache_key (string)
         direction_scale_factor (float32)

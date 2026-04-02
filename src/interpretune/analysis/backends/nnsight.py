@@ -12,15 +12,24 @@ compatible with analysis op expectations (``items()``, ``keys()``, ``__getitem__
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import os
 import platform
-from typing import Any, Callable, Literal, Sequence
+from typing import Any, Callable, Literal
 
 import nnsight as _nnsight
 import torch
 
-from interpretune.analysis.backends import BackendCapability, InterventionSpec
+from interpretune.analysis.backends import (
+    BackendCapability,
+    InterventionDict,
+    InterventionValue,
+    apply_intervention_to_last_token,
+    build_intervention_dict,
+    expand_intervention_patterns,
+    get_intervention_target_shape,
+)
 from interpretune.analysis.backends.hook_mapping import HookNameResolver, ResolvedHook, _SAE_SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
 
@@ -38,6 +47,7 @@ _nnsight.CONFIG.APP.PYMOUNT = False  # type: ignore[attr-defined]  # nnsight CON
 _BACKBONE_ATTR_NAMES = ("transformer", "model")
 
 _CONFIGS_PER_PASS_ENV = "IT_NNSIGHT_CONFIGS_PER_PASS"
+_LATENT_INTERVENTION_SUFFIXES = frozenset({"hook_sae_input", "hook_sae_acts_post"})
 
 
 def get_default_configs_per_pass() -> int:
@@ -275,6 +285,32 @@ def _iter_requested_hook_names(model: Any, resolver: HookNameResolver, names_fil
                     requested.append(cache_name)
 
     return requested
+
+
+def _iter_available_hook_names(
+    model: Any,
+    resolver: HookNameResolver,
+    *,
+    include_latent_subhooks: bool,
+) -> list[str]:
+    """Enumerate concrete TL-style hook names that can be targeted by interventions."""
+
+    available: list[str] = []
+    num_layers = _infer_num_layers(model)
+
+    for base_name in resolver.supported_hooks:
+        if "{layer}" in resolver._mapping.hook_mappings[base_name].envoy_path:  # type: ignore[attr-defined]
+            candidates = [f"blocks.{layer}.{base_name}" for layer in range(num_layers)]
+        else:
+            candidates = [base_name]
+
+        available.extend(candidates)
+        if include_latent_subhooks:
+            for candidate in candidates:
+                for suffix in sorted(_LATENT_INTERVENTION_SUFFIXES):
+                    available.append(f"{candidate}.{suffix}")
+
+    return available
 
 
 def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
@@ -524,8 +560,19 @@ class NNsightModelBackend:
         """
         saved_cache: dict[str, Any] = {}
         saved_logits: Any = None
+        requested_base_hooks = [
+            hook_name
+            for hook_name in _iter_available_hook_names(model, self._resolver, include_latent_subhooks=False)
+            if _matches_names_filter(hook_name, names_filter)
+        ]
         with model.trace() as tracer:
             with _invoke_trace(tracer, batch):
+                for hook_name in requested_base_hooks:
+                    resolved = self._resolver.resolve_for_envoy(hook_name)
+                    envoy = _navigate_envoy(model, resolved.module_path)
+                    act_proxy = _read_envoy_activation(envoy, resolved)
+                    saved_cache[hook_name] = _nnsight.save(act_proxy)
+
                 for sae in latent_model_handles:
                     hook_name: str = sae.cfg.metadata.hook_name
                     feature_acts, act_proxy, _ = self._splice_sae(model, sae)
@@ -846,7 +893,8 @@ class NNsightModelBackend:
         self,
         model: Any,
         batch: dict[str, Any],
-        interventions: dict[str, InterventionSpec | Sequence[InterventionSpec]],
+        interventions: InterventionDict | Mapping[str, InterventionValue],
+        latent_model_handles: list[Any] | None = None,
     ) -> tuple[Any, Any]:
         """Apply interventions at the last token position via NNsight trace.
 
@@ -857,27 +905,41 @@ class NNsightModelBackend:
            resolves the envoy (expanding ``*`` wildcards to matching hooks), reads the
            activation proxy, applies the spec, and writes back.
         """
-        import re
-        import torch as _torch
+        if isinstance(interventions, InterventionDict):
+            expanded_matches = {hook_name: [hook_name] for hook_name in interventions.keys()}
+            hook_names = list(interventions.keys())
+            intervention_dict = interventions
+        else:
+            available_hook_map = {
+                hook_name: hook_name
+                for hook_name in _iter_available_hook_names(
+                    model,
+                    self._resolver,
+                    include_latent_subhooks=bool(latent_model_handles),
+                )
+            }
+            expanded_matches = expand_intervention_patterns(list(interventions.keys()), available_hook_map)
+            hook_names = [hook_name for matches in expanded_matches.values() for hook_name in matches]
+            intervention_dict = None
 
-        # --- Expand wildcards and collect resolved hook names ---
-        expanded: dict[str, InterventionSpec | Sequence[InterventionSpec]] = {}
-        for pattern, specs in interventions.items():
-            if "*" in pattern:
-                pat = re.compile(pattern.replace("*", ".*"))
-                filter_fn: NamesFilter = lambda name, _p=pat: bool(_p.fullmatch(name))
-                matched = _iter_requested_hook_names(model, self._resolver, filter_fn)
-                for hook_name in matched:
-                    expanded[hook_name] = specs
-            else:
-                expanded[pattern] = specs
-
-        # --- Collect a single names_filter for the baseline cache pass ---
-        hook_names = list(expanded.keys())
         names_filter: str | list[str] = hook_names[0] if len(hook_names) == 1 else hook_names
 
         # --- Baseline forward pass (pre-intervention) ---
-        pre_logits, _ = self.fwd_w_cache(model=model, batch=batch, names_filter=names_filter)
+        if latent_model_handles:
+            pre_logits, cache = self.fwd_w_cache_and_latent_models(
+                model=model,
+                batch=batch,
+                latent_model_handles=latent_model_handles,
+                names_filter=names_filter,
+            )
+        else:
+            pre_logits, cache = self.fwd_w_cache(model=model, batch=batch, names_filter=names_filter)
+
+        if intervention_dict is None:
+            hook_shapes = {
+                hook_name: get_intervention_target_shape(torch.as_tensor(cache[hook_name])) for hook_name in hook_names
+            }
+            intervention_dict = build_intervention_dict(interventions, expanded_matches, hook_shapes)
 
         last_pos = int(pre_logits.shape[1] - 1)
 
@@ -885,22 +947,46 @@ class NNsightModelBackend:
         saved_post_logits: Any = None
         with model.trace() as tracer:
             with _invoke_trace(tracer, batch):
-                for hook_qualifier, specs in expanded.items():
+                pending_base_interventions: dict[str, tuple[Any, ...]] = {
+                    hook_name: tuple(specs) for hook_name, specs in intervention_dict.items()
+                }
+
+                if latent_model_handles:
+                    for sae in latent_model_handles:
+                        hook_name = str(sae.cfg.metadata.hook_name)
+                        resolved = self._resolver.resolve_for_envoy(hook_name)
+                        envoy = _navigate_envoy(model, resolved.module_path)
+                        act_proxy = _read_envoy_activation(envoy, resolved)
+
+                        input_key = f"{hook_name}.hook_sae_input"
+                        for spec in pending_base_interventions.pop(input_key, ()):  # type: ignore[arg-type]
+                            act_proxy = apply_intervention_to_last_token(act_proxy, spec, last_pos=last_pos)
+
+                        disable_hz = getattr(sae, "hook_z_reshaping_mode", False)
+                        if disable_hz:
+                            sae.turn_off_forward_pass_hook_z_reshaping()
+
+                        try:
+                            feature_acts = sae.encode(act_proxy)
+                            acts_key = f"{hook_name}.hook_sae_acts_post"
+                            for spec in pending_base_interventions.pop(acts_key, ()):  # type: ignore[arg-type]
+                                feature_acts = apply_intervention_to_last_token(feature_acts, spec, last_pos=last_pos)
+
+                            sae_out = sae.decode(feature_acts)
+                            for spec in pending_base_interventions.pop(hook_name, ()):  # type: ignore[arg-type]
+                                sae_out = apply_intervention_to_last_token(sae_out, spec, last_pos=last_pos)
+                            _write_envoy_activation(envoy, resolved, sae_out)
+                        finally:
+                            if disable_hz:
+                                sae.turn_on_forward_pass_hook_z_reshaping()
+
+                for hook_qualifier, specs in pending_base_interventions.items():
                     resolved = self._resolver.resolve_for_envoy(hook_qualifier)
                     envoy = _navigate_envoy(model, resolved.module_path)
                     act_proxy = _read_envoy_activation(envoy, resolved)
 
-                    spec_list = [specs] if isinstance(specs, InterventionSpec) else list(specs)
-                    for spec in spec_list:
-                        vec = _torch.as_tensor(spec.intervention_tensor, device=pre_logits.device, dtype=_torch.float32)
-                        if spec.mode == "replace":
-                            act_proxy[:, last_pos, :] = vec
-                        elif spec.mode == "add":
-                            act_proxy[:, last_pos, :] = act_proxy[:, last_pos, :] + vec * spec.scale_factor
-                        elif spec.mode == "scale":
-                            act_proxy[:, last_pos, :] = act_proxy[:, last_pos, :] * (vec * spec.scale_factor)
-                        else:
-                            raise ValueError(f"Unknown intervention mode: {spec.mode!r}")
+                    for spec in specs:
+                        act_proxy = apply_intervention_to_last_token(act_proxy, spec, last_pos=last_pos)
 
                     _write_envoy_activation(envoy, resolved, act_proxy)
 
