@@ -4,7 +4,6 @@ from __future__ import annotations  # see PEP 749, no longer needed when 3.13 re
 
 from collections import defaultdict
 from functools import partial
-import json
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 import torch
@@ -17,9 +16,9 @@ if TYPE_CHECKING:
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
 from interpretune.analysis.backends import (
     FeatureSelectionSpec,
-    InterventionDict,
     apply_feature_selection_filter,
     require_analysis_backend,
+    resolve_interventions,
 )
 from interpretune.analysis.ops.helpers import (
     _extract_concept_latent_state_from_cache,
@@ -27,6 +26,7 @@ from interpretune.analysis.ops.helpers import (
     _resolve_concept_cache_key,
     extract_logits,
     last_token_logits,
+    load_json_field,
     mean_target_logit_delta,
     require_model_backend,
     resolve_embedding_weight,
@@ -811,65 +811,13 @@ def model_fwd_intervention_impl(
     NNsight (traced execution) and TransformerLens (eager hook execution).
     """
 
-    def _load_json_field(field_name: str) -> Any:
-        raw_value = resolve_aggregate_input(module, analysis_batch, field_name)
-        if isinstance(raw_value, str):
-            return json.loads(raw_value)
-        return raw_value
-
-    def _resolve_interventions() -> InterventionDict | dict[str, Any]:
-        raw_interventions = _load_json_field("interventions_json")
-        if raw_interventions is None:
-            raw_interventions = resolve_aggregate_input(module, analysis_batch, "interventions")
-
-        if raw_interventions is not None:
-            if isinstance(raw_interventions, InterventionDict):
-                return raw_interventions
-            if not isinstance(raw_interventions, dict):
-                raise TypeError("interventions_json/interventions must resolve to a mapping or InterventionDict")
-            return raw_interventions
-
-        hook_qualifier = str(
-            resolve_aggregate_input(module, analysis_batch, "intervention_hook_pattern")
-            or analysis_batch.get("concept_cache_key")
-            or "unembed.hook_in"
-        )
-        intervention_mode = resolve_aggregate_input(module, analysis_batch, "intervention_mode") or kwargs.get("mode")
-        scale_factor = (
-            resolve_aggregate_input(module, analysis_batch, "intervention_scale_factor")
-            or analysis_batch.get("direction_scale_factor")
-            or kwargs.get("scale_factor")
-            or 1.0
-        )
-
-        intervention_tensor = resolve_aggregate_input(module, analysis_batch, "intervention_tensor")
-        intervention_tensors = _load_json_field("intervention_tensors_json")
-        if intervention_tensors is None:
-            intervention_tensors = resolve_aggregate_input(module, analysis_batch, "intervention_tensors")
-
-        if intervention_tensor is None and intervention_tensors is None:
-            concept_direction = analysis_batch.get("concept_direction")
-            if concept_direction is None:
-                raise ValueError(
-                    "model_fwd_intervention requires either explicit interventions "
-                    "or shorthand intervention tensor inputs"
-                )
-            intervention_tensor = concept_direction
-            intervention_mode = intervention_mode or "add"
-
-        payload: dict[str, Any] = {
-            "mode": str(intervention_mode or "replace"),
-            "scale_factor": float(scale_factor),
-        }
-        if intervention_tensors is not None:
-            payload["intervention_tensors"] = intervention_tensors
-        else:
-            payload["intervention_tensor"] = intervention_tensor
-
-        return {hook_qualifier: payload}
-
     model_backend = require_model_backend(module)
-    interventions = _resolve_interventions()
+    interventions = resolve_interventions(
+        analysis_batch=analysis_batch,
+        resolve_field=lambda field_name: resolve_aggregate_input(module, analysis_batch, field_name),
+        load_json_field=lambda field_name: load_json_field(module, analysis_batch, field_name),
+        kwargs=kwargs,
+    )
     use_latent_models = bool(
         resolve_aggregate_input(module, analysis_batch, "use_latent_models") or kwargs.get("use_latent_models", False)
     )

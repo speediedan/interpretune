@@ -27,16 +27,24 @@ class InterventionSpec(NamedTuple):
             ``(n_heads, d_head)`` or latent feature activations.
         mode: ``"replace"`` overwrites the activation at the target position with the tensor;
               ``"add"`` adds ``intervention_tensor * scale_factor`` to the activation;
-              ``"dot"`` replaces the activation with the dot-product projection of the existing
-              activation onto ``intervention_tensor``, optionally scaled by ``scale_factor``.
+              ``"project"`` replaces the activation with a projection result. By default, the
+              current hook input is projected onto the span of ``intervention_tensor``, so the
+              intervention tensor acts as the projection basis. When
+              ``use_intervention_tensor_as_basis`` is ``False``, the direction is reversed and
+              ``intervention_tensor`` is projected onto the span of the current hook input.
         scale_factor: Scalar multiplier applied to *intervention_tensor* before the intervention
             (not used in ``"replace"`` mode and applied to the projected activation in
-            ``"dot"`` mode).
+            ``"project"`` mode).
+        use_intervention_tensor_as_basis: Controls which vector defines the projection basis in
+            ``"project"`` mode. ``True`` means project the current hook input onto the span of
+            ``intervention_tensor``. ``False`` means project ``intervention_tensor`` onto the
+            span of the current hook input instead.
     """
 
     intervention_tensor: torch.Tensor
     mode: str = "replace"
     scale_factor: float = 1.0
+    use_intervention_tensor_as_basis: bool = True
 
 
 InterventionValue: TypeAlias = Any
@@ -108,6 +116,7 @@ def _coerce_single_intervention_spec(
             intervention_tensor=torch.as_tensor(value["intervention_tensor"]),
             mode=str(value.get("mode", default_mode)),
             scale_factor=float(value.get("scale_factor", default_scale_factor)),
+            use_intervention_tensor_as_basis=bool(value.get("use_intervention_tensor_as_basis", True)),
         )
     raise TypeError(f"Unsupported intervention value type: {type(value)!r}")
 
@@ -175,9 +184,14 @@ def _validate_intervention_spec(
 ) -> InterventionSpec:
     tensor = torch.as_tensor(spec.intervention_tensor)
     _ensure_shape_compatible(tuple(tensor.shape), target_shape, hook_name)
-    if spec.mode not in {"replace", "add", "dot"}:
+    if spec.mode not in {"replace", "add", "project"}:
         raise ValueError(f"Unknown intervention mode: {spec.mode!r}")
-    return InterventionSpec(intervention_tensor=tensor, mode=spec.mode, scale_factor=spec.scale_factor)
+    return InterventionSpec(
+        intervention_tensor=tensor,
+        mode=spec.mode,
+        scale_factor=spec.scale_factor,
+        use_intervention_tensor_as_basis=spec.use_intervention_tensor_as_basis,
+    )
 
 
 def expand_intervention_patterns(
@@ -256,10 +270,16 @@ def _expand_intervention_value_for_matches(
             )
         shared_mode = str(raw_value.get("mode", default_mode))
         shared_scale = float(raw_value.get("scale_factor", default_scale_factor))
+        shared_basis = bool(raw_value.get("use_intervention_tensor_as_basis", True))
         return [
             (
                 _validate_intervention_spec(
-                    InterventionSpec(torch.as_tensor(tensor), mode=shared_mode, scale_factor=shared_scale),
+                    InterventionSpec(
+                        torch.as_tensor(tensor),
+                        mode=shared_mode,
+                        scale_factor=shared_scale,
+                        use_intervention_tensor_as_basis=shared_basis,
+                    ),
                     hook_shapes[hook_name],
                     hook_name,
                 ),
@@ -338,35 +358,135 @@ def build_intervention_dict(
     return InterventionDict({hook_name: tuple(specs) for hook_name, specs in resolved.items()})
 
 
+def resolve_interventions(
+    *,
+    analysis_batch: Any,
+    resolve_field: Callable[[str], Any],
+    load_json_field: Callable[[str], Any],
+    kwargs: Mapping[str, Any] | None = None,
+    default_hook_qualifier: str = "unembed.hook_in",
+) -> InterventionDict | dict[str, Any]:
+    """Resolve explicit or shorthand intervention inputs into a standardized payload mapping.
+
+    Explicit ``interventions`` or ``interventions_json`` mappings take precedence. Otherwise,
+    shorthand op inputs are assembled into a raw intervention payload keyed by the resolved hook
+    qualifier. Shape canonicalization into :class:`InterventionDict` still happens in the backend
+    after concrete hook shapes are known.
+    """
+
+    def _first_defined(*values: Any) -> Any:
+        for value in values:
+            if value is not None:
+                return value
+        return None
+
+    kwargs = kwargs or {}
+    batch_get = getattr(analysis_batch, "get", lambda *_args, **_kwargs: None)
+
+    raw_interventions = load_json_field("interventions_json")
+    if raw_interventions is None:
+        raw_interventions = resolve_field("interventions")
+
+    if raw_interventions is not None:
+        if isinstance(raw_interventions, InterventionDict):
+            return raw_interventions
+        if not isinstance(raw_interventions, dict):
+            raise TypeError("interventions_json/interventions must resolve to a mapping or InterventionDict")
+        return raw_interventions
+
+    hook_qualifier = str(
+        _first_defined(
+            resolve_field("intervention_hook_pattern"),
+            batch_get("concept_cache_key"),
+            default_hook_qualifier,
+        )
+    )
+    intervention_mode = _first_defined(resolve_field("intervention_mode"), kwargs.get("mode"))
+    scale_factor = _first_defined(
+        resolve_field("intervention_scale_factor"),
+        batch_get("direction_scale_factor"),
+        kwargs.get("scale_factor"),
+        1.0,
+    )
+    use_intervention_tensor_as_basis = _first_defined(
+        resolve_field("intervention_use_intervention_tensor_as_basis"),
+        kwargs.get("use_intervention_tensor_as_basis"),
+        True,
+    )
+
+    intervention_tensor = resolve_field("intervention_tensor")
+    intervention_tensors = load_json_field("intervention_tensors_json")
+    if intervention_tensors is None:
+        intervention_tensors = resolve_field("intervention_tensors")
+
+    if intervention_tensor is None and intervention_tensors is None:
+        concept_direction = batch_get("concept_direction")
+        if concept_direction is None:
+            raise ValueError(
+                "model_fwd_intervention requires either explicit interventions or shorthand intervention tensor inputs"
+            )
+        intervention_tensor = concept_direction
+        intervention_mode = intervention_mode or "add"
+
+    payload: dict[str, Any] = {
+        "mode": str(intervention_mode or "replace"),
+        "scale_factor": float(scale_factor),
+        "use_intervention_tensor_as_basis": bool(use_intervention_tensor_as_basis),
+    }
+    if intervention_tensors is not None:
+        payload["intervention_tensors"] = intervention_tensors
+    else:
+        payload["intervention_tensor"] = intervention_tensor
+
+    return {hook_qualifier: payload}
+
+
 def apply_intervention_to_last_token(
     value: torch.Tensor,
     spec: InterventionSpec,
     *,
     last_pos: int,
 ) -> torch.Tensor:
-    """Apply one intervention spec to the last-token slice of an activation tensor."""
+    """Apply one intervention spec to the last-token slice of an activation tensor.
 
-    target = value[:, last_pos, ...]
-    intervention_tensor = torch.as_tensor(spec.intervention_tensor, device=target.device, dtype=target.dtype)
+    The existing hook value is treated as the projection input and
+    ``spec.intervention_tensor`` is treated as the projection target. In ``"project"`` mode,
+    the target defines the default projection basis: the input is projected onto the span of
+    the intervention tensor. When ``spec.use_intervention_tensor_as_basis`` is ``False``, the
+    direction is reversed and the intervention tensor is projected onto the span of the input.
+    """
+
+    input_value = value[:, last_pos, ...]
+    target = torch.as_tensor(spec.intervention_tensor, device=input_value.device, dtype=input_value.dtype)
 
     if spec.mode == "replace":
-        value[:, last_pos, ...] = intervention_tensor
+        value[:, last_pos, ...] = target
         return value
 
     if spec.mode == "add":
-        value[:, last_pos, ...] = target + intervention_tensor * spec.scale_factor
+        value[:, last_pos, ...] = input_value + target * spec.scale_factor
         return value
 
-    if spec.mode != "dot":
+    if spec.mode != "project":
         raise ValueError(f"Unknown intervention mode: {spec.mode!r}")
 
-    broadcast_tensor = torch.broadcast_to(intervention_tensor, target.shape[1:]).to(dtype=torch.float32)
-    target_float = target.to(dtype=torch.float32)
-    denom = broadcast_tensor.pow(2).sum().clamp_min(1e-12)
-    keepdim_axes = tuple(range(1, target_float.ndim))
-    coeff = (target_float * broadcast_tensor).sum(dim=keepdim_axes, keepdim=True) / denom
-    projected = coeff * broadcast_tensor.reshape((1,) + tuple(broadcast_tensor.shape))
-    value[:, last_pos, ...] = projected.to(dtype=target.dtype) * spec.scale_factor
+    input_float = input_value.to(dtype=torch.float32)
+    target_float = torch.broadcast_to(target, input_value.shape[1:]).to(dtype=torch.float32)
+    keepdim_axes = tuple(range(1, input_float.ndim))
+
+    if spec.use_intervention_tensor_as_basis:
+        basis = target_float
+        denom = basis.pow(2).sum().clamp_min(1e-12)
+        coeff = (input_float * basis).sum(dim=keepdim_axes, keepdim=True) / denom
+        projected = coeff * basis.reshape((1,) + tuple(basis.shape))
+    else:
+        basis = input_float
+        source = target_float.reshape((1,) + tuple(target_float.shape))
+        denom = basis.pow(2).sum(dim=keepdim_axes, keepdim=True).clamp_min(1e-12)
+        coeff = (source * basis).sum(dim=keepdim_axes, keepdim=True) / denom
+        projected = coeff * basis
+
+    value[:, last_pos, ...] = projected.to(dtype=input_value.dtype) * spec.scale_factor
     return value
 
 
@@ -905,7 +1025,7 @@ class ModelBackend(Protocol):
         2. **Intervention**: for each key in *interventions*, matches the key (which may
            contain ``*`` wildcards) against available hook names, then applies each
            ``InterventionSpec`` at the last sequence position according to its ``mode``
-           (``"replace"``, ``"add"``, or ``"dot"``).
+           (``"replace"``, ``"add"``, or ``"project"``).
 
         Args:
             model: The model to run.
@@ -940,4 +1060,5 @@ __all__ = [
     "ModelBackend",
     "ModuleCapabilities",
     "normalize_backend_capability",
+    "resolve_interventions",
 ]

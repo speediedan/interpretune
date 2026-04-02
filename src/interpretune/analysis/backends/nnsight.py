@@ -24,13 +24,14 @@ import torch
 from interpretune.analysis.backends import (
     BackendCapability,
     InterventionDict,
+    InterventionSpec,
     InterventionValue,
     apply_intervention_to_last_token,
     build_intervention_dict,
     expand_intervention_patterns,
     get_intervention_target_shape,
 )
-from interpretune.analysis.backends.hook_mapping import HookNameResolver, ResolvedHook, _SAE_SUBHOOK_SUFFIXES
+from interpretune.analysis.backends.hook_mapping import HookNameResolver, ResolvedHook, SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
 
 # Disable PYMOUNT C extension — this backend uses nnsight.save() exclusively.
@@ -47,7 +48,6 @@ _nnsight.CONFIG.APP.PYMOUNT = False  # type: ignore[attr-defined]  # nnsight CON
 _BACKBONE_ATTR_NAMES = ("transformer", "model")
 
 _CONFIGS_PER_PASS_ENV = "IT_NNSIGHT_CONFIGS_PER_PASS"
-_LATENT_INTERVENTION_SUFFIXES = frozenset({"hook_sae_input", "hook_sae_acts_post"})
 
 
 def get_default_configs_per_pass() -> int:
@@ -265,7 +265,13 @@ def _infer_num_layers(model: Any) -> int:
     raise ValueError("Unable to infer model layer count for NNsight activation caching")
 
 
-def _iter_requested_hook_names(model: Any, resolver: HookNameResolver, names_filter: NamesFilter) -> list[str]:
+def _iter_requested_hook_names(
+    model: Any,
+    resolver: HookNameResolver,
+    names_filter: NamesFilter,
+    *,
+    include_subhooks: bool,
+) -> list[str]:
     """Enumerate TL hook names requested by a names_filter."""
     requested: list[str] = []
     num_layers = _infer_num_layers(model)
@@ -279,7 +285,7 @@ def _iter_requested_hook_names(model: Any, resolver: HookNameResolver, names_fil
         for candidate in candidates:
             if _matches_names_filter(candidate, names_filter):
                 requested.append(candidate)
-            for suffix in sorted(_SAE_SUBHOOK_SUFFIXES):
+            for suffix in sorted(SUBHOOK_SUFFIXES) if include_subhooks else ():
                 cache_name = f"{candidate}.{suffix}"
                 if _matches_names_filter(cache_name, names_filter):
                     requested.append(cache_name)
@@ -307,7 +313,7 @@ def _iter_available_hook_names(
         available.extend(candidates)
         if include_latent_subhooks:
             for candidate in candidates:
-                for suffix in sorted(_LATENT_INTERVENTION_SUFFIXES):
+                for suffix in sorted(SUBHOOK_SUFFIXES):
                     available.append(f"{candidate}.{suffix}")
 
     return available
@@ -408,11 +414,14 @@ class NNsightModelBackend:
         sae: Any,
         *,
         hook_fn: Callable[[Any, _DummyHookPoint], Any] | None = None,
-    ) -> tuple[Any, Any, ResolvedHook]:
+        interventions: Mapping[str, Sequence[InterventionSpec]] | None = None,
+        last_pos: int | None = None,
+    ) -> tuple[dict[str, Any], ResolvedHook]:
         """Splice an SAE into the model's activation stream within an NNsight trace.
 
-        Resolves the SAE hook point, reads the activation proxy, runs encode → (optional
-        hook) → decode, and writes the reconstruction back.  This is the repeated
+        Resolves the SAE hook point, reads the activation proxy, runs the SAE encode/decode
+        pipeline, optionally applies stage-local interventions, and writes the reconstruction
+        back. This is the repeated
         pattern shared by all protocol methods.
 
         Must be called inside an active ``tracer.invoke()`` context.
@@ -423,15 +432,21 @@ class NNsightModelBackend:
             hook_fn: Optional TL-style hook function ``(tensor, hook) -> tensor`` to apply
                 to the encoded feature activations before decoding.  The hook receives a
                 ``_DummyHookPoint`` with the SAE's ``hook_sae_acts_post`` sub-hook name.
+            interventions: Optional mapping from SAE subhook suffixes to intervention specs.
+            last_pos: Sequence position to modify for intervention application.
 
         Returns:
-            Tuple of ``(feature_acts_proxy, act_input_proxy, resolved_hook)``.
+            Tuple of ``(stage_proxy_map, resolved_hook)``.
         """
         hook_name: str = sae.cfg.metadata.hook_name
         resolved = self._resolver.resolve_for_envoy(hook_name)
         envoy = _navigate_envoy(model, resolved.module_path)
 
-        act_proxy = _read_envoy_activation(envoy, resolved)
+        stage_interventions = interventions or {}
+        act_input = _read_envoy_activation(envoy, resolved)
+        if last_pos is not None:
+            for spec in stage_interventions.get("hook_sae_input", ()):  # type: ignore[arg-type]
+                act_input = apply_intervention_to_last_token(act_input, spec, last_pos=last_pos)
 
         # NNsight reads post-merge activations (3D: [batch, seq, n_heads*d_head])
         # for hook_z hooks because HF attention merges heads before calling
@@ -444,19 +459,56 @@ class NNsightModelBackend:
             sae.turn_off_forward_pass_hook_z_reshaping()
 
         try:
-            feature_acts = sae.encode(act_proxy)
+            encode_with_hidden_pre = getattr(sae, "encode_with_hidden_pre", None)
+            if encode_with_hidden_pre is not None:
+                encoded = encode_with_hidden_pre(act_input)
+                feature_acts = encoded[0]
+                hidden_pre = encoded[1]
+                has_hidden_pre = True
+            else:
+                feature_acts = sae.encode(act_input)
+                hidden_pre = feature_acts
+                has_hidden_pre = False
+
+            if last_pos is not None and stage_interventions.get("hook_sae_acts_pre"):
+                for spec in stage_interventions["hook_sae_acts_pre"]:
+                    hidden_pre = apply_intervention_to_last_token(hidden_pre, spec, last_pos=last_pos)
+                if has_hidden_pre:
+                    feature_acts = sae.hook_sae_acts_post(sae.activation_fn(hidden_pre))
+                else:
+                    feature_acts = hidden_pre
 
             if hook_fn is not None:
                 dummy = _DummyHookPoint(name=f"{hook_name}.hook_sae_acts_post")
                 feature_acts = hook_fn(feature_acts, dummy)
 
+            if last_pos is not None:
+                for spec in stage_interventions.get("hook_sae_acts_post", ()):  # type: ignore[arg-type]
+                    feature_acts = apply_intervention_to_last_token(feature_acts, spec, last_pos=last_pos)
+
             sae_out = sae.decode(feature_acts)
-            _write_envoy_activation(envoy, resolved, sae_out)
+            sae_error = act_input - sae_out
+            if last_pos is not None:
+                for spec in stage_interventions.get("hook_sae_error", ()):  # type: ignore[arg-type]
+                    sae_error = apply_intervention_to_last_token(sae_error, spec, last_pos=last_pos)
+
+            sae_output = sae_out + sae_error if getattr(sae, "use_error_term", False) else sae_out
+            if last_pos is not None:
+                for spec in stage_interventions.get("hook_sae_output", ()):  # type: ignore[arg-type]
+                    sae_output = apply_intervention_to_last_token(sae_output, spec, last_pos=last_pos)
+
+            _write_envoy_activation(envoy, resolved, sae_output)
         finally:
             if _disable_hz:
                 sae.turn_on_forward_pass_hook_z_reshaping()
 
-        return feature_acts, act_proxy, resolved
+        return {
+            "hook_sae_input": act_input,
+            "hook_sae_acts_pre": hidden_pre,
+            "hook_sae_acts_post": feature_acts,
+            "hook_sae_error": sae_error,
+            "hook_sae_output": sae_output,
+        }, resolved
 
     @staticmethod
     def _get_hf_model(model: Any) -> torch.nn.Module:
@@ -575,13 +627,12 @@ class NNsightModelBackend:
 
                 for sae in latent_model_handles:
                     hook_name: str = sae.cfg.metadata.hook_name
-                    feature_acts, act_proxy, _ = self._splice_sae(model, sae)
+                    stage_values, _ = self._splice_sae(model, sae)
 
-                    # Cache requested sub-hook activations via nnsight.save()
-                    if _matches_names_filter(f"{hook_name}.hook_sae_input", names_filter):
-                        saved_cache[f"{hook_name}.hook_sae_input"] = _nnsight.save(act_proxy)
-                    if _matches_names_filter(f"{hook_name}.hook_sae_acts_post", names_filter):
-                        saved_cache[f"{hook_name}.hook_sae_acts_post"] = _nnsight.save(feature_acts)
+                    for suffix, stage_value in stage_values.items():
+                        cache_name = f"{hook_name}.{suffix}"
+                        if _matches_names_filter(cache_name, names_filter):
+                            saved_cache[cache_name] = _nnsight.save(stage_value)
                 saved_logits = _nnsight.save(model.output.logits)
 
         # After trace exits: nnsight.save() resolves to real tensors directly
@@ -594,7 +645,7 @@ class NNsightModelBackend:
         names_filter: NamesFilter,
     ) -> tuple[torch.Tensor, Any]:
         """Run a forward pass with activation caching but without latent model hooks."""
-        requested_hooks = _iter_requested_hook_names(model, self._resolver, names_filter)
+        requested_hooks = _iter_requested_hook_names(model, self._resolver, names_filter, include_subhooks=False)
         saved_cache: dict[str, Any] = {}
         saved_logits: Any = None
         with model.trace() as tracer:
@@ -824,19 +875,14 @@ class NNsightModelBackend:
                 # ---- SAE splicing via _splice_sae ----
                 for sae in latent_model_handles:
                     hook_name: str = sae.cfg.metadata.hook_name
-                    feature_acts, act_proxy, _ = self._splice_sae(model, sae)
+                    stage_values, _ = self._splice_sae(model, sae)
 
-                    input_key = f"{hook_name}.hook_sae_input"
-                    acts_key = f"{hook_name}.hook_sae_acts_post"
-                    if any(_matches_names_filter(input_key, nf) for nf, _ in fwd_hooks):
-                        saved_fwd[input_key] = _nnsight.save(act_proxy)
-                    if any(_matches_names_filter(acts_key, nf) for nf, _ in fwd_hooks):
-                        saved_fwd[acts_key] = _nnsight.save(feature_acts)
-
-                    if any(_matches_names_filter(input_key, nf) for nf, _ in bwd_hooks):
-                        saved_grad[f"_proxy_{input_key}"] = act_proxy
-                    if any(_matches_names_filter(acts_key, nf) for nf, _ in bwd_hooks):
-                        saved_grad[f"_proxy_{acts_key}"] = feature_acts
+                    for suffix, stage_value in stage_values.items():
+                        cache_name = f"{hook_name}.{suffix}"
+                        if any(_matches_names_filter(cache_name, nf) for nf, _ in fwd_hooks):
+                            saved_fwd[cache_name] = _nnsight.save(stage_value)
+                        if any(_matches_names_filter(cache_name, nf) for nf, _ in bwd_hooks):
+                            saved_grad[f"_proxy_{cache_name}"] = stage_value
 
                 logits_proxy = model.output.logits
                 scalar = backward_fn(logits_proxy)
@@ -954,31 +1000,18 @@ class NNsightModelBackend:
                 if latent_model_handles:
                     for sae in latent_model_handles:
                         hook_name = str(sae.cfg.metadata.hook_name)
-                        resolved = self._resolver.resolve_for_envoy(hook_name)
-                        envoy = _navigate_envoy(model, resolved.module_path)
-                        act_proxy = _read_envoy_activation(envoy, resolved)
+                        latent_specs: dict[str, tuple[InterventionSpec, ...]] = {}
+                        for suffix in sorted(SUBHOOK_SUFFIXES):
+                            full_name = f"{hook_name}.{suffix}"
+                            specs = pending_base_interventions.pop(full_name, ())
+                            if specs:
+                                latent_specs[suffix] = tuple(specs)
 
-                        input_key = f"{hook_name}.hook_sae_input"
-                        for spec in pending_base_interventions.pop(input_key, ()):  # type: ignore[arg-type]
-                            act_proxy = apply_intervention_to_last_token(act_proxy, spec, last_pos=last_pos)
+                        base_specs = pending_base_interventions.pop(hook_name, ())
+                        if base_specs:
+                            latent_specs["hook_sae_output"] = (*latent_specs.get("hook_sae_output", ()), *base_specs)
 
-                        disable_hz = getattr(sae, "hook_z_reshaping_mode", False)
-                        if disable_hz:
-                            sae.turn_off_forward_pass_hook_z_reshaping()
-
-                        try:
-                            feature_acts = sae.encode(act_proxy)
-                            acts_key = f"{hook_name}.hook_sae_acts_post"
-                            for spec in pending_base_interventions.pop(acts_key, ()):  # type: ignore[arg-type]
-                                feature_acts = apply_intervention_to_last_token(feature_acts, spec, last_pos=last_pos)
-
-                            sae_out = sae.decode(feature_acts)
-                            for spec in pending_base_interventions.pop(hook_name, ()):  # type: ignore[arg-type]
-                                sae_out = apply_intervention_to_last_token(sae_out, spec, last_pos=last_pos)
-                            _write_envoy_activation(envoy, resolved, sae_out)
-                        finally:
-                            if disable_hz:
-                                sae.turn_on_forward_pass_hook_z_reshaping()
+                        self._splice_sae(model, sae, interventions=latent_specs, last_pos=last_pos)
 
                 for hook_qualifier, specs in pending_base_interventions.items():
                     resolved = self._resolver.resolve_for_envoy(hook_qualifier)

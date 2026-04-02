@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import json
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -134,6 +135,15 @@ def resolve_aggregate_input(module: Any, analysis_batch: Any, field_name: str) -
             return store_value
 
     return None
+
+
+def load_json_field(module: Any, analysis_batch: Any, field_name: str) -> Any:
+    """Resolve an aggregate input field and decode JSON string payloads when present."""
+
+    raw_value = resolve_aggregate_input(module, analysis_batch, field_name)
+    if isinstance(raw_value, str):
+        return json.loads(raw_value)
+    return raw_value
 
 
 def weighted_mean(states: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
@@ -628,6 +638,7 @@ __all__ = [
     "get_analysis_resolver",
     "get_input_store_value",
     "last_token_logits",
+    "load_json_field",
     "mean_target_logit_delta",
     "require_model_backend",
     "resolve_embedding_weight",

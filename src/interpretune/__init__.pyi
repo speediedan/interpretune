@@ -136,6 +136,7 @@ def model_fwd_intervention(
         intervention_tensor (float32)
         intervention_tensors_json (string)
         intervention_mode (string)
+        intervention_use_intervention_tensor_as_basis (bool)
         intervention_scale_factor (float32)
         use_latent_models (bool)
         concept_direction (float32)

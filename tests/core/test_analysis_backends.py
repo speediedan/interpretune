@@ -26,12 +26,14 @@ from interpretune.analysis.backends import (
     apply_intervention_to_last_token,
     build_intervention_dict,
     expand_intervention_patterns,
+    resolve_interventions,
 )
 from interpretune.analysis.backends.hook_mapping import (
     ArchitectureMapping,
     HookMapping,
     HookNameResolver,
     ResolvedHook,
+    SUBHOOK_SUFFIXES,
 )
 from interpretune.analysis.backends.nnsight import (
     NNsightActivationCacheAdapter,
@@ -767,6 +769,8 @@ class TestNNsightSpliceSae:
         sae = MagicMock()
         sae.cfg.metadata.hook_name = "blocks.0.hook_resid_post"
         sae.encode.side_effect = lambda x: x * 0.5
+        sae.encode_with_hidden_pre.side_effect = lambda x: (x * 0.5, x * 0.25)
+        sae.activation_fn.side_effect = lambda x: x
         sae.decode.side_effect = lambda x: x * 2.0
         return sae
 
@@ -779,12 +783,13 @@ class TestNNsightSpliceSae:
         mock_nav.return_value = MagicMock()  # envoy
         mock_read.return_value = fake_act
 
-        feature_acts, act_proxy, resolved = backend._splice_sae(MagicMock(), mock_sae)
+        stage_values, resolved = backend._splice_sae(MagicMock(), mock_sae)
 
-        mock_sae.encode.assert_called_once_with(fake_act)
+        mock_sae.encode_with_hidden_pre.assert_called_once_with(fake_act)
         mock_sae.decode.assert_called_once()
         mock_write.assert_called_once()
-        assert act_proxy is fake_act
+        assert torch.allclose(stage_values["hook_sae_input"], fake_act)
+        assert torch.allclose(stage_values["hook_sae_acts_post"], fake_act * 0.5)
         assert resolved.module_path == "transformer.h.0"
 
     @patch("interpretune.analysis.backends.nnsight._write_envoy_activation")
@@ -797,12 +802,13 @@ class TestNNsightSpliceSae:
         mock_read.return_value = fake_act
 
         hook_fn = MagicMock(side_effect=lambda t, h: t * 0.0)
-        feature_acts, _, _ = backend._splice_sae(MagicMock(), mock_sae, hook_fn=hook_fn)
+        stage_values, _ = backend._splice_sae(MagicMock(), mock_sae, hook_fn=hook_fn)
 
         hook_fn.assert_called_once()
         # hook_fn received a _DummyHookPoint with the correct name
         _, hook_arg = hook_fn.call_args[0]
         assert hook_arg.name == "blocks.0.hook_resid_post.hook_sae_acts_post"
+        assert torch.allclose(stage_values["hook_sae_acts_post"], torch.zeros_like(fake_act))
 
     @patch("interpretune.analysis.backends.nnsight._write_envoy_activation")
     @patch("interpretune.analysis.backends.nnsight._read_envoy_activation")
@@ -813,14 +819,15 @@ class TestNNsightSpliceSae:
         mock_nav.return_value = MagicMock()
         mock_read.return_value = fake_act
 
-        feature_acts, _, _ = backend._splice_sae(MagicMock(), mock_sae, hook_fn=None)
+        stage_values, _ = backend._splice_sae(MagicMock(), mock_sae, hook_fn=None)
 
-        # encode should produce feature_acts, decode should receive it
-        mock_sae.encode.assert_called_once()
+        # encode_with_hidden_pre should produce feature activations, and decode should receive them
+        mock_sae.encode_with_hidden_pre.assert_called_once()
         mock_sae.decode.assert_called_once()
         # decode receives the output of encode (fake_act * 0.5)
         decode_arg = mock_sae.decode.call_args[0][0]
         assert torch.allclose(decode_arg, fake_act * 0.5)
+        assert torch.allclose(stage_values["hook_sae_acts_pre"], fake_act * 0.25)
 
     @patch("interpretune.analysis.backends.nnsight._write_envoy_activation")
     @patch("interpretune.analysis.backends.nnsight._read_envoy_activation")
@@ -830,7 +837,7 @@ class TestNNsightSpliceSae:
         mock_nav.return_value = MagicMock()
         mock_read.return_value = torch.randn(2, 10, 768)
 
-        _, _, resolved = backend._splice_sae(MagicMock(), mock_sae)
+        _, resolved = backend._splice_sae(MagicMock(), mock_sae)
 
         assert isinstance(resolved, ResolvedHook)
         assert resolved.io_type == "output"
@@ -1016,10 +1023,14 @@ class TestInterventionSpec:
         assert "mode" in spec._fields
         assert "scale_factor" in spec._fields
 
-    def test_dot_mode(self):
-        spec = InterventionSpec(intervention_tensor=torch.ones(768), mode="dot", scale_factor=2.0)
-        assert spec.mode == "dot"
+    def test_project_mode(self):
+        spec = InterventionSpec(intervention_tensor=torch.ones(768), mode="project", scale_factor=2.0)
+        assert spec.mode == "project"
         assert spec.scale_factor == 2.0
+
+    def test_project_mode_defaults_to_intervention_basis(self):
+        spec = InterventionSpec(intervention_tensor=torch.ones(768), mode="project")
+        assert spec.use_intervention_tensor_as_basis is True
 
     def test_intervention_tensor_attribute_name(self):
         """Verify the field is named intervention_tensor (not the old 'vector' name)."""
@@ -1087,7 +1098,12 @@ class TestInterventionDictHelpers:
     def test_build_intervention_dict_preserves_explicit_mixed_shapes(self):
         interventions = {
             "blocks.0.hook_resid_post": torch.ones(4),
-            "blocks.0.attn.hook_z": {"intervention_tensor": torch.ones(2, 3), "mode": "add", "scale_factor": 0.5},
+            "blocks.0.attn.hook_z": {
+                "intervention_tensor": torch.ones(2, 3),
+                "mode": "add",
+                "scale_factor": 0.5,
+                "use_intervention_tensor_as_basis": False,
+            },
         }
         expanded_matches = {
             "blocks.0.hook_resid_post": ["blocks.0.hook_resid_post"],
@@ -1102,6 +1118,7 @@ class TestInterventionDictHelpers:
         assert intervention_dict["blocks.0.hook_resid_post"][0].mode == "replace"
         assert intervention_dict["blocks.0.attn.hook_z"][0].mode == "add"
         assert intervention_dict["blocks.0.attn.hook_z"][0].scale_factor == 0.5
+        assert intervention_dict["blocks.0.attn.hook_z"][0].use_intervention_tensor_as_basis is False
 
     def test_build_intervention_dict_invalid_shape_raises(self):
         with pytest.raises(ValueError, match="not compatible"):
@@ -1119,13 +1136,73 @@ class TestInterventionDictHelpers:
         expanded = expand_intervention_patterns(["blocks.0.hook_resid_post*"], available_hook_map)
         assert expanded["blocks.0.hook_resid_post*"] == ["blocks.0.hook_resid_post"]
 
-    def test_apply_intervention_dot_mode_projects_onto_direction(self):
-        value = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]], dtype=torch.float32)
-        spec = InterventionSpec(intervention_tensor=torch.tensor([1.0, 0.0]), mode="dot", scale_factor=2.0)
+    def test_resolve_interventions_builds_shorthand_project_payload(self):
+        field_values = {
+            "intervention_hook_pattern": "blocks.0.hook_resid_post",
+            "intervention_mode": "project",
+            "intervention_scale_factor": 0.5,
+            "intervention_tensor": torch.tensor([1.0, 0.0]),
+            "intervention_use_intervention_tensor_as_basis": False,
+        }
+        analysis_batch = {}
+
+        resolved = resolve_interventions(
+            analysis_batch=analysis_batch,
+            resolve_field=field_values.get,
+            load_json_field=lambda _field_name: None,
+        )
+
+        assert resolved["blocks.0.hook_resid_post"]["mode"] == "project"
+        assert resolved["blocks.0.hook_resid_post"]["scale_factor"] == 0.5
+        assert resolved["blocks.0.hook_resid_post"]["use_intervention_tensor_as_basis"] is False
+
+    def test_resolve_interventions_preserves_explicit_intervention_mapping(self):
+        explicit = {"blocks.0.hook_resid_post": {"intervention_tensor": torch.ones(4), "mode": "add"}}
+
+        resolved = resolve_interventions(
+            analysis_batch={},
+            resolve_field=lambda field_name: explicit if field_name == "interventions" else None,
+            load_json_field=lambda _field_name: None,
+        )
+
+        assert resolved is explicit
+
+    def test_apply_intervention_project_mode_projects_input_onto_target_basis(self):
+        value = torch.tensor([[[0.0, 0.0], [3.0, 4.0]]], dtype=torch.float32)
+        spec = InterventionSpec(
+            intervention_tensor=torch.tensor([5.0, 0.0]),
+            mode="project",
+            scale_factor=1.0,
+        )
 
         result = apply_intervention_to_last_token(value.clone(), spec, last_pos=1)
-        expected = torch.tensor([[[1.0, 2.0], [6.0, 0.0]]], dtype=torch.float32)
+        expected = torch.tensor([[[0.0, 0.0], [3.0, 0.0]]], dtype=torch.float32)
         assert torch.allclose(result, expected)
+
+    def test_apply_intervention_project_mode_projects_target_onto_input_basis(self):
+        value = torch.tensor([[[0.0, 0.0], [3.0, 4.0]]], dtype=torch.float32)
+        spec = InterventionSpec(
+            intervention_tensor=torch.tensor([5.0, 0.0]),
+            mode="project",
+            scale_factor=1.0,
+            use_intervention_tensor_as_basis=False,
+        )
+
+        result = apply_intervention_to_last_token(value.clone(), spec, last_pos=1)
+        expected = torch.tensor([[[0.0, 0.0], [1.8, 2.4]]], dtype=torch.float32)
+        assert torch.allclose(result, expected)
+
+
+def test_subhook_suffixes_expose_all_supported_sae_suffixes():
+    assert SUBHOOK_SUFFIXES == frozenset(
+        {
+            "hook_sae_input",
+            "hook_sae_acts_pre",
+            "hook_sae_acts_post",
+            "hook_sae_output",
+            "hook_sae_error",
+        }
+    )
 
 
 # ==============================================================================

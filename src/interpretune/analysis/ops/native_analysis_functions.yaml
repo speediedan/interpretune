@@ -922,6 +922,10 @@ model_fwd_intervention:
       required: false
       non_tensor: true
       sequence_type: false
+    intervention_use_intervention_tensor_as_basis:
+      datasets_dtype: bool
+      required: false
+      sequence_type: false
     intervention_scale_factor:
       datasets_dtype: float32
       required: false

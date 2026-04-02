@@ -26,6 +26,11 @@ _SAE_SUBHOOK_SUFFIXES = frozenset(
     }
 )
 
+# Public latent-model sub-hook suffix set used across backends. This mirrors the
+# current SAE hook set but is kept distinct so future custom suffixes can be
+# layered on without rewriting hook parsing call sites.
+SUBHOOK_SUFFIXES = frozenset(_SAE_SUBHOOK_SUFFIXES)
+
 
 @dataclass(frozen=True)
 class HookMapping:
@@ -331,7 +336,7 @@ class HookNameResolver:
         base_parts: list[str] = []
         sae_subhook: str | None = None
         for i, part in enumerate(parts):
-            if part in _SAE_SUBHOOK_SUFFIXES:
+            if part in SUBHOOK_SUFFIXES:
                 sae_subhook = ".".join(parts[i:])
                 break
             base_parts.append(part)
@@ -364,4 +369,5 @@ __all__ = [
     "HookMapping",
     "HookNameResolver",
     "ResolvedHook",
+    "SUBHOOK_SUFFIXES",
 ]

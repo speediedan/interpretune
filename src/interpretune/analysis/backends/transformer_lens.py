@@ -16,10 +16,8 @@ from interpretune.analysis.backends import (
     expand_intervention_patterns,
     get_intervention_target_shape,
 )
+from interpretune.analysis.backends.hook_mapping import SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
-
-
-_LATENT_INTERVENTION_SUFFIXES = ("hook_sae_input", "hook_sae_acts_post")
 
 
 def _iter_hook_aliases(model: Any) -> dict[str, list[str]]:
@@ -47,7 +45,7 @@ def _build_available_hook_map(model: Any, latent_model_handles: list[Any] | None
             base_name = str(sae.cfg.metadata.hook_name)
             canonical_names = alias_to_canonical.get(base_name, [base_name])
             for canonical_name in canonical_names:
-                for suffix in _LATENT_INTERVENTION_SUFFIXES:
+                for suffix in sorted(SUBHOOK_SUFFIXES):
                     candidate_map.setdefault(f"{canonical_name}.{suffix}", f"{canonical_name}.{suffix}")
 
     actual_names = list(candidate_map.values())
