@@ -199,10 +199,15 @@ class TLModelBackend:
             spec_list = [specs] if isinstance(specs, InterventionSpec) else list(specs)
             for hook_name in matched:
                 for spec in spec_list:
-                    vec = torch.as_tensor(spec.vector, device=pre_logits.device, dtype=torch.float32)
+                    vec = torch.as_tensor(spec.intervention_tensor, device=pre_logits.device, dtype=torch.float32)
                     sf = spec.scale_factor
 
-                    if spec.mode == "add":
+                    if spec.mode == "replace":
+
+                        def _hook(value: torch.Tensor, hook: Any, _v: torch.Tensor = vec) -> torch.Tensor:
+                            value[:, last_pos, :] = _v
+                            return value
+                    elif spec.mode == "add":
 
                         def _hook(
                             value: torch.Tensor, hook: Any, _v: torch.Tensor = vec, _sf: float = sf

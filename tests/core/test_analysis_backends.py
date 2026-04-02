@@ -969,3 +969,171 @@ class TestTLFwdWHooksBatched:
 
         assert len(result) == 3
         assert mock_model.run_with_hooks_with_saes.call_count == 3
+
+
+# ==============================================================================
+# InterventionSpec tests
+# ==============================================================================
+
+
+class TestInterventionSpec:
+    """Tests for the InterventionSpec NamedTuple defaults and construction."""
+
+    def test_default_mode_is_replace(self):
+        from interpretune.analysis.backends import InterventionSpec
+
+        spec = InterventionSpec(intervention_tensor=torch.randn(768))
+        assert spec.mode == "replace"
+
+    def test_default_scale_factor_is_one(self):
+        from interpretune.analysis.backends import InterventionSpec
+
+        spec = InterventionSpec(intervention_tensor=torch.randn(768))
+        assert spec.scale_factor == 1.0
+
+    def test_explicit_add_mode(self):
+        from interpretune.analysis.backends import InterventionSpec
+
+        spec = InterventionSpec(intervention_tensor=torch.randn(768), mode="add", scale_factor=3.0)
+        assert spec.mode == "add"
+        assert spec.scale_factor == 3.0
+
+    def test_is_named_tuple(self):
+        from interpretune.analysis.backends import InterventionSpec
+
+        spec = InterventionSpec(intervention_tensor=torch.randn(768))
+        assert hasattr(spec, "_fields")
+        assert "intervention_tensor" in spec._fields
+        assert "mode" in spec._fields
+        assert "scale_factor" in spec._fields
+
+    def test_scale_mode(self):
+        from interpretune.analysis.backends import InterventionSpec
+
+        spec = InterventionSpec(intervention_tensor=torch.ones(768), mode="scale", scale_factor=2.0)
+        assert spec.mode == "scale"
+        assert spec.scale_factor == 2.0
+
+    def test_intervention_tensor_attribute_name(self):
+        """Verify the field is named intervention_tensor (not the old 'vector' name)."""
+        from interpretune.analysis.backends import InterventionSpec
+
+        t = torch.randn(768)
+        spec = InterventionSpec(intervention_tensor=t)
+        assert torch.equal(spec.intervention_tensor, t)
+        assert not hasattr(spec, "vector")
+
+
+# ==============================================================================
+# fwd_w_intervention signature tests
+# ==============================================================================
+
+
+class TestFwdWInterventionSignature:
+    """Verify both backends expose the fwd_w_intervention method with correct signature."""
+
+    def test_nnsight_fwd_w_intervention_signature(self):
+        resolver = HookNameResolver("GPT2LMHeadModel")
+        backend = NNsightModelBackend(resolver)
+        sig = inspect.signature(backend.fwd_w_intervention)
+        param_names = list(sig.parameters.keys())
+        assert "model" in param_names
+        assert "batch" in param_names
+        assert "interventions" in param_names
+
+    def test_tl_fwd_w_intervention_signature(self):
+        from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+        backend = TLModelBackend()
+        sig = inspect.signature(backend.fwd_w_intervention)
+        param_names = list(sig.parameters.keys())
+        assert "model" in param_names
+        assert "batch" in param_names
+        assert "interventions" in param_names
+
+    def test_tl_unknown_mode_raises(self):
+        """TL backend should raise ValueError for unknown intervention modes."""
+        from interpretune.analysis.backends import InterventionSpec
+        from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+        backend = TLModelBackend()
+        mock_model = MagicMock()
+        mock_model.hook_dict = {"blocks.0.hook_resid_post": MagicMock()}
+        mock_model.run_with_cache.return_value = (torch.randn(1, 5, 100), {})
+
+        spec = InterventionSpec(intervention_tensor=torch.randn(100), mode="unknown")
+        with pytest.raises(ValueError, match="Unknown intervention mode"):
+            backend.fwd_w_intervention(
+                model=mock_model,
+                batch={"input": torch.randn(1, 5)},
+                interventions={"blocks.0.hook_resid_post": spec},
+            )
+
+    def test_tl_wildcard_expansion(self):
+        """TL backend should expand wildcard patterns against model.hook_dict."""
+        from interpretune.analysis.backends import InterventionSpec
+        from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+        backend = TLModelBackend()
+        mock_model = MagicMock()
+        mock_model.hook_dict = {
+            "blocks.0.hook_resid_post": MagicMock(),
+            "blocks.1.hook_resid_post": MagicMock(),
+            "blocks.0.hook_resid_pre": MagicMock(),
+        }
+
+        # run_with_cache returns (logits, cache_dict)
+        mock_model.run_with_cache.return_value = (torch.randn(1, 5, 100), {})
+        # run_with_hooks returns logits
+        mock_model.run_with_hooks.return_value = torch.randn(1, 5, 100)
+
+        spec = InterventionSpec(intervention_tensor=torch.randn(100))
+
+        # Use wildcard pattern that should match 2 hooks
+        backend.fwd_w_intervention(
+            model=mock_model,
+            batch={"input": torch.randn(1, 5)},
+            interventions={"blocks.*.hook_resid_post": spec},
+        )
+
+        # Verify run_with_hooks was called (the hooks were built)
+        assert mock_model.run_with_hooks.called
+        # Check that the fwd_hooks arg has 2 entries (matched blocks.0 and blocks.1)
+        call_kwargs = mock_model.run_with_hooks.call_args
+        fwd_hooks = call_kwargs.kwargs.get("fwd_hooks", call_kwargs[1].get("fwd_hooks", []))
+        assert len(fwd_hooks) == 2
+
+    def test_tl_replace_mode_hook_overwrites(self):
+        """TL backend replace mode hook should overwrite (not add to) the activation."""
+        from interpretune.analysis.backends import InterventionSpec
+        from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+        backend = TLModelBackend()
+        mock_model = MagicMock()
+        mock_model.hook_dict = {"blocks.0.hook_resid_post": MagicMock()}
+
+        # Return logits with known last_pos
+        logits = torch.randn(1, 3, 100)
+        mock_model.run_with_cache.return_value = (logits, {})
+
+        replacement_vec = torch.ones(100) * 42.0
+        spec = InterventionSpec(intervention_tensor=replacement_vec, mode="replace")
+
+        # Capture the hook that gets built
+        def capture_hooks(**kwargs):
+            hooks = kwargs.get("fwd_hooks", [])
+            # Apply the hook to a known activation
+            activation = torch.randn(1, 3, 100)
+            for _, hook_fn in hooks:
+                activation = hook_fn(activation, None)
+            # After replace mode, last position should equal the replacement vector
+            assert torch.allclose(activation[0, 2, :], replacement_vec), "Replace mode should overwrite last position"
+            return torch.randn(1, 3, 100)
+
+        mock_model.run_with_hooks.side_effect = capture_hooks
+
+        backend.fwd_w_intervention(
+            model=mock_model,
+            batch={"input": torch.randn(1, 3)},
+            interventions={"blocks.0.hook_resid_post": spec},
+        )

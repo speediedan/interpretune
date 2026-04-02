@@ -889,10 +889,10 @@ feature_intervention_forward:
       required: false
       sequence_type: false
 
-direct_concept_direction_intervention:
-  description: Add a scaled concept-direction vector to the residual stream at a configurable hook location and return pre/post intervention logits
-  implementation: interpretune.analysis.ops.definitions.direct_concept_direction_intervention_impl
-  aliases: [direction_intervention]
+model_fwd_intervention:
+  description: Apply intervention tensors at configurable hook locations in the residual stream and return pre/post intervention logits
+  implementation: interpretune.analysis.ops.definitions.model_fwd_intervention_impl
+  aliases: [direction_intervention, direct_concept_direction_intervention]
   input_schema:
     concept_direction:
       datasets_dtype: float32

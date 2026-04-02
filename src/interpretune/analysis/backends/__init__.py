@@ -6,7 +6,7 @@ for different model execution frameworks (TransformerLens, nnsight, etc.).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, NamedTuple, Protocol, Sequence, TypeAlias, runtime_checkable
 
@@ -19,15 +19,109 @@ class InterventionSpec(NamedTuple):
     """Specification for a single hook-point intervention.
 
     Attributes:
-        vector: Intervention vector, shape ``(d_model,)``.
-        mode: ``"add"`` adds ``vector * scale_factor`` to the activation;
-              ``"scale"`` element-wise multiplies the activation by ``vector * scale_factor``.
-        scale_factor: Scalar multiplier applied to *vector* before the intervention.
+        intervention_tensor: Intervention tensor, shape ``(d_model,)``.
+        mode: ``"replace"`` overwrites the activation at the target position with the tensor;
+              ``"add"`` adds ``intervention_tensor * scale_factor`` to the activation;
+              ``"scale"`` element-wise multiplies the activation by ``intervention_tensor * scale_factor``.
+        scale_factor: Scalar multiplier applied to *intervention_tensor* before the intervention
+            (not used in ``"replace"`` mode).
     """
 
-    vector: torch.Tensor
-    mode: str = "add"
+    intervention_tensor: torch.Tensor
+    mode: str = "replace"
     scale_factor: float = 1.0
+
+
+@dataclass
+class FeatureSelectionSpec:
+    """Pre-filter specification for :func:`extract_top_features_impl`.
+
+    All criteria use **OR** semantics: a feature row ``(layer, position, feature_id)``
+    passes the filter if it matches *any* of the non-empty criteria.
+
+    Slice notation is supported for ``layers`` and ``positions`` — pass a Python
+    ``slice`` object alongside (or instead of) explicit ``int`` lists.  The slice
+    is expanded against the observed values in *active_features* so callers need
+    not know the exact range ahead of time.
+
+    Attributes:
+        layers: Explicit layer indices to include.
+        positions: Explicit token-position indices to include.
+        feature_ids: Explicit feature-ID values to include.
+        layer_slice: A ``slice`` expanded over observed layer values.
+        position_slice: A ``slice`` expanded over observed position values.
+        triples: Exact ``(layer, position, feature_id)`` tuples to include.
+    """
+
+    layers: list[int] = field(default_factory=list)
+    positions: list[int] = field(default_factory=list)
+    feature_ids: list[int] = field(default_factory=list)
+    layer_slice: slice | None = None
+    position_slice: slice | None = None
+    triples: list[tuple[int, int, int]] = field(default_factory=list)
+
+
+def _expand_slice(s: slice, observed: torch.Tensor) -> list[int]:
+    """Expand a ``slice`` into concrete indices from the unique observed values."""
+    unique_vals = sorted(observed.unique().tolist())
+    return unique_vals[s] if unique_vals else []
+
+
+def apply_feature_selection_filter(
+    active_features: torch.Tensor,
+    spec: FeatureSelectionSpec,
+) -> torch.Tensor:
+    """Return a boolean mask (length *N*) selecting rows of *active_features* that match *spec*.
+
+    ``active_features`` has shape ``(N, 3)`` with columns ``[layer, position, feature_id]``.
+    """
+    n = active_features.shape[0]
+    if n == 0:
+        return torch.zeros(0, dtype=torch.bool)
+
+    mask = torch.zeros(n, dtype=torch.bool)
+
+    layers_col = active_features[:, 0]
+    positions_col = active_features[:, 1]
+    features_col = active_features[:, 2]
+
+    # Explicit layer list
+    if spec.layers:
+        layer_set = torch.tensor(spec.layers, dtype=layers_col.dtype)
+        mask |= torch.isin(layers_col, layer_set)
+
+    # Layer slice
+    if spec.layer_slice is not None:
+        expanded = _expand_slice(spec.layer_slice, layers_col)
+        if expanded:
+            layer_set = torch.tensor(expanded, dtype=layers_col.dtype)
+            mask |= torch.isin(layers_col, layer_set)
+
+    # Explicit position list
+    if spec.positions:
+        pos_set = torch.tensor(spec.positions, dtype=positions_col.dtype)
+        mask |= torch.isin(positions_col, pos_set)
+
+    # Position slice
+    if spec.position_slice is not None:
+        expanded = _expand_slice(spec.position_slice, positions_col)
+        if expanded:
+            pos_set = torch.tensor(expanded, dtype=positions_col.dtype)
+            mask |= torch.isin(positions_col, pos_set)
+
+    # Explicit feature IDs
+    if spec.feature_ids:
+        fid_set = torch.tensor(spec.feature_ids, dtype=features_col.dtype)
+        mask |= torch.isin(features_col, fid_set)
+
+    # Exact (layer, position, feature_id) triples
+    if spec.triples:
+        triple_tensor = torch.tensor(spec.triples, dtype=active_features.dtype)  # (T, 3)
+        # Compare every row against every triple: (N, 1, 3) == (T, 3) → (N, T, 3)
+        matches = (active_features.unsqueeze(1) == triple_tensor.unsqueeze(0)).all(dim=2)  # (N, T)
+        mask |= matches.any(dim=1)
+
+    return mask
 
 
 class BackendCapability(Enum):
@@ -471,7 +565,8 @@ class ModelBackend(Protocol):
         1. **Baseline**: captures pre-intervention logits.
         2. **Intervention**: for each key in *interventions*, matches the key (which may
            contain ``*`` wildcards) against available hook names, then applies each
-           ``InterventionSpec`` at the last sequence position according to its ``mode``.
+           ``InterventionSpec`` at the last sequence position according to its ``mode``
+           (``"replace"``, ``"add"``, or ``"scale"``).
 
         Args:
             model: The model to run.
@@ -491,7 +586,9 @@ __all__ = [
     "AnalysisBackend",
     "AnalysisBackendCapability",
     "Capability",
+    "FeatureSelectionSpec",
     "InterventionSpec",
+    "apply_feature_selection_filter",
     "get_module_capabilities",
     "ModelBackend",
     "ModuleCapabilities",

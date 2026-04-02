@@ -326,6 +326,10 @@ class AnalysisOpDispatcher:
 
         for op_name, op_def in op_definitions.items():
             op_name_norm = self._normalize_op_name(op_name)
+            # Only process canonical entries (skip alias entries added to _op_definitions)
+            canonical_name = self._normalize_op_name(op_def.name)
+            if op_name_norm != canonical_name:
+                continue
             # Build mapping for each alias
             for alias in op_def.aliases:
                 alias_norm = self._normalize_op_name(alias)

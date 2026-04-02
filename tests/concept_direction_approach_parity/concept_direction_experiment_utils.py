@@ -614,9 +614,9 @@ def run_direct_projection_pipeline(
     """Run a direct residual-stream projection intervention (bypasses feature selection).
 
     Instead of going through the full attribution graph → feature selection → feature
-    intervention pipeline, this uses ``it.direct_concept_direction_intervention`` to add
+    intervention pipeline, this uses ``it.model_fwd_intervention`` to add
     the scaled concept direction vector *directly* to the residual stream via the model
-    backend's ``fwd_w_direction_intervention`` method.
+    backend's ``fwd_w_intervention`` method.
 
     Returns a result dict compatible with ``run_pipeline``'s output format.
     """
@@ -632,10 +632,10 @@ def run_direct_projection_pipeline(
         enc = tokenizer(rendered_prompt, return_tensors="pt", padding=False, add_special_tokens=add_special_tokens)
         device = next(module.model.parameters()).device
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in dict(enc).items()}
-        configure_analysis(module, it.direct_concept_direction_intervention, scale_factor)
+        configure_analysis(module, it.model_fwd_intervention, scale_factor)
         intervention_result = cast(
             Any,
-            it.direct_concept_direction_intervention(
+            it.model_fwd_intervention(
                 module,
                 it.AnalysisBatch(
                     prompts=[rendered_prompt],

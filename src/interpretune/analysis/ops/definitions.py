@@ -14,13 +14,16 @@ if TYPE_CHECKING:
     from transformer_lens.hook_points import HookPoint
 
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
-from interpretune.analysis.backends import InterventionSpec, require_analysis_backend
-from interpretune.analysis.ops.helpers import (
+from interpretune.analysis.backends import (
     FeatureSelectionSpec,
+    InterventionSpec,
+    apply_feature_selection_filter,
+    require_analysis_backend,
+)
+from interpretune.analysis.ops.helpers import (
     _extract_concept_latent_state_from_cache,
     _flatten_concept_store_rows,
     _resolve_concept_cache_key,
-    apply_feature_selection_filter,
     extract_logits,
     last_token_logits,
     mean_target_logit_delta,
@@ -793,7 +796,7 @@ def concept_direction_impl(
     return analysis_batch
 
 
-def direct_concept_direction_intervention_impl(
+def model_fwd_intervention_impl(
     module,
     analysis_batch: AnalysisBatch,
     batch: BatchEncoding,
@@ -808,7 +811,7 @@ def direct_concept_direction_intervention_impl(
     """
     concept_direction = analysis_batch.require(
         "concept_direction",
-        message="direct_concept_direction_intervention requires concept_direction on the analysis_batch",
+        message="model_fwd_intervention requires concept_direction on the analysis_batch",
     )
     hook_qualifier = str(analysis_batch.get("concept_cache_key") or "unembed.hook_in")
     scale_factor = float(analysis_batch.get("direction_scale_factor") or kwargs.get("scale_factor") or 1.0)
@@ -824,7 +827,7 @@ def direct_concept_direction_intervention_impl(
         batch = module.auto_prune_batch(batch, "forward")
 
     with torch.no_grad():
-        spec = InterventionSpec(vector=direction_tensor, mode="add", scale_factor=scale_factor)
+        spec = InterventionSpec(intervention_tensor=direction_tensor, mode="add", scale_factor=scale_factor)
         pre_logits, post_logits = model_backend.fwd_w_intervention(
             model=module.model,
             batch=batch,

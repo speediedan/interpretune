@@ -495,7 +495,7 @@ def _extract_module_and_batch(fixture):
 
 
 class TestDirectionInterventionBackendParity:
-    """direct_concept_direction_intervention: TransformerBridge ↔ NNsight.
+    """model_fwd_intervention: TransformerBridge ↔ NNsight.
 
     Both backends add a scaled direction vector at the ``unembed.hook_in``
     site and return pre/post logits.  Pre-intervention logits should already
@@ -538,7 +538,7 @@ class TestDirectionInterventionBackendParity:
             concept_direction=direction,
             direction_scale_factor=scale_factor,
         )
-        return it.direct_concept_direction_intervention(module, analysis_batch, batch=batch, batch_idx=0)
+        return it.model_fwd_intervention(module, analysis_batch, batch=batch, batch_idx=0)
 
     def test_pre_intervention_logits_match(self, _br_module_and_batch, _ns_module_and_batch, _concept_direction):
         """Pre-intervention last-token logits should match across backends."""

@@ -854,13 +854,26 @@ class NNsightModelBackend:
 
         1. **Baseline** (via ``fwd_w_cache``): captures pre-intervention logits.
         2. **Intervention** (via ``model.trace()``): for each entry in *interventions*,
-           resolves the envoy, reads the activation proxy, applies the spec, and writes
-           back.
+           resolves the envoy (expanding ``*`` wildcards to matching hooks), reads the
+           activation proxy, applies the spec, and writes back.
         """
+        import re
         import torch as _torch
 
+        # --- Expand wildcards and collect resolved hook names ---
+        expanded: dict[str, InterventionSpec | Sequence[InterventionSpec]] = {}
+        for pattern, specs in interventions.items():
+            if "*" in pattern:
+                pat = re.compile(pattern.replace("*", ".*"))
+                filter_fn: NamesFilter = lambda name, _p=pat: bool(_p.fullmatch(name))
+                matched = _iter_requested_hook_names(model, self._resolver, filter_fn)
+                for hook_name in matched:
+                    expanded[hook_name] = specs
+            else:
+                expanded[pattern] = specs
+
         # --- Collect a single names_filter for the baseline cache pass ---
-        hook_names = list(interventions.keys())
+        hook_names = list(expanded.keys())
         names_filter: str | list[str] = hook_names[0] if len(hook_names) == 1 else hook_names
 
         # --- Baseline forward pass (pre-intervention) ---
@@ -872,15 +885,17 @@ class NNsightModelBackend:
         saved_post_logits: Any = None
         with model.trace() as tracer:
             with _invoke_trace(tracer, batch):
-                for hook_qualifier, specs in interventions.items():
+                for hook_qualifier, specs in expanded.items():
                     resolved = self._resolver.resolve_for_envoy(hook_qualifier)
                     envoy = _navigate_envoy(model, resolved.module_path)
                     act_proxy = _read_envoy_activation(envoy, resolved)
 
                     spec_list = [specs] if isinstance(specs, InterventionSpec) else list(specs)
                     for spec in spec_list:
-                        vec = _torch.as_tensor(spec.vector, device=pre_logits.device, dtype=_torch.float32)
-                        if spec.mode == "add":
+                        vec = _torch.as_tensor(spec.intervention_tensor, device=pre_logits.device, dtype=_torch.float32)
+                        if spec.mode == "replace":
+                            act_proxy[:, last_pos, :] = vec
+                        elif spec.mode == "add":
                             act_proxy[:, last_pos, :] = act_proxy[:, last_pos, :] + vec * spec.scale_factor
                         elif spec.mode == "scale":
                             act_proxy[:, last_pos, :] = act_proxy[:, last_pos, :] * (vec * spec.scale_factor)
