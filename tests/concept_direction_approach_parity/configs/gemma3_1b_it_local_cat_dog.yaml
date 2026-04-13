@@ -1,7 +1,6 @@
-EXPERIMENT_NAME: gemma3_4b_it_cat_dog
+EXPERIMENT_NAME: gemma3_1b_it_local_cat_dog
 MODEL_FAMILY: gemma3
-MODEL_VARIANT: 4b_it
-CONCEPT_PAIR_NAME: cat_dog
+MODEL_VARIANT: 1b_it
 CONCEPT_PAIR_CONFIG_PATH: cp_cat_dog_gemma_it.yaml
 PROMPT_OVERRIDE: "Answer with only the missing animal type (e.g. \"Cat\", \"Dog\"). My favorite kind of common four-legged domestic pet is the"
 TOP_N: 10
@@ -13,6 +12,15 @@ PROMPT_RENDER_MODE: apply_chat_template
 TARGET_TOKENS: [Cat, Dog]
 TARGET_TOKEN_IDS: null
 KEY_TOKENS: [Cat, Dog, cat, dog, Siamese, Labrador, kitten, puppy]
-BATCH_SIZE: 64
+USE_LOCALHOST: true
+LOCAL_NEURONPEDIA_DB_URL: postgres://postgres:postgres@127.0.0.1:5433/postgres
+LOCAL_NEURONPEDIA_WEBAPP_URL: http://localhost:3000
+CHECK_LOCAL_EXPLANATION_COVERAGE: true
+GENERATE_MISSING_LOCAL_EXPLANATIONS: true
+LOCAL_EXPLANATION_TYPE_NAME: np_moe-max-act-logits
+LOCAL_EXPLANATION_FEATURE_LIMIT: 20
+LOCAL_EXPLANATION_MAX_RETRIES: 2
+LOCAL_EXPLANATION_RETRY_BACKOFF_SECONDS: 5.0
+ENABLE_BASELINE_PATH_DEBUG: true
 VERBOSE: true
 FORCE_DEVICE: null

@@ -124,36 +124,6 @@ def concept_direction(
 
 semantic_direction = concept_direction
 
-def model_fwd_intervention(
-    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
-) -> AnalysisBatch:
-    """Apply intervention tensors at configurable hook locations and return pre/post intervention logits.
-
-    Input Schema:
-        interventions (object)
-        interventions_json (string)
-        intervention_hook_pattern (string)
-        intervention_tensor (float32)
-        intervention_tensors_json (string)
-        intervention_mode (string)
-        intervention_use_intervention_tensor_as_basis (bool)
-        intervention_scale_factor (float32)
-        use_latent_models (bool)
-        concept_direction (float32)
-        concept_cache_key (string)
-        direction_scale_factor (float32)
-        logit_target_ids (int64)
-
-    Output Schema:
-        pre_intervention_logits (float32)
-        post_intervention_logits (float32)
-        logit_diff (float32)
-    """
-    ...
-
-direction_intervention = model_fwd_intervention
-direct_concept_direction_intervention = model_fwd_intervention
-
 def extract_concept_latent_examples(
     module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
 ) -> AnalysisBatch:
@@ -242,6 +212,7 @@ def feature_intervention_forward(
         intervention_values (float32)
         pre_intervention_logits (float32)
         post_intervention_logits (float32)
+        intervention_activation_cache (object)
         logit_diff (float32)
     """
     ...
@@ -466,6 +437,36 @@ def model_fwd(
     ...
 
 model_forward = model_fwd
+
+def model_fwd_intervention(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Apply generalized hook-point interventions and return pre/post intervention logits
+
+    Input Schema:
+        interventions (object)
+        interventions_json (string)
+        intervention_hook_pattern (string)
+        intervention_tensor (float32)
+        intervention_tensors_json (string)
+        intervention_mode (string)
+        intervention_use_intervention_tensor_as_basis (bool)
+        intervention_scale_factor (float32)
+        use_latent_models (bool)
+        concept_direction (float32)
+        concept_cache_key (string)
+        direction_scale_factor (float32)
+        logit_target_ids (int64)
+
+    Output Schema:
+        pre_intervention_logits (float32)
+        post_intervention_logits (float32)
+        logit_diff (float32)
+    """
+    ...
+
+direction_intervention = model_fwd_intervention
+direct_concept_direction_intervention = model_fwd_intervention
 
 def model_fwd_w_cache(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int

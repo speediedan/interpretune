@@ -1,0 +1,18 @@
+name: capitals_states
+description: US state capitals vs states
+group_a_tokens: [Austin, Sacramento, Olympia, Atlanta]
+group_b_tokens: [Texas, California, Washington, Georgia]
+group_a_entities:
+  - [Austin, Capital]
+  - [Sacramento, Capital]
+  - [Olympia, Capital]
+  - [Atlanta, Capital]
+group_b_entities:
+  - [Texas, State]
+  - [California, State]
+  - [Washington, State]
+  - [Georgia, State]
+group_a_name: capitals
+group_b_name: states
+concept_label: "Concept: Capitals − States"
+classification_question: "Is this a Capital or a State? Answer with one word: \"Capital\" or \"State\"."

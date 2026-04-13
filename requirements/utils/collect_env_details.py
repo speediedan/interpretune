@@ -257,6 +257,7 @@ def info_packages():
         "lightning": _pkg_version("lightning", "lightning"),
         "transformer_lens": _pkg_version("transformer_lens", "transformer_lens"),
         "sae_lens": _pkg_version("sae_lens", "sae_lens"),
+        "SAEDashboard": _pkg_version("SAEDashboard", "sae_dashboard"),
         "circuit_tracer": _pkg_version("circuit_tracer", "circuit_tracer"),
         "nnsight": _pkg_version("nnsight", "nnsight"),
         "neuronpedia": _pkg_version("neuronpedia", "neuronpedia"),

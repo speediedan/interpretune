@@ -33,14 +33,32 @@ class _FakeReplacementModel:
         self.calls: list[tuple[str, list[tuple[int, int, int, float]], dict[str, object]]] = []
         self.tokenizer = _FakeTokenizer()
 
-    def get_activations(self, prompt: str):
-        assert prompt == "Paris Austin"
+    def get_activations(self, prompt: str | torch.Tensor, **kwargs):
+        if isinstance(prompt, str):
+            assert prompt == "Paris Austin"
         return torch.tensor([[[0.1, 0.2, 0.3, 0.4]]], dtype=torch.float32), None
 
     def feature_intervention(self, prompt: str, interventions, **kwargs):
         self.calls.append((prompt, list(interventions), dict(kwargs)))
         total_delta = sum(value for _, _, _, value in interventions)
-        return torch.tensor([[[0.1, 0.2, 0.3 + total_delta, 0.4]]], dtype=torch.float32), None
+        activation_cache = None
+        if kwargs.get("return_activations"):
+            activation_cache = torch.tensor(
+                [
+                    [
+                        [0.0, 0.0, 0.0],
+                        [0.0, 0.0, 0.0],
+                        [0.0, 0.0, 0.0],
+                    ],
+                    [
+                        [0.0, 0.0, 0.0],
+                        [0.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0 + total_delta],
+                    ],
+                ],
+                dtype=torch.float32,
+            )
+        return torch.tensor([[[0.1, 0.2, 0.3 + total_delta, 0.4]]], dtype=torch.float32), activation_cache
 
 
 class _FakeModule:
@@ -148,6 +166,70 @@ def test_feature_intervention_store_round_trip_hydrates_intervention_specs(tmp_p
     assert row["intervention_specs"] == [(1, 2, 11, 1.0)]
     assert torch.equal(cast(torch.Tensor, row["intervention_layers"]), torch.tensor([1], dtype=torch.int64))
     assert torch.allclose(cast(torch.Tensor, row["intervention_values"]), torch.tensor([1.0], dtype=torch.float32))
+    assert "intervention_activation_cache" not in row
+
+
+def test_feature_intervention_forward_impl_returns_intermediate_activation_cache() -> None:
+    module = _FakeModule()
+    module.circuit_tracer_cfg.intervention_return_activations = True
+    analysis_batch = AnalysisBatch(
+        prompts=["Paris Austin"],
+        top_feature_ids=torch.tensor([[1, 2, 11]], dtype=torch.long),
+        top_feature_scores=torch.tensor([0.5], dtype=torch.float32),
+        logit_target_ids=torch.tensor([2], dtype=torch.long),
+    )
+
+    result = feature_intervention_forward_impl(module, analysis_batch, batch=cast(BatchEncoding, None), batch_idx=0)
+    output_schema = cast(Any, DISPATCHER.get_op("feature_intervention_forward")).output_schema
+
+    assert module.replacement_model.calls == [
+        (
+            "Paris Austin",
+            [(1, 2, 11, 1.0)],
+            {"sparse": True, "return_activations": True, "constrained_layers": [0, 1]},
+        )
+    ]
+    assert torch.equal(
+        cast(torch.Tensor, result.intervention_activation_cache),
+        torch.tensor(
+            [
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0],
+                ],
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0],
+                    [0.0, 0.0, 2.0],
+                ],
+            ],
+            dtype=torch.float32,
+        ),
+    )
+    assert output_schema["intervention_activation_cache"].intermediate_only is True
+    assert "intervention_activation_cache" not in schema_to_features(module, schema=output_schema)
+
+
+def test_feature_intervention_forward_impl_accepts_tensor_prompt_kwarg() -> None:
+    module = _FakeModule()
+    prompt = torch.tensor([[1, 2, 3]], dtype=torch.long)
+    analysis_batch = AnalysisBatch(
+        top_feature_ids=torch.tensor([[1, 2, 11]], dtype=torch.long),
+        top_feature_scores=torch.tensor([0.5], dtype=torch.float32),
+        logit_target_ids=torch.tensor([2], dtype=torch.long),
+    )
+
+    feature_intervention_forward_impl(
+        module,
+        analysis_batch,
+        batch=cast(BatchEncoding, None),
+        batch_idx=0,
+        prompt=prompt,
+    )
+
+    recorded_prompt, _, _ = module.replacement_model.calls[0]
+    assert torch.equal(cast(torch.Tensor, recorded_prompt), prompt)
 
 
 def test_feature_intervention_forward_impl_can_use_activation_values() -> None:

@@ -1,6 +1,6 @@
-EXPERIMENT_NAME: gemma3_4b_it_capitals_states
+EXPERIMENT_NAME: gemma3_1b_it_capitals_states
 MODEL_FAMILY: gemma3
-MODEL_VARIANT: 4b_it
+MODEL_VARIANT: 1b_it
 CONCEPT_PAIR_NAME: capitals_states
 CONCEPT_PAIR_CONFIG_PATH: cp_capitals_states_gemma_it.yaml
 PROMPT_OVERRIDE: "Answer with only the missing city name. Fact: the capital of the state containing Dallas is"
@@ -13,5 +13,9 @@ PROMPT_RENDER_MODE: apply_chat_template
 TARGET_TOKENS: [Austin, Dallas]
 TARGET_TOKEN_IDS: null
 KEY_TOKENS: [Austin, Dallas, Texas, Capital, State, capital, state, City, city]
-BATCH_SIZE: 64
+USE_LOCALHOST: false
+CHECK_LOCAL_EXPLANATION_COVERAGE: false
+GENERATE_MISSING_LOCAL_EXPLANATIONS: false
+LOCAL_EXPLANATION_FEATURE_LIMIT: 20
 VERBOSE: true
+FORCE_DEVICE: null

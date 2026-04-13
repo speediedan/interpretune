@@ -90,6 +90,8 @@ tests/tests_tt_dir/
 tests/save_dir
 tests/tests/
 tests/profiling_artifacts/
+archived_experiments/
+archived_cfgs/
 
 # Translations
 *.mo

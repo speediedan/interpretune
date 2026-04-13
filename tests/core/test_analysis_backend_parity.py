@@ -1,25 +1,44 @@
 from __future__ import annotations
 
 import gc
+import json
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import partial
+from pathlib import Path
 from typing import Any, cast
 
+import interpretune as it
 import pytest
 import torch
+import yaml
+from circuit_tracer import Graph, ReplacementModel, attribute
 from circuit_tracer.attribution.targets import CustomTarget
 from circuit_tracer.graph import compute_node_influence
+from circuit_tracer.replacement_model.replacement_model_nnsight import NNSightReplacementModel
 from circuit_tracer.utils.demo_utils import get_unembed_vecs
+from nnsight import save
 from torch.testing import assert_close
 
+from interpretune.analysis.backends import require_analysis_backend
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.dispatcher import DISPATCHER
-from interpretune.config import AnalysisCfg, NNsightConfig, init_analysis_cfgs
+from interpretune.analysis.ops.helpers import last_token_logits
+from interpretune.config import AnalysisCfg, CircuitTracerConfig, NNsightConfig, init_analysis_cfgs
 from tests import load_dotenv
 from tests.analysis_resource_utils import clear_nnsight_test_state, serial_test_cleanup
+from tests.concept_direction_approach_parity.experiment_resource_utils import resolve_model_spec
 from tests.configuration import config_modules
-from tests.conftest import FixtPhase, session_fixture_hook_exec
-from tests.core.cfg_aliases import CircuitTracerNNsightGemma2
+from tests.conftest import FixtPhase, clean_cuda, session_fixture_hook_exec
+from tests.core.cfg_aliases import CircuitTracerNNsightGemma2, CircuitTracerNNsightGemma3
+from tests.parity_analysis.intervention_drift_analysis import (
+    build_intervention_drift_report,
+    resolve_artifact_output_dir,
+    save_preserved_intervention_artifacts,
+    snapshot_analysis_batch,
+    snapshot_module_runtime_state,
+    tensor_fingerprint,
+)
 from tests.runif import RunIf
 
 
@@ -27,6 +46,14 @@ CONCEPT_DIRECTION_COSINE_MIN = 0.999
 VALUE_RTOL = 1e-6
 VALUE_ATOL = 1e-6
 MIN_FREE_CUDA_BYTES_FOR_PARITY = 10 * 1024**3
+TOKEN_EDGE_ACT_ATOL = 1e-3
+TOKEN_EDGE_ACT_RTOL = 1e-3
+FEATURE_EDGE_ACT_ATOL = 1e-3
+FEATURE_EDGE_ACT_RTOL = 1e-5
+EDGE_LOGIT_ATOL = 1e-5
+EDGE_LOGIT_RTOL = 1e-3
+GEMMA3_IT_PREFIX_TOKEN_IDS = (2, 105, 2364, 107)
+RUNIF: Any = RunIf
 
 
 @dataclass(frozen=True)
@@ -67,6 +94,58 @@ class OpSemanticBaseline:
     post_gap: float
 
 
+@dataclass(frozen=True)
+class Gemma3InstructionInterventionCase:
+    prompt: str
+    model_name: str
+    transcoder_set: str
+    pos_start: int
+    token_position_limit: int
+    error_layer_limit: int
+    feature_sample_count: int
+    reference_feature_sample_count: int
+    intervention_scale_factor: float
+
+
+@dataclass(frozen=True)
+class Gemma3OQIDebugInterventionCase:
+    prompt: str
+    prompt_render_mode: str
+    key_tokens: tuple[str, ...]
+    model_name: str
+    transcoder_set: str
+    max_feature_nodes: int
+    batch_size: int
+    intervention_scale_factor: float
+
+
+@dataclass(frozen=True)
+class GraphEdgeValidationContext:
+    prompt: str
+    adjacency_matrix: torch.Tensor
+    active_features: torch.Tensor
+    logit_tokens: torch.Tensor
+    total_active_features: int
+    activation_cache: torch.Tensor
+    relevant_activations: torch.Tensor
+    demeaned_relevant_logits: torch.Tensor
+
+
+@dataclass(frozen=True)
+class EdgeValidationSummary:
+    label: str
+    max_activation_abs_error: float
+    max_logit_abs_error: float
+
+
+@dataclass(frozen=True)
+class WrapperFeatureInterventionSummary:
+    feature_row: tuple[int, int, int]
+    intervention_value: float
+    edge_max_logit_abs_error: float
+    returned_activation_cache: bool
+
+
 @pytest.fixture
 def semantic_intervention_parity_case() -> SemanticInterventionParityCase:
     return SemanticInterventionParityCase(
@@ -75,6 +154,43 @@ def semantic_intervention_parity_case() -> SemanticInterventionParityCase:
         states=["▁Texas", "▁California", "▁Washington", "▁Georgia"],
         label="Concept: Capitals − States",
         n_top=10,
+    )
+
+
+@pytest.fixture
+def gemma3_instruction_intervention_case() -> Gemma3InstructionInterventionCase:
+    return Gemma3InstructionInterventionCase(
+        prompt="<bos><start_of_turn>user\nThe National Digital Analytics Group (ND",
+        model_name="google/gemma-3-1b-it",
+        transcoder_set="mwhanna/gemma-scope-2-1b-it/transcoder_all/width_16k_l0_small_affine",
+        pos_start=4,
+        token_position_limit=2,
+        error_layer_limit=3,
+        feature_sample_count=4,
+        reference_feature_sample_count=100,
+        intervention_scale_factor=2.0,
+    )
+
+
+@pytest.fixture
+def gemma3_4b_it_oqi_debug_intervention_case() -> Gemma3OQIDebugInterventionCase:
+    config_path = (
+        Path(__file__).resolve().parents[1]
+        / "concept_direction_approach_parity"
+        / "configs"
+        / "gemma3_4b_it_local_oqi_reasoning_single_fs_di_60.yaml"
+    )
+    payload = yaml.safe_load(config_path.read_text())
+    model_spec = resolve_model_spec(payload["MODEL_FAMILY"], payload["MODEL_VARIANT"])
+    return Gemma3OQIDebugInterventionCase(
+        prompt=str(payload["PROMPT_OVERRIDE"]),
+        prompt_render_mode=str(payload["PROMPT_RENDER_MODE"]),
+        key_tokens=tuple(str(token) for token in payload["KEY_TOKENS"]),
+        model_name=model_spec.model_name,
+        transcoder_set=model_spec.transcoder_set,
+        max_feature_nodes=8192,
+        batch_size=int(payload["BATCH_SIZE"]),
+        intervention_scale_factor=float(payload["DEFAULT_SCALE_FACTOR"]),
     )
 
 
@@ -98,6 +214,108 @@ def ct_nnsight_session_factory(tmp_path):
                 dispatch=True,
                 attn_implementation="eager",
                 tokenizer_kwargs={"padding_side": "left", "add_bos_token": True},
+            ),
+        )
+
+    @contextmanager
+    def _factory(run_name: str):
+        session_dir = tmp_path / run_name
+        session_dir.mkdir(parents=True, exist_ok=True)
+        clear_nnsight_test_state(None)
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        load_dotenv()
+        it_session = config_modules(_build_test_cfg(), run_name, {}, session_dir, {}, False)
+        session_fixture_hook_exec(it_session, cast(FixtPhase, FixtPhase.setup))
+        module = it_session.module
+        assert module is not None
+        replacement_model = cast(Any, module).replacement_model
+        with serial_test_cleanup(it_session, module, replacement_model):
+            yield it_session
+
+    return _factory
+
+
+@pytest.fixture
+def ct_nnsight_gemma3_it_session_factory(tmp_path, gemma3_instruction_intervention_case):
+    case = gemma3_instruction_intervention_case
+
+    def _build_test_cfg() -> CircuitTracerNNsightGemma3:
+        return CircuitTracerNNsightGemma3(
+            device_type="cpu",
+            nnsight_cfg=NNsightConfig(
+                model_name=case.model_name,
+                device_map="cpu",
+                torch_dtype="float32",
+                dispatch=True,
+                attn_implementation="eager",
+                tokenizer_kwargs={"padding_side": "left", "add_bos_token": True},
+            ),
+            circuit_tracer_cfg=CircuitTracerConfig(
+                backend="nnsight",
+                model_name=case.model_name,
+                transcoder_set=case.transcoder_set,
+                dtype=torch.float32,
+                analysis_target_tokens=None,
+                target_token_ids=None,
+                max_feature_nodes=None,
+                offload=None,
+                verbose=False,
+                batch_size=256,
+                max_n_logits=10,
+                desired_logit_prob=0.95,
+            ),
+        )
+
+    @contextmanager
+    def _factory(run_name: str):
+        session_dir = tmp_path / run_name
+        session_dir.mkdir(parents=True, exist_ok=True)
+        clear_nnsight_test_state(None)
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        load_dotenv()
+        it_session = config_modules(_build_test_cfg(), run_name, {}, session_dir, {}, False)
+        session_fixture_hook_exec(it_session, cast(FixtPhase, FixtPhase.setup))
+        module = it_session.module
+        assert module is not None
+        replacement_model = cast(Any, module).replacement_model
+        with serial_test_cleanup(it_session, module, replacement_model):
+            yield it_session
+
+    return _factory
+
+
+@pytest.fixture
+def ct_nnsight_gemma3_oqi_session_factory(tmp_path, gemma3_4b_it_oqi_debug_intervention_case):
+    case = gemma3_4b_it_oqi_debug_intervention_case
+
+    def _build_test_cfg() -> CircuitTracerNNsightGemma3:
+        return CircuitTracerNNsightGemma3(
+            device_type="cpu",
+            nnsight_cfg=NNsightConfig(
+                model_name=case.model_name,
+                device_map="cpu",
+                torch_dtype="float32",
+                dispatch=True,
+                attn_implementation="eager",
+                tokenizer_kwargs={"padding_side": "left", "add_bos_token": True},
+            ),
+            circuit_tracer_cfg=CircuitTracerConfig(
+                backend="nnsight",
+                model_name=case.model_name,
+                transcoder_set=case.transcoder_set,
+                dtype=torch.float32,
+                analysis_target_tokens=None,
+                target_token_ids=None,
+                max_feature_nodes=case.max_feature_nodes,
+                offload="cpu",
+                verbose=False,
+                batch_size=case.batch_size,
+                max_n_logits=10,
+                desired_logit_prob=0.95,
             ),
         )
 
@@ -289,7 +507,636 @@ def _build_op_baseline(it_session, case: SemanticInterventionParityCase) -> OpSe
     )
 
 
-@RunIf(bf16_cuda=True)
+def _ensure_analysis_cfg(module: Any, target_op: Any) -> None:
+    module.analysis_cfg = AnalysisCfg(target_op=target_op, ignore_manual=True, save_tokens=False)
+    if not module.analysis_cfg.applied_to(module):
+        init_analysis_cfgs(module, [module.analysis_cfg])
+
+
+@contextmanager
+def _raw_gemma3_it_model(case: Gemma3InstructionInterventionCase):
+    clear_nnsight_test_state(None)
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    model = ReplacementModel.from_pretrained(
+        case.model_name,
+        case.transcoder_set,
+        dtype=torch.float32,
+        backend="nnsight",
+    )
+    assert isinstance(model, NNSightReplacementModel)
+    with serial_test_cleanup(model):
+        yield cast(NNSightReplacementModel, model)
+
+
+def _select_evenly_spaced_values(values: range | list[int], limit: int | None) -> list[int]:
+    candidates = list(values)
+    if limit is None or limit >= len(candidates):
+        return candidates
+    if limit <= 0 or not candidates:
+        return []
+    index_tensor = torch.linspace(0, len(candidates) - 1, steps=limit).round().to(torch.long)
+    selected: list[int] = []
+    seen: set[int] = set()
+    for index in index_tensor.tolist():
+        resolved = int(index)
+        if resolved in seen:
+            continue
+        selected.append(candidates[resolved])
+        seen.add(resolved)
+    for value in candidates:
+        if len(selected) >= limit:
+            break
+        if value not in selected:
+            selected.append(value)
+    return selected
+
+
+def _format_feature_row(feature_row: tuple[int, int, int]) -> str:
+    return f"(layer={feature_row[0]}, pos={feature_row[1]}, feature={feature_row[2]})"
+
+
+def _feature_row_from_tensor(feature_row_tensor: torch.Tensor) -> tuple[int, int, int]:
+    values = feature_row_tensor.detach().cpu().tolist()
+    assert len(values) == 3
+    return (int(values[0]), int(values[1]), int(values[2]))
+
+
+def _find_active_feature_index(active_features: torch.Tensor, feature_row: tuple[int, int, int]) -> int:
+    match_mask = (
+        (active_features[:, 0] == feature_row[0])
+        & (active_features[:, 1] == feature_row[1])
+        & (active_features[:, 2] == feature_row[2])
+    )
+    matches = torch.nonzero(match_mask, as_tuple=True)[0]
+    assert matches.numel() == 1, f"Expected exactly one active feature row match for {_format_feature_row(feature_row)}"
+    return int(matches.item())
+
+
+def _assert_gemma3_it_model_loaded(model: NNSightReplacementModel, prompt: str) -> None:
+    tokenized = model.ensure_tokenized(prompt)
+    tokens = tokenized[0] if tokenized.ndim > 1 else tokenized
+    ignore_prefix = torch.tensor(GEMMA3_IT_PREFIX_TOKEN_IDS, dtype=tokens.dtype, device=tokens.device)
+    assert isinstance(model, NNSightReplacementModel)
+    assert getattr(model, "zero_positions", None) == slice(0, 4)
+    assert tokens.size(0) >= 4 and torch.all(tokens[:4] == ignore_prefix), (
+        "Gemma 3 IT prompt tokenization did not preserve the expected "
+        f"<bos><start_of_turn>user\\n prefix: {tokens[:4].detach().cpu().tolist()}"
+    )
+
+
+def _render_debug_prompt(tokenizer: Any, prompt: str, prompt_render_mode: str) -> str:
+    if prompt_render_mode == "plain":
+        return prompt
+    if prompt_render_mode == "apply_chat_template":
+        return cast(
+            str,
+            tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=False,
+                add_generation_prompt=True,
+            ),
+        )
+    raise ValueError(f"Unsupported debug prompt render mode: {prompt_render_mode!r}")
+
+
+def _normalize_debug_graph_target_token(token: str, *, use_chat_template: bool) -> str:
+    if not use_chat_template:
+        return token
+    normalized = token.lstrip(" ▁Ġ")
+    return normalized or token
+
+
+def _resolve_debug_graph_target_ids(
+    tokenizer: Any,
+    key_tokens: tuple[str, ...],
+    *,
+    use_chat_template: bool,
+) -> tuple[list[int], list[str]]:
+    token_ids: list[int] = []
+    labels: list[str] = []
+    seen_ids: set[int] = set()
+    for token in key_tokens:
+        normalized = _normalize_debug_graph_target_token(token, use_chat_template=use_chat_template)
+        encoded = tokenizer.encode(normalized, add_special_tokens=False)
+        if not encoded:
+            continue
+        token_id = int(encoded[-1])
+        if token_id in seen_ids:
+            continue
+        seen_ids.add(token_id)
+        token_ids.append(token_id)
+        labels.append(normalized)
+    assert token_ids, "Expected at least one debug graph target token id"
+    return token_ids, labels
+
+
+def _build_graph_edge_validation_context(
+    model: NNSightReplacementModel,
+    graph: Graph,
+    *,
+    selected_only: bool = False,
+) -> GraphEdgeValidationContext:
+    prompt = graph.input_tokens
+    adjacency_matrix = graph.adjacency_matrix.to(device=model.device, dtype=model.dtype)
+    active_features = graph.active_features.to(device=model.device)
+    if selected_only and len(graph.selected_features) > 0:
+        selected_indices = graph.selected_features.to(device=active_features.device, dtype=torch.long)
+        active_features = active_features.index_select(0, selected_indices)
+    logit_tokens = graph.logit_tokens.to(device=model.device)
+    logits, activation_cache = model.get_activations(prompt, apply_activation_function=False)
+    logits = logits.squeeze(0)
+    relevant_activations = activation_cache[active_features[:, 0], active_features[:, 1], active_features[:, 2]]
+    relevant_logits = logits[-1, logit_tokens]
+    demeaned_relevant_logits = relevant_logits - logits[-1].mean()
+    return GraphEdgeValidationContext(
+        prompt=prompt,
+        adjacency_matrix=adjacency_matrix,
+        active_features=active_features,
+        logit_tokens=logit_tokens,
+        total_active_features=int(active_features.size(0)),
+        activation_cache=activation_cache,
+        relevant_activations=relevant_activations,
+        demeaned_relevant_logits=demeaned_relevant_logits,
+    )
+
+
+def _assert_effect_matches_expected(
+    *,
+    label: str,
+    context: GraphEdgeValidationContext,
+    new_relevant_activations: torch.Tensor,
+    new_logits: torch.Tensor,
+    expected_effects: torch.Tensor,
+    act_atol: float,
+    act_rtol: float,
+    logit_atol: float,
+    logit_rtol: float,
+) -> EdgeValidationSummary:
+    last_logits = (new_logits if new_logits.dim() == 1 else new_logits[-1]).detach().float().cpu()
+    new_relevant_activations = new_relevant_activations.detach().float().cpu()
+    active_features = context.active_features.detach().cpu()
+    logit_tokens = context.logit_tokens.detach().long().cpu()
+    expected_effects = expected_effects.detach().float().cpu()
+    relevant_activations = context.relevant_activations.detach().float().cpu()
+    demeaned_relevant_logits = context.demeaned_relevant_logits.detach().float().cpu()
+
+    new_relevant_logits = last_logits[logit_tokens]
+    new_demeaned_relevant_logits = new_relevant_logits - last_logits.mean()
+
+    expected_activation_difference = expected_effects[: context.total_active_features]
+    expected_logit_difference = expected_effects[-len(logit_tokens) :]
+    expected_activations = relevant_activations + expected_activation_difference
+    expected_logits = demeaned_relevant_logits + expected_logit_difference
+
+    act_error = (new_relevant_activations - expected_activations).abs().detach().float().cpu()
+    logit_error = (new_demeaned_relevant_logits - expected_logits).abs().detach().float().cpu()
+    act_top_indices = torch.topk(act_error, min(3, int(act_error.numel()))).indices.tolist()
+    logit_top_indices = torch.topk(logit_error, min(3, int(logit_error.numel()))).indices.tolist()
+    act_preview = "; ".join(
+        f"{_format_feature_row(cast(tuple[int, int, int], _feature_row_from_tensor(active_features[index])))} "
+        f"err={act_error[index].item():.3e}"
+        for index in act_top_indices
+    )
+    logit_preview = "; ".join(
+        f"token_id={int(logit_tokens[index].item())} err={logit_error[index].item():.3e}" for index in logit_top_indices
+    )
+
+    assert torch.allclose(
+        new_relevant_activations,
+        expected_activations,
+        atol=act_atol,
+        rtol=act_rtol,
+    ), f"{label}: activation parity mismatch max={act_error.max().item():.3e}; top={act_preview}"
+    assert torch.allclose(
+        new_demeaned_relevant_logits,
+        expected_logits,
+        atol=logit_atol,
+        rtol=logit_rtol,
+    ), f"{label}: logit parity mismatch max={logit_error.max().item():.3e}; top={logit_preview}"
+
+    return EdgeValidationSummary(
+        label=label,
+        max_activation_abs_error=float(act_error.max().item()),
+        max_logit_abs_error=float(logit_error.max().item()),
+    )
+
+
+def _verify_token_and_error_edges(
+    model: NNSightReplacementModel,
+    graph: Graph,
+    *,
+    pos_start: int,
+    token_position_limit: int | None = None,
+    error_layer_limit: int | None = None,
+    act_atol: float = TOKEN_EDGE_ACT_ATOL,
+    act_rtol: float = TOKEN_EDGE_ACT_RTOL,
+    logit_atol: float = EDGE_LOGIT_ATOL,
+    logit_rtol: float = EDGE_LOGIT_RTOL,
+) -> list[EdgeValidationSummary]:
+    context = _build_graph_edge_validation_context(model, graph)
+    attribution_ctx = model.setup_attribution(context.prompt)
+    error_vectors = attribution_ctx.error_vectors
+    token_vectors = attribution_ctx.token_vectors
+    error_positions = _select_evenly_spaced_values(range(pos_start, error_vectors.size(1)), token_position_limit)
+    token_positions = _select_evenly_spaced_values(range(pos_start, token_vectors.size(0)), token_position_limit)
+    error_layers = _select_evenly_spaced_values(range(error_vectors.size(0)), error_layer_limit)
+    summaries: list[EdgeValidationSummary] = []
+
+    def _verify_intervention(
+        expected_effects: torch.Tensor,
+        intervention: Any,
+        target_layer: int | str,
+        label: str,
+    ) -> None:
+        _, freeze_fns = model.setup_intervention_with_freeze(
+            context.prompt,
+            constrained_layers=range(model.cfg.n_layers),  # type: ignore[arg-type]
+        )
+        _, activation_fn = model.get_activation_fn(apply_activation_function=False)
+
+        with model.trace() as tracer:
+            with tracer.invoke(context.prompt):
+                pass
+
+            direct_effects_barrier = tracer.barrier(2)
+
+            with tracer.invoke():
+                _, new_activation_cache = activation_fn()  # type: ignore[misc]
+                new_activation_cache = save(new_activation_cache)  # type: ignore[assignment]
+
+            for freeze_fn in freeze_fns:
+                with tracer.invoke():
+                    freeze_fn(direct_effects_barrier=direct_effects_barrier)
+
+            with tracer.invoke():
+                if target_layer == "embed":
+                    intervention(model.embed_location)
+
+                for layer, feature_output_loc in enumerate(model.feature_output_locs):
+                    direct_effects_barrier()
+                    if layer == target_layer:
+                        intervention(feature_output_loc)
+
+                new_logits = save(model.output.logits.squeeze(0))  # type: ignore[arg-type]
+
+        new_relevant_activations = new_activation_cache[
+            context.active_features[:, 0],
+            context.active_features[:, 1],
+            context.active_features[:, 2],
+        ]
+        summaries.append(
+            _assert_effect_matches_expected(
+                label=label,
+                context=context,
+                new_relevant_activations=new_relevant_activations,
+                new_logits=new_logits,
+                expected_effects=expected_effects,
+                act_atol=act_atol,
+                act_rtol=act_rtol,
+                logit_atol=logit_atol,
+                logit_rtol=logit_rtol,
+            )
+        )
+
+    for error_node_layer in error_layers:
+        for error_node_pos in error_positions:
+            error_node_index = error_node_layer * error_vectors.size(1) + error_node_pos
+            expected_effects = context.adjacency_matrix[:, context.total_active_features + error_node_index]
+
+            def error_intervention(feature_output_loc, *, error_node_layer: int, error_node_pos: int):
+                activations = feature_output_loc.output
+                steering_vector = torch.zeros_like(activations)
+                steering_vector[:, error_node_pos] += error_vectors[error_node_layer, error_node_pos]
+                feature_output_loc.output = activations + steering_vector
+
+            _verify_intervention(
+                expected_effects,
+                partial(error_intervention, error_node_layer=error_node_layer, error_node_pos=error_node_pos),
+                error_node_layer,
+                f"error_edge[layer={error_node_layer}, pos={error_node_pos}]",
+            )
+
+    total_error_nodes = error_vectors.size(0) * error_vectors.size(1)
+    for token_pos in token_positions:
+        expected_effects = context.adjacency_matrix[:, context.total_active_features + total_error_nodes + token_pos]
+
+        def token_intervention(token_loc, *, token_pos: int):
+            activations = token_loc.output
+            steering_vector = torch.zeros_like(activations)
+            steering_vector[:, token_pos] += token_vectors[token_pos]
+            token_loc.output = activations + steering_vector
+
+        _verify_intervention(
+            expected_effects,
+            partial(token_intervention, token_pos=token_pos),
+            "embed",
+            f"token_edge[pos={token_pos}]",
+        )
+
+    return summaries
+
+
+def _verify_feature_edges_direct(
+    model: NNSightReplacementModel,
+    graph: Graph,
+    *,
+    feature_rows: list[tuple[int, int, int]] | None = None,
+    n_samples: int | None = None,
+    value_scale_factor: float = 2.0,
+    selected_only: bool = False,
+    act_atol: float = FEATURE_EDGE_ACT_ATOL,
+    act_rtol: float = FEATURE_EDGE_ACT_RTOL,
+    logit_atol: float = EDGE_LOGIT_ATOL,
+    logit_rtol: float = EDGE_LOGIT_RTOL,
+) -> list[EdgeValidationSummary]:
+    context = _build_graph_edge_validation_context(model, graph, selected_only=selected_only)
+    if feature_rows is None:
+        sample_count = min(n_samples or int(context.active_features.size(0)), int(context.active_features.size(0)))
+        chosen_nodes = torch.randperm(
+            context.active_features.size(0),
+            device=context.active_features.device,
+        )[:sample_count]
+    else:
+        chosen_nodes = torch.tensor(
+            [_find_active_feature_index(context.active_features, feature_row) for feature_row in feature_rows],
+            device=context.active_features.device,
+            dtype=torch.long,
+        )
+
+    summaries: list[EdgeValidationSummary] = []
+    for chosen_node in chosen_nodes.tolist():
+        layer, position, feature_id = (int(value) for value in context.active_features[chosen_node].tolist())
+        old_activation = context.activation_cache[layer, position, feature_id]
+        new_activation = float((old_activation * value_scale_factor).item())
+        expected_effects = context.adjacency_matrix[:, chosen_node]
+        new_logits, new_activation_cache = model.feature_intervention(
+            context.prompt,
+            [(layer, position, feature_id, new_activation)],
+            constrained_layers=range(model.cfg.n_layers),  # type: ignore[arg-type]
+            apply_activation_function=False,
+        )
+        new_relevant_activations = new_activation_cache[
+            context.active_features[:, 0],
+            context.active_features[:, 1],
+            context.active_features[:, 2],
+        ]
+        summaries.append(
+            _assert_effect_matches_expected(
+                label=f"feature_edge[layer={layer}, pos={position}, feature={feature_id}]",
+                context=context,
+                new_relevant_activations=new_relevant_activations,
+                new_logits=new_logits.squeeze(0),
+                expected_effects=expected_effects,
+                act_atol=act_atol,
+                act_rtol=act_rtol,
+                logit_atol=logit_atol,
+                logit_rtol=logit_rtol,
+            )
+        )
+
+    return summaries
+
+
+def _configure_gemma3_it_op_settings(module: Any, case: Gemma3InstructionInterventionCase) -> None:
+    cfg = module.circuit_tracer_cfg
+    cfg.model_name = case.model_name
+    cfg.transcoder_set = case.transcoder_set
+    cfg.dtype = torch.float32
+    cfg.analysis_target_tokens = None
+    cfg.target_token_ids = None
+    cfg.max_feature_nodes = None
+    cfg.offload = None
+    cfg.verbose = False
+    cfg.batch_size = 256
+    cfg.max_n_logits = 10
+    cfg.desired_logit_prob = 0.95
+    cfg.intervention_value_source = "top_feature_activation_values"
+    cfg.intervention_scale_factor = case.intervention_scale_factor
+    cfg.intervention_constrained_layers = list(range(module.replacement_model.cfg.n_layers))
+    cfg.intervention_apply_activation_function = False
+    cfg.intervention_freeze_attention = None
+    cfg.intervention_sparse = False
+    cfg.intervention_return_activations = False
+
+
+def _configure_gemma3_oqi_op_settings(module: Any, case: Gemma3OQIDebugInterventionCase) -> None:
+    cfg = module.circuit_tracer_cfg
+    cfg.model_name = case.model_name
+    cfg.transcoder_set = case.transcoder_set
+    cfg.dtype = torch.float32
+    cfg.analysis_target_tokens = None
+    cfg.target_token_ids = None
+    cfg.max_feature_nodes = case.max_feature_nodes
+    cfg.offload = "cpu"
+    cfg.verbose = False
+    cfg.batch_size = case.batch_size
+    cfg.max_n_logits = 10
+    cfg.desired_logit_prob = 0.95
+    cfg.intervention_value_source = "top_feature_activation_values"
+    cfg.intervention_scale_factor = case.intervention_scale_factor
+    cfg.intervention_constrained_layers = list(range(module.replacement_model.cfg.n_layers))
+    cfg.intervention_apply_activation_function = False
+    cfg.intervention_freeze_attention = None
+    cfg.intervention_sparse = False
+    cfg.intervention_return_activations = False
+
+
+def _build_gemma3_4b_it_oqi_debug_graph(
+    module: Any,
+    rendered_prompt: str,
+    target_ids_tensor: torch.Tensor,
+) -> tuple[Any, Graph, GraphEdgeValidationContext, dict[str, Any]]:
+    graph_result = cast(
+        Any,
+        it.compute_attribution_graph(
+            module,
+            AnalysisBatch(prompts=[rendered_prompt], logit_target_ids=target_ids_tensor),
+            batch=None,
+            batch_idx=0,
+            attribution_targets=target_ids_tensor.to(module.replacement_model.device),
+        ),
+    )
+
+    assert torch.equal(
+        torch.as_tensor(graph_result.logit_target_ids, dtype=torch.long).cpu(),
+        target_ids_tensor.cpu(),
+    ), "Graph target ids diverged from the requested OQI debug ids"
+
+    analysis_backend = require_analysis_backend(module)
+    settings = analysis_backend.resolve_feature_intervention_settings(module)
+    assert settings["constrained_layers"] == list(range(module.replacement_model.cfg.n_layers))
+    assert settings["apply_activation_function"] is False
+
+    graph = analysis_backend.hydrate_graph_from_batch(graph_result)
+    graph_context = _build_graph_edge_validation_context(
+        module.replacement_model,
+        graph,
+        selected_only=True,
+    )
+    return graph_result, graph, graph_context, settings
+
+
+def _build_single_feature_top_features_result(
+    graph_context: GraphEdgeValidationContext,
+    feature_row: tuple[int, int, int],
+) -> AnalysisBatch:
+    layer, position, feature_id = feature_row
+    activation_value = float(graph_context.activation_cache[layer, position, feature_id].item())
+    return AnalysisBatch(
+        top_feature_ids=torch.tensor([feature_row], dtype=torch.long),
+        top_feature_scores=torch.tensor([0.0], dtype=torch.float32),
+        top_feature_activation_values=torch.tensor([activation_value], dtype=torch.float32),
+    )
+
+
+def _maybe_preserve_oqi_debug_intervention_artifacts(
+    *,
+    constrained_feature_ref: str,
+    case: Gemma3OQIDebugInterventionCase,
+    rendered_prompt: str,
+    graph: Graph,
+    feature_row: tuple[int, int, int],
+    interventions: list[tuple[int, int, int, float]],
+    baseline_activation_cache: torch.Tensor,
+    intervention_activation_cache: torch.Tensor,
+    baseline_logits: torch.Tensor,
+    intervention_logits: torch.Tensor,
+    graph_target_ids: list[int],
+    report: Any,
+    runtime_state: dict[str, Any] | None = None,
+) -> Path | None:
+    artifact_name = constrained_feature_ref.replace("/", "__").replace("-", "_")
+    artifact_dir = resolve_artifact_output_dir(artifact_name=f"gemma3_4b_it_oqi_{artifact_name}")
+    if artifact_dir is None:
+        return None
+
+    metadata = {
+        "constrained_feature_ref": constrained_feature_ref,
+        "feature_row": list(feature_row),
+        "prompt_render_mode": case.prompt_render_mode,
+        "requested_key_tokens": list(case.key_tokens),
+        "graph_target_ids": list(graph_target_ids),
+        "graph_target_tokens": [target.token_str for target in graph.logit_targets],
+        "rendered_prompt": rendered_prompt,
+        "model_name": case.model_name,
+        "transcoder_set": case.transcoder_set,
+        "runtime_state": runtime_state or {},
+    }
+    return save_preserved_intervention_artifacts(
+        artifact_dir,
+        graph=graph,
+        feature_row=feature_row,
+        interventions=interventions,
+        baseline_activation_cache=baseline_activation_cache,
+        intervention_activation_cache=intervention_activation_cache,
+        baseline_logits=baseline_logits,
+        intervention_logits=intervention_logits,
+        activation_atol=FEATURE_EDGE_ACT_ATOL,
+        activation_rtol=FEATURE_EDGE_ACT_RTOL,
+        logit_atol=EDGE_LOGIT_ATOL,
+        logit_rtol=EDGE_LOGIT_RTOL,
+        report=report,
+        metadata=metadata,
+    )
+
+
+def _verify_wrapper_feature_interventions(
+    module: Any,
+    prompt: str,
+    graph: Graph,
+    graph_context: GraphEdgeValidationContext,
+    top_features_result: Any,
+    *,
+    require_direct_edge_parity: bool = True,
+) -> list[WrapperFeatureInterventionSummary]:
+    analysis_backend = require_analysis_backend(module)
+    settings = analysis_backend.resolve_feature_intervention_settings(module)
+    feature_rows = torch.as_tensor(top_features_result.top_feature_ids, dtype=torch.long)
+    feature_scores = torch.as_tensor(top_features_result.top_feature_scores, dtype=torch.float32)
+    activation_values = torch.as_tensor(top_features_result.top_feature_activation_values, dtype=torch.float32)
+    logit_target_ids = graph.logit_tokens.detach().cpu()
+    baseline_pre_logits, _ = module.replacement_model.get_activations(prompt)
+    baseline_pre_final = last_token_logits(baseline_pre_logits.float()).cpu()
+    summaries: list[WrapperFeatureInterventionSummary] = []
+
+    for index, feature_row_tensor in enumerate(feature_rows):
+        feature_row = cast(tuple[int, int, int], _feature_row_from_tensor(feature_row_tensor))
+        analysis_batch = AnalysisBatch(
+            prompts=[prompt],
+            top_feature_ids=feature_row_tensor.unsqueeze(0),
+            top_feature_scores=feature_scores[index : index + 1],
+            top_feature_activation_values=activation_values[index : index + 1],
+            logit_target_ids=logit_target_ids,
+        )
+        interventions, _ = analysis_backend.build_feature_interventions(analysis_batch, settings)
+        wrapper_result = cast(
+            Any,
+            it.feature_intervention_forward(
+                module,
+                analysis_batch,
+                batch=cast(Any, None),
+                batch_idx=0,
+                intervention_return_activations=require_direct_edge_parity,
+            ),
+        )
+        wrapper_pre = wrapper_result.pre_intervention_logits.float().cpu()
+        wrapper_post = wrapper_result.post_intervention_logits.float().cpu()
+
+        assert_close(wrapper_pre, baseline_pre_final, rtol=VALUE_RTOL, atol=VALUE_ATOL)
+        assert wrapper_result.intervention_feature_ids == [feature_row[2]]
+        assert wrapper_result.intervention_positions == [feature_row[1]]
+        assert_close(
+            torch.tensor(wrapper_result.intervention_values, dtype=torch.float32),
+            torch.tensor([interventions[0][3]], dtype=torch.float32),
+            rtol=VALUE_RTOL,
+            atol=VALUE_ATOL,
+        )
+        chosen_node = _find_active_feature_index(graph_context.active_features, feature_row)
+        returned_activation_cache = getattr(wrapper_result, "intervention_activation_cache", None) is not None
+        edge_max_logit_abs_error = float("nan")
+        if require_direct_edge_parity:
+            assert returned_activation_cache
+            wrapper_activation_cache = (
+                torch.as_tensor(
+                    wrapper_result.intervention_activation_cache,
+                    dtype=torch.float32,
+                )
+                .detach()
+                .cpu()
+            )
+            active_feature_rows = graph_context.active_features.detach().cpu()
+            wrapper_relevant_activations = wrapper_activation_cache[
+                active_feature_rows[:, 0],
+                active_feature_rows[:, 1],
+                active_feature_rows[:, 2],
+            ]
+            edge_summary = _assert_effect_matches_expected(
+                label=f"op_wrapper_feature_edge{_format_feature_row(feature_row)}",
+                context=graph_context,
+                new_relevant_activations=wrapper_relevant_activations,
+                new_logits=wrapper_post,
+                expected_effects=graph_context.adjacency_matrix[:, chosen_node],
+                act_atol=FEATURE_EDGE_ACT_ATOL,
+                act_rtol=FEATURE_EDGE_ACT_RTOL,
+                logit_atol=EDGE_LOGIT_ATOL,
+                logit_rtol=EDGE_LOGIT_RTOL,
+            )
+            edge_max_logit_abs_error = edge_summary.max_logit_abs_error
+        summaries.append(
+            WrapperFeatureInterventionSummary(
+                feature_row=feature_row,
+                intervention_value=float(interventions[0][3]),
+                edge_max_logit_abs_error=edge_max_logit_abs_error,
+                returned_activation_cache=returned_activation_cache,
+            )
+        )
+
+    return summaries
+
+
+@RUNIF(bf16_cuda=True)
 def test_analysis_backend_parity_semantic_intervention_nnsight(
     cleanup_cuda,
     ct_nnsight_session_factory,
@@ -330,3 +1177,401 @@ def test_analysis_backend_parity_semantic_intervention_nnsight(
     assert_close(op_baseline.post_logits, native_baseline.post_logits, rtol=VALUE_RTOL, atol=VALUE_ATOL)
     assert native_baseline.post_gap > native_baseline.pre_gap
     assert op_baseline.post_gap > op_baseline.pre_gap
+
+
+@RUNIF(min_cuda_gpus=1, standalone=True)
+def test_analysis_backend_parity_gemma3_it_reference_intervention_graph(
+    cleanup_cuda,
+    gemma3_instruction_intervention_case,
+):
+    """Reference-only upstream-style Gemma 3 IT intervention graph check.
+
+    This mirrors circuit-tracer's direct Gemma 3 IT NNsight path as closely as possible before any Interpretune
+    session/config machinery is involved.
+    """
+
+    with _raw_gemma3_it_model(gemma3_instruction_intervention_case) as model:
+        _assert_gemma3_it_model_loaded(model, gemma3_instruction_intervention_case.prompt)
+        graph = attribute(gemma3_instruction_intervention_case.prompt, model)
+        with model.zero_softcap():
+            _verify_token_and_error_edges(
+                model,
+                graph,
+                pos_start=gemma3_instruction_intervention_case.pos_start,
+            )
+            _verify_feature_edges_direct(
+                model,
+                graph,
+                n_samples=gemma3_instruction_intervention_case.reference_feature_sample_count,
+                value_scale_factor=gemma3_instruction_intervention_case.intervention_scale_factor,
+            )
+
+
+@RUNIF(min_cuda_gpus=1, standalone=True)
+def test_analysis_backend_parity_gemma3_it_direct_session_intervention_graph(
+    cleanup_cuda,
+    ct_nnsight_gemma3_it_session_factory,
+    gemma3_instruction_intervention_case,
+):
+    """Interpretune session parity stage using direct circuit-tracer graph/intervention APIs."""
+
+    with ct_nnsight_gemma3_it_session_factory("ct_gemma3_it_direct_session") as it_session:
+        module = cast(Any, it_session.module)
+        with clean_cuda(module.replacement_model):
+            _assert_gemma3_it_model_loaded(module.replacement_model, gemma3_instruction_intervention_case.prompt)
+            graph = attribute(gemma3_instruction_intervention_case.prompt, module.replacement_model)
+            top_features = _top_features_from_graph(graph, gemma3_instruction_intervention_case.feature_sample_count)
+            with module.replacement_model.zero_softcap():
+                _verify_token_and_error_edges(
+                    module.replacement_model,
+                    graph,
+                    pos_start=gemma3_instruction_intervention_case.pos_start,
+                    token_position_limit=gemma3_instruction_intervention_case.token_position_limit,
+                    error_layer_limit=gemma3_instruction_intervention_case.error_layer_limit,
+                )
+                _verify_feature_edges_direct(
+                    module.replacement_model,
+                    graph,
+                    feature_rows=top_features,
+                    value_scale_factor=gemma3_instruction_intervention_case.intervention_scale_factor,
+                )
+
+
+@RUNIF(min_cuda_gpus=1, standalone=True)
+def test_analysis_backend_parity_gemma3_it_op_intervention_graph(
+    cleanup_cuda,
+    ct_nnsight_gemma3_it_session_factory,
+    gemma3_instruction_intervention_case,
+):
+    """Interpretune op-layer parity stage for Gemma 3 IT graph and feature interventions."""
+
+    with ct_nnsight_gemma3_it_session_factory("ct_gemma3_it_op_session") as it_session:
+        module = cast(Any, it_session.module)
+        _configure_gemma3_it_op_settings(module, gemma3_instruction_intervention_case)
+        _ensure_analysis_cfg(module, it.compute_attribution_graph)
+
+        with clean_cuda(module.replacement_model):
+            _assert_gemma3_it_model_loaded(module.replacement_model, gemma3_instruction_intervention_case.prompt)
+            graph_result = cast(
+                Any,
+                it.compute_attribution_graph(
+                    module,
+                    AnalysisBatch(prompts=[gemma3_instruction_intervention_case.prompt]),
+                    batch=None,
+                    batch_idx=0,
+                ),
+            )
+            graph = require_analysis_backend(module).hydrate_graph_from_batch(graph_result)
+            graph_context = _build_graph_edge_validation_context(module.replacement_model, graph)
+            influence_result = cast(Any, it.graph_node_influence(module, graph_result, batch=None, batch_idx=0))
+            top_payload = dict(cast(Any, graph_result))
+            top_payload.update(dict(cast(Any, influence_result)))
+            top_features_result = cast(
+                Any,
+                it.extract_top_features(
+                    module,
+                    AnalysisBatch(**top_payload),
+                    batch=None,
+                    batch_idx=0,
+                    top_n=gemma3_instruction_intervention_case.feature_sample_count,
+                ),
+            )
+
+            expected_top_features = _top_features_from_graph(
+                graph,
+                gemma3_instruction_intervention_case.feature_sample_count,
+            )
+            actual_top_features = [tuple(row.tolist()) for row in torch.as_tensor(top_features_result.top_feature_ids)]
+            assert actual_top_features == expected_top_features
+            expected_activation_values = torch.tensor(
+                [
+                    float(graph_context.activation_cache[layer, position, feature_id].item())
+                    for layer, position, feature_id in actual_top_features
+                ],
+                dtype=torch.float32,
+            )
+            assert_close(
+                torch.as_tensor(top_features_result.top_feature_activation_values, dtype=torch.float32).cpu(),
+                expected_activation_values,
+                rtol=VALUE_RTOL,
+                atol=VALUE_ATOL,
+            )
+
+            with module.replacement_model.zero_softcap():
+                _verify_token_and_error_edges(
+                    module.replacement_model,
+                    graph,
+                    pos_start=gemma3_instruction_intervention_case.pos_start,
+                    token_position_limit=gemma3_instruction_intervention_case.token_position_limit,
+                    error_layer_limit=gemma3_instruction_intervention_case.error_layer_limit,
+                )
+                _verify_feature_edges_direct(
+                    module.replacement_model,
+                    graph,
+                    feature_rows=actual_top_features,
+                    value_scale_factor=gemma3_instruction_intervention_case.intervention_scale_factor,
+                )
+                _verify_wrapper_feature_interventions(
+                    module,
+                    gemma3_instruction_intervention_case.prompt,
+                    graph,
+                    graph_context,
+                    top_features_result,
+                )
+
+
+@RUNIF(min_cuda_gpus=1, standalone=True)
+@pytest.mark.parametrize(
+    ("constrained_feature_ref", "expected_feature_row"),
+    [
+        pytest.param(
+            "gemma-3-4b-it/25-gemmascope-2-transcoder-16k/60",
+            (25, 34, 60),
+            id="feature_25_60",
+        ),
+    ],
+)
+def test_analysis_backend_parity_gemma3_4b_it_oqi_debug_feature_intervention_wrapper(
+    cleanup_cuda,
+    ct_nnsight_gemma3_oqi_session_factory,
+    gemma3_4b_it_oqi_debug_intervention_case,
+    constrained_feature_ref,
+    expected_feature_row,
+):
+    """Validate the exact 4B IT OQI debug wrapper settings against the direct intervention call."""
+
+    case = gemma3_4b_it_oqi_debug_intervention_case
+    with ct_nnsight_gemma3_oqi_session_factory("ct_gemma3_4b_it_oqi_debug_op_session") as it_session:
+        module = cast(Any, it_session.module)
+        _configure_gemma3_oqi_op_settings(module, case)
+        _ensure_analysis_cfg(module, it.compute_attribution_graph)
+
+        with clean_cuda(module.replacement_model):
+            tokenizer = module.replacement_model.tokenizer
+            rendered_prompt = _render_debug_prompt(tokenizer, case.prompt, case.prompt_render_mode)
+            graph_target_ids, _ = _resolve_debug_graph_target_ids(
+                tokenizer,
+                case.key_tokens,
+                use_chat_template=case.prompt_render_mode != "plain",
+            )
+            target_ids_tensor = torch.tensor(graph_target_ids, dtype=torch.long)
+
+            with module.replacement_model.zero_softcap():
+                _, graph, graph_context, _ = _build_gemma3_4b_it_oqi_debug_graph(
+                    module,
+                    rendered_prompt,
+                    target_ids_tensor,
+                )
+                _find_active_feature_index(graph_context.active_features, expected_feature_row)
+
+                top_features_result = _build_single_feature_top_features_result(graph_context, expected_feature_row)
+                summaries = _verify_wrapper_feature_interventions(
+                    module,
+                    rendered_prompt,
+                    graph,
+                    graph_context,
+                    top_features_result,
+                )
+
+            assert len(summaries) == 1
+            assert summaries[0].feature_row == expected_feature_row
+            assert summaries[0].returned_activation_cache is True
+
+
+@RUNIF(min_cuda_gpus=1, standalone=True)
+@pytest.mark.parametrize(
+    ("constrained_feature_ref", "expected_feature_row"),
+    [
+        pytest.param(
+            "gemma-3-4b-it/25-gemmascope-2-transcoder-16k/60",
+            (25, 34, 60),
+            id="feature_25_60",
+        ),
+    ],
+)
+def test_analysis_backend_parity_gemma3_4b_it_oqi_debug_selected_feature_adjacency_trace(
+    cleanup_cuda,
+    ct_nnsight_gemma3_oqi_session_factory,
+    gemma3_4b_it_oqi_debug_intervention_case,
+    constrained_feature_ref,
+    expected_feature_row,
+):
+    """Trace retained-feature and tracked-logit drift for one selected OQI debug feature intervention."""
+
+    case = gemma3_4b_it_oqi_debug_intervention_case
+    with ct_nnsight_gemma3_oqi_session_factory("ct_gemma3_4b_it_oqi_debug_trace_session") as it_session:
+        module = cast(Any, it_session.module)
+        _configure_gemma3_oqi_op_settings(module, case)
+        _ensure_analysis_cfg(module, it.compute_attribution_graph)
+
+        with clean_cuda(module.replacement_model):
+            tokenizer = module.replacement_model.tokenizer
+            rendered_prompt = _render_debug_prompt(tokenizer, case.prompt, case.prompt_render_mode)
+            graph_target_ids, _ = _resolve_debug_graph_target_ids(
+                tokenizer,
+                case.key_tokens,
+                use_chat_template=case.prompt_render_mode != "plain",
+            )
+            target_ids_tensor = torch.tensor(graph_target_ids, dtype=torch.long)
+
+            with module.replacement_model.zero_softcap():
+                graph_result, graph, graph_context, settings = _build_gemma3_4b_it_oqi_debug_graph(
+                    module,
+                    rendered_prompt,
+                    target_ids_tensor,
+                )
+                top_features_result = _build_single_feature_top_features_result(graph_context, expected_feature_row)
+                analysis_backend = require_analysis_backend(module)
+                analysis_batch = AnalysisBatch(
+                    prompts=[rendered_prompt],
+                    top_feature_ids=top_features_result.top_feature_ids,
+                    top_feature_scores=top_features_result.top_feature_scores,
+                    top_feature_activation_values=top_features_result.top_feature_activation_values,
+                    logit_target_ids=graph.logit_tokens.detach().cpu(),
+                )
+                interventions, _ = analysis_backend.build_feature_interventions(analysis_batch, settings)
+                baseline_logits_raw, baseline_activation_cache = module.replacement_model.get_activations(
+                    rendered_prompt,
+                    apply_activation_function=False,
+                )
+                baseline_logits = (
+                    last_token_logits(torch.as_tensor(baseline_logits_raw, dtype=torch.float32)).detach().cpu()
+                )
+                baseline_activation_cache = (
+                    torch.as_tensor(
+                        baseline_activation_cache,
+                        dtype=torch.float32,
+                    )
+                    .detach()
+                    .cpu()
+                )
+                wrapper_result = cast(
+                    Any,
+                    it.feature_intervention_forward(
+                        module,
+                        analysis_batch,
+                        batch=cast(Any, None),
+                        batch_idx=0,
+                        prompt=rendered_prompt,
+                        intervention_return_activations=True,
+                    ),
+                )
+                assert getattr(wrapper_result, "intervention_activation_cache", None) is not None
+                wrapper_post_logits = (
+                    torch.as_tensor(
+                        wrapper_result.post_intervention_logits,
+                        dtype=torch.float32,
+                    )
+                    .detach()
+                    .cpu()
+                )
+                wrapper_activation_cache = (
+                    torch.as_tensor(
+                        wrapper_result.intervention_activation_cache,
+                        dtype=torch.float32,
+                    )
+                    .detach()
+                    .cpu()
+                )
+                runtime_state = {
+                    "module": snapshot_module_runtime_state(module),
+                    "graph_op": {
+                        "analysis_batch": snapshot_analysis_batch(
+                            AnalysisBatch(prompts=[rendered_prompt], logit_target_ids=target_ids_tensor),
+                            ("prompts", "logit_target_ids"),
+                        ),
+                        "call_kwargs": {
+                            "attribution_targets": tensor_fingerprint(
+                                target_ids_tensor.to(module.replacement_model.device)
+                            )
+                        },
+                        "requested_graph_target_ids": [int(token_id) for token_id in graph_target_ids],
+                        "result": {
+                            "input_tokens": tensor_fingerprint(getattr(graph_result, "input_tokens", None)),
+                            "active_features": tensor_fingerprint(getattr(graph_result, "active_features", None)),
+                            "selected_features": tensor_fingerprint(getattr(graph_result, "selected_features", None)),
+                            "selected_feature_rows": tensor_fingerprint(graph_context.active_features),
+                            "adjacency_matrix": tensor_fingerprint(getattr(graph_result, "adjacency_matrix", None)),
+                            "logit_target_ids": tensor_fingerprint(getattr(graph_result, "logit_target_ids", None)),
+                            "logit_target_tokens": [target.token_str for target in graph.logit_targets],
+                        },
+                    },
+                    "top_features_op": {
+                        "result": snapshot_analysis_batch(
+                            top_features_result,
+                            ("top_feature_ids", "top_feature_scores", "top_feature_activation_values"),
+                        )
+                    },
+                    "baseline_forward": {
+                        "zero_softcap_enabled": True,
+                        "apply_activation_function": False,
+                        "graph_inputs": rendered_prompt,
+                        "baseline_logits": tensor_fingerprint(baseline_logits),
+                        "baseline_activation_cache": tensor_fingerprint(baseline_activation_cache),
+                        "selected_feature_baseline_activation": float(
+                            graph_context.activation_cache[
+                                expected_feature_row[0], expected_feature_row[1], expected_feature_row[2]
+                            ].item()
+                        ),
+                    },
+                    "intervention_op": {
+                        "analysis_batch": snapshot_analysis_batch(
+                            analysis_batch,
+                            (
+                                "prompts",
+                                "top_feature_ids",
+                                "top_feature_scores",
+                                "top_feature_activation_values",
+                                "logit_target_ids",
+                            ),
+                        ),
+                        "resolved_settings": settings,
+                        "call_kwargs": analysis_backend.feature_intervention_call_kwargs(settings),
+                        "interventions": [list(spec) for spec in interventions],
+                        "result": {
+                            "pre_intervention_logits": tensor_fingerprint(wrapper_result.pre_intervention_logits),
+                            "post_intervention_logits": tensor_fingerprint(wrapper_post_logits),
+                            "intervention_activation_cache": tensor_fingerprint(wrapper_activation_cache),
+                            "intervention_specs_json": getattr(wrapper_result, "intervention_specs_json", None),
+                            "intervention_config": getattr(wrapper_result, "intervention_config", None),
+                        },
+                    },
+                }
+
+                report = build_intervention_drift_report(
+                    graph,
+                    feature_row=expected_feature_row,
+                    baseline_activation_cache=baseline_activation_cache,
+                    intervention_activation_cache=wrapper_activation_cache,
+                    baseline_logits=baseline_logits,
+                    intervention_logits=wrapper_post_logits,
+                    activation_atol=FEATURE_EDGE_ACT_ATOL,
+                    activation_rtol=FEATURE_EDGE_ACT_RTOL,
+                    logit_atol=EDGE_LOGIT_ATOL,
+                    logit_rtol=EDGE_LOGIT_RTOL,
+                )
+                print(json.dumps(report.to_dict(), indent=2))
+
+                artifact_dir = _maybe_preserve_oqi_debug_intervention_artifacts(
+                    constrained_feature_ref=constrained_feature_ref,
+                    case=case,
+                    rendered_prompt=rendered_prompt,
+                    graph=graph,
+                    feature_row=expected_feature_row,
+                    interventions=interventions,
+                    baseline_activation_cache=baseline_activation_cache,
+                    intervention_activation_cache=wrapper_activation_cache,
+                    baseline_logits=baseline_logits,
+                    intervention_logits=wrapper_post_logits,
+                    graph_target_ids=graph_target_ids,
+                    report=report,
+                    runtime_state=runtime_state,
+                )
+                if artifact_dir is not None:
+                    print(f"Preserved OQI parity artifacts at: {artifact_dir}")
+
+            assert report.feature_row == expected_feature_row
+            assert report.total_feature_count == int(graph_context.active_features.size(0))
+            assert report.logit_summary.total_logit_count == len(graph.logit_targets)
+            if report.divergent_feature_count > 0:
+                assert report.layer_with_max_divergence == 33, json.dumps(report.to_dict(), indent=2)

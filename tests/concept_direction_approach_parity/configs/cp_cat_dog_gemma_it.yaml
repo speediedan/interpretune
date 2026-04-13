@@ -1,0 +1,18 @@
+name: cat_dog
+description: "Cat breeds vs dog breeds (reversed direction: Cat - Dog)"
+group_a_tokens: [Siamese, Persian, Tabby, Sphynx]
+group_b_tokens: [Labrador, Poodle, Beagle, Bulldog]
+group_a_entities:
+  - [Siamese, Cat]
+  - [Persian, Cat]
+  - [Tabby, Cat]
+  - [Sphynx, Cat]
+group_b_entities:
+  - [Labrador, Dog]
+  - [Poodle, Dog]
+  - [Beagle, Dog]
+  - [Bulldog, Dog]
+group_a_name: cats
+group_b_name: dogs
+concept_label: "Concept: Cats − Dogs"
+classification_question: "Is this a Cat or a Dog breed? Answer with one word: \"Cat\" or \"Dog\"."

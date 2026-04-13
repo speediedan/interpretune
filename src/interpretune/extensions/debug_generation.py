@@ -138,6 +138,45 @@ class DebugGeneration:
             sequences = sequences or []  # sequences could still be None at Exception
             return [f"{ex.strip()}" for ex in sequences]
 
+    def collect_prompt_debug_info(
+        self,
+        raw_sequences: List | str,
+        *,
+        rendered_sequences: List | str | None = None,
+        add_special_tokens: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Collect prompt text and tokenization metadata for debugging generation paths."""
+
+        ph = self._check_phandle()
+        tokenizer = ph.datamodule.tokenizer  # type: ignore[attr-defined]  # protocol provides datamodule
+
+        if not isinstance(raw_sequences, list):
+            raw_sequences = [raw_sequences]
+        if rendered_sequences is None:
+            rendered_sequences = raw_sequences
+        elif not isinstance(rendered_sequences, list):
+            rendered_sequences = [rendered_sequences]
+
+        if len(raw_sequences) != len(rendered_sequences):
+            raise ValueError("raw_sequences and rendered_sequences must have the same length")
+
+        debug_rows: List[Dict[str, Any]] = []
+        for raw_prompt, rendered_prompt in zip(raw_sequences, rendered_sequences):
+            encoded = tokenizer(rendered_prompt, return_tensors="pt", add_special_tokens=add_special_tokens)
+            input_ids = encoded["input_ids"][0].tolist()
+            attention_mask = encoded.get("attention_mask")
+            debug_rows.append(
+                {
+                    "raw_prompt": raw_prompt,
+                    "rendered_prompt": rendered_prompt,
+                    "input_ids": input_ids,
+                    "tokens": tokenizer.convert_ids_to_tokens(input_ids),
+                    "attention_mask": attention_mask[0].tolist() if attention_mask is not None else None,
+                    "add_special_tokens": add_special_tokens,
+                }
+            )
+        return debug_rows
+
     def _debug_generate(
         self,
         inputs: List | torch.Tensor,

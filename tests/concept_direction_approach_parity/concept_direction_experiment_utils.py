@@ -1,31 +1,89 @@
 from __future__ import annotations
 
+import json
+import os
+import warnings
+from collections.abc import Iterable, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import torch
 
 import interpretune as it
 import interpretune.analysis
+from interpretune.analysis.backends import require_analysis_backend
 from interpretune.analysis.execution import execute_analysis_op
-from interpretune.analysis.ops.helpers import AnalysisInputs
+from interpretune.analysis.ops.helpers import (
+    AnalysisInputs,
+    FeatureSelectionSpec,
+    apply_feature_selection_filter,
+    last_token_logits,
+)
 from interpretune.config import AnalysisCfg, init_analysis_cfgs
+from interpretune.utils import (
+    DEFAULT_COPILOT_MAX_RETRIES,
+    DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS,
+    DEFAULT_COPILOT_TIMEOUT_SECONDS,
+    DEFAULT_EXPLANATION_TYPE_NAME,
+    DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL,
+    DEFAULT_NEURONPEDIA_BASE_URL,
+    LocalNeuronpediaServiceStatus,
+    check_local_neuronpedia_services,
+    check_local_explanation_coverage,
+    feature_tuples_to_feature_refs,
+    default_np_cache_dir,
+    parse_feature_url,
+)
+from interpretune.utils.neuronpedia_explanations import (
+    NeuronpediaFeatureRef,
+    NeuronpediaLocalExplanationStatus,
+    candidate_cached_activation_batch_paths,
+    cached_feature_activation_path,
+    load_activation_batch_records,
+    load_cached_feature_activations,
+    write_cached_feature_activations,
+)
 
 from it_examples.example_prompt_configs import GemmaPromptConfig
-from tests.concept_direction_approach_parity.experiment_resource_utils import (
-    experiment_session,
-    feature_ids_to_tuples,
-    tensor_to_cpu,
+from tests.parity_analysis.intervention_drift_analysis import (
+    build_intervention_drift_report,
+    resolve_artifact_output_dir,
+    save_preserved_intervention_artifacts,
+    snapshot_analysis_batch,
+    snapshot_module_runtime_state,
+    tensor_fingerprint,
 )
+
+try:
+    from tests.concept_direction_approach_parity.experiment_resource_utils import (
+        experiment_session,
+        feature_ids_to_tuples,
+        tensor_to_cpu,
+    )
+except ModuleNotFoundError:
+    from experiment_resource_utils import experiment_session, feature_ids_to_tuples, tensor_to_cpu
+
+if TYPE_CHECKING:
+    from interpretune.extensions.debug_generation import DebugGeneration
 
 
 PromptRenderMode = Literal["plain", "apply_chat_template", "gemma_dataclass"]
 StoreLatentExtractionMode = Literal["answer_position_state", "context_enhanced"]
+ConstrainedFeatureSelectionRef = str | tuple[str, str, int, int]
+AnalysisMode = Literal["concept_pair", "explicit_embedding_difference", "debug_intervention_pipelines"]
+DebugSessionSurfacePreset = Literal["notebook_default", "parity_surface"]
 
 
-CLASSIFICATION_QUESTION_V3 = 'Is this a Capital or a State? Answer with one word: " Capital" or " State".'
-KEY_TOKENS_TO_INSPECT = ["▁Austin", "▁Dallas", "▁Texas", "▁Capital", "▁State", "▁capital", "▁state", "▁City", "▁city"]
+DEFAULT_CONCEPT_PAIR_CONFIG_DIR = Path(__file__).with_name("configs")
+DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT = Path(
+    os.getenv(
+        "LOCAL_NEURONPEDIA_EXPORT_ROOT",
+        "/home/speediedan/repos/neuronpedia/utils/neuronpedia-utils/neuronpedia_utils/exports",
+    )
+)
 
 
 @dataclass
@@ -42,102 +100,127 @@ class ConceptPair:
     group_b_name: str
     concept_label: str
     classification_question: str
-    intervention_prompt: str
-    key_tokens: list[str]
-    chat_intervention_prompt: str | None = None
 
 
-CAPITALS_STATES = ConceptPair(
-    name="capitals_states",
-    description="US state capitals vs states",
-    group_a_tokens=["▁Austin", "▁Sacramento", "▁Olympia", "▁Atlanta"],
-    group_b_tokens=["▁Texas", "▁California", "▁Washington", "▁Georgia"],
-    group_a_entities=[
-        ("Austin", "Capital"),
-        ("Sacramento", "Capital"),
-        ("Olympia", "Capital"),
-        ("Atlanta", "Capital"),
-    ],
-    group_b_entities=[
-        ("Texas", "State"),
-        ("California", "State"),
-        ("Washington", "State"),
-        ("Georgia", "State"),
-    ],
-    group_a_name="capitals",
-    group_b_name="states",
-    concept_label="Concept: Capitals − States",
-    classification_question=CLASSIFICATION_QUESTION_V3,
-    intervention_prompt="Fact: the capital of the state containing Dallas is",
-    key_tokens=KEY_TOKENS_TO_INSPECT,
-    chat_intervention_prompt=(
-        "Answer with only the missing city name. Fact: the capital of the state containing Dallas is"
-    ),
-)
+def _normalize_entity_pairs(raw_rows: Any, field_name: str) -> list[tuple[str, str]]:
+    if not isinstance(raw_rows, list):
+        raise ValueError(f"Concept pair field '{field_name}' must be a list of [entity, label] rows.")
 
-DOG_CAT = ConceptPair(
-    name="dog_cat",
-    description="Dog breeds vs cat breeds (simpler concept pair for sanity check)",
-    group_a_tokens=["▁Labrador", "▁Poodle", "▁Beagle", "▁Bulldog"],
-    group_b_tokens=["▁Siamese", "▁Persian", "▁Tabby", "▁Sphynx"],
-    group_a_entities=[
-        ("Labrador", "Dog"),
-        ("Poodle", "Dog"),
-        ("Beagle", "Dog"),
-        ("Bulldog", "Dog"),
-    ],
-    group_b_entities=[
-        ("Siamese", "Cat"),
-        ("Persian", "Cat"),
-        ("Tabby", "Cat"),
-        ("Sphynx", "Cat"),
-    ],
-    group_a_name="dogs",
-    group_b_name="cats",
-    concept_label="Concept: Dogs − Cats",
-    classification_question='Is this a Dog or a Cat breed? Answer with one word: " Dog" or " Cat".',
-    intervention_prompt="My favorite kind of common four-legged domestic pet is the",
-    key_tokens=["▁Dog", "▁Cat", "▁dog", "▁cat", "▁Labrador", "▁Siamese", "▁puppy", "▁kitten"],
-    chat_intervention_prompt=(
-        'Answer with only the missing animal type (e.g. " Dog", " Cat").'
-        " My favorite kind of common four-legged domestic pet is the"
-    ),
-)
+    normalized: list[tuple[str, str]] = []
+    for row in raw_rows:
+        if not isinstance(row, (list, tuple)) or len(row) != 2:
+            raise ValueError(f"Concept pair field '{field_name}' rows must each contain exactly two values.")
+        normalized.append((str(row[0]), str(row[1])))
+    return normalized
 
-CAT_DOG = ConceptPair(
-    name="cat_dog",
-    description="Cat breeds vs dog breeds (reversed direction: Cat − Dog)",
-    group_a_tokens=["▁Siamese", "▁Persian", "▁Tabby", "▁Sphynx"],
-    group_b_tokens=["▁Labrador", "▁Poodle", "▁Beagle", "▁Bulldog"],
-    group_a_entities=[
-        ("Siamese", "Cat"),
-        ("Persian", "Cat"),
-        ("Tabby", "Cat"),
-        ("Sphynx", "Cat"),
-    ],
-    group_b_entities=[
-        ("Labrador", "Dog"),
-        ("Poodle", "Dog"),
-        ("Beagle", "Dog"),
-        ("Bulldog", "Dog"),
-    ],
-    group_a_name="cats",
-    group_b_name="dogs",
-    concept_label="Concept: Cats − Dogs",
-    classification_question='Is this a Cat or a Dog breed? Answer with one word: " Cat" or " Dog".',
-    intervention_prompt="My favorite kind of common four-legged domestic pet is the",
-    key_tokens=["▁Cat", "▁Dog", "▁cat", "▁dog", "▁Siamese", "▁Labrador", "▁kitten", "▁puppy"],
-    chat_intervention_prompt=(
-        'Answer with only the missing animal type (e.g. " Cat", " Dog").'
-        " My favorite kind of common four-legged domestic pet is the"
-    ),
-)
 
-CONCEPT_PAIRS: dict[str, ConceptPair] = {
-    "capitals_states": CAPITALS_STATES,
-    "dog_cat": DOG_CAT,
-    "cat_dog": CAT_DOG,
-}
+def load_concept_pair_from_dict(payload: dict[str, Any]) -> ConceptPair:
+    """Build a ``ConceptPair`` from a YAML-decoded mapping."""
+
+    required_fields = (
+        "name",
+        "description",
+        "group_a_tokens",
+        "group_b_tokens",
+        "group_a_entities",
+        "group_b_entities",
+        "group_a_name",
+        "group_b_name",
+        "concept_label",
+        "classification_question",
+    )
+    missing_fields = [field_name for field_name in required_fields if field_name not in payload]
+    if missing_fields:
+        raise ValueError(f"Concept pair YAML is missing required fields: {', '.join(missing_fields)}")
+
+    return ConceptPair(
+        name=str(payload["name"]),
+        description=str(payload["description"]),
+        group_a_tokens=[str(token) for token in payload["group_a_tokens"]],
+        group_b_tokens=[str(token) for token in payload["group_b_tokens"]],
+        group_a_entities=_normalize_entity_pairs(payload["group_a_entities"], "group_a_entities"),
+        group_b_entities=_normalize_entity_pairs(payload["group_b_entities"], "group_b_entities"),
+        group_a_name=str(payload["group_a_name"]),
+        group_b_name=str(payload["group_b_name"]),
+        concept_label=str(payload["concept_label"]),
+        classification_question=str(payload["classification_question"]),
+    )
+
+
+def load_concept_pair(path: str | Path) -> ConceptPair:
+    """Load a concept pair definition from YAML."""
+
+    import yaml  # type: ignore[import-untyped]
+
+    concept_pair_path = Path(path).expanduser().resolve()
+    payload = yaml.safe_load(concept_pair_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Concept pair config must parse to a mapping: {concept_pair_path}")
+    return load_concept_pair_from_dict(payload)
+
+
+def _concept_pair_family_slug(model_family: str) -> str:
+    lowered = model_family.lower()
+    if lowered.startswith("gemma"):
+        return "gemma"
+    return lowered.replace("-", "_")
+
+
+def _concept_pair_context_slug(prompt_render_mode: PromptRenderMode) -> str:
+    return "pt" if prompt_render_mode == "plain" else "it"
+
+
+def resolve_concept_pair_config_path(
+    concept_pair_name: str | None,
+    *,
+    model_family: str,
+    prompt_render_mode: PromptRenderMode,
+    concept_pair_config_path: str | Path | None = None,
+    config_dir: Path = DEFAULT_CONCEPT_PAIR_CONFIG_DIR,
+) -> Path:
+    """Resolve the concept-pair YAML path from an explicit path or naming convention."""
+
+    if concept_pair_config_path is not None:
+        candidate = Path(concept_pair_config_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = (config_dir / candidate).resolve()
+        return candidate
+
+    if not concept_pair_name:
+        raise ValueError("concept_pair_name is required when concept_pair_config_path is not provided")
+
+    derived_name = (
+        f"cp_{concept_pair_name}_{_concept_pair_family_slug(model_family)}_"
+        f"{_concept_pair_context_slug(prompt_render_mode)}.yaml"
+    )
+    return (config_dir / derived_name).resolve()
+
+
+def _normalize_constrained_feature_selection_ref(raw_ref: Any) -> ConstrainedFeatureSelectionRef:
+    if isinstance(raw_ref, str):
+        return raw_ref
+    if isinstance(raw_ref, Sequence) and not isinstance(raw_ref, (str, bytes)) and len(raw_ref) == 4:
+        model_id, source_set, layer_number, feature_index = raw_ref
+        return (str(model_id), str(source_set), int(layer_number), int(feature_index))
+    raise ValueError(
+        "Constrained feature selection entries must be full Neuronpedia refs or "
+        "(model_id, source_set, layer, feature_index) tuples."
+    )
+
+
+def _normalize_constrained_feature_selection_refs(
+    raw_refs: Iterable[Any] | None,
+) -> tuple[ConstrainedFeatureSelectionRef, ...] | None:
+    if raw_refs is None:
+        return None
+    return tuple(_normalize_constrained_feature_selection_ref(raw_ref) for raw_ref in raw_refs)
+
+
+def _serialize_constrained_feature_selection_ref(raw_ref: ConstrainedFeatureSelectionRef) -> str | list[Any]:
+    if isinstance(raw_ref, str):
+        return raw_ref
+    model_id, source_set, layer_number, feature_index = raw_ref
+    return [model_id, source_set, layer_number, feature_index]
 
 
 def _build_classification_prompt(entity_name: str, question: str) -> str:
@@ -165,6 +248,97 @@ def _chattify(prompt: str, tokenizer: Any, method: str = "apply_chat_template") 
 
 
 @dataclass
+class NotebookNeuronpediaRuntimeConfig:
+    use_localhost: bool
+    base_url: str
+    local_db_url: str | None
+    local_webapp_url: str
+    check_local_explanation_coverage: bool
+    generate_missing_local_explanations: bool
+    local_explanation_feature_limit: int
+    service_status: LocalNeuronpediaServiceStatus | None = None
+    warning_messages: tuple[str, ...] = ()
+
+
+def resolve_neuronpedia_runtime_config(
+    *,
+    use_localhost: bool,
+    neuronpedia_base_url_override: str | None = None,
+    local_db_url: str | None = None,
+    local_webapp_url: str | None = None,
+    check_local_explanation_coverage: bool = False,
+    generate_missing_local_explanations: bool = False,
+    local_explanation_feature_limit: int = 20,
+) -> NotebookNeuronpediaRuntimeConfig:
+    """Resolve public vs localhost Neuronpedia mode and explanation workflow settings."""
+
+    resolved_local_webapp_url = (local_webapp_url or DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL).rstrip("/")
+    effective_use_localhost = use_localhost
+    effective_check_local_explanation_coverage = check_local_explanation_coverage
+    effective_generate_missing_local_explanations = generate_missing_local_explanations
+    warning_messages: list[str] = []
+
+    should_probe_local_services = (
+        effective_use_localhost
+        or effective_check_local_explanation_coverage
+        or effective_generate_missing_local_explanations
+        or local_db_url is not None
+    )
+    service_status = (
+        check_local_neuronpedia_services(local_db_url=local_db_url, webapp_url=resolved_local_webapp_url)
+        if should_probe_local_services
+        else None
+    )
+    local_services_ready = bool(service_status and service_status.webapp_available and service_status.db_available)
+
+    if (
+        effective_check_local_explanation_coverage or effective_generate_missing_local_explanations
+    ) and not effective_use_localhost:
+        if local_services_ready:
+            warning_messages.append(
+                "Enabling localhost mode because local explanation coverage requires a live local "
+                "Neuronpedia webapp and DB."
+            )
+            effective_use_localhost = True
+        else:
+            warning_messages.append(
+                "Disabling local explanation coverage because USE_LOCALHOST is false and local "
+                "Neuronpedia services are not available."
+            )
+            effective_check_local_explanation_coverage = False
+            effective_generate_missing_local_explanations = False
+
+    if effective_use_localhost and not local_services_ready:
+        warning_messages.append(
+            "Falling back to public Neuronpedia because the local Neuronpedia webapp or DB is unavailable."
+        )
+        effective_use_localhost = False
+        effective_check_local_explanation_coverage = False
+        effective_generate_missing_local_explanations = False
+
+    resolved_base_url = (
+        neuronpedia_base_url_override.rstrip("/")
+        if neuronpedia_base_url_override
+        else resolved_local_webapp_url if effective_use_localhost else DEFAULT_NEURONPEDIA_BASE_URL
+    )
+
+    for warning_message in warning_messages:
+        warnings.warn(warning_message, stacklevel=2)
+
+    return NotebookNeuronpediaRuntimeConfig(
+        use_localhost=effective_use_localhost,
+        base_url=resolved_base_url,
+        local_db_url=local_db_url,
+        local_webapp_url=resolved_local_webapp_url,
+        check_local_explanation_coverage=effective_check_local_explanation_coverage,
+        generate_missing_local_explanations=effective_generate_missing_local_explanations,
+        local_explanation_feature_limit=int(local_explanation_feature_limit),
+        service_status=service_status,
+        warning_messages=tuple(warning_messages),
+    )
+
+
+@dataclass
 class NotebookHarnessConfig:
     experiment_name: str
     experiment_config_name: str
@@ -175,7 +349,8 @@ class NotebookHarnessConfig:
     hf_model_head: str | None
     neuronpedia_model: str
     neuronpedia_set: str
-    concept_pair_name: str
+    neuronpedia_base_url: str
+    concept_pair_name: str | None
     prompt: str
     prompt_render_mode: PromptRenderMode
     target_tokens: tuple[str, str] | None
@@ -187,18 +362,64 @@ class NotebookHarnessConfig:
     enable_sign_aware: bool
     force_device: str | None
     work_root: Any
+    analysis_mode: AnalysisMode = "concept_pair"
+    explicit_direction_tokens: tuple[str, str] | None = None
+    enable_zero_softcap: bool = False
     batch_size: int | None = None
     max_feature_nodes: int | None = None
+    use_localhost: bool = False
+    local_neuronpedia_db_url: str | None = None
+    local_neuronpedia_webapp_url: str = DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL
+    check_local_explanation_coverage: bool = False
+    generate_missing_local_explanations: bool = False
+    local_explanation_feature_limit: int = 20
+    local_neuronpedia_service_status: LocalNeuronpediaServiceStatus | None = None
+    mode_warning_messages: tuple[str, ...] = field(default_factory=tuple)
+    local_explanation_type_name: str = DEFAULT_EXPLANATION_TYPE_NAME
+    local_explanation_timeout_seconds: int = DEFAULT_COPILOT_TIMEOUT_SECONDS
+    local_explanation_max_retries: int = DEFAULT_COPILOT_MAX_RETRIES
+    local_explanation_retry_backoff_seconds: float = DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS
     key_tokens_override: tuple[str, ...] | None = None
+    concept_pair_config_path: str | None = None
+    constrained_feature_selection_refs: tuple[ConstrainedFeatureSelectionRef, ...] | None = None
     store_latent_extraction_mode: StoreLatentExtractionMode = "answer_position_state"
     context_enhanced_scale: float = 1.0
     store_concept_cache_key: str = "unembed.hook_in"
     store_concept_correct_only: bool = False
     store_weight_by_logit_diff: bool = True
+    enable_baseline_path_debug: bool = False
+    debug_validation_logit_atol: float = 1e-4
+    debug_validation_logit_rtol: float = 1e-3
+    debug_validation_act_atol: float = 1e-3
+    debug_validation_act_rtol: float = 1e-5
+    debug_validation_top_k: int = 10
+    debug_validation_raise_on_failure: bool = True
+    debug_session_surface_preset: DebugSessionSurfacePreset = "notebook_default"
     concept_pair: ConceptPair = field(init=False)
 
     def __post_init__(self) -> None:
-        self.concept_pair = CONCEPT_PAIRS[self.concept_pair_name]
+        self.analysis_mode = cast(AnalysisMode, str(self.analysis_mode).strip())
+        requested_concept_pair_name = None if self.concept_pair_name is None else str(self.concept_pair_name).strip()
+        resolved_concept_pair_path = resolve_concept_pair_config_path(
+            requested_concept_pair_name,
+            model_family=self.model_family,
+            prompt_render_mode=self.prompt_render_mode,
+            concept_pair_config_path=self.concept_pair_config_path,
+        )
+        self.concept_pair = load_concept_pair(resolved_concept_pair_path)
+        if requested_concept_pair_name and requested_concept_pair_name != self.concept_pair.name:
+            warnings.warn(
+                "CONCEPT_PAIR_CONFIG_PATH takes precedence over concept_pair_name; using "
+                f"{self.concept_pair.name!r} from {resolved_concept_pair_path.name}.",
+                stacklevel=2,
+            )
+        self.concept_pair_name = self.concept_pair.name
+        self.concept_pair_config_path = str(resolved_concept_pair_path)
+        if self.key_tokens_override is None or not self.key_tokens_override:
+            raise ValueError(
+                "NotebookHarnessConfig requires KEY_TOKENS in the experiment config; concept-pair YAMLs no longer "
+                "provide key token defaults."
+            )
         if self.target_tokens is not None:
             if len(self.target_tokens) != 2:
                 raise ValueError("target_tokens must contain exactly two tokens")
@@ -209,12 +430,105 @@ class NotebookHarnessConfig:
             self.target_token_ids = (int(self.target_token_ids[0]), int(self.target_token_ids[1]))
         if self.target_tokens is None and self.target_token_ids is None:
             raise ValueError("either target_tokens or target_token_ids must be provided")
+        if self.explicit_direction_tokens is not None:
+            if len(self.explicit_direction_tokens) != 2:
+                raise ValueError("explicit_direction_tokens must contain exactly two tokens")
+            self.explicit_direction_tokens = (
+                str(self.explicit_direction_tokens[0]),
+                str(self.explicit_direction_tokens[1]),
+            )
         self.scale_factor_sweep = [float(value) for value in self.scale_factor_sweep]
         self.ablation_n_list = [int(value) for value in self.ablation_n_list]
+        self.debug_validation_top_k = int(self.debug_validation_top_k)
+        self.debug_session_surface_preset = cast(
+            DebugSessionSurfacePreset,
+            str(self.debug_session_surface_preset).strip(),
+        )
+        if self.debug_session_surface_preset not in {"notebook_default", "parity_surface"}:
+            raise ValueError(
+                "debug_session_surface_preset must be 'notebook_default' or 'parity_surface'"
+            )
+        if self.debug_validation_top_k <= 0:
+            raise ValueError("debug_validation_top_k must be a positive integer")
+        self.constrained_feature_selection_refs = _normalize_constrained_feature_selection_refs(
+            self.constrained_feature_selection_refs
+        )
+
+        mode_warning_messages = list(self.mode_warning_messages)
+        if self.analysis_mode == "explicit_embedding_difference":
+            if self.explicit_direction_tokens is None:
+                raise ValueError(
+                    "explicit_embedding_difference mode requires explicit_direction_tokens to be provided"
+                )
+            mode_warning_messages.append(
+                "Explicit embedding-difference mode uses EXPLICIT_DIRECTION_TOKENS for attribution and skips "
+                "concept-pair comparison phases."
+            )
+        elif self.analysis_mode == "debug_intervention_pipelines":
+            if not self.constrained_feature_selection_refs or len(self.constrained_feature_selection_refs) != 1:
+                raise ValueError(
+                    "debug_intervention_pipelines mode requires exactly one constrained feature selection ref"
+                )
+            mode_warning_messages.append(
+                "Debug intervention mode bypasses concept-direction phases and validates a single constrained "
+                "feature against the attribution graph."
+            )
+            if not self.debug_validation_raise_on_failure:
+                mode_warning_messages.append(
+                    "Debug intervention validation failures will be recorded without raising so the notebook can "
+                    "complete and retain diagnostics."
+                )
+        elif self.analysis_mode != "concept_pair":
+            raise ValueError(
+                "analysis_mode must be one of 'concept_pair', 'explicit_embedding_difference', or "
+                "'debug_intervention_pipelines'"
+            )
+
+        if self.debug_session_surface_preset == "parity_surface":
+            mode_warning_messages.append(
+                "Notebook sessions will use the parity-aligned session surface "
+                "(preserving the configured or auto-selected device, plus eager attention, float32 NNsight/"
+                "circuit-tracer dtype, cleared default analysis target tokens, CPU offload, and quieter "
+                "circuit-tracer logging)."
+            )
+
+        if self.enable_zero_softcap:
+            mode_warning_messages.append(
+                "zero_softcap is enabled for all supported forward and intervention paths in this notebook run."
+            )
+        self.mode_warning_messages = tuple(mode_warning_messages)
 
     @property
     def use_chat_template(self) -> bool:
         return self.prompt_render_mode != "plain"
+
+    @property
+    def uses_explicit_embedding_difference(self) -> bool:
+        return self.analysis_mode == "explicit_embedding_difference"
+
+    @property
+    def is_debug_intervention_mode(self) -> bool:
+        return self.analysis_mode == "debug_intervention_pipelines"
+
+    @property
+    def supports_store_direction(self) -> bool:
+        return self.analysis_mode == "concept_pair"
+
+    @property
+    def analysis_concept_label(self) -> str:
+        if self.uses_explicit_embedding_difference and self.explicit_direction_tokens is not None:
+            return f"{self.explicit_direction_tokens[0]} - {self.explicit_direction_tokens[1]}"
+        if self.is_debug_intervention_mode:
+            return "debug_key_token_logits"
+        return self.concept_pair.concept_label
+
+    @property
+    def analysis_direction_mode_name(self) -> str:
+        if self.uses_explicit_embedding_difference:
+            return "explicit_embedding_difference"
+        if self.is_debug_intervention_mode:
+            return "debug_intervention_pipelines"
+        return "paired_rejection"
 
     @property
     def chat_template_method(self) -> str:
@@ -235,7 +549,279 @@ class NotebookHarnessConfig:
             "force_device": self.force_device,
             "batch_size": self.batch_size,
             "max_feature_nodes": self.max_feature_nodes,
+            "debug_session_surface_preset": self.debug_session_surface_preset,
         }
+
+
+def resolve_key_tokens(cfg: NotebookHarnessConfig) -> tuple[str, ...]:
+    """Return the experiment-owned key tokens used for analysis and reporting."""
+
+    if cfg.key_tokens_override is None or not cfg.key_tokens_override:
+        raise ValueError(
+            "NotebookHarnessConfig requires KEY_TOKENS in the experiment config; concept-pair YAMLs no longer "
+            "provide key token defaults."
+        )
+    return tuple(cfg.key_tokens_override)
+
+
+def _build_key_token_candidates(
+    cfg: NotebookHarnessConfig,
+    tokenizer: Any,
+    *,
+    include_space_prefixed_variants: bool = True,
+    include_bare_variants: bool = True,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+
+    def _append_candidate(
+        token_id: int,
+        *,
+        label: str,
+        source_token: str,
+        variant: str,
+        encoded_ids: Sequence[int],
+    ) -> None:
+        if token_id in seen_ids:
+            return
+        seen_ids.add(token_id)
+        candidates.append(
+            {
+                "label": label,
+                "token_id": int(token_id),
+                "source_token": source_token,
+                "variant": variant,
+                "ids": [int(value) for value in encoded_ids],
+                "decoded": tokenizer.decode([int(token_id)]),
+            }
+        )
+
+    for source_token in resolve_key_tokens(cfg):
+        if cfg.use_chat_template:
+            normalized = _normalize_target_token_for_prompt_mode(source_token, cfg)
+
+            if include_space_prefixed_variants:
+                prefixed_ids = tokenizer.encode(f" {normalized}", add_special_tokens=False)
+                if len(prefixed_ids) == 1:
+                    _append_candidate(
+                        int(prefixed_ids[0]),
+                        label=f"▁{normalized}",
+                        source_token=source_token,
+                        variant="space_prefixed",
+                        encoded_ids=prefixed_ids,
+                    )
+
+            if include_bare_variants:
+                bare_ids = tokenizer.encode(normalized, add_special_tokens=False)
+                if bare_ids:
+                    bare_token_id = int(bare_ids[-1])
+                    bare_label = normalized if len(bare_ids) == 1 else tokenizer.decode([bare_token_id]).lstrip()
+                    _append_candidate(
+                        bare_token_id,
+                        label=bare_label,
+                        source_token=source_token,
+                        variant="bare",
+                        encoded_ids=bare_ids,
+                    )
+            continue
+
+        literal_ids = tokenizer.encode(source_token, add_special_tokens=False)
+        if literal_ids:
+            literal_token_id = int(literal_ids[-1])
+            literal_label = source_token if len(literal_ids) == 1 else tokenizer.decode([literal_token_id]).lstrip()
+            _append_candidate(
+                literal_token_id,
+                label=literal_label,
+                source_token=source_token,
+                variant="literal",
+                encoded_ids=literal_ids,
+            )
+
+    return candidates
+
+
+@dataclass(frozen=True)
+class LocalExplanationPrefetchStatus:
+    """Activation-cache readiness for one local Neuronpedia feature explanation."""
+
+    feature_ref: NeuronpediaFeatureRef
+    explanation_count: int
+    cache_ready: bool
+    cache_source: str
+    cache_path: str | None = None
+    activation_rows: int = 0
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class LocalExplanationPreparationResult:
+    """Summary of explanation availability and cache-prefetch readiness."""
+
+    feature_refs: list[NeuronpediaFeatureRef]
+    initial_statuses: list[NeuronpediaLocalExplanationStatus]
+    prefetch_statuses: list[LocalExplanationPrefetchStatus]
+    export_roots: tuple[str, ...]
+    cache_dir: str
+
+    @property
+    def missing_feature_refs(self) -> list[NeuronpediaFeatureRef]:
+        return [status.feature_ref for status in self.initial_statuses if not status.has_local_explanation]
+
+
+def _resolve_local_export_roots(local_export_roots: Iterable[Path | str] | None = None) -> tuple[Path, ...]:
+    candidate_roots = tuple(Path(root) for root in (local_export_roots or (DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT,)))
+    return tuple(root for root in candidate_roots if root.exists())
+
+
+def _feature_rows_to_layer_feature_tuples(feature_groups: Iterable[Any]) -> list[tuple[int, int]]:
+    candidate_feature_tuples: list[tuple[int, int]] = []
+    for feature_group in feature_groups:
+        for feature_row in feature_group:
+            normalized_row = tuple(int(value) for value in feature_row)
+            if len(normalized_row) < 2:
+                raise ValueError(f"Expected at least 2 values in feature row, got {normalized_row!r}")
+            candidate_feature_tuples.append((normalized_row[0], normalized_row[-1]))
+    return list(dict.fromkeys(candidate_feature_tuples))
+
+
+def _populate_feature_cache_from_local_exports(
+    feature_ref: NeuronpediaFeatureRef,
+    *,
+    export_roots: tuple[Path, ...],
+    cache_dir: Path | None = None,
+) -> tuple[int, Path] | None:
+    for export_root in export_roots:
+        activations_dir = export_root / feature_ref.model_id / feature_ref.layer / "activations"
+        if not activations_dir.exists():
+            continue
+        for batch_path in sorted(activations_dir.glob("batch-*.jsonl.gz")):
+            activation_rows = load_activation_batch_records(batch_path)
+            matching_rows = [row for row in activation_rows if str(row.get("index")) == feature_ref.index]
+            if not matching_rows:
+                continue
+            cache_path = write_cached_feature_activations(feature_ref, matching_rows, cache_dir=cache_dir)
+            return len(matching_rows), cache_path
+    return None
+
+
+def prepare_local_explanation_backfill(
+    cfg: NotebookHarnessConfig,
+    *feature_groups: Any,
+    cache_dir: Path | None = None,
+    local_export_roots: Iterable[Path | str] | None = None,
+    timeout_seconds: int = 60,
+) -> LocalExplanationPreparationResult:
+    """Collect top feature refs, inspect local explanation coverage, and prefetch activation cache rows."""
+
+    feature_tuples = _feature_rows_to_layer_feature_tuples(feature_groups)
+    feature_refs = feature_tuples_to_feature_refs(
+        model_id=cfg.neuronpedia_model,
+        source_set=cfg.neuronpedia_set,
+        feature_tuples=feature_tuples,
+        base_url=cfg.neuronpedia_base_url,
+    )
+    initial_statuses = check_local_explanation_coverage(
+        feature_refs,
+        local_db_url=cfg.local_neuronpedia_db_url,
+        type_name=cfg.local_explanation_type_name,
+    )
+    resolved_export_roots = _resolve_local_export_roots(local_export_roots)
+    prefetch_statuses: list[LocalExplanationPrefetchStatus] = []
+
+    for explanation_status in initial_statuses:
+        feature_ref = explanation_status.feature_ref
+        if explanation_status.has_local_explanation:
+            prefetch_statuses.append(
+                LocalExplanationPrefetchStatus(
+                    feature_ref=feature_ref,
+                    explanation_count=explanation_status.explanation_count,
+                    cache_ready=True,
+                    cache_source="existing_explanation",
+                )
+            )
+            continue
+
+        feature_cache_path = cached_feature_activation_path(feature_ref, cache_dir=cache_dir)
+        existing_batch_paths = candidate_cached_activation_batch_paths(feature_ref, cache_dir=cache_dir)
+        had_cache_before = feature_cache_path.exists() or any(
+            batch_path.exists() for batch_path in existing_batch_paths
+        )
+
+        if had_cache_before:
+            try:
+                cached_rows, resolved_cache_path = load_cached_feature_activations(
+                    feature_ref,
+                    cache_dir=cache_dir,
+                    timeout_seconds=timeout_seconds,
+                )
+                prefetch_statuses.append(
+                    LocalExplanationPrefetchStatus(
+                        feature_ref=feature_ref,
+                        explanation_count=explanation_status.explanation_count,
+                        cache_ready=True,
+                        cache_source="existing_cache",
+                        cache_path=str(resolved_cache_path),
+                        activation_rows=len(cached_rows),
+                    )
+                )
+                continue
+            except Exception:
+                pass
+
+        local_export_result = _populate_feature_cache_from_local_exports(
+            feature_ref,
+            export_roots=resolved_export_roots,
+            cache_dir=cache_dir,
+        )
+        if local_export_result is not None:
+            activation_rows, resolved_cache_path = local_export_result
+            prefetch_statuses.append(
+                LocalExplanationPrefetchStatus(
+                    feature_ref=feature_ref,
+                    explanation_count=explanation_status.explanation_count,
+                    cache_ready=True,
+                    cache_source="local_export_cache",
+                    cache_path=str(resolved_cache_path),
+                    activation_rows=activation_rows,
+                )
+            )
+            continue
+
+        try:
+            cached_rows, resolved_cache_path = load_cached_feature_activations(
+                feature_ref,
+                cache_dir=cache_dir,
+                timeout_seconds=timeout_seconds,
+            )
+            prefetch_statuses.append(
+                LocalExplanationPrefetchStatus(
+                    feature_ref=feature_ref,
+                    explanation_count=explanation_status.explanation_count,
+                    cache_ready=True,
+                    cache_source="existing_cache" if had_cache_before else "downloaded_public_cache",
+                    cache_path=str(resolved_cache_path),
+                    activation_rows=len(cached_rows),
+                )
+            )
+            continue
+        except Exception as exc:
+            prefetch_statuses.append(
+                LocalExplanationPrefetchStatus(
+                    feature_ref=feature_ref,
+                    explanation_count=explanation_status.explanation_count,
+                    cache_ready=False,
+                    cache_source="unavailable",
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            )
+
+    return LocalExplanationPreparationResult(
+        feature_refs=feature_refs,
+        initial_statuses=initial_statuses,
+        prefetch_statuses=prefetch_statuses,
+        export_roots=tuple(str(root) for root in resolved_export_roots),
+        cache_dir=str(cache_dir or default_np_cache_dir()),
+    )
 
 
 def phase_run_name(cfg: NotebookHarnessConfig, label: str) -> str:
@@ -272,13 +858,90 @@ def _tokenize_rendered_prompt(tokenizer: Any, rendered_prompt: str, mode: Prompt
     return cast(list[int], tokenizer(rendered_prompt, add_special_tokens=add_special_tokens)["input_ids"])
 
 
+def _build_prompt_batch(tokenizer: Any, rendered_prompt: str, mode: PromptRenderMode, device: Any) -> dict[str, Any]:
+    add_special_tokens = mode == "plain"
+    encoded = tokenizer(rendered_prompt, return_tensors="pt", add_special_tokens=add_special_tokens)
+    return {key: value.to(device) if isinstance(value, torch.Tensor) else value for key, value in encoded.items()}
+
+
+def _topk_token_summaries(logits: torch.Tensor, tokenizer: Any, *, k: int = 5) -> list[dict[str, Any]]:
+    logits = logits.float().cpu()
+    probs = torch.softmax(logits, dim=-1)
+    topk = torch.topk(logits, k)
+    summaries: list[dict[str, Any]] = []
+    for token_id, logit in zip(topk.indices.tolist(), topk.values.tolist(), strict=False):
+        summaries.append(
+            {
+                "token_id": int(token_id),
+                "token": tokenizer.decode([int(token_id)]),
+                "logit": float(logit),
+                "prob": float(probs[int(token_id)].item()),
+            }
+        )
+    return summaries
+
+
+def _get_prompt_debugger(module: Any) -> DebugGeneration:
+    from interpretune.extensions.debug_generation import DebugGeneration
+
+    debug_lm = getattr(module, "debug_lm", None)
+    if debug_lm is None:
+        debug_lm = DebugGeneration()
+        debug_lm.connect(module)
+    return cast(DebugGeneration, debug_lm)
+
+
+def _normalize_target_token_for_prompt_mode(token: str, cfg: NotebookHarnessConfig) -> str:
+    if not cfg.use_chat_template:
+        return token
+    normalized = token.lstrip(" ▁Ġ")
+    return normalized or token
+
+
 def resolve_target_tokens(cfg: NotebookHarnessConfig, tokenizer: Any) -> tuple[tuple[int, int], tuple[str, str]]:
     if cfg.target_tokens is not None:
-        resolved_ids = tuple(tokenizer.encode(token, add_special_tokens=False)[-1] for token in cfg.target_tokens)
-        return cast(tuple[int, int], resolved_ids), cfg.target_tokens
+        resolved_tokens = tuple(_normalize_target_token_for_prompt_mode(token, cfg) for token in cfg.target_tokens)
+        resolved_ids = tuple(tokenizer.encode(token, add_special_tokens=False)[-1] for token in resolved_tokens)
+        return cast(tuple[int, int], resolved_ids), cast(tuple[str, str], resolved_tokens)
     assert cfg.target_token_ids is not None
     decoded_tokens = tuple(tokenizer.decode([token_id]) for token_id in cfg.target_token_ids)
     return cfg.target_token_ids, cast(tuple[str, str], decoded_tokens)
+
+
+def resolve_explicit_direction_tokens(
+    cfg: NotebookHarnessConfig,
+    tokenizer: Any,
+) -> tuple[tuple[int, int], tuple[str, str]]:
+    if cfg.explicit_direction_tokens is None:
+        raise ValueError("explicit_direction_tokens must be provided for explicit embedding-difference mode")
+    resolved_tokens = tuple(
+        _normalize_target_token_for_prompt_mode(token, cfg) for token in cfg.explicit_direction_tokens
+    )
+    resolved_ids = tuple(tokenizer.encode(token, add_special_tokens=False)[-1] for token in resolved_tokens)
+    return cast(tuple[int, int], resolved_ids), cast(tuple[str, str], resolved_tokens)
+
+
+def resolve_graph_target_tokens(cfg: NotebookHarnessConfig, tokenizer: Any) -> tuple[list[int], list[str]]:
+    if not cfg.is_debug_intervention_mode:
+        raise ValueError("resolve_graph_target_tokens is only available in debug_intervention_pipelines mode")
+
+    ids: list[int] = []
+    labels: list[str] = []
+    seen_ids: set[int] = set()
+    for token in resolve_key_tokens(cfg):
+        resolved = _normalize_target_token_for_prompt_mode(token, cfg)
+        encoded = tokenizer.encode(resolved, add_special_tokens=False)
+        if not encoded:
+            continue
+        token_id = int(encoded[-1])
+        if token_id in seen_ids:
+            continue
+        seen_ids.add(token_id)
+        ids.append(token_id)
+        labels.append(resolved)
+    if not ids:
+        raise ValueError("Unable to resolve any debug graph target tokens from KEY_TOKENS")
+    return ids, labels
 
 
 def get_key_token_ids_and_labels(
@@ -287,34 +950,19 @@ def get_key_token_ids_and_labels(
     *,
     include_bare_variants: bool = True,
 ) -> tuple[list[int], list[str]]:
-    """Resolve key token IDs and labels, optionally including bare (non-▁-prefixed) variants.
+    """Resolve key-token IDs and labels for reporting and logit displays.
 
-    SentencePiece tokenizers encode ``" Austin"`` → ``▁Austin`` (token 24278), but in chat
-    mode the model may predict bare ``Austin`` (token 107305). Setting
-    *include_bare_variants* (default ``True``) ensures both forms are tracked.
+    In chat mode this includes the single-token space-prefixed variant (for example
+    ``▁Austin``) plus the bare completion token when available, even if the experiment config
+    uses bare labels like ``Austin``.
     """
-    ids: list[int] = []
-    labels: list[str] = []
-    seen_ids: set[int] = set()
-    source_tokens = cfg.key_tokens_override if cfg.key_tokens_override is not None else cfg.concept_pair.key_tokens
-    for token in source_tokens:
-        encoded = tokenizer.encode(token, add_special_tokens=False)
-        if encoded:
-            tid = encoded[-1]
-            if tid not in seen_ids:
-                ids.append(tid)
-                labels.append(token)
-                seen_ids.add(tid)
-        if include_bare_variants and token.startswith("▁"):
-            bare = token.lstrip("▁")
-            bare_encoded = tokenizer.encode(bare, add_special_tokens=False)
-            if bare_encoded:
-                bare_tid = bare_encoded[-1]
-                if bare_tid not in seen_ids:
-                    ids.append(bare_tid)
-                    labels.append(bare)
-                    seen_ids.add(bare_tid)
-    return ids, labels
+    candidates = _build_key_token_candidates(
+        cfg,
+        tokenizer,
+        include_space_prefixed_variants=True,
+        include_bare_variants=include_bare_variants,
+    )
+    return [entry["token_id"] for entry in candidates], [entry["label"] for entry in candidates]
 
 
 def summarize_gap(
@@ -331,9 +979,644 @@ def summarize_gap(
 def configure_analysis(module: Any, graph_op: Any, scale_factor: float) -> None:
     module.circuit_tracer_cfg.intervention_value_source = "top_feature_activation_values"
     module.circuit_tracer_cfg.intervention_scale_factor = scale_factor
+    module.circuit_tracer_cfg.intervention_constrained_layers = list(range(_resolve_model_layer_count(module)))
+    module.circuit_tracer_cfg.intervention_apply_activation_function = False
+    module.circuit_tracer_cfg.intervention_freeze_attention = None
+    module.circuit_tracer_cfg.intervention_sparse = False
+    module.circuit_tracer_cfg.intervention_return_activations = False
     module.analysis_cfg = AnalysisCfg(target_op=graph_op, ignore_manual=True, save_tokens=False)
     if not module.analysis_cfg.applied_to(module):
         init_analysis_cfgs(module, [module.analysis_cfg])
+
+
+def _debug_intervention_artifact_name(
+    cfg: NotebookHarnessConfig,
+    feature_row: Sequence[int],
+) -> str:
+    feature_suffix = "_".join(str(int(value)) for value in feature_row)
+    config_name = str(cfg.experiment_config_name or "manual").strip().replace(" ", "_")
+    return f"{cfg.experiment_name}_{config_name}_{cfg.model_family}_{cfg.model_variant}_{feature_suffix}"
+
+
+def _maybe_preserve_debug_intervention_artifacts(
+    cfg: NotebookHarnessConfig,
+    *,
+    graph: Any,
+    feature_row: Sequence[int],
+    interventions: Sequence[Sequence[int | float]],
+    baseline_activation_cache: torch.Tensor,
+    intervention_activation_cache: torch.Tensor,
+    baseline_logits: torch.Tensor,
+    intervention_logits: torch.Tensor,
+    graph_target_ids: Sequence[int],
+    graph_target_tokens: Sequence[str],
+    selected_feature_score: float,
+    selected_feature_activation: float,
+    report: Any,
+    runtime_state: dict[str, Any] | None = None,
+) -> Path | None:
+    artifact_dir = resolve_artifact_output_dir(
+        artifact_name=_debug_intervention_artifact_name(cfg, feature_row),
+    )
+    if artifact_dir is None:
+        return None
+
+    metadata = {
+        "artifact_kind": "concept_direction_debug_validation",
+        "experiment_name": cfg.experiment_name,
+        "experiment_config_name": cfg.experiment_config_name,
+        "analysis_mode": cfg.analysis_mode,
+        "model_family": cfg.model_family,
+        "model_variant": cfg.model_variant,
+        "model_name": cfg.model_name,
+        "transcoder_set": cfg.transcoder_set,
+        "prompt": cfg.prompt,
+        "prompt_render_mode": cfg.prompt_render_mode,
+        "graph_target_ids": [int(token_id) for token_id in graph_target_ids],
+        "graph_target_tokens": [str(token) for token in graph_target_tokens],
+        "selected_feature_score": float(selected_feature_score),
+        "selected_feature_activation": float(selected_feature_activation),
+        "requested_constrained_feature_selection": [
+            _serialize_constrained_feature_selection_ref(raw_ref)
+            for raw_ref in (cfg.constrained_feature_selection_refs or ())
+        ],
+        "validation_tolerances": {
+            "act_atol": cfg.debug_validation_act_atol,
+            "act_rtol": cfg.debug_validation_act_rtol,
+            "logit_atol": cfg.debug_validation_logit_atol,
+            "logit_rtol": cfg.debug_validation_logit_rtol,
+        },
+        "runtime_state": runtime_state or {},
+    }
+    save_preserved_intervention_artifacts(
+        artifact_dir,
+        graph=graph,
+        feature_row=feature_row,
+        interventions=interventions,
+        baseline_activation_cache=baseline_activation_cache,
+        intervention_activation_cache=intervention_activation_cache,
+        baseline_logits=baseline_logits,
+        intervention_logits=intervention_logits,
+        activation_atol=cfg.debug_validation_act_atol,
+        activation_rtol=cfg.debug_validation_act_rtol,
+        logit_atol=cfg.debug_validation_logit_atol,
+        logit_rtol=cfg.debug_validation_logit_rtol,
+        report=report,
+        metadata=metadata,
+    )
+    return artifact_dir
+
+
+@contextmanager
+def maybe_zero_softcap(module: Any, cfg: NotebookHarnessConfig):
+    if not cfg.enable_zero_softcap:
+        yield
+        return
+
+    replacement_model = getattr(module, "replacement_model", None)
+    zero_softcap = getattr(replacement_model, "zero_softcap", None)
+    if callable(zero_softcap):
+        zero_softcap_cm = zero_softcap()
+        with cast(Any, zero_softcap_cm):
+            yield
+        return
+
+    warning_flag = "_interpretune_zero_softcap_warning_emitted"
+    if replacement_model is not None and not getattr(replacement_model, warning_flag, False):
+        warnings.warn(
+            "enable_zero_softcap was requested but the current replacement model does not expose zero_softcap(); "
+            "continuing without it.",
+            stacklevel=2,
+        )
+        setattr(replacement_model, warning_flag, True)
+    yield
+
+
+def _build_graph_analysis_inputs(
+    cfg: NotebookHarnessConfig,
+    tokenizer: Any,
+    rendered_prompt: str,
+    *,
+    direction: torch.Tensor | None,
+    group_a_ids: list[int] | None,
+    group_b_ids: list[int] | None,
+    attribution_target_device: torch.device | str | None = None,
+) -> tuple[Any, dict[str, Any]]:
+    batch_kwargs: dict[str, Any] = {"prompts": [rendered_prompt]}
+    call_kwargs: dict[str, Any] = {}
+
+    if cfg.is_debug_intervention_mode:
+        graph_target_ids, graph_target_tokens = resolve_graph_target_tokens(cfg, tokenizer)
+        del graph_target_tokens
+        attribution_target_ids = torch.tensor(graph_target_ids, dtype=torch.long)
+        batch_kwargs["logit_target_ids"] = attribution_target_ids
+        call_kwargs["attribution_targets"] = (
+            attribution_target_ids
+            if attribution_target_device is None
+            else attribution_target_ids.to(attribution_target_device)
+        )
+    else:
+        if direction is None or group_a_ids is None or group_b_ids is None:
+            raise ValueError("direction and concept-group token ids are required for non-debug graph analysis")
+        batch_kwargs.update(
+            concept_direction=direction,
+            concept_label=cfg.analysis_concept_label,
+            concept_direction_mode=cfg.analysis_direction_mode_name,
+            concept_group_a_token_ids=group_a_ids,
+            concept_group_b_token_ids=group_b_ids,
+        )
+
+    return it.AnalysisBatch(**batch_kwargs), call_kwargs
+
+
+def _resolve_model_layer_count(module: Any) -> int:
+    replacement_model = getattr(module, "replacement_model", None)
+    model_cfg = getattr(replacement_model, "cfg", None)
+    if model_cfg is not None:
+        for attr_name in ("n_layers", "num_hidden_layers"):
+            value = getattr(model_cfg, attr_name, None)
+            if value is not None:
+                return int(value)
+
+    config = getattr(replacement_model, "config", None)
+    for candidate in (config, getattr(config, "text_config", None) if config is not None else None):
+        if candidate is None:
+            continue
+        value = getattr(candidate, "num_hidden_layers", None)
+        if value is not None:
+            return int(value)
+
+    raise ValueError("Unable to resolve the replacement model layer count for debug intervention validation")
+
+
+def _match_feature_row_index(active_features: torch.Tensor, feature_row: torch.Tensor) -> int:
+    matches = (active_features == feature_row.reshape(1, 3)).all(dim=1).nonzero(as_tuple=False).reshape(-1)
+    if matches.numel() != 1:
+        raise ValueError(
+            "Expected exactly one active-feature row to match the selected debug intervention feature; "
+            f"found {int(matches.numel())} matches for {feature_row.tolist()}"
+        )
+    return int(matches.item())
+
+
+def _rank_top_indices(values: torch.Tensor, top_k: int) -> torch.Tensor:
+    flat_values = tensor_to_cpu(torch.as_tensor(values, dtype=torch.float32)).reshape(-1)
+    if flat_values.numel() == 0 or top_k <= 0:
+        return torch.empty((0,), dtype=torch.long)
+    return torch.argsort(flat_values, descending=True)[: min(int(top_k), flat_values.numel())]
+
+
+def _summarize_feature_row_deltas(
+    feature_rows: torch.Tensor,
+    baseline_values: torch.Tensor,
+    post_values: torch.Tensor,
+    expected_delta: torch.Tensor,
+    *,
+    top_k: int,
+    ranking: Literal["abs_error", "expected_delta", "actual_delta"] = "abs_error",
+) -> list[dict[str, Any]]:
+    feature_rows_t = tensor_to_cpu(torch.as_tensor(feature_rows, dtype=torch.long)).reshape(-1, 3)
+    baseline_t = tensor_to_cpu(torch.as_tensor(baseline_values, dtype=torch.float32)).reshape(-1)
+    post_t = tensor_to_cpu(torch.as_tensor(post_values, dtype=torch.float32)).reshape(-1)
+    expected_t = tensor_to_cpu(torch.as_tensor(expected_delta, dtype=torch.float32)).reshape(-1)
+
+    count = feature_rows_t.shape[0]
+    if not (baseline_t.shape[0] == count == post_t.shape[0] == expected_t.shape[0]):
+        raise ValueError("Feature-row diagnostic inputs must all have matching lengths")
+    if count == 0:
+        return []
+
+    actual_delta_t = post_t - baseline_t
+    predicted_t = baseline_t + expected_t
+    signed_error_t = post_t - predicted_t
+    abs_error_t = signed_error_t.abs()
+    if ranking == "expected_delta":
+        rank_values = expected_t.abs()
+    elif ranking == "actual_delta":
+        rank_values = actual_delta_t.abs()
+    else:
+        rank_values = abs_error_t
+
+    rows: list[dict[str, Any]] = []
+    for display_rank, graph_index in enumerate(_rank_top_indices(rank_values, top_k).tolist(), start=1):
+        layer, position, feature_id = (int(value) for value in feature_rows_t[graph_index].tolist())
+        expected_delta_value = float(expected_t[graph_index].item())
+        actual_delta_value = float(actual_delta_t[graph_index].item())
+        abs_error_value = float(abs_error_t[graph_index].item())
+        rows.append(
+            {
+                "rank": display_rank,
+                "graph_index": int(graph_index),
+                "layer": layer,
+                "position": position,
+                "feature_id": feature_id,
+                "row": [layer, position, feature_id],
+                "baseline_activation": float(baseline_t[graph_index].item()),
+                "predicted_activation": float(predicted_t[graph_index].item()),
+                "post_activation": float(post_t[graph_index].item()),
+                "expected_delta": expected_delta_value,
+                "actual_delta": actual_delta_value,
+                "abs_error": abs_error_value,
+                "signed_error": float(signed_error_t[graph_index].item()),
+                "relative_abs_error": abs_error_value / max(abs(expected_delta_value), 1e-12),
+                "sign_mismatch": bool(expected_delta_value * actual_delta_value < 0.0),
+                "ranking": ranking,
+                "rank_metric": float(rank_values[graph_index].item()),
+            }
+        )
+    return rows
+
+
+def _summarize_layer_error_rows(
+    feature_rows: torch.Tensor,
+    baseline_values: torch.Tensor,
+    post_values: torch.Tensor,
+    expected_delta: torch.Tensor,
+    *,
+    top_k: int,
+) -> list[dict[str, Any]]:
+    feature_rows_t = tensor_to_cpu(torch.as_tensor(feature_rows, dtype=torch.long)).reshape(-1, 3)
+    baseline_t = tensor_to_cpu(torch.as_tensor(baseline_values, dtype=torch.float32)).reshape(-1)
+    post_t = tensor_to_cpu(torch.as_tensor(post_values, dtype=torch.float32)).reshape(-1)
+    expected_t = tensor_to_cpu(torch.as_tensor(expected_delta, dtype=torch.float32)).reshape(-1)
+
+    count = feature_rows_t.shape[0]
+    if not (baseline_t.shape[0] == count == post_t.shape[0] == expected_t.shape[0]):
+        raise ValueError("Layer diagnostic inputs must all have matching lengths")
+    if count == 0:
+        return []
+
+    actual_delta_t = post_t - baseline_t
+    abs_error_t = (post_t - (baseline_t + expected_t)).abs()
+    summaries: list[dict[str, Any]] = []
+    for layer_value in sorted({int(layer) for layer in feature_rows_t[:, 0].tolist()}):
+        layer_mask = feature_rows_t[:, 0] == layer_value
+        layer_errors = abs_error_t[layer_mask]
+        layer_expected = expected_t[layer_mask]
+        layer_actual = actual_delta_t[layer_mask]
+        sign_mismatches = ((layer_expected * layer_actual) < 0.0).sum().item()
+        summaries.append(
+            {
+                "layer": int(layer_value),
+                "feature_count": int(layer_mask.sum().item()),
+                "max_abs_error": float(layer_errors.max().item()),
+                "mean_abs_error": float(layer_errors.mean().item()),
+                "max_abs_expected_delta": float(layer_expected.abs().max().item()),
+                "mean_abs_expected_delta": float(layer_expected.abs().mean().item()),
+                "max_abs_actual_delta": float(layer_actual.abs().max().item()),
+                "mean_abs_actual_delta": float(layer_actual.abs().mean().item()),
+                "sign_mismatch_count": int(sign_mismatches),
+            }
+        )
+    summaries.sort(key=lambda entry: entry["max_abs_error"], reverse=True)
+    return summaries[: min(int(top_k), len(summaries))]
+
+
+def _summarize_logit_delta_rows(
+    token_ids: Sequence[int],
+    token_labels: Sequence[str],
+    baseline_logits: torch.Tensor,
+    post_logits: torch.Tensor,
+    baseline_demeaned_logits: torch.Tensor,
+    post_demeaned_logits: torch.Tensor,
+    expected_delta: torch.Tensor,
+    *,
+    top_k: int,
+) -> list[dict[str, Any]]:
+    baseline_logits_t = tensor_to_cpu(torch.as_tensor(baseline_logits, dtype=torch.float32)).reshape(-1)
+    post_logits_t = tensor_to_cpu(torch.as_tensor(post_logits, dtype=torch.float32)).reshape(-1)
+    baseline_demeaned_t = tensor_to_cpu(torch.as_tensor(baseline_demeaned_logits, dtype=torch.float32)).reshape(-1)
+    post_demeaned_t = tensor_to_cpu(torch.as_tensor(post_demeaned_logits, dtype=torch.float32)).reshape(-1)
+    expected_t = tensor_to_cpu(torch.as_tensor(expected_delta, dtype=torch.float32)).reshape(-1)
+
+    count = len(token_ids)
+    if not (
+        baseline_logits_t.shape[0]
+        == count
+        == post_logits_t.shape[0]
+        == baseline_demeaned_t.shape[0]
+        == post_demeaned_t.shape[0]
+        == expected_t.shape[0]
+    ):
+        raise ValueError("Logit diagnostic inputs must all have matching lengths")
+    if count == 0:
+        return []
+
+    actual_delta_t = post_demeaned_t - baseline_demeaned_t
+    predicted_t = baseline_demeaned_t + expected_t
+    signed_error_t = post_demeaned_t - predicted_t
+    abs_error_t = signed_error_t.abs()
+
+    rows: list[dict[str, Any]] = []
+    for display_rank, token_index in enumerate(_rank_top_indices(abs_error_t, top_k).tolist(), start=1):
+        expected_delta_value = float(expected_t[token_index].item())
+        actual_delta_value = float(actual_delta_t[token_index].item())
+        abs_error_value = float(abs_error_t[token_index].item())
+        rows.append(
+            {
+                "rank": display_rank,
+                "token_id": int(token_ids[token_index]),
+                "token": str(token_labels[token_index]),
+                "baseline_logit": float(baseline_logits_t[token_index].item()),
+                "post_logit": float(post_logits_t[token_index].item()),
+                "baseline_demeaned_logit": float(baseline_demeaned_t[token_index].item()),
+                "post_demeaned_logit": float(post_demeaned_t[token_index].item()),
+                "expected_delta": expected_delta_value,
+                "actual_delta": actual_delta_value,
+                "abs_error": abs_error_value,
+                "signed_error": float(signed_error_t[token_index].item()),
+                "relative_abs_error": abs_error_value / max(abs(expected_delta_value), 1e-12),
+                "sign_mismatch": bool(expected_delta_value * actual_delta_value < 0.0),
+            }
+        )
+    return rows
+
+
+def _summarize_same_feature_rows(
+    feature_rows: torch.Tensor,
+    baseline_values: torch.Tensor,
+    post_values: torch.Tensor,
+    expected_delta: torch.Tensor,
+    *,
+    layer: int,
+    feature_id: int,
+) -> list[dict[str, Any]]:
+    feature_rows_t = tensor_to_cpu(torch.as_tensor(feature_rows, dtype=torch.long)).reshape(-1, 3)
+    baseline_t = tensor_to_cpu(torch.as_tensor(baseline_values, dtype=torch.float32)).reshape(-1)
+    post_t = tensor_to_cpu(torch.as_tensor(post_values, dtype=torch.float32)).reshape(-1)
+    expected_t = tensor_to_cpu(torch.as_tensor(expected_delta, dtype=torch.float32)).reshape(-1)
+
+    count = feature_rows_t.shape[0]
+    if not (baseline_t.shape[0] == count == post_t.shape[0] == expected_t.shape[0]):
+        raise ValueError("Same-feature diagnostic inputs must all have matching lengths")
+
+    actual_delta_t = post_t - baseline_t
+    rows: list[dict[str, Any]] = []
+    for graph_index in ((feature_rows_t[:, 0] == layer) & (feature_rows_t[:, 2] == feature_id)).nonzero(
+        as_tuple=False
+    ).reshape(-1).tolist():
+        rows.append(
+            {
+                "graph_index": int(graph_index),
+                "row": [int(value) for value in feature_rows_t[graph_index].tolist()],
+                "position": int(feature_rows_t[graph_index, 1].item()),
+                "baseline_activation": float(baseline_t[graph_index].item()),
+                "post_activation": float(post_t[graph_index].item()),
+                "expected_delta": float(expected_t[graph_index].item()),
+                "actual_delta": float(actual_delta_t[graph_index].item()),
+                "abs_error": float(
+                    (post_t[graph_index] - (baseline_t[graph_index] + expected_t[graph_index])).abs().item()
+                ),
+            }
+        )
+    rows.sort(key=lambda entry: (entry["position"], entry["graph_index"]))
+    return rows
+
+
+def _serialize_intervention_call_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    serialized: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        if isinstance(value, torch.Tensor):
+            serialized[key] = tensor_fingerprint(value)
+        elif isinstance(value, range):
+            serialized[key] = {"kind": "range", "start": value.start, "stop": value.stop, "step": value.step}
+        else:
+            serialized[key] = value
+    return serialized
+
+
+def _summarize_graph_input_tokens(
+    tokenizer: Any,
+    rendered_prompt: str,
+    prompt_render_mode: PromptRenderMode,
+    graph_inputs: Any,
+) -> dict[str, Any]:
+    rendered_prompt_token_ids = _tokenize_rendered_prompt(tokenizer, rendered_prompt, prompt_render_mode)
+    if isinstance(graph_inputs, torch.Tensor):
+        graph_input_token_ids = tensor_to_cpu(torch.as_tensor(graph_inputs, dtype=torch.long)).reshape(-1).tolist()
+        graph_input_source = "graph_result.input_tokens"
+    else:
+        graph_input_token_ids = _tokenize_rendered_prompt(tokenizer, str(graph_inputs), prompt_render_mode)
+        graph_input_source = type(graph_inputs).__name__
+
+    first_difference_index = next(
+        (
+            index
+            for index, (rendered_token_id, graph_token_id) in enumerate(
+                zip(rendered_prompt_token_ids, graph_input_token_ids, strict=False)
+            )
+            if rendered_token_id != graph_token_id
+        ),
+        None,
+    )
+    if first_difference_index is None and len(rendered_prompt_token_ids) != len(graph_input_token_ids):
+        first_difference_index = min(len(rendered_prompt_token_ids), len(graph_input_token_ids))
+
+    return {
+        "graph_input_source": graph_input_source,
+        "rendered_prompt_token_count": len(rendered_prompt_token_ids),
+        "graph_input_token_count": len(graph_input_token_ids),
+        "graph_inputs_match_rendered_prompt": rendered_prompt_token_ids == graph_input_token_ids,
+        "first_difference_index": first_difference_index,
+        "rendered_prompt_token_ids": rendered_prompt_token_ids,
+        "graph_input_token_ids": graph_input_token_ids,
+    }
+
+
+def _parse_constrained_feature_selection_ref(
+    raw_ref: ConstrainedFeatureSelectionRef,
+    cfg: NotebookHarnessConfig,
+) -> tuple[int, int]:
+    layer_identifier: str
+    feature_index: str
+    if not isinstance(raw_ref, str):
+        model_id = raw_ref[0]
+        source_set = raw_ref[1]
+        layer_number = int(raw_ref[2])
+        feature_index_value = int(raw_ref[3])
+        if model_id != cfg.neuronpedia_model:
+            raise ValueError(
+                f"Constrained feature selection tuple {raw_ref!r} targets model {model_id}, "
+                f"expected {cfg.neuronpedia_model}."
+            )
+        if source_set != cfg.neuronpedia_set:
+            raise ValueError(
+                f"Constrained feature selection tuple {raw_ref!r} targets source set {source_set}, "
+                f"expected {cfg.neuronpedia_set}."
+            )
+        return int(layer_number), int(feature_index_value)
+
+    if "://" in raw_ref:
+        feature_ref = parse_feature_url(raw_ref)
+        if feature_ref.model_id != cfg.neuronpedia_model:
+            raise ValueError(
+                f"Constrained feature selection ref {raw_ref!r} targets model {feature_ref.model_id}, "
+                f"expected {cfg.neuronpedia_model}."
+            )
+        layer_identifier = feature_ref.layer
+        feature_index = feature_ref.index
+    else:
+        parts = [part for part in raw_ref.split("/") if part]
+        if len(parts) == 3:
+            model_id, layer_identifier, feature_index = parts
+            if model_id != cfg.neuronpedia_model:
+                raise ValueError(
+                    f"Constrained feature selection ref {raw_ref!r} targets model {model_id}, "
+                    f"expected {cfg.neuronpedia_model}."
+                )
+        elif len(parts) == 2:
+            layer_identifier, feature_index = parts
+        else:
+            raise ValueError(
+                "Constrained feature selection refs must be full Neuronpedia URLs or 'model/layer/index' or "
+                "'layer/index' strings. "
+                f"Got: {raw_ref!r}"
+            )
+
+    layer_parts = str(layer_identifier).split("-", 1)
+    if len(layer_parts) == 2 and layer_parts[1] != cfg.neuronpedia_set:
+        raise ValueError(
+            f"Constrained feature selection ref {raw_ref!r} targets source set {layer_parts[1]}, "
+            f"expected {cfg.neuronpedia_set}."
+        )
+    layer_number = int(str(layer_identifier).split("-", 1)[0])
+    return layer_number, int(feature_index)
+
+
+def _build_feature_selection_spec(
+    cfg: NotebookHarnessConfig,
+    active_features: Any,
+) -> FeatureSelectionSpec | None:
+    requested_refs = cfg.constrained_feature_selection_refs or ()
+    if not requested_refs:
+        return None
+
+    feature_rows = torch.as_tensor(active_features, dtype=torch.long)
+    if feature_rows.numel() == 0:
+        raise ValueError(
+            "Feature-selection filtering was requested but the attribution graph produced no active features."
+        )
+    feature_rows = feature_rows.reshape(-1, 3)
+
+    triples: list[tuple[int, int, int]] = []
+    unmatched_refs: list[str] = []
+    for raw_ref in requested_refs:
+        layer_number, feature_id = _parse_constrained_feature_selection_ref(raw_ref, cfg)
+        matches = feature_rows[(feature_rows[:, 0] == layer_number) & (feature_rows[:, 2] == feature_id)]
+        if matches.numel() == 0:
+            unmatched_refs.append(str(_serialize_constrained_feature_selection_ref(raw_ref)))
+            continue
+        for row in matches:
+            row_tuple = tuple(int(value) for value in row.tolist())
+            triples.append(cast(tuple[int, int, int], row_tuple))
+
+    if unmatched_refs and not triples:
+        raise ValueError(
+            "None of the requested feature-selection refs were present in the extracted attribution graph: "
+            + ", ".join(unmatched_refs)
+        )
+    if unmatched_refs:
+        warnings.warn(
+            "Some requested feature-selection refs were not present in the extracted attribution graph: "
+            + ", ".join(unmatched_refs),
+            stacklevel=2,
+        )
+
+    unique_triples = list(dict.fromkeys(triples))
+    return FeatureSelectionSpec(triples=unique_triples) if unique_triples else None
+
+
+def _extract_top_features_with_optional_filter(
+    module: Any,
+    cfg: NotebookHarnessConfig,
+    top_payload: dict[str, Any],
+    *,
+    top_n: int,
+) -> tuple[Any, list[tuple[int, int, int]]]:
+    def _post_filter_top_features_result(result: Any, selection: FeatureSelectionSpec) -> Any:
+        feature_ids = torch.as_tensor(getattr(result, "top_feature_ids", []), dtype=torch.long).reshape(-1, 3)
+        feature_scores = torch.as_tensor(getattr(result, "top_feature_scores", []), dtype=torch.float32).reshape(-1)
+        activation_values = getattr(result, "top_feature_activation_values", None)
+        activation_tensor = (
+            None
+            if activation_values is None
+            else torch.as_tensor(activation_values, dtype=torch.float32).reshape(-1)
+        )
+
+        if feature_ids.numel() == 0:
+            setattr(result, "top_feature_ids", torch.empty((0, 3), dtype=torch.long))
+            setattr(result, "top_feature_scores", torch.empty((0,), dtype=torch.float32))
+            if activation_tensor is not None:
+                setattr(result, "top_feature_activation_values", torch.empty((0,), dtype=torch.float32))
+            return result
+
+        selection_mask = apply_feature_selection_filter(feature_ids, selection)
+        if selection_mask.numel() == 0 or not selection_mask.any():
+            setattr(result, "top_feature_ids", torch.empty((0, 3), dtype=torch.long))
+            setattr(result, "top_feature_scores", torch.empty((0,), dtype=torch.float32))
+            if activation_tensor is not None:
+                setattr(result, "top_feature_activation_values", torch.empty((0,), dtype=torch.float32))
+            return result
+
+        selected_indices = selection_mask.nonzero(as_tuple=False).reshape(-1)
+        setattr(result, "top_feature_ids", feature_ids.index_select(0, selected_indices).detach().cpu())
+        setattr(result, "top_feature_scores", feature_scores.index_select(0, selected_indices).detach().cpu())
+        if activation_tensor is not None and activation_tensor.shape[0] == feature_ids.shape[0]:
+            setattr(
+                result,
+                "top_feature_activation_values",
+                activation_tensor.index_select(0, selected_indices).detach().cpu(),
+            )
+        return result
+
+    feature_selection = _build_feature_selection_spec(cfg, top_payload.get("active_features", []))
+    call_kwargs: dict[str, Any] = {"top_n": top_n}
+    applied_triples: list[tuple[int, int, int]] = []
+    if feature_selection is not None:
+        call_kwargs["feature_selection"] = feature_selection
+        applied_triples = list(feature_selection.triples)
+
+    top_features_result = cast(
+        Any,
+        it.extract_top_features(module, it.AnalysisBatch(**top_payload), None, 0, **call_kwargs),
+    )
+    if feature_selection is not None:
+        top_features_result = _post_filter_top_features_result(top_features_result, feature_selection)
+    return top_features_result, applied_triples
+
+
+def _reduce_top_features_result_to_single_feature(result: Any) -> tuple[Any, int]:
+    feature_ids = torch.as_tensor(getattr(result, "top_feature_ids", []), dtype=torch.long).reshape(-1, 3)
+    feature_scores = torch.as_tensor(getattr(result, "top_feature_scores", []), dtype=torch.float32).reshape(-1)
+    activation_values = getattr(result, "top_feature_activation_values", None)
+    activation_tensor = (
+        None if activation_values is None else torch.as_tensor(activation_values, dtype=torch.float32).reshape(-1)
+    )
+
+    candidate_count = int(feature_ids.shape[0])
+    if candidate_count == 0:
+        raise ValueError(
+            "debug_intervention_pipelines mode expected at least one selected feature row after filtering."
+        )
+    if candidate_count == 1:
+        return result, candidate_count
+
+    if feature_scores.shape[0] == feature_ids.shape[0]:
+        selected_index = int(torch.argmax(feature_scores.abs()).item())
+    else:
+        selected_index = 0
+
+    selected_indices = torch.tensor([selected_index], dtype=torch.long)
+    setattr(result, "top_feature_ids", feature_ids.index_select(0, selected_indices).detach().cpu())
+    if feature_scores.shape[0] == feature_ids.shape[0]:
+        setattr(result, "top_feature_scores", feature_scores.index_select(0, selected_indices).detach().cpu())
+    if activation_tensor is not None and activation_tensor.shape[0] == feature_ids.shape[0]:
+        setattr(
+            result,
+            "top_feature_activation_values",
+            activation_tensor.index_select(0, selected_indices).detach().cpu(),
+        )
+    return result, candidate_count
 
 
 def run_initial_sanity_check(cfg: NotebookHarnessConfig) -> dict[str, Any]:
@@ -342,7 +1625,6 @@ def run_initial_sanity_check(cfg: NotebookHarnessConfig) -> dict[str, Any]:
     Uses ``cfg.prompt`` (which incorporates PROMPT_OVERRIDE from YAML configs)
     rather than the concept pair's hardcoded prompts.
     """
-    concept_pair = cfg.concept_pair
     raw_prompt = cfg.prompt
 
     with experiment_session(
@@ -351,14 +1633,12 @@ def run_initial_sanity_check(cfg: NotebookHarnessConfig) -> dict[str, Any]:
         **cfg.session_kwargs,
     ) as (_, module, tokenizer):
         rendered = render_prompt(raw_prompt, tokenizer, cfg.prompt_render_mode)
-        add_special = cfg.prompt_render_mode == "plain"
-        enc = tokenizer(rendered, return_tensors="pt", add_special_tokens=add_special)
-        enc = {k: v.to(module.device) for k, v in enc.items()}
+        enc = _build_prompt_batch(tokenizer, rendered, cfg.prompt_render_mode, module.device)
 
-        with torch.inference_mode():
+        with maybe_zero_softcap(module, cfg), torch.inference_mode():
             gen_out = module.model.generate(
                 **enc,
-                max_new_tokens=5,
+                max_new_tokens=1,
                 do_sample=False,
                 output_logits=True,
                 return_dict_in_generate=True,
@@ -368,43 +1648,20 @@ def run_initial_sanity_check(cfg: NotebookHarnessConfig) -> dict[str, Any]:
         first_logits = gen_out.logits[0][0]
         probs = torch.softmax(first_logits.float(), dim=-1)
 
-        # Build key_labels dynamically from the concept pair's key_tokens.
-        # Space-prefix ensures SentencePiece encodes to a single token (e.g. ▁Austin)
-        # rather than splitting bare "Austin" into sub-tokens.
-        # Also include bare variants (without ▁ prefix) since chat-mode models may
-        # predict different token IDs for bare vs prefixed forms.
-        seen_ids: set[int] = set()
         key_analysis: list[dict[str, Any]] = []
-        source_tokens = cfg.key_tokens_override if cfg.key_tokens_override is not None else concept_pair.key_tokens
-        for tok in source_tokens:
-            # ▁-prefixed token (space prefix encoding)
-            encode_form = f" {tok.lstrip('▁')}"
-            label = tok.lstrip("▁")
-            ids = tokenizer.encode(encode_form, add_special_tokens=False)
-            tid = ids[0] if ids else None
-            if tid is not None and tid not in seen_ids:
-                entry: dict[str, Any] = {"label": f"▁{label}", "token_id": tid}
-                entry["logit"] = float(first_logits[tid].item())
-                entry["prob"] = float(probs[tid].item())
-                key_analysis.append(entry)
-                seen_ids.add(tid)
-            # Bare token variant (for chat-mode predictions)
-            if tok.startswith("▁"):
-                bare = tok.lstrip("▁")
-                bare_ids = tokenizer.encode(bare, add_special_tokens=False)
-                bare_tid = bare_ids[-1] if bare_ids else None
-                if bare_tid is not None and bare_tid not in seen_ids:
-                    bare_entry: dict[str, Any] = {"label": bare, "token_id": bare_tid}
-                    bare_entry["logit"] = float(first_logits[bare_tid].item())
-                    bare_entry["prob"] = float(probs[bare_tid].item())
-                    key_analysis.append(bare_entry)
-                    seen_ids.add(bare_tid)
+        for candidate in _build_key_token_candidates(cfg, tokenizer):
+            token_id = int(candidate["token_id"])
+            entry: dict[str, Any] = dict(candidate)
+            entry["logit"] = float(first_logits[token_id].item())
+            entry["prob"] = float(probs[token_id].item())
+            key_analysis.append(entry)
 
         # Sort key tokens by logit magnitude descending
         key_analysis.sort(key=lambda e: abs(e.get("logit", 0.0)), reverse=True)
 
         top_id = int(first_logits.argmax(dim=-1).item())
         top_token = tokenizer.decode([top_id])
+        top_logit = float(first_logits[top_id].item())
         top_prob = float(probs[top_id].item())
 
         return {
@@ -414,7 +1671,70 @@ def run_initial_sanity_check(cfg: NotebookHarnessConfig) -> dict[str, Any]:
             "key_tokens": key_analysis,
             "top1_token": top_token,
             "top1_id": top_id,
+            "top1_logit": top_logit,
             "top1_prob": top_prob,
+        }
+
+
+def collect_baseline_path_debug(cfg: NotebookHarnessConfig) -> dict[str, Any]:
+    """Compare the notebook sanity-check path against replacement-model baseline logits."""
+
+    raw_prompt = cfg.prompt
+    generation_kwargs = {
+        "max_new_tokens": 1,
+        "do_sample": False,
+        "output_logits": True,
+        "return_dict_in_generate": True,
+    }
+
+    with experiment_session(
+        cfg.work_root,
+        phase_run_name(cfg, "baseline_path_debug"),
+        **cfg.session_kwargs,
+    ) as (_, module, tokenizer):
+        rendered_prompt = render_prompt(raw_prompt, tokenizer, cfg.prompt_render_mode)
+        prompt_debug = _get_prompt_debugger(module).collect_prompt_debug_info(
+            raw_prompt,
+            rendered_sequences=rendered_prompt,
+            add_special_tokens=cfg.prompt_render_mode == "plain",
+        )[0]
+
+        prompt_batch = _build_prompt_batch(tokenizer, rendered_prompt, cfg.prompt_render_mode, module.device)
+        prompt_input_ids = cast(torch.Tensor, prompt_batch["input_ids"])[0]
+
+        with maybe_zero_softcap(module, cfg), torch.inference_mode():
+            forward_out = module.model(**prompt_batch)
+            forward_logits = forward_out.logits if hasattr(forward_out, "logits") else forward_out
+            forward_last = forward_logits[0, -1].float().cpu()
+            gen_out = module.model.generate(**prompt_batch, **generation_kwargs)
+            generate_first = gen_out.logits[0][0].float().cpu()
+
+            replacement_string = last_token_logits(
+                module.replacement_model.get_activations(rendered_prompt)[0]
+            ).float().cpu()
+            replacement_tokens = last_token_logits(
+                module.replacement_model.get_activations(prompt_input_ids)[0]
+            ).float().cpu()
+
+        return {
+            "prompt_render_mode": cfg.prompt_render_mode,
+            "generation_kwargs": generation_kwargs,
+            "prompt_debug": prompt_debug,
+            "render_variants": render_prompt_variants(raw_prompt, tokenizer),
+            "generated_text": tokenizer.decode(gen_out.sequences[0], skip_special_tokens=True),
+            "baseline_sources": {
+                "forward_last": _topk_token_summaries(forward_last, tokenizer),
+                "generate_first": _topk_token_summaries(generate_first, tokenizer),
+                "replacement_from_string": _topk_token_summaries(replacement_string, tokenizer),
+                "replacement_from_tokens": _topk_token_summaries(replacement_tokens, tokenizer),
+            },
+            "max_abs_diffs": {
+                "forward_vs_generate": float((forward_last - generate_first).abs().max().item()),
+                "forward_vs_replacement_string": float((forward_last - replacement_string).abs().max().item()),
+                "forward_vs_replacement_tokens": float((forward_last - replacement_tokens).abs().max().item()),
+                "generate_vs_replacement_string": float((generate_first - replacement_string).abs().max().item()),
+                "generate_vs_replacement_tokens": float((generate_first - replacement_tokens).abs().max().item()),
+            },
         }
 
 
@@ -482,27 +1802,40 @@ def run_tokenizer_verification(cfg: NotebookHarnessConfig) -> dict[str, Any]:
                 ids = tokenizer.encode(token, add_special_tokens=False)
                 entries.append({"token": token, "ids": ids, "decoded": tokenizer.decode(ids)})
             report["groups"][label] = entries
-        for token in cfg.concept_pair.key_tokens:
+        for token in resolve_key_tokens(cfg):
             ids = tokenizer.encode(token, add_special_tokens=False)
             report["key_tokens"][token] = {"ids": ids, "decoded": tokenizer.decode(ids)}
+        report["resolved_key_token_candidates"] = _build_key_token_candidates(cfg, tokenizer)
         return report
 
 
 def compute_embed_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
+    if cfg.is_debug_intervention_mode:
+        raise ValueError("compute_embed_direction is not available in debug_intervention_pipelines mode")
+
     with experiment_session(
         cfg.work_root,
         phase_run_name(cfg, "embed_direction"),
         **cfg.session_kwargs,
     ) as (_, module, _):
+        if cfg.uses_explicit_embedding_difference:
+            explicit_tokens = cast(tuple[str, str], cfg.explicit_direction_tokens)
+            group_a_tokens, group_b_tokens = ([explicit_tokens[0]], [explicit_tokens[1]])
+            concept_label = cfg.analysis_concept_label
+        else:
+            group_a_tokens = cfg.concept_pair.group_a_tokens
+            group_b_tokens = cfg.concept_pair.group_b_tokens
+            concept_label = cfg.concept_pair.concept_label
+
         embed_result = cast(
             Any,
             it.concept_direction(
                 module,
                 it.AnalysisBatch(
-                    concept_group_a=cfg.concept_pair.group_a_tokens,
-                    concept_group_b=cfg.concept_pair.group_b_tokens,
-                    concept_label=cfg.concept_pair.concept_label,
-                    concept_direction_mode="paired_rejection",
+                    concept_group_a=group_a_tokens,
+                    concept_group_b=group_b_tokens,
+                    concept_label=concept_label,
+                    concept_direction_mode=cfg.analysis_direction_mode_name,
                 ),
                 None,
                 0,
@@ -525,6 +1858,9 @@ def run_pipeline(
     group_a_ids: list[int],
     group_b_ids: list[int],
 ) -> dict[str, Any]:
+    if cfg.is_debug_intervention_mode:
+        raise ValueError("run_pipeline is not available in debug_intervention_pipelines mode")
+
     with experiment_session(
         cfg.work_root,
         phase_run_name(cfg, f"{label}_pipeline_{scale_factor}x"),
@@ -534,44 +1870,49 @@ def run_pipeline(
         key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
         rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
         configure_analysis(module, it.compute_attribution_graph, scale_factor)
-        graph_result = cast(
-            Any,
-            it.compute_attribution_graph(
-                module,
-                it.AnalysisBatch(
-                    prompts=[rendered_prompt],
-                    concept_direction=direction,
-                    concept_label=cfg.concept_pair.concept_label,
-                    concept_direction_mode="paired_rejection",
-                    concept_group_a_token_ids=group_a_ids,
-                    concept_group_b_token_ids=group_b_ids,
+        analysis_batch, graph_call_kwargs = _build_graph_analysis_inputs(
+            cfg,
+            tokenizer,
+            rendered_prompt,
+            direction=direction,
+            group_a_ids=group_a_ids,
+            group_b_ids=group_b_ids,
+        )
+        with maybe_zero_softcap(module, cfg):
+            graph_result = cast(
+                Any,
+                it.compute_attribution_graph(
+                    module,
+                    analysis_batch,
+                    None,
+                    0,
+                    **graph_call_kwargs,
                 ),
-                None,
-                0,
-            ),
-        )
-        influence_result = cast(Any, it.graph_node_influence(module, graph_result, None, 0))
-        top_payload = dict(cast(Any, graph_result))
-        top_payload.update(dict(cast(Any, influence_result)))
-        top_features_result = cast(
-            Any,
-            it.extract_top_features(module, it.AnalysisBatch(**top_payload), None, 0, top_n=top_n),
-        )
-        intervention_result = cast(
-            Any,
-            it.feature_intervention_forward(
+            )
+            influence_result = cast(Any, it.graph_node_influence(module, graph_result, None, 0))
+            top_payload = dict(cast(Any, graph_result))
+            top_payload.update(dict(cast(Any, influence_result)))
+            top_features_result, applied_feature_filter_triples = _extract_top_features_with_optional_filter(
                 module,
-                it.AnalysisBatch(
-                    prompts=[rendered_prompt],
-                    top_feature_ids=top_features_result.top_feature_ids,
-                    top_feature_scores=top_features_result.top_feature_scores,
-                    top_feature_activation_values=top_features_result.top_feature_activation_values,
-                    logit_target_ids=torch.tensor([target_a_id], dtype=torch.long),
+                cfg,
+                top_payload,
+                top_n=top_n,
+            )
+            intervention_result = cast(
+                Any,
+                it.feature_intervention_forward(
+                    module,
+                    it.AnalysisBatch(
+                        prompts=[rendered_prompt],
+                        top_feature_ids=top_features_result.top_feature_ids,
+                        top_feature_scores=top_features_result.top_feature_scores,
+                        top_feature_activation_values=top_features_result.top_feature_activation_values,
+                        logit_target_ids=torch.tensor([target_a_id], dtype=torch.long),
+                    ),
+                    None,
+                    0,
                 ),
-                None,
-                0,
-            ),
-        )
+            )
         pre_logits = tensor_to_cpu(intervention_result.pre_intervention_logits)
         post_logits = tensor_to_cpu(intervention_result.post_intervention_logits)
         pre_gap, post_gap, gap_delta = summarize_gap(pre_logits, post_logits, target_a_id, target_b_id)
@@ -601,6 +1942,11 @@ def run_pipeline(
             "pre_top_token_ids": [int(token_id) for token_id in pre_top.indices.tolist()],
             "post_top_tokens": [tokenizer.decode([int(token_id)]) for token_id in post_top.indices.tolist()],
             "post_top_token_ids": [int(token_id) for token_id in post_top.indices.tolist()],
+            "requested_constrained_feature_selection": [
+                _serialize_constrained_feature_selection_ref(raw_ref)
+                for raw_ref in (cfg.constrained_feature_selection_refs or ())
+            ],
+            "applied_feature_filter_triples": applied_feature_filter_triples,
         }
 
 
@@ -620,6 +1966,9 @@ def run_direct_projection_pipeline(
 
     Returns a result dict compatible with ``run_pipeline``'s output format.
     """
+    if cfg.is_debug_intervention_mode:
+        raise ValueError("run_direct_projection_pipeline is not available in debug_intervention_pipelines mode")
+
     with experiment_session(
         cfg.work_root,
         phase_run_name(cfg, f"{label}_direct_proj_{scale_factor}x"),
@@ -633,23 +1982,24 @@ def run_direct_projection_pipeline(
         device = next(module.model.parameters()).device
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in dict(enc).items()}
         configure_analysis(module, it.model_fwd_intervention, scale_factor)
-        intervention_result = cast(
-            Any,
-            it.model_fwd_intervention(
-                module,
-                it.AnalysisBatch(
-                    prompts=[rendered_prompt],
-                    concept_direction=direction,
-                    concept_cache_key=cfg.store_concept_cache_key,
-                    direction_scale_factor=scale_factor,
-                    logit_target_ids=torch.tensor([target_a_id], dtype=torch.long),
-                    concept_group_a_token_ids=[target_a_id],
-                    concept_group_b_token_ids=[target_b_id],
+        with maybe_zero_softcap(module, cfg):
+            intervention_result = cast(
+                Any,
+                it.model_fwd_intervention(
+                    module,
+                    it.AnalysisBatch(
+                        prompts=[rendered_prompt],
+                        concept_direction=direction,
+                        concept_cache_key=cfg.store_concept_cache_key,
+                        direction_scale_factor=scale_factor,
+                        logit_target_ids=torch.tensor([target_a_id], dtype=torch.long),
+                        concept_group_a_token_ids=[target_a_id],
+                        concept_group_b_token_ids=[target_b_id],
+                    ),
+                    batch,
+                    0,
                 ),
-                batch,
-                0,
-            ),
-        )
+            )
         pre_logits = tensor_to_cpu(intervention_result.pre_intervention_logits)
         post_logits = tensor_to_cpu(intervention_result.post_intervention_logits)
 
@@ -734,6 +2084,9 @@ def _score_expected_answer(
 
 
 def compute_store_direction_manual(cfg: NotebookHarnessConfig) -> dict[str, Any]:
+    if not cfg.supports_store_direction:
+        raise ValueError("compute_store_direction_manual is only available in concept_pair mode")
+
     with experiment_session(
         cfg.work_root,
         phase_run_name(cfg, "store_direction_manual"),
@@ -745,47 +2098,50 @@ def compute_store_direction_manual(cfg: NotebookHarnessConfig) -> dict[str, Any]
         all_prompts = build_all_prompts(cfg, tokenizer)
         (target_a_id, target_b_id), _ = resolve_target_tokens(cfg, tokenizer)
         latent_states: list[torch.Tensor] = []
-        prediction_info = {"examples": [], "n_correct": 0}
-        for prompt_text, expected_answer, group in all_prompts:
-            add_special_tokens = cfg.prompt_render_mode == "plain"
-            enc = tokenizer(prompt_text, return_tensors="pt", padding=False, add_special_tokens=add_special_tokens)
-            batch_dev = {
-                key: value.to(device) if isinstance(value, torch.Tensor) else value for key, value in dict(enc).items()
-            }
-            with torch.no_grad():
-                logits, cache = model_backend.fwd_w_cache(
-                    model=module.model,
-                    batch=batch_dev,
-                    names_filter="unembed.hook_in",
-                )
-            last_pos = logits.shape[1] - 1
-            example_logits = logits[0, last_pos]
-            cache_tensor = torch.as_tensor(cache["unembed.hook_in"])
-            latent_states.append(tensor_to_cpu(cache_tensor[0, last_pos]))
-            expected_id, _, correct, rank, topk_ids, topk_tokens = _score_expected_answer(
-                tokenizer,
-                example_logits,
-                expected_answer,
-                target_a_id,
-                target_b_id,
-            )
-            if correct:
-                prediction_info["n_correct"] += 1
-            prediction_info["examples"].append(
-                {
-                    "group": group,
-                    "expected": expected_answer,
-                    "correct": correct,
-                    "rank": rank,
-                    "top1": topk_tokens[0] if topk_tokens else None,
-                    "top5": topk_tokens[:5],
-                    "top10_ids": topk_ids,
-                    "prompt": prompt_text,
-                    "input_ids": enc["input_ids"][0].tolist(),
-                    "tokens": tokenizer.convert_ids_to_tokens(enc["input_ids"][0].tolist()),
-                    "attention_mask": enc["attention_mask"][0].tolist() if "attention_mask" in enc else None,
+        prediction_info: dict[str, Any] = {"examples": [], "n_correct": 0}
+        prediction_examples = cast(list[dict[str, Any]], prediction_info["examples"])
+        with maybe_zero_softcap(module, cfg):
+            for prompt_text, expected_answer, group in all_prompts:
+                add_special_tokens = cfg.prompt_render_mode == "plain"
+                enc = tokenizer(prompt_text, return_tensors="pt", padding=False, add_special_tokens=add_special_tokens)
+                batch_dev = {
+                    key: value.to(device) if isinstance(value, torch.Tensor) else value
+                    for key, value in dict(enc).items()
                 }
-            )
+                with torch.no_grad():
+                    logits, cache = model_backend.fwd_w_cache(
+                        model=module.model,
+                        batch=batch_dev,
+                        names_filter="unembed.hook_in",
+                    )
+                last_pos = logits.shape[1] - 1
+                example_logits = logits[0, last_pos]
+                cache_tensor = torch.as_tensor(cache["unembed.hook_in"])
+                latent_states.append(tensor_to_cpu(cache_tensor[0, last_pos]))
+                expected_id, _, correct, rank, topk_ids, topk_tokens = _score_expected_answer(
+                    tokenizer,
+                    example_logits,
+                    expected_answer,
+                    target_a_id,
+                    target_b_id,
+                )
+                if correct:
+                    prediction_info["n_correct"] = int(prediction_info["n_correct"]) + 1
+                prediction_examples.append(
+                    {
+                        "group": group,
+                        "expected": expected_answer,
+                        "correct": correct,
+                        "rank": rank,
+                        "top1": topk_tokens[0] if topk_tokens else None,
+                        "top5": topk_tokens[:5],
+                        "top10_ids": topk_ids,
+                        "prompt": prompt_text,
+                        "input_ids": enc["input_ids"][0].tolist(),
+                        "tokens": tokenizer.convert_ids_to_tokens(enc["input_ids"][0].tolist()),
+                        "attention_mask": enc["attention_mask"][0].tolist() if "attention_mask" in enc else None,
+                    }
+                )
         stacked = torch.stack(latent_states)
         n_a = len(cfg.concept_pair.group_a_entities)
         n_b = len(cfg.concept_pair.group_b_entities)
@@ -1071,6 +2427,9 @@ def prepare_extracted_concept_example_tensors(
 
 
 def compute_store_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
+    if not cfg.supports_store_direction:
+        raise ValueError("compute_store_direction is only available in concept_pair mode")
+
     if cfg.store_latent_extraction_mode not in ("answer_position_state", "context_enhanced"):
         raise ValueError(f"Unsupported store_latent_extraction_mode: {cfg.store_latent_extraction_mode}")
 
@@ -1084,17 +2443,18 @@ def compute_store_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
         device = next(module.model.parameters()).device
         (target_a_id, target_b_id), _ = resolve_target_tokens(cfg, tokenizer)
 
-        cached_batches, answer_indices, orig_labels, logit_diffs, prediction_info, all_prompts = (
-            construct_concept_pair_analysis_inputs(
-                cfg,
-                module,
-                tokenizer,
-                model_backend,
-                device,
-                target_a_id,
-                target_b_id,
+        with maybe_zero_softcap(module, cfg):
+            cached_batches, answer_indices, orig_labels, logit_diffs, prediction_info, all_prompts = (
+                construct_concept_pair_analysis_inputs(
+                    cfg,
+                    module,
+                    tokenizer,
+                    model_backend,
+                    device,
+                    target_a_id,
+                    target_b_id,
+                )
             )
-        )
 
         extracted_batches = execute_concept_latent_extraction_ops(
             module,
@@ -1151,6 +2511,9 @@ def run_scale_sweep(
     group_a_ids: list[int],
     group_b_ids: list[int],
 ) -> list[dict[str, Any]]:
+    if cfg.is_debug_intervention_mode:
+        raise ValueError("run_scale_sweep is not available in debug_intervention_pipelines mode")
+
     results = []
     for scale_factor in cfg.scale_factor_sweep:
         with experiment_session(
@@ -1162,44 +2525,49 @@ def run_scale_sweep(
             key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
             rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
             configure_analysis(module, it.compute_attribution_graph, scale_factor)
-            graph_result = cast(
-                Any,
-                it.compute_attribution_graph(
-                    module,
-                    it.AnalysisBatch(
-                        prompts=[rendered_prompt],
-                        concept_direction=direction,
-                        concept_label=cfg.concept_pair.concept_label,
-                        concept_direction_mode="paired_rejection",
-                        concept_group_a_token_ids=group_a_ids,
-                        concept_group_b_token_ids=group_b_ids,
+            analysis_batch, graph_call_kwargs = _build_graph_analysis_inputs(
+                cfg,
+                tokenizer,
+                rendered_prompt,
+                direction=direction,
+                group_a_ids=group_a_ids,
+                group_b_ids=group_b_ids,
+            )
+            with maybe_zero_softcap(module, cfg):
+                graph_result = cast(
+                    Any,
+                    it.compute_attribution_graph(
+                        module,
+                        analysis_batch,
+                        None,
+                        0,
+                        **graph_call_kwargs,
                     ),
-                    None,
-                    0,
-                ),
-            )
-            influence_result = cast(Any, it.graph_node_influence(module, graph_result, None, 0))
-            top_payload = dict(cast(Any, graph_result))
-            top_payload.update(dict(cast(Any, influence_result)))
-            top_features_result = cast(
-                Any,
-                it.extract_top_features(module, it.AnalysisBatch(**top_payload), None, 0, top_n=cfg.top_n),
-            )
-            intervention_result = cast(
-                Any,
-                it.feature_intervention_forward(
+                )
+                influence_result = cast(Any, it.graph_node_influence(module, graph_result, None, 0))
+                top_payload = dict(cast(Any, graph_result))
+                top_payload.update(dict(cast(Any, influence_result)))
+                top_features_result, applied_feature_filter_triples = _extract_top_features_with_optional_filter(
                     module,
-                    it.AnalysisBatch(
-                        prompts=[rendered_prompt],
-                        top_feature_ids=top_features_result.top_feature_ids,
-                        top_feature_scores=top_features_result.top_feature_scores,
-                        top_feature_activation_values=top_features_result.top_feature_activation_values,
-                        logit_target_ids=torch.tensor([target_a_id], dtype=torch.long),
+                    cfg,
+                    top_payload,
+                    top_n=cfg.top_n,
+                )
+                intervention_result = cast(
+                    Any,
+                    it.feature_intervention_forward(
+                        module,
+                        it.AnalysisBatch(
+                            prompts=[rendered_prompt],
+                            top_feature_ids=top_features_result.top_feature_ids,
+                            top_feature_scores=top_features_result.top_feature_scores,
+                            top_feature_activation_values=top_features_result.top_feature_activation_values,
+                            logit_target_ids=torch.tensor([target_a_id], dtype=torch.long),
+                        ),
+                        None,
+                        0,
                     ),
-                    None,
-                    0,
-                ),
-            )
+                )
             pre_logits = tensor_to_cpu(intervention_result.pre_intervention_logits)
             post_logits = tensor_to_cpu(intervention_result.post_intervention_logits)
             pre_gap, post_gap, gap_delta = summarize_gap(pre_logits, post_logits, target_a_id, target_b_id)
@@ -1213,6 +2581,11 @@ def run_scale_sweep(
                     "gap_delta": gap_delta,
                     "key_ids": key_ids,
                     "key_labels": key_labels,
+                    "requested_constrained_feature_selection": [
+                        _serialize_constrained_feature_selection_ref(raw_ref)
+                        for raw_ref in (cfg.constrained_feature_selection_refs or ())
+                    ],
+                    "applied_feature_filter_triples": applied_feature_filter_triples,
                 }
             )
     return results
@@ -1226,6 +2599,9 @@ def collect_feature_pool(
     *,
     top_n: int,
 ) -> dict[str, Any]:
+    if cfg.is_debug_intervention_mode:
+        raise ValueError("collect_feature_pool is not available in debug_intervention_pipelines mode")
+
     with experiment_session(
         cfg.work_root,
         phase_run_name(cfg, "feature_pool"),
@@ -1235,29 +2611,34 @@ def collect_feature_pool(
         key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
         rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
         configure_analysis(module, it.compute_attribution_graph, 0.0)
-        graph_result = cast(
-            Any,
-            it.compute_attribution_graph(
-                module,
-                it.AnalysisBatch(
-                    prompts=[rendered_prompt],
-                    concept_direction=direction,
-                    concept_label=cfg.concept_pair.concept_label,
-                    concept_direction_mode="paired_rejection",
-                    concept_group_a_token_ids=group_a_ids,
-                    concept_group_b_token_ids=group_b_ids,
+        analysis_batch, graph_call_kwargs = _build_graph_analysis_inputs(
+            cfg,
+            tokenizer,
+            rendered_prompt,
+            direction=direction,
+            group_a_ids=group_a_ids,
+            group_b_ids=group_b_ids,
+        )
+        with maybe_zero_softcap(module, cfg):
+            graph_result = cast(
+                Any,
+                it.compute_attribution_graph(
+                    module,
+                    analysis_batch,
+                    None,
+                    0,
+                    **graph_call_kwargs,
                 ),
-                None,
-                0,
-            ),
-        )
-        influence_result = cast(Any, it.graph_node_influence(module, graph_result, None, 0))
-        top_payload = dict(cast(Any, graph_result))
-        top_payload.update(dict(cast(Any, influence_result)))
-        feature_result = cast(
-            Any,
-            it.extract_top_features(module, it.AnalysisBatch(**top_payload), None, 0, top_n=top_n),
-        )
+            )
+            influence_result = cast(Any, it.graph_node_influence(module, graph_result, None, 0))
+            top_payload = dict(cast(Any, graph_result))
+            top_payload.update(dict(cast(Any, influence_result)))
+            feature_result, applied_feature_filter_triples = _extract_top_features_with_optional_filter(
+                module,
+                cfg,
+                top_payload,
+                top_n=top_n,
+            )
         return {
             "feature_ids": tensor_to_cpu(feature_result.top_feature_ids.to(torch.float32)).to(torch.long),
             "feature_scores": tensor_to_cpu(feature_result.top_feature_scores),
@@ -1266,6 +2647,11 @@ def collect_feature_pool(
             "target_b_id": target_b_id,
             "key_ids": key_ids,
             "key_labels": key_labels,
+            "requested_constrained_feature_selection": [
+                _serialize_constrained_feature_selection_ref(raw_ref)
+                for raw_ref in (cfg.constrained_feature_selection_refs or ())
+            ],
+            "applied_feature_filter_triples": applied_feature_filter_triples,
         }
 
 
@@ -1274,6 +2660,9 @@ def run_ablations(
     feature_pool: dict[str, Any],
     pre_logits_ref: torch.Tensor,
 ) -> tuple[dict[str, dict[str, float]], dict[str, float], dict[int, torch.Tensor]]:
+    if cfg.is_debug_intervention_mode:
+        raise ValueError("run_ablations is not available in debug_intervention_pipelines mode")
+
     abl_groups = {
         "baseline": {
             label: float(torch.softmax(pre_logits_ref.float(), dim=-1)[token_id].item())
@@ -1290,35 +2679,36 @@ def run_ablations(
         **cfg.session_kwargs,
     ) as (_, module, tokenizer):
         rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
-        for n_value in cfg.ablation_n_list:
-            if n_value > int(feature_pool["feature_ids"].shape[0]):
-                continue
-            intervention_result = cast(
-                Any,
-                it.feature_intervention_forward(
-                    module,
-                    it.AnalysisBatch(
-                        prompts=[rendered_prompt],
-                        top_feature_ids=feature_pool["feature_ids"][:n_value],
-                        top_feature_scores=feature_pool["feature_scores"][:n_value],
-                        top_feature_activation_values=feature_pool["feature_activations"][:n_value] * 0.0,
-                        logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
+        with maybe_zero_softcap(module, cfg):
+            for n_value in cfg.ablation_n_list:
+                if n_value > int(feature_pool["feature_ids"].shape[0]):
+                    continue
+                intervention_result = cast(
+                    Any,
+                    it.feature_intervention_forward(
+                        module,
+                        it.AnalysisBatch(
+                            prompts=[rendered_prompt],
+                            top_feature_ids=feature_pool["feature_ids"][:n_value],
+                            top_feature_scores=feature_pool["feature_scores"][:n_value],
+                            top_feature_activation_values=feature_pool["feature_activations"][:n_value] * 0.0,
+                            logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
+                        ),
+                        None,
+                        0,
                     ),
-                    None,
-                    0,
-                ),
-            )
-            post_logits = tensor_to_cpu(intervention_result.post_intervention_logits)
-            probs = torch.softmax(post_logits, dim=-1)
-            label = f"top-{n_value}"
-            abl_groups[label] = {
-                name: float(probs[token_id].item())
-                for name, token_id in zip(feature_pool["key_labels"][:3], feature_pool["key_ids"][:3])
-            }
-            abl_logit_diffs[label] = float(
-                post_logits[feature_pool["target_a_id"]] - post_logits[feature_pool["target_b_id"]]
-            )
-            results[n_value] = post_logits
+                )
+                post_logits = tensor_to_cpu(intervention_result.post_intervention_logits)
+                probs = torch.softmax(post_logits, dim=-1)
+                label = f"top-{n_value}"
+                abl_groups[label] = {
+                    name: float(probs[token_id].item())
+                    for name, token_id in zip(feature_pool["key_labels"][:3], feature_pool["key_ids"][:3])
+                }
+                abl_logit_diffs[label] = float(
+                    post_logits[feature_pool["target_a_id"]] - post_logits[feature_pool["target_b_id"]]
+                )
+                results[n_value] = post_logits
     return abl_groups, abl_logit_diffs, results
 
 
@@ -1327,6 +2717,9 @@ def run_sign_aware(
     feature_pool: dict[str, Any],
     pre_logits_ref: torch.Tensor,
 ) -> dict[str, Any]:
+    if cfg.is_debug_intervention_mode:
+        raise ValueError("run_sign_aware is not available in debug_intervention_pipelines mode")
+
     feature_ids = feature_pool["feature_ids"]
     feature_scores = feature_pool["feature_scores"]
     feature_activations = feature_pool["feature_activations"]
@@ -1347,48 +2740,494 @@ def run_sign_aware(
         **cfg.session_kwargs,
     ) as (_, module, tokenizer):
         rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
-        if len(result["positive_features"]) > 0:
-            n_pos = min(cfg.top_n, len(result["positive_features"]))
-            pos_intervention = cast(
-                Any,
-                it.feature_intervention_forward(
-                    module,
-                    it.AnalysisBatch(
-                        prompts=[rendered_prompt],
-                        top_feature_ids=result["positive_features"][:n_pos],
-                        top_feature_scores=result["positive_scores"][:n_pos],
-                        top_feature_activation_values=result["positive_activations"][:n_pos] * cfg.default_scale_factor,
-                        logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
+        with maybe_zero_softcap(module, cfg):
+            if len(result["positive_features"]) > 0:
+                n_pos = min(cfg.top_n, len(result["positive_features"]))
+                pos_intervention = cast(
+                    Any,
+                    it.feature_intervention_forward(
+                        module,
+                        it.AnalysisBatch(
+                            prompts=[rendered_prompt],
+                            top_feature_ids=result["positive_features"][:n_pos],
+                            top_feature_scores=result["positive_scores"][:n_pos],
+                            top_feature_activation_values=result["positive_activations"][:n_pos]
+                            * cfg.default_scale_factor,
+                            logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
+                        ),
+                        None,
+                        0,
                     ),
-                    None,
-                    0,
-                ),
-            )
-            result["positive_post_logits"] = tensor_to_cpu(pos_intervention.post_intervention_logits)
-        else:
-            result["messages"].append("No positive-activation features were available for the current feature pool.")
-        if len(result["negative_features"]) > 0:
-            n_neg = min(cfg.top_n, len(result["negative_features"]))
-            neg_intervention = cast(
-                Any,
-                it.feature_intervention_forward(
-                    module,
-                    it.AnalysisBatch(
-                        prompts=[rendered_prompt],
-                        top_feature_ids=result["negative_features"][:n_neg],
-                        top_feature_scores=result["negative_scores"][:n_neg],
-                        top_feature_activation_values=result["negative_activations"][:n_neg] * 0.0,
-                        logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
+                )
+                result["positive_post_logits"] = tensor_to_cpu(pos_intervention.post_intervention_logits)
+            else:
+                result["messages"].append(
+                    "No positive-activation features were available for the current feature pool."
+                )
+            if len(result["negative_features"]) > 0:
+                n_neg = min(cfg.top_n, len(result["negative_features"]))
+                neg_intervention = cast(
+                    Any,
+                    it.feature_intervention_forward(
+                        module,
+                        it.AnalysisBatch(
+                            prompts=[rendered_prompt],
+                            top_feature_ids=result["negative_features"][:n_neg],
+                            top_feature_scores=result["negative_scores"][:n_neg],
+                            top_feature_activation_values=result["negative_activations"][:n_neg] * 0.0,
+                            logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
+                        ),
+                        None,
+                        0,
                     ),
-                    None,
-                    0,
-                ),
-            )
-            result["negative_post_logits"] = tensor_to_cpu(neg_intervention.post_intervention_logits)
-        else:
-            result["messages"].append("No negative-activation features were available for the current feature pool.")
+                )
+                result["negative_post_logits"] = tensor_to_cpu(neg_intervention.post_intervention_logits)
+            else:
+                result["messages"].append(
+                    "No negative-activation features were available for the current feature pool."
+                )
     result["pre_logits_ref"] = pre_logits_ref
     return result
+
+
+def run_debug_intervention_validation(cfg: NotebookHarnessConfig) -> dict[str, Any]:
+    if not cfg.is_debug_intervention_mode:
+        raise ValueError("run_debug_intervention_validation is only available in debug_intervention_pipelines mode")
+
+    with experiment_session(
+        cfg.work_root,
+        phase_run_name(cfg, "debug_intervention_validation"),
+        **cfg.session_kwargs,
+    ) as (_, module, tokenizer):
+        rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
+        (target_a_id, target_b_id), resolved_target_tokens = resolve_target_tokens(cfg, tokenizer)
+        key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer, include_bare_variants=False)
+        graph_target_ids, graph_target_tokens = resolve_graph_target_tokens(cfg, tokenizer)
+
+        configure_analysis(module, it.compute_attribution_graph, cfg.default_scale_factor)
+        analysis_batch, graph_call_kwargs = _build_graph_analysis_inputs(
+            cfg,
+            tokenizer,
+            rendered_prompt,
+            direction=None,
+            group_a_ids=None,
+            group_b_ids=None,
+            attribution_target_device=module.replacement_model.device,
+        )
+
+        with maybe_zero_softcap(module, cfg):
+            analysis_backend = require_analysis_backend(module)
+            graph_result = cast(
+                Any,
+                it.compute_attribution_graph(
+                    module,
+                    analysis_batch,
+                    None,
+                    0,
+                    **graph_call_kwargs,
+                ),
+            )
+            graph = analysis_backend.hydrate_graph_from_batch(graph_result)
+            influence_result = cast(Any, it.graph_node_influence(module, graph_result, None, 0))
+            top_payload = dict(cast(Any, graph_result))
+            top_payload.update(dict(cast(Any, influence_result)))
+            top_features_result, applied_feature_filter_triples = _extract_top_features_with_optional_filter(
+                module,
+                cfg,
+                top_payload,
+                top_n=cfg.top_n,
+            )
+            top_features_result, selected_feature_candidate_count = _reduce_top_features_result_to_single_feature(
+                top_features_result
+            )
+            selected_feature_rows = top_features_result.top_feature_ids.to(torch.long)
+
+            active_features = tensor_to_cpu(
+                torch.as_tensor(graph_result.active_features, dtype=torch.long)
+            ).to(torch.long)
+            selected_feature_indices = tensor_to_cpu(
+                torch.as_tensor(getattr(graph_result, "selected_features", []), dtype=torch.long)
+            ).reshape(-1).to(torch.long)
+            graph_feature_rows = (
+                active_features.index_select(0, selected_feature_indices)
+                if selected_feature_indices.numel() > 0
+                else active_features
+            )
+            adjacency_matrix = tensor_to_cpu(torch.as_tensor(graph_result.adjacency_matrix, dtype=torch.float32))
+            logit_target_ids = tensor_to_cpu(
+                torch.as_tensor(graph_result.logit_target_ids, dtype=torch.long)
+            ).reshape(-1).to(torch.long)
+            graph_result_target_tokens = [
+                str(token) for token in getattr(graph_result, "logit_target_tokens", graph_target_tokens)
+            ]
+            requested_graph_target_ids = [int(token_id) for token_id in graph_target_ids]
+            actual_graph_target_ids = [int(token_id) for token_id in logit_target_ids.tolist()]
+            selected_feature = tensor_to_cpu(selected_feature_rows[0]).to(torch.long)
+            selected_graph_index = _match_feature_row_index(graph_feature_rows, selected_feature)
+            graph_inputs = getattr(graph_result, "input_tokens", rendered_prompt)
+            input_diagnostics = _summarize_graph_input_tokens(
+                tokenizer,
+                rendered_prompt,
+                cfg.prompt_render_mode,
+                graph_inputs,
+            )
+
+            baseline_logits_raw, baseline_activation_cache = module.replacement_model.get_activations(
+                graph_inputs,
+                apply_activation_function=False,
+            )
+            baseline_logits = last_token_logits(baseline_logits_raw).float().cpu()
+            baseline_activation_cache_t = torch.as_tensor(baseline_activation_cache).detach().cpu().float()
+
+            layer, position, feature_id = (int(value) for value in selected_feature.tolist())
+            baseline_activation = float(baseline_activation_cache_t[layer, position, feature_id].item())
+            n_layers = _resolve_model_layer_count(module)
+            wrapper_inputs = it.AnalysisBatch(
+                top_feature_ids=top_features_result.top_feature_ids,
+                top_feature_scores=top_features_result.top_feature_scores,
+                top_feature_activation_values=top_features_result.top_feature_activation_values,
+                logit_target_ids=logit_target_ids,
+                prompts=[rendered_prompt],
+            )
+            wrapper_settings = analysis_backend.resolve_feature_intervention_settings(
+                module,
+                {"intervention_return_activations": True},
+            )
+            interventions, _ = analysis_backend.build_feature_interventions(wrapper_inputs, wrapper_settings)
+            wrapper_result = cast(
+                Any,
+                it.feature_intervention_forward(
+                    module,
+                    wrapper_inputs,
+                    None,
+                    0,
+                    prompt=graph_inputs,
+                    intervention_return_activations=True,
+                ),
+            )
+            wrapper_pre_logits = tensor_to_cpu(
+                torch.as_tensor(wrapper_result.pre_intervention_logits, dtype=torch.float32)
+            ).reshape(-1)
+            wrapper_post_logits = tensor_to_cpu(
+                torch.as_tensor(wrapper_result.post_intervention_logits, dtype=torch.float32)
+            ).reshape(-1)
+            wrapper_activation_cache = getattr(wrapper_result, "intervention_activation_cache", None)
+            if wrapper_activation_cache is None:
+                raise ValueError("feature_intervention_forward did not return intervention_activation_cache")
+            post_activation_cache_t = torch.as_tensor(wrapper_activation_cache).detach().cpu().float()
+            post_logits = wrapper_post_logits
+            intervention_value = float(interventions[0][3])
+            wrapper_pre_gap, wrapper_post_gap, wrapper_gap_delta = summarize_gap(
+                wrapper_pre_logits,
+                wrapper_post_logits,
+                target_a_id,
+                target_b_id,
+            )
+            wrapper_intervention_specs = json.loads(getattr(wrapper_result, "intervention_specs_json", "[]"))
+            wrapper_intervention_config = json.loads(getattr(wrapper_result, "intervention_config", "{}"))
+            wrapper_path_diagnostics = {
+                "resolved_settings": {
+                    "scale_factor": float(wrapper_settings["scale_factor"]),
+                    "value_source": str(wrapper_settings["value_source"]),
+                    "value": wrapper_settings["value"],
+                    "constrained_layers": wrapper_settings["constrained_layers"],
+                    "freeze_attention": wrapper_settings["freeze_attention"],
+                    "apply_activation_function": wrapper_settings["apply_activation_function"],
+                    "sparse": bool(wrapper_settings["sparse"]),
+                    "return_activations": bool(wrapper_settings["return_activations"]),
+                },
+                "call_kwargs": _serialize_intervention_call_kwargs(
+                    analysis_backend.feature_intervention_call_kwargs(wrapper_settings)
+                ),
+                "intervention_specs": wrapper_intervention_specs,
+                "intervention_config": wrapper_intervention_config,
+                "pre_gap": wrapper_pre_gap,
+                "post_gap": wrapper_post_gap,
+                "gap_delta": wrapper_gap_delta,
+                "matches_validation_path_settings": {
+                    "constrained_layers": wrapper_settings["constrained_layers"] == list(range(n_layers)),
+                    "apply_activation_function": wrapper_settings["apply_activation_function"] is False,
+                },
+                "returned_activation_cache": True,
+                "max_abs_pre_logit_diff_vs_baseline_path": float(
+                    (wrapper_pre_logits - baseline_logits).abs().max().item()
+                ),
+                "key_logits_post": [float(wrapper_post_logits[token_id].item()) for token_id in key_ids],
+            }
+            runtime_state = {
+                "module": snapshot_module_runtime_state(module),
+                "graph_op": {
+                    "analysis_batch": snapshot_analysis_batch(analysis_batch, ("prompts", "logit_target_ids")),
+                    "call_kwargs": _serialize_intervention_call_kwargs(graph_call_kwargs),
+                    "requested_graph_target_ids": requested_graph_target_ids,
+                    "requested_graph_target_tokens": [str(token) for token in graph_target_tokens],
+                    "result": {
+                        "input_tokens": tensor_fingerprint(getattr(graph_result, "input_tokens", None)),
+                        "active_features": tensor_fingerprint(getattr(graph_result, "active_features", None)),
+                        "selected_features": tensor_fingerprint(getattr(graph_result, "selected_features", None)),
+                        "selected_feature_rows": tensor_fingerprint(graph_feature_rows),
+                        "adjacency_matrix": tensor_fingerprint(getattr(graph_result, "adjacency_matrix", None)),
+                        "logit_target_ids": tensor_fingerprint(logit_target_ids),
+                        "logit_target_tokens": graph_result_target_tokens,
+                    },
+                },
+                "top_features_op": {
+                    "applied_feature_filter_triples": [list(triple) for triple in applied_feature_filter_triples],
+                    "selected_feature_candidate_count": int(selected_feature_candidate_count),
+                    "result": snapshot_analysis_batch(
+                        top_features_result,
+                        ("top_feature_ids", "top_feature_scores", "top_feature_activation_values"),
+                    ),
+                },
+                "baseline_forward": {
+                    "zero_softcap_enabled": bool(cfg.enable_zero_softcap),
+                    "apply_activation_function": False,
+                    "graph_inputs": tensor_fingerprint(graph_inputs)
+                    if isinstance(graph_inputs, torch.Tensor)
+                    else str(graph_inputs),
+                    "input_diagnostics": input_diagnostics,
+                    "baseline_logits": tensor_fingerprint(baseline_logits),
+                    "baseline_activation_cache": tensor_fingerprint(baseline_activation_cache_t),
+                    "selected_feature_baseline_activation": float(baseline_activation),
+                },
+                "intervention_op": {
+                    "analysis_batch": snapshot_analysis_batch(
+                        wrapper_inputs,
+                        (
+                            "prompts",
+                            "top_feature_ids",
+                            "top_feature_scores",
+                            "top_feature_activation_values",
+                            "logit_target_ids",
+                        ),
+                    ),
+                    "resolved_settings": wrapper_path_diagnostics["resolved_settings"],
+                    "call_kwargs": wrapper_path_diagnostics["call_kwargs"],
+                    "interventions": [list(spec) for spec in interventions],
+                    "result": {
+                        "pre_intervention_logits": tensor_fingerprint(wrapper_pre_logits),
+                        "post_intervention_logits": tensor_fingerprint(wrapper_post_logits),
+                        "intervention_activation_cache": tensor_fingerprint(post_activation_cache_t),
+                        "intervention_specs": wrapper_intervention_specs,
+                        "intervention_config": wrapper_intervention_config,
+                    },
+                    "diagnostics": wrapper_path_diagnostics,
+                },
+            }
+
+        relevant_activations = baseline_activation_cache_t[
+            graph_feature_rows[:, 0], graph_feature_rows[:, 1], graph_feature_rows[:, 2]
+        ]
+        new_relevant_activations = post_activation_cache_t[
+            graph_feature_rows[:, 0], graph_feature_rows[:, 1], graph_feature_rows[:, 2]
+        ]
+        relevant_logits = baseline_logits[logit_target_ids]
+        new_relevant_logits = post_logits[logit_target_ids]
+        demeaned_relevant_logits = relevant_logits - baseline_logits.mean()
+        new_demeaned_relevant_logits = new_relevant_logits - post_logits.mean()
+
+        expected_effects = adjacency_matrix[:, selected_graph_index]
+        effect_multiplier = 1.0
+        expected_activation_difference = expected_effects[: graph_feature_rows.shape[0]]
+        expected_logit_difference = expected_effects[-len(logit_target_ids) :]
+
+        activation_prediction = relevant_activations + expected_activation_difference
+        logit_prediction = demeaned_relevant_logits + expected_logit_difference
+        activation_abs_error = (new_relevant_activations - activation_prediction).abs()
+        logit_abs_error = (new_demeaned_relevant_logits - logit_prediction).abs()
+        actual_activation_difference = new_relevant_activations - relevant_activations
+        actual_logit_difference = new_demeaned_relevant_logits - demeaned_relevant_logits
+
+        activation_error_rows = _summarize_feature_row_deltas(
+            graph_feature_rows,
+            relevant_activations,
+            new_relevant_activations,
+            expected_activation_difference,
+            top_k=cfg.debug_validation_top_k,
+            ranking="abs_error",
+        )
+        expected_effect_rows = _summarize_feature_row_deltas(
+            graph_feature_rows,
+            relevant_activations,
+            new_relevant_activations,
+            expected_activation_difference,
+            top_k=cfg.debug_validation_top_k,
+            ranking="expected_delta",
+        )
+        actual_effect_rows = _summarize_feature_row_deltas(
+            graph_feature_rows,
+            relevant_activations,
+            new_relevant_activations,
+            expected_activation_difference,
+            top_k=cfg.debug_validation_top_k,
+            ranking="actual_delta",
+        )
+        activation_layer_summary = _summarize_layer_error_rows(
+            graph_feature_rows,
+            relevant_activations,
+            new_relevant_activations,
+            expected_activation_difference,
+            top_k=cfg.debug_validation_top_k,
+        )
+        logit_error_rows = _summarize_logit_delta_rows(
+            logit_target_ids.tolist(),
+            list(graph_target_tokens),
+            relevant_logits,
+            new_relevant_logits,
+            demeaned_relevant_logits,
+            new_demeaned_relevant_logits,
+            expected_logit_difference,
+            top_k=cfg.debug_validation_top_k,
+        )
+        same_feature_rows_in_graph = _summarize_same_feature_rows(
+            graph_feature_rows,
+            relevant_activations,
+            new_relevant_activations,
+            expected_activation_difference,
+            layer=layer,
+            feature_id=feature_id,
+        )
+        selected_feature_self_effect = {
+            "graph_index": int(selected_graph_index),
+            "row": [layer, position, feature_id],
+            "baseline_activation": float(relevant_activations[selected_graph_index].item()),
+            "predicted_activation": float(activation_prediction[selected_graph_index].item()),
+            "post_activation": float(new_relevant_activations[selected_graph_index].item()),
+            "expected_delta": float(expected_activation_difference[selected_graph_index].item()),
+            "actual_delta": float(actual_activation_difference[selected_graph_index].item()),
+            "abs_error": float(activation_abs_error[selected_graph_index].item()),
+            "signed_error": float(
+                (new_relevant_activations[selected_graph_index] - activation_prediction[selected_graph_index]).item()
+            ),
+        }
+        activation_sign_mismatch_count = int(
+            ((expected_activation_difference * actual_activation_difference) < 0.0).sum().item()
+        )
+        logit_sign_mismatch_count = int(((expected_logit_difference * actual_logit_difference) < 0.0).sum().item())
+
+        drift_report = build_intervention_drift_report(
+            graph,
+            feature_row=tuple(int(value) for value in selected_feature.tolist()),
+            baseline_activation_cache=baseline_activation_cache_t,
+            intervention_activation_cache=post_activation_cache_t,
+            baseline_logits=baseline_logits,
+            intervention_logits=post_logits,
+            activation_atol=cfg.debug_validation_act_atol,
+            activation_rtol=cfg.debug_validation_act_rtol,
+            logit_atol=cfg.debug_validation_logit_atol,
+            logit_rtol=cfg.debug_validation_logit_rtol,
+        )
+        activation_passed = drift_report.divergent_feature_count == 0
+        logit_passed = drift_report.logit_summary.divergent_logit_count == 0
+
+        pre_gap, post_gap, gap_delta = summarize_gap(baseline_logits, post_logits, target_a_id, target_b_id)
+        selected_feature_score = float(tensor_to_cpu(top_features_result.top_feature_scores)[0].item())
+        selected_feature_activation = float(tensor_to_cpu(top_features_result.top_feature_activation_values)[0].item())
+        key_logits_pre = [float(baseline_logits[token_id].item()) for token_id in key_ids]
+        key_logits_post = [float(post_logits[token_id].item()) for token_id in key_ids]
+        artifact_dir = _maybe_preserve_debug_intervention_artifacts(
+            cfg,
+            graph=graph,
+            feature_row=tuple(int(value) for value in selected_feature.tolist()),
+            interventions=interventions,
+            baseline_activation_cache=baseline_activation_cache_t,
+            intervention_activation_cache=post_activation_cache_t,
+            baseline_logits=baseline_logits,
+            intervention_logits=post_logits,
+            graph_target_ids=requested_graph_target_ids,
+            graph_target_tokens=graph_target_tokens,
+            selected_feature_score=selected_feature_score,
+            selected_feature_activation=selected_feature_activation,
+            report=drift_report,
+            runtime_state=runtime_state,
+        )
+
+        return {
+            "rendered_prompt": rendered_prompt,
+            "selected_feature": tuple(int(value) for value in selected_feature.tolist()),
+            "selected_feature_candidate_count": selected_feature_candidate_count,
+            "selected_feature_score": selected_feature_score,
+            "selected_feature_activation": selected_feature_activation,
+            "selected_feature_graph_index": selected_graph_index,
+            "graph_target_ids": requested_graph_target_ids,
+            "graph_target_tokens": graph_target_tokens,
+            "graph_result_target_ids": actual_graph_target_ids,
+            "graph_result_target_tokens": graph_result_target_tokens,
+            "graph_summary": {
+                "active_feature_count": int(active_features.shape[0]),
+                "selected_feature_count": int(graph_feature_rows.shape[0]),
+                "selected_feature_index_count": int(selected_feature_indices.numel()),
+                "adjacency_shape": [int(dim) for dim in adjacency_matrix.shape],
+                "requested_graph_target_count": len(requested_graph_target_ids),
+                "graph_target_count": int(logit_target_ids.numel()),
+                "graph_targets_match_requested": actual_graph_target_ids == requested_graph_target_ids,
+            },
+            "input_diagnostics": input_diagnostics,
+            "requested_constrained_feature_selection": [
+                _serialize_constrained_feature_selection_ref(raw_ref)
+                for raw_ref in (cfg.constrained_feature_selection_refs or ())
+            ],
+            "applied_feature_filter_triples": applied_feature_filter_triples,
+            "target_a_id": target_a_id,
+            "target_b_id": target_b_id,
+            "target_a_tok": resolved_target_tokens[0],
+            "target_b_tok": resolved_target_tokens[1],
+            "pre_gap": pre_gap,
+            "post_gap": post_gap,
+            "gap_delta": gap_delta,
+            "baseline_activation": baseline_activation,
+            "intervention_value": intervention_value,
+            "effect_multiplier": effect_multiplier,
+            "selected_feature_self_effect": selected_feature_self_effect,
+            "same_feature_rows_in_graph": same_feature_rows_in_graph,
+            "activation_passed": activation_passed,
+            "logit_passed": logit_passed,
+            "all_passed": activation_passed and logit_passed,
+            "activation_max_abs_error": float(activation_abs_error.max().item()),
+            "logit_max_abs_error": float(logit_abs_error.max().item()),
+            "activation_mean_abs_error": float(activation_abs_error.mean().item()),
+            "logit_mean_abs_error": float(logit_abs_error.mean().item()),
+            "activation_sign_mismatch_count": activation_sign_mismatch_count,
+            "logit_sign_mismatch_count": logit_sign_mismatch_count,
+            "activation_error_rows": activation_error_rows,
+            "activation_layer_summary": activation_layer_summary,
+            "expected_effect_rows": expected_effect_rows,
+            "actual_effect_rows": actual_effect_rows,
+            "logit_error_rows": logit_error_rows,
+            "drift_report": drift_report.to_dict(top_feature_count=cfg.debug_validation_top_k),
+            "artifact_dir": None if artifact_dir is None else str(artifact_dir),
+            "runtime_state": runtime_state,
+            "intervention_paths": {
+                "adjacency_validation": {
+                    "intervention": {
+                        "layer": layer,
+                        "position": position,
+                        "feature_id": feature_id,
+                        "value": intervention_value,
+                    },
+                    "call_kwargs": {
+                        "constrained_layers": {"kind": "range", "start": 0, "stop": n_layers, "step": 1},
+                        "apply_activation_function": False,
+                    },
+                    "pre_gap": pre_gap,
+                    "post_gap": post_gap,
+                    "gap_delta": gap_delta,
+                },
+                "feature_intervention_forward": wrapper_path_diagnostics,
+            },
+            "key_ids": key_ids,
+            "key_labels": key_labels,
+            "key_logits_pre": key_logits_pre,
+            "key_logits_post": key_logits_post,
+            "validation_tolerances": {
+                "act_atol": cfg.debug_validation_act_atol,
+                "act_rtol": cfg.debug_validation_act_rtol,
+                "logit_atol": cfg.debug_validation_logit_atol,
+                "logit_rtol": cfg.debug_validation_logit_rtol,
+            },
+            "debug_validation_top_k": int(cfg.debug_validation_top_k),
+            "debug_validation_raise_on_failure": bool(cfg.debug_validation_raise_on_failure),
+        }
 
 
 def run_direction_probes(
@@ -1396,6 +3235,9 @@ def run_direction_probes(
     embed_direction: torch.Tensor,
     store_direction: torch.Tensor,
 ) -> dict[str, Any]:
+    if not cfg.supports_store_direction:
+        raise ValueError("run_direction_probes is only available in concept_pair mode")
+
     from interpretune.analysis.backends.circuit_tracer import CircuitTracerAnalysisBackend
 
     with experiment_session(

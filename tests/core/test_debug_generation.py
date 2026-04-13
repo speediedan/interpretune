@@ -1,6 +1,9 @@
+from __future__ import annotations
 from unittest.mock import patch
 import torch
 import re
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from torch.testing import assert_close
@@ -8,6 +11,22 @@ from torch.testing import assert_close
 from tests.runif import RunIf
 from interpretune.extensions import DebugGeneration
 from transformers.utils import ModelOutput
+
+
+class _StubTokenizer:
+    def __call__(
+        self, text: str, return_tensors: str = "pt", add_special_tokens: bool = False
+    ) -> dict[str, torch.Tensor]:
+        base_ids = [11, 12] if add_special_tokens else []
+        input_ids = base_ids + [ord(ch) for ch in text]
+        attention_mask = [1] * len(input_ids)
+        return {
+            "input_ids": torch.tensor([input_ids], dtype=torch.long),
+            "attention_mask": torch.tensor([attention_mask], dtype=torch.long),
+        }
+
+    def convert_ids_to_tokens(self, token_ids: list[int]) -> list[str]:
+        return [f"tok_{token_id}" for token_id in token_ids]
 
 
 def _get_sequence_from_output(output, batch_idx: int = 0):
@@ -56,6 +75,26 @@ IT_TEST_TEXT = {
 
 class TestClassDebugGen:
     TEST_DEBUG_SEQS = ["Hello, I'm a large language,", "The day after Tuesday"]
+
+    def test_collect_prompt_debug_info_includes_raw_rendered_and_token_ids(self, monkeypatch: Any) -> None:
+        debug_generation = DebugGeneration()
+        fake_handle = SimpleNamespace(datamodule=SimpleNamespace(tokenizer=_StubTokenizer()))
+        monkeypatch.setattr(debug_generation, "_check_phandle", lambda: fake_handle)
+
+        debug_rows = debug_generation.collect_prompt_debug_info(
+            raw_sequences="raw prompt",
+            rendered_sequences="rendered prompt",
+            add_special_tokens=True,
+        )
+
+        assert len(debug_rows) == 1
+        debug_row = debug_rows[0]
+        assert debug_row["raw_prompt"] == "raw prompt"
+        assert debug_row["rendered_prompt"] == "rendered prompt"
+        assert debug_row["input_ids"][:2] == [11, 12]
+        assert debug_row["tokens"][:2] == ["tok_11", "tok_12"]
+        assert debug_row["attention_mask"] == [1] * len(debug_row["input_ids"])
+        assert debug_row["add_special_tokens"] is True
 
     @pytest.mark.usefixtures("make_deterministic")
     def test_debug_session_top1(self, get_it_session__tl_gpt2_debug__setup):

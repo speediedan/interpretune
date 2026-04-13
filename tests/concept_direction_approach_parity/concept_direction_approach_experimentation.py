@@ -83,6 +83,11 @@ CACHE_KEY = "unembed.hook_in"
 # V3 classification prompt: explicitly names both expected answers to prime the model.
 # The model should see "Capital" and "State" as viable answer tokens.
 CLASSIFICATION_QUESTION_V3 = 'Is this a Capital or a State? Answer with one word: "Capital" or "State".'
+ANIMAL_CLASSIFICATION_QUESTION = 'Is this a cat breed or a dog breed? Answer with one word: "Cat" or "Dog".'
+ANIMAL_CHAT_INTERVENTION_PROMPT = (
+    'Answer with only the missing animal type: "Cat" or "Dog". '
+    "My favorite kind of common four-legged domestic pet is the"
+)
 
 # Key tokens to inspect in logit analysis (beyond the target pair)
 KEY_TOKENS_TO_INSPECT = ["▁Austin", "▁Dallas", "▁Texas", "▁Capital", "▁State", "▁capital", "▁state", "▁City", "▁city"]
@@ -165,9 +170,10 @@ DOG_CAT = ConceptPair(
     group_a_name="dogs",
     group_b_name="cats",
     concept_label="Concept: Dogs − Cats",
-    classification_question='Is this a Dog or a Cat breed? Answer with one word: "Dog" or "Cat".',
+    classification_question=ANIMAL_CLASSIFICATION_QUESTION,
     intervention_prompt="My favorite kind of common four-legged domestic pet is the",
     key_tokens=["▁Dog", "▁Cat", "▁dog", "▁cat", "▁Labrador", "▁Siamese", "▁puppy", "▁kitten"],
+    chat_intervention_prompt=ANIMAL_CHAT_INTERVENTION_PROMPT,
 )
 
 CAT_DOG = ConceptPair(
@@ -190,13 +196,10 @@ CAT_DOG = ConceptPair(
     group_a_name="cats",
     group_b_name="dogs",
     concept_label="Concept: Cats − Dogs",
-    classification_question='Is this a Cat or a Dog breed? Answer with one word: " Cat" or " Dog".',
+    classification_question=ANIMAL_CLASSIFICATION_QUESTION,
     intervention_prompt="My favorite kind of common four-legged domestic pet is the",
     key_tokens=["▁Cat", "▁Dog", "▁cat", "▁dog", "▁Siamese", "▁Labrador", "▁kitten", "▁puppy"],
-    chat_intervention_prompt=(
-        'Answer with only the missing animal type (e.g. " Cat", " Dog").'
-        " My favorite kind of common four-legged domestic pet is the"
-    ),
+    chat_intervention_prompt=ANIMAL_CHAT_INTERVENTION_PROMPT,
 )
 
 CONCEPT_PAIRS: dict[str, ConceptPair] = {

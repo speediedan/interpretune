@@ -1046,7 +1046,9 @@ def feature_intervention_forward_impl(
     if replacement_model is None:
         raise ValueError("feature_intervention_forward requires module.replacement_model")
 
-    prompt = kwargs.pop("prompt", None) or analysis_backend.resolve_prompt(module, analysis_batch, batch)
+    prompt = kwargs.pop("prompt", None)
+    if prompt is None:
+        prompt = analysis_backend.resolve_prompt(module, analysis_batch, batch)
     settings = analysis_backend.resolve_feature_intervention_settings(module, kwargs)
     feature_rows = analysis_batch.require(
         "top_feature_ids",
@@ -1081,9 +1083,10 @@ def feature_intervention_forward_impl(
 
     pre_logits_raw, _ = replacement_model.get_activations(prompt)
     pre_logits = last_token_logits(pre_logits_raw)
+    intervention_activation_cache = None
 
     if interventions:
-        post_logits_raw, _ = replacement_model.feature_intervention(
+        post_logits_raw, intervention_activation_cache = replacement_model.feature_intervention(
             prompt,
             interventions,
             **analysis_backend.feature_intervention_call_kwargs(settings),
@@ -1103,4 +1106,6 @@ def feature_intervention_forward_impl(
         post_intervention_logits=post_logits,
         logit_diff=logit_diff.detach().cpu(),
     )
+    if intervention_activation_cache is not None:
+        analysis_batch.update(intervention_activation_cache=intervention_activation_cache)
     return analysis_batch

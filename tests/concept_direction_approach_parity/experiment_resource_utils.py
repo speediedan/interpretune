@@ -4,7 +4,7 @@ import tempfile
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Iterator, cast
+from typing import Any, Iterator, Literal, cast
 
 import torch
 
@@ -57,13 +57,13 @@ MODEL_SPECS: dict[tuple[str, str], ModelSpec] = {
         neuronpedia_set="gemmascope-2-res-16k",
         use_chat_template=False,
     ),
-    ("gemma3", "it"): ModelSpec(
+    ("gemma3", "1b_it"): ModelSpec(
         family="gemma3",
-        variant="it",
+        variant="1b_it",
         model_name="google/gemma-3-1b-it",
         transcoder_set="mwhanna/gemma-scope-2-1b-it/transcoder_all/width_16k_l0_small_affine",
         neuronpedia_model="gemma-3-1b-it",
-        neuronpedia_set="gemmascope-2-res-16k",
+        neuronpedia_set="gemmascope-2-transcoder-16k",
         use_chat_template=True,
     ),
     ("gemma3", "4b_pt"): ModelSpec(
@@ -109,6 +109,33 @@ MODEL_SPECS: dict[tuple[str, str], ModelSpec] = {
 }
 
 
+DebugSessionSurfacePreset = Literal["notebook_default", "parity_surface"]
+
+
+def _apply_debug_session_surface_preset(
+    cfg: CircuitTracerNNsightGemma2 | CircuitTracerNNsightGemma3,
+    *,
+    preset: DebugSessionSurfacePreset,
+) -> None:
+    if preset == "notebook_default":
+        return
+    if preset != "parity_surface":
+        raise ValueError(f"Unsupported debug session surface preset: {preset}")
+
+    nnsight_cfg = getattr(cfg, "nnsight_cfg", None)
+    if nnsight_cfg is not None:
+        nnsight_cfg.attn_implementation = "eager"
+        nnsight_cfg.torch_dtype = "float32"
+
+    circuit_tracer_cfg = getattr(cfg, "circuit_tracer_cfg", None)
+    if circuit_tracer_cfg is not None:
+        circuit_tracer_cfg.dtype = torch.float32
+        circuit_tracer_cfg.analysis_target_tokens = None
+        circuit_tracer_cfg.target_token_ids = None
+        circuit_tracer_cfg.offload = "cpu"
+        circuit_tracer_cfg.verbose = False
+
+
 def create_work_root(base_dir: str | None, experiment_name: str) -> Path:
     if base_dir:
         work_root = Path(base_dir)
@@ -152,32 +179,37 @@ def build_test_cfg(
     hf_model_head: str | None = None,
     batch_size: int | None = None,
     max_feature_nodes: int | None = None,
+    debug_session_surface_preset: DebugSessionSurfacePreset = "notebook_default",
 ) -> CircuitTracerNNsightGemma2 | CircuitTracerNNsightGemma3:
     device_type = force_device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     if model_family == "gemma2":
-        cfg = CircuitTracerNNsightGemma2(phase="test", device_type=device_type)
-        assert cfg.circuit_tracer_cfg is not None
-        assert cfg.nnsight_cfg is not None
-        cfg.circuit_tracer_cfg.model_name = model_name
-        cfg.circuit_tracer_cfg.transcoder_set = transcoder_set
+        cfg_gemma2: CircuitTracerNNsightGemma2 = CircuitTracerNNsightGemma2(phase="test", device_type=device_type)
+        assert cfg_gemma2.circuit_tracer_cfg is not None
+        assert cfg_gemma2.nnsight_cfg is not None
+        cfg_gemma2.circuit_tracer_cfg.model_name = model_name
+        cfg_gemma2.circuit_tracer_cfg.transcoder_set = transcoder_set
         if batch_size is not None:
-            cfg.circuit_tracer_cfg.batch_size = batch_size
+            cfg_gemma2.circuit_tracer_cfg.batch_size = batch_size
         if max_feature_nodes is not None:
-            cfg.circuit_tracer_cfg.max_feature_nodes = max_feature_nodes
-        cfg.nnsight_cfg.model_name = model_name
-        cfg.nnsight_cfg.device_map = device_type
-        return cfg
+            cfg_gemma2.circuit_tracer_cfg.max_feature_nodes = max_feature_nodes
+        cfg_gemma2.nnsight_cfg.model_name = model_name
+        cfg_gemma2.nnsight_cfg.device_map = device_type
+        _apply_debug_session_surface_preset(cfg_gemma2, preset=debug_session_surface_preset)
+        return cfg_gemma2
 
     if model_family == "gemma3":
-        cfg = CircuitTracerNNsightGemma3(phase="test", device_type=device_type)
-        assert cfg.circuit_tracer_cfg is not None
-        cfg.circuit_tracer_cfg.model_name = model_name
-        cfg.circuit_tracer_cfg.transcoder_set = transcoder_set
+        cfg_gemma3: CircuitTracerNNsightGemma3 = CircuitTracerNNsightGemma3(
+            phase="test",
+            device_type=device_type,
+        )
+        assert cfg_gemma3.circuit_tracer_cfg is not None
+        cfg_gemma3.circuit_tracer_cfg.model_name = model_name
+        cfg_gemma3.circuit_tracer_cfg.transcoder_set = transcoder_set
         if batch_size is not None:
-            cfg.circuit_tracer_cfg.batch_size = batch_size
+            cfg_gemma3.circuit_tracer_cfg.batch_size = batch_size
         if max_feature_nodes is not None:
-            cfg.circuit_tracer_cfg.max_feature_nodes = max_feature_nodes
+            cfg_gemma3.circuit_tracer_cfg.max_feature_nodes = max_feature_nodes
         nnsight_kwargs: dict[str, Any] = {
             "model_name": model_name,
             "device_map": device_type,
@@ -185,8 +217,9 @@ def build_test_cfg(
             "dispatch": True,
             "tokenizer_kwargs": {"padding_side": "left", "add_bos_token": True},
         }
-        cfg.nnsight_cfg = NNsightConfig(**nnsight_kwargs)
-        return cfg
+        cfg_gemma3.nnsight_cfg = NNsightConfig(**nnsight_kwargs)
+        _apply_debug_session_surface_preset(cfg_gemma3, preset=debug_session_surface_preset)
+        return cfg_gemma3
 
     raise ValueError(f"Unsupported model family: {model_family}")
 
@@ -204,6 +237,7 @@ def experiment_session(
     hf_model_head: str | None = None,
     batch_size: int | None = None,
     max_feature_nodes: int | None = None,
+    debug_session_surface_preset: DebugSessionSurfacePreset = "notebook_default",
 ) -> Iterator[tuple[Any, Any, Any]]:
     session_dir = work_root / run_name
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -220,6 +254,7 @@ def experiment_session(
         hf_model_head=hf_model_head,
         batch_size=batch_size,
         max_feature_nodes=max_feature_nodes,
+        debug_session_surface_preset=debug_session_surface_preset,
     )
     it_session = config_modules(cfg, run_name, {}, session_dir, {}, False)
     session_fixture_hook_exec(it_session, cast(FixtPhase, FixtPhase.setup))

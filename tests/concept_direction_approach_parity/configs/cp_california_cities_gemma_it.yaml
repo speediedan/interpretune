@@ -1,0 +1,18 @@
+name: california_cities
+description: California cities vs non-California cities
+group_a_tokens: [Berkeley, Eureka, Corona, Davis]
+group_b_tokens: [Austin, Seattle, Atlanta, Boston]
+group_a_entities:
+  - [Berkeley, California]
+  - [Eureka, California]
+  - [Corona, California]
+  - [Davis, California]
+group_b_entities:
+  - [Austin, Other]
+  - [Seattle, Other]
+  - [Atlanta, Other]
+  - [Boston, Other]
+group_a_name: california_cities
+group_b_name: non_california_cities
+concept_label: "Concept: California cities - non-California cities"
+classification_question: "Is this a California city or not? Answer with one word: \"California\" or \"Other\"."

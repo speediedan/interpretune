@@ -72,6 +72,9 @@ cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpret
 - Write unit tests for new functionality and ensure existing tests pass.
 - Ensure the cpu coverage reported by our `ci_test-full.yml` workflow is >= the existing coverage.
 
+### Tooling Reliability
+- Pylance MCP requests can hang or time out on longer operations. When using Pylance-backed tooling, actively monitor the call for stalls and switch to direct file inspection, search, or terminal-based validation if it stops making progress.
+
 ### Pre-MVP Backwards Compatibility
 - Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeline composition may change without deprecation notices.
 - Do not add backwards-compatibility shims (fallback code paths, silent coercions, etc.) to preserve caller assumptions that predate the current design.
@@ -664,7 +667,6 @@ Then run specific tests using **inline environment variables** (not export) to a
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
 IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/examples/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT] -v
-unset IT_RUN_STANDALONE_TESTS
 
 # another example using inline variable assignment with multiple standalone tests invoked separately
 cd ${IT_REPO_DIR} && \

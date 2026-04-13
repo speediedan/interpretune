@@ -884,6 +884,12 @@ feature_intervention_forward:
       datasets_dtype: float32
       required: false
       sequence_type: true
+    intervention_activation_cache:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+      intermediate_only: true
+      sequence_type: false
     logit_diff:
       datasets_dtype: float32
       required: false

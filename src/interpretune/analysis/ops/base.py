@@ -756,10 +756,13 @@ class AnalysisOp:
             return available_defaults
 
         call_args = {}
+        accepts_var_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in sig.parameters.values()
+        )
 
         # Only pass parameters that the function accepts
         for param_name, param_value in available_defaults.items():
-            if param_name in sig.parameters:
+            if accepts_var_kwargs or param_name in sig.parameters:
                 call_args[param_name] = param_value
 
         return call_args

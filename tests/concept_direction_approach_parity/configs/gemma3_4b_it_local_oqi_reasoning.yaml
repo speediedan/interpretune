@@ -1,0 +1,24 @@
+EXPERIMENT_NAME: gemma3_4b_it_local_oqi_reasoning
+MODEL_FAMILY: gemma3
+MODEL_VARIANT: 4b_it
+CONCEPT_PAIR_CONFIG_PATH: cp_california_cities_gemma_it.yaml
+PROMPT_OVERRIDE: "Answer with only the missing city name. Fact: the capital of the only US state with greater population than the state containing Dallas is"
+TOP_N: 10
+DEFAULT_SCALE_FACTOR: 10.0
+SCALE_FACTOR_SWEEP: [2.0, 5.0, 10.0, 20.0, 50.0]
+ABLATION_N_LIST: [5, 10, 25, 50, 100]
+ENABLE_SIGN_AWARE: false
+PROMPT_RENDER_MODE: apply_chat_template
+TARGET_TOKENS: [ramento, Austin]
+TARGET_TOKEN_IDS: null
+KEY_TOKENS: [ramento, Austin, Dallas, California, Houston, Texas]
+USE_LOCALHOST: true
+LOCAL_NEURONPEDIA_DB_URL: postgres://postgres:postgres@127.0.0.1:5433/postgres
+LOCAL_NEURONPEDIA_WEBAPP_URL: http://localhost:3000
+CHECK_LOCAL_EXPLANATION_COVERAGE: true
+GENERATE_MISSING_LOCAL_EXPLANATIONS: true
+LOCAL_EXPLANATION_TYPE_NAME: np_moe-max-act-logits
+ENABLE_BASELINE_PATH_DEBUG: true
+BATCH_SIZE: 64
+VERBOSE: true
+FORCE_DEVICE: null
