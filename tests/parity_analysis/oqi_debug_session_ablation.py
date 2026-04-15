@@ -22,13 +22,19 @@ import torch
 from circuit_tracer import Graph
 
 from interpretune.utils.resource_mgmt import cleanup_python_cuda, safe_clean_cuda
+from tests.nb_experiment_harness import pipeline_patterns
 from tests import load_dotenv
 from tests.analysis_resource_utils import clear_nnsight_test_state, serial_test_cleanup
 from tests.configuration import config_modules
 from tests.conftest import FixtPhase, session_fixture_hook_exec
-from tests.concept_direction_approach_parity import concept_direction_experiment_utils as cdeu
-from tests.concept_direction_approach_parity import experiment_resource_utils as eru
-from tests.concept_direction_approach_parity.nb_experiment_launcher import load_flat_yaml
+from tests.concept_direction_approach_parity.concept_direction import (
+    NotebookHarnessConfig,
+    build_notebook_harness_config,
+)
+from tests.nb_experiment_harness.pipeline_patterns import (
+    run_debug_intervention_validation,
+)
+from tests.nb_experiment_harness.session import build_test_cfg
 from tests.parity_analysis.intervention_drift_analysis import (
     PRESERVE_ARTIFACTS_ENV,
     PRESERVE_ARTIFACT_DIR_ENV,
@@ -40,7 +46,7 @@ UNSET = object()
 DEFAULT_CONFIG = (
     Path(__file__).resolve().parents[1]
     / "concept_direction_approach_parity"
-    / "configs"
+    / "archived_cfgs"
     / "gemma3_4b_it_local_oqi_reasoning_single_fs_di_60.yaml"
 )
 DEFAULT_REFERENCE_GLOB = "gemma3_4b_it_oqi_gemma_3_4b_it__25_gemmascope_2_transcoder_16k__60_*"
@@ -286,148 +292,8 @@ def _compare_preserved_artifacts(
     }
 
 
-def _build_notebook_cfg(config_path: Path) -> tuple[cdeu.NotebookHarnessConfig, bool]:
-    payload = load_flat_yaml(config_path)
-    config_name = config_path.stem
-    experiment_name = str(payload.get("EXPERIMENT_NAME", config_name))
-    work_root = eru.create_work_root(payload.get("EXPERIMENT_WORK_DIR"), experiment_name)
-    should_cleanup_work_root = payload.get("EXPERIMENT_WORK_DIR") is None
-
-    model_family = str(payload["MODEL_FAMILY"])
-    model_variant = str(payload["MODEL_VARIANT"])
-    prompt_render_mode = cast(
-        cdeu.PromptRenderMode,
-        str(payload.get("PROMPT_RENDER_MODE", "plain")).strip(),
-    )
-    model_spec = eru.resolve_model_spec(
-        model_family,
-        model_variant,
-        model_name_override=payload.get("MODEL_NAME_OVERRIDE"),
-        transcoder_set_override=payload.get("TRANSCODER_SET_OVERRIDE"),
-        neuronpedia_model_override=payload.get("NEURONPEDIA_MODEL_OVERRIDE"),
-        neuronpedia_set_override=payload.get("NEURONPEDIA_SET_OVERRIDE"),
-    )
-    runtime = cdeu.resolve_neuronpedia_runtime_config(
-        use_localhost=bool(payload.get("USE_LOCALHOST", False)),
-        neuronpedia_base_url_override=payload.get("NEURONPEDIA_BASE_URL_OVERRIDE"),
-        local_db_url=payload.get("LOCAL_NEURONPEDIA_DB_URL"),
-        local_webapp_url=payload.get("LOCAL_NEURONPEDIA_WEBAPP_URL"),
-        check_local_explanation_coverage=bool(payload.get("CHECK_LOCAL_EXPLANATION_COVERAGE", False)),
-        generate_missing_local_explanations=bool(payload.get("GENERATE_MISSING_LOCAL_EXPLANATIONS", False)),
-        local_explanation_feature_limit=int(payload.get("LOCAL_EXPLANATION_FEATURE_LIMIT", 20)),
-    )
-    concept_pair_path = cdeu.resolve_concept_pair_config_path(
-        payload.get("CONCEPT_PAIR_NAME"),
-        model_family=model_family,
-        prompt_render_mode=prompt_render_mode,
-        concept_pair_config_path=payload.get("CONCEPT_PAIR_CONFIG_PATH"),
-    )
-    concept_pair = cdeu.load_concept_pair(concept_pair_path)
-    prompt_override = payload.get("PROMPT_OVERRIDE")
-    prompt = (
-        str(prompt_override)
-        if prompt_override
-        else (
-            concept_pair.chat_intervention_prompt
-            if prompt_render_mode != "plain" and concept_pair.chat_intervention_prompt is not None
-            else concept_pair.intervention_prompt
-        )
-    )
-
-    target_tokens = None
-    if payload.get("TARGET_TOKENS") is not None:
-        target_tokens_raw = tuple(str(token) for token in payload["TARGET_TOKENS"])
-        if len(target_tokens_raw) != 2:
-            raise ValueError("TARGET_TOKENS must contain exactly two entries when provided")
-        target_tokens = cast(tuple[str, str], target_tokens_raw)
-
-    target_token_ids = None
-    if payload.get("TARGET_TOKEN_IDS") is not None:
-        target_token_ids_raw = tuple(int(token_id) for token_id in payload["TARGET_TOKEN_IDS"])
-        if len(target_token_ids_raw) != 2:
-            raise ValueError("TARGET_TOKEN_IDS must contain exactly two entries when provided")
-        target_token_ids = cast(tuple[int, int], target_token_ids_raw)
-
-    explicit_direction_tokens = None
-    if payload.get("EXPLICIT_DIRECTION_TOKENS") is not None:
-        explicit_direction_tokens_raw = tuple(str(token) for token in payload["EXPLICIT_DIRECTION_TOKENS"])
-        if len(explicit_direction_tokens_raw) != 2:
-            raise ValueError("EXPLICIT_DIRECTION_TOKENS must contain exactly two entries when provided")
-        explicit_direction_tokens = cast(tuple[str, str], explicit_direction_tokens_raw)
-
-    analysis_mode = cast(cdeu.AnalysisMode, str(payload.get("ANALYSIS_MODE", "concept_pair")).strip())
-    store_latent_extraction_mode = cast(
-        cdeu.StoreLatentExtractionMode,
-        str(payload.get("STORE_LATENT_EXTRACTION_MODE", "answer_position_state")).strip(),
-    )
-    debug_session_surface_preset = cast(
-        cdeu.DebugSessionSurfacePreset,
-        str(payload.get("DEBUG_SESSION_SURFACE_PRESET", "notebook_default")).strip(),
-    )
-
-    cfg = cdeu.NotebookHarnessConfig(
-        experiment_name=experiment_name,
-        experiment_config_name=str(payload.get("EXPERIMENT_CONFIG_NAME", config_name)),
-        model_family=model_family,
-        model_variant=model_variant,
-        model_name=model_spec.model_name,
-        transcoder_set=model_spec.transcoder_set,
-        hf_model_head=model_spec.hf_model_head,
-        neuronpedia_model=model_spec.neuronpedia_model,
-        neuronpedia_set=model_spec.neuronpedia_set,
-        neuronpedia_base_url=runtime.base_url,
-        concept_pair_name=payload.get("CONCEPT_PAIR_NAME"),
-        concept_pair_config_path=str(concept_pair_path),
-        prompt=prompt,
-        prompt_render_mode=prompt_render_mode,
-        target_tokens=target_tokens,
-        target_token_ids=target_token_ids,
-        top_n=int(payload.get("TOP_N", 10)),
-        default_scale_factor=float(payload.get("DEFAULT_SCALE_FACTOR", 10.0)),
-        scale_factor_sweep=list(payload.get("SCALE_FACTOR_SWEEP", [2.0, 5.0, 10.0, 20.0, 50.0])),
-        ablation_n_list=list(payload.get("ABLATION_N_LIST", [5, 10, 25, 50, 100])),
-        enable_sign_aware=bool(payload.get("ENABLE_SIGN_AWARE", True)),
-        force_device=payload.get("FORCE_DEVICE"),
-        work_root=work_root,
-        analysis_mode=analysis_mode,
-        explicit_direction_tokens=explicit_direction_tokens,
-        enable_zero_softcap=bool(payload.get("ENABLE_ZERO_SOFTCAP", False)),
-        batch_size=int(payload["BATCH_SIZE"]) if payload.get("BATCH_SIZE") is not None else None,
-        max_feature_nodes=(int(payload["MAX_FEATURE_NODES"]) if payload.get("MAX_FEATURE_NODES") is not None else None),
-        use_localhost=runtime.use_localhost,
-        local_neuronpedia_db_url=runtime.local_db_url,
-        local_neuronpedia_webapp_url=runtime.local_webapp_url,
-        check_local_explanation_coverage=runtime.check_local_explanation_coverage,
-        generate_missing_local_explanations=runtime.generate_missing_local_explanations,
-        local_explanation_feature_limit=runtime.local_explanation_feature_limit,
-        local_neuronpedia_service_status=runtime.service_status,
-        mode_warning_messages=runtime.warning_messages,
-        local_explanation_type_name=str(payload.get("LOCAL_EXPLANATION_TYPE_NAME", cdeu.DEFAULT_EXPLANATION_TYPE_NAME)),
-        local_explanation_timeout_seconds=int(
-            payload.get("LOCAL_EXPLANATION_TIMEOUT_SECONDS", cdeu.DEFAULT_COPILOT_TIMEOUT_SECONDS)
-        ),
-        local_explanation_max_retries=int(
-            payload.get("LOCAL_EXPLANATION_MAX_RETRIES", cdeu.DEFAULT_COPILOT_MAX_RETRIES)
-        ),
-        local_explanation_retry_backoff_seconds=float(
-            payload.get(
-                "LOCAL_EXPLANATION_RETRY_BACKOFF_SECONDS",
-                cdeu.DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS,
-            )
-        ),
-        key_tokens_override=tuple(payload["KEY_TOKENS"]) if payload.get("KEY_TOKENS") is not None else None,
-        constrained_feature_selection_refs=payload.get("CONSTRAINED_FEATURE_SELECTION_LIST"),
-        store_latent_extraction_mode=store_latent_extraction_mode,
-        context_enhanced_scale=float(payload.get("CONTEXT_ENHANCED_SCALE", 1.0)),
-        enable_baseline_path_debug=bool(payload.get("ENABLE_BASELINE_PATH_DEBUG", False)),
-        debug_validation_logit_atol=float(payload.get("DEBUG_VALIDATION_LOGIT_ATOL", 1e-4)),
-        debug_validation_logit_rtol=float(payload.get("DEBUG_VALIDATION_LOGIT_RTOL", 1e-3)),
-        debug_validation_act_atol=float(payload.get("DEBUG_VALIDATION_ACT_ATOL", 1e-3)),
-        debug_validation_act_rtol=float(payload.get("DEBUG_VALIDATION_ACT_RTOL", 1e-5)),
-        debug_validation_top_k=int(payload.get("DEBUG_VALIDATION_TOP_K", 10)),
-        debug_validation_raise_on_failure=bool(payload.get("DEBUG_VALIDATION_RAISE_ON_FAILURE", True)),
-        debug_session_surface_preset=debug_session_surface_preset,
-    )
+def _build_notebook_cfg(config_path: Path) -> tuple[NotebookHarnessConfig, bool]:
+    cfg, should_cleanup_work_root, _resolved_payload = build_notebook_harness_config(config_path)
     return cfg, should_cleanup_work_root
 
 
@@ -455,6 +321,7 @@ def _make_experiment_session(override: SessionSurfaceOverride):
         run_name: str,
         *,
         model_family: str,
+        model_variant: str | None = None,
         model_name: str,
         transcoder_set: str,
         force_device: str | None = None,
@@ -462,6 +329,7 @@ def _make_experiment_session(override: SessionSurfaceOverride):
         hf_model_head: str | None = None,
         batch_size: int | None = None,
         max_feature_nodes: int | None = None,
+        debug_session_surface_preset: str = "notebook_default",
     ) -> Iterator[tuple[Any, Any, Any]]:
         del use_cuda_cleanup
         full_run_name = f"{run_name}_{override.name}"
@@ -473,14 +341,16 @@ def _make_experiment_session(override: SessionSurfaceOverride):
         load_dotenv()
 
         effective_force_device = force_device if override.force_device is UNSET else override.force_device
-        cfg = eru.build_test_cfg(
+        cfg = build_test_cfg(
             model_family,
+            model_variant=model_variant,
             model_name=model_name,
             transcoder_set=transcoder_set,
             force_device=effective_force_device,
             hf_model_head=hf_model_head,
             batch_size=batch_size,
             max_feature_nodes=max_feature_nodes,
+            debug_session_surface_preset=cast(Any, debug_session_surface_preset),
         )
         _apply_override_attr(getattr(cfg, "nnsight_cfg", None), "device_map", override.nnsight_device_map)
         _apply_override_attr(
@@ -533,7 +403,7 @@ def _compare_runtime_state(reference_state: Mapping[str, Any], candidate_state: 
 
 
 def _run_variant(
-    cfg: cdeu.NotebookHarnessConfig,
+    cfg: NotebookHarnessConfig,
     override: SessionSurfaceOverride,
     reference_summary: Mapping[str, Any],
     reference_artifact_dir: Path,
@@ -547,8 +417,8 @@ def _run_variant(
         },
         clear=False,
     ):
-        with patch.object(cdeu, "experiment_session", _make_experiment_session(override)):
-            result = cdeu.run_debug_intervention_validation(cfg)
+        with patch.object(pipeline_patterns, "experiment_session", _make_experiment_session(override)):
+            result = run_debug_intervention_validation(cfg)
 
     runtime_comparison = _compare_runtime_state(
         reference_summary["metadata"]["runtime_state"],

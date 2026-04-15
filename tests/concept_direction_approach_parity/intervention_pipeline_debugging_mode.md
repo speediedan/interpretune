@@ -15,7 +15,8 @@ Do not reuse that preset for the normal localhost concept-pair configs. The pari
 
 ## What `parity_surface` Changes
 
-The preset is applied inside `experiment_resource_utils.py` and forwarded by `NotebookHarnessConfig.session_kwargs`.
+The preset is resolved from `tests/nb_experiment_harness/configs/session_surface_presets.yaml`
+and forwarded by `NotebookHarnessConfig.session_kwargs`.
 When selected, it pushes the debug run toward the standalone parity surface by:
 
 - preserving the configured `FORCE_DEVICE`, or the auto-selected CUDA device when `FORCE_DEVICE` is unset

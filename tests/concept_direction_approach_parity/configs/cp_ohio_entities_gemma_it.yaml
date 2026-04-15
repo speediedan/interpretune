@@ -1,0 +1,16 @@
+name: ohio_not_indiana
+description: Ohio entities vs Indiana entities
+group_a_tokens: [Columbus, ▁Buckeye, ▁Cavaliers ]
+group_b_tokens: [Indianapolis, ▁Hoos, ▁Pacers]
+group_a_entities:
+  - [Columbus, Ohio]
+  - [▁Buckeye, Ohio]
+  - [▁Cavaliers, Ohio]
+group_b_entities:
+  - [Indianapolis, Indiana]
+  - [▁Hoos, Indiana]
+  - [▁Pacers, Indiana]
+group_a_name: ohio_entities
+group_b_name: indiana_entities
+concept_label: "Concept: Ohio entities - Indiana entities"
+classification_question: "Is this an Ohio entity or Indiana entity? Answer with one word: \"Ohio\" or \"Indiana\"."

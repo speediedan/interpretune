@@ -153,6 +153,28 @@ To add or update a HuggingFace token secret:
 4. In the test file, add a `@pytest.mark.skipif` guard so the test skips gracefully when the
    token is unavailable
 
+## Concept-Direction Notebook Config Notes
+
+The concept-direction notebook configs under `tests/concept_direction_approach_parity/configs/` now expose two
+intervention-related capabilities that are useful for local experiment reproduction:
+
+- `ANALYSIS.direct_projection.interventions` mirrors `model_fwd_intervention`'s explicit intervention mapping. The
+  notebook wrapper injects the runtime `concept_direction` as the `intervention_tensor` when omitted, so configs can
+  target non-default hook points like `blocks.0.hook_in` with `project` or `add` modes.
+- `ANALYSIS.constrained_feature_selection` entries may include an `activation_value` override alongside the feature
+  ref. Missing constrained features are no longer dropped automatically: `extract_top_features` synthesizes candidate
+  rows using same-layer or global activation baselines so downstream `feature_intervention_forward` calls can still
+  run.
+
+Example constrained feature-selection entry with an explicit activation override:
+
+```yaml
+ANALYSIS:
+  constrained_feature_selection:
+    - ref: [gemma-3-4b-it, gemmascope-2-transcoder-16k, 22, 2975]
+      activation_value: 4.5
+```
+
 ## Test Reruns for Transient Failures
 
 All pytest invocations in our CI and local coverage scripts include `--reruns 2 --reruns-delay 5` by default. This addresses transient `httpx` read timeouts that can occur with HuggingFace `transformers` v5 during model/tokenizer downloads. Tests that fail due to these transient network issues will automatically retry up to 2 times with a 5-second delay between attempts.

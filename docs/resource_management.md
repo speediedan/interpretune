@@ -1,8 +1,9 @@
 # Resource Management for Circuit-Tracer Experiments
 
 This document describes the resource management controls available when running
-concept-direction experiment notebooks via the `nb_experiment_launcher.py`
-harness and the `concept_direction_experiment_harness.ipynb` notebook.
+concept-direction experiment notebooks via the shared
+`tests/nb_experiment_harness/nb_experiment_launcher.py` launcher and the
+`concept_direction_template.ipynb` notebook template.
 
 ## Background
 
@@ -25,7 +26,7 @@ Each flat YAML config passed to the launcher can include:
 ### Example
 
 ```yaml
-# gemma2_it_capitals_states.yaml
+# example config fragment
 MODEL_FAMILY: gemma2
 MODEL_NAME: google/gemma-2-2b-it
 TRANSCODER_SET: gemma

@@ -11,7 +11,6 @@ from typing import Any, cast
 import interpretune as it
 import pytest
 import torch
-import yaml
 from circuit_tracer import Graph, ReplacementModel, attribute
 from circuit_tracer.attribution.targets import CustomTarget
 from circuit_tracer.graph import compute_node_influence
@@ -27,7 +26,8 @@ from interpretune.analysis.ops.helpers import last_token_logits
 from interpretune.config import AnalysisCfg, CircuitTracerConfig, NNsightConfig, init_analysis_cfgs
 from tests import load_dotenv
 from tests.analysis_resource_utils import clear_nnsight_test_state, serial_test_cleanup
-from tests.concept_direction_approach_parity.experiment_resource_utils import resolve_model_spec
+from tests.nb_experiment_harness.config import load_experiment_config
+from tests.nb_experiment_harness.session import resolve_model_spec
 from tests.configuration import config_modules
 from tests.conftest import FixtPhase, clean_cuda, session_fixture_hook_exec
 from tests.core.cfg_aliases import CircuitTracerNNsightGemma2, CircuitTracerNNsightGemma3
@@ -177,20 +177,24 @@ def gemma3_4b_it_oqi_debug_intervention_case() -> Gemma3OQIDebugInterventionCase
     config_path = (
         Path(__file__).resolve().parents[1]
         / "concept_direction_approach_parity"
-        / "configs"
+        / "archived_cfgs"
         / "gemma3_4b_it_local_oqi_reasoning_single_fs_di_60.yaml"
     )
-    payload = yaml.safe_load(config_path.read_text())
-    model_spec = resolve_model_spec(payload["MODEL_FAMILY"], payload["MODEL_VARIANT"])
+    payload = load_experiment_config(config_path)
+    model_payload = cast(dict[str, Any], payload["MODEL"])
+    prompt_payload = cast(dict[str, Any], payload["PROMPT"])
+    session_payload = cast(dict[str, Any], payload["SESSION"])
+    analysis_payload = cast(dict[str, Any], payload["ANALYSIS"])
+    model_spec = resolve_model_spec(str(model_payload["family"]), str(model_payload["variant"]))
     return Gemma3OQIDebugInterventionCase(
-        prompt=str(payload["PROMPT_OVERRIDE"]),
-        prompt_render_mode=str(payload["PROMPT_RENDER_MODE"]),
-        key_tokens=tuple(str(token) for token in payload["KEY_TOKENS"]),
+        prompt=str(prompt_payload["text"]),
+        prompt_render_mode=str(prompt_payload["render_mode"]),
+        key_tokens=tuple(str(token) for token in prompt_payload["key_tokens"]),
         model_name=model_spec.model_name,
         transcoder_set=model_spec.transcoder_set,
         max_feature_nodes=8192,
-        batch_size=int(payload["BATCH_SIZE"]),
-        intervention_scale_factor=float(payload["DEFAULT_SCALE_FACTOR"]),
+        batch_size=int(session_payload["batch_size"]),
+        intervention_scale_factor=float(analysis_payload["default_scale_factor"]),
     )
 
 

@@ -10,7 +10,7 @@ def test_build_notebook_cfg_preserves_debug_session_surface_preset() -> None:
     config_path = (
         Path(__file__).resolve().parents[1]
         / "concept_direction_approach_parity"
-        / "configs"
+        / "archived_cfgs"
         / "gemma3_4b_it_local_oqi_reasoning_single_fs_di_60.yaml"
     )
     cfg, should_cleanup = _build_notebook_cfg(config_path)

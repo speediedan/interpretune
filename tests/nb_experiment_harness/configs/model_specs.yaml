@@ -1,0 +1,151 @@
+model_specs:
+  gemma2.base:
+    model_name: google/gemma-2-2b
+    transcoder_set: gemma
+    neuronpedia_model: gemma-2-2b
+    neuronpedia_set: gemmascope-transcoder-16k
+    use_chat_template: false
+    cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma2
+    nnsight_overrides:
+      model_name: "{model_name}"
+      device_map: "{device_type}"
+      torch_dtype: float32
+      dispatch: true
+      attn_implementation: eager
+      tokenizer_kwargs:
+        padding_side: left
+        add_bos_token: true
+    circuit_tracer_overrides:
+      model_name: "{model_name}"
+      transcoder_set: "{transcoder_set}"
+  gemma2.it:
+    model_name: google/gemma-2-2b-it
+    transcoder_set: gemma
+    neuronpedia_model: gemma-2-2b
+    neuronpedia_set: gemmascope-transcoder-16k
+    use_chat_template: true
+    cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma2
+    nnsight_overrides:
+      model_name: "{model_name}"
+      device_map: "{device_type}"
+      torch_dtype: float32
+      dispatch: true
+      attn_implementation: eager
+      tokenizer_kwargs:
+        padding_side: left
+        add_bos_token: true
+    circuit_tracer_overrides:
+      model_name: "{model_name}"
+      transcoder_set: "{transcoder_set}"
+  gemma3.pt:
+    model_name: google/gemma-3-1b-pt
+    transcoder_set: mwhanna/gemma-scope-2-1b-pt/transcoder_all/width_16k_l0_small_affine
+    neuronpedia_model: gemma-3-1b
+    neuronpedia_set: gemmascope-2-res-16k
+    use_chat_template: false
+    cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma3
+    nnsight_overrides:
+      model_name: "{model_name}"
+      device_map: "{device_type}"
+      torch_dtype: float32
+      dispatch: true
+      tokenizer_kwargs:
+        padding_side: left
+        add_bos_token: true
+    circuit_tracer_overrides:
+      model_name: "{model_name}"
+      transcoder_set: "{transcoder_set}"
+  gemma3.1b_it:
+    model_name: google/gemma-3-1b-it
+    transcoder_set: mwhanna/gemma-scope-2-1b-it/transcoder_all/width_16k_l0_small_affine
+    neuronpedia_model: gemma-3-1b-it
+    neuronpedia_set: gemmascope-2-transcoder-16k
+    use_chat_template: true
+    cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma3
+    nnsight_overrides:
+      model_name: "{model_name}"
+      device_map: "{device_type}"
+      torch_dtype: float32
+      dispatch: true
+      tokenizer_kwargs:
+        padding_side: left
+        add_bos_token: true
+    circuit_tracer_overrides:
+      model_name: "{model_name}"
+      transcoder_set: "{transcoder_set}"
+  gemma3.4b_pt:
+    model_name: google/gemma-3-4b-pt
+    transcoder_set: mwhanna/gemma-scope-2-4b-pt/transcoder_all/width_16k_l0_small_affine
+    neuronpedia_model: gemma-3-4b
+    neuronpedia_set: gemmascope-2-res-16k
+    use_chat_template: false
+    cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma3
+    hf_model_head: transformers.Gemma3ForConditionalGeneration
+    nnsight_overrides:
+      model_name: "{model_name}"
+      device_map: "{device_type}"
+      torch_dtype: float32
+      dispatch: true
+      tokenizer_kwargs:
+        padding_side: left
+        add_bos_token: true
+    circuit_tracer_overrides:
+      model_name: "{model_name}"
+      transcoder_set: "{transcoder_set}"
+  gemma3.4b_it:
+    model_name: google/gemma-3-4b-it
+    transcoder_set: mwhanna/gemma-scope-2-4b-it/transcoder_all/width_16k_l0_small_affine
+    neuronpedia_model: gemma-3-4b-it
+    neuronpedia_set: gemmascope-2-transcoder-16k
+    use_chat_template: true
+    cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma3
+    hf_model_head: transformers.Gemma3ForConditionalGeneration
+    nnsight_overrides:
+      model_name: "{model_name}"
+      device_map: "{device_type}"
+      torch_dtype: float32
+      dispatch: true
+      tokenizer_kwargs:
+        padding_side: left
+        add_bos_token: true
+    circuit_tracer_overrides:
+      model_name: "{model_name}"
+      transcoder_set: "{transcoder_set}"
+  gemma3.4b_262k_pt:
+    model_name: google/gemma-3-4b-pt
+    transcoder_set: mwhanna/gemma-scope-2-4b-pt/transcoder_all/width_262k_l0_small_affine
+    neuronpedia_model: gemma-3-4b
+    neuronpedia_set: gemmascope-2-res-262k
+    use_chat_template: false
+    cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma3
+    hf_model_head: transformers.Gemma3ForConditionalGeneration
+    nnsight_overrides:
+      model_name: "{model_name}"
+      device_map: "{device_type}"
+      torch_dtype: float32
+      dispatch: true
+      tokenizer_kwargs:
+        padding_side: left
+        add_bos_token: true
+    circuit_tracer_overrides:
+      model_name: "{model_name}"
+      transcoder_set: "{transcoder_set}"
+  gemma3.4b_262k_it:
+    model_name: google/gemma-3-4b-it
+    transcoder_set: mwhanna/gemma-scope-2-4b-it/transcoder_all/width_262k_l0_small_affine
+    neuronpedia_model: gemma-3-4b-it
+    neuronpedia_set: gemmascope-2-transcoder-262k
+    use_chat_template: true
+    cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma3
+    hf_model_head: transformers.Gemma3ForConditionalGeneration
+    nnsight_overrides:
+      model_name: "{model_name}"
+      device_map: "{device_type}"
+      torch_dtype: float32
+      dispatch: true
+      tokenizer_kwargs:
+        padding_side: left
+        add_bos_token: true
+    circuit_tracer_overrides:
+      model_name: "{model_name}"
+      transcoder_set: "{transcoder_set}"

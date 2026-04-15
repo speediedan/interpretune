@@ -368,6 +368,30 @@ def test_concept_direction_public_op_uses_schema_default_mode(module_factory) ->
     assert result.concept_direction_mode == "mean_difference"
 
 
+@pytest.mark.parametrize(
+    "module_factory",
+    [
+        pytest.param(_TLLikeProducerModule, id="transformerlens"),
+        pytest.param(_NNsightLikeProducerModule, id="nnsight"),
+    ],
+)
+def test_concept_direction_single_group_embed_supports_group_a_only(module_factory) -> None:
+    module = module_factory()
+
+    result = it.concept_direction(
+        module,
+        AnalysisBatch(concept_group_a=["Paris"], concept_direction_mode="single_group"),
+        batch=None,
+        batch_idx=0,
+    )
+
+    expected = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
+    assert torch.allclose(result.concept_direction, expected, atol=1e-6)
+    assert result.concept_group_a_token_ids == [0]
+    assert result.concept_group_b_token_ids == []
+    assert result.concept_direction_mode == "single_group"
+
+
 def test_extract_concept_latent_examples_filters_correct_rows_and_applies_logit_diff_weights() -> None:
     module = SimpleNamespace()
     analysis_batch = AnalysisBatch(
@@ -404,6 +428,35 @@ def test_extract_concept_latent_examples_filters_correct_rows_and_applies_logit_
     assert result.concept_group_name == ["capital", "state", "state"]
     assert torch.equal(result.concept_example_logit_diff, torch.tensor([2.0, 1.0, 0.5], dtype=torch.float32))
     assert torch.equal(result.concept_example_weight, torch.tensor([2.0, 1.0, 0.5], dtype=torch.float32))
+
+
+def test_extract_concept_latent_examples_allows_missing_group_b_labels() -> None:
+    module = SimpleNamespace()
+    analysis_batch = AnalysisBatch(
+        cache={
+            "unembed.hook_in.hook_sae_acts_post": torch.tensor(
+                [
+                    [[0.0, 0.0], [3.0, 0.0]],
+                    [[0.0, 0.0], [2.0, 1.0]],
+                ],
+                dtype=torch.float32,
+            )
+        },
+        answer_indices=torch.tensor([1, 1], dtype=torch.long),
+        orig_labels=torch.tensor([0, 0], dtype=torch.long),
+        logit_diffs=torch.tensor([2.0, 0.5], dtype=torch.float32),
+        concept_group_a_label_ids=[0],
+        concept_group_a_name="ohio_entities",
+        concept_cache_key="unembed.hook_in.hook_sae_acts_post",
+        concept_weight_by_logit_diff=1,
+    )
+
+    source_batch = extract_concept_latent_state_impl(module, analysis_batch, batch=None, batch_idx=0)
+    result = extract_concept_latent_examples_impl(module, source_batch, batch=None, batch_idx=0)
+
+    assert torch.equal(result.concept_group_id, torch.tensor([0, 0], dtype=torch.long))
+    assert result.concept_group_name == ["ohio_entities", "ohio_entities"]
+    assert torch.equal(result.concept_example_weight, torch.tensor([2.0, 0.5], dtype=torch.float32))
 
 
 def test_concept_direction_aggregates_round_tripped_synthetic_hf_dataset(tmp_path) -> None:
@@ -961,6 +1014,44 @@ def test_concept_direction_store_path_quality_with_distinct_latent_space(tmp_pat
     abs_direction = direction.abs()
     assert abs_direction[0] > abs_direction[1], "dim-0 (capital-unique) should dominate over shared dim-1"
     assert abs_direction[0] > abs_direction[2], "dim-0 (capital-unique) should dominate over dim-2"
+
+
+def test_concept_direction_single_group_store_supports_group_a_only(tmp_path) -> None:
+    embed_weight = _build_capitals_states_embed_weight()
+    latent_rows = torch.tensor(
+        [
+            [4.0, 0.0, 0.0],
+            [2.0, 2.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+    weights = torch.tensor([2.0, 1.0], dtype=torch.float32)
+    concept_store = _round_trip_store(
+        tmp_path,
+        "single_group_latent",
+        Dataset.from_dict(
+            {
+                "concept_latent_state": latent_rows.tolist(),
+                "concept_group_id": [0, 0],
+                "concept_group_name": ["ohio_city", "ohio_city"],
+                "concept_example_weight": weights.tolist(),
+            }
+        ),
+    )
+    module = _EmbedStoreEquivalenceModule(embed_weight, input_store=concept_store)
+
+    result = it.concept_direction(
+        module,
+        AnalysisBatch(concept_direction_mode="single_group", concept_group_a_name="ohio_city"),
+        batch=None,
+        batch_idx=0,
+    )
+
+    expected = ((latent_rows * weights.unsqueeze(-1)).sum(dim=0) / weights.sum()).float()
+    expected = expected / torch.linalg.vector_norm(expected)
+    assert torch.allclose(result.concept_direction, expected, atol=1e-6)
+    assert result.concept_direction_mode == "single_group"
+    assert result.concept_label == "ohio_city"
 
 
 def test_concept_direction_paired_rejection_separates_overlapping_groups(tmp_path) -> None:

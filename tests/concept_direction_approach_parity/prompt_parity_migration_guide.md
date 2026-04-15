@@ -18,14 +18,14 @@ The shared Gemma prompt config in [src/it_examples/example_prompt_configs.py](/h
 1. Builds the manual Gemma chat string with the correct BOS token and turn separators.
 2. Exposes `apply_chat_template_fn(...)` so the harness can compare the manual path against the tokenizer-native path directly.
 
-The concept-direction harness utilities in [tests/concept_direction_approach_parity/concept_direction_experiment_utils.py](/home/speediedan/repos/interpretune/tests/concept_direction_approach_parity/concept_direction_experiment_utils.py) now:
+The concept-direction harness utilities in [tests/concept_direction_approach_parity/concept_direction.py](/home/speediedan/repos/interpretune/tests/concept_direction_approach_parity/concept_direction.py) now:
 
 1. Use explicit `apply_chat_template` instead of the older `tokenizer` mode name.
 2. Allow `TARGET_TOKENS` to override `TARGET_TOKEN_IDS`.
 3. Emit prompt strings, token IDs, and token strings for each render mode.
 4. Record pre-intervention and post-intervention top-token snapshots for easier debugging.
 
-The source notebook [tests/concept_direction_approach_parity/concept_direction_experiment_harness.ipynb](/home/speediedan/repos/interpretune/tests/concept_direction_approach_parity/concept_direction_experiment_harness.ipynb) was also cleaned up to remove the whitespace-heavy cell formatting introduced by earlier edits.
+The source notebook [tests/concept_direction_approach_parity/concept_direction_template.ipynb](/home/speediedan/repos/interpretune/tests/concept_direction_approach_parity/concept_direction_template.ipynb) was also cleaned up to remove the whitespace-heavy cell formatting introduced by earlier edits.
 
 ## Token-By-Token Validation
 

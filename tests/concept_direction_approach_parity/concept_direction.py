@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import warnings
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,7 +19,6 @@ from interpretune.analysis.execution import execute_analysis_op
 from interpretune.analysis.ops.helpers import (
     AnalysisInputs,
     FeatureSelectionSpec,
-    apply_feature_selection_filter,
     last_token_logits,
 )
 from interpretune.config import AnalysisCfg, init_analysis_cfgs
@@ -48,6 +47,25 @@ from interpretune.utils.neuronpedia_explanations import (
 )
 
 from it_examples.example_prompt_configs import GemmaPromptConfig
+from tests.nb_experiment_harness.config import (
+    SharedHarnessSections,
+    build_shared_harness_sections,
+    get_config_value,
+    get_required_config_value,
+    load_experiment_config,
+)
+from tests.nb_experiment_harness.nb_harness_utils import (
+    _build_feature_selection_spec as _shared_build_feature_selection_spec,
+    _get_config_value_with_preset_default,
+    _extract_top_features_with_optional_filter as _shared_extract_top_features_with_optional_filter,
+    build_shared_summary_record,
+    create_work_root,
+    feature_ids_to_tuples,
+    tensor_to_cpu,
+)
+from tests.nb_experiment_harness.pipeline_patterns import (
+    run_direct_projection_pipeline as _shared_run_direct_projection_pipeline,
+)
 from tests.parity_analysis.intervention_drift_analysis import (
     build_intervention_drift_report,
     resolve_artifact_output_dir,
@@ -56,15 +74,11 @@ from tests.parity_analysis.intervention_drift_analysis import (
     snapshot_module_runtime_state,
     tensor_fingerprint,
 )
-
-try:
-    from tests.concept_direction_approach_parity.experiment_resource_utils import (
-        experiment_session,
-        feature_ids_to_tuples,
-        tensor_to_cpu,
-    )
-except ModuleNotFoundError:
-    from experiment_resource_utils import experiment_session, feature_ids_to_tuples, tensor_to_cpu
+from tests.nb_experiment_harness.session import (
+    experiment_session,
+    resolve_model_spec,
+    resolve_session_surface_preset_config_defaults,
+)
 
 if TYPE_CHECKING:
     from interpretune.extensions.debug_generation import DebugGeneration
@@ -72,18 +86,27 @@ if TYPE_CHECKING:
 
 PromptRenderMode = Literal["plain", "apply_chat_template", "gemma_dataclass"]
 StoreLatentExtractionMode = Literal["answer_position_state", "context_enhanced"]
-ConstrainedFeatureSelectionRef = str | tuple[str, str, int, int]
+ConstrainedFeatureSelectionRefValue = str | tuple[str, str, int, int]
 AnalysisMode = Literal["concept_pair", "explicit_embedding_difference", "debug_intervention_pipelines"]
+ConceptDirectionMode = Literal["mean_difference", "paired_rejection", "single_group"]
 DebugSessionSurfacePreset = Literal["notebook_default", "parity_surface"]
 
 
+@dataclass(frozen=True)
+class ConstrainedFeatureSelectionRef:
+    ref: ConstrainedFeatureSelectionRefValue
+    activation_value: float | None = None
+
+
 DEFAULT_CONCEPT_PAIR_CONFIG_DIR = Path(__file__).with_name("configs")
+DEFAULT_NOTEBOOK_PATH = Path(__file__).resolve().with_name("concept_direction_template.ipynb")
 DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT = Path(
     os.getenv(
         "LOCAL_NEURONPEDIA_EXPORT_ROOT",
         "/home/speediedan/repos/neuronpedia/utils/neuronpedia-utils/neuronpedia_utils/exports",
     )
 )
+NULL_BATCH: Any = cast(Any, None)
 
 
 @dataclass
@@ -197,14 +220,32 @@ def resolve_concept_pair_config_path(
 
 
 def _normalize_constrained_feature_selection_ref(raw_ref: Any) -> ConstrainedFeatureSelectionRef:
-    if isinstance(raw_ref, str):
+    if isinstance(raw_ref, ConstrainedFeatureSelectionRef):
         return raw_ref
+
+    activation_value = None
+    if isinstance(raw_ref, Mapping):
+        ref_value = raw_ref.get("ref", raw_ref.get("feature_ref"))
+        activation_value_raw = raw_ref.get("activation_value")
+        if ref_value is None:
+            raise ValueError(
+                "Constrained feature selection mappings must include 'ref' (or legacy 'feature_ref')."
+            )
+        raw_ref = ref_value
+        activation_value = None if activation_value_raw is None else float(activation_value_raw)
+
+    if isinstance(raw_ref, str):
+        return ConstrainedFeatureSelectionRef(ref=raw_ref, activation_value=activation_value)
     if isinstance(raw_ref, Sequence) and not isinstance(raw_ref, (str, bytes)) and len(raw_ref) == 4:
         model_id, source_set, layer_number, feature_index = raw_ref
-        return (str(model_id), str(source_set), int(layer_number), int(feature_index))
+        return ConstrainedFeatureSelectionRef(
+            ref=(str(model_id), str(source_set), int(layer_number), int(feature_index)),
+            activation_value=activation_value,
+        )
     raise ValueError(
         "Constrained feature selection entries must be full Neuronpedia refs or "
-        "(model_id, source_set, layer, feature_index) tuples."
+        "(model_id, source_set, layer, feature_index) tuples, optionally wrapped in a mapping with "
+        "an activation_value override."
     )
 
 
@@ -216,11 +257,18 @@ def _normalize_constrained_feature_selection_refs(
     return tuple(_normalize_constrained_feature_selection_ref(raw_ref) for raw_ref in raw_refs)
 
 
-def _serialize_constrained_feature_selection_ref(raw_ref: ConstrainedFeatureSelectionRef) -> str | list[Any]:
-    if isinstance(raw_ref, str):
-        return raw_ref
-    model_id, source_set, layer_number, feature_index = raw_ref
-    return [model_id, source_set, layer_number, feature_index]
+def _serialize_constrained_feature_selection_ref(
+    raw_ref: ConstrainedFeatureSelectionRef,
+) -> str | list[Any] | dict[str, Any]:
+    if isinstance(raw_ref.ref, str):
+        serialized_ref: str | list[Any] = raw_ref.ref
+    else:
+        model_id, source_set, layer_number, feature_index = raw_ref.ref
+        serialized_ref = [model_id, source_set, layer_number, feature_index]
+
+    if raw_ref.activation_value is None:
+        return serialized_ref
+    return {"ref": serialized_ref, "activation_value": float(raw_ref.activation_value)}
 
 
 def _build_classification_prompt(entity_name: str, question: str) -> str:
@@ -363,6 +411,7 @@ class NotebookHarnessConfig:
     force_device: str | None
     work_root: Any
     analysis_mode: AnalysisMode = "concept_pair"
+    concept_direction_mode: ConceptDirectionMode = "paired_rejection"
     explicit_direction_tokens: tuple[str, str] | None = None
     enable_zero_softcap: bool = False
     batch_size: int | None = None
@@ -384,6 +433,11 @@ class NotebookHarnessConfig:
     constrained_feature_selection_refs: tuple[ConstrainedFeatureSelectionRef, ...] | None = None
     store_latent_extraction_mode: StoreLatentExtractionMode = "answer_position_state"
     context_enhanced_scale: float = 1.0
+    direct_projection_interventions: dict[str, Any] | None = None
+    direct_projection_intervention_hook_pattern: str | None = None
+    direct_projection_intervention_mode: str | None = None
+    direct_projection_intervention_scale_factor: float | None = None
+    direct_projection_intervention_use_intervention_tensor_as_basis: bool | None = None
     store_concept_cache_key: str = "unembed.hook_in"
     store_concept_correct_only: bool = False
     store_weight_by_logit_diff: bool = True
@@ -396,9 +450,11 @@ class NotebookHarnessConfig:
     debug_validation_raise_on_failure: bool = True
     debug_session_surface_preset: DebugSessionSurfacePreset = "notebook_default"
     concept_pair: ConceptPair = field(init=False)
+    shared_sections: SharedHarnessSections = field(init=False)
 
     def __post_init__(self) -> None:
         self.analysis_mode = cast(AnalysisMode, str(self.analysis_mode).strip())
+        self.concept_direction_mode = cast(ConceptDirectionMode, str(self.concept_direction_mode).strip())
         requested_concept_pair_name = None if self.concept_pair_name is None else str(self.concept_pair_name).strip()
         resolved_concept_pair_path = resolve_concept_pair_config_path(
             requested_concept_pair_name,
@@ -444,6 +500,8 @@ class NotebookHarnessConfig:
             DebugSessionSurfacePreset,
             str(self.debug_session_surface_preset).strip(),
         )
+        if self.concept_direction_mode not in {"mean_difference", "paired_rejection", "single_group"}:
+            raise ValueError("concept_direction_mode must be 'mean_difference', 'paired_rejection', or 'single_group'")
         if self.debug_session_surface_preset not in {"notebook_default", "parity_surface"}:
             raise ValueError(
                 "debug_session_surface_preset must be 'notebook_default' or 'parity_surface'"
@@ -453,6 +511,16 @@ class NotebookHarnessConfig:
         self.constrained_feature_selection_refs = _normalize_constrained_feature_selection_refs(
             self.constrained_feature_selection_refs
         )
+        if self.direct_projection_interventions is not None:
+            if not isinstance(self.direct_projection_interventions, Mapping):
+                raise ValueError("ANALYSIS.direct_projection.interventions must be a mapping when provided")
+            self.direct_projection_interventions = dict(self.direct_projection_interventions)
+        if self.direct_projection_intervention_scale_factor is not None:
+            self.direct_projection_intervention_scale_factor = float(self.direct_projection_intervention_scale_factor)
+        if self.direct_projection_intervention_use_intervention_tensor_as_basis is not None:
+            self.direct_projection_intervention_use_intervention_tensor_as_basis = bool(
+                self.direct_projection_intervention_use_intervention_tensor_as_basis
+            )
 
         mode_warning_messages = list(self.mode_warning_messages)
         if self.analysis_mode == "explicit_embedding_difference":
@@ -497,6 +565,46 @@ class NotebookHarnessConfig:
                 "zero_softcap is enabled for all supported forward and intervention paths in this notebook run."
             )
         self.mode_warning_messages = tuple(mode_warning_messages)
+        self.shared_sections = build_shared_harness_sections(
+            model_family=self.model_family,
+            model_variant=self.model_variant,
+            model_name=self.model_name,
+            transcoder_set=self.transcoder_set,
+            neuronpedia_model=self.neuronpedia_model,
+            neuronpedia_set=self.neuronpedia_set,
+            hf_model_head=self.hf_model_head,
+            prompt=self.prompt,
+            prompt_render_mode=self.prompt_render_mode,
+            target_tokens=self.target_tokens,
+            target_token_ids=self.target_token_ids,
+            key_tokens=self.key_tokens_override,
+            explicit_direction_tokens=self.explicit_direction_tokens,
+            force_device=self.force_device,
+            batch_size=self.batch_size,
+            max_feature_nodes=self.max_feature_nodes,
+            debug_session_surface_preset=self.debug_session_surface_preset,
+            neuronpedia_base_url=self.neuronpedia_base_url,
+            use_localhost=self.use_localhost,
+            local_neuronpedia_db_url=self.local_neuronpedia_db_url,
+            local_neuronpedia_webapp_url=self.local_neuronpedia_webapp_url,
+            check_local_explanation_coverage=self.check_local_explanation_coverage,
+            generate_missing_local_explanations=self.generate_missing_local_explanations,
+            local_explanation_feature_limit=self.local_explanation_feature_limit,
+            local_explanation_type_name=self.local_explanation_type_name,
+            local_explanation_timeout_seconds=self.local_explanation_timeout_seconds,
+            local_explanation_max_retries=self.local_explanation_max_retries,
+            local_explanation_retry_backoff_seconds=self.local_explanation_retry_backoff_seconds,
+            local_neuronpedia_service_status=self.local_neuronpedia_service_status,
+            mode_warning_messages=self.mode_warning_messages,
+            enable_zero_softcap=self.enable_zero_softcap,
+            enable_baseline_path_debug=self.enable_baseline_path_debug,
+            debug_validation_logit_atol=self.debug_validation_logit_atol,
+            debug_validation_logit_rtol=self.debug_validation_logit_rtol,
+            debug_validation_act_atol=self.debug_validation_act_atol,
+            debug_validation_act_rtol=self.debug_validation_act_rtol,
+            debug_validation_top_k=self.debug_validation_top_k,
+            debug_validation_raise_on_failure=self.debug_validation_raise_on_failure,
+        )
 
     @property
     def use_chat_template(self) -> bool:
@@ -524,11 +632,7 @@ class NotebookHarnessConfig:
 
     @property
     def analysis_direction_mode_name(self) -> str:
-        if self.uses_explicit_embedding_difference:
-            return "explicit_embedding_difference"
-        if self.is_debug_intervention_mode:
-            return "debug_intervention_pipelines"
-        return "paired_rejection"
+        return self.concept_direction_mode
 
     @property
     def chat_template_method(self) -> str:
@@ -543,6 +647,7 @@ class NotebookHarnessConfig:
         """Common kwargs passed to every ``experiment_session`` call."""
         return {
             "model_family": self.model_family,
+            "model_variant": self.model_variant,
             "model_name": self.model_name,
             "transcoder_set": self.transcoder_set,
             "hf_model_head": self.hf_model_head,
@@ -551,6 +656,491 @@ class NotebookHarnessConfig:
             "max_feature_nodes": self.max_feature_nodes,
             "debug_session_surface_preset": self.debug_session_surface_preset,
         }
+
+
+def _normalize_token_pair(value: Any, *, field_name: str) -> tuple[str, str] | None:
+    if value is None:
+        return None
+    items = tuple(str(item) for item in value)
+    if len(items) != 2:
+        raise ValueError(f"{field_name} must contain exactly two values.")
+    return cast(tuple[str, str], items)
+
+
+def _normalize_int_pair(value: Any, *, field_name: str) -> tuple[int, int] | None:
+    if value is None:
+        return None
+    items = tuple(int(item) for item in value)
+    if len(items) != 2:
+        raise ValueError(f"{field_name} must contain exactly two values.")
+    return cast(tuple[int, int], items)
+
+
+def _resolve_prompt_text(payload: Mapping[str, Any]) -> str:
+    prompt_override = get_config_value(payload, section="PROMPT", key="text", flat_key="PROMPT_OVERRIDE")
+    if prompt_override is None:
+        raise ValueError("PROMPT_OVERRIDE must be provided by the experiment config.")
+    return str(prompt_override)
+
+
+def build_notebook_harness_config(
+    config_path: str | Path,
+) -> tuple[NotebookHarnessConfig, bool, dict[str, Any]]:
+    resolved_payload = load_experiment_config(config_path)
+    resolved_config_path = Path(resolved_payload["EXPERIMENT_CONFIG_PATH"]).resolve()
+    config_name = str(resolved_payload.get("EXPERIMENT_CONFIG_NAME", resolved_config_path.stem))
+    experiment_name = str(resolved_payload.get("EXPERIMENT_NAME", config_name))
+
+    work_root_base = get_config_value(
+        resolved_payload,
+        section="RUNTIME",
+        key="experiment_work_dir",
+        flat_key="EXPERIMENT_WORK_DIR",
+    )
+    work_root = create_work_root(work_root_base, experiment_name, prefix="concept_dir")
+    should_cleanup_work_root = work_root_base is None
+
+    model_family = str(
+        get_required_config_value(resolved_payload, section="MODEL", key="family", flat_key="MODEL_FAMILY")
+    )
+    model_variant = str(
+        get_required_config_value(resolved_payload, section="MODEL", key="variant", flat_key="MODEL_VARIANT")
+    )
+    prompt_render_mode = cast(
+        PromptRenderMode,
+        str(
+            get_config_value(
+                resolved_payload,
+                section="PROMPT",
+                key="render_mode",
+                flat_key="PROMPT_RENDER_MODE",
+                default="plain",
+            )
+        ).strip(),
+    )
+
+    model_spec = resolve_model_spec(
+        model_family,
+        model_variant,
+        model_name_override=get_config_value(
+            resolved_payload,
+            section="MODEL",
+            key="model_name",
+            flat_key="MODEL_NAME_OVERRIDE",
+        ),
+        transcoder_set_override=get_config_value(
+            resolved_payload,
+            section="MODEL",
+            key="transcoder_set",
+            flat_key="TRANSCODER_SET_OVERRIDE",
+        ),
+        neuronpedia_model_override=get_config_value(
+            resolved_payload,
+            section="MODEL",
+            key="neuronpedia_model",
+            flat_key="NEURONPEDIA_MODEL_OVERRIDE",
+        ),
+        neuronpedia_set_override=get_config_value(
+            resolved_payload,
+            section="MODEL",
+            key="neuronpedia_set",
+            flat_key="NEURONPEDIA_SET_OVERRIDE",
+        ),
+    )
+
+    runtime = resolve_neuronpedia_runtime_config(
+        use_localhost=bool(
+            get_config_value(
+                resolved_payload,
+                section="NEURONPEDIA",
+                key="use_localhost",
+                flat_key="USE_LOCALHOST",
+                default=False,
+            )
+        ),
+        neuronpedia_base_url_override=get_config_value(
+            resolved_payload,
+            section="NEURONPEDIA",
+            key="base_url_override",
+            flat_key="NEURONPEDIA_BASE_URL_OVERRIDE",
+        ),
+        local_db_url=get_config_value(
+            resolved_payload,
+            section="NEURONPEDIA",
+            key="local_db_url",
+            flat_key="LOCAL_NEURONPEDIA_DB_URL",
+        ),
+        local_webapp_url=get_config_value(
+            resolved_payload,
+            section="NEURONPEDIA",
+            key="local_webapp_url",
+            flat_key="LOCAL_NEURONPEDIA_WEBAPP_URL",
+        ),
+        check_local_explanation_coverage=bool(
+            get_config_value(
+                resolved_payload,
+                section="NEURONPEDIA",
+                key="check_local_explanation_coverage",
+                flat_key="CHECK_LOCAL_EXPLANATION_COVERAGE",
+                default=False,
+            )
+        ),
+        generate_missing_local_explanations=bool(
+            get_config_value(
+                resolved_payload,
+                section="NEURONPEDIA",
+                key="generate_missing_local_explanations",
+                flat_key="GENERATE_MISSING_LOCAL_EXPLANATIONS",
+                default=False,
+            )
+        ),
+        local_explanation_feature_limit=int(
+            get_config_value(
+                resolved_payload,
+                section="NEURONPEDIA",
+                key="local_explanation_feature_limit",
+                flat_key="LOCAL_EXPLANATION_FEATURE_LIMIT",
+                default=20,
+            )
+        ),
+    )
+
+    concept_pair_path = resolve_concept_pair_config_path(
+        cast(str | None, resolved_payload.get("CONCEPT_PAIR_NAME")),
+        model_family=model_family,
+        prompt_render_mode=prompt_render_mode,
+        config_dir=Path(config_path).expanduser().resolve().parent,
+        concept_pair_config_path=get_config_value(
+            resolved_payload,
+            section="EXPERIMENT",
+            key="concept_pair_config_path",
+            flat_key="CONCEPT_PAIR_CONFIG_PATH",
+        ),
+    )
+    prompt = _resolve_prompt_text(resolved_payload)
+    analysis_cfg = cast(Mapping[str, Any], resolved_payload.get("ANALYSIS", {}))
+    direct_projection_cfg = cast(Mapping[str, Any], analysis_cfg.get("direct_projection", {}))
+    debug_session_surface_preset = cast(
+        DebugSessionSurfacePreset,
+        str(
+            get_config_value(
+                resolved_payload,
+                section="SESSION",
+                key="debug_session_surface_preset",
+                flat_key="DEBUG_SESSION_SURFACE_PRESET",
+                default="notebook_default",
+            )
+        ).strip(),
+    )
+    preset_config_defaults = resolve_session_surface_preset_config_defaults(debug_session_surface_preset)
+
+    cfg = NotebookHarnessConfig(
+        experiment_name=experiment_name,
+        experiment_config_name=config_name,
+        model_family=model_family,
+        model_variant=model_variant,
+        model_name=model_spec.model_name,
+        transcoder_set=model_spec.transcoder_set,
+        hf_model_head=model_spec.hf_model_head,
+        neuronpedia_model=model_spec.neuronpedia_model,
+        neuronpedia_set=model_spec.neuronpedia_set,
+        neuronpedia_base_url=runtime.base_url,
+        concept_pair_name=cast(str | None, resolved_payload.get("CONCEPT_PAIR_NAME")),
+        concept_pair_config_path=str(concept_pair_path),
+        prompt=prompt,
+        prompt_render_mode=prompt_render_mode,
+        target_tokens=_normalize_token_pair(
+            get_config_value(resolved_payload, section="PROMPT", key="target_tokens", flat_key="TARGET_TOKENS"),
+            field_name="TARGET_TOKENS",
+        ),
+        target_token_ids=_normalize_int_pair(
+            get_config_value(
+                resolved_payload,
+                section="PROMPT",
+                key="target_token_ids",
+                flat_key="TARGET_TOKEN_IDS",
+            ),
+            field_name="TARGET_TOKEN_IDS",
+        ),
+        top_n=int(get_config_value(resolved_payload, section="ANALYSIS", key="top_n", flat_key="TOP_N", default=10)),
+        default_scale_factor=float(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="default_scale_factor",
+                flat_key="DEFAULT_SCALE_FACTOR",
+                default=10.0,
+            )
+        ),
+        scale_factor_sweep=list(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="scale_factor_sweep",
+                flat_key="SCALE_FACTOR_SWEEP",
+                default=[2.0, 5.0, 10.0, 20.0, 50.0],
+            )
+        ),
+        ablation_n_list=list(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="ablation_n_list",
+                flat_key="ABLATION_N_LIST",
+                default=[5, 10, 25, 50, 100],
+            )
+        ),
+        enable_sign_aware=bool(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="enable_sign_aware",
+                flat_key="ENABLE_SIGN_AWARE",
+                default=False,
+            )
+        ),
+        force_device=cast(
+            str | None,
+            get_config_value(resolved_payload, section="SESSION", key="force_device", flat_key="FORCE_DEVICE"),
+        ),
+        work_root=work_root,
+        analysis_mode=cast(
+            AnalysisMode,
+            str(
+                get_config_value(
+                    resolved_payload,
+                    section="ANALYSIS",
+                    key="mode",
+                    flat_key="ANALYSIS_MODE",
+                    default="concept_pair",
+                )
+            ).strip(),
+        ),
+        concept_direction_mode=cast(
+            ConceptDirectionMode,
+            str(
+                get_config_value(
+                    resolved_payload,
+                    section="ANALYSIS",
+                    key="concept_direction_mode",
+                    flat_key="CONCEPT_DIRECTION_MODE",
+                    default="paired_rejection",
+                )
+            ).strip(),
+        ),
+        explicit_direction_tokens=_normalize_token_pair(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="explicit_direction_tokens",
+                flat_key="EXPLICIT_DIRECTION_TOKENS",
+            ),
+            field_name="EXPLICIT_DIRECTION_TOKENS",
+        ),
+        enable_zero_softcap=bool(
+            _get_config_value_with_preset_default(
+                resolved_payload,
+                preset_config_defaults,
+                section="DEBUG_VALIDATION",
+                key="enable_zero_softcap",
+                flat_key="ENABLE_ZERO_SOFTCAP",
+                default=False,
+            )
+        ),
+        batch_size=cast(
+            int | None,
+            get_config_value(resolved_payload, section="SESSION", key="batch_size", flat_key="BATCH_SIZE"),
+        ),
+        max_feature_nodes=cast(
+            int | None,
+            get_config_value(
+                resolved_payload,
+                section="SESSION",
+                key="max_feature_nodes",
+                flat_key="MAX_FEATURE_NODES",
+            ),
+        ),
+        use_localhost=runtime.use_localhost,
+        local_neuronpedia_db_url=runtime.local_db_url,
+        local_neuronpedia_webapp_url=runtime.local_webapp_url,
+        check_local_explanation_coverage=runtime.check_local_explanation_coverage,
+        generate_missing_local_explanations=runtime.generate_missing_local_explanations,
+        local_explanation_feature_limit=runtime.local_explanation_feature_limit,
+        local_neuronpedia_service_status=runtime.service_status,
+        mode_warning_messages=runtime.warning_messages,
+        local_explanation_type_name=str(
+            get_config_value(
+                resolved_payload,
+                section="NEURONPEDIA",
+                key="local_explanation_type_name",
+                flat_key="LOCAL_EXPLANATION_TYPE_NAME",
+                default=DEFAULT_EXPLANATION_TYPE_NAME,
+            )
+        ),
+        local_explanation_timeout_seconds=int(
+            get_config_value(
+                resolved_payload,
+                section="NEURONPEDIA",
+                key="local_explanation_timeout_seconds",
+                flat_key="LOCAL_EXPLANATION_TIMEOUT_SECONDS",
+                default=DEFAULT_COPILOT_TIMEOUT_SECONDS,
+            )
+        ),
+        local_explanation_max_retries=int(
+            get_config_value(
+                resolved_payload,
+                section="NEURONPEDIA",
+                key="local_explanation_max_retries",
+                flat_key="LOCAL_EXPLANATION_MAX_RETRIES",
+                default=DEFAULT_COPILOT_MAX_RETRIES,
+            )
+        ),
+        local_explanation_retry_backoff_seconds=float(
+            get_config_value(
+                resolved_payload,
+                section="NEURONPEDIA",
+                key="local_explanation_retry_backoff_seconds",
+                flat_key="LOCAL_EXPLANATION_RETRY_BACKOFF_SECONDS",
+                default=DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS,
+            )
+        ),
+        key_tokens_override=cast(
+            tuple[str, ...] | None,
+            tuple(
+                str(token)
+                for token in get_config_value(
+                    resolved_payload,
+                    section="PROMPT",
+                    key="key_tokens",
+                    flat_key="KEY_TOKENS",
+                    default=(),
+                )
+            )
+            or None,
+        ),
+        constrained_feature_selection_refs=cast(
+            tuple[ConstrainedFeatureSelectionRef, ...] | None,
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="constrained_feature_selection",
+                flat_key="CONSTRAINED_FEATURE_SELECTION_LIST",
+            ),
+        ),
+        store_latent_extraction_mode=cast(
+            StoreLatentExtractionMode,
+            str(
+                get_config_value(
+                    resolved_payload,
+                    section="ANALYSIS",
+                    key="store_latent_extraction_mode",
+                    flat_key="STORE_LATENT_EXTRACTION_MODE",
+                    default="answer_position_state",
+                )
+            ).strip(),
+        ),
+        context_enhanced_scale=float(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="context_enhanced_scale",
+                flat_key="CONTEXT_ENHANCED_SCALE",
+                default=1.0,
+            )
+        ),
+        direct_projection_interventions=cast(
+            dict[str, Any] | None,
+            direct_projection_cfg.get("interventions"),
+        ),
+        direct_projection_intervention_hook_pattern=cast(
+            str | None,
+            direct_projection_cfg.get("intervention_hook_pattern"),
+        ),
+        direct_projection_intervention_mode=cast(
+            str | None,
+            direct_projection_cfg.get("intervention_mode"),
+        ),
+        direct_projection_intervention_scale_factor=cast(
+            float | None,
+            direct_projection_cfg.get("intervention_scale_factor"),
+        ),
+        direct_projection_intervention_use_intervention_tensor_as_basis=cast(
+            bool | None,
+            direct_projection_cfg.get("intervention_use_intervention_tensor_as_basis"),
+        ),
+        enable_baseline_path_debug=bool(
+            get_config_value(
+                resolved_payload,
+                section="DEBUG_VALIDATION",
+                key="enable_baseline_path_debug",
+                flat_key="ENABLE_BASELINE_PATH_DEBUG",
+                default=False,
+            )
+        ),
+        debug_validation_logit_atol=float(
+            _get_config_value_with_preset_default(
+                resolved_payload,
+                preset_config_defaults,
+                section="DEBUG_VALIDATION",
+                key="logit_atol",
+                flat_key="DEBUG_VALIDATION_LOGIT_ATOL",
+                default=1e-4,
+            )
+        ),
+        debug_validation_logit_rtol=float(
+            _get_config_value_with_preset_default(
+                resolved_payload,
+                preset_config_defaults,
+                section="DEBUG_VALIDATION",
+                key="logit_rtol",
+                flat_key="DEBUG_VALIDATION_LOGIT_RTOL",
+                default=1e-3,
+            )
+        ),
+        debug_validation_act_atol=float(
+            _get_config_value_with_preset_default(
+                resolved_payload,
+                preset_config_defaults,
+                section="DEBUG_VALIDATION",
+                key="act_atol",
+                flat_key="DEBUG_VALIDATION_ACT_ATOL",
+                default=1e-3,
+            )
+        ),
+        debug_validation_act_rtol=float(
+            _get_config_value_with_preset_default(
+                resolved_payload,
+                preset_config_defaults,
+                section="DEBUG_VALIDATION",
+                key="act_rtol",
+                flat_key="DEBUG_VALIDATION_ACT_RTOL",
+                default=1e-5,
+            )
+        ),
+        debug_validation_top_k=int(
+            _get_config_value_with_preset_default(
+                resolved_payload,
+                preset_config_defaults,
+                section="DEBUG_VALIDATION",
+                key="top_k",
+                flat_key="DEBUG_VALIDATION_TOP_K",
+                default=10,
+            )
+        ),
+        debug_validation_raise_on_failure=bool(
+            _get_config_value_with_preset_default(
+                resolved_payload,
+                preset_config_defaults,
+                section="DEBUG_VALIDATION",
+                key="raise_on_failure",
+                flat_key="DEBUG_VALIDATION_RAISE_ON_FAILURE",
+                default=True,
+            )
+        ),
+        debug_session_surface_preset=debug_session_surface_preset,
+    )
+
+    return cfg, should_cleanup_work_root, resolved_payload
 
 
 def resolve_key_tokens(cfg: NotebookHarnessConfig) -> tuple[str, ...]:
@@ -1427,13 +2017,14 @@ def _parse_constrained_feature_selection_ref(
     raw_ref: ConstrainedFeatureSelectionRef,
     cfg: NotebookHarnessConfig,
 ) -> tuple[int, int]:
+    ref_value = raw_ref.ref
     layer_identifier: str
     feature_index: str
-    if not isinstance(raw_ref, str):
-        model_id = raw_ref[0]
-        source_set = raw_ref[1]
-        layer_number = int(raw_ref[2])
-        feature_index_value = int(raw_ref[3])
+    if not isinstance(ref_value, str):
+        model_id = ref_value[0]
+        source_set = ref_value[1]
+        layer_number = int(ref_value[2])
+        feature_index_value = int(ref_value[3])
         if model_id != cfg.neuronpedia_model:
             raise ValueError(
                 f"Constrained feature selection tuple {raw_ref!r} targets model {model_id}, "
@@ -1446,22 +2037,22 @@ def _parse_constrained_feature_selection_ref(
             )
         return int(layer_number), int(feature_index_value)
 
-    if "://" in raw_ref:
-        feature_ref = parse_feature_url(raw_ref)
+    if "://" in ref_value:
+        feature_ref = parse_feature_url(ref_value)
         if feature_ref.model_id != cfg.neuronpedia_model:
             raise ValueError(
-                f"Constrained feature selection ref {raw_ref!r} targets model {feature_ref.model_id}, "
+                f"Constrained feature selection ref {ref_value!r} targets model {feature_ref.model_id}, "
                 f"expected {cfg.neuronpedia_model}."
             )
         layer_identifier = feature_ref.layer
         feature_index = feature_ref.index
     else:
-        parts = [part for part in raw_ref.split("/") if part]
+        parts = [part for part in ref_value.split("/") if part]
         if len(parts) == 3:
             model_id, layer_identifier, feature_index = parts
             if model_id != cfg.neuronpedia_model:
                 raise ValueError(
-                    f"Constrained feature selection ref {raw_ref!r} targets model {model_id}, "
+                    f"Constrained feature selection ref {ref_value!r} targets model {model_id}, "
                     f"expected {cfg.neuronpedia_model}."
                 )
         elif len(parts) == 2:
@@ -1470,7 +2061,7 @@ def _parse_constrained_feature_selection_ref(
             raise ValueError(
                 "Constrained feature selection refs must be full Neuronpedia URLs or 'model/layer/index' or "
                 "'layer/index' strings. "
-                f"Got: {raw_ref!r}"
+                f"Got: {ref_value!r}"
             )
 
     layer_parts = str(layer_identifier).split("-", 1)
@@ -1487,43 +2078,7 @@ def _build_feature_selection_spec(
     cfg: NotebookHarnessConfig,
     active_features: Any,
 ) -> FeatureSelectionSpec | None:
-    requested_refs = cfg.constrained_feature_selection_refs or ()
-    if not requested_refs:
-        return None
-
-    feature_rows = torch.as_tensor(active_features, dtype=torch.long)
-    if feature_rows.numel() == 0:
-        raise ValueError(
-            "Feature-selection filtering was requested but the attribution graph produced no active features."
-        )
-    feature_rows = feature_rows.reshape(-1, 3)
-
-    triples: list[tuple[int, int, int]] = []
-    unmatched_refs: list[str] = []
-    for raw_ref in requested_refs:
-        layer_number, feature_id = _parse_constrained_feature_selection_ref(raw_ref, cfg)
-        matches = feature_rows[(feature_rows[:, 0] == layer_number) & (feature_rows[:, 2] == feature_id)]
-        if matches.numel() == 0:
-            unmatched_refs.append(str(_serialize_constrained_feature_selection_ref(raw_ref)))
-            continue
-        for row in matches:
-            row_tuple = tuple(int(value) for value in row.tolist())
-            triples.append(cast(tuple[int, int, int], row_tuple))
-
-    if unmatched_refs and not triples:
-        raise ValueError(
-            "None of the requested feature-selection refs were present in the extracted attribution graph: "
-            + ", ".join(unmatched_refs)
-        )
-    if unmatched_refs:
-        warnings.warn(
-            "Some requested feature-selection refs were not present in the extracted attribution graph: "
-            + ", ".join(unmatched_refs),
-            stacklevel=2,
-        )
-
-    unique_triples = list(dict.fromkeys(triples))
-    return FeatureSelectionSpec(triples=unique_triples) if unique_triples else None
+    return _shared_build_feature_selection_spec(cfg, active_features)
 
 
 def _extract_top_features_with_optional_filter(
@@ -1533,56 +2088,7 @@ def _extract_top_features_with_optional_filter(
     *,
     top_n: int,
 ) -> tuple[Any, list[tuple[int, int, int]]]:
-    def _post_filter_top_features_result(result: Any, selection: FeatureSelectionSpec) -> Any:
-        feature_ids = torch.as_tensor(getattr(result, "top_feature_ids", []), dtype=torch.long).reshape(-1, 3)
-        feature_scores = torch.as_tensor(getattr(result, "top_feature_scores", []), dtype=torch.float32).reshape(-1)
-        activation_values = getattr(result, "top_feature_activation_values", None)
-        activation_tensor = (
-            None
-            if activation_values is None
-            else torch.as_tensor(activation_values, dtype=torch.float32).reshape(-1)
-        )
-
-        if feature_ids.numel() == 0:
-            setattr(result, "top_feature_ids", torch.empty((0, 3), dtype=torch.long))
-            setattr(result, "top_feature_scores", torch.empty((0,), dtype=torch.float32))
-            if activation_tensor is not None:
-                setattr(result, "top_feature_activation_values", torch.empty((0,), dtype=torch.float32))
-            return result
-
-        selection_mask = apply_feature_selection_filter(feature_ids, selection)
-        if selection_mask.numel() == 0 or not selection_mask.any():
-            setattr(result, "top_feature_ids", torch.empty((0, 3), dtype=torch.long))
-            setattr(result, "top_feature_scores", torch.empty((0,), dtype=torch.float32))
-            if activation_tensor is not None:
-                setattr(result, "top_feature_activation_values", torch.empty((0,), dtype=torch.float32))
-            return result
-
-        selected_indices = selection_mask.nonzero(as_tuple=False).reshape(-1)
-        setattr(result, "top_feature_ids", feature_ids.index_select(0, selected_indices).detach().cpu())
-        setattr(result, "top_feature_scores", feature_scores.index_select(0, selected_indices).detach().cpu())
-        if activation_tensor is not None and activation_tensor.shape[0] == feature_ids.shape[0]:
-            setattr(
-                result,
-                "top_feature_activation_values",
-                activation_tensor.index_select(0, selected_indices).detach().cpu(),
-            )
-        return result
-
-    feature_selection = _build_feature_selection_spec(cfg, top_payload.get("active_features", []))
-    call_kwargs: dict[str, Any] = {"top_n": top_n}
-    applied_triples: list[tuple[int, int, int]] = []
-    if feature_selection is not None:
-        call_kwargs["feature_selection"] = feature_selection
-        applied_triples = list(feature_selection.triples)
-
-    top_features_result = cast(
-        Any,
-        it.extract_top_features(module, it.AnalysisBatch(**top_payload), None, 0, **call_kwargs),
-    )
-    if feature_selection is not None:
-        top_features_result = _post_filter_top_features_result(top_features_result, feature_selection)
-    return top_features_result, applied_triples
+    return _shared_extract_top_features_with_optional_filter(module, cfg, top_payload, top_n=top_n)
 
 
 def _reduce_top_features_result_to_single_feature(result: Any) -> tuple[Any, int]:
@@ -1824,20 +2330,27 @@ def compute_embed_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
             concept_label = cfg.analysis_concept_label
         else:
             group_a_tokens = cfg.concept_pair.group_a_tokens
-            group_b_tokens = cfg.concept_pair.group_b_tokens
+            group_b_tokens = (
+                []
+                if cfg.analysis_direction_mode_name == "single_group"
+                else cfg.concept_pair.group_b_tokens
+            )
             concept_label = cfg.concept_pair.concept_label
+
+        analysis_kwargs: dict[str, Any] = {
+            "concept_group_a": group_a_tokens,
+            "concept_label": concept_label,
+            "concept_direction_mode": cfg.analysis_direction_mode_name,
+        }
+        if group_b_tokens:
+            analysis_kwargs["concept_group_b"] = group_b_tokens
 
         embed_result = cast(
             Any,
             it.concept_direction(
                 module,
-                it.AnalysisBatch(
-                    concept_group_a=group_a_tokens,
-                    concept_group_b=group_b_tokens,
-                    concept_label=concept_label,
-                    concept_direction_mode=cfg.analysis_direction_mode_name,
-                ),
-                None,
+                it.AnalysisBatch(**analysis_kwargs),
+                NULL_BATCH,
                 0,
             ),
         )
@@ -1884,12 +2397,12 @@ def run_pipeline(
                 it.compute_attribution_graph(
                     module,
                     analysis_batch,
-                    None,
+                    NULL_BATCH,
                     0,
                     **graph_call_kwargs,
                 ),
             )
-            influence_result = cast(Any, it.graph_node_influence(module, graph_result, None, 0))
+            influence_result = cast(Any, it.graph_node_influence(module, graph_result, NULL_BATCH, 0))
             top_payload = dict(cast(Any, graph_result))
             top_payload.update(dict(cast(Any, influence_result)))
             top_features_result, applied_feature_filter_triples = _extract_top_features_with_optional_filter(
@@ -1909,7 +2422,7 @@ def run_pipeline(
                         top_feature_activation_values=top_features_result.top_feature_activation_values,
                         logit_target_ids=torch.tensor([target_a_id], dtype=torch.long),
                     ),
-                    None,
+                    NULL_BATCH,
                     0,
                 ),
             )
@@ -1957,98 +2470,92 @@ def run_direct_projection_pipeline(
     *,
     scale_factor: float,
 ) -> dict[str, Any]:
-    """Run a direct residual-stream projection intervention (bypasses feature selection).
-
-    Instead of going through the full attribution graph → feature selection → feature
-    intervention pipeline, this uses ``it.model_fwd_intervention`` to add
-    the scaled concept direction vector *directly* to the residual stream via the model
-    backend's ``fwd_w_intervention`` method.
-
-    Returns a result dict compatible with ``run_pipeline``'s output format.
-    """
-    if cfg.is_debug_intervention_mode:
-        raise ValueError("run_direct_projection_pipeline is not available in debug_intervention_pipelines mode")
-
-    with experiment_session(
-        cfg.work_root,
-        phase_run_name(cfg, f"{label}_direct_proj_{scale_factor}x"),
-        **cfg.session_kwargs,
-    ) as (_, module, tokenizer):
-        (target_a_id, target_b_id), resolved_target_tokens = resolve_target_tokens(cfg, tokenizer)
-        key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
-        rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
-        add_special_tokens = cfg.prompt_render_mode == "plain"
-        enc = tokenizer(rendered_prompt, return_tensors="pt", padding=False, add_special_tokens=add_special_tokens)
-        device = next(module.model.parameters()).device
-        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in dict(enc).items()}
-        configure_analysis(module, it.model_fwd_intervention, scale_factor)
-        with maybe_zero_softcap(module, cfg):
-            intervention_result = cast(
-                Any,
-                it.model_fwd_intervention(
-                    module,
-                    it.AnalysisBatch(
-                        prompts=[rendered_prompt],
-                        concept_direction=direction,
-                        concept_cache_key=cfg.store_concept_cache_key,
-                        direction_scale_factor=scale_factor,
-                        logit_target_ids=torch.tensor([target_a_id], dtype=torch.long),
-                        concept_group_a_token_ids=[target_a_id],
-                        concept_group_b_token_ids=[target_b_id],
-                    ),
-                    batch,
-                    0,
-                ),
+    def _inject_concept_direction(raw_value: Any) -> Any:
+        if isinstance(raw_value, torch.Tensor):
+            return raw_value
+        if isinstance(raw_value, Mapping):
+            payload = dict(raw_value)
+            payload.setdefault("intervention_tensor", direction)
+            payload.setdefault(
+                "scale_factor",
+                cfg.direct_projection_intervention_scale_factor
+                if cfg.direct_projection_intervention_scale_factor is not None
+                else scale_factor,
             )
-        pre_logits = tensor_to_cpu(intervention_result.pre_intervention_logits)
-        post_logits = tensor_to_cpu(intervention_result.post_intervention_logits)
+            if cfg.direct_projection_intervention_mode is not None:
+                payload.setdefault("mode", cfg.direct_projection_intervention_mode)
+            if cfg.direct_projection_intervention_use_intervention_tensor_as_basis is not None:
+                payload.setdefault(
+                    "use_intervention_tensor_as_basis",
+                    cfg.direct_projection_intervention_use_intervention_tensor_as_basis,
+                )
+            return payload
+        if isinstance(raw_value, Sequence) and not isinstance(raw_value, (str, bytes)):
+            return [_inject_concept_direction(item) for item in raw_value]
+        raise ValueError(
+            "ANALYSIS.direct_projection.interventions values must be mappings or sequences of mappings."
+        )
 
-        pre_gap, post_gap, gap_delta = summarize_gap(pre_logits, post_logits, target_a_id, target_b_id)
-        pre_top = torch.topk(pre_logits.float(), 5)
-        post_top = torch.topk(post_logits.float(), 5)
-        return {
-            "label": label,
-            "scale_factor": scale_factor,
-            "top_n": 0,  # No feature selection in direct projection
-            "pre_logits": pre_logits,
-            "post_logits": post_logits,
-            "pre_gap": pre_gap,
-            "post_gap": post_gap,
-            "gap_delta": gap_delta,
-            "feature_ids": [],  # No features used
-            "feature_scores": [],
-            "feature_activations": torch.tensor([]),
-            "target_a_id": target_a_id,
-            "target_b_id": target_b_id,
-            "target_a_tok": resolved_target_tokens[0],
-            "target_b_tok": resolved_target_tokens[1],
-            "key_ids": key_ids,
-            "key_labels": key_labels,
-            "rendered_prompt": rendered_prompt,
-            "rendered_prompt_token_ids": _tokenize_rendered_prompt(tokenizer, rendered_prompt, cfg.prompt_render_mode),
-            "pre_top_tokens": [tokenizer.decode([int(token_id)]) for token_id in pre_top.indices.tolist()],
-            "pre_top_token_ids": [int(token_id) for token_id in pre_top.indices.tolist()],
-            "post_top_tokens": [tokenizer.decode([int(token_id)]) for token_id in post_top.indices.tolist()],
-            "post_top_token_ids": [int(token_id) for token_id in post_top.indices.tolist()],
-            "intervention_type": "direct_projection",
+    direct_projection_interventions = dict(cfg.direct_projection_interventions or {})
+    use_explicit_interventions = bool(direct_projection_interventions)
+
+    def _build_direct_projection_analysis_batch(
+        rendered_prompt: str,
+        target_a_id: int,
+        target_b_id: int,
+        resolved_scale_factor: float,
+    ) -> Any:
+        payload: dict[str, Any] = {
+            "prompts": [rendered_prompt],
+            "concept_direction": direction,
+            "logit_target_ids": torch.tensor([target_a_id], dtype=torch.long),
+            "concept_group_a_token_ids": [target_a_id],
+            "concept_group_b_token_ids": [target_b_id],
         }
+        if use_explicit_interventions:
+            payload["interventions"] = {
+                str(hook_pattern): _inject_concept_direction(raw_value)
+                for hook_pattern, raw_value in direct_projection_interventions.items()
+            }
+        else:
+            payload["concept_cache_key"] = cfg.store_concept_cache_key
+            payload["intervention_hook_pattern"] = (
+                cfg.direct_projection_intervention_hook_pattern or cfg.store_concept_cache_key
+            )
+            if cfg.direct_projection_intervention_mode is not None:
+                payload["intervention_mode"] = cfg.direct_projection_intervention_mode
+            if cfg.direct_projection_intervention_scale_factor is not None:
+                payload["intervention_scale_factor"] = cfg.direct_projection_intervention_scale_factor
+            else:
+                payload["direction_scale_factor"] = resolved_scale_factor
+            if cfg.direct_projection_intervention_use_intervention_tensor_as_basis is not None:
+                payload["intervention_use_intervention_tensor_as_basis"] = (
+                    cfg.direct_projection_intervention_use_intervention_tensor_as_basis
+                )
+        return it.AnalysisBatch(**payload)
+
+    return _shared_run_direct_projection_pipeline(
+        cfg,
+        label,
+        scale_factor=scale_factor,
+        build_analysis_batch=_build_direct_projection_analysis_batch,
+    )
 
 
 def run_direct_projection_scale_sweep(
     cfg: NotebookHarnessConfig,
     direction: torch.Tensor,
 ) -> list[dict[str, Any]]:
-    """Run a scale sweep using direct residual-stream projection (no feature selection)."""
-    results = []
-    for scale_factor in cfg.scale_factor_sweep:
-        result = run_direct_projection_pipeline(
+    """Run a scale sweep using the shared direct-projection helper."""
+    return [
+        run_direct_projection_pipeline(
             cfg,
             direction,
             "direct_proj_sweep",
             scale_factor=scale_factor,
         )
-        results.append(result)
-    return results
+        for scale_factor in cfg.scale_factor_sweep
+    ]
 
 
 def build_all_prompts(cfg: NotebookHarnessConfig, tokenizer: Any) -> list[tuple[str, str, str]]:
@@ -2157,11 +2664,11 @@ def compute_store_direction_manual(cfg: NotebookHarnessConfig) -> dict[str, Any]
                     concept_group_name=[group_names],
                     concept_example_weight=[torch.ones(len(stacked), dtype=torch.float32)],
                     concept_label=cfg.concept_pair.concept_label,
-                    concept_direction_mode="paired_rejection",
+                    concept_direction_mode=cfg.analysis_direction_mode_name,
                     concept_group_a_name=cfg.concept_pair.group_a_name,
                     concept_group_b_name=cfg.concept_pair.group_b_name,
                 ),
-                None,
+                NULL_BATCH,
                 0,
             ),
         )
@@ -2264,51 +2771,6 @@ def construct_concept_pair_analysis_inputs(
     return cached_batches, answer_indices, orig_labels, logit_diffs, prediction_info, all_prompts
 
 
-def _apply_context_enhanced_projection(
-    extracted_batches: list[Any],
-    cached_batches: list[dict[str, torch.Tensor]],
-    answer_indices: list[torch.Tensor],
-    cache_key: str,
-    context_scale: float = 1.0,
-) -> list[Any]:
-    """Project answer-position latent states into previous-token context.
-
-    For each extracted batch, retrieves the context vector from the token immediately
-    preceding the answer position, scales the answer-position latent state by
-    *context_scale*, then adds the scaled answer state to the context vector.  The
-    resulting "context-enhanced" latent replaces the original ``concept_latent_state`` in
-    the batch.
-
-    This grounding step attempts to disentangle the answer-token representation from
-    senses of the token that are not specific to the prompt context (e.g. the multiple
-    senses of "Capital" that are not related to capital-city semantics).
-    """
-    for batch_idx, batch in enumerate(extracted_batches):
-        if batch.concept_latent_state is None:
-            continue
-
-        cache_tensor = torch.as_tensor(cached_batches[batch_idx][cache_key])
-        ans_idx = int(answer_indices[batch_idx].reshape(-1)[0])
-
-        if ans_idx < 1:
-            continue
-
-        prev_idx = ans_idx - 1
-        if cache_tensor.dim() >= 3:
-            context_state = cache_tensor[0, prev_idx].detach().cpu().float()
-        else:
-            continue
-
-        answer_state = batch.concept_latent_state
-        if answer_state.dim() == 2:
-            answer_state = answer_state.squeeze(0)
-
-        projected = context_state + context_scale * answer_state
-        batch.concept_latent_state = projected.unsqueeze(0)
-
-    return extracted_batches
-
-
 def execute_concept_latent_extraction_ops(
     module: Any,
     cfg: NotebookHarnessConfig,
@@ -2350,6 +2812,7 @@ def execute_concept_latent_extraction_ops(
     )
 
     extracted_batches: list[Any] = []
+    context_enhanced = extraction_mode == "context_enhanced"
     for batch_idx in range(n_prompts):
         extracted_batches.append(
             execute_analysis_op(
@@ -2367,16 +2830,9 @@ def execute_concept_latent_extraction_ops(
                 ),
                 analysis_cfg=extraction_cfg,
                 analysis_inputs=analysis_inputs,
+                context_enhanced=context_enhanced,
+                context_scale=cfg.context_enhanced_scale,
             )
-        )
-
-    if extraction_mode == "context_enhanced":
-        extracted_batches = _apply_context_enhanced_projection(
-            extracted_batches,
-            cached_batches,
-            answer_indices,
-            cfg.store_concept_cache_key,
-            context_scale=cfg.context_enhanced_scale,
         )
 
     return extracted_batches
@@ -2481,11 +2937,11 @@ def compute_store_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
                     concept_group_name=[group_name_rows],
                     concept_example_weight=[example_weights],
                     concept_label=cfg.concept_pair.concept_label,
-                    concept_direction_mode="paired_rejection",
+                    concept_direction_mode=cfg.analysis_direction_mode_name,
                     concept_group_a_name=cfg.concept_pair.group_a_name,
                     concept_group_b_name=cfg.concept_pair.group_b_name,
                 ),
-                None,
+                NULL_BATCH,
                 0,
             ),
         )
@@ -2539,12 +2995,12 @@ def run_scale_sweep(
                     it.compute_attribution_graph(
                         module,
                         analysis_batch,
-                        None,
+                        NULL_BATCH,
                         0,
                         **graph_call_kwargs,
                     ),
                 )
-                influence_result = cast(Any, it.graph_node_influence(module, graph_result, None, 0))
+                influence_result = cast(Any, it.graph_node_influence(module, graph_result, NULL_BATCH, 0))
                 top_payload = dict(cast(Any, graph_result))
                 top_payload.update(dict(cast(Any, influence_result)))
                 top_features_result, applied_feature_filter_triples = _extract_top_features_with_optional_filter(
@@ -2564,7 +3020,7 @@ def run_scale_sweep(
                             top_feature_activation_values=top_features_result.top_feature_activation_values,
                             logit_target_ids=torch.tensor([target_a_id], dtype=torch.long),
                         ),
-                        None,
+                        NULL_BATCH,
                         0,
                     ),
                 )
@@ -2625,12 +3081,12 @@ def collect_feature_pool(
                 it.compute_attribution_graph(
                     module,
                     analysis_batch,
-                    None,
+                    NULL_BATCH,
                     0,
                     **graph_call_kwargs,
                 ),
             )
-            influence_result = cast(Any, it.graph_node_influence(module, graph_result, None, 0))
+            influence_result = cast(Any, it.graph_node_influence(module, graph_result, NULL_BATCH, 0))
             top_payload = dict(cast(Any, graph_result))
             top_payload.update(dict(cast(Any, influence_result)))
             feature_result, applied_feature_filter_triples = _extract_top_features_with_optional_filter(
@@ -2694,7 +3150,7 @@ def run_ablations(
                             top_feature_activation_values=feature_pool["feature_activations"][:n_value] * 0.0,
                             logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
                         ),
-                        None,
+                        NULL_BATCH,
                         0,
                     ),
                 )
@@ -2755,7 +3211,7 @@ def run_sign_aware(
                             * cfg.default_scale_factor,
                             logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
                         ),
-                        None,
+                        NULL_BATCH,
                         0,
                     ),
                 )
@@ -2777,7 +3233,7 @@ def run_sign_aware(
                             top_feature_activation_values=result["negative_activations"][:n_neg] * 0.0,
                             logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
                         ),
-                        None,
+                        NULL_BATCH,
                         0,
                     ),
                 )
@@ -2822,13 +3278,13 @@ def run_debug_intervention_validation(cfg: NotebookHarnessConfig) -> dict[str, A
                 it.compute_attribution_graph(
                     module,
                     analysis_batch,
-                    None,
+                    NULL_BATCH,
                     0,
                     **graph_call_kwargs,
                 ),
             )
             graph = analysis_backend.hydrate_graph_from_batch(graph_result)
-            influence_result = cast(Any, it.graph_node_influence(module, graph_result, None, 0))
+            influence_result = cast(Any, it.graph_node_influence(module, graph_result, NULL_BATCH, 0))
             top_payload = dict(cast(Any, graph_result))
             top_payload.update(dict(cast(Any, influence_result)))
             top_features_result, applied_feature_filter_triples = _extract_top_features_with_optional_filter(
@@ -2899,7 +3355,7 @@ def run_debug_intervention_validation(cfg: NotebookHarnessConfig) -> dict[str, A
                 it.feature_intervention_forward(
                     module,
                     wrapper_inputs,
-                    None,
+                    NULL_BATCH,
                     0,
                     prompt=graph_inputs,
                     intervention_return_activations=True,
@@ -3264,9 +3720,75 @@ def run_direction_probes(
                 projection = float(torch.dot(unembed[:, token_id].float(), direction_dev).item())
                 group_b_projections.append(projection)
                 rows.append({"token": token, "projection": projection, "group": "B"})
+            mean_b = None if not group_b_projections else sum(group_b_projections) / len(group_b_projections)
             probe_results[label] = {
                 "rows": rows,
                 "mean_a": sum(group_a_projections) / len(group_a_projections),
-                "mean_b": sum(group_b_projections) / len(group_b_projections),
+                "mean_b": mean_b,
             }
         return probe_results
+
+
+def display_tokenizer_target_summary(report: Mapping[str, Any]) -> None:
+    target_tokens = cast(Mapping[str, Any], report.get("target_tokens", {}))
+    group_a = cast(Mapping[str, Any], target_tokens.get("group_a", {}))
+    group_b = cast(Mapping[str, Any], target_tokens.get("group_b", {}))
+    if group_a or group_b:
+        print(
+            "Target tokens: "
+            f"A={group_a.get('id')} ({group_a.get('decoded')!r}), "
+            f"B={group_b.get('id')} ({group_b.get('decoded')!r})"
+        )
+
+    for group_name, entries in cast(Mapping[str, Any], report.get("groups", {})).items():
+        print(f"\n{group_name}:")
+        for entry in entries:
+            print(f"  {entry['token']}: ids={entry['ids']}, decoded={entry['decoded']!r}")
+
+
+def display_direction_probe_results(probe_results: Mapping[str, Any]) -> None:
+    for label, payload in probe_results.items():
+        print(f"\n{label} direction probes:")
+        print(f"{'Token':<15} {'Projection':>12} {'Group':>8}")
+        print(f"{'-' * 15} {'-' * 12} {'-' * 8}")
+        for row in payload["rows"]:
+            print(f"{row['token']:<15} {row['projection']:>12.4f} {row['group']:>8}")
+        mean_b = payload.get("mean_b")
+        if mean_b is None:
+            print(f"Mean A: {payload['mean_a']:.4f}, Mean B: n/a, Separation: n/a")
+            continue
+        separation = payload["mean_a"] - mean_b
+        print(f"Mean A: {payload['mean_a']:.4f}, Mean B: {mean_b:.4f}, Separation: {separation:.4f}")
+
+
+def collect_summary(
+    cfg: NotebookHarnessConfig,
+    results: Mapping[str, Any],
+    *,
+    config_path: str | Path,
+    work_root_removed: bool,
+) -> dict[str, Any]:
+    summary = build_shared_summary_record(
+        cfg,
+        config_path=config_path,
+        work_root_removed=work_root_removed,
+    )
+    summary["concept_pair"] = cfg.concept_pair.name
+    summary["analysis_concept_label"] = cfg.analysis_concept_label
+
+    if "embed_pipeline" in results:
+        summary["embed_gap_delta"] = results["embed_pipeline"]["gap_delta"]
+    if "store_pipeline" in results:
+        summary["store_gap_delta"] = results["store_pipeline"]["gap_delta"]
+    if "comparison" in results:
+        summary["cosine_similarity"] = results["comparison"]["cosine_similarity"]
+        summary["feature_jaccard"] = results["comparison"]["feature_jaccard"]
+    if "store_direction_result" in results:
+        summary["prediction_correct"] = results["store_direction_result"]["prediction_info"]["n_correct"]
+        summary["prediction_total"] = results["store_direction_result"]["n_total"]
+    if "debug_validation" in results:
+        summary["debug_validation_passed"] = results["debug_validation"]["all_passed"]
+        summary["debug_activation_max_abs_error"] = results["debug_validation"]["activation_max_abs_error"]
+        summary["debug_logit_max_abs_error"] = results["debug_validation"]["logit_max_abs_error"]
+        summary["debug_selected_feature"] = list(results["debug_validation"]["selected_feature"])
+    return summary

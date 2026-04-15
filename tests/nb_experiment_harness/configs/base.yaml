@@ -1,0 +1,40 @@
+MODEL: {}
+PROMPT:
+  render_mode: plain
+SESSION:
+  force_device: null
+  batch_size: null
+  max_feature_nodes: null
+  debug_session_surface_preset: notebook_default
+ANALYSIS:
+  top_n: 10
+  default_scale_factor: 10.0
+  scale_factor_sweep: [2.0, 5.0, 10.0, 20.0, 50.0]
+  ablation_n_list: [5, 10, 25, 50, 100]
+  enable_sign_aware: false
+  store_latent_extraction_mode: answer_position_state
+  context_enhanced_scale: 1.0
+NEURONPEDIA:
+  base_url: https://www.neuronpedia.org
+  use_localhost: false
+  local_db_url: null
+  local_webapp_url: http://localhost:3000
+  check_local_explanation_coverage: false
+  generate_missing_local_explanations: false
+  local_explanation_feature_limit: 20
+  local_explanation_type_name: np_moe-max-act-logits
+  local_explanation_timeout_seconds: 120
+  local_explanation_max_retries: 2
+  local_explanation_retry_backoff_seconds: 5.0
+DEBUG_VALIDATION:
+  enable_zero_softcap: false
+  enable_baseline_path_debug: false
+  logit_atol: 0.0001
+  logit_rtol: 0.001
+  act_atol: 0.001
+  act_rtol: 0.00001
+  top_k: 10
+  raise_on_failure: true
+RUNTIME:
+  experiment_work_dir: null
+  verbose: true

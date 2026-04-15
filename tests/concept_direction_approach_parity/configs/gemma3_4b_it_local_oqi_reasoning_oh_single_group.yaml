@@ -1,0 +1,23 @@
+EXTENDS: base_oqi_reasoning_oh.yaml
+
+EXPERIMENT_NAME: gemma3_4b_it_local_oqi_reasoning_oh_single_group
+
+MODEL:
+  family: gemma3
+  variant: 4b_it
+
+EXPERIMENT:
+  concept_pair_config_path: cp_ohio_entities_single_group_gemma_it.yaml
+
+ANALYSIS:
+  concept_direction_mode: single_group
+  direct_projection:
+    interventions:
+      unembed.hook_in:
+        mode: project
+        scale_factor: 10.0
+  store_latent_extraction_mode: context_enhanced
+  context_enhanced_scale: 10.0
+
+SESSION:
+  batch_size: 64

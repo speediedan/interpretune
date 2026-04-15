@@ -33,6 +33,11 @@ directly across model sizes.
 
 ## Architecture Notes
 
+Core harness infrastructure now lives in `tests/nb_experiment_harness/`.
+This directory keeps the concept-direction experiment definitions, concept-pair YAMLs, and
+analysis-specific notebook logic, while shared launcher/bootstrap/session/config code is owned by
+the shared harness package.
+
 The circuit-tracer NNsight module uses its own `TranscoderSet` (not SAELens SAE objects),
 so the `fwd_w_cache_and_latent_models` path (which requires `sae_handles` from
 `_SAEHandleMixin`) is **not available**. We use `fwd_w_cache` with `unembed.hook_in` to
@@ -41,7 +46,7 @@ happens only during the attribution graph computation.
 
 ## Notebook Modes
 
-`concept_direction_experiment_harness.ipynb` now supports three analysis modes via the
+`concept_direction_template.ipynb` now supports three analysis modes via the
 `ANALYSIS_MODE` notebook/YAML parameter:
 
 - `concept_pair`: the original embed-direction vs store-direction comparison.
@@ -100,16 +105,16 @@ Additional references:
 - `../parity_analysis/intervention_graph_parity_testing.md` documents the preserved-artifact parity workflow and the manual ablation tooling.
 
 The new config
-`tests/concept_direction_approach_parity/configs/gemma3_4b_it_local_oqi_reasoning_single_fs_di.yaml`
+`tests/concept_direction_approach_parity/archived_cfgs/gemma3_4b_it_local_oqi_reasoning_single_fs_di.yaml`
 is the historical single-feature debug entry point for the local OQI reasoning prompt. That
 config still targets the originally requested `23/2313` feature, which is inactive for the
 current prompt.
 
 The current active high-layer debug configs are:
 
-- `tests/concept_direction_approach_parity/configs/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60.yaml`
-- `tests/concept_direction_approach_parity/configs/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60_full_graph.yaml`
-- `tests/concept_direction_approach_parity/configs/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60_no_softcap.yaml`
+- `tests/concept_direction_approach_parity/archived_cfgs/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60.yaml`
+- `tests/concept_direction_approach_parity/archived_cfgs/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60_full_graph.yaml`
+- `tests/concept_direction_approach_parity/archived_cfgs/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60_no_softcap.yaml`
 
 These follow-up configs target `gemma-3-4b-it/25-gemmascope-2-transcoder-16k/60`, chosen from
 the normal non-debug OQI run because it is the highest-ranked active feature above layer 20 in
@@ -432,8 +437,9 @@ benchmark suite; the 4B PT notebook here is retained only as a concept-direction
 GPU memory management is critical for running larger models (Gemma 2 2B-IT) within 24GB VRAM.
 Key parameters:
 
-- **`BATCH_SIZE`**: Circuit-tracer attribution batch size. Default 1024 causes OOM for 2B models;
-  128 works reliably. Set via YAML config.
+- **`BATCH_SIZE`**: Circuit-tracer attribution batch size. The default inherited from the
+   shared cfg aliases is 256; 128 works reliably for 2B IT-style configs and 64 is a safer
+   starting point for 4B IT configs. Set via YAML config.
 - **`MAX_FEATURE_NODES`**: Maximum feature nodes for attribution. Default 8192 is fine for most configs.
 - **`PYTORCH_CUDA_ALLOC_CONF`**: Set `expandable_segments:True` to reduce allocator fragmentation.
 
@@ -441,15 +447,17 @@ See [resource_management.md](resource_management.md) for full details and [/docs
 
 ## Files
 
-- `concept_direction_approach_experimentation.py`: V3 experimentation harness with 2×2
-  model/concept matrix, key-token logit analysis, direction reversal tests, and
-  datetime-stamped log output. Legacy — use the notebook launcher for new experiments.
-- `concept_direction_experiment_utils.py`: Notebook harness utilities — `NotebookHarnessConfig`,
-  direction computation, pipeline execution, and sanity checks.
-- `nb_experiment_launcher.py`: Papermill-based launcher for running parameterized experiment
-  notebooks across multiple YAML configs with timestamped output.
-- `experiment_resource_utils.py`: `ModelSpec` definitions, `experiment_session()` context
-  manager, and `build_test_cfg()` for loading models with configurable batch_size/max_feature_nodes.
+- `concept_direction.py`: Concept-direction-specific config/runtime surface — `NotebookHarnessConfig`,
+   concept-pair loading, direction computation, and local explanation preparation.
+- `concept_direction_template.ipynb`: Parameterized concept-direction notebook template.
+- `../nb_experiment_harness/nb_harness_utils.py`: shared notebook utility helpers used across
+   experiment templates.
+- `../nb_experiment_harness/pipeline_patterns.py`: shared notebook phase runners used by the
+   concept-direction template.
+- `../nb_experiment_harness/nb_experiment_launcher.py`: shared Papermill launcher for running
+   parameterized experiment notebooks across YAML configs with timestamped output.
+- `../nb_experiment_harness/README.md`: shared launcher/bootstrap/config/session harness notes.
+- `archived_analysis/`: Historical notes and results from the retired standalone experimentation wave.
 - `compare_approaches.py`: V1/V2 harness (predecessor). Supports `--model-variant it|base`,
   `--no-chat-template`, `--skip-intervention`, `--output`.
 - `V3_ANALYSIS.md`: Comprehensive V3 analysis document with full results and findings.
@@ -466,53 +474,46 @@ See [resource_management.md](resource_management.md) for full details and [/docs
 
 ### Running parameterized experiments (V4+, recommended)
 
-The `nb_experiment_launcher.py` script drives papermill-parameterized Jupyter notebooks across
-multiple YAML config files. Each config specifies model, prompt mode, target tokens, etc.
+Use the shared notebook harness launcher directly. Configs may use nested sections plus `EXTENDS`
+inheritance; the notebook receives the resolved config path rather than a flattened papermill
+parameter expansion.
 
 ```bash
 cd /home/speediedan/repos/interpretune
 source /mnt/cache/speediedan/.venvs/it_latest/bin/activate
 
 # Run a single config
-python tests/concept_direction_approach_parity/nb_experiment_launcher.py \
-  --notebook <path/to/notebook.ipynb> \
-   tests/concept_direction_approach_parity/configs/gemma3_1b_it_capitals_states.yaml
+python tests/nb_experiment_harness/nb_experiment_launcher.py \
+   --notebook tests/concept_direction_approach_parity/concept_direction_template.ipynb \
+   tests/concept_direction_approach_parity/configs/gemma3_1b_it_local_capitals_states.yaml
 
 # Run all configs in the configs/ directory
-python tests/concept_direction_approach_parity/nb_experiment_launcher.py \
-  --notebook <path/to/notebook.ipynb> --all-configs
+python tests/nb_experiment_harness/nb_experiment_launcher.py \
+   --notebook tests/concept_direction_approach_parity/concept_direction_template.ipynb --all-configs
 
 # Run only the PT capitals/states wave
-python tests/concept_direction_approach_parity/nb_experiment_launcher.py \
-   --notebook <path/to/notebook.ipynb> \
+python tests/nb_experiment_harness/nb_experiment_launcher.py \
+    --notebook tests/concept_direction_approach_parity/concept_direction_template.ipynb \
    --config-pattern '.*pt_capitals_states\\.yaml'
 
 # Prepare only (copy notebook + archive config, don't execute)
-python tests/concept_direction_approach_parity/nb_experiment_launcher.py \
-  --notebook <path/to/notebook.ipynb> --all-configs --prepare-only
+python tests/nb_experiment_harness/nb_experiment_launcher.py \
+   --notebook tests/concept_direction_approach_parity/concept_direction_template.ipynb --all-configs --prepare-only
 
 # Custom timeout and kernel
-python tests/concept_direction_approach_parity/nb_experiment_launcher.py \
-  --notebook <path/to/notebook.ipynb> \
-   configs/gemma3_1b_it_capitals_states.yaml \
+python tests/nb_experiment_harness/nb_experiment_launcher.py \
+   --notebook tests/concept_direction_approach_parity/concept_direction_template.ipynb \
+    tests/concept_direction_approach_parity/configs/gemma3_1b_it_local_capitals_states.yaml \
   --timeout 3600 --kernel-name it_latest
 ```
 
-Each run creates a timestamped output directory under `outputs/` containing the executed
-notebook, archived config YAML, and any generated artifacts.
+Each run writes timestamped artifacts under `generated_experiments/`, including the executed
+notebook plus `.source.yaml` and `.resolved.yaml` snapshots of the config used for that run.
 
-### Running V3-style experiments (legacy)
+### Historical V3 notes
 
-```bash
-cd /home/speediedan/repos/interpretune
-source /mnt/cache/speediedan/.venvs/it_latest/bin/activate
-
-# V3: Run specific model + concept pair experiments
-python tests/concept_direction_approach_parity/concept_direction_approach_experimentation.py \
-  --model-variant base --concept-pair capitals_states
-python tests/concept_direction_approach_parity/concept_direction_approach_experimentation.py \
-  --model-variant it --concept-pair dog_cat
-```
+The standalone V3 experimentation script has been retired.
+Historical analysis notes remain under `archived_analysis/`.
 
 ## Comparison Metrics
 

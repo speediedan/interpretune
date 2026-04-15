@@ -14,6 +14,7 @@ from typing import Any, Callable, NamedTuple, Protocol, TypeAlias, runtime_check
 
 import torch
 
+from interpretune.analysis.backends.hook_mapping import SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
 
 
@@ -48,6 +49,29 @@ class InterventionSpec(NamedTuple):
 
 
 InterventionValue: TypeAlias = Any
+
+
+HOOK_ALIAS_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("hook_in", "hook_resid_pre"),
+    ("hook_out", "hook_resid_post"),
+    ("attn.hook_in", "hook_attn_in"),
+    ("attn.hook_out", "hook_attn_out", "hook_resid_mid"),
+    ("attn.o.hook_in", "attn.hook_z"),
+    ("attn.q.hook_in", "hook_q_input"),
+    ("attn.k.hook_in", "hook_k_input"),
+    ("attn.v.hook_in", "hook_v_input"),
+    ("attn.q.hook_out", "hook_q"),
+    ("attn.k.hook_out", "hook_k"),
+    ("attn.v.hook_out", "hook_v"),
+    ("mlp.hook_in", "hook_mlp_in"),
+    ("mlp.hook_out", "hook_mlp_out"),
+    ("embed.hook_out", "hook_embed"),
+    ("pos_embed.hook_out", "hook_pos_embed"),
+    ("attn.hook_pattern", "attn.hook_attention_weights"),
+    ("attn.hook_hidden_states", "attn.hook_result"),
+    ("ln1.hook_out", "ln1.hook_normalized", "ln1.hook_scale"),
+    ("ln2.hook_out", "ln2.hook_normalized", "ln2.hook_scale"),
+)
 
 
 @dataclass(frozen=True)
@@ -199,22 +223,51 @@ def expand_intervention_patterns(
     available_hook_map: Mapping[str, str],
 ) -> dict[str, list[str]]:
     """Expand raw hook-name patterns to ordered lists of concrete hook names."""
+    alias_lookup = {alias_name: alias_group for alias_group in HOOK_ALIAS_GROUPS for alias_name in alias_group}
+
+    def _split_subhook_suffix(pattern: str) -> tuple[str, str]:
+        parts = pattern.split(".")
+        for index, part in enumerate(parts):
+            if part in SUBHOOK_SUFFIXES:
+                return ".".join(parts[:index]), "." + ".".join(parts[index:])
+        return pattern, ""
+
+    def _pattern_variants(pattern: str) -> tuple[str, ...]:
+        base_pattern, subhook_suffix = _split_subhook_suffix(pattern)
+        base_name = base_pattern
+        prefix = ""
+        if base_pattern.startswith("blocks."):
+            parts = base_pattern.split(".", 2)
+            if len(parts) == 3:
+                prefix = f"{parts[0]}.{parts[1]}."
+                base_name = parts[2]
+
+        variants = [pattern]
+        for alias_name in alias_lookup.get(base_name, (base_name,)):
+            variants.append(f"{prefix}{alias_name}{subhook_suffix}")
+        return tuple(dict.fromkeys(variants))
 
     expanded: dict[str, list[str]] = {}
     for pattern in patterns:
         if "*" not in pattern:
-            if pattern not in available_hook_map:
+            matched_actual = None
+            for candidate_pattern in _pattern_variants(pattern):
+                matched_actual = available_hook_map.get(candidate_pattern)
+                if matched_actual is not None:
+                    break
+            if matched_actual is None:
                 raise ValueError(f"Intervention pattern '{pattern}' did not match any available hook names")
-            expanded[pattern] = [available_hook_map[pattern]]
+            expanded[pattern] = [matched_actual]
             continue
 
-        regex = re.compile("^" + re.escape(pattern).replace(r"\*", ".*") + "$")
         matched: list[str] = []
         seen: set[str] = set()
-        for candidate_name, actual_name in available_hook_map.items():
-            if regex.fullmatch(candidate_name) and actual_name not in seen:
-                matched.append(actual_name)
-                seen.add(actual_name)
+        for candidate_pattern in _pattern_variants(pattern):
+            regex = re.compile("^" + re.escape(candidate_pattern).replace(r"\*", ".*") + "$")
+            for candidate_name, actual_name in available_hook_map.items():
+                if regex.fullmatch(candidate_name) and actual_name not in seen:
+                    matched.append(actual_name)
+                    seen.add(actual_name)
         if not matched:
             raise ValueError(f"Intervention pattern '{pattern}' did not match any available hook names")
         expanded[pattern] = matched
@@ -509,6 +562,8 @@ class FeatureSelectionSpec:
         layer_slice: A ``slice`` expanded over observed layer values.
         position_slice: A ``slice`` expanded over observed position values.
         triples: Exact ``(layer, position, feature_id)`` tuples to include.
+        layer_feature_pairs: Exact ``(layer, feature_id)`` pairs to include across any position.
+        activation_overrides: Optional override activation values keyed by ``(layer, feature_id)``.
     """
 
     layers: list[int] = field(default_factory=list)
@@ -517,6 +572,8 @@ class FeatureSelectionSpec:
     layer_slice: slice | None = None
     position_slice: slice | None = None
     triples: list[tuple[int, int, int]] = field(default_factory=list)
+    layer_feature_pairs: list[tuple[int, int]] = field(default_factory=list)
+    activation_overrides: dict[tuple[int, int], float] = field(default_factory=dict)
 
 
 def _expand_slice(s: slice, observed: torch.Tensor) -> list[int]:
@@ -577,6 +634,13 @@ def apply_feature_selection_filter(
         triple_tensor = torch.tensor(spec.triples, dtype=active_features.dtype)  # (T, 3)
         # Compare every row against every triple: (N, 1, 3) == (T, 3) → (N, T, 3)
         matches = (active_features.unsqueeze(1) == triple_tensor.unsqueeze(0)).all(dim=2)  # (N, T)
+        mask |= matches.any(dim=1)
+
+    # Exact (layer, feature_id) pairs across any position
+    if spec.layer_feature_pairs:
+        pair_tensor = torch.tensor(spec.layer_feature_pairs, dtype=active_features.dtype)  # (P, 2)
+        pair_rows = torch.stack((layers_col, features_col), dim=1)
+        matches = (pair_rows.unsqueeze(1) == pair_tensor.unsqueeze(0)).all(dim=2)  # (N, P)
         mask |= matches.any(dim=1)
 
     return mask
@@ -1053,6 +1117,7 @@ __all__ = [
     "expand_intervention_patterns",
     "FeatureSelectionSpec",
     "get_intervention_target_shape",
+    "HOOK_ALIAS_GROUPS",
     "InterventionDict",
     "InterventionSpec",
     "apply_feature_selection_filter",

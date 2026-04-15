@@ -172,6 +172,130 @@ space, not an artifact of the extraction weighting scheme.
 
 ---
 
+## Ohio Prompt-Anchor Reruns
+
+The Ohio notebook turned out to be more sensitive to prompt framing than to the nominal
+"Ohio cities vs Indiana cities" label. The earlier failed run
+`gemma3_4b_it_local_oqi_reasoning_oh_20260414_170839.ipynb` was caused by the harness
+passing the high-level `explicit_embedding_difference` mode into the low-level
+`it.concept_direction(...)` call. After separating `ANALYSIS.concept_direction_mode`
+from `ANALYSIS.mode`, two reruns make the prompt effect clear:
+
+| Config | Notebook | Prompt anchor | Baseline top-1 | Embed gap change | Dominant intervention motion |
+|--------|----------|---------------|----------------|------------------|------------------------------|
+| `gemma3_4b_it_local_oqi_reasoning_oh.yaml` | `gemma3_4b_it_local_oqi_reasoning_oh_20260414_180140.ipynb` | nearest-capital question anchored on `Michigan` / `largest city in Michigan` | `Indianapolis` (97.665%), `Columbus` only `3.28e-04` | `-8.0 -> -68.5` (`Δ = -60.5`) | `Michigan +172.5`, `▁Lansing +157.25`, `Indianapolis +85.75`, `Columbus +25.25` |
+| `gemma3_4b_it_local_oqi_reasoning_oh_cleveland_anchor.yaml` | `gemma3_4b_it_local_oqi_reasoning_oh_cleveland_anchor_20260414_180925.ipynb` | direct Ohio anchor via `state containing Cleveland` | `Columbus` (100.0%), `Ohio` and `Cleveland` already outrank `Indianapolis` / `Indiana` | `29.25 -> 151.5` (`Δ = +122.25`) | `▁Columbus +177.5`, `Columbus +172.0`, `Cleveland +110.0`, `Ohio +86.0`, while `Indiana -31.69`, `▁Indiana -36.94` |
+
+### Why the Original Ohio Notebook Looks Michigan/Indiana-Heavy
+
+The base Ohio prompt never names Ohio. Instead, it asks the model to solve a
+nearest-capital query conditioned on `largest city in Michigan`, which strongly invites
+a `Michigan -> Detroit -> nearby capital` reasoning path before any intervention is
+applied. The baseline logits already show that the model is living in that circuit:
+`Indianapolis` dominates the answer distribution, while `▁Lansing`, `Michigan`, and
+`Cleveland` all appear among the strongest tracked tokens.
+
+The embed intervention then pushes that same circuit harder rather than recovering an
+Ohio-specific one. In the rerun notebook `...180140.ipynb`, the largest key-token gains
+go to `Michigan` and `▁Lansing`, not to `Columbus`. Even the explicit direct projection
+step strengthens the original Indiana answer (`Indianapolis` rises from 97.665% to
+99.883%) instead of moving probability mass toward Ohio.
+
+By contrast, changing only the prompt anchor to `state containing Cleveland` immediately
+flips the baseline and the intervention semantics. In `...180925.ipynb`, the baseline
+answer is `Columbus`, the tracked Ohio tokens (`Ohio`, `Cleveland`) are salient before
+intervention, and the embed step amplifies `Columbus/Cleveland/Ohio` while suppressing
+`Indiana` terms. That is strong evidence that the earlier Michigan-heavy behavior was
+primarily prompt contamination, not a failure of the `Columbus - Indianapolis` explicit
+direction itself.
+
+### Additional Observations from `...202642.ipynb`
+
+The later Ohio rerun `gemma3_4b_it_local_oqi_reasoning_oh_20260414_202642.ipynb` makes
+the embed/store split more concrete. Both construction modes were using
+`paired_rejection`, but they differed in the source of the direction vector:
+
+- The embed direction applied `paired_rejection` directly to the two token groups in
+   embedding space, and its top features included the Ohio-state feature
+   `(25, 27, 15708)`.
+- The store direction applied `paired_rejection` to saved activations coming from the
+   harness's then-current context-enhanced path, and its top features included the
+   Indiana-state feature `(26, 30, 3591)` instead.
+
+That split lines up with the qualitative behavior in the same notebook:
+
+- The embed attribution graph does include Ohio-related features in addition to city
+   features, but capital-city features are more numerous than the Ohio-state features, so
+   amplification mostly returns capital-city tokens rather than a clean Ohio-only state
+   identity.
+- The answer-position store direction remains much less stable. Its attribution graph
+   surfaces an Indiana-state feature, and the store-direction consistency probes show only
+   weak separation between the two concepts. A plausible explanation is that the store
+   direction is still capturing the dominant `Indianapolis` answer context from the base
+   prompt. Notably, `paired_rejection` does appear to remove most of the direct `city`
+   features from that store attribution, but it does not remove the Indiana-state feature.
+- Direct projection demonstrates that the constructed concept direction can still steer
+   strongly toward Ohio. In that step the model effectively ignores the rest of the
+   original prompt and returns almost entirely Ohio-related tokens in the top-k output.
+
+### Post-Fix Reruns (`...113258.ipynb` and `...115348.ipynb`)
+
+After the context-enhanced extraction path was fixed so the projection happens inside
+`_extract_concept_latent_state_from_cache(...)` rather than through the harness-side
+`_apply_context_enhanced_projection(...)`, the paired Ohio rerun
+`gemma3_4b_it_local_oqi_reasoning_oh_20260415_113258.ipynb` changed in one important
+way: the embed path stayed effectively the same, but the store path no longer showed the
+old Indiana-heavy behavior. The top store features changed from the earlier
+`(32, 30, 110), (28, 30, 5565), (26, 30, 3591), (3, 30, 69), (0, 26, 144)` mix to
+`(0, 26, 144), (0, 5, 443), (0, 4, 826), (0, 28, 66), (25, 30, 60)`, so the explicit
+Indiana-state feature `(26, 30, 3591)` disappeared. However, that did not make the
+store direction more semantically useful. Its direction-probe separation dropped from
+`0.1395` to `0.0350`, and the store direct-projection intervention collapsed from
+`Δ = +67.25` in `...202642.ipynb` to only `Δ = +8.3066`. The corrected interpretation is
+that the earlier harness-side reprojection was amplifying the store direction much more
+than it was clarifying it.
+
+The new `single_group` Ohio-city rerun exposed one remaining notebook-harness bug on the
+first attempt: `tests/nb_experiment_harness/pipeline_patterns.py::run_direction_probes`
+still assumed group B was non-empty and raised `ZeroDivisionError` when the notebook
+reached the probe cell. After fixing that helper and rerunning, the clean notebook
+`gemma3_4b_it_local_oqi_reasoning_oh_single_group_20260415_115348.ipynb` completed
+successfully. Its embed direction now behaves as expected for a group-A-only concept:
+`Columbus`, `Cleveland`, and `Cincinnati` all score strongly positive, with
+`Mean A = 0.7523`, `Mean B = n/a`, and `Separation = n/a`. The store direction also now
+reports `Mean B = n/a` cleanly without crashing, which confirms the end-to-end
+single-group execution path works. But the actual store signal remains extremely weak:
+`Mean A = -0.0011`, direct projection only gives `Δ = +6.6836`, and the top store
+features remain a mixed set `[(32, 30, 110), (27, 30, 1791), (0, 26, 144),
+(28, 30, 5565), (25, 30, 60)]` rather than a clearly Ohio-specific state identity.
+
+One smaller but useful confirmation from the same reruns is that the top-k token display
+fix is visible in the notebook output itself. Tokens such as `▁Lansing` now keep their
+SentencePiece marker in the rendered tables instead of being shown as the decoded plain
+text form.
+
+### Working Hypotheses
+
+1. The Michigan prompt is probing a Midwest distance-to-capital circuit, not a clean
+   Ohio-vs-Indiana city-membership circuit.
+2. The explicit `Columbus - Indianapolis` direction is usable, but only when the prompt
+   already points at Ohio-relevant evidence.
+3. Store-direction comparisons should be deferred until the prompt-side confound is
+   removed; otherwise the analysis mixes prompt retrieval failure with direction-quality
+   failure.
+
+### Recommended Follow-Ups
+
+1. Add symmetric, within-state prompts such as `state containing Cleveland` vs
+   `state containing Hammond` so the relation type is matched across Ohio and Indiana.
+2. Add a state-identity concept pair (`Ohio`, `Columbus`, `Cleveland`, `Cincinnati`
+   vs `Indiana`, `Indianapolis`, `Carmel`, `Bloomington`) for debugging state-membership
+   behavior directly rather than nearest-capital reasoning.
+3. Keep using explicit mode when debugging prompt framing, then reintroduce
+   concept-pair/store-direction comparisons only after the prompt anchor is aligned.
+
+---
+
 ## Outstanding Questions
 
 1. **Would larger context-enhanced scales or alternative weighting schemes improve separation?**

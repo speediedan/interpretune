@@ -162,6 +162,12 @@ class TestHookNameResolver:
         assert path == "transformer.h.0"
         assert io_type == "input"
 
+    def test_resolve_gpt2_canonical_hook_in_alias(self):
+        resolver = HookNameResolver("GPT2LMHeadModel")
+        path, io_type = resolver.resolve("blocks.0.hook_in")
+        assert path == "transformer.h.0"
+        assert io_type == "input"
+
     def test_resolve_gpt2_resid_mid(self):
         resolver = HookNameResolver("GPT2LMHeadModel")
         path, io_type = resolver.resolve("blocks.3.hook_resid_mid")
@@ -171,6 +177,12 @@ class TestHookNameResolver:
     def test_resolve_gpt2_attn_out(self):
         resolver = HookNameResolver("GPT2LMHeadModel")
         path, io_type = resolver.resolve("blocks.2.hook_attn_out")
+        assert path == "transformer.h.2.attn"
+        assert io_type == "output"
+
+    def test_resolve_gpt2_canonical_attn_out_alias(self):
+        resolver = HookNameResolver("GPT2LMHeadModel")
+        path, io_type = resolver.resolve("blocks.2.attn.hook_out")
         assert path == "transformer.h.2.attn"
         assert io_type == "output"
 
@@ -192,6 +204,12 @@ class TestHookNameResolver:
         assert path == "lm_head"
         assert io_type == "input"
 
+    def test_resolve_gemma2_canonical_ln2_hook_out_alias(self):
+        resolver = HookNameResolver("Gemma2ForCausalLM")
+        path, io_type = resolver.resolve("blocks.3.ln2.hook_out")
+        assert path == "model.layers.3.pre_feedforward_layernorm"
+        assert io_type == "output"
+
     def test_resolve_sae_subhook_resolves_to_base(self):
         resolver = HookNameResolver("GPT2LMHeadModel")
         path1, io1 = resolver.resolve("blocks.5.hook_resid_post")
@@ -210,6 +228,12 @@ class TestHookNameResolver:
         path, io_type = resolver.resolve("blocks.3.hook_mlp_out")
         assert path == "model.layers.3.post_feedforward_layernorm"
         assert io_type == "output"
+
+    def test_resolve_gemma3_conditional_resid_pre(self):
+        resolver = HookNameResolver("Gemma3ForConditionalGeneration")
+        path, io_type = resolver.resolve("blocks.0.hook_resid_pre")
+        assert path == "model.language_model.layers.0"
+        assert io_type == "input"
 
     def test_unsupported_architecture_raises(self):
         with pytest.raises(ValueError, match="Unsupported model architecture"):

@@ -29,6 +29,26 @@ concept_direction → compute_attribution_graph → graph_node_influence
 Ops compose via the standard `AnalysisRunner` / `AnalysisOpDispatcher` system. Each op's outputs are stored
 in `AnalysisStore` and available as inputs for downstream ops.
 
+`extract_top_features` now also supports constrained `(layer, feature_id)` requests that were absent from the original
+graph rows. In those cases it synthesizes candidate rows using same-layer positions when available, falls back to
+global positions otherwise, and carries forward activation baselines so `feature_intervention_forward` can still build
+meaningful intervention tuples. Optional activation overrides can be supplied by notebook experiment configs when a
+specific feature should use a fixed intervention activation rather than a baseline heuristic.
+
+When constrained selection is active, `extract_top_features` also preserves at least one representative row per
+requested `(layer, feature_id)` pair before final top-N truncation. That guarantee is what keeps a synthesized missing
+feature available to `feature_intervention_forward` even when other requested features occupy more positions.
+
+For direct tensor steering outside the feature-intervention path, concept-direction notebook experiments now also use
+`model_fwd_intervention` with explicit intervention mappings. This allows the runtime concept-direction vector to be
+applied at non-default hook points such as `blocks.0.hook_in` in modes like `project`.
+
+For hook naming, prefer the canonical TransformerBridge-style patterns documented in
+[intervention_hook_pattern_support.md](intervention_hook_pattern_support.md).
+Interpretune now expands the supported canonical and legacy HookedTransformer spellings in both directions before
+backend resolution, but the portable cross-backend subset is still intentionally smaller than the full
+TransformerLens v3 hook surface.
+
 ## Backend Support
 
 | Backend | Status | Model Types |

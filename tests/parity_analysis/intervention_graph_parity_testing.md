@@ -26,7 +26,7 @@ These artifacts make it possible to compare:
 
 ## Recommended Workflow
 
-1. Start from the active flat YAML config under `tests/concept_direction_approach_parity/configs/`.
+1. Start from the preserved debug YAML config under `tests/concept_direction_approach_parity/archived_cfgs/`.
 2. Confirm the config builder preserves `DEBUG_SESSION_SURFACE_PRESET` without forcing a notebook-only CPU fallback when `FORCE_DEVICE` is unset.
 3. Reproduce the notebook path with the exact launcher command before changing presets by hand.
 4. Compare the pre-intervention surface first: input tokens, graph targets, selected feature set, adjacency matrix, baseline logits, and baseline activation cache.
@@ -35,9 +35,9 @@ These artifacts make it possible to compare:
 The current OQI GPU validation command is:
 
 ```bash
-python tests/concept_direction_approach_parity/nb_experiment_launcher.py \
-	--notebook tests/concept_direction_approach_parity/concept_direction_experiment_harness.ipynb \
-	tests/concept_direction_approach_parity/configs/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60.yaml
+python tests/nb_experiment_harness/nb_experiment_launcher.py \
+	--notebook tests/concept_direction_approach_parity/concept_direction_template.ipynb \
+	tests/concept_direction_approach_parity/archived_cfgs/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60.yaml
 ```
 
 ## Current Regression Guard

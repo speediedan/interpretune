@@ -9,18 +9,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import yaml
+import torch
+import yaml  # type: ignore[import-untyped]
 
-
-ROOT = Path(__file__).resolve().parent
-DEFAULT_NOTEBOOK = ROOT / "concept_direction_experiment_harness.ipynb"
-DEFAULT_CONFIG_DIR = ROOT / "configs"
-DEFAULT_OUTPUT_DIR = ROOT / "generated_experiments"
+from tests.nb_experiment_harness.config import load_experiment_config
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render and execute parameterized concept-direction notebooks via papermill.",
+        description="Render and execute parameterized experiment notebooks via papermill.",
     )
     parser.add_argument(
         "configs",
@@ -29,18 +26,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--config-dir",
-        default=str(DEFAULT_CONFIG_DIR),
-        help="Directory containing flat YAML experiment configs.",
+        help="Directory containing experiment configs. Defaults to '<notebook parent>/configs'.",
     )
     parser.add_argument(
         "--notebook",
-        default=str(DEFAULT_NOTEBOOK),
+        required=True,
         help="Notebook harness to execute.",
     )
     parser.add_argument(
         "--output-dir",
-        default=str(DEFAULT_OUTPUT_DIR),
-        help="Directory where executed notebooks will be written.",
+        help=(
+            "Directory where executed notebooks will be written. Defaults to '<notebook parent>/generated_experiments'."
+        ),
     )
     parser.add_argument(
         "--timeout",
@@ -108,16 +105,6 @@ def discover_config_paths(args: argparse.Namespace, config_dir: Path) -> list[Pa
     return config_paths
 
 
-def load_flat_yaml(path: Path) -> dict[str, Any]:
-    payload = yaml.safe_load(path.read_text())
-    if not isinstance(payload, dict):
-        raise ValueError(f"Config {path} must parse to a mapping.")
-    for key, value in payload.items():
-        if isinstance(value, dict):
-            raise ValueError(f"Config {path} is not flat: key '{key}' contains a nested mapping.")
-    return payload
-
-
 def execute_config(
     notebook_path: Path,
     config_path: Path,
@@ -129,14 +116,18 @@ def execute_config(
 ) -> Path:
     import papermill as pm
 
-    parameters = load_flat_yaml(config_path)
+    resolved_config = load_experiment_config(config_path)
     config_name = config_path.stem
     stamp = _timestamp()
     output_path = output_dir / f"{config_name}_{stamp}.ipynb"
-    archived_config = output_dir / f"{config_name}_{stamp}.yaml"
+    source_config_path = output_dir / f"{config_name}_{stamp}.source.yaml"
+    resolved_config_path = output_dir / f"{config_name}_{stamp}.resolved.yaml"
 
-    parameters.setdefault("EXPERIMENT_CONFIG_NAME", config_name)
-    parameters.setdefault("EXPERIMENT_NAME", config_name)
+    parameters: dict[str, Any] = {
+        "EXPERIMENT_CONFIG_PATH": str(config_path.resolve()),
+        "EXPERIMENT_CONFIG_NAME": str(resolved_config.get("EXPERIMENT_CONFIG_NAME", config_name)),
+        "EXPERIMENT_NAME": str(resolved_config.get("EXPERIMENT_NAME", config_name)),
+    }
 
     print(f"Running config {config_name} -> {output_path.name}")
     pm.execute_notebook(
@@ -149,15 +140,16 @@ def execute_config(
         prepare_only=prepare_only,
         kernel_name=kernel_name,
     )
-    shutil.copy2(config_path, archived_config)
+    shutil.copy2(config_path, source_config_path)
+    resolved_config_path.write_text(yaml.safe_dump(resolved_config, sort_keys=False), encoding="utf-8")
     return output_path
 
 
 def main() -> int:
     args = parse_args()
-    config_dir = Path(args.config_dir).resolve()
     notebook_path = Path(args.notebook).resolve()
-    output_dir = Path(args.output_dir).resolve()
+    config_dir = Path(args.config_dir).resolve() if args.config_dir else notebook_path.parent / "configs"
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else notebook_path.parent / "generated_experiments"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     config_paths = discover_config_paths(args, config_dir)
@@ -184,8 +176,6 @@ def main() -> int:
             print(f"ERROR: Config {config_path.name} failed: {exc}")
         gc.collect()
         try:
-            import torch
-
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:

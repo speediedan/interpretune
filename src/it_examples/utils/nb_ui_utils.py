@@ -57,9 +57,21 @@ def get_topk(
     Accepts logits of any shape — 1-D ``(vocab,)``, 2-D ``(seq, vocab)``, or 3-D ``(batch, seq, vocab)`` — and always
     resolves to the final position.
     """
+
+    def _token_to_display(token_id: int) -> str:
+        if hasattr(tokenizer, "convert_ids_to_tokens"):
+            token = tokenizer.convert_ids_to_tokens(int(token_id))
+            if isinstance(token, list):
+                if len(token) == 1:
+                    return str(token[0])
+                return str(token[-1])
+            if token is not None:
+                return str(token)
+        return tokenizer.decode([int(token_id)], skip_special_tokens=False)
+
     probs = torch.softmax(_ensure_1d_logits(logits), dim=-1)
     topk = torch.topk(probs, k)
-    return [(tokenizer.decode([topk.indices[i]]), topk.values[i].item()) for i in range(k)]
+    return [(_token_to_display(int(topk.indices[i])), topk.values[i].item()) for i in range(k)]
 
 
 # ---------------------------------------------------------------------------
@@ -723,7 +735,15 @@ def display_layer_divergence_summary(
     """Display per-layer retained-feature drift summaries as an HTML table."""
 
     rows = ""
-    for index, summary in enumerate(layer_summaries):
+
+    def _layer_sort_key(summary: Mapping[str, Any] | Any) -> tuple[int, int | str]:
+        layer = _summary_value(summary, "layer")
+        try:
+            return (1, int(layer))
+        except (TypeError, ValueError):
+            return (0, str(layer))
+
+    for index, summary in enumerate(sorted(layer_summaries, key=_layer_sort_key, reverse=True)):
         layer = _summary_value(summary, "layer")
         divergent_feature_count = _summary_value(summary, "divergent_feature_count")
         total_feature_count = _summary_value(summary, "total_feature_count")
@@ -747,6 +767,16 @@ def display_layer_divergence_summary(
             f"</tr>\n"
         )
 
+    center_header_style = (
+        "text-align:center;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);"
+    )
+    right_header_style = (
+        "text-align:right;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);"
+    )
+    left_header_style = (
+        "text-align:left;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);"
+    )
+
     markup = f"""
     <div style="font-family:system-ui,-apple-system,sans-serif;max-width:980px;margin-bottom:14px;font-size:13px;">
         <div style="font-weight:bold;font-size:14px;margin-bottom:6px;padding:4px 8px;
@@ -755,14 +785,14 @@ def display_layer_divergence_summary(
         <table style="width:100%;border-collapse:collapse;">
             <thead>
                 <tr>
-                    <th style="text-align:center;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">Layer</th>
-                    <th style="text-align:center;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">Diverged</th>
-                    <th style="text-align:center;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">Total</th>
-                    <th style="text-align:right;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">Max |Error|</th>
-                    <th style="text-align:right;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">Mean |Error|</th>
-                    <th style="text-align:right;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">Σ|Expected Δ|</th>
-                    <th style="text-align:right;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">Σ|Actual Δ|</th>
-                    <th style="text-align:left;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">Top Error Row</th>
+                    <th style="{center_header_style}">Layer</th>
+                    <th style="{center_header_style}">Diverged</th>
+                    <th style="{center_header_style}">Total</th>
+                    <th style="{right_header_style}">Max |Error|</th>
+                    <th style="{right_header_style}">Mean |Error|</th>
+                    <th style="{right_header_style}">Σ|Expected Δ|</th>
+                    <th style="{right_header_style}">Σ|Actual Δ|</th>
+                    <th style="{left_header_style}">Top Error Row</th>
                 </tr>
             </thead>
             <tbody>
@@ -804,6 +834,16 @@ def display_logit_drift_summary(
             f"</tr>\n"
         )
 
+    center_header_style = (
+        "text-align:center;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);"
+    )
+    right_header_style = (
+        "text-align:right;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);"
+    )
+    left_header_style = (
+        "text-align:left;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);"
+    )
+
     markup = f"""
     <div style="font-family:system-ui,-apple-system,sans-serif;max-width:760px;margin-bottom:14px;font-size:13px;">
         <div style="font-weight:bold;font-size:14px;margin-bottom:6px;padding:4px 8px;
@@ -813,11 +853,11 @@ def display_logit_drift_summary(
         <table style="width:100%;border-collapse:collapse;">
             <thead>
                 <tr>
-                    <th style="text-align:left;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">Token</th>
-                    <th style="text-align:center;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">Token ID</th>
-                    <th style="text-align:right;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">Expected Δ</th>
-                    <th style="text-align:right;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">Actual Δ</th>
-                    <th style="text-align:right;padding:3px 6px;border:1px solid rgba(150,150,150,0.5);background:rgba(200,200,200,0.3);">|Error|</th>
+                    <th style="{left_header_style}">Token</th>
+                    <th style="{center_header_style}">Token ID</th>
+                    <th style="{right_header_style}">Expected Δ</th>
+                    <th style="{right_header_style}">Actual Δ</th>
+                    <th style="{right_header_style}">|Error|</th>
                 </tr>
             </thead>
             <tbody>

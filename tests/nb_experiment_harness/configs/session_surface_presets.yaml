@@ -1,0 +1,15 @@
+session_surface_presets:
+  parity_surface:
+    session_overrides:
+      nnsight_cfg:
+        attn_implementation: eager
+        torch_dtype: float32
+      circuit_tracer_cfg:
+        dtype: torch.float32
+        analysis_target_tokens: null
+        target_token_ids: null
+        offload: cpu
+        verbose: false
+    config_defaults:
+      DEBUG_VALIDATION:
+        enable_zero_softcap: true

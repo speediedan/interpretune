@@ -19,10 +19,12 @@ YAML config (BATCH_SIZE, MAX_FEATURE_NODES)
 
 | File | Role |
 |------|------|
-| `experiment_resource_utils.py` | `MODEL_SPECS`, `build_test_cfg()`, `experiment_session()` context manager |
-| `concept_direction_experiment_utils.py` | `NotebookHarnessConfig`, 10 experiment functions, `render_prompt()` |
-| `nb_experiment_launcher.py` | Papermill driver with inter-notebook `gc.collect()` + CUDA cleanup |
-| `concept_direction_experiment_harness.ipynb` | Notebook harness; params cell provides `BATCH_SIZE`, `MAX_FEATURE_NODES` |
+| `../nb_experiment_harness/session.py` | shared model spec registry, `build_test_cfg()`, `experiment_session()` |
+| `concept_direction.py` | `NotebookHarnessConfig`, concept-pair loading, direction computation |
+| `../nb_experiment_harness/nb_harness_utils.py` | shared prompt/token/resource helpers |
+| `../nb_experiment_harness/pipeline_patterns.py` | shared notebook phase runners |
+| `../nb_experiment_harness/nb_experiment_launcher.py` | Papermill driver with inter-notebook `gc.collect()` + CUDA cleanup |
+| `concept_direction_template.ipynb` | Notebook template; params cell provides `BATCH_SIZE`, `MAX_FEATURE_NODES` |
 | `src/interpretune/utils/resource_mgmt.py` | `cleanup_python_cuda()`, `safe_clean_cuda()` |
 | `src/it_examples/utils/nb_ui_utils.py` | `display_ablation_chart()` with `plt.close(fig)` for figure cleanup |
 
@@ -40,7 +42,7 @@ flows through `NotebookHarnessConfig.session_kwargs` → `experiment_session()`
 
 ## Adding a New Model
 
-1. Add a `ModelSpec` entry in `experiment_resource_utils.py::MODEL_SPECS`.
+1. Add a `ModelSpec` entry in `tests/nb_experiment_harness/configs/model_specs.yaml`.
 2. Add a cfg_aliases class in `tests/core/cfg_aliases.py`.
 3. Register the example module in `src/it_examples/example_module_registry.yaml`
    if the adapter combination is new.
@@ -53,7 +55,10 @@ flows through `NotebookHarnessConfig.session_kwargs` → `experiment_session()`
 1. Set `IT_RESOURCE_DEBUG=1` for per-fixture/per-test snapshots.
 2. Run a single config through the launcher:
    ```bash
-   python nb_experiment_launcher.py gemma2_it_capitals_states.yaml --continue-on-error
+    python ../nb_experiment_harness/nb_experiment_launcher.py \
+       --notebook concept_direction_template.ipynb \
+       gemma2_it_capitals_states.yaml \
+       --continue-on-error
    ```
 3. Look for "Tried to allocate N MiB" in the traceback — this indicates
    peak VRAM at the allocation site.

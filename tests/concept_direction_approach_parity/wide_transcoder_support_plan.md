@@ -58,14 +58,17 @@ feature dashboard inspection on gemma-3-4b-it.
 262k experiments run end-to-end via the same notebook harness as 16k:
 
 ```bash
-python nb_experiment_launcher.py --config-pattern "262k" --continue-on-error
+python ../nb_experiment_harness/nb_experiment_launcher.py \
+  --notebook concept_direction_template.ipynb \
+  --config-pattern "262k" \
+  --continue-on-error
 ```
 
 Configuration overrides in 262k YAML configs:
 - `BATCH_SIZE: 64` (vs default 256) to prevent GPU OOM
 - `MODEL_VARIANT: 4b_262k_pt` / `4b_262k_it` (selects 262k ModelSpec)
 
-The `experiment_resource_utils.py` MODEL_SPECS registry includes both 262k variants:
+The shared `tests/nb_experiment_harness/configs/model_specs.yaml` registry includes both 262k variants:
 - `("gemma3", "4b_262k_pt")` → `width_262k_l0_small_affine` (PT)
 - `("gemma3", "4b_262k_it")` → `width_262k_l0_small_affine` (IT)
 

@@ -15,6 +15,7 @@ from circuit_tracer.attribution.targets import CustomTarget, LogitTarget
 from circuit_tracer.graph import Graph
 from circuit_tracer.utils.tl_nnsight_mapping import UnifiedConfig
 
+from interpretune.analysis.backends import expand_intervention_patterns
 from interpretune.analysis.backends.circuit_tracer import DEFAULT_CT_ANALYSIS_BACKEND
 from interpretune.analysis.core import AnalysisStore, schema_to_features
 from interpretune.analysis.ops.base import AnalysisBatch
@@ -411,6 +412,11 @@ def test_feature_selection_filter_by_triples() -> None:
     assert mask.tolist() == [False, False, True, False, False, True]
 
 
+def test_feature_selection_filter_by_layer_feature_pairs() -> None:
+    mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec(layer_feature_pairs=[(1, 200), (2, 301)]))
+    assert mask.tolist() == [False, False, True, False, False, True]
+
+
 def test_feature_selection_filter_or_semantics() -> None:
     spec = FeatureSelectionSpec(layers=[0], positions=[1])
     mask = apply_feature_selection_filter(_FEATURES, spec)
@@ -454,3 +460,148 @@ def test_extract_top_features_with_feature_selection() -> None:
     # Row 3 (layer=1, pos=1, fid=201) has score 0.4 > row 2 score 0.3
     assert torch.equal(result.top_feature_ids, torch.tensor([[1, 1, 201]], dtype=torch.long))
     assert torch.allclose(result.top_feature_scores, torch.tensor([0.4], dtype=torch.float32))
+
+
+def test_extract_top_features_impl_synthesizes_missing_feature_rows_with_same_layer_baseline() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=torch.tensor([[1, 0, 10], [1, 1, 11], [2, 0, 21]], dtype=torch.long),
+        activation_values=torch.tensor([0.2, 0.4, 0.9], dtype=torch.float32),
+        node_influence_scores=torch.tensor([0.5, 0.3, 0.1], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(layer_feature_pairs=[(1, 99)])
+
+    result = extract_top_features_impl(
+        module,
+        analysis_batch,
+        batch=None,
+        batch_idx=0,
+        top_n=10,
+        feature_selection=spec,
+    )
+
+    assert {tuple(row) for row in result.top_feature_ids.tolist()} == {(1, 0, 99), (1, 1, 99)}
+    assert torch.allclose(result.top_feature_scores, torch.tensor([0.4, 0.4], dtype=torch.float32))
+    assert torch.allclose(result.top_feature_activation_values, torch.tensor([0.3, 0.3], dtype=torch.float32))
+
+
+def test_extract_top_features_impl_synthesizes_missing_feature_rows_with_global_activation_baseline() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=torch.tensor([[0, 0, 10], [2, 1, 21]], dtype=torch.long),
+        activation_values=torch.tensor([0.2, 0.8], dtype=torch.float32),
+        node_influence_scores=torch.tensor([0.5, 0.3], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(layer_feature_pairs=[(1, 99)])
+
+    result = extract_top_features_impl(
+        module,
+        analysis_batch,
+        batch=None,
+        batch_idx=0,
+        top_n=10,
+        feature_selection=spec,
+    )
+
+    assert {tuple(row) for row in result.top_feature_ids.tolist()} == {(1, 0, 99), (1, 1, 99)}
+    assert torch.allclose(result.top_feature_scores, torch.tensor([0.4, 0.4], dtype=torch.float32))
+    assert torch.allclose(result.top_feature_activation_values, torch.tensor([0.5, 0.5], dtype=torch.float32))
+
+
+def test_extract_top_features_impl_applies_activation_overrides_to_matching_rows() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=torch.tensor([[1, 0, 10], [1, 1, 11], [2, 0, 21]], dtype=torch.long),
+        activation_values=torch.tensor([0.2, 0.4, 0.9], dtype=torch.float32),
+        node_influence_scores=torch.tensor([0.5, 0.3, 0.1], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(
+        layer_feature_pairs=[(1, 99)],
+        activation_overrides={(1, 99): 7.5},
+    )
+
+    result = extract_top_features_impl(
+        module,
+        analysis_batch,
+        batch=None,
+        batch_idx=0,
+        top_n=10,
+        feature_selection=spec,
+    )
+
+    assert {tuple(row) for row in result.top_feature_ids.tolist()} == {(1, 0, 99), (1, 1, 99)}
+    assert torch.allclose(result.top_feature_activation_values, torch.tensor([7.5, 7.5], dtype=torch.float32))
+
+
+def test_extract_top_features_impl_preserves_requested_feature_pairs_across_top_n() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=torch.tensor([[1, 0, 10], [1, 1, 11], [2, 0, 21], [2, 1, 21]], dtype=torch.long),
+        activation_values=torch.tensor([0.1, 0.2, 0.3, 0.4], dtype=torch.float32),
+        node_influence_scores=torch.tensor([0.05, 0.04, 0.9, 0.8], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(layer_feature_pairs=[(1, 99), (2, 21)])
+
+    result = extract_top_features_impl(module, analysis_batch, batch=None, batch_idx=0, top_n=2, feature_selection=spec)
+
+    selected_pairs = {(int(row[0]), int(row[2])) for row in result.top_feature_ids.tolist()}
+    assert selected_pairs == {(1, 99), (2, 21)}
+    assert (2, 0, 21) in {tuple(row) for row in result.top_feature_ids.tolist()}
+    assert any(row[0] == 1 and row[2] == 99 for row in result.top_feature_ids.tolist())
+
+
+def test_expand_intervention_patterns_supports_hook_in_alias() -> None:
+    available_hook_map = {
+        "blocks.0.hook_resid_pre": "blocks.0.hook_resid_pre",
+        "unembed.hook_in": "unembed.hook_in",
+    }
+
+    expanded = expand_intervention_patterns(["blocks.0.hook_in"], available_hook_map)
+
+    assert expanded == {"blocks.0.hook_in": ["blocks.0.hook_resid_pre"]}
+
+
+def test_expand_intervention_patterns_supports_hook_out_alias() -> None:
+    available_hook_map = {
+        "blocks.0.hook_resid_post": "blocks.0.hook_resid_post",
+    }
+
+    expanded = expand_intervention_patterns(["blocks.0.hook_out"], available_hook_map)
+
+    assert expanded == {"blocks.0.hook_out": ["blocks.0.hook_resid_post"]}
+
+
+def test_expand_intervention_patterns_supports_legacy_hook_out_against_canonical_map() -> None:
+    available_hook_map = {
+        "blocks.0.hook_out": "blocks.0.hook_out",
+    }
+
+    expanded = expand_intervention_patterns(["blocks.0.hook_resid_post"], available_hook_map)
+
+    assert expanded == {"blocks.0.hook_resid_post": ["blocks.0.hook_out"]}
+
+
+def test_expand_intervention_patterns_supports_attn_o_hook_in_alias() -> None:
+    available_hook_map = {
+        "blocks.0.attn.hook_z": "blocks.0.attn.hook_z",
+    }
+
+    expanded = expand_intervention_patterns(["blocks.0.attn.o.hook_in"], available_hook_map)
+
+    assert expanded == {"blocks.0.attn.o.hook_in": ["blocks.0.attn.hook_z"]}
+
+
+def test_expand_intervention_patterns_supports_hook_in_alias_wildcard() -> None:
+    available_hook_map = {
+        "blocks.0.hook_resid_pre": "blocks.0.hook_resid_pre",
+        "blocks.1.hook_resid_pre": "blocks.1.hook_resid_pre",
+    }
+
+    expanded = expand_intervention_patterns(["blocks.*.hook_in"], available_hook_map)
+
+    assert expanded == {
+        "blocks.*.hook_in": [
+            "blocks.0.hook_resid_pre",
+            "blocks.1.hook_resid_pre",
+        ]
+    }

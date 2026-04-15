@@ -21,6 +21,7 @@ from interpretune.analysis.backends import (
     resolve_interventions,
 )
 from interpretune.analysis.ops.helpers import (
+    _augment_feature_rows_for_selection,
     _extract_concept_latent_state_from_cache,
     _flatten_concept_store_rows,
     _resolve_concept_cache_key,
@@ -212,8 +213,18 @@ def extract_concept_latent_examples_impl(
 
     labels = torch.as_tensor(orig_labels, dtype=torch.long).reshape(-1).detach().cpu()
     diffs = torch.as_tensor(logit_diffs, dtype=torch.float32).reshape(-1).detach().cpu()
-    group_a_label_ids = torch.as_tensor(analysis_batch.concept_group_a_label_ids, dtype=torch.long).reshape(-1)
-    group_b_label_ids = torch.as_tensor(analysis_batch.concept_group_b_label_ids, dtype=torch.long).reshape(-1)
+    raw_group_a_label_ids = analysis_batch.get("concept_group_a_label_ids")
+    raw_group_b_label_ids = analysis_batch.get("concept_group_b_label_ids")
+    group_a_label_ids = (
+        torch.empty((0,), dtype=torch.long)
+        if raw_group_a_label_ids is None
+        else torch.as_tensor(raw_group_a_label_ids, dtype=torch.long).reshape(-1)
+    )
+    group_b_label_ids = (
+        torch.empty((0,), dtype=torch.long)
+        if raw_group_b_label_ids is None
+        else torch.as_tensor(raw_group_b_label_ids, dtype=torch.long).reshape(-1)
+    )
 
     if latent_states.shape[0] != labels.shape[0]:
         raise ValueError(
@@ -689,7 +700,7 @@ def concept_direction_impl(
     latent_state_rows = resolve_aggregate_input(module, analysis_batch, "concept_latent_state")
     group_id_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_id")
     if latent_state_rows is not None and group_id_rows is not None:
-        direction_mode = str(analysis_batch.concept_direction_mode)
+        direction_mode = str(analysis_batch.get("concept_direction_mode", "mean_difference"))
         concept_label = analysis_batch.get("concept_label")
         group_name_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_name")
         example_weight_rows = resolve_aggregate_input(module, analysis_batch, "concept_example_weight")
@@ -703,14 +714,18 @@ def concept_direction_impl(
 
         group_a_mask = group_ids == 0
         group_b_mask = group_ids == 1
-        if not group_a_mask.any() or not group_b_mask.any():
-            raise ValueError("concept_direction requires at least one example from each concept group")
+        if not group_a_mask.any():
+            raise ValueError("concept_direction requires at least one example from concept group A")
 
         if direction_mode == "mean_difference":
+            if not group_b_mask.any():
+                raise ValueError("mean_difference requires at least one example from each concept group")
             direction_vector = weighted_mean(
                 latent_states[group_a_mask], example_weights[group_a_mask]
             ) - weighted_mean(latent_states[group_b_mask], example_weights[group_b_mask])
         elif direction_mode == "paired_rejection":
+            if not group_b_mask.any():
+                raise ValueError("paired_rejection requires at least one example from each concept group")
             group_a_states = latent_states[group_a_mask]
             group_b_states = latent_states[group_b_mask]
             group_a_weights = example_weights[group_a_mask]
@@ -727,6 +742,8 @@ def concept_direction_impl(
                 residuals.append(state_a - proj)
                 pair_weights.append((weight_a + weight_b) / 2)
             direction_vector = weighted_mean(torch.stack(residuals), torch.stack(pair_weights))
+        elif direction_mode == "single_group":
+            direction_vector = weighted_mean(latent_states[group_a_mask], example_weights[group_a_mask])
         else:
             raise ValueError(f"Unsupported concept_direction_mode: {direction_mode}")
 
@@ -746,9 +763,13 @@ def concept_direction_impl(
             if group_b_matches:
                 group_b_name = group_b_matches[0]
 
+        resolved_label = concept_label
+        if resolved_label is None:
+            resolved_label = group_a_name if direction_mode == "single_group" else f"{group_a_name} -> {group_b_name}"
+
         analysis_batch.update(
             concept_direction=direction_vector.detach().cpu(),
-            concept_label=concept_label or f"{group_a_name} -> {group_b_name}",
+            concept_label=resolved_label,
             concept_direction_mode=direction_mode,
             concept_group_a_name=group_a_name,
             concept_group_b_name=group_b_name,
@@ -757,21 +778,31 @@ def concept_direction_impl(
 
     tokenizer = resolve_tokenizer(module)
     embed_weight = resolve_embedding_weight(module)
-    group_a = list(analysis_batch.concept_group_a)
-    group_b = list(analysis_batch.concept_group_b)
+    raw_group_a = analysis_batch.get("concept_group_a")
+    raw_group_b = analysis_batch.get("concept_group_b")
+    group_a = list(raw_group_a or [])
+    group_b = list(raw_group_b or [])
     direction_mode = str(analysis_batch.get("concept_direction_mode", "mean_difference"))
     concept_label = analysis_batch.get("concept_label")
-    if not group_a or not group_b:
-        raise ValueError("concept_direction requires non-empty concept_group_a and concept_group_b")
+    if not group_a:
+        raise ValueError("concept_direction requires non-empty concept_group_a")
 
     group_a_ids = token_strings_to_last_ids(tokenizer, group_a)
-    group_b_ids = token_strings_to_last_ids(tokenizer, group_b)
     group_a_embed = embed_weight[torch.tensor(group_a_ids, device=embed_weight.device)].float()
-    group_b_embed = embed_weight[torch.tensor(group_b_ids, device=embed_weight.device)].float()
+    if group_b:
+        group_b_ids = token_strings_to_last_ids(tokenizer, group_b)
+        group_b_embed = embed_weight[torch.tensor(group_b_ids, device=embed_weight.device)].float()
+    else:
+        group_b_ids = []
+        group_b_embed = None
 
     if direction_mode == "mean_difference":
+        if group_b_embed is None:
+            raise ValueError("mean_difference requires non-empty concept_group_b")
         direction_vector = group_a_embed.mean(dim=0) - group_b_embed.mean(dim=0)
     elif direction_mode == "paired_rejection":
+        if group_b_embed is None:
+            raise ValueError("paired_rejection requires non-empty concept_group_b")
         if len(group_a_ids) != len(group_b_ids):
             raise ValueError("paired_rejection requires concept groups of equal length")
         residuals = []
@@ -780,6 +811,8 @@ def concept_direction_impl(
             proj = (torch.dot(embed_a, embed_b) / denom) * embed_b
             residuals.append(embed_a - proj)
         direction_vector = torch.stack(residuals).mean(dim=0)
+    elif direction_mode == "single_group":
+        direction_vector = group_a_embed.mean(dim=0)
     else:
         raise ValueError(f"Unsupported concept_direction_mode: {direction_mode}")
 
@@ -789,7 +822,14 @@ def concept_direction_impl(
 
     analysis_batch.update(
         concept_direction=direction_vector.detach().cpu(),
-        concept_label=concept_label or f"{' / '.join(group_a)} -> {' / '.join(group_b)}",
+        concept_label=(
+            concept_label
+            or (
+                " / ".join(group_a)
+                if direction_mode == "single_group"
+                else f"{' / '.join(group_a)} -> {' / '.join(group_b)}"
+            )
+        ),
         concept_group_a_token_ids=group_a_ids,
         concept_group_b_token_ids=group_b_ids,
         concept_direction_mode=direction_mode,
@@ -913,6 +953,62 @@ def compute_attribution_graph_impl(
     return analysis_batch
 
 
+def _select_top_feature_indices(
+    feature_rows: torch.Tensor,
+    scores: torch.Tensor,
+    top_n: int | None,
+    feature_selection: FeatureSelectionSpec | None,
+) -> torch.Tensor:
+    if scores.numel() == 0:
+        return torch.empty((0,), dtype=torch.long)
+
+    ranked_indices = torch.argsort(scores, descending=True)
+    selected_count = scores.shape[0] if top_n is None else min(int(top_n), scores.shape[0])
+    if selected_count <= 0:
+        return torch.empty((0,), dtype=torch.long)
+
+    selected = ranked_indices[:selected_count].tolist()
+    if feature_selection is None or not feature_selection.layer_feature_pairs:
+        return torch.tensor(selected, dtype=torch.long)
+
+    rank_by_index = {int(index): rank for rank, index in enumerate(ranked_indices.tolist())}
+    guaranteed: list[int] = []
+    for layer, feature_id in dict.fromkeys(feature_selection.layer_feature_pairs):
+        match_mask = (feature_rows[:, 0] == int(layer)) & (feature_rows[:, 2] == int(feature_id))
+        if not match_mask.any():
+            continue
+        pair_indices = match_mask.nonzero(as_tuple=False).reshape(-1)
+        pair_scores = scores.index_select(0, pair_indices)
+        best_pair_index = int(pair_indices[int(torch.argmax(pair_scores).item())].item())
+        guaranteed.append(best_pair_index)
+
+    if not guaranteed:
+        return torch.tensor(selected, dtype=torch.long)
+
+    guaranteed = sorted(dict.fromkeys(guaranteed), key=lambda index: rank_by_index[index])
+    guaranteed_set = set(guaranteed)
+    selected_set = set(selected)
+
+    for guaranteed_index in guaranteed:
+        if guaranteed_index in selected_set:
+            continue
+        replace_position = next(
+            (position for position in range(len(selected) - 1, -1, -1) if selected[position] not in guaranteed_set),
+            None,
+        )
+        if replace_position is None:
+            selected.append(guaranteed_index)
+            selected_set.add(guaranteed_index)
+            continue
+        removed_index = selected[replace_position]
+        selected[replace_position] = guaranteed_index
+        selected_set.discard(removed_index)
+        selected_set.add(guaranteed_index)
+
+    selected = sorted(dict.fromkeys(selected), key=lambda index: rank_by_index[index])
+    return torch.tensor(selected, dtype=torch.long)
+
+
 def extract_top_features_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -965,6 +1061,14 @@ def extract_top_features_impl(
     elif activation_tensor is not None and activation_tensor.shape[0] == active_features.shape[0]:
         aligned_activation_values = activation_tensor
 
+    if feature_selection is not None:
+        feature_rows, scores, aligned_activation_values = _augment_feature_rows_for_selection(
+            feature_rows,
+            scores,
+            aligned_activation_values,
+            feature_selection,
+        )
+
     # ---- apply optional pre-filter before score ranking ----
     if feature_selection is not None:
         sel_mask = apply_feature_selection_filter(feature_rows, feature_selection)
@@ -975,8 +1079,7 @@ def extract_top_features_impl(
             if aligned_activation_values is not None:
                 aligned_activation_values = aligned_activation_values.index_select(0, sel_idx)
 
-    top_n = scores.shape[0] if top_n is None else min(int(top_n), scores.shape[0])
-    top_indices = torch.argsort(scores, descending=True)[:top_n]
+    top_indices = _select_top_feature_indices(feature_rows, scores, top_n, feature_selection)
     update_payload: dict[str, Any] = {
         "top_feature_ids": feature_rows.index_select(0, top_indices).detach().cpu(),
         "top_feature_scores": scores.index_select(0, top_indices).detach().cpu(),

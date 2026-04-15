@@ -19,6 +19,45 @@ value inputs from `AnalysisStore`, constructs canonical intervention tuples, run
 intervened forward pass through `module.replacement_model`, and stores Arrow-safe intervention summaries back into
 `AnalysisStore`.
 
+`model_fwd_intervention` is the current hook-level API for direct tensor interventions. It accepts either explicit
+`interventions` / `interventions_json` mappings or the shorthand `intervention_hook_pattern`, `intervention_mode`,
+`intervention_scale_factor`, and `intervention_use_intervention_tensor_as_basis` fields. Explicit mappings take
+precedence. Concept-direction notebook experiments now use this surface for direct-projection phases, including
+configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook such
+as `blocks.0.hook_in` in `project` mode.
+
+## Hook pattern contract
+
+Prefer canonical TransformerBridge-style hook names in new intervention configs, even when the current backend still
+accepts older HookedTransformer aliases. The current portable subset and its legacy aliases are documented in
+[intervention_hook_pattern_support.md](intervention_hook_pattern_support.md).
+
+In practice this means new configs should prefer names such as `blocks.{i}.hook_in`, `blocks.{i}.hook_out`,
+`blocks.{i}.attn.hook_out`, `blocks.{i}.attn.o.hook_in`, and `unembed.hook_in`. The intervention pattern expander now
+tries supported canonical and legacy spellings in both directions before backend resolution.
+
+## Direct projection config pattern
+
+The concept-direction notebook configs now expose a notebook-facing `ANALYSIS.direct_projection` section. The most
+expressive form mirrors `resolve_interventions(...)` by supplying an explicit intervention mapping whose values are
+valid `InterventionSpec`-style payloads. The experiment wrapper injects the runtime `concept_direction` tensor when an
+`intervention_tensor` is omitted.
+
+Example:
+
+```yaml
+ANALYSIS:
+	direct_projection:
+		interventions:
+			blocks.0.hook_in:
+				mode: project
+				scale_factor: 10.0
+				use_intervention_tensor_as_basis: true
+```
+
+When an explicit `interventions` mapping is not supplied, the notebook wrapper falls back to the shorthand fields and
+lets `resolve_interventions(...)` derive the final payload using its standard precedence rules.
+
 ## Current storage contract
 
 The analysis op stores both a compact JSON payload and primitive Arrow-safe columns:
@@ -30,6 +69,23 @@ The analysis op stores both a compact JSON payload and primitive Arrow-safe colu
 
 The circuit-tracer analysis backend hydrates `intervention_specs_json` back into canonical tuple lists when an
 `AnalysisStore` row or batch is formatted with `analysis_backend=DEFAULT_CT_ANALYSIS_BACKEND`.
+
+## Missing-feature constrained selection
+
+`extract_top_features` now supports constrained selections that refer to `(layer, feature_id)` pairs not present in
+the original attribution graph rows. When a requested feature is missing, the op synthesizes candidate rows across the
+observed positions for that layer, or across all observed positions when the layer has no active rows. Synthetic rows
+inherit score baselines from same-layer rows when available and fall back to global means otherwise.
+
+For activation-derived interventions, the op also carries forward optional activation overrides keyed by
+`(layer, feature_id)`. When an override is not provided, synthetic rows use the mean activation of same-layer active
+rows when available and the global mean activation otherwise. This lets `feature_intervention_forward` intervene on
+requested features that were absent from the original graph without degrading to a zero activation heuristic.
+
+When constrained feature selection is active, top-feature ranking now preserves at least one highest-scoring row per
+requested `(layer, feature_id)` pair before returning the final top-feature payload. This prevents repeated positions
+for one requested feature from crowding out a second requested feature before downstream intervention tuple
+construction.
 
 ## Scope boundary
 

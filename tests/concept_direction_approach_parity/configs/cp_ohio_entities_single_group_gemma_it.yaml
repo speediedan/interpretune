@@ -1,0 +1,14 @@
+name: ohio_entities_single_group
+description: Ohio entities
+group_a_tokens: [Ohio, Columbus, ▁Buckeye, ▁Cavaliers]
+group_b_tokens: []
+group_a_entities:
+  - [Ohio, Ohio]
+  - [Columbus, Ohio]
+  - [▁Buckeye, Ohio]
+  - [▁Cavaliers, Ohio]
+group_b_entities: []
+group_a_name: ohio_entities
+group_b_name: unrelated_entities
+concept_label: "Concept: Ohio entities"
+classification_question: "Is this an Ohio entity or not? Answer with one word: \"Ohio\" or \"No\"."
