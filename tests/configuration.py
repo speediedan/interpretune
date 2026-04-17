@@ -30,6 +30,7 @@ from interpretune.config import (
     ITLensCustomConfig,
     NNsightConfig,
 )
+from interpretune.config.extensions import ExtensionsContext
 from interpretune.session import ITSessionConfig, ITSession
 from interpretune.protocol import StrOrPath, Adapter
 from interpretune.analysis import AnalysisBatch, AnalysisStore
@@ -76,6 +77,9 @@ def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: St
         "use_bridge",
         "nnsight_cfg",
     ]
+    default_extensions = ExtensionsContext().DEFAULT_EXTENSIONS
+    test_cfg_override_attrs.extend(f"{it_ext.ext_attr}_cfg" for it_ext in default_extensions)
+    test_cfg_override_attrs = list(dict.fromkeys(test_cfg_override_attrs))
     test_it_cfg = deepcopy(base_it_cfg)
     for attr in test_cfg_override_attrs:
         if hasattr(test_cfg, attr) and getattr(test_cfg, attr) is not None:

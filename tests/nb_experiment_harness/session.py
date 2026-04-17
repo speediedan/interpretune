@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from copy import deepcopy
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from functools import lru_cache
@@ -275,6 +276,10 @@ def build_test_cfg(
     batch_size: int | None = None,
     max_feature_nodes: int | None = None,
     debug_session_surface_preset: DebugSessionSurfacePreset = "notebook_default",
+    enable_neuronpedia_graph_upload: bool = False,
+    neuronpedia_graph_slug_prefix: str | None = None,
+    neuronpedia_model: str | None = None,
+    neuronpedia_source_set: str | None = None,
 ) -> Any:
     device_type = force_device or ("cuda" if torch.cuda.is_available() else "cpu")
     spec = _find_model_spec_for_cfg(model_family, model_name, model_variant)
@@ -306,6 +311,39 @@ def build_test_cfg(
     if nnsight_cfg is not None and spec.nnsight_overrides:
         _apply_override_mapping(nnsight_cfg, spec.nnsight_overrides, spec=spec, device_type=device_type)
 
+    neuronpedia_cfg = getattr(cfg, "neuronpedia_cfg", None)
+    if neuronpedia_cfg is None and enable_neuronpedia_graph_upload:
+        from interpretune.extensions.neuronpedia import NeuronpediaConfig
+
+        cfg.neuronpedia_cfg = NeuronpediaConfig(enabled=True, auto_transform=True)
+        neuronpedia_cfg = cfg.neuronpedia_cfg
+
+    if neuronpedia_cfg is not None and enable_neuronpedia_graph_upload:
+        neuronpedia_cfg.enabled = True
+        neuronpedia_cfg.auto_transform = True
+        if neuronpedia_graph_slug_prefix:
+            neuronpedia_cfg.default_slug_prefix = neuronpedia_graph_slug_prefix
+
+        default_metadata = deepcopy(neuronpedia_cfg.default_metadata)
+        info = default_metadata.get("info")
+        if not isinstance(info, dict):
+            info = {}
+            default_metadata["info"] = info
+
+        if neuronpedia_model:
+            info.setdefault("neuronpedia_model", neuronpedia_model)
+        if neuronpedia_source_set:
+            info["neuronpedia_source_set"] = neuronpedia_source_set
+            feature_details = default_metadata.get("feature_details")
+            if not isinstance(feature_details, dict):
+                feature_details = {}
+                default_metadata["feature_details"] = feature_details
+            feature_details["neuronpedia_source_set"] = neuronpedia_source_set
+
+        neuronpedia_cfg.default_metadata = default_metadata
+        if circuit_tracer_cfg is not None:
+            circuit_tracer_cfg.use_neuronpedia = True
+
     apply_debug_session_surface_preset(cfg, preset=debug_session_surface_preset)
     return cfg
 
@@ -325,6 +363,10 @@ def experiment_session(
     max_feature_nodes: int | None = None,
     debug_session_surface_preset: DebugSessionSurfacePreset = "notebook_default",
     model_variant: str | None = None,
+    enable_neuronpedia_graph_upload: bool = False,
+    neuronpedia_graph_slug_prefix: str | None = None,
+    neuronpedia_model: str | None = None,
+    neuronpedia_source_set: str | None = None,
 ) -> Iterator[tuple[Any, Any, Any]]:
     session_dir = work_root / run_name
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -343,6 +385,10 @@ def experiment_session(
         batch_size=batch_size,
         max_feature_nodes=max_feature_nodes,
         debug_session_surface_preset=debug_session_surface_preset,
+        enable_neuronpedia_graph_upload=enable_neuronpedia_graph_upload,
+        neuronpedia_graph_slug_prefix=neuronpedia_graph_slug_prefix,
+        neuronpedia_model=neuronpedia_model,
+        neuronpedia_source_set=neuronpedia_source_set,
     )
     it_session = config_modules(cfg, run_name, {}, session_dir, {}, False)
     session_fixture_hook_exec(it_session, cast(FixtPhase, FixtPhase.setup))

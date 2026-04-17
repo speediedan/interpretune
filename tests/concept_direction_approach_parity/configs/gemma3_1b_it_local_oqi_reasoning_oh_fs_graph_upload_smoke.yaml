@@ -1,0 +1,12 @@
+EXTENDS: gemma3_1b_it_local_oqi_reasoning_oh_fs.yaml
+
+EXPERIMENT_NAME: gemma3_1b_it_local_oqi_reasoning_oh_fs_graph_upload_smoke
+
+SESSION:
+  max_feature_nodes: 8192
+
+NEURONPEDIA:
+  upload_local_graphs: true
+  local_graph_slug_prefix: gemma3-1b-local-graph-smoke
+  local_graph_upload_target: public_then_sync_local
+  local_graph_owner_username: speediedan

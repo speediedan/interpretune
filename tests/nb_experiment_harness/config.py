@@ -45,6 +45,10 @@ class HarnessNeuronpediaConfig:
     use_localhost: bool
     local_db_url: str | None
     local_webapp_url: str
+    upload_local_graphs: bool
+    local_graph_slug_prefix: str | None
+    local_graph_upload_target: str
+    local_graph_owner_username: str | None
     check_local_explanation_coverage: bool
     generate_missing_local_explanations: bool
     local_explanation_feature_limit: int
@@ -189,6 +193,10 @@ def build_shared_harness_sections(
     use_localhost: bool,
     local_neuronpedia_db_url: str | None,
     local_neuronpedia_webapp_url: str,
+    upload_local_graphs: bool,
+    local_graph_slug_prefix: str | None,
+    local_graph_upload_target: str,
+    local_graph_owner_username: str | None,
     check_local_explanation_coverage: bool,
     generate_missing_local_explanations: bool,
     local_explanation_feature_limit: int,
@@ -236,6 +244,10 @@ def build_shared_harness_sections(
             use_localhost=use_localhost,
             local_db_url=local_neuronpedia_db_url,
             local_webapp_url=local_neuronpedia_webapp_url,
+            upload_local_graphs=upload_local_graphs,
+            local_graph_slug_prefix=local_graph_slug_prefix,
+            local_graph_upload_target=local_graph_upload_target,
+            local_graph_owner_username=local_graph_owner_username,
             check_local_explanation_coverage=check_local_explanation_coverage,
             generate_missing_local_explanations=generate_missing_local_explanations,
             local_explanation_feature_limit=local_explanation_feature_limit,

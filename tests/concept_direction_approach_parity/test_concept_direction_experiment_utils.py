@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+import gzip
+import json
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -19,6 +22,7 @@ from tests.concept_direction_approach_parity.concept_direction import (
     execute_concept_latent_extraction_ops,
 )
 from tests.nb_experiment_harness import pipeline_patterns
+from tests.nb_experiment_harness import nb_harness_utils as nb_harness_utils_module
 from tests.nb_experiment_harness.nb_harness_utils import (
     _build_graph_analysis_inputs,
     _build_feature_selection_spec,
@@ -27,10 +31,13 @@ from tests.nb_experiment_harness.nb_harness_utils import (
     _summarize_feature_row_deltas,
     _summarize_layer_error_rows,
     get_key_token_ids_and_labels,
+    maybe_save_local_neuronpedia_graph,
     prepare_local_explanation_backfill,
     resolve_graph_target_tokens,
     resolve_target_tokens,
 )
+from tests.configuration import config_modules
+from tests.nb_experiment_harness.session import build_test_cfg
 
 
 class _StubTokenizer:
@@ -78,6 +85,11 @@ def _build_cfg(
     direct_projection_intervention_mode: str | None = None,
     direct_projection_intervention_scale_factor: float | None = None,
     direct_projection_intervention_use_intervention_tensor_as_basis: bool | None = None,
+    use_localhost: bool = False,
+    upload_local_graphs: bool = False,
+    local_graph_slug_prefix: str | None = None,
+    local_graph_upload_target: str = "localhost",
+    local_graph_owner_username: str | None = None,
 ) -> NotebookHarnessConfig:
     return NotebookHarnessConfig(
         experiment_name="test",
@@ -108,6 +120,11 @@ def _build_cfg(
         explicit_direction_tokens=explicit_direction_tokens,
         enable_zero_softcap=enable_zero_softcap,
         debug_session_surface_preset=debug_session_surface_preset,
+        use_localhost=use_localhost,
+        upload_local_graphs=upload_local_graphs,
+        local_graph_slug_prefix=local_graph_slug_prefix,
+        local_graph_upload_target=local_graph_upload_target,
+        local_graph_owner_username=local_graph_owner_username,
         key_tokens_override=key_tokens_override,
         constrained_feature_selection_refs=cast(Any, constrained_feature_selection_refs),
         direct_projection_interventions=cast(Any, direct_projection_interventions),
@@ -399,6 +416,540 @@ def test_concept_pair_mode_parity_surface_passes_through_session_kwargs() -> Non
 
     assert cfg.session_kwargs["debug_session_surface_preset"] == "parity_surface"
     assert any("Notebook sessions will use the parity-aligned session surface" in message for message in cfg.mode_warning_messages)
+
+
+def test_notebook_harness_config_exposes_graph_upload_session_kwargs() -> None:
+    cfg = _build_cfg(
+        prompt_render_mode="apply_chat_template",
+        target_tokens=("Austin", "Dallas"),
+        use_localhost=True,
+        upload_local_graphs=True,
+        local_graph_slug_prefix="manual-graph-run",
+    )
+
+    assert cfg.session_kwargs["enable_neuronpedia_graph_upload"] is True
+    assert cfg.session_kwargs["neuronpedia_graph_slug_prefix"] == "manual-graph-run"
+    assert cfg.session_kwargs["neuronpedia_model"] == "gemma-3-1b-it"
+    assert cfg.session_kwargs["neuronpedia_source_set"] == "gemmascope-2-transcoder-16k"
+
+
+def test_resolve_neuronpedia_runtime_config_enables_localhost_for_graph_upload(monkeypatch) -> None:
+    monkeypatch.setattr(
+        concept_direction_module,
+        "check_local_neuronpedia_services",
+        lambda **kwargs: SimpleNamespace(webapp_available=True, db_available=True),
+    )
+
+    with pytest.warns(UserWarning, match="local graph upload"):
+        runtime = concept_direction_module.resolve_neuronpedia_runtime_config(
+            use_localhost=False,
+            upload_local_graphs=True,
+            local_webapp_url="http://localhost:3999",
+        )
+
+    assert runtime.use_localhost is True
+    assert runtime.upload_local_graphs is True
+    assert runtime.local_webapp_url == "http://localhost:3999"
+
+
+def test_build_test_cfg_enables_neuronpedia_defaults_for_graph_upload() -> None:
+    cfg = build_test_cfg(
+        "gemma3",
+        model_variant="1b_it",
+        model_name="google/gemma-3-1b-it",
+        transcoder_set="gemma",
+        enable_neuronpedia_graph_upload=True,
+        neuronpedia_graph_slug_prefix="graph-upload-test",
+        neuronpedia_model="gemma-3-1b-it",
+        neuronpedia_source_set="gemmascope-2-transcoder-16k",
+    )
+
+    assert cfg.neuronpedia_cfg.enabled is True
+    assert cfg.neuronpedia_cfg.default_slug_prefix == "graph-upload-test"
+    assert cfg.circuit_tracer_cfg.use_neuronpedia is True
+    assert cfg.neuronpedia_cfg.default_metadata["info"]["neuronpedia_source_set"] == "gemmascope-2-transcoder-16k"
+    assert cfg.neuronpedia_cfg.default_metadata["feature_details"]["neuronpedia_source_set"] == (
+        "gemmascope-2-transcoder-16k"
+    )
+
+
+def test_cfg_only_session_preserves_neuronpedia_graph_upload_config(tmp_path: Path) -> None:
+    cfg = build_test_cfg(
+        "gemma3",
+        model_variant="1b_it",
+        model_name="google/gemma-3-1b-it",
+        transcoder_set="gemma",
+        enable_neuronpedia_graph_upload=True,
+        neuronpedia_graph_slug_prefix="graph-upload-test",
+        neuronpedia_model="gemma-3-1b-it",
+        neuronpedia_source_set="gemmascope-2-transcoder-16k",
+    )
+
+    session_cfg = config_modules(cfg, "graph-upload-test", {}, tmp_path, {}, False, cfg_only=True)
+
+    assert session_cfg.module_cfg.neuronpedia_cfg.enabled is True
+    assert session_cfg.module_cfg.neuronpedia_cfg.default_slug_prefix == "graph-upload-test"
+    assert session_cfg.module_cfg.circuit_tracer_cfg.use_neuronpedia is True
+
+
+def test_maybe_save_local_neuronpedia_graph_uses_local_env_and_metadata(monkeypatch, tmp_path: Path) -> None:
+    cfg = _build_cfg(
+        prompt_render_mode="apply_chat_template",
+        target_tokens=("Austin", "Dallas"),
+        use_localhost=True,
+        upload_local_graphs=True,
+        local_graph_slug_prefix="Local Graph Run",
+    )
+    cfg.work_root = tmp_path
+    cfg.local_neuronpedia_webapp_url = "http://localhost:3999"
+
+    observed: dict[str, Any] = {}
+    monkeypatch.setenv("DEV_NEURONPEDIA_API_KEY", "dev-key")
+
+    class _FakeNeuronpedia:
+        def upload_graph_to_neuronpedia(self, graph_path, api_key=None):
+            observed["upload_path"] = str(graph_path)
+            observed["api_key"] = api_key
+            observed["env_use_localhost"] = os.environ.get("USE_LOCALHOST")
+            observed["env_local_webapp_url"] = os.environ.get("LOCAL_NEURONPEDIA_WEBAPP_URL")
+            return SimpleNamespace(url="http://localhost:3999/gemma-3-1b-it/graph?slug=test")
+
+    class _FakeModule:
+        neuronpedia = _FakeNeuronpedia()
+
+        def save_graph(self, *, graph, output_path, slug=None, custom_metadata=None, use_neuronpedia=None):
+            del graph
+            observed["slug"] = slug
+            observed["custom_metadata"] = custom_metadata
+            observed["use_neuronpedia"] = use_neuronpedia
+            output_dir = Path(output_path)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            graph_path = output_dir / f"{slug}.json"
+            graph_path.write_text("{}", encoding="utf-8")
+            return graph_path
+
+    artifact = maybe_save_local_neuronpedia_graph(
+        cfg,
+        _FakeModule(),
+        object(),
+        phase_label="Embed Pipeline",
+        rendered_prompt="The capital of Texas is",
+        graph_target_tokens=("Austin", "Dallas"),
+        graph_target_ids=[1, 2],
+        extra_metadata={"info": {"scale_factor": 10.0}},
+    )
+
+    assert artifact is not None
+    assert artifact["uploaded"] is True
+    assert artifact["graph_url"] == "http://localhost:3999/gemma-3-1b-it/graph?slug=test"
+    assert observed["api_key"] == "dev-key"
+    assert observed["env_use_localhost"] == "true"
+    assert observed["env_local_webapp_url"] == "http://localhost:3999"
+    assert observed["use_neuronpedia"] is True
+    assert observed["custom_metadata"]["feature_details"]["neuronpedia_source_set"] == "gemmascope-2-transcoder-16k"
+    assert observed["custom_metadata"]["info"]["neuronpedia_source_set"] == "gemmascope-2-transcoder-16k"
+    assert observed["custom_metadata"]["info"]["scale_factor"] == 10.0
+    assert "embed-pipeline" in observed["slug"]
+
+
+def test_maybe_save_local_neuronpedia_graph_public_upload_syncs_local_metadata(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = _build_cfg(
+        prompt_render_mode="apply_chat_template",
+        target_tokens=("Austin", "Dallas"),
+        use_localhost=True,
+        upload_local_graphs=True,
+        local_graph_slug_prefix="Local Graph Run",
+        local_graph_upload_target="public_then_sync_local",
+        local_graph_owner_username="speediedan",
+    )
+    cfg.work_root = tmp_path
+    cfg.local_neuronpedia_webapp_url = "http://localhost:3999"
+
+    observed: dict[str, Any] = {}
+    monkeypatch.setenv("NEURONPEDIA_API_KEY", "prod-key")
+    monkeypatch.setenv("USE_LOCALHOST", "true")
+
+    class _FakeModule:
+        neuronpedia = object()
+
+        def save_graph(self, *, graph, output_path, slug=None, custom_metadata=None, use_neuronpedia=None):
+            del graph
+            observed["slug"] = slug
+            observed["custom_metadata"] = custom_metadata
+            observed["use_neuronpedia"] = use_neuronpedia
+            output_dir = Path(output_path)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            graph_path = output_dir / f"{slug}.json"
+            graph_path.write_text("{}", encoding="utf-8")
+            return graph_path
+
+    monkeypatch.setattr(
+        "tests.nb_experiment_harness.nb_harness_utils._upload_graph_for_public_then_sync_local",
+        lambda graph_path, *, api_key, public_base_url=None: (
+            observed.update(
+                upload_path=str(graph_path),
+                api_key=api_key,
+                env_use_localhost=os.environ.get("USE_LOCALHOST"),
+                env_local_webapp_url=os.environ.get("LOCAL_NEURONPEDIA_WEBAPP_URL"),
+            )
+            or SimpleNamespace(
+                graph_metadata=SimpleNamespace(
+                    model_id="gemma-3-1b-it",
+                    slug="test-public-sync",
+                    json_url="https://storage.neuronpedia.org/user-graphs/test-public-sync.json",
+                    url="https://neuronpedia.org/gemma-3-1b-it/graph?slug=test-public-sync",
+                    url_embed="https://neuronpedia.org/gemma-3-1b-it/graph?slug=test-public-sync&embed=true",
+                ),
+                public_saved_to_db=True,
+                public_save_to_db_error=None,
+            )
+        ),
+    )
+
+    monkeypatch.setattr(
+        "tests.nb_experiment_harness.nb_harness_utils.sync_graph_metadata_to_local_dev",
+        lambda **kwargs: {
+            "model_id": "gemma-3-1b-it",
+            "slug": "test-public-sync",
+            "username": kwargs["username"],
+            "graph_json_url": "https://storage.neuronpedia.org/user-graphs/test-public-sync.json",
+            "public_graph_url": "https://neuronpedia.org/gemma-3-1b-it/graph?slug=test-public-sync",
+            "local_graph_url": "http://localhost:3999/gemma-3-1b-it/graph?slug=test-public-sync",
+            "local_graph_embed_url": "http://localhost:3999/gemma-3-1b-it/graph?slug=test-public-sync&embed=true",
+            "graph_metadata_id": "graph-row-id",
+            "source_set_name": "gemmascope-2-transcoder-16k",
+        },
+    )
+
+    artifact = maybe_save_local_neuronpedia_graph(
+        cfg,
+        _FakeModule(),
+        object(),
+        phase_label="Embed Pipeline",
+        rendered_prompt="The capital of Texas is",
+        graph_target_tokens=("Austin", "Dallas"),
+        graph_target_ids=[1, 2],
+    )
+
+    assert artifact is not None
+    assert artifact["uploaded"] is True
+    assert artifact["upload_target"] == "public_then_sync_local"
+    assert artifact["synced_to_local"] is True
+    assert artifact["graph_url"] == "http://localhost:3999/gemma-3-1b-it/graph?slug=test-public-sync"
+    assert artifact["public_graph_url"] == "https://neuronpedia.org/gemma-3-1b-it/graph?slug=test-public-sync"
+    assert observed["api_key"] == "prod-key"
+    assert observed["env_use_localhost"] == "false"
+    assert observed["env_local_webapp_url"] is None
+
+
+def test_maybe_save_local_neuronpedia_graph_public_upload_falls_back_to_local_sync_when_public_save_fails(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = _build_cfg(
+        prompt_render_mode="apply_chat_template",
+        target_tokens=("Austin", "Dallas"),
+        use_localhost=True,
+        upload_local_graphs=True,
+        local_graph_slug_prefix="Local Graph Run",
+        local_graph_upload_target="public_then_sync_local",
+        local_graph_owner_username="speediedan",
+    )
+    cfg.work_root = tmp_path
+    cfg.local_neuronpedia_webapp_url = "http://localhost:3999"
+
+    class _FakeModule:
+        neuronpedia = object()
+
+        def save_graph(self, *, graph, output_path, slug=None, custom_metadata=None, use_neuronpedia=None):
+            del graph, custom_metadata, use_neuronpedia
+            output_dir = Path(output_path)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            graph_path = output_dir / f"{slug}.json"
+            graph_path.write_text("{}", encoding="utf-8")
+            return graph_path
+
+    monkeypatch.setenv("NEURONPEDIA_API_KEY", "prod-key")
+    monkeypatch.setattr(
+        "tests.nb_experiment_harness.nb_harness_utils._upload_graph_for_public_then_sync_local",
+        lambda graph_path, *, api_key, public_base_url=None: SimpleNamespace(
+            graph_metadata=SimpleNamespace(
+                model_id="gemma-3-1b-it",
+                slug="test-public-sync-fallback",
+                json_url="https://storage.neuronpedia.org/user-graphs/test-public-sync-fallback.json",
+                url=None,
+                url_embed=None,
+            ),
+            public_saved_to_db=False,
+            public_save_to_db_error="HTTP 500: Failed to generate signed URL",
+        ),
+    )
+    monkeypatch.setattr(
+        "tests.nb_experiment_harness.nb_harness_utils.sync_graph_metadata_to_local_dev",
+        lambda **kwargs: {
+            "model_id": "gemma-3-1b-it",
+            "slug": "test-public-sync-fallback",
+            "username": kwargs["username"],
+            "graph_json_url": "https://storage.neuronpedia.org/user-graphs/test-public-sync-fallback.json",
+            "public_graph_url": None,
+            "local_graph_url": "http://localhost:3999/gemma-3-1b-it/graph?slug=test-public-sync-fallback",
+            "local_graph_embed_url": (
+                "http://localhost:3999/gemma-3-1b-it/graph?slug=test-public-sync-fallback&embed=true"
+            ),
+            "graph_metadata_id": "graph-row-id",
+            "source_set_name": "gemmascope-2-transcoder-16k",
+        },
+    )
+
+    artifact = maybe_save_local_neuronpedia_graph(
+        cfg,
+        _FakeModule(),
+        object(),
+        phase_label="Embed Pipeline",
+        rendered_prompt="The capital of Texas is",
+        graph_target_tokens=("Austin", "Dallas"),
+        graph_target_ids=[1, 2],
+    )
+
+    assert artifact is not None
+    assert artifact["uploaded"] is True
+    assert artifact["synced_to_local"] is True
+    assert artifact["public_saved_to_db"] is False
+    assert artifact["public_save_to_db_error"] == "HTTP 500: Failed to generate signed URL"
+    assert artifact["graph_url"] == "http://localhost:3999/gemma-3-1b-it/graph?slug=test-public-sync-fallback"
+    assert artifact["public_graph_url"] is None
+
+
+def test_sync_graph_metadata_to_local_dev_uses_public_json_url_and_upsert(monkeypatch) -> None:
+    graph_metadata = SimpleNamespace(
+        id="graph-row-id",
+        model_id="gemma-3-1b-it",
+        slug="test-public-sync",
+        prompt_tokens=["Hello"],
+        prompt="Hello",
+        title_prefix="",
+        json_url="https://storage.neuronpedia.org/user-graphs/test-public-sync.json",
+        url="https://neuronpedia.org/gemma-3-1b-it/graph?slug=test-public-sync",
+        url_embed="https://neuronpedia.org/gemma-3-1b-it/graph?slug=test-public-sync&embed=true",
+    )
+    observed: dict[str, Any] = {"queries": []}
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return gzip.compress(
+                json.dumps(
+                    {
+                        "metadata": {
+                            "info": {"neuronpedia_source_set": "remote/gemmascope-2-transcoder-16k"},
+                        }
+                    }
+                ).encode("utf-8")
+            )
+
+    class _FakeCursor:
+        def execute(self, query, params=None):
+            observed["queries"].append((query, params))
+            self._last_query = query
+
+        def fetchone(self):
+            if 'SELECT id FROM "User"' in self._last_query:
+                return ("local-user-id",)
+            if 'SELECT name FROM public."SourceSet"' in self._last_query:
+                return ("gemmascope-2-transcoder-16k",)
+            if 'RETURNING id, "modelId", slug, url, "sourceSetName"' in self._last_query:
+                return (
+                    "graph-row-id",
+                    "gemma-3-1b-it",
+                    "test-public-sync",
+                    "https://storage.neuronpedia.org/user-graphs/test-public-sync.json",
+                    "gemmascope-2-transcoder-16k",
+                )
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _FakeConnection:
+        def cursor(self):
+            return _FakeCursor()
+
+        def commit(self):
+            observed["committed"] = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("tests.nb_experiment_harness.nb_harness_utils.load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "tests.nb_experiment_harness.nb_harness_utils.resolve_local_neuronpedia_db_url",
+        lambda local_db_url=None: "postgres://postgres:postgres@127.0.0.1:5433/postgres",
+    )
+    monkeypatch.setattr("tests.nb_experiment_harness.nb_harness_utils.urlopen", lambda *args, **kwargs: _FakeResponse())
+    monkeypatch.setattr(
+        "tests.nb_experiment_harness.nb_harness_utils.psycopg.connect",
+        lambda *args, **kwargs: _FakeConnection(),
+    )
+    monkeypatch.setattr(
+        "tests.nb_experiment_harness.nb_harness_utils.load_dotenv",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setenv("LOCAL_NEURONPEDIA_WEBAPP_URL", "http://localhost:3999")
+
+    from tests.nb_experiment_harness.nb_harness_utils import sync_graph_metadata_to_local_dev
+
+    summary = sync_graph_metadata_to_local_dev(username="speediedan", graph_metadata=graph_metadata)
+
+    assert summary["graph_json_url"] == "https://storage.neuronpedia.org/user-graphs/test-public-sync.json"
+    assert summary["local_graph_url"] == "http://localhost:3999/gemma-3-1b-it/graph?slug=test-public-sync"
+    assert summary["source_set_name"] == "gemmascope-2-transcoder-16k"
+    assert observed["committed"] is True
+
+
+def test_sync_graph_metadata_to_local_dev_generates_local_id_when_public_metadata_id_missing(monkeypatch) -> None:
+    graph_metadata = SimpleNamespace(
+        id=None,
+        model_id="gemma-3-1b-it",
+        slug="test-public-sync-missing-id",
+        prompt_tokens=["Hello"],
+        prompt="Hello",
+        title_prefix="",
+        json_url="https://storage.neuronpedia.org/user-graphs/test-public-sync-missing-id.json",
+        url=None,
+        url_embed=None,
+    )
+    observed: dict[str, Any] = {"queries": []}
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return gzip.compress(
+                json.dumps(
+                    {
+                        "metadata": {
+                            "info": {"neuronpedia_source_set": "remote/gemmascope-2-transcoder-16k"},
+                        }
+                    }
+                ).encode("utf-8")
+            )
+
+    class _FakeCursor:
+        def execute(self, query, params=None):
+            observed["queries"].append((query, params))
+            self._last_query = query
+
+        def fetchone(self):
+            if 'SELECT id FROM "User"' in self._last_query:
+                return ("local-user-id",)
+            if 'SELECT name FROM public."SourceSet"' in self._last_query:
+                return ("gemmascope-2-transcoder-16k",)
+            if 'RETURNING id, "modelId", slug, url, "sourceSetName"' in self._last_query:
+                return (
+                    "local-sync-generated",
+                    "gemma-3-1b-it",
+                    "test-public-sync-missing-id",
+                    "https://storage.neuronpedia.org/user-graphs/test-public-sync-missing-id.json",
+                    "gemmascope-2-transcoder-16k",
+                )
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _FakeConnection:
+        def cursor(self):
+            return _FakeCursor()
+
+        def commit(self):
+            observed["committed"] = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        "tests.nb_experiment_harness.nb_harness_utils.urlopen",
+        lambda request, timeout=60: _FakeResponse(),
+    )
+    monkeypatch.setattr(
+        "tests.nb_experiment_harness.nb_harness_utils.resolve_local_neuronpedia_db_url",
+        lambda url=None: "postgres://db",
+    )
+    monkeypatch.setattr(
+        "tests.nb_experiment_harness.nb_harness_utils.psycopg.connect",
+        lambda *args, **kwargs: _FakeConnection(),
+    )
+    monkeypatch.setattr(
+        "tests.nb_experiment_harness.nb_harness_utils.load_dotenv",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setenv("LOCAL_NEURONPEDIA_WEBAPP_URL", "http://localhost:3999")
+    for env_key in (
+        "POSTGRES_PRISMA_URL",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_USER",
+        "POSTGRES_URL_NON_POOLING",
+        "POSTGRES_DB",
+    ):
+        monkeypatch.setenv(env_key, "")
+
+    summary = nb_harness_utils_module.sync_graph_metadata_to_local_dev(
+        username="speediedan",
+        graph_metadata=graph_metadata,
+    )
+
+    insert_query, insert_params = next(
+        (query, params)
+        for query, params in observed["queries"]
+        if 'INSERT INTO public."GraphMetadata"' in query
+    )
+    assert insert_query
+    assert str(insert_params[0]).startswith("local-sync-")
+    assert summary["graph_metadata_id"] == "local-sync-generated"
+    assert observed["committed"] is True
+
+
+def test_build_graph_analysis_inputs_supports_generic_graph_kwargs_without_concept_direction() -> None:
+    cfg = _build_cfg(prompt_render_mode="apply_chat_template", target_tokens=("Austin", "Dallas"))
+
+    analysis_batch, call_kwargs = _build_graph_analysis_inputs(
+        cfg,
+        _StubTokenizer({"Austin": 107305, "Dallas": 85968}),
+        "prompt",
+        direction=None,
+        group_a_ids=None,
+        group_b_ids=None,
+        attribution_targets=["Austin", "Dallas"],
+        graph_call_kwargs={"max_n_logits": 5},
+        analysis_batch_kwargs={"logit_target_ids": torch.tensor([107305, 85968], dtype=torch.long)},
+    )
+
+    assert analysis_batch.prompts == ["prompt"]
+    assert analysis_batch.logit_target_ids.tolist() == [107305, 85968]
+    assert call_kwargs["attribution_targets"] == ["Austin", "Dallas"]
+    assert call_kwargs["max_n_logits"] == 5
 
 
 def test_get_key_token_ids_and_labels_tracks_prefixed_and_bare_chat_variants() -> None:
@@ -809,11 +1360,6 @@ def test_run_scale_sweep_suppresses_internal_output_on_success(monkeypatch, caps
     monkeypatch.setattr(pipeline_patterns, "get_key_token_ids_and_labels", lambda cfg, tokenizer: ([1, 2], ["Austin", "Dallas"]))
     monkeypatch.setattr(pipeline_patterns, "render_prompt", lambda prompt, tokenizer, mode: prompt)
     monkeypatch.setattr(pipeline_patterns, "configure_analysis", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        pipeline_patterns,
-        "_build_graph_analysis_inputs",
-        lambda *args, **kwargs: (SimpleNamespace(), {}),
-    )
     monkeypatch.setattr(pipeline_patterns, "maybe_zero_softcap", lambda module, cfg: nullcontext())
 
     def _fake_compute_attribution_graph(*args, **kwargs):
@@ -851,9 +1397,7 @@ def test_run_scale_sweep_suppresses_internal_output_on_success(monkeypatch, caps
 
     results = pipeline_patterns.run_scale_sweep(
         cfg,
-        direction=torch.tensor([0.1, 0.2]),
-        group_a_ids=[1],
-        group_b_ids=[2],
+        build_graph_analysis_inputs=lambda tokenizer, rendered_prompt: (SimpleNamespace(), {}),
     )
 
     captured = capsys.readouterr()

@@ -44,6 +44,7 @@ mkdir -p "${RUN_DIR}"
 
 nohup /mnt/cache/speediedan/.venvs/it_latest/bin/python -m interpretune.utils.neuronpedia_dashboard_pipeline \
   --model-name gemma-3-1b-it \
+  --model-layers 26 \
   --sae-set gemma-scope-2-1b-it-transcoders-all \
   --neuronpedia-source-set-id gemmascope-2-transcoder-16k \
   --neuronpedia-source-set-description 'Transcoder - 16k' \
@@ -65,6 +66,26 @@ nohup /mnt/cache/speediedan/.venvs/it_latest/bin/python -m interpretune.utils.ne
   --use-skip-transcoder \
   > "${LAUNCH_LOG}" 2>&1 &
 ```
+
+## Model metadata guardrail
+
+The local import path does more than features and explanations. `import_neuronpedia_export_bundle_local_db(...)` also imports
+bundle-scoped metadata tables such as `model.jsonl` and `release.jsonl`. Those inserts use `ON CONFLICT DO NOTHING`, which
+means a correct existing local `Model` row is preserved, but a missing row in a fresh local DB is seeded directly from the
+bundle metadata.
+
+That import seam was the real cause of the earlier broken local Gemma graph rows. Older Neuronpedia utility exports were
+still emitting `layers: 0` and omitting `defaultGraphSourceSetName`, so importing one of those stale bundles could recreate
+a `Model` row that broke `/graph` even though graph upload itself was fine.
+
+Current supported fix:
+
+1. the converter now requires `--model-layers` and writes both `defaultSourceSetName` and `defaultGraphSourceSetName`
+2. the checked-in `gemma-3-1b-it` export examples under `neuronpedia_utils/exports/` have been refreshed to match
+   `gemmascope-2-transcoder-16k`
+
+If your local DB was already seeded from a pre-fix bundle, repair that `Model` row once in the live DB. After that, stick
+to regenerated or refreshed bundles rather than re-importing older `model.jsonl` and `release.jsonl` artifacts.
 
 ## What the pipeline now handles automatically
 
@@ -132,6 +153,9 @@ summary = import_neuronpedia_export_bundle_local_db(
 print(summary)
 PY
 ```
+
+If you are validating a bundle outside this repo, inspect its `model.jsonl` and `release.jsonl` first. A pre-fix bundle can
+still seed stale `Model` metadata into an otherwise fresh local DB.
 
 ## How notebook explanation backfill uses dashboard exports
 

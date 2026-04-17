@@ -46,6 +46,7 @@ from tests.nb_experiment_harness.nb_harness_utils import (  # noqa: E402
     configure_analysis,
     feature_ids_to_tuples,
     get_key_token_ids_and_labels,
+    maybe_save_local_neuronpedia_graph,
     maybe_zero_softcap,
     phase_run_name,
     render_prompt,
@@ -80,6 +81,7 @@ enable_progress_bars = (
 
 
 NULL_BATCH: Any = None
+GraphAnalysisInputBuilder = Callable[[Any, str], tuple[Any, dict[str, Any]]]
 
 
 @contextmanager
@@ -307,13 +309,11 @@ def run_tokenizer_verification(cfg: NotebookHarnessConfig) -> dict[str, Any]:
 
 def run_pipeline(
     cfg: NotebookHarnessConfig,
-    direction: torch.Tensor,
     label: str,
     *,
     scale_factor: float,
     top_n: int,
-    group_a_ids: list[int],
-    group_b_ids: list[int],
+    build_graph_analysis_inputs: GraphAnalysisInputBuilder,
 ) -> dict[str, Any]:
     if cfg.is_debug_intervention_mode:
         raise ValueError("run_pipeline is not available in debug_intervention_pipelines mode")
@@ -327,14 +327,8 @@ def run_pipeline(
         key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
         rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
         configure_analysis(module, it.compute_attribution_graph, scale_factor)
-        analysis_batch, graph_call_kwargs = _build_graph_analysis_inputs(
-            cfg,
-            tokenizer,
-            rendered_prompt,
-            direction=direction,
-            group_a_ids=group_a_ids,
-            group_b_ids=group_b_ids,
-        )
+        analysis_batch, graph_call_kwargs = build_graph_analysis_inputs(tokenizer, rendered_prompt)
+        graph_artifact = None
         with maybe_zero_softcap(module, cfg):
             graph_result = cast(
                 Any,
@@ -346,6 +340,19 @@ def run_pipeline(
                     **graph_call_kwargs,
                 ),
             )
+            if cfg.upload_local_graphs:
+                analysis_backend = require_analysis_backend(module)
+                graph = analysis_backend.hydrate_graph_from_batch(graph_result)
+                graph_artifact = maybe_save_local_neuronpedia_graph(
+                    cfg,
+                    module,
+                    graph,
+                    phase_label=f"{label}_pipeline_{scale_factor}x",
+                    rendered_prompt=rendered_prompt,
+                    graph_target_tokens=resolved_target_tokens,
+                    graph_target_ids=[target_a_id, target_b_id],
+                    extra_metadata={"info": {"direction_label": label, "scale_factor": float(scale_factor)}},
+                )
             influence_result = cast(Any, it.graph_node_influence(module, graph_result, NULL_BATCH, 0))
             top_payload = dict(cast(Any, graph_result))
             top_payload.update(dict(cast(Any, influence_result)))
@@ -404,6 +411,7 @@ def run_pipeline(
                 for raw_ref in (cfg.constrained_feature_selection_refs or ())
             ],
             "applied_feature_filter_triples": applied_feature_filter_triples,
+            "graph_artifact": graph_artifact,
         }
 
 
@@ -524,9 +532,8 @@ def _score_expected_answer(
 
 def run_scale_sweep(
     cfg: NotebookHarnessConfig,
-    direction: torch.Tensor,
-    group_a_ids: list[int],
-    group_b_ids: list[int],
+    *,
+    build_graph_analysis_inputs: GraphAnalysisInputBuilder,
 ) -> list[dict[str, Any]]:
     if cfg.is_debug_intervention_mode:
         raise ValueError("run_scale_sweep is not available in debug_intervention_pipelines mode")
@@ -543,14 +550,8 @@ def run_scale_sweep(
                 key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
                 rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
                 configure_analysis(module, it.compute_attribution_graph, scale_factor)
-                analysis_batch, graph_call_kwargs = _build_graph_analysis_inputs(
-                    cfg,
-                    tokenizer,
-                    rendered_prompt,
-                    direction=direction,
-                    group_a_ids=group_a_ids,
-                    group_b_ids=group_b_ids,
-                )
+                analysis_batch, graph_call_kwargs = build_graph_analysis_inputs(tokenizer, rendered_prompt)
+                graph_artifact = None
                 with maybe_zero_softcap(module, cfg):
                     graph_result = cast(
                         Any,
@@ -562,6 +563,19 @@ def run_scale_sweep(
                             **graph_call_kwargs,
                         ),
                     )
+                    if cfg.upload_local_graphs:
+                        analysis_backend = require_analysis_backend(module)
+                        graph = analysis_backend.hydrate_graph_from_batch(graph_result)
+                        graph_artifact = maybe_save_local_neuronpedia_graph(
+                            cfg,
+                            module,
+                            graph,
+                            phase_label=f"scale_sweep_{scale_factor}x",
+                            rendered_prompt=rendered_prompt,
+                            graph_target_tokens=None,
+                            graph_target_ids=[target_a_id, target_b_id],
+                            extra_metadata={"info": {"scale_factor": float(scale_factor), "sweep": True}},
+                        )
                     influence_result = cast(Any, it.graph_node_influence(module, graph_result, NULL_BATCH, 0))
                     top_payload = dict(cast(Any, graph_result))
                     top_payload.update(dict(cast(Any, influence_result)))
@@ -604,6 +618,7 @@ def run_scale_sweep(
                         for raw_ref in (cfg.constrained_feature_selection_refs or ())
                     ],
                     "applied_feature_filter_triples": applied_feature_filter_triples,
+                    "graph_artifact": graph_artifact,
                 }
             )
     return results
@@ -611,11 +626,9 @@ def run_scale_sweep(
 
 def collect_feature_pool(
     cfg: NotebookHarnessConfig,
-    direction: torch.Tensor,
-    group_a_ids: list[int],
-    group_b_ids: list[int],
     *,
     top_n: int,
+    build_graph_analysis_inputs: GraphAnalysisInputBuilder,
 ) -> dict[str, Any]:
     if cfg.is_debug_intervention_mode:
         raise ValueError("collect_feature_pool is not available in debug_intervention_pipelines mode")
@@ -629,14 +642,7 @@ def collect_feature_pool(
         key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
         rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
         configure_analysis(module, it.compute_attribution_graph, 0.0)
-        analysis_batch, graph_call_kwargs = _build_graph_analysis_inputs(
-            cfg,
-            tokenizer,
-            rendered_prompt,
-            direction=direction,
-            group_a_ids=group_a_ids,
-            group_b_ids=group_b_ids,
-        )
+        analysis_batch, graph_call_kwargs = build_graph_analysis_inputs(tokenizer, rendered_prompt)
         with maybe_zero_softcap(module, cfg):
             graph_result = cast(
                 Any,
@@ -846,6 +852,16 @@ def run_debug_intervention_validation(cfg: NotebookHarnessConfig) -> dict[str, A
                 ),
             )
             graph = analysis_backend.hydrate_graph_from_batch(graph_result)
+            graph_artifact = maybe_save_local_neuronpedia_graph(
+                cfg,
+                module,
+                graph,
+                phase_label="debug_intervention_validation",
+                rendered_prompt=rendered_prompt,
+                graph_target_tokens=graph_target_tokens,
+                graph_target_ids=graph_target_ids,
+                extra_metadata={"info": {"debug_intervention_validation": True}},
+            )
             influence_result = cast(Any, it.graph_node_influence(module, graph_result, NULL_BATCH, 0))
             top_payload = dict(cast(Any, graph_result))
             top_payload.update(dict(cast(Any, influence_result)))
@@ -1218,6 +1234,7 @@ def run_debug_intervention_validation(cfg: NotebookHarnessConfig) -> dict[str, A
             "logit_error_rows": logit_error_rows,
             "drift_report": drift_report.to_dict(top_feature_count=cfg.debug_validation_top_k),
             "artifact_dir": None if artifact_dir is None else str(artifact_dir),
+            "graph_artifact": graph_artifact,
             "runtime_state": runtime_state,
             "intervention_paths": {
                 "adjacency_validation": {

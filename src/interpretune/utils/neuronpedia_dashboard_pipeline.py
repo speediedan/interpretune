@@ -48,6 +48,7 @@ class NeuronpediaDashboardPipelineConfig:
     """Configuration for generating, converting, and importing Neuronpedia dashboard layers."""
 
     model_name: str
+    model_layers: int
     sae_set: str
     neuronpedia_source_set_id: str
     neuronpedia_source_set_description: str
@@ -429,6 +430,7 @@ def convert_dashboard_output(
         "release_title": config.release_title,
         "url": config.release_url,
         "model_name": config.model_name,
+        "model_layers": config.model_layers,
         "neuronpedia_source_set_id": config.neuronpedia_source_set_id,
         "neuronpedia_source_set_description": config.neuronpedia_source_set_description,
         "hf_weights_repo_id": config.hf_weights_repo_id,
@@ -580,6 +582,7 @@ def _parse_args() -> argparse.Namespace:
         description="Generate SAEDashboard layers and import them into a local Neuronpedia DB."
     )
     parser.add_argument("--model-name", required=True)
+    parser.add_argument("--model-layers", type=int, required=True)
     parser.add_argument("--sae-set", required=True)
     parser.add_argument("--neuronpedia-source-set-id", required=True)
     parser.add_argument("--neuronpedia-source-set-description", required=True)
@@ -631,6 +634,7 @@ def main() -> int:
     args = _parse_args()
     config = NeuronpediaDashboardPipelineConfig(
         model_name=args.model_name,
+        model_layers=args.model_layers,
         sae_set=args.sae_set,
         neuronpedia_source_set_id=args.neuronpedia_source_set_id,
         neuronpedia_source_set_description=args.neuronpedia_source_set_description,

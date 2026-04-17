@@ -19,6 +19,8 @@ NEURONPEDIA:
   use_localhost: false
   local_db_url: null
   local_webapp_url: http://localhost:3000
+  upload_local_graphs: false
+  local_graph_slug_prefix: null
   check_local_explanation_coverage: false
   generate_missing_local_explanations: false
   local_explanation_feature_limit: 20

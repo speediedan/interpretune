@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
@@ -8,13 +7,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 import torch
 
 import interpretune as it
 import interpretune.analysis
-from interpretune.analysis.backends import require_analysis_backend
 from interpretune.analysis.execution import execute_analysis_op
 from interpretune.analysis.ops.helpers import (
     AnalysisInputs,
@@ -55,23 +53,24 @@ from tests.nb_experiment_harness.config import (
     load_experiment_config,
 )
 from tests.nb_experiment_harness.nb_harness_utils import (
+    _build_graph_analysis_inputs as _shared_build_graph_analysis_inputs,
     _build_feature_selection_spec as _shared_build_feature_selection_spec,
     _get_config_value_with_preset_default,
     _extract_top_features_with_optional_filter as _shared_extract_top_features_with_optional_filter,
     build_shared_summary_record,
     create_work_root,
-    feature_ids_to_tuples,
     tensor_to_cpu,
 )
 from tests.nb_experiment_harness.pipeline_patterns import (
+    collect_feature_pool as _shared_collect_feature_pool,
+    run_debug_intervention_validation as _shared_run_debug_intervention_validation,
+    run_pipeline as _shared_run_pipeline,
     run_direct_projection_pipeline as _shared_run_direct_projection_pipeline,
+    run_scale_sweep as _shared_run_scale_sweep,
 )
 from tests.parity_analysis.intervention_drift_analysis import (
-    build_intervention_drift_report,
     resolve_artifact_output_dir,
     save_preserved_intervention_artifacts,
-    snapshot_analysis_batch,
-    snapshot_module_runtime_state,
     tensor_fingerprint,
 )
 from tests.nb_experiment_harness.session import (
@@ -301,6 +300,10 @@ class NotebookNeuronpediaRuntimeConfig:
     base_url: str
     local_db_url: str | None
     local_webapp_url: str
+    upload_local_graphs: bool
+    local_graph_slug_prefix: str | None
+    local_graph_upload_target: str
+    local_graph_owner_username: str | None
     check_local_explanation_coverage: bool
     generate_missing_local_explanations: bool
     local_explanation_feature_limit: int
@@ -314,6 +317,10 @@ def resolve_neuronpedia_runtime_config(
     neuronpedia_base_url_override: str | None = None,
     local_db_url: str | None = None,
     local_webapp_url: str | None = None,
+    upload_local_graphs: bool = False,
+    local_graph_slug_prefix: str | None = None,
+    local_graph_upload_target: str = "localhost",
+    local_graph_owner_username: str | None = None,
     check_local_explanation_coverage: bool = False,
     generate_missing_local_explanations: bool = False,
     local_explanation_feature_limit: int = 20,
@@ -322,12 +329,23 @@ def resolve_neuronpedia_runtime_config(
 
     resolved_local_webapp_url = (local_webapp_url or DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL).rstrip("/")
     effective_use_localhost = use_localhost
+    effective_upload_local_graphs = upload_local_graphs
     effective_check_local_explanation_coverage = check_local_explanation_coverage
     effective_generate_missing_local_explanations = generate_missing_local_explanations
+    resolved_upload_target = str(local_graph_upload_target).strip() or "localhost"
+    resolved_owner_username = None
+    if local_graph_owner_username is not None:
+        resolved_owner_username = str(local_graph_owner_username).strip() or None
     warning_messages: list[str] = []
+
+    if resolved_upload_target not in {"localhost", "public_then_sync_local"}:
+        raise ValueError(
+            "local_graph_upload_target must be 'localhost' or 'public_then_sync_local'"
+        )
 
     should_probe_local_services = (
         effective_use_localhost
+        or effective_upload_local_graphs
         or effective_check_local_explanation_coverage
         or effective_generate_missing_local_explanations
         or local_db_url is not None
@@ -356,13 +374,40 @@ def resolve_neuronpedia_runtime_config(
             effective_check_local_explanation_coverage = False
             effective_generate_missing_local_explanations = False
 
+    if effective_upload_local_graphs and not effective_use_localhost:
+        if local_services_ready:
+            warning_messages.append(
+                "Enabling localhost mode because local graph upload requires a live local Neuronpedia webapp and DB."
+            )
+            effective_use_localhost = True
+        else:
+            warning_messages.append(
+                "Disabling local graph upload because USE_LOCALHOST is false and local Neuronpedia services are "
+                "not available."
+            )
+            effective_upload_local_graphs = False
+
     if effective_use_localhost and not local_services_ready:
         warning_messages.append(
             "Falling back to public Neuronpedia because the local Neuronpedia webapp or DB is unavailable."
         )
         effective_use_localhost = False
+        effective_upload_local_graphs = False
         effective_check_local_explanation_coverage = False
         effective_generate_missing_local_explanations = False
+
+    if (
+        effective_upload_local_graphs
+        and resolved_upload_target == "public_then_sync_local"
+        and resolved_owner_username is None
+    ):
+        env_username = os.environ.get("LOCAL_NEURONPEDIA_USERNAME") or os.environ.get("USER")
+        resolved_owner_username = None if not env_username else str(env_username).strip() or None
+        if resolved_owner_username is None:
+            raise ValueError(
+                    "public_then_sync_local graph upload requires local_graph_owner_username "
+                    "or a USER environment value"
+            )
 
     resolved_base_url = (
         neuronpedia_base_url_override.rstrip("/")
@@ -378,6 +423,12 @@ def resolve_neuronpedia_runtime_config(
         base_url=resolved_base_url,
         local_db_url=local_db_url,
         local_webapp_url=resolved_local_webapp_url,
+        upload_local_graphs=effective_upload_local_graphs,
+        local_graph_slug_prefix=(
+            None if local_graph_slug_prefix is None else str(local_graph_slug_prefix).strip() or None
+        ),
+        local_graph_upload_target=resolved_upload_target,
+        local_graph_owner_username=resolved_owner_username,
         check_local_explanation_coverage=effective_check_local_explanation_coverage,
         generate_missing_local_explanations=effective_generate_missing_local_explanations,
         local_explanation_feature_limit=int(local_explanation_feature_limit),
@@ -419,6 +470,10 @@ class NotebookHarnessConfig:
     use_localhost: bool = False
     local_neuronpedia_db_url: str | None = None
     local_neuronpedia_webapp_url: str = DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL
+    upload_local_graphs: bool = False
+    local_graph_slug_prefix: str | None = None
+    local_graph_upload_target: str = "localhost"
+    local_graph_owner_username: str | None = None
     check_local_explanation_coverage: bool = False
     generate_missing_local_explanations: bool = False
     local_explanation_feature_limit: int = 20
@@ -486,6 +541,26 @@ class NotebookHarnessConfig:
             self.target_token_ids = (int(self.target_token_ids[0]), int(self.target_token_ids[1]))
         if self.target_tokens is None and self.target_token_ids is None:
             raise ValueError("either target_tokens or target_token_ids must be provided")
+        if self.local_graph_slug_prefix is not None:
+            stripped_prefix = str(self.local_graph_slug_prefix).strip()
+            self.local_graph_slug_prefix = stripped_prefix or None
+        self.local_graph_upload_target = str(self.local_graph_upload_target).strip() or "localhost"
+        if self.local_graph_upload_target not in {"localhost", "public_then_sync_local"}:
+            raise ValueError(
+                "local_graph_upload_target must be 'localhost' or 'public_then_sync_local'"
+            )
+        if self.local_graph_owner_username is not None:
+            stripped_owner_username = str(self.local_graph_owner_username).strip()
+            self.local_graph_owner_username = stripped_owner_username or None
+        if self.upload_local_graphs and self.local_graph_upload_target == "public_then_sync_local":
+            if self.local_graph_owner_username is None:
+                env_username = os.environ.get("LOCAL_NEURONPEDIA_USERNAME") or os.environ.get("USER")
+                self.local_graph_owner_username = None if not env_username else str(env_username).strip() or None
+            if self.local_graph_owner_username is None:
+                raise ValueError(
+                    "public_then_sync_local graph upload requires local_graph_owner_username "
+                    "or a USER environment value"
+                )
         if self.explicit_direction_tokens is not None:
             if len(self.explicit_direction_tokens) != 2:
                 raise ValueError("explicit_direction_tokens must contain exactly two tokens")
@@ -587,6 +662,10 @@ class NotebookHarnessConfig:
             use_localhost=self.use_localhost,
             local_neuronpedia_db_url=self.local_neuronpedia_db_url,
             local_neuronpedia_webapp_url=self.local_neuronpedia_webapp_url,
+            upload_local_graphs=self.upload_local_graphs,
+            local_graph_slug_prefix=self.local_graph_slug_prefix,
+            local_graph_upload_target=self.local_graph_upload_target,
+            local_graph_owner_username=self.local_graph_owner_username,
             check_local_explanation_coverage=self.check_local_explanation_coverage,
             generate_missing_local_explanations=self.generate_missing_local_explanations,
             local_explanation_feature_limit=self.local_explanation_feature_limit,
@@ -655,6 +734,10 @@ class NotebookHarnessConfig:
             "batch_size": self.batch_size,
             "max_feature_nodes": self.max_feature_nodes,
             "debug_session_surface_preset": self.debug_session_surface_preset,
+            "enable_neuronpedia_graph_upload": self.upload_local_graphs,
+            "neuronpedia_graph_slug_prefix": self.local_graph_slug_prefix,
+            "neuronpedia_model": self.neuronpedia_model,
+            "neuronpedia_source_set": self.neuronpedia_set,
         }
 
 
@@ -775,6 +858,43 @@ def build_notebook_harness_config(
             section="NEURONPEDIA",
             key="local_webapp_url",
             flat_key="LOCAL_NEURONPEDIA_WEBAPP_URL",
+        ),
+        upload_local_graphs=bool(
+            get_config_value(
+                resolved_payload,
+                section="NEURONPEDIA",
+                key="upload_local_graphs",
+                flat_key="UPLOAD_LOCAL_NEURONPEDIA_GRAPHS",
+                default=False,
+            )
+        ),
+        local_graph_slug_prefix=cast(
+            str | None,
+            get_config_value(
+                resolved_payload,
+                section="NEURONPEDIA",
+                key="local_graph_slug_prefix",
+                flat_key="LOCAL_GRAPH_SLUG_PREFIX",
+            ),
+        ),
+        local_graph_upload_target=cast(
+            str,
+            get_config_value(
+                resolved_payload,
+                section="NEURONPEDIA",
+                key="local_graph_upload_target",
+                flat_key="LOCAL_GRAPH_UPLOAD_TARGET",
+                default="localhost",
+            ),
+        ),
+        local_graph_owner_username=cast(
+            str | None,
+            get_config_value(
+                resolved_payload,
+                section="NEURONPEDIA",
+                key="local_graph_owner_username",
+                flat_key="LOCAL_GRAPH_OWNER_USERNAME",
+            ),
         ),
         check_local_explanation_coverage=bool(
             get_config_value(
@@ -963,6 +1083,10 @@ def build_notebook_harness_config(
         use_localhost=runtime.use_localhost,
         local_neuronpedia_db_url=runtime.local_db_url,
         local_neuronpedia_webapp_url=runtime.local_webapp_url,
+        upload_local_graphs=runtime.upload_local_graphs,
+        local_graph_slug_prefix=runtime.local_graph_slug_prefix,
+        local_graph_upload_target=runtime.local_graph_upload_target,
+        local_graph_owner_username=runtime.local_graph_owner_username,
         check_local_explanation_coverage=runtime.check_local_explanation_coverage,
         generate_missing_local_explanations=runtime.generate_missing_local_explanations,
         local_explanation_feature_limit=runtime.local_explanation_feature_limit,
@@ -1691,32 +1815,41 @@ def _build_graph_analysis_inputs(
     group_a_ids: list[int] | None,
     group_b_ids: list[int] | None,
     attribution_target_device: torch.device | str | None = None,
+    attribution_targets: Any | None = None,
+    graph_call_kwargs: Mapping[str, Any] | None = None,
+    analysis_batch_kwargs: Mapping[str, Any] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
-    batch_kwargs: dict[str, Any] = {"prompts": [rendered_prompt]}
-    call_kwargs: dict[str, Any] = {}
+    return _shared_build_graph_analysis_inputs(
+        cfg,
+        tokenizer,
+        rendered_prompt,
+        direction=direction,
+        group_a_ids=group_a_ids,
+        group_b_ids=group_b_ids,
+        attribution_target_device=attribution_target_device,
+        attribution_targets=attribution_targets,
+        graph_call_kwargs=graph_call_kwargs,
+        analysis_batch_kwargs=analysis_batch_kwargs,
+    )
 
-    if cfg.is_debug_intervention_mode:
-        graph_target_ids, graph_target_tokens = resolve_graph_target_tokens(cfg, tokenizer)
-        del graph_target_tokens
-        attribution_target_ids = torch.tensor(graph_target_ids, dtype=torch.long)
-        batch_kwargs["logit_target_ids"] = attribution_target_ids
-        call_kwargs["attribution_targets"] = (
-            attribution_target_ids
-            if attribution_target_device is None
-            else attribution_target_ids.to(attribution_target_device)
-        )
-    else:
-        if direction is None or group_a_ids is None or group_b_ids is None:
-            raise ValueError("direction and concept-group token ids are required for non-debug graph analysis")
-        batch_kwargs.update(
-            concept_direction=direction,
-            concept_label=cfg.analysis_concept_label,
-            concept_direction_mode=cfg.analysis_direction_mode_name,
-            concept_group_a_token_ids=group_a_ids,
-            concept_group_b_token_ids=group_b_ids,
+
+def _build_concept_graph_input_builder(
+    cfg: NotebookHarnessConfig,
+    direction: torch.Tensor,
+    group_a_ids: list[int],
+    group_b_ids: list[int],
+) -> Callable[[Any, str], tuple[Any, dict[str, Any]]]:
+    def _builder(tokenizer: Any, rendered_prompt: str) -> tuple[Any, dict[str, Any]]:
+        return _build_graph_analysis_inputs(
+            cfg,
+            tokenizer,
+            rendered_prompt,
+            direction=direction,
+            group_a_ids=group_a_ids,
+            group_b_ids=group_b_ids,
         )
 
-    return it.AnalysisBatch(**batch_kwargs), call_kwargs
+    return _builder
 
 
 def _resolve_model_layer_count(module: Any) -> int:
@@ -2371,96 +2504,13 @@ def run_pipeline(
     group_a_ids: list[int],
     group_b_ids: list[int],
 ) -> dict[str, Any]:
-    if cfg.is_debug_intervention_mode:
-        raise ValueError("run_pipeline is not available in debug_intervention_pipelines mode")
-
-    with experiment_session(
-        cfg.work_root,
-        phase_run_name(cfg, f"{label}_pipeline_{scale_factor}x"),
-        **cfg.session_kwargs,
-    ) as (_, module, tokenizer):
-        (target_a_id, target_b_id), resolved_target_tokens = resolve_target_tokens(cfg, tokenizer)
-        key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
-        rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
-        configure_analysis(module, it.compute_attribution_graph, scale_factor)
-        analysis_batch, graph_call_kwargs = _build_graph_analysis_inputs(
-            cfg,
-            tokenizer,
-            rendered_prompt,
-            direction=direction,
-            group_a_ids=group_a_ids,
-            group_b_ids=group_b_ids,
-        )
-        with maybe_zero_softcap(module, cfg):
-            graph_result = cast(
-                Any,
-                it.compute_attribution_graph(
-                    module,
-                    analysis_batch,
-                    NULL_BATCH,
-                    0,
-                    **graph_call_kwargs,
-                ),
-            )
-            influence_result = cast(Any, it.graph_node_influence(module, graph_result, NULL_BATCH, 0))
-            top_payload = dict(cast(Any, graph_result))
-            top_payload.update(dict(cast(Any, influence_result)))
-            top_features_result, applied_feature_filter_triples = _extract_top_features_with_optional_filter(
-                module,
-                cfg,
-                top_payload,
-                top_n=top_n,
-            )
-            intervention_result = cast(
-                Any,
-                it.feature_intervention_forward(
-                    module,
-                    it.AnalysisBatch(
-                        prompts=[rendered_prompt],
-                        top_feature_ids=top_features_result.top_feature_ids,
-                        top_feature_scores=top_features_result.top_feature_scores,
-                        top_feature_activation_values=top_features_result.top_feature_activation_values,
-                        logit_target_ids=torch.tensor([target_a_id], dtype=torch.long),
-                    ),
-                    NULL_BATCH,
-                    0,
-                ),
-            )
-        pre_logits = tensor_to_cpu(intervention_result.pre_intervention_logits)
-        post_logits = tensor_to_cpu(intervention_result.post_intervention_logits)
-        pre_gap, post_gap, gap_delta = summarize_gap(pre_logits, post_logits, target_a_id, target_b_id)
-        pre_top = torch.topk(pre_logits.float(), 5)
-        post_top = torch.topk(post_logits.float(), 5)
-        return {
-            "label": label,
-            "scale_factor": scale_factor,
-            "top_n": top_n,
-            "pre_logits": pre_logits,
-            "post_logits": post_logits,
-            "pre_gap": pre_gap,
-            "post_gap": post_gap,
-            "gap_delta": gap_delta,
-            "feature_ids": feature_ids_to_tuples(top_features_result.top_feature_ids),
-            "feature_scores": tensor_to_cpu(top_features_result.top_feature_scores).tolist(),
-            "feature_activations": tensor_to_cpu(top_features_result.top_feature_activation_values),
-            "target_a_id": target_a_id,
-            "target_b_id": target_b_id,
-            "target_a_tok": resolved_target_tokens[0],
-            "target_b_tok": resolved_target_tokens[1],
-            "key_ids": key_ids,
-            "key_labels": key_labels,
-            "rendered_prompt": rendered_prompt,
-            "rendered_prompt_token_ids": _tokenize_rendered_prompt(tokenizer, rendered_prompt, cfg.prompt_render_mode),
-            "pre_top_tokens": [tokenizer.decode([int(token_id)]) for token_id in pre_top.indices.tolist()],
-            "pre_top_token_ids": [int(token_id) for token_id in pre_top.indices.tolist()],
-            "post_top_tokens": [tokenizer.decode([int(token_id)]) for token_id in post_top.indices.tolist()],
-            "post_top_token_ids": [int(token_id) for token_id in post_top.indices.tolist()],
-            "requested_constrained_feature_selection": [
-                _serialize_constrained_feature_selection_ref(raw_ref)
-                for raw_ref in (cfg.constrained_feature_selection_refs or ())
-            ],
-            "applied_feature_filter_triples": applied_feature_filter_triples,
-        }
+    return _shared_run_pipeline(
+        cfg,
+        label,
+        scale_factor=scale_factor,
+        top_n=top_n,
+        build_graph_analysis_inputs=_build_concept_graph_input_builder(cfg, direction, group_a_ids, group_b_ids),
+    )
 
 
 def run_direct_projection_pipeline(
@@ -2967,84 +3017,10 @@ def run_scale_sweep(
     group_a_ids: list[int],
     group_b_ids: list[int],
 ) -> list[dict[str, Any]]:
-    if cfg.is_debug_intervention_mode:
-        raise ValueError("run_scale_sweep is not available in debug_intervention_pipelines mode")
-
-    results = []
-    for scale_factor in cfg.scale_factor_sweep:
-        with experiment_session(
-            cfg.work_root,
-            phase_run_name(cfg, f"scale_sweep_{scale_factor}x"),
-            **cfg.session_kwargs,
-        ) as (_, module, tokenizer):
-            (target_a_id, target_b_id), _ = resolve_target_tokens(cfg, tokenizer)
-            key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
-            rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
-            configure_analysis(module, it.compute_attribution_graph, scale_factor)
-            analysis_batch, graph_call_kwargs = _build_graph_analysis_inputs(
-                cfg,
-                tokenizer,
-                rendered_prompt,
-                direction=direction,
-                group_a_ids=group_a_ids,
-                group_b_ids=group_b_ids,
-            )
-            with maybe_zero_softcap(module, cfg):
-                graph_result = cast(
-                    Any,
-                    it.compute_attribution_graph(
-                        module,
-                        analysis_batch,
-                        NULL_BATCH,
-                        0,
-                        **graph_call_kwargs,
-                    ),
-                )
-                influence_result = cast(Any, it.graph_node_influence(module, graph_result, NULL_BATCH, 0))
-                top_payload = dict(cast(Any, graph_result))
-                top_payload.update(dict(cast(Any, influence_result)))
-                top_features_result, applied_feature_filter_triples = _extract_top_features_with_optional_filter(
-                    module,
-                    cfg,
-                    top_payload,
-                    top_n=cfg.top_n,
-                )
-                intervention_result = cast(
-                    Any,
-                    it.feature_intervention_forward(
-                        module,
-                        it.AnalysisBatch(
-                            prompts=[rendered_prompt],
-                            top_feature_ids=top_features_result.top_feature_ids,
-                            top_feature_scores=top_features_result.top_feature_scores,
-                            top_feature_activation_values=top_features_result.top_feature_activation_values,
-                            logit_target_ids=torch.tensor([target_a_id], dtype=torch.long),
-                        ),
-                        NULL_BATCH,
-                        0,
-                    ),
-                )
-            pre_logits = tensor_to_cpu(intervention_result.pre_intervention_logits)
-            post_logits = tensor_to_cpu(intervention_result.post_intervention_logits)
-            pre_gap, post_gap, gap_delta = summarize_gap(pre_logits, post_logits, target_a_id, target_b_id)
-            results.append(
-                {
-                    "scale_factor": float(scale_factor),
-                    "pre_logits": pre_logits,
-                    "post_logits": post_logits,
-                    "pre_gap": pre_gap,
-                    "post_gap": post_gap,
-                    "gap_delta": gap_delta,
-                    "key_ids": key_ids,
-                    "key_labels": key_labels,
-                    "requested_constrained_feature_selection": [
-                        _serialize_constrained_feature_selection_ref(raw_ref)
-                        for raw_ref in (cfg.constrained_feature_selection_refs or ())
-                    ],
-                    "applied_feature_filter_triples": applied_feature_filter_triples,
-                }
-            )
-    return results
+    return _shared_run_scale_sweep(
+        cfg,
+        build_graph_analysis_inputs=_build_concept_graph_input_builder(cfg, direction, group_a_ids, group_b_ids),
+    )
 
 
 def collect_feature_pool(
@@ -3055,60 +3031,11 @@ def collect_feature_pool(
     *,
     top_n: int,
 ) -> dict[str, Any]:
-    if cfg.is_debug_intervention_mode:
-        raise ValueError("collect_feature_pool is not available in debug_intervention_pipelines mode")
-
-    with experiment_session(
-        cfg.work_root,
-        phase_run_name(cfg, "feature_pool"),
-        **cfg.session_kwargs,
-    ) as (_, module, tokenizer):
-        (target_a_id, target_b_id), _ = resolve_target_tokens(cfg, tokenizer)
-        key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
-        rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
-        configure_analysis(module, it.compute_attribution_graph, 0.0)
-        analysis_batch, graph_call_kwargs = _build_graph_analysis_inputs(
-            cfg,
-            tokenizer,
-            rendered_prompt,
-            direction=direction,
-            group_a_ids=group_a_ids,
-            group_b_ids=group_b_ids,
-        )
-        with maybe_zero_softcap(module, cfg):
-            graph_result = cast(
-                Any,
-                it.compute_attribution_graph(
-                    module,
-                    analysis_batch,
-                    NULL_BATCH,
-                    0,
-                    **graph_call_kwargs,
-                ),
-            )
-            influence_result = cast(Any, it.graph_node_influence(module, graph_result, NULL_BATCH, 0))
-            top_payload = dict(cast(Any, graph_result))
-            top_payload.update(dict(cast(Any, influence_result)))
-            feature_result, applied_feature_filter_triples = _extract_top_features_with_optional_filter(
-                module,
-                cfg,
-                top_payload,
-                top_n=top_n,
-            )
-        return {
-            "feature_ids": tensor_to_cpu(feature_result.top_feature_ids.to(torch.float32)).to(torch.long),
-            "feature_scores": tensor_to_cpu(feature_result.top_feature_scores),
-            "feature_activations": tensor_to_cpu(feature_result.top_feature_activation_values),
-            "target_a_id": target_a_id,
-            "target_b_id": target_b_id,
-            "key_ids": key_ids,
-            "key_labels": key_labels,
-            "requested_constrained_feature_selection": [
-                _serialize_constrained_feature_selection_ref(raw_ref)
-                for raw_ref in (cfg.constrained_feature_selection_refs or ())
-            ],
-            "applied_feature_filter_triples": applied_feature_filter_triples,
-        }
+    return _shared_collect_feature_pool(
+        cfg,
+        top_n=top_n,
+        build_graph_analysis_inputs=_build_concept_graph_input_builder(cfg, direction, group_a_ids, group_b_ids),
+    )
 
 
 def run_ablations(
@@ -3247,443 +3174,7 @@ def run_sign_aware(
 
 
 def run_debug_intervention_validation(cfg: NotebookHarnessConfig) -> dict[str, Any]:
-    if not cfg.is_debug_intervention_mode:
-        raise ValueError("run_debug_intervention_validation is only available in debug_intervention_pipelines mode")
-
-    with experiment_session(
-        cfg.work_root,
-        phase_run_name(cfg, "debug_intervention_validation"),
-        **cfg.session_kwargs,
-    ) as (_, module, tokenizer):
-        rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
-        (target_a_id, target_b_id), resolved_target_tokens = resolve_target_tokens(cfg, tokenizer)
-        key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer, include_bare_variants=False)
-        graph_target_ids, graph_target_tokens = resolve_graph_target_tokens(cfg, tokenizer)
-
-        configure_analysis(module, it.compute_attribution_graph, cfg.default_scale_factor)
-        analysis_batch, graph_call_kwargs = _build_graph_analysis_inputs(
-            cfg,
-            tokenizer,
-            rendered_prompt,
-            direction=None,
-            group_a_ids=None,
-            group_b_ids=None,
-            attribution_target_device=module.replacement_model.device,
-        )
-
-        with maybe_zero_softcap(module, cfg):
-            analysis_backend = require_analysis_backend(module)
-            graph_result = cast(
-                Any,
-                it.compute_attribution_graph(
-                    module,
-                    analysis_batch,
-                    NULL_BATCH,
-                    0,
-                    **graph_call_kwargs,
-                ),
-            )
-            graph = analysis_backend.hydrate_graph_from_batch(graph_result)
-            influence_result = cast(Any, it.graph_node_influence(module, graph_result, NULL_BATCH, 0))
-            top_payload = dict(cast(Any, graph_result))
-            top_payload.update(dict(cast(Any, influence_result)))
-            top_features_result, applied_feature_filter_triples = _extract_top_features_with_optional_filter(
-                module,
-                cfg,
-                top_payload,
-                top_n=cfg.top_n,
-            )
-            top_features_result, selected_feature_candidate_count = _reduce_top_features_result_to_single_feature(
-                top_features_result
-            )
-            selected_feature_rows = top_features_result.top_feature_ids.to(torch.long)
-
-            active_features = tensor_to_cpu(
-                torch.as_tensor(graph_result.active_features, dtype=torch.long)
-            ).to(torch.long)
-            selected_feature_indices = tensor_to_cpu(
-                torch.as_tensor(getattr(graph_result, "selected_features", []), dtype=torch.long)
-            ).reshape(-1).to(torch.long)
-            graph_feature_rows = (
-                active_features.index_select(0, selected_feature_indices)
-                if selected_feature_indices.numel() > 0
-                else active_features
-            )
-            adjacency_matrix = tensor_to_cpu(torch.as_tensor(graph_result.adjacency_matrix, dtype=torch.float32))
-            logit_target_ids = tensor_to_cpu(
-                torch.as_tensor(graph_result.logit_target_ids, dtype=torch.long)
-            ).reshape(-1).to(torch.long)
-            graph_result_target_tokens = [
-                str(token) for token in getattr(graph_result, "logit_target_tokens", graph_target_tokens)
-            ]
-            requested_graph_target_ids = [int(token_id) for token_id in graph_target_ids]
-            actual_graph_target_ids = [int(token_id) for token_id in logit_target_ids.tolist()]
-            selected_feature = tensor_to_cpu(selected_feature_rows[0]).to(torch.long)
-            selected_graph_index = _match_feature_row_index(graph_feature_rows, selected_feature)
-            graph_inputs = getattr(graph_result, "input_tokens", rendered_prompt)
-            input_diagnostics = _summarize_graph_input_tokens(
-                tokenizer,
-                rendered_prompt,
-                cfg.prompt_render_mode,
-                graph_inputs,
-            )
-
-            baseline_logits_raw, baseline_activation_cache = module.replacement_model.get_activations(
-                graph_inputs,
-                apply_activation_function=False,
-            )
-            baseline_logits = last_token_logits(baseline_logits_raw).float().cpu()
-            baseline_activation_cache_t = torch.as_tensor(baseline_activation_cache).detach().cpu().float()
-
-            layer, position, feature_id = (int(value) for value in selected_feature.tolist())
-            baseline_activation = float(baseline_activation_cache_t[layer, position, feature_id].item())
-            n_layers = _resolve_model_layer_count(module)
-            wrapper_inputs = it.AnalysisBatch(
-                top_feature_ids=top_features_result.top_feature_ids,
-                top_feature_scores=top_features_result.top_feature_scores,
-                top_feature_activation_values=top_features_result.top_feature_activation_values,
-                logit_target_ids=logit_target_ids,
-                prompts=[rendered_prompt],
-            )
-            wrapper_settings = analysis_backend.resolve_feature_intervention_settings(
-                module,
-                {"intervention_return_activations": True},
-            )
-            interventions, _ = analysis_backend.build_feature_interventions(wrapper_inputs, wrapper_settings)
-            wrapper_result = cast(
-                Any,
-                it.feature_intervention_forward(
-                    module,
-                    wrapper_inputs,
-                    NULL_BATCH,
-                    0,
-                    prompt=graph_inputs,
-                    intervention_return_activations=True,
-                ),
-            )
-            wrapper_pre_logits = tensor_to_cpu(
-                torch.as_tensor(wrapper_result.pre_intervention_logits, dtype=torch.float32)
-            ).reshape(-1)
-            wrapper_post_logits = tensor_to_cpu(
-                torch.as_tensor(wrapper_result.post_intervention_logits, dtype=torch.float32)
-            ).reshape(-1)
-            wrapper_activation_cache = getattr(wrapper_result, "intervention_activation_cache", None)
-            if wrapper_activation_cache is None:
-                raise ValueError("feature_intervention_forward did not return intervention_activation_cache")
-            post_activation_cache_t = torch.as_tensor(wrapper_activation_cache).detach().cpu().float()
-            post_logits = wrapper_post_logits
-            intervention_value = float(interventions[0][3])
-            wrapper_pre_gap, wrapper_post_gap, wrapper_gap_delta = summarize_gap(
-                wrapper_pre_logits,
-                wrapper_post_logits,
-                target_a_id,
-                target_b_id,
-            )
-            wrapper_intervention_specs = json.loads(getattr(wrapper_result, "intervention_specs_json", "[]"))
-            wrapper_intervention_config = json.loads(getattr(wrapper_result, "intervention_config", "{}"))
-            wrapper_path_diagnostics = {
-                "resolved_settings": {
-                    "scale_factor": float(wrapper_settings["scale_factor"]),
-                    "value_source": str(wrapper_settings["value_source"]),
-                    "value": wrapper_settings["value"],
-                    "constrained_layers": wrapper_settings["constrained_layers"],
-                    "freeze_attention": wrapper_settings["freeze_attention"],
-                    "apply_activation_function": wrapper_settings["apply_activation_function"],
-                    "sparse": bool(wrapper_settings["sparse"]),
-                    "return_activations": bool(wrapper_settings["return_activations"]),
-                },
-                "call_kwargs": _serialize_intervention_call_kwargs(
-                    analysis_backend.feature_intervention_call_kwargs(wrapper_settings)
-                ),
-                "intervention_specs": wrapper_intervention_specs,
-                "intervention_config": wrapper_intervention_config,
-                "pre_gap": wrapper_pre_gap,
-                "post_gap": wrapper_post_gap,
-                "gap_delta": wrapper_gap_delta,
-                "matches_validation_path_settings": {
-                    "constrained_layers": wrapper_settings["constrained_layers"] == list(range(n_layers)),
-                    "apply_activation_function": wrapper_settings["apply_activation_function"] is False,
-                },
-                "returned_activation_cache": True,
-                "max_abs_pre_logit_diff_vs_baseline_path": float(
-                    (wrapper_pre_logits - baseline_logits).abs().max().item()
-                ),
-                "key_logits_post": [float(wrapper_post_logits[token_id].item()) for token_id in key_ids],
-            }
-            runtime_state = {
-                "module": snapshot_module_runtime_state(module),
-                "graph_op": {
-                    "analysis_batch": snapshot_analysis_batch(analysis_batch, ("prompts", "logit_target_ids")),
-                    "call_kwargs": _serialize_intervention_call_kwargs(graph_call_kwargs),
-                    "requested_graph_target_ids": requested_graph_target_ids,
-                    "requested_graph_target_tokens": [str(token) for token in graph_target_tokens],
-                    "result": {
-                        "input_tokens": tensor_fingerprint(getattr(graph_result, "input_tokens", None)),
-                        "active_features": tensor_fingerprint(getattr(graph_result, "active_features", None)),
-                        "selected_features": tensor_fingerprint(getattr(graph_result, "selected_features", None)),
-                        "selected_feature_rows": tensor_fingerprint(graph_feature_rows),
-                        "adjacency_matrix": tensor_fingerprint(getattr(graph_result, "adjacency_matrix", None)),
-                        "logit_target_ids": tensor_fingerprint(logit_target_ids),
-                        "logit_target_tokens": graph_result_target_tokens,
-                    },
-                },
-                "top_features_op": {
-                    "applied_feature_filter_triples": [list(triple) for triple in applied_feature_filter_triples],
-                    "selected_feature_candidate_count": int(selected_feature_candidate_count),
-                    "result": snapshot_analysis_batch(
-                        top_features_result,
-                        ("top_feature_ids", "top_feature_scores", "top_feature_activation_values"),
-                    ),
-                },
-                "baseline_forward": {
-                    "zero_softcap_enabled": bool(cfg.enable_zero_softcap),
-                    "apply_activation_function": False,
-                    "graph_inputs": tensor_fingerprint(graph_inputs)
-                    if isinstance(graph_inputs, torch.Tensor)
-                    else str(graph_inputs),
-                    "input_diagnostics": input_diagnostics,
-                    "baseline_logits": tensor_fingerprint(baseline_logits),
-                    "baseline_activation_cache": tensor_fingerprint(baseline_activation_cache_t),
-                    "selected_feature_baseline_activation": float(baseline_activation),
-                },
-                "intervention_op": {
-                    "analysis_batch": snapshot_analysis_batch(
-                        wrapper_inputs,
-                        (
-                            "prompts",
-                            "top_feature_ids",
-                            "top_feature_scores",
-                            "top_feature_activation_values",
-                            "logit_target_ids",
-                        ),
-                    ),
-                    "resolved_settings": wrapper_path_diagnostics["resolved_settings"],
-                    "call_kwargs": wrapper_path_diagnostics["call_kwargs"],
-                    "interventions": [list(spec) for spec in interventions],
-                    "result": {
-                        "pre_intervention_logits": tensor_fingerprint(wrapper_pre_logits),
-                        "post_intervention_logits": tensor_fingerprint(wrapper_post_logits),
-                        "intervention_activation_cache": tensor_fingerprint(post_activation_cache_t),
-                        "intervention_specs": wrapper_intervention_specs,
-                        "intervention_config": wrapper_intervention_config,
-                    },
-                    "diagnostics": wrapper_path_diagnostics,
-                },
-            }
-
-        relevant_activations = baseline_activation_cache_t[
-            graph_feature_rows[:, 0], graph_feature_rows[:, 1], graph_feature_rows[:, 2]
-        ]
-        new_relevant_activations = post_activation_cache_t[
-            graph_feature_rows[:, 0], graph_feature_rows[:, 1], graph_feature_rows[:, 2]
-        ]
-        relevant_logits = baseline_logits[logit_target_ids]
-        new_relevant_logits = post_logits[logit_target_ids]
-        demeaned_relevant_logits = relevant_logits - baseline_logits.mean()
-        new_demeaned_relevant_logits = new_relevant_logits - post_logits.mean()
-
-        expected_effects = adjacency_matrix[:, selected_graph_index]
-        effect_multiplier = 1.0
-        expected_activation_difference = expected_effects[: graph_feature_rows.shape[0]]
-        expected_logit_difference = expected_effects[-len(logit_target_ids) :]
-
-        activation_prediction = relevant_activations + expected_activation_difference
-        logit_prediction = demeaned_relevant_logits + expected_logit_difference
-        activation_abs_error = (new_relevant_activations - activation_prediction).abs()
-        logit_abs_error = (new_demeaned_relevant_logits - logit_prediction).abs()
-        actual_activation_difference = new_relevant_activations - relevant_activations
-        actual_logit_difference = new_demeaned_relevant_logits - demeaned_relevant_logits
-
-        activation_error_rows = _summarize_feature_row_deltas(
-            graph_feature_rows,
-            relevant_activations,
-            new_relevant_activations,
-            expected_activation_difference,
-            top_k=cfg.debug_validation_top_k,
-            ranking="abs_error",
-        )
-        expected_effect_rows = _summarize_feature_row_deltas(
-            graph_feature_rows,
-            relevant_activations,
-            new_relevant_activations,
-            expected_activation_difference,
-            top_k=cfg.debug_validation_top_k,
-            ranking="expected_delta",
-        )
-        actual_effect_rows = _summarize_feature_row_deltas(
-            graph_feature_rows,
-            relevant_activations,
-            new_relevant_activations,
-            expected_activation_difference,
-            top_k=cfg.debug_validation_top_k,
-            ranking="actual_delta",
-        )
-        activation_layer_summary = _summarize_layer_error_rows(
-            graph_feature_rows,
-            relevant_activations,
-            new_relevant_activations,
-            expected_activation_difference,
-            top_k=cfg.debug_validation_top_k,
-        )
-        logit_error_rows = _summarize_logit_delta_rows(
-            logit_target_ids.tolist(),
-            list(graph_target_tokens),
-            relevant_logits,
-            new_relevant_logits,
-            demeaned_relevant_logits,
-            new_demeaned_relevant_logits,
-            expected_logit_difference,
-            top_k=cfg.debug_validation_top_k,
-        )
-        same_feature_rows_in_graph = _summarize_same_feature_rows(
-            graph_feature_rows,
-            relevant_activations,
-            new_relevant_activations,
-            expected_activation_difference,
-            layer=layer,
-            feature_id=feature_id,
-        )
-        selected_feature_self_effect = {
-            "graph_index": int(selected_graph_index),
-            "row": [layer, position, feature_id],
-            "baseline_activation": float(relevant_activations[selected_graph_index].item()),
-            "predicted_activation": float(activation_prediction[selected_graph_index].item()),
-            "post_activation": float(new_relevant_activations[selected_graph_index].item()),
-            "expected_delta": float(expected_activation_difference[selected_graph_index].item()),
-            "actual_delta": float(actual_activation_difference[selected_graph_index].item()),
-            "abs_error": float(activation_abs_error[selected_graph_index].item()),
-            "signed_error": float(
-                (new_relevant_activations[selected_graph_index] - activation_prediction[selected_graph_index]).item()
-            ),
-        }
-        activation_sign_mismatch_count = int(
-            ((expected_activation_difference * actual_activation_difference) < 0.0).sum().item()
-        )
-        logit_sign_mismatch_count = int(((expected_logit_difference * actual_logit_difference) < 0.0).sum().item())
-
-        drift_report = build_intervention_drift_report(
-            graph,
-            feature_row=tuple(int(value) for value in selected_feature.tolist()),
-            baseline_activation_cache=baseline_activation_cache_t,
-            intervention_activation_cache=post_activation_cache_t,
-            baseline_logits=baseline_logits,
-            intervention_logits=post_logits,
-            activation_atol=cfg.debug_validation_act_atol,
-            activation_rtol=cfg.debug_validation_act_rtol,
-            logit_atol=cfg.debug_validation_logit_atol,
-            logit_rtol=cfg.debug_validation_logit_rtol,
-        )
-        activation_passed = drift_report.divergent_feature_count == 0
-        logit_passed = drift_report.logit_summary.divergent_logit_count == 0
-
-        pre_gap, post_gap, gap_delta = summarize_gap(baseline_logits, post_logits, target_a_id, target_b_id)
-        selected_feature_score = float(tensor_to_cpu(top_features_result.top_feature_scores)[0].item())
-        selected_feature_activation = float(tensor_to_cpu(top_features_result.top_feature_activation_values)[0].item())
-        key_logits_pre = [float(baseline_logits[token_id].item()) for token_id in key_ids]
-        key_logits_post = [float(post_logits[token_id].item()) for token_id in key_ids]
-        artifact_dir = _maybe_preserve_debug_intervention_artifacts(
-            cfg,
-            graph=graph,
-            feature_row=tuple(int(value) for value in selected_feature.tolist()),
-            interventions=interventions,
-            baseline_activation_cache=baseline_activation_cache_t,
-            intervention_activation_cache=post_activation_cache_t,
-            baseline_logits=baseline_logits,
-            intervention_logits=post_logits,
-            graph_target_ids=requested_graph_target_ids,
-            graph_target_tokens=graph_target_tokens,
-            selected_feature_score=selected_feature_score,
-            selected_feature_activation=selected_feature_activation,
-            report=drift_report,
-            runtime_state=runtime_state,
-        )
-
-        return {
-            "rendered_prompt": rendered_prompt,
-            "selected_feature": tuple(int(value) for value in selected_feature.tolist()),
-            "selected_feature_candidate_count": selected_feature_candidate_count,
-            "selected_feature_score": selected_feature_score,
-            "selected_feature_activation": selected_feature_activation,
-            "selected_feature_graph_index": selected_graph_index,
-            "graph_target_ids": requested_graph_target_ids,
-            "graph_target_tokens": graph_target_tokens,
-            "graph_result_target_ids": actual_graph_target_ids,
-            "graph_result_target_tokens": graph_result_target_tokens,
-            "graph_summary": {
-                "active_feature_count": int(active_features.shape[0]),
-                "selected_feature_count": int(graph_feature_rows.shape[0]),
-                "selected_feature_index_count": int(selected_feature_indices.numel()),
-                "adjacency_shape": [int(dim) for dim in adjacency_matrix.shape],
-                "requested_graph_target_count": len(requested_graph_target_ids),
-                "graph_target_count": int(logit_target_ids.numel()),
-                "graph_targets_match_requested": actual_graph_target_ids == requested_graph_target_ids,
-            },
-            "input_diagnostics": input_diagnostics,
-            "requested_constrained_feature_selection": [
-                _serialize_constrained_feature_selection_ref(raw_ref)
-                for raw_ref in (cfg.constrained_feature_selection_refs or ())
-            ],
-            "applied_feature_filter_triples": applied_feature_filter_triples,
-            "target_a_id": target_a_id,
-            "target_b_id": target_b_id,
-            "target_a_tok": resolved_target_tokens[0],
-            "target_b_tok": resolved_target_tokens[1],
-            "pre_gap": pre_gap,
-            "post_gap": post_gap,
-            "gap_delta": gap_delta,
-            "baseline_activation": baseline_activation,
-            "intervention_value": intervention_value,
-            "effect_multiplier": effect_multiplier,
-            "selected_feature_self_effect": selected_feature_self_effect,
-            "same_feature_rows_in_graph": same_feature_rows_in_graph,
-            "activation_passed": activation_passed,
-            "logit_passed": logit_passed,
-            "all_passed": activation_passed and logit_passed,
-            "activation_max_abs_error": float(activation_abs_error.max().item()),
-            "logit_max_abs_error": float(logit_abs_error.max().item()),
-            "activation_mean_abs_error": float(activation_abs_error.mean().item()),
-            "logit_mean_abs_error": float(logit_abs_error.mean().item()),
-            "activation_sign_mismatch_count": activation_sign_mismatch_count,
-            "logit_sign_mismatch_count": logit_sign_mismatch_count,
-            "activation_error_rows": activation_error_rows,
-            "activation_layer_summary": activation_layer_summary,
-            "expected_effect_rows": expected_effect_rows,
-            "actual_effect_rows": actual_effect_rows,
-            "logit_error_rows": logit_error_rows,
-            "drift_report": drift_report.to_dict(top_feature_count=cfg.debug_validation_top_k),
-            "artifact_dir": None if artifact_dir is None else str(artifact_dir),
-            "runtime_state": runtime_state,
-            "intervention_paths": {
-                "adjacency_validation": {
-                    "intervention": {
-                        "layer": layer,
-                        "position": position,
-                        "feature_id": feature_id,
-                        "value": intervention_value,
-                    },
-                    "call_kwargs": {
-                        "constrained_layers": {"kind": "range", "start": 0, "stop": n_layers, "step": 1},
-                        "apply_activation_function": False,
-                    },
-                    "pre_gap": pre_gap,
-                    "post_gap": post_gap,
-                    "gap_delta": gap_delta,
-                },
-                "feature_intervention_forward": wrapper_path_diagnostics,
-            },
-            "key_ids": key_ids,
-            "key_labels": key_labels,
-            "key_logits_pre": key_logits_pre,
-            "key_logits_post": key_logits_post,
-            "validation_tolerances": {
-                "act_atol": cfg.debug_validation_act_atol,
-                "act_rtol": cfg.debug_validation_act_rtol,
-                "logit_atol": cfg.debug_validation_logit_atol,
-                "logit_rtol": cfg.debug_validation_logit_rtol,
-            },
-            "debug_validation_top_k": int(cfg.debug_validation_top_k),
-            "debug_validation_raise_on_failure": bool(cfg.debug_validation_raise_on_failure),
-        }
+    return _shared_run_debug_intervention_validation(cfg)
 
 
 def run_direction_probes(

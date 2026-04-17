@@ -347,9 +347,46 @@ if _NEURONPEDIA_AVAILABLE:
                     else:
                         metadata[key] = value
 
+            info = metadata.get("info")
+            if not isinstance(info, dict):
+                info = {}
+                metadata["info"] = info
+            feature_details = metadata.get("feature_details")
+            if not isinstance(feature_details, dict):
+                feature_details = {}
+                metadata["feature_details"] = feature_details
+
+            resolved_source_set = feature_details.get("neuronpedia_source_set") or info.get("neuronpedia_source_set")
+            if resolved_source_set:
+                feature_details["neuronpedia_source_set"] = resolved_source_set
+                info["neuronpedia_source_set"] = resolved_source_set
+
+            resolved_model_id = info.get("neuronpedia_model")
+            if isinstance(resolved_model_id, str) and resolved_model_id.strip():
+                metadata["scan"] = resolved_model_id.strip()
+            elif "scan" in metadata and not isinstance(metadata["scan"], str):
+                metadata["scan"] = str(metadata["scan"])
+
             # TODO: inspect supported CT generation config metadata and add it saved NP metadata
             # (e.g. node_threshold, max_n_logits, max_feature_nodes, etc.)
             return graph_dict
+
+        def _configure_np_request_base_url(self, *, use_localhost: bool) -> tuple[Any, tuple[bool, str] | None]:
+            try:
+                from neuronpedia.requests.base_request import NPRequest
+            except ImportError:
+                return None, None
+
+            previous_state = (bool(NPRequest.USE_LOCALHOST), str(NPRequest.BASE_URL))
+            if use_localhost:
+                local_base_url = os.environ.get("LOCAL_NEURONPEDIA_WEBAPP_URL", "http://localhost:3000").rstrip("/")
+                NPRequest.USE_LOCALHOST = True
+                NPRequest.BASE_URL = f"{local_base_url}/api"
+            else:
+                NPRequest.USE_LOCALHOST = False
+                NPRequest.BASE_URL = "https://neuronpedia.org/api"
+
+            return NPRequest, previous_state
 
         def transform_circuit_tracer_graph(
             self,
@@ -488,10 +525,13 @@ if _NEURONPEDIA_AVAILABLE:
                 )
 
                 if not api_key:
-                    raise ValueError("API key not found. Set NEURONPEDIA_API_KEY env var.")
+                    missing_key = "DEV_NEURONPEDIA_API_KEY" if use_localhost else "NEURONPEDIA_API_KEY"
+                    raise ValueError(f"API key not found. Set {missing_key} in the environment.")
 
             # Upload with API key context
             import neuronpedia
+
+            request_cls, previous_request_state = self._configure_np_request_base_url(use_localhost=use_localhost)
 
             rank_zero_info(f"[NeuronpediaIntegration] Uploading graph: {graph_path}")
 
@@ -513,6 +553,9 @@ if _NEURONPEDIA_AVAILABLE:
                 except Exception as e:
                     rank_zero_warn(f"[NeuronpediaIntegration] Upload failed: {e}")
                     raise
+                finally:
+                    if request_cls is not None and previous_request_state is not None:
+                        request_cls.USE_LOCALHOST, request_cls.BASE_URL = previous_request_state
 
         def transform_graph_for_np(
             self,

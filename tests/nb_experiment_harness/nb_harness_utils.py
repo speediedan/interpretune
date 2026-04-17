@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
 import os
+import re
 import tempfile
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
+from urllib.request import Request, urlopen
 
+import psycopg
+import requests
 import torch
+from dotenv import load_dotenv
 
 import interpretune as it
 from interpretune.analysis.ops.helpers import (
@@ -19,10 +27,13 @@ from interpretune.analysis.ops.helpers import (
 )
 from interpretune.config import AnalysisCfg, init_analysis_cfgs
 from interpretune.utils import (
+    DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL,
+    DEFAULT_NEURONPEDIA_BASE_URL,
     check_local_explanation_coverage,
     default_np_cache_dir,
     feature_tuples_to_feature_refs,
     parse_feature_url,
+    resolve_local_neuronpedia_db_url,
 )
 from interpretune.utils.neuronpedia_explanations import (
     NeuronpediaFeatureRef,
@@ -73,6 +84,26 @@ DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT = Path(
         "/home/speediedan/repos/neuronpedia/utils/neuronpedia-utils/neuronpedia_utils/exports",
     )
 )
+
+
+@dataclass
+class UploadedGraphMetadata:
+    model_id: str
+    slug: str
+    prompt_tokens: list[str]
+    prompt: str
+    title_prefix: str
+    json_url: str
+    url: str | None = None
+    url_embed: str | None = None
+    id: str | None = None
+
+
+@dataclass
+class PublicGraphUploadResult:
+    graph_metadata: UploadedGraphMetadata
+    public_saved_to_db: bool
+    public_save_to_db_error: str | None = None
 
 
 def _split_constrained_feature_selection_ref(raw_ref: Any) -> tuple[Any, float | None]:
@@ -148,6 +179,478 @@ def phase_run_name(experiment_name: str, label: str) -> str:
     return f"{experiment_name}_{cleaned}"
 
 
+def _slugify_graph_component(value: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return cleaned or "graph"
+
+
+def _truncate_http_error_body(response: requests.Response, *, limit: int = 500) -> str:
+    body_text = response.text.strip()
+    if len(body_text) > limit:
+        body_text = f"{body_text[:limit]}..."
+    return f"HTTP {response.status_code}: {body_text}" if body_text else f"HTTP {response.status_code}"
+
+
+def _load_uploaded_graph_metadata(graph_path: str | Path) -> tuple[str, UploadedGraphMetadata]:
+    graph_text = Path(graph_path).read_text(encoding="utf-8")
+    graph_payload = json.loads(graph_text)
+    metadata = graph_payload.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise ValueError("Graph JSON must include a metadata mapping before upload.")
+
+    model_id = str(metadata.get("scan", "") or "").strip()
+    slug = str(metadata.get("slug", "") or "").strip()
+    prompt = str(metadata.get("prompt", "") or "")
+    prompt_tokens = [str(token) for token in metadata.get("prompt_tokens", [])]
+    title_prefix = str(metadata.get("title_prefix", "") or "")
+    if not model_id or not slug or not prompt or not prompt_tokens:
+        raise ValueError("Graph JSON metadata must include scan, slug, prompt, and prompt_tokens before upload.")
+
+    return (
+        graph_text,
+        UploadedGraphMetadata(
+            model_id=model_id,
+            slug=slug,
+            prompt_tokens=prompt_tokens,
+            prompt=prompt,
+            title_prefix=title_prefix,
+            json_url="",
+        ),
+    )
+
+
+def _upload_graph_for_public_then_sync_local(
+    graph_path: str | Path,
+    *,
+    api_key: str,
+    public_base_url: str = DEFAULT_NEURONPEDIA_BASE_URL,
+) -> PublicGraphUploadResult:
+    graph_text, graph_metadata = _load_uploaded_graph_metadata(graph_path)
+    graph_gzip = gzip.compress(graph_text.encode("utf-8"))
+    api_root = f"{public_base_url.rstrip('/')}/api/graph"
+    headers = {"X-Api-Key": api_key}
+
+    signed_put_response = requests.post(
+        f"{api_root}/signed-put",
+        headers=headers,
+        json={
+            "filename": f"{graph_metadata.slug}.json",
+            "contentLength": len(graph_gzip),
+            "contentType": "application/json",
+        },
+        timeout=60,
+    )
+    if not signed_put_response.ok:
+        raise RuntimeError(
+            f"Failed to create public graph upload URL for '{graph_metadata.slug}': "
+            f"{_truncate_http_error_body(signed_put_response)}"
+        )
+
+    signed_put_payload = signed_put_response.json()
+    signed_put_url = str(signed_put_payload.get("url", "") or "").strip()
+    put_request_id = str(signed_put_payload.get("putRequestId", "") or "").strip()
+    if not signed_put_url or not put_request_id:
+        raise RuntimeError(
+            f"Public graph upload response for '{graph_metadata.slug}' did not include both url and putRequestId."
+        )
+
+    put_response = requests.put(
+        signed_put_url,
+        data=graph_gzip,
+        headers={"Content-Encoding": "gzip"},
+        timeout=120,
+    )
+    if not put_response.ok:
+        raise RuntimeError(
+            f"Failed to upload public graph payload for '{graph_metadata.slug}': "
+            f"{_truncate_http_error_body(put_response)}"
+        )
+
+    graph_metadata.json_url = signed_put_url.split("?", 1)[0]
+
+    save_to_db_response = requests.post(
+        f"{api_root}/save-to-db",
+        headers=headers,
+        json={"putRequestId": put_request_id},
+        timeout=60,
+    )
+    public_save_to_db_error = None
+    if save_to_db_response.ok:
+        response_payload = save_to_db_response.json()
+        public_graph_url = response_payload.get("url")
+        if isinstance(public_graph_url, str) and public_graph_url.strip():
+            graph_metadata.url = public_graph_url.strip()
+            graph_metadata.url_embed = f"{graph_metadata.url}&embed=true"
+    else:
+        public_save_to_db_error = _truncate_http_error_body(save_to_db_response)
+
+    return PublicGraphUploadResult(
+        graph_metadata=graph_metadata,
+        public_saved_to_db=save_to_db_response.ok,
+        public_save_to_db_error=public_save_to_db_error,
+    )
+
+
+@contextmanager
+def _temporary_neuronpedia_upload_env(cfg: NotebookHarnessConfig, *, upload_target: str) -> Any:
+    env_updates = {"USE_LOCALHOST": "true" if upload_target == "localhost" else "false"}
+    if upload_target == "localhost":
+        api_key = os.environ.get("DEV_NEURONPEDIA_API_KEY")
+        if not api_key:
+            raise ValueError("DEV_NEURONPEDIA_API_KEY is required when local graph upload is enabled.")
+        env_updates["LOCAL_NEURONPEDIA_WEBAPP_URL"] = cfg.local_neuronpedia_webapp_url.rstrip("/")
+    elif upload_target == "public_then_sync_local":
+        api_key = os.environ.get("NEURONPEDIA_API_KEY")
+        if not api_key:
+            raise ValueError("NEURONPEDIA_API_KEY is required when public_then_sync_local graph upload is enabled.")
+    else:
+        raise ValueError(f"Unsupported local graph upload target: {upload_target!r}")
+
+    previous_env = {key: os.environ.get(key) for key in ("USE_LOCALHOST", "LOCAL_NEURONPEDIA_WEBAPP_URL")}
+    os.environ.update(env_updates)
+    if upload_target != "localhost":
+        os.environ.pop("LOCAL_NEURONPEDIA_WEBAPP_URL", None)
+    try:
+        yield api_key
+    finally:
+        for key, previous_value in previous_env.items():
+            if previous_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous_value
+
+
+def _load_graph_payload_from_json_url(graph_json_url: str) -> dict[str, Any]:
+    request = Request(graph_json_url, method="GET")
+    with urlopen(request, timeout=60) as response:
+        raw_payload = response.read()
+    if raw_payload.startswith(b"\x1f\x8b"):
+        raw_payload = gzip.decompress(raw_payload)
+    payload = json.loads(raw_payload.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Neuronpedia graph payload must decode to a mapping.")
+    return payload
+
+
+def _resolve_graph_source_set_name(cursor: Any, *, model_id: str, graph_payload: Mapping[str, Any]) -> str | None:
+    metadata = graph_payload.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return None
+
+    source_set_name: str | None = None
+    for metadata_key in ("info", "feature_details"):
+        candidate_mapping = metadata.get(metadata_key)
+        if not isinstance(candidate_mapping, Mapping):
+            continue
+        candidate_value = candidate_mapping.get("neuronpedia_source_set")
+        if isinstance(candidate_value, str) and candidate_value.strip():
+            source_set_name = candidate_value.strip()
+            break
+
+    if source_set_name is None:
+        return None
+    if "/" in source_set_name:
+        source_set_name = source_set_name.split("/")[-1] or source_set_name
+
+    cursor.execute(
+        'SELECT name FROM public."SourceSet" WHERE "modelId"=%s AND name=%s;',
+        (model_id, source_set_name),
+    )
+    source_set_row = cursor.fetchone()
+    return None if source_set_row is None else cast(str, source_set_row[0])
+
+
+def sync_graph_metadata_to_local_dev(
+    *,
+    username: str,
+    graph_metadata: Any | None = None,
+    model_id: str | None = None,
+    slug: str | None = None,
+    public_api_key: str | None = None,
+    local_db_url: str | None = None,
+) -> dict[str, Any]:
+    """Sync a public Neuronpedia graph into the local dev GraphMetadata table."""
+
+    normalized_username = str(username).strip()
+    if not normalized_username:
+        raise ValueError("username is required for local graph metadata sync")
+
+    load_dotenv(".env.localhost_np")
+
+    if graph_metadata is None:
+        if not model_id or not slug:
+            raise ValueError("model_id and slug are required when graph_metadata is not provided")
+
+        import neuronpedia
+        from neuronpedia.np_graph_metadata import NPGraphMetadata
+
+        resolved_public_api_key = public_api_key or os.environ.get("NEURONPEDIA_API_KEY")
+        if not resolved_public_api_key:
+            raise ValueError("NEURONPEDIA_API_KEY is not set in the environment.")
+
+        with neuronpedia.api_key(resolved_public_api_key):
+            graph_metadata = NPGraphMetadata.get(model_id, slug)
+
+    resolved_model_id = str(getattr(graph_metadata, "model_id", model_id or "")).strip()
+    resolved_slug = str(getattr(graph_metadata, "slug", slug or "")).strip()
+    graph_json_url = getattr(graph_metadata, "json_url", None)
+    if not resolved_model_id or not resolved_slug or not isinstance(graph_json_url, str) or not graph_json_url.strip():
+        raise ValueError("graph_metadata must include model_id, slug, and json_url")
+
+    resolved_db_url = resolve_local_neuronpedia_db_url(local_db_url)
+    graph_payload = _load_graph_payload_from_json_url(graph_json_url)
+    resolved_graph_metadata_id = str(getattr(graph_metadata, "id", "") or "").strip()
+    if not resolved_graph_metadata_id:
+        slug_digest = hashlib.sha1(f"{resolved_model_id}:{resolved_slug}".encode("utf-8")).hexdigest()[:24]
+        resolved_graph_metadata_id = f"local-sync-{slug_digest}"
+
+    with psycopg.connect(resolved_db_url) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT id FROM "User" WHERE name=%s;', (normalized_username,))
+            user_row = cursor.fetchone()
+            if user_row is None:
+                raise ValueError(f"User '{normalized_username}' not found in the local Neuronpedia database.")
+
+            resolved_user_id = cast(str, user_row[0])
+            source_set_name = _resolve_graph_source_set_name(
+                cursor,
+                model_id=resolved_model_id,
+                graph_payload=graph_payload,
+            )
+            prompt_tokens = [str(token) for token in getattr(graph_metadata, "prompt_tokens", [])]
+            title_prefix = str(getattr(graph_metadata, "title_prefix", "") or "")
+            prompt = str(getattr(graph_metadata, "prompt", "") or "")
+
+            cursor.execute(
+                """
+                INSERT INTO public."GraphMetadata" (
+                    id, "modelId", "sourceSetName", slug, "promptTokens", prompt, "titlePrefix", url, "userId",
+                    "createdAt", "updatedAt", "isFeatured"
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, current_timestamp(3), current_timestamp(3), FALSE)
+                ON CONFLICT ("modelId", slug) DO UPDATE SET
+                    "sourceSetName" = EXCLUDED."sourceSetName",
+                    "promptTokens" = EXCLUDED."promptTokens",
+                    prompt = EXCLUDED.prompt,
+                    "titlePrefix" = EXCLUDED."titlePrefix",
+                    url = EXCLUDED.url,
+                    "userId" = EXCLUDED."userId",
+                    "updatedAt" = current_timestamp(3),
+                    "isFeatured" = FALSE
+                RETURNING id, "modelId", slug, url, "sourceSetName";
+                """,
+                (
+                    resolved_graph_metadata_id,
+                    resolved_model_id,
+                    source_set_name,
+                    resolved_slug,
+                    prompt_tokens,
+                    prompt,
+                    title_prefix,
+                    graph_json_url,
+                    resolved_user_id,
+                ),
+            )
+            synced_row = cursor.fetchone()
+        conn.commit()
+
+    local_webapp_url = os.environ.get("LOCAL_NEURONPEDIA_WEBAPP_URL", DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL).rstrip("/")
+    local_graph_url = f"{local_webapp_url}/{resolved_model_id}/graph?slug={resolved_slug}"
+
+    return {
+        "model_id": resolved_model_id,
+        "slug": resolved_slug,
+        "username": normalized_username,
+        "user_id": resolved_user_id,
+        "graph_json_url": graph_json_url,
+        "public_graph_url": getattr(graph_metadata, "url", None),
+        "public_graph_embed_url": getattr(graph_metadata, "url_embed", None),
+        "local_graph_url": local_graph_url,
+        "local_graph_embed_url": f"{local_graph_url}&embed=true",
+        "source_set_name": None if synced_row is None else synced_row[4],
+        "graph_metadata_id": None if synced_row is None else synced_row[0],
+    }
+
+
+def maybe_save_local_neuronpedia_graph(
+    cfg: NotebookHarnessConfig,
+    module: Any,
+    graph: Any,
+    *,
+    phase_label: str,
+    rendered_prompt: str,
+    graph_target_tokens: Sequence[str] | None = None,
+    graph_target_ids: Sequence[int] | None = None,
+    extra_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if not cfg.upload_local_graphs:
+        return None
+
+    if not cfg.use_localhost:
+        warning_message = "Skipping local Neuronpedia graph upload because localhost mode is disabled."
+        warnings.warn(warning_message, stacklevel=2)
+        return {
+            "phase_label": phase_label,
+            "uploaded": False,
+            "skipped": True,
+            "reason": warning_message,
+        }
+
+    neuronpedia_handle = getattr(module, "neuronpedia", None)
+    if neuronpedia_handle is None:
+        warning_message = "Skipping local Neuronpedia graph upload because the module has no neuronpedia extension."
+        warnings.warn(warning_message, stacklevel=2)
+        return {
+            "phase_label": phase_label,
+            "uploaded": False,
+            "skipped": True,
+            "reason": warning_message,
+        }
+
+    slug_prefix_base = cfg.local_graph_slug_prefix or cfg.experiment_name
+    upload_target = str(getattr(cfg, "local_graph_upload_target", "localhost")).strip() or "localhost"
+    slug = (
+        f"{_slugify_graph_component(slug_prefix_base)}-"
+        f"{_slugify_graph_component(phase_label)}-"
+        f"{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    )
+    output_dir = Path(cfg.work_root) / "graph_artifacts" / _slugify_graph_component(phase_label)
+
+    custom_metadata: dict[str, Any] = {
+        "feature_details": {"neuronpedia_source_set": cfg.neuronpedia_set},
+        "info": {
+            "neuronpedia_source_set": cfg.neuronpedia_set,
+            "experiment_name": cfg.experiment_name,
+            "experiment_config_name": cfg.experiment_config_name,
+            "analysis_mode": cfg.analysis_mode,
+            "prompt_render_mode": cfg.prompt_render_mode,
+            "phase_label": phase_label,
+            "neuronpedia_model": cfg.neuronpedia_model,
+            "rendered_prompt_preview": rendered_prompt[:200],
+        },
+    }
+    if graph_target_tokens is not None:
+        custom_metadata["info"]["graph_target_tokens"] = [str(token) for token in graph_target_tokens]
+    if graph_target_ids is not None:
+        custom_metadata["info"]["graph_target_ids"] = [int(token_id) for token_id in graph_target_ids]
+    if extra_metadata:
+        for key, value in extra_metadata.items():
+            if isinstance(value, Mapping) and isinstance(custom_metadata.get(key), dict):
+                cast(dict[str, Any], custom_metadata[key]).update(dict(value))
+            else:
+                custom_metadata[key] = value
+
+    try:
+        graph_path = module.save_graph(
+            graph=graph,
+            output_path=output_dir,
+            slug=slug,
+            custom_metadata=custom_metadata,
+            use_neuronpedia=True,
+        )
+    except Exception as exc:
+        warning_message = f"Failed to save local Neuronpedia graph artifact for phase '{phase_label}': {exc}"
+        warnings.warn(warning_message, stacklevel=2)
+        return {
+            "phase_label": phase_label,
+            "slug": slug,
+            "uploaded": False,
+            "skipped": True,
+            "reason": warning_message,
+        }
+
+    public_upload_result: PublicGraphUploadResult | None = None
+    try:
+        with _temporary_neuronpedia_upload_env(cfg, upload_target=upload_target) as api_key:
+            if upload_target == "public_then_sync_local":
+                public_upload_result = _upload_graph_for_public_then_sync_local(graph_path, api_key=api_key)
+                graph_metadata = public_upload_result.graph_metadata
+            else:
+                graph_metadata = neuronpedia_handle.upload_graph_to_neuronpedia(graph_path, api_key=api_key)
+    except Exception as exc:
+        warning_message = f"Failed to upload local Neuronpedia graph '{slug}': {exc}"
+        warnings.warn(warning_message, stacklevel=2)
+        return {
+            "phase_label": phase_label,
+            "slug": slug,
+            "local_graph_path": str(graph_path),
+            "uploaded": False,
+            "skipped": False,
+            "reason": warning_message,
+        }
+
+    graph_url = getattr(graph_metadata, "url", None)
+    if graph_url is None:
+        fallback_base_url = (
+            cfg.local_neuronpedia_webapp_url if upload_target == "localhost" else DEFAULT_NEURONPEDIA_BASE_URL
+        )
+        graph_url = f"{fallback_base_url.rstrip('/')}/{cfg.neuronpedia_model}/graph?slug={slug}"
+
+    artifact = {
+        "phase_label": phase_label,
+        "slug": slug,
+        "local_graph_path": str(graph_path),
+        "uploaded": True,
+        "skipped": False,
+        "upload_target": upload_target,
+        "graph_url": graph_url,
+        "graph_json_url": getattr(graph_metadata, "json_url", None),
+        "graph_embed_url": getattr(graph_metadata, "url_embed", None),
+        "neuronpedia_model": cfg.neuronpedia_model,
+        "neuronpedia_source_set": cfg.neuronpedia_set,
+    }
+
+    if upload_target != "public_then_sync_local":
+        return artifact
+
+    artifact.update(
+        public_graph_url=getattr(graph_metadata, "url", None),
+        public_graph_json_url=getattr(graph_metadata, "json_url", None),
+        public_graph_embed_url=getattr(graph_metadata, "url_embed", None),
+        public_saved_to_db=False if public_upload_result is None else public_upload_result.public_saved_to_db,
+        public_save_to_db_error=None if public_upload_result is None else public_upload_result.public_save_to_db_error,
+        synced_to_local=False,
+    )
+    try:
+        sync_summary = sync_graph_metadata_to_local_dev(
+            username=cast(str, getattr(cfg, "local_graph_owner_username", None)),
+            graph_metadata=graph_metadata,
+            local_db_url=cfg.local_neuronpedia_db_url,
+        )
+    except Exception as exc:
+        warning_message = f"Uploaded public Neuronpedia graph '{slug}' but failed to sync local metadata: {exc}"
+        warnings.warn(warning_message, stacklevel=2)
+        artifact["sync_error"] = warning_message
+        return artifact
+
+    artifact.update(
+        synced_to_local=True,
+        graph_url=sync_summary["local_graph_url"],
+        graph_embed_url=sync_summary["local_graph_embed_url"],
+        local_graph_url=sync_summary["local_graph_url"],
+        local_graph_embed_url=sync_summary["local_graph_embed_url"],
+        local_graph_sync=sync_summary,
+    )
+    return artifact
+
+
+def sync_dev_graph_metadata() -> None:
+    """Sync graph metadata from Neuronpedia production service to a local dev database."""
+    model_id = os.environ.get("MODEL_ID")
+    slug = os.environ.get("SLUG")
+    username = os.environ.get("USERNAME")
+
+    if not all([model_id, slug, username]):
+        raise ValueError("MODEL_ID, SLUG, and USERNAME environment variables are required.")
+
+    summary = sync_graph_metadata_to_local_dev(
+        model_id=model_id,
+        slug=slug,
+        username=cast(str, username),
+        local_db_url=os.environ.get("LOCAL_NEURONPEDIA_DB_URL"),
+    )
+    print(json.dumps(summary, indent=2, default=str))
+
+
 def _get_config_value_with_preset_default(
     payload: Mapping[str, Any],
     preset_defaults: Mapping[str, Any],
@@ -209,6 +712,8 @@ def serialize_notebook_config(
         "neuronpedia_base_url": cfg.neuronpedia_base_url,
         "local_neuronpedia_db_url": cfg.local_neuronpedia_db_url,
         "local_neuronpedia_webapp_url": cfg.local_neuronpedia_webapp_url,
+        "upload_local_graphs": cfg.upload_local_graphs,
+        "local_graph_slug_prefix": cfg.local_graph_slug_prefix,
         "check_local_explanation_coverage": cfg.check_local_explanation_coverage,
         "generate_missing_local_explanations": cfg.generate_missing_local_explanations,
         "local_explanation_feature_limit": cfg.local_explanation_feature_limit,
@@ -1037,30 +1542,45 @@ def _build_graph_analysis_inputs(
     group_a_ids: list[int] | None,
     group_b_ids: list[int] | None,
     attribution_target_device: torch.device | str | None = None,
+    attribution_targets: Any | None = None,
+    graph_call_kwargs: Mapping[str, Any] | None = None,
+    analysis_batch_kwargs: Mapping[str, Any] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     batch_kwargs: dict[str, Any] = {"prompts": [rendered_prompt]}
-    call_kwargs: dict[str, Any] = {}
+    call_kwargs: dict[str, Any] = dict(graph_call_kwargs or {})
 
     if cfg.is_debug_intervention_mode:
         graph_target_ids, graph_target_tokens = resolve_graph_target_tokens(cfg, tokenizer)
         del graph_target_tokens
         attribution_target_ids = torch.tensor(graph_target_ids, dtype=torch.long)
         batch_kwargs["logit_target_ids"] = attribution_target_ids
-        call_kwargs["attribution_targets"] = (
+        call_kwargs.setdefault(
+            "attribution_targets",
             attribution_target_ids
             if attribution_target_device is None
-            else attribution_target_ids.to(attribution_target_device)
+            else attribution_target_ids.to(attribution_target_device),
         )
     else:
-        if direction is None or group_a_ids is None or group_b_ids is None:
-            raise ValueError("direction and concept-group token ids are required for non-debug graph analysis")
-        batch_kwargs.update(
-            concept_direction=direction,
-            concept_label=cfg.analysis_concept_label,
-            concept_direction_mode=cfg.analysis_direction_mode_name,
-            concept_group_a_token_ids=group_a_ids,
-            concept_group_b_token_ids=group_b_ids,
-        )
+        any_direction_inputs = any(value is not None for value in (direction, group_a_ids, group_b_ids))
+        if any_direction_inputs:
+            if direction is None or group_a_ids is None or group_b_ids is None:
+                raise ValueError("direction and concept-group token ids must either all be provided or all be omitted")
+            batch_kwargs.update(
+                concept_direction=direction,
+                concept_label=cfg.analysis_concept_label,
+                concept_direction_mode=cfg.analysis_direction_mode_name,
+                concept_group_a_token_ids=group_a_ids,
+                concept_group_b_token_ids=group_b_ids,
+            )
+
+    if attribution_targets is not None:
+        resolved_attribution_targets = attribution_targets
+        if attribution_target_device is not None and isinstance(resolved_attribution_targets, torch.Tensor):
+            resolved_attribution_targets = resolved_attribution_targets.to(attribution_target_device)
+        call_kwargs["attribution_targets"] = resolved_attribution_targets
+
+    if analysis_batch_kwargs:
+        batch_kwargs.update(dict(analysis_batch_kwargs))
 
     return it.AnalysisBatch(**batch_kwargs), call_kwargs
 
