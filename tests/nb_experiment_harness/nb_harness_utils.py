@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import html
 import json
 import os
 import re
@@ -9,7 +10,7 @@ import tempfile
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -30,7 +31,9 @@ from interpretune.utils import (
     DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL,
     DEFAULT_NEURONPEDIA_BASE_URL,
     check_local_explanation_coverage,
+    clean_explanation_text,
     default_np_cache_dir,
+    fetch_feature_payload,
     feature_tuples_to_feature_refs,
     parse_feature_url,
     resolve_local_neuronpedia_db_url,
@@ -48,6 +51,7 @@ from interpretune.utils.neuronpedia_explanations import (
 from it_examples.example_prompt_configs import GemmaPromptConfig
 from it_examples.utils.nb_ui_utils import display_layer_divergence_summary, display_logit_drift_summary
 from tests.nb_experiment_harness.config import get_config_value
+from tests.parity_analysis.concept_direction_parity_analysis import build_classification_prompt_text
 from tests.parity_analysis.intervention_drift_analysis import (
     resolve_artifact_output_dir,
     save_preserved_intervention_artifacts,
@@ -55,11 +59,14 @@ from tests.parity_analysis.intervention_drift_analysis import (
 )
 
 _ipython_display: Any
+_ipython_html: Any
 
 try:
+    from IPython.display import HTML as _ipython_html
     from IPython.display import display as _ipython_display
 except ImportError:  # pragma: no cover - notebook display fallback
     _ipython_display = None
+    _ipython_html = None
 
 
 def _display(value: Any) -> None:
@@ -69,10 +76,113 @@ def _display(value: Any) -> None:
     _ipython_display(value)
 
 
+def _visible_token_text(token_text: object) -> str:
+    if token_text is None:
+        return ""
+    return str(token_text).replace("\r", "␍").replace("\n", "↵").replace("\t", "⇥")
+
+
+def _token_debug_entry_html(
+    row: Mapping[str, Any],
+    *,
+    token_text_key: str,
+    token_id_key: str,
+    marks_key: str | None,
+    index_key: str | None,
+) -> str:
+    index = row.get(index_key) if index_key else None
+    token_id = row.get(token_id_key)
+    token_text = _visible_token_text(row.get(token_text_key))
+    marks = tuple(row.get(marks_key) or ()) if marks_key else ()
+    title_parts = []
+    if index is not None:
+        title_parts.append(f"index={index}")
+    title_parts.append(f"token_id={token_id}")
+    if marks_key:
+        title_parts.append(f"marks={','.join(marks) if marks else 'none'}")
+    title_parts.append(f"raw={row.get(token_text_key)!r}")
+    title_text = " | ".join(title_parts)
+    style = [
+        "display:inline-block",
+        "margin:0.05rem 0.15rem 0.05rem 0",
+        "padding:0.08rem 0.24rem",
+        "border:1px solid #cbd5e1",
+        "border-radius:0.35rem",
+        "background:#f8fafc",
+        "font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+        "font-size:0.75rem",
+        "white-space:pre",
+    ]
+    if "cache_answer" in marks or "answer" in marks:
+        style.extend(["background:#fff3cd", "border-color:#b7791f"])
+    elif "context" in marks:
+        style.extend(["background:#dcfce7", "border-color:#15803d"])
+    elif "probe" in marks:
+        style.extend(["background:#dbeafe", "border-color:#2563eb"])
+    label = token_text if token_text else "∅"
+    style_text = "; ".join(style)
+    return f'<span title="{html.escape(title_text, quote=True)}" style="{style_text}">{html.escape(label)}</span>'
+
+
+def format_token_debug_html(
+    rows: Sequence[Mapping[str, Any]] | None,
+    *,
+    token_text_key: str = "token_text",
+    token_id_key: str = "token_id",
+    marks_key: str | None = "marks",
+    index_key: str | None = "index",
+) -> str:
+    normalized_rows = [row for row in (rows or []) if isinstance(row, Mapping)]
+    if not normalized_rows:
+        return ""
+    rendered_rows = "".join(
+        _token_debug_entry_html(
+            row,
+            token_text_key=token_text_key,
+            token_id_key=token_id_key,
+            marks_key=marks_key,
+            index_key=index_key,
+        )
+        for row in normalized_rows
+    )
+    return f'<div style="line-height:1.5; max-width:96rem; white-space:normal">{rendered_rows}</div>'
+
+
+def display_html_frame(frame: Any) -> None:
+    if _ipython_html is None or _ipython_display is None:
+        print(frame)
+        return
+    html_columns = tuple(getattr(frame, "attrs", {}).get("html_columns", ()))
+    safe_frame = frame.copy()
+    for column in safe_frame.columns:
+        if column in html_columns:
+            continue
+        safe_frame[column] = safe_frame[column].map(
+            lambda value: html.escape(value) if isinstance(value, str) else value
+        )
+    _display(_ipython_html(safe_frame.to_html(index=False, escape=False)))
+
+
+def display_full_frame(frame: Any) -> None:
+    if getattr(frame, "attrs", {}).get("html_columns"):
+        display_html_frame(frame)
+        return
+    import pandas as pd  # type: ignore[import-untyped]
+
+    with pd.option_context(
+        "display.max_columns",
+        None,
+        "display.max_colwidth",
+        None,
+        "display.width",
+        240,
+    ):
+        _display(frame)
+
+
 if TYPE_CHECKING:
     from interpretune.extensions.debug_generation import DebugGeneration
     from tests.concept_direction_approach_parity.concept_direction import (
-        ConstrainedFeatureSelectionRef,
         NotebookHarnessConfig,
         PromptRenderMode,
     )
@@ -106,6 +216,28 @@ class PublicGraphUploadResult:
     public_save_to_db_error: str | None = None
 
 
+ConstrainedFeatureSelectionRefValue = str | tuple[str, str, int, int]
+
+
+@dataclass(frozen=True)
+class ConstrainedFeatureSelectionRef:
+    ref: ConstrainedFeatureSelectionRefValue
+    activation_value: float | None = None
+
+
+@dataclass
+class ConstrainedFeatureSelection:
+    specific_features: tuple[ConstrainedFeatureSelectionRef | tuple[int, int, int], ...] = ()
+    layers: tuple[int, ...] = ()
+    positions: tuple[int, ...] = ()
+    feature_ids: tuple[int, ...] = ()
+    layer_slices: tuple[slice, ...] = ()
+    position_slices: tuple[slice, ...] = ()
+    triples: tuple[tuple[int, int, int], ...] = ()
+    layer_feature_pairs: tuple[tuple[int, int], ...] = ()
+    activation_overrides: dict[tuple[int, int], float] = field(default_factory=dict)
+
+
 def _split_constrained_feature_selection_ref(raw_ref: Any) -> tuple[Any, float | None]:
     if isinstance(raw_ref, Mapping):
         ref_value = raw_ref.get("ref", raw_ref.get("feature_ref"))
@@ -134,8 +266,257 @@ def _serialize_constrained_feature_selection_ref(
     return {"ref": serialized_ref, "activation_value": float(activation_value)}
 
 
+def _normalize_constrained_feature_selection_ref(raw_ref: Any) -> ConstrainedFeatureSelectionRef:
+    if isinstance(raw_ref, ConstrainedFeatureSelectionRef):
+        return raw_ref
+
+    activation_value = None
+    if isinstance(raw_ref, Mapping):
+        ref_value = raw_ref.get("ref", raw_ref.get("feature_ref"))
+        activation_value_raw = raw_ref.get("activation_value")
+        if ref_value is None:
+            raise ValueError("Constrained feature selection mappings must include 'ref' (or legacy 'feature_ref').")
+        raw_ref = ref_value
+        activation_value = None if activation_value_raw is None else float(activation_value_raw)
+
+    if isinstance(raw_ref, str):
+        return ConstrainedFeatureSelectionRef(ref=raw_ref, activation_value=activation_value)
+    if isinstance(raw_ref, Sequence) and not isinstance(raw_ref, (str, bytes)) and len(raw_ref) == 4:
+        model_id, source_set, layer_number, feature_index = raw_ref
+        return ConstrainedFeatureSelectionRef(
+            ref=(str(model_id), str(source_set), int(layer_number), int(feature_index)),
+            activation_value=activation_value,
+        )
+    raise ValueError(
+        "Constrained feature selection entries must be full Neuronpedia refs or "
+        "(model_id, source_set, layer, feature_index) tuples, optionally wrapped in a mapping with "
+        "an activation_value override."
+    )
+
+
+def _normalize_feature_row_triple(raw_triple: Any, *, field_name: str) -> tuple[int, int, int]:
+    if not isinstance(raw_triple, Sequence) or isinstance(raw_triple, (str, bytes)) or len(raw_triple) != 3:
+        raise ValueError(f"{field_name} entries must be [layer, position, feature_id] rows. Got: {raw_triple!r}")
+    layer_number, position_index, feature_id = raw_triple
+    return int(layer_number), int(position_index), int(feature_id)
+
+
+def _normalize_layer_feature_pair(raw_pair: Any, *, field_name: str) -> tuple[int, int]:
+    if not isinstance(raw_pair, Sequence) or isinstance(raw_pair, (str, bytes)) or len(raw_pair) != 2:
+        raise ValueError(f"{field_name} entries must be [layer, feature_id] rows. Got: {raw_pair!r}")
+    layer_number, feature_id = raw_pair
+    return int(layer_number), int(feature_id)
+
+
+def _normalize_feature_selection_slice(raw_slice: Any, *, field_name: str) -> slice:
+    if isinstance(raw_slice, slice):
+        return raw_slice
+    if isinstance(raw_slice, Mapping):
+        return slice(raw_slice.get("start"), raw_slice.get("stop"), raw_slice.get("step"))
+    if not isinstance(raw_slice, Sequence) or isinstance(raw_slice, (str, bytes)):
+        raise ValueError(f"{field_name} entries must be [start, stop] or [start, stop, step] rows. Got: {raw_slice!r}")
+    if not 2 <= len(raw_slice) <= 3:
+        raise ValueError(
+            f"{field_name} entries must contain 2 or 3 values. Got {len(raw_slice)} values in {raw_slice!r}"
+        )
+    start = raw_slice[0]
+    stop = raw_slice[1]
+    step = raw_slice[2] if len(raw_slice) == 3 else None
+    return slice(start, stop, step)
+
+
+def _serialize_feature_selection_slice(raw_slice: slice) -> list[int | None]:
+    payload: list[int | None] = [
+        None if raw_slice.start is None else int(raw_slice.start),
+        None if raw_slice.stop is None else int(raw_slice.stop),
+    ]
+    if raw_slice.step is not None:
+        payload.append(int(raw_slice.step))
+    return payload
+
+
+def _normalize_constrained_feature_selection_specific_feature(
+    raw_feature: Any,
+) -> ConstrainedFeatureSelectionRef | tuple[int, int, int]:
+    if isinstance(raw_feature, Mapping) and any(key in raw_feature for key in ("triple", "feature_row")):
+        return _normalize_feature_row_triple(
+            raw_feature.get("triple", raw_feature.get("feature_row")),
+            field_name="specific_features",
+        )
+    if isinstance(raw_feature, Sequence) and not isinstance(raw_feature, (str, bytes)) and len(raw_feature) == 3:
+        return _normalize_feature_row_triple(raw_feature, field_name="specific_features")
+    return _normalize_constrained_feature_selection_ref(raw_feature)
+
+
+def _normalize_feature_selection_activation_overrides(raw_overrides: Any) -> dict[tuple[int, int], float]:
+    if raw_overrides is None:
+        return {}
+
+    normalized: dict[tuple[int, int], float] = {}
+    if isinstance(raw_overrides, Mapping):
+        iterator = raw_overrides.items()
+        for raw_key, raw_value in iterator:
+            if isinstance(raw_key, str):
+                key_parts = [part for part in raw_key.split("/") if part]
+                if len(key_parts) != 2:
+                    raise ValueError(
+                        "activation_overrides mapping keys must be 'layer/feature_id' strings when using mapping "
+                        f"syntax. Got: {raw_key!r}"
+                    )
+                layer_number, feature_id = (int(key_parts[0]), int(key_parts[1]))
+            else:
+                layer_number, feature_id = _normalize_layer_feature_pair(raw_key, field_name="activation_overrides")
+            normalized[(layer_number, feature_id)] = float(raw_value)
+        return normalized
+
+    if not isinstance(raw_overrides, Sequence) or isinstance(raw_overrides, (str, bytes)):
+        raise ValueError("activation_overrides must be a mapping or a list of {layer, feature_id, value} mappings.")
+
+    for raw_entry in raw_overrides:
+        if not isinstance(raw_entry, Mapping):
+            raise ValueError(
+                "activation_overrides list entries must be mappings with layer, feature_id, and value fields."
+            )
+        normalized[(int(raw_entry["layer"]), int(raw_entry["feature_id"]))] = float(raw_entry["value"])
+    return normalized
+
+
+def _normalize_constrained_feature_selection(raw_selection: Any) -> ConstrainedFeatureSelection | None:
+    if raw_selection is None:
+        return None
+    if isinstance(raw_selection, ConstrainedFeatureSelection):
+        return raw_selection
+
+    if isinstance(raw_selection, Mapping):
+        if ("ref" in raw_selection or "feature_ref" in raw_selection) and set(raw_selection.keys()).issubset(
+            {"ref", "feature_ref", "activation_value"}
+        ):
+            return ConstrainedFeatureSelection(
+                specific_features=(_normalize_constrained_feature_selection_specific_feature(raw_selection),),
+            )
+
+        specific_features = tuple(
+            _normalize_constrained_feature_selection_specific_feature(raw_feature)
+            for raw_feature in raw_selection.get("specific_features", raw_selection.get("refs", ()))
+        )
+        layers = tuple(int(value) for value in raw_selection.get("layers", ()))
+        positions = tuple(int(value) for value in raw_selection.get("positions", ()))
+        feature_ids = tuple(int(value) for value in raw_selection.get("feature_ids", ()))
+        layer_slices = tuple(
+            _normalize_feature_selection_slice(raw_slice, field_name="layer_slices")
+            for raw_slice in raw_selection.get("layer_slices", ())
+        )
+        position_slices = tuple(
+            _normalize_feature_selection_slice(raw_slice, field_name="position_slices")
+            for raw_slice in raw_selection.get("position_slices", ())
+        )
+        triples = tuple(
+            _normalize_feature_row_triple(raw_triple, field_name="triples")
+            for raw_triple in raw_selection.get("triples", ())
+        )
+        layer_feature_pairs = tuple(
+            _normalize_layer_feature_pair(raw_pair, field_name="layer_feature_pairs")
+            for raw_pair in raw_selection.get("layer_feature_pairs", ())
+        )
+        activation_overrides = _normalize_feature_selection_activation_overrides(
+            raw_selection.get("activation_overrides")
+        )
+        return ConstrainedFeatureSelection(
+            specific_features=specific_features,
+            layers=layers,
+            positions=positions,
+            feature_ids=feature_ids,
+            layer_slices=layer_slices,
+            position_slices=position_slices,
+            triples=triples,
+            layer_feature_pairs=layer_feature_pairs,
+            activation_overrides=activation_overrides,
+        )
+
+    if isinstance(raw_selection, Iterable) and not isinstance(raw_selection, (str, bytes)):
+        return ConstrainedFeatureSelection(
+            specific_features=tuple(
+                _normalize_constrained_feature_selection_specific_feature(raw_feature) for raw_feature in raw_selection
+            )
+        )
+    raise ValueError(
+        "constrained_feature_selection must be either a legacy list of feature refs or a mapping containing "
+        "specific_features / layer_slices / position_slices / FeatureSelectionSpec-style filters."
+    )
+
+
+def _serialize_constrained_feature_selection_specific_feature(
+    raw_feature: ConstrainedFeatureSelectionRef | tuple[int, int, int],
+) -> str | list[Any] | dict[str, Any]:
+    if isinstance(raw_feature, ConstrainedFeatureSelectionRef):
+        return _serialize_constrained_feature_selection_ref(raw_feature)
+    return [int(raw_feature[0]), int(raw_feature[1]), int(raw_feature[2])]
+
+
+def _serialize_constrained_feature_selection(raw_selection: Any) -> list[Any] | dict[str, Any] | None:
+    normalized = _normalize_constrained_feature_selection(raw_selection)
+    if normalized is None:
+        return None
+
+    has_extended_filters = any(
+        (
+            normalized.layers,
+            normalized.positions,
+            normalized.feature_ids,
+            normalized.layer_slices,
+            normalized.position_slices,
+            normalized.triples,
+            normalized.layer_feature_pairs,
+            normalized.activation_overrides,
+        )
+    )
+    serialized_specific_features = [
+        _serialize_constrained_feature_selection_specific_feature(raw_feature)
+        for raw_feature in normalized.specific_features
+    ]
+    if not has_extended_filters:
+        return serialized_specific_features
+
+    payload: dict[str, Any] = {}
+    if serialized_specific_features:
+        payload["specific_features"] = serialized_specific_features
+    if normalized.layers:
+        payload["layers"] = [int(value) for value in normalized.layers]
+    if normalized.positions:
+        payload["positions"] = [int(value) for value in normalized.positions]
+    if normalized.feature_ids:
+        payload["feature_ids"] = [int(value) for value in normalized.feature_ids]
+    if normalized.layer_slices:
+        payload["layer_slices"] = [
+            _serialize_feature_selection_slice(raw_slice) for raw_slice in normalized.layer_slices
+        ]
+    if normalized.position_slices:
+        payload["position_slices"] = [
+            _serialize_feature_selection_slice(raw_slice) for raw_slice in normalized.position_slices
+        ]
+    if normalized.triples:
+        payload["triples"] = [
+            [int(layer), int(position), int(feature_id)] for layer, position, feature_id in normalized.triples
+        ]
+    if normalized.layer_feature_pairs:
+        payload["layer_feature_pairs"] = [
+            [int(layer), int(feature_id)] for layer, feature_id in normalized.layer_feature_pairs
+        ]
+    if normalized.activation_overrides:
+        payload["activation_overrides"] = [
+            {"layer": int(layer), "feature_id": int(feature_id), "value": float(value)}
+            for (layer, feature_id), value in sorted(normalized.activation_overrides.items())
+        ]
+    return payload
+
+
+def _count_specific_feature_requests(raw_selection: Any) -> int:
+    normalized = _normalize_constrained_feature_selection(raw_selection)
+    return 0 if normalized is None else len(normalized.specific_features)
+
+
 def _build_classification_prompt(entity_name: str, question: str) -> str:
-    return f"{question} {entity_name} : "
+    return build_classification_prompt_text(entity_name, question)
 
 
 def _chattify_apply_chat_template(prompt: str, tokenizer: Any) -> str:
@@ -719,7 +1100,9 @@ def serialize_notebook_config(
         "local_explanation_feature_limit": cfg.local_explanation_feature_limit,
         "local_explanation_type_name": cfg.local_explanation_type_name,
         "prompt_render_mode": cfg.prompt_render_mode,
-        "constrained_feature_selection_refs": cfg.constrained_feature_selection_refs,
+        "constrained_feature_selection_refs": _serialize_constrained_feature_selection(
+            cfg.constrained_feature_selection_refs
+        ),
         "store_latent_extraction_mode": cfg.store_latent_extraction_mode,
         "context_enhanced_scale": cfg.context_enhanced_scale,
         "debug_validation_top_k": cfg.debug_validation_top_k,
@@ -1130,6 +1513,91 @@ def _feature_rows_to_layer_feature_tuples(feature_groups: Iterable[Any]) -> list
     return list(dict.fromkeys(candidate_feature_tuples))
 
 
+def _select_feature_explanation(
+    payload: Mapping[str, Any],
+    *,
+    preferred_type_name: str | None = None,
+) -> dict[str, Any] | None:
+    explanations = payload.get("explanations")
+    if not isinstance(explanations, list):
+        return None
+
+    explanation_rows = [row for row in explanations if isinstance(row, Mapping)]
+    if not explanation_rows:
+        return None
+
+    if preferred_type_name:
+        preferred_rows = [
+            row for row in explanation_rows if str(row.get("typeName") or "").strip() == preferred_type_name
+        ]
+        if preferred_rows:
+            explanation_rows = preferred_rows
+
+    for row in explanation_rows:
+        description = row.get("description")
+        if not isinstance(description, str) or not description.strip():
+            continue
+        return {
+            "feature_explanation": clean_explanation_text(description),
+            "feature_explanation_type_name": row.get("typeName"),
+            "feature_explanation_model_name": row.get("explanationModelName"),
+        }
+    return None
+
+
+def resolve_feature_dashboard_metadata(
+    *,
+    model_id: str,
+    source_set: str,
+    feature_rows: Iterable[Any],
+    base_url: str = DEFAULT_NEURONPEDIA_BASE_URL,
+    preferred_type_name: str | None = None,
+    timeout_seconds: int = 15,
+) -> dict[tuple[int, int], dict[str, Any]]:
+    """Resolve Neuronpedia dashboard URLs and best-effort explanation text for feature rows."""
+
+    feature_tuples = _feature_rows_to_layer_feature_tuples(feature_rows)
+    if not feature_tuples:
+        return {}
+
+    feature_refs = feature_tuples_to_feature_refs(
+        model_id=model_id,
+        source_set=source_set,
+        feature_tuples=feature_tuples,
+        base_url=base_url,
+    )
+
+    metadata_by_feature: dict[tuple[int, int], dict[str, Any]] = {}
+    payload_cache: dict[str, Mapping[str, Any]] = {}
+
+    for feature_tuple, feature_ref in zip(feature_tuples, feature_refs, strict=True):
+        metadata = {
+            "feature_url": feature_ref.feature_url,
+            "feature_api_url": feature_ref.api_url,
+            "feature_model_id": feature_ref.model_id,
+            "feature_layer": feature_ref.layer,
+            "feature_index": feature_ref.index,
+        }
+        try:
+            payload = payload_cache.get(feature_ref.feature_url)
+            if payload is None:
+                payload = fetch_feature_payload(feature_ref, timeout_seconds=timeout_seconds)
+                payload_cache[feature_ref.feature_url] = payload
+        except Exception as exc:
+            metadata["feature_fetch_error"] = f"{type(exc).__name__}: {exc}"
+        else:
+            selected_explanation = _select_feature_explanation(
+                payload,
+                preferred_type_name=preferred_type_name,
+            )
+            if selected_explanation is not None:
+                metadata.update(selected_explanation)
+
+        metadata_by_feature[(int(feature_tuple[0]), int(feature_tuple[1]))] = metadata
+
+    return metadata_by_feature
+
+
 def _populate_feature_cache_from_local_exports(
     feature_ref: NeuronpediaFeatureRef,
     *,
@@ -1477,10 +1945,9 @@ def _maybe_preserve_debug_intervention_artifacts(
         "graph_target_tokens": [str(token) for token in graph_target_tokens],
         "selected_feature_score": float(selected_feature_score),
         "selected_feature_activation": float(selected_feature_activation),
-        "requested_constrained_feature_selection": [
-            _serialize_constrained_feature_selection_ref(raw_ref)
-            for raw_ref in (cfg.constrained_feature_selection_refs or ())
-        ],
+        "requested_constrained_feature_selection": _serialize_constrained_feature_selection(
+            cfg.constrained_feature_selection_refs
+        ),
         "validation_tolerances": {
             "act_atol": cfg.debug_validation_act_atol,
             "act_rtol": cfg.debug_validation_act_rtol,
@@ -1947,8 +2414,8 @@ def _build_feature_selection_spec(
     cfg: NotebookHarnessConfig,
     active_features: Any,
 ) -> FeatureSelectionSpec | None:
-    requested_refs = cfg.constrained_feature_selection_refs or ()
-    if not requested_refs:
+    requested_selection = _normalize_constrained_feature_selection(cfg.constrained_feature_selection_refs)
+    if requested_selection is None:
         return None
 
     feature_rows = torch.as_tensor(active_features, dtype=torch.long)
@@ -1958,41 +2425,81 @@ def _build_feature_selection_spec(
         )
     feature_rows = feature_rows.reshape(-1, 3)
 
-    triples: list[tuple[int, int, int]] = []
-    layer_feature_pairs: list[tuple[int, int]] = []
-    activation_overrides: dict[tuple[int, int], float] = {}
+    observed_layers = sorted(int(value) for value in feature_rows[:, 0].unique().tolist())
+    observed_positions = sorted(int(value) for value in feature_rows[:, 1].unique().tolist())
+
+    triples: list[tuple[int, int, int]] = list(requested_selection.triples)
+    layer_feature_pairs: list[tuple[int, int]] = list(requested_selection.layer_feature_pairs)
+    activation_overrides: dict[tuple[int, int], float] = dict(requested_selection.activation_overrides)
+    layers: list[int] = list(requested_selection.layers)
+    positions: list[int] = list(requested_selection.positions)
+    feature_ids: list[int] = list(requested_selection.feature_ids)
     unmatched_refs: list[str] = []
-    for raw_ref in requested_refs:
-        layer_number, feature_id = _parse_constrained_feature_selection_ref(raw_ref, cfg)
-        layer_feature_pairs.append((layer_number, feature_id))
-        _, activation_value = _split_constrained_feature_selection_ref(raw_ref)
-        if activation_value is not None:
-            activation_overrides[(layer_number, feature_id)] = float(activation_value)
-        matches = feature_rows[(feature_rows[:, 0] == layer_number) & (feature_rows[:, 2] == feature_id)]
-        if matches.numel() == 0:
-            unmatched_refs.append(str(_serialize_constrained_feature_selection_ref(raw_ref)))
+
+    def _extend_values_for_slice(target: list[int], observed_values: list[int], raw_slice: slice) -> None:
+        for value in observed_values:
+            if raw_slice.start is not None and value < int(raw_slice.start):
+                continue
+            if raw_slice.stop is not None and value >= int(raw_slice.stop):
+                continue
+            if raw_slice.step not in (None, 1):
+                base = int(raw_slice.start) if raw_slice.start is not None else observed_values[0]
+                if (value - base) % int(raw_slice.step) != 0:
+                    continue
+            target.append(int(value))
+
+    for raw_slice in requested_selection.layer_slices:
+        _extend_values_for_slice(layers, observed_layers, raw_slice)
+    for raw_slice in requested_selection.position_slices:
+        _extend_values_for_slice(positions, observed_positions, raw_slice)
+
+    for raw_feature in requested_selection.specific_features:
+        if isinstance(raw_feature, ConstrainedFeatureSelectionRef):
+            layer_number, feature_id = _parse_constrained_feature_selection_ref(raw_feature, cfg)
+            layer_feature_pairs.append((layer_number, feature_id))
+            _, activation_value = _split_constrained_feature_selection_ref(raw_feature)
+            if activation_value is not None:
+                activation_overrides[(layer_number, feature_id)] = float(activation_value)
+            matches = feature_rows[(feature_rows[:, 0] == layer_number) & (feature_rows[:, 2] == feature_id)]
+            if matches.numel() == 0:
+                unmatched_refs.append(str(_serialize_constrained_feature_selection_ref(raw_feature)))
+                continue
+            for row in matches:
+                row_tuple = tuple(int(value) for value in row.tolist())
+                triples.append(cast(tuple[int, int, int], row_tuple))
             continue
-        for row in matches:
-            row_tuple = tuple(int(value) for value in row.tolist())
-            triples.append(cast(tuple[int, int, int], row_tuple))
+
+        triple = cast(tuple[int, int, int], raw_feature)
+        triples.append(triple)
+        matches = feature_rows[
+            (feature_rows[:, 0] == triple[0]) & (feature_rows[:, 1] == triple[1]) & (feature_rows[:, 2] == triple[2])
+        ]
+        if matches.numel() == 0:
+            unmatched_refs.append(str(_serialize_constrained_feature_selection_specific_feature(triple)))
 
     if unmatched_refs:
         warnings.warn(
             "Some requested feature-selection refs were not present in the extracted attribution graph; "
-            "extract_top_features will synthesize candidate rows using same-layer or global baselines: "
+            "extract_top_features will synthesize candidate rows for same-layer ref requests when possible: "
             + ", ".join(unmatched_refs),
             stacklevel=2,
         )
 
     unique_triples = list(dict.fromkeys(triples))
     unique_pairs = list(dict.fromkeys(layer_feature_pairs))
+    unique_layers = list(dict.fromkeys(layers))
+    unique_positions = list(dict.fromkeys(positions))
+    unique_feature_ids = list(dict.fromkeys(feature_ids))
     return (
         FeatureSelectionSpec(
+            layers=unique_layers,
+            positions=unique_positions,
+            feature_ids=unique_feature_ids,
             triples=unique_triples,
             layer_feature_pairs=unique_pairs,
             activation_overrides=activation_overrides,
         )
-        if unique_triples or unique_pairs
+        if unique_layers or unique_positions or unique_feature_ids or unique_triples or unique_pairs
         else None
     )
 
@@ -2004,53 +2511,23 @@ def _extract_top_features_with_optional_filter(
     *,
     top_n: int,
 ) -> tuple[Any, list[tuple[int, int, int]]]:
-    def _post_filter_top_features_result(result: Any, selection: FeatureSelectionSpec) -> Any:
-        feature_ids = torch.as_tensor(getattr(result, "top_feature_ids", []), dtype=torch.long).reshape(-1, 3)
-        feature_scores = torch.as_tensor(getattr(result, "top_feature_scores", []), dtype=torch.float32).reshape(-1)
-        activation_values = getattr(result, "top_feature_activation_values", None)
-        activation_tensor = (
-            None if activation_values is None else torch.as_tensor(activation_values, dtype=torch.float32).reshape(-1)
-        )
-
-        if feature_ids.numel() == 0:
-            setattr(result, "top_feature_ids", torch.empty((0, 3), dtype=torch.long))
-            setattr(result, "top_feature_scores", torch.empty((0,), dtype=torch.float32))
-            if activation_tensor is not None:
-                setattr(result, "top_feature_activation_values", torch.empty((0,), dtype=torch.float32))
-            return result
-
-        selection_mask = apply_feature_selection_filter(feature_ids, selection)
-        if selection_mask.numel() == 0 or not selection_mask.any():
-            setattr(result, "top_feature_ids", torch.empty((0, 3), dtype=torch.long))
-            setattr(result, "top_feature_scores", torch.empty((0,), dtype=torch.float32))
-            if activation_tensor is not None:
-                setattr(result, "top_feature_activation_values", torch.empty((0,), dtype=torch.float32))
-            return result
-
-        selected_indices = selection_mask.nonzero(as_tuple=False).reshape(-1)
-        setattr(result, "top_feature_ids", feature_ids.index_select(0, selected_indices).detach().cpu())
-        setattr(result, "top_feature_scores", feature_scores.index_select(0, selected_indices).detach().cpu())
-        if activation_tensor is not None and activation_tensor.shape[0] == feature_ids.shape[0]:
-            setattr(
-                result,
-                "top_feature_activation_values",
-                activation_tensor.index_select(0, selected_indices).detach().cpu(),
-            )
-        return result
-
     feature_selection = _build_feature_selection_spec(cfg, top_payload.get("active_features", []))
     call_kwargs: dict[str, Any] = {"top_n": top_n}
     applied_triples: list[tuple[int, int, int]] = []
     if feature_selection is not None:
         call_kwargs["feature_selection"] = feature_selection
-        applied_triples = list(feature_selection.triples)
+        feature_rows = torch.as_tensor(top_payload.get("active_features", []), dtype=torch.long)
+        if feature_rows.numel() > 0:
+            feature_rows = feature_rows.reshape(-1, 3)
+            applied_triples = [
+                cast(tuple[int, int, int], tuple(int(value) for value in row.tolist()))
+                for row in feature_rows[apply_feature_selection_filter(feature_rows, feature_selection)]
+            ]
 
     top_features_result = cast(
         Any,
         it.extract_top_features(module, it.AnalysisBatch(**top_payload), cast(Any, None), 0, **call_kwargs),
     )
-    if feature_selection is not None:
-        top_features_result = _post_filter_top_features_result(top_features_result, feature_selection)
     return top_features_result, applied_triples
 
 

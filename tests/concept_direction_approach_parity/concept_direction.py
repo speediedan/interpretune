@@ -16,7 +16,7 @@ import interpretune.analysis
 from interpretune.analysis.execution import execute_analysis_op
 from interpretune.analysis.ops.helpers import (
     AnalysisInputs,
-    FeatureSelectionSpec,
+    _flatten_concept_store_rows,
     last_token_logits,
 )
 from interpretune.config import AnalysisCfg, init_analysis_cfgs
@@ -32,7 +32,6 @@ from interpretune.utils import (
     check_local_explanation_coverage,
     feature_tuples_to_feature_refs,
     default_np_cache_dir,
-    parse_feature_url,
 )
 from interpretune.utils.neuronpedia_explanations import (
     NeuronpediaFeatureRef,
@@ -53,25 +52,35 @@ from tests.nb_experiment_harness.config import (
     load_experiment_config,
 )
 from tests.nb_experiment_harness.nb_harness_utils import (
+    ConstrainedFeatureSelection,
+    ConstrainedFeatureSelectionRef,
     _build_graph_analysis_inputs as _shared_build_graph_analysis_inputs,
-    _build_feature_selection_spec as _shared_build_feature_selection_spec,
+    _count_specific_feature_requests,
     _get_config_value_with_preset_default,
-    _extract_top_features_with_optional_filter as _shared_extract_top_features_with_optional_filter,
+    _normalize_constrained_feature_selection as _shared_normalize_constrained_feature_selection,
     build_shared_summary_record,
     create_work_root,
     tensor_to_cpu,
 )
 from tests.nb_experiment_harness.pipeline_patterns import (
+    build_classification_prompt_examples as _shared_build_classification_prompt_examples,
     collect_feature_pool as _shared_collect_feature_pool,
     run_debug_intervention_validation as _shared_run_debug_intervention_validation,
     run_pipeline as _shared_run_pipeline,
     run_direct_projection_pipeline as _shared_run_direct_projection_pipeline,
     run_scale_sweep as _shared_run_scale_sweep,
 )
-from tests.parity_analysis.intervention_drift_analysis import (
-    resolve_artifact_output_dir,
-    save_preserved_intervention_artifacts,
-    tensor_fingerprint,
+from tests.parity_analysis.concept_direction_parity_analysis import (
+    DEFAULT_RANDOM_PERTURBATION_SCALE,
+    build_concept_direction_stage_artifact,
+    build_context_extraction_artifact,
+    build_prompt_alignment_artifact,
+    build_random_vector_perturbation,
+    capture_context_enhanced_extraction_snapshot,
+    compare_top_feature_sets,
+    cosine_similarity_value,
+    compute_concept_direction_geometry,
+    save_concept_direction_pipeline_state_artifacts,
 )
 from tests.nb_experiment_harness.session import (
     experiment_session,
@@ -85,16 +94,9 @@ if TYPE_CHECKING:
 
 PromptRenderMode = Literal["plain", "apply_chat_template", "gemma_dataclass"]
 StoreLatentExtractionMode = Literal["answer_position_state", "context_enhanced"]
-ConstrainedFeatureSelectionRefValue = str | tuple[str, str, int, int]
 AnalysisMode = Literal["concept_pair", "explicit_embedding_difference", "debug_intervention_pipelines"]
 ConceptDirectionMode = Literal["mean_difference", "paired_rejection", "single_group"]
 DebugSessionSurfacePreset = Literal["notebook_default", "parity_surface"]
-
-
-@dataclass(frozen=True)
-class ConstrainedFeatureSelectionRef:
-    ref: ConstrainedFeatureSelectionRefValue
-    activation_value: float | None = None
 
 
 DEFAULT_CONCEPT_PAIR_CONFIG_DIR = Path(__file__).with_name("configs")
@@ -218,61 +220,8 @@ def resolve_concept_pair_config_path(
     return (config_dir / derived_name).resolve()
 
 
-def _normalize_constrained_feature_selection_ref(raw_ref: Any) -> ConstrainedFeatureSelectionRef:
-    if isinstance(raw_ref, ConstrainedFeatureSelectionRef):
-        return raw_ref
-
-    activation_value = None
-    if isinstance(raw_ref, Mapping):
-        ref_value = raw_ref.get("ref", raw_ref.get("feature_ref"))
-        activation_value_raw = raw_ref.get("activation_value")
-        if ref_value is None:
-            raise ValueError(
-                "Constrained feature selection mappings must include 'ref' (or legacy 'feature_ref')."
-            )
-        raw_ref = ref_value
-        activation_value = None if activation_value_raw is None else float(activation_value_raw)
-
-    if isinstance(raw_ref, str):
-        return ConstrainedFeatureSelectionRef(ref=raw_ref, activation_value=activation_value)
-    if isinstance(raw_ref, Sequence) and not isinstance(raw_ref, (str, bytes)) and len(raw_ref) == 4:
-        model_id, source_set, layer_number, feature_index = raw_ref
-        return ConstrainedFeatureSelectionRef(
-            ref=(str(model_id), str(source_set), int(layer_number), int(feature_index)),
-            activation_value=activation_value,
-        )
-    raise ValueError(
-        "Constrained feature selection entries must be full Neuronpedia refs or "
-        "(model_id, source_set, layer, feature_index) tuples, optionally wrapped in a mapping with "
-        "an activation_value override."
-    )
-
-
-def _normalize_constrained_feature_selection_refs(
-    raw_refs: Iterable[Any] | None,
-) -> tuple[ConstrainedFeatureSelectionRef, ...] | None:
-    if raw_refs is None:
-        return None
-    return tuple(_normalize_constrained_feature_selection_ref(raw_ref) for raw_ref in raw_refs)
-
-
-def _serialize_constrained_feature_selection_ref(
-    raw_ref: ConstrainedFeatureSelectionRef,
-) -> str | list[Any] | dict[str, Any]:
-    if isinstance(raw_ref.ref, str):
-        serialized_ref: str | list[Any] = raw_ref.ref
-    else:
-        model_id, source_set, layer_number, feature_index = raw_ref.ref
-        serialized_ref = [model_id, source_set, layer_number, feature_index]
-
-    if raw_ref.activation_value is None:
-        return serialized_ref
-    return {"ref": serialized_ref, "activation_value": float(raw_ref.activation_value)}
-
-
-def _build_classification_prompt(entity_name: str, question: str) -> str:
-    """Build a classification-style prompt for a single entity."""
-    return f"{question} {entity_name} : "
+def _normalize_constrained_feature_selection_refs(raw_refs: Any) -> ConstrainedFeatureSelection | None:
+    return _shared_normalize_constrained_feature_selection(raw_refs)
 
 
 def _chattify_apply_chat_template(prompt: str, tokenizer: Any) -> str:
@@ -485,9 +434,11 @@ class NotebookHarnessConfig:
     local_explanation_retry_backoff_seconds: float = DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS
     key_tokens_override: tuple[str, ...] | None = None
     concept_pair_config_path: str | None = None
-    constrained_feature_selection_refs: tuple[ConstrainedFeatureSelectionRef, ...] | None = None
+    constrained_feature_selection_refs: ConstrainedFeatureSelection | None = None
     store_latent_extraction_mode: StoreLatentExtractionMode = "answer_position_state"
     context_enhanced_scale: float = 1.0
+    debug_pipeline_state_artifacts: bool = False
+    debug_pipeline_state_artifact_name: str | None = None
     direct_projection_interventions: dict[str, Any] | None = None
     direct_projection_intervention_hook_pattern: str | None = None
     direct_projection_intervention_mode: str | None = None
@@ -596,6 +547,9 @@ class NotebookHarnessConfig:
             self.direct_projection_intervention_use_intervention_tensor_as_basis = bool(
                 self.direct_projection_intervention_use_intervention_tensor_as_basis
             )
+        if self.debug_pipeline_state_artifact_name is not None:
+            cleaned_artifact_name = str(self.debug_pipeline_state_artifact_name).strip()
+            self.debug_pipeline_state_artifact_name = cleaned_artifact_name or None
 
         mode_warning_messages = list(self.mode_warning_messages)
         if self.analysis_mode == "explicit_embedding_difference":
@@ -608,7 +562,7 @@ class NotebookHarnessConfig:
                 "concept-pair comparison phases."
             )
         elif self.analysis_mode == "debug_intervention_pipelines":
-            if not self.constrained_feature_selection_refs or len(self.constrained_feature_selection_refs) != 1:
+            if _count_specific_feature_requests(self.constrained_feature_selection_refs) != 1:
                 raise ValueError(
                     "debug_intervention_pipelines mode requires exactly one constrained feature selection ref"
                 )
@@ -638,6 +592,11 @@ class NotebookHarnessConfig:
         if self.enable_zero_softcap:
             mode_warning_messages.append(
                 "zero_softcap is enabled for all supported forward and intervention paths in this notebook run."
+            )
+        if self.debug_pipeline_state_artifacts:
+            mode_warning_messages.append(
+                "debug_pipeline_state_artifacts is enabled; embed/store direction construction and graph stages "
+                "will be preserved for later parity comparison."
             )
         self.mode_warning_messages = tuple(mode_warning_messages)
         self.shared_sections = build_shared_harness_sections(
@@ -1143,7 +1102,7 @@ def build_notebook_harness_config(
             or None,
         ),
         constrained_feature_selection_refs=cast(
-            tuple[ConstrainedFeatureSelectionRef, ...] | None,
+            ConstrainedFeatureSelection | None,
             get_config_value(
                 resolved_payload,
                 section="ANALYSIS",
@@ -1171,6 +1130,24 @@ def build_notebook_harness_config(
                 flat_key="CONTEXT_ENHANCED_SCALE",
                 default=1.0,
             )
+        ),
+        debug_pipeline_state_artifacts=bool(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="debug_pipeline_state_artifacts",
+                flat_key="DEBUG_PIPELINE_STATE_ARTIFACTS",
+                default=False,
+            )
+        ),
+        debug_pipeline_state_artifact_name=cast(
+            str | None,
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="debug_pipeline_state_artifact_name",
+                flat_key="DEBUG_PIPELINE_STATE_ARTIFACT_NAME",
+            ),
         ),
         direct_projection_interventions=cast(
             dict[str, Any] | None,
@@ -1703,84 +1680,6 @@ def configure_analysis(module: Any, graph_op: Any, scale_factor: float) -> None:
         init_analysis_cfgs(module, [module.analysis_cfg])
 
 
-def _debug_intervention_artifact_name(
-    cfg: NotebookHarnessConfig,
-    feature_row: Sequence[int],
-) -> str:
-    feature_suffix = "_".join(str(int(value)) for value in feature_row)
-    config_name = str(cfg.experiment_config_name or "manual").strip().replace(" ", "_")
-    return f"{cfg.experiment_name}_{config_name}_{cfg.model_family}_{cfg.model_variant}_{feature_suffix}"
-
-
-def _maybe_preserve_debug_intervention_artifacts(
-    cfg: NotebookHarnessConfig,
-    *,
-    graph: Any,
-    feature_row: Sequence[int],
-    interventions: Sequence[Sequence[int | float]],
-    baseline_activation_cache: torch.Tensor,
-    intervention_activation_cache: torch.Tensor,
-    baseline_logits: torch.Tensor,
-    intervention_logits: torch.Tensor,
-    graph_target_ids: Sequence[int],
-    graph_target_tokens: Sequence[str],
-    selected_feature_score: float,
-    selected_feature_activation: float,
-    report: Any,
-    runtime_state: dict[str, Any] | None = None,
-) -> Path | None:
-    artifact_dir = resolve_artifact_output_dir(
-        artifact_name=_debug_intervention_artifact_name(cfg, feature_row),
-    )
-    if artifact_dir is None:
-        return None
-
-    metadata = {
-        "artifact_kind": "concept_direction_debug_validation",
-        "experiment_name": cfg.experiment_name,
-        "experiment_config_name": cfg.experiment_config_name,
-        "analysis_mode": cfg.analysis_mode,
-        "model_family": cfg.model_family,
-        "model_variant": cfg.model_variant,
-        "model_name": cfg.model_name,
-        "transcoder_set": cfg.transcoder_set,
-        "prompt": cfg.prompt,
-        "prompt_render_mode": cfg.prompt_render_mode,
-        "graph_target_ids": [int(token_id) for token_id in graph_target_ids],
-        "graph_target_tokens": [str(token) for token in graph_target_tokens],
-        "selected_feature_score": float(selected_feature_score),
-        "selected_feature_activation": float(selected_feature_activation),
-        "requested_constrained_feature_selection": [
-            _serialize_constrained_feature_selection_ref(raw_ref)
-            for raw_ref in (cfg.constrained_feature_selection_refs or ())
-        ],
-        "validation_tolerances": {
-            "act_atol": cfg.debug_validation_act_atol,
-            "act_rtol": cfg.debug_validation_act_rtol,
-            "logit_atol": cfg.debug_validation_logit_atol,
-            "logit_rtol": cfg.debug_validation_logit_rtol,
-        },
-        "runtime_state": runtime_state or {},
-    }
-    save_preserved_intervention_artifacts(
-        artifact_dir,
-        graph=graph,
-        feature_row=feature_row,
-        interventions=interventions,
-        baseline_activation_cache=baseline_activation_cache,
-        intervention_activation_cache=intervention_activation_cache,
-        baseline_logits=baseline_logits,
-        intervention_logits=intervention_logits,
-        activation_atol=cfg.debug_validation_act_atol,
-        activation_rtol=cfg.debug_validation_act_rtol,
-        logit_atol=cfg.debug_validation_logit_atol,
-        logit_rtol=cfg.debug_validation_logit_rtol,
-        report=report,
-        metadata=metadata,
-    )
-    return artifact_dir
-
-
 @contextmanager
 def maybe_zero_softcap(module: Any, cfg: NotebookHarnessConfig):
     if not cfg.enable_zero_softcap:
@@ -1870,392 +1769,6 @@ def _resolve_model_layer_count(module: Any) -> int:
             return int(value)
 
     raise ValueError("Unable to resolve the replacement model layer count for debug intervention validation")
-
-
-def _match_feature_row_index(active_features: torch.Tensor, feature_row: torch.Tensor) -> int:
-    matches = (active_features == feature_row.reshape(1, 3)).all(dim=1).nonzero(as_tuple=False).reshape(-1)
-    if matches.numel() != 1:
-        raise ValueError(
-            "Expected exactly one active-feature row to match the selected debug intervention feature; "
-            f"found {int(matches.numel())} matches for {feature_row.tolist()}"
-        )
-    return int(matches.item())
-
-
-def _rank_top_indices(values: torch.Tensor, top_k: int) -> torch.Tensor:
-    flat_values = tensor_to_cpu(torch.as_tensor(values, dtype=torch.float32)).reshape(-1)
-    if flat_values.numel() == 0 or top_k <= 0:
-        return torch.empty((0,), dtype=torch.long)
-    return torch.argsort(flat_values, descending=True)[: min(int(top_k), flat_values.numel())]
-
-
-def _summarize_feature_row_deltas(
-    feature_rows: torch.Tensor,
-    baseline_values: torch.Tensor,
-    post_values: torch.Tensor,
-    expected_delta: torch.Tensor,
-    *,
-    top_k: int,
-    ranking: Literal["abs_error", "expected_delta", "actual_delta"] = "abs_error",
-) -> list[dict[str, Any]]:
-    feature_rows_t = tensor_to_cpu(torch.as_tensor(feature_rows, dtype=torch.long)).reshape(-1, 3)
-    baseline_t = tensor_to_cpu(torch.as_tensor(baseline_values, dtype=torch.float32)).reshape(-1)
-    post_t = tensor_to_cpu(torch.as_tensor(post_values, dtype=torch.float32)).reshape(-1)
-    expected_t = tensor_to_cpu(torch.as_tensor(expected_delta, dtype=torch.float32)).reshape(-1)
-
-    count = feature_rows_t.shape[0]
-    if not (baseline_t.shape[0] == count == post_t.shape[0] == expected_t.shape[0]):
-        raise ValueError("Feature-row diagnostic inputs must all have matching lengths")
-    if count == 0:
-        return []
-
-    actual_delta_t = post_t - baseline_t
-    predicted_t = baseline_t + expected_t
-    signed_error_t = post_t - predicted_t
-    abs_error_t = signed_error_t.abs()
-    if ranking == "expected_delta":
-        rank_values = expected_t.abs()
-    elif ranking == "actual_delta":
-        rank_values = actual_delta_t.abs()
-    else:
-        rank_values = abs_error_t
-
-    rows: list[dict[str, Any]] = []
-    for display_rank, graph_index in enumerate(_rank_top_indices(rank_values, top_k).tolist(), start=1):
-        layer, position, feature_id = (int(value) for value in feature_rows_t[graph_index].tolist())
-        expected_delta_value = float(expected_t[graph_index].item())
-        actual_delta_value = float(actual_delta_t[graph_index].item())
-        abs_error_value = float(abs_error_t[graph_index].item())
-        rows.append(
-            {
-                "rank": display_rank,
-                "graph_index": int(graph_index),
-                "layer": layer,
-                "position": position,
-                "feature_id": feature_id,
-                "row": [layer, position, feature_id],
-                "baseline_activation": float(baseline_t[graph_index].item()),
-                "predicted_activation": float(predicted_t[graph_index].item()),
-                "post_activation": float(post_t[graph_index].item()),
-                "expected_delta": expected_delta_value,
-                "actual_delta": actual_delta_value,
-                "abs_error": abs_error_value,
-                "signed_error": float(signed_error_t[graph_index].item()),
-                "relative_abs_error": abs_error_value / max(abs(expected_delta_value), 1e-12),
-                "sign_mismatch": bool(expected_delta_value * actual_delta_value < 0.0),
-                "ranking": ranking,
-                "rank_metric": float(rank_values[graph_index].item()),
-            }
-        )
-    return rows
-
-
-def _summarize_layer_error_rows(
-    feature_rows: torch.Tensor,
-    baseline_values: torch.Tensor,
-    post_values: torch.Tensor,
-    expected_delta: torch.Tensor,
-    *,
-    top_k: int,
-) -> list[dict[str, Any]]:
-    feature_rows_t = tensor_to_cpu(torch.as_tensor(feature_rows, dtype=torch.long)).reshape(-1, 3)
-    baseline_t = tensor_to_cpu(torch.as_tensor(baseline_values, dtype=torch.float32)).reshape(-1)
-    post_t = tensor_to_cpu(torch.as_tensor(post_values, dtype=torch.float32)).reshape(-1)
-    expected_t = tensor_to_cpu(torch.as_tensor(expected_delta, dtype=torch.float32)).reshape(-1)
-
-    count = feature_rows_t.shape[0]
-    if not (baseline_t.shape[0] == count == post_t.shape[0] == expected_t.shape[0]):
-        raise ValueError("Layer diagnostic inputs must all have matching lengths")
-    if count == 0:
-        return []
-
-    actual_delta_t = post_t - baseline_t
-    abs_error_t = (post_t - (baseline_t + expected_t)).abs()
-    summaries: list[dict[str, Any]] = []
-    for layer_value in sorted({int(layer) for layer in feature_rows_t[:, 0].tolist()}):
-        layer_mask = feature_rows_t[:, 0] == layer_value
-        layer_errors = abs_error_t[layer_mask]
-        layer_expected = expected_t[layer_mask]
-        layer_actual = actual_delta_t[layer_mask]
-        sign_mismatches = ((layer_expected * layer_actual) < 0.0).sum().item()
-        summaries.append(
-            {
-                "layer": int(layer_value),
-                "feature_count": int(layer_mask.sum().item()),
-                "max_abs_error": float(layer_errors.max().item()),
-                "mean_abs_error": float(layer_errors.mean().item()),
-                "max_abs_expected_delta": float(layer_expected.abs().max().item()),
-                "mean_abs_expected_delta": float(layer_expected.abs().mean().item()),
-                "max_abs_actual_delta": float(layer_actual.abs().max().item()),
-                "mean_abs_actual_delta": float(layer_actual.abs().mean().item()),
-                "sign_mismatch_count": int(sign_mismatches),
-            }
-        )
-    summaries.sort(key=lambda entry: entry["max_abs_error"], reverse=True)
-    return summaries[: min(int(top_k), len(summaries))]
-
-
-def _summarize_logit_delta_rows(
-    token_ids: Sequence[int],
-    token_labels: Sequence[str],
-    baseline_logits: torch.Tensor,
-    post_logits: torch.Tensor,
-    baseline_demeaned_logits: torch.Tensor,
-    post_demeaned_logits: torch.Tensor,
-    expected_delta: torch.Tensor,
-    *,
-    top_k: int,
-) -> list[dict[str, Any]]:
-    baseline_logits_t = tensor_to_cpu(torch.as_tensor(baseline_logits, dtype=torch.float32)).reshape(-1)
-    post_logits_t = tensor_to_cpu(torch.as_tensor(post_logits, dtype=torch.float32)).reshape(-1)
-    baseline_demeaned_t = tensor_to_cpu(torch.as_tensor(baseline_demeaned_logits, dtype=torch.float32)).reshape(-1)
-    post_demeaned_t = tensor_to_cpu(torch.as_tensor(post_demeaned_logits, dtype=torch.float32)).reshape(-1)
-    expected_t = tensor_to_cpu(torch.as_tensor(expected_delta, dtype=torch.float32)).reshape(-1)
-
-    count = len(token_ids)
-    if not (
-        baseline_logits_t.shape[0]
-        == count
-        == post_logits_t.shape[0]
-        == baseline_demeaned_t.shape[0]
-        == post_demeaned_t.shape[0]
-        == expected_t.shape[0]
-    ):
-        raise ValueError("Logit diagnostic inputs must all have matching lengths")
-    if count == 0:
-        return []
-
-    actual_delta_t = post_demeaned_t - baseline_demeaned_t
-    predicted_t = baseline_demeaned_t + expected_t
-    signed_error_t = post_demeaned_t - predicted_t
-    abs_error_t = signed_error_t.abs()
-
-    rows: list[dict[str, Any]] = []
-    for display_rank, token_index in enumerate(_rank_top_indices(abs_error_t, top_k).tolist(), start=1):
-        expected_delta_value = float(expected_t[token_index].item())
-        actual_delta_value = float(actual_delta_t[token_index].item())
-        abs_error_value = float(abs_error_t[token_index].item())
-        rows.append(
-            {
-                "rank": display_rank,
-                "token_id": int(token_ids[token_index]),
-                "token": str(token_labels[token_index]),
-                "baseline_logit": float(baseline_logits_t[token_index].item()),
-                "post_logit": float(post_logits_t[token_index].item()),
-                "baseline_demeaned_logit": float(baseline_demeaned_t[token_index].item()),
-                "post_demeaned_logit": float(post_demeaned_t[token_index].item()),
-                "expected_delta": expected_delta_value,
-                "actual_delta": actual_delta_value,
-                "abs_error": abs_error_value,
-                "signed_error": float(signed_error_t[token_index].item()),
-                "relative_abs_error": abs_error_value / max(abs(expected_delta_value), 1e-12),
-                "sign_mismatch": bool(expected_delta_value * actual_delta_value < 0.0),
-            }
-        )
-    return rows
-
-
-def _summarize_same_feature_rows(
-    feature_rows: torch.Tensor,
-    baseline_values: torch.Tensor,
-    post_values: torch.Tensor,
-    expected_delta: torch.Tensor,
-    *,
-    layer: int,
-    feature_id: int,
-) -> list[dict[str, Any]]:
-    feature_rows_t = tensor_to_cpu(torch.as_tensor(feature_rows, dtype=torch.long)).reshape(-1, 3)
-    baseline_t = tensor_to_cpu(torch.as_tensor(baseline_values, dtype=torch.float32)).reshape(-1)
-    post_t = tensor_to_cpu(torch.as_tensor(post_values, dtype=torch.float32)).reshape(-1)
-    expected_t = tensor_to_cpu(torch.as_tensor(expected_delta, dtype=torch.float32)).reshape(-1)
-
-    count = feature_rows_t.shape[0]
-    if not (baseline_t.shape[0] == count == post_t.shape[0] == expected_t.shape[0]):
-        raise ValueError("Same-feature diagnostic inputs must all have matching lengths")
-
-    actual_delta_t = post_t - baseline_t
-    rows: list[dict[str, Any]] = []
-    for graph_index in ((feature_rows_t[:, 0] == layer) & (feature_rows_t[:, 2] == feature_id)).nonzero(
-        as_tuple=False
-    ).reshape(-1).tolist():
-        rows.append(
-            {
-                "graph_index": int(graph_index),
-                "row": [int(value) for value in feature_rows_t[graph_index].tolist()],
-                "position": int(feature_rows_t[graph_index, 1].item()),
-                "baseline_activation": float(baseline_t[graph_index].item()),
-                "post_activation": float(post_t[graph_index].item()),
-                "expected_delta": float(expected_t[graph_index].item()),
-                "actual_delta": float(actual_delta_t[graph_index].item()),
-                "abs_error": float(
-                    (post_t[graph_index] - (baseline_t[graph_index] + expected_t[graph_index])).abs().item()
-                ),
-            }
-        )
-    rows.sort(key=lambda entry: (entry["position"], entry["graph_index"]))
-    return rows
-
-
-def _serialize_intervention_call_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
-    serialized: dict[str, Any] = {}
-    for key, value in kwargs.items():
-        if isinstance(value, torch.Tensor):
-            serialized[key] = tensor_fingerprint(value)
-        elif isinstance(value, range):
-            serialized[key] = {"kind": "range", "start": value.start, "stop": value.stop, "step": value.step}
-        else:
-            serialized[key] = value
-    return serialized
-
-
-def _summarize_graph_input_tokens(
-    tokenizer: Any,
-    rendered_prompt: str,
-    prompt_render_mode: PromptRenderMode,
-    graph_inputs: Any,
-) -> dict[str, Any]:
-    rendered_prompt_token_ids = _tokenize_rendered_prompt(tokenizer, rendered_prompt, prompt_render_mode)
-    if isinstance(graph_inputs, torch.Tensor):
-        graph_input_token_ids = tensor_to_cpu(torch.as_tensor(graph_inputs, dtype=torch.long)).reshape(-1).tolist()
-        graph_input_source = "graph_result.input_tokens"
-    else:
-        graph_input_token_ids = _tokenize_rendered_prompt(tokenizer, str(graph_inputs), prompt_render_mode)
-        graph_input_source = type(graph_inputs).__name__
-
-    first_difference_index = next(
-        (
-            index
-            for index, (rendered_token_id, graph_token_id) in enumerate(
-                zip(rendered_prompt_token_ids, graph_input_token_ids, strict=False)
-            )
-            if rendered_token_id != graph_token_id
-        ),
-        None,
-    )
-    if first_difference_index is None and len(rendered_prompt_token_ids) != len(graph_input_token_ids):
-        first_difference_index = min(len(rendered_prompt_token_ids), len(graph_input_token_ids))
-
-    return {
-        "graph_input_source": graph_input_source,
-        "rendered_prompt_token_count": len(rendered_prompt_token_ids),
-        "graph_input_token_count": len(graph_input_token_ids),
-        "graph_inputs_match_rendered_prompt": rendered_prompt_token_ids == graph_input_token_ids,
-        "first_difference_index": first_difference_index,
-        "rendered_prompt_token_ids": rendered_prompt_token_ids,
-        "graph_input_token_ids": graph_input_token_ids,
-    }
-
-
-def _parse_constrained_feature_selection_ref(
-    raw_ref: ConstrainedFeatureSelectionRef,
-    cfg: NotebookHarnessConfig,
-) -> tuple[int, int]:
-    ref_value = raw_ref.ref
-    layer_identifier: str
-    feature_index: str
-    if not isinstance(ref_value, str):
-        model_id = ref_value[0]
-        source_set = ref_value[1]
-        layer_number = int(ref_value[2])
-        feature_index_value = int(ref_value[3])
-        if model_id != cfg.neuronpedia_model:
-            raise ValueError(
-                f"Constrained feature selection tuple {raw_ref!r} targets model {model_id}, "
-                f"expected {cfg.neuronpedia_model}."
-            )
-        if source_set != cfg.neuronpedia_set:
-            raise ValueError(
-                f"Constrained feature selection tuple {raw_ref!r} targets source set {source_set}, "
-                f"expected {cfg.neuronpedia_set}."
-            )
-        return int(layer_number), int(feature_index_value)
-
-    if "://" in ref_value:
-        feature_ref = parse_feature_url(ref_value)
-        if feature_ref.model_id != cfg.neuronpedia_model:
-            raise ValueError(
-                f"Constrained feature selection ref {ref_value!r} targets model {feature_ref.model_id}, "
-                f"expected {cfg.neuronpedia_model}."
-            )
-        layer_identifier = feature_ref.layer
-        feature_index = feature_ref.index
-    else:
-        parts = [part for part in ref_value.split("/") if part]
-        if len(parts) == 3:
-            model_id, layer_identifier, feature_index = parts
-            if model_id != cfg.neuronpedia_model:
-                raise ValueError(
-                    f"Constrained feature selection ref {ref_value!r} targets model {model_id}, "
-                    f"expected {cfg.neuronpedia_model}."
-                )
-        elif len(parts) == 2:
-            layer_identifier, feature_index = parts
-        else:
-            raise ValueError(
-                "Constrained feature selection refs must be full Neuronpedia URLs or 'model/layer/index' or "
-                "'layer/index' strings. "
-                f"Got: {ref_value!r}"
-            )
-
-    layer_parts = str(layer_identifier).split("-", 1)
-    if len(layer_parts) == 2 and layer_parts[1] != cfg.neuronpedia_set:
-        raise ValueError(
-            f"Constrained feature selection ref {raw_ref!r} targets source set {layer_parts[1]}, "
-            f"expected {cfg.neuronpedia_set}."
-        )
-    layer_number = int(str(layer_identifier).split("-", 1)[0])
-    return layer_number, int(feature_index)
-
-
-def _build_feature_selection_spec(
-    cfg: NotebookHarnessConfig,
-    active_features: Any,
-) -> FeatureSelectionSpec | None:
-    return _shared_build_feature_selection_spec(cfg, active_features)
-
-
-def _extract_top_features_with_optional_filter(
-    module: Any,
-    cfg: NotebookHarnessConfig,
-    top_payload: dict[str, Any],
-    *,
-    top_n: int,
-) -> tuple[Any, list[tuple[int, int, int]]]:
-    return _shared_extract_top_features_with_optional_filter(module, cfg, top_payload, top_n=top_n)
-
-
-def _reduce_top_features_result_to_single_feature(result: Any) -> tuple[Any, int]:
-    feature_ids = torch.as_tensor(getattr(result, "top_feature_ids", []), dtype=torch.long).reshape(-1, 3)
-    feature_scores = torch.as_tensor(getattr(result, "top_feature_scores", []), dtype=torch.float32).reshape(-1)
-    activation_values = getattr(result, "top_feature_activation_values", None)
-    activation_tensor = (
-        None if activation_values is None else torch.as_tensor(activation_values, dtype=torch.float32).reshape(-1)
-    )
-
-    candidate_count = int(feature_ids.shape[0])
-    if candidate_count == 0:
-        raise ValueError(
-            "debug_intervention_pipelines mode expected at least one selected feature row after filtering."
-        )
-    if candidate_count == 1:
-        return result, candidate_count
-
-    if feature_scores.shape[0] == feature_ids.shape[0]:
-        selected_index = int(torch.argmax(feature_scores.abs()).item())
-    else:
-        selected_index = 0
-
-    selected_indices = torch.tensor([selected_index], dtype=torch.long)
-    setattr(result, "top_feature_ids", feature_ids.index_select(0, selected_indices).detach().cpu())
-    if feature_scores.shape[0] == feature_ids.shape[0]:
-        setattr(result, "top_feature_scores", feature_scores.index_select(0, selected_indices).detach().cpu())
-    if activation_tensor is not None and activation_tensor.shape[0] == feature_ids.shape[0]:
-        setattr(
-            result,
-            "top_feature_activation_values",
-            activation_tensor.index_select(0, selected_indices).detach().cpu(),
-        )
-    return result, candidate_count
 
 
 def run_initial_sanity_check(cfg: NotebookHarnessConfig) -> dict[str, Any]:
@@ -2456,7 +1969,7 @@ def compute_embed_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
         cfg.work_root,
         phase_run_name(cfg, "embed_direction"),
         **cfg.session_kwargs,
-    ) as (_, module, _):
+    ) as (_, module, tokenizer):
         if cfg.uses_explicit_embedding_difference:
             explicit_tokens = cast(tuple[str, str], cfg.explicit_direction_tokens)
             group_a_tokens, group_b_tokens = ([explicit_tokens[0]], [explicit_tokens[1]])
@@ -2487,11 +2000,36 @@ def compute_embed_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
                 0,
             ),
         )
-        return {
+        result = {
             "direction": tensor_to_cpu(embed_result.concept_direction),
             "group_a_ids": list(embed_result.concept_group_a_token_ids),
             "group_b_ids": list(embed_result.concept_group_b_token_ids),
         }
+        if cfg.debug_pipeline_state_artifacts:
+            embed_weight = module.model.get_input_embeddings().weight.detach().cpu().float()
+            group_a_states = embed_weight[torch.tensor(embed_result.concept_group_a_token_ids, dtype=torch.long)]
+            if embed_result.concept_group_b_token_ids:
+                group_b_states = embed_weight[torch.tensor(embed_result.concept_group_b_token_ids, dtype=torch.long)]
+                group_projection_states = torch.cat([group_a_states, group_b_states], dim=0)
+                group_ids = torch.tensor([0] * len(group_a_states) + [1] * len(group_b_states), dtype=torch.long)
+            else:
+                group_projection_states = group_a_states
+                group_ids = torch.tensor([0] * len(group_a_states), dtype=torch.long)
+            geometry = compute_concept_direction_geometry(
+                group_projection_states,
+                group_ids,
+                direction_mode=cfg.analysis_direction_mode_name,
+            )
+            result["debug_pipeline_state_artifacts"] = build_concept_direction_stage_artifact(
+                path_label="embed_direction",
+                direction_mode=cfg.analysis_direction_mode_name,
+                direction=embed_result.concept_direction,
+                tokenizer=tokenizer,
+                group_a_token_ids=embed_result.concept_group_a_token_ids,
+                group_b_token_ids=embed_result.concept_group_b_token_ids,
+                geometry=geometry,
+            )
+        return result
 
 
 def run_pipeline(
@@ -2608,19 +2146,71 @@ def run_direct_projection_scale_sweep(
     ]
 
 
+def run_random_perturbation_control(
+    cfg: NotebookHarnessConfig,
+    *,
+    base_direction: torch.Tensor,
+    base_pipeline: Mapping[str, Any],
+    label: str,
+    group_a_ids: list[int],
+    group_b_ids: list[int],
+    scale_factor: float,
+    top_n: int,
+    seed: int,
+    perturbation_scale: float = DEFAULT_RANDOM_PERTURBATION_SCALE,
+) -> dict[str, Any]:
+    perturbed_direction, perturbation_metadata = build_random_vector_perturbation(
+        base_direction,
+        scale=perturbation_scale,
+        seed=seed,
+    )
+    pipeline_label = f"{label}_random_perturbed"
+    perturbed_pipeline = run_pipeline(
+        cfg,
+        perturbed_direction,
+        pipeline_label,
+        scale_factor=scale_factor,
+        top_n=top_n,
+        group_a_ids=group_a_ids,
+        group_b_ids=group_b_ids,
+    )
+    feature_parity = compare_top_feature_sets(
+        cast(Sequence[Sequence[int]], base_pipeline.get("feature_ids") or base_pipeline.get("top_features") or []),
+        cast(
+            Sequence[Sequence[int]],
+            perturbed_pipeline.get("feature_ids") or perturbed_pipeline.get("top_features") or [],
+        ),
+        left_scores=base_pipeline.get("feature_scores") or base_pipeline.get("top_feature_scores"),
+        right_scores=perturbed_pipeline.get("feature_scores") or perturbed_pipeline.get("top_feature_scores"),
+        left_label=label,
+        right_label=pipeline_label,
+    )
+    return {
+        "seed": int(seed),
+        "perturbation_scale": float(perturbation_scale),
+        "direction_cosine_to_base": cosine_similarity_value(base_direction, perturbed_direction),
+        "sampled_random_direction_cosine_to_base": float(
+            perturbation_metadata["sampled_random_direction_cosine_to_base"]
+        ),
+        "perturbation_basis_cosine_to_base": float(perturbation_metadata["perturbation_basis_cosine_to_base"]),
+        "feature_jaccard_vs_base": feature_parity.jaccard,
+        "shared_score_cosine_vs_base": feature_parity.shared_score_cosine,
+        "gap_delta_vs_base": float(perturbed_pipeline["gap_delta"] - float(base_pipeline["gap_delta"])),
+        "feature_comparison": feature_parity.to_dict(),
+        "perturbation_metadata": perturbation_metadata,
+        "pipeline": perturbed_pipeline,
+    }
+
+
 def build_all_prompts(cfg: NotebookHarnessConfig, tokenizer: Any) -> list[tuple[str, str, str]]:
-    prompts: list[tuple[str, str, str]] = []
-    for entity_name, expected_answer in cfg.concept_pair.group_a_entities:
-        raw = _build_classification_prompt(entity_name, cfg.concept_pair.classification_question)
-        prompts.append(
-            (render_prompt(raw, tokenizer, cfg.prompt_render_mode), expected_answer, cfg.concept_pair.group_a_name)
-        )
-    for entity_name, expected_answer in cfg.concept_pair.group_b_entities:
-        raw = _build_classification_prompt(entity_name, cfg.concept_pair.classification_question)
-        prompts.append(
-            (render_prompt(raw, tokenizer, cfg.prompt_render_mode), expected_answer, cfg.concept_pair.group_b_name)
-        )
-    return prompts
+    return [
+        (example["rendered_prompt"], example["expected_answer"], example["group_name"])
+        for example in _shared_build_classification_prompt_examples(cfg, tokenizer)
+    ]
+
+
+def build_classification_prompt_examples(cfg: NotebookHarnessConfig, tokenizer: Any) -> list[dict[str, Any]]:
+    return _shared_build_classification_prompt_examples(cfg, tokenizer)
 
 
 def _score_expected_answer(
@@ -2699,20 +2289,25 @@ def compute_store_direction_manual(cfg: NotebookHarnessConfig) -> dict[str, Any]
                         "attention_mask": enc["attention_mask"][0].tolist() if "attention_mask" in enc else None,
                     }
                 )
-        stacked = torch.stack(latent_states)
         n_a = len(cfg.concept_pair.group_a_entities)
         n_b = len(cfg.concept_pair.group_b_entities)
-        group_ids = torch.cat([torch.zeros(n_a, dtype=torch.long), torch.ones(n_b, dtype=torch.long)])
-        group_names = ([cfg.concept_pair.group_a_name] * n_a) + ([cfg.concept_pair.group_b_name] * n_b)
+        latent_state_rows = [state.unsqueeze(0) for state in latent_states]
+        group_id_rows = [torch.tensor([0], dtype=torch.long) for _ in range(n_a)] + [
+            torch.tensor([1], dtype=torch.long) for _ in range(n_b)
+        ]
+        group_name_rows = [[cfg.concept_pair.group_a_name] for _ in range(n_a)] + [
+            [cfg.concept_pair.group_b_name] for _ in range(n_b)
+        ]
+        example_weight_rows = [torch.ones(1, dtype=torch.float32) for _ in latent_state_rows]
         store_result = cast(
             Any,
             it.concept_direction(
                 module,
                 it.AnalysisBatch(
-                    concept_latent_state=[stacked],
-                    concept_group_id=[group_ids],
-                    concept_group_name=[group_names],
-                    concept_example_weight=[torch.ones(len(stacked), dtype=torch.float32)],
+                    concept_latent_state=latent_state_rows,
+                    concept_group_id=group_id_rows,
+                    concept_group_name=group_name_rows,
+                    concept_example_weight=example_weight_rows,
                     concept_label=cfg.concept_pair.concept_label,
                     concept_direction_mode=cfg.analysis_direction_mode_name,
                     concept_group_a_name=cfg.concept_pair.group_a_name,
@@ -2748,8 +2343,9 @@ def construct_concept_pair_analysis_inputs(
     list[torch.Tensor],
     list[torch.Tensor],
     list[torch.Tensor],
+    list[torch.Tensor],
     dict[str, Any],
-    list[tuple[str, str, str]],
+    list[dict[str, Any]],
 ]:
     """Build per-example forward-pass caches, answer indices, labels, and logit diffs.
 
@@ -2758,31 +2354,58 @@ def construct_concept_pair_analysis_inputs(
     ``execute_concept_latent_extraction_ops``.
 
     Returns:
-        (cached_batches, answer_indices, orig_labels, logit_diffs, prediction_info, all_prompts)
+        (cached_batches, answer_indices, context_token_indices, orig_labels, logit_diffs, prediction_info,
+        prompt_examples)
     """
-    all_prompts = build_all_prompts(cfg, tokenizer)
+    prompt_examples = build_classification_prompt_examples(cfg, tokenizer)
 
     cached_batches: list[dict[str, torch.Tensor]] = []
     answer_indices: list[torch.Tensor] = []
+    context_token_indices: list[torch.Tensor] = []
     orig_labels: list[torch.Tensor] = []
     logit_diffs: list[torch.Tensor] = []
     prediction_info: dict[str, Any] = {"examples": [], "n_correct": 0}
 
-    for prompt_text, expected_answer, group in all_prompts:
+    for prompt_example in prompt_examples:
+        prompt_text = str(prompt_example["rendered_prompt"])
+        cache_prompt_text = str(prompt_example.get("rendered_prompt_with_answer") or prompt_text)
+        expected_answer = str(prompt_example["expected_answer"])
+        group = str(prompt_example["group_name"])
         add_special_tokens = cfg.prompt_render_mode == "plain"
-        enc = tokenizer(prompt_text, return_tensors="pt", padding=False, add_special_tokens=add_special_tokens)
-        batch_dev = {
-            key: value.to(device) if isinstance(value, torch.Tensor) else value for key, value in dict(enc).items()
+        enc_prompt = tokenizer(prompt_text, return_tensors="pt", padding=False, add_special_tokens=add_special_tokens)
+        batch_dev_prompt = {
+            key: value.to(device) if isinstance(value, torch.Tensor) else value for key, value in dict(enc_prompt).items()
+        }
+        enc_cache = tokenizer(cache_prompt_text, return_tensors="pt", padding=False, add_special_tokens=add_special_tokens)
+        batch_dev_cache = {
+            key: value.to(device) if isinstance(value, torch.Tensor) else value for key, value in dict(enc_cache).items()
         }
         with torch.no_grad():
-            logits, cache = model_backend.fwd_w_cache(
+            prompt_logits, _ = model_backend.fwd_w_cache(
                 model=module.model,
-                batch=batch_dev,
+                batch=batch_dev_prompt,
+                names_filter=cfg.store_concept_cache_key,
+            )
+            cache_logits, cache = model_backend.fwd_w_cache(
+                model=module.model,
+                batch=batch_dev_cache,
                 names_filter=cfg.store_concept_cache_key,
             )
 
-        last_pos = int(logits.shape[1] - 1)
-        example_logits = logits[0, last_pos]
+        scoring_index = int(prompt_example.get("scoring_index", int(enc_prompt["input_ids"].shape[1] - 1)))
+        prompt_last_pos = int(prompt_logits.shape[1] - 1)
+        if prompt_last_pos != scoring_index:
+            raise ValueError(
+                "Prompt scoring expected the final prompt position to match the scoring index "
+                f"({prompt_last_pos} vs {scoring_index})"
+            )
+        cache_answer_index = int(prompt_example["cache_answer_index"])
+        if cache_answer_index >= int(cache_logits.shape[1]):
+            raise ValueError(
+                "Prompt alignment expected the cache answer index to resolve inside the teacher-forced cache "
+                f"({cache_answer_index} vs {int(cache_logits.shape[1])})"
+            )
+        example_logits = prompt_logits[0, scoring_index]
         expected_id, example_logit_diff, correct, rank, topk_ids, topk_tokens = _score_expected_answer(
             tokenizer,
             example_logits,
@@ -2797,12 +2420,17 @@ def construct_concept_pair_analysis_inputs(
         cached_batches.append(
             {cfg.store_concept_cache_key: torch.as_tensor(cache[cfg.store_concept_cache_key]).detach().cpu()}
         )
-        answer_indices.append(torch.tensor([last_pos], dtype=torch.long))
+        answer_indices.append(torch.tensor([cache_answer_index], dtype=torch.long))
+        context_token_index = prompt_example["context_token_index"]
+        context_token_indices.append(
+            torch.tensor([-1 if context_token_index is None else int(context_token_index)], dtype=torch.long)
+        )
         orig_labels.append(torch.tensor([group_id], dtype=torch.long))
         logit_diffs.append(torch.tensor([example_logit_diff], dtype=torch.float32))
         prediction_info["examples"].append(
             {
                 "group": group,
+                "probe_surface_text": str(prompt_example["probe_surface_text"]),
                 "expected": expected_answer,
                 "expected_token_id": expected_id,
                 "correct": correct,
@@ -2812,13 +2440,26 @@ def construct_concept_pair_analysis_inputs(
                 "top10_ids": topk_ids,
                 "logit_diff": example_logit_diff,
                 "prompt": prompt_text,
-                "input_ids": enc["input_ids"][0].tolist(),
-                "tokens": tokenizer.convert_ids_to_tokens(enc["input_ids"][0].tolist()),
-                "attention_mask": enc["attention_mask"][0].tolist() if "attention_mask" in enc else None,
+                "input_ids": enc_prompt["input_ids"][0].tolist(),
+                "tokens": tokenizer.convert_ids_to_tokens(enc_prompt["input_ids"][0].tolist()),
+                "attention_mask": enc_prompt["attention_mask"][0].tolist() if "attention_mask" in enc_prompt else None,
+                "prompt_alignment_snapshot": prompt_example["prompt_alignment_snapshot"].to_dict(),
+                "prompt_alignment_artifact": prompt_example["prompt_alignment_artifact"],
+                "cache_answer_index": cache_answer_index,
+                "context_token_index": None if context_token_index is None else int(context_token_index),
+                "context_token_source": str(prompt_example["context_token_source"]),
             }
         )
 
-    return cached_batches, answer_indices, orig_labels, logit_diffs, prediction_info, all_prompts
+    return (
+        cached_batches,
+        answer_indices,
+        context_token_indices,
+        orig_labels,
+        logit_diffs,
+        prediction_info,
+        prompt_examples,
+    )
 
 
 def execute_concept_latent_extraction_ops(
@@ -2826,12 +2467,14 @@ def execute_concept_latent_extraction_ops(
     cfg: NotebookHarnessConfig,
     cached_batches: list[dict[str, torch.Tensor]],
     answer_indices: list[torch.Tensor],
+    context_token_indices: list[torch.Tensor],
     orig_labels: list[torch.Tensor],
     logit_diffs: list[torch.Tensor],
     n_prompts: int,
     *,
     extraction_mode: StoreLatentExtractionMode = "answer_position_state",
-) -> list[Any]:
+    return_analysis_inputs: bool = False,
+) -> list[Any] | tuple[list[Any], AnalysisInputs]:
     """Execute ``extract_concept_latent_state`` and ``extract_concept_latent_examples`` ops.
 
     Wraps the AnalysisCfg setup, AnalysisInputs construction, and per-batch op execution
@@ -2856,6 +2499,7 @@ def execute_concept_latent_extraction_ops(
         store=SimpleNamespace(
             cache=cached_batches,
             answer_indices=answer_indices,
+            context_token_indices=context_token_indices,
             orig_labels=orig_labels,
             logit_diffs=logit_diffs,
         )
@@ -2871,12 +2515,23 @@ def execute_concept_latent_extraction_ops(
                 batch_idx=batch_idx,
                 analysis_batch=it.AnalysisBatch(
                     concept_group_a_label_ids=[0],
-                    concept_group_b_label_ids=[1],
+                    concept_group_b_label_ids=[1] if cfg.concept_pair.group_b_entities else None,
                     concept_group_a_name=cfg.concept_pair.group_a_name,
                     concept_group_b_name=cfg.concept_pair.group_b_name,
+                    concept_label=cfg.concept_pair.concept_label,
+                    concept_direction_mode=cfg.analysis_direction_mode_name,
                     concept_cache_key=cfg.store_concept_cache_key,
                     concept_correct_only=cfg.store_concept_correct_only,
                     concept_weight_by_logit_diff=cfg.store_weight_by_logit_diff,
+                    # Notebook diagnostic harness needs flattened per-batch row tensors for downstream
+                    # geometry/debug artifacts (see compute_store_direction and latent_dynamics paths).
+                    # Streaming mode (the new default for runner workflows) intentionally drops those
+                    # row accumulators; opt this helper into the in-memory legacy path only when the
+                    # diagnostic artifacts are explicitly requested. paired_rejection is now
+                    # supported by the streaming aggregator (see CONCEPT_STREAMING_PAIRED_REJECTION_FIELDS).
+                    concept_aggregate_output_mode=(
+                        "in_memory" if cfg.debug_pipeline_state_artifacts else "streaming"
+                    ),
                 ),
                 analysis_cfg=extraction_cfg,
                 analysis_inputs=analysis_inputs,
@@ -2885,51 +2540,9 @@ def execute_concept_latent_extraction_ops(
             )
         )
 
+    if return_analysis_inputs:
+        return extracted_batches, analysis_inputs
     return extracted_batches
-
-
-def prepare_extracted_concept_example_tensors(
-    extracted_batches: list[Any],
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
-    """Prepare tensors from extracted AnalysisBatch rows for ``it.concept_direction``.
-
-    This intermediate step is needed because ``it.extract_concept_latent_examples`` emits
-    one AnalysisBatch *per example* (each containing a single-row latent state, group id,
-    weight, and group name).  The ``it.concept_direction`` op, however, expects a *single*
-    stacked tensor of all concept latent states along with parallel group-id, weight, and
-    group-name sequences — the format produced when the two ops are chained via the
-    AnalysisStore in a standard analysis session (where the store accumulates rows
-    automatically across batches).
-
-    In experiment-harness code we run the ops manually in a per-example loop, so the
-    store-level accumulation does not happen.  This function bridges that gap by
-    concatenating the per-example rows into the stacked format ``it.concept_direction``
-    requires.
-
-    .. note::
-
-       *IG-7 follow-up:* Investigate whether ``extract_concept_latent_examples`` and
-       ``concept_direction`` can be adapted (or an additional intermediate op added) so
-       their input/output contracts allow direct pipelining via a composite op alias,
-       eliminating the need for this manual stacking step.
-
-    Returns:
-        (stacked_latent_states, group_ids, example_weights, group_name_rows)
-    """
-    latent_rows = [batch.concept_latent_state for batch in extracted_batches if batch.concept_latent_state is not None]
-    group_id_rows = [batch.concept_group_id for batch in extracted_batches if batch.concept_group_id is not None]
-    weight_rows = [
-        batch.concept_example_weight for batch in extracted_batches if batch.concept_example_weight is not None
-    ]
-    group_name_rows: list[str] = []
-    for batch in extracted_batches:
-        if batch.concept_group_name is not None:
-            group_name_rows.extend(list(batch.concept_group_name))
-
-    stacked = torch.cat([tensor_to_cpu(row) for row in latent_rows], dim=0)
-    group_ids = torch.cat([tensor_to_cpu(row) for row in group_id_rows], dim=0)
-    example_weights = torch.cat([tensor_to_cpu(row) for row in weight_rows], dim=0)
-    return stacked, group_ids, example_weights, group_name_rows
 
 
 def compute_store_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
@@ -2950,7 +2563,15 @@ def compute_store_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
         (target_a_id, target_b_id), _ = resolve_target_tokens(cfg, tokenizer)
 
         with maybe_zero_softcap(module, cfg):
-            cached_batches, answer_indices, orig_labels, logit_diffs, prediction_info, all_prompts = (
+            (
+                cached_batches,
+                answer_indices,
+                context_token_indices,
+                orig_labels,
+                logit_diffs,
+                prediction_info,
+                prompt_examples,
+            ) = (
                 construct_concept_pair_analysis_inputs(
                     cfg,
                     module,
@@ -2962,40 +2583,121 @@ def compute_store_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
                 )
             )
 
-        extracted_batches = execute_concept_latent_extraction_ops(
-            module,
-            cfg,
-            cached_batches,
-            answer_indices,
-            orig_labels,
-            logit_diffs,
-            len(all_prompts),
-            extraction_mode=cfg.store_latent_extraction_mode,
-        )
-
-        stacked, group_ids, example_weights, group_name_rows = prepare_extracted_concept_example_tensors(
-            extracted_batches,
-        )
-
-        store_result = cast(
-            Any,
-            it.concept_direction(
+        extracted_batches, analysis_inputs = cast(
+            tuple[list[Any], AnalysisInputs],
+            execute_concept_latent_extraction_ops(
                 module,
-                it.AnalysisBatch(
-                    concept_latent_state=[stacked],
-                    concept_group_id=[group_ids],
-                    concept_group_name=[group_name_rows],
-                    concept_example_weight=[example_weights],
-                    concept_label=cfg.concept_pair.concept_label,
-                    concept_direction_mode=cfg.analysis_direction_mode_name,
-                    concept_group_a_name=cfg.concept_pair.group_a_name,
-                    concept_group_b_name=cfg.concept_pair.group_b_name,
-                ),
-                NULL_BATCH,
-                0,
+                cfg,
+                cached_batches,
+                answer_indices,
+                context_token_indices,
+                orig_labels,
+                logit_diffs,
+                len(prompt_examples),
+                extraction_mode=cfg.store_latent_extraction_mode,
+                return_analysis_inputs=True,
             ),
         )
-        return {
+
+        aggregated_batch = cast(Any, extracted_batches[-1])
+        aggregate_latent_rows = cast(
+            Any,
+            aggregated_batch.get("concept_latent_state_rows")
+            if hasattr(aggregated_batch, "get")
+            else getattr(aggregated_batch, "concept_latent_state_rows", None),
+        )
+        aggregate_group_id_rows = cast(
+            Any,
+            aggregated_batch.get("concept_group_id_rows")
+            if hasattr(aggregated_batch, "get")
+            else getattr(aggregated_batch, "concept_group_id_rows", None),
+        )
+        aggregate_group_name_rows = cast(
+            Any,
+            aggregated_batch.get("concept_group_name_rows")
+            if hasattr(aggregated_batch, "get")
+            else getattr(aggregated_batch, "concept_group_name_rows", None),
+        )
+        aggregate_weight_rows = cast(
+            Any,
+            aggregated_batch.get("concept_example_weight_rows")
+            if hasattr(aggregated_batch, "get")
+            else getattr(aggregated_batch, "concept_example_weight_rows", None),
+        )
+        if aggregate_latent_rows is not None:
+            flattened_states, flattened_group_ids, flattened_example_weights, _ = _flatten_concept_store_rows(
+                aggregate_latent_rows,
+                aggregate_group_id_rows,
+                aggregate_group_name_rows,
+                aggregate_weight_rows,
+            )
+        else:
+            # Streaming mode: per-row tensors are intentionally dropped by the aggregator.
+            # Geometry/debug artifacts that need them are only built when
+            # debug_pipeline_state_artifacts is enabled (which forces in_memory mode upstream).
+            flattened_states = torch.empty(0)
+            flattened_group_ids = torch.empty(0, dtype=torch.long)
+            flattened_example_weights = torch.empty(0)
+
+        context_extraction_artifacts: list[dict[str, Any]] = []
+        if cfg.debug_pipeline_state_artifacts and cfg.store_latent_extraction_mode == "context_enhanced":
+            for cached_batch, answer_index, context_index, prompt_example, group_label, logit_diff in zip(
+                cached_batches,
+                answer_indices,
+                context_token_indices,
+                prompt_examples,
+                orig_labels,
+                logit_diffs,
+                strict=True,
+            ):
+                extraction_snapshot = capture_context_enhanced_extraction_snapshot(
+                    it.AnalysisBatch(
+                        cache=cached_batch,
+                        answer_indices=answer_index,
+                        context_token_indices=context_index,
+                        concept_cache_key=cfg.store_concept_cache_key,
+                        orig_labels=group_label,
+                        logit_diffs=logit_diff,
+                    ),
+                    context_scale=cfg.context_enhanced_scale,
+                )
+                context_extraction_artifacts.append(
+                    build_context_extraction_artifact(
+                        extraction_snapshot,
+                        prompt_alignment_artifact=cast(dict[str, Any], prompt_example["prompt_alignment_artifact"]),
+                    )
+                )
+
+        aggregate_mode = (
+            aggregated_batch.get("concept_aggregate_output_mode")
+            if hasattr(aggregated_batch, "get")
+            else getattr(aggregated_batch, "concept_aggregate_output_mode", None)
+        )
+        if aggregate_mode == "streaming":
+            store_result = None
+            for stream_batch_idx, extracted_batch in enumerate(extracted_batches):
+                store_result = cast(
+                    Any,
+                    it.concept_direction(
+                        module,
+                        extracted_batch,
+                        NULL_BATCH,
+                        stream_batch_idx,
+                        analysis_inputs=analysis_inputs,
+                    ),
+                )
+            assert store_result is not None
+        else:
+            store_result = cast(
+                Any,
+                it.concept_direction(
+                    module,
+                    aggregated_batch,
+                    NULL_BATCH,
+                    0,
+                ),
+            )
+        result = {
             "direction": tensor_to_cpu(store_result.concept_direction),
             "group_a_ids": [
                 tokenizer.encode(token, add_special_tokens=False)[-1] for token in cfg.concept_pair.group_a_tokens
@@ -3004,11 +2706,46 @@ def compute_store_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
                 tokenizer.encode(token, add_special_tokens=False)[-1] for token in cfg.concept_pair.group_b_tokens
             ],
             "prediction_info": prediction_info,
-            "n_total": len(all_prompts),
-            "n_latent_rows": int(stacked.shape[0]),
+            "n_total": len(prompt_examples),
+            "n_latent_rows": int(flattened_states.shape[0]),
             "manual_reference_fn": "compute_store_direction_manual",
             "store_latent_extraction_mode": cfg.store_latent_extraction_mode,
+            "context_token_source_counts": {
+                source: sum(1 for example in prediction_info["examples"] if example["context_token_source"] == source)
+                for source in {str(example["context_token_source"]) for example in prediction_info["examples"]}
+            },
         }
+        if cfg.debug_pipeline_state_artifacts:
+            geometry = compute_concept_direction_geometry(
+                flattened_states,
+                flattened_group_ids,
+                direction_mode=cfg.analysis_direction_mode_name,
+                example_weights=flattened_example_weights,
+            )
+            group_a_token_ids = cast(list[int], result["group_a_ids"])
+            group_b_token_ids = cast(list[int], result["group_b_ids"])
+            stage_artifact = build_concept_direction_stage_artifact(
+                path_label="store_direction",
+                direction_mode=cfg.analysis_direction_mode_name,
+                direction=store_result.concept_direction,
+                tokenizer=tokenizer,
+                group_a_token_ids=group_a_token_ids,
+                group_b_token_ids=group_b_token_ids,
+                geometry=geometry,
+                prompt_examples=[
+                    cast(dict[str, Any], prompt_example["prompt_alignment_artifact"])
+                    for prompt_example in prompt_examples
+                ],
+                example_logit_diffs=[
+                    float(torch.as_tensor(logit_diff, dtype=torch.float32).reshape(-1)[0].item())
+                    for logit_diff in logit_diffs
+                ],
+            )
+            stage_artifact["store_latent_extraction_mode"] = cfg.store_latent_extraction_mode
+            stage_artifact["context_enhanced_scale"] = cfg.context_enhanced_scale
+            stage_artifact["context_enhanced_extraction"] = context_extraction_artifacts
+            result["debug_pipeline_state_artifacts"] = stage_artifact
+        return result
 
 
 def run_scale_sweep(
@@ -3252,6 +2989,127 @@ def display_direction_probe_results(probe_results: Mapping[str, Any]) -> None:
         print(f"Mean A: {payload['mean_a']:.4f}, Mean B: {mean_b:.4f}, Separation: {separation:.4f}")
 
 
+def collect_pipeline_state_artifacts(results: Mapping[str, Any]) -> dict[str, Any]:
+    artifacts: dict[str, Any] = {}
+    for result_key, artifact_key in (
+        ("embed_direction_result", "embed_direction"),
+        ("store_direction_result", "store_direction"),
+        ("embed_pipeline", "embed_pipeline"),
+        ("store_pipeline", "store_pipeline"),
+        ("embed_random_perturbed_pipeline", "embed_random_perturbed_pipeline"),
+        ("store_random_perturbed_pipeline", "store_random_perturbed_pipeline"),
+    ):
+        payload = cast(Mapping[str, Any] | None, results.get(result_key))
+        if not payload:
+            continue
+        debug_artifact = payload.get("debug_pipeline_state_artifacts")
+        if debug_artifact is not None:
+            artifacts[artifact_key] = debug_artifact
+
+    perturbation_controls = cast(Mapping[str, Any] | None, results.get("perturbation_controls"))
+    if perturbation_controls:
+        artifacts["perturbation_controls"] = {
+            str(label): {
+                key: value
+                for key, value in cast(Mapping[str, Any], payload).items()
+                if key != "pipeline"
+            }
+            for label, payload in perturbation_controls.items()
+        }
+
+    store_direction_result = cast(Mapping[str, Any] | None, results.get("store_direction_result"))
+    if store_direction_result:
+        prediction_info = cast(Mapping[str, Any], store_direction_result.get("prediction_info", {}))
+        examples = cast(list[dict[str, Any]], prediction_info.get("examples", []))
+        if examples:
+            artifacts["store_prediction_examples"] = [
+                {
+                    "group": example.get("group"),
+                    "probe_surface_text": example.get("probe_surface_text"),
+                    "expected": example.get("expected"),
+                    "cache_answer_index": example.get("cache_answer_index"),
+                    "context_token_index": example.get("context_token_index"),
+                    "context_token_source": example.get("context_token_source"),
+                    "prompt_alignment_artifact": example.get("prompt_alignment_artifact"),
+                }
+                for example in examples
+            ]
+
+    comparison = cast(Mapping[str, Any] | None, results.get("comparison"))
+    embed_pipeline = cast(Mapping[str, Any] | None, results.get("embed_pipeline"))
+    store_pipeline = cast(Mapping[str, Any] | None, results.get("store_pipeline"))
+    if comparison or (embed_pipeline and store_pipeline):
+        comparison_payload = dict(comparison or {})
+        feature_parity = None
+        if embed_pipeline and store_pipeline:
+            embed_feature_rows = cast(Sequence[Sequence[int]], embed_pipeline.get("top_features") or embed_pipeline.get("feature_ids") or [])
+            store_feature_rows = cast(Sequence[Sequence[int]], store_pipeline.get("top_features") or store_pipeline.get("feature_ids") or [])
+            feature_parity = compare_top_feature_sets(
+                embed_feature_rows,
+                store_feature_rows,
+                left_scores=embed_pipeline.get("top_feature_scores") or embed_pipeline.get("feature_scores"),
+                right_scores=store_pipeline.get("top_feature_scores") or store_pipeline.get("feature_scores"),
+                left_label="embed_pipeline",
+                right_label="store_pipeline",
+            )
+            comparison_payload.setdefault("feature_jaccard", feature_parity.jaccard)
+        artifacts["comparison"] = {
+            "cosine_similarity": comparison_payload.get("cosine_similarity"),
+            "feature_jaccard": comparison_payload.get("feature_jaccard"),
+            "shared_feature_count": comparison_payload.get(
+                "shared_feature_count",
+                None if feature_parity is None else len(feature_parity.shared),
+            ),
+            "embed_only_count": comparison_payload.get(
+                "embed_only_count",
+                None if feature_parity is None else len(feature_parity.left_only),
+            ),
+            "store_only_count": comparison_payload.get(
+                "store_only_count",
+                None if feature_parity is None else len(feature_parity.right_only),
+            ),
+            "same_features": comparison_payload.get(
+                "same_features",
+                None if feature_parity is None else [list(row) for row in feature_parity.shared],
+            ),
+            "shared_features": comparison_payload.get(
+                "shared_features",
+                None if feature_parity is None else [list(row) for row in feature_parity.shared],
+            ),
+            "embed_only_features": comparison_payload.get(
+                "embed_only_features",
+                None if feature_parity is None else [list(row) for row in feature_parity.left_only],
+            ),
+            "store_only_features": comparison_payload.get(
+                "store_only_features",
+                None if feature_parity is None else [list(row) for row in feature_parity.right_only],
+            ),
+            "shared_score_cosine": comparison_payload.get(
+                "shared_score_cosine",
+                None if feature_parity is None else feature_parity.shared_score_cosine,
+            ),
+            "shared_key_token_rows": comparison_payload.get("shared_key_token_rows"),
+        }
+
+    return artifacts
+
+
+def maybe_save_pipeline_state_artifacts(
+    cfg: NotebookHarnessConfig,
+    results: Mapping[str, Any],
+) -> Path | None:
+    if not cfg.debug_pipeline_state_artifacts:
+        return None
+
+    artifact_name = cfg.debug_pipeline_state_artifact_name or (
+        f"{cfg.experiment_name}_{(cfg.experiment_config_name or 'manual').strip().replace(' ', '_')}"
+    )
+    return save_concept_direction_pipeline_state_artifacts(
+        collect_pipeline_state_artifacts(results),
+        artifact_name=artifact_name,
+    )
+
+
 def collect_summary(
     cfg: NotebookHarnessConfig,
     results: Mapping[str, Any],
@@ -3274,9 +3132,42 @@ def collect_summary(
     if "comparison" in results:
         summary["cosine_similarity"] = results["comparison"]["cosine_similarity"]
         summary["feature_jaccard"] = results["comparison"]["feature_jaccard"]
+    perturbation_controls = cast(Mapping[str, Any] | None, results.get("perturbation_controls"))
+    if perturbation_controls:
+        embed_control = cast(Mapping[str, Any] | None, perturbation_controls.get("embed"))
+        store_control = cast(Mapping[str, Any] | None, perturbation_controls.get("store"))
+        if embed_control:
+            summary["embed_random_direction_cosine"] = embed_control.get("direction_cosine_to_base")
+            summary["embed_sampled_random_direction_cosine"] = embed_control.get(
+                "sampled_random_direction_cosine_to_base"
+            )
+            summary["embed_random_feature_jaccard"] = embed_control.get("feature_jaccard_vs_base")
+        if store_control:
+            summary["store_random_direction_cosine"] = store_control.get("direction_cosine_to_base")
+            summary["store_sampled_random_direction_cosine"] = store_control.get(
+                "sampled_random_direction_cosine_to_base"
+            )
+            summary["store_random_feature_jaccard"] = store_control.get("feature_jaccard_vs_base")
     if "store_direction_result" in results:
         summary["prediction_correct"] = results["store_direction_result"]["prediction_info"]["n_correct"]
         summary["prediction_total"] = results["store_direction_result"]["n_total"]
+        summary["store_context_token_source_counts"] = results["store_direction_result"].get(
+            "context_token_source_counts",
+            {},
+        )
+        prompt_examples = results["store_direction_result"]["prediction_info"].get("examples", [])
+        summary["store_prompt_alignment_examples"] = [
+            {
+                "group": example.get("group"),
+                "expected": example.get("expected"),
+                "cache_answer_index": example.get("cache_answer_index"),
+                "context_token_index": example.get("context_token_index"),
+                "context_token_source": example.get("context_token_source"),
+                "probe_end_index": example.get("prompt_alignment_snapshot", {}).get("probe_end_index"),
+                "answer_index": example.get("prompt_alignment_snapshot", {}).get("answer_index"),
+            }
+            for example in prompt_examples[:4]
+        ]
     if "debug_validation" in results:
         summary["debug_validation_passed"] = results["debug_validation"]["all_passed"]
         summary["debug_activation_max_abs_error"] = results["debug_validation"]["activation_max_abs_error"]

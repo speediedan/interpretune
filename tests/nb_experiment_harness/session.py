@@ -20,6 +20,7 @@ for _path in (REPO_ROOT, TESTS_DIR):
         sys.path.insert(0, _path_str)
 
 from interpretune.config.nnsight import NNsightConfig  # noqa: E402
+from interpretune.adapter_registry import ADAPTER_REGISTRY  # noqa: E402
 from interpretune.utils.resource_mgmt import cleanup_python_cuda, safe_clean_cuda  # noqa: E402
 from tests import load_dotenv  # noqa: E402
 from tests.analysis_resource_utils import clear_nnsight_test_state, serial_test_cleanup  # noqa: E402
@@ -223,6 +224,20 @@ def _apply_generic_override_mapping(target: Any, override_mapping: Mapping[str, 
         _set_nested_attr(target, attr_path, _resolve_special_value(raw_value))
 
 
+def _ensure_adapter_registry_initialized() -> None:
+    _ = ADAPTER_REGISTRY.registry
+
+
+def _warm_cuda_cublas_device(device_spec: str | torch.device | None) -> None:
+    # Planned deletion: keep the helper as a no-op until all notebook harness callers are updated.
+    return
+
+
+def _warm_cuda_cublas_context(module: Any) -> None:
+    # Planned deletion: keep the helper as a no-op until all notebook harness callers are updated.
+    return
+
+
 def apply_debug_session_surface_preset(cfg: Any, *, preset: DebugSessionSurfacePreset) -> None:
     if preset == "notebook_default":
         return
@@ -374,6 +389,7 @@ def experiment_session(
     clear_nnsight_test_state(None)
     cleanup_python_cuda()
     load_dotenv()
+    _ensure_adapter_registry_initialized()
 
     cfg = build_test_cfg(
         model_family,
@@ -408,6 +424,8 @@ def experiment_session(
     try:
         with serial_test_cleanup(it_session, module, replacement_model, clear_cuda=not use_cuda_cleanup):
             with cuda_cleanup:
+                # Planned deletion: eager cuBLAS warmup is disabled for notebook harness sessions.
+                # _warm_cuda_cublas_context(module)
                 yield it_session, module, tokenizer
     finally:
         clear_nnsight_test_state(it_session)

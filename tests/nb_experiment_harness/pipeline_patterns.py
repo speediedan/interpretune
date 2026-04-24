@@ -34,6 +34,7 @@ from tests.nb_experiment_harness.nb_harness_utils import (  # noqa: E402
     _maybe_preserve_debug_intervention_artifacts,
     _reduce_top_features_result_to_single_feature,
     _resolve_model_layer_count,
+    _serialize_constrained_feature_selection,
     _serialize_constrained_feature_selection_ref as _serialize_feature_selection_ref,
     _serialize_intervention_call_kwargs,
     _summarize_feature_row_deltas,
@@ -63,6 +64,12 @@ from tests.parity_analysis.intervention_drift_analysis import (  # noqa: E402
     snapshot_analysis_batch,
     snapshot_module_runtime_state,
     tensor_fingerprint,
+)
+from tests.parity_analysis.concept_direction_parity_analysis import (  # noqa: E402
+    build_prompt_alignment_artifact,
+    build_prompt_alignment_snapshot,
+    normalize_prompt_entity_text,
+    resolve_prompt_alignment_context_index,
 )
 
 if TYPE_CHECKING:
@@ -115,6 +122,10 @@ def _capture_internal_notebook_output() -> Any:
 def _serialize_constrained_feature_selection_ref(raw_ref: Any) -> str | list[Any] | dict[str, Any]:
     serialized = _serialize_feature_selection_ref(raw_ref)
     return cast(str | list[Any] | dict[str, Any], serialized)
+
+
+def _serialize_requested_constrained_feature_selection(cfg: NotebookHarnessConfig) -> list[Any] | dict[str, Any] | None:
+    return _serialize_constrained_feature_selection(cfg.constrained_feature_selection_refs)
 
 
 def run_initial_sanity_check(cfg: NotebookHarnessConfig) -> dict[str, Any]:
@@ -382,7 +393,7 @@ def run_pipeline(
         pre_gap, post_gap, gap_delta = summarize_gap(pre_logits, post_logits, target_a_id, target_b_id)
         pre_top = torch.topk(pre_logits.float(), 5)
         post_top = torch.topk(post_logits.float(), 5)
-        return {
+        result = {
             "label": label,
             "scale_factor": scale_factor,
             "top_n": top_n,
@@ -406,13 +417,50 @@ def run_pipeline(
             "pre_top_token_ids": [int(token_id) for token_id in pre_top.indices.tolist()],
             "post_top_tokens": [tokenizer.decode([int(token_id)]) for token_id in post_top.indices.tolist()],
             "post_top_token_ids": [int(token_id) for token_id in post_top.indices.tolist()],
-            "requested_constrained_feature_selection": [
-                _serialize_constrained_feature_selection_ref(raw_ref)
-                for raw_ref in (cfg.constrained_feature_selection_refs or ())
-            ],
+            "requested_constrained_feature_selection": _serialize_requested_constrained_feature_selection(cfg),
             "applied_feature_filter_triples": applied_feature_filter_triples,
             "graph_artifact": graph_artifact,
         }
+        if cfg.debug_pipeline_state_artifacts:
+            result["debug_pipeline_state_artifacts"] = {
+                "path_label": f"{label}_graph_pipeline",
+                "scale_factor": float(scale_factor),
+                "graph_analysis_batch": snapshot_analysis_batch(
+                    analysis_batch,
+                    fields=(
+                        "concept_direction",
+                        "concept_direction_mode",
+                        "concept_label",
+                        "concept_group_a",
+                        "concept_group_b",
+                        "concept_group_a_token_ids",
+                        "concept_group_b_token_ids",
+                        "prompts",
+                        "logit_target_ids",
+                        "context_token_indices",
+                    ),
+                    max_items=32,
+                ),
+                "graph_call_kwargs": _serialize_intervention_call_kwargs(graph_call_kwargs),
+                "graph_input_tokens": _summarize_graph_input_tokens(
+                    tokenizer,
+                    rendered_prompt,
+                    cfg.prompt_render_mode,
+                    graph_result.input_tokens,
+                ),
+                "graph_result_input_tokens": tensor_to_cpu(graph_result.input_tokens).reshape(-1).tolist(),
+                "top_features": feature_ids_to_tuples(top_features_result.top_feature_ids),
+                "top_feature_scores": tensor_to_cpu(top_features_result.top_feature_scores).tolist(),
+                "top_feature_activation_values": tensor_to_cpu(
+                    top_features_result.top_feature_activation_values
+                ).tolist(),
+                "pre_gap": pre_gap,
+                "post_gap": post_gap,
+                "gap_delta": gap_delta,
+                "pre_logits_fingerprint": tensor_fingerprint(pre_logits),
+                "post_logits_fingerprint": tensor_fingerprint(post_logits),
+            }
+        return result
 
 
 def run_direct_projection_pipeline(
@@ -498,19 +546,70 @@ def run_direct_projection_scale_sweep(
     return [build_pipeline(scale_factor) for scale_factor in cfg.scale_factor_sweep]
 
 
+def build_classification_prompt_examples(cfg: NotebookHarnessConfig, tokenizer: Any) -> list[dict[str, Any]]:
+    examples: list[dict[str, Any]] = []
+    add_special_tokens = cfg.prompt_render_mode == "plain"
+    for group_name, rows in (
+        (cfg.concept_pair.group_a_name, cfg.concept_pair.group_a_entities),
+        (cfg.concept_pair.group_b_name, cfg.concept_pair.group_b_entities),
+    ):
+        for entity_name, expected_answer in rows:
+            raw_prompt = _build_classification_prompt(entity_name, cfg.concept_pair.classification_question)
+            rendered_prompt = render_prompt(raw_prompt, tokenizer, cfg.prompt_render_mode)
+            rendered_prompt_with_answer = f"{rendered_prompt}{expected_answer}"
+            probe_surface_text = normalize_prompt_entity_text(entity_name)
+            snapshot = build_prompt_alignment_snapshot(
+                tokenizer,
+                rendered_prompt_with_answer,
+                probe_text=probe_surface_text,
+                answer_text=expected_answer,
+                add_special_tokens=add_special_tokens,
+            )
+            rendered_prompt_token_ids = _tokenize_rendered_prompt(tokenizer, rendered_prompt, cfg.prompt_render_mode)
+            if len(rendered_prompt_token_ids) != snapshot.answer_index:
+                raise ValueError(
+                    "Prompt alignment expected the answer token span to begin immediately after the rendered prompt "
+                    f"({len(rendered_prompt_token_ids)} vs {snapshot.answer_index})"
+                )
+            context_token_index, context_token_source = resolve_prompt_alignment_context_index(snapshot)
+            scoring_index = len(rendered_prompt_token_ids) - 1
+            cache_answer_index = int(snapshot.answer_index)
+            prompt_alignment_artifact = build_prompt_alignment_artifact(
+                snapshot,
+                probe_surface_text=probe_surface_text,
+                cache_rendered_prompt=rendered_prompt_with_answer,
+                cache_input_ids=snapshot.input_ids,
+                cache_input_tokens=snapshot.input_tokens,
+                cache_answer_index=cache_answer_index,
+                context_token_index=context_token_index,
+                context_token_source=context_token_source,
+            )
+            examples.append(
+                {
+                    "entity_name": entity_name,
+                    "probe_surface_text": probe_surface_text,
+                    "expected_answer": expected_answer,
+                    "group_name": group_name,
+                    "raw_prompt": raw_prompt,
+                    "rendered_prompt": rendered_prompt,
+                    "rendered_prompt_with_answer": rendered_prompt_with_answer,
+                    "rendered_prompt_token_ids": rendered_prompt_token_ids,
+                    "scoring_index": scoring_index,
+                    "cache_answer_index": cache_answer_index,
+                    "context_token_index": context_token_index,
+                    "context_token_source": context_token_source,
+                    "prompt_alignment_snapshot": snapshot,
+                    "prompt_alignment_artifact": prompt_alignment_artifact,
+                }
+            )
+    return examples
+
+
 def build_all_prompts(cfg: NotebookHarnessConfig, tokenizer: Any) -> list[tuple[str, str, str]]:
-    prompts: list[tuple[str, str, str]] = []
-    for entity_name, expected_answer in cfg.concept_pair.group_a_entities:
-        raw = _build_classification_prompt(entity_name, cfg.concept_pair.classification_question)
-        prompts.append(
-            (render_prompt(raw, tokenizer, cfg.prompt_render_mode), expected_answer, cfg.concept_pair.group_a_name)
-        )
-    for entity_name, expected_answer in cfg.concept_pair.group_b_entities:
-        raw = _build_classification_prompt(entity_name, cfg.concept_pair.classification_question)
-        prompts.append(
-            (render_prompt(raw, tokenizer, cfg.prompt_render_mode), expected_answer, cfg.concept_pair.group_b_name)
-        )
-    return prompts
+    return [
+        (example["rendered_prompt"], example["expected_answer"], example["group_name"])
+        for example in build_classification_prompt_examples(cfg, tokenizer)
+    ]
 
 
 def _score_expected_answer(
@@ -613,10 +712,7 @@ def run_scale_sweep(
                     "gap_delta": gap_delta,
                     "key_ids": key_ids,
                     "key_labels": key_labels,
-                    "requested_constrained_feature_selection": [
-                        _serialize_constrained_feature_selection_ref(raw_ref)
-                        for raw_ref in (cfg.constrained_feature_selection_refs or ())
-                    ],
+                    "requested_constrained_feature_selection": _serialize_requested_constrained_feature_selection(cfg),
                     "applied_feature_filter_triples": applied_feature_filter_triples,
                     "graph_artifact": graph_artifact,
                 }
@@ -671,10 +767,7 @@ def collect_feature_pool(
             "target_b_id": target_b_id,
             "key_ids": key_ids,
             "key_labels": key_labels,
-            "requested_constrained_feature_selection": [
-                _serialize_constrained_feature_selection_ref(raw_ref)
-                for raw_ref in (cfg.constrained_feature_selection_refs or ())
-            ],
+            "requested_constrained_feature_selection": _serialize_requested_constrained_feature_selection(cfg),
             "applied_feature_filter_triples": applied_feature_filter_triples,
         }
 
@@ -1201,10 +1294,7 @@ def run_debug_intervention_validation(cfg: NotebookHarnessConfig) -> dict[str, A
                 "graph_targets_match_requested": actual_graph_target_ids == requested_graph_target_ids,
             },
             "input_diagnostics": input_diagnostics,
-            "requested_constrained_feature_selection": [
-                _serialize_constrained_feature_selection_ref(raw_ref)
-                for raw_ref in (cfg.constrained_feature_selection_refs or ())
-            ],
+            "requested_constrained_feature_selection": _serialize_requested_constrained_feature_selection(cfg),
             "applied_feature_filter_triples": applied_feature_filter_triples,
             "target_a_id": target_a_id,
             "target_b_id": target_b_id,

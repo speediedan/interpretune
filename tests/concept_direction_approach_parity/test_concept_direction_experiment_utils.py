@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import gzip
 import json
 import os
@@ -69,6 +69,11 @@ class _DisplayTokenizer:
         return self._tokens[int(token_id)]
 
 
+_TEST_CONCEPT_PAIR_CONFIG_PATH = (
+    Path(__file__).resolve().parent / "archived_cfgs" / "cp_capitals_states_gemma_it.yaml"
+).resolve()
+
+
 def _build_cfg(
     *,
     prompt_render_mode: Literal["plain", "apply_chat_template", "gemma_dataclass"],
@@ -103,7 +108,7 @@ def _build_cfg(
         neuronpedia_set="gemmascope-2-transcoder-16k",
         neuronpedia_base_url="https://www.neuronpedia.org",
         concept_pair_name=None,
-        concept_pair_config_path="cp_capitals_states_gemma_it.yaml",
+        concept_pair_config_path=str(_TEST_CONCEPT_PAIR_CONFIG_PATH),
         prompt="Answer with only the missing city name.",
         prompt_render_mode=prompt_render_mode,
         target_tokens=target_tokens,
@@ -324,11 +329,13 @@ def test_notebook_harness_accepts_single_group_direction_mode() -> None:
 def test_execute_concept_latent_extraction_ops_uses_core_context_enhanced_path(monkeypatch) -> None:
     cfg = _build_cfg(prompt_render_mode="apply_chat_template", target_tokens=("Austin", "Dallas"))
     observed_kwargs: list[dict[str, object]] = []
+    observed_context_indices: list[list[torch.Tensor]] = []
     original_state = torch.tensor([[9.0, 10.0]], dtype=torch.float32)
 
     def fake_execute_analysis_op(*args, **kwargs):
         del args
         observed_kwargs.append({key: kwargs[key] for key in ("context_enhanced", "context_scale")})
+        observed_context_indices.append(list(kwargs["analysis_inputs"].store.context_token_indices))
         return SimpleNamespace(
             concept_latent_state=original_state.clone(),
             concept_group_id=torch.tensor([0], dtype=torch.long),
@@ -343,6 +350,7 @@ def test_execute_concept_latent_extraction_ops_uses_core_context_enhanced_path(m
         cfg,
         cached_batches=[{"unembed.hook_in": torch.tensor([[[1.0, 0.0], [3.0, 4.0], [5.0, 6.0]]], dtype=torch.float32)}],
         answer_indices=[torch.tensor([2], dtype=torch.long)],
+        context_token_indices=[torch.tensor([1], dtype=torch.long)],
         orig_labels=[torch.tensor([0], dtype=torch.long)],
         logit_diffs=[torch.tensor([1.0], dtype=torch.float32)],
         n_prompts=1,
@@ -350,7 +358,186 @@ def test_execute_concept_latent_extraction_ops_uses_core_context_enhanced_path(m
     )
 
     assert observed_kwargs == [{"context_enhanced": True, "context_scale": cfg.context_enhanced_scale}]
+    assert len(observed_context_indices) == 1
+    assert torch.equal(observed_context_indices[0][0], torch.tensor([1], dtype=torch.long))
     assert torch.equal(extracted[0].concept_latent_state, original_state)
+
+
+def test_execute_concept_latent_extraction_ops_uses_in_memory_rows_for_debug_artifacts(monkeypatch) -> None:
+    cfg = _build_cfg(prompt_render_mode="apply_chat_template", target_tokens=("Austin", "Dallas"))
+    cfg.debug_pipeline_state_artifacts = True
+    observed_modes: list[str] = []
+
+    def fake_execute_analysis_op(*args, **kwargs):
+        del args
+        analysis_batch = kwargs["analysis_batch"]
+        observed_modes.append(str(analysis_batch.get("concept_aggregate_output_mode")))
+        assert analysis_batch.get("concept_direction_mode") == "paired_rejection"
+        return SimpleNamespace(
+            concept_latent_state_rows=[torch.tensor([[1.0, 2.0]], dtype=torch.float32)],
+            concept_group_id_rows=[torch.tensor([0], dtype=torch.long)],
+            concept_group_name_rows=[["capital"]],
+            concept_example_weight_rows=[torch.tensor([1.0], dtype=torch.float32)],
+        )
+
+    monkeypatch.setattr(concept_direction_module, "execute_analysis_op", fake_execute_analysis_op)
+
+    extracted = execute_concept_latent_extraction_ops(
+        SimpleNamespace(),
+        cfg,
+        cached_batches=[{"unembed.hook_in": torch.tensor([[[1.0, 0.0], [3.0, 4.0]]], dtype=torch.float32)}],
+        answer_indices=[torch.tensor([1], dtype=torch.long)],
+        context_token_indices=[torch.tensor([0], dtype=torch.long)],
+        orig_labels=[torch.tensor([0], dtype=torch.long)],
+        logit_diffs=[torch.tensor([1.0], dtype=torch.float32)],
+        n_prompts=1,
+    )
+
+    assert observed_modes == ["in_memory"]
+    assert torch.equal(extracted[0].concept_latent_state_rows[0], torch.tensor([[1.0, 2.0]], dtype=torch.float32))
+    assert torch.equal(extracted[0].concept_group_id_rows[0], torch.tensor([0], dtype=torch.long))
+
+
+def test_execute_concept_latent_extraction_ops_uses_streaming_mode_without_debug_artifacts(monkeypatch) -> None:
+    cfg = _build_cfg(prompt_render_mode="apply_chat_template", target_tokens=("Austin", "Dallas"))
+    observed_modes: list[str] = []
+
+    def fake_execute_analysis_op(*args, **kwargs):
+        del args
+        analysis_batch = kwargs["analysis_batch"]
+        observed_modes.append(str(analysis_batch.get("concept_aggregate_output_mode")))
+        assert analysis_batch.get("concept_direction_mode") == "paired_rejection"
+        return SimpleNamespace(
+            concept_latent_state_rows=None,
+            concept_group_id_rows=None,
+            concept_group_name_rows=None,
+            concept_example_weight_rows=None,
+            concept_direction=torch.zeros(2, dtype=torch.float32),
+        )
+
+    monkeypatch.setattr(concept_direction_module, "execute_analysis_op", fake_execute_analysis_op)
+
+    extracted = execute_concept_latent_extraction_ops(
+        SimpleNamespace(),
+        cfg,
+        cached_batches=[{"unembed.hook_in": torch.tensor([[[1.0, 0.0], [3.0, 4.0]]], dtype=torch.float32)}],
+        answer_indices=[torch.tensor([1], dtype=torch.long)],
+        context_token_indices=[torch.tensor([0], dtype=torch.long)],
+        orig_labels=[torch.tensor([0], dtype=torch.long)],
+        logit_diffs=[torch.tensor([1.0], dtype=torch.float32)],
+        n_prompts=1,
+    )
+
+    assert observed_modes == ["streaming"]
+    assert extracted[0].concept_latent_state_rows is None
+    assert extracted[0].concept_group_id_rows is None
+
+
+def test_compute_store_direction_runs_streaming_aggregation_incrementally(monkeypatch) -> None:
+    cfg = _build_cfg(prompt_render_mode="apply_chat_template", target_tokens=("Austin", "Dallas"))
+    cfg.debug_pipeline_state_artifacts = False
+
+    class _FakeModel:
+        def parameters(self):
+            yield torch.nn.Parameter(torch.zeros(1, dtype=torch.float32))
+
+    tokenizer = _StubTokenizer(
+        {
+            "Austin": 101,
+            "Dallas": 202,
+            "Sacramento": 303,
+            "California": 404,
+            "Olympia": 505,
+            "Washington": 606,
+        }
+    )
+
+    def tolerant_encode(token: str, add_special_tokens: bool = False) -> list[int]:
+        del add_special_tokens
+        value = tokenizer._mapping.get(token, 999)
+        return list(value) if isinstance(value, list) else [value]
+
+    tokenizer.encode = tolerant_encode  # type: ignore[method-assign]
+
+    fake_module = SimpleNamespace(
+        model=_FakeModel(),
+        replacement_model=SimpleNamespace(tokenizer=tokenizer),
+        _model_backend=object(),
+    )
+
+    @contextmanager
+    def fake_experiment_session(*args, **kwargs):
+        del args, kwargs
+        yield (None, fake_module, tokenizer)
+
+    observed_calls: list[tuple[int, object]] = []
+    shared_analysis_inputs = SimpleNamespace(store=SimpleNamespace())
+    extracted_batches = [
+        SimpleNamespace(
+            concept_aggregate_output_mode="streaming",
+            concept_latent_state_rows=None,
+            concept_group_id_rows=None,
+            concept_group_name_rows=None,
+            concept_example_weight_rows=None,
+            concept_latent_state=torch.tensor([[1.0, 0.0]], dtype=torch.float32),
+            concept_group_id=torch.tensor([0], dtype=torch.long),
+            concept_group_name=["capital"],
+            concept_example_weight=torch.tensor([1.0], dtype=torch.float32),
+        ),
+        SimpleNamespace(
+            concept_aggregate_output_mode="streaming",
+            concept_latent_state_rows=None,
+            concept_group_id_rows=None,
+            concept_group_name_rows=None,
+            concept_example_weight_rows=None,
+            concept_latent_state=torch.tensor([[0.0, 1.0]], dtype=torch.float32),
+            concept_group_id=torch.tensor([1], dtype=torch.long),
+            concept_group_name=["state"],
+            concept_example_weight=torch.tensor([1.0], dtype=torch.float32),
+        ),
+    ]
+
+    monkeypatch.setattr(concept_direction_module, "experiment_session", fake_experiment_session)
+    monkeypatch.setattr(concept_direction_module, "maybe_zero_softcap", lambda module, cfg: nullcontext())
+    monkeypatch.setattr(concept_direction_module, "resolve_target_tokens", lambda cfg, tokenizer: ((101, 202), ("Austin", "Dallas")))
+    monkeypatch.setattr(
+        concept_direction_module,
+        "construct_concept_pair_analysis_inputs",
+        lambda *args, **kwargs: (
+            [{"unembed.hook_in": torch.tensor([[[1.0, 0.0]]], dtype=torch.float32)}],
+            [torch.tensor([0], dtype=torch.long)],
+            [torch.tensor([0], dtype=torch.long)],
+            [torch.tensor([0], dtype=torch.long)],
+            [torch.tensor([1.0], dtype=torch.float32)],
+            {"examples": [{"context_token_source": "probe_end"}]},
+            [{"prompt_alignment_artifact": {}}],
+        ),
+    )
+
+    def fake_execute_concept_latent_extraction_ops(*args, **kwargs):
+        del args
+        assert kwargs["return_analysis_inputs"] is True
+        return extracted_batches, shared_analysis_inputs
+
+    monkeypatch.setattr(
+        concept_direction_module,
+        "execute_concept_latent_extraction_ops",
+        fake_execute_concept_latent_extraction_ops,
+    )
+
+    def fake_concept_direction(module, analysis_batch, batch, batch_idx, **kwargs):
+        del module, batch
+        observed_calls.append((batch_idx, kwargs.get("analysis_inputs")))
+        return SimpleNamespace(concept_direction=torch.tensor([0.5, -0.5], dtype=torch.float32))
+
+    monkeypatch.setattr(concept_direction_module.it, "concept_direction", fake_concept_direction)
+
+    result = concept_direction_module.compute_store_direction(cfg)
+
+    assert [batch_idx for batch_idx, _ in observed_calls] == [0, 1]
+    assert all(analysis_inputs is shared_analysis_inputs for _, analysis_inputs in observed_calls)
+    assert result["n_latent_rows"] == 0
+    assert torch.equal(result["direction"], torch.tensor([0.5, -0.5], dtype=torch.float32))
 
 
 def test_get_topk_preserves_tokenizer_special_markers() -> None:
@@ -390,6 +577,44 @@ def test_debug_mode_uses_key_tokens_as_graph_targets() -> None:
 
     assert target_ids == [107305, 85968, 9191]
     assert target_labels == ["Austin", "Dallas", "Texas"]
+
+
+def test_debug_mode_accepts_structured_single_constrained_feature() -> None:
+    cfg = _build_cfg(
+        prompt_render_mode="apply_chat_template",
+        target_tokens=("Austin", "Dallas"),
+        analysis_mode="debug_intervention_pipelines",
+        constrained_feature_selection_refs=cast(
+            Any,
+            {
+                "specific_features": [
+                    ["gemma-3-1b-it", "gemmascope-2-transcoder-16k", 21, 3866],
+                ]
+            },
+        ),
+    )
+
+    assert cfg.constrained_feature_selection_refs is not None
+    assert len(cfg.constrained_feature_selection_refs.specific_features) == 1
+
+
+def test_debug_mode_accepts_structured_single_constrained_feature() -> None:
+    cfg = _build_cfg(
+        prompt_render_mode="apply_chat_template",
+        target_tokens=("Austin", "Dallas"),
+        analysis_mode="debug_intervention_pipelines",
+        constrained_feature_selection_refs=cast(
+            Any,
+            {
+                "specific_features": [
+                    ["gemma-3-1b-it", "gemmascope-2-transcoder-16k", 21, 3866],
+                ]
+            },
+        ),
+    )
+
+    assert cfg.constrained_feature_selection_refs is not None
+    assert len(cfg.constrained_feature_selection_refs.specific_features) == 1
 
 
 def test_debug_mode_parity_surface_preserves_force_device_when_unset() -> None:
@@ -1082,6 +1307,146 @@ def test_build_feature_selection_spec_preserves_missing_feature_refs_with_activa
     assert spec.activation_overrides == {(21, 3866): 4.5}
 
 
+def test_build_feature_selection_spec_supports_structured_feature_selection_mapping() -> None:
+    cfg = _build_cfg(prompt_render_mode="apply_chat_template", target_tokens=("Austin", "Dallas"))
+    cfg.constrained_feature_selection_refs = cast(
+        Any,
+        {
+            "specific_features": [
+                [21, 12, 3866],
+                "gemma-3-1b-it/21-gemmascope-2-transcoder-16k/7777",
+            ],
+            "layer_slices": [(10, None)],
+            "position_slices": [(0, 2)],
+        },
+    )
+    cfg.__post_init__()
+
+    active_features = torch.tensor(
+        [
+            [9, 0, 111],
+            [10, 1, 222],
+            [11, 2, 333],
+            [21, 12, 3866],
+            [21, 13, 7777],
+        ],
+        dtype=torch.long,
+    )
+
+    spec = _build_feature_selection_spec(cfg, active_features)
+
+    assert spec is not None
+    assert spec.layers == [10, 11, 21]
+    assert spec.positions == [0, 1]
+    assert spec.triples == [(21, 12, 3866), (21, 13, 7777)]
+    assert spec.layer_feature_pairs == [(21, 7777)]
+
+
+def test_structured_constrained_feature_selection_serializes_full_mapping() -> None:
+    cfg = _build_cfg(prompt_render_mode="apply_chat_template", target_tokens=("Austin", "Dallas"))
+    cfg.constrained_feature_selection_refs = cast(
+        Any,
+        {
+            "specific_features": [
+                {
+                    "ref": ("gemma-3-1b-it", "gemmascope-2-transcoder-16k", 21, 3866),
+                    "activation_value": 4.5,
+                },
+                [21, 12, 7777],
+            ],
+            "layer_slices": [(10, None)],
+            "position_slices": [(0, 10)],
+        },
+    )
+    cfg.__post_init__()
+
+    serialized = nb_harness_utils_module._serialize_constrained_feature_selection(cfg.constrained_feature_selection_refs)
+
+    assert serialized == {
+        "specific_features": [
+            {
+                "ref": ["gemma-3-1b-it", "gemmascope-2-transcoder-16k", 21, 3866],
+                "activation_value": 4.5,
+            },
+            [21, 12, 7777],
+        ],
+        "layer_slices": [[10, None]],
+        "position_slices": [[0, 10]],
+    }
+
+
+def test_build_feature_selection_spec_supports_structured_feature_selection_mapping() -> None:
+    cfg = _build_cfg(
+        prompt_render_mode="apply_chat_template",
+        target_tokens=("Austin", "Dallas"),
+        constrained_feature_selection_refs=cast(
+            Any,
+            {
+                "specific_features": [
+                    [21, 12, 3866],
+                    "gemma-3-1b-it/21-gemmascope-2-transcoder-16k/7777",
+                ],
+                "layer_slices": [(10, None)],
+                "position_slices": [(0, 2)],
+            },
+        ),
+    )
+
+    active_features = torch.tensor(
+        [
+            [9, 0, 111],
+            [10, 1, 222],
+            [11, 2, 333],
+            [21, 12, 3866],
+            [21, 13, 7777],
+        ],
+        dtype=torch.long,
+    )
+
+    spec = _build_feature_selection_spec(cfg, active_features)
+
+    assert spec is not None
+    assert spec.layers == [10, 11, 21]
+    assert spec.positions == [0, 1]
+    assert spec.triples == [(21, 12, 3866), (21, 13, 7777)]
+    assert spec.layer_feature_pairs == [(21, 7777)]
+
+
+def test_structured_constrained_feature_selection_serializes_full_mapping() -> None:
+    cfg = _build_cfg(
+        prompt_render_mode="apply_chat_template",
+        target_tokens=("Austin", "Dallas"),
+        constrained_feature_selection_refs=cast(
+            Any,
+            {
+                "specific_features": [
+                    {
+                        "ref": ("gemma-3-1b-it", "gemmascope-2-transcoder-16k", 21, 3866),
+                        "activation_value": 4.5,
+                    },
+                    [21, 12, 7777],
+                ],
+                "layer_slices": [(10, None)],
+                "position_slices": [(0, 10)],
+            },
+        ),
+    )
+
+    serialized = nb_harness_utils_module._serialize_constrained_feature_selection(cfg.constrained_feature_selection_refs)
+
+    assert serialized == {
+        "specific_features": [
+            {
+                "ref": ["gemma-3-1b-it", "gemmascope-2-transcoder-16k", 21, 3866],
+                "activation_value": 4.5,
+            },
+            [21, 12, 7777],
+        ],
+        "layer_slices": [[10, None]],
+        "position_slices": [[0, 10]],
+    }
+
+
 def test_run_direct_projection_pipeline_injects_concept_direction_for_metadata_only_interventions(monkeypatch) -> None:
     cfg = _build_cfg(
         prompt_render_mode="apply_chat_template",
@@ -1220,7 +1585,7 @@ def test_pipeline_serializer_supports_structured_constrained_feature_refs() -> N
     }
 
 
-def test_extract_top_features_with_optional_filter_post_filters_nonmatching_rows(monkeypatch) -> None:
+def test_extract_top_features_with_optional_filter_passes_feature_selection_to_op(monkeypatch) -> None:
     cfg = _build_cfg(prompt_render_mode="apply_chat_template", target_tokens=("Austin", "Dallas"))
     cfg.constrained_feature_selection_refs = cast(
         Any,
@@ -1236,21 +1601,23 @@ def test_extract_top_features_with_optional_filter_post_filters_nonmatching_rows
         top_feature_scores=torch.tensor([0.5, 0.4], dtype=torch.float32),
         top_feature_activation_values=torch.tensor([1.0, 2.0], dtype=torch.float32),
     )
+    observed_feature_selection: dict[str, Any] = {}
 
     monkeypatch.setattr(
         "tests.nb_experiment_harness.nb_harness_utils.it.extract_top_features",
-        lambda *args, **kwargs: fake_result,
+        lambda *args, **kwargs: observed_feature_selection.update(feature_selection=kwargs.get("feature_selection"))
+        or fake_result,
     )
 
     result, applied = _extract_top_features_with_optional_filter(object(), cfg, top_payload, top_n=10)
 
     assert applied == [(21, 12, 3866)]
-    assert torch.equal(result.top_feature_ids, torch.tensor([[21, 12, 3866]], dtype=torch.long))
-    assert torch.allclose(result.top_feature_scores, torch.tensor([0.5], dtype=torch.float32))
-    assert torch.allclose(result.top_feature_activation_values, torch.tensor([1.0], dtype=torch.float32))
+    assert observed_feature_selection["feature_selection"] is not None
+    assert list(observed_feature_selection["feature_selection"].triples) == [(21, 12, 3866)]
+    assert result is fake_result
 
 
-def test_extract_top_features_with_optional_filter_returns_empty_when_requested_feature_missing(monkeypatch) -> None:
+def test_extract_top_features_with_optional_filter_leaves_op_result_unchanged(monkeypatch) -> None:
     cfg = _build_cfg(prompt_render_mode="apply_chat_template", target_tokens=("Austin", "Dallas"))
     cfg.constrained_feature_selection_refs = cast(
         Any,
@@ -1275,9 +1642,42 @@ def test_extract_top_features_with_optional_filter_returns_empty_when_requested_
     result, applied = _extract_top_features_with_optional_filter(object(), cfg, top_payload, top_n=10)
 
     assert applied == [(21, 12, 3866)]
-    assert result.top_feature_ids.shape == (0, 3)
-    assert result.top_feature_scores.shape == (0,)
-    assert result.top_feature_activation_values.shape == (0,)
+    assert result is fake_result
+    assert torch.equal(result.top_feature_ids, torch.tensor([[9, 4, 9999]], dtype=torch.long))
+    assert torch.allclose(result.top_feature_scores, torch.tensor([0.4], dtype=torch.float32))
+    assert torch.allclose(result.top_feature_activation_values, torch.tensor([2.0], dtype=torch.float32))
+
+
+def test_extract_top_features_with_optional_filter_matches_direct_feature_selection_result() -> None:
+    cfg = _build_cfg(prompt_render_mode="apply_chat_template", target_tokens=("Austin", "Dallas"))
+    cfg.constrained_feature_selection_refs = cast(
+        Any,
+        (("gemma-3-1b-it", "gemmascope-2-transcoder-16k", 21, 3866),),
+    )
+
+    top_payload = {
+        "active_features": torch.tensor([[21, 12, 3866], [9, 4, 9999]], dtype=torch.long),
+        "node_influence_scores": torch.tensor([0.5, 0.4], dtype=torch.float32),
+        "activation_values": torch.tensor([1.0, 2.0], dtype=torch.float32),
+    }
+
+    feature_selection = _build_feature_selection_spec(cfg, top_payload["active_features"])
+    assert feature_selection is not None
+
+    direct_result = nb_harness_utils_module.it.extract_top_features(
+        object(),
+        nb_harness_utils_module.it.AnalysisBatch(**top_payload),
+        cast(Any, None),
+        0,
+        top_n=10,
+        feature_selection=feature_selection,
+    )
+    result, applied = _extract_top_features_with_optional_filter(object(), cfg, top_payload, top_n=10)
+
+    assert applied == [(21, 12, 3866)]
+    assert torch.equal(result.top_feature_ids, direct_result.top_feature_ids)
+    assert torch.allclose(result.top_feature_scores, direct_result.top_feature_scores)
+    assert torch.allclose(result.top_feature_activation_values, direct_result.top_feature_activation_values)
 
 
 def test_reduce_top_features_result_to_single_feature_prefers_largest_abs_score() -> None:

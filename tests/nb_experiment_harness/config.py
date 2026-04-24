@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -8,6 +9,32 @@ import yaml  # type: ignore[import-untyped]
 
 
 CONFIG_EXTENDS_KEY = "EXTENDS"
+_MISSING = object()
+
+
+def _parse_env_override(raw_value: str) -> Any:
+    stripped = raw_value.strip()
+    if not stripped:
+        return raw_value
+
+    lower_value = stripped.lower()
+    if lower_value in {"true", "false", "null", "none", "~"}:
+        return yaml.safe_load(stripped)
+
+    if stripped[0] in "[{(" or stripped[0] in "\"'":
+        return yaml.safe_load(stripped)
+
+    number_chars = set("0123456789+-.eE")
+    if set(stripped) <= number_chars and any(char.isdigit() for char in stripped):
+        return yaml.safe_load(stripped)
+
+    return raw_value
+
+
+def _get_env_override(flat_key: str) -> Any:
+    if flat_key not in os.environ:
+        return _MISSING
+    return _parse_env_override(os.environ[flat_key])
 
 
 @dataclass(frozen=True)
@@ -151,6 +178,10 @@ def get_config_value(
     flat_key: str,
     default: Any = None,
 ) -> Any:
+    env_override = _get_env_override(flat_key)
+    if env_override is not _MISSING:
+        return env_override
+
     section_value = payload.get(section)
     if isinstance(section_value, Mapping) and key in section_value:
         return section_value[key]
