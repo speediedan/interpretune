@@ -247,6 +247,26 @@ PY
         fi
     }
 
+    run_partitioned_cuda_pytest_phase(){
+        local bulk_status=0
+        local isolated_status=0
+
+        env -u CUDA_VISIBLE_DEVICES IT_RUN_CUDA_TESTS=1 python -X faulthandler -m pytest \
+            --cov=src/interpretune --cov-append --cov-report= tests -v ${pytest_resource_args} ${rerun_args} \
+            "${isolated_cuda_deselect_args[@]}" >> "$coverage_session_log" 2>&1
+        bulk_status=$?
+
+        env -u CUDA_VISIBLE_DEVICES IT_RUN_CUDA_TESTS=1 python -X faulthandler -m pytest \
+            --cov=src/interpretune --cov-append --cov-report= -v ${pytest_resource_args} ${rerun_args} \
+            "${isolated_cuda_nodeids[@]}" >> "$coverage_session_log" 2>&1
+        isolated_status=$?
+
+        if [[ $bulk_status -ne 0 || $isolated_status -ne 0 ]]; then
+            return 1
+        fi
+        return 0
+    }
+
     # Build special_tests.sh rerun args to pass through
     special_tests_rerun_args=""
     [[ $no_reruns -eq 1 ]] && special_tests_rerun_args="--no-reruns"
@@ -263,6 +283,16 @@ PY
         failures_flag="--allow-failures"
         echo "Running in --allow-failures mode: coverage collection will continue past test failures." >> $coverage_session_log
     fi
+    local -a isolated_cuda_deselect_args=(
+        --deselect tests/core/test_analysis_backend_parity.py::test_analysis_backend_parity_semantic_intervention_nnsight
+        --deselect tests/examples/test_notebooks.py::test_sae_lens_notebooks[sae_lens_tl]
+        --deselect tests/examples/test_notebooks.py::test_sae_lens_notebooks[sae_lens_nnsight]
+    )
+    local -a isolated_cuda_nodeids=(
+        tests/core/test_analysis_backend_parity.py::test_analysis_backend_parity_semantic_intervention_nnsight
+        tests/examples/test_notebooks.py::test_sae_lens_notebooks[sae_lens_tl]
+        tests/examples/test_notebooks.py::test_sae_lens_notebooks[sae_lens_nnsight]
+    )
     case $1 in
         it_latest )
             check_self_test_only "Skipping all tests and examples." && return
@@ -275,7 +305,7 @@ PY
                     >> "$coverage_session_log" 2>&1
                 run_logged_cuda_phase \
                     "base pytest cuda-marked" \
-                    env -u CUDA_VISIBLE_DEVICES IT_RUN_CUDA_TESTS=1 python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${pytest_resource_args} ${rerun_args} \
+                    run_partitioned_cuda_pytest_phase \
                     >> "$coverage_session_log" 2>&1
                 run_logged_phase \
                     "special tests standalone" \
@@ -300,7 +330,7 @@ PY
                     >> "$coverage_session_log" 2>&1
                 run_logged_cuda_phase \
                     "base pytest cuda-marked" \
-                    env -u CUDA_VISIBLE_DEVICES IT_RUN_CUDA_TESTS=1 python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${pytest_resource_args} ${rerun_args} \
+                    run_partitioned_cuda_pytest_phase \
                     >> "$coverage_session_log" 2>&1
                 run_logged_phase \
                     "special tests standalone" \

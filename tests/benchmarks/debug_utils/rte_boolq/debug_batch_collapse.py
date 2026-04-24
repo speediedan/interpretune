@@ -4,10 +4,9 @@
 Loads the baseline config model directly (no LightningCLI) and inspects
 the generation pipeline step by step.
 """
+
 from __future__ import annotations
 import os
-import sys
-import json
 from datetime import datetime
 
 import torch
@@ -107,7 +106,7 @@ def debug_batch_collapse():
     device = model.device
     encoded = {k: v.to(device) for k, v in encoded.items()}
 
-    log(f"\n7. Running generate()...")
+    log("\n7. Running generate()...")
     with torch.no_grad():
         outputs = model.generate(**encoded)
 
@@ -126,10 +125,10 @@ def debug_batch_collapse():
         elif isinstance(outputs.logits, torch.Tensor):
             log(f"   logits tensor shape: {outputs.logits.shape}")
     else:
-        log(f"   logits: None or missing")
+        log("   logits: None or missing")
 
     # Now trace through standardize_logits logic
-    log(f"\n8. Tracing standardize_logits logic...")
+    log("\n8. Tracing standardize_logits logic...")
     if hasattr(outputs, "logits") and outputs.logits is not None:
         logits = outputs.logits
         if isinstance(logits, tuple):
@@ -161,7 +160,7 @@ def debug_batch_collapse():
             log(f"   Example {i}: predicted '{mapping[pred_idx.item()]}'")
 
     # Also test with raw generate (return sequences only)
-    log(f"\n9. Raw generate (sequences only)...")
+    log("\n9. Raw generate (sequences only)...")
     model.generation_config.output_logits = False
     model.generation_config.return_dict_in_generate = False
     with torch.no_grad():
@@ -172,7 +171,10 @@ def debug_batch_collapse():
         log(f"   Example {i} decoded: ...{decoded[-80:]}")
 
     # Save log
-    log_dir = "/home/speediedan/repos/distributed-insight/project_admin/interpretune/design/circuit-tracer-backend/benchmark_debugging"
+    log_dir = (
+        "/home/speediedan/repos/distributed-insight/project_admin/interpretune/design/"
+        "circuit-tracer-backend/benchmark_debugging"
+    )
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f"batch_collapse_debug_{timestamp}.log")
     with open(log_path, "w") as f:

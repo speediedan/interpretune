@@ -103,6 +103,20 @@ expand_tilde(){
     fi
 }
 
+# Expand unquoted ~/ segments that appear at the start of a value or after
+# whitespace/= so env vars like FLAGS="-r ~/requirements.txt" resolve correctly.
+# Usage: expanded_value=$(expand_tilde_segments "$value")
+expand_tilde_segments(){
+    local value="$1"
+    local home_dir="${HOME}"
+
+    value="${value/#~\//${home_dir}/}"
+    value="${value//" ~/"/" ${home_dir}/"}"
+    value="${value//"=~/"/"=${home_dir}/"}"
+
+    echo "$value"
+}
+
 # Read torch prerelease configuration from torch-pre.txt
 # This function reads the torch-pre.txt file and sets global variables:
 #   TORCH_PRE_VERSION: The torch version to install (e.g., "2.10.0.dev20250122")
@@ -334,6 +348,7 @@ install_from_source_packages(){
                 if [[ $env_var =~ ^([^=]+)=(.*)$ ]]; then
                     local var_name="${BASH_REMATCH[1]}"
                     local var_value="${BASH_REMATCH[2]}"
+                    var_value=$(expand_tilde_segments "${var_value}")
                     echo "  export ${var_name}=${var_value}"
                     export "${var_name}=${var_value}"
                     env_vars_set+=("${var_name}")

@@ -7,6 +7,7 @@ same commit are tests/benchmarks/benchmark_update.allow, documentation files
 every registry update traceable to the exact codebase state that produced it
 while allowing incidental documentation and tooling updates.
 """
+
 from __future__ import annotations
 
 import subprocess

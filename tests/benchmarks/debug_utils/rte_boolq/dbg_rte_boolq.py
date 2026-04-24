@@ -95,7 +95,7 @@ def check_entailment_predictions(model, batch, buf: StringIO, results: dict) -> 
         buf.write(f"  ERROR: {e}\n")
 
 
-def run_rte_boolq_diagnostics(config_path: str, output_path: str | None = None) -> dict:
+def run_diagnostics(config_path: str, output_path: str | None = None) -> dict:
     """Run full diagnostics including RTE-specific checks."""
     cli_mode = _detect_cli_mode_from_config(config_path)
     # Run shared diagnostics first
@@ -142,7 +142,7 @@ def main():
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    run_rte_boolq_diagnostics(args.config, args.output)
+    run_diagnostics(args.config, args.output)
 
 
 if __name__ == "__main__":

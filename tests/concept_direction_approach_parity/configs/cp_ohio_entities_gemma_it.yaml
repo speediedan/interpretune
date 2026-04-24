@@ -1,6 +1,6 @@
 name: ohio_not_indiana
 description: Ohio entities vs Indiana entities
-group_a_tokens: [Columbus, ▁Buckeye, ▁Cavaliers ]
+group_a_tokens: [Columbus, ▁Buckeye, ▁Cavaliers]
 group_b_tokens: [Indianapolis, ▁Hoos, ▁Pacers]
 group_a_entities:
   - [Columbus, Ohio]

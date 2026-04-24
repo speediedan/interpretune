@@ -14,12 +14,15 @@ contract that matters for the circuit-tracer backend workstream:
 from __future__ import annotations
 
 import json
+import os
+from functools import lru_cache
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import torch
 from datasets import Dataset, load_from_disk
-from transformers import BatchEncoding
+from transformers import AutoTokenizer, BatchEncoding
 
 import interpretune as it
 from circuit_tracer.attribution.targets import CustomTarget, LogitTarget
@@ -37,6 +40,18 @@ from interpretune.analysis.ops.definitions import (
 from interpretune.analysis.ops.helpers import _extract_concept_latent_state_from_cache
 from interpretune.config.circuit_tracer import CircuitTracerConfig
 from interpretune.config import init_analysis_cfgs
+from tests import load_dotenv
+from tests.nb_experiment_harness.session import resolve_model_spec
+from tests.parity_analysis.concept_direction_parity_analysis import (
+    build_prompt_alignment_snapshot,
+    capture_context_enhanced_extraction_snapshot,
+    compare_top_feature_sets,
+    resolve_prompt_alignment_context_index,
+)
+from tests.runif import RunIf
+
+
+RUNIF: Any = RunIf
 
 
 class _FakeTokenizer:
@@ -61,6 +76,15 @@ class _FakeTokenizer:
 
     def convert_ids_to_tokens(self, token_id: int) -> str:
         return self.decode([token_id], skip_special_tokens=False)
+
+
+@lru_cache(maxsize=1)
+def _load_gemma3_1b_it_alignment_tokenizer() -> Any:
+    load_dotenv()
+    model_spec = resolve_model_spec("gemma3", "1b_it")
+    auth_token = os.getenv("HF_GATED_PUBLIC_REPO_AUTH_KEY") or os.getenv("HF_TOKEN")
+    tokenizer_kwargs = {"token": auth_token} if auth_token else {}
+    return AutoTokenizer.from_pretrained(model_spec.model_name, **tokenizer_kwargs)
 
 
 def _embed_weight() -> torch.Tensor:
@@ -459,6 +483,120 @@ def test_extract_concept_latent_examples_allows_missing_group_b_labels() -> None
     assert torch.equal(result.concept_example_weight, torch.tensor([2.0, 0.5], dtype=torch.float32))
 
 
+@RUNIF(standalone=True)
+def test_prompt_alignment_snapshot_reports_probe_and_previous_tokens() -> None:
+    tokenizer = _load_gemma3_1b_it_alignment_tokenizer()
+    rendered_prompt = "Is this an Ohio entity or Indiana entity? Columbus : Ohio"
+    input_ids = tokenizer(rendered_prompt, add_special_tokens=False)["input_ids"]
+    input_tokens = tokenizer.convert_ids_to_tokens(input_ids)
+
+    snapshot = build_prompt_alignment_snapshot(
+        tokenizer,
+        rendered_prompt,
+        probe_text="Columbus",
+        answer_text="Ohio",
+        add_special_tokens=False,
+    )
+
+    assert snapshot.input_ids == tuple(int(value) for value in input_ids)
+    assert snapshot.input_tokens == tuple(str(token) for token in input_tokens)
+    assert snapshot.probe_start_index == 9
+    assert snapshot.probe_end_index == 9
+    assert snapshot.answer_index == 11
+    assert snapshot.answer_start_index == 11
+    assert snapshot.answer_end_index == 11
+    assert snapshot.answer_token_text == "▁Ohio"
+    assert snapshot.previous_token_index == 10
+    assert snapshot.previous_token_text == "▁:"
+    assert snapshot.intervening_token_texts == ("▁:",)
+    assert resolve_prompt_alignment_context_index(snapshot) == (9, "probe_end")
+
+
+def test_context_enhanced_extraction_snapshot_matches_helper_projection() -> None:
+    analysis_batch = AnalysisBatch(
+        cache={
+            "unembed.hook_in": torch.tensor(
+                [[[1.0, 0.0, 0.0, 0.0], [3.0, 4.0, 0.0, 0.0], [1.0, 2.0, 0.0, 0.0]]],
+                dtype=torch.float32,
+            )
+        },
+        answer_indices=torch.tensor([2], dtype=torch.long),
+        context_token_indices=torch.tensor([0], dtype=torch.long),
+        concept_cache_key="unembed.hook_in",
+    )
+
+    snapshot = capture_context_enhanced_extraction_snapshot(analysis_batch, context_scale=2.0)
+    latent_states, _ = _extract_concept_latent_state_from_cache(
+        analysis_batch,
+        context_enhanced=True,
+        context_scale=2.0,
+    )
+
+    assert snapshot.answer_indices == (2,)
+    assert snapshot.context_source == "context_token_indices"
+    assert snapshot.context_indices == (0,)
+    assert torch.allclose(snapshot.answer_states, torch.tensor([[1.0, 2.0, 0.0, 0.0]], dtype=torch.float32))
+    assert torch.allclose(snapshot.context_states, torch.tensor([[1.0, 0.0, 0.0, 0.0]], dtype=torch.float32))
+    assert torch.allclose(snapshot.dot_num, torch.tensor([[2.0]], dtype=torch.float32))
+    assert torch.allclose(snapshot.dot_den, torch.tensor([[1.0]], dtype=torch.float32))
+    assert torch.allclose(snapshot.final_latent_states, latent_states, atol=1e-5)
+
+
+def test_concept_direction_accepts_per_example_rows_without_manual_stacking() -> None:
+    extracted_batches = [
+        AnalysisBatch(
+            concept_latent_state=torch.tensor([[3.0, 0.0]], dtype=torch.float32),
+            concept_group_id=torch.tensor([0], dtype=torch.long),
+            concept_group_name=["ohio_entities"],
+            concept_example_weight=torch.tensor([2.0], dtype=torch.float32),
+        ),
+        AnalysisBatch(
+            concept_latent_state=torch.tensor([[0.0, 4.0]], dtype=torch.float32),
+            concept_group_id=torch.tensor([1], dtype=torch.long),
+            concept_group_name=["indiana_entities"],
+            concept_example_weight=torch.tensor([1.0], dtype=torch.float32),
+        ),
+    ]
+
+    result = it.concept_direction(
+        _TLLikeProducerModule(),
+        AnalysisBatch(
+            concept_latent_state=[batch.concept_latent_state for batch in extracted_batches],
+            concept_group_id=[batch.concept_group_id for batch in extracted_batches],
+            concept_group_name=[batch.concept_group_name for batch in extracted_batches],
+            concept_example_weight=[batch.concept_example_weight for batch in extracted_batches],
+            concept_direction_mode="mean_difference",
+            concept_group_a_name="ohio_entities",
+            concept_group_b_name="indiana_entities",
+        ),
+        batch=None,
+        batch_idx=0,
+    )
+
+    expected = torch.tensor([3.0, -4.0], dtype=torch.float32)
+    expected = expected / torch.linalg.vector_norm(expected)
+    assert torch.allclose(result.concept_direction, expected, atol=1e-6)
+    assert result.concept_label == "ohio_entities -> indiana_entities"
+    assert result.concept_direction_mode == "mean_difference"
+
+
+def test_compare_top_feature_sets_reports_overlap_and_score_cosine() -> None:
+    summary = compare_top_feature_sets(
+        [(0, 0, 10), (1, 0, 12), (2, 0, 15)],
+        [(1, 0, 12), (2, 0, 15), (3, 0, 20)],
+        left_scores=torch.tensor([0.9, 0.5, 0.25], dtype=torch.float32),
+        right_scores=torch.tensor([0.45, 0.2, 0.1], dtype=torch.float32),
+        left_label="embed",
+        right_label="store",
+    )
+
+    assert summary.shared == ((1, 0, 12), (2, 0, 15))
+    assert summary.left_only == ((0, 0, 10),)
+    assert summary.right_only == ((3, 0, 20),)
+    assert summary.jaccard == pytest.approx(0.5)
+    assert summary.shared_score_cosine is not None and summary.shared_score_cosine > 0
+
+
 def test_concept_direction_aggregates_round_tripped_synthetic_hf_dataset(tmp_path) -> None:
     synthetic_dataset = Dataset.from_dict(
         {
@@ -599,6 +737,328 @@ def test_concept_direction_runner_store_workflow_aggregates_latent_examples(tmp_
     assert torch.allclose(result.concept_direction, expected, atol=1e-4)
     assert result.concept_label == "capital -> state"
     assert result.concept_direction_mode == "mean_difference"
+
+
+def test_extract_concept_latent_examples_final_batch_is_directly_consumable(tmp_path) -> None:
+    module = _FakeConceptExtractionModule()
+    module.core_log_dir = tmp_path
+    datamodule = module.datamodule
+    extraction_inputs = SimpleNamespace(
+        cache=[
+            {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [3.0, 0.0]], [[0.0, 0.0], [0.0, 4.0]]])},
+            {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [1.0, 1.0]], [[0.0, 0.0], [1.0, 3.0]]])},
+        ],
+        answer_indices=[torch.tensor([1, 1], dtype=torch.long), torch.tensor([1, 1], dtype=torch.long)],
+        orig_labels=[torch.tensor([0, 1], dtype=torch.long), torch.tensor([0, 1], dtype=torch.long)],
+        logit_diffs=[torch.tensor([2.0, 1.0], dtype=torch.float32), torch.tensor([-0.25, 0.5], dtype=torch.float32)],
+    )
+    analysis_cfg = it.AnalysisCfg(
+        name="latent_example_rows",
+        target_op=[it.extract_concept_latent_state, it.extract_concept_latent_examples],
+        ignore_manual=True,
+    )
+    init_analysis_cfgs(module, analysis_cfg, ignore_manual=True)
+
+    extracted_batches = []
+    for batch_idx, batch in enumerate(datamodule.test_dataloader()):
+        extracted_batches.append(
+            execute_analysis_op(
+                module,
+                batch,
+                batch_idx,
+                analysis_batch=AnalysisBatch(
+                    concept_group_a_label_ids=[0],
+                    concept_group_b_label_ids=[1],
+                    concept_group_a_name="capital",
+                    concept_group_b_name="state",
+                    concept_label="capital -> state",
+                    concept_direction_mode="mean_difference",
+                    concept_cache_key="unembed.hook_in.hook_sae_acts_post",
+                    concept_weight_by_logit_diff=True,
+                    concept_aggregate_output_mode="in_memory",
+                ),
+                analysis_cfg=analysis_cfg,
+                analysis_inputs=AnalysisInputs(store=extraction_inputs),
+            )
+        )
+
+    final_extracted = extracted_batches[-1]
+    assert len(final_extracted.concept_latent_state_rows) == 2
+    assert final_extracted.concept_latent_state_rows[0].shape == (2, 2)
+    assert final_extracted.concept_group_id_rows[1].shape == (1,)
+
+    result = it.concept_direction(module, final_extracted, batch=None, batch_idx=0)
+
+    expected = torch.tensor([8.0 / 3.0, -11.0 / 3.0], dtype=torch.float32)
+    expected = expected / torch.linalg.vector_norm(expected)
+    assert torch.allclose(result.concept_direction, expected, atol=1e-4)
+    assert result.concept_label == "capital -> state"
+    assert result.concept_direction_mode == "mean_difference"
+
+
+def _run_chained_concept_direction_for_aggregate_mode(
+    module,
+    datamodule,
+    extraction_inputs,
+    *,
+    aggregate_mode: str,
+    shared_store,
+    direction_mode: str = "mean_difference",
+):
+    """Drive extract_concept_latent_state + extract_concept_latent_examples + concept_direction per batch.
+
+    Returns the list of analysis batches emitted by the chained op for each input batch.
+    """
+    analysis_cfg = it.AnalysisCfg(
+        name=f"chained_concept_direction_{aggregate_mode}_{direction_mode}",
+        target_op=[
+            it.extract_concept_latent_state,
+            it.extract_concept_latent_examples,
+            it.concept_direction,
+        ],
+        ignore_manual=True,
+    )
+    init_analysis_cfgs(module, analysis_cfg, ignore_manual=True)
+
+    emitted_batches = []
+    for batch_idx, batch in enumerate(datamodule.test_dataloader()):
+        emitted_batches.append(
+            execute_analysis_op(
+                module,
+                batch,
+                batch_idx,
+                analysis_batch=AnalysisBatch(
+                    concept_group_a_label_ids=[0],
+                    concept_group_b_label_ids=[1],
+                    concept_group_a_name="capital",
+                    concept_group_b_name="state",
+                    concept_label="capital -> state",
+                    concept_direction_mode=direction_mode,
+                    concept_cache_key="unembed.hook_in.hook_sae_acts_post",
+                    concept_weight_by_logit_diff=True,
+                    concept_aggregate_output_mode=aggregate_mode,
+                ),
+                analysis_cfg=analysis_cfg,
+                analysis_inputs=AnalysisInputs(store=shared_store),
+            )
+        )
+    return emitted_batches
+
+
+def test_concept_direction_streaming_matches_in_memory_aggregate(tmp_path) -> None:
+    """Explicit batched-vs-aggregate parity: streaming and in_memory must converge to the same direction."""
+    expected = torch.tensor([8.0 / 3.0, -11.0 / 3.0], dtype=torch.float32)
+    expected = expected / torch.linalg.vector_norm(expected)
+
+    streaming_module = _FakeConceptExtractionModule()
+    streaming_module.core_log_dir = tmp_path / "streaming"
+    streaming_inputs = SimpleNamespace(
+        cache=[
+            {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [3.0, 0.0]], [[0.0, 0.0], [0.0, 4.0]]])},
+            {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [1.0, 1.0]], [[0.0, 0.0], [1.0, 3.0]]])},
+        ],
+        answer_indices=[torch.tensor([1, 1], dtype=torch.long), torch.tensor([1, 1], dtype=torch.long)],
+        orig_labels=[torch.tensor([0, 1], dtype=torch.long), torch.tensor([0, 1], dtype=torch.long)],
+        logit_diffs=[torch.tensor([2.0, 1.0], dtype=torch.float32), torch.tensor([-0.25, 0.5], dtype=torch.float32)],
+    )
+    streaming_batches = _run_chained_concept_direction_for_aggregate_mode(
+        streaming_module,
+        streaming_module.datamodule,
+        streaming_inputs,
+        aggregate_mode="streaming",
+        shared_store=streaming_inputs,
+    )
+    streaming_final = streaming_batches[-1]
+
+    in_memory_module = _FakeConceptExtractionModule()
+    in_memory_module.core_log_dir = tmp_path / "in_memory"
+    in_memory_inputs = SimpleNamespace(
+        cache=[
+            {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [3.0, 0.0]], [[0.0, 0.0], [0.0, 4.0]]])},
+            {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [1.0, 1.0]], [[0.0, 0.0], [1.0, 3.0]]])},
+        ],
+        answer_indices=[torch.tensor([1, 1], dtype=torch.long), torch.tensor([1, 1], dtype=torch.long)],
+        orig_labels=[torch.tensor([0, 1], dtype=torch.long), torch.tensor([0, 1], dtype=torch.long)],
+        logit_diffs=[torch.tensor([2.0, 1.0], dtype=torch.float32), torch.tensor([-0.25, 0.5], dtype=torch.float32)],
+    )
+    in_memory_batches = _run_chained_concept_direction_for_aggregate_mode(
+        in_memory_module,
+        in_memory_module.datamodule,
+        in_memory_inputs,
+        aggregate_mode="in_memory",
+        shared_store=in_memory_inputs,
+    )
+    in_memory_final = in_memory_batches[-1]
+
+    # Both modes must match the analytical expected mean-difference direction within tight tolerance.
+    assert torch.allclose(streaming_final.concept_direction, expected, atol=1e-5)
+    assert torch.allclose(in_memory_final.concept_direction, expected, atol=1e-5)
+    # And the two modes must agree with each other to even tighter tolerance.
+    assert torch.allclose(streaming_final.concept_direction, in_memory_final.concept_direction, atol=1e-6)
+
+    assert streaming_final.concept_direction_mode == "mean_difference"
+    assert in_memory_final.concept_direction_mode == "mean_difference"
+    assert streaming_final.get("concept_aggregate_output_mode") == "streaming"
+    assert streaming_final.concept_label == "capital -> state"
+    assert in_memory_final.concept_label == "capital -> state"
+
+
+def test_concept_direction_streaming_paired_rejection_matches_in_memory(tmp_path) -> None:
+    """Paired-rejection parity: streaming pending-buffer impl must match the legacy in_memory math.
+
+    Inputs are constructed with matched (group_a, group_b) counts per batch so that pair structure
+    is preserved by both code paths. Pair index = stable iteration order across batches (matches
+    legacy ``zip`` semantics).
+    """
+    # Two batches, each with one (group_a=label 0, group_b=label 1) pair, both correct.
+    # Cache layout is (batch, seq=2, d_model=2); answer_indices=[1,1] selects the seq=1 row.
+    #   batch 0: a=[3,0], b=[0,4]; weights from |logit_diffs| = [2.0, 1.0]
+    #   batch 1: a=[1,1], b=[1,3]; weights from |logit_diffs| = [1.0, 0.5]
+    cache_batches = [
+        {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [3.0, 0.0]], [[0.0, 0.0], [0.0, 4.0]]])},
+        {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [1.0, 1.0]], [[0.0, 0.0], [1.0, 3.0]]])},
+    ]
+    answer_indices = [torch.tensor([1, 1], dtype=torch.long), torch.tensor([1, 1], dtype=torch.long)]
+    orig_labels = [torch.tensor([0, 1], dtype=torch.long), torch.tensor([0, 1], dtype=torch.long)]
+    logit_diffs = [
+        torch.tensor([2.0, 1.0], dtype=torch.float32),
+        torch.tensor([1.0, 0.5], dtype=torch.float32),
+    ]
+
+    streaming_module = _FakeConceptExtractionModule()
+    streaming_module.core_log_dir = tmp_path / "streaming"
+    streaming_inputs = SimpleNamespace(
+        cache=cache_batches,
+        answer_indices=answer_indices,
+        orig_labels=orig_labels,
+        logit_diffs=logit_diffs,
+    )
+    streaming_batches = _run_chained_concept_direction_for_aggregate_mode(
+        streaming_module,
+        streaming_module.datamodule,
+        streaming_inputs,
+        aggregate_mode="streaming",
+        shared_store=streaming_inputs,
+        direction_mode="paired_rejection",
+    )
+    streaming_final = streaming_batches[-1]
+
+    in_memory_module = _FakeConceptExtractionModule()
+    in_memory_module.core_log_dir = tmp_path / "in_memory"
+    in_memory_inputs = SimpleNamespace(
+        cache=cache_batches,
+        answer_indices=answer_indices,
+        orig_labels=orig_labels,
+        logit_diffs=logit_diffs,
+    )
+    in_memory_batches = _run_chained_concept_direction_for_aggregate_mode(
+        in_memory_module,
+        in_memory_module.datamodule,
+        in_memory_inputs,
+        aggregate_mode="in_memory",
+        shared_store=in_memory_inputs,
+        direction_mode="paired_rejection",
+    )
+    in_memory_final = in_memory_batches[-1]
+
+    # Analytical expected:
+    #   pair 0: a=[3,0], b=[0,4]; proj=(0/16)*b=[0,0]; residual=[3,0]; pair_w=(2+1)/2=1.5
+    #   pair 1: a=[1,1], b=[1,3]; proj=(4/10)*b=[0.4,1.2]; residual=[0.6,-0.2]; pair_w=(1+0.5)/2=0.75
+    #   sum = 1.5*[3,0] + 0.75*[0.6,-0.2] = [4.95, -0.15]; total_w = 2.25
+    #   direction = [2.2, -0.0666...]; normalized below.
+    expected = torch.tensor([4.95, -0.15], dtype=torch.float32) / torch.tensor(2.25, dtype=torch.float32)
+    expected = expected / torch.linalg.vector_norm(expected)
+
+    assert torch.allclose(streaming_final.concept_direction, expected, atol=1e-5)
+    assert torch.allclose(in_memory_final.concept_direction, expected, atol=1e-5)
+    assert torch.allclose(streaming_final.concept_direction, in_memory_final.concept_direction, atol=1e-6)
+    assert streaming_final.concept_direction_mode == "paired_rejection"
+    assert in_memory_final.concept_direction_mode == "paired_rejection"
+    assert streaming_final.get("concept_aggregate_output_mode") == "streaming"
+
+    # Storage contract: streaming must populate paired-rejection running totals on the store and
+    # leave no unmatched pending rows after the final batch (counts are balanced per batch).
+    assert getattr(streaming_inputs, "concept_running_residual_sum", None) is not None
+    assert float(getattr(streaming_inputs, "concept_running_pair_weight")) == pytest.approx(2.25, abs=1e-5)
+    assert int(getattr(streaming_inputs, "concept_pending_a_states").shape[0]) == 0
+    assert int(getattr(streaming_inputs, "concept_pending_b_states").shape[0]) == 0
+
+
+def test_concept_direction_streaming_paired_rejection_handles_unmatched_batches(tmp_path) -> None:
+    """Streaming paired-rejection must defer pair computation across batches when groups are skewed.
+
+    Constructs two batches where the per-batch group counts are imbalanced, but the overall counts match. The pending-
+    buffer mechanism should match (a, b) pairs across batch boundaries.
+    """
+    # batch 0: 1 group_a only (label=0). batch 1: 1 group_b only (label=1). Pair forms across batches.
+    # Cache is (batch, seq=2, d_model=2); answer_indices=[1] selects seq=1.
+    cache_batches = [
+        {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [2.0, 0.0]]])},
+        {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [0.0, 5.0]]])},
+    ]
+    answer_indices = [torch.tensor([1], dtype=torch.long), torch.tensor([1], dtype=torch.long)]
+    orig_labels = [torch.tensor([0], dtype=torch.long), torch.tensor([1], dtype=torch.long)]
+    logit_diffs = [torch.tensor([4.0], dtype=torch.float32), torch.tensor([2.0], dtype=torch.float32)]
+
+    streaming_module = _FakeConceptExtractionModule()
+    streaming_module.core_log_dir = tmp_path / "streaming"
+    streaming_inputs = SimpleNamespace(
+        cache=cache_batches,
+        answer_indices=answer_indices,
+        orig_labels=orig_labels,
+        logit_diffs=logit_diffs,
+    )
+    streaming_batches = _run_chained_concept_direction_for_aggregate_mode(
+        streaming_module,
+        streaming_module.datamodule,
+        streaming_inputs,
+        aggregate_mode="streaming",
+        shared_store=streaming_inputs,
+        direction_mode="paired_rejection",
+    )
+
+    # After batch 0 (only group_a present), no pair has been formed yet -> direction is zero.
+    assert torch.allclose(streaming_batches[0].concept_direction, torch.zeros(2), atol=1e-7)
+    # After batch 1, pair (a=[2,0], b=[0,5]) forms: proj=(0)*b=[0,0]; residual=[2,0]; norm=[1,0].
+    expected = torch.tensor([1.0, 0.0], dtype=torch.float32)
+    assert torch.allclose(streaming_batches[1].concept_direction, expected, atol=1e-6)
+    # Pending buffers are drained.
+    assert int(getattr(streaming_inputs, "concept_pending_a_states").shape[0]) == 0
+    assert int(getattr(streaming_inputs, "concept_pending_b_states").shape[0]) == 0
+
+
+def test_concept_direction_streaming_does_not_retain_latent_state_rows(tmp_path) -> None:
+    """Streaming mode must skip in-memory row accumulation on extract_concept_latent_examples output."""
+    module = _FakeConceptExtractionModule()
+    module.core_log_dir = tmp_path
+    extraction_inputs = SimpleNamespace(
+        cache=[
+            {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [3.0, 0.0]], [[0.0, 0.0], [0.0, 4.0]]])},
+            {"unembed.hook_in.hook_sae_acts_post": torch.tensor([[[0.0, 0.0], [1.0, 1.0]], [[0.0, 0.0], [1.0, 3.0]]])},
+        ],
+        answer_indices=[torch.tensor([1, 1], dtype=torch.long), torch.tensor([1, 1], dtype=torch.long)],
+        orig_labels=[torch.tensor([0, 1], dtype=torch.long), torch.tensor([0, 1], dtype=torch.long)],
+        logit_diffs=[torch.tensor([2.0, 1.0], dtype=torch.float32), torch.tensor([-0.25, 0.5], dtype=torch.float32)],
+    )
+
+    streaming_batches = _run_chained_concept_direction_for_aggregate_mode(
+        module,
+        module.datamodule,
+        extraction_inputs,
+        aggregate_mode="streaming",
+        shared_store=extraction_inputs,
+    )
+
+    for emitted in streaming_batches:
+        # Streaming must NOT retain the per-batch row accumulators (memory-saving contract).
+        assert emitted.get("concept_latent_state_rows") is None
+        assert emitted.get("concept_group_id_rows") is None
+
+    # And the shared store's running aggregate state must be populated.
+    assert getattr(extraction_inputs, "concept_running_state_sum_a", None) is not None
+    assert getattr(extraction_inputs, "concept_running_state_sum_b", None) is not None
+    assert float(extraction_inputs.concept_running_weight_a) > 0.0
+    assert float(extraction_inputs.concept_running_weight_b) > 0.0
 
 
 def test_concept_direction_ignores_empty_store_rows(tmp_path) -> None:
@@ -1215,6 +1675,23 @@ def test_context_enhanced_projection_math() -> None:
     # dot(context, context) = 9 + 16 = 25
     # projected = (22/25) * [3, 4, 0, 0] = [2.64, 3.52, 0, 0]
     expected = torch.tensor([[2.64, 3.52, 0.0, 0.0]], dtype=torch.float32)
+    assert torch.allclose(latent_states, expected, atol=1e-5), f"Expected {expected}, got {latent_states}"
+
+
+def test_context_enhanced_projection_uses_explicit_context_indices() -> None:
+    cache_tensor = torch.tensor(
+        [[[1.0, 0.0, 0.0], [3.0, 4.0, 0.0], [1.0, 2.0, 0.0]]],
+        dtype=torch.float32,
+    )
+    batch = AnalysisBatch(
+        cache={"unembed.hook_in": cache_tensor},
+        answer_indices=torch.tensor([2], dtype=torch.long),
+        context_token_indices=torch.tensor([0], dtype=torch.long),
+    )
+
+    latent_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=2.0)
+
+    expected = torch.tensor([[2.0, 0.0, 0.0]], dtype=torch.float32)
     assert torch.allclose(latent_states, expected, atol=1e-5), f"Expected {expected}, got {latent_states}"
 
 

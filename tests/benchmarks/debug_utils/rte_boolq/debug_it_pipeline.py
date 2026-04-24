@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """Debug batch collapse through the interpretune pipeline.
 
-Loads an ITSession using internal APIs (not LightningCLI) and traces
-exactly what happens in test_step with a batch of 2.
+Loads an ITSession using internal APIs (not LightningCLI) and traces exactly what happens in test_step with a batch of
+2.
 """
+
 from __future__ import annotations
 import os
-import sys
 from datetime import datetime
 
 import torch
@@ -127,7 +127,7 @@ def main():
     # Check gen config on the model
     gen_config = getattr(module.model, "generation_config", None)
     if gen_config:
-        log(f"\n5. Model generation_config:")
+        log("\n5. Model generation_config:")
         log(f"   output_logits: {getattr(gen_config, 'output_logits', 'NOT SET')}")
         log(f"   return_dict_in_generate: {getattr(gen_config, 'return_dict_in_generate', 'NOT SET')}")
         log(f"   max_new_tokens: {getattr(gen_config, 'max_new_tokens', 'NOT SET')}")
@@ -135,13 +135,13 @@ def main():
         log(f"   eos_token_id: {getattr(gen_config, 'eos_token_id', 'NOT SET')}")
 
     # Check _should_inspect_inputs
-    log(f"\n6. Input inspection:")
+    log("\n6. Input inspection:")
     log(f"   _generate_accepts_kwargs: {module._generate_accepts_kwargs()}")
     log(f"   _generate_prepares_inputs: {module._generate_prepares_inputs()}")
     log(f"   _should_inspect_inputs: {module._should_inspect_inputs}")
 
     # Get a test batch
-    log(f"\n7. Getting test batch...")
+    log("\n7. Getting test batch...")
     test_dl = dm.test_dataloader()
     batch = next(iter(test_dl))
     log(f"   Batch keys: {list(batch.keys()) if hasattr(batch, 'keys') else type(batch)}")
@@ -160,7 +160,7 @@ def main():
     log(f"   device: {device}")
     batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
 
-    log(f"\n8. Calling it_generate...")
+    log("\n8. Calling it_generate...")
     gen_kwargs = module.it_cfg.generative_step_cfg.lm_generation_cfg.generate_kwargs
     log(f"   generate_kwargs: {gen_kwargs}")
     log(f"   batch keys going to generate: {list(batch.keys())}")
@@ -168,7 +168,7 @@ def main():
     with torch.no_grad():
         outputs = module.it_generate(batch, **gen_kwargs)
 
-    log(f"\n9. Generate outputs:")
+    log("\n9. Generate outputs:")
     log(f"   type: {type(outputs).__name__}")
     if isinstance(outputs, torch.Tensor):
         log(f"   shape: {outputs.shape}")
@@ -184,16 +184,16 @@ def main():
         elif isinstance(logits, torch.Tensor):
             log(f"   logits tensor shape: {logits.shape}")
     else:
-        log(f"   no logits attribute!")
+        log("   no logits attribute!")
 
     # Now trace through standardize_logits
-    log(f"\n10. Tracing standardize_logits...")
+    log("\n10. Tracing standardize_logits...")
     if hasattr(outputs, "logits") and outputs.logits is not None:
         logits = outputs.logits
     elif isinstance(outputs, torch.Tensor):
         logits = outputs
     else:
-        log(f"   ERROR: No logits found!")
+        log("   ERROR: No logits found!")
         logits = None
 
     if logits is not None:
@@ -206,10 +206,14 @@ def main():
         log(f"   preds shape: {preds.shape}")
         log(f"   preds: {preds}")
         log(f"   labels: {labels}")
-        log(f"   preds count: {preds.shape[0]}, labels count: {labels.shape[0] if isinstance(labels, torch.Tensor) else len(labels)}")
+        label_count = labels.shape[0] if isinstance(labels, torch.Tensor) else len(labels)
+        log(f"   preds count: {preds.shape[0]}, labels count: {label_count}")
 
     # Save log
-    log_dir = "/home/speediedan/repos/distributed-insight/project_admin/interpretune/design/circuit-tracer-backend/benchmark_debugging"
+    log_dir = (
+        "/home/speediedan/repos/distributed-insight/project_admin/interpretune/design/"
+        "circuit-tracer-backend/benchmark_debugging"
+    )
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f"it_pipeline_debug_{timestamp}.log")
     with open(log_path, "w") as f:

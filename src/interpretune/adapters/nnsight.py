@@ -200,8 +200,8 @@ class BaseNNsightModule(BaseITModule):
     def _apply_generation_config(self) -> None:
         """Apply HFGenerationConfig settings to the underlying HF model's generation_config.
 
-        NNsight wraps HF models directly, so we apply generation config to the underlying model
-        the same way _hf_post_init_cfg does for standard HF models.
+        NNsight wraps HF models directly, so we apply generation config to the underlying model the same way
+        _hf_post_init_cfg does for standard HF models.
         """
         from interpretune.config.mixins import HFGenerationConfig
 

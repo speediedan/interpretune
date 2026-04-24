@@ -932,7 +932,9 @@ SERIALIZATION_TEST_CONFIGS = (
             override_req_cols=("cache", "answer_indices"),
         ),
     ),
-    BaseAugTest(alias="model_fwd_w_cache_latent_models", cfg=OpTestConfig(target_op=it.model_fwd_w_cache_latent_models)),
+    BaseAugTest(
+        alias="model_fwd_w_cache_latent_models", cfg=OpTestConfig(target_op=it.model_fwd_w_cache_latent_models)
+    ),
     BaseAugTest(alias="model_ablation", cfg=OpTestConfig(target_op=it.model_ablation)),
     BaseAugTest(alias="model_gradient", cfg=OpTestConfig(target_op=it.model_gradient)),
     BaseAugTest(alias="logit_diffs", cfg=OpTestConfig(target_op=it.logit_diffs)),

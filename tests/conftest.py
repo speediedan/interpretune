@@ -51,6 +51,7 @@ from tests.analysis_resource_utils import (
     AnalysisExtractionMixin,
     analysis_fixture_scope,
     analysis_resource_debug_enabled,
+    clear_nnsight_test_state,
     get_resource_snapshot,
     log_resource_delta,
     log_resource_snapshot,
@@ -120,6 +121,7 @@ def _force_gc():
 
 def _cleanup_cuda_memory():
     """Release CUDA memory if available, then run gc."""
+    clear_nnsight_test_state(None)
     cleanup_python_cuda()
 
 

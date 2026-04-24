@@ -175,7 +175,16 @@ def extract_concept_latent_state_impl(
     latent_states, cache_key = _extract_concept_latent_state_from_cache(
         analysis_batch, context_enhanced=context_enhanced, context_scale=context_scale
     )
-    analysis_batch.update(concept_latent_state=latent_states, concept_cache_key=cache_key)
+    update_kwargs: dict[str, Any] = {
+        "concept_latent_state": latent_states,
+        "concept_cache_key": cache_key,
+    }
+    raw_context_token_indices = analysis_batch.get("context_token_indices")
+    if raw_context_token_indices is not None:
+        update_kwargs["context_token_indices"] = (
+            torch.as_tensor(raw_context_token_indices, dtype=torch.long).reshape(-1).detach().cpu()
+        )
+    analysis_batch.update(**update_kwargs)
     return analysis_batch
 
 
@@ -190,7 +199,36 @@ def extract_concept_latent_examples_impl(
 
     Consumes ``concept_latent_state`` rows produced by the upstream ``extract_concept_latent_state`` op.
     That op must run first to populate ``concept_latent_state`` on the batch.
+
+    Aggregation modes (selected via ``concept_aggregate_output_mode`` on the batch):
+
+    * ``"streaming"`` (default): emit only per-batch tensors. Cross-batch aggregation is performed
+      incrementally inside :func:`concept_direction_impl` using running per-group weighted sums
+      stored on ``analysis_inputs.store``. This avoids materializing the full latent-row payload
+      and keeps per-batch payload sizes constant. Recommended for all new callers and any pipeline
+      where the full set of selected examples does not need to be retained for later inspection.
+    * ``"in_memory"`` (legacy): accumulate the full per-batch row collections on
+      ``analysis_inputs.store`` (``concept_latent_state_rows``, ``concept_group_id_rows``,
+      ``concept_group_name_rows``, ``concept_example_logit_diff_rows``,
+      ``concept_example_weight_rows``, optionally ``concept_context_indices_rows``) and re-emit
+      them on every returned batch. Each per-batch call appends to a Python list and re-binds
+      it on the store and on ``analysis_batch``; the underlying tensor data is shared by reference,
+      but the list overhead grows linearly per batch and the runner's per-batch payloads end up
+      holding O(N\u00b2) cumulative list references for ``N`` batches. This mode remains useful for
+      callers that need access to the full row collection (e.g. parity tests, pre-computed
+      aggregate inputs to ``concept_direction``), but its scalability depends on store
+      caching/persistence; do not use it for large concept-example sets without that backing.
+
+    The legacy mode is preserved to keep existing tests and notebook diagnostics that consume the
+    aggregate row tensors directly working unchanged.
     """
+
+    group_a_name = str(analysis_batch.get("concept_group_a_name") or "group_a")
+    group_b_name = str(analysis_batch.get("concept_group_b_name") or "group_b")
+    keep_correct_only = bool(analysis_batch.get("concept_correct_only", True))
+    weight_by_logit_diff = bool(analysis_batch.get("concept_weight_by_logit_diff", False))
+    aggregate_output = bool(analysis_batch.get("concept_aggregate_output", True))
+    aggregate_mode = str(analysis_batch.get("concept_aggregate_output_mode", "streaming"))
 
     orig_labels = analysis_batch.orig_labels
     logit_diffs = analysis_batch.logit_diffs
@@ -206,13 +244,9 @@ def extract_concept_latent_examples_impl(
         )
     latent_states = torch.as_tensor(latent_states).detach().cpu().float()
 
-    group_a_name = str(analysis_batch.get("concept_group_a_name") or "group_a")
-    group_b_name = str(analysis_batch.get("concept_group_b_name") or "group_b")
-    keep_correct_only = bool(analysis_batch.get("concept_correct_only", True))
-    weight_by_logit_diff = bool(analysis_batch.get("concept_weight_by_logit_diff", False))
-
     labels = torch.as_tensor(orig_labels, dtype=torch.long).reshape(-1).detach().cpu()
     diffs = torch.as_tensor(logit_diffs, dtype=torch.float32).reshape(-1).detach().cpu()
+    raw_context_token_indices = analysis_batch.get("context_token_indices")
     raw_group_a_label_ids = analysis_batch.get("concept_group_a_label_ids")
     raw_group_b_label_ids = analysis_batch.get("concept_group_b_label_ids")
     group_a_label_ids = (
@@ -248,11 +282,50 @@ def extract_concept_latent_examples_impl(
     selected_states = latent_states[selection_mask] if selection_mask.any() else empty_states
     selected_group_ids = group_ids[selection_mask]
     selected_logit_diffs = diffs[selection_mask].detach().cpu()
+    selected_context_indices: torch.Tensor | None = None
+    if raw_context_token_indices is not None:
+        context_token_indices = torch.as_tensor(raw_context_token_indices, dtype=torch.long).reshape(-1).detach().cpu()
+        if context_token_indices.shape[0] != labels.shape[0]:
+            raise ValueError(
+                "extract_concept_latent_examples requires context_token_indices to align with orig_labels "
+                f"({context_token_indices.shape[0]} vs {labels.shape[0]})"
+            )
+        selected_context_indices = (
+            context_token_indices[selection_mask] if selection_mask.any() else torch.empty((0,), dtype=torch.long)
+        )
     if weight_by_logit_diff:
         selected_weights = selected_logit_diffs.abs()
     else:
         selected_weights = torch.ones(selected_logit_diffs.shape, dtype=selected_logit_diffs.dtype)
     selected_group_names = [group_a_name if int(group_id) == 0 else group_b_name for group_id in selected_group_ids]
+
+    aggregated_updates: dict[str, Any] = {}
+    analysis_inputs = kwargs.get("analysis_inputs")
+    store = getattr(analysis_inputs, "store", None) if analysis_inputs is not None else None
+    if aggregate_output and aggregate_mode == "in_memory" and store is not None:
+        aggregate_rows = (
+            ("concept_latent_state_rows", selected_states),
+            ("concept_group_id_rows", selected_group_ids),
+            ("concept_group_name_rows", selected_group_names),
+            ("concept_example_logit_diff_rows", selected_logit_diffs),
+            ("concept_example_weight_rows", selected_weights),
+        )
+        for field_name, row_value in aggregate_rows:
+            existing_rows = [] if batch_idx == 0 else list(getattr(store, field_name, []) or [])
+            existing_rows.append(row_value)
+            try:
+                setattr(store, field_name, existing_rows)
+            except Exception:
+                pass
+            aggregated_updates[field_name] = existing_rows
+        if selected_context_indices is not None:
+            context_rows = [] if batch_idx == 0 else list(getattr(store, "concept_context_indices_rows", []) or [])
+            context_rows.append(selected_context_indices)
+            try:
+                setattr(store, "concept_context_indices_rows", context_rows)
+            except Exception:
+                pass
+            aggregated_updates["concept_context_indices_rows"] = context_rows
 
     analysis_batch.update(
         concept_latent_state=selected_states,
@@ -264,6 +337,8 @@ def extract_concept_latent_examples_impl(
         concept_group_a_name=group_a_name,
         concept_group_b_name=group_b_name,
         concept_correct_mask=correct_mask.detach().cpu(),
+        concept_context_indices=selected_context_indices,
+        **aggregated_updates,
     )
     return analysis_batch
 
@@ -689,6 +764,312 @@ def ablation_attribution_impl(
     return analysis_batch
 
 
+def _parse_streaming_per_batch_inputs(
+    module,
+    analysis_batch: AnalysisBatch,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, tuple[int, ...]]:
+    """Parse per-batch concept inputs into normalized (states, group_ids, weights) cpu tensors.
+
+    Inputs may be either a per-batch tensor (the standard streaming case) or a list of per-batch
+    tensors with potentially non-uniform shapes (e.g. when concept_direction is invoked once with a
+    store-backed input column). Returns ``(states, gids, weights, feature_shape)``.
+    """
+    per_batch_states = resolve_aggregate_input(module, analysis_batch, "concept_latent_state")
+    per_batch_group_ids = resolve_aggregate_input(module, analysis_batch, "concept_group_id")
+    if per_batch_states is None or per_batch_group_ids is None:
+        raise ValueError(
+            "concept_direction streaming mode requires per-batch concept_latent_state and concept_group_id"
+        )
+    per_batch_weights = resolve_aggregate_input(module, analysis_batch, "concept_example_weight")
+    if isinstance(per_batch_states, (list, tuple)) and not isinstance(per_batch_states, torch.Tensor):
+        states_t, gids_t, weights_t, _ = _flatten_concept_store_rows(
+            per_batch_states, per_batch_group_ids, None, per_batch_weights
+        )
+        states_t = states_t.float().detach().cpu()
+        gids_t = gids_t.long().reshape(-1).detach().cpu()
+        weights_t = weights_t.float().reshape(-1).detach().cpu()
+    else:
+        states_t = torch.as_tensor(per_batch_states, dtype=torch.float32).detach().cpu()
+        gids_t = torch.as_tensor(per_batch_group_ids, dtype=torch.long).reshape(-1).detach().cpu()
+        if per_batch_weights is None:
+            weights_t = torch.ones(gids_t.shape, dtype=torch.float32)
+        else:
+            weights_t = torch.as_tensor(per_batch_weights, dtype=torch.float32).reshape(-1).detach().cpu()
+    feature_shape = tuple(states_t.shape[1:])
+    return states_t, gids_t, weights_t, feature_shape
+
+
+def _accumulate_streaming_group_means(
+    states_t: torch.Tensor,
+    gids_t: torch.Tensor,
+    weights_t: torch.Tensor,
+    feature_shape: tuple[int, ...],
+    store,
+    batch_idx: int,
+) -> None:
+    """Update per-group running weighted state sums and weight totals on the store."""
+    for group_value, attr_state, attr_weight in (
+        (0, "concept_running_state_sum_a", "concept_running_weight_a"),
+        (1, "concept_running_state_sum_b", "concept_running_weight_b"),
+    ):
+        existing_state = getattr(store, attr_state, None) if batch_idx > 0 else None
+        existing_weight = getattr(store, attr_weight, None) if batch_idx > 0 else None
+        mask = gids_t == group_value
+        if mask.any():
+            weight_view = weights_t[mask].view(-1, *([1] * len(feature_shape)))
+            batch_state_sum = (states_t[mask] * weight_view).sum(dim=0)
+            batch_weight_sum = weights_t[mask].sum()
+        else:
+            batch_state_sum = torch.zeros(feature_shape, dtype=torch.float32) if existing_state is None else None
+            batch_weight_sum = torch.zeros((), dtype=torch.float32)
+        if existing_state is None:
+            new_state = batch_state_sum
+        elif batch_state_sum is None:
+            new_state = existing_state
+        else:
+            new_state = torch.as_tensor(existing_state, dtype=torch.float32) + batch_state_sum
+        if existing_weight is None:
+            new_weight = batch_weight_sum
+        else:
+            new_weight = torch.as_tensor(existing_weight, dtype=torch.float32) + batch_weight_sum
+        try:
+            if new_state is not None:
+                setattr(store, attr_state, new_state)
+            setattr(store, attr_weight, new_weight)
+        except Exception:
+            pass
+
+
+def _drain_streaming_paired_buffers(
+    store,
+    feature_shape: tuple[int, ...],
+) -> None:
+    """Pop matched (a, b) prefix pairs from pending buffers and accumulate weighted residuals.
+
+    Pair index = stable iteration order across batches (matches the legacy in_memory contract,
+    where ``group_a_states[i]`` is paired with ``group_b_states[i]``). For each matched prefix
+    pair, computes the rejection residual ``a - ((a·b)/(b·b)) b`` and adds the pair-weight-mean
+    times that residual to ``concept_running_residual_sum``.
+    """
+    pending_a = getattr(store, "concept_pending_a_states", None)
+    pending_a_w = getattr(store, "concept_pending_a_weights", None)
+    pending_b = getattr(store, "concept_pending_b_states", None)
+    pending_b_w = getattr(store, "concept_pending_b_weights", None)
+    if pending_a is None or pending_b is None:
+        return
+    n_pairs = min(int(pending_a.shape[0]), int(pending_b.shape[0]))
+    if n_pairs <= 0:
+        return
+
+    matched_a = pending_a[:n_pairs]
+    matched_b = pending_b[:n_pairs]
+    matched_a_w = pending_a_w[:n_pairs] if pending_a_w is not None else torch.ones(n_pairs, dtype=torch.float32)
+    matched_b_w = pending_b_w[:n_pairs] if pending_b_w is not None else torch.ones(n_pairs, dtype=torch.float32)
+
+    flat_dim = int(torch.tensor(feature_shape).prod().item()) if feature_shape else 1
+    a_flat = matched_a.reshape(n_pairs, flat_dim)
+    b_flat = matched_b.reshape(n_pairs, flat_dim)
+    # Per-row dot products (vectorized).
+    bb = (b_flat * b_flat).sum(dim=1).clamp_min(1e-12)
+    ab = (a_flat * b_flat).sum(dim=1)
+    proj_scale = (ab / bb).view(n_pairs, 1)
+    residuals_flat = a_flat - proj_scale * b_flat
+    residuals = residuals_flat.reshape(n_pairs, *feature_shape)
+    pair_weights = (matched_a_w + matched_b_w) / 2
+
+    weight_view = pair_weights.view(-1, *([1] * len(feature_shape)))
+    batch_residual_sum = (residuals * weight_view).sum(dim=0)
+    batch_pair_weight_sum = pair_weights.sum()
+
+    existing_residual_sum = getattr(store, "concept_running_residual_sum", None)
+    existing_pair_weight = getattr(store, "concept_running_pair_weight", None)
+    new_residual_sum = (
+        batch_residual_sum
+        if existing_residual_sum is None
+        else torch.as_tensor(existing_residual_sum, dtype=torch.float32) + batch_residual_sum
+    )
+    new_pair_weight = (
+        batch_pair_weight_sum
+        if existing_pair_weight is None
+        else torch.as_tensor(existing_pair_weight, dtype=torch.float32) + batch_pair_weight_sum
+    )
+    try:
+        setattr(store, "concept_running_residual_sum", new_residual_sum)
+        setattr(store, "concept_running_pair_weight", new_pair_weight)
+    except Exception:
+        pass
+
+    # Trim consumed prefixes; keep unmatched suffix for future batches.
+    try:
+        setattr(store, "concept_pending_a_states", pending_a[n_pairs:])
+        setattr(store, "concept_pending_b_states", pending_b[n_pairs:])
+        if pending_a_w is not None:
+            setattr(store, "concept_pending_a_weights", pending_a_w[n_pairs:])
+        if pending_b_w is not None:
+            setattr(store, "concept_pending_b_weights", pending_b_w[n_pairs:])
+    except Exception:
+        pass
+
+
+def _accumulate_streaming_paired_rejection(
+    states_t: torch.Tensor,
+    gids_t: torch.Tensor,
+    weights_t: torch.Tensor,
+    feature_shape: tuple[int, ...],
+    store,
+    batch_idx: int,
+) -> None:
+    """Append per-group rows to pending buffers, then drain matched pairs into running residuals."""
+    for group_value, states_attr, weights_attr in (
+        (0, "concept_pending_a_states", "concept_pending_a_weights"),
+        (1, "concept_pending_b_states", "concept_pending_b_weights"),
+    ):
+        mask = gids_t == group_value
+        if not mask.any():
+            continue
+        new_states = states_t[mask]
+        new_weights = weights_t[mask]
+        existing_states = getattr(store, states_attr, None) if batch_idx > 0 else None
+        existing_weights = getattr(store, weights_attr, None) if batch_idx > 0 else None
+        if existing_states is None or int(getattr(existing_states, "shape", [0])[0]) == 0:
+            combined_states = new_states
+            combined_weights = new_weights
+        else:
+            combined_states = torch.cat([torch.as_tensor(existing_states, dtype=torch.float32), new_states], dim=0)
+            combined_weights = torch.cat([torch.as_tensor(existing_weights, dtype=torch.float32), new_weights], dim=0)
+        try:
+            setattr(store, states_attr, combined_states)
+            setattr(store, weights_attr, combined_weights)
+        except Exception:
+            pass
+
+    _drain_streaming_paired_buffers(store, feature_shape)
+
+
+def _resolve_streaming_group_names(
+    module,
+    analysis_batch: AnalysisBatch,
+    gids_t: torch.Tensor,
+) -> tuple[str, str]:
+    """Resolve group display names from the batch or per-batch group-name input."""
+    group_a_name = str(analysis_batch.get("concept_group_a_name") or "group_a")
+    group_b_name = str(analysis_batch.get("concept_group_b_name") or "group_b")
+    if (
+        analysis_batch.get("concept_group_a_name") is not None
+        and analysis_batch.get("concept_group_b_name") is not None
+    ):
+        return group_a_name, group_b_name
+    per_batch_group_names = resolve_aggregate_input(module, analysis_batch, "concept_group_name")
+    if per_batch_group_names is None:
+        return group_a_name, group_b_name
+    flattened_names: list[str] = []
+    if isinstance(per_batch_group_names, (list, tuple)):
+        iterable_names = per_batch_group_names
+    else:
+        try:
+            iterable_names = list(per_batch_group_names)
+        except TypeError:
+            iterable_names = [per_batch_group_names]
+    for entry in iterable_names:
+        if isinstance(entry, (list, tuple)):
+            flattened_names.extend(str(n) for n in entry)
+        else:
+            flattened_names.append(str(entry))
+    paired = list(zip(flattened_names, gids_t.tolist(), strict=False))
+    if analysis_batch.get("concept_group_a_name") is None:
+        a_matches = [n for n, gid in paired if gid == 0 and n]
+        if a_matches:
+            group_a_name = a_matches[0]
+    if analysis_batch.get("concept_group_b_name") is None:
+        b_matches = [n for n, gid in paired if gid == 1 and n]
+        if b_matches:
+            group_b_name = b_matches[0]
+    return group_a_name, group_b_name
+
+
+def _concept_direction_streaming(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch_idx: int,
+    store,
+) -> AnalysisBatch:
+    """Streaming/incremental concept-direction accumulator.
+
+    Updates per-group running aggregator state on the shared analysis store using this batch's
+    per-batch latent rows, then recomputes the current concept direction. The final batch's
+    emitted direction is the converged result. Storage contract field names are defined in
+    :mod:`interpretune.analysis.ops.helpers` (``CONCEPT_STREAMING_*`` constants).
+
+    Supported direction modes:
+
+    * ``mean_difference``, ``single_group``: maintain per-group running weighted state sums and
+      weight totals (``concept_running_state_sum_{a,b}``, ``concept_running_weight_{a,b}``).
+    * ``paired_rejection``: additionally maintain per-group pending buffers
+      (``concept_pending_{a,b}_states``, ``concept_pending_{a,b}_weights``); on each batch, drain
+      matched (a, b) prefix pairs (paired by stable iteration order, matching the legacy in_memory
+      contract) and accumulate weighted residuals into ``concept_running_residual_sum`` /
+      ``concept_running_pair_weight``.
+    """
+    direction_mode = str(analysis_batch.get("concept_direction_mode", "mean_difference"))
+    states_t, gids_t, weights_t, feature_shape = _parse_streaming_per_batch_inputs(module, analysis_batch)
+
+    if direction_mode in ("mean_difference", "single_group"):
+        _accumulate_streaming_group_means(states_t, gids_t, weights_t, feature_shape, store, batch_idx)
+
+        state_sum_a = getattr(store, "concept_running_state_sum_a", None)
+        weight_a = getattr(store, "concept_running_weight_a", None)
+        state_sum_b = getattr(store, "concept_running_state_sum_b", None)
+        weight_b = getattr(store, "concept_running_weight_b", None)
+        if state_sum_a is None or weight_a is None or float(weight_a) <= 0:
+            raise ValueError("concept_direction streaming mode requires at least one group A example")
+        mean_a = torch.as_tensor(state_sum_a, dtype=torch.float32) / torch.as_tensor(
+            weight_a, dtype=torch.float32
+        ).clamp_min(1e-12)
+        if direction_mode == "mean_difference":
+            if state_sum_b is None or weight_b is None or float(weight_b) <= 0:
+                raise ValueError("mean_difference requires examples from both concept groups")
+            mean_b = torch.as_tensor(state_sum_b, dtype=torch.float32) / torch.as_tensor(
+                weight_b, dtype=torch.float32
+            ).clamp_min(1e-12)
+            direction_vector = mean_a - mean_b
+        else:  # single_group
+            direction_vector = mean_a
+    elif direction_mode == "paired_rejection":
+        _accumulate_streaming_paired_rejection(states_t, gids_t, weights_t, feature_shape, store, batch_idx)
+        residual_sum = getattr(store, "concept_running_residual_sum", None)
+        pair_weight = getattr(store, "concept_running_pair_weight", None)
+        if residual_sum is None or pair_weight is None or float(pair_weight) <= 0:
+            # No matched pairs accumulated yet (e.g. all of group_a in batch 0, group_b later).
+            # Emit a zero direction; subsequent batches will produce the converged result.
+            direction_vector = torch.zeros(feature_shape, dtype=torch.float32)
+        else:
+            direction_vector = torch.as_tensor(residual_sum, dtype=torch.float32) / torch.as_tensor(
+                pair_weight, dtype=torch.float32
+            ).clamp_min(1e-12)
+    else:
+        raise ValueError(f"Unsupported concept_direction_mode in streaming: {direction_mode}")
+
+    direction_norm = torch.linalg.vector_norm(direction_vector)
+    if torch.isfinite(direction_norm) and direction_norm.item() > 0:
+        direction_vector = direction_vector / direction_norm
+
+    group_a_name, group_b_name = _resolve_streaming_group_names(module, analysis_batch, gids_t)
+    concept_label = analysis_batch.get("concept_label")
+    resolved_label = concept_label
+    if resolved_label is None:
+        resolved_label = group_a_name if direction_mode == "single_group" else f"{group_a_name} -> {group_b_name}"
+
+    analysis_batch.update(
+        concept_direction=direction_vector.detach().cpu(),
+        concept_label=resolved_label,
+        concept_direction_mode=direction_mode,
+        concept_group_a_name=group_a_name,
+        concept_group_b_name=group_b_name,
+        concept_aggregate_output_mode="streaming",
+    )
+    return analysis_batch
+
+
 def concept_direction_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -696,14 +1077,60 @@ def concept_direction_impl(
     batch_idx: int,
     **kwargs,
 ) -> AnalysisBatch:
-    """Compute a concept direction from latent-example rows, or fall back to token-group embeddings."""
-    latent_state_rows = resolve_aggregate_input(module, analysis_batch, "concept_latent_state")
-    group_id_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_id")
+    """Compute a concept direction from latent-example rows, or fall back to token-group embeddings.
+
+    Aggregation modes (selected via ``concept_aggregate_output_mode`` on the batch):
+
+    * ``"streaming"``: maintain per-group running weighted state sums and weight totals on
+      ``analysis_inputs.store`` (``concept_running_state_sum_a``, ``concept_running_weight_a``,
+      ``concept_running_state_sum_b``, ``concept_running_weight_b``). Each per-batch invocation
+      updates the running aggregates from this batch's per-batch ``concept_latent_state`` /
+      ``concept_group_id`` / ``concept_example_weight`` tensors and recomputes the current concept
+      direction from the accumulated sums; the final batch's emitted direction is the converged
+      result. Memory cost is O(d_model * num_groups) instead of O(num_examples * d_model). For
+      ``paired_rejection``, additionally maintains pending per-group buffers
+      (``concept_pending_{a,b}_states``, ``concept_pending_{a,b}_weights``) plus running residual
+      and pair-weight totals (``concept_running_residual_sum``, ``concept_running_pair_weight``);
+      pairs are matched by stable iteration order (matching the legacy in_memory contract). The
+      full storage-contract field set is exported via
+      :data:`interpretune.analysis.ops.helpers.CONCEPT_STREAMING_STATE_FIELDS`.
+    * ``"in_memory"`` (legacy): consume the aggregate row tensors emitted by
+      :func:`extract_concept_latent_examples_impl` in legacy mode and compute the direction over
+      the full materialized example set. Supports all direction modes.
+
+    If ``concept_aggregate_output_mode`` is not set, behavior is determined by what is on the
+    batch: aggregate row fields trigger the legacy path; per-batch fields with a writable store
+    trigger streaming. If neither is available, fall back to a token-group embedding direction
+    computed from the model's input embedding matrix.
+    """
+    aggregate_mode = analysis_batch.get("concept_aggregate_output_mode")
+    analysis_inputs = kwargs.get("analysis_inputs")
+    store = getattr(analysis_inputs, "store", None) if analysis_inputs is not None else None
+
+    use_streaming = aggregate_mode == "streaming"
+    if not use_streaming and aggregate_mode is None:
+        # Auto-detect: prefer legacy path if aggregate rows are already present
+        legacy_rows_present = resolve_aggregate_input(module, analysis_batch, "concept_latent_state_rows") is not None
+        per_batch_state_present = resolve_aggregate_input(module, analysis_batch, "concept_latent_state") is not None
+        use_streaming = (not legacy_rows_present) and per_batch_state_present and store is not None
+
+    if use_streaming:
+        return _concept_direction_streaming(module, analysis_batch, batch_idx, store)
+
+    latent_state_rows = resolve_aggregate_input(module, analysis_batch, "concept_latent_state_rows")
+    group_id_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_id_rows")
+    if latent_state_rows is None or group_id_rows is None:
+        latent_state_rows = resolve_aggregate_input(module, analysis_batch, "concept_latent_state")
+        group_id_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_id")
     if latent_state_rows is not None and group_id_rows is not None:
         direction_mode = str(analysis_batch.get("concept_direction_mode", "mean_difference"))
         concept_label = analysis_batch.get("concept_label")
-        group_name_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_name")
-        example_weight_rows = resolve_aggregate_input(module, analysis_batch, "concept_example_weight")
+        group_name_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_name_rows")
+        if group_name_rows is None:
+            group_name_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_name")
+        example_weight_rows = resolve_aggregate_input(module, analysis_batch, "concept_example_weight_rows")
+        if example_weight_rows is None:
+            example_weight_rows = resolve_aggregate_input(module, analysis_batch, "concept_example_weight")
 
         latent_states, group_ids, example_weights, flattened_group_names = _flatten_concept_store_rows(
             latent_state_rows,
@@ -926,7 +1353,25 @@ def compute_attribution_graph_impl(
             concept_direction_mode=concept_direction_mode,
         )
 
-    graph = module.generate_attribution_graph(prompt, **kwargs)
+    # Only forward kwargs consumed by graph construction. Composite pipeline
+    # calls also carry downstream stage params such as top_n and
+    # intervention_scale_factor that must remain available for later ops.
+    attribution_graph_kwargs = {
+        name: kwargs[name]
+        for name in (
+            "attribution_targets",
+            "max_n_logits",
+            "desired_logit_prob",
+            "batch_size",
+            "max_feature_nodes",
+            "offload",
+            "verbose",
+            "update_interval",
+        )
+        if name in kwargs
+    }
+
+    graph = module.generate_attribution_graph(prompt, **attribution_graph_kwargs)
     extra_metadata: dict[str, Any] = {}
     extra_metadata["batch_idx"] = batch_idx
     if concept_label is not None:

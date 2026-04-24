@@ -161,6 +161,36 @@ def test_concept_direction_impl_uses_embedding_difference() -> None:
     assert result.concept_label == "Paris -> London"
 
 
+def test_concept_direction_impl_prefers_aggregate_row_fields() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        concept_latent_state=torch.tensor([[7.0, 0.0, 0.0]], dtype=torch.float32),
+        concept_group_id=torch.tensor([0], dtype=torch.long),
+        concept_group_name=["capital"],
+        concept_example_weight=torch.tensor([1.0], dtype=torch.float32),
+        concept_latent_state_rows=[
+            torch.tensor([[3.0, 0.0, 0.0]], dtype=torch.float32),
+            torch.tensor([[0.0, 4.0, 0.0]], dtype=torch.float32),
+        ],
+        concept_group_id_rows=[torch.tensor([0], dtype=torch.long), torch.tensor([1], dtype=torch.long)],
+        concept_group_name_rows=[["capital"], ["state"]],
+        concept_example_weight_rows=[
+            torch.tensor([2.0], dtype=torch.float32),
+            torch.tensor([1.0], dtype=torch.float32),
+        ],
+        concept_direction_mode="mean_difference",
+        concept_group_a_name="capital",
+        concept_group_b_name="state",
+    )
+
+    result = concept_direction_impl(module, analysis_batch, batch=None, batch_idx=0)
+
+    expected = torch.tensor([3.0, -4.0, 0.0], dtype=torch.float32)
+    expected = expected / torch.linalg.vector_norm(expected)
+    assert torch.allclose(result.concept_direction, expected, atol=1e-6)
+    assert result.concept_label == "capital -> state"
+
+
 def test_compute_attribution_graph_impl_decomposes_graph() -> None:
     graph = _make_graph()
     module = _FakeModule(graph=graph)
@@ -204,6 +234,35 @@ def test_compute_attribution_graph_impl_builds_custom_target_from_concept_direct
     assert targets[0].token_str == "Concept: Capitals - States"
     assert torch.allclose(targets[0].vec, torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32))
     assert json.loads(result.graph_metadata)["concept_label"] == "Concept: Capitals - States"
+
+
+def test_compute_attribution_graph_impl_filters_downstream_pipeline_kwargs() -> None:
+    graph = _make_graph()
+    module = _FakeModule(graph=graph)
+    analysis_batch = AnalysisBatch(prompts=[graph.input_string])
+
+    captured: dict[str, object] = {}
+
+    def _capture_generate(prompt: str, **kwargs) -> Graph:
+        captured["prompt"] = prompt
+        captured["kwargs"] = dict(kwargs)
+        return graph
+
+    module.generate_attribution_graph = _capture_generate  # type: ignore[method-assign]
+
+    compute_attribution_graph_impl(
+        module,
+        analysis_batch,
+        batch=None,
+        batch_idx=0,
+        top_n=10,
+        intervention_scale_factor=2.0,
+        max_feature_nodes=5,
+        verbose=True,
+    )
+
+    assert captured["prompt"] == graph.input_string
+    assert captured["kwargs"] == {"max_feature_nodes": 5, "verbose": True}
 
 
 def test_graph_prune_impl_round_trips_serialized_graph() -> None:
@@ -434,8 +493,38 @@ def test_feature_selection_filter_layer_slice() -> None:
 def test_feature_selection_filter_position_slice() -> None:
     spec = FeatureSelectionSpec(position_slice=slice(1, None))
     mask = apply_feature_selection_filter(_FEATURES, spec)
-    # unique positions sorted: [0, 1]; slice(1, None) → [1]
+    # numeric range: positions >= 1
     assert mask.tolist() == [False, True, False, True, False, True]
+
+
+def test_feature_selection_filter_layer_slice_uses_numeric_bounds() -> None:
+    features = torch.tensor(
+        [
+            [9, 0, 100],
+            [10, 0, 101],
+            [11, 1, 102],
+        ],
+        dtype=torch.long,
+    )
+
+    mask = apply_feature_selection_filter(features, FeatureSelectionSpec(layer_slice=slice(10, None)))
+
+    assert mask.tolist() == [False, True, True]
+
+
+def test_feature_selection_filter_position_slice_uses_numeric_bounds() -> None:
+    features = torch.tensor(
+        [
+            [0, 5, 100],
+            [1, 10, 101],
+            [2, 15, 102],
+        ],
+        dtype=torch.long,
+    )
+
+    mask = apply_feature_selection_filter(features, FeatureSelectionSpec(position_slice=slice(10, None)))
+
+    assert mask.tolist() == [False, True, True]
 
 
 def test_feature_selection_empty_features() -> None:

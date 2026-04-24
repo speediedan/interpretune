@@ -1,8 +1,7 @@
 """Resource management utilities for CUDA memory and Python garbage collection.
 
-Provides general-purpose helpers for managing CUDA tensor lifecycles and
-system memory cleanup. These are used by both the main application (notebook
-workflows, experiment scripts) and the test infrastructure.
+Provides general-purpose helpers for managing CUDA tensor lifecycles and system memory cleanup. These are used by both
+the main application (notebook workflows, experiment scripts) and the test infrastructure.
 """
 
 from __future__ import annotations

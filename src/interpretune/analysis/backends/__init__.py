@@ -550,10 +550,11 @@ class FeatureSelectionSpec:
     All criteria use **OR** semantics: a feature row ``(layer, position, feature_id)``
     passes the filter if it matches *any* of the non-empty criteria.
 
-    Slice notation is supported for ``layers`` and ``positions`` — pass a Python
-    ``slice`` object alongside (or instead of) explicit ``int`` lists.  The slice
-    is expanded against the observed values in *active_features* so callers need
-    not know the exact range ahead of time.
+    Numeric slice notation is supported for ``layers`` and ``positions`` — pass a
+    Python ``slice`` object alongside (or instead of) explicit ``int`` lists. The
+    slice is applied as a numeric range over the observed values in
+    *active_features*, so ``slice(10, None)`` means "layer >= 10" and
+    ``slice(0, 10)`` means "position >= 0 and < 10".
 
     Attributes:
         layers: Explicit layer indices to include.
@@ -577,9 +578,19 @@ class FeatureSelectionSpec:
 
 
 def _expand_slice(s: slice, observed: torch.Tensor) -> list[int]:
-    """Expand a ``slice`` into concrete indices from the unique observed values."""
+    """Expand a numeric ``slice`` into concrete observed values."""
     unique_vals = sorted(observed.unique().tolist())
-    return unique_vals[s] if unique_vals else []
+    if not unique_vals:
+        return []
+
+    filtered = [
+        int(value)
+        for value in unique_vals
+        if (s.start is None or value >= s.start) and (s.stop is None or value < s.stop)
+    ]
+    if s.step not in (None, 1):
+        filtered = filtered[:: int(s.step)]
+    return filtered
 
 
 def apply_feature_selection_filter(

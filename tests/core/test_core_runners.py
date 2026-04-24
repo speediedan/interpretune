@@ -84,7 +84,7 @@ class TestCallITModuleHook:
         """When optional=False (default) and hook exists, it is called normally."""
         module = MagicMock()
         module.my_hook.return_value = "result"
-        result = _call_itmodule_hook(module, hook_name="my_hook", hook_msg="test")
+        assert _call_itmodule_hook(module, hook_name="my_hook", hook_msg="test") == "result"
         module.my_hook.assert_called_once()
 
     def test_hook_receives_kwargs(self):
@@ -255,7 +255,7 @@ class TestCoreLogMetricAccumulation:
         return datamodule
 
     def test_metrics_accumulated_across_batches(self, mock_module_with_metrics, mock_datamodule_multi_batch):
-        """log() calls accumulate values in _logged_metrics across batches."""
+        """Log() calls accumulate values in _logged_metrics across batches."""
         core_test_loop(module=mock_module_with_metrics, datamodule=mock_datamodule_multi_batch, limit_test_batches=2)
         # _logged_metrics should be cleared after epoch-end reporting
         assert mock_module_with_metrics._logged_metrics == {}
@@ -295,6 +295,7 @@ class TestCoreLogMetricAccumulation:
 
     def test_log_dict_accumulates_multiple_keys(self, mock_module_with_metrics, mock_datamodule_multi_batch):
         """log_dict dispatches to log for each key, accumulating properly."""
+
         # Replace test_step to use log_dict
         def test_step_with_dict(batch, batch_idx):
             mock_module_with_metrics.log_dict({"f1": 0.9, "precision": 0.88})
@@ -302,8 +303,6 @@ class TestCoreLogMetricAccumulation:
 
         mock_module_with_metrics.test_step = MagicMock(side_effect=test_step_with_dict)
 
-        core_test_loop(
-            module=mock_module_with_metrics, datamodule=mock_datamodule_multi_batch, limit_test_batches=2
-        )
+        core_test_loop(module=mock_module_with_metrics, datamodule=mock_datamodule_multi_batch, limit_test_batches=2)
         # Metrics cleared after printing
         assert mock_module_with_metrics._logged_metrics == {}

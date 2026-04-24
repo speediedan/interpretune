@@ -688,11 +688,9 @@ IT_RUN_PROFILING_TESTS=2 python -m pytest tests/parity_acceptance/test_it_tl.py:
 unset IT_RUN_PROFILING_TESTS
 
 # Run specific optional tests
-export IT_RUN_OPTIONAL_TESTS=1 && \
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
-python -m pytest tests/parity_acceptance/test_it_fts.py::test_parity_fts[train_cuda_32_l_fts] -v  || true && \
-unset IT_RUN_OPTIONAL_TESTS
+IT_RUN_OPTIONAL_TESTS=1 python -m pytest tests/parity_acceptance/test_it_fts.py::test_parity_fts[train_cuda_32_l_fts] -v
 ```
 
 **Important Notes:**

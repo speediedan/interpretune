@@ -10,10 +10,12 @@ tb_logs/
 debug/
 .github/prompts/
 
-# concept-direction experiment scratch artifacts
+# local experiment scratch artifacts
 tests/concept_direction_approach_parity/archived_analysis/
 tests/concept_direction_approach_parity/archived_cfgs/
 tests/concept_direction_approach_parity/generated_experiments/
+tests/concept_direction_approach_parity/artifacts
+tests/parity_analysis/generated_experiments/
 # ignore ipynb files themselves since we want to only store the source *.py
 #*.ipynb
 

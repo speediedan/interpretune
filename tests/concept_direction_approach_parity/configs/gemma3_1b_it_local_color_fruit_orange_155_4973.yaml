@@ -1,0 +1,10 @@
+EXTENDS: gemma3_1b_it_local_color_fruit_orange.yaml
+
+EXPERIMENT_NAME: gemma3_1b_it_local_color_fruit_orange_155_4973
+
+ANALYSIS:
+  top_n: 5
+  constrained_feature_selection:
+    - gemma-3-1b-it/16-gemmascope-2-transcoder-16k/155  # ripe fruit
+    - gemma-3-1b-it/25-gemmascope-2-transcoder-16k/4973 # `not color`
+  debug_pipeline_state_artifact_name: gemma3_1b_it_orange_155_4973_notebook_debug

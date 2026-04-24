@@ -14,6 +14,8 @@ from typing import Any
 
 import pytest
 
+from interpretune.utils.resource_mgmt import cleanup_python_cuda
+from tests.analysis_resource_utils import clear_nnsight_test_state
 from tests.runif import RunIf
 
 try:
@@ -38,15 +40,22 @@ def execute_notebook_with_params(
 
     output_notebook = output_dir / f"{notebook_path.stem}_output.ipynb"
 
-    # Execute the notebook from its directory to ensure relative imports work
-    pm.execute_notebook(
-        input_path=str(notebook_path),
-        output_path=str(output_notebook),
-        parameters=parameters,
-        timeout=timeout,
-        log_output=True,
-        cwd=str(notebook_path.parent),  # Execute from notebook's directory
-    )
+    clear_nnsight_test_state(None)
+    cleanup_python_cuda()
+
+    try:
+        # Execute the notebook from its directory to ensure relative imports work
+        pm.execute_notebook(
+            input_path=str(notebook_path),
+            output_path=str(output_notebook),
+            parameters=parameters,
+            timeout=timeout,
+            log_output=True,
+            cwd=str(notebook_path.parent),  # Execute from notebook's directory
+        )
+    finally:
+        clear_nnsight_test_state(None)
+        cleanup_python_cuda()
 
     return output_notebook
 

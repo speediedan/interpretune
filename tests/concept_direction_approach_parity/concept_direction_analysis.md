@@ -274,34 +274,372 @@ fix is visible in the notebook output itself. Tokens such as `▁Lansing` now ke
 SentencePiece marker in the rendered tables instead of being shown as the decoded plain
 text form.
 
+### 2026-04-19 Gemma 3.1B Prompt-Aligned Probe-End Rerun
+
+The latest `gemma-3-1b-it` Ohio rerun moved the context-token policy out of test-only
+instrumentation and into the real store extraction path. The concept-direction harness now
+computes an explicit `context_token_index` from the prompt-alignment snapshot and threads
+that value through the core extraction op contract. The executed notebook
+`gemma3_1b_it_local_oqi_reasoning_oh_20260419_114405.ipynb` records that policy directly in
+its final summary:
+
+- `store_context_token_source_counts = {"probe_end": 6}`
+- representative cache-space mappings such as `probe_end_index=25 -> cache_answer_index=31 -> answer_index=32`
+- no remaining cases where the live notebook path falls back to the old turn-boundary token
+
+That change improved the downstream notebook parity only slightly relative to baseline
+`gemma3_1b_it_local_oqi_reasoning_oh_20260417_171549.ipynb`:
+
+| Notebook | Embed Δ | Store Δ | Cosine Sim | Jaccard | Predictions |
+|----------|--------:|--------:|-----------:|--------:|:-----------:|
+| `...171549.ipynb` | `-64.875` | `-28.375` | `-0.0592208` | `0.1764706` (`3/17`) | `6/6` |
+| `...114405.ipynb` | `-64.875` | `-25.375` | `-0.0586897` | `0.25` (`4/16`) | `6/6` |
+
+The direction-feature overlap improved modestly and the cosine moved only in the fourth
+decimal place, but the store intervention still did not move materially closer to the
+embed path on the main downstream metric. The absolute gap between embed and store deltas
+actually widened slightly (`36.5 -> 39.5`). That matters because it rules out the most
+obvious context-token hypothesis: using the probe/entity token instead of the turn-boundary
+newline is now implemented and observable, but it is not enough to explain the remaining
+store-vs-embed divergence.
+
+The same conclusion shows up in the direct-op parity reports regenerated after the change.
+For the Gemma 3.1B Ohio two-group and single-group cases, embed/store/plain/store/context
+still have:
+
+- exact top-feature ID agreement (`Jaccard = 1.0`)
+- shared-score cosine ~= `1.0`
+- identical `pre_gap` / `post_gap` summaries
+
+So the remaining discrepancy is still a magnitude/calibration issue rather than a feature
+ranking issue. The store direction is landing on the same salient features but with a
+different latent-space scale and a meaningfully different downstream intervention effect.
+
+### 2026-04-19 Artifact Notebook Extension, Successful Shortlist Scan, and Bat Follow-Up
+
+The parity-analysis notebook now renders two views that were previously easy to miss:
+
+1. preserved direct-op direction geometry, including raw norms, latent-row norms, example
+   weights, paired-rejection residuals, and SHA fingerprints
+2. notebook-debug pipeline artifacts that do not have a paired direct-op parity report
+
+The refreshed direct-op rerun sharpens the diagnosis further. The preserved graph-stage
+summary is still perfectly aligned for both Gemma 3.1B concept-direction test variants, but
+the upstream direction geometry is not:
+
+| Artifact view | Embed raw norm | Store raw norm(s) | Direction cosine(s) | Downstream overlap summary |
+|---------------|---------------:|------------------:|--------------------:|----------------------------|
+| preserved direct-op `gemma3_1b_it_two_group` | `0.592790` | `53.009087` (`store_plain`), `188.381836` (`store_context`) | `-0.0381` / `0.0706` / `0.0192` | graph-stage Jaccard `1.0`, shared-score cosine `1.0`, identical gap delta `-47.308847` |
+| preserved direct-op `gemma3_1b_it_single_group` | `0.645849` | `125.866814` (`store_plain`), `330.705688` (`store_context`) | `0.0126` / `0.0593` / `0.3914` | graph-stage Jaccard `1.0`, shared-score cosine `1.0`, identical gap delta `-47.308847` |
+| notebook-debug `gemma3_1b_it_ohio_notebook_debug` | `0.592790` | `170.347778` (`store_direction`) | `0.076709` | feature Jaccard `0.333333`, shared-score cosine `0.858457`, embed/store gap deltas `-64.875` vs `-52.875` |
+| notebook-debug `gemma3_1b_it_bat_notebook_debug` | `0.528009` | `209.447205` (`store_direction`) | `0.067216` | feature Jaccard `0.666667`, shared-score cosine `0.990623`, embed/store gap deltas `+57.9375` vs `+19.5625` |
+
+So the preserved direct-op graph summary is still best understood as a masking layer: it can
+stay perfectly aligned even while the pre-graph directions differ substantially in norm and
+remain close to orthogonal. That is exactly why the Ohio notebook continues to look
+materially different once the full pipeline is exercised.
+
+The shortlist workflow also moved forward in the same session. The local inference service
+was restored, the request auth mismatch was fixed by sending `X-SECRET-KEY` alongside the
+bearer token, and both inference-side scan scripts completed successfully for the filtered
+`orange`, `hammer`, and `bat` shortlist.
+
+The saved JSON outputs showed an important distinction:
+
+1. the shortlist classification prompts are all dominated by the same generic top features
+   (`14/.../457`, `11/.../12`, `13/.../256`, `8/.../91`, `13/.../613`)
+2. the saved scan rows currently report `has_local_explanation = false` for those features
+3. the hypothesis-query scans, not the classification scans, provide the discriminative signal
+
+Combining the saved scan JSON with the prompt-answer harness results gives the current
+candidate ranking:
+
+| Candidate | Top-1 / Top-2 answer | Hypothesis-query readout | Takeaway |
+|-----------|----------------------|--------------------------|----------|
+| `orange` (color vs fruit) | `color` `0.9884` / `fruit` `0.0075` | still overlaps the generic shortlist-heavy feature set | usable ambiguity candidate, but still fairly lexical/generic |
+| `hammer` (tool vs weapon) | `tool` `0.9983` / `Tool` `0.0005` | shows some distinctive object-use features | too clean for the next calibration pass |
+| `bat` (bird vs mammal) | `mammal` `0.7908` / `bird` `0.1999` | exposes the richest hypothesis-only set, including `22/.../10136`, `23/.../7092`, `25/.../413`, `25/.../937`, `7/.../377`, `7/.../468` | best next follow-up |
+
+That led to a dedicated `bat` concept-pair config and notebook config, followed by a fresh
+Ohio rerun (`gemma3_1b_it_local_oqi_reasoning_oh_20260419_193722.ipynb`), a new `bat`
+notebook run (`gemma3_1b_it_local_bird_mammal_bat_20260419_193941.ipynb`), and a refreshed
+parity-analysis notebook execution. The Ohio notebook remains anti-target for both embed and
+store, but the `bat` notebook is the first shortlist follow-up where both paths steer the
+intended class gap in the positive direction, with substantially higher feature overlap than
+the Ohio run even though the underlying direction cosine is still low.
+
+#### Upstream Reference Graph and Random Perturbation Controls
+
+The refreshed 1B artifact set now includes two new diagnostics that were missing from the
+earlier pass:
+
+1. an upstream-only reference graph sanity report for the `bat` surface
+2. a large random-vector perturbation control in the notebook-debug artifacts for both `bat`
+   and Ohio
+
+The direct-op `bat` reference report confirms that upstream graph construction is more stable
+than the raw direction cosines would suggest, but not stable enough to erase the embed/store
+split:
+
+| Bat reference comparison | Jaccard | Shared-score cosine | Direction cosine | Shared top features |
+|--------------------------|--------:|--------------------:|-----------------:|---------------------|
+| embed vs `store_plain` | `0.428571` | `0.962254` | `-0.033594` | 6 |
+| embed vs `store_context` | `0.666667` | `0.989558` | `0.065248` | 8 |
+| `store_plain` vs `store_context` | `0.538462` | `0.921478` | `0.173271` | 7 |
+| embed vs embed-random-perturbed | `0.428571` | `0.996317` | `0.099504` | 6 |
+| `store_context` vs store-random-perturbed | `0.538462` | `0.943407` | `0.099504` | 7 |
+
+The shared `bat` reference rows still center on a small common core:
+`[0, 28, 276]`, `[0, 26, 363]`, `[0, 24, 441]`, `[0, 25, 276]`, and `[0, 27, 19]`. The main
+top-5 difference is that embed keeps `[0, 4, 5392]` while the store-context path instead lifts
+`[0, 28, 420]` into the shared frontier.
+
+The notebook perturbation controls reinforce the same story. Even after forcing the perturbed
+direction cosine down to `0.099504`, the graph selections remain partly stable:
+
+| Notebook artifact | Base embed/store Jaccard | Embed perturb Jaccard | Store perturb Jaccard | Embed `Δgap_vs_base` | Store `Δgap_vs_base` |
+|-------------------|-------------------------:|----------------------:|----------------------:|---------------------:|---------------------:|
+| `gemma3_1b_it_bat_notebook_debug` | `0.666667` | `0.428571` | `0.538462` | `-47.8125` | `+2.4375` |
+| `gemma3_1b_it_ohio_notebook_debug` | `0.333333` | `0.333333` | `0.333333` | `+17.5` | `-1.0` |
+
+Interpretation:
+
+1. The graph layer is materially more stable than the raw embed/store direction cosine, which
+   helps explain why the direct-op graph summaries can still look healthier than the full
+   notebook pipeline.
+2. That stability is surface-dependent. `bat` keeps much more shared graph structure than Ohio,
+   but the positive `bat` store path still moves the target gap far less than embed.
+3. The perturbation control now rules out a simplistic "completely different direction means
+   completely different graph" story. The next debugging step should focus on scale and weight
+   calibration rather than only on feature-ID overlap.
+
+### 2026-04-20 Ohio Direct-Op Fix and Structured Feature-Selection Reruns
+
+The top-priority Ohio direct-op failure turned out to be a reference-side mismatch rather than a
+remaining embed-vs-store graph-construction bug. After aligning the Ohio direct-op reference path
+with the corrected target configuration and ranking behavior, the preserved Gemma 3.1B Ohio parity
+tests now validate direct-op vs reference agreement for both the two-group and single-group cases.
+The large random-vector perturbation control is also no longer inert: the preserved reports still
+show the expected `~0.099504` direction cosine to the base path, but the perturbed graph selections
+and post-gap summaries are now distinct from the unperturbed ones instead of being byte-for-byte
+identical.
+
+That matters because it changes how to interpret the remaining Ohio mismatch. The failing test was
+not telling us that the embed/store paths were secretly identical and the reference helper was fine.
+It was telling us that the test had been over-asserting cross-path equality after the reference path
+was fixed. The corrected Ohio direct-op parity gate now treats exact direct-op vs reference parity
+as the hard invariant for each path, while only requiring partial overlap and consistent gap
+reduction across embed/store variants.
+
+The same session also landed the shared constrained-feature-selection refactor in the notebook
+harness. `constrained_feature_selection` now supports structured `FeatureSelectionSpec`-style
+payloads via `specific_features`, `layer_slices`, and `position_slices`, and slice bounds now use
+numeric value semantics so a config entry like `layer_slices: [[10, null]]` really means "layers
+greater than or equal to 10". Two new notebook configs exercised that support directly:
+
+- `gemma3_1b_it_local_oqi_reasoning_oh_fs_l10_n5.yaml`
+- `gemma3_1b_it_local_color_fruit_orange_fs_l10_n5.yaml`
+
+Both reruns applied the intended constraint shape correctly: all extracted rows came from layers
+`>= 10`, and the harness returned only the top 5 constrained features per path. The important part
+is what happened next: the high-layer filter did **not** restore embed/store parity. It made the
+remaining divergence easier to localize.
+
+| Surface | Config | Feature Jaccard | Shared features | Embed `Δgap` | Store `Δgap` | Embed layers | Store layers |
+|---------|--------|----------------:|----------------:|-------------:|-------------:|--------------|--------------|
+| Ohio | baseline | `0.333333` | `5/15` | `-64.875` | `-52.875` | `0,16,17,18,19,20,25` | `0,16,17,25` |
+| Ohio | `fs_l10_n5` | `0.111111` | `1/9` | `-46.875` | `-54.875` | `17,18,19,20,25` | `16,17,24,25` |
+| Orange | baseline | `0.333333` | `5/15` | `+5.5` | `+3.0` | `0,1,16,20,25` | `0,3,5` |
+| Orange | `fs_l10_n5` | `0.0` | `0/10` | `+15.625` | `+1.625` | `16,20,25` | `12,16,17,25` |
+
+Three conclusions follow from those reruns:
+
+1. The structured constrained-feature-selection path is working as intended. The notebook harness,
+   serializer, and backend filter all honor the new layer-slice specification.
+2. Removing the obvious layer-0 rows does not collapse embed/store divergence. On both Ohio and
+   orange, overlap becomes sparser rather than denser once the selection is restricted to later
+   layers.
+3. The remaining notebook drift is therefore not just a low-layer lexical-feature problem. Even in
+   the high-layer-only slice, the store path lifts a different later-layer frontier than embed.
+
+That puts the next debugging step in a narrower box. The open issue is no longer "why does the
+reference helper disagree with direct-op?" and it is no longer "does the notebook parser really
+apply a layer slice?" The remaining question is why the later-layer store direction keeps surfacing
+different rows and materially different intervention deltas even when the experiment is forced onto
+the same high-layer band as embed.
+
+### Refreshed Parity-Analysis Notebook
+
+The full rerun of `tests/parity_analysis/concept_direction_parity_analysis.ipynb` makes the new
+boundary clearer. Path-vs-reference parity is now exact on the refreshed Ohio and orange artifacts,
+including the new `fs_l10_n5` surfaces, so the remaining mismatch is squarely about cross-path
+geometry rather than report-generation drift.
+
+For the direct-op artifacts, the strongest recurring pattern is high shared-score cosine paired with
+near-orthogonal normalized directions and extreme raw-scale inflation:
+
+- Ohio two-group: embed/store-plain/store-context shared-score cosine stays high
+   (`0.971491` / `0.861413`), but the corresponding normalized direction cosines remain tiny
+   (`-0.038099`, `0.070584`, `0.019183`) while raw norms jump from `0.592790` to `53.009087`
+   and then `188.381836`.
+- Ohio `fs_l10_n5`: the high-layer filter still leaves only `3` shared embed/store-plain rows and
+   `1` shared embed/store-context row, even though the surviving rows remain numerically aligned
+   (`0.991121` and `1.000000` shared-score cosine).
+- Orange baseline: embed/store-plain/store-context shared-score cosine stays similarly high
+   (`0.985395` / `0.980590`), but normalized direction cosines are still only `0.009717`,
+   `0.043186`, and `0.140010`, while raw norms jump from `0.592765` to `60.012154` and then
+   `259.368958`.
+- Orange `fs_l10_n5`: the high-layer slice is the starkest case. Embed and store-plain keep only
+   `1` shared row, embed and store-context keep `0`, and yet path-vs-reference parity still holds.
+
+The notebook-debug artifacts remain consistent with that direct-op picture instead of contradicting
+it. Ohio stays low-cosine and anti-target (`0.076709`, Jaccard `0.333333`, gap deltas `-64.875`
+vs `-52.875`), while orange stays low-cosine but target-consistent (`0.066321`, Jaccard
+`0.333333`, gap deltas `+5.5` vs `+3.0`). The large random-vector control is also active on the
+refreshed surfaces rather than inert: the parity notebook now shows the expected `~0.099504`
+direction cosine together with changed feature sets for both direct-op and notebook-debug artifacts.
+
+### Orange `fs_l10_n5` Latent Dynamics
+
+The separate latent notebook `tests/parity_analysis/concept_direction_latent_dynamics_analysis.ipynb`
+also now runs cleanly through papermill with a real top `parameters` cell, clickable Neuronpedia
+feature links, and best-available explanation text in the feature tables. The old UMAP
+spectral-initialization fallback is gone; the only remaining UMAP warning on this surface is the
+expected `n_jobs` override that comes from pinning `random_state`.
+
+- For `context_enhanced_scale=10.0`, the mean Color norms rise from `138.01` answer-state /
+   `103.42` context-state to `357.81` projected/selected-store-state, while the mean Fruit norms
+   rise from `148.82` / `110.42` to `417.85`. `selected_store_state_source` is
+   `projected_context_state` for every example and `projected_selected_state_delta_norm` stays
+   `0.0`, so the selected store state is literally the projected context state on this surface,
+   not a later fallback.
+- The new signed `expected_answer_logit_margin` view resolves the earlier orange `logit_diff`
+   confusion. All four Fruit prompts remain strongly positive, and red/green are positive once the
+   fixed `Fruit - Color` gap is flipped into the expected-answer frame, but blue and yellow remain
+   anti-target (`-14.125` and `-0.5`). The score path is therefore not globally inverted; two of
+   the four Color exemplars are still genuinely misaligned.
+- The precise hash collapse is now between
+   `store_context_enhanced_paired_rejection_direction` and
+   `store_context_enhanced_paired_rejection_reconstruction_direction`, which both resolve to
+   `bc11607d`. `store_answer_position_paired_rejection_direction` remains distinct at `ec185c69`,
+   so the context-enhanced path is still replaying the same paired-rejection residual rather than
+   rotating onto the answer-position store axis.
+- The later-layer context-enhanced frontier remains
+   `[(13,27,10777), (11,27,688), (17,27,11442), (12,25,3), (16,25,400)]`. That matches the
+   refreshed direct-op parity notebook, where orange `fs_l10_n5` still reports embed/store-plain
+   Jaccard `0.111111`, embed/store-context Jaccard `0.0`, store-plain/store-context Jaccard
+   `0.428571`, shared-score cosine `1.0`, and raw norms `0.592765 -> 60.012154 -> 259.368958`.
+- A supplemental `context_enhanced_scale=1.0` rerun did not restore store-plain parity. It kept
+   the same context-enhanced frontier, changed the normalized hash from `bc11607d` to `38ebd49a`,
+   and shrank the raw context-enhanced direction norm from `252.238266` to `25.223827`. The exact
+   comparison script shows the same `3/7` shared top features with the answer-position store
+   frontier at both scales (Jaccard `0.428571`), the same context-vs-answer cosine
+   (`0.143060848`), and an effective context-vs-context cosine of `1.0` between the scale-`10.0`
+   and scale-`1.0` directions. The per-example projected/selected-store-state norms contracted by
+   the same factor (`357.81 -> 35.78` for Color, `417.85 -> 41.79` for Fruit). The most defensible
+   reading is that lowering the scale mostly contracts magnitude; it does not rotate the context-
+   enhanced store direction onto the answer-position store axis.
+
+### 2026-04-21 Interpretation Update
+
+#### Scale vs directional shift
+
+The strongest recurring pattern is no longer "shared features vs different features". It is
+"similar high-salience frontier, different normalized geometry, very different raw scale". Across
+Ohio and orange, embed/store shared-score cosine can stay high while normalized direction cosine
+stays near zero and store raw norms inflate by two to three orders of magnitude. That means the
+remaining drift is better explained as a calibration problem in how the store rows are weighted and
+aggregated than as evidence that the store path is discovering a wholly unrelated concept.
+
+#### Store plain vs context-enhanced precision
+
+`store_plain` should now be treated as the cleaner diagnostic baseline. It shows the answer-position
+signal before the extra context-enhanced reprojection amplifies it. `store_context` is still useful,
+but mostly as a stress test for whether contextual weighting adds semantic precision. On the current
+Ohio and orange reruns it usually adds magnitude much more reliably than it adds alignment. The key
+question is therefore not whether context-enhanced extraction makes the store vector bigger, but
+whether it makes the downstream motion more embed-like. On the current surfaces, it generally does
+not. The orange scale-`1.0` follow-up sharpens that point: reducing the scale contracts the raw and
+projected norms by about `10x`, but it leaves the later-layer frontier intact, preserves the same
+`0.143060848` context-vs-answer cosine, and still does not recover answer-position parity.
+
+#### Paired-Residual Replay and Latent-Dynamics Interpretation
+
+The orange `fs_l10_n5` latent notebook makes that precision issue explicit. The normalized hash
+collapse is between `store_context_enhanced_paired_rejection_direction` and its explicit
+reconstruction stage, not between the context-enhanced path and the answer-position store path.
+Combined with projected and selected store states landing on the same coordinates for every example,
+the projection step is best understood as injecting more magnitude into an already-selected later-
+layer residual, not rotating the state onto the embed direction.
+
+#### How to read Ohio shared-score cosine
+
+The Ohio reruns are the clearest warning against over-reading shared-score cosine. A value near
+`1.0` says the overlapping rows are scored similarly once they survive selection. It does **not**
+say the full normalized directions agree, and it does **not** guarantee similar intervention
+behavior. Ohio still shows high shared-score cosine alongside low normalized cosine, large store
+norm inflation, and materially different gap motion. The most defensible reading is that both paths
+still touch the same broad Midwest/capital circuit while weighting that circuit very differently.
+
+#### Parity target update
+
+The parity target should no longer be "maximize embed/store feature overlap". The refreshed random
+perturbation controls show that partially stable graph selections can survive even when the control
+direction is forced down to the low-cosine regime, so feature overlap by itself is too weak a goal.
+The stronger target is:
+
+1. Pivot our focus away from maximizing embed versus store_context surviving feature set alignment to instead focus on quantifying and documenting the differing behavior and latent space dynamics underlying it as well as the differing contextual utility of each approach.
+2. Understand and exploit cross-path differences in normalized geometry and raw-scale inflation.
+3. Prefer surfaces where downstream gap motion stays aligned after those geometry checks, rather than
+   treating high Jaccard or shared-score cosine as success on their own.
+
 ### Working Hypotheses
 
-1. The Michigan prompt is probing a Midwest distance-to-capital circuit, not a clean
+1. The Ohio prompt is still probing a Midwest distance-to-capital circuit, not a clean
    Ohio-vs-Indiana city-membership circuit.
-2. The explicit `Columbus - Indianapolis` direction is usable, but only when the prompt
-   already points at Ohio-relevant evidence.
-3. Store-direction comparisons should be deferred until the prompt-side confound is
-   removed; otherwise the analysis mixes prompt retrieval failure with direction-quality
-   failure.
+2. The remaining store-direction divergence is not primarily a prompt-alignment bug; the refreshed
+    direct-op parity notebook and the orange latent pass both point to a scale/calibration issue in
+    how stored latent rows are weighted, normalized, or aggregated into the final concept direction.
+   On the orange `fs_l10_n5` surface, context-enhanced extraction still replays the same later-
+   layer paired-rejection frontier, and lowering the scale from `10.0` to `1.0` mostly contracts
+   that replay instead of moving it onto the answer-position store axis.
+3. Ambiguous taxonomic prompts like `bat` appear to be a better calibration surface than
+   the Ohio prompt because they preserve more shared top features while still exposing the
+   low-cosine embed/store geometry underneath.
+4. High-layer-only feature constraints do not restore parity, which argues that the residual
+   drift is not just caused by generic layer-0 / prompt-formatting rows dominating the top-k
+   frontier.
+5. The same broader-embed / narrower-store-context split now appears on both Ohio and orange,
+    so the residual drift is not specific to the Ohio prompt semantics.
 
 ### Recommended Follow-Ups
 
-1. Add symmetric, within-state prompts such as `state containing Cleveland` vs
-   `state containing Hammond` so the relation type is matched across Ohio and Indiana.
-2. Add a state-identity concept pair (`Ohio`, `Columbus`, `Cleveland`, `Cincinnati`
-   vs `Indiana`, `Indianapolis`, `Carmel`, `Bloomington`) for debugging state-membership
-   behavior directly rather than nearest-capital reasoning.
-3. Keep using explicit mode when debugging prompt framing, then reintroduce
-   concept-pair/store-direction comparisons only after the prompt anchor is aligned.
+1. Use `gemma3_1b_it_local_bird_mammal_bat.yaml` as the current notebook-default calibration
+   surface for the next embed-vs-store pass rather than spending another iteration on Ohio
+   prompt wording first.
+2. Compare pre-normalization store latent-state norms, per-example weights, and paired-
+   rejection residuals across Ohio, orange, and `bat`, and explicitly include the orange
+   `context_enhanced_scale=1.0` versus `10.0` comparison before changing the extraction contract.
+3. Use the new large random-vector perturbation control to compare graph stability against the
+   pre-graph norm/weight summaries; the control is now implemented in both the direct-op and
+   notebook artifact paths.
+4. Revisit explicit-marker or state-membership Ohio prompts only after the scale/calibration
+   investigation establishes why the current store directions remain low-cosine despite the
+   much stronger top-feature overlap now visible in the `bat` follow-up.
+5. Add a narrowed `specific_features` follow-up on the new `fs_l10_n5` surfaces using the shared
+   later-layer survivors directly, rather than only comparing full unconstrained frontiers.
+6. Inspect the two orange Color exemplars that remain anti-target in the signed-margin view
+   (`blue` and `yellow`) before treating orange as a solved calibration surface.
 
 ---
 
 ## Outstanding Questions
 
 1. **Would larger context-enhanced scales or alternative weighting schemes improve separation?**
-   The current test used `CONTEXT_ENHANCED_SCALE=10.0`. More aggressive weighting
-   or alternative approaches (e.g., attention-weighted extraction, multi-position
-   aggregation) may yet produce better store directions.
+   The current reruns now bracket both `CONTEXT_ENHANCED_SCALE=10.0` and `1.0`. The smaller scale
+   mostly contracts magnitude without restoring answer-position parity, but it is still unclear
+   whether an intermediate scale, adaptive weighting, or a different aggregation rule would improve
+   separation.
 
 2. **Are there concept pairs where the store direction naturally outperforms embed?**
    All tested pairs show embed dominance. Identifying a counter-example would help

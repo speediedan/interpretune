@@ -376,6 +376,11 @@ extract_concept_latent_state:
       intermediate_only: true
     answer_indices:
       datasets_dtype: int64
+    context_token_indices:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
     concept_cache_key:
       datasets_dtype: string
       required: false
@@ -390,6 +395,11 @@ extract_concept_latent_state:
       datasets_dtype: string
       required: false
       non_tensor: true
+      sequence_type: false
+    context_token_indices:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
       sequence_type: false
 
 extract_concept_latent_examples:
@@ -410,6 +420,11 @@ extract_concept_latent_examples:
     answer_indices:
       datasets_dtype: int64
       required: false
+    context_token_indices:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
     orig_labels:
       datasets_dtype: int64
     logit_diffs:
@@ -420,6 +435,7 @@ extract_concept_latent_examples:
       sequence_type: true
     concept_group_b_label_ids:
       datasets_dtype: int64
+      required: false
       non_tensor: true
       sequence_type: true
     concept_group_a_name:
@@ -464,6 +480,11 @@ extract_concept_latent_examples:
       sequence_type: false
     concept_example_weight:
       datasets_dtype: float32
+      array_shape: [null]
+      sequence_type: false
+    concept_context_indices:
+      datasets_dtype: int64
+      required: false
       array_shape: [null]
       sequence_type: false
     concept_cache_key:

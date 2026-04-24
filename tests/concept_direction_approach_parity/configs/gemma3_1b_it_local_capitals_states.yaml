@@ -1,8 +1,0 @@
-EXTENDS: base_capitals_states_local.yaml
-
-EXPERIMENT_NAME: gemma3_1b_it_local_capitals_states
-
-MODEL:
-  family: gemma3
-  variant: 1b_it
-

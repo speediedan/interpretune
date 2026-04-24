@@ -229,6 +229,8 @@ class RunIf:
 
             conditions.append(cond)
             reasons.append("CUDA device bf16")
+            # used in conftest.py::pytest_collection_modifyitems
+            kwargs["bf16_cuda"] = True
 
         if skip_windows:
             conditions.append(sys.platform == "win32")

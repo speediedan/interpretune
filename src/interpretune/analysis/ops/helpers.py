@@ -253,6 +253,64 @@ def weighted_mean(states: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
     return (states * weights.unsqueeze(-1)).sum(dim=0) / weight_sum
 
 
+# ---------------------------------------------------------------------------
+# Concept-direction streaming-state storage contract
+# ---------------------------------------------------------------------------
+# These attribute names are the formal storage contract used by the
+# ``concept_direction`` op's incremental aggregator. They are read/written on
+# the user-supplied ``analysis_inputs.store`` object (typically a
+# ``SimpleNamespace`` in synthetic tests; an ``AnalysisStore`` or similar in
+# runner-driven flows). Treat as a stable surface: downstream callers may
+# inspect or reset these fields between runs.
+#
+# Modes:
+#   - ``mean_difference`` / ``single_group``: only the per-group running
+#     weighted state sums and weight totals are used.
+#   - ``paired_rejection``: additionally maintains pending per-group buffers
+#     (for matching pair rows that arrive in different batches), a running
+#     residual sum, and a running pair-weight total.
+CONCEPT_STREAMING_GROUP_FIELDS: tuple[str, ...] = (
+    "concept_running_state_sum_a",
+    "concept_running_weight_a",
+    "concept_running_state_sum_b",
+    "concept_running_weight_b",
+)
+
+CONCEPT_STREAMING_PAIRED_REJECTION_FIELDS: tuple[str, ...] = (
+    "concept_pending_a_states",
+    "concept_pending_a_weights",
+    "concept_pending_b_states",
+    "concept_pending_b_weights",
+    "concept_running_residual_sum",
+    "concept_running_pair_weight",
+)
+
+CONCEPT_STREAMING_STATE_FIELDS: tuple[str, ...] = (
+    *CONCEPT_STREAMING_GROUP_FIELDS,
+    *CONCEPT_STREAMING_PAIRED_REJECTION_FIELDS,
+)
+
+
+def reset_concept_streaming_state(store: Any) -> None:
+    """Clear all concept_direction streaming aggregator fields on a store.
+
+    Safe to call on objects that don't currently have the fields. Useful for re-using a long-lived store across
+    independent concept-direction runs.
+    """
+    if store is None:
+        return
+    for field_name in CONCEPT_STREAMING_STATE_FIELDS:
+        if hasattr(store, field_name):
+            try:
+                delattr(store, field_name)
+            except (AttributeError, TypeError):
+                # Some store-like objects forbid attribute deletion; fall back to None.
+                try:
+                    setattr(store, field_name, None)
+                except Exception:
+                    pass
+
+
 def _resolve_attr_path(root: Any, *path: str) -> Any | None:
     current = root
     for attr_name in path:
@@ -600,6 +658,30 @@ def _resolve_concept_cache_key(analysis_batch: AnalysisBatch) -> str:
     return str(analysis_batch.get("concept_cache_key") or "unembed.hook_in")
 
 
+def _resolve_context_token_indices(
+    analysis_batch: AnalysisBatch,
+    answer_index_tensor: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    raw_context_token_indices = analysis_batch.get("context_token_indices")
+    if raw_context_token_indices is None:
+        raw_indices = answer_index_tensor - 1
+        valid_mask = raw_indices >= 0
+        return raw_indices.clamp(min=0), valid_mask
+
+    context_index_tensor = torch.as_tensor(
+        raw_context_token_indices,
+        dtype=torch.long,
+        device=answer_index_tensor.device,
+    ).reshape(-1)
+    if context_index_tensor.shape != answer_index_tensor.shape:
+        raise ValueError(
+            "extract_concept_latent_state requires context_token_indices to align with answer_indices "
+            f"({tuple(context_index_tensor.shape)} vs {tuple(answer_index_tensor.shape)})"
+        )
+    valid_mask = context_index_tensor >= 0
+    return context_index_tensor.clamp(min=0), valid_mask
+
+
 # TODO: This may be better cast as a separate op itself rather than a helper, we should revisit
 def _extract_concept_latent_state_from_cache(
     analysis_batch: AnalysisBatch,
@@ -625,10 +707,8 @@ def _extract_concept_latent_state_from_cache(
         latent_states = cache_tensor[batch_indices, index_tensor].detach().cpu().float()
 
         if context_enhanced:
-            prev_indices = index_tensor - 1
-            valid = prev_indices >= 0
-            prev_clamped = prev_indices.clamp(min=0)
-            context_states = cache_tensor[batch_indices, prev_clamped].detach().cpu().float()
+            context_indices, valid = _resolve_context_token_indices(analysis_batch, index_tensor)
+            context_states = cache_tensor[batch_indices, context_indices].detach().cpu().float()
 
             scaled_answer = context_scale * latent_states
             dot_num = (scaled_answer * context_states).sum(dim=-1, keepdim=True)

@@ -92,7 +92,9 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
     # SAE-specific fields
     # NOTE: TypeAlias inlined here so jsonargparse can resolve the type in CLI contexts
     # (PEP 563 deferred annotations + TypeAlias causes fail_untyped failures).
-    sae_cfgs: SAELensFromPretrainedConfig | SAELensCustomConfig | Sequence[SAELensFromPretrainedConfig | SAELensCustomConfig]
+    sae_cfgs: (
+        SAELensFromPretrainedConfig | SAELensCustomConfig | Sequence[SAELensFromPretrainedConfig | SAELensCustomConfig]
+    )
     add_saes_on_init: bool = False  # TODO: may push this down to SAE config level instead of setting for all saes
     # use_error_term: bool = False  # TODO: add support for use_error_term with on_init stateful SAEs
 
@@ -145,8 +147,10 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
             )
 
         # Warn if use_bridge=True but tl_cfg is not ITLensBridgeConfig (likely misconfiguration)
-        if self.use_bridge and isinstance(self.tl_cfg, ITLensFromPretrainedConfig) and not isinstance(
-            self.tl_cfg, ITLensBridgeConfig
+        if (
+            self.use_bridge
+            and isinstance(self.tl_cfg, ITLensFromPretrainedConfig)
+            and not isinstance(self.tl_cfg, ITLensBridgeConfig)
         ):
             rank_zero_warn(
                 "use_bridge=True but tl_cfg is an ITLensFromPretrainedConfig (HookedTransformer config), "

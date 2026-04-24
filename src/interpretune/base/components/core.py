@@ -403,8 +403,7 @@ class CoreHelperAttributes:
         else:
             raise MisconfigurationException("CoreHelperAttributes requires an ITConfig.")
         self._supported_helper_attrs = {
-            k: partial(_dummy_notify, method=k, ret_callable=v.ret_callable, ret_val=v.ret_val)
-            for k, v in ca.items()
+            k: partial(_dummy_notify, method=k, ret_callable=v.ret_callable, ret_val=v.ret_val) for k, v in ca.items()
         }
         self._logged_metrics = {}
         super().__init__(*args, **kwargs)

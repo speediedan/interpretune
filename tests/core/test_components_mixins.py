@@ -438,10 +438,10 @@ class TestGenerativeStepMixin:
     def test_lightning_adapter_gen_prepares_inputs_sigs(self):
         """Test that LightningAdapter._it_cls_metadata includes gen_prepares_inputs_sigs.
 
-        The LightningAdapter's metadata must include gen_prepares_inputs_sigs so that
-        _generate_prepares_inputs() returns True for HF models (which have _prepare_model_inputs).
-        Without this, map_gen_inputs filters batch keys against gen_sig_keys (HF generate
-        signature params), stripping input_ids/attention_mask and producing an empty batch.
+        The LightningAdapter's metadata must include gen_prepares_inputs_sigs so that _generate_prepares_inputs()
+        returns True for HF models (which have _prepare_model_inputs). Without this, map_gen_inputs filters batch keys
+        against gen_sig_keys (HF generate signature params), stripping input_ids/attention_mask and producing an empty
+        batch.
         """
         from interpretune.adapters.lightning import LightningAdapter
 

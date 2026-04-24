@@ -20,6 +20,7 @@ Usage:
     # Via special_tests.sh harness
     ./tests/special_tests.sh --mark_type=benchmark
 """
+
 from __future__ import annotations
 
 import re
@@ -119,6 +120,5 @@ def test_benchmark(experiment_name, benchmark_id, benchmark_entry):
 
     if expected is not None:
         assert abs(accuracy - expected) <= tolerance, (
-            f"Benchmark {experiment_name}/{benchmark_id}: accuracy={accuracy:.4f}, "
-            f"expected={expected:.3f}±{tolerance}"
+            f"Benchmark {experiment_name}/{benchmark_id}: accuracy={accuracy:.4f}, expected={expected:.3f}±{tolerance}"
         )
