@@ -356,7 +356,7 @@ SAE_LENS_PARAMS = [
 ]
 
 
-@RunIf(bf16_cuda=True)
+@RunIf(bf16_cuda=True, standalone=True)
 @pytest.mark.parametrize("params", SAE_LENS_PARAMS)
 def test_sae_lens_notebooks(params: dict[str, Any], tmp_path: Path):
     """Test SAE Lens adapter notebooks with different backend parameterizations."""

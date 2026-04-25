@@ -36,9 +36,9 @@ An op should define:
 
 Relevant code:
 
-- `/home/speediedan/repos/interpretune/src/interpretune/analysis/ops/base.py`
-- `/home/speediedan/repos/interpretune/src/interpretune/analysis/ops/dispatcher.py`
-- `/home/speediedan/repos/interpretune/src/interpretune/analysis/ops/definitions.py`
+- `src/interpretune/analysis/ops/base.py`
+- `src/interpretune/analysis/ops/dispatcher.py`
+- `src/interpretune/analysis/ops/definitions.py`
 
 ## Preferred Notebook And Script Surface
 
@@ -196,10 +196,10 @@ Notebook tests are useful, but they should not be the only correctness signal.
 
 Good test targets include:
 
-- `/home/speediedan/repos/interpretune/tests/core/test_analysis_ops_base.py`
-- `/home/speediedan/repos/interpretune/tests/core/test_analysis_ops_dispatcher.py`
-- `/home/speediedan/repos/interpretune/tests/core/test_analysis_ops_definitions.py`
-- `/home/speediedan/repos/interpretune/tests/core/test_cross_backend_compat.py`
+- `tests/core/test_analysis_ops_base.py`
+- `tests/core/test_analysis_ops_dispatcher.py`
+- `tests/core/test_analysis_ops_definitions.py`
+- `tests/core/test_cross_backend_compat.py`
 
 ### Add round-trip tests when serialization matters
 

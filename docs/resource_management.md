@@ -2,7 +2,7 @@
 
 This document describes the resource management controls available when running
 concept-direction experiment notebooks via the shared
-`tests/nb_experiment_harness/nb_experiment_launcher.py` launcher and the
+`tests/nb_experiments/nb_experiment_launcher.py` launcher and the
 `concept_direction_template.ipynb` notebook template.
 
 ## Background

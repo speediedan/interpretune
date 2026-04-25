@@ -31,6 +31,9 @@ def main() -> int:
     )
     staged = {f.strip() for f in result.stdout.splitlines() if f.strip()}
 
+    if "tests/benchmarks/benchmark_registry.yaml" not in staged:
+        return 0
+
     extra = set()
     for f in staged:
         if f in _ALWAYS_ALLOWED:

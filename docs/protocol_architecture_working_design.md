@@ -27,9 +27,9 @@ Its job is to:
 
 Relevant code:
 
-- `/home/speediedan/repos/interpretune/src/interpretune/session.py`
-- `/home/speediedan/repos/interpretune/src/interpretune/adapter_registry.py`
-- `/home/speediedan/repos/interpretune/src/interpretune/protocol.py`
+- `src/interpretune/session.py`
+- `src/interpretune/adapter_registry.py`
+- `src/interpretune/protocol.py`
 
 The current session model is still biased toward a paired `ITDataModule` plus `ITModule` workflow.
 
@@ -48,7 +48,7 @@ This layer lets Interpretune type and reason about composed objects without hard
 
 Relevant code:
 
-- `/home/speediedan/repos/interpretune/src/interpretune/protocol.py`
+- `src/interpretune/protocol.py`
 
 ### 3. Adapter layer
 
@@ -66,7 +66,7 @@ The adapter system is the main reason Interpretune can compose multiple model-le
 
 Relevant code:
 
-- `/home/speediedan/repos/interpretune/src/interpretune/adapters/`
+- `src/interpretune/adapters/`
 
 ### 4. Backend layer
 
@@ -79,7 +79,7 @@ This split is important. It keeps execution concerns separate from richer analys
 
 Relevant code:
 
-- `/home/speediedan/repos/interpretune/src/interpretune/analysis/backends/__init__.py`
+- `src/interpretune/analysis/backends/__init__.py`
 
 ### 5. Analysis op layer
 
@@ -95,9 +95,9 @@ Composite ops chain these operations while preserving a schema-driven execution 
 
 Relevant code:
 
-- `/home/speediedan/repos/interpretune/src/interpretune/analysis/ops/base.py`
-- `/home/speediedan/repos/interpretune/src/interpretune/analysis/ops/dispatcher.py`
-- `/home/speediedan/repos/interpretune/src/interpretune/analysis/ops/definitions.py`
+- `src/interpretune/analysis/ops/base.py`
+- `src/interpretune/analysis/ops/dispatcher.py`
+- `src/interpretune/analysis/ops/definitions.py`
 
 ### 6. Persistence layer
 
@@ -113,8 +113,8 @@ This layer matters for hub workflows and for future reusable analysis artifacts.
 
 Relevant code:
 
-- `/home/speediedan/repos/interpretune/src/interpretune/analysis/core.py`
-- `/home/speediedan/repos/interpretune/docs/analysis_store_serialization.md`
+- `src/interpretune/analysis/core.py`
+- `docs/analysis_store_serialization.md`
 
 ## Current Strengths
 

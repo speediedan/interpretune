@@ -135,15 +135,15 @@ If bytes are static for too long, use the logged `ps`, GPU, and kernel snapshots
 If you want to validate an already-converted bundle directly, use the Python helper with the explicit localhost Postgres URL:
 
 ```bash
-cd /home/speediedan/repos/interpretune
-source /mnt/cache/speediedan/.venvs/it_latest/bin/activate
+cd "${IT_REPO_DIR}"
+source "${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate"
 
 python - <<'PY'
 from pathlib import Path
 from interpretune.utils import import_neuronpedia_export_bundle_local_db
 
 bundle = Path(
-    '/home/speediedan/repos/neuronpedia/utils/neuronpedia-utils/neuronpedia_utils/exports/'
+  '${NEURONPEDIA_REPO_DIR}/utils/neuronpedia-utils/neuronpedia_utils/exports/'
     'gemma-3-1b-it/23-gemmascope-2-transcoder-16k'
 )
 summary = import_neuronpedia_export_bundle_local_db(
@@ -226,7 +226,7 @@ Important detail:
 The relevant pieces are:
 
 1. dashboard generation creates Neuronpedia export bundles under:
-  - `/home/speediedan/repos/neuronpedia/utils/neuronpedia-utils/neuronpedia_utils/exports/<model>/<layer-source-set>`
+  - `${NEURONPEDIA_REPO_DIR}/utils/neuronpedia-utils/neuronpedia_utils/exports/<model>/<layer-source-set>`
 2. each bundle includes `activations/batch-*.jsonl.gz`
 3. the localhost concept-direction notebook calls `prepare_local_explanation_backfill(...)` before `ensure_local_feature_explanations(...)`
 4. that helper searches the local export `activations/` batches for the exact feature index and writes a feature-specific Interpretune cache artifact under:
@@ -264,7 +264,7 @@ If a localhost notebook reports explanation cache misses:
 For manual inspection on this host:
 
 ```bash
-find /home/speediedan/repos/neuronpedia/utils/neuronpedia-utils/neuronpedia_utils/exports/gemma-3-1b-it/19-gemmascope-2-transcoder-16k/activations -maxdepth 1 -name 'batch-*.jsonl.gz' | head
+find "${NEURONPEDIA_REPO_DIR}/utils/neuronpedia-utils/neuronpedia_utils/exports/gemma-3-1b-it/19-gemmascope-2-transcoder-16k/activations" -maxdepth 1 -name 'batch-*.jsonl.gz' | head
 
 ls -l /mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/v1/gemma-3-1b-it/19-gemmascope-2-transcoder-16k/feature-activations/
 ```

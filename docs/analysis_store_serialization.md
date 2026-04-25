@@ -12,9 +12,9 @@ This document describes the current flow, how native and hub ops contribute sche
 
 ### Schema declaration
 
-Each native analysis op in [src/interpretune/analysis/ops/native_analysis_functions.yaml](/home/speediedan/repos/interpretune/src/interpretune/analysis/ops/native_analysis_functions.yaml) declares `input_schema`, `output_schema`, `aliases`, and optional `required_capabilities` entries. Those YAML entries become `ColCfg` instances in [src/interpretune/analysis/ops/base.py](/home/speediedan/repos/interpretune/src/interpretune/analysis/ops/base.py).
+Each native analysis op in [src/interpretune/analysis/ops/native_analysis_functions.yaml](../src/interpretune/analysis/ops/native_analysis_functions.yaml) declares `input_schema`, `output_schema`, `aliases`, and optional `required_capabilities` entries. Those YAML entries become `ColCfg` instances in [src/interpretune/analysis/ops/base.py](../src/interpretune/analysis/ops/base.py).
 
-Hub ops follow the same shape after download and load through [src/interpretune/analysis/ops/hub_manager.py](/home/speediedan/repos/interpretune/src/interpretune/analysis/ops/hub_manager.py) and [src/interpretune/analysis/ops/dispatcher.py](/home/speediedan/repos/interpretune/src/interpretune/analysis/ops/dispatcher.py). Once loaded, native and hub ops are normalized into the same `AnalysisOp` representation, so serialization is driven by resolved schema rather than by the source registry.
+Hub ops follow the same shape after download and load through [src/interpretune/analysis/ops/hub_manager.py](../src/interpretune/analysis/ops/hub_manager.py) and [src/interpretune/analysis/ops/dispatcher.py](../src/interpretune/analysis/ops/dispatcher.py). Once loaded, native and hub ops are normalized into the same `AnalysisOp` representation, so serialization is driven by resolved schema rather than by the source registry.
 
 Aliases and composite ops do not create separate storage rules. Aliases resolve to the same concrete op definition, and composite ops serialize only the union of the concrete stage schemas produced by compilation. The formatter therefore sees final compiled column metadata, not whether a column originated in a native op, a hub op, or a composite expansion.
 
@@ -31,7 +31,7 @@ Aliases and composite ops do not create separate storage rules. Aliases resolve 
 
 ### Feature generation
 
-[schema_to_features()](/home/speediedan/repos/interpretune/src/interpretune/analysis/core.py#L227) converts an `OpSchema` into Hugging Face `Features`.
+[schema_to_features()](../src/interpretune/analysis/core.py#L227) converts an `OpSchema` into Hugging Face `Features`.
 
 The important behaviors are:
 
@@ -44,18 +44,18 @@ This stage is where Interpretune commits to an Arrow-native layout. If a field i
 
 ### Dataset generation
 
-[dataset_features_and_format()](/home/speediedan/repos/interpretune/src/interpretune/runners/analysis.py#L74) derives both:
+[dataset_features_and_format()](../src/interpretune/runners/analysis.py#L74) derives both:
 
 - the `Features` object passed into `Dataset.from_generator(...)`, and
 - the serialized `col_cfg` payload passed into `with_format("interpretune", col_cfg=...)`.
 
-[generate_analysis_dataset()](/home/speediedan/repos/interpretune/src/interpretune/runners/analysis.py#L116) then builds the dataset from `analysis_store_generator(...)` and immediately applies the custom format.
+[generate_analysis_dataset()](../src/interpretune/runners/analysis.py#L116) then builds the dataset from `analysis_store_generator(...)` and immediately applies the custom format.
 
 The stored dataset is still plain Hugging Face data on disk. The custom format only affects how rows, columns, and batches are decoded when read back.
 
 ### Custom formatter
 
-[ITAnalysisFormatter](/home/speediedan/repos/interpretune/src/interpretune/analysis/formatters.py) subclasses `TorchFormatter`.
+[ITAnalysisFormatter](../src/interpretune/analysis/formatters.py) subclasses `TorchFormatter`.
 
 Its role is deliberately narrow:
 
@@ -69,7 +69,7 @@ This means the formatter is not a serialization escape hatch. It does not deseri
 
 ### AnalysisStore access
 
-[AnalysisStore](/home/speediedan/repos/interpretune/src/interpretune/analysis/core.py#L348) wraps a dataset and always reads it back through the `interpretune` formatter.
+[AnalysisStore](../src/interpretune/analysis/core.py#L348) wraps a dataset and always reads it back through the `interpretune` formatter.
 
 Important access patterns:
 

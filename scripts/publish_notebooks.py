@@ -109,7 +109,7 @@ def add_colab_badge_and_install_cell(notebook: Dict[str, Any], relative_path: st
 
     badge_cell = {
         "cell_type": "markdown",
-        "metadata": {},
+        "metadata": {"id": "colab-badge"},
         "source": [
             f'<a href="{colab_url}">\n',
             f'  <img src="{colab_badge_url}" alt="Open In Colab" />\n',
@@ -124,7 +124,7 @@ def add_colab_badge_and_install_cell(notebook: Dict[str, Any], relative_path: st
     # editable install in the published runtime.
     install_runner_cell = {
         "cell_type": "code",
-        "metadata": {"language": "python"},
+        "metadata": {"id": "install-deps", "language": "python"},
         "source": [
             "# Uncomment to run installation steps if you do not have a development\n",
             "# editable install and want to run this notebook in a fresh environment.\n",

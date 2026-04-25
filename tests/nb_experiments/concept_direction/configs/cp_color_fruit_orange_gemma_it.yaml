@@ -1,0 +1,18 @@
+name: fruit_vs_color_orange
+description: Fruit entities vs color entities with orange as the probe case
+group_a_tokens: [apple, banana, grape, peach]
+group_b_tokens: [red, blue, green, yellow]
+group_a_entities:
+  - [apple, Fruit]
+  - [banana, Fruit]
+  - [grape, Fruit]
+  - [peach, Fruit]
+group_b_entities:
+  - [red, Color]
+  - [blue, Color]
+  - [green, Color]
+  - [yellow, Color]
+group_a_name: Fruit
+group_b_name: Color
+concept_label: "Concept: Fruit - Color"
+classification_question: 'Is this a fruit or a color? Answer with one word: "Fruit" or "Color".'

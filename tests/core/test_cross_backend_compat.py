@@ -41,8 +41,8 @@ from interpretune.analysis.ops.helpers import _extract_concept_latent_state_from
 from interpretune.config.circuit_tracer import CircuitTracerConfig
 from interpretune.config import init_analysis_cfgs
 from tests import load_dotenv
-from tests.nb_experiment_harness.session import resolve_model_spec
-from tests.parity_analysis.concept_direction_parity_analysis import (
+from tests.nb_experiments.session import resolve_model_spec
+from tests.nb_experiments.concept_direction.analysis.concept_direction_analysis import (
     build_prompt_alignment_snapshot,
     capture_context_enhanced_extraction_snapshot,
     compare_top_feature_sets,

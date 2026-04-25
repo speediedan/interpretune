@@ -1,0 +1,13 @@
+EXTENDS: ../../configs/base.yaml
+
+PROMPT:
+  render_mode: apply_chat_template
+
+NEURONPEDIA:
+  use_localhost: true
+  local_db_url: postgres://postgres:postgres@127.0.0.1:5433/postgres
+  local_webapp_url: http://localhost:3000
+  local_explanation_type_name: np_moe-max-act-logits
+
+RUNTIME:
+  verbose: true

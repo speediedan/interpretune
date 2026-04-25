@@ -25,7 +25,7 @@ Use a datamodule when you need:
 
 Relevant code:
 
-- `/home/speediedan/repos/interpretune/src/interpretune/base/datamodules.py`
+- `src/interpretune/base/datamodules.py`
 
 ### `BaseITModule` and `ITModule`
 
@@ -38,8 +38,8 @@ Use a module when you need:
 
 Relevant code:
 
-- `/home/speediedan/repos/interpretune/src/interpretune/base/modules.py`
-- `/home/speediedan/repos/interpretune/src/interpretune/protocol.py`
+- `src/interpretune/base/modules.py`
+- `src/interpretune/protocol.py`
 
 ### `ITSession`
 
@@ -47,7 +47,7 @@ Use a session when you want Interpretune to compose your datamodule and module u
 
 Relevant code:
 
-- `/home/speediedan/repos/interpretune/src/interpretune/session.py`
+- `src/interpretune/session.py`
 
 ## Recommended Patterns Today
 
@@ -100,7 +100,7 @@ Use a manual `analysis_step` when:
 
 See the current example in:
 
-- `/home/speediedan/repos/interpretune/src/it_examples/experiments/rte_boolq.py`
+- `src/it_examples/experiments/rte_boolq.py`
 
 ## Best Practices
 

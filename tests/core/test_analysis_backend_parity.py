@@ -959,7 +959,7 @@ def _verify_wrapper_feature_interventions(
     return summaries
 
 
-@RUNIF(bf16_cuda=True)
+@RUNIF(bf16_cuda=True, standalone=True)
 def test_analysis_backend_parity_semantic_intervention_nnsight(
     cleanup_cuda,
     ct_nnsight_session_factory,
