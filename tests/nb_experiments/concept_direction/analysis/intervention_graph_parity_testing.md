@@ -14,7 +14,7 @@ When comparing surfaces, preserve artifacts from the run you trust before changi
 The current scripts use:
 
 - `IT_PARITY_PRESERVE_ARTIFACTS=1`
-- `IT_PARITY_PRESERVE_ARTIFACT_DIR=tests/nb_experiments/concept_direction/analysis/artifacts`
+- `IT_PARITY_PRESERVE_ARTIFACT_DIR=/tmp/it_concept_direction_analysis_artifacts`
 
 These artifacts make it possible to compare:
 

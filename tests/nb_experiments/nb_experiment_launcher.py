@@ -15,6 +15,9 @@ import yaml  # type: ignore[import-untyped]
 from tests.nb_experiments.config import load_experiment_config
 
 
+CONCEPT_DIRECTION_OUTPUT_ROOT = Path("/tmp/it_concept_direction_experiments")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Render and execute parameterized experiment notebooks via papermill.",
@@ -36,7 +39,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         help=(
-            "Directory where executed notebooks will be written. Defaults to '<notebook parent>/generated_experiments'."
+            "Directory where executed notebooks will be written. Defaults to /tmp/it_concept_direction_experiments "
+            "for concept-direction notebooks, otherwise '<notebook parent>/generated_experiments'."
         ),
     )
     parser.add_argument(
@@ -88,6 +92,16 @@ def _resolve_config_path(raw_value: str, config_dir: Path) -> Path:
         if candidate.exists():
             return candidate.resolve()
     raise FileNotFoundError(f"Could not resolve config path from '{raw_value}'")
+
+
+def _default_output_dir(notebook_path: Path) -> Path:
+    parts = notebook_path.resolve().parts
+    for index in range(len(parts)):
+        if parts[index : index + 4] == ("tests", "nb_experiments", "concept_direction", "analysis"):
+            return CONCEPT_DIRECTION_OUTPUT_ROOT / "analysis"
+        if parts[index : index + 3] == ("tests", "nb_experiments", "concept_direction"):
+            return CONCEPT_DIRECTION_OUTPUT_ROOT
+    return notebook_path.parent / "generated_experiments"
 
 
 def discover_config_paths(args: argparse.Namespace, config_dir: Path) -> list[Path]:
@@ -149,7 +163,7 @@ def main() -> int:
     args = parse_args()
     notebook_path = Path(args.notebook).resolve()
     config_dir = Path(args.config_dir).resolve() if args.config_dir else notebook_path.parent / "configs"
-    output_dir = Path(args.output_dir).resolve() if args.output_dir else notebook_path.parent / "generated_experiments"
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else _default_output_dir(notebook_path)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     config_paths = discover_config_paths(args, config_dir)

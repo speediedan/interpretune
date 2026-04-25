@@ -129,11 +129,12 @@ The most useful high-layer candidates from the current normal OQI run were:
 - Store top features: `(33, 34, 1061)` at `1.84e-08`, `(31, 34, 721)` at `1.70e-08`,
    `(3, 34, 69)` at `1.56e-08`
 
-Three completed notebooks now capture the focused `25/60` investigation:
+Three completed notebooks now capture the focused `25/60` investigation under
+`/tmp/it_concept_direction_experiments/`:
 
-- `generated_experiments/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60_20260410_225906.ipynb`
-- `generated_experiments/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60_full_graph_20260410_230326.ipynb`
-- `generated_experiments/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60_no_softcap_20260410_230725.ipynb`
+- `/tmp/it_concept_direction_experiments/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60_20260410_225906.ipynb`
+- `/tmp/it_concept_direction_experiments/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60_full_graph_20260410_230326.ipynb`
+- `/tmp/it_concept_direction_experiments/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60_no_softcap_20260410_230725.ipynb`
 
 Key findings from those runs:
 
@@ -154,13 +155,14 @@ Key findings from those runs:
 ### Latest Localhost Follow-up: Non-Debug Rerun on Current Dependency State (2026-04-12)
 
 After validating that `DEBUG_SESSION_SURFACE_PRESET: parity_surface` should remain debug-only, the
-requested localhost-backed non-debug configs were rerun with the notebook-default session surface:
+requested localhost-backed non-debug configs were rerun with the notebook-default session surface,
+with executed notebooks written under `/tmp/it_concept_direction_experiments/`:
 
-- `generated_experiments/gemma3_4b_it_local_oqi_reasoning_20260412_173925.ipynb`
-- `generated_experiments/gemma3_4b_it_local_oqi_reasoning_single_fs_20260412_174857.ipynb`
-- `generated_experiments/gemma3_4b_it_local_cat_dog_20260412_175750.ipynb`
-- `generated_experiments/gemma3_4b_it_local_capitals_states_20260412_180711.ipynb`
-- `generated_experiments/gemma3_1b_it_local_capitals_states_20260412_181555.ipynb`
+- `/tmp/it_concept_direction_experiments/gemma3_4b_it_local_oqi_reasoning_20260412_173925.ipynb`
+- `/tmp/it_concept_direction_experiments/gemma3_4b_it_local_oqi_reasoning_single_fs_20260412_174857.ipynb`
+- `/tmp/it_concept_direction_experiments/gemma3_4b_it_local_cat_dog_20260412_175750.ipynb`
+- `/tmp/it_concept_direction_experiments/gemma3_4b_it_local_capitals_states_20260412_180711.ipynb`
+- `/tmp/it_concept_direction_experiments/gemma3_1b_it_local_capitals_states_20260412_181555.ipynb`
 
 Observed summary deltas on the current environment:
 
@@ -466,7 +468,7 @@ See [resource_management.md](resource_management.md) for full details and [/docs
 - `resource_management.md`: Developer-facing GPU memory management guide.
 - `configs/`: YAML config files for parameterized notebook experiments. Includes
   `archived_cfgs/` for deprecated `gemma_dataclass` render mode configs.
-- `generated_experiments/`: Timestamped executed notebook outputs.
+- `/tmp/it_concept_direction_experiments/`: Timestamped executed notebook outputs.
 - `README.md`: This file.
 - `experiment_*.log`: Timestamped experiment logs from V3 runs.
 
@@ -507,8 +509,8 @@ python tests/nb_experiments/nb_experiment_launcher.py \
   --timeout 3600 --kernel-name it_latest
 ```
 
-Each run writes timestamped artifacts under `generated_experiments/`, including the executed
-notebook plus `.source.yaml` and `.resolved.yaml` snapshots of the config used for that run.
+Each run writes timestamped artifacts under `/tmp/it_concept_direction_experiments/`, including the
+executed notebook plus `.source.yaml` and `.resolved.yaml` snapshots of the config used for that run.
 
 ### Historical V3 notes
 

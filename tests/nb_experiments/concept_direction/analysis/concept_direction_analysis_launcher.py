@@ -43,11 +43,12 @@ def find_repo_root(start: Path) -> Path:
 REPO_ROOT = _BOOTSTRAP_REPO_ROOT
 ANALYSIS_DIR = Path(__file__).resolve().parent
 CONCEPT_DIRECTION_DIR = ANALYSIS_DIR.parent
+DEFAULT_CONCEPT_DIRECTION_EXPERIMENT_ROOT = Path("/tmp/it_concept_direction_experiments")
 DEFAULT_NOTEBOOK_PATH = CONCEPT_DIRECTION_DIR / "concept_direction_template.ipynb"
 DEFAULT_CONFIG_DIR = CONCEPT_DIRECTION_DIR / "configs"
-DEFAULT_NOTEBOOK_OUTPUT_DIR = CONCEPT_DIRECTION_DIR / "generated_experiments"
+DEFAULT_NOTEBOOK_OUTPUT_DIR = DEFAULT_CONCEPT_DIRECTION_EXPERIMENT_ROOT
 DEFAULT_ANALYSIS_NOTEBOOK = ANALYSIS_DIR / "concept_direction_analysis.ipynb"
-DEFAULT_ANALYSIS_OUTPUT_DIR = ANALYSIS_DIR / "generated_experiments"
+DEFAULT_ANALYSIS_OUTPUT_DIR = DEFAULT_CONCEPT_DIRECTION_EXPERIMENT_ROOT / "analysis"
 DEFAULT_EXPERIMENT_SET_PATH = ANALYSIS_DIR / "default_analysis_experiment_set.yaml"
 DEFAULT_NB_LAUNCHER = REPO_ROOT / "tests" / "nb_experiments" / "nb_experiment_launcher.py"
 

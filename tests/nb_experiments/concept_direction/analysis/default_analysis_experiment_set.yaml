@@ -10,7 +10,7 @@ notebook_configs:
   # - gemma3_4b_it_local_oqi_reasoning_oh_2975_15708.yaml
 notebook_path: ../concept_direction_template.ipynb
 config_dir: ../configs
-notebook_output_dir: ../generated_experiments
+notebook_output_dir: /tmp/it_concept_direction_experiments
 analysis_notebook: ./concept_direction_analysis.ipynb
-analysis_output_dir: ./generated_experiments
+analysis_output_dir: /tmp/it_concept_direction_experiments/analysis
 analysis_output_stem: concept_direction_analysis

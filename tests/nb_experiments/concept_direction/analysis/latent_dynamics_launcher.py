@@ -29,7 +29,7 @@ from tests.nb_experiments.config import load_experiment_config  # noqa: E402
 
 NOTEBOOK_PATH = Path(__file__).resolve().with_name("concept_direction_latent_dynamics_analysis.ipynb")
 DEFAULT_CONFIG_DIR = NOTEBOOK_PATH.parent / "configs"
-DEFAULT_OUTPUT_DIR = NOTEBOOK_PATH.parent / "generated_experiments"
+DEFAULT_OUTPUT_DIR = Path("/tmp/it_concept_direction_experiments/analysis")
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=str(DEFAULT_OUTPUT_DIR),
         help=(
             "Directory where executed notebooks will be written. "
-            "Defaults to tests/nb_experiments/concept_direction/analysis/generated_experiments."
+            "Defaults to /tmp/it_concept_direction_experiments/analysis."
         ),
     )
     parser.add_argument(

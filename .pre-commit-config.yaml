@@ -39,10 +39,6 @@ repos:
             )$
       - id: detect-private-key
 
-  - repo: https://github.com/kynan/nbstripout
-    rev: 0.5.0
-    hooks:
-      - id: nbstripout
   # temporarily disabling until the pre-commit hook allows per-line ignores to avoid certain errors with jaxtyping
   # - repo: https://github.com/asottile/pyupgrade
   #   rev: v3.19.1
@@ -81,6 +77,11 @@ repos:
 
   - repo: local
     hooks:
+      - id: nbstripout
+        name: nbstripout
+        entry: python scripts/run_nbstripout_hook.py
+        language: system
+        files: \.ipynb$
       - id: publish-notebooks
         name: Publish notebooks if changed
         entry: python scripts/publish_notebooks.py

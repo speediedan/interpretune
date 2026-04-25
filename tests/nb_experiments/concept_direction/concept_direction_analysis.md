@@ -4,6 +4,13 @@ This document tracks the quality of concept-direction vectors derived from diffe
 extraction approaches, using Neuronpedia feature interpretations and direction-probe
 separations as diagnostic tools.
 
+> **Implementation guardrail:** The analysis notebooks and helper modules should not become an
+> independent fork of the production op behavior. Keep `src/interpretune/analysis/ops/definitions.py`
+> and `tests/nb_experiments/concept_direction/analysis/concept_direction_latent_dynamics.py` aligned,
+> especially `concept_direction_impl` and `_paired_rejection_payload`. If the latent-dynamics module
+> remains in tree, it needs rigorous parity tests so report-only changes cannot silently drift from the
+> op contract.
+
 ## Model and SAE Configuration
 
 | Property | Value |
@@ -691,7 +698,7 @@ The full fresh launcher run also completed cleanly from a new artifact generatio
    `gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_20260424_212931.ipynb`, and
    `gemma3_4b_it_local_oqi_reasoning_oh_2975_15708_20260424_213707.ipynb`.
 4. The final analysis notebook execution also finished successfully and wrote
-   `tests/nb_experiments/concept_direction/analysis/generated_experiments/concept_direction_analysis_20260424_203259.ipynb`.
+   `/tmp/it_concept_direction_experiments/analysis/concept_direction_analysis_20260424_203259.ipynb`.
 5. No notebook-level `Traceback`, `CellExecutionError`, or `output_type = "error"` entries were
    present in either the final Ohio notebook or the generated analysis notebook.
 
