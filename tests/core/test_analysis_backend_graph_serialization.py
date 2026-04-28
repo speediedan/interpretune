@@ -27,7 +27,11 @@ from interpretune.analysis.ops.definitions import (
     graph_node_influence_impl,
     graph_prune_impl,
 )
-from interpretune.analysis.ops.helpers import FeatureSelectionSpec, apply_feature_selection_filter
+from interpretune.analysis.ops.helpers import (
+    FeatureSelectionSpec,
+    apply_feature_score_sign_filter,
+    apply_feature_selection_filter,
+)
 
 
 class _FakeTokenizer:
@@ -133,6 +137,41 @@ def _make_graph() -> Graph:
         activation_values=torch.tensor([0.25, 0.75], dtype=torch.float32),
         logit_targets=[LogitTarget("Dallas", 2), LogitTarget("Austin", 3)],
         logit_probabilities=torch.tensor([0.4, 0.6], dtype=torch.float32),
+        scan="gemma",
+        vocab_size=32,
+    )
+
+
+def _make_signed_graph() -> Graph:
+    cfg = UnifiedConfig(
+        n_layers=2,
+        d_model=4,
+        d_head=2,
+        n_heads=2,
+        d_mlp=8,
+        d_vocab=32,
+        tokenizer_name="fake-tokenizer",
+        model_name="fake-model",
+        original_architecture="FakeForCausalLM",
+    )
+    return Graph(
+        input_string="Paris Austin",
+        input_tokens=torch.tensor([0, 3], dtype=torch.long),
+        active_features=torch.tensor([[0, 0, 10], [1, 0, 12]], dtype=torch.long),
+        adjacency_matrix=torch.tensor(
+            [
+                [0.0, 0.0, 0.50, -0.10],
+                [0.0, 0.0, -0.40, 0.10],
+                [0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        ),
+        cfg=cfg,
+        selected_features=torch.tensor([0, 1], dtype=torch.long),
+        activation_values=torch.tensor([0.25, 0.75], dtype=torch.float32),
+        logit_targets=[LogitTarget("Dallas", 2), LogitTarget("Austin", 3)],
+        logit_probabilities=torch.tensor([0.5, 0.5], dtype=torch.float32),
         scan="gemma",
         vocab_size=32,
     )
@@ -317,7 +356,19 @@ def test_graph_node_influence_impl_returns_feature_rows() -> None:
 
     assert result.node_feature_ids.shape == (2, 3)
     assert result.node_influence_scores.shape == (2,)
+    assert result.node_signed_influence_scores.shape == (2,)
     assert torch.equal(result.node_feature_ids, graph.active_features.index_select(0, graph.selected_features))
+
+
+def test_graph_node_influence_impl_preserves_signed_feature_scores() -> None:
+    graph = _make_signed_graph()
+    analysis_batch = _graph_batch_from_graph(graph)
+    module = _FakeModule(graph=graph)
+
+    result = graph_node_influence_impl(module, analysis_batch, batch=None, batch_idx=0)
+
+    assert result.node_signed_influence_scores[0] > 0
+    assert result.node_signed_influence_scores[1] < 0
 
 
 def test_graph_fields_round_trip_through_analysis_store(tmp_path) -> None:
@@ -536,6 +587,47 @@ def test_feature_selection_empty_features() -> None:
 def test_feature_selection_no_criteria_matches_nothing() -> None:
     mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec())
     assert not mask.any()
+
+
+def test_feature_score_sign_filter_selects_promoting_and_opposing_scores() -> None:
+    scores = torch.tensor([0.8, -0.7, 0.0], dtype=torch.float32)
+
+    assert apply_feature_score_sign_filter(scores, "positive").tolist() == [True, False, False]
+    assert apply_feature_score_sign_filter(scores, "negative").tolist() == [False, True, False]
+    assert apply_feature_score_sign_filter(scores, "any").tolist() == [True, True, True]
+
+
+def test_extract_top_features_can_filter_promoting_signed_scores() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=_FEATURES[:3],
+        node_influence_scores=torch.tensor([0.9, 0.8, 0.7], dtype=torch.float32),
+        node_signed_influence_scores=torch.tensor([-0.9, 0.8, 0.4], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(score_source="node_signed_influence_scores", score_sign="positive")
+
+    result = extract_top_features_impl(module, analysis_batch, batch=None, batch_idx=0, top_n=1, feature_selection=spec)
+
+    assert torch.equal(result.top_feature_ids, torch.tensor([[0, 1, 101]], dtype=torch.long))
+    assert torch.allclose(result.top_feature_scores, torch.tensor([0.8], dtype=torch.float32))
+
+
+def test_extract_top_features_can_rank_opposing_signed_scores_by_magnitude() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=_FEATURES[:3],
+        node_signed_influence_scores=torch.tensor([-0.9, 0.8, -0.4], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(
+        score_source="node_signed_influence_scores",
+        score_sign="negative",
+        rank_by_abs=True,
+    )
+
+    result = extract_top_features_impl(module, analysis_batch, batch=None, batch_idx=0, top_n=1, feature_selection=spec)
+
+    assert torch.equal(result.top_feature_ids, torch.tensor([[0, 0, 100]], dtype=torch.long))
+    assert torch.allclose(result.top_feature_scores, torch.tensor([-0.9], dtype=torch.float32))
 
 
 def test_extract_top_features_with_feature_selection() -> None:

@@ -1,0 +1,7 @@
+EXTENDS: gemma3_1b_it_local_color_fruit_orange_fs_l10_n5.yaml
+
+EXPERIMENT_NAME: gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_answer_basis
+
+ANALYSIS:
+  use_answer_state_as_basis: true
+  debug_pipeline_state_artifact_name: gemma3_1b_it_orange_fs_l10_n5_answer_basis_notebook_debug

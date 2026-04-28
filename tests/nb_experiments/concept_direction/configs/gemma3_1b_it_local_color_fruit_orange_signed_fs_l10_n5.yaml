@@ -1,0 +1,16 @@
+EXTENDS: gemma3_1b_it_local_color_fruit_orange_fs_l10_n5.yaml
+
+EXPERIMENT_NAME: gemma3_1b_it_local_color_fruit_orange_signed_fs_l10_n5
+
+ANALYSIS:
+  constrained_feature_selection:
+    layer_slices:
+      - [10, null]
+    score_source: signed_influence
+    score_sign: positive
+    rank_by_abs: true
+  debug_pipeline_state_artifact_name: gemma3_1b_it_orange_signed_fs_l10_n5_notebook_debug
+
+NEURONPEDIA:
+  check_local_explanation_coverage: false
+  generate_missing_local_explanations: false

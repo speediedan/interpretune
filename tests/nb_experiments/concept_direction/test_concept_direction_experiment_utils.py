@@ -5,6 +5,7 @@ import gzip
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -12,6 +13,7 @@ from typing import Any, Literal, cast
 import pytest
 import torch
 
+from it_examples.utils import nb_ui_utils as nb_ui_utils_module
 from it_examples.utils.nb_ui_utils import get_topk
 from interpretune.utils import DEFAULT_EXPLANATION_TYPE_NAME
 from interpretune.utils.neuronpedia_explanations import NeuronpediaLocalExplanationStatus
@@ -72,6 +74,21 @@ class _DisplayTokenizer:
 _TEST_CONCEPT_PAIR_CONFIG_PATH = (
     Path(__file__).resolve().parent / "configs" / "cp_color_fruit_orange_gemma_it.yaml"
 ).resolve()
+_BASELINE_ORANGE_FS_CONFIG_PATH = (
+    Path(__file__).resolve().parent / "configs" / "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5.yaml"
+).resolve()
+_SIGNED_ORANGE_CONFIG_PATH = (
+    Path(__file__).resolve().parent / "configs" / "gemma3_1b_it_local_color_fruit_orange_signed_fs_l10_n5.yaml"
+).resolve()
+_SIGNED_ORANGE_TOP5_POSITIVE_CONFIG_PATH = (
+    Path(__file__).resolve().parent / "configs" / "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_s5.yaml"
+).resolve()
+_SIGNED_ORANGE_TOP5_ANY_CONFIG_PATH = (
+    Path(__file__).resolve().parent / "configs" / "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_s5_any.yaml"
+).resolve()
+_ANSWER_BASIS_ORANGE_FS_CONFIG_PATH = (
+    Path(__file__).resolve().parent / "configs" / "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_answer_basis.yaml"
+).resolve()
 
 _OPTIONAL_TEST_MARK = pytest.mark.skipif(
     os.getenv("IT_RUN_OPTIONAL_TESTS", "0") != "1",
@@ -103,6 +120,11 @@ def _build_cfg(
     local_graph_slug_prefix: str | None = None,
     local_graph_upload_target: str = "localhost",
     local_graph_owner_username: str | None = None,
+    intervention_max_influence_norm_scale: bool = False,
+    intervention_sign_aware_scale: bool = True,
+    intervention_apply_activation_function: bool = True,
+    intervention_constrained_layers: list[int] | None = None,
+    debug_print_circuit_tracer_cfg: bool = False,
 ) -> NotebookHarnessConfig:
     return NotebookHarnessConfig(
         experiment_name="test",
@@ -125,7 +147,6 @@ def _build_cfg(
         default_scale_factor=10.0,
         scale_factor_sweep=[10.0],
         ablation_n_list=[5],
-        enable_sign_aware=False,
         force_device=None,
         work_root=Path("/tmp"),
         analysis_mode=analysis_mode,
@@ -147,6 +168,11 @@ def _build_cfg(
         direct_projection_intervention_use_intervention_tensor_as_basis=(
             direct_projection_intervention_use_intervention_tensor_as_basis
         ),
+        intervention_max_influence_norm_scale=intervention_max_influence_norm_scale,
+        intervention_sign_aware_scale=intervention_sign_aware_scale,
+        intervention_apply_activation_function=intervention_apply_activation_function,
+        intervention_constrained_layers=intervention_constrained_layers,
+        debug_print_circuit_tracer_cfg=debug_print_circuit_tracer_cfg,
     )
 
 
@@ -214,6 +240,98 @@ def test_notebook_harness_config_loads_chat_concept_pair_from_yaml() -> None:
     assert cfg.concept_pair.classification_question.endswith('"Fruit" or "Color".')
     assert cfg.concept_pair_config_path is not None
     assert cfg.concept_pair_config_path.endswith("cp_color_fruit_orange_gemma_it.yaml")
+
+
+def test_baseline_orange_config_uses_any_signed_feature_scores_and_pipeline_defaults() -> None:
+    cfg, _should_cleanup_work_root, _resolved_payload = build_notebook_harness_config(_BASELINE_ORANGE_FS_CONFIG_PATH)
+
+    assert cfg.experiment_name == "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5"
+    assert cfg.show_score_sign_in_feature_tables
+    assert not cfg.debug_print_circuit_tracer_cfg
+    assert cfg.constrained_feature_selection_refs is not None
+    assert cfg.constrained_feature_selection_refs.score_source == "signed_influence"
+    assert cfg.constrained_feature_selection_refs.score_sign == "any"
+    assert cfg.constrained_feature_selection_refs.rank_by_abs
+    assert cfg.intervention_max_influence_norm_scale
+    assert cfg.intervention_sign_aware_scale
+    assert cfg.intervention_apply_activation_function is True
+    assert cfg.intervention_constrained_layers is None
+
+
+def test_signed_orange_config_uses_positive_signed_feature_scores() -> None:
+    cfg, _should_cleanup_work_root, _resolved_payload = build_notebook_harness_config(_SIGNED_ORANGE_CONFIG_PATH)
+
+    assert cfg.experiment_name == "gemma3_1b_it_local_color_fruit_orange_signed_fs_l10_n5"
+    assert cfg.show_score_sign_in_feature_tables
+    assert not cfg.debug_print_circuit_tracer_cfg
+    assert cfg.constrained_feature_selection_refs is not None
+    assert cfg.constrained_feature_selection_refs.score_source == "signed_influence"
+    assert cfg.constrained_feature_selection_refs.score_sign == "positive"
+    assert cfg.constrained_feature_selection_refs.rank_by_abs
+
+
+@pytest.mark.parametrize(
+    ("config_path", "expected_name", "expected_score_sign"),
+    [
+        (
+            _SIGNED_ORANGE_TOP5_POSITIVE_CONFIG_PATH,
+            "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_s5",
+            "positive",
+        ),
+        (
+            _SIGNED_ORANGE_TOP5_ANY_CONFIG_PATH,
+            "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_s5_any",
+            "any",
+        ),
+    ],
+)
+def test_signed_orange_top5_configs_enable_max_normalized_intervention_scaling(
+    config_path: Path,
+    expected_name: str,
+    expected_score_sign: str,
+) -> None:
+    cfg, _should_cleanup_work_root, _resolved_payload = build_notebook_harness_config(config_path)
+
+    assert cfg.experiment_name == expected_name
+    assert cfg.default_scale_factor == 20.0
+    assert cfg.show_score_sign_in_feature_tables
+    assert cfg.debug_print_circuit_tracer_cfg
+    assert cfg.intervention_max_influence_norm_scale
+    assert cfg.intervention_sign_aware_scale
+    assert cfg.constrained_feature_selection_refs is not None
+    assert cfg.constrained_feature_selection_refs.score_source == "signed_influence"
+    assert cfg.constrained_feature_selection_refs.score_sign == expected_score_sign
+    assert cfg.constrained_feature_selection_refs.rank_by_abs
+
+
+def test_signed_orange_top5_any_config_enables_max_normalized_intervention_scaling() -> None:
+    cfg, _should_cleanup_work_root, _resolved_payload = build_notebook_harness_config(
+        _SIGNED_ORANGE_TOP5_ANY_CONFIG_PATH
+    )
+
+    assert cfg.experiment_name == "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_s5_any"
+    assert cfg.default_scale_factor == 20.0
+    assert cfg.show_score_sign_in_feature_tables
+    assert cfg.debug_print_circuit_tracer_cfg
+    assert cfg.intervention_max_influence_norm_scale
+    assert cfg.intervention_sign_aware_scale
+    assert cfg.constrained_feature_selection_refs is not None
+    assert cfg.constrained_feature_selection_refs.score_source == "signed_influence"
+    assert cfg.constrained_feature_selection_refs.score_sign == "any"
+    assert cfg.constrained_feature_selection_refs.rank_by_abs
+    assert cfg.intervention_apply_activation_function is True
+    assert cfg.intervention_constrained_layers is None
+
+
+def test_answer_basis_orange_config_enables_context_enhanced_answer_basis_projection() -> None:
+    cfg, _should_cleanup_work_root, _resolved_payload = build_notebook_harness_config(
+        _ANSWER_BASIS_ORANGE_FS_CONFIG_PATH,
+    )
+
+    assert cfg.experiment_name == "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_answer_basis"
+    assert cfg.store_latent_extraction_mode == "context_enhanced"
+    assert cfg.use_answer_state_as_basis is True
+    assert cfg.context_enhanced_scale == 1.0
 
 
 def test_notebook_harness_config_requires_experiment_key_tokens() -> None:
@@ -337,13 +455,16 @@ def test_notebook_harness_accepts_single_group_direction_mode() -> None:
 
 def test_execute_concept_latent_extraction_ops_uses_core_context_enhanced_path(monkeypatch) -> None:
     cfg = _build_cfg(prompt_render_mode="apply_chat_template", target_tokens=("Austin", "Dallas"))
+    cfg.use_answer_state_as_basis = True
     observed_kwargs: list[dict[str, object]] = []
     observed_context_indices: list[list[torch.Tensor]] = []
     original_state = torch.tensor([[9.0, 10.0]], dtype=torch.float32)
 
     def fake_execute_analysis_op(*args, **kwargs):
         del args
-        observed_kwargs.append({key: kwargs[key] for key in ("context_enhanced", "context_scale")})
+        observed_kwargs.append(
+            {key: kwargs[key] for key in ("context_enhanced", "context_scale", "use_answer_state_as_basis")}
+        )
         observed_context_indices.append(list(kwargs["analysis_inputs"].store.context_token_indices))
         return SimpleNamespace(
             concept_latent_state=original_state.clone(),
@@ -366,7 +487,13 @@ def test_execute_concept_latent_extraction_ops_uses_core_context_enhanced_path(m
         extraction_mode="context_enhanced",
     )
 
-    assert observed_kwargs == [{"context_enhanced": True, "context_scale": cfg.context_enhanced_scale}]
+    assert observed_kwargs == [
+        {
+            "context_enhanced": True,
+            "context_scale": cfg.context_enhanced_scale,
+            "use_answer_state_as_basis": True,
+        }
+    ]
     assert len(observed_context_indices) == 1
     assert torch.equal(observed_context_indices[0][0], torch.tensor([1], dtype=torch.long))
     assert torch.equal(extracted[0].concept_latent_state, original_state)
@@ -559,6 +686,46 @@ def test_get_topk_preserves_tokenizer_special_markers() -> None:
 
     assert topk[0][0] == "▁Ohio"
     assert topk[1][0] == "Columbus"
+
+
+def test_display_topk_token_predictions_scales_key_token_change_bars_by_absolute_change(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    class _Tokenizer:
+        def convert_ids_to_tokens(self, token_id: int) -> str:
+            return {0: "Color", 1: "_color", 2: "Fruit", 3: "Orange", 4: "Pear"}[int(token_id)]
+
+        def decode(self, token_ids: list[int], skip_special_tokens: bool = False) -> str:
+            del skip_special_tokens
+            return "".join(self.convert_ids_to_tokens(token_id) for token_id in token_ids)
+
+    monkeypatch.setattr(nb_ui_utils_module, "HTML", lambda markup: markup)
+    monkeypatch.setattr(nb_ui_utils_module, "display", lambda markup: captured.setdefault("markup", markup))
+
+    original_logits = torch.log(torch.tensor([0.95, 0.04, 0.005, 0.003, 0.002], dtype=torch.float32))
+    new_logits = torch.log(torch.tensor([0.0004, 0.9179, 0.05, 0.02, 0.0117], dtype=torch.float32))
+
+    nb_ui_utils_module.display_topk_token_predictions(
+        sentence="orange ->",
+        original_logits=original_logits,
+        new_logits=new_logits,
+        tokenizer=_Tokenizer(),
+        key_tokens=[("Color", 0), ("_color", 1)],
+    )
+
+    markup = captured["markup"]
+    key_rows = re.findall(
+        r'title="([^"]+)">[^<]+</td><td class="prob-col" style="text-align: right;">[^<]+</td>'
+        r'<td class="prob-col" style="text-align: right;">[^<]+</td><td class="dist-col"><div class="bar-container">'
+        r'<div class="bar" style="background-color: ([^;]+); width: (\d+)%',
+        markup,
+    )
+    width_by_label = {label: int(width) for label, _color, width in key_rows}
+    color_by_label = {label: color for label, color, _width in key_rows}
+
+    assert width_by_label["Color"] > width_by_label["_color"]
+    assert color_by_label["Color"] == "#C0392B"
+    assert color_by_label["_color"] == "#27AE60"
 
 
 def test_debug_mode_requires_single_constrained_feature() -> None:
@@ -1309,6 +1476,9 @@ def test_build_feature_selection_spec_supports_structured_feature_selection_mapp
                 ],
                 "layer_slices": [(10, None)],
                 "position_slices": [(0, 2)],
+                "score_source": "signed_influence",
+                "score_sign": "any",
+                "rank_by_abs": True,
             },
         ),
     )
@@ -1331,6 +1501,9 @@ def test_build_feature_selection_spec_supports_structured_feature_selection_mapp
     assert spec.positions == [0, 1]
     assert spec.triples == [(21, 12, 3866), (21, 13, 7777)]
     assert spec.layer_feature_pairs == [(21, 7777)]
+    assert spec.score_source == "signed_influence"
+    assert spec.score_sign == "any"
+    assert spec.rank_by_abs is True
 
 
 def test_structured_constrained_feature_selection_serializes_full_mapping() -> None:
@@ -1349,6 +1522,9 @@ def test_structured_constrained_feature_selection_serializes_full_mapping() -> N
                 ],
                 "layer_slices": [(10, None)],
                 "position_slices": [(0, 10)],
+                "score_source": "gradient",
+                "score_sign": "negative",
+                "rank_by_abs": True,
             },
         ),
     )
@@ -1367,6 +1543,9 @@ def test_structured_constrained_feature_selection_serializes_full_mapping() -> N
         ],
         "layer_slices": [[10, None]],
         "position_slices": [[0, 10]],
+        "score_source": "gradient",
+        "score_sign": "negative",
+        "rank_by_abs": True,
     }
 
 
@@ -1713,7 +1892,7 @@ def test_run_scale_sweep_suppresses_internal_output_on_success(monkeypatch, caps
         "_extract_top_features_with_optional_filter",
         lambda *args, **kwargs: (
             SimpleNamespace(
-                top_feature_ids=torch.tensor([11]),
+                top_feature_ids=torch.tensor([[10, 0, 11]], dtype=torch.long),
                 top_feature_scores=torch.tensor([0.5]),
                 top_feature_activation_values=torch.tensor([0.25]),
             ),
@@ -1732,6 +1911,141 @@ def test_run_scale_sweep_suppresses_internal_output_on_success(monkeypatch, caps
     assert len(results) == 2
     assert captured.out == ""
     assert captured.err == ""
+
+
+def test_run_pipeline_prints_circuit_tracer_cfg_when_enabled(monkeypatch, capsys) -> None:
+    cfg = _build_cfg(
+        prompt_render_mode="apply_chat_template",
+        target_tokens=("Austin", "Dallas"),
+        debug_print_circuit_tracer_cfg=True,
+    )
+
+    class _Tokenizer:
+        def __call__(self, prompt: str, return_tensors: str = "pt", add_special_tokens: bool = True):
+            del prompt, return_tensors, add_special_tokens
+            return {"input_ids": torch.tensor([[1, 2]], dtype=torch.long)}
+
+        def decode(self, token_ids: list[int]) -> str:
+            mapping = {0: "<0>", 1: "Austin", 2: "Dallas", 3: "<3>", 4: "<4>", 5: "<5>"}
+            return "".join(mapping[int(token_id)] for token_id in token_ids)
+
+    class _Session:
+        def __enter__(self):
+            return (None, SimpleNamespace(), _Tokenizer())
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def _fake_feature_intervention_forward(_module, _analysis_batch, *_args, **_kwargs):
+        return SimpleNamespace(
+            pre_intervention_logits=torch.tensor([0.0, 2.0, 1.0, -0.5, -1.0, -1.5], dtype=torch.float32),
+            post_intervention_logits=torch.tensor([0.0, 3.5, 0.5, -0.5, -1.0, -1.5], dtype=torch.float32),
+        )
+
+    monkeypatch.setattr(pipeline_patterns, "experiment_session", lambda *args, **kwargs: _Session())
+    monkeypatch.setattr(
+        pipeline_patterns, "resolve_target_tokens", lambda cfg, tokenizer: ((1, 2), ("Austin", "Dallas"))
+    )
+    monkeypatch.setattr(
+        pipeline_patterns, "get_key_token_ids_and_labels", lambda cfg, tokenizer: ([1, 2], ["Austin", "Dallas"])
+    )
+    monkeypatch.setattr(pipeline_patterns, "render_prompt", lambda prompt, tokenizer, mode: prompt)
+    monkeypatch.setattr(pipeline_patterns, "maybe_zero_softcap", lambda module, cfg: nullcontext())
+    monkeypatch.setattr(pipeline_patterns, "configure_analysis", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        pipeline_patterns,
+        "snapshot_module_runtime_state",
+        lambda module: {
+            "circuit_tracer_cfg": {
+                "backend": "nnsight",
+                "intervention_sign_aware_scale": True,
+                "intervention_max_influence_norm_scale": True,
+            }
+        },
+    )
+    monkeypatch.setattr(pipeline_patterns.it, "compute_attribution_graph", lambda *args, **kwargs: {"graph": 1})
+    monkeypatch.setattr(pipeline_patterns.it, "graph_node_influence", lambda *args, **kwargs: {"influence": 1})
+    monkeypatch.setattr(
+        pipeline_patterns,
+        "_extract_top_features_with_optional_filter",
+        lambda *args, **kwargs: (
+            SimpleNamespace(
+                top_feature_ids=torch.tensor([[10, 0, 11]], dtype=torch.long),
+                top_feature_scores=torch.tensor([0.5]),
+                top_feature_activation_values=torch.tensor([0.25]),
+            ),
+            [],
+        ),
+    )
+    monkeypatch.setattr(pipeline_patterns.it, "feature_intervention_forward", _fake_feature_intervention_forward)
+
+    result = pipeline_patterns.run_pipeline(
+        cfg,
+        "Embed",
+        scale_factor=cfg.default_scale_factor,
+        top_n=cfg.top_n,
+        build_graph_analysis_inputs=lambda tokenizer, rendered_prompt: (SimpleNamespace(), {}),
+    )
+
+    captured = capsys.readouterr()
+
+    assert result["gap_delta"] == 2.0
+    assert "Circuit tracer config debug:" in captured.out
+    assert '"backend": "nnsight"' in captured.out
+    assert '"label": "Embed"' in captured.out
+
+
+def test_configure_analysis_uses_pipeline_defaults_but_keeps_debug_validation_constrained(monkeypatch) -> None:
+    configured_analysis_cfgs: list[object] = []
+
+    class _FakeAnalysisCfg:
+        def __init__(self, *, target_op, ignore_manual, save_tokens):
+            self.target_op = target_op
+            self.ignore_manual = ignore_manual
+            self.save_tokens = save_tokens
+
+        def applied_to(self, module: Any) -> bool:
+            del module
+            return False
+
+    monkeypatch.setattr(nb_harness_utils_module, "AnalysisCfg", _FakeAnalysisCfg)
+    monkeypatch.setattr(
+        nb_harness_utils_module,
+        "init_analysis_cfgs",
+        lambda module, analysis_cfgs: configured_analysis_cfgs.extend(list(analysis_cfgs)),
+    )
+
+    cfg = _build_cfg(
+        prompt_render_mode="apply_chat_template",
+        target_tokens=("Austin", "Dallas"),
+        intervention_max_influence_norm_scale=True,
+        intervention_sign_aware_scale=True,
+        intervention_apply_activation_function=True,
+        intervention_constrained_layers=None,
+    )
+    module = SimpleNamespace(
+        circuit_tracer_cfg=SimpleNamespace(),
+        replacement_model=SimpleNamespace(cfg=SimpleNamespace(n_layers=4)),
+    )
+
+    nb_harness_utils_module.configure_analysis(module, object(), cfg.default_scale_factor, cfg)
+
+    assert module.circuit_tracer_cfg.intervention_apply_activation_function is True
+    assert module.circuit_tracer_cfg.intervention_constrained_layers is None
+    assert module.circuit_tracer_cfg.intervention_max_influence_norm_scale is True
+    assert module.circuit_tracer_cfg.intervention_sign_aware_scale is True
+    assert configured_analysis_cfgs
+
+    nb_harness_utils_module.configure_analysis(
+        module,
+        object(),
+        cfg.default_scale_factor,
+        cfg,
+        use_debug_intervention_defaults=True,
+    )
+
+    assert module.circuit_tracer_cfg.intervention_apply_activation_function is False
+    assert module.circuit_tracer_cfg.intervention_constrained_layers == [0, 1, 2, 3]
 
 
 def test_pipeline_run_direction_probes_allows_missing_group_b(monkeypatch) -> None:

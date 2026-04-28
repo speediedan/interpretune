@@ -540,6 +540,39 @@ def test_context_enhanced_extraction_snapshot_matches_helper_projection() -> Non
     assert torch.allclose(snapshot.dot_num, torch.tensor([[2.0]], dtype=torch.float32))
     assert torch.allclose(snapshot.dot_den, torch.tensor([[1.0]], dtype=torch.float32))
     assert torch.allclose(snapshot.final_latent_states, latent_states, atol=1e-5)
+    assert snapshot.projection_basis == "context_state"
+
+
+def test_context_enhanced_extraction_snapshot_matches_answer_basis_projection() -> None:
+    analysis_batch = AnalysisBatch(
+        cache={
+            "unembed.hook_in": torch.tensor(
+                [[[1.0, 0.0, 0.0, 0.0], [3.0, 4.0, 0.0, 0.0], [1.0, 2.0, 0.0, 0.0]]],
+                dtype=torch.float32,
+            )
+        },
+        answer_indices=torch.tensor([2], dtype=torch.long),
+        context_token_indices=torch.tensor([1], dtype=torch.long),
+        concept_cache_key="unembed.hook_in",
+        use_answer_state_as_basis=True,
+    )
+
+    snapshot = capture_context_enhanced_extraction_snapshot(
+        analysis_batch,
+        context_scale=2.0,
+        use_answer_state_as_basis=True,
+    )
+    latent_states, _ = _extract_concept_latent_state_from_cache(
+        analysis_batch,
+        context_enhanced=True,
+        context_scale=2.0,
+        use_answer_state_as_basis=True,
+    )
+
+    expected = torch.tensor([[2.2, 4.4, 0.0, 0.0]], dtype=torch.float32)
+    assert torch.allclose(snapshot.projected_states, expected, atol=1e-5)
+    assert torch.allclose(snapshot.final_latent_states, latent_states, atol=1e-5)
+    assert snapshot.projection_basis == "answer_state"
 
 
 def test_concept_direction_accepts_per_example_rows_without_manual_stacking() -> None:
@@ -1711,6 +1744,24 @@ def test_context_enhanced_projection_default_scale() -> None:
     # dot(context, context) = 900 + 1600 = 2500
     # projected = (3900/2500) * [30, 40] = [46.8, 62.4]
     expected = torch.tensor([[46.8, 62.4]], dtype=torch.float32)
+    assert torch.allclose(latent_states, expected, atol=1e-5)
+
+
+def test_context_enhanced_projection_can_use_answer_state_as_basis() -> None:
+    cache_tensor = torch.tensor(
+        [[[1.0, 0.0], [3.0, 4.0], [1.0, 2.0]]],
+        dtype=torch.float32,
+    )
+    batch = AnalysisBatch(cache={"unembed.hook_in": cache_tensor}, answer_indices=torch.tensor([2], dtype=torch.long))
+
+    latent_states, _ = _extract_concept_latent_state_from_cache(
+        batch,
+        context_enhanced=True,
+        context_scale=2.0,
+        use_answer_state_as_basis=True,
+    )
+
+    expected = torch.tensor([[2.2, 4.4]], dtype=torch.float32)
     assert torch.allclose(latent_states, expected, atol=1e-5)
 
 

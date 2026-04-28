@@ -77,8 +77,12 @@ class CircuitTracerConfig(ITSerializableCfg):
     use_neuronpedia: bool = False
 
     # Analysis-level feature intervention settings
-    """Scale factor applied to each constructed intervention value."""
+    """Base scale factor applied to each constructed intervention value."""
     intervention_scale_factor: float = 1.0
+    """Scale each feature by ``abs(score) / max(abs(score))`` before applying ``intervention_scale_factor``."""
+    intervention_max_influence_norm_scale: bool = False
+    """Use ``top_feature_scores`` sign to choose intervention direction when scores are available."""
+    intervention_sign_aware_scale: bool = True
     """Optional constant value for all interventions.
 
     When ``None``, the op uses per-feature values from ``top_feature_scores``.

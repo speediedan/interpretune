@@ -68,3 +68,18 @@ def test_build_papermill_parameters_omits_stage_top_n_when_not_provided(tmp_path
         "EXPERIMENT_CONFIG_PATH": str(config_path.resolve()),
         "PROJECTION_METHOD": "umap",
     }
+
+
+def test_resolve_config_path_falls_back_to_parent_concept_direction_configs(monkeypatch, tmp_path: Path) -> None:
+    analysis_config_dir = tmp_path / "analysis-configs"
+    analysis_config_dir.mkdir()
+    concept_config_dir = tmp_path / "concept-configs"
+    concept_config_dir.mkdir()
+    config_path = concept_config_dir / "orange_answer_basis.yaml"
+    config_path.write_text("EXPERIMENT_NAME: orange_answer_basis\n", encoding="utf-8")
+
+    monkeypatch.setattr(latent_dynamics_launcher, "DEFAULT_CONCEPT_DIRECTION_CONFIG_DIR", concept_config_dir)
+
+    resolved = latent_dynamics_launcher.resolve_config_path("orange_answer_basis.yaml", analysis_config_dir)
+
+    assert resolved == config_path.resolve()

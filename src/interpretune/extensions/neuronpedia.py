@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Dict
+from typing import Any, Dict, cast
 from dataclasses import dataclass, field
 from pathlib import Path
 from copy import deepcopy
@@ -377,16 +377,17 @@ if _NEURONPEDIA_AVAILABLE:
             except ImportError:
                 return None, None
 
-            previous_state = (bool(NPRequest.USE_LOCALHOST), str(NPRequest.BASE_URL))
+            request_cls = cast(Any, NPRequest)
+            previous_state = (bool(request_cls.USE_LOCALHOST), str(request_cls.BASE_URL))
             if use_localhost:
                 local_base_url = os.environ.get("LOCAL_NEURONPEDIA_WEBAPP_URL", "http://localhost:3000").rstrip("/")
-                NPRequest.USE_LOCALHOST = True
-                NPRequest.BASE_URL = f"{local_base_url}/api"
+                request_cls.USE_LOCALHOST = True
+                request_cls.BASE_URL = f"{local_base_url}/api"
             else:
-                NPRequest.USE_LOCALHOST = False
-                NPRequest.BASE_URL = "https://neuronpedia.org/api"
+                request_cls.USE_LOCALHOST = False
+                request_cls.BASE_URL = "https://neuronpedia.org/api"
 
-            return NPRequest, previous_state
+            return request_cls, previous_state
 
         def transform_circuit_tracer_graph(
             self,

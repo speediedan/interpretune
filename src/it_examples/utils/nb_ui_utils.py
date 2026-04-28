@@ -160,6 +160,7 @@ def display_top_features_comparison(
     neuronpedia_model: str | None = None,
     neuronpedia_set: str = "gemmascope-transcoder-16k",
     neuronpedia_base_url: str = "https://www.neuronpedia.org",
+    show_score_sign: bool = False,
 ) -> None:
     """Display top features from multiple attribution configurations side by side.
 
@@ -232,10 +233,20 @@ def display_top_features_comparison(
         body += f'<div class="col-header" style="background-color: {color};">{html.escape(label)}</div>'
         body += "<table><thead><tr><th>#</th><th>Node</th>"
         if scores is not None:
-            body += "<th>Score</th>"
+            if show_score_sign:
+                body += "<th>Sign</th><th>|Score|</th>"
+            else:
+                body += "<th>Score</th>"
         body += "</tr></thead><tbody>"
         for j, (layer, pos, feat_idx) in enumerate(features):
-            score_cell = f"<td>{format_score(scores[j])}</td>" if scores is not None else ""
+            score_cell = ""
+            if scores is not None:
+                score_value = float(scores[j])
+                if show_score_sign:
+                    score_sign = "+" if score_value > 0 else "−" if score_value < 0 else "0"
+                    score_cell = f"<td>{score_sign}</td><td>{format_score(abs(score_value))}</td>"
+                else:
+                    score_cell = f"<td>{format_score(score_value)}</td>"
             if neuronpedia_model is not None:
                 np_url = (
                     f"{html.escape(resolved_base_url)}/{html.escape(neuronpedia_model)}/"
@@ -502,6 +513,7 @@ def display_topk_token_predictions(
             change = p_new - p_orig
             key_token_data.append((label, tid, p_orig, p_new, change))
         key_token_data.sort(key=lambda x: x[4], reverse=True)
+        max_change = max((abs(change) for *_prefix, change in key_token_data), default=0.0)
 
         markup += """
         <div>
@@ -520,7 +532,7 @@ def display_topk_token_predictions(
         for i, (label, tid, p_orig, p_new, change) in enumerate(key_token_data):
             sign = "+" if change >= 0 else ""
             bar_color = "#27AE60" if change >= 0 else "#C0392B"
-            bar_width = int(p_new / max(max_prob, 1e-9) * 100)
+            bar_width = 0 if max_change <= 0 else int(abs(change) / max(max_change, 1e-9) * 100)
             row_class = "even-row" if i % 2 == 0 else "odd-row"
             markup += (
                 f'<tr class="{row_class}">'

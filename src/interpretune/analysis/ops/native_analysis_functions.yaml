@@ -663,6 +663,18 @@ extract_top_features:
     activation_values:
       datasets_dtype: float32
       sequence_type: true
+    node_influence_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    node_signed_influence_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    node_logit_diff_gradient_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
   output_schema:
     top_feature_ids:
       datasets_dtype: int64
@@ -850,6 +862,10 @@ graph_node_influence:
     node_influence_scores:
       datasets_dtype: float32
       sequence_type: true
+    node_signed_influence_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
     node_feature_ids:
       datasets_dtype: int64
       array_shape: [null, 3]
@@ -863,12 +879,35 @@ feature_intervention_forward:
   input_schema:
     top_feature_ids:
       datasets_dtype: int64
+      required: false
       array_shape: [null, 3]
       sequence_type: false
     top_feature_scores:
       datasets_dtype: float32
+      required: false
       sequence_type: true
     top_feature_activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    active_features:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null, 3]
+      sequence_type: false
+    activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    node_influence_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    node_signed_influence_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    node_logit_diff_gradient_scores:
       datasets_dtype: float32
       required: false
       sequence_type: true
@@ -878,6 +917,10 @@ feature_intervention_forward:
       required: false
       non_tensor: true
     intervention_specs_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    feature_intervention_dict_json:
       datasets_dtype: string
       required: false
       non_tensor: true
@@ -894,6 +937,18 @@ feature_intervention_forward:
       required: false
       sequence_type: true
     intervention_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    intervention_base_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    intervention_score_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    intervention_scale_factors:
       datasets_dtype: float32
       required: false
       sequence_type: true

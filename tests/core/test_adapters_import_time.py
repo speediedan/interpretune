@@ -1,5 +1,6 @@
 import json
 import os
+import statistics
 import subprocess
 import sys
 
@@ -23,6 +24,7 @@ def test_import_interpretune_does_not_pull_adapters_and_is_fast():
         "circuit_tracer",
         "sae_lens",
     ]
+    attempts = 3
 
     # The small helper script run in a clean subprocess
     check_script = (
@@ -34,16 +36,20 @@ def test_import_interpretune_does_not_pull_adapters_and_is_fast():
         "print(json.dumps({'duration': duration, 'modules': mods}))" % (json.dumps(adapters),)
     )
 
-    result = subprocess.run([sys.executable, "-c", check_script], capture_output=True, text=True, timeout=20)
-    assert result.returncode == 0, f"Subprocess failed: {result.stderr}\n{result.stdout}"
+    durations = []
+    for _ in range(attempts):
+        result = subprocess.run([sys.executable, "-c", check_script], capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, f"Subprocess failed: {result.stderr}\n{result.stdout}"
 
-    payload = json.loads(result.stdout.strip())
-    duration = float(payload.get("duration", 9999))
-    modules = payload.get("modules", {})
+        payload = json.loads(result.stdout.strip())
+        durations.append(float(payload.get("duration", 9999)))
+        modules = payload.get("modules", {})
 
-    # Assert adapters were not imported
-    imported = [m for m, present in modules.items() if present]
-    assert not imported, "Adapters were unexpectedly imported on package import: %s" % imported
+        # Assert adapters were not imported
+        imported = [m for m, present in modules.items() if present]
+        assert not imported, "Adapters were unexpectedly imported on package import: %s" % imported
+
+    duration = statistics.median(durations)
 
     # Allow CI override to avoid flakes on slow runners
     if os.environ.get("IT_ALLOW_SLOW_IMPORT"):
@@ -65,5 +71,6 @@ def test_import_interpretune_does_not_pull_adapters_and_is_fast():
         threshold = default_threshold
 
     assert duration < threshold, (
-        f"interpretune import took too long ({duration:.2f}s) — expected < {threshold:.1f}s on {system}"
+        f"interpretune median import time across {attempts} subprocesses took too long "
+        f"({duration:.2f}s) — expected < {threshold:.1f}s on {system}; raw timings={durations}"
     )

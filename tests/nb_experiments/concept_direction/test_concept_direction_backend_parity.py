@@ -80,6 +80,7 @@ from tests.runif import RunIf
 
 RUNIF: Any = RunIf
 pytest_plugins = ("tests.core.test_analysis_backend_parity",)
+FEATURE_DELTA_SIGN_ATOL = 1.0
 
 
 @pytest.fixture
@@ -141,6 +142,47 @@ def _resolve_debug_graph_target_ids(
         labels.append(normalized)
     assert token_ids, "Expected at least one debug graph target token id"
     return token_ids, labels
+
+
+def _resolve_debug_graph_target_token_variants(
+    tokenizer: Any,
+    token: str,
+    *,
+    use_chat_template: bool,
+) -> list[dict[str, Any]]:
+    candidates = {token, _normalize_debug_graph_target_token(token, use_chat_template=use_chat_template)}
+    if use_chat_template:
+        normalized = _normalize_debug_graph_target_token(token, use_chat_template=True)
+        candidates.add(f" {normalized}")
+        if token.startswith("▁"):
+            candidates.add(" " + token.lstrip("▁"))
+
+    variants: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    for candidate in candidates:
+        encoded = tokenizer.encode(candidate, add_special_tokens=False)
+        if len(encoded) != 1:
+            continue
+        token_id = int(encoded[0])
+        if token_id in seen_ids:
+            continue
+        seen_ids.add(token_id)
+        variants.append({"token": candidate, "token_id": token_id, "decoded": tokenizer.decode([token_id])})
+    return sorted(variants, key=lambda item: int(item["token_id"]))
+
+
+def _summarize_top_logits(tokenizer: Any, logits: torch.Tensor, *, top_k: int = 10) -> list[dict[str, Any]]:
+    logits = logits.detach().float().cpu().reshape(-1)
+    values, indices = torch.topk(logits, min(top_k, int(logits.numel())))
+    return [
+        {
+            "rank": rank,
+            "token_id": int(token_id.item()),
+            "token": tokenizer.decode([int(token_id.item())]),
+            "logit": float(value.item()),
+        }
+        for rank, (token_id, value) in enumerate(zip(indices, values))
+    ]
 
 
 def _resolve_parity_config_path(config_name: str) -> Path:
@@ -215,6 +257,18 @@ def _build_gemma3_it_concept_direction_parity_case(
         max_feature_nodes=max_feature_nodes,
         batch_size=batch_size,
         intervention_scale_factor=intervention_scale_factor,
+        intervention_max_influence_norm_scale=bool(
+            cast(Mapping[str, Any], analysis_payload.get("feature_intervention", {})).get(
+                "max_influence_norm_scale",
+                analysis_payload.get("intervention_max_influence_norm_scale", False),
+            )
+        ),
+        intervention_sign_aware_scale=bool(
+            cast(Mapping[str, Any], analysis_payload.get("feature_intervention", {})).get(
+                "sign_aware_scale",
+                analysis_payload.get("intervention_sign_aware_scale", True),
+            )
+        ),
         top_n=int(analysis_payload.get("top_n", 10)),
         concept_direction_mode=direction_mode,
         group_a_tokens=group_a_tokens,
@@ -231,6 +285,7 @@ def _build_gemma3_it_concept_direction_parity_case(
         classification_question=str(concept_pair_payload["classification_question"]),
         store_concept_cache_key=store_concept_cache_key,
         context_enhanced_scale=float(analysis_payload["context_enhanced_scale"]),
+        use_answer_state_as_basis=bool(analysis_payload.get("use_answer_state_as_basis", False)),
         constrained_feature_selection_refs=analysis_payload.get("constrained_feature_selection"),
         require_cross_path_feature_overlap=require_cross_path_feature_overlap,
         require_gap_improvement=require_gap_improvement,
@@ -334,6 +389,18 @@ def _load_gemma3_1b_it_orange_fs_l10_n5_concept_direction_parity_case() -> Gemma
     )
 
 
+def _load_gemma3_1b_it_orange_fs_l10_n5_s5_any_concept_direction_parity_case() -> Gemma3ConceptDirectionParityCase:
+    return _load_gemma3_it_experiment_concept_direction_parity_case(
+        config_name="gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_s5_any.yaml",
+        calibration_surface="orange",
+        parity_artifact_name="gemma3_1b_it_orange_fs_l10_n5_s5_any",
+        reference_artifact_name="gemma3_1b_it_orange_fs_l10_n5_s5_any_reference_graph_sanity",
+        session_name="ct_gemma3_1b_it_orange_fs_l10_n5_s5_any",
+        require_cross_path_feature_overlap=False,
+        require_gap_improvement=True,
+    )
+
+
 @pytest.fixture(
     params=[
         pytest.param("cp_color_fruit_orange_gemma_it.yaml", id="orange_155_4973"),
@@ -382,6 +449,11 @@ def gemma3_1b_it_extended_concept_direction_parity_case(request) -> Gemma3Concep
 def gemma3_1b_it_fs_l10_n5_concept_direction_parity_case(request) -> Gemma3ConceptDirectionParityCase:
     loader = cast(Any, request.param)
     return cast(Gemma3ConceptDirectionParityCase, loader())
+
+
+@pytest.fixture
+def gemma3_1b_it_orange_fs_l10_n5_s5_any_concept_direction_parity_case() -> Gemma3ConceptDirectionParityCase:
+    return _load_gemma3_1b_it_orange_fs_l10_n5_s5_any_concept_direction_parity_case()
 
 
 @pytest.fixture
@@ -521,6 +593,7 @@ def _build_reference_graph_target_artifact(
     graph = attribute(rendered_prompt, model, **graph_call_kwargs)
     analysis_backend = require_analysis_backend(module)
     node_influence_scores, _node_feature_rows = analysis_backend.compute_node_influence_scores(graph)
+    signed_score_fn = getattr(analysis_backend, "compute_signed_node_influence_scores", None)
     _baseline_logits, activation_cache = module.replacement_model.get_activations(
         rendered_prompt,
         apply_activation_function=False,
@@ -532,15 +605,20 @@ def _build_reference_graph_target_artifact(
         active_feature_rows[:, 1],
         active_feature_rows[:, 2],
     ]
+    feature_selection_inputs: dict[str, Any] = {
+        "active_features": graph.active_features.detach().cpu(),
+        "selected_features": graph.selected_features.detach().cpu(),
+        "node_influence_scores": node_influence_scores,
+        "activation_values": activation_values,
+    }
+    if callable(signed_score_fn):
+        feature_selection_inputs["node_signed_influence_scores"] = (
+            torch.as_tensor(signed_score_fn(graph), dtype=torch.float32).detach().cpu()
+        )
     top_features_result, applied_feature_rows = _extract_top_features_with_optional_filter(
         module,
         _build_case_feature_selection_context(case),
-        {
-            "active_features": graph.active_features.detach().cpu(),
-            "selected_features": graph.selected_features.detach().cpu(),
-            "node_influence_scores": node_influence_scores,
-            "activation_values": activation_values,
-        },
+        feature_selection_inputs,
         top_n=case.top_n,
     )
     top_feature_rows = [
@@ -1567,6 +1645,87 @@ def test_analysis_backend_parity_feature_intervention_wrapper(
 
 
 @RUNIF(min_cuda_gpus=1, optional=True)
+def test_analysis_backend_parity_feature_intervention_wrapper_sign_aware_top5_any_scaling(
+    cleanup_cuda,
+    ct_nnsight_gemma3_case_session_factory,
+    gemma3_1b_it_orange_fs_l10_n5_s5_any_concept_direction_parity_case,
+):
+    case = gemma3_1b_it_orange_fs_l10_n5_s5_any_concept_direction_parity_case
+    assert case.intervention_max_influence_norm_scale
+    assert case.intervention_sign_aware_scale
+
+    with ct_nnsight_gemma3_case_session_factory(case, case.session_name) as it_session:
+        module = cast(Any, it_session.module)
+        _configure_gemma3_1b_concept_direction_parity_settings(module, case)
+        _ensure_analysis_cfg(module, it.compute_attribution_graph)
+
+        with clean_cuda(module.replacement_model):
+            embed_stage = _compute_embed_concept_direction_stage(module, case)
+            artifacts = _build_concept_direction_graph_artifacts(
+                module,
+                case,
+                path_label=embed_stage.path_label,
+                concept_direction=embed_stage.concept_direction,
+                group_projection_states=embed_stage.group_projection_states,
+                group_ids=embed_stage.group_ids,
+                direction_stage_artifact=embed_stage.direction_stage_artifact,
+                validate_feature_edges=True,
+            )
+
+    graph_stage = cast(dict[str, Any], artifacts.graph_stage_artifact)
+    feature_scores = torch.tensor(graph_stage["top_feature_scores"], dtype=torch.float32)
+    activation_values = torch.tensor(graph_stage["top_feature_activation_values"], dtype=torch.float32)
+    intervention_values = torch.tensor(graph_stage["intervention_values"], dtype=torch.float32)
+    scale_factors = torch.tensor(graph_stage["intervention_scale_factors"], dtype=torch.float32)
+    max_abs_score = feature_scores.abs().max().clamp_min(1e-12)
+    expected_scale_factors = case.intervention_scale_factor * (feature_scores.abs() / max_abs_score)
+    expected_values = feature_scores.sign() * activation_values.abs() * expected_scale_factors
+    top_features = cast(list[list[int]], graph_stage["top_features"])
+    wrapper_summaries = cast(list[dict[str, Any]], graph_stage["wrapper_feature_intervention_summaries"])
+
+    assert len(feature_scores) == case.top_n
+    assert torch.any(feature_scores > 0)
+    assert torch.any(feature_scores < 0)
+    assert torch.all(feature_scores.abs()[:-1] >= feature_scores.abs()[1:])
+    assert_close(scale_factors, expected_scale_factors, rtol=VALUE_RTOL, atol=VALUE_ATOL)
+    assert_close(intervention_values, expected_values, rtol=VALUE_RTOL, atol=VALUE_ATOL)
+    nonzero_interventions = intervention_values != 0
+    assert torch.all(
+        torch.sign(intervention_values[nonzero_interventions]) == torch.sign(feature_scores[nonzero_interventions])
+    )
+    assert len(wrapper_summaries) == case.top_n
+    for index, summary in enumerate(wrapper_summaries):
+        assert summary["feature_row"] == top_features[index]
+        assert summary["returned_activation_cache"] is True
+        assert_close(
+            torch.tensor([summary["intervention_value"]], dtype=torch.float32),
+            intervention_values[index : index + 1],
+            rtol=VALUE_RTOL,
+            atol=VALUE_ATOL,
+        )
+    assert artifacts.post_gap > artifacts.pre_gap
+    post_top_id = int(torch.argmax(artifacts.post_logits).item())
+    first_target_variant_ids = {
+        int(variant["token_id"]) for variant in cast(list[dict[str, Any]], graph_stage["target_token_variants"][0])
+    }
+    assert post_top_id in first_target_variant_ids, json.dumps(
+        {
+            "post_top_id": post_top_id,
+            "target_ids": graph_stage["target_ids"],
+            "target_token_variants": graph_stage["target_token_variants"],
+            "pre_gap": artifacts.pre_gap,
+            "post_gap": artifacts.post_gap,
+            "top_features": top_features,
+            "top_feature_scores": feature_scores.tolist(),
+            "intervention_values": intervention_values.tolist(),
+            "post_top_logits": graph_stage["post_top_logits"],
+        },
+        indent=2,
+        default=str,
+    )
+
+
+@RUNIF(min_cuda_gpus=1, optional=True)
 @pytest.mark.parametrize(
     ("constrained_feature_ref", "expected_feature_row"),
     [
@@ -1787,6 +1946,8 @@ def _configure_gemma3_1b_concept_direction_parity_settings(
     cfg.desired_logit_prob = 0.95
     cfg.intervention_value_source = "top_feature_activation_values"
     cfg.intervention_scale_factor = case.intervention_scale_factor
+    cfg.intervention_max_influence_norm_scale = case.intervention_max_influence_norm_scale
+    cfg.intervention_sign_aware_scale = case.intervention_sign_aware_scale
     cfg.intervention_constrained_layers = list(range(module.replacement_model.cfg.n_layers))
     cfg.intervention_apply_activation_function = False
     cfg.intervention_freeze_attention = None
@@ -1947,6 +2108,191 @@ def _assert_reference_graph_payload_matches_direct_artifacts(
     )
 
 
+def _validate_concept_direction_feature_intervention_wrappers(
+    module: Any,
+    rendered_prompt: str,
+    graph: Graph,
+    top_features_result: AnalysisBatch,
+) -> list[dict[str, Any]]:
+    analysis_backend = require_analysis_backend(module)
+    settings = analysis_backend.resolve_feature_intervention_settings(module, {})
+    feature_rows = torch.as_tensor(top_features_result.top_feature_ids, dtype=torch.long)
+    feature_scores = torch.as_tensor(top_features_result.top_feature_scores, dtype=torch.float32)
+    activation_values = torch.as_tensor(top_features_result.top_feature_activation_values, dtype=torch.float32)
+    logit_target_ids = graph.logit_tokens.detach().cpu()
+    baseline_logits_raw, baseline_activation_cache = module.replacement_model.get_activations(
+        rendered_prompt,
+        apply_activation_function=False,
+    )
+    baseline_logits = last_token_logits(torch.as_tensor(baseline_logits_raw, dtype=torch.float32)).detach().cpu()
+    baseline_activation_cache = torch.as_tensor(baseline_activation_cache, dtype=torch.float32).detach().cpu()
+    graph_adjacency = graph.adjacency_matrix.detach().float().cpu()
+    graph_active_features = graph.active_features.detach().long().cpu()
+    selected_feature_indices = graph.selected_features.detach().long().cpu()
+    graph_selected_features = graph_active_features.index_select(0, selected_feature_indices)
+    graph_feature_count = int(selected_feature_indices.numel())
+    graph_logit_count = int(logit_target_ids.numel())
+    baseline_demeaned_logits = baseline_logits[logit_target_ids] - baseline_logits.mean()
+
+    wrapper_batch = AnalysisBatch(
+        prompts=[rendered_prompt],
+        top_feature_ids=feature_rows,
+        top_feature_scores=feature_scores,
+        top_feature_activation_values=activation_values,
+        logit_target_ids=logit_target_ids,
+    )
+    interventions, _ = analysis_backend.build_feature_interventions(wrapper_batch, settings)
+    wrapper_result = cast(
+        Any,
+        it.feature_intervention_forward(
+            module,
+            wrapper_batch,
+            batch=cast(Any, None),
+            batch_idx=0,
+            prompt=rendered_prompt,
+            intervention_return_activations=True,
+        ),
+    )
+    assert getattr(wrapper_result, "intervention_activation_cache", None) is not None
+    wrapper_pre = torch.as_tensor(wrapper_result.pre_intervention_logits, dtype=torch.float32).detach().cpu()
+    wrapper_post = torch.as_tensor(wrapper_result.post_intervention_logits, dtype=torch.float32).detach().cpu()
+    wrapper_activation_cache = (
+        torch.as_tensor(wrapper_result.intervention_activation_cache, dtype=torch.float32).detach().cpu()
+    )
+    expected_feature_rows = [_feature_row_from_tensor(feature_row_tensor) for feature_row_tensor in feature_rows]
+    assert_close(wrapper_pre, baseline_logits, rtol=VALUE_RTOL, atol=VALUE_ATOL)
+    assert wrapper_result.intervention_feature_ids == [feature_row[2] for feature_row in expected_feature_rows]
+    assert wrapper_result.intervention_positions == [feature_row[1] for feature_row in expected_feature_rows]
+    expected_intervention_values = torch.tensor(
+        [intervention[3] for intervention in interventions],
+        dtype=torch.float32,
+    )
+    assert_close(
+        torch.tensor(wrapper_result.intervention_values, dtype=torch.float32),
+        expected_intervention_values,
+        rtol=VALUE_RTOL,
+        atol=VALUE_ATOL,
+    )
+    feature_intervention_call_kwargs = analysis_backend.feature_intervention_call_kwargs(settings)
+    feature_intervention_call_kwargs["return_activations"] = False
+    expected_aggregate_feature_effects = torch.zeros(graph_feature_count, dtype=torch.float32)
+    expected_aggregate_logit_effects = torch.zeros(graph_logit_count, dtype=torch.float32)
+
+    summaries: list[dict[str, Any]] = []
+    for index, feature_row_tensor in enumerate(feature_rows):
+        feature_row = _feature_row_from_tensor(feature_row_tensor)
+        single_post_logits_raw, _ = module.replacement_model.feature_intervention(
+            rendered_prompt,
+            [interventions[index]],
+            **feature_intervention_call_kwargs,
+        )
+        single_post_logits = (
+            last_token_logits(
+                torch.as_tensor(single_post_logits_raw, dtype=torch.float32),
+            )
+            .detach()
+            .cpu()
+        )
+        intervention_value = float(interventions[index][3])
+
+        layer, position, feature_id = feature_row
+        baseline_feature_activation = float(baseline_activation_cache[layer, position, feature_id].item())
+        returned_cache_feature_activation = float(wrapper_activation_cache[layer, position, feature_id].item())
+        requested_activation_delta = intervention_value - baseline_feature_activation
+        assert abs(baseline_feature_activation) > 1e-12, json.dumps(
+            {
+                "feature_row": list(feature_row),
+                "baseline_activation": baseline_feature_activation,
+                "intervention_value": intervention_value,
+            },
+            indent=2,
+        )
+
+        graph_node_index = _find_active_feature_index(graph_selected_features, feature_row)
+        raw_graph_feature_effects = graph_adjacency[:graph_feature_count, graph_node_index]
+        raw_graph_logit_effects = graph_adjacency[-graph_logit_count:, graph_node_index]
+        graph_effect_scale = requested_activation_delta / baseline_feature_activation
+        expected_feature_effects = raw_graph_feature_effects * graph_effect_scale
+        expected_logit_effects = raw_graph_logit_effects * graph_effect_scale
+        expected_aggregate_feature_effects += expected_feature_effects
+        expected_aggregate_logit_effects += expected_logit_effects
+        single_demeaned_logits = single_post_logits[logit_target_ids] - single_post_logits.mean()
+        actual_logit_effects = single_demeaned_logits - baseline_demeaned_logits
+        nonzero_effects = (expected_logit_effects.abs() > EDGE_LOGIT_ATOL) & (
+            actual_logit_effects.abs() > EDGE_LOGIT_ATOL
+        )
+        if torch.any(nonzero_effects):
+            assert torch.all(
+                torch.sign(actual_logit_effects[nonzero_effects]) == torch.sign(expected_logit_effects[nonzero_effects])
+            ), json.dumps(
+                {
+                    "feature_row": list(feature_row),
+                    "feature_score": float(feature_scores[index].item()),
+                    "baseline_activation": baseline_feature_activation,
+                    "requested_activation_delta": requested_activation_delta,
+                    "intervention_value": intervention_value,
+                    "graph_effect_scale": graph_effect_scale,
+                    "raw_graph_logit_effects": raw_graph_logit_effects.tolist(),
+                    "expected_graph_logit_effects": expected_logit_effects.tolist(),
+                    "actual_graph_logit_effects": actual_logit_effects.tolist(),
+                },
+                indent=2,
+            )
+
+        summaries.append(
+            {
+                "feature_row": list(feature_row),
+                "feature_score": float(feature_scores[index].item()),
+                "baseline_activation": baseline_feature_activation,
+                "returned_cache_activation": returned_cache_feature_activation,
+                "returned_cache_delta": returned_cache_feature_activation - baseline_feature_activation,
+                "requested_activation_delta": requested_activation_delta,
+                "intervention_value": intervention_value,
+                "graph_node_index": graph_node_index,
+                "graph_effect_scale": graph_effect_scale,
+                "expected_self_feature_effect": float(expected_feature_effects[graph_node_index].item()),
+                "raw_graph_logit_effects": raw_graph_logit_effects.tolist(),
+                "expected_graph_logit_effects": expected_logit_effects.tolist(),
+                "actual_graph_logit_effects": actual_logit_effects.tolist(),
+                "returned_activation_cache": True,
+            }
+        )
+    for summary in summaries:
+        graph_node_index = int(summary["graph_node_index"])
+        expected_feature_delta = float(expected_aggregate_feature_effects[graph_node_index].item())
+        actual_feature_delta = float(summary["returned_cache_delta"])
+        expected_cache_activation = float(summary["baseline_activation"] + expected_feature_delta)
+        summary["expected_returned_cache_activation"] = expected_cache_activation
+        summary["expected_aggregate_feature_effect"] = expected_feature_delta
+        if (
+            abs(expected_feature_delta) > FEATURE_DELTA_SIGN_ATOL
+            and abs(actual_feature_delta) > FEATURE_DELTA_SIGN_ATOL
+        ):
+            assert torch.sign(torch.tensor(actual_feature_delta)) == torch.sign(torch.tensor(expected_feature_delta)), (
+                json.dumps(summary, indent=2)
+            )
+    wrapper_demeaned_logits = wrapper_post[logit_target_ids] - wrapper_post.mean()
+    actual_aggregate_logit_effects = wrapper_demeaned_logits - baseline_demeaned_logits
+    aggregate_nonzero_effects = (expected_aggregate_logit_effects.abs() > EDGE_LOGIT_ATOL) & (
+        actual_aggregate_logit_effects.abs() > EDGE_LOGIT_ATOL
+    )
+    if torch.any(aggregate_nonzero_effects):
+        assert torch.all(
+            torch.sign(actual_aggregate_logit_effects[aggregate_nonzero_effects])
+            == torch.sign(expected_aggregate_logit_effects[aggregate_nonzero_effects])
+        ), json.dumps(
+            {
+                "top_features": [list(feature_row) for feature_row in expected_feature_rows],
+                "feature_scores": feature_scores.tolist(),
+                "intervention_values": expected_intervention_values.tolist(),
+                "expected_aggregate_logit_effects": expected_aggregate_logit_effects.tolist(),
+                "actual_aggregate_logit_effects": actual_aggregate_logit_effects.tolist(),
+            },
+            indent=2,
+        )
+    return summaries
+
+
 def _build_concept_direction_graph_artifacts(
     module: Any,
     case: Gemma3ConceptDirectionParityCase,
@@ -1958,6 +2304,7 @@ def _build_concept_direction_graph_artifacts(
     group_projection_states: torch.Tensor,
     group_ids: torch.Tensor,
     direction_stage_artifact: dict[str, Any] | None = None,
+    validate_feature_edges: bool = False,
 ) -> ConceptDirectionParityArtifacts:
     tokenizer = module.replacement_model.tokenizer
     rendered_prompt = _render_debug_prompt(tokenizer, case.prompt, case.prompt_render_mode)
@@ -1999,6 +2346,7 @@ def _build_concept_direction_graph_artifacts(
             **graph_call_kwargs,
         ),
     )
+    graph = require_analysis_backend(module).hydrate_graph_from_batch(graph_result) if validate_feature_edges else None
     influence_result = cast(Any, it.graph_node_influence(module, graph_result, batch=cast(Any, None), batch_idx=0))
     top_payload = dict(cast(Any, graph_result))
     top_payload.update(dict(cast(Any, influence_result)))
@@ -2025,6 +2373,32 @@ def _build_concept_direction_graph_artifacts(
     )
     pre_logits = intervention_result.pre_intervention_logits.float().cpu()
     post_logits = intervention_result.post_intervention_logits.float().cpu()
+    top_feature_scores = torch.as_tensor(top_features_result.top_feature_scores, dtype=torch.float32).cpu()
+    top_feature_activation_values = torch.as_tensor(
+        top_features_result.top_feature_activation_values,
+        dtype=torch.float32,
+    ).cpu()
+    expected_scale_factors = torch.full_like(top_feature_scores, float(case.intervention_scale_factor))
+    if case.intervention_max_influence_norm_scale and top_feature_scores.numel() > 0:
+        max_abs_score = top_feature_scores.abs().max().clamp_min(1e-12)
+        expected_scale_factors = expected_scale_factors * (top_feature_scores.abs() / max_abs_score)
+    expected_intervention_values = top_feature_activation_values * expected_scale_factors
+    if case.intervention_sign_aware_scale:
+        expected_intervention_values = (
+            top_feature_scores.sign() * top_feature_activation_values.abs() * expected_scale_factors
+        )
+    assert_close(
+        torch.as_tensor(intervention_result.intervention_scale_factors, dtype=torch.float32).cpu(),
+        expected_scale_factors,
+        rtol=VALUE_RTOL,
+        atol=VALUE_ATOL,
+    )
+    assert_close(
+        torch.as_tensor(intervention_result.intervention_values, dtype=torch.float32).cpu(),
+        expected_intervention_values,
+        rtol=VALUE_RTOL,
+        atol=VALUE_ATOL,
+    )
     group_a_projection_mean, group_b_projection_mean = _project_group_separation(
         group_projection_states,
         group_ids,
@@ -2033,6 +2407,20 @@ def _build_concept_direction_graph_artifacts(
     top_feature_rows = tuple(
         _feature_row_from_tensor(torch.as_tensor(row)) for row in top_features_result.top_feature_ids
     )
+    wrapper_summaries: list[dict[str, Any]] = []
+    if validate_feature_edges:
+        assert graph is not None
+        wrapper_summaries = _validate_concept_direction_feature_intervention_wrappers(
+            module,
+            rendered_prompt,
+            graph,
+            top_features_result,
+        )
+    use_chat_template = case.prompt_render_mode != "plain"
+    target_token_variants = [
+        _resolve_debug_graph_target_token_variants(tokenizer, token, use_chat_template=use_chat_template)
+        for token in case.target_tokens
+    ]
     graph_stage_artifact = {
         "path_label": f"{path_label}_graph_pipeline",
         "graph_analysis_batch": snapshot_analysis_batch(
@@ -2063,21 +2451,27 @@ def _build_concept_direction_graph_artifacts(
         "active_feature_count": int(
             torch.as_tensor(graph_result.active_features, dtype=torch.long).reshape(-1, 3).shape[0]
         ),
+        "target_ids": [int(token_id) for token_id in target_ids],
+        "target_token_variants": target_token_variants,
         "top_n": int(case.top_n),
         "requested_feature_selection": _serialize_constrained_feature_selection(
             case.constrained_feature_selection_refs
         ),
         "applied_feature_selection_rows": [list(row) for row in applied_feature_rows],
         "top_features": [list(row) for row in top_feature_rows],
-        "top_feature_scores": (
-            torch.as_tensor(top_features_result.top_feature_scores, dtype=torch.float32).cpu().tolist()
-        ),
-        "top_feature_activation_values": torch.as_tensor(
-            top_features_result.top_feature_activation_values,
+        "top_feature_scores": top_feature_scores.tolist(),
+        "top_feature_activation_values": top_feature_activation_values.tolist(),
+        "intervention_values": torch.as_tensor(intervention_result.intervention_values, dtype=torch.float32)
+        .cpu()
+        .tolist(),
+        "intervention_scale_factors": torch.as_tensor(
+            intervention_result.intervention_scale_factors,
             dtype=torch.float32,
         )
         .cpu()
         .tolist(),
+        "expected_intervention_values": expected_intervention_values.tolist(),
+        "expected_intervention_scale_factors": expected_scale_factors.tolist(),
         "pre_gap": float((pre_logits[target_ids[0]] - pre_logits[target_ids[1]]).item()),
         "post_gap": float((post_logits[target_ids[0]] - post_logits[target_ids[1]]).item()),
         "gap_delta": float(
@@ -2086,6 +2480,9 @@ def _build_concept_direction_graph_artifacts(
         ),
         "pre_logits_fingerprint": tensor_fingerprint(pre_logits),
         "post_logits_fingerprint": tensor_fingerprint(post_logits),
+        "pre_top_logits": _summarize_top_logits(tokenizer, pre_logits),
+        "post_top_logits": _summarize_top_logits(tokenizer, post_logits),
+        "wrapper_feature_intervention_summaries": wrapper_summaries,
     }
     return ConceptDirectionParityArtifacts(
         path_label=path_label,
@@ -2274,12 +2671,14 @@ def _compute_store_concept_direction_stage(
                 batch_idx=0,
                 context_enhanced=context_enhanced,
                 context_scale=case.context_enhanced_scale,
+                use_answer_state_as_basis=case.use_answer_state_as_basis,
             ),
         )
         if context_enhanced:
             extraction_snapshot = capture_context_enhanced_extraction_snapshot(
                 source_batch,
                 context_scale=case.context_enhanced_scale,
+                use_answer_state_as_basis=case.use_answer_state_as_basis,
             )
             extraction_snapshots.append(extraction_snapshot.to_dict())
             context_extraction_artifacts.append(
@@ -2347,6 +2746,7 @@ def _compute_store_concept_direction_stage(
     ) | {
         "store_latent_extraction_mode": "context_enhanced" if context_enhanced else "answer_position_state",
         "context_enhanced_scale": case.context_enhanced_scale,
+        "use_answer_state_as_basis": case.use_answer_state_as_basis,
         "context_enhanced_extraction": context_extraction_artifacts,
     }
     return ConceptDirectionStageResult(

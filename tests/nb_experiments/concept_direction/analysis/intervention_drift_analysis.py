@@ -156,6 +156,12 @@ def snapshot_module_runtime_state(module: Any) -> dict[str, Any]:
             "max_n_logits": getattr(circuit_tracer_cfg, "max_n_logits", None),
             "desired_logit_prob": getattr(circuit_tracer_cfg, "desired_logit_prob", None),
             "intervention_scale_factor": getattr(circuit_tracer_cfg, "intervention_scale_factor", None),
+            "intervention_max_influence_norm_scale": getattr(
+                circuit_tracer_cfg,
+                "intervention_max_influence_norm_scale",
+                None,
+            ),
+            "intervention_sign_aware_scale": getattr(circuit_tracer_cfg, "intervention_sign_aware_scale", None),
             "intervention_value": getattr(circuit_tracer_cfg, "intervention_value", None),
             "intervention_value_source": getattr(circuit_tracer_cfg, "intervention_value_source", None),
             "intervention_constrained_layers": _json_debug_value(

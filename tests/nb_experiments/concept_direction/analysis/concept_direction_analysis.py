@@ -18,6 +18,8 @@ from typing import Any, Mapping, Sequence
 
 import torch
 
+from interpretune.analysis.ops.helpers import _project_context_enhanced_states
+
 
 PRESERVE_ARTIFACTS_ENV = "IT_PARITY_PRESERVE_ARTIFACTS"
 PRESERVE_ARTIFACT_DIR_ENV = "IT_PARITY_PRESERVE_ARTIFACT_DIR"
@@ -703,6 +705,8 @@ class ContextEnhancedExtractionSnapshot:
 
     cache_key: str
     context_source: str
+    use_answer_state_as_basis: bool
+    projection_basis: str
     answer_indices: tuple[int, ...]
     answer_states: torch.Tensor
     context_indices: tuple[int, ...]
@@ -717,6 +721,8 @@ class ContextEnhancedExtractionSnapshot:
         return {
             "cache_key": self.cache_key,
             "context_source": self.context_source,
+            "use_answer_state_as_basis": self.use_answer_state_as_basis,
+            "projection_basis": self.projection_basis,
             "answer_indices": list(self.answer_indices),
             "context_indices": list(self.context_indices),
             "answer_states": self.answer_states.tolist(),
@@ -733,6 +739,7 @@ def capture_context_enhanced_extraction_snapshot(
     analysis_batch: Any,
     *,
     context_scale: float,
+    use_answer_state_as_basis: bool = False,
 ) -> ContextEnhancedExtractionSnapshot:
     """Reconstruct the current context-enhanced extraction math from an analysis batch."""
     cache = _get_analysis_value(analysis_batch, "cache")
@@ -767,10 +774,14 @@ def capture_context_enhanced_extraction_snapshot(
     context_index_tensor = raw_context_index_tensor.clamp(min=0)
     context_states = cache_tensor[batch_indices, context_index_tensor].detach().cpu().float()
 
-    scaled_answer = context_scale * answer_states
-    dot_num = (scaled_answer * context_states).sum(dim=-1, keepdim=True)
-    dot_den = (context_states * context_states).sum(dim=-1, keepdim=True).clamp(min=1e-12)
-    projected_states = (dot_num / dot_den) * context_states
+    batch_flag = _get_analysis_value(analysis_batch, "use_answer_state_as_basis")
+    resolved_use_answer_state_as_basis = bool(batch_flag) if batch_flag is not None else use_answer_state_as_basis
+    scaled_answer, dot_num, dot_den, projected_states = _project_context_enhanced_states(
+        answer_states,
+        context_states,
+        context_scale=context_scale,
+        use_answer_state_as_basis=resolved_use_answer_state_as_basis,
+    )
     final_latent_states = torch.where(
         valid_mask.unsqueeze(-1).expand_as(answer_states),
         projected_states,
@@ -780,6 +791,8 @@ def capture_context_enhanced_extraction_snapshot(
     return ContextEnhancedExtractionSnapshot(
         cache_key=cache_key,
         context_source=context_source,
+        use_answer_state_as_basis=resolved_use_answer_state_as_basis,
+        projection_basis=("answer_state" if resolved_use_answer_state_as_basis else "context_state"),
         answer_indices=tuple(int(index) for index in answer_index_tensor.detach().cpu().tolist()),
         answer_states=answer_states,
         context_indices=tuple(int(index) for index in context_index_tensor.detach().cpu().tolist()),

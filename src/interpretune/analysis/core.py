@@ -329,8 +329,9 @@ def schema_to_features(
                     # Determine base feature based on ColCfg properties
                     base_feature = Value(dtype=dtype)  # Default to simple Value type
                     if col_cfg.array_shape:
-                        shape = list(col_cfg.array_shape)
-                        shape = [dim_vars.get(dim, dim) if isinstance(dim, str) else dim for dim in shape]
+                        shape: list[int | None] = [
+                            dim_vars.get(dim) if isinstance(dim, str) else dim for dim in col_cfg.array_shape
+                        ]
                         base_feature = _feature_for_array_shape(shape, dtype)
                     elif col_cfg.sequence_type:
                         base_feature = DatasetsSequence(Value(dtype=dtype))
@@ -349,8 +350,9 @@ def schema_to_features(
 
         # Handle explicit array shapes
         if col_cfg.array_shape:
-            shape = list(col_cfg.array_shape)
-            shape = [dim_vars.get(dim, dim) if isinstance(dim, str) else dim for dim in shape]
+            shape: list[int | None] = [
+                dim_vars.get(dim) if isinstance(dim, str) else dim for dim in col_cfg.array_shape
+            ]
 
             features_dict[col_name] = _feature_for_array_shape(shape, dtype)
             continue

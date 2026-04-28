@@ -12,7 +12,7 @@ from typing import Any, Mapping
 import torch
 from transformers import BatchEncoding
 
-from interpretune.analysis.backends import AnalysisBackendCapability
+from interpretune.analysis.backends import AnalysisBackendCapability, InterventionDict, InterventionSpec
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
 from interpretune.protocol import GraphComponentPayload
 
@@ -153,6 +153,8 @@ class CircuitTracerAnalysisBackend:
 
         settings = {
             "scale_factor": float(_resolve("intervention_scale_factor", 1.0)),
+            "max_influence_norm_scale": bool(_resolve("intervention_max_influence_norm_scale", False)),
+            "sign_aware_scale": bool(_resolve("intervention_sign_aware_scale", True)),
             "value": None if value is None else float(value),
             "value_source": str(value_source),
             "constrained_layers": _resolve("intervention_constrained_layers", None),
@@ -170,6 +172,55 @@ class CircuitTracerAnalysisBackend:
         if settings["value_source"] == "constant" and settings["value"] is None:
             raise ValueError("feature_intervention_forward requires a constant intervention_value for constant mode")
         return settings
+
+    @staticmethod
+    def _signed_feature_intervention_value(
+        base_value: float,
+        score_value: float | None,
+        scale_factor: float,
+        *,
+        sign_aware_scale: bool,
+    ) -> float:
+        if score_value is None or not sign_aware_scale:
+            return float(base_value * scale_factor)
+        if score_value == 0.0:
+            return 0.0
+        direction = 1.0 if score_value > 0.0 else -1.0
+        return float(direction * abs(base_value) * scale_factor)
+
+    @staticmethod
+    def _feature_intervention_target(layer: int, position: int, feature_id: int) -> str:
+        return f"feature.layer.{layer}.position.{position}.id.{feature_id}"
+
+    @staticmethod
+    def _intervention_dict_to_json(intervention_dict: InterventionDict) -> str:
+        payload: dict[str, list[dict[str, Any]]] = {}
+        for target, specs in intervention_dict.items():
+            payload[target] = [
+                {
+                    "intervention_tensor": torch.as_tensor(spec.intervention_tensor).detach().cpu().tolist(),
+                    "mode": spec.mode,
+                    "scale_factor": float(spec.scale_factor),
+                    "use_intervention_tensor_as_basis": bool(spec.use_intervention_tensor_as_basis),
+                }
+                for spec in specs
+            ]
+        return json.dumps(payload, default=str)
+
+    def _build_feature_intervention_dict(
+        self,
+        intervention_specs: list[dict[str, Any]],
+    ) -> InterventionDict:
+        return InterventionDict.from_mapping(
+            {
+                self._feature_intervention_target(
+                    spec["layer"],
+                    spec["position"],
+                    spec["feature_id"],
+                ): InterventionSpec(torch.tensor(float(spec["value"]), dtype=torch.float32), mode="replace")
+                for spec in intervention_specs
+            }
+        )
 
     def build_feature_interventions(
         self,
@@ -207,8 +258,19 @@ class CircuitTracerAnalysisBackend:
         if activation_value_tensor is not None and activation_value_tensor.shape[0] != top_feature_ids.shape[0]:
             raise ValueError("top_feature_ids and top_feature_activation_values must have matching lengths")
 
+        max_abs_score = None
+        if bool(settings.get("max_influence_norm_scale", False)):
+            if score_tensor is None:
+                raise ValueError(
+                    "feature_intervention_forward requires top_feature_scores when max_influence_norm_scale is enabled"
+                )
+            max_abs_score = float(score_tensor.abs().max().item()) if score_tensor.numel() else 0.0
+
         intervention_specs: list[dict[str, Any]] = []
         interventions: list[tuple[int, int, int, float]] = []
+        base_values: list[float] = []
+        score_values: list[float | None] = []
+        scale_factors: list[float] = []
         for index, feature_row in enumerate(top_feature_ids.tolist()):
             layer, position, feature_id = (int(value) for value in feature_row)
             if settings["value"] is not None:
@@ -221,12 +283,29 @@ class CircuitTracerAnalysisBackend:
                 base_value = float(score_tensor[index].item())
             else:
                 raise ValueError("Unable to resolve intervention value for feature row")
-            value = float(base_value * settings["scale_factor"])
+            score_value = None if score_tensor is None else float(score_tensor[index].item())
+            scale_factor = float(settings["scale_factor"])
+            if max_abs_score is not None:
+                score_ratio = 0.0 if max_abs_score <= 0.0 or score_value is None else abs(score_value) / max_abs_score
+                scale_factor *= score_ratio
+            value = self._signed_feature_intervention_value(
+                float(base_value),
+                score_value,
+                scale_factor,
+                sign_aware_scale=bool(settings.get("sign_aware_scale", True)),
+            )
             interventions.append((layer, position, feature_id, value))
             intervention_specs.append({"layer": layer, "position": position, "feature_id": feature_id, "value": value})
+            base_values.append(float(base_value))
+            score_values.append(score_value)
+            scale_factors.append(scale_factor)
+
+        feature_intervention_dict = self._build_feature_intervention_dict(intervention_specs)
 
         config_payload = {
             "scale_factor": settings["scale_factor"],
+            "max_influence_norm_scale": settings["max_influence_norm_scale"],
+            "sign_aware_scale": settings["sign_aware_scale"],
             "value": settings["value"],
             "value_source": settings["value_source"],
             "constrained_layers": settings["constrained_layers"],
@@ -238,11 +317,17 @@ class CircuitTracerAnalysisBackend:
         payload = {
             "intervention_config": json.dumps(config_payload, default=str),
             "intervention_specs_json": json.dumps(intervention_specs, default=str),
+            "feature_intervention_dict": feature_intervention_dict,
+            "feature_intervention_dict_json": self._intervention_dict_to_json(feature_intervention_dict),
             "intervention_layers": [spec["layer"] for spec in intervention_specs],
             "intervention_positions": [spec["position"] for spec in intervention_specs],
             "intervention_feature_ids": [spec["feature_id"] for spec in intervention_specs],
             "intervention_values": [spec["value"] for spec in intervention_specs],
+            "intervention_base_values": base_values,
+            "intervention_scale_factors": scale_factors,
         }
+        if score_tensor is not None:
+            payload["intervention_score_values"] = score_values
         return interventions, payload
 
     def feature_intervention_call_kwargs(self, settings: Mapping[str, Any]) -> dict[str, Any]:
@@ -267,6 +352,27 @@ class CircuitTracerAnalysisBackend:
         return [
             (int(spec["layer"]), int(spec["position"]), int(spec["feature_id"]), float(spec["value"])) for spec in specs
         ]
+
+    def _hydrate_feature_intervention_dict(self, interventions_json: str | None) -> InterventionDict | None:
+        if not interventions_json:
+            return None
+        if isinstance(interventions_json, list):
+            interventions_json = "".join(str(part) for part in interventions_json)
+        raw_interventions = json.loads(interventions_json)
+        return InterventionDict.from_mapping(
+            {
+                target: tuple(
+                    InterventionSpec(
+                        torch.as_tensor(spec["intervention_tensor"], dtype=torch.float32),
+                        mode=str(spec.get("mode", "replace")),
+                        scale_factor=float(spec.get("scale_factor", 1.0)),
+                        use_intervention_tensor_as_basis=bool(spec.get("use_intervention_tensor_as_basis", True)),
+                    )
+                    for spec in specs
+                )
+                for target, specs in raw_interventions.items()
+            }
+        )
 
     def graph_cfg_dict(self, graph: Any) -> dict[str, Any]:
         return graph.cfg.to_dict() if hasattr(graph.cfg, "to_dict") else vars(graph.cfg)
@@ -318,14 +424,22 @@ class CircuitTracerAnalysisBackend:
         graph_scan_json = getattr(analysis_batch, "graph_scan_json", "null")
         if isinstance(analysis_batch, Mapping):
             graph_scan_json = analysis_batch.get("graph_scan_json", graph_scan_json)
-        logit_target_tokens = list(getattr(analysis_batch, "logit_target_tokens", []))
+        raw_logit_target_tokens = getattr(analysis_batch, "logit_target_tokens", None)
         if isinstance(analysis_batch, Mapping):
-            logit_target_tokens = list(analysis_batch.get("logit_target_tokens", logit_target_tokens))
+            raw_logit_target_tokens = analysis_batch.get("logit_target_tokens", raw_logit_target_tokens)
+        logit_target_tokens = list(raw_logit_target_tokens or [])
 
         def _value(name: str, default: Any) -> Any:
             if isinstance(analysis_batch, Mapping):
                 return analysis_batch.get(name, default)
             return getattr(analysis_batch, name, default)
+
+        def _json_text(value: Any) -> str:
+            if isinstance(value, str):
+                return value
+            if isinstance(value, (bytes, bytearray)):
+                return value.decode()
+            return json.dumps(value)
 
         return {
             "input_string": str(_value("input_string", "")),
@@ -337,8 +451,8 @@ class CircuitTracerAnalysisBackend:
             "logit_target_ids": torch.as_tensor(_value("logit_target_ids", []), dtype=torch.long),
             "logit_target_tokens": logit_target_tokens,
             "logit_probabilities": torch.as_tensor(_value("logit_probabilities", []), dtype=torch.float32),
-            "graph_cfg": json.loads(graph_cfg_json),
-            "scan": json.loads(graph_scan_json),
+            "graph_cfg": json.loads(_json_text(graph_cfg_json)),
+            "scan": json.loads(_json_text(graph_scan_json)),
             "vocab_size": int(_value("graph_vocab_size", 0)),
         }
 
@@ -375,6 +489,10 @@ class CircuitTracerAnalysisBackend:
             hydrated["attribution_graph"] = self.hydrate_graph_from_batch(hydrated)
         if "intervention_specs_json" in hydrated and "intervention_specs" not in hydrated:
             hydrated["intervention_specs"] = self._hydrate_intervention_specs(hydrated.get("intervention_specs_json"))
+        if "feature_intervention_dict_json" in hydrated and "feature_intervention_dict" not in hydrated:
+            hydrated["feature_intervention_dict"] = self._hydrate_feature_intervention_dict(
+                hydrated.get("feature_intervention_dict_json")
+            )
         return hydrated
 
     def maybe_hydrate_batch(self, batch: Mapping[str, Any]) -> dict[str, Any]:
@@ -389,6 +507,11 @@ class CircuitTracerAnalysisBackend:
         if "intervention_specs_json" in hydrated and "intervention_specs" not in hydrated:
             hydrated["intervention_specs"] = [
                 self._hydrate_intervention_specs(specs_json) for specs_json in hydrated["intervention_specs_json"]
+            ]
+        if "feature_intervention_dict_json" in hydrated and "feature_intervention_dict" not in hydrated:
+            hydrated["feature_intervention_dict"] = [
+                self._hydrate_feature_intervention_dict(interventions_json)
+                for interventions_json in hydrated["feature_intervention_dict_json"]
             ]
         return hydrated
 
@@ -439,6 +562,33 @@ class CircuitTracerAnalysisBackend:
         node_scores = compute_node_influence(graph.adjacency_matrix, logit_weights)[:n_features]
         node_feature_ids = self.select_feature_rows(graph.active_features, graph.selected_features)
         return node_scores.detach().cpu(), node_feature_ids
+
+    def compute_signed_node_influence_scores(self, graph: Any) -> torch.Tensor:
+        """Compute signed feature-node influence scores from the raw signed graph edges.
+
+        Upstream circuit-tracer normalizes graph rows with absolute edge values before influence propagation. This
+        companion score keeps the same row normalization scale but preserves edge signs, giving downstream selection
+        code a stable promoting/opposing feature channel without modifying upstream graph construction.
+        """
+
+        from circuit_tracer.graph import compute_influence
+
+        n_logits = len(graph.logit_targets)
+        n_features = len(graph.selected_features)
+        adjacency_matrix = graph.adjacency_matrix.to(dtype=torch.float32)
+        logit_probabilities = graph.logit_probabilities.to(device=adjacency_matrix.device, dtype=torch.float32)
+        logit_weights = torch.zeros(adjacency_matrix.shape[0], device=adjacency_matrix.device, dtype=torch.float32)
+        logit_weights[-n_logits:] = logit_probabilities
+
+        row_norm = adjacency_matrix.abs().sum(dim=1, keepdim=True).clamp(min=1e-10)
+        signed_normalized = adjacency_matrix / row_norm
+        signed_scores = compute_influence(signed_normalized, logit_weights)[:n_features]
+
+        if not signed_scores.any() and n_logits > 0:
+            direct_logit_edges = adjacency_matrix[:n_features, -n_logits:]
+            if direct_logit_edges.numel() > 0:
+                signed_scores = direct_logit_edges @ logit_probabilities
+        return signed_scores.detach().cpu()
 
 
 DEFAULT_CT_ANALYSIS_BACKEND = CircuitTracerAnalysisBackend()

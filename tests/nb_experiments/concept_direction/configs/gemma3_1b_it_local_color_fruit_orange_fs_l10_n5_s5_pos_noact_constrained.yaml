@@ -1,0 +1,9 @@
+EXTENDS: gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_s5.yaml
+
+EXPERIMENT_NAME: gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_s5_pos_noact_constrained
+
+ANALYSIS:
+  feature_intervention:
+    apply_activation_function: false
+    constrained_layers: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+  debug_pipeline_state_artifact_name: gemma3_1b_it_orange_fs_l10_n5_s5_pos_noact_constrained_notebook_debug

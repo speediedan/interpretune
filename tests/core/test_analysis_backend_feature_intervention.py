@@ -7,6 +7,7 @@ test surface later.
 
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 
 import pytest
@@ -14,6 +15,7 @@ import torch
 from datasets import Dataset, load_from_disk
 from transformers import BatchEncoding
 
+from interpretune.analysis.backends import FeatureSelectionSpec, InterventionDict
 from interpretune.analysis.backends.circuit_tracer import DEFAULT_CT_ANALYSIS_BACKEND
 from interpretune.analysis.core import AnalysisStore, schema_to_features
 from interpretune.analysis.ops.base import AnalysisBatch
@@ -124,6 +126,17 @@ def test_feature_intervention_forward_impl_serializes_and_executes_interventions
     assert result.intervention_positions == [2, 1]
     assert result.intervention_feature_ids == [11, 7]
     assert result.intervention_values == [1.0, -0.5]
+    assert isinstance(result.feature_intervention_dict, InterventionDict)
+    assert list(result.feature_intervention_dict.keys()) == [
+        "feature.layer.1.position.2.id.11",
+        "feature.layer.0.position.1.id.7",
+    ]
+    assert torch.isclose(
+        result.feature_intervention_dict["feature.layer.1.position.2.id.11"][0].intervention_tensor,
+        torch.tensor(1.0),
+    )
+    intervention_dict_payload = json.loads(result.feature_intervention_dict_json)
+    assert intervention_dict_payload["feature.layer.0.position.1.id.7"][0]["intervention_tensor"] == -0.5
     assert torch.allclose(result.pre_intervention_logits, torch.tensor([0.1, 0.2, 0.3, 0.4], dtype=torch.float32))
     assert torch.allclose(result.post_intervention_logits, torch.tensor([0.1, 0.2, 0.8, 0.4], dtype=torch.float32))
     assert torch.isclose(result.logit_diff, torch.tensor(0.5, dtype=torch.float32))
@@ -143,10 +156,14 @@ def test_feature_intervention_store_round_trip_hydrates_intervention_specs(tmp_p
         {
             "intervention_config": [result.intervention_config],
             "intervention_specs_json": [result.intervention_specs_json],
+            "feature_intervention_dict_json": [result.feature_intervention_dict_json],
             "intervention_layers": [result.intervention_layers],
             "intervention_positions": [result.intervention_positions],
             "intervention_feature_ids": [result.intervention_feature_ids],
             "intervention_values": [result.intervention_values],
+            "intervention_base_values": [result.intervention_base_values],
+            "intervention_score_values": [result.intervention_score_values],
+            "intervention_scale_factors": [result.intervention_scale_factors],
             "pre_intervention_logits": [result.pre_intervention_logits.tolist()],
             "post_intervention_logits": [result.post_intervention_logits.tolist()],
             "logit_diff": [float(result.logit_diff.item())],
@@ -164,8 +181,15 @@ def test_feature_intervention_store_round_trip_hydrates_intervention_specs(tmp_p
 
     row = cast(dict[str, object], reloaded[0])
     assert row["intervention_specs"] == [(1, 2, 11, 1.0)]
+    feature_intervention_dict = cast(InterventionDict, row["feature_intervention_dict"])
+    assert list(feature_intervention_dict.keys()) == ["feature.layer.1.position.2.id.11"]
+    assert torch.isclose(
+        feature_intervention_dict["feature.layer.1.position.2.id.11"][0].intervention_tensor,
+        torch.tensor(1.0),
+    )
     assert torch.equal(cast(torch.Tensor, row["intervention_layers"]), torch.tensor([1], dtype=torch.int64))
     assert torch.allclose(cast(torch.Tensor, row["intervention_values"]), torch.tensor([1.0], dtype=torch.float32))
+    assert torch.allclose(cast(torch.Tensor, row["intervention_scale_factors"]), torch.tensor([2.0]))
     assert "intervention_activation_cache" not in row
 
 
@@ -256,6 +280,118 @@ def test_feature_intervention_forward_impl_can_use_activation_values() -> None:
         torch.tensor([2.5, -1.0], dtype=torch.float32),
     )
     assert torch.allclose(torch.tensor(result.intervention_values, dtype=torch.float32), torch.tensor([2.5, -1.0]))
+
+
+def test_feature_intervention_forward_impl_uses_score_sign_for_activation_values() -> None:
+    module = _FakeModule()
+    module.circuit_tracer_cfg.intervention_value_source = "top_feature_activation_values"
+    module.circuit_tracer_cfg.intervention_scale_factor = 10.0
+    analysis_batch = AnalysisBatch(
+        prompts=["Paris Austin"],
+        top_feature_ids=torch.tensor([[1, 2, 11], [0, 1, 7]], dtype=torch.long),
+        top_feature_scores=torch.tensor([-0.5, 0.25], dtype=torch.float32),
+        top_feature_activation_values=torch.tensor([0.8, -0.4], dtype=torch.float32),
+        logit_target_ids=torch.tensor([2], dtype=torch.long),
+    )
+
+    result = feature_intervention_forward_impl(module, analysis_batch, batch=cast(BatchEncoding, None), batch_idx=0)
+
+    assert len(module.replacement_model.calls) == 1
+    _, interventions, _ = module.replacement_model.calls[0]
+    assert torch.allclose(
+        torch.tensor([value for _, _, _, value in interventions], dtype=torch.float32),
+        torch.tensor([-8.0, 4.0], dtype=torch.float32),
+    )
+    assert torch.allclose(torch.tensor(result.intervention_base_values), torch.tensor([0.8, -0.4]))
+    assert torch.allclose(torch.tensor(result.intervention_score_values), torch.tensor([-0.5, 0.25]))
+    assert torch.allclose(torch.tensor(result.intervention_scale_factors), torch.tensor([10.0, 10.0]))
+
+
+def test_feature_intervention_forward_impl_can_max_normalize_scale_by_signed_influence() -> None:
+    module = _FakeModule()
+    module.circuit_tracer_cfg.intervention_value_source = "top_feature_activation_values"
+    module.circuit_tracer_cfg.intervention_scale_factor = 10.0
+    module.circuit_tracer_cfg.intervention_max_influence_norm_scale = True
+    analysis_batch = AnalysisBatch(
+        prompts=["Paris Austin"],
+        top_feature_ids=torch.tensor([[1, 2, 11], [0, 1, 7], [1, 0, 9]], dtype=torch.long),
+        top_feature_scores=torch.tensor([0.5, -0.25, 0.0], dtype=torch.float32),
+        top_feature_activation_values=torch.tensor([2.0, 4.0, 7.0], dtype=torch.float32),
+        logit_target_ids=torch.tensor([2], dtype=torch.long),
+    )
+
+    result = feature_intervention_forward_impl(module, analysis_batch, batch=cast(BatchEncoding, None), batch_idx=0)
+
+    assert len(module.replacement_model.calls) == 1
+    _, interventions, _ = module.replacement_model.calls[0]
+    assert torch.allclose(
+        torch.tensor([value for _, _, _, value in interventions], dtype=torch.float32),
+        torch.tensor([20.0, -20.0, 0.0], dtype=torch.float32),
+    )
+    assert torch.allclose(torch.tensor(result.intervention_base_values), torch.tensor([2.0, 4.0, 7.0]))
+    assert torch.allclose(torch.tensor(result.intervention_score_values), torch.tensor([0.5, -0.25, 0.0]))
+    assert torch.allclose(torch.tensor(result.intervention_scale_factors), torch.tensor([10.0, 5.0, 0.0]))
+
+
+def test_feature_intervention_forward_impl_requires_scores_for_max_normalized_scaling() -> None:
+    module = _FakeModule()
+    module.circuit_tracer_cfg.intervention_value_source = "top_feature_activation_values"
+    module.circuit_tracer_cfg.intervention_max_influence_norm_scale = True
+    analysis_batch = AnalysisBatch(
+        prompts=["Paris Austin"],
+        top_feature_ids=torch.tensor([[1, 2, 11]], dtype=torch.long),
+        top_feature_activation_values=torch.tensor([2.0], dtype=torch.float32),
+        logit_target_ids=torch.tensor([2], dtype=torch.long),
+    )
+
+    with pytest.raises(ValueError, match="top_feature_scores when max_influence_norm_scale is enabled"):
+        feature_intervention_forward_impl(module, analysis_batch, batch=cast(BatchEncoding, None), batch_idx=0)
+
+
+def test_feature_intervention_forward_impl_can_select_and_intervene_on_mixed_sign_features() -> None:
+    module = _FakeModule()
+    module.circuit_tracer_cfg.intervention_scale_factor = 1.0
+    analysis_batch = AnalysisBatch(
+        prompts=["Paris Austin"],
+        active_features=torch.tensor([[0, 0, 10], [1, 0, 12]], dtype=torch.long),
+        node_logit_diff_gradient_scores=torch.tensor([0.4, -0.7], dtype=torch.float32),
+        logit_target_ids=torch.tensor([2], dtype=torch.long),
+    )
+    feature_selection = FeatureSelectionSpec(
+        triples=[(0, 0, 10), (1, 0, 12)],
+        score_source="gradient",
+        score_sign="any",
+        rank_by_abs=True,
+    )
+
+    result = feature_intervention_forward_impl(
+        module,
+        analysis_batch,
+        batch=cast(BatchEncoding, None),
+        batch_idx=0,
+        top_n=2,
+        feature_selection=feature_selection,
+    )
+
+    assert len(module.replacement_model.calls) == 1
+    prompt, interventions, call_kwargs = module.replacement_model.calls[0]
+    assert prompt == "Paris Austin"
+    assert [(layer, position, feature_id) for layer, position, feature_id, _ in interventions] == [
+        (1, 0, 12),
+        (0, 0, 10),
+    ]
+    assert torch.allclose(
+        torch.tensor([value for _, _, _, value in interventions], dtype=torch.float32),
+        torch.tensor([-0.7, 0.4], dtype=torch.float32),
+    )
+    assert call_kwargs == {"sparse": True, "return_activations": False, "constrained_layers": [0, 1]}
+    assert torch.equal(result.top_feature_ids, torch.tensor([[1, 0, 12], [0, 0, 10]], dtype=torch.long))
+    assert torch.allclose(result.top_feature_scores, torch.tensor([-0.7, 0.4], dtype=torch.float32))
+    assert torch.allclose(torch.tensor(result.intervention_values), torch.tensor([-0.7, 0.4]))
+    assert list(result.feature_intervention_dict.keys()) == [
+        "feature.layer.1.position.0.id.12",
+        "feature.layer.0.position.0.id.10",
+    ]
 
 
 def test_feature_intervention_resolves_logit_target_ids_from_concept_groups() -> None:

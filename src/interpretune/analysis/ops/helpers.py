@@ -14,6 +14,7 @@ import torch
 
 from interpretune.analysis.backends import (
     FeatureSelectionSpec,
+    apply_feature_score_sign_filter,
     apply_feature_selection_filter,
     get_analysis_backend,
     get_model_backend,
@@ -21,6 +22,16 @@ from interpretune.analysis.backends import (
 
 
 _MISSING = object()
+
+FEATURE_SCORE_SOURCE_ALIASES: dict[str, str] = {
+    "influence": "node_influence_scores",
+    "absolute_influence": "node_influence_scores",
+    "signed_influence": "node_signed_influence_scores",
+    "gradient": "node_logit_diff_gradient_scores",
+    "gradients": "node_logit_diff_gradient_scores",
+    "logit_diff_gradient": "node_logit_diff_gradient_scores",
+    "target_logit_diff_gradient": "node_logit_diff_gradient_scores",
+}
 
 
 # TODO: Split feature-selection / top-feature ranking helpers into a dedicated module once the
@@ -123,8 +134,97 @@ def _augment_feature_rows_for_selection(
     return feature_rows, scores, activation_values
 
 
+def _select_top_feature_indices(
+    feature_rows: torch.Tensor,
+    scores: torch.Tensor,
+    top_n: int | None,
+    feature_selection: FeatureSelectionSpec | None,
+    *,
+    rank_scores: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if scores.numel() == 0:
+        return torch.empty((0,), dtype=torch.long)
+
+    effective_rank_scores = scores if rank_scores is None else rank_scores
+    ranked_indices = torch.argsort(effective_rank_scores, descending=True)
+    selected_count = scores.shape[0] if top_n is None else min(int(top_n), scores.shape[0])
+    if selected_count <= 0:
+        return torch.empty((0,), dtype=torch.long)
+
+    selected = ranked_indices[:selected_count].tolist()
+    if feature_selection is None or not feature_selection.layer_feature_pairs:
+        return torch.tensor(selected, dtype=torch.long)
+
+    rank_by_index = {int(index): rank for rank, index in enumerate(ranked_indices.tolist())}
+    guaranteed: list[int] = []
+    for layer, feature_id in dict.fromkeys(feature_selection.layer_feature_pairs):
+        match_mask = (feature_rows[:, 0] == int(layer)) & (feature_rows[:, 2] == int(feature_id))
+        if not match_mask.any():
+            continue
+        pair_indices = match_mask.nonzero(as_tuple=False).reshape(-1)
+        pair_scores = effective_rank_scores.index_select(0, pair_indices)
+        best_pair_index = int(pair_indices[int(torch.argmax(pair_scores).item())].item())
+        guaranteed.append(best_pair_index)
+
+    if not guaranteed:
+        return torch.tensor(selected, dtype=torch.long)
+
+    guaranteed = sorted(dict.fromkeys(guaranteed), key=lambda index: rank_by_index[index])
+    guaranteed_set = set(guaranteed)
+    selected_set = set(selected)
+
+    for guaranteed_index in guaranteed:
+        if guaranteed_index in selected_set:
+            continue
+        replace_position = next(
+            (position for position in range(len(selected) - 1, -1, -1) if selected[position] not in guaranteed_set),
+            None,
+        )
+        if replace_position is None:
+            selected.append(guaranteed_index)
+            selected_set.add(guaranteed_index)
+            continue
+        removed_index = selected[replace_position]
+        selected[replace_position] = guaranteed_index
+        selected_set.discard(removed_index)
+        selected_set.add(guaranteed_index)
+
+    selected = sorted(dict.fromkeys(selected), key=lambda index: rank_by_index[index])
+    return torch.tensor(selected, dtype=torch.long)
+
+
+def _apply_optional_feature_sign_filter(
+    feature_rows: torch.Tensor,
+    scores: torch.Tensor,
+    activation_values: torch.Tensor | None,
+    feature_selection: FeatureSelectionSpec,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    score_mask = apply_feature_score_sign_filter(scores, feature_selection.score_sign)
+    if feature_selection.score_sign == "any":
+        return feature_rows, scores, activation_values
+    selected_indices = score_mask.nonzero(as_tuple=False).reshape(-1)
+    feature_rows = feature_rows.index_select(0, selected_indices)
+    scores = scores.index_select(0, selected_indices)
+    if activation_values is not None:
+        activation_values = activation_values.index_select(0, selected_indices)
+    return feature_rows, scores, activation_values
+
+
+def resolve_feature_score_source(score_source: str | None) -> str | None:
+    """Normalize user-facing score-source aliases to analysis-batch field names."""
+    if score_source is None:
+        return None
+    return FEATURE_SCORE_SOURCE_ALIASES.get(score_source, score_source)
+
+
 # Re-export for backwards compatibility
-__all__ = ["FeatureSelectionSpec", "apply_feature_selection_filter"]
+__all__ = [
+    "FEATURE_SCORE_SOURCE_ALIASES",
+    "FeatureSelectionSpec",
+    "apply_feature_score_sign_filter",
+    "apply_feature_selection_filter",
+    "resolve_feature_score_source",
+]
 
 
 AnalysisScope = str
@@ -682,11 +782,40 @@ def _resolve_context_token_indices(
     return context_index_tensor.clamp(min=0), valid_mask
 
 
+def _project_context_enhanced_states(
+    answer_states: torch.Tensor,
+    context_states: torch.Tensor,
+    *,
+    context_scale: float = 1.0,
+    use_answer_state_as_basis: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Project context-enhanced latent rows using either context or answer as the basis.
+
+    The answer state is always scaled first so the existing context-basis path remains
+    unchanged. When ``use_answer_state_as_basis`` is true, the context state is projected
+    onto that scaled answer-state basis instead.
+    """
+
+    scaled_answer = float(context_scale) * answer_states
+    if use_answer_state_as_basis:
+        projection_source = context_states
+        projection_basis = scaled_answer
+    else:
+        projection_source = scaled_answer
+        projection_basis = context_states
+
+    dot_num = (projection_source * projection_basis).sum(dim=-1, keepdim=True)
+    dot_den = (projection_basis * projection_basis).sum(dim=-1, keepdim=True).clamp(min=1e-12)
+    projected_states = (dot_num / dot_den) * projection_basis
+    return scaled_answer, dot_num, dot_den, projected_states
+
+
 # TODO: This may be better cast as a separate op itself rather than a helper, we should revisit
 def _extract_concept_latent_state_from_cache(
     analysis_batch: AnalysisBatch,
     context_enhanced: bool = False,
     context_scale: float = 1.0,
+    use_answer_state_as_basis: bool = False,
 ) -> tuple[torch.Tensor, str]:
     cache = analysis_batch.cache
     answer_indices = analysis_batch.answer_indices
@@ -710,10 +839,12 @@ def _extract_concept_latent_state_from_cache(
             context_indices, valid = _resolve_context_token_indices(analysis_batch, index_tensor)
             context_states = cache_tensor[batch_indices, context_indices].detach().cpu().float()
 
-            scaled_answer = context_scale * latent_states
-            dot_num = (scaled_answer * context_states).sum(dim=-1, keepdim=True)
-            dot_den = (context_states * context_states).sum(dim=-1, keepdim=True).clamp(min=1e-12)
-            projected = (dot_num / dot_den) * context_states
+            _scaled_answer, _dot_num, _dot_den, projected = _project_context_enhanced_states(
+                latent_states,
+                context_states,
+                context_scale=context_scale,
+                use_answer_state_as_basis=use_answer_state_as_basis,
+            )
 
             valid_expanded = valid.unsqueeze(-1).expand_as(latent_states)
             latent_states = torch.where(valid_expanded, projected, latent_states)
@@ -829,6 +960,7 @@ __all__ = [
     "token_strings_to_last_ids",
     "weighted_mean",
     "_resolve_concept_cache_key",
+    "_project_context_enhanced_states",
     "_extract_concept_latent_state_from_cache",
     "_flatten_concept_store_rows",
 ]

@@ -731,10 +731,15 @@ class CircuitAnalysisBatchProtocol(DefaultAnalysisBatchProtocol):
     graph_vocab_size: int | None
     intervention_config: str | None
     intervention_specs_json: str | None
+    feature_intervention_dict: Any | None
+    feature_intervention_dict_json: str | None
     intervention_layers: list[int] | torch.Tensor | None
     intervention_positions: list[int] | torch.Tensor | None
     intervention_feature_ids: list[int] | torch.Tensor | None
     intervention_values: list[float] | torch.Tensor | None
+    intervention_base_values: list[float] | torch.Tensor | None
+    intervention_score_values: list[float] | torch.Tensor | None
+    intervention_scale_factors: list[float] | torch.Tensor | None
     pre_intervention_logits: torch.Tensor | None
     post_intervention_logits: torch.Tensor | None
     logit_diff: torch.Tensor | float | None

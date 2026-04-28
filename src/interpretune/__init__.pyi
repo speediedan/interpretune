@@ -183,6 +183,9 @@ def extract_top_features(
     Input Schema:
         active_features (int64)
         activation_values (float32)
+        node_influence_scores (float32)
+        node_signed_influence_scores (float32)
+        node_logit_diff_gradient_scores (float32)
 
     Output Schema:
         top_feature_ids (int64)
@@ -202,14 +205,23 @@ def feature_intervention_forward(
         top_feature_ids (int64)
         top_feature_scores (float32)
         top_feature_activation_values (float32)
+        active_features (int64)
+        activation_values (float32)
+        node_influence_scores (float32)
+        node_signed_influence_scores (float32)
+        node_logit_diff_gradient_scores (float32)
 
     Output Schema:
         intervention_config (string)
         intervention_specs_json (string)
+        feature_intervention_dict_json (string)
         intervention_layers (int64)
         intervention_positions (int64)
         intervention_feature_ids (int64)
         intervention_values (float32)
+        intervention_base_values (float32)
+        intervention_score_values (float32)
+        intervention_scale_factors (float32)
         pre_intervention_logits (float32)
         post_intervention_logits (float32)
         intervention_activation_cache (object)
@@ -286,6 +298,7 @@ def graph_node_influence(
 
     Output Schema:
         node_influence_scores (float32)
+        node_signed_influence_scores (float32)
         node_feature_ids (int64)
     """
     ...

@@ -26,6 +26,54 @@ precedence. Concept-direction notebook experiments now use this surface for dire
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook such
 as `blocks.0.hook_in` in `project` mode.
 
+## Planned config split
+
+The current `CircuitTracerConfig` still mixes shared model-level intervention knobs with circuit-tracer-specific
+analysis-level feature-intervention settings by keeping them all at the top level behind `intervention_` prefixes.
+The next refactor should split that surface into:
+
+- a shared model-level intervention config dataclass that can be reused by `model_fwd_intervention`,
+	`resolve_interventions(...)`, and both the TransformerLens and NNsight model backends
+- a circuit-tracer analysis-level intervention config dataclass for feature-selection and
+	`ReplacementModel.feature_intervention(...)`-specific controls
+
+### Model-level intervention config candidates
+
+These options are backend-agnostic because they describe how a resolved hook intervention should be applied after the
+hook target is known, regardless of whether execution happens through TransformerLens or NNsight:
+
+- `hook_pattern` or `hook_patterns`: the user-facing hook selector before wildcard expansion
+- `interventions`: explicit resolved-or-resolvable intervention mapping payloads
+- `mode`: canonical replacement/add/project selector aligned with `InterventionSpec.mode`
+- `scale_factor`: canonical scalar aligned with `InterventionSpec.scale_factor`
+- `use_intervention_tensor_as_basis`: canonical projection-basis selector aligned with
+	`InterventionSpec.use_intervention_tensor_as_basis`
+- `intervention_tensor`: optional shorthand tensor when the caller is not supplying an explicit mapping
+
+The important canonicalization rule is that the shared dataclass should prefer the non-prefixed field names above.
+For example, `use_intervention_tensor_as_basis` should become the single canonical config name in the shared
+model-level dataclass rather than preserving both `use_intervention_tensor_as_basis` and
+`intervention_use_intervention_tensor_as_basis` as parallel long-term surfaces. Any legacy prefixed spellings should
+be normalized at the op/config boundary rather than carried deeper into backend execution code.
+
+### Circuit-tracer analysis-level config candidates
+
+These options are not general hook-intervention controls. They are specific to the analysis-layer feature-selection
+and `ReplacementModel.feature_intervention(...)` flow and should live in a circuit-tracer-specific intervention config
+object instead of the shared model-level one:
+
+- `value` and `value_source`
+- `sign_aware_scale`
+- `max_influence_norm_scale`
+- `constrained_layers`
+- `freeze_attention`
+- `apply_activation_function`
+- `sparse`
+- `return_activations`
+
+This split keeps the shared model-backend contract focused on `InterventionSpec`-style hook semantics while letting
+the circuit-tracer analysis backend own its feature-intervention execution details.
+
 ## Hook pattern contract
 
 Prefer canonical TransformerBridge-style hook names in new intervention configs, even when the current backend still

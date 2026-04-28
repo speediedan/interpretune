@@ -716,6 +716,68 @@ slice is repaired, the fresh notebook/analysis generation path has been revalida
 and the latest generated analysis notebook can now be used as the authoritative comparison surface
 for the preserved `/tmp` artifacts from this cycle.
 
+### 2026-04-27 Orange answer-basis follow-up
+
+This follow-up added the new `use_answer_state_as_basis` option to the shared
+`_extract_concept_latent_state_from_cache(...)` helper, threaded it through the notebook harness,
+latent-dynamics analysis, and analysis notebook surfaces, then ran both of the requested long-form
+validations:
+
+1. `concept_direction_analysis_launcher.py --experiment-set tests/nb_experiments/concept_direction/analysis/answer_basis_analysis_experiment_set.yaml`
+2. `latent_dynamics_launcher.py gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_answer_basis.yaml`
+
+Both completed successfully. The analysis experiment set passed its single reference test and ran
+the two baseline orange notebooks end to end, producing
+`/tmp/it_concept_direction_experiments/analysis/concept_direction_analysis_answer_basis_20260427_144640.ipynb`.
+The latent-dynamics rerun completed in `03:06` and produced
+`/tmp/it_concept_direction_experiments/analysis/gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_answer_basis_20260427_150438.ipynb`.
+
+#### Notebook-debug comparison on the orange `fs_l10_n5` surface
+
+| Config | `use_answer_state_as_basis` | Store raw norm | Embed/store cosine | Feature Jaccard | Store gap delta |
+|--------|:---------------------------:|---------------:|-------------------:|----------------:|----------------:|
+| `gemma3_1b_it_orange_fs_l10_n5_notebook_debug` | false | `25.223827` | `0.050431` | `0.111111` | `+3.90625` |
+| `gemma3_1b_it_orange_fs_l10_n5_answer_basis_notebook_debug` | true | `12.293857` | `0.006141` | `0.0` | `-32.25` |
+
+The answer-basis path is therefore a **real geometric change**, not a no-op, but on this orange
+surface it moves the store path farther away from the embed path and materially worsens the store
+pipeline outcome. The raw store direction norm drops by roughly half, yet that contraction does not
+translate into better alignment or a more target-consistent downstream intervention.
+
+#### Latent-dynamics interpretation
+
+The latent notebook sharpens that result rather than contradicting it.
+
+- All examples still resolve `selected_store_state_source = projected_context_state`, so the new
+   basis option is not merely triggering more answer-state fallbacks.
+- The group-mean projected state norms do shrink appreciably: Fruit drops from `41.785138` to
+   `30.971016`, and Color drops from `35.781089` to `26.585669`.
+- The final store-context paired-rejection raw norm tracks the same contraction (`25.223827` →
+   `12.293857`) while the answer-position store direction remains unchanged.
+
+That makes the current answer-basis result easy to summarize: it **changes the projected-context
+state geometry**, but it still leaves the selected store state on the projected-context branch and
+does not recover answer-position parity.
+
+#### Contract insight
+
+The pure answer-basis formulation also exposed an important contract detail: when the projection is
+defined as "project context into the answer-state basis", `context_enhanced_scale` cancels
+algebraically. That means the current scale knob can no longer tune this path in the same way it can
+for the original context-basis projection. If we want a tunable answer-oriented variant, the next
+step has to change the formula, not just the scale.
+
+#### Recommended next steps
+
+1. Keep `use_answer_state_as_basis` as an experimental diagnostic option rather than promoting it to
+    the new default.
+2. Try a **hybrid or non-canceling** answer-oriented rule next: for example, interpolate between the
+    context-basis and answer-basis projections, or blend the projected context state back toward the
+    raw answer state after normalization.
+3. Reuse the new notebook diagnostics (`projection_basis`, `use_answer_state_as_basis`, cosine/L2
+    closeness columns) on orange and `bat` before changing the production default, so the next
+    iteration is grounded in measured state geometry instead of only final gap deltas.
+
 ---
 
 ## Outstanding Questions

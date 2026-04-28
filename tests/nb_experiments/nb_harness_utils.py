@@ -236,6 +236,9 @@ class ConstrainedFeatureSelection:
     triples: tuple[tuple[int, int, int], ...] = ()
     layer_feature_pairs: tuple[tuple[int, int], ...] = ()
     activation_overrides: dict[tuple[int, int], float] = field(default_factory=dict)
+    score_source: str | None = None
+    score_sign: str = "any"
+    rank_by_abs: bool = False
 
 
 def _split_constrained_feature_selection_ref(raw_ref: Any) -> tuple[Any, float | None]:
@@ -421,6 +424,7 @@ def _normalize_constrained_feature_selection(raw_selection: Any) -> ConstrainedF
         activation_overrides = _normalize_feature_selection_activation_overrides(
             raw_selection.get("activation_overrides")
         )
+        score_source = raw_selection.get("score_source")
         return ConstrainedFeatureSelection(
             specific_features=specific_features,
             layers=layers,
@@ -431,6 +435,9 @@ def _normalize_constrained_feature_selection(raw_selection: Any) -> ConstrainedF
             triples=triples,
             layer_feature_pairs=layer_feature_pairs,
             activation_overrides=activation_overrides,
+            score_source=None if score_source is None else str(score_source),
+            score_sign=str(raw_selection.get("score_sign", "any")),
+            rank_by_abs=bool(raw_selection.get("rank_by_abs", False)),
         )
 
     if isinstance(raw_selection, Iterable) and not isinstance(raw_selection, (str, bytes)):
@@ -468,6 +475,9 @@ def _serialize_constrained_feature_selection(raw_selection: Any) -> list[Any] | 
             normalized.triples,
             normalized.layer_feature_pairs,
             normalized.activation_overrides,
+            normalized.score_source,
+            normalized.score_sign != "any",
+            normalized.rank_by_abs,
         )
     )
     serialized_specific_features = [
@@ -507,6 +517,12 @@ def _serialize_constrained_feature_selection(raw_selection: Any) -> list[Any] | 
             {"layer": int(layer), "feature_id": int(feature_id), "value": float(value)}
             for (layer, feature_id), value in sorted(normalized.activation_overrides.items())
         ]
+    if normalized.score_source is not None:
+        payload["score_source"] = normalized.score_source
+    if normalized.score_sign != "any":
+        payload["score_sign"] = normalized.score_sign
+    if normalized.rank_by_abs:
+        payload["rank_by_abs"] = True
     return payload
 
 
@@ -1083,7 +1099,12 @@ def serialize_notebook_config(
         "default_scale_factor": cfg.default_scale_factor,
         "scale_factor_sweep": cfg.scale_factor_sweep,
         "ablation_n_list": cfg.ablation_n_list,
-        "enable_sign_aware": cfg.enable_sign_aware,
+        "intervention_apply_activation_function": cfg.intervention_apply_activation_function,
+        "intervention_constrained_layers": cfg.intervention_constrained_layers,
+        "intervention_max_influence_norm_scale": cfg.intervention_max_influence_norm_scale,
+        "intervention_sign_aware_scale": cfg.intervention_sign_aware_scale,
+        "show_score_sign_in_feature_tables": cfg.show_score_sign_in_feature_tables,
+        "debug_print_circuit_tracer_cfg": cfg.debug_print_circuit_tracer_cfg,
         "batch_size": cfg.batch_size,
         "max_feature_nodes": cfg.max_feature_nodes,
         "force_device": cfg.force_device,
@@ -1105,6 +1126,7 @@ def serialize_notebook_config(
         ),
         "store_latent_extraction_mode": cfg.store_latent_extraction_mode,
         "context_enhanced_scale": cfg.context_enhanced_scale,
+        "use_answer_state_as_basis": cfg.use_answer_state_as_basis,
         "debug_validation_top_k": cfg.debug_validation_top_k,
         "debug_validation_raise_on_failure": cfg.debug_validation_raise_on_failure,
         "debug_validation_tolerances": {
@@ -1885,11 +1907,31 @@ def summarize_gap(
     return pre_gap, post_gap, post_gap - pre_gap
 
 
-def configure_analysis(module: Any, graph_op: Any, scale_factor: float) -> None:
+def configure_analysis(
+    module: Any,
+    graph_op: Any,
+    scale_factor: float,
+    cfg: NotebookHarnessConfig | None = None,
+    *,
+    use_debug_intervention_defaults: bool = False,
+) -> None:
     module.circuit_tracer_cfg.intervention_value_source = "top_feature_activation_values"
     module.circuit_tracer_cfg.intervention_scale_factor = scale_factor
-    module.circuit_tracer_cfg.intervention_constrained_layers = list(range(_resolve_model_layer_count(module)))
-    module.circuit_tracer_cfg.intervention_apply_activation_function = False
+    module.circuit_tracer_cfg.intervention_max_influence_norm_scale = bool(
+        getattr(cfg, "intervention_max_influence_norm_scale", False)
+    )
+    module.circuit_tracer_cfg.intervention_sign_aware_scale = bool(getattr(cfg, "intervention_sign_aware_scale", True))
+    if use_debug_intervention_defaults:
+        module.circuit_tracer_cfg.intervention_constrained_layers = list(range(_resolve_model_layer_count(module)))
+        module.circuit_tracer_cfg.intervention_apply_activation_function = False
+    else:
+        configured_layers = getattr(cfg, "intervention_constrained_layers", None)
+        module.circuit_tracer_cfg.intervention_constrained_layers = (
+            None if configured_layers is None else list(configured_layers)
+        )
+        module.circuit_tracer_cfg.intervention_apply_activation_function = bool(
+            getattr(cfg, "intervention_apply_activation_function", True)
+        )
     module.circuit_tracer_cfg.intervention_freeze_attention = None
     module.circuit_tracer_cfg.intervention_sparse = False
     module.circuit_tracer_cfg.intervention_return_activations = False
@@ -2498,8 +2540,18 @@ def _build_feature_selection_spec(
             triples=unique_triples,
             layer_feature_pairs=unique_pairs,
             activation_overrides=activation_overrides,
+            score_source=requested_selection.score_source,
+            score_sign=requested_selection.score_sign,
+            rank_by_abs=requested_selection.rank_by_abs,
         )
-        if unique_layers or unique_positions or unique_feature_ids or unique_triples or unique_pairs
+        if unique_layers
+        or unique_positions
+        or unique_feature_ids
+        or unique_triples
+        or unique_pairs
+        or requested_selection.score_source is not None
+        or requested_selection.score_sign != "any"
+        or requested_selection.rank_by_abs
         else None
     )
 

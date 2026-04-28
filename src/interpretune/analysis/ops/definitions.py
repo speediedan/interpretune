@@ -16,20 +16,23 @@ if TYPE_CHECKING:
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
 from interpretune.analysis.backends import (
     FeatureSelectionSpec,
-    apply_feature_selection_filter,
     require_analysis_backend,
     resolve_interventions,
 )
 from interpretune.analysis.ops.helpers import (
+    _apply_optional_feature_sign_filter,
     _augment_feature_rows_for_selection,
     _extract_concept_latent_state_from_cache,
     _flatten_concept_store_rows,
     _resolve_concept_cache_key,
+    _select_top_feature_indices,
+    apply_feature_selection_filter,
     extract_logits,
     last_token_logits,
     load_json_field,
     mean_target_logit_delta,
     require_model_backend,
+    resolve_feature_score_source,
     resolve_embedding_weight,
     resolve_aggregate_input,
     resolve_tokenizer,
@@ -171,13 +174,18 @@ def extract_concept_latent_state_impl(
     """Extract per-example latent rows from the configured cache key for downstream concept-direction ops."""
     context_enhanced = bool(kwargs.get("context_enhanced", False))
     context_scale = float(kwargs.get("context_scale", 1.0))
+    use_answer_state_as_basis = bool(kwargs.get("use_answer_state_as_basis", False))
 
     latent_states, cache_key = _extract_concept_latent_state_from_cache(
-        analysis_batch, context_enhanced=context_enhanced, context_scale=context_scale
+        analysis_batch,
+        context_enhanced=context_enhanced,
+        context_scale=context_scale,
+        use_answer_state_as_basis=use_answer_state_as_basis,
     )
     update_kwargs: dict[str, Any] = {
         "concept_latent_state": latent_states,
         "concept_cache_key": cache_key,
+        "use_answer_state_as_basis": use_answer_state_as_basis,
     }
     raw_context_token_indices = analysis_batch.get("context_token_indices")
     if raw_context_token_indices is not None:
@@ -1398,62 +1406,6 @@ def compute_attribution_graph_impl(
     return analysis_batch
 
 
-def _select_top_feature_indices(
-    feature_rows: torch.Tensor,
-    scores: torch.Tensor,
-    top_n: int | None,
-    feature_selection: FeatureSelectionSpec | None,
-) -> torch.Tensor:
-    if scores.numel() == 0:
-        return torch.empty((0,), dtype=torch.long)
-
-    ranked_indices = torch.argsort(scores, descending=True)
-    selected_count = scores.shape[0] if top_n is None else min(int(top_n), scores.shape[0])
-    if selected_count <= 0:
-        return torch.empty((0,), dtype=torch.long)
-
-    selected = ranked_indices[:selected_count].tolist()
-    if feature_selection is None or not feature_selection.layer_feature_pairs:
-        return torch.tensor(selected, dtype=torch.long)
-
-    rank_by_index = {int(index): rank for rank, index in enumerate(ranked_indices.tolist())}
-    guaranteed: list[int] = []
-    for layer, feature_id in dict.fromkeys(feature_selection.layer_feature_pairs):
-        match_mask = (feature_rows[:, 0] == int(layer)) & (feature_rows[:, 2] == int(feature_id))
-        if not match_mask.any():
-            continue
-        pair_indices = match_mask.nonzero(as_tuple=False).reshape(-1)
-        pair_scores = scores.index_select(0, pair_indices)
-        best_pair_index = int(pair_indices[int(torch.argmax(pair_scores).item())].item())
-        guaranteed.append(best_pair_index)
-
-    if not guaranteed:
-        return torch.tensor(selected, dtype=torch.long)
-
-    guaranteed = sorted(dict.fromkeys(guaranteed), key=lambda index: rank_by_index[index])
-    guaranteed_set = set(guaranteed)
-    selected_set = set(selected)
-
-    for guaranteed_index in guaranteed:
-        if guaranteed_index in selected_set:
-            continue
-        replace_position = next(
-            (position for position in range(len(selected) - 1, -1, -1) if selected[position] not in guaranteed_set),
-            None,
-        )
-        if replace_position is None:
-            selected.append(guaranteed_index)
-            selected_set.add(guaranteed_index)
-            continue
-        removed_index = selected[replace_position]
-        selected[replace_position] = guaranteed_index
-        selected_set.discard(removed_index)
-        selected_set.add(guaranteed_index)
-
-    selected = sorted(dict.fromkeys(selected), key=lambda index: rank_by_index[index])
-    return torch.tensor(selected, dtype=torch.long)
-
-
 def extract_top_features_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -1484,7 +1436,14 @@ def extract_top_features_impl(
         return analysis_batch
     active_features = active_features.reshape(-1, 3)
 
-    score_values = getattr(analysis_batch, "node_influence_scores", None)
+    score_source = resolve_feature_score_source(
+        kwargs.get("score_source") or (feature_selection.score_source if feature_selection else None)
+    )
+    score_values = getattr(analysis_batch, score_source, None) if score_source else None
+    if score_source is not None and score_values is None:
+        raise ValueError(f"extract_top_features score_source '{score_source}' is not present on analysis_batch")
+    if score_values is None:
+        score_values = getattr(analysis_batch, "node_influence_scores", None)
     if score_values is None:
         score_values = getattr(analysis_batch, "activation_values", None)
     scores = torch.as_tensor(score_values, dtype=torch.float32)
@@ -1524,7 +1483,21 @@ def extract_top_features_impl(
             if aligned_activation_values is not None:
                 aligned_activation_values = aligned_activation_values.index_select(0, sel_idx)
 
-    top_indices = _select_top_feature_indices(feature_rows, scores, top_n, feature_selection)
+        feature_rows, scores, aligned_activation_values = _apply_optional_feature_sign_filter(
+            feature_rows,
+            scores,
+            aligned_activation_values,
+            feature_selection,
+        )
+
+    rank_by_abs = bool(kwargs.get("rank_by_abs", feature_selection.rank_by_abs if feature_selection else False))
+    top_indices = _select_top_feature_indices(
+        feature_rows,
+        scores,
+        top_n,
+        feature_selection,
+        rank_scores=scores.abs() if rank_by_abs else None,
+    )
     update_payload: dict[str, Any] = {
         "top_feature_ids": feature_rows.index_select(0, top_indices).detach().cpu(),
         "top_feature_scores": scores.index_select(0, top_indices).detach().cpu(),
@@ -1569,9 +1542,16 @@ def graph_node_influence_impl(
     analysis_backend = require_analysis_backend(module)
     graph = analysis_backend.hydrate_graph_from_batch(analysis_batch)
     node_scores, node_feature_ids = analysis_backend.compute_node_influence_scores(graph)
+    update_payload: dict[str, Any] = {
+        "node_influence_scores": node_scores,
+        "node_feature_ids": node_feature_ids,
+    }
+    signed_score_fn = getattr(analysis_backend, "compute_signed_node_influence_scores", None)
+    if callable(signed_score_fn):
+        signed_scores = signed_score_fn(graph)
+        update_payload["node_signed_influence_scores"] = signed_scores
     analysis_batch.update(
-        node_influence_scores=node_scores,
-        node_feature_ids=node_feature_ids,
+        **update_payload,
     )
     return analysis_batch
 
@@ -1585,8 +1565,8 @@ def feature_intervention_forward_impl(
 ) -> AnalysisBatch:
     """Run circuit-tracer feature interventions against the module replacement model.
 
-    This op currently implements forward-only intervention analysis and stores an Arrow-safe summary of the intervention
-    tuples so downstream AnalysisStore consumers can inspect or rehydrate the canonical intervention list.
+    This op currently implements forward-only intervention analysis and stores both the circuit-tracer tuple payload and
+    a canonical feature-target InterventionDict summary for AnalysisStore consumers.
     """
     analysis_backend = require_analysis_backend(module)
 
@@ -1598,6 +1578,21 @@ def feature_intervention_forward_impl(
     if prompt is None:
         prompt = analysis_backend.resolve_prompt(module, analysis_batch, batch)
     settings = analysis_backend.resolve_feature_intervention_settings(module, kwargs)
+    if (
+        getattr(analysis_batch, "top_feature_ids", None) is None
+        and getattr(analysis_batch, "active_features", None) is not None
+    ):
+        selection_kwargs = {
+            name: kwargs[name] for name in ("feature_selection", "score_source", "rank_by_abs") if name in kwargs
+        }
+        analysis_batch = extract_top_features_impl(
+            module,
+            analysis_batch,
+            batch,
+            batch_idx,
+            top_n=kwargs.get("top_n"),
+            **selection_kwargs,
+        )
     feature_rows = analysis_batch.require(
         "top_feature_ids",
         message="feature_intervention_forward requires top_feature_ids in analysis_batch or scoped inputs",

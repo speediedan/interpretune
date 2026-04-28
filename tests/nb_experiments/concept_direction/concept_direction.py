@@ -16,6 +16,7 @@ import interpretune.analysis
 from interpretune.analysis.execution import execute_analysis_op
 from interpretune.analysis.ops.helpers import (
     AnalysisInputs,
+    FEATURE_SCORE_SOURCE_ALIASES,
     _flatten_concept_store_rows,
     last_token_logits,
 )
@@ -53,6 +54,7 @@ from tests.nb_experiments.config import (
 )
 from tests.nb_experiments.nb_harness_utils import (
     ConstrainedFeatureSelection,
+    ConstrainedFeatureSelectionRef as ConstrainedFeatureSelectionRef,
     _build_graph_analysis_inputs as _shared_build_graph_analysis_inputs,
     _count_specific_feature_requests,
     _get_config_value_with_preset_default,
@@ -95,6 +97,7 @@ StoreLatentExtractionMode = Literal["answer_position_state", "context_enhanced"]
 AnalysisMode = Literal["concept_pair", "explicit_embedding_difference", "debug_intervention_pipelines"]
 ConceptDirectionMode = Literal["mean_difference", "paired_rejection", "single_group"]
 DebugSessionSurfacePreset = Literal["notebook_default", "parity_surface"]
+_SIGNED_FEATURE_SCORE_SOURCE_KEYS = frozenset({"node_signed_influence_scores", "node_logit_diff_gradient_scores"})
 
 
 DEFAULT_CONCEPT_PAIR_CONFIG_DIR = Path(__file__).with_name("configs")
@@ -106,6 +109,13 @@ DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT = Path(
     )
 )
 NULL_BATCH: Any = cast(Any, None)
+
+
+def constrained_feature_selection_uses_signed_scores(selection: ConstrainedFeatureSelection | None) -> bool:
+    if selection is None or selection.score_source is None:
+        return False
+    resolved_score_source = FEATURE_SCORE_SOURCE_ALIASES.get(selection.score_source, selection.score_source)
+    return resolved_score_source in _SIGNED_FEATURE_SCORE_SOURCE_KEYS
 
 
 @dataclass
@@ -404,9 +414,12 @@ class NotebookHarnessConfig:
     default_scale_factor: float
     scale_factor_sweep: list[float]
     ablation_n_list: list[int]
-    enable_sign_aware: bool
     force_device: str | None
     work_root: Any
+    intervention_max_influence_norm_scale: bool = False
+    intervention_sign_aware_scale: bool = True
+    intervention_apply_activation_function: bool = True
+    intervention_constrained_layers: list[int] | None = None
     analysis_mode: AnalysisMode = "concept_pair"
     concept_direction_mode: ConceptDirectionMode = "paired_rejection"
     explicit_direction_tokens: tuple[str, str] | None = None
@@ -432,8 +445,11 @@ class NotebookHarnessConfig:
     key_tokens_override: tuple[str, ...] | None = None
     concept_pair_config_path: str | None = None
     constrained_feature_selection_refs: ConstrainedFeatureSelection | None = None
+    show_score_sign_in_feature_tables: bool = False
     store_latent_extraction_mode: StoreLatentExtractionMode = "answer_position_state"
     context_enhanced_scale: float = 1.0
+    use_answer_state_as_basis: bool = False
+    debug_print_circuit_tracer_cfg: bool = False
     debug_pipeline_state_artifacts: bool = False
     debug_pipeline_state_artifact_name: str | None = None
     direct_projection_interventions: dict[str, Any] | None = None
@@ -530,6 +546,10 @@ class NotebookHarnessConfig:
         self.constrained_feature_selection_refs = _normalize_constrained_feature_selection_refs(
             self.constrained_feature_selection_refs
         )
+        self.show_score_sign_in_feature_tables = bool(
+            self.show_score_sign_in_feature_tables
+            or constrained_feature_selection_uses_signed_scores(self.constrained_feature_selection_refs)
+        )
         if self.direct_projection_interventions is not None:
             if not isinstance(self.direct_projection_interventions, Mapping):
                 raise ValueError("ANALYSIS.direct_projection.interventions must be a mapping when provided")
@@ -543,6 +563,17 @@ class NotebookHarnessConfig:
         if self.debug_pipeline_state_artifact_name is not None:
             cleaned_artifact_name = str(self.debug_pipeline_state_artifact_name).strip()
             self.debug_pipeline_state_artifact_name = cleaned_artifact_name or None
+        self.debug_print_circuit_tracer_cfg = bool(self.debug_print_circuit_tracer_cfg)
+        self.intervention_max_influence_norm_scale = bool(self.intervention_max_influence_norm_scale)
+        self.intervention_sign_aware_scale = bool(self.intervention_sign_aware_scale)
+        self.intervention_apply_activation_function = bool(self.intervention_apply_activation_function)
+        if self.intervention_constrained_layers is not None:
+            if isinstance(self.intervention_constrained_layers, (str, bytes)) or not isinstance(
+                self.intervention_constrained_layers,
+                Sequence,
+            ):
+                raise ValueError("intervention_constrained_layers must be a sequence of layer indices or null")
+            self.intervention_constrained_layers = [int(value) for value in self.intervention_constrained_layers]
 
         mode_warning_messages = list(self.mode_warning_messages)
         if self.analysis_mode == "explicit_embedding_difference":
@@ -889,7 +920,18 @@ def build_notebook_harness_config(
     )
     prompt = _resolve_prompt_text(resolved_payload)
     analysis_cfg = cast(Mapping[str, Any], resolved_payload.get("ANALYSIS", {}))
+    feature_intervention_cfg = cast(Mapping[str, Any], analysis_cfg.get("feature_intervention", {}))
     direct_projection_cfg = cast(Mapping[str, Any], analysis_cfg.get("direct_projection", {}))
+    intervention_constrained_layers = feature_intervention_cfg.get(
+        "constrained_layers",
+        get_config_value(
+            resolved_payload,
+            section="ANALYSIS",
+            key="intervention_constrained_layers",
+            flat_key="INTERVENTION_CONSTRAINED_LAYERS",
+            default=None,
+        ),
+    )
     debug_session_surface_preset = cast(
         DebugSessionSurfacePreset,
         str(
@@ -960,12 +1002,53 @@ def build_notebook_harness_config(
                 default=[5, 10, 25, 50, 100],
             )
         ),
-        enable_sign_aware=bool(
+        intervention_max_influence_norm_scale=bool(
+            feature_intervention_cfg.get(
+                "max_influence_norm_scale",
+                get_config_value(
+                    resolved_payload,
+                    section="ANALYSIS",
+                    key="intervention_max_influence_norm_scale",
+                    flat_key="INTERVENTION_MAX_INFLUENCE_NORM_SCALE",
+                    default=False,
+                ),
+            )
+        ),
+        intervention_sign_aware_scale=bool(
+            feature_intervention_cfg.get(
+                "sign_aware_scale",
+                get_config_value(
+                    resolved_payload,
+                    section="ANALYSIS",
+                    key="intervention_sign_aware_scale",
+                    flat_key="INTERVENTION_SIGN_AWARE_SCALE",
+                    default=True,
+                ),
+            )
+        ),
+        intervention_apply_activation_function=bool(
+            feature_intervention_cfg.get(
+                "apply_activation_function",
+                get_config_value(
+                    resolved_payload,
+                    section="ANALYSIS",
+                    key="intervention_apply_activation_function",
+                    flat_key="INTERVENTION_APPLY_ACTIVATION_FUNCTION",
+                    default=True,
+                ),
+            )
+        ),
+        intervention_constrained_layers=(
+            None
+            if intervention_constrained_layers is None
+            else [int(value) for value in cast(Sequence[Any], intervention_constrained_layers)]
+        ),
+        debug_print_circuit_tracer_cfg=bool(
             get_config_value(
                 resolved_payload,
                 section="ANALYSIS",
-                key="enable_sign_aware",
-                flat_key="ENABLE_SIGN_AWARE",
+                key="debug_print_circuit_tracer_cfg",
+                flat_key="DEBUG_PRINT_CIRCUIT_TRACER_CFG",
                 default=False,
             )
         ),
@@ -1120,6 +1203,15 @@ def build_notebook_harness_config(
                 key="context_enhanced_scale",
                 flat_key="CONTEXT_ENHANCED_SCALE",
                 default=1.0,
+            )
+        ),
+        use_answer_state_as_basis=bool(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="use_answer_state_as_basis",
+                flat_key="USE_ANSWER_STATE_AS_BASIS",
+                default=False,
             )
         ),
         debug_pipeline_state_artifacts=bool(
@@ -1658,11 +1750,31 @@ def summarize_gap(
     return pre_gap, post_gap, post_gap - pre_gap
 
 
-def configure_analysis(module: Any, graph_op: Any, scale_factor: float) -> None:
+def configure_analysis(
+    module: Any,
+    graph_op: Any,
+    scale_factor: float,
+    cfg: NotebookHarnessConfig | None = None,
+    *,
+    use_debug_intervention_defaults: bool = False,
+) -> None:
     module.circuit_tracer_cfg.intervention_value_source = "top_feature_activation_values"
     module.circuit_tracer_cfg.intervention_scale_factor = scale_factor
-    module.circuit_tracer_cfg.intervention_constrained_layers = list(range(_resolve_model_layer_count(module)))
-    module.circuit_tracer_cfg.intervention_apply_activation_function = False
+    module.circuit_tracer_cfg.intervention_max_influence_norm_scale = bool(
+        getattr(cfg, "intervention_max_influence_norm_scale", False)
+    )
+    module.circuit_tracer_cfg.intervention_sign_aware_scale = bool(getattr(cfg, "intervention_sign_aware_scale", True))
+    if use_debug_intervention_defaults:
+        module.circuit_tracer_cfg.intervention_constrained_layers = list(range(_resolve_model_layer_count(module)))
+        module.circuit_tracer_cfg.intervention_apply_activation_function = False
+    else:
+        configured_layers = getattr(cfg, "intervention_constrained_layers", None)
+        module.circuit_tracer_cfg.intervention_constrained_layers = (
+            None if configured_layers is None else list(configured_layers)
+        )
+        module.circuit_tracer_cfg.intervention_apply_activation_function = bool(
+            getattr(cfg, "intervention_apply_activation_function", True)
+        )
     module.circuit_tracer_cfg.intervention_freeze_attention = None
     module.circuit_tracer_cfg.intervention_sparse = False
     module.circuit_tracer_cfg.intervention_return_activations = False
@@ -2475,8 +2587,10 @@ def execute_concept_latent_extraction_ops(
     - ``"answer_position_state"``: Default — extracts the hidden state at the answer
       token position.
     - ``"context_enhanced"``: Extracts the answer-position state *and* the immediately
-      preceding token's context, then projects the scaled answer state into that context.
-      The scale factor is read from ``cfg.context_enhanced_scale`` (default 1.0).
+            preceding token's context, then projects either the scaled answer state into that
+            context or the context state into the scaled answer-state basis depending on
+            ``cfg.use_answer_state_as_basis``. The scale factor is read from
+            ``cfg.context_enhanced_scale`` (default 1.0).
     """
     if extraction_mode not in ("answer_position_state", "context_enhanced"):
         raise ValueError(f"Unsupported extraction_mode: {extraction_mode}")
@@ -2526,6 +2640,7 @@ def execute_concept_latent_extraction_ops(
                 analysis_inputs=analysis_inputs,
                 context_enhanced=context_enhanced,
                 context_scale=cfg.context_enhanced_scale,
+                use_answer_state_as_basis=cfg.use_answer_state_as_basis,
             )
         )
 
@@ -2645,8 +2760,10 @@ def compute_store_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
                         concept_cache_key=cfg.store_concept_cache_key,
                         orig_labels=group_label,
                         logit_diffs=logit_diff,
+                        use_answer_state_as_basis=cfg.use_answer_state_as_basis,
                     ),
                     context_scale=cfg.context_enhanced_scale,
+                    use_answer_state_as_basis=cfg.use_answer_state_as_basis,
                 )
                 context_extraction_artifacts.append(
                     build_context_extraction_artifact(
@@ -2697,6 +2814,7 @@ def compute_store_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
             "n_latent_rows": int(flattened_states.shape[0]),
             "manual_reference_fn": "compute_store_direction_manual",
             "store_latent_extraction_mode": cfg.store_latent_extraction_mode,
+            "use_answer_state_as_basis": cfg.use_answer_state_as_basis,
             "context_token_source_counts": {
                 source: sum(1 for example in prediction_info["examples"] if example["context_token_source"] == source)
                 for source in {str(example["context_token_source"]) for example in prediction_info["examples"]}
@@ -2730,6 +2848,7 @@ def compute_store_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
             )
             stage_artifact["store_latent_extraction_mode"] = cfg.store_latent_extraction_mode
             stage_artifact["context_enhanced_scale"] = cfg.context_enhanced_scale
+            stage_artifact["use_answer_state_as_basis"] = cfg.use_answer_state_as_basis
             stage_artifact["context_enhanced_extraction"] = context_extraction_artifacts
             result["debug_pipeline_state_artifacts"] = stage_artifact
         return result
@@ -2817,84 +2936,6 @@ def run_ablations(
                 )
                 results[n_value] = post_logits
     return abl_groups, abl_logit_diffs, results
-
-
-def run_sign_aware(
-    cfg: NotebookHarnessConfig,
-    feature_pool: dict[str, Any],
-    pre_logits_ref: torch.Tensor,
-) -> dict[str, Any]:
-    if cfg.is_debug_intervention_mode:
-        raise ValueError("run_sign_aware is not available in debug_intervention_pipelines mode")
-
-    feature_ids = feature_pool["feature_ids"]
-    feature_scores = feature_pool["feature_scores"]
-    feature_activations = feature_pool["feature_activations"]
-    positive_mask = feature_activations > 0
-    negative_mask = feature_activations < 0
-    result: dict[str, Any] = {
-        "positive_features": feature_ids[positive_mask],
-        "negative_features": feature_ids[negative_mask],
-        "positive_scores": feature_scores[positive_mask],
-        "negative_scores": feature_scores[negative_mask],
-        "positive_activations": feature_activations[positive_mask],
-        "negative_activations": feature_activations[negative_mask],
-        "messages": [],
-    }
-    with experiment_session(
-        cfg.work_root,
-        phase_run_name(cfg, "sign_aware"),
-        **cfg.session_kwargs,
-    ) as (_, module, tokenizer):
-        rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
-        with maybe_zero_softcap(module, cfg):
-            if len(result["positive_features"]) > 0:
-                n_pos = min(cfg.top_n, len(result["positive_features"]))
-                pos_intervention = cast(
-                    Any,
-                    it.feature_intervention_forward(
-                        module,
-                        it.AnalysisBatch(
-                            prompts=[rendered_prompt],
-                            top_feature_ids=result["positive_features"][:n_pos],
-                            top_feature_scores=result["positive_scores"][:n_pos],
-                            top_feature_activation_values=result["positive_activations"][:n_pos]
-                            * cfg.default_scale_factor,
-                            logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
-                        ),
-                        NULL_BATCH,
-                        0,
-                    ),
-                )
-                result["positive_post_logits"] = tensor_to_cpu(pos_intervention.post_intervention_logits)
-            else:
-                result["messages"].append(
-                    "No positive-activation features were available for the current feature pool."
-                )
-            if len(result["negative_features"]) > 0:
-                n_neg = min(cfg.top_n, len(result["negative_features"]))
-                neg_intervention = cast(
-                    Any,
-                    it.feature_intervention_forward(
-                        module,
-                        it.AnalysisBatch(
-                            prompts=[rendered_prompt],
-                            top_feature_ids=result["negative_features"][:n_neg],
-                            top_feature_scores=result["negative_scores"][:n_neg],
-                            top_feature_activation_values=result["negative_activations"][:n_neg] * 0.0,
-                            logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
-                        ),
-                        NULL_BATCH,
-                        0,
-                    ),
-                )
-                result["negative_post_logits"] = tensor_to_cpu(neg_intervention.post_intervention_logits)
-            else:
-                result["messages"].append(
-                    "No negative-activation features were available for the current feature pool."
-                )
-    result["pre_logits_ref"] = pre_logits_ref
-    return result
 
 
 def run_debug_intervention_validation(cfg: NotebookHarnessConfig) -> dict[str, Any]:

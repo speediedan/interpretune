@@ -29,6 +29,7 @@ from tests.nb_experiments.config import load_experiment_config  # noqa: E402
 
 NOTEBOOK_PATH = Path(__file__).resolve().with_name("concept_direction_latent_dynamics_analysis.ipynb")
 DEFAULT_CONFIG_DIR = NOTEBOOK_PATH.parent / "configs"
+DEFAULT_CONCEPT_DIRECTION_CONFIG_DIR = NOTEBOOK_PATH.parent.parent / "configs"
 DEFAULT_OUTPUT_DIR = Path("/tmp/it_concept_direction_experiments/analysis")
 
 
@@ -104,9 +105,16 @@ def _timestamp() -> str:
 
 def resolve_config_path(raw_value: str, config_dir: Path) -> Path:
     raw_path = Path(raw_value).expanduser()
-    candidates = [raw_path, config_dir / raw_value]
+    candidates = [raw_path, config_dir / raw_value, DEFAULT_CONCEPT_DIRECTION_CONFIG_DIR / raw_value]
     if raw_path.suffix == "":
-        candidates.extend([config_dir / f"{raw_value}.yaml", config_dir / f"{raw_value}.yml"])
+        candidates.extend(
+            [
+                config_dir / f"{raw_value}.yaml",
+                config_dir / f"{raw_value}.yml",
+                DEFAULT_CONCEPT_DIRECTION_CONFIG_DIR / f"{raw_value}.yaml",
+                DEFAULT_CONCEPT_DIRECTION_CONFIG_DIR / f"{raw_value}.yml",
+            ]
+        )
     for candidate in candidates:
         if candidate.exists():
             return candidate.resolve()

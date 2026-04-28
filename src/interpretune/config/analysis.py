@@ -123,10 +123,10 @@ class AnalysisCfg(ITSerializableCfg):
         repr=False,
         compare=False,
     )  # Tracks which live module instances this cfg has been applied to
-    _op: str | AnalysisOp | Callable | list[AnalysisOp] | None = None  # op via generated analysis step
+    _op: str | AnalysisOp | Callable | list[AnalysisOp | Callable] | None = None  # op via generated analysis step
 
     @property
-    def op(self) -> str | AnalysisOp | Callable | list[AnalysisOp] | None:
+    def op(self) -> str | AnalysisOp | Callable | list[AnalysisOp | Callable] | None:
         """Get the operation, unwrapping any OpWrapper if present."""
         if self._op is None:
             return None
@@ -138,7 +138,7 @@ class AnalysisCfg(ITSerializableCfg):
         return self._op
 
     @op.setter
-    def op(self, value: str | AnalysisOp | Callable | list[AnalysisOp] | None) -> None:
+    def op(self, value: str | AnalysisOp | Callable | list[AnalysisOp | Callable] | None) -> None:
         """Set the operation value."""
         self._op = value
 
@@ -198,11 +198,39 @@ class AnalysisCfg(ITSerializableCfg):
                 for op in self.op:
                     if isinstance(op, str):
                         instantiated_ops.append(DISPATCHER.get_op(op))
-                    elif not isinstance(op, AnalysisOp):
-                        # Expect an OpWrapper-like object
+                    elif isinstance(op, OpWrapper):
                         instantiated_ops.append(op._ensure_instantiated())
-                    else:
+                    elif isinstance(op, AnalysisOp):
                         instantiated_ops.append(op)
+                    else:
+                        ensure_instantiated = getattr(op, "_ensure_instantiated", None)
+                        if callable(ensure_instantiated):
+                            instantiated_ops.append(ensure_instantiated())
+                            continue
+
+                        bound_self = getattr(op, "__self__", None)
+                        bound_ensure_instantiated = getattr(bound_self, "_ensure_instantiated", None)
+                        if callable(bound_ensure_instantiated):
+                            instantiated_ops.append(bound_ensure_instantiated())
+                            continue
+
+                        op_name = (
+                            getattr(op, "_op_name", None) or getattr(op, "name", None) or getattr(op, "__name__", None)
+                        )
+                        if isinstance(op_name, str):
+                            try:
+                                instantiated_ops.append(DISPATCHER.get_op(op_name))
+                                continue
+                            except Exception:
+                                pass
+
+                        instantiated = op()
+                        if isinstance(instantiated, OpWrapper):
+                            instantiated_ops.append(instantiated._ensure_instantiated())
+                        elif isinstance(instantiated, AnalysisOp):
+                            instantiated_ops.append(instantiated)
+                        else:
+                            raise TypeError(f"Composite op factory returned unsupported type: {type(instantiated)}")
                 self.op = DISPATCHER.compile_ops(instantiated_ops)
             return
 

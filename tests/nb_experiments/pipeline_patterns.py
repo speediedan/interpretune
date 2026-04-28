@@ -128,6 +128,24 @@ def _serialize_requested_constrained_feature_selection(cfg: NotebookHarnessConfi
     return _serialize_constrained_feature_selection(cfg.constrained_feature_selection_refs)
 
 
+def _maybe_print_circuit_tracer_cfg_debug(
+    cfg: NotebookHarnessConfig,
+    *,
+    label: str,
+    scale_factor: float,
+    module: Any,
+) -> None:
+    if not getattr(cfg, "debug_print_circuit_tracer_cfg", False):
+        return
+    payload = {
+        "label": label,
+        "scale_factor": float(scale_factor),
+        "circuit_tracer_cfg": snapshot_module_runtime_state(module).get("circuit_tracer_cfg"),
+    }
+    print("\nCircuit tracer config debug:")
+    print(json.dumps(payload, indent=2, sort_keys=True))
+
+
 def run_initial_sanity_check(cfg: NotebookHarnessConfig) -> dict[str, Any]:
     """Run initial sanity check for the configured intervention prompt and return logit analysis.
 
@@ -337,7 +355,8 @@ def run_pipeline(
         (target_a_id, target_b_id), resolved_target_tokens = resolve_target_tokens(cfg, tokenizer)
         key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
         rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
-        configure_analysis(module, it.compute_attribution_graph, scale_factor)
+        configure_analysis(module, it.compute_attribution_graph, scale_factor, cfg)
+        _maybe_print_circuit_tracer_cfg_debug(cfg, label=label, scale_factor=scale_factor, module=module)
         analysis_batch, graph_call_kwargs = build_graph_analysis_inputs(tokenizer, rendered_prompt)
         graph_artifact = None
         with maybe_zero_softcap(module, cfg):
@@ -491,7 +510,7 @@ def run_direct_projection_pipeline(
         enc = tokenizer(rendered_prompt, return_tensors="pt", padding=False, add_special_tokens=add_special_tokens)
         device = next(module.model.parameters()).device
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in dict(enc).items()}
-        configure_analysis(module, it.model_fwd_intervention, scale_factor)
+        configure_analysis(module, it.model_fwd_intervention, scale_factor, cfg)
         analysis_batch = build_analysis_batch(rendered_prompt, target_a_id, target_b_id, scale_factor)
         with maybe_zero_softcap(module, cfg):
             intervention_result = cast(
@@ -648,7 +667,7 @@ def run_scale_sweep(
                 (target_a_id, target_b_id), _ = resolve_target_tokens(cfg, tokenizer)
                 key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
                 rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
-                configure_analysis(module, it.compute_attribution_graph, scale_factor)
+                configure_analysis(module, it.compute_attribution_graph, scale_factor, cfg)
                 analysis_batch, graph_call_kwargs = build_graph_analysis_inputs(tokenizer, rendered_prompt)
                 graph_artifact = None
                 with maybe_zero_softcap(module, cfg):
@@ -737,7 +756,7 @@ def collect_feature_pool(
         (target_a_id, target_b_id), _ = resolve_target_tokens(cfg, tokenizer)
         key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer)
         rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
-        configure_analysis(module, it.compute_attribution_graph, 0.0)
+        configure_analysis(module, it.compute_attribution_graph, 0.0, cfg)
         analysis_batch, graph_call_kwargs = build_graph_analysis_inputs(tokenizer, rendered_prompt)
         with maybe_zero_softcap(module, cfg):
             graph_result = cast(
@@ -829,84 +848,6 @@ def run_ablations(
     return abl_groups, abl_logit_diffs, results
 
 
-def run_sign_aware(
-    cfg: NotebookHarnessConfig,
-    feature_pool: dict[str, Any],
-    pre_logits_ref: torch.Tensor,
-) -> dict[str, Any]:
-    if cfg.is_debug_intervention_mode:
-        raise ValueError("run_sign_aware is not available in debug_intervention_pipelines mode")
-
-    feature_ids = feature_pool["feature_ids"]
-    feature_scores = feature_pool["feature_scores"]
-    feature_activations = feature_pool["feature_activations"]
-    positive_mask = feature_activations > 0
-    negative_mask = feature_activations < 0
-    result: dict[str, Any] = {
-        "positive_features": feature_ids[positive_mask],
-        "negative_features": feature_ids[negative_mask],
-        "positive_scores": feature_scores[positive_mask],
-        "negative_scores": feature_scores[negative_mask],
-        "positive_activations": feature_activations[positive_mask],
-        "negative_activations": feature_activations[negative_mask],
-        "messages": [],
-    }
-    with experiment_session(
-        cfg.work_root,
-        phase_run_name(cfg.experiment_name, "sign_aware"),
-        **cfg.session_kwargs,
-    ) as (_, module, tokenizer):
-        rendered_prompt = render_prompt(cfg.prompt, tokenizer, cfg.prompt_render_mode)
-        with maybe_zero_softcap(module, cfg):
-            if len(result["positive_features"]) > 0:
-                n_pos = min(cfg.top_n, len(result["positive_features"]))
-                pos_intervention = cast(
-                    Any,
-                    it.feature_intervention_forward(
-                        module,
-                        it.AnalysisBatch(
-                            prompts=[rendered_prompt],
-                            top_feature_ids=result["positive_features"][:n_pos],
-                            top_feature_scores=result["positive_scores"][:n_pos],
-                            top_feature_activation_values=result["positive_activations"][:n_pos]
-                            * cfg.default_scale_factor,
-                            logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
-                        ),
-                        NULL_BATCH,
-                        0,
-                    ),
-                )
-                result["positive_post_logits"] = tensor_to_cpu(pos_intervention.post_intervention_logits)
-            else:
-                result["messages"].append(
-                    "No positive-activation features were available for the current feature pool."
-                )
-            if len(result["negative_features"]) > 0:
-                n_neg = min(cfg.top_n, len(result["negative_features"]))
-                neg_intervention = cast(
-                    Any,
-                    it.feature_intervention_forward(
-                        module,
-                        it.AnalysisBatch(
-                            prompts=[rendered_prompt],
-                            top_feature_ids=result["negative_features"][:n_neg],
-                            top_feature_scores=result["negative_scores"][:n_neg],
-                            top_feature_activation_values=result["negative_activations"][:n_neg] * 0.0,
-                            logit_target_ids=torch.tensor([feature_pool["target_a_id"]], dtype=torch.long),
-                        ),
-                        cast(Any, None),
-                        0,
-                    ),
-                )
-                result["negative_post_logits"] = tensor_to_cpu(neg_intervention.post_intervention_logits)
-            else:
-                result["messages"].append(
-                    "No negative-activation features were available for the current feature pool."
-                )
-    result["pre_logits_ref"] = pre_logits_ref
-    return result
-
-
 def run_debug_intervention_validation(cfg: NotebookHarnessConfig) -> dict[str, Any]:
     if not cfg.is_debug_intervention_mode:
         raise ValueError("run_debug_intervention_validation is only available in debug_intervention_pipelines mode")
@@ -921,7 +862,13 @@ def run_debug_intervention_validation(cfg: NotebookHarnessConfig) -> dict[str, A
         key_ids, key_labels = get_key_token_ids_and_labels(cfg, tokenizer, include_bare_variants=False)
         graph_target_ids, graph_target_tokens = resolve_graph_target_tokens(cfg, tokenizer)
 
-        configure_analysis(module, it.compute_attribution_graph, cfg.default_scale_factor)
+        configure_analysis(
+            module,
+            it.compute_attribution_graph,
+            cfg.default_scale_factor,
+            cfg,
+            use_debug_intervention_defaults=True,
+        )
         analysis_batch, graph_call_kwargs = _build_graph_analysis_inputs(
             cfg,
             tokenizer,

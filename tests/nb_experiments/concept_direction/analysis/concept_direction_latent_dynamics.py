@@ -651,8 +651,10 @@ def run_latent_dynamics_analysis(
                             concept_cache_key=cfg.store_concept_cache_key,
                             orig_labels=group_label,
                             logit_diffs=logit_diff,
+                            use_answer_state_as_basis=cfg.use_answer_state_as_basis,
                         ),
                         context_scale=cfg.context_enhanced_scale,
+                        use_answer_state_as_basis=cfg.use_answer_state_as_basis,
                     )
                     for cached_batch, answer_index, context_index, group_label, logit_diff in zip(
                         cached_batches,
@@ -1109,6 +1111,7 @@ def run_latent_dynamics_analysis(
                     "concept_direction_mode": cfg.analysis_direction_mode_name,
                     "store_latent_extraction_mode": cfg.store_latent_extraction_mode,
                     "context_enhanced_scale": float(cfg.context_enhanced_scale),
+                    "use_answer_state_as_basis": bool(cfg.use_answer_state_as_basis),
                     "projection_backend_preference": umap_backend_preference,
                     "resolved_key_tokens": _serialize_key_tokens(cfg, tokenizer),
                     "constrained_feature_selection": _serialize_constrained_feature_selection(

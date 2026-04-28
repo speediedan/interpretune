@@ -21,6 +21,7 @@ from interpretune.analysis.backends import require_analysis_backend
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.analysis.ops.helpers import (
+    FeatureSelectionSpec,
     apply_feature_selection_filter,
     last_token_logits,
 )
@@ -130,7 +131,10 @@ class Gemma3ConceptDirectionParityCase:
     classification_question: str
     store_concept_cache_key: str
     context_enhanced_scale: float
+    use_answer_state_as_basis: bool = False
     constrained_feature_selection_refs: Any | None = None
+    intervention_max_influence_norm_scale: bool = False
+    intervention_sign_aware_scale: bool = True
     require_cross_path_feature_overlap: bool = True
     require_gap_improvement: bool = True
 
@@ -858,6 +862,8 @@ def _configure_gemma3_it_op_settings(module: Any, case: Gemma3InstructionInterve
     cfg.desired_logit_prob = 0.95
     cfg.intervention_value_source = "top_feature_activation_values"
     cfg.intervention_scale_factor = case.intervention_scale_factor
+    cfg.intervention_max_influence_norm_scale = False
+    cfg.intervention_sign_aware_scale = True
     cfg.intervention_constrained_layers = list(range(module.replacement_model.cfg.n_layers))
     cfg.intervention_apply_activation_function = False
     cfg.intervention_freeze_attention = None
@@ -917,6 +923,11 @@ def _verify_wrapper_feature_interventions(
             atol=VALUE_ATOL,
         )
         chosen_node = _find_active_feature_index(graph_context.active_features, feature_row)
+        baseline_activation = float(
+            graph_context.activation_cache[feature_row[0], feature_row[1], feature_row[2]].item()
+        )
+        assert abs(baseline_activation) > 1e-12
+        expected_effect_scale = (float(interventions[0][3]) - baseline_activation) / baseline_activation
         returned_activation_cache = getattr(wrapper_result, "intervention_activation_cache", None) is not None
         edge_max_logit_abs_error = float("nan")
         if require_direct_edge_parity:
@@ -940,7 +951,7 @@ def _verify_wrapper_feature_interventions(
                 context=graph_context,
                 new_relevant_activations=wrapper_relevant_activations,
                 new_logits=wrapper_post,
-                expected_effects=graph_context.adjacency_matrix[:, chosen_node],
+                expected_effects=graph_context.adjacency_matrix[:, chosen_node] * expected_effect_scale,
                 act_atol=FEATURE_EDGE_ACT_ATOL,
                 act_rtol=FEATURE_EDGE_ACT_RTOL,
                 logit_atol=EDGE_LOGIT_ATOL,
@@ -1140,4 +1151,139 @@ def test_analysis_backend_parity_gemma3_it_op_intervention_graph(
                     graph,
                     graph_context,
                     top_features_result,
+                )
+
+
+@RUNIF(min_cuda_gpus=1, optional=True)
+def test_analysis_backend_parity_gemma3_it_signed_feature_selection_intervention_graph(
+    cleanup_cuda,
+    ct_nnsight_gemma3_it_session_factory,
+    gemma3_instruction_intervention_case,
+):
+    """Gemma 3 IT op-layer parity for signed feature selection feeding feature intervention."""
+
+    with ct_nnsight_gemma3_it_session_factory("ct_gemma3_it_signed_selection_op_session") as it_session:
+        module = cast(Any, it_session.module)
+        _configure_gemma3_it_op_settings(module, gemma3_instruction_intervention_case)
+        _ensure_analysis_cfg(module, it.compute_attribution_graph)
+
+        with clean_cuda(module.replacement_model):
+            _assert_gemma3_it_model_loaded(module.replacement_model, gemma3_instruction_intervention_case.prompt)
+            graph_result = cast(
+                Any,
+                it.compute_attribution_graph(
+                    module,
+                    AnalysisBatch(prompts=[gemma3_instruction_intervention_case.prompt]),
+                    batch=None,
+                    batch_idx=0,
+                ),
+            )
+            graph = require_analysis_backend(module).hydrate_graph_from_batch(graph_result)
+            graph_context = _build_graph_edge_validation_context(module.replacement_model, graph)
+            influence_result = cast(Any, it.graph_node_influence(module, graph_result, batch=None, batch_idx=0))
+            signed_scores = torch.as_tensor(influence_result.node_signed_influence_scores, dtype=torch.float32)
+            feature_rows = torch.as_tensor(influence_result.node_feature_ids, dtype=torch.long).reshape(-1, 3)
+            positive_indices = torch.nonzero(signed_scores > 0, as_tuple=False).reshape(-1)
+            negative_indices = torch.nonzero(signed_scores < 0, as_tuple=False).reshape(-1)
+
+            assert positive_indices.numel() > 0, "Expected the Gemma3 parity graph to expose promoting features"
+            assert negative_indices.numel() > 0, "Expected the Gemma3 parity graph to expose opposing features"
+
+            positive_index = int(positive_indices[torch.argmax(signed_scores.index_select(0, positive_indices))].item())
+            negative_index = int(
+                negative_indices[torch.argmax(signed_scores.index_select(0, negative_indices).abs())].item()
+            )
+            requested_indices = [positive_index, negative_index]
+            requested_triples = [
+                cast(tuple[int, int, int], tuple(int(value) for value in feature_rows[index].tolist()))
+                for index in requested_indices
+            ]
+            expected_indices = sorted(
+                requested_indices,
+                key=lambda index: abs(float(signed_scores[index])),
+                reverse=True,
+            )
+            expected_top_features = [
+                cast(tuple[int, int, int], tuple(int(value) for value in feature_rows[index].tolist()))
+                for index in expected_indices
+            ]
+            expected_signed_scores = signed_scores.index_select(
+                0, torch.tensor(expected_indices, dtype=torch.long)
+            ).cpu()
+
+            top_payload = dict(cast(Any, graph_result))
+            top_payload.update(dict(cast(Any, influence_result)))
+            top_payload["prompts"] = [gemma3_instruction_intervention_case.prompt]
+            top_payload["logit_target_ids"] = graph.logit_tokens.detach().cpu()
+            feature_selection = FeatureSelectionSpec(
+                triples=requested_triples,
+                score_source="signed_influence",
+                score_sign="any",
+                rank_by_abs=True,
+            )
+
+            with module.replacement_model.zero_softcap():
+                signed_intervention_result = cast(
+                    Any,
+                    it.feature_intervention_forward(
+                        module,
+                        AnalysisBatch(**top_payload),
+                        batch=None,
+                        batch_idx=0,
+                        top_n=2,
+                        feature_selection=feature_selection,
+                    ),
+                )
+
+                actual_top_features = [
+                    cast(tuple[int, int, int], tuple(int(value) for value in row.tolist()))
+                    for row in torch.as_tensor(signed_intervention_result.top_feature_ids, dtype=torch.long)
+                ]
+                assert actual_top_features == expected_top_features
+                assert torch.any(torch.as_tensor(signed_intervention_result.top_feature_scores) > 0)
+                assert torch.any(torch.as_tensor(signed_intervention_result.top_feature_scores) < 0)
+                assert_close(
+                    torch.as_tensor(signed_intervention_result.top_feature_scores, dtype=torch.float32).cpu(),
+                    expected_signed_scores,
+                    rtol=VALUE_RTOL,
+                    atol=VALUE_ATOL,
+                )
+                intervention_activations = torch.as_tensor(
+                    signed_intervention_result.top_feature_activation_values,
+                    dtype=torch.float32,
+                ).cpu()
+                expected_intervention_values = (
+                    expected_signed_scores.sign()
+                    * intervention_activations.abs()
+                    * gemma3_instruction_intervention_case.intervention_scale_factor
+                )
+                assert_close(
+                    torch.as_tensor(signed_intervention_result.intervention_values, dtype=torch.float32).cpu(),
+                    expected_intervention_values,
+                    rtol=VALUE_RTOL,
+                    atol=VALUE_ATOL,
+                )
+                assert_close(
+                    torch.as_tensor(signed_intervention_result.intervention_scale_factors, dtype=torch.float32).cpu(),
+                    torch.full_like(
+                        expected_signed_scores,
+                        gemma3_instruction_intervention_case.intervention_scale_factor,
+                    ),
+                    rtol=VALUE_RTOL,
+                    atol=VALUE_ATOL,
+                )
+                assert getattr(signed_intervention_result, "feature_intervention_dict_json", None)
+                assert signed_intervention_result.intervention_feature_ids == [
+                    feature_id for _, _, feature_id in expected_top_features
+                ]
+                assert signed_intervention_result.intervention_positions == [
+                    position for _, position, _ in expected_top_features
+                ]
+
+                _verify_wrapper_feature_interventions(
+                    module,
+                    gemma3_instruction_intervention_case.prompt,
+                    graph,
+                    graph_context,
+                    signed_intervention_result,
                 )

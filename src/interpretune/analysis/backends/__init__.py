@@ -565,6 +565,12 @@ class FeatureSelectionSpec:
         triples: Exact ``(layer, position, feature_id)`` tuples to include.
         layer_feature_pairs: Exact ``(layer, feature_id)`` pairs to include across any position.
         activation_overrides: Optional override activation values keyed by ``(layer, feature_id)``.
+        score_source: Optional analysis-batch field name or alias to use for feature ranking. Supported aliases include
+            ``"influence"``, ``"signed_influence"``, and the planned backward-pass ``"gradient"`` /
+            ``"logit_diff_gradient"`` channel for gradients of selected feature activations with respect to a target
+            logit difference.
+        score_sign: Optional sign filter for score values: ``"any"``, ``"positive"``, or ``"negative"``.
+        rank_by_abs: If true, rank by absolute score magnitude while preserving the original signed score values.
     """
 
     layers: list[int] = field(default_factory=list)
@@ -575,6 +581,9 @@ class FeatureSelectionSpec:
     triples: list[tuple[int, int, int]] = field(default_factory=list)
     layer_feature_pairs: list[tuple[int, int]] = field(default_factory=list)
     activation_overrides: dict[tuple[int, int], float] = field(default_factory=dict)
+    score_source: str | None = None
+    score_sign: str = "any"
+    rank_by_abs: bool = False
 
 
 def _expand_slice(s: slice, observed: torch.Tensor) -> list[int]:
@@ -655,6 +664,17 @@ def apply_feature_selection_filter(
         mask |= matches.any(dim=1)
 
     return mask
+
+
+def apply_feature_score_sign_filter(scores: torch.Tensor, score_sign: str = "any") -> torch.Tensor:
+    """Return a boolean mask selecting feature scores with the requested sign."""
+    if score_sign == "any":
+        return torch.ones(scores.shape[0], dtype=torch.bool, device=scores.device)
+    if score_sign == "positive":
+        return scores > 0
+    if score_sign == "negative":
+        return scores < 0
+    raise ValueError("score_sign must be one of 'any', 'positive', or 'negative'")
 
 
 class BackendCapability(Enum):
@@ -867,6 +887,8 @@ class AnalysisBackend(Protocol):
     def select_feature_rows(self, active_features: torch.Tensor, selected_features: torch.Tensor) -> torch.Tensor: ...
 
     def compute_node_influence_scores(self, graph: Any) -> tuple[torch.Tensor, torch.Tensor]: ...
+
+    def compute_signed_node_influence_scores(self, graph: Any) -> torch.Tensor: ...
 
 
 @runtime_checkable
@@ -1131,6 +1153,7 @@ __all__ = [
     "HOOK_ALIAS_GROUPS",
     "InterventionDict",
     "InterventionSpec",
+    "apply_feature_score_sign_filter",
     "apply_feature_selection_filter",
     "get_module_capabilities",
     "ModelBackend",
