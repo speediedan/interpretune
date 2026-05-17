@@ -8,14 +8,18 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
-from urllib.parse import unquote, urlparse, urlunparse
+from typing import Any
+from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
+
+from interpretune.utils.neuronpedia_db_utils import (
+    resolve_local_neuronpedia_db_url,
+)
 
 DEFAULT_NEURONPEDIA_BASE_URL = "https://www.neuronpedia.org"
 DEFAULT_NEURONPEDIA_PUBLIC_DATASET_BASE_URL = "https://neuronpedia-datasets.s3.amazonaws.com"
@@ -24,20 +28,10 @@ DEFAULT_TOKENS_AROUND_MAX = 24
 DEFAULT_COPILOT_TIMEOUT_SECONDS = 120
 DEFAULT_COPILOT_MODEL = "gpt-5-mini"
 DEFAULT_ACTIVATION_BATCH_SIZE = 512
-FALLBACK_ACTIVATION_BATCH_SIZES = (DEFAULT_ACTIVATION_BATCH_SIZE, 1024)
+FALLBACK_ACTIVATION_BATCH_SIZES = (DEFAULT_ACTIVATION_BATCH_SIZE, 256, 1024)
 DEFAULT_GENERATED_OUTPUT_DIR = Path(tempfile.gettempdir()) / "generated_np_explanations"
 DEFAULT_HF_CACHE_HOME = Path(os.getenv("HF_HOME", os.path.expanduser("~/.cache/huggingface")))
 DEFAULT_IT_NP_CACHE = Path(os.getenv("IT_NP_CACHE", os.path.join(DEFAULT_HF_CACHE_HOME, "interpretune", "neuronpedia")))
-DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL = os.getenv("LOCAL_NEURONPEDIA_WEBAPP_URL", "http://localhost:3000")
-DEFAULT_LOCAL_NEURONPEDIA_DB_ENV_VARS = (
-    "LOCAL_NEURONPEDIA_DB_URL",
-    "POSTGRES_URL_NON_POOLING",
-    "DATABASE_URL",
-)
-DEFAULT_LOCAL_NEURONPEDIA_DOCKER_HOSTNAME = "postgres"
-DEFAULT_LOCAL_NEURONPEDIA_HOST = "127.0.0.1"
-DEFAULT_LOCAL_NEURONPEDIA_POSTGRES_PORT_ENV = "POSTGRES_HOST_PORT"
-DEFAULT_LOCAL_NEURONPEDIA_DB_TIMEOUT_SECONDS = 5
 DEFAULT_EXPLANATION_TYPE_NAME = "np_max-act-logits"
 NP_MOE_MAX_ACT_LOGITS_TYPE_NAME = "np_moe-max-act-logits"
 DEFAULT_EXPLANATION_AUTHOR_ID = os.getenv("DEFAULT_CREATOR_ID", "clkht01d40000jv08hvalcvly")
@@ -343,28 +337,6 @@ class NeuronpediaExplanationError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class LocalNeuronpediaServiceStatus:
-    """Availability snapshot for the local Neuronpedia webapp and Postgres services."""
-
-    webapp_url: str
-    webapp_available: bool
-    webapp_status_code: int | None
-    webapp_error: str | None
-    db_url_redacted: str | None
-    db_available: bool
-    db_error: str | None
-
-
-@dataclass(frozen=True)
-class NeuronpediaLocalImportSummary:
-    """Summary of a local Neuronpedia export-bundle import run."""
-
-    export_root: Path
-    imported_row_counts: dict[str, int]
-    processed_files: list[Path]
-
-
-@dataclass(frozen=True)
 class NeuronpediaLocalExplanationStatus:
     """Local explanation availability for one Neuronpedia feature route."""
 
@@ -395,115 +367,6 @@ class NeuronpediaLocalExplanationCoverage:
     @property
     def missing_feature_refs(self) -> list[NeuronpediaFeatureRef]:
         return [status.feature_ref for status in self.statuses if not status.has_local_explanation]
-
-
-def _redact_connection_url(connection_url: str) -> str:
-    parsed = urlparse(connection_url)
-    if parsed.password is None:
-        return connection_url
-    username = parsed.username or ""
-    netloc = parsed.netloc.replace(f":{parsed.password}@", ":***@", 1)
-    if username and not netloc.startswith(username):
-        netloc = f"{username}:***@{parsed.hostname or ''}"
-        if parsed.port is not None:
-            netloc += f":{parsed.port}"
-    return urlunparse(parsed._replace(netloc=netloc))
-
-
-def rewrite_container_postgres_url_for_host(
-    connection_url: str,
-    *,
-    env: Mapping[str, str] | None = None,
-    container_hostname: str = DEFAULT_LOCAL_NEURONPEDIA_DOCKER_HOSTNAME,
-    host: str = DEFAULT_LOCAL_NEURONPEDIA_HOST,
-    port_env_var: str = DEFAULT_LOCAL_NEURONPEDIA_POSTGRES_PORT_ENV,
-) -> str:
-    """Rewrite a docker-only Postgres URL to the host-mapped local port when configured."""
-
-    env_map = dict(os.environ if env is None else env)
-    parsed = urlparse(connection_url)
-    if parsed.hostname != container_hostname:
-        return connection_url
-    host_port = env_map.get(port_env_var)
-    if not host_port:
-        return connection_url
-    username = parsed.username or ""
-    password = parsed.password or ""
-    auth_prefix = username
-    if password:
-        auth_prefix = f"{auth_prefix}:{password}"
-    if auth_prefix:
-        auth_prefix = f"{auth_prefix}@"
-    netloc = f"{auth_prefix}{host}:{host_port}"
-    return urlunparse(parsed._replace(netloc=netloc))
-
-
-def resolve_local_neuronpedia_db_url(
-    local_db_url: str | None = None,
-    *,
-    env: Mapping[str, str] | None = None,
-) -> str:
-    """Resolve the best local Neuronpedia Postgres URL from explicit input or environment."""
-
-    env_map = dict(os.environ if env is None else env)
-    candidate = local_db_url
-    if not candidate:
-        for env_var in DEFAULT_LOCAL_NEURONPEDIA_DB_ENV_VARS:
-            candidate = env_map.get(env_var)
-            if candidate:
-                break
-    if not candidate:
-        raise NeuronpediaExplanationError(
-            "Could not resolve a local Neuronpedia DB URL. Set LOCAL_NEURONPEDIA_DB_URL or POSTGRES_URL_NON_POOLING."
-        )
-    return rewrite_container_postgres_url_for_host(candidate, env=env_map)
-
-
-def check_local_neuronpedia_services(
-    *,
-    local_db_url: str | None = None,
-    webapp_url: str = DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL,
-    timeout_seconds: int = DEFAULT_LOCAL_NEURONPEDIA_DB_TIMEOUT_SECONDS,
-) -> LocalNeuronpediaServiceStatus:
-    """Probe the local Neuronpedia webapp and Postgres services without raising on failure."""
-
-    import psycopg
-
-    resolved_db_url: str | None = None
-    db_url_redacted: str | None = None
-    db_available = False
-    db_error: str | None = None
-    try:
-        resolved_db_url = resolve_local_neuronpedia_db_url(local_db_url)
-        db_url_redacted = _redact_connection_url(resolved_db_url)
-        with psycopg.connect(resolved_db_url, connect_timeout=timeout_seconds) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT 1")
-                cursor.fetchone()
-        db_available = True
-    except Exception as exc:  # pragma: no cover - exercised in integration contexts
-        db_error = str(exc)
-
-    webapp_available = False
-    webapp_status_code: int | None = None
-    webapp_error: str | None = None
-    try:
-        request = Request(webapp_url, method="GET")
-        with urlopen(request, timeout=timeout_seconds) as response:
-            webapp_status_code = getattr(response, "status", None)
-            webapp_available = webapp_status_code is not None and 200 <= webapp_status_code < 500
-    except Exception as exc:  # pragma: no cover - exercised in integration contexts
-        webapp_error = str(exc)
-
-    return LocalNeuronpediaServiceStatus(
-        webapp_url=webapp_url,
-        webapp_available=webapp_available,
-        webapp_status_code=webapp_status_code,
-        webapp_error=webapp_error,
-        db_url_redacted=db_url_redacted,
-        db_available=db_available,
-        db_error=db_error,
-    )
 
 
 def normalize_base_url(base_url: str) -> str:
@@ -943,16 +806,22 @@ def load_feature_payload_with_cached_activations(
     *,
     cache_dir: Path | None = None,
     timeout_seconds: int = 60,
-) -> tuple[dict[str, Any], Path]:
-    """Fetch feature metadata from the API and replace activations with cached export rows."""
+) -> tuple[dict[str, Any], Path | None]:
+    """Fetch feature metadata from the API and prefer cached export activations when available."""
 
     feature_payload = fetch_feature_payload(feature_ref, timeout_seconds=timeout_seconds)
-    cached_activations, batch_path = load_cached_feature_activations(
-        feature_ref,
-        cache_dir=cache_dir,
-        timeout_seconds=timeout_seconds,
-    )
     feature_payload = dict(feature_payload)
+    try:
+        cached_activations, batch_path = load_cached_feature_activations(
+            feature_ref,
+            cache_dir=cache_dir,
+            timeout_seconds=timeout_seconds,
+        )
+    except NeuronpediaExplanationError:
+        if feature_payload.get("activations"):
+            return feature_payload, None
+        raise
+
     feature_payload["activations"] = cached_activations
     return feature_payload, batch_path
 
@@ -1322,142 +1191,11 @@ def write_explanation_import_bundle(
     )
 
 
-def _resolve_supported_fk_name(cursor: Any, table_name: str, requested_name: str | None) -> str | None:
+def _resolve_supported_explanation_fk_name(cursor: Any, table_name: str, requested_name: str | None) -> str | None:
     if requested_name is None:
         return None
     cursor.execute(f'SELECT 1 FROM "{table_name}" WHERE "name" = %s LIMIT 1', (requested_name,))
     return requested_name if cursor.fetchone() else None
-
-
-def _load_jsonl_records(path: Path) -> list[dict[str, Any]]:
-    opener = gzip.open if path.suffix == ".gz" else open
-    with opener(path, "rt", encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
-
-
-def _export_bundle_table_paths(export_root: Path) -> list[tuple[str, Path]]:
-    table_paths: list[tuple[str, Path]] = []
-    metadata_file_map = (
-        ("SourceRelease", export_root / "release.jsonl"),
-        ("Model", export_root / "model.jsonl"),
-        ("SourceSet", export_root / "sourceset.jsonl"),
-        ("Source", export_root / "source.jsonl"),
-    )
-    for table_name, path in metadata_file_map:
-        if path.exists():
-            table_paths.append((table_name, path))
-    for dir_name, table_name in (
-        ("features", "Neuron"),
-        ("activations", "Activation"),
-        ("explanations", "Explanation"),
-    ):
-        directory = export_root / dir_name
-        if not directory.exists():
-            continue
-        for path in sorted(directory.glob("*.jsonl.gz")):
-            table_paths.append((table_name, path))
-    return table_paths
-
-
-def _resolve_table_column_defs(cursor: Any, table_name: str, available_columns: Iterable[str]) -> list[tuple[str, str]]:
-    column_names = list(dict.fromkeys(available_columns))
-    cursor.execute(
-        """
-        SELECT a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod)
-        FROM pg_attribute a
-        JOIN pg_class c ON c.oid = a.attrelid
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relname = %s
-          AND n.nspname = current_schema()
-          AND a.attnum > 0
-          AND NOT a.attisdropped
-          AND a.attname = ANY(%s)
-        ORDER BY a.attnum
-        """,
-        (table_name, column_names),
-    )
-    return [(row[0], row[1]) for row in cursor.fetchall()]
-
-
-def _import_records_local_db(
-    connection: Any,
-    table_name: str,
-    records: list[dict[str, Any]],
-    *,
-    chunk_size: int = 65000,
-) -> int:
-    if not records:
-        return 0
-
-    import psycopg.sql as sql
-
-    available_columns: list[str] = []
-    for record in records:
-        for key in record:
-            if key not in available_columns:
-                available_columns.append(key)
-
-    with connection.cursor() as cursor:
-        column_defs = _resolve_table_column_defs(cursor, table_name, available_columns)
-        if not column_defs:
-            raise NeuronpediaExplanationError(f"Could not resolve columns for table {table_name}.")
-        column_names = [column_name for column_name, _ in column_defs]
-        query = sql.SQL(
-            "INSERT INTO {table_name} ({column_list}) "
-            "SELECT {column_list} FROM jsonb_to_recordset(%s::jsonb) AS t({column_defs}) "
-            "ON CONFLICT DO NOTHING"
-        ).format(
-            table_name=sql.Identifier(table_name),
-            column_list=sql.SQL(", ").join(sql.Identifier(column_name) for column_name in column_names),
-            column_defs=sql.SQL(", ").join(
-                sql.SQL("{} {}").format(sql.Identifier(column_name), sql.SQL(cast(Any, column_type)))
-                for column_name, column_type in column_defs
-            ),
-        )
-
-        imported_rows = 0
-        for start_idx in range(0, len(records), chunk_size):
-            chunk = records[start_idx : start_idx + chunk_size]
-            payload = json.dumps(chunk).replace("\\u0000", " ")
-            cursor.execute(query, (payload,))
-            if cursor.rowcount > 0:
-                imported_rows += cursor.rowcount
-    return imported_rows
-
-
-def import_neuronpedia_export_bundle_local_db(
-    export_root: Path | str,
-    *,
-    local_db_url: str,
-) -> NeuronpediaLocalImportSummary:
-    """Import a Neuronpedia export bundle into a local Neuronpedia Postgres database."""
-
-    import psycopg
-
-    export_root_path = Path(export_root)
-    if not export_root_path.exists():
-        raise NeuronpediaExplanationError(f"Export root does not exist: {export_root_path}")
-
-    table_paths = _export_bundle_table_paths(export_root_path)
-    if not table_paths:
-        raise NeuronpediaExplanationError(f"No importable Neuronpedia bundle files found under {export_root_path}")
-
-    imported_row_counts: dict[str, int] = {}
-    processed_files: list[Path] = []
-    resolved_db_url = resolve_local_neuronpedia_db_url(local_db_url)
-    with psycopg.connect(resolved_db_url) as connection:
-        for table_name, path in table_paths:
-            records = _load_jsonl_records(path)
-            imported_count = _import_records_local_db(connection, table_name, records)
-            imported_row_counts[table_name] = imported_row_counts.get(table_name, 0) + imported_count
-            processed_files.append(path)
-        connection.commit()
-
-    return NeuronpediaLocalImportSummary(
-        export_root=export_root_path,
-        imported_row_counts=imported_row_counts,
-        processed_files=processed_files,
-    )
 
 
 def insert_explanation_record_local_db(
@@ -1470,9 +1208,10 @@ def insert_explanation_record_local_db(
     import psycopg
 
     record = dict(explanation_record)
-    with psycopg.connect(local_db_url) as connection:
+    resolved_db_url = resolve_local_neuronpedia_db_url(local_db_url)
+    with psycopg.connect(resolved_db_url) as connection:
         with connection.cursor() as cursor:
-            resolved_model_name = _resolve_supported_fk_name(
+            resolved_model_name = _resolve_supported_explanation_fk_name(
                 cursor,
                 "ExplanationModelType",
                 record.get("explanationModelName"),

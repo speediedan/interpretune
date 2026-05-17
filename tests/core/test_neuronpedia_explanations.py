@@ -130,6 +130,29 @@ def test_derive_np_max_act_logits_inputs_reconstructs_prompt_lists() -> None:
     ]
 
 
+def test_load_feature_payload_with_cached_activations_falls_back_to_api_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    feature_ref = NeuronpediaFeatureRef(
+        model_id="gemma-3-1b-it",
+        layer="0-gemmascope-2-transcoder-262k-rte",
+        index="0",
+    )
+    payload = _sample_feature_payload()
+
+    monkeypatch.setattr(np_explanations, "fetch_feature_payload", lambda *_args, **_kwargs: dict(payload))
+
+    def _raise_missing_cache(*_args, **_kwargs):
+        raise np_explanations.NeuronpediaExplanationError("missing cache")
+
+    monkeypatch.setattr(np_explanations, "load_cached_feature_activations", _raise_missing_cache)
+
+    loaded_payload, batch_path = np_explanations.load_feature_payload_with_cached_activations(feature_ref)
+
+    assert batch_path is None
+    assert loaded_payload["activations"] == payload["activations"]
+
+
 def test_build_np_max_act_logits_prompt_contains_feature_metadata_and_lists() -> None:
     feature_ref = NeuronpediaFeatureRef(
         model_id="gemma-3-4b-it",
@@ -319,6 +342,9 @@ def test_activation_batch_helpers_match_known_public_export_path() -> None:
     )
     assert cached_activation_batch_path(feature_ref, cache_dir=Path("/tmp/np-cache")) == Path(
         "/tmp/np-cache/v1/gemma-3-4b-it/23-gemmascope-2-transcoder-262k/activations/batch-26.jsonl.gz"
+    )
+    assert candidate_paths[1] == Path(
+        "/tmp/np-cache/v1/gemma-3-4b-it/23-gemmascope-2-transcoder-262k/activations/batch-52.jsonl.gz"
     )
     assert candidate_paths[-1] == Path(
         "/tmp/np-cache/v1/gemma-3-4b-it/23-gemmascope-2-transcoder-262k/activations/batch-13.jsonl.gz"
