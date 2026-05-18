@@ -170,6 +170,7 @@ class NeuronpediaDashboardPipelineConfig:
     stall_timeout_seconds: int = 0
     import_to_local_db: bool = True
     local_db_url: str | None = None
+    local_db_import_chunk_size: int = 65000
     webapp_url: str = DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL
     archive_partial_dirs: bool = True
     resume_from_existing_logs: bool = True
@@ -1770,6 +1771,7 @@ def import_columnar_dashboard_output(
         source_saelens_sae_id=config.sae_path_for_layer(layer_num),
         num_prompts=config.n_prompts_total,
         num_tokens_in_prompt=config.n_tokens_in_prompt,
+        chunk_size=config.local_db_import_chunk_size,
         activation_use_stage_table=activation_use_stage_table,
     )
 
@@ -2364,6 +2366,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--heartbeat-seconds", type=int)
     parser.add_argument("--stall-timeout-seconds", type=int)
     parser.add_argument("--local-db-url")
+    parser.add_argument("--local-db-import-chunk-size", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--webapp-url")
     parser.add_argument("--use-skip-transcoder", action="store_true")
     parser.add_argument("--zero-out-bos-token", action="store_true")

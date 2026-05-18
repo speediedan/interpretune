@@ -380,6 +380,7 @@ def test_import_columnar_dashboard_output_can_disable_activation_stage_table(
         neuronpedia_utils_root=tmp_path,
         interpretune_env_file=None,
         local_db_url="postgres://local",
+        local_db_import_chunk_size=4096,
         runner_dashboard_output_format="columnar",
     )
 
@@ -391,6 +392,7 @@ def test_import_columnar_dashboard_output_can_disable_activation_stage_table(
     )
 
     assert captured_kwargs["activation_use_stage_table"] is False
+    assert captured_kwargs["chunk_size"] == 4096
     assert captured_kwargs["source_id"] == "9-gemmascope-2-transcoder-262k-rte"
     assert summary.imported_row_counts == {"Activation": 3, "Neuron": 2}
 
@@ -1577,6 +1579,8 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
             "16",
             "--runner-dashboard-output-format",
             "columnar",
+            "--local-db-import-chunk-size",
+            "4096",
             "--runner-cleanup-each-minibatch",
             "--runner-correlation-accumulation-device",
             "cpu",
@@ -1606,6 +1610,7 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
     assert config.runner_dashboard_output_format == "columnar"
     assert config.runner_columnar_artifact_format == "parquet"
     assert config.runner_emit_activation_copy_rows is None
+    assert config.local_db_import_chunk_size == 4096
     assert config.runner_cleanup_each_minibatch is True
     assert config.runner_correlation_accumulation_device == "cpu"
 
