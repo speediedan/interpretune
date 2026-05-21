@@ -191,6 +191,29 @@ def test_profile_dashboard_run_name_uses_extra_suffix() -> None:
     )
 
 
+def test_profile_dashboard_pipeline_log_path_uses_effective_layer_overrides(tmp_path: Path) -> None:
+    profile_module = _load_dashboard_profile_module()
+    run_root = tmp_path / "runs"
+
+    default_path = profile_module.dashboard_pipeline_log_path(run_root, [], default_layer=2)
+    overridden_path = profile_module.dashboard_pipeline_log_path(
+        run_root,
+        [
+            "--run-name-suffix=phase3-legacy-rte-pretokenized-reduced-l9-b3-20260521",
+            "--start-layer=9",
+            "--end-layer=9",
+        ],
+        default_layer=2,
+    )
+
+    assert default_path == run_root / profile_module.DEFAULT_RUN_NAME / "run.resume-2-2.log"
+    assert overridden_path == (
+        run_root
+        / f"{profile_module.DEFAULT_RUN_NAME}_phase3-legacy-rte-pretokenized-reduced-l9-b3-20260521"
+        / "run.resume-9-9.log"
+    )
+
+
 def test_profile_import_stage_legacy_includes_conversion_in_activation_load(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

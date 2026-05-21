@@ -777,6 +777,24 @@ def dashboard_extra_arg_value(extra_args: Iterable[str], option_name: str) -> st
     return resolved_value
 
 
+def dashboard_layer_range(extra_args: Iterable[str], *, default_layer: int) -> tuple[int, int]:
+    """Return the effective child pipeline layer range after applying extra-arg overrides."""
+
+    start_layer = dashboard_extra_arg_value(extra_args, "--start-layer")
+    end_layer = dashboard_extra_arg_value(extra_args, "--end-layer")
+    return (
+        int(start_layer) if start_layer is not None else default_layer,
+        int(end_layer) if end_layer is not None else default_layer,
+    )
+
+
+def dashboard_pipeline_log_path(run_root: Path, extra_args: Iterable[str], *, default_layer: int) -> Path:
+    """Return the expected child pipeline resume-log path for the effective layer range."""
+
+    start_layer, end_layer = dashboard_layer_range(extra_args, default_layer=default_layer)
+    return run_root / dashboard_run_name(extra_args) / f"run.resume-{start_layer}-{end_layer}.log"
+
+
 def dashboard_run_name(extra_args: Iterable[str]) -> str:
     """Return the dashboard run directory name implied by the child pipeline args."""
 
@@ -1307,8 +1325,10 @@ def run_profile(
     config_dir = session_dir / config.label
     run_root = config_dir / "run_root"
     run_root.mkdir(parents=True, exist_ok=True)
-    pipeline_log_path = (
-        run_root / dashboard_run_name(args.dashboard_extra_arg) / f"run.resume-{args.layer}-{args.layer}.log"
+    pipeline_log_path = dashboard_pipeline_log_path(
+        run_root,
+        args.dashboard_extra_arg,
+        default_layer=args.layer,
     )
     dashboard_command = build_dashboard_command(
         config,
