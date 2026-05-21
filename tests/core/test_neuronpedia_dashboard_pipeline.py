@@ -160,6 +160,71 @@ def test_profile_command_uses_pretokenized_context_size_for_n_tokens_in_prompt(t
     assert command[token_arg_index + 1] == "319"
 
 
+def test_profile_command_uses_dashboard_extra_arg_prompt_overrides(tmp_path: Path) -> None:
+    profile_module = _load_dashboard_profile_module()
+
+    command = profile_module.build_dashboard_command(
+        profile_module.ProfileConfig("profile", 1024, 512),
+        layer=9,
+        python_executable="python",
+        run_root=tmp_path / "runs",
+        pretokenized_dataset_path=None,
+        primary_acts_batch_size=128,
+        cuda_visible_devices="0",
+        dashboard_extra_args=("--n-prompts-total=2490", "--n-tokens-in-prompt=319"),
+    )
+
+    prompts_arg_index = command.index("--n-prompts-total")
+    token_arg_index = command.index("--n-tokens-in-prompt")
+
+    assert command[prompts_arg_index + 1] == "2490"
+    assert command[token_arg_index + 1] == "319"
+    assert command.count("--n-prompts-total") == 1
+    assert command.count("--n-tokens-in-prompt") == 1
+
+
+def test_profile_preset_phase3_legacy_rte_smoke_applies_baseline_args() -> None:
+    profile_module = _load_dashboard_profile_module()
+    args = profile_module.build_parser().parse_args(["--preset", "phase3-legacy-rte-smoke"])
+
+    preset = profile_module.apply_profile_preset(args)
+
+    assert preset is not None
+    assert preset.name == "phase3-legacy-rte-smoke"
+    assert args.target_batches == 2
+    assert args.summary_warmup_batches == 0
+    assert args.prompts_pretokenized_dataset_path is None
+    assert args.dashboard_extra_arg[0] == "--run-name-suffix=phase3-legacy-rte-smoke"
+    assert (
+        f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_RTE_TEXT_DATASET}"
+        in args.dashboard_extra_arg
+    )
+    assert f"--n-prompts-total={profile_module.DEFAULT_PHASE3_PROMPTS_TOTAL}" in args.dashboard_extra_arg
+    assert f"--n-tokens-in-prompt={profile_module.DEFAULT_PHASE3_RTE_TOKENS_IN_PROMPT}" in args.dashboard_extra_arg
+    assert any(arg.startswith("--saedashboard-repo-root=") for arg in args.dashboard_extra_arg)
+    assert any(arg.startswith("--saelens-repo-root=") for arg in args.dashboard_extra_arg)
+    assert any(arg.startswith("--neuronpedia-utils-root=") for arg in args.dashboard_extra_arg)
+    assert "--runner-implementation=legacy_json_cpu" in args.dashboard_extra_arg
+
+
+def test_profile_preset_preserves_explicit_pretokenized_dataset_path(tmp_path: Path) -> None:
+    profile_module = _load_dashboard_profile_module()
+    prompts_path = tmp_path / "prompts"
+    args = profile_module.build_parser().parse_args(
+        [
+            "--preset",
+            "phase3-lazy-rte-reduced",
+            "--prompts-pretokenized-dataset-path",
+            str(prompts_path),
+        ]
+    )
+
+    preset = profile_module.apply_profile_preset(args)
+
+    assert preset is not None
+    assert args.prompts_pretokenized_dataset_path == prompts_path
+
+
 def test_profile_dashboard_run_name_uses_extra_suffix() -> None:
     profile_module = _load_dashboard_profile_module()
 
@@ -211,6 +276,60 @@ def test_profile_dashboard_pipeline_log_path_uses_effective_layer_overrides(tmp_
         run_root
         / f"{profile_module.DEFAULT_RUN_NAME}_phase3-legacy-rte-pretokenized-reduced-l9-b3-20260521"
         / "run.resume-9-9.log"
+    )
+
+
+def test_phase3_profile_preset_pairs_share_reduced_shapes() -> None:
+    profile_module = _load_dashboard_profile_module()
+
+    legacy = profile_module.PROFILE_PRESETS["phase3-legacy-monology-reduced"]
+    lazy = profile_module.PROFILE_PRESETS["phase3-lazy-monology-reduced"]
+
+    assert legacy.config.n_features_per_batch == lazy.config.n_features_per_batch == 1024
+    assert legacy.config.n_prompts_in_forward_pass == lazy.config.n_prompts_in_forward_pass == 256
+    assert legacy.target_batches == lazy.target_batches == 4
+    assert legacy.pretokenized_dataset_path is None
+    assert lazy.pretokenized_dataset_path is None
+    assert "--runner-implementation=legacy_json_cpu" in legacy.dashboard_extra_args
+    assert "--runner-dashboard-output-format=columnar" in lazy.dashboard_extra_args
+    assert f"--n-prompts-total={profile_module.DEFAULT_PHASE3_PROMPTS_TOTAL}" in legacy.dashboard_extra_args
+    assert f"--n-prompts-total={profile_module.DEFAULT_PHASE3_PROMPTS_TOTAL}" in lazy.dashboard_extra_args
+    assert (
+        f"--n-tokens-in-prompt={profile_module.DEFAULT_PHASE3_MONOLOGY_TOKENS_IN_PROMPT}" in legacy.dashboard_extra_args
+    )
+    assert (
+        f"--n-tokens-in-prompt={profile_module.DEFAULT_PHASE3_MONOLOGY_TOKENS_IN_PROMPT}" in lazy.dashboard_extra_args
+    )
+    assert f"--neuronpedia-source-set-id={profile_module.DEFAULT_MONOLOGY_SOURCE_SET_ID}" in legacy.dashboard_extra_args
+    assert f"--neuronpedia-source-set-id={profile_module.DEFAULT_MONOLOGY_SOURCE_SET_ID}" in lazy.dashboard_extra_args
+
+
+def test_phase3_pretokenized_reduced_presets_use_final_prompt_artifacts() -> None:
+    profile_module = _load_dashboard_profile_module()
+
+    legacy_rte = profile_module.PROFILE_PRESETS["phase3-legacy-rte-pretokenized-reduced"]
+    lazy_rte = profile_module.PROFILE_PRESETS["phase3-lazy-rte-pretokenized-reduced"]
+    legacy_monology = profile_module.PROFILE_PRESETS["phase3-legacy-monology-pretokenized-reduced"]
+    lazy_monology = profile_module.PROFILE_PRESETS["phase3-lazy-monology-pretokenized-reduced"]
+
+    assert legacy_rte.config.n_features_per_batch == lazy_rte.config.n_features_per_batch == 512
+    assert legacy_rte.config.n_prompts_in_forward_pass == lazy_rte.config.n_prompts_in_forward_pass == 128
+    assert legacy_rte.target_batches == lazy_rte.target_batches == 4
+    assert legacy_rte.pretokenized_dataset_path is None
+    assert lazy_rte.pretokenized_dataset_path == profile_module.DEFAULT_PHASE3_RTE_LAZY_PRETOKENIZED_DATASET
+    assert (
+        f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET}"
+        in legacy_rte.dashboard_extra_args
+    )
+
+    assert legacy_monology.config.n_features_per_batch == lazy_monology.config.n_features_per_batch == 1024
+    assert legacy_monology.config.n_prompts_in_forward_pass == lazy_monology.config.n_prompts_in_forward_pass == 256
+    assert legacy_monology.target_batches == lazy_monology.target_batches == 4
+    assert legacy_monology.pretokenized_dataset_path is None
+    assert lazy_monology.pretokenized_dataset_path == profile_module.DEFAULT_PHASE3_MONOLOGY_PRETOKENIZED_DATASET
+    assert (
+        f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET}"
+        in legacy_monology.dashboard_extra_args
     )
 
 
@@ -634,17 +753,174 @@ def test_layer_runner_command_includes_bridge_and_custom_dataset_args(tmp_path: 
     assert "--log-hook-aliases" in command
     assert "--cleanup-each-minibatch" in command
     assert f"--converter-input-artifact-dir={tmp_path / 'converter_inputs'}" in command
-    assert "--feature-statistics-backend=arrow" in command
-    assert "--logits-histogram-backend=arrow" in command
-    assert "--activation-histogram-backend=polars" in command
-    assert "--defer-component-construction" in command
-    assert "--sequence-selection-backend=lazy_gpu" in command
-    assert "--dashboard-output-format=columnar" in command
-    assert "--columnar-artifact-format=parquet" in command
-    assert "--columnar-emit-activation-rows" in command
-    assert "--columnar-emit-activation-copy-rows" in command
-    assert "--columnar-activation-copy-model-id=gemma-3-1b-it" in command
-    assert f"--prompt-bucket-schedule-file={tmp_path / 'selected_bucket_configs.json'}" in command
+
+
+def test_layer_runner_command_uses_explicit_shared_tokens_file(tmp_path: Path) -> None:
+    explicit_tokens_path = tmp_path / "baseline_tokens.pt"
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        prompts_huggingface_dataset_config_name="rte",
+        prompts_huggingface_dataset_split="train",
+        prompts_pretokenized_dataset_path=tmp_path / "pretokenized_prompts",
+        prompts_shared_tokens_file=explicit_tokens_path,
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+        dataset_streaming=False,
+        n_features_per_batch=512,
+    )
+
+    command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
+
+    assert f"--pretokenized-dataset-path={tmp_path / 'pretokenized_prompts'}" in command
+    assert f"--shared-tokens-file={explicit_tokens_path}" in command
+    assert f"--shared-tokens-file={tmp_path / 'pretokenized_prompts' / 'tokens_24576.pt'}" not in command
+
+
+def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) -> None:
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemma-scope-2-1b-it-transcoders-all",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        prompts_huggingface_dataset_config_name="rte",
+        prompts_huggingface_dataset_split="train",
+        prompts_pretokenized_dataset_path=tmp_path / "pretokenized_prompts",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path / "baseline_saedashboard",
+        saelens_repo_root=tmp_path / "baseline_saelens",
+        neuronpedia_utils_root=tmp_path / "baseline_neuronpedia_utils",
+        interpretune_env_file=None,
+        dataset_streaming=False,
+        n_features_per_batch=128,
+        n_prompts_in_forward_pass=32,
+        start_batch=0,
+        end_batch=1,
+        model_wrapper="bridge",
+        bridge_enable_compatibility_mode=True,
+        runner_log_resource_snapshots=True,
+        runner_log_hook_aliases=True,
+        runner_log_performance=True,
+        runner_implementation="legacy_json_cpu",
+        runner_cleanup_each_minibatch=True,
+        runner_feature_statistics_backend="arrow",
+        runner_logits_histogram_backend="arrow",
+        runner_activation_histogram_backend="polars",
+        runner_defer_component_construction=True,
+        runner_sequence_selection_backend="lazy_gpu",
+        runner_dashboard_output_format="columnar",
+    )
+
+    command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
+
+    assert dashboard_pipeline._resolve_runner_dashboard_output_format(config) == "legacy_json"
+    assert "--dataset-path=aps/super_glue" in command
+    assert "--n-features-per-batch=128" in command
+    assert "--n-prompts-in-forward-pass=32" in command
+    assert "--end-batch=1" in command
+    unsupported_legacy_flags = (
+        "--model-wrapper=bridge",
+        "--dataset-config-name=rte",
+        "--dataset-split=train",
+        f"--pretokenized-dataset-path={tmp_path / 'pretokenized_prompts'}",
+        f"--shared-tokens-file={tmp_path / 'pretokenized_prompts' / 'tokens_24576.pt'}",
+        "--log-resource-snapshots",
+        "--log-hook-aliases",
+        "--log-performance",
+        "--cleanup-each-minibatch",
+        "--feature-statistics-backend=arrow",
+        "--logits-histogram-backend=arrow",
+        "--activation-histogram-backend=polars",
+        "--defer-component-construction",
+        "--sequence-selection-backend=lazy_gpu",
+        "--dashboard-output-format=columnar",
+        "--columnar-artifact-format=parquet",
+    )
+    assert not any(flag in command for flag in unsupported_legacy_flags)
+
+
+def test_layer_runner_command_materializes_legacy_local_dataset_alias(tmp_path: Path) -> None:
+    legacy_dataset_dir = tmp_path / "legacy_pretok_export"
+    legacy_dataset_dir.mkdir()
+    (legacy_dataset_dir / "train.jsonl").write_text('{"input_ids": [1, 2, 3]}\n', encoding="utf-8")
+    (legacy_dataset_dir / "sae_lens.json").write_text('{"context_size": 319}\n', encoding="utf-8")
+
+    saedashboard_repo_root = tmp_path / "baseline_saedashboard"
+    saedashboard_repo_root.mkdir()
+
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemma-scope-2-1b-it-transcoders-all",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path=str(legacy_dataset_dir),
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=saedashboard_repo_root,
+        saelens_repo_root=tmp_path / "baseline_saelens",
+        neuronpedia_utils_root=tmp_path / "baseline_neuronpedia_utils",
+        interpretune_env_file=None,
+        n_features_per_batch=128,
+        n_prompts_in_forward_pass=32,
+        runner_implementation="legacy_json_cpu",
+    )
+
+    command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
+
+    dataset_flag = next(part for part in command if part.startswith("--dataset-path="))
+    materialized_dataset_path = dataset_flag.split("=", maxsplit=1)[1]
+
+    assert materialized_dataset_path != str(legacy_dataset_dir)
+
+    alias_path = saedashboard_repo_root / materialized_dataset_path
+    assert alias_path.exists() or alias_path.is_symlink()
+    if alias_path.is_symlink():
+        assert alias_path.resolve(strict=True) == legacy_dataset_dir.resolve(strict=True)
+    else:
+        alias_marker_path = alias_path / dashboard_pipeline.LEGACY_LOCAL_DATASET_ALIAS_SOURCE_FILE
+        assert alias_marker_path.read_text(encoding="utf-8").strip() == str(legacy_dataset_dir.resolve(strict=True))
 
 
 def test_layer_runner_command_can_enable_runner_auto_prompt_bucket_schedule(tmp_path: Path) -> None:
@@ -1578,6 +1854,8 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
         [
             "--config",
             str(config_path),
+            "--prompts-shared-tokens-file",
+            str(tmp_path / "baseline_tokens.pt"),
             "--n-features-per-batch",
             "1024",
             "--n-prompts-in-forward-pass",
@@ -1618,6 +1896,8 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
     assert config.primary_acts_batch_size == 64
     assert config.model_wrapper == "bridge"
     assert config.run_name == "gemma-3-1b-it_gemmascope-2-transcoder-262k-rte_context319-full-prompts"
+    assert config.prompts_shared_tokens_file == tmp_path / "baseline_tokens.pt"
+    assert config.shared_prompt_tokens_file == tmp_path / "baseline_tokens.pt"
     assert config.bridge_enable_compatibility_mode is False
     assert config.bridge_compatibility_mode_kwargs == {"no_processing": False, "alias_debug": True}
     assert config.import_to_local_db is False
@@ -1655,6 +1935,10 @@ def test_run_dashboard_pipeline_skips_conversion_for_columnar_generation_only(
 
     def _fake_popen(command, *args, **kwargs):
         launched_commands.append(command)
+        output_arg = next(part for part in command if part.startswith("--output-dir="))
+        fake_leaf_dir = Path(output_arg.split("=", 1)[1]) / "model_source"
+        fake_leaf_dir.mkdir(parents=True)
+        (fake_leaf_dir / "batch-0.json").write_text("{}", encoding="utf-8")
         return SimpleNamespace(pid=12345)
 
     def _unexpected_convert(*args, **kwargs):
@@ -1706,6 +1990,242 @@ def test_run_dashboard_pipeline_skips_conversion_for_columnar_generation_only(
     assert "--dashboard-output-format=columnar" in launched_commands[0]
     assert "--correlation-accumulation-device=auto" in launched_commands[0]
     assert "Skipping legacy Neuronpedia conversion for columnar dashboard output" in caplog.text
+
+
+def test_run_dashboard_pipeline_skips_conversion_for_legacy_generation_only(
+    tmp_path: Path,
+    monkeypatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    test_logger = logging.getLogger("test_run_dashboard_pipeline_skips_conversion_for_legacy_generation_only")
+    test_logger.handlers.clear()
+    test_logger.propagate = True
+    test_logger.setLevel(logging.INFO)
+    launched_commands: list[list[str]] = []
+
+    monkeypatch.setattr(dashboard_pipeline, "_configure_logger", lambda _: test_logger)
+    monkeypatch.setattr(dashboard_pipeline, "_build_generation_env", lambda _: {})
+    monkeypatch.setattr(dashboard_pipeline, "_monitor_process", lambda *args, **kwargs: 0)
+
+    def _fake_popen(command, *args, **kwargs):
+        launched_commands.append(command)
+        output_arg = next(part for part in command if part.startswith("--output-dir="))
+        fake_leaf_dir = Path(output_arg.split("=", 1)[1]) / "model_source"
+        fake_leaf_dir.mkdir(parents=True)
+        (fake_leaf_dir / "batch-0.json").write_text("{}", encoding="utf-8")
+        return SimpleNamespace(pid=12345)
+
+    def _unexpected_convert(*args, **kwargs):
+        raise AssertionError("legacy_json_cpu generation-only runs should not invoke conversion")
+
+    monkeypatch.setattr(dashboard_pipeline.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(dashboard_pipeline, "convert_dashboard_output", _unexpected_convert)
+
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+        pipeline_log_path=tmp_path / "run.log",
+        import_to_local_db=False,
+        runner_implementation="legacy_json_cpu",
+    )
+
+    caplog.set_level(logging.INFO, logger=test_logger.name)
+
+    results = dashboard_pipeline.run_dashboard_pipeline(config)
+
+    assert len(results) == 1
+    assert results[0].export_root is None
+    assert not results[0].skipped
+    assert launched_commands
+    assert "--dashboard-output-format=legacy_json" not in launched_commands[0]
+    assert "Skipping Neuronpedia conversion for legacy_json_cpu generation-only" in caplog.text
+
+
+def test_convert_dashboard_output_filters_new_kwargs_for_legacy_converter(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    dashboard_leaf_dir = tmp_path / "runs" / "layer_2" / "model_source"
+    dashboard_leaf_dir.mkdir(parents=True)
+    (dashboard_leaf_dir / "batch-0.json").write_text('{"sae_id_suffix":"smoke"}', encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def _fake_main(
+        ctx,
+        *,
+        saedashboard_output_dir,
+        creator_name,
+        release_id,
+        release_title,
+        url,
+        model_name,
+        neuronpedia_source_set_id,
+        neuronpedia_source_set_description,
+        hf_weights_repo_id,
+        hf_weights_path,
+        hook_point,
+        layer_num,
+        prompts_huggingface_dataset_path,
+        n_prompts_total,
+        n_tokens_in_prompt,
+        zero_out_bos_token,
+    ):
+        seen.update(ctx.params)
+        export_dir = Path(fake_module.OUTPUT_DIR) / model_name / f"{layer_num}-{neuronpedia_source_set_id}__smoke"
+        export_dir.mkdir(parents=True)
+        assert Path(saedashboard_output_dir) == dashboard_leaf_dir
+        assert creator_name == "Google DeepMind"
+        assert release_id == "gemma-scope-2"
+        assert release_title == "Gemma Scope 2"
+        assert url == "https://huggingface.co/google/gemma-scope-2-1b-it"
+        assert hf_weights_repo_id == "google/gemma-scope-2-1b-it"
+        assert hf_weights_path == "transcoder_all/layer_2_width_262k_l0_small_affine"
+        assert hook_point == "hook_mlp_in"
+        assert prompts_huggingface_dataset_path == "aps/super_glue"
+        assert n_prompts_total == 8
+        assert n_tokens_in_prompt == 32
+        assert zero_out_bos_token is False
+
+    fake_module = SimpleNamespace(
+        OUTPUT_DIR=tmp_path / "wrong-export-root",
+        HOOK_POINT_TYPE_CHOICES=lambda value: value,
+        main=_fake_main,
+        CONVERSION_DEBUG_CALLBACK=None,
+    )
+    monkeypatch.setattr(dashboard_pipeline, "_load_converter_module", lambda _: fake_module)
+
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_mlp_in",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        start_layer=2,
+        end_layer=2,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        pipeline_log_path=tmp_path / "run.log",
+        n_prompts_total=8,
+        n_tokens_in_prompt=32,
+    )
+
+    export_root = dashboard_pipeline.convert_dashboard_output(config, layer_num=2, output_dir=dashboard_leaf_dir.parent)
+
+    assert export_root == tmp_path / "exports" / "gemma-3-1b-it" / "2-gemmascope-2-transcoder-262k-rte__smoke"
+    assert fake_module.OUTPUT_DIR == str(tmp_path / "exports")
+    assert "export_root" not in seen
+    assert "model_layers" not in seen
+
+
+def test_legacy_generation_converts_when_import_requested_but_db_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    test_logger = logging.getLogger("test_legacy_generation_converts_when_import_requested_but_db_unavailable")
+    test_logger.handlers.clear()
+    test_logger.propagate = True
+    test_logger.setLevel(logging.INFO)
+    converted_layers: list[tuple[int, Path]] = []
+
+    monkeypatch.setattr(dashboard_pipeline, "_configure_logger", lambda _: test_logger)
+    monkeypatch.setattr(dashboard_pipeline, "_build_generation_env", lambda _: {})
+    monkeypatch.setattr(dashboard_pipeline, "_monitor_process", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(
+        dashboard_pipeline,
+        "check_local_neuronpedia_services",
+        lambda **_: SimpleNamespace(
+            db_available=False,
+            webapp_available=False,
+            db_error="no local db",
+            webapp_error="no local webapp",
+            db_url_redacted="postgres://postgres:***@127.0.0.1:5433/postgres",
+        ),
+    )
+
+    def _fake_popen(command, *args, **kwargs):
+        output_arg = next(part for part in command if part.startswith("--output-dir="))
+        fake_leaf_dir = Path(output_arg.split("=", 1)[1]) / "model_source"
+        fake_leaf_dir.mkdir(parents=True)
+        (fake_leaf_dir / "batch-0.json").write_text("{}", encoding="utf-8")
+        return SimpleNamespace(pid=12345)
+
+    def _fake_convert(
+        config: NeuronpediaDashboardPipelineConfig,
+        *,
+        layer_num: int,
+        output_dir: Path,
+        logger: logging.Logger | None = None,
+    ) -> Path:
+        converted_layers.append((layer_num, output_dir))
+        export_root = config.export_root / config.model_name / f"{layer_num}-{config.neuronpedia_source_set_id}"
+        export_root.mkdir(parents=True)
+        return export_root
+
+    monkeypatch.setattr(dashboard_pipeline.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(dashboard_pipeline, "convert_dashboard_output", _fake_convert)
+
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+        pipeline_log_path=tmp_path / "run.log",
+        import_to_local_db=True,
+        runner_implementation="legacy_json_cpu",
+    )
+
+    results = dashboard_pipeline.run_dashboard_pipeline(config)
+
+    assert converted_layers == [(0, tmp_path / "runs" / config.run_name / "layer_0")]
+    assert results[0].export_root == tmp_path / "exports" / "gemma-3-1b-it" / "0-gemmascope-2-transcoder-262k-rte"
+    assert results[0].import_summary is None
 
 
 def test_run_dashboard_pipeline_imports_columnar_output_directly(

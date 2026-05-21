@@ -73,6 +73,14 @@ def build_base_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--save-path", type=Path)
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument(
+        "--legacy-output-dir",
+        type=Path,
+        help=(
+            "Optional load_dataset-compatible export directory for legacy Neuronpedia runners. "
+            "Writes <split>.jsonl plus sae_lens.json."
+        ),
+    )
     parser.add_argument("--hf-repo-id")
     parser.add_argument("--hf-num-shards", type=int, default=64)
     parser.add_argument("--hf-revision", default="main")
@@ -207,6 +215,7 @@ def persist_dashboard_dataset(
     cfg: PretokenizeRunnerConfig,
     metadata: dict[str, Any],
     force: bool,
+    legacy_output_dir: Path | None = None,
 ) -> None:
     if cfg.save_path is not None:
         save_path = Path(cfg.save_path)
@@ -225,6 +234,52 @@ def persist_dashboard_dataset(
             revision=cfg.hf_revision,
         )
         upload_metadata_to_hugging_face_hub(cfg=cfg, metadata=metadata)
+
+    if legacy_output_dir is not None:
+        persist_legacy_load_dataset_directory(
+            dataset,
+            output_dir=legacy_output_dir,
+            split=str(cfg.split or "train"),
+            metadata=metadata,
+            force=force,
+        )
+
+
+def persist_legacy_load_dataset_directory(
+    dataset: Dataset,
+    *,
+    output_dir: Path,
+    split: str,
+    metadata: dict[str, Any],
+    force: bool,
+) -> None:
+    if output_dir.exists():
+        if not force:
+            raise FileExistsError(f"Legacy output directory already exists: {output_dir}. Pass --force to replace it.")
+        shutil.rmtree(output_dir)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    data_path = output_dir / f"{split}.jsonl"
+    dataset_for_export = dataset.with_format(type=None)
+    with data_path.open("w", encoding="utf-8") as handle:
+        for row in dataset_for_export:
+            serialized_row = {key: _coerce_json_value(value) for key, value in row.items()}
+            handle.write(json.dumps(serialized_row, ensure_ascii=False))
+            handle.write("\n")
+
+    write_metadata_file(output_dir, metadata)
+
+
+def _coerce_json_value(value: Any) -> Any:
+    if hasattr(value, "tolist"):
+        return _coerce_json_value(value.tolist())
+    if isinstance(value, dict):
+        return {key: _coerce_json_value(inner) for key, inner in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_coerce_json_value(inner) for inner in value]
+    if isinstance(value, Path):
+        return str(value)
+    return value
 
 
 def write_metadata_file(output_dir: Path, metadata: dict[str, Any]) -> None:
@@ -259,8 +314,13 @@ def upload_metadata_to_hugging_face_hub(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    if args.save_path is None and args.output_dir is None and args.hf_repo_id is None:
-        raise ValueError("Provide --save-path/--output-dir and/or --hf-repo-id.")
+    if (
+        args.save_path is None
+        and args.output_dir is None
+        and args.legacy_output_dir is None
+        and args.hf_repo_id is None
+    ):
+        raise ValueError("Provide --save-path/--output-dir, --legacy-output-dir, and/or --hf-repo-id.")
 
     result, cfg, metadata = run_dashboard_pretokenization(args)
     persist_dashboard_dataset(
@@ -268,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
         cfg=cfg,
         metadata=metadata,
         force=args.force,
+        legacy_output_dir=args.legacy_output_dir,
     )
     destination = cfg.save_path or cfg.hf_repo_id or "<in-memory>"
     print(

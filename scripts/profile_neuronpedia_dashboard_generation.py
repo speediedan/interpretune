@@ -29,11 +29,44 @@ DEFAULT_SESSION_ROOT = Path("/tmp/np_dashboard_generation_profiles")
 DEFAULT_PYTHON = "/mnt/cache/speediedan/.venvs/it_latest/bin/python"
 DEFAULT_PY_SPY = "/mnt/cache/speediedan/.venvs/it_latest/bin/py-spy"
 DEFAULT_RUN_ROOT = Path("/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/dashboard_runs")
-DEFAULT_PRETOKENIZED_DATASET = Path(
-    "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/pretokenized/"
-    "gemma-3-1b-it_rte_boolq_context128"
+DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT = Path(
+    "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/baseline_worktrees_20260518"
 )
+DEFAULT_PHASE3_BASELINE_SAEDASHBOARD_ROOT = DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "SAEDashboard-7e42ce6"
+DEFAULT_PHASE3_BASELINE_SAELENS_ROOT = DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "SAELens-3eea6552"
+DEFAULT_PHASE3_BASELINE_NEURONPEDIA_UTILS_ROOT = (
+    DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "neuronpedia-5a33f17" / "utils" / "neuronpedia-utils"
+)
+DEFAULT_PHASE3_RTE_TEXT_DATASET = Path(
+    "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/baseline_datasets/"
+    "rte_text_phase3_2490_context319"
+)
+DEFAULT_PHASE3_RTE_PRETOKENIZED_DATASET = Path(
+    "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/pretokenized/"
+    "gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts"
+)
+DEFAULT_PHASE3_RTE_LAZY_PRETOKENIZED_DATASET = Path(
+    "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/pretokenized/"
+    "gemma-3-1b-it_rte_boolq_context319_fixed_pad_2490_lazy_phase3"
+)
+DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET = Path(
+    "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/legacy_pretokenized/"
+    "gemma-3-1b-it_rte_boolq_context319_fixed_pad_2490"
+)
+DEFAULT_PHASE3_MONOLOGY_PRETOKENIZED_DATASET = Path(
+    "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/pretokenized/"
+    "gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490"
+)
+DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET = Path(
+    "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/legacy_pretokenized/"
+    "gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490"
+)
+DEFAULT_PRETOKENIZED_DATASET = DEFAULT_PHASE3_RTE_PRETOKENIZED_DATASET
 DEFAULT_CACHE_PATH = Path("/mnt/cache_extended")
+DEFAULT_MONOLOGY_SOURCE_SET_ID = "gemmascope-2-transcoder-262k"
+DEFAULT_PHASE3_PROMPTS_TOTAL = 2490
+DEFAULT_PHASE3_RTE_TOKENS_IN_PROMPT = 319
+DEFAULT_PHASE3_MONOLOGY_TOKENS_IN_PROMPT = 128
 
 BATCH_OUTPUT_RE = re.compile(r"Output written to .*?/batch-(\d+)\.json")
 COLUMNAR_BATCH_OUTPUT_RE = re.compile(r"\bevent=columnar_output_summary\b.*?/batch-(\d+)\.columnar\b")
@@ -56,6 +89,19 @@ class ProfileConfig:
     label: str
     n_features_per_batch: int
     n_prompts_in_forward_pass: int
+
+
+@dataclass(frozen=True)
+class ProfilePreset:
+    """Named profiling preset for one Phase 3 comparison run."""
+
+    name: str
+    description: str
+    config: ProfileConfig
+    target_batches: int
+    summary_warmup_batches: int
+    pretokenized_dataset_path: Path | None
+    dashboard_extra_args: tuple[str, ...] = ()
 
 
 @dataclass
@@ -108,6 +154,28 @@ class ResourceSample:
     cache_read_ms_per_op: float | None = None
     cache_write_ms_per_op: float | None = None
     cache_io_util_percent: float | None = None
+
+
+class _StoreExplicitPath(argparse.Action):
+    """Store a path value and note that it was provided explicitly."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        option_string: str | None = None,
+    ) -> None:
+        if values is None:
+            raise ValueError(f"{self.dest} requires a path value.")
+        raw_value: Any
+        if isinstance(values, (list, tuple)):
+            raw_value = values[0]
+        else:
+            raw_value = values
+        path_value = raw_value if isinstance(raw_value, Path) else Path(str(raw_value))
+        setattr(namespace, self.dest, path_value)
+        setattr(namespace, f"{self.dest}_explicit", True)
 
 
 @dataclass
@@ -282,6 +350,191 @@ def default_profile_configs(include_comparisons: bool) -> list[ProfileConfig]:
     return configs
 
 
+def _phase3_baseline_repo_args() -> tuple[str, ...]:
+    return (
+        f"--saedashboard-repo-root={DEFAULT_PHASE3_BASELINE_SAEDASHBOARD_ROOT}",
+        f"--saelens-repo-root={DEFAULT_PHASE3_BASELINE_SAELENS_ROOT}",
+        f"--neuronpedia-utils-root={DEFAULT_PHASE3_BASELINE_NEURONPEDIA_UTILS_ROOT}",
+    )
+
+
+def _phase3_legacy_impl_args() -> tuple[str, ...]:
+    return ("--runner-implementation=legacy_json_cpu", *_phase3_baseline_repo_args())
+
+
+def _phase3_lazy_impl_args() -> tuple[str, ...]:
+    return (
+        "--runner-sequence-selection-backend=lazy_gpu",
+        "--runner-dashboard-output-format=columnar",
+        "--runner-feature-statistics-backend=arrow",
+        "--runner-logits-histogram-backend=arrow",
+    )
+
+
+def _phase3_rte_preset(
+    name: str,
+    *,
+    config: ProfileConfig,
+    target_batches: int,
+    legacy: bool,
+    prompts_dataset_path: Path | str = DEFAULT_PHASE3_RTE_TEXT_DATASET,
+    pretokenized_dataset_path: Path | None = None,
+) -> ProfilePreset:
+    dashboard_extra_args = [
+        f"--run-name-suffix={name}",
+        f"--prompts-huggingface-dataset-path={prompts_dataset_path}",
+        "--prompts-huggingface-dataset-config-name=",
+        f"--n-prompts-total={DEFAULT_PHASE3_PROMPTS_TOTAL}",
+        f"--n-tokens-in-prompt={DEFAULT_PHASE3_RTE_TOKENS_IN_PROMPT}",
+    ]
+    dashboard_extra_args.extend(_phase3_legacy_impl_args() if legacy else _phase3_lazy_impl_args())
+    return ProfilePreset(
+        name=name,
+        description=(
+            "Phase 3 reduced RTE baseline smoke/reduced row using the preserved pre-PR worktrees."
+            if legacy
+            else "Phase 3 reduced RTE lazy columnar comparison row on the current PR branches."
+        ),
+        config=config,
+        target_batches=target_batches,
+        summary_warmup_batches=0 if target_batches <= 2 else 1,
+        pretokenized_dataset_path=pretokenized_dataset_path,
+        dashboard_extra_args=tuple(dashboard_extra_args),
+    )
+
+
+def _phase3_monology_preset(
+    name: str,
+    *,
+    config: ProfileConfig,
+    target_batches: int,
+    legacy: bool,
+    prompts_dataset_path: Path | str = "monology/pile-uncopyrighted",
+    pretokenized_dataset_path: Path | None = None,
+) -> ProfilePreset:
+    dashboard_extra_args = [
+        f"--run-name-suffix={name}",
+        f"--neuronpedia-source-set-id={DEFAULT_MONOLOGY_SOURCE_SET_ID}",
+        "--neuronpedia-source-set-description=Transcoder-262k",
+        f"--prompts-huggingface-dataset-path={prompts_dataset_path}",
+        "--prompts-huggingface-dataset-config-name=",
+        f"--n-prompts-total={DEFAULT_PHASE3_PROMPTS_TOTAL}",
+        f"--n-tokens-in-prompt={DEFAULT_PHASE3_MONOLOGY_TOKENS_IN_PROMPT}",
+    ]
+    dashboard_extra_args.extend(_phase3_legacy_impl_args() if legacy else _phase3_lazy_impl_args())
+    return ProfilePreset(
+        name=name,
+        description=(
+            "Phase 3 reduced Monology baseline smoke/reduced row using the preserved pre-PR worktrees."
+            if legacy
+            else "Phase 3 reduced Monology lazy columnar comparison row on the current PR branches."
+        ),
+        config=config,
+        target_batches=target_batches,
+        summary_warmup_batches=0 if target_batches <= 2 else 1,
+        pretokenized_dataset_path=pretokenized_dataset_path,
+        dashboard_extra_args=tuple(dashboard_extra_args),
+    )
+
+
+PROFILE_PRESETS: dict[str, ProfilePreset] = {
+    preset.name: preset
+    for preset in (
+        _phase3_rte_preset(
+            "phase3-legacy-rte-smoke",
+            config=ProfileConfig("phase3-legacy-rte-smoke", 128, 32),
+            target_batches=2,
+            legacy=True,
+        ),
+        _phase3_rte_preset(
+            "phase3-lazy-rte-smoke",
+            config=ProfileConfig("phase3-lazy-rte-smoke", 128, 32),
+            target_batches=2,
+            legacy=False,
+        ),
+        _phase3_rte_preset(
+            "phase3-legacy-rte-reduced",
+            config=ProfileConfig("phase3-legacy-rte-reduced", 512, 128),
+            target_batches=4,
+            legacy=True,
+        ),
+        _phase3_rte_preset(
+            "phase3-lazy-rte-reduced",
+            config=ProfileConfig("phase3-lazy-rte-reduced", 512, 128),
+            target_batches=4,
+            legacy=False,
+        ),
+        _phase3_rte_preset(
+            "phase3-legacy-rte-pretokenized-reduced",
+            config=ProfileConfig("phase3-legacy-rte-pretokenized-reduced", 512, 128),
+            target_batches=4,
+            legacy=True,
+            prompts_dataset_path=DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET,
+        ),
+        _phase3_rte_preset(
+            "phase3-lazy-rte-pretokenized-reduced",
+            config=ProfileConfig("phase3-lazy-rte-pretokenized-reduced", 512, 128),
+            target_batches=4,
+            legacy=False,
+            pretokenized_dataset_path=DEFAULT_PHASE3_RTE_LAZY_PRETOKENIZED_DATASET,
+        ),
+        _phase3_monology_preset(
+            "phase3-legacy-monology-smoke",
+            config=ProfileConfig("phase3-legacy-monology-smoke", 128, 64),
+            target_batches=2,
+            legacy=True,
+        ),
+        _phase3_monology_preset(
+            "phase3-lazy-monology-smoke",
+            config=ProfileConfig("phase3-lazy-monology-smoke", 128, 64),
+            target_batches=2,
+            legacy=False,
+        ),
+        _phase3_monology_preset(
+            "phase3-legacy-monology-reduced",
+            config=ProfileConfig("phase3-legacy-monology-reduced", 1024, 256),
+            target_batches=4,
+            legacy=True,
+        ),
+        _phase3_monology_preset(
+            "phase3-lazy-monology-reduced",
+            config=ProfileConfig("phase3-lazy-monology-reduced", 1024, 256),
+            target_batches=4,
+            legacy=False,
+        ),
+        _phase3_monology_preset(
+            "phase3-legacy-monology-pretokenized-reduced",
+            config=ProfileConfig("phase3-legacy-monology-pretokenized-reduced", 1024, 256),
+            target_batches=4,
+            legacy=True,
+            prompts_dataset_path=DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET,
+        ),
+        _phase3_monology_preset(
+            "phase3-lazy-monology-pretokenized-reduced",
+            config=ProfileConfig("phase3-lazy-monology-pretokenized-reduced", 1024, 256),
+            target_batches=4,
+            legacy=False,
+            pretokenized_dataset_path=DEFAULT_PHASE3_MONOLOGY_PRETOKENIZED_DATASET,
+        ),
+    )
+}
+
+
+def apply_profile_preset(args: argparse.Namespace) -> ProfilePreset | None:
+    """Apply one named preset to the parsed CLI args in place."""
+
+    preset_name = getattr(args, "preset", None)
+    if not preset_name:
+        return None
+    preset = PROFILE_PRESETS[preset_name]
+    args.target_batches = preset.target_batches
+    args.summary_warmup_batches = preset.summary_warmup_batches
+    if not getattr(args, "prompts_pretokenized_dataset_path_explicit", False):
+        args.prompts_pretokenized_dataset_path = preset.pretokenized_dataset_path
+    args.dashboard_extra_arg = [*preset.dashboard_extra_args, *args.dashboard_extra_arg]
+    return preset
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI parser."""
 
@@ -291,6 +544,15 @@ def build_parser() -> argparse.ArgumentParser:
             "The default workload is the gemmascope-2-transcoder-262k-rte source set with TransformerBridge and "
             "the pretokenized RTE prompt cache."
         )
+    )
+    parser.set_defaults(prompts_pretokenized_dataset_path_explicit=False)
+    parser.add_argument(
+        "--preset",
+        choices=tuple(PROFILE_PRESETS),
+        help=(
+            "Named Phase 3 comparison preset. Applies the matching legacy/lazy scenario args, baseline repo roots when "
+            "needed, default prompt-cache choice, and the suggested smoke/reduced config when --config is omitted."
+        ),
     )
     parser.add_argument(
         "--config",
@@ -354,6 +616,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--prompts-pretokenized-dataset-path",
+        action=_StoreExplicitPath,
         type=Path,
         default=DEFAULT_PRETOKENIZED_DATASET,
         help="Local HuggingFace dataset with an input_ids column.",
@@ -673,7 +936,16 @@ def build_dashboard_command(
 ) -> list[str]:
     """Build the dashboard pipeline command for one profiled run."""
 
-    n_tokens_in_prompt = resolve_n_tokens_in_prompt(pretokenized_dataset_path)
+    dashboard_extra_args = list(dashboard_extra_args)
+    n_prompts_total = int(
+        dashboard_extra_arg_value(dashboard_extra_args, "--n-prompts-total") or DEFAULT_PHASE3_PROMPTS_TOTAL
+    )
+    n_tokens_override = dashboard_extra_arg_value(dashboard_extra_args, "--n-tokens-in-prompt")
+    n_tokens_in_prompt = (
+        int(n_tokens_override)
+        if n_tokens_override is not None
+        else resolve_n_tokens_in_prompt(pretokenized_dataset_path)
+    )
     command = [
         python_executable,
         "-m",
@@ -719,7 +991,7 @@ def build_dashboard_command(
         "--start-batch",
         "0",
         "--n-prompts-total",
-        "2490",
+        str(n_prompts_total),
         "--n-tokens-in-prompt",
         str(n_tokens_in_prompt),
         "--n-features-per-batch",
@@ -746,7 +1018,6 @@ def build_dashboard_command(
         command.extend(["--prompts-pretokenized-dataset-path", str(pretokenized_dataset_path)])
     if primary_acts_batch_size is not None:
         command.extend(["--primary-acts-batch-size", str(primary_acts_batch_size)])
-    dashboard_extra_args = list(dashboard_extra_args)
     requested_output_format = dashboard_extra_arg_value(dashboard_extra_args, "--runner-dashboard-output-format")
     if (
         profile_import_stage
@@ -755,7 +1026,12 @@ def build_dashboard_command(
         and "--no-runner-emit-activation-copy-rows" not in dashboard_extra_args
     ):
         dashboard_extra_args.append("--runner-emit-activation-copy-rows")
-    command.extend(dashboard_extra_args)
+    command.extend(
+        strip_dashboard_extra_arg_options(
+            dashboard_extra_args,
+            option_names=("--n-prompts-total", "--n-tokens-in-prompt"),
+        )
+    )
     return command
 
 
@@ -775,6 +1051,25 @@ def dashboard_extra_arg_value(extra_args: Iterable[str], option_name: str) -> st
         elif extra_arg.startswith(option_prefix):
             resolved_value = extra_arg[len(option_prefix) :]
     return resolved_value
+
+
+def strip_dashboard_extra_arg_options(extra_args: Iterable[str], *, option_names: Iterable[str]) -> list[str]:
+    """Drop specific options from dashboard extra args, preserving all other arguments."""
+
+    option_name_set = set(option_names)
+    filtered_args: list[str] = []
+    skip_next = False
+    for extra_arg in extra_args:
+        if skip_next:
+            skip_next = False
+            continue
+        if extra_arg in option_name_set:
+            skip_next = True
+            continue
+        if any(extra_arg.startswith(f"{option_name}=") for option_name in option_name_set):
+            continue
+        filtered_args.append(extra_arg)
+    return filtered_args
 
 
 def dashboard_layer_range(extra_args: Iterable[str], *, default_layer: int) -> tuple[int, int]:
@@ -1613,7 +1908,10 @@ def main() -> int:
 
     parser = build_parser()
     args = parser.parse_args()
+    preset = apply_profile_preset(args)
     configs = [parse_config_spec(spec) for spec in args.config]
+    if not configs and preset is not None:
+        configs = [preset.config]
     if not configs:
         configs = default_profile_configs(args.include_comparisons)
     if not configs:

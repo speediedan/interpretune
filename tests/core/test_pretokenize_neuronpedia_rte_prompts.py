@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
 
 import torch
 import pytest
-from datasets import Dataset
+from datasets import Dataset, load_dataset
 from sae_lens.config import PretokenizeRunnerConfig
 from transformers.tokenization_utils_base import BatchEncoding
 
@@ -266,3 +267,28 @@ def test_default_harness_materializes_streaming_tokenized_rows(monkeypatch: pyte
     assert result.tokenized_dataset[0]["input_ids"].tolist() == [1, 2, 3, 4]
     assert cfg.use_chat_formatting is True
     assert "custom" not in metadata
+
+
+def test_persist_legacy_load_dataset_directory_writes_jsonl_export(tmp_path: Path) -> None:
+    dataset = Dataset.from_dict(
+        {
+            "input_ids": [[1, 2, 3], [4, 5, 0]],
+            "attention_mask": [[1, 1, 1], [1, 1, 0]],
+        }
+    ).with_format("torch")
+    output_dir = tmp_path / "legacy_tokens"
+    metadata = {"tokenizer_name": "google/gemma-3-1b-it", "pad_token_id": 0}
+
+    pretokenize_script.persist_legacy_load_dataset_directory(
+        dataset,
+        output_dir=output_dir,
+        split="train",
+        metadata=metadata,
+        force=False,
+    )
+
+    loaded = load_dataset(str(output_dir), split="train")
+
+    assert loaded[0]["input_ids"] == [1, 2, 3]
+    assert loaded[1]["attention_mask"] == [1, 1, 0]
+    assert json.loads((output_dir / "sae_lens.json").read_text(encoding="utf-8")) == metadata

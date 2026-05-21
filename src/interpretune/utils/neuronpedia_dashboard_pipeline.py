@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+import hashlib
 import importlib.util
+import inspect
 import json
 import logging
 import os
@@ -39,6 +41,7 @@ from interpretune.utils.neuronpedia_explanations import (
 DONE_LAYER_RE = re.compile(r"\bDONE layer=(\d+)\b")
 OOM_LOG_RE = re.compile(r"(CUDA out of memory|out of memory|torch\.OutOfMemoryError)", re.IGNORECASE)
 BATCH_JSON_RE = re.compile(r"^batch-\d+\.json$")
+LEGACY_LOCAL_DATASET_ALIAS_SOURCE_FILE = ".interpretune_legacy_alias_source"
 CONFIG_EXTENDS_KEY = "EXTENDS"
 PIPELINE_CONFIG_SECTION = "pipeline"
 LAUNCHER_CONFIG_SECTION = "launcher"
@@ -109,6 +112,7 @@ class NeuronpediaDashboardPipelineConfig:
     prompts_huggingface_dataset_split: str | None = None
     prompts_dataset_text_field: str | None = None
     prompts_pretokenized_dataset_path: Path | None = None
+    prompts_shared_tokens_file: Path | None = None
     run_root: Path = DEFAULT_IT_NP_CACHE / "dashboard_runs"
     run_name_suffix: str | None = None
     export_root: Path = field(default_factory=_default_dashboard_export_root)
@@ -144,6 +148,7 @@ class NeuronpediaDashboardPipelineConfig:
     runner_log_resource_snapshots: bool = False
     runner_log_hook_aliases: bool = False
     runner_log_performance: bool = False
+    runner_implementation: str = "current"
     runner_cleanup_each_minibatch: bool = False
     runner_correlation_accumulation_device: str = "auto"
     runner_converter_input_artifact_dir: Path | None = None
@@ -210,6 +215,8 @@ class NeuronpediaDashboardPipelineConfig:
                 raise ValueError("worker_id must not contain path separators.")
         if self.prompts_pretokenized_dataset_path is not None:
             self.prompts_pretokenized_dataset_path = Path(self.prompts_pretokenized_dataset_path)
+        if self.prompts_shared_tokens_file is not None:
+            self.prompts_shared_tokens_file = Path(self.prompts_shared_tokens_file)
         if self.existing_log_path is not None:
             self.existing_log_path = Path(self.existing_log_path)
         if self.pipeline_log_path is not None:
@@ -276,6 +283,8 @@ class NeuronpediaDashboardPipelineConfig:
 
     @property
     def shared_prompt_tokens_file(self) -> Path | None:
+        if self.prompts_shared_tokens_file is not None:
+            return self.prompts_shared_tokens_file
         if self.prompts_pretokenized_dataset_path is None:
             return None
         return self.prompts_pretokenized_dataset_path / f"tokens_{self.n_prompts_total}.pt"
@@ -291,6 +300,8 @@ class NeuronpediaDashboardPipelineConfig:
             dataset_id = f"{dataset_id}#text_field={self.prompts_dataset_text_field}"
         if self.prompts_pretokenized_dataset_path:
             dataset_id = f"{dataset_id}#pretokenized={self.prompts_pretokenized_dataset_path}"
+        if self.prompts_shared_tokens_file:
+            dataset_id = f"{dataset_id}#shared_tokens={self.prompts_shared_tokens_file}"
         return dataset_id
 
 
@@ -1427,6 +1438,8 @@ def _log_runtime_diagnostics(logger: logging.Logger, *, pid: int, output_dir: Pa
 
 
 def _resolve_runner_dashboard_output_format(config: NeuronpediaDashboardPipelineConfig) -> str:
+    if config.runner_implementation == "legacy_json_cpu":
+        return "legacy_json"
     dashboard_output_format = config.runner_dashboard_output_format
     if dashboard_output_format == "auto":
         return (
@@ -1448,6 +1461,68 @@ def _resolve_runner_emit_activation_copy_rows(config: NeuronpediaDashboardPipeli
     return config.import_to_local_db
 
 
+def _legacy_local_dataset_alias_name(dataset_path: Path) -> str:
+    dataset_slug = re.sub(r"[^a-z0-9]+", "-", dataset_path.name.lower()).strip("-")
+    dataset_slug = re.sub(r"-{2,}", "-", dataset_slug)
+    if not dataset_slug:
+        dataset_slug = "dataset"
+    digest = hashlib.sha1(str(dataset_path).encode("utf-8")).hexdigest()[:10]
+    return f"it-legacy-local-{dataset_slug[:40]}-{digest}"
+
+
+def _materialize_legacy_local_dataset_alias(
+    dataset_path: str,
+    *,
+    saedashboard_repo_root: Path,
+) -> str:
+    candidate_path = Path(dataset_path).expanduser()
+    if not candidate_path.is_absolute():
+        return dataset_path
+
+    try:
+        resolved_path = candidate_path.resolve(strict=True)
+    except OSError:
+        return dataset_path
+
+    if not resolved_path.is_dir():
+        return dataset_path
+    if not (resolved_path / "sae_lens.json").exists():
+        return dataset_path
+    if not any(resolved_path.glob("*.jsonl")):
+        return dataset_path
+
+    alias_name = _legacy_local_dataset_alias_name(resolved_path)
+    alias_path = saedashboard_repo_root / alias_name
+    alias_marker_path = alias_path / LEGACY_LOCAL_DATASET_ALIAS_SOURCE_FILE
+
+    if alias_path.is_symlink():
+        try:
+            if alias_path.resolve(strict=True) == resolved_path:
+                return alias_name
+        except OSError:
+            pass
+        alias_path.unlink()
+    elif alias_path.is_dir():
+        if alias_marker_path.exists() and alias_marker_path.read_text(encoding="utf-8").strip() == str(resolved_path):
+            return alias_name
+        raise RuntimeError(
+            "Cannot materialize a legacy local dataset alias because the target path already exists "
+            f"and is not a managed alias: {alias_path}"
+        )
+    elif alias_path.exists():
+        raise RuntimeError(
+            f"Cannot materialize a legacy local dataset alias because the target path already exists: {alias_path}"
+        )
+
+    try:
+        alias_path.symlink_to(resolved_path, target_is_directory=True)
+    except OSError:
+        shutil.copytree(resolved_path, alias_path)
+        alias_marker_path.write_text(f"{resolved_path}\n", encoding="utf-8")
+
+    return alias_name
+
+
 def _layer_runner_command(
     config: NeuronpediaDashboardPipelineConfig,
     layer_num: int,
@@ -1457,6 +1532,13 @@ def _layer_runner_command(
 ) -> list[str]:
     if prompt_settings is None:
         prompt_settings = _resolve_shared_prompt_run_settings(config)
+    if config.runner_implementation == "legacy_json_cpu":
+        return _legacy_json_cpu_layer_runner_command(
+            config,
+            layer_num=layer_num,
+            output_dir=output_dir,
+            prompt_settings=prompt_settings,
+        )
     command = [
         config.python_executable,
         "-m",
@@ -1577,6 +1659,54 @@ def _layer_runner_command(
         command.append("--use-skip-transcoder")
     if config.zero_out_bos_token:
         command.append("--zero-out-bos-token")
+    return command
+
+
+def _legacy_json_cpu_layer_runner_command(
+    config: NeuronpediaDashboardPipelineConfig,
+    layer_num: int,
+    output_dir: Path,
+    *,
+    prompt_settings: SharedPromptRunSettings,
+) -> list[str]:
+    dataset_path = _materialize_legacy_local_dataset_alias(
+        config.prompts_huggingface_dataset_path,
+        saedashboard_repo_root=config.saedashboard_repo_root,
+    )
+    command = [
+        config.python_executable,
+        "-m",
+        "sae_dashboard.neuronpedia.neuronpedia_runner",
+        f"--sae-set={config.sae_set}",
+        f"--sae-path={config.sae_path_for_layer(layer_num)}",
+        f"--np-set-name={config.neuronpedia_source_set_id}",
+        f"--dataset-path={dataset_path}",
+        f"--output-dir={output_dir}",
+        f"--sae_dtype={config.sae_dtype}",
+        f"--model_dtype={config.model_dtype}",
+        f"--sparsity-threshold={config.sparsity_threshold}",
+        f"--n-prompts={prompt_settings.n_prompts_total}",
+        f"--n-tokens-in-prompt={prompt_settings.n_tokens_in_prompt}",
+        f"--n-features-per-batch={config.n_features_per_batch}",
+        f"--n-prompts-in-forward-pass={prompt_settings.n_prompts_in_forward_pass}",
+        f"--start-batch={config.start_batch}",
+    ]
+    if config.run_name_suffix:
+        command.append(f"--np-sae-id-suffix={config.run_name_suffix}")
+    if config.end_batch is not None:
+        command.append(f"--end-batch={config.end_batch}")
+    if config.hf_model_path:
+        command.append(f"--hf-model-path={config.hf_model_path}")
+    if config.use_clt:
+        command.append("--from-local-sae")
+        command.append("--use-clt")
+        command.append(f"--clt-layer-idx={layer_num}")
+        if config.clt_dtype:
+            command.append(f"--clt-dtype={config.clt_dtype}")
+        if config.clt_weights_filename:
+            command.append(f"--clt-weights-filename={config.clt_weights_filename}")
+    if config.use_skip_transcoder:
+        command.append("--use-skip-transcoder")
     return command
 
 
@@ -1878,6 +2008,15 @@ def convert_dashboard_output(
         "n_tokens_in_prompt": config.n_tokens_in_prompt,
         "zero_out_bos_token": config.zero_out_bos_token,
     }
+    converter_params = inspect.signature(module_any.main).parameters
+    accepts_var_keyword = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in converter_params.values()
+    )
+    if "export_root" not in converter_params:
+        module_any.OUTPUT_DIR = str(config.export_root)
+    call_params = (
+        params if accepts_var_keyword else {name: value for name, value in params.items() if name in converter_params}
+    )
     try:
         if debug_session is not None:
             debug_session.emit(
@@ -1888,7 +2027,7 @@ def convert_dashboard_output(
                     "source_set_id": config.neuronpedia_source_set_id,
                 },
             )
-        module_any.main(SimpleNamespace(params=params), **params)
+        module_any.main(SimpleNamespace(params=call_params), **call_params)
         if debug_session is not None:
             debug_session.emit("after_converter_main", {"layer_num": layer_num})
     finally:
@@ -2180,6 +2319,25 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
                 layer_num,
                 _resolve_dashboard_leaf_dir(output_dir),
             )
+            if config.runner_implementation == "legacy_json_cpu" and not config.import_to_local_db:
+                elapsed_seconds = time.monotonic() - layer_start
+                _log_host_memory(logger, stage="layer_done", layer_num=layer_num)
+                logger.info(
+                    "Skipping Neuronpedia conversion for legacy_json_cpu generation-only layer=%s; "
+                    "local DB import is disabled.",
+                    layer_num,
+                )
+                logger.info("DONE layer=%s elapsed_seconds=%.1f", layer_num, elapsed_seconds)
+                results.append(
+                    NeuronpediaDashboardLayerResult(
+                        layer_num=layer_num,
+                        output_dir=output_dir,
+                        export_root=None,
+                        import_summary=None,
+                        elapsed_seconds=elapsed_seconds,
+                    )
+                )
+                continue
             _log_host_memory(logger, stage="before_conversion", layer_num=layer_num)
             export_root = convert_dashboard_output(config, layer_num=layer_num, output_dir=output_dir, logger=logger)
             _log_host_memory(logger, stage="after_conversion", layer_num=layer_num)
@@ -2251,6 +2409,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompts-huggingface-dataset-split")
     parser.add_argument("--prompts-dataset-text-field")
     parser.add_argument("--prompts-pretokenized-dataset-path", type=Path)
+    parser.add_argument("--prompts-shared-tokens-file", type=Path)
     parser.add_argument("--start-layer", type=int)
     parser.add_argument("--end-layer", type=int)
     parser.add_argument("--sae-path-template")
@@ -2317,6 +2476,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runner-log-resource-snapshots", action="store_true")
     parser.add_argument("--runner-log-hook-aliases", action="store_true")
     parser.add_argument("--runner-log-performance", action="store_true")
+    parser.add_argument("--runner-implementation", choices=("current", "legacy_json_cpu"), default="current")
     parser.add_argument("--runner-cleanup-each-minibatch", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
         "--runner-correlation-accumulation-device",
