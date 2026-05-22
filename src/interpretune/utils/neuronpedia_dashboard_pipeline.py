@@ -1744,6 +1744,9 @@ def _legacy_json_cpu_layer_runner_command(
         config.prompts_huggingface_dataset_path,
         saedashboard_repo_root=config.saedashboard_repo_root,
     )
+    detached_baseline_supports_prompt_dataset_contract = _legacy_json_cpu_runner_supports_prompt_dataset_contract(
+        config.saedashboard_repo_root
+    )
     command = [
         config.python_executable,
         "-m",
@@ -1751,8 +1754,6 @@ def _legacy_json_cpu_layer_runner_command(
         f"--sae-set={config.sae_set}",
         f"--sae-path={config.sae_path_for_layer(layer_num)}",
         f"--np-set-name={config.neuronpedia_source_set_id}",
-        f"--prompt-dataset-path={dataset_path}",
-        f"--prompt-dataset-mode={resolved_dataset_mode}",
         f"--output-dir={output_dir}",
         f"--sae_dtype={config.sae_dtype}",
         f"--model_dtype={config.model_dtype}",
@@ -1763,17 +1764,26 @@ def _legacy_json_cpu_layer_runner_command(
         f"--n-prompts-in-forward-pass={prompt_settings.n_prompts_in_forward_pass}",
         f"--start-batch={config.start_batch}",
     ]
+    if detached_baseline_supports_prompt_dataset_contract:
+        command.extend(
+            [
+                f"--prompt-dataset-path={dataset_path}",
+                f"--prompt-dataset-mode={resolved_dataset_mode}",
+            ]
+        )
+    else:
+        command.append(f"--dataset-path={dataset_path}")
     if config.run_name_suffix:
         command.append(f"--np-sae-id-suffix={config.run_name_suffix}")
     if config.end_batch is not None:
         command.append(f"--end-batch={config.end_batch}")
     if config.hf_model_path:
         command.append(f"--hf-model-path={config.hf_model_path}")
-    if config.prompts_huggingface_dataset_config_name:
+    if detached_baseline_supports_prompt_dataset_contract and config.prompts_huggingface_dataset_config_name:
         command.append(f"--prompt-dataset-name={config.prompts_huggingface_dataset_config_name}")
-    if config.prompts_huggingface_dataset_split:
+    if detached_baseline_supports_prompt_dataset_contract and config.prompts_huggingface_dataset_split:
         command.append(f"--prompt-dataset-split={config.prompts_huggingface_dataset_split}")
-    if config.prompts_dataset_text_field:
+    if detached_baseline_supports_prompt_dataset_contract and config.prompts_dataset_text_field:
         command.append(f"--prompt-dataset-text-field={config.prompts_dataset_text_field}")
     if config.use_clt:
         command.append("--from-local-sae")
@@ -1788,6 +1798,13 @@ def _legacy_json_cpu_layer_runner_command(
     if resolved_dataset_mode == "load_from_disk":
         raise ValueError("legacy_json_cpu must not be invoked with prompts_dataset_mode='load_from_disk'.")
     return command
+
+
+def _legacy_json_cpu_runner_supports_prompt_dataset_contract(saedashboard_repo_root: Path) -> bool:
+    runner_path = saedashboard_repo_root / "sae_dashboard" / "neuronpedia" / "neuronpedia_runner.py"
+    if not runner_path.exists():
+        return True
+    return "--prompt-dataset-path" in runner_path.read_text(encoding="utf-8")
 
 
 def _monitor_process(

@@ -1049,6 +1049,60 @@ def test_layer_runner_command_materializes_legacy_local_dataset_alias(tmp_path: 
         assert alias_marker_path.read_text(encoding="utf-8").strip() == str(legacy_dataset_dir.resolve(strict=True))
 
 
+def test_layer_runner_command_uses_legacy_dataset_flag_for_detached_baseline_runner(tmp_path: Path) -> None:
+    legacy_dataset_dir = tmp_path / "legacy_pretok_export"
+    legacy_dataset_dir.mkdir()
+    (legacy_dataset_dir / "train.jsonl").write_text('{"input_ids": [1, 2, 3]}\n', encoding="utf-8")
+    (legacy_dataset_dir / "sae_lens.json").write_text('{"context_size": 319}\n', encoding="utf-8")
+
+    saedashboard_repo_root = tmp_path / "baseline_saedashboard"
+    runner_path = saedashboard_repo_root / "sae_dashboard" / "neuronpedia"
+    runner_path.mkdir(parents=True)
+    (runner_path / "neuronpedia_runner.py").write_text(
+        'parser.add_argument("--dataset-path", required=True)\n',
+        encoding="utf-8",
+    )
+
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemma-scope-2-1b-it-transcoders-all",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path=str(legacy_dataset_dir),
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=saedashboard_repo_root,
+        saelens_repo_root=tmp_path / "baseline_saelens",
+        neuronpedia_utils_root=tmp_path / "baseline_neuronpedia_utils",
+        interpretune_env_file=None,
+        n_features_per_batch=128,
+        n_prompts_in_forward_pass=32,
+        runner_implementation="legacy_json_cpu",
+    )
+
+    command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
+
+    assert "--prompt-dataset-path=legacy_prompt_dataset" not in command
+    assert "--prompt-dataset-mode=legacy_jsonl" not in command
+    dataset_flag = next(part for part in command if part.startswith("--dataset-path="))
+    materialized_dataset_path = dataset_flag.split("=", maxsplit=1)[1]
+    assert materialized_dataset_path != str(legacy_dataset_dir)
+
+    alias_path = saedashboard_repo_root / materialized_dataset_path
+    assert alias_path.exists() or alias_path.is_symlink()
+
+
 def test_prompts_dataset_identifier_records_resolved_dataset_mode(tmp_path: Path) -> None:
     config = NeuronpediaDashboardPipelineConfig(
         model_name="gemma-3-1b-it",
