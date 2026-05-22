@@ -1,24 +1,15 @@
 from __future__ import annotations
 
-import importlib.util
-import json
-import sys
-from pathlib import Path
+import importlib
 from typing import Any
 
 import torch
 import pytest
-from datasets import Dataset, load_dataset
+from datasets import Dataset
 from sae_lens.config import PretokenizeRunnerConfig
+from sae_dashboard.neuronpedia import prompt_pretokenization as pretokenize_script
 from transformers.tokenization_utils_base import BatchEncoding
 
-
-SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "pretokenize_dashboard_dataset.py"
-SPEC = importlib.util.spec_from_file_location("pretokenize_dashboard_dataset", SCRIPT_PATH)
-assert SPEC is not None and SPEC.loader is not None
-pretokenize_script = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = pretokenize_script
-SPEC.loader.exec_module(pretokenize_script)
 
 RTE_MODULE = importlib.import_module("it_examples.utils.dashboard_pretokenization_rte")
 
@@ -75,6 +66,7 @@ def test_load_rte_pretokenization_settings_uses_gemma_prompt_config() -> None:
     assert settings.text_fields == ("premise", "hypothesis")
     assert settings.prompt_config_class_path == "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig"
     assert settings.prompt_cfg.ctx_question_join == "Does the previous passage imply that "
+    assert settings.windowing_mode == "max-prompt-pad"
 
 
 def test_build_rte_boolq_task_prompt_matches_datamodule_template() -> None:
@@ -146,6 +138,7 @@ def test_pretokenize_rte_dataset_uses_apply_chat_template_with_generation_prompt
 
     assert len(tokenized) == 1
     assert tokenized[0]["input_ids"].tolist() == [1, 10, 11, 12]
+    assert result.windowing_mode == "max-prompt-pad"
     assert tokenizer.calls == [
         {
             "messages": [
@@ -214,19 +207,186 @@ def test_pretokenize_rte_dataset_max_prompt_pad_keeps_every_prompt() -> None:
 
     assert result.effective_context_size == 5
     assert result.prompt_lengths == (3, 5)
+    assert result.windowing_mode == "max-prompt-pad"
     assert len(result.tokenized_dataset) == 2
     assert result.tokenized_dataset[0]["input_ids"].tolist() == [1, 10, 11, 0, 0]
     assert result.tokenized_dataset[0]["attention_mask"].tolist() == [1, 1, 1, 0, 0]
     assert result.tokenized_dataset[1]["input_ids"].tolist() == [1, 10, 11, 12, 13]
 
 
+def test_pretokenize_rte_dataset_fixed_context_pad_uses_requested_context() -> None:
+    args = pretokenize_script.parse_args(
+        [
+            "--dataset-path",
+            "aps/super_glue",
+            "--dataset-name",
+            "rte",
+            "--tokenizer-name",
+            "google/gemma-3-1b-it",
+            "--output-dir",
+            "/tmp/rte_tokens",
+            "--custom-dataset-module",
+            "it_examples.utils.dashboard_pretokenization_rte",
+            "--windowing-mode",
+            "fixed-context-pad",
+        ]
+    )
+    settings = RTE_MODULE.load_custom_pretokenization_settings(args)
+    tokenizer = RecordingTokenizer(
+        responses=[
+            torch.tensor([[1, 10, 11]], dtype=torch.long),
+            torch.tensor([[1, 10]], dtype=torch.long),
+        ]
+    )
+    dataset = Dataset.from_dict(
+        {
+            "premise": ["Premise A.", "Premise B."],
+            "hypothesis": ["Hypothesis A", "Hypothesis B"],
+            "label": [0, 1],
+        }
+    )
+    cfg = PretokenizeRunnerConfig(
+        tokenizer_name="fake-tokenizer",
+        dataset_path="aps/super_glue",
+        dataset_name="rte",
+        split="train",
+        num_proc=1,
+        context_size=6,
+        column_name="text",
+        shuffle=False,
+        streaming=False,
+        pretokenize_batch_size=1,
+        begin_batch_token="bos",
+        begin_sequence_token=None,
+        sequence_separator_token="bos",
+        disable_concat_sequences=True,
+    )
+
+    result = RTE_MODULE.pretokenize_custom_dataset(dataset, tokenizer, cfg, settings)
+
+    assert result.effective_context_size == 6
+    assert result.prompt_lengths == (3, 2)
+    assert result.windowing_mode == "fixed-context-pad"
+    assert result.tokenized_dataset[0]["attention_mask"].tolist() == [1, 1, 1, 0, 0, 0]
+    assert result.tokenized_dataset[1]["input_ids"].tolist() == [1, 10, 0, 0, 0, 0]
+
+
+def test_pretokenize_rte_dataset_filter_truncate_uses_upstream_packed_windowing() -> None:
+    args = pretokenize_script.parse_args(
+        [
+            "--dataset-path",
+            "aps/super_glue",
+            "--dataset-name",
+            "rte",
+            "--tokenizer-name",
+            "google/gemma-3-1b-it",
+            "--output-dir",
+            "/tmp/rte_tokens",
+            "--custom-dataset-module",
+            "it_examples.utils.dashboard_pretokenization_rte",
+            "--windowing-mode",
+            "filter-truncate",
+        ]
+    )
+    settings = RTE_MODULE.load_custom_pretokenization_settings(args)
+    tokenizer = RecordingTokenizer(
+        responses=[
+            torch.tensor([[1, 10, 11]], dtype=torch.long),
+            torch.tensor([[1, 10, 11, 12, 13]], dtype=torch.long),
+        ]
+    )
+    dataset = Dataset.from_dict(
+        {
+            "premise": ["Premise A.", "Premise B."],
+            "hypothesis": ["Hypothesis A", "Hypothesis B"],
+            "label": [0, 1],
+        }
+    )
+    cfg = PretokenizeRunnerConfig(
+        tokenizer_name="fake-tokenizer",
+        dataset_path="aps/super_glue",
+        dataset_name="rte",
+        split="train",
+        num_proc=1,
+        context_size=4,
+        column_name="text",
+        shuffle=False,
+        streaming=False,
+        pretokenize_batch_size=1,
+        begin_batch_token=None,
+        begin_sequence_token=None,
+        sequence_separator_token=None,
+        disable_concat_sequences=True,
+    )
+
+    result = RTE_MODULE.pretokenize_custom_dataset(dataset, tokenizer, cfg, settings)
+
+    assert result.effective_context_size == 4
+    assert result.prompt_lengths is None
+    assert result.windowing_mode == "filter-truncate"
+    assert len(result.tokenized_dataset) == 1
+    assert result.tokenized_dataset[0]["input_ids"].tolist() == [1, 10, 11, 12]
+
+
+def test_build_custom_metadata_keeps_only_rte_specific_fields() -> None:
+    args = pretokenize_script.parse_args(
+        [
+            "--dataset-path",
+            "aps/super_glue",
+            "--dataset-name",
+            "rte",
+            "--tokenizer-name",
+            "google/gemma-3-1b-it",
+            "--output-dir",
+            "/tmp/rte_tokens",
+            "--custom-dataset-module",
+            "it_examples.utils.dashboard_pretokenization_rte",
+        ]
+    )
+    settings = RTE_MODULE.load_custom_pretokenization_settings(args)
+
+    metadata = RTE_MODULE.build_custom_metadata(
+        args,
+        settings,
+        pretokenize_script.PretokenizationResult(tokenized_dataset=Dataset.from_dict({"input_ids": [[1, 2, 3]]})),
+        RecordingTokenizer(),
+        PretokenizeRunnerConfig(
+            tokenizer_name="fake-tokenizer",
+            dataset_path="aps/super_glue",
+            dataset_name="rte",
+            split="train",
+            num_proc=1,
+            context_size=4,
+            column_name="text",
+            shuffle=False,
+            streaming=False,
+            pretokenize_batch_size=1,
+            begin_batch_token=None,
+            begin_sequence_token=None,
+            sequence_separator_token=None,
+            disable_concat_sequences=True,
+        ),
+    )
+
+    assert metadata == {
+        "prompt_renderer": "apply_chat_template_fn",
+        "prompt_config_class": settings.prompt_config_class_path,
+        "experiment_config": str(settings.experiment_config),
+        "chat_template_add_generation_prompt": True,
+        "task_name": "rte",
+        "text_fields": ["premise", "hypothesis"],
+    }
+
+
 def test_pad_to_context_size_refuses_truncation() -> None:
     with pytest.raises(ValueError, match="does not truncate"):
-        RTE_MODULE._pad_to_context_size(torch.tensor([1, 2, 3]), context_size=2, pad_token_id=0)
+        pretokenize_script.pad_to_context_size(torch.tensor([1, 2, 3]), context_size=2, pad_token_id=0)
 
 
 def test_as_1d_token_tensor_accepts_batch_encoding() -> None:
-    tokens = RTE_MODULE._as_1d_token_tensor(BatchEncoding({"input_ids": torch.tensor([[1, 2, 3]], dtype=torch.long)}))
+    tokens = pretokenize_script.as_1d_token_tensor(
+        BatchEncoding({"input_ids": torch.tensor([[1, 2, 3]], dtype=torch.long)})
+    )
 
     assert tokens.tolist() == [1, 2, 3]
 
@@ -267,28 +427,3 @@ def test_default_harness_materializes_streaming_tokenized_rows(monkeypatch: pyte
     assert result.tokenized_dataset[0]["input_ids"].tolist() == [1, 2, 3, 4]
     assert cfg.use_chat_formatting is True
     assert "custom" not in metadata
-
-
-def test_persist_legacy_load_dataset_directory_writes_jsonl_export(tmp_path: Path) -> None:
-    dataset = Dataset.from_dict(
-        {
-            "input_ids": [[1, 2, 3], [4, 5, 0]],
-            "attention_mask": [[1, 1, 1], [1, 1, 0]],
-        }
-    ).with_format("torch")
-    output_dir = tmp_path / "legacy_tokens"
-    metadata = {"tokenizer_name": "google/gemma-3-1b-it", "pad_token_id": 0}
-
-    pretokenize_script.persist_legacy_load_dataset_directory(
-        dataset,
-        output_dir=output_dir,
-        split="train",
-        metadata=metadata,
-        force=False,
-    )
-
-    loaded = load_dataset(str(output_dir), split="train")
-
-    assert loaded[0]["input_ids"] == [1, 2, 3]
-    assert loaded[1]["attention_mask"] == [1, 1, 0]
-    assert json.loads((output_dir / "sae_lens.json").read_text(encoding="utf-8")) == metadata

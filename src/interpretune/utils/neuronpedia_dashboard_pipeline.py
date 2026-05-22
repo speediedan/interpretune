@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import time
+import warnings
 from dataclasses import MISSING as DATACLASS_MISSING, dataclass, field, fields as dataclass_fields
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -22,6 +23,7 @@ from urllib.parse import urlparse
 
 import certifi
 import yaml  # type: ignore[import-untyped]
+from sae_dashboard.neuronpedia.prompt_bucketing import derive_prompt_bucket_ceilings
 
 from interpretune.utils.neuronpedia_db_utils import (
     DEFAULT_COLUMNAR_COPY_IMPORT_TABLES,
@@ -46,10 +48,33 @@ CONFIG_EXTENDS_KEY = "EXTENDS"
 PIPELINE_CONFIG_SECTION = "pipeline"
 LAUNCHER_CONFIG_SECTION = "launcher"
 RUN_SETTINGS_FILE = "run_settings.json"
-DEFAULT_PROMPT_BUCKET_CEILINGS = (64, 128, 192, 256)
 DEFAULT_LOCAL_DB_COLUMNAR_IMPORT_TABLES = tuple(sorted(DEFAULT_COLUMNAR_IMPORT_TABLES))
 DEFAULT_LOCAL_DB_COLUMNAR_COPY_TABLES = tuple(sorted(DEFAULT_COLUMNAR_COPY_IMPORT_TABLES))
 DEFAULT_DASHBOARD_EXPORT_ROOT_ENV_VARS = ("NEURONPEDIA_EXPORT_ROOT",)
+PROMPT_DATASET_MODES = ("load_dataset", "load_from_disk", "legacy_jsonl")
+
+
+def _valid_prompts_dataset_mode_values() -> str:
+    return ", ".join(PROMPT_DATASET_MODES)
+
+
+def _is_legacy_jsonl_dataset_path(dataset_path: str) -> bool:
+    candidate_path = Path(dataset_path).expanduser()
+    try:
+        resolved_path = candidate_path.resolve(strict=True)
+    except OSError:
+        return False
+    return resolved_path.is_dir() and (resolved_path / "sae_lens.json").exists() and any(resolved_path.glob("*.jsonl"))
+
+
+def _warn_deprecated_legacy_jsonl() -> None:
+    warnings.warn(
+        "prompts_dataset_mode='legacy_jsonl' is deprecated and exists only for legacy JSONL dashboard "
+        "compatibility. Prefer 'load_dataset' for Hugging Face/local datasets or 'load_from_disk' for "
+        "save_to_disk() prompt caches.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 def _default_dashboard_export_root() -> Path:
@@ -107,6 +132,7 @@ class NeuronpediaDashboardPipelineConfig:
     start_layer: int
     end_layer: int
     sae_path_template: str
+    prompts_dataset_mode: str = "load_dataset"
     hf_model_path: str | None = None
     prompts_huggingface_dataset_config_name: str | None = None
     prompts_huggingface_dataset_split: str | None = None
@@ -215,6 +241,12 @@ class NeuronpediaDashboardPipelineConfig:
                 raise ValueError("worker_id must not contain path separators.")
         if self.prompts_pretokenized_dataset_path is not None:
             self.prompts_pretokenized_dataset_path = Path(self.prompts_pretokenized_dataset_path)
+        self.prompts_dataset_mode = str(self.prompts_dataset_mode).strip() or "load_dataset"
+        if self.prompts_dataset_mode not in PROMPT_DATASET_MODES:
+            raise ValueError(
+                f"prompts_dataset_mode must be one of {_valid_prompts_dataset_mode_values()}; "
+                f"got {self.prompts_dataset_mode!r}."
+            )
         if self.prompts_shared_tokens_file is not None:
             self.prompts_shared_tokens_file = Path(self.prompts_shared_tokens_file)
         if self.existing_log_path is not None:
@@ -302,6 +334,7 @@ class NeuronpediaDashboardPipelineConfig:
             dataset_id = f"{dataset_id}#pretokenized={self.prompts_pretokenized_dataset_path}"
         if self.prompts_shared_tokens_file:
             dataset_id = f"{dataset_id}#shared_tokens={self.prompts_shared_tokens_file}"
+        dataset_id = f"{dataset_id}#dataset_mode={_resolve_prompts_dataset_mode(self)}"
         return dataset_id
 
 
@@ -323,6 +356,27 @@ ALLOWED_TOP_LEVEL_CONFIG_KEYS = ALLOWED_PIPELINE_CONFIG_KEYS | {
     LAUNCHER_CONFIG_SECTION,
 }
 ALLOWED_LAUNCHER_CONFIG_KEYS = {"background", "env", "log_path", "monitor", "monitor_heartbeat_seconds", "workers"}
+
+
+def _resolve_prompts_dataset_mode(config: NeuronpediaDashboardPipelineConfig) -> str:
+    resolved_mode = config.prompts_dataset_mode
+    if resolved_mode == "load_dataset":
+        if _is_legacy_jsonl_dataset_path(config.prompts_huggingface_dataset_path):
+            resolved_mode = "legacy_jsonl"
+        elif config.prompts_pretokenized_dataset_path is not None and config.runner_implementation != "legacy_json_cpu":
+            resolved_mode = "load_from_disk"
+
+    if resolved_mode == "legacy_jsonl":
+        _warn_deprecated_legacy_jsonl()
+
+    if resolved_mode == "load_from_disk" and config.runner_implementation == "legacy_json_cpu":
+        raise ValueError(
+            "legacy_json_cpu does not accept prompts_dataset_mode='load_from_disk'; "
+            "use load_dataset or legacy_jsonl instead."
+        )
+    if resolved_mode == "load_from_disk" and config.prompts_pretokenized_dataset_path is None:
+        raise ValueError("prompts_dataset_mode='load_from_disk' requires prompts_pretokenized_dataset_path to be set.")
+    return resolved_mode
 
 
 def _load_yaml_mapping(path: Path) -> dict[str, Any]:
@@ -908,12 +962,15 @@ def _load_json_mapping_if_exists(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _normalized_prompt_bucket_ceilings(config: NeuronpediaDashboardPipelineConfig) -> tuple[int, ...]:
-    bucket_ceilings = {value for value in config.prompt_bucket_ceilings if 0 < value <= config.n_tokens_in_prompt}
-    if not bucket_ceilings:
-        bucket_ceilings = {value for value in DEFAULT_PROMPT_BUCKET_CEILINGS if 0 < value < config.n_tokens_in_prompt}
-    bucket_ceilings.add(config.n_tokens_in_prompt)
-    return tuple(sorted(bucket_ceilings))
+def _normalized_prompt_bucket_ceilings(
+    config: NeuronpediaDashboardPipelineConfig,
+    effective_lengths: list[int],
+) -> tuple[int, ...]:
+    return derive_prompt_bucket_ceilings(
+        effective_lengths,
+        max_context_size=config.n_tokens_in_prompt,
+        explicit_bucket_ceilings=config.prompt_bucket_ceilings,
+    )
 
 
 def _round_down_to_multiple(value: int, *, multiple: int) -> int:
@@ -937,8 +994,9 @@ def _scale_batch_size(
 
 
 def _resolve_shared_prompt_run_settings(config: NeuronpediaDashboardPipelineConfig) -> SharedPromptRunSettings:
+    resolved_dataset_mode = _resolve_prompts_dataset_mode(config)
     default_settings = SharedPromptRunSettings(
-        shared_tokens_file=config.shared_prompt_tokens_file,
+        shared_tokens_file=(config.shared_prompt_tokens_file if resolved_dataset_mode == "load_from_disk" else None),
         n_prompts_total=config.n_prompts_total,
         n_tokens_in_prompt=config.n_tokens_in_prompt,
         n_prompts_in_forward_pass=config.n_prompts_in_forward_pass,
@@ -946,6 +1004,9 @@ def _resolve_shared_prompt_run_settings(config: NeuronpediaDashboardPipelineConf
     )
     if config.prompt_bucket_ceiling is None:
         return default_settings
+
+    if resolved_dataset_mode != "load_from_disk":
+        raise ValueError("prompt_bucket_ceiling requires prompts_dataset_mode='load_from_disk'.")
 
     shared_tokens_file = config.shared_prompt_tokens_file
     if shared_tokens_file is None:
@@ -1025,6 +1086,9 @@ def _ensure_shared_prompt_tokens_file(
     *,
     logger: logging.Logger,
 ) -> Path | None:
+    if _resolve_prompts_dataset_mode(config) != "load_from_disk":
+        return None
+
     shared_tokens_file = config.shared_prompt_tokens_file
     if shared_tokens_file is None:
         return None
@@ -1112,9 +1176,10 @@ def _ensure_shared_prompt_tokens_file(
     effective_length_tensor = torch.tensor(effective_lengths, dtype=torch.int32)
     torch.save(token_tensor, shared_tokens_file)
     torch.save(effective_length_tensor, effective_lengths_file)
+    bucket_ceilings = _normalized_prompt_bucket_ceilings(config, effective_lengths)
     bucket_entries: list[dict[str, Any]] = []
     lower_exclusive = 0
-    for bucket_ceiling in _normalized_prompt_bucket_ceilings(config):
+    for bucket_ceiling in bucket_ceilings:
         bucket_indices = [
             index for index, length in enumerate(effective_lengths) if lower_exclusive < length <= bucket_ceiling
         ]
@@ -1160,7 +1225,7 @@ def _ensure_shared_prompt_tokens_file(
             {
                 "requested_prompts": config.n_prompts_total,
                 "source_dataset_path": str(config.prompts_pretokenized_dataset_path),
-                "bucket_ceilings": list(_normalized_prompt_bucket_ceilings(config)),
+                "bucket_ceilings": list(bucket_ceilings),
                 "buckets": bucket_entries,
             },
             indent=2,
@@ -1183,7 +1248,7 @@ def _ensure_shared_prompt_tokens_file(
                 "effective_length_max": max(effective_lengths),
                 "effective_length_mean": sum(effective_lengths) / len(effective_lengths),
                 "pad_token_id": pad_token_id,
-                "bucket_ceilings": list(_normalized_prompt_bucket_ceilings(config)),
+                "bucket_ceilings": list(bucket_ceilings),
                 "bucket_manifest": str(bucket_manifest_file),
             },
             indent=2,
@@ -1530,6 +1595,12 @@ def _layer_runner_command(
     *,
     prompt_settings: SharedPromptRunSettings | None = None,
 ) -> list[str]:
+    resolved_dataset_mode = _resolve_prompts_dataset_mode(config)
+    prompt_dataset_path = (
+        str(config.prompts_pretokenized_dataset_path)
+        if resolved_dataset_mode == "load_from_disk" and config.prompts_pretokenized_dataset_path is not None
+        else config.prompts_huggingface_dataset_path
+    )
     if prompt_settings is None:
         prompt_settings = _resolve_shared_prompt_run_settings(config)
     if config.runner_implementation == "legacy_json_cpu":
@@ -1546,7 +1617,8 @@ def _layer_runner_command(
         f"--sae-set={config.sae_set}",
         f"--sae-path={config.sae_path_for_layer(layer_num)}",
         f"--np-set-name={config.neuronpedia_source_set_id}",
-        f"--dataset-path={config.prompts_huggingface_dataset_path}",
+        f"--prompt-dataset-path={prompt_dataset_path}",
+        f"--prompt-dataset-mode={resolved_dataset_mode}",
         f"--model-wrapper={config.model_wrapper}",
         f"--output-dir={output_dir}",
         f"--sae_dtype={config.sae_dtype}",
@@ -1565,14 +1637,12 @@ def _layer_runner_command(
     if config.hf_model_path:
         command.append(f"--hf-model-path={config.hf_model_path}")
     if config.prompts_huggingface_dataset_config_name:
-        command.append(f"--dataset-config-name={config.prompts_huggingface_dataset_config_name}")
+        command.append(f"--prompt-dataset-name={config.prompts_huggingface_dataset_config_name}")
     if config.prompts_huggingface_dataset_split:
-        command.append(f"--dataset-split={config.prompts_huggingface_dataset_split}")
+        command.append(f"--prompt-dataset-split={config.prompts_huggingface_dataset_split}")
     if config.prompts_dataset_text_field:
-        command.append(f"--dataset-text-field={config.prompts_dataset_text_field}")
-    if config.prompts_pretokenized_dataset_path:
-        command.append(f"--pretokenized-dataset-path={config.prompts_pretokenized_dataset_path}")
-    if prompt_settings.shared_tokens_file:
+        command.append(f"--prompt-dataset-text-field={config.prompts_dataset_text_field}")
+    if resolved_dataset_mode == "load_from_disk" and prompt_settings.shared_tokens_file:
         command.append(f"--shared-tokens-file={prompt_settings.shared_tokens_file}")
     if not config.deduplicate_shared_prompt_tokens:
         command.append("--no-deduplicate-shared-prompt-tokens")
@@ -1669,6 +1739,7 @@ def _legacy_json_cpu_layer_runner_command(
     *,
     prompt_settings: SharedPromptRunSettings,
 ) -> list[str]:
+    resolved_dataset_mode = _resolve_prompts_dataset_mode(config)
     dataset_path = _materialize_legacy_local_dataset_alias(
         config.prompts_huggingface_dataset_path,
         saedashboard_repo_root=config.saedashboard_repo_root,
@@ -1680,7 +1751,8 @@ def _legacy_json_cpu_layer_runner_command(
         f"--sae-set={config.sae_set}",
         f"--sae-path={config.sae_path_for_layer(layer_num)}",
         f"--np-set-name={config.neuronpedia_source_set_id}",
-        f"--dataset-path={dataset_path}",
+        f"--prompt-dataset-path={dataset_path}",
+        f"--prompt-dataset-mode={resolved_dataset_mode}",
         f"--output-dir={output_dir}",
         f"--sae_dtype={config.sae_dtype}",
         f"--model_dtype={config.model_dtype}",
@@ -1697,6 +1769,12 @@ def _legacy_json_cpu_layer_runner_command(
         command.append(f"--end-batch={config.end_batch}")
     if config.hf_model_path:
         command.append(f"--hf-model-path={config.hf_model_path}")
+    if config.prompts_huggingface_dataset_config_name:
+        command.append(f"--prompt-dataset-name={config.prompts_huggingface_dataset_config_name}")
+    if config.prompts_huggingface_dataset_split:
+        command.append(f"--prompt-dataset-split={config.prompts_huggingface_dataset_split}")
+    if config.prompts_dataset_text_field:
+        command.append(f"--prompt-dataset-text-field={config.prompts_dataset_text_field}")
     if config.use_clt:
         command.append("--from-local-sae")
         command.append("--use-clt")
@@ -1707,6 +1785,8 @@ def _legacy_json_cpu_layer_runner_command(
             command.append(f"--clt-weights-filename={config.clt_weights_filename}")
     if config.use_skip_transcoder:
         command.append("--use-skip-transcoder")
+    if resolved_dataset_mode == "load_from_disk":
+        raise ValueError("legacy_json_cpu must not be invoked with prompts_dataset_mode='load_from_disk'.")
     return command
 
 
@@ -2405,6 +2485,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hf-weights-path-template")
     parser.add_argument("--hook-point")
     parser.add_argument("--prompts-huggingface-dataset-path")
+    parser.add_argument("--prompts-dataset-mode", choices=PROMPT_DATASET_MODES)
     parser.add_argument("--prompts-huggingface-dataset-config-name")
     parser.add_argument("--prompts-huggingface-dataset-split")
     parser.add_argument("--prompts-dataset-text-field")

@@ -47,7 +47,7 @@ DEFAULT_PHASE3_RTE_PRETOKENIZED_DATASET = Path(
 )
 DEFAULT_PHASE3_RTE_LAZY_PRETOKENIZED_DATASET = Path(
     "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/pretokenized/"
-    "gemma-3-1b-it_rte_boolq_context319_fixed_pad_2490_lazy_phase3"
+    "gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts"
 )
 DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET = Path(
     "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/legacy_pretokenized/"
@@ -380,9 +380,21 @@ def _phase3_rte_preset(
     prompts_dataset_path: Path | str = DEFAULT_PHASE3_RTE_TEXT_DATASET,
     pretokenized_dataset_path: Path | None = None,
 ) -> ProfilePreset:
+    if pretokenized_dataset_path is not None:
+        prompts_dataset_mode = "load_from_disk"
+    elif (
+        legacy
+        and isinstance(prompts_dataset_path, Path)
+        and prompts_dataset_path == DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET
+    ):
+        prompts_dataset_mode = "legacy_jsonl"
+    else:
+        prompts_dataset_mode = "load_dataset"
+
     dashboard_extra_args = [
         f"--run-name-suffix={name}",
         f"--prompts-huggingface-dataset-path={prompts_dataset_path}",
+        f"--prompts-dataset-mode={prompts_dataset_mode}",
         "--prompts-huggingface-dataset-config-name=",
         f"--n-prompts-total={DEFAULT_PHASE3_PROMPTS_TOTAL}",
         f"--n-tokens-in-prompt={DEFAULT_PHASE3_RTE_TOKENS_IN_PROMPT}",
@@ -412,11 +424,23 @@ def _phase3_monology_preset(
     prompts_dataset_path: Path | str = "monology/pile-uncopyrighted",
     pretokenized_dataset_path: Path | None = None,
 ) -> ProfilePreset:
+    if pretokenized_dataset_path is not None:
+        prompts_dataset_mode = "load_from_disk"
+    elif (
+        legacy
+        and isinstance(prompts_dataset_path, Path)
+        and prompts_dataset_path == DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET
+    ):
+        prompts_dataset_mode = "legacy_jsonl"
+    else:
+        prompts_dataset_mode = "load_dataset"
+
     dashboard_extra_args = [
         f"--run-name-suffix={name}",
         f"--neuronpedia-source-set-id={DEFAULT_MONOLOGY_SOURCE_SET_ID}",
         "--neuronpedia-source-set-description=Transcoder-262k",
         f"--prompts-huggingface-dataset-path={prompts_dataset_path}",
+        f"--prompts-dataset-mode={prompts_dataset_mode}",
         "--prompts-huggingface-dataset-config-name=",
         f"--n-prompts-total={DEFAULT_PHASE3_PROMPTS_TOTAL}",
         f"--n-tokens-in-prompt={DEFAULT_PHASE3_MONOLOGY_TOKENS_IN_PROMPT}",
@@ -940,6 +964,9 @@ def build_dashboard_command(
     n_prompts_total = int(
         dashboard_extra_arg_value(dashboard_extra_args, "--n-prompts-total") or DEFAULT_PHASE3_PROMPTS_TOTAL
     )
+    prompts_dataset_mode = dashboard_extra_arg_value(dashboard_extra_args, "--prompts-dataset-mode")
+    if prompts_dataset_mode is None:
+        prompts_dataset_mode = "load_from_disk" if pretokenized_dataset_path is not None else "load_dataset"
     n_tokens_override = dashboard_extra_arg_value(dashboard_extra_args, "--n-tokens-in-prompt")
     n_tokens_in_prompt = (
         int(n_tokens_override)
@@ -976,6 +1003,8 @@ def build_dashboard_command(
         "hook_mlp_in",
         "--prompts-huggingface-dataset-path",
         "aps/super_glue",
+        "--prompts-dataset-mode",
+        prompts_dataset_mode,
         "--prompts-huggingface-dataset-config-name",
         "rte",
         "--prompts-huggingface-dataset-split",
@@ -1029,7 +1058,7 @@ def build_dashboard_command(
     command.extend(
         strip_dashboard_extra_arg_options(
             dashboard_extra_args,
-            option_names=("--n-prompts-total", "--n-tokens-in-prompt"),
+            option_names=("--n-prompts-total", "--n-tokens-in-prompt", "--prompts-dataset-mode"),
         )
     )
     return command

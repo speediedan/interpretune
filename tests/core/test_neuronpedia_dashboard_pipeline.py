@@ -199,6 +199,7 @@ def test_profile_preset_phase3_legacy_rte_smoke_applies_baseline_args() -> None:
         f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_RTE_TEXT_DATASET}"
         in args.dashboard_extra_arg
     )
+    assert "--prompts-dataset-mode=load_dataset" in args.dashboard_extra_arg
     assert f"--n-prompts-total={profile_module.DEFAULT_PHASE3_PROMPTS_TOTAL}" in args.dashboard_extra_arg
     assert f"--n-tokens-in-prompt={profile_module.DEFAULT_PHASE3_RTE_TOKENS_IN_PROMPT}" in args.dashboard_extra_arg
     assert any(arg.startswith("--saedashboard-repo-root=") for arg in args.dashboard_extra_arg)
@@ -223,6 +224,15 @@ def test_profile_preset_preserves_explicit_pretokenized_dataset_path(tmp_path: P
 
     assert preset is not None
     assert args.prompts_pretokenized_dataset_path == prompts_path
+
+
+def test_profile_preset_lazy_rte_uses_upstream_owned_pretokenized_cache() -> None:
+    profile_module = _load_dashboard_profile_module()
+
+    lazy_rte = profile_module.PROFILE_PRESETS["phase3-lazy-rte-pretokenized-reduced"]
+
+    assert lazy_rte.pretokenized_dataset_path == profile_module.DEFAULT_PHASE3_RTE_LAZY_PRETOKENIZED_DATASET
+    assert lazy_rte.pretokenized_dataset_path.name == "gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts"
 
 
 def test_profile_dashboard_run_name_uses_extra_suffix() -> None:
@@ -292,6 +302,8 @@ def test_phase3_profile_preset_pairs_share_reduced_shapes() -> None:
     assert lazy.pretokenized_dataset_path is None
     assert "--runner-implementation=legacy_json_cpu" in legacy.dashboard_extra_args
     assert "--runner-dashboard-output-format=columnar" in lazy.dashboard_extra_args
+    assert "--prompts-dataset-mode=load_dataset" in legacy.dashboard_extra_args
+    assert "--prompts-dataset-mode=load_dataset" in lazy.dashboard_extra_args
     assert f"--n-prompts-total={profile_module.DEFAULT_PHASE3_PROMPTS_TOTAL}" in legacy.dashboard_extra_args
     assert f"--n-prompts-total={profile_module.DEFAULT_PHASE3_PROMPTS_TOTAL}" in lazy.dashboard_extra_args
     assert (
@@ -321,6 +333,8 @@ def test_phase3_pretokenized_reduced_presets_use_final_prompt_artifacts() -> Non
         f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET}"
         in legacy_rte.dashboard_extra_args
     )
+    assert "--prompts-dataset-mode=legacy_jsonl" in legacy_rte.dashboard_extra_args
+    assert "--prompts-dataset-mode=load_from_disk" in lazy_rte.dashboard_extra_args
 
     assert legacy_monology.config.n_features_per_batch == lazy_monology.config.n_features_per_batch == 1024
     assert legacy_monology.config.n_prompts_in_forward_pass == lazy_monology.config.n_prompts_in_forward_pass == 256
@@ -331,6 +345,79 @@ def test_phase3_pretokenized_reduced_presets_use_final_prompt_artifacts() -> Non
         f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET}"
         in legacy_monology.dashboard_extra_args
     )
+    assert "--prompts-dataset-mode=legacy_jsonl" in legacy_monology.dashboard_extra_args
+    assert "--prompts-dataset-mode=load_from_disk" in lazy_monology.dashboard_extra_args
+
+
+def test_profile_command_defaults_to_load_from_disk_mode_when_prompt_cache_present(tmp_path: Path) -> None:
+    profile_module = _load_dashboard_profile_module()
+
+    command = profile_module.build_dashboard_command(
+        profile_module.ProfileConfig("profile", 1024, 512),
+        layer=9,
+        python_executable="python",
+        run_root=tmp_path / "runs",
+        pretokenized_dataset_path=tmp_path / "prompts",
+        primary_acts_batch_size=128,
+        cuda_visible_devices="0",
+        dashboard_extra_args=(),
+    )
+
+    mode_index = command.index("--prompts-dataset-mode")
+    assert command[mode_index + 1] == "load_from_disk"
+
+
+def test_profile_command_allows_explicit_prompt_dataset_mode_override(tmp_path: Path) -> None:
+    profile_module = _load_dashboard_profile_module()
+
+    command = profile_module.build_dashboard_command(
+        profile_module.ProfileConfig("profile", 1024, 512),
+        layer=9,
+        python_executable="python",
+        run_root=tmp_path / "runs",
+        pretokenized_dataset_path=tmp_path / "prompts",
+        primary_acts_batch_size=128,
+        cuda_visible_devices="0",
+        dashboard_extra_args=("--prompts-dataset-mode=legacy_jsonl",),
+    )
+
+    mode_index = command.index("--prompts-dataset-mode")
+    assert command[mode_index + 1] == "legacy_jsonl"
+
+
+def test_normalized_prompt_bucket_ceilings_use_quantiles_when_not_explicit(tmp_path: Path) -> None:
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+        n_tokens_in_prompt=128,
+    )
+
+    ceilings = dashboard_pipeline._normalized_prompt_bucket_ceilings(
+        config,
+        [40, 50, 60, 64, 64, 64, 65, 70, 80, 90, 110, 120],
+    )
+
+    assert ceilings == (60, 64, 80, 120)
 
 
 def test_profile_import_stage_legacy_includes_conversion_in_activation_load(
@@ -615,7 +702,7 @@ def test_convert_dashboard_output_passes_model_metadata(tmp_path: Path, monkeypa
         "hf_weights_path": "transcoder/layer_0/weights.safetensors",
         "hook_point": _FakeHookPointChoices.hook_resid_post,
         "layer_num": 0,
-        "prompts_huggingface_dataset_path": "monology/pile-uncopyrighted",
+        "prompts_huggingface_dataset_path": "monology/pile-uncopyrighted#dataset_mode=load_dataset",
         "n_prompts_total": 24576,
         "n_tokens_in_prompt": 128,
         "zero_out_bos_token": False,
@@ -737,11 +824,11 @@ def test_layer_runner_command_includes_bridge_and_custom_dataset_args(tmp_path: 
     command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
 
     assert "--model-wrapper=bridge" in command
-    assert "--dataset-path=aps/super_glue" in command
-    assert "--dataset-config-name=rte" in command
-    assert "--dataset-split=train" in command
+    assert f"--prompt-dataset-path={tmp_path / 'pretokenized_prompts'}" in command
+    assert "--prompt-dataset-mode=load_from_disk" in command
+    assert "--prompt-dataset-name=rte" in command
+    assert "--prompt-dataset-split=train" in command
     assert not any(part.startswith("--prompt-builder") for part in command)
-    assert f"--pretokenized-dataset-path={tmp_path / 'pretokenized_prompts'}" in command
     assert f"--shared-tokens-file={tmp_path / 'pretokenized_prompts' / 'tokens_24576.pt'}" in command
     assert "--primary-acts-batch-size=128" in command
     assert "--start-batch=2" in command
@@ -790,7 +877,8 @@ def test_layer_runner_command_uses_explicit_shared_tokens_file(tmp_path: Path) -
 
     command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
 
-    assert f"--pretokenized-dataset-path={tmp_path / 'pretokenized_prompts'}" in command
+    assert f"--prompt-dataset-path={tmp_path / 'pretokenized_prompts'}" in command
+    assert "--prompt-dataset-mode=load_from_disk" in command
     assert f"--shared-tokens-file={explicit_tokens_path}" in command
     assert f"--shared-tokens-file={tmp_path / 'pretokenized_prompts' / 'tokens_24576.pt'}" not in command
 
@@ -845,14 +933,17 @@ def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) 
     command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
 
     assert dashboard_pipeline._resolve_runner_dashboard_output_format(config) == "legacy_json"
-    assert "--dataset-path=aps/super_glue" in command
+    assert "--prompt-dataset-path=aps/super_glue" in command
+    assert "--prompt-dataset-mode=load_dataset" in command
+    assert "--prompt-dataset-name=rte" in command
+    assert "--prompt-dataset-split=train" in command
     assert "--n-features-per-batch=128" in command
     assert "--n-prompts-in-forward-pass=32" in command
     assert "--end-batch=1" in command
     unsupported_legacy_flags = (
         "--model-wrapper=bridge",
-        "--dataset-config-name=rte",
-        "--dataset-split=train",
+        f"--prompt-dataset-path={tmp_path / 'pretokenized_prompts'}",
+        "--prompt-dataset-mode=load_from_disk",
         f"--pretokenized-dataset-path={tmp_path / 'pretokenized_prompts'}",
         f"--shared-tokens-file={tmp_path / 'pretokenized_prompts' / 'tokens_24576.pt'}",
         "--log-resource-snapshots",
@@ -868,6 +959,39 @@ def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) 
         "--columnar-artifact-format=parquet",
     )
     assert not any(flag in command for flag in unsupported_legacy_flags)
+
+
+def test_layer_runner_command_rejects_legacy_json_cpu_with_load_from_disk_mode(tmp_path: Path) -> None:
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemma-scope-2-1b-it-transcoders-all",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        prompts_dataset_mode="load_from_disk",
+        prompts_pretokenized_dataset_path=tmp_path / "pretokenized_prompts",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path / "baseline_saedashboard",
+        saelens_repo_root=tmp_path / "baseline_saelens",
+        neuronpedia_utils_root=tmp_path / "baseline_neuronpedia_utils",
+        interpretune_env_file=None,
+        runner_implementation="legacy_json_cpu",
+    )
+
+    with pytest.raises(ValueError, match="legacy_json_cpu does not accept prompts_dataset_mode='load_from_disk'"):
+        dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
 
 
 def test_layer_runner_command_materializes_legacy_local_dataset_alias(tmp_path: Path) -> None:
@@ -909,7 +1033,9 @@ def test_layer_runner_command_materializes_legacy_local_dataset_alias(tmp_path: 
 
     command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
 
-    dataset_flag = next(part for part in command if part.startswith("--dataset-path="))
+    assert "--prompt-dataset-mode=legacy_jsonl" in command
+
+    dataset_flag = next(part for part in command if part.startswith("--prompt-dataset-path="))
     materialized_dataset_path = dataset_flag.split("=", maxsplit=1)[1]
 
     assert materialized_dataset_path != str(legacy_dataset_dir)
@@ -921,6 +1047,38 @@ def test_layer_runner_command_materializes_legacy_local_dataset_alias(tmp_path: 
     else:
         alias_marker_path = alias_path / dashboard_pipeline.LEGACY_LOCAL_DATASET_ALIAS_SOURCE_FILE
         assert alias_marker_path.read_text(encoding="utf-8").strip() == str(legacy_dataset_dir.resolve(strict=True))
+
+
+def test_prompts_dataset_identifier_records_resolved_dataset_mode(tmp_path: Path) -> None:
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        prompts_huggingface_dataset_config_name="rte",
+        prompts_huggingface_dataset_split="train",
+        prompts_pretokenized_dataset_path=tmp_path / "pretokenized_prompts",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+    )
+
+    assert "#dataset_mode=load_from_disk" in config.prompts_dataset_identifier
 
 
 def test_layer_runner_command_can_enable_runner_auto_prompt_bucket_schedule(tmp_path: Path) -> None:
@@ -1070,7 +1228,7 @@ def test_convert_dashboard_output_uses_structured_dataset_identifier(tmp_path: P
 
     params = captured["params"]
     assert isinstance(params, dict)
-    assert params["prompts_huggingface_dataset_path"] == "aps/super_glue:rte[train]"
+    assert params["prompts_huggingface_dataset_path"] == "aps/super_glue:rte[train]#dataset_mode=load_dataset"
 
 
 def test_pipeline_config_coerces_optional_log_paths_to_path_objects(tmp_path: Path) -> None:
@@ -2101,7 +2259,7 @@ def test_convert_dashboard_output_filters_new_kwargs_for_legacy_converter(
         assert hf_weights_repo_id == "google/gemma-scope-2-1b-it"
         assert hf_weights_path == "transcoder_all/layer_2_width_262k_l0_small_affine"
         assert hook_point == "hook_mlp_in"
-        assert prompts_huggingface_dataset_path == "aps/super_glue"
+        assert prompts_huggingface_dataset_path == "aps/super_glue#dataset_mode=load_dataset"
         assert n_prompts_total == 8
         assert n_tokens_in_prompt == 32
         assert zero_out_bos_token is False

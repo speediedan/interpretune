@@ -376,12 +376,22 @@ Key extra controls in this mode:
 
 1. `--model-wrapper bridge` switches the runner from the legacy HookedTransformer path to `SAETransformerBridge`.
 2. `--bridge-enable-compatibility-mode` restores the legacy hook aliases (`blocks.<n>.hook_mlp_in`, `hook_mlp_out`) expected by the current dashboard metadata.
-3. `--prompts-pretokenized-dataset-path` points the runner at the local SAELens-compatible prompt cache. For raw text datasets, use `--prompts-dataset-text-field` with a prebuilt dataset that already has the dashboard prompt text.
-4. `--start-batch` and `--end-batch` make small, reproducible batch probes possible without forking a second pipeline path.
-5. `--runner-log-resource-snapshots` and `--runner-log-hook-aliases` provide lightweight migration diagnostics without touching the outer pipeline heartbeats.
-6. `--runner-log-performance` enables `[runner_perf]` lines from SAEDashboard with per-batch CPU snapshots, process IO deltas, disk write throughput, and wall/CUDA timings for activation capture, feature encode, logits/statistics packaging, sequence packaging, JSON serialization, and writes.
-7. `--runner-torch-profile` writes short-run Torch profiler traces under `torch_profiles/` in the layer output tree, or under `--runner-torch-profile-dir` when provided. Keep it to one- or two-batch probes; it adds material overhead.
-8. `--prompts-pretokenized-dataset-path` can point at a local HuggingFace dataset saved with an `input_ids` column. The runner still uses the Bridge model path, but SAELens skips raw text tokenization when building the activation-store token cache.
+3. `--prompts-dataset-mode` makes the prompt artifact contract explicit:
+  - `load_dataset` means the runner reads raw prompt rows or tokenized Hub/local datasets through `load_dataset(...)` style inputs;
+  - `load_from_disk` means the pipeline uses a local `save_to_disk()` / `load_from_disk()` prompt cache;
+  - `legacy_jsonl` means the legacy runner consumes a deprecated local `load_dataset("json", data_files=...)` export with `<split>.jsonl` plus `sae_lens.json`.
+  The config default is `load_dataset`. When `--prompts-pretokenized-dataset-path` is set, the pipeline resolves that
+  invocation to `load_from_disk` because the supplied path names a `save_to_disk()` artifact, except for the
+  `legacy_json_cpu` runner which continues to stay on the `load_dataset`/`legacy_jsonl` side of the contract. When the
+  dataset path already points at a legacy `<split>.jsonl` plus `sae_lens.json` export, the pipeline still resolves that
+  path to deprecated `legacy_jsonl` compatibility automatically. `legacy_json_cpu` must not be paired with
+  `load_from_disk`.
+4. `--prompts-pretokenized-dataset-path` points the runner at the local SAELens-compatible prompt cache. For raw text datasets, use `--prompts-dataset-text-field` with a prebuilt dataset that already has the dashboard prompt text.
+5. `--start-batch` and `--end-batch` make small, reproducible batch probes possible without forking a second pipeline path.
+6. `--runner-log-resource-snapshots` and `--runner-log-hook-aliases` provide lightweight migration diagnostics without touching the outer pipeline heartbeats.
+7. `--runner-log-performance` enables `[runner_perf]` lines from SAEDashboard with per-batch CPU snapshots, process IO deltas, disk write throughput, and wall/CUDA timings for activation capture, feature encode, logits/statistics packaging, sequence packaging, JSON serialization, and writes.
+8. `--runner-torch-profile` writes short-run Torch profiler traces under `torch_profiles/` in the layer output tree, or under `--runner-torch-profile-dir` when provided. Keep it to one- or two-batch probes; it adds material overhead.
+9. `--prompts-pretokenized-dataset-path` can point at a local HuggingFace dataset saved with an `input_ids` column. The runner still uses the Bridge model path, but SAELens skips raw text tokenization when building the activation-store token cache.
 
 Current validated result for this shape:
 
@@ -391,8 +401,9 @@ Current validated result for this shape:
 
 ### Pretokenize dashboard datasets
 
-Build the local prompt caches once before a long run. Interpretune now uses a generic dashboard pretokenization harness
-with optional per-dataset custom modules.
+Build the local prompt caches once before a long run. SAEDashboard now provides the generic dashboard pretokenization
+harness and prompt artifact writer. Interpretune keeps task-specific rendering, such as the RTE/BoolQ custom module,
+and passes it to SAEDashboard with `--custom-dataset-module`.
 
 RTE full-prompt cache command of record:
 
@@ -401,7 +412,7 @@ HF_HOME=/mnt/cache_extended/speediedan/.cache/huggingface \
 HF_DATASETS_CACHE=/mnt/cache_extended/speediedan/.cache/huggingface/datasets \
 HF_HUB_CACHE=/mnt/cache_extended/speediedan/.cache/huggingface/hub \
 /mnt/cache/speediedan/.venvs/it_latest/bin/python \
-  /home/speediedan/repos/interpretune/scripts/pretokenize_dashboard_dataset.py \
+  -m sae_dashboard.neuronpedia.prompt_pretokenization \
   --dataset-path aps/super_glue \
   --dataset-name rte \
   --dataset-split train \
@@ -421,7 +432,7 @@ HF_HOME=/mnt/cache_extended/speediedan/.cache/huggingface \
 HF_DATASETS_CACHE=/mnt/cache_extended/speediedan/.cache/huggingface/datasets \
 HF_HUB_CACHE=/mnt/cache_extended/speediedan/.cache/huggingface/hub \
 /mnt/cache/speediedan/.venvs/it_latest/bin/python \
-  /home/speediedan/repos/interpretune/scripts/pretokenize_dashboard_dataset.py \
+  -m sae_dashboard.neuronpedia.prompt_pretokenization \
   --dataset-path monology/pile-uncopyrighted \
   --dataset-split train \
   --tokenizer-name google/gemma-3-1b-it \
@@ -435,6 +446,38 @@ HF_HUB_CACHE=/mnt/cache_extended/speediedan/.cache/huggingface/hub \
   --output-dir /mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490 \
   --force
 ```
+
+  Windowing modes now belong to SAEDashboard rather than the Interpretune custom module:
+
+  1. `concatenate` keeps the legacy SAELens packed-window behavior and remains the streaming-friendly choice for dense
+    corpora such as Monology.
+  2. `filter-truncate` keeps only prompts that already satisfy the configured width and truncates them to that width. It
+    is still a packed-mode contract, not the example-aligned padded contract used for RTE full-prompt caches.
+  3. `max-prompt-pad` preserves one row per rendered prompt, pads every row to the longest observed prompt, and emits an
+    `attention_mask` sidecar so later bucketing can recover each prompt's effective length. This is the current RTE
+    full-prompt mode.
+  4. `fixed-context-pad` also preserves one row per prompt, but pads to the configured `context-size` and rejects any
+    prompt that would exceed that width.
+
+  Prompt-length metadata and bucket scheduling now share one contract:
+
+  1. `effective_context_size` is the saved row width after windowing. For `max-prompt-pad` it equals the longest prompt
+    observed in the materialized dataset; for packed modes and `fixed-context-pad` it equals the configured
+    `--context-size`.
+  2. `prompt_lengths` records the per-prompt pre-padding lengths only for example-aligned padded modes. Packed modes do
+    not keep a 1:1 prompt-length sidecar because the saved rows no longer represent whole prompts.
+  3. `shared_tokens_file` is the staged `tokens_<n_prompts_total>.pt` tensor that every layer run reuses instead of
+    rebuilding prompt tokens in each layer directory.
+  4. The staged effective-length sidecar is derived from `attention_mask` when the dataset keeps one row per prompt.
+    That sidecar is what the runner uses for prompt-length bucketing and dynamic batch scaling.
+  5. `prompt_bucket_schedule_file` is an explicit JSON schedule artifact. `auto_prompt_bucket_schedule` builds the same
+    schedule directly from the staged effective-length sidecar when no explicit file is supplied.
+  6. `prompt_bucket_ceilings` are optional explicit inclusive bucket ceilings. When left empty, the runner now derives a
+    small ceiling set from prompt-length quantiles in the staged effective-length distribution instead of relying on a
+    hardcoded global default.
+  7. Streaming currently remains limited to the packed windowing family. Example-aligned pad-enabled modes
+    (`max-prompt-pad` and `fixed-context-pad`) are intentionally still a future streaming follow-up because they require
+    prompt-by-prompt length accounting and final-width resolution before the artifact contract can be finalized.
 
 The current RTE full-prompt cache is:
 
