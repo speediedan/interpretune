@@ -362,6 +362,10 @@ def _phase3_legacy_impl_args() -> tuple[str, ...]:
     return ("--runner-implementation=legacy_json_cpu", *_phase3_baseline_repo_args())
 
 
+def _current_legacy_impl_args() -> tuple[str, ...]:
+    return ("--runner-implementation=legacy_json_cpu",)
+
+
 def _phase3_lazy_impl_args() -> tuple[str, ...]:
     return (
         "--runner-sequence-selection-backend=lazy_gpu",
@@ -377,6 +381,7 @@ def _phase3_rte_preset(
     config: ProfileConfig,
     target_batches: int,
     legacy: bool,
+    detached_baseline: bool = True,
     prompts_dataset_path: Path | str = DEFAULT_PHASE3_RTE_TEXT_DATASET,
     pretokenized_dataset_path: Path | None = None,
 ) -> ProfilePreset:
@@ -399,11 +404,16 @@ def _phase3_rte_preset(
         f"--n-prompts-total={DEFAULT_PHASE3_PROMPTS_TOTAL}",
         f"--n-tokens-in-prompt={DEFAULT_PHASE3_RTE_TOKENS_IN_PROMPT}",
     ]
-    dashboard_extra_args.extend(_phase3_legacy_impl_args() if legacy else _phase3_lazy_impl_args())
+    if legacy:
+        dashboard_extra_args.extend(_phase3_legacy_impl_args() if detached_baseline else _current_legacy_impl_args())
+    else:
+        dashboard_extra_args.extend(_phase3_lazy_impl_args())
     return ProfilePreset(
         name=name,
         description=(
             "Phase 3 reduced RTE baseline smoke/reduced row using the preserved pre-PR worktrees."
+            if detached_baseline
+            else "Phase 4 current-code RTE legacy_json_cpu comparison row without detached worktree overrides."
             if legacy
             else "Phase 3 reduced RTE lazy columnar comparison row on the current PR branches."
         ),
@@ -421,6 +431,7 @@ def _phase3_monology_preset(
     config: ProfileConfig,
     target_batches: int,
     legacy: bool,
+    detached_baseline: bool = True,
     prompts_dataset_path: Path | str = "monology/pile-uncopyrighted",
     pretokenized_dataset_path: Path | None = None,
 ) -> ProfilePreset:
@@ -445,11 +456,16 @@ def _phase3_monology_preset(
         f"--n-prompts-total={DEFAULT_PHASE3_PROMPTS_TOTAL}",
         f"--n-tokens-in-prompt={DEFAULT_PHASE3_MONOLOGY_TOKENS_IN_PROMPT}",
     ]
-    dashboard_extra_args.extend(_phase3_legacy_impl_args() if legacy else _phase3_lazy_impl_args())
+    if legacy:
+        dashboard_extra_args.extend(_phase3_legacy_impl_args() if detached_baseline else _current_legacy_impl_args())
+    else:
+        dashboard_extra_args.extend(_phase3_lazy_impl_args())
     return ProfilePreset(
         name=name,
         description=(
             "Phase 3 reduced Monology baseline smoke/reduced row using the preserved pre-PR worktrees."
+            if detached_baseline
+            else "Phase 4 current-code Monology legacy_json_cpu comparison row without detached worktree overrides."
             if legacy
             else "Phase 3 reduced Monology lazy columnar comparison row on the current PR branches."
         ),
@@ -502,6 +518,14 @@ PROFILE_PRESETS: dict[str, ProfilePreset] = {
             legacy=False,
             pretokenized_dataset_path=DEFAULT_PHASE3_RTE_LAZY_PRETOKENIZED_DATASET,
         ),
+        _phase3_rte_preset(
+            "phase4-current-legacy-rte-pretokenized-reduced",
+            config=ProfileConfig("phase4-current-legacy-rte-pretokenized-reduced", 512, 128),
+            target_batches=4,
+            legacy=True,
+            detached_baseline=False,
+            prompts_dataset_path=DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET,
+        ),
         _phase3_monology_preset(
             "phase3-legacy-monology-smoke",
             config=ProfileConfig("phase3-legacy-monology-smoke", 128, 64),
@@ -539,6 +563,14 @@ PROFILE_PRESETS: dict[str, ProfilePreset] = {
             target_batches=4,
             legacy=False,
             pretokenized_dataset_path=DEFAULT_PHASE3_MONOLOGY_PRETOKENIZED_DATASET,
+        ),
+        _phase3_monology_preset(
+            "phase4-current-legacy-monology-pretokenized-reduced",
+            config=ProfileConfig("phase4-current-legacy-monology-pretokenized-reduced", 1024, 256),
+            target_batches=4,
+            legacy=True,
+            detached_baseline=False,
+            prompts_dataset_path=DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET,
         ),
     )
 }

@@ -1740,13 +1740,15 @@ def _legacy_json_cpu_layer_runner_command(
     prompt_settings: SharedPromptRunSettings,
 ) -> list[str]:
     resolved_dataset_mode = _resolve_prompts_dataset_mode(config)
-    dataset_path = _materialize_legacy_local_dataset_alias(
-        config.prompts_huggingface_dataset_path,
-        saedashboard_repo_root=config.saedashboard_repo_root,
-    )
     detached_baseline_supports_prompt_dataset_contract = _legacy_json_cpu_runner_supports_prompt_dataset_contract(
         config.saedashboard_repo_root
     )
+    dataset_path = config.prompts_huggingface_dataset_path
+    if not detached_baseline_supports_prompt_dataset_contract:
+        dataset_path = _materialize_legacy_local_dataset_alias(
+            config.prompts_huggingface_dataset_path,
+            saedashboard_repo_root=config.saedashboard_repo_root,
+        )
     command = [
         config.python_executable,
         "-m",

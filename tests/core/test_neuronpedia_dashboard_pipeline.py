@@ -349,6 +349,70 @@ def test_phase3_pretokenized_reduced_presets_use_final_prompt_artifacts() -> Non
     assert "--prompts-dataset-mode=load_from_disk" in lazy_monology.dashboard_extra_args
 
 
+def test_phase4_current_legacy_presets_omit_detached_repo_overrides() -> None:
+    profile_module = _load_dashboard_profile_module()
+
+    current_legacy_rte = profile_module.PROFILE_PRESETS["phase4-current-legacy-rte-pretokenized-reduced"]
+    current_legacy_monology = profile_module.PROFILE_PRESETS["phase4-current-legacy-monology-pretokenized-reduced"]
+
+    for preset in (current_legacy_rte, current_legacy_monology):
+        assert "--runner-implementation=legacy_json_cpu" in preset.dashboard_extra_args
+        assert "--prompts-dataset-mode=legacy_jsonl" in preset.dashboard_extra_args
+        assert not any(arg.startswith("--saedashboard-repo-root=") for arg in preset.dashboard_extra_args)
+        assert not any(arg.startswith("--saelens-repo-root=") for arg in preset.dashboard_extra_args)
+        assert not any(arg.startswith("--neuronpedia-utils-root=") for arg in preset.dashboard_extra_args)
+
+    assert current_legacy_rte.config.n_features_per_batch == 512
+    assert current_legacy_rte.config.n_prompts_in_forward_pass == 128
+    assert (
+        f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET}"
+        in current_legacy_rte.dashboard_extra_args
+    )
+    assert current_legacy_monology.config.n_features_per_batch == 1024
+    assert current_legacy_monology.config.n_prompts_in_forward_pass == 256
+    assert (
+        f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET}"
+        in current_legacy_monology.dashboard_extra_args
+    )
+
+
+def test_phase4_import_tolerance_fixture_records_preserved_baseline_contract() -> None:
+    fixture_path = (
+        Path(__file__).parents[1] / "fixtures" / "neuronpedia_dashboard_phase4" / "import_tolerance_baselines.json"
+    )
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    assert fixture["schema_version"] == 1
+    assert fixture["preserved_baseline_lineage"] == {
+        "saedashboard": "7886eaa",
+        "saelens": "3eea6552",
+        "neuronpedia": "5a33f17",
+        "interpretune": "207d4a5",
+    }
+    assert fixture["comparison_tolerances"]["detached_baseline_vs_current_legacy"] == {
+        "activation_rows_max_abs_delta": 0,
+        "generation_throughput_relative_tolerance": 0.10,
+        "import_wall_relative_tolerance": 0.15,
+    }
+
+    rte = fixture["scenarios"]["rte_reduced"]
+    monology = fixture["scenarios"]["monology_reduced"]
+
+    assert rte["prompt_contract"]["mode"] == "legacy_jsonl"
+    assert monology["prompt_contract"]["mode"] == "legacy_jsonl"
+    assert (
+        rte["legacy_contract"]
+        == monology["legacy_contract"]
+        == {
+            "runner_implementation": "legacy_json_cpu",
+            "dashboard_output_format": "legacy_json",
+            "sequence_selection_backend": "eager_cpu",
+        }
+    )
+    assert rte["preserved_baseline_result"]["imported_activation_rows"] == 65127
+    assert monology["preserved_baseline_result"]["imported_activation_rows"] == 137331
+
+
 def test_profile_command_defaults_to_load_from_disk_mode_when_prompt_cache_present(tmp_path: Path) -> None:
     profile_module = _load_dashboard_profile_module()
 
@@ -994,7 +1058,7 @@ def test_layer_runner_command_rejects_legacy_json_cpu_with_load_from_disk_mode(t
         dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
 
 
-def test_layer_runner_command_materializes_legacy_local_dataset_alias(tmp_path: Path) -> None:
+def test_layer_runner_command_uses_absolute_legacy_jsonl_path_for_current_runner(tmp_path: Path) -> None:
     legacy_dataset_dir = tmp_path / "legacy_pretok_export"
     legacy_dataset_dir.mkdir()
     (legacy_dataset_dir / "train.jsonl").write_text('{"input_ids": [1, 2, 3]}\n', encoding="utf-8")
@@ -1035,18 +1099,8 @@ def test_layer_runner_command_materializes_legacy_local_dataset_alias(tmp_path: 
 
     assert "--prompt-dataset-mode=legacy_jsonl" in command
 
-    dataset_flag = next(part for part in command if part.startswith("--prompt-dataset-path="))
-    materialized_dataset_path = dataset_flag.split("=", maxsplit=1)[1]
-
-    assert materialized_dataset_path != str(legacy_dataset_dir)
-
-    alias_path = saedashboard_repo_root / materialized_dataset_path
-    assert alias_path.exists() or alias_path.is_symlink()
-    if alias_path.is_symlink():
-        assert alias_path.resolve(strict=True) == legacy_dataset_dir.resolve(strict=True)
-    else:
-        alias_marker_path = alias_path / dashboard_pipeline.LEGACY_LOCAL_DATASET_ALIAS_SOURCE_FILE
-        assert alias_marker_path.read_text(encoding="utf-8").strip() == str(legacy_dataset_dir.resolve(strict=True))
+    assert f"--prompt-dataset-path={legacy_dataset_dir}" in command
+    assert not any(saedashboard_repo_root.glob("it-legacy-local-*"))
 
 
 def test_layer_runner_command_uses_legacy_dataset_flag_for_detached_baseline_runner(tmp_path: Path) -> None:
