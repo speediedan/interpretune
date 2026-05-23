@@ -183,7 +183,7 @@ class NeuronpediaDashboardPipelineConfig:
     runner_logits_histogram_backend: str = "arrow"
     runner_activation_histogram_backend: str = "torch"
     runner_defer_component_construction: bool = False
-    runner_sequence_selection_backend: str = "eager_cpu"
+    runner_sequence_selection_backend: str = "lazy_gpu"
     runner_dashboard_output_format: str = "auto"
     runner_columnar_artifact_format: str = "parquet"
     runner_emit_activation_copy_rows: bool | None = None
@@ -1765,6 +1765,8 @@ def _legacy_json_cpu_layer_runner_command(
         f"--n-features-per-batch={config.n_features_per_batch}",
         f"--n-prompts-in-forward-pass={prompt_settings.n_prompts_in_forward_pass}",
         f"--start-batch={config.start_batch}",
+        "--sequence-selection-backend=legacy_json_cpu",
+        "--dashboard-output-format=legacy_json",
     ]
     if detached_baseline_supports_prompt_dataset_contract:
         command.extend(
@@ -2589,7 +2591,11 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runner-logits-histogram-backend", choices=("object", "arrow"), default="arrow")
     parser.add_argument("--runner-activation-histogram-backend", choices=("torch", "polars"), default="torch")
     parser.add_argument("--runner-defer-component-construction", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--runner-sequence-selection-backend", choices=("eager_cpu", "lazy_gpu"), default="eager_cpu")
+    parser.add_argument(
+        "--runner-sequence-selection-backend",
+        choices=("legacy_json_cpu", "lazy_gpu"),
+        default="lazy_gpu",
+    )
     parser.add_argument(
         "--runner-dashboard-output-format",
         choices=("auto", "legacy_json", "columnar"),

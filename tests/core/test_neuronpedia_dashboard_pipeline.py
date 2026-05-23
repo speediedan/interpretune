@@ -387,7 +387,7 @@ def test_phase4_import_tolerance_fixture_records_preserved_baseline_contract() -
         "saedashboard": "7886eaa",
         "saelens": "3eea6552",
         "neuronpedia": "5a33f17",
-        "interpretune": "207d4a5",
+        "interpretune": "fc69a14",
     }
     assert fixture["comparison_tolerances"]["detached_baseline_vs_current_legacy"] == {
         "activation_rows_max_abs_delta": 0,
@@ -406,10 +406,10 @@ def test_phase4_import_tolerance_fixture_records_preserved_baseline_contract() -
         == {
             "runner_implementation": "legacy_json_cpu",
             "dashboard_output_format": "legacy_json",
-            "sequence_selection_backend": "eager_cpu",
+            "sequence_selection_backend": "legacy_json_cpu",
         }
     )
-    assert rte["preserved_baseline_result"]["imported_activation_rows"] == 65127
+    assert rte["preserved_baseline_result"]["imported_activation_rows"] == 65129
     assert monology["preserved_baseline_result"]["imported_activation_rows"] == 137331
 
 
@@ -1004,6 +1004,8 @@ def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) 
     assert "--n-features-per-batch=128" in command
     assert "--n-prompts-in-forward-pass=32" in command
     assert "--end-batch=1" in command
+    assert "--sequence-selection-backend=legacy_json_cpu" in command
+    assert "--dashboard-output-format=legacy_json" in command
     unsupported_legacy_flags = (
         "--model-wrapper=bridge",
         f"--prompt-dataset-path={tmp_path / 'pretokenized_prompts'}",
