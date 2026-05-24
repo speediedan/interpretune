@@ -984,7 +984,9 @@ def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) 
         runner_log_resource_snapshots=True,
         runner_log_hook_aliases=True,
         runner_log_performance=True,
+        runner_shuffle_tokens=False,
         runner_implementation="legacy_json_cpu",
+        prompts_shared_tokens_file=tmp_path / "baseline_tokens.pt",
         runner_cleanup_each_minibatch=True,
         runner_feature_statistics_backend="arrow",
         runner_logits_histogram_backend="arrow",
@@ -1004,18 +1006,21 @@ def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) 
     assert "--n-features-per-batch=128" in command
     assert "--n-prompts-in-forward-pass=32" in command
     assert "--end-batch=1" in command
+    assert "--no-shuffle-tokens" in command
+    assert "--log-resource-snapshots" in command
+    assert "--log-hook-aliases" in command
+    assert "--log-performance" in command
+    assert "--cleanup-each-minibatch" in command
+    assert "--correlation-accumulation-device=auto" in command
     assert "--sequence-selection-backend=legacy_json_cpu" in command
     assert "--dashboard-output-format=legacy_json" in command
+    assert f"--shared-tokens-file={tmp_path / 'baseline_tokens.pt'}" in command
     unsupported_legacy_flags = (
         "--model-wrapper=bridge",
         f"--prompt-dataset-path={tmp_path / 'pretokenized_prompts'}",
         "--prompt-dataset-mode=load_from_disk",
         f"--pretokenized-dataset-path={tmp_path / 'pretokenized_prompts'}",
         f"--shared-tokens-file={tmp_path / 'pretokenized_prompts' / 'tokens_24576.pt'}",
-        "--log-resource-snapshots",
-        "--log-hook-aliases",
-        "--log-performance",
-        "--cleanup-each-minibatch",
         "--feature-statistics-backend=arrow",
         "--logits-histogram-backend=arrow",
         "--activation-histogram-backend=polars",
@@ -1144,6 +1149,7 @@ def test_layer_runner_command_uses_legacy_dataset_flag_for_detached_baseline_run
         interpretune_env_file=None,
         n_features_per_batch=128,
         n_prompts_in_forward_pass=32,
+        runner_shuffle_tokens=False,
         runner_implementation="legacy_json_cpu",
     )
 
@@ -1151,12 +1157,21 @@ def test_layer_runner_command_uses_legacy_dataset_flag_for_detached_baseline_run
 
     assert "--prompt-dataset-path=legacy_prompt_dataset" not in command
     assert "--prompt-dataset-mode=legacy_jsonl" not in command
+    assert "--no-shuffle-tokens" in command
+    assert "--sequence-selection-backend=legacy_json_cpu" not in command
+    assert "--dashboard-output-format=legacy_json" not in command
     dataset_flag = next(part for part in command if part.startswith("--dataset-path="))
     materialized_dataset_path = dataset_flag.split("=", maxsplit=1)[1]
     assert materialized_dataset_path != str(legacy_dataset_dir)
 
     alias_path = saedashboard_repo_root / materialized_dataset_path
     assert alias_path.exists() or alias_path.is_symlink()
+
+
+def test_parse_args_accepts_runner_shuffle_toggle() -> None:
+    args = dashboard_pipeline._parse_args(["--no-runner-shuffle-tokens"])
+
+    assert args.runner_shuffle_tokens is False
 
 
 def test_prompts_dataset_identifier_records_resolved_dataset_mode(tmp_path: Path) -> None:
@@ -2325,7 +2340,8 @@ def test_run_dashboard_pipeline_skips_conversion_for_legacy_generation_only(
     assert results[0].export_root is None
     assert not results[0].skipped
     assert launched_commands
-    assert "--dashboard-output-format=legacy_json" not in launched_commands[0]
+    assert "--sequence-selection-backend=legacy_json_cpu" in launched_commands[0]
+    assert "--dashboard-output-format=legacy_json" in launched_commands[0]
     assert "Skipping Neuronpedia conversion for legacy_json_cpu generation-only" in caplog.text
 
 

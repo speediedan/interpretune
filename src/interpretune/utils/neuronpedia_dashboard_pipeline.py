@@ -174,6 +174,7 @@ class NeuronpediaDashboardPipelineConfig:
     runner_log_resource_snapshots: bool = False
     runner_log_hook_aliases: bool = False
     runner_log_performance: bool = False
+    runner_shuffle_tokens: bool = True
     runner_implementation: str = "current"
     runner_cleanup_each_minibatch: bool = False
     runner_correlation_accumulation_device: str = "auto"
@@ -996,7 +997,7 @@ def _scale_batch_size(
 def _resolve_shared_prompt_run_settings(config: NeuronpediaDashboardPipelineConfig) -> SharedPromptRunSettings:
     resolved_dataset_mode = _resolve_prompts_dataset_mode(config)
     default_settings = SharedPromptRunSettings(
-        shared_tokens_file=(config.shared_prompt_tokens_file if resolved_dataset_mode == "load_from_disk" else None),
+        shared_tokens_file=config.shared_prompt_tokens_file,
         n_prompts_total=config.n_prompts_total,
         n_tokens_in_prompt=config.n_tokens_in_prompt,
         n_prompts_in_forward_pass=config.n_prompts_in_forward_pass,
@@ -1642,7 +1643,7 @@ def _layer_runner_command(
         command.append(f"--prompt-dataset-split={config.prompts_huggingface_dataset_split}")
     if config.prompts_dataset_text_field:
         command.append(f"--prompt-dataset-text-field={config.prompts_dataset_text_field}")
-    if resolved_dataset_mode == "load_from_disk" and prompt_settings.shared_tokens_file:
+    if prompt_settings.shared_tokens_file:
         command.append(f"--shared-tokens-file={prompt_settings.shared_tokens_file}")
     if not config.deduplicate_shared_prompt_tokens:
         command.append("--no-deduplicate-shared-prompt-tokens")
@@ -1679,6 +1680,8 @@ def _layer_runner_command(
         command.append("--log-hook-aliases")
     if config.runner_log_performance:
         command.append("--log-performance")
+    if not config.runner_shuffle_tokens:
+        command.append("--no-shuffle-tokens")
     command.append(
         "--cleanup-each-minibatch" if config.runner_cleanup_each_minibatch else "--no-cleanup-each-minibatch"
     )
@@ -1765,9 +1768,14 @@ def _legacy_json_cpu_layer_runner_command(
         f"--n-features-per-batch={config.n_features_per_batch}",
         f"--n-prompts-in-forward-pass={prompt_settings.n_prompts_in_forward_pass}",
         f"--start-batch={config.start_batch}",
-        "--sequence-selection-backend=legacy_json_cpu",
-        "--dashboard-output-format=legacy_json",
     ]
+    if detached_baseline_supports_prompt_dataset_contract:
+        command.extend(
+            [
+                "--sequence-selection-backend=legacy_json_cpu",
+                "--dashboard-output-format=legacy_json",
+            ]
+        )
     if detached_baseline_supports_prompt_dataset_contract:
         command.extend(
             [
@@ -1781,6 +1789,26 @@ def _legacy_json_cpu_layer_runner_command(
         command.append(f"--np-sae-id-suffix={config.run_name_suffix}")
     if config.end_batch is not None:
         command.append(f"--end-batch={config.end_batch}")
+    if not config.runner_shuffle_tokens:
+        command.append("--no-shuffle-tokens")
+    if config.runner_log_resource_snapshots and _legacy_json_cpu_runner_supports_option(
+        config.saedashboard_repo_root, "--log-resource-snapshots"
+    ):
+        command.append("--log-resource-snapshots")
+    if config.runner_log_hook_aliases and _legacy_json_cpu_runner_supports_option(
+        config.saedashboard_repo_root, "--log-hook-aliases"
+    ):
+        command.append("--log-hook-aliases")
+    if config.runner_log_performance and _legacy_json_cpu_runner_supports_option(
+        config.saedashboard_repo_root, "--log-performance"
+    ):
+        command.append("--log-performance")
+    if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--cleanup-each-minibatch"):
+        command.append(
+            "--cleanup-each-minibatch" if config.runner_cleanup_each_minibatch else "--no-cleanup-each-minibatch"
+        )
+    if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--correlation-accumulation-device"):
+        command.append(f"--correlation-accumulation-device={config.runner_correlation_accumulation_device}")
     if config.hf_model_path:
         command.append(f"--hf-model-path={config.hf_model_path}")
     if detached_baseline_supports_prompt_dataset_contract and config.prompts_huggingface_dataset_config_name:
@@ -1789,6 +1817,10 @@ def _legacy_json_cpu_layer_runner_command(
         command.append(f"--prompt-dataset-split={config.prompts_huggingface_dataset_split}")
     if detached_baseline_supports_prompt_dataset_contract and config.prompts_dataset_text_field:
         command.append(f"--prompt-dataset-text-field={config.prompts_dataset_text_field}")
+    if prompt_settings.shared_tokens_file and _legacy_json_cpu_runner_supports_option(
+        config.saedashboard_repo_root, "--shared-tokens-file"
+    ):
+        command.append(f"--shared-tokens-file={prompt_settings.shared_tokens_file}")
     if config.use_clt:
         command.append("--from-local-sae")
         command.append("--use-clt")
@@ -1805,10 +1837,14 @@ def _legacy_json_cpu_layer_runner_command(
 
 
 def _legacy_json_cpu_runner_supports_prompt_dataset_contract(saedashboard_repo_root: Path) -> bool:
+    return _legacy_json_cpu_runner_supports_option(saedashboard_repo_root, "--prompt-dataset-path")
+
+
+def _legacy_json_cpu_runner_supports_option(saedashboard_repo_root: Path, option_name: str) -> bool:
     runner_path = saedashboard_repo_root / "sae_dashboard" / "neuronpedia" / "neuronpedia_runner.py"
     if not runner_path.exists():
         return True
-    return "--prompt-dataset-path" in runner_path.read_text(encoding="utf-8")
+    return option_name in runner_path.read_text(encoding="utf-8")
 
 
 def _monitor_process(
@@ -2578,6 +2614,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runner-log-resource-snapshots", action="store_true")
     parser.add_argument("--runner-log-hook-aliases", action="store_true")
     parser.add_argument("--runner-log-performance", action="store_true")
+    parser.add_argument("--runner-shuffle-tokens", action=argparse.BooleanOptionalAction)
     parser.add_argument("--runner-implementation", choices=("current", "legacy_json_cpu"), default="current")
     parser.add_argument("--runner-cleanup-each-minibatch", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
