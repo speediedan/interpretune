@@ -95,13 +95,14 @@ def test_dashboard_log_contains_oom_scans_from_offset(tmp_path: Path) -> None:
 def test_profile_parser_detects_columnar_and_resource_batch_completion() -> None:
     profile_module = _load_dashboard_profile_module()
 
-    batch_events, resource_events = profile_module.parse_runner_events(
+    batch_events, resource_events, runner_perf_events = profile_module.parse_runner_events(
         [
             "Output written to /tmp/run/layer_9/foo/batch-0.json\n",
             (
                 "[runner_resource] stage=post_batch_1 pid=123 rss_gib=5.50 cuda_allocated_gib=1.25 "
                 "cuda_reserved_gib=2.50 cuda_max_allocated_gib=3.75\n"
             ),
+            '[runner_perf] event=batch_total batch=1 wall_s=29.174150 process_io_delta={"write_bytes":17}\n',
             (
                 "[runner_perf] event=columnar_output_summary feature_count=1024 "
                 "artifact_dir=/tmp/run/layer_9/foo/batch-2.columnar manifest_path=/tmp/run/manifest.json\n"
@@ -114,6 +115,10 @@ def test_profile_parser_detects_columnar_and_resource_batch_completion() -> None
     assert {event.batch_num for event in batch_events} == {0, 1, 2, 3}
     assert [event.stage for event in resource_events] == ["post_batch_1"]
     assert resource_events[0].cuda_max_allocated_gib == pytest.approx(3.75)
+    assert [event.event for event in runner_perf_events] == ["batch_total", "columnar_output_summary"]
+    assert runner_perf_events[0].fields["batch"] == 1
+    assert runner_perf_events[0].fields["wall_s"] == pytest.approx(29.17415)
+    assert runner_perf_events[0].fields["process_io_delta"] == {"write_bytes": 17}
 
 
 def test_profile_command_appends_dashboard_extra_args(tmp_path: Path) -> None:
@@ -329,6 +334,8 @@ def test_phase3_pretokenized_reduced_presets_use_final_prompt_artifacts() -> Non
     assert legacy_rte.target_batches == lazy_rte.target_batches == 4
     assert legacy_rte.pretokenized_dataset_path is None
     assert lazy_rte.pretokenized_dataset_path == profile_module.DEFAULT_PHASE3_RTE_LAZY_PRETOKENIZED_DATASET
+    assert "--no-runner-use-cached-activations" in legacy_rte.dashboard_extra_args
+    assert "--no-runner-use-cached-activations" in lazy_rte.dashboard_extra_args
     assert (
         f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET}"
         in legacy_rte.dashboard_extra_args
@@ -341,6 +348,8 @@ def test_phase3_pretokenized_reduced_presets_use_final_prompt_artifacts() -> Non
     assert legacy_monology.target_batches == lazy_monology.target_batches == 4
     assert legacy_monology.pretokenized_dataset_path is None
     assert lazy_monology.pretokenized_dataset_path == profile_module.DEFAULT_PHASE3_MONOLOGY_PRETOKENIZED_DATASET
+    assert "--no-runner-use-cached-activations" in legacy_monology.dashboard_extra_args
+    assert "--no-runner-use-cached-activations" in lazy_monology.dashboard_extra_args
     assert (
         f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET}"
         in legacy_monology.dashboard_extra_args
@@ -357,7 +366,11 @@ def test_phase4_current_legacy_presets_omit_detached_repo_overrides() -> None:
 
     for preset in (current_legacy_rte, current_legacy_monology):
         assert "--runner-implementation=legacy_json_cpu" in preset.dashboard_extra_args
+        assert "--no-runner-use-cached-activations" in preset.dashboard_extra_args
+        assert "--legacy-export-bundle-contract=preserved_baseline" in preset.dashboard_extra_args
         assert "--prompts-dataset-mode=legacy_jsonl" in preset.dashboard_extra_args
+        assert "--runner-logits-histogram-compatibility=detached_legacy" in preset.dashboard_extra_args
+        assert "--runner-legacy-json-cpu-compatibility=detached_legacy" in preset.dashboard_extra_args
         assert not any(arg.startswith("--saedashboard-repo-root=") for arg in preset.dashboard_extra_args)
         assert not any(arg.startswith("--saelens-repo-root=") for arg in preset.dashboard_extra_args)
         assert not any(arg.startswith("--neuronpedia-utils-root=") for arg in preset.dashboard_extra_args)
@@ -368,12 +381,18 @@ def test_phase4_current_legacy_presets_omit_detached_repo_overrides() -> None:
         f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET}"
         in current_legacy_rte.dashboard_extra_args
     )
+    assert (
+        f"--prompts-shared-tokens-file={profile_module.DEFAULT_PHASE4_RTE_SHARED_TOKENS_FILE}"
+        in current_legacy_rte.dashboard_extra_args
+    )
+    assert "--runner-logits-histogram-backend=object" in current_legacy_rte.dashboard_extra_args
     assert current_legacy_monology.config.n_features_per_batch == 1024
     assert current_legacy_monology.config.n_prompts_in_forward_pass == 256
     assert (
         f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET}"
         in current_legacy_monology.dashboard_extra_args
     )
+    assert "--runner-logits-histogram-backend=object" in current_legacy_monology.dashboard_extra_args
 
 
 def test_phase4_import_tolerance_fixture_records_preserved_baseline_contract() -> None:
@@ -533,8 +552,66 @@ def test_profile_import_stage_legacy_includes_conversion_in_activation_load(
     assert import_profile.activation_load_seconds == pytest.approx(23.24)
     assert import_profile.activation_import_seconds == pytest.approx(42.88)
     assert import_profile.wall_seconds == pytest.approx(51.0)
+    assert import_profile.local_db_source_id == "export_root"
     assert import_profile.imported_activation_rows == 259607
     assert import_profile.imported_neuron_rows == 8192
+    assert import_profile.imported_row_counts == {"Activation": 259607, "Neuron": 8192}
+
+
+def test_profile_import_stage_legacy_uses_preserved_baseline_import_preferences(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile_module = _load_dashboard_profile_module()
+    run_root = tmp_path / "runs"
+    extra_args = (
+        "--run-name-suffix=legacy-contract-profile",
+        "--runner-dashboard-output-format=legacy_json",
+        "--legacy-export-bundle-contract=preserved_baseline",
+    )
+    command = profile_module.build_dashboard_command(
+        profile_module.ProfileConfig("profile", 2048, 512),
+        layer=9,
+        python_executable="python",
+        run_root=run_root,
+        pretokenized_dataset_path=None,
+        primary_acts_batch_size=128,
+        cuda_visible_devices="0",
+        dashboard_extra_args=extra_args,
+    )
+    output_dir = run_root / profile_module.dashboard_run_name(extra_args) / "layer_9"
+    output_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(profile_module, "resolve_local_neuronpedia_db_url", lambda _: "postgres://local")
+    monkeypatch.setattr(
+        profile_module.dashboard_pipeline,
+        "convert_dashboard_output",
+        lambda config, *, layer_num, output_dir, logger=None: tmp_path / "export_root",
+    )
+    captured_import_kwargs: dict[str, object] = {}
+
+    def _fake_import_bundle(*args, **kwargs):
+        captured_import_kwargs.update(kwargs)
+        return SimpleNamespace(
+            imported_row_counts={"Activation": 137331, "Neuron": 0},
+            table_load_seconds={"Activation": 9.65},
+            table_import_seconds={"Activation": 31.34},
+            table_import_substage_seconds={},
+        )
+
+    monkeypatch.setattr(
+        profile_module.dashboard_pipeline,
+        "import_neuronpedia_export_bundle_local_db",
+        _fake_import_bundle,
+    )
+    monotonic_values = iter([0.0, 1.0, 17.28, 58.89])
+    monkeypatch.setattr(profile_module.time, "monotonic", lambda: next(monotonic_values))
+
+    import_profile = profile_module.profile_import_stage(command, local_db_url=None)
+
+    assert captured_import_kwargs["prefer_arrow_for_tables"] == ()
+    assert captured_import_kwargs["prefer_copy_for_tables"] == ()
+    assert import_profile.imported_row_counts == {"Activation": 137331, "Neuron": 0}
 
 
 def test_profile_import_stage_columnar_skips_conversion(
@@ -556,6 +633,7 @@ def test_profile_import_stage_columnar_skips_conversion(
     )
     output_dir = run_root / profile_module.dashboard_run_name(extra_args) / "layer_9"
     output_dir.mkdir(parents=True)
+    (output_dir / "batch-0.json").write_text(json.dumps({"sae_id_suffix": "columnar-import-profile"}), encoding="utf-8")
 
     monkeypatch.setattr(profile_module, "resolve_local_neuronpedia_db_url", lambda _: "postgres://local")
     monkeypatch.setattr(
@@ -563,6 +641,7 @@ def test_profile_import_stage_columnar_skips_conversion(
         "convert_dashboard_output",
         lambda *args, **kwargs: pytest.fail("columnar import profiling should not convert legacy output"),
     )
+    monkeypatch.setattr(profile_module, "uuid4", lambda: SimpleNamespace(hex="feedfacecafebeef1234"))
     captured_import_kwargs: dict[str, object] = {}
 
     def _fake_import_columnar_dashboard_output(*args, **kwargs):
@@ -588,13 +667,23 @@ def test_profile_import_stage_columnar_skips_conversion(
 
     assert import_profile.mode == "columnar"
     assert captured_import_kwargs["activation_use_stage_table"] is False
+    assert captured_import_kwargs["source_id_override"] == (
+        "9-gemmascope-2-transcoder-262k-rte__columnar-import-profile__profile-import-feedfacecafe"
+    )
+    assert captured_import_kwargs["activation_id_prefix"] == (
+        "9-gemmascope-2-transcoder-262k-rte__columnar-import-profile__profile-import-feedfacecafe-activation"
+    )
     assert import_profile.conversion_seconds == pytest.approx(0.0)
     assert import_profile.activation_table_load_seconds == pytest.approx(2.34)
     assert import_profile.activation_load_seconds == pytest.approx(2.34)
     assert import_profile.activation_import_seconds == pytest.approx(43.87)
     assert import_profile.wall_seconds == pytest.approx(50.2)
+    assert import_profile.local_db_source_id == (
+        "9-gemmascope-2-transcoder-262k-rte__columnar-import-profile__profile-import-feedfacecafe"
+    )
     assert import_profile.imported_activation_rows == 259605
     assert import_profile.imported_neuron_rows == 8192
+    assert import_profile.imported_row_counts == {"Activation": 259605, "Neuron": 8192}
 
 
 def test_build_dashboard_command_enables_activation_copy_rows_for_columnar_profile_import(
@@ -682,11 +771,16 @@ def test_import_columnar_dashboard_output_can_disable_activation_stage_table(
         layer_num=9,
         output_dir=tmp_path / "layer_9",
         activation_use_stage_table=False,
+        source_id_override="9-gemmascope-2-transcoder-262k-rte__profile-import-deadbeef",
+        activation_id_prefix="9-gemmascope-2-transcoder-262k-rte__profile-import-deadbeef-activation",
     )
 
     assert captured_kwargs["activation_use_stage_table"] is False
     assert captured_kwargs["chunk_size"] == 4096
-    assert captured_kwargs["source_id"] == "9-gemmascope-2-transcoder-262k-rte"
+    assert captured_kwargs["source_id"] == "9-gemmascope-2-transcoder-262k-rte__profile-import-deadbeef"
+    assert captured_kwargs["activation_id_prefix"] == (
+        "9-gemmascope-2-transcoder-262k-rte__profile-import-deadbeef-activation"
+    )
     assert summary.imported_row_counts == {"Activation": 3, "Neuron": 2}
 
 
@@ -990,10 +1084,13 @@ def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) 
         runner_cleanup_each_minibatch=True,
         runner_feature_statistics_backend="arrow",
         runner_logits_histogram_backend="arrow",
+        runner_logits_histogram_compatibility="detached_legacy",
+        runner_legacy_json_cpu_compatibility="detached_legacy",
         runner_activation_histogram_backend="polars",
         runner_defer_component_construction=True,
         runner_sequence_selection_backend="lazy_gpu",
         runner_dashboard_output_format="columnar",
+        runner_use_cached_activations=False,
     )
 
     command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
@@ -1012,6 +1109,10 @@ def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) 
     assert "--log-performance" in command
     assert "--cleanup-each-minibatch" in command
     assert "--correlation-accumulation-device=auto" in command
+    assert "--logits-histogram-backend=arrow" in command
+    assert "--logits-histogram-compatibility=detached_legacy" in command
+    assert "--legacy-json-cpu-compatibility=detached_legacy" in command
+    assert "--no-use-cached-activations" in command
     assert "--sequence-selection-backend=legacy_json_cpu" in command
     assert "--dashboard-output-format=legacy_json" in command
     assert f"--shared-tokens-file={tmp_path / 'baseline_tokens.pt'}" in command
@@ -1022,7 +1123,6 @@ def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) 
         f"--pretokenized-dataset-path={tmp_path / 'pretokenized_prompts'}",
         f"--shared-tokens-file={tmp_path / 'pretokenized_prompts' / 'tokens_24576.pt'}",
         "--feature-statistics-backend=arrow",
-        "--logits-histogram-backend=arrow",
         "--activation-histogram-backend=polars",
         "--defer-component-construction",
         "--sequence-selection-backend=lazy_gpu",
@@ -1793,6 +1893,88 @@ def test_run_dashboard_pipeline_import_only_uses_existing_export_bundle(tmp_path
     assert not results[0].skipped
 
 
+def test_run_dashboard_pipeline_import_only_uses_preserved_baseline_legacy_import_contract(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    export_root = tmp_path / "exports"
+    existing_bundle = export_root / "gemma-3-1b-it" / "0-gemmascope-2-transcoder-262k-rte"
+    existing_bundle.mkdir(parents=True)
+    (existing_bundle / "release.jsonl.gz").write_bytes(b"{}\n")
+    imported_paths: list[Path] = []
+
+    monkeypatch.setattr(
+        dashboard_pipeline,
+        "check_local_neuronpedia_services",
+        lambda **_: SimpleNamespace(
+            db_available=True,
+            webapp_available=True,
+            db_error=None,
+            webapp_error=None,
+            db_url_redacted="postgres://postgres:***@127.0.0.1:5433/postgres",
+        ),
+    )
+
+    def _fake_import(
+        bundle_path: Path,
+        local_db_url: str,
+        *,
+        prefer_arrow_for_tables: tuple[str, ...] = (),
+        prefer_copy_for_tables: tuple[str, ...] = (),
+    ) -> SimpleNamespace:
+        assert prefer_arrow_for_tables == ()
+        assert prefer_copy_for_tables == ()
+        imported_paths.append(bundle_path)
+        return SimpleNamespace(imported_row_counts={"Source": 1, "Feature": 2})
+
+    monkeypatch.setattr(
+        dashboard_pipeline,
+        "import_neuronpedia_export_bundle_local_db",
+        _fake_import,
+    )
+
+    def _unexpected_popen(*args, **kwargs):
+        raise AssertionError("generation subprocess should not start in import-only mode")
+
+    monkeypatch.setattr(dashboard_pipeline.subprocess, "Popen", _unexpected_popen)
+
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=export_root,
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+        import_only_local_db=True,
+        legacy_export_bundle_contract="preserved_baseline",
+    )
+
+    results = dashboard_pipeline.run_dashboard_pipeline(config)
+
+    assert imported_paths == [existing_bundle]
+    assert len(results) == 1
+    assert results[0].export_root == existing_bundle
+    assert results[0].import_summary is not None
+    assert results[0].import_summary.imported_row_counts == {"Source": 1, "Feature": 2}
+    assert not results[0].skipped
+
+
 def test_build_columnar_token_decoder_falls_back_to_slow_tokenizer(monkeypatch, tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
     pretokenized_path = tmp_path / "pretokenized"
@@ -2163,6 +2345,10 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
             "16",
             "--runner-dashboard-output-format",
             "columnar",
+            "--legacy-export-bundle-contract",
+            "preserved_baseline",
+            "--runner-legacy-json-cpu-compatibility",
+            "detached_legacy",
             "--local-db-import-chunk-size",
             "4096",
             "--runner-cleanup-each-minibatch",
@@ -2194,6 +2380,8 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
     assert config.runner_prompt_primary_acts_scale_limit == 4.5
     assert config.runner_prompt_batch_size_round_to == 16
     assert config.runner_dashboard_output_format == "columnar"
+    assert config.legacy_export_bundle_contract == "preserved_baseline"
+    assert config.runner_legacy_json_cpu_compatibility == "detached_legacy"
     assert config.runner_columnar_artifact_format == "parquet"
     assert config.runner_emit_activation_copy_rows is None
     assert config.local_db_import_chunk_size == 4096
@@ -2426,8 +2614,60 @@ def test_convert_dashboard_output_filters_new_kwargs_for_legacy_converter(
 
     assert export_root == tmp_path / "exports" / "gemma-3-1b-it" / "2-gemmascope-2-transcoder-262k-rte__smoke"
     assert fake_module.OUTPUT_DIR == str(tmp_path / "exports")
+    assert "emit_arrow" not in seen
     assert "export_root" not in seen
     assert "model_layers" not in seen
+
+
+def test_convert_dashboard_output_sets_preserved_baseline_contract_for_legacy_converter(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    dashboard_leaf_dir = tmp_path / "runs" / "layer_2" / "model_source"
+    dashboard_leaf_dir.mkdir(parents=True)
+    (dashboard_leaf_dir / "batch-0.json").write_text('{"sae_id_suffix":"smoke"}', encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def _fake_main(ctx, **kwargs):
+        seen.update(ctx.params)
+        export_dir = Path(fake_module.OUTPUT_DIR) / kwargs["model_name"] / "2-gemmascope-2-transcoder-262k-rte__smoke"
+        export_dir.mkdir(parents=True)
+
+    fake_module = SimpleNamespace(
+        OUTPUT_DIR=tmp_path / "wrong-export-root",
+        HOOK_POINT_TYPE_CHOICES=lambda value: value,
+        main=_fake_main,
+        CONVERSION_DEBUG_CALLBACK=None,
+    )
+    monkeypatch.setattr(dashboard_pipeline, "_load_converter_module", lambda _: fake_module)
+
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_mlp_in",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        start_layer=2,
+        end_layer=2,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        pipeline_log_path=tmp_path / "run.log",
+        legacy_export_bundle_contract="preserved_baseline",
+    )
+
+    export_root = dashboard_pipeline.convert_dashboard_output(config, layer_num=2, output_dir=dashboard_leaf_dir.parent)
+
+    assert export_root == tmp_path / "exports" / "gemma-3-1b-it" / "2-gemmascope-2-transcoder-262k-rte__smoke"
+    assert seen["emit_arrow"] is False
 
 
 def test_legacy_generation_converts_when_import_requested_but_db_unavailable(

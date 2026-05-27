@@ -52,6 +52,7 @@ DEFAULT_LOCAL_DB_COLUMNAR_IMPORT_TABLES = tuple(sorted(DEFAULT_COLUMNAR_IMPORT_T
 DEFAULT_LOCAL_DB_COLUMNAR_COPY_TABLES = tuple(sorted(DEFAULT_COLUMNAR_COPY_IMPORT_TABLES))
 DEFAULT_DASHBOARD_EXPORT_ROOT_ENV_VARS = ("NEURONPEDIA_EXPORT_ROOT",)
 PROMPT_DATASET_MODES = ("load_dataset", "load_from_disk", "legacy_jsonl")
+LEGACY_EXPORT_BUNDLE_CONTRACTS = ("auto", "preserved_baseline")
 
 
 def _valid_prompts_dataset_mode_values() -> str:
@@ -182,10 +183,13 @@ class NeuronpediaDashboardPipelineConfig:
     runner_sequence_replay_artifact_dir: Path | None = None
     runner_feature_statistics_backend: str = "arrow"
     runner_logits_histogram_backend: str = "arrow"
+    runner_logits_histogram_compatibility: str = "current"
+    runner_legacy_json_cpu_compatibility: str = "current"
     runner_activation_histogram_backend: str = "torch"
     runner_defer_component_construction: bool = False
     runner_sequence_selection_backend: str = "lazy_gpu"
     runner_dashboard_output_format: str = "auto"
+    legacy_export_bundle_contract: str = "auto"
     runner_columnar_artifact_format: str = "parquet"
     runner_emit_activation_copy_rows: bool | None = None
     runner_prompt_bucket_schedule_file: Path | None = None
@@ -247,6 +251,12 @@ class NeuronpediaDashboardPipelineConfig:
             raise ValueError(
                 f"prompts_dataset_mode must be one of {_valid_prompts_dataset_mode_values()}; "
                 f"got {self.prompts_dataset_mode!r}."
+            )
+        self.legacy_export_bundle_contract = str(self.legacy_export_bundle_contract).strip() or "auto"
+        if self.legacy_export_bundle_contract not in LEGACY_EXPORT_BUNDLE_CONTRACTS:
+            raise ValueError(
+                "legacy_export_bundle_contract must be one of "
+                f"{', '.join(LEGACY_EXPORT_BUNDLE_CONTRACTS)}; got {self.legacy_export_bundle_contract!r}."
             )
         if self.prompts_shared_tokens_file is not None:
             self.prompts_shared_tokens_file = Path(self.prompts_shared_tokens_file)
@@ -1527,6 +1537,22 @@ def _resolve_runner_emit_activation_copy_rows(config: NeuronpediaDashboardPipeli
     return config.import_to_local_db
 
 
+def _legacy_export_bundle_emit_arrow_override(
+    config: NeuronpediaDashboardPipelineConfig,
+) -> bool | None:
+    if config.legacy_export_bundle_contract == "preserved_baseline":
+        return False
+    return None
+
+
+def _legacy_export_bundle_import_preferences(
+    config: NeuronpediaDashboardPipelineConfig,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if config.legacy_export_bundle_contract == "preserved_baseline":
+        return (), ()
+    return DEFAULT_LOCAL_DB_COLUMNAR_IMPORT_TABLES, DEFAULT_LOCAL_DB_COLUMNAR_COPY_TABLES
+
+
 def _legacy_local_dataset_alias_name(dataset_path: Path) -> str:
     dataset_slug = re.sub(r"[^a-z0-9]+", "-", dataset_path.name.lower()).strip("-")
     dataset_slug = re.sub(r"-{2,}", "-", dataset_slug)
@@ -1692,6 +1718,7 @@ def _layer_runner_command(
         command.append(f"--sequence-replay-artifact-dir={config.runner_sequence_replay_artifact_dir}")
     command.append(f"--feature-statistics-backend={config.runner_feature_statistics_backend}")
     command.append(f"--logits-histogram-backend={config.runner_logits_histogram_backend}")
+    command.append(f"--logits-histogram-compatibility={config.runner_logits_histogram_compatibility}")
     command.append(f"--activation-histogram-backend={config.runner_activation_histogram_backend}")
     command.append(
         "--defer-component-construction"
@@ -1809,6 +1836,16 @@ def _legacy_json_cpu_layer_runner_command(
         )
     if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--correlation-accumulation-device"):
         command.append(f"--correlation-accumulation-device={config.runner_correlation_accumulation_device}")
+    if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--logits-histogram-backend"):
+        command.append(f"--logits-histogram-backend={config.runner_logits_histogram_backend}")
+    if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--logits-histogram-compatibility"):
+        command.append(f"--logits-histogram-compatibility={config.runner_logits_histogram_compatibility}")
+    if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--legacy-json-cpu-compatibility"):
+        command.append(f"--legacy-json-cpu-compatibility={config.runner_legacy_json_cpu_compatibility}")
+    if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--use-cached-activations"):
+        command.append(
+            "--use-cached-activations" if config.runner_use_cached_activations else "--no-use-cached-activations"
+        )
     if config.hf_model_path:
         command.append(f"--hf-model-path={config.hf_model_path}")
     if detached_baseline_supports_prompt_dataset_contract and config.prompts_huggingface_dataset_config_name:
@@ -2005,10 +2042,12 @@ def import_columnar_dashboard_output(
     layer_num: int,
     output_dir: Path,
     activation_use_stage_table: bool = True,
+    source_id_override: str | None = None,
+    activation_id_prefix: str | None = None,
 ) -> NeuronpediaLocalImportSummary:
     """Import SAEDashboard columnar output directly into local Neuronpedia tables."""
 
-    source_id = _resolve_source_id(output_dir, layer_num, config.neuronpedia_source_set_id)
+    source_id = source_id_override or _resolve_source_id(output_dir, layer_num, config.neuronpedia_source_set_id)
     decode_token_ids, pad_token_id = _build_columnar_token_decoder(config)
     return import_saedashboard_columnar_bundle_local_db(
         output_dir,
@@ -2019,7 +2058,7 @@ def import_columnar_dashboard_output(
         creator_id=DEFAULT_EXPLANATION_AUTHOR_ID,
         creator_name=config.creator_name,
         decode_token_ids=decode_token_ids,
-        activation_id_prefix=f"{source_id}-activation",
+        activation_id_prefix=activation_id_prefix or f"{source_id}-activation",
         pad_token_id=pad_token_id,
         hook_name=config.hook_point,
         release_name=config.release_id,
@@ -2149,6 +2188,9 @@ def convert_dashboard_output(
     accepts_var_keyword = any(
         parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in converter_params.values()
     )
+    emit_arrow_override = _legacy_export_bundle_emit_arrow_override(config)
+    if emit_arrow_override is not None and (accepts_var_keyword or "emit_arrow" in converter_params):
+        params["emit_arrow"] = emit_arrow_override
     if "export_root" not in converter_params:
         module_any.OUTPUT_DIR = str(config.export_root)
     call_params = (
@@ -2276,11 +2318,12 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
                     output_dir=import_root,
                 )
             else:
+                prefer_arrow_for_tables, prefer_copy_for_tables = _legacy_export_bundle_import_preferences(config)
                 import_only_summary = import_neuronpedia_export_bundle_local_db(
                     import_root,
                     local_db_url=config.local_db_url or "",
-                    prefer_arrow_for_tables=DEFAULT_LOCAL_DB_COLUMNAR_IMPORT_TABLES,
-                    prefer_copy_for_tables=DEFAULT_LOCAL_DB_COLUMNAR_COPY_TABLES,
+                    prefer_arrow_for_tables=prefer_arrow_for_tables,
+                    prefer_copy_for_tables=prefer_copy_for_tables,
                 )
             elapsed_seconds = time.monotonic() - layer_start
             logger.info(
@@ -2482,12 +2525,13 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
 
             import_summary = None
             if should_import:
+                prefer_arrow_for_tables, prefer_copy_for_tables = _legacy_export_bundle_import_preferences(config)
                 _log_host_memory(logger, stage="before_import", layer_num=layer_num)
                 import_summary = import_neuronpedia_export_bundle_local_db(
                     export_root,
                     local_db_url=config.local_db_url or "",
-                    prefer_arrow_for_tables=DEFAULT_LOCAL_DB_COLUMNAR_IMPORT_TABLES,
-                    prefer_copy_for_tables=DEFAULT_LOCAL_DB_COLUMNAR_COPY_TABLES,
+                    prefer_arrow_for_tables=prefer_arrow_for_tables,
+                    prefer_copy_for_tables=prefer_copy_for_tables,
                 )
                 _log_host_memory(logger, stage="after_import", layer_num=layer_num)
                 logger.info(
@@ -2626,6 +2670,16 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runner-sequence-replay-artifact-dir", type=Path)
     parser.add_argument("--runner-feature-statistics-backend", choices=("object", "arrow"), default="arrow")
     parser.add_argument("--runner-logits-histogram-backend", choices=("object", "arrow"), default="arrow")
+    parser.add_argument(
+        "--runner-logits-histogram-compatibility",
+        choices=("current", "detached_legacy"),
+        default="current",
+    )
+    parser.add_argument(
+        "--runner-legacy-json-cpu-compatibility",
+        choices=("current", "detached_legacy"),
+        default="current",
+    )
     parser.add_argument("--runner-activation-histogram-backend", choices=("torch", "polars"), default="torch")
     parser.add_argument("--runner-defer-component-construction", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
@@ -2637,6 +2691,15 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         "--runner-dashboard-output-format",
         choices=("auto", "legacy_json", "columnar"),
         default="auto",
+    )
+    parser.add_argument(
+        "--legacy-export-bundle-contract",
+        choices=LEGACY_EXPORT_BUNDLE_CONTRACTS,
+        default="auto",
+        help=(
+            "Override the legacy export/import contract used after legacy_json dashboard generation. "
+            "Use 'preserved_baseline' to force detached-baseline JSONL-only conversion and local import behavior."
+        ),
     )
     parser.add_argument(
         "--runner-columnar-artifact-format",

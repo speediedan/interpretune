@@ -15,6 +15,7 @@ import signal
 import subprocess
 import time
 from typing import Any, Iterable
+from uuid import uuid4
 
 from interpretune.utils import neuronpedia_dashboard_pipeline as dashboard_pipeline
 from interpretune.utils.neuronpedia_db_utils import resolve_local_neuronpedia_db_url
@@ -53,6 +54,14 @@ DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET = Path(
     "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/legacy_pretokenized/"
     "gemma-3-1b-it_rte_boolq_context319_fixed_pad_2490"
 )
+DEFAULT_PHASE4_RTE_SHARED_TOKENS_FILE = Path(
+    "/tmp/phase4_rte_threeway_sharedtokens_20260524_121354/legacy_baseline/20260524_191404/"
+    "phase3-legacy-rte-pretokenized-reduced/run_root/"
+    "gemma-3-1b-it_gemmascope-2-transcoder-262k-rte_"
+    "phase4-legacy-rte-threeway-sharedtokens-20260524_121354-6816a67-2c581d0/layer_9/"
+    "google/gemma-3-1b-it_gemma-scope-2-1b-it-transcoders-all_blocks.9.hook_mlp_in_262144_"
+    "phase4-legacy-rte-threeway-sharedtokens-20260524_121354-6816a67-2c581d0/tokens_2490.pt"
+)
 DEFAULT_PHASE3_MONOLOGY_PRETOKENIZED_DATASET = Path(
     "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/pretokenized/"
     "gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490"
@@ -80,6 +89,7 @@ POST_BATCH_RE = re.compile(r"post_batch_(\d+)")
 
 OOM_MARKERS = ("CUDA out of memory", "torch.OutOfMemoryError", "out of memory")
 SHAPE_MISMATCH_MARKERS = ("The size of tensor a", "must match the size of tensor b")
+RUNNER_PERF_PREFIX = "[runner_perf] "
 
 
 @dataclass(frozen=True)
@@ -192,6 +202,17 @@ class RunnerResourceEvent:
 
 
 @dataclass
+class RunnerPerfEvent:
+    """One parsed ``[runner_perf]`` line emitted by the SAEDashboard runner."""
+
+    event: str
+    detected_elapsed_seconds: float
+    timestamp_utc: str
+    fields: dict[str, Any] = field(default_factory=dict)
+    raw_line: str = ""
+
+
+@dataclass
 class BatchEvent:
     """Detected generation progress for one batch."""
 
@@ -248,8 +269,10 @@ class ImportStageProfile:
     activation_copy_write_seconds: float | None
     activation_copy_stream_close_seconds: float | None
     activation_insert_from_stage_seconds: float | None
+    local_db_source_id: str | None
     imported_activation_rows: int | None
     imported_neuron_rows: int | None
+    imported_row_counts: dict[str, int] = field(default_factory=dict)
     table_load_seconds: dict[str, float] = field(default_factory=dict)
     table_import_seconds: dict[str, float] = field(default_factory=dict)
     table_import_substage_seconds: dict[str, dict[str, float]] = field(default_factory=dict)
@@ -288,6 +311,8 @@ class ProfileResult:
     stdout_log_path: str
     resource_samples_path: str
     stage_summary_path: str
+    runner_perf_log_path: str
+    runner_perf_events_path: str
     py_spy_output_path: str | None
     py_spy_command: str | None
     run_root: str
@@ -295,6 +320,7 @@ class ProfileResult:
     cache_device: str | None
     speedscope_summary: SpeedscopeSummary | None = None
     import_stage_profile: ImportStageProfile | None = None
+    import_stage_profile_path: str | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -359,15 +385,27 @@ def _phase3_baseline_repo_args() -> tuple[str, ...]:
 
 
 def _phase3_legacy_impl_args() -> tuple[str, ...]:
-    return ("--runner-implementation=legacy_json_cpu", *_phase3_baseline_repo_args())
+    return (
+        "--runner-implementation=legacy_json_cpu",
+        "--no-runner-use-cached-activations",
+        *_phase3_baseline_repo_args(),
+    )
 
 
 def _current_legacy_impl_args() -> tuple[str, ...]:
-    return ("--runner-implementation=legacy_json_cpu",)
+    return (
+        "--runner-implementation=legacy_json_cpu",
+        "--no-runner-use-cached-activations",
+        "--runner-logits-histogram-backend=object",
+        "--runner-logits-histogram-compatibility=detached_legacy",
+        "--runner-legacy-json-cpu-compatibility=detached_legacy",
+        "--legacy-export-bundle-contract=preserved_baseline",
+    )
 
 
 def _phase3_lazy_impl_args() -> tuple[str, ...]:
     return (
+        "--no-runner-use-cached-activations",
         "--runner-sequence-selection-backend=lazy_gpu",
         "--runner-dashboard-output-format=columnar",
         "--runner-feature-statistics-backend=arrow",
@@ -384,6 +422,7 @@ def _phase3_rte_preset(
     detached_baseline: bool = True,
     prompts_dataset_path: Path | str = DEFAULT_PHASE3_RTE_TEXT_DATASET,
     pretokenized_dataset_path: Path | None = None,
+    shared_tokens_file: Path | None = None,
 ) -> ProfilePreset:
     if pretokenized_dataset_path is not None:
         prompts_dataset_mode = "load_from_disk"
@@ -404,6 +443,8 @@ def _phase3_rte_preset(
         f"--n-prompts-total={DEFAULT_PHASE3_PROMPTS_TOTAL}",
         f"--n-tokens-in-prompt={DEFAULT_PHASE3_RTE_TOKENS_IN_PROMPT}",
     ]
+    if shared_tokens_file is not None:
+        dashboard_extra_args.append(f"--prompts-shared-tokens-file={shared_tokens_file}")
     if legacy:
         dashboard_extra_args.extend(_phase3_legacy_impl_args() if detached_baseline else _current_legacy_impl_args())
     else:
@@ -525,6 +566,7 @@ PROFILE_PRESETS: dict[str, ProfilePreset] = {
             legacy=True,
             detached_baseline=False,
             prompts_dataset_path=DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET,
+            shared_tokens_file=DEFAULT_PHASE4_RTE_SHARED_TOKENS_FILE,
         ),
         _phase3_monology_preset(
             "phase3-legacy-monology-smoke",
@@ -1243,18 +1285,100 @@ def classify_error_lines(lines: Iterable[str]) -> tuple[str | None, list[str]]:
     return classification, captured[-8:]
 
 
+def _coerce_runner_perf_value(raw_value: str) -> Any:
+    """Coerce a serialized ``[runner_perf]`` value back into a Python value."""
+
+    if raw_value.startswith("{") or raw_value.startswith("["):
+        try:
+            return json.loads(raw_value)
+        except json.JSONDecodeError:
+            pass
+
+    lowered = raw_value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered == "none":
+        return None
+
+    try:
+        return int(raw_value)
+    except ValueError:
+        pass
+
+    try:
+        return float(raw_value)
+    except ValueError:
+        return raw_value
+
+
+def parse_runner_perf_line(line: str) -> tuple[str, dict[str, Any], str] | None:
+    """Parse one ``[runner_perf]`` line into an event name and typed fields."""
+
+    stripped = line.strip()
+    if not stripped.startswith(RUNNER_PERF_PREFIX):
+        return None
+
+    payload_text = stripped[len(RUNNER_PERF_PREFIX) :]
+    payload: dict[str, Any] = {}
+    for token in payload_text.split():
+        if "=" not in token:
+            continue
+        key, raw_value = token.split("=", 1)
+        payload[key] = _coerce_runner_perf_value(raw_value)
+
+    event_name = payload.pop("event", None)
+    if not isinstance(event_name, str) or not event_name:
+        return None
+    return event_name, payload, stripped
+
+
+def _coerce_batch_num(value: Any) -> int | None:
+    """Normalize a batch identifier from a parsed runner event."""
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
 def parse_runner_events(
     lines: Iterable[str],
     *,
     started_monotonic: float,
-) -> tuple[list[BatchEvent], list[RunnerResourceEvent]]:
-    """Parse batch completion and runner resource events from new log lines."""
+) -> tuple[list[BatchEvent], list[RunnerResourceEvent], list[RunnerPerfEvent]]:
+    """Parse batch completion, resource snapshots, and runner perf events from new log lines."""
 
     batch_events: list[BatchEvent] = []
     resource_events: list[RunnerResourceEvent] = []
+    perf_events: list[RunnerPerfEvent] = []
     for line in lines:
         now_monotonic = time.monotonic()
         elapsed = now_monotonic - started_monotonic
+
+        perf_event = parse_runner_perf_line(line)
+        if perf_event is not None:
+            event_name, fields, raw_line = perf_event
+            perf_events.append(
+                RunnerPerfEvent(
+                    event=event_name,
+                    detected_elapsed_seconds=elapsed,
+                    timestamp_utc=utc_now_iso(),
+                    fields=fields,
+                    raw_line=raw_line,
+                )
+            )
+            if event_name == "batch_total":
+                batch_num = _coerce_batch_num(fields.get("batch"))
+                if batch_num is not None:
+                    batch_events.append(BatchEvent(batch_num, elapsed, utc_now_iso()))
+
         batch_match = BATCH_OUTPUT_RE.search(line)
         if batch_match:
             batch_events.append(BatchEvent(int(batch_match.group(1)), elapsed, utc_now_iso()))
@@ -1282,7 +1406,7 @@ def parse_runner_events(
                     cuda_max_allocated_gib=float(resource_match.group(5)),
                 )
             )
-    return batch_events, resource_events
+    return batch_events, resource_events, perf_events
 
 
 def finite_average(values: Iterable[float | None]) -> float | None:
@@ -1569,6 +1693,12 @@ def _coerce_nested_float_mapping(values: Any) -> dict[str, dict[str, float]]:
     return {str(key): _coerce_float_mapping(value) for key, value in dict(values).items()}
 
 
+def _profile_import_source_id(base_source_id: str) -> str:
+    """Return a unique local-DB source id for a profiling-only import rerun."""
+
+    return f"{base_source_id}__profile-import-{uuid4().hex[:12]}"
+
+
 def profile_import_stage(
     dashboard_command: list[str],
     *,
@@ -1586,15 +1716,23 @@ def profile_import_stage(
     wall_start = time.monotonic()
     conversion_seconds = 0.0
     import_root: Path
+    local_db_source_id: str | None = None
     if dashboard_output_format == "columnar":
         import_root = output_dir
+        base_source_id = dashboard_pipeline._resolve_source_id(output_dir, layer_num, config.neuronpedia_source_set_id)
+        local_db_source_id = _profile_import_source_id(base_source_id)
         import_summary = dashboard_pipeline.import_columnar_dashboard_output(
             config,
             layer_num=layer_num,
             output_dir=output_dir,
             activation_use_stage_table=False,
+            source_id_override=local_db_source_id,
+            activation_id_prefix=f"{local_db_source_id}-activation",
         )
     else:
+        prefer_arrow_for_tables, prefer_copy_for_tables = dashboard_pipeline._legacy_export_bundle_import_preferences(
+            config
+        )
         conversion_start = time.monotonic()
         import_root = dashboard_pipeline.convert_dashboard_output(
             config,
@@ -1606,9 +1744,10 @@ def profile_import_stage(
         import_summary = dashboard_pipeline.import_neuronpedia_export_bundle_local_db(
             import_root,
             local_db_url=config.local_db_url or "",
-            prefer_arrow_for_tables=dashboard_pipeline.DEFAULT_LOCAL_DB_COLUMNAR_IMPORT_TABLES,
-            prefer_copy_for_tables=dashboard_pipeline.DEFAULT_LOCAL_DB_COLUMNAR_COPY_TABLES,
+            prefer_arrow_for_tables=prefer_arrow_for_tables,
+            prefer_copy_for_tables=prefer_copy_for_tables,
         )
+        local_db_source_id = import_root.name
     wall_seconds = time.monotonic() - wall_start
 
     table_load_seconds = _coerce_float_mapping(getattr(import_summary, "table_load_seconds", {}))
@@ -1623,7 +1762,11 @@ def profile_import_stage(
     if activation_table_load_seconds is not None or conversion_seconds:
         activation_load_seconds = (activation_table_load_seconds or 0.0) + conversion_seconds
 
-    imported_row_counts = dict(getattr(import_summary, "imported_row_counts", {}) or {})
+    imported_row_counts = {
+        str(table_name): int(row_count)
+        for table_name, row_count in dict(getattr(import_summary, "imported_row_counts", {}) or {}).items()
+        if row_count is not None
+    }
     return ImportStageProfile(
         mode=dashboard_output_format,
         import_root=str(import_root),
@@ -1635,12 +1778,10 @@ def profile_import_stage(
         activation_copy_write_seconds=activation_substages.get("copy_write"),
         activation_copy_stream_close_seconds=activation_substages.get("copy_stream_close"),
         activation_insert_from_stage_seconds=activation_substages.get("insert_from_stage"),
-        imported_activation_rows=(
-            int(imported_row_counts["Activation"]) if imported_row_counts.get("Activation") is not None else None
-        ),
-        imported_neuron_rows=(
-            int(imported_row_counts["Neuron"]) if imported_row_counts.get("Neuron") is not None else None
-        ),
+        local_db_source_id=local_db_source_id,
+        imported_activation_rows=imported_row_counts.get("Activation"),
+        imported_neuron_rows=imported_row_counts.get("Neuron"),
+        imported_row_counts=imported_row_counts,
         table_load_seconds=table_load_seconds,
         table_import_seconds=table_import_seconds,
         table_import_substage_seconds=table_import_substage_seconds,
@@ -1725,6 +1866,7 @@ def run_profile(
     log_offset = 0
     samples: list[ResourceSample] = []
     runner_events: list[RunnerResourceEvent] = []
+    runner_perf_events: list[RunnerPerfEvent] = []
     batch_events: dict[int, BatchEvent] = {}
     notes: list[str] = []
     last_error_lines: list[str] = []
@@ -1740,12 +1882,16 @@ def run_profile(
         while True:
             time.sleep(args.sample_seconds)
             new_lines, log_offset = read_new_log_lines(pipeline_log_path, log_offset)
-            new_batch_events, new_runner_events = parse_runner_events(new_lines, started_monotonic=started_monotonic)
+            new_batch_events, new_runner_events, new_perf_events = parse_runner_events(
+                new_lines,
+                started_monotonic=started_monotonic,
+            )
             for event in new_batch_events:
                 if event.batch_num not in batch_events:
                     batch_events[event.batch_num] = event
                     last_batch_progress_monotonic = time.monotonic()
             runner_events.extend(new_runner_events)
+            runner_perf_events.extend(new_perf_events)
 
             error_kind, error_lines = classify_error_lines(new_lines)
             if error_lines:
@@ -1820,6 +1966,16 @@ def run_profile(
         json.dumps([asdict(event) for event in runner_events], indent=2),
         encoding="utf-8",
     )
+    runner_perf_log_path = config_dir / "runner_perf.log"
+    runner_perf_log_path.write_text(
+        "".join(f"{event.raw_line}\n" for event in runner_perf_events),
+        encoding="utf-8",
+    )
+    runner_perf_events_path = config_dir / "runner_perf_events.json"
+    runner_perf_events_path.write_text(
+        json.dumps([asdict(event) for event in runner_perf_events], indent=2),
+        encoding="utf-8",
+    )
 
     avg_batch_seconds, throughput_features_per_min = summarize_batch_throughput(
         config,
@@ -1830,12 +1986,15 @@ def run_profile(
         notes.append(f"Reported averages exclude completed batches before {args.summary_warmup_batches}.")
     speedscope_summary = summarize_speedscope(py_spy_output_path) if py_spy_output_path is not None else None
     import_stage_profile = None
+    import_stage_profile_path: Path | None = None
     if (
         args.profile_import_stage
         and len(batch_events) >= args.target_batches
         and status in {"target_reached", "exited"}
     ):
         import_stage_profile = profile_import_stage(dashboard_command, local_db_url=args.local_db_url)
+        import_stage_profile_path = config_dir / "import_stage_profile.json"
+        import_stage_profile_path.write_text(json.dumps(asdict(import_stage_profile), indent=2), encoding="utf-8")
         notes.append(
             "Measured exact-lineage import stage profile"
             f" mode={import_stage_profile.mode} wall_seconds={import_stage_profile.wall_seconds:.2f}."
@@ -1872,6 +2031,8 @@ def run_profile(
         stdout_log_path=str(stdout_path),
         resource_samples_path=str(resource_samples_path),
         stage_summary_path=str(stage_summary_path),
+        runner_perf_log_path=str(runner_perf_log_path),
+        runner_perf_events_path=str(runner_perf_events_path),
         py_spy_output_path=str(py_spy_output_path) if py_spy_output_path is not None else None,
         py_spy_command=py_spy_command,
         run_root=str(run_root),
@@ -1879,6 +2040,7 @@ def run_profile(
         cache_device=cache_device,
         speedscope_summary=speedscope_summary,
         import_stage_profile=import_stage_profile,
+        import_stage_profile_path=(str(import_stage_profile_path) if import_stage_profile_path is not None else None),
         notes=notes + last_error_lines,
     )
     (config_dir / "result.json").write_text(json.dumps(asdict(result), indent=2), encoding="utf-8")
