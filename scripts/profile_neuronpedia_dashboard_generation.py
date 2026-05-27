@@ -33,7 +33,7 @@ DEFAULT_RUN_ROOT = Path("/mnt/cache_extended/speediedan/.cache/huggingface/inter
 DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT = Path(
     "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/baseline_worktrees_20260518"
 )
-DEFAULT_PHASE3_BASELINE_SAEDASHBOARD_ROOT = DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "SAEDashboard-7e42ce6"
+DEFAULT_PHASE3_BASELINE_SAEDASHBOARD_ROOT = DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "SAEDashboard-7886eaa"
 DEFAULT_PHASE3_BASELINE_SAELENS_ROOT = DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "SAELens-3eea6552"
 DEFAULT_PHASE3_BASELINE_NEURONPEDIA_UTILS_ROOT = (
     DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "neuronpedia-5a33f17" / "utils" / "neuronpedia-utils"
@@ -90,6 +90,7 @@ POST_BATCH_RE = re.compile(r"post_batch_(\d+)")
 OOM_MARKERS = ("CUDA out of memory", "torch.OutOfMemoryError", "out of memory")
 SHAPE_MISMATCH_MARKERS = ("The size of tensor a", "must match the size of tensor b")
 RUNNER_PERF_PREFIX = "[runner_perf] "
+RUNNER_PERF_MARKER = "[runner_perf]"
 
 
 @dataclass(frozen=True)
@@ -328,6 +329,12 @@ def utc_now_iso() -> str:
     """Return the current UTC timestamp in ISO format."""
 
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def local_log_timestamp() -> str:
+    """Return a millisecond timestamp matching Python log output."""
+
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
 
 
 def gib_from_kib(value_kib: int) -> float:
@@ -1317,10 +1324,11 @@ def parse_runner_perf_line(line: str) -> tuple[str, dict[str, Any], str] | None:
     """Parse one ``[runner_perf]`` line into an event name and typed fields."""
 
     stripped = line.strip()
-    if not stripped.startswith(RUNNER_PERF_PREFIX):
+    marker_index = stripped.find(RUNNER_PERF_MARKER)
+    if marker_index < 0:
         return None
 
-    payload_text = stripped[len(RUNNER_PERF_PREFIX) :]
+    payload_text = stripped[marker_index + len(RUNNER_PERF_MARKER) :].lstrip()
     payload: dict[str, Any] = {}
     for token in payload_text.split():
         if "=" not in token:
@@ -1365,13 +1373,17 @@ def parse_runner_events(
         perf_event = parse_runner_perf_line(line)
         if perf_event is not None:
             event_name, fields, raw_line = perf_event
+            timestamp_utc = utc_now_iso()
+            timestamped_raw_line = raw_line
+            if raw_line.startswith(RUNNER_PERF_PREFIX):
+                timestamped_raw_line = f"{local_log_timestamp()} {raw_line}"
             perf_events.append(
                 RunnerPerfEvent(
                     event=event_name,
                     detected_elapsed_seconds=elapsed,
-                    timestamp_utc=utc_now_iso(),
+                    timestamp_utc=timestamp_utc,
                     fields=fields,
-                    raw_line=raw_line,
+                    raw_line=timestamped_raw_line,
                 )
             )
             if event_name == "batch_total":

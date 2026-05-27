@@ -104,7 +104,7 @@ def test_profile_parser_detects_columnar_and_resource_batch_completion() -> None
             ),
             '[runner_perf] event=batch_total batch=1 wall_s=29.174150 process_io_delta={"write_bytes":17}\n',
             (
-                "[runner_perf] event=columnar_output_summary feature_count=1024 "
+                "2026-05-26 09:51:01,312 [runner_perf] event=columnar_output_summary feature_count=1024 "
                 "artifact_dir=/tmp/run/layer_9/foo/batch-2.columnar manifest_path=/tmp/run/manifest.json\n"
             ),
             "Columnar output written to /tmp/run/layer_9/foo/batch-3.columnar/manifest.json\n",
@@ -119,6 +119,10 @@ def test_profile_parser_detects_columnar_and_resource_batch_completion() -> None
     assert runner_perf_events[0].fields["batch"] == 1
     assert runner_perf_events[0].fields["wall_s"] == pytest.approx(29.17415)
     assert runner_perf_events[0].fields["process_io_delta"] == {"write_bytes": 17}
+    assert runner_perf_events[0].raw_line.endswith(
+        '[runner_perf] event=batch_total batch=1 wall_s=29.174150 process_io_delta={"write_bytes":17}'
+    )
+    assert runner_perf_events[1].raw_line.startswith("2026-05-26 09:51:01,312 [runner_perf]")
 
 
 def test_profile_command_appends_dashboard_extra_args(tmp_path: Path) -> None:
