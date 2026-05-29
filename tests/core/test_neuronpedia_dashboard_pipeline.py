@@ -373,8 +373,10 @@ def test_phase4_current_legacy_presets_omit_detached_repo_overrides() -> None:
         assert "--no-runner-use-cached-activations" in preset.dashboard_extra_args
         assert "--legacy-export-bundle-contract=preserved_baseline" in preset.dashboard_extra_args
         assert "--prompts-dataset-mode=legacy_jsonl" in preset.dashboard_extra_args
-        assert "--runner-logits-histogram-compatibility=detached_legacy" in preset.dashboard_extra_args
-        assert "--runner-legacy-compatibility=detached_legacy" in preset.dashboard_extra_args
+        assert not any(
+            arg.startswith("--runner-logits-histogram-compatibility=") for arg in preset.dashboard_extra_args
+        )
+        assert not any(arg.startswith("--runner-legacy-compatibility=") for arg in preset.dashboard_extra_args)
         assert not any(arg.startswith("--saedashboard-repo-root=") for arg in preset.dashboard_extra_args)
         assert not any(arg.startswith("--saelens-repo-root=") for arg in preset.dashboard_extra_args)
         assert not any(arg.startswith("--neuronpedia-utils-root=") for arg in preset.dashboard_extra_args)
@@ -1088,8 +1090,6 @@ def test_layer_runner_command_can_target_legacy_runner(tmp_path: Path) -> None:
         runner_cleanup_each_minibatch=True,
         runner_feature_statistics_backend="arrow",
         runner_logits_histogram_backend="arrow",
-        runner_logits_histogram_compatibility="detached_legacy",
-        runner_legacy_compatibility="detached_legacy",
         runner_activation_histogram_backend="polars",
         runner_defer_component_construction=True,
         runner_sequence_selection_backend="lazy_gpu",
@@ -1114,8 +1114,8 @@ def test_layer_runner_command_can_target_legacy_runner(tmp_path: Path) -> None:
     assert "--cleanup-each-minibatch" in command
     assert "--correlation-accumulation-device=auto" in command
     assert "--logits-histogram-backend=arrow" in command
-    assert "--logits-histogram-compatibility=detached_legacy" in command
-    assert "--legacy-compatibility=detached_legacy" in command
+    assert not any(arg.startswith("--logits-histogram-compatibility=") for arg in command)
+    assert not any(arg.startswith("--legacy-compatibility=") for arg in command)
     assert "--no-use-cached-activations" in command
     assert "--sequence-selection-backend=legacy" in command
     assert "--dashboard-output-format=legacy_json" in command
@@ -2351,8 +2351,6 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
             "columnar",
             "--legacy-export-bundle-contract",
             "preserved_baseline",
-            "--runner-legacy-compatibility",
-            "detached_legacy",
             "--local-db-import-chunk-size",
             "4096",
             "--runner-cleanup-each-minibatch",
@@ -2385,7 +2383,6 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
     assert config.runner_prompt_batch_size_round_to == 16
     assert config.runner_dashboard_output_format == "columnar"
     assert config.legacy_export_bundle_contract == "preserved_baseline"
-    assert config.runner_legacy_compatibility == "detached_legacy"
     assert config.runner_columnar_artifact_format == "parquet"
     assert config.runner_emit_activation_copy_rows is None
     assert config.local_db_import_chunk_size == 4096

@@ -183,8 +183,6 @@ class NeuronpediaDashboardPipelineConfig:
     runner_sequence_replay_artifact_dir: Path | None = None
     runner_feature_statistics_backend: str = "arrow"
     runner_logits_histogram_backend: str = "arrow"
-    runner_logits_histogram_compatibility: str = "current"
-    runner_legacy_compatibility: str = "current"
     runner_activation_histogram_backend: str = "torch"
     runner_defer_component_construction: bool = False
     runner_sequence_selection_backend: str = "lazy_gpu"
@@ -1717,7 +1715,6 @@ def _layer_runner_command(
         command.append(f"--sequence-replay-artifact-dir={config.runner_sequence_replay_artifact_dir}")
     command.append(f"--feature-statistics-backend={config.runner_feature_statistics_backend}")
     command.append(f"--logits-histogram-backend={config.runner_logits_histogram_backend}")
-    command.append(f"--logits-histogram-compatibility={config.runner_logits_histogram_compatibility}")
     command.append(f"--activation-histogram-backend={config.runner_activation_histogram_backend}")
     command.append(
         "--defer-component-construction"
@@ -1837,10 +1834,6 @@ def _legacy_layer_runner_command(
         command.append(f"--correlation-accumulation-device={config.runner_correlation_accumulation_device}")
     if _legacy_runner_supports_option(config.saedashboard_repo_root, "--logits-histogram-backend"):
         command.append(f"--logits-histogram-backend={config.runner_logits_histogram_backend}")
-    if _legacy_runner_supports_option(config.saedashboard_repo_root, "--logits-histogram-compatibility"):
-        command.append(f"--logits-histogram-compatibility={config.runner_logits_histogram_compatibility}")
-    if _legacy_runner_supports_option(config.saedashboard_repo_root, "--legacy-compatibility"):
-        command.append(f"--legacy-compatibility={config.runner_legacy_compatibility}")
     if _legacy_runner_supports_option(config.saedashboard_repo_root, "--use-cached-activations"):
         command.append(
             "--use-cached-activations" if config.runner_use_cached_activations else "--no-use-cached-activations"
@@ -2668,16 +2661,6 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runner-sequence-replay-artifact-dir", type=Path)
     parser.add_argument("--runner-feature-statistics-backend", choices=("object", "arrow"), default="arrow")
     parser.add_argument("--runner-logits-histogram-backend", choices=("object", "arrow"), default="arrow")
-    parser.add_argument(
-        "--runner-logits-histogram-compatibility",
-        choices=("current", "detached_legacy"),
-        default="current",
-    )
-    parser.add_argument(
-        "--runner-legacy-compatibility",
-        choices=("current", "detached_legacy"),
-        default="current",
-    )
     parser.add_argument("--runner-activation-histogram-backend", choices=("torch", "polars"), default="torch")
     parser.add_argument("--runner-defer-component-construction", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
