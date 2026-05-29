@@ -382,9 +382,9 @@ Key extra controls in this mode:
   - `legacy_jsonl` means the legacy runner consumes a deprecated local `load_dataset("json", data_files=...)` export with `<split>.jsonl` plus `sae_lens.json`.
   The config default is `load_dataset`. When `--prompts-pretokenized-dataset-path` is set, the pipeline resolves that
   invocation to `load_from_disk` because the supplied path names a `save_to_disk()` artifact, except for the
-  `legacy_json_cpu` runner which continues to stay on the `load_dataset`/`legacy_jsonl` side of the contract. When the
+  `legacy` runner which continues to stay on the `load_dataset`/`legacy_jsonl` side of the contract. When the
   dataset path already points at a legacy `<split>.jsonl` plus `sae_lens.json` export, the pipeline still resolves that
-  path to deprecated `legacy_jsonl` compatibility automatically. `legacy_json_cpu` must not be paired with
+  path to deprecated `legacy_jsonl` compatibility automatically. `legacy` must not be paired with
   `load_from_disk`.
 4. `--prompts-pretokenized-dataset-path` points the runner at the local SAELens-compatible prompt cache. For raw text datasets, use `--prompts-dataset-text-field` with a prebuilt dataset that already has the dashboard prompt text.
 5. `--start-batch` and `--end-batch` make small, reproducible batch probes possible without forking a second pipeline path.

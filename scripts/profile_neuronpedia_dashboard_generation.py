@@ -393,7 +393,7 @@ def _phase3_baseline_repo_args() -> tuple[str, ...]:
 
 def _phase3_legacy_impl_args() -> tuple[str, ...]:
     return (
-        "--runner-implementation=legacy_json_cpu",
+        "--runner-implementation=legacy",
         "--no-runner-use-cached-activations",
         *_phase3_baseline_repo_args(),
     )
@@ -401,11 +401,11 @@ def _phase3_legacy_impl_args() -> tuple[str, ...]:
 
 def _current_legacy_impl_args() -> tuple[str, ...]:
     return (
-        "--runner-implementation=legacy_json_cpu",
+        "--runner-implementation=legacy",
         "--no-runner-use-cached-activations",
         "--runner-logits-histogram-backend=object",
         "--runner-logits-histogram-compatibility=detached_legacy",
-        "--runner-legacy-json-cpu-compatibility=detached_legacy",
+        "--runner-legacy-compatibility=detached_legacy",
         "--legacy-export-bundle-contract=preserved_baseline",
     )
 
@@ -461,7 +461,7 @@ def _phase3_rte_preset(
         description=(
             "Phase 3 reduced RTE baseline smoke/reduced row using the preserved pre-PR worktrees."
             if detached_baseline
-            else "Phase 4 current-code RTE legacy_json_cpu comparison row without detached worktree overrides."
+            else "Phase 4 current-code RTE legacy comparison row without detached worktree overrides."
             if legacy
             else "Phase 3 reduced RTE lazy columnar comparison row on the current PR branches."
         ),
@@ -513,7 +513,7 @@ def _phase3_monology_preset(
         description=(
             "Phase 3 reduced Monology baseline smoke/reduced row using the preserved pre-PR worktrees."
             if detached_baseline
-            else "Phase 4 current-code Monology legacy_json_cpu comparison row without detached worktree overrides."
+            else "Phase 4 current-code Monology legacy comparison row without detached worktree overrides."
             if legacy
             else "Phase 3 reduced Monology lazy columnar comparison row on the current PR branches."
         ),

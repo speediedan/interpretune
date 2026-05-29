@@ -32,9 +32,9 @@
         "required_files": ["train.jsonl", "sae_lens.json"]
       },
       "legacy_contract": {
-        "runner_implementation": "legacy_json_cpu",
+        "runner_implementation": "legacy",
         "dashboard_output_format": "legacy_json",
-        "sequence_selection_backend": "legacy_json_cpu"
+        "sequence_selection_backend": "legacy"
       },
       "preserved_baseline_result": {
         "avg_batch_seconds": 33.42,
@@ -58,9 +58,9 @@
         "required_files": ["train.jsonl", "sae_lens.json"]
       },
       "legacy_contract": {
-        "runner_implementation": "legacy_json_cpu",
+        "runner_implementation": "legacy",
         "dashboard_output_format": "legacy_json",
-        "sequence_selection_backend": "legacy_json_cpu"
+        "sequence_selection_backend": "legacy"
       },
       "preserved_baseline_result": {
         "avg_batch_seconds": 45.82,

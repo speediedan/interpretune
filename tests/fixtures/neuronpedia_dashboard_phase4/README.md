@@ -1,7 +1,7 @@
 # Phase 4 Neuronpedia Dashboard Baseline Fixtures
 
 These fixtures preserve the detached-baseline artifact and import contract used to validate the current-code
-`legacy_json_cpu` compatibility path. The active baseline is the latest published Phase 4 detached-baseline row from
+`legacy` compatibility path. The active baseline is the latest published Phase 4 detached-baseline row from
 `distributed-insight/project_admin/PRs/neuronpedia/source-set-enhancements/phase4_summary_results_for_pr.md`:
 
 - RTE: `SD-7886eaa/SL-3eea6552/NP-5a33f17/IT-fc69a14`, `65129` imported `Activation` rows,

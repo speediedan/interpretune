@@ -214,7 +214,7 @@ def test_profile_preset_phase3_legacy_rte_smoke_applies_baseline_args() -> None:
     assert any(arg.startswith("--saedashboard-repo-root=") for arg in args.dashboard_extra_arg)
     assert any(arg.startswith("--saelens-repo-root=") for arg in args.dashboard_extra_arg)
     assert any(arg.startswith("--neuronpedia-utils-root=") for arg in args.dashboard_extra_arg)
-    assert "--runner-implementation=legacy_json_cpu" in args.dashboard_extra_arg
+    assert "--runner-implementation=legacy" in args.dashboard_extra_arg
 
 
 def test_profile_preset_preserves_explicit_pretokenized_dataset_path(tmp_path: Path) -> None:
@@ -309,7 +309,7 @@ def test_phase3_profile_preset_pairs_share_reduced_shapes() -> None:
     assert legacy.target_batches == lazy.target_batches == 4
     assert legacy.pretokenized_dataset_path is None
     assert lazy.pretokenized_dataset_path is None
-    assert "--runner-implementation=legacy_json_cpu" in legacy.dashboard_extra_args
+    assert "--runner-implementation=legacy" in legacy.dashboard_extra_args
     assert "--runner-dashboard-output-format=columnar" in lazy.dashboard_extra_args
     assert "--prompts-dataset-mode=load_dataset" in legacy.dashboard_extra_args
     assert "--prompts-dataset-mode=load_dataset" in lazy.dashboard_extra_args
@@ -369,12 +369,12 @@ def test_phase4_current_legacy_presets_omit_detached_repo_overrides() -> None:
     current_legacy_monology = profile_module.PROFILE_PRESETS["phase4-current-legacy-monology-pretokenized-reduced"]
 
     for preset in (current_legacy_rte, current_legacy_monology):
-        assert "--runner-implementation=legacy_json_cpu" in preset.dashboard_extra_args
+        assert "--runner-implementation=legacy" in preset.dashboard_extra_args
         assert "--no-runner-use-cached-activations" in preset.dashboard_extra_args
         assert "--legacy-export-bundle-contract=preserved_baseline" in preset.dashboard_extra_args
         assert "--prompts-dataset-mode=legacy_jsonl" in preset.dashboard_extra_args
         assert "--runner-logits-histogram-compatibility=detached_legacy" in preset.dashboard_extra_args
-        assert "--runner-legacy-json-cpu-compatibility=detached_legacy" in preset.dashboard_extra_args
+        assert "--runner-legacy-compatibility=detached_legacy" in preset.dashboard_extra_args
         assert not any(arg.startswith("--saedashboard-repo-root=") for arg in preset.dashboard_extra_args)
         assert not any(arg.startswith("--saelens-repo-root=") for arg in preset.dashboard_extra_args)
         assert not any(arg.startswith("--neuronpedia-utils-root=") for arg in preset.dashboard_extra_args)
@@ -427,9 +427,9 @@ def test_phase4_import_tolerance_fixture_records_preserved_baseline_contract() -
         rte["legacy_contract"]
         == monology["legacy_contract"]
         == {
-            "runner_implementation": "legacy_json_cpu",
+            "runner_implementation": "legacy",
             "dashboard_output_format": "legacy_json",
-            "sequence_selection_backend": "legacy_json_cpu",
+            "sequence_selection_backend": "legacy",
         }
     )
     assert rte["preserved_baseline_result"]["imported_activation_rows"] == 65129
@@ -1045,7 +1045,7 @@ def test_layer_runner_command_uses_explicit_shared_tokens_file(tmp_path: Path) -
     assert f"--shared-tokens-file={tmp_path / 'pretokenized_prompts' / 'tokens_24576.pt'}" not in command
 
 
-def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) -> None:
+def test_layer_runner_command_can_target_legacy_runner(tmp_path: Path) -> None:
     config = NeuronpediaDashboardPipelineConfig(
         model_name="gemma-3-1b-it",
         model_layers=26,
@@ -1083,13 +1083,13 @@ def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) 
         runner_log_hook_aliases=True,
         runner_log_performance=True,
         runner_shuffle_tokens=False,
-        runner_implementation="legacy_json_cpu",
+        runner_implementation="legacy",
         prompts_shared_tokens_file=tmp_path / "baseline_tokens.pt",
         runner_cleanup_each_minibatch=True,
         runner_feature_statistics_backend="arrow",
         runner_logits_histogram_backend="arrow",
         runner_logits_histogram_compatibility="detached_legacy",
-        runner_legacy_json_cpu_compatibility="detached_legacy",
+        runner_legacy_compatibility="detached_legacy",
         runner_activation_histogram_backend="polars",
         runner_defer_component_construction=True,
         runner_sequence_selection_backend="lazy_gpu",
@@ -1115,9 +1115,9 @@ def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) 
     assert "--correlation-accumulation-device=auto" in command
     assert "--logits-histogram-backend=arrow" in command
     assert "--logits-histogram-compatibility=detached_legacy" in command
-    assert "--legacy-json-cpu-compatibility=detached_legacy" in command
+    assert "--legacy-compatibility=detached_legacy" in command
     assert "--no-use-cached-activations" in command
-    assert "--sequence-selection-backend=legacy_json_cpu" in command
+    assert "--sequence-selection-backend=legacy" in command
     assert "--dashboard-output-format=legacy_json" in command
     assert f"--shared-tokens-file={tmp_path / 'baseline_tokens.pt'}" in command
     unsupported_legacy_flags = (
@@ -1136,7 +1136,7 @@ def test_layer_runner_command_can_target_legacy_json_cpu_runner(tmp_path: Path) 
     assert not any(flag in command for flag in unsupported_legacy_flags)
 
 
-def test_layer_runner_command_rejects_legacy_json_cpu_with_load_from_disk_mode(tmp_path: Path) -> None:
+def test_layer_runner_command_rejects_legacy_with_load_from_disk_mode(tmp_path: Path) -> None:
     config = NeuronpediaDashboardPipelineConfig(
         model_name="gemma-3-1b-it",
         model_layers=26,
@@ -1162,10 +1162,10 @@ def test_layer_runner_command_rejects_legacy_json_cpu_with_load_from_disk_mode(t
         saelens_repo_root=tmp_path / "baseline_saelens",
         neuronpedia_utils_root=tmp_path / "baseline_neuronpedia_utils",
         interpretune_env_file=None,
-        runner_implementation="legacy_json_cpu",
+        runner_implementation="legacy",
     )
 
-    with pytest.raises(ValueError, match="legacy_json_cpu does not accept prompts_dataset_mode='load_from_disk'"):
+    with pytest.raises(ValueError, match="legacy does not accept prompts_dataset_mode='load_from_disk'"):
         dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
 
 
@@ -1203,7 +1203,7 @@ def test_layer_runner_command_uses_absolute_legacy_jsonl_path_for_current_runner
         interpretune_env_file=None,
         n_features_per_batch=128,
         n_prompts_in_forward_pass=32,
-        runner_implementation="legacy_json_cpu",
+        runner_implementation="legacy",
     )
 
     command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
@@ -1254,7 +1254,7 @@ def test_layer_runner_command_uses_legacy_dataset_flag_for_detached_baseline_run
         n_features_per_batch=128,
         n_prompts_in_forward_pass=32,
         runner_shuffle_tokens=False,
-        runner_implementation="legacy_json_cpu",
+        runner_implementation="legacy",
     )
 
     command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
@@ -1262,7 +1262,7 @@ def test_layer_runner_command_uses_legacy_dataset_flag_for_detached_baseline_run
     assert "--prompt-dataset-path=legacy_prompt_dataset" not in command
     assert "--prompt-dataset-mode=legacy_jsonl" not in command
     assert "--no-shuffle-tokens" in command
-    assert "--sequence-selection-backend=legacy_json_cpu" not in command
+    assert "--sequence-selection-backend=legacy" not in command
     assert "--dashboard-output-format=legacy_json" not in command
     dataset_flag = next(part for part in command if part.startswith("--dataset-path="))
     materialized_dataset_path = dataset_flag.split("=", maxsplit=1)[1]
@@ -2351,7 +2351,7 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
             "columnar",
             "--legacy-export-bundle-contract",
             "preserved_baseline",
-            "--runner-legacy-json-cpu-compatibility",
+            "--runner-legacy-compatibility",
             "detached_legacy",
             "--local-db-import-chunk-size",
             "4096",
@@ -2385,7 +2385,7 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
     assert config.runner_prompt_batch_size_round_to == 16
     assert config.runner_dashboard_output_format == "columnar"
     assert config.legacy_export_bundle_contract == "preserved_baseline"
-    assert config.runner_legacy_json_cpu_compatibility == "detached_legacy"
+    assert config.runner_legacy_compatibility == "detached_legacy"
     assert config.runner_columnar_artifact_format == "parquet"
     assert config.runner_emit_activation_copy_rows is None
     assert config.local_db_import_chunk_size == 4096
@@ -2491,7 +2491,7 @@ def test_run_dashboard_pipeline_skips_conversion_for_legacy_generation_only(
         return SimpleNamespace(pid=12345)
 
     def _unexpected_convert(*args, **kwargs):
-        raise AssertionError("legacy_json_cpu generation-only runs should not invoke conversion")
+        raise AssertionError("legacy generation-only runs should not invoke conversion")
 
     monkeypatch.setattr(dashboard_pipeline.subprocess, "Popen", _fake_popen)
     monkeypatch.setattr(dashboard_pipeline, "convert_dashboard_output", _unexpected_convert)
@@ -2521,7 +2521,7 @@ def test_run_dashboard_pipeline_skips_conversion_for_legacy_generation_only(
         interpretune_env_file=None,
         pipeline_log_path=tmp_path / "run.log",
         import_to_local_db=False,
-        runner_implementation="legacy_json_cpu",
+        runner_implementation="legacy",
     )
 
     caplog.set_level(logging.INFO, logger=test_logger.name)
@@ -2532,9 +2532,9 @@ def test_run_dashboard_pipeline_skips_conversion_for_legacy_generation_only(
     assert results[0].export_root is None
     assert not results[0].skipped
     assert launched_commands
-    assert "--sequence-selection-backend=legacy_json_cpu" in launched_commands[0]
+    assert "--sequence-selection-backend=legacy" in launched_commands[0]
     assert "--dashboard-output-format=legacy_json" in launched_commands[0]
-    assert "Skipping Neuronpedia conversion for legacy_json_cpu generation-only" in caplog.text
+    assert "Skipping Neuronpedia conversion for legacy generation-only" in caplog.text
 
 
 def test_convert_dashboard_output_filters_new_kwargs_for_legacy_converter(
@@ -2746,7 +2746,7 @@ def test_legacy_generation_converts_when_import_requested_but_db_unavailable(
         interpretune_env_file=None,
         pipeline_log_path=tmp_path / "run.log",
         import_to_local_db=True,
-        runner_implementation="legacy_json_cpu",
+        runner_implementation="legacy",
     )
 
     results = dashboard_pipeline.run_dashboard_pipeline(config)

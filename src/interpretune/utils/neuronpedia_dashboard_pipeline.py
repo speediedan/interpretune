@@ -184,7 +184,7 @@ class NeuronpediaDashboardPipelineConfig:
     runner_feature_statistics_backend: str = "arrow"
     runner_logits_histogram_backend: str = "arrow"
     runner_logits_histogram_compatibility: str = "current"
-    runner_legacy_json_cpu_compatibility: str = "current"
+    runner_legacy_compatibility: str = "current"
     runner_activation_histogram_backend: str = "torch"
     runner_defer_component_construction: bool = False
     runner_sequence_selection_backend: str = "lazy_gpu"
@@ -374,16 +374,15 @@ def _resolve_prompts_dataset_mode(config: NeuronpediaDashboardPipelineConfig) ->
     if resolved_mode == "load_dataset":
         if _is_legacy_jsonl_dataset_path(config.prompts_huggingface_dataset_path):
             resolved_mode = "legacy_jsonl"
-        elif config.prompts_pretokenized_dataset_path is not None and config.runner_implementation != "legacy_json_cpu":
+        elif config.prompts_pretokenized_dataset_path is not None and config.runner_implementation != "legacy":
             resolved_mode = "load_from_disk"
 
     if resolved_mode == "legacy_jsonl":
         _warn_deprecated_legacy_jsonl()
 
-    if resolved_mode == "load_from_disk" and config.runner_implementation == "legacy_json_cpu":
+    if resolved_mode == "load_from_disk" and config.runner_implementation == "legacy":
         raise ValueError(
-            "legacy_json_cpu does not accept prompts_dataset_mode='load_from_disk'; "
-            "use load_dataset or legacy_jsonl instead."
+            "legacy does not accept prompts_dataset_mode='load_from_disk'; use load_dataset or legacy_jsonl instead."
         )
     if resolved_mode == "load_from_disk" and config.prompts_pretokenized_dataset_path is None:
         raise ValueError("prompts_dataset_mode='load_from_disk' requires prompts_pretokenized_dataset_path to be set.")
@@ -1514,7 +1513,7 @@ def _log_runtime_diagnostics(logger: logging.Logger, *, pid: int, output_dir: Pa
 
 
 def _resolve_runner_dashboard_output_format(config: NeuronpediaDashboardPipelineConfig) -> str:
-    if config.runner_implementation == "legacy_json_cpu":
+    if config.runner_implementation == "legacy":
         return "legacy_json"
     dashboard_output_format = config.runner_dashboard_output_format
     if dashboard_output_format == "auto":
@@ -1630,8 +1629,8 @@ def _layer_runner_command(
     )
     if prompt_settings is None:
         prompt_settings = _resolve_shared_prompt_run_settings(config)
-    if config.runner_implementation == "legacy_json_cpu":
-        return _legacy_json_cpu_layer_runner_command(
+    if config.runner_implementation == "legacy":
+        return _legacy_layer_runner_command(
             config,
             layer_num=layer_num,
             output_dir=output_dir,
@@ -1762,7 +1761,7 @@ def _layer_runner_command(
     return command
 
 
-def _legacy_json_cpu_layer_runner_command(
+def _legacy_layer_runner_command(
     config: NeuronpediaDashboardPipelineConfig,
     layer_num: int,
     output_dir: Path,
@@ -1770,7 +1769,7 @@ def _legacy_json_cpu_layer_runner_command(
     prompt_settings: SharedPromptRunSettings,
 ) -> list[str]:
     resolved_dataset_mode = _resolve_prompts_dataset_mode(config)
-    detached_baseline_supports_prompt_dataset_contract = _legacy_json_cpu_runner_supports_prompt_dataset_contract(
+    detached_baseline_supports_prompt_dataset_contract = _legacy_runner_supports_prompt_dataset_contract(
         config.saedashboard_repo_root
     )
     dataset_path = config.prompts_huggingface_dataset_path
@@ -1799,7 +1798,7 @@ def _legacy_json_cpu_layer_runner_command(
     if detached_baseline_supports_prompt_dataset_contract:
         command.extend(
             [
-                "--sequence-selection-backend=legacy_json_cpu",
+                "--sequence-selection-backend=legacy",
                 "--dashboard-output-format=legacy_json",
             ]
         )
@@ -1818,31 +1817,31 @@ def _legacy_json_cpu_layer_runner_command(
         command.append(f"--end-batch={config.end_batch}")
     if not config.runner_shuffle_tokens:
         command.append("--no-shuffle-tokens")
-    if config.runner_log_resource_snapshots and _legacy_json_cpu_runner_supports_option(
+    if config.runner_log_resource_snapshots and _legacy_runner_supports_option(
         config.saedashboard_repo_root, "--log-resource-snapshots"
     ):
         command.append("--log-resource-snapshots")
-    if config.runner_log_hook_aliases and _legacy_json_cpu_runner_supports_option(
+    if config.runner_log_hook_aliases and _legacy_runner_supports_option(
         config.saedashboard_repo_root, "--log-hook-aliases"
     ):
         command.append("--log-hook-aliases")
-    if config.runner_log_performance and _legacy_json_cpu_runner_supports_option(
+    if config.runner_log_performance and _legacy_runner_supports_option(
         config.saedashboard_repo_root, "--log-performance"
     ):
         command.append("--log-performance")
-    if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--cleanup-each-minibatch"):
+    if _legacy_runner_supports_option(config.saedashboard_repo_root, "--cleanup-each-minibatch"):
         command.append(
             "--cleanup-each-minibatch" if config.runner_cleanup_each_minibatch else "--no-cleanup-each-minibatch"
         )
-    if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--correlation-accumulation-device"):
+    if _legacy_runner_supports_option(config.saedashboard_repo_root, "--correlation-accumulation-device"):
         command.append(f"--correlation-accumulation-device={config.runner_correlation_accumulation_device}")
-    if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--logits-histogram-backend"):
+    if _legacy_runner_supports_option(config.saedashboard_repo_root, "--logits-histogram-backend"):
         command.append(f"--logits-histogram-backend={config.runner_logits_histogram_backend}")
-    if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--logits-histogram-compatibility"):
+    if _legacy_runner_supports_option(config.saedashboard_repo_root, "--logits-histogram-compatibility"):
         command.append(f"--logits-histogram-compatibility={config.runner_logits_histogram_compatibility}")
-    if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--legacy-json-cpu-compatibility"):
-        command.append(f"--legacy-json-cpu-compatibility={config.runner_legacy_json_cpu_compatibility}")
-    if _legacy_json_cpu_runner_supports_option(config.saedashboard_repo_root, "--use-cached-activations"):
+    if _legacy_runner_supports_option(config.saedashboard_repo_root, "--legacy-compatibility"):
+        command.append(f"--legacy-compatibility={config.runner_legacy_compatibility}")
+    if _legacy_runner_supports_option(config.saedashboard_repo_root, "--use-cached-activations"):
         command.append(
             "--use-cached-activations" if config.runner_use_cached_activations else "--no-use-cached-activations"
         )
@@ -1854,7 +1853,7 @@ def _legacy_json_cpu_layer_runner_command(
         command.append(f"--prompt-dataset-split={config.prompts_huggingface_dataset_split}")
     if detached_baseline_supports_prompt_dataset_contract and config.prompts_dataset_text_field:
         command.append(f"--prompt-dataset-text-field={config.prompts_dataset_text_field}")
-    if prompt_settings.shared_tokens_file and _legacy_json_cpu_runner_supports_option(
+    if prompt_settings.shared_tokens_file and _legacy_runner_supports_option(
         config.saedashboard_repo_root, "--shared-tokens-file"
     ):
         command.append(f"--shared-tokens-file={prompt_settings.shared_tokens_file}")
@@ -1869,15 +1868,15 @@ def _legacy_json_cpu_layer_runner_command(
     if config.use_skip_transcoder:
         command.append("--use-skip-transcoder")
     if resolved_dataset_mode == "load_from_disk":
-        raise ValueError("legacy_json_cpu must not be invoked with prompts_dataset_mode='load_from_disk'.")
+        raise ValueError("legacy must not be invoked with prompts_dataset_mode='load_from_disk'.")
     return command
 
 
-def _legacy_json_cpu_runner_supports_prompt_dataset_contract(saedashboard_repo_root: Path) -> bool:
-    return _legacy_json_cpu_runner_supports_option(saedashboard_repo_root, "--prompt-dataset-path")
+def _legacy_runner_supports_prompt_dataset_contract(saedashboard_repo_root: Path) -> bool:
+    return _legacy_runner_supports_option(saedashboard_repo_root, "--prompt-dataset-path")
 
 
-def _legacy_json_cpu_runner_supports_option(saedashboard_repo_root: Path, option_name: str) -> bool:
+def _legacy_runner_supports_option(saedashboard_repo_root: Path, option_name: str) -> bool:
     runner_path = saedashboard_repo_root / "sae_dashboard" / "neuronpedia" / "neuronpedia_runner.py"
     if not runner_path.exists():
         return True
@@ -2499,12 +2498,11 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
                 layer_num,
                 _resolve_dashboard_leaf_dir(output_dir),
             )
-            if config.runner_implementation == "legacy_json_cpu" and not config.import_to_local_db:
+            if config.runner_implementation == "legacy" and not config.import_to_local_db:
                 elapsed_seconds = time.monotonic() - layer_start
                 _log_host_memory(logger, stage="layer_done", layer_num=layer_num)
                 logger.info(
-                    "Skipping Neuronpedia conversion for legacy_json_cpu generation-only layer=%s; "
-                    "local DB import is disabled.",
+                    "Skipping Neuronpedia conversion for legacy generation-only layer=%s; local DB import is disabled.",
                     layer_num,
                 )
                 logger.info("DONE layer=%s elapsed_seconds=%.1f", layer_num, elapsed_seconds)
@@ -2659,7 +2657,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runner-log-hook-aliases", action="store_true")
     parser.add_argument("--runner-log-performance", action="store_true")
     parser.add_argument("--runner-shuffle-tokens", action=argparse.BooleanOptionalAction)
-    parser.add_argument("--runner-implementation", choices=("current", "legacy_json_cpu"), default="current")
+    parser.add_argument("--runner-implementation", choices=("current", "legacy"), default="current")
     parser.add_argument("--runner-cleanup-each-minibatch", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
         "--runner-correlation-accumulation-device",
@@ -2676,7 +2674,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         default="current",
     )
     parser.add_argument(
-        "--runner-legacy-json-cpu-compatibility",
+        "--runner-legacy-compatibility",
         choices=("current", "detached_legacy"),
         default="current",
     )
@@ -2684,7 +2682,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runner-defer-component-construction", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
         "--runner-sequence-selection-backend",
-        choices=("legacy_json_cpu", "lazy_gpu"),
+        choices=("legacy", "lazy_gpu"),
         default="lazy_gpu",
     )
     parser.add_argument(
