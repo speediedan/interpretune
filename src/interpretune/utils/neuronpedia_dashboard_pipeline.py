@@ -179,6 +179,7 @@ class NeuronpediaDashboardPipelineConfig:
     runner_implementation: str = "current"
     runner_cleanup_each_minibatch: bool = False
     runner_correlation_accumulation_device: str = "auto"
+    runner_rolling_coefficient_num_threads: int | None = None
     runner_converter_input_artifact_dir: Path | None = None
     runner_sequence_replay_artifact_dir: Path | None = None
     runner_feature_statistics_backend: str = "arrow"
@@ -288,6 +289,10 @@ class NeuronpediaDashboardPipelineConfig:
             raise ValueError("runner_prompt_primary_acts_scale_limit must be positive.")
         if self.runner_prompt_batch_size_round_to <= 0:
             raise ValueError("runner_prompt_batch_size_round_to must be positive.")
+        if self.runner_rolling_coefficient_num_threads is not None:
+            self.runner_rolling_coefficient_num_threads = int(self.runner_rolling_coefficient_num_threads)
+            if self.runner_rolling_coefficient_num_threads <= 0:
+                raise ValueError("runner_rolling_coefficient_num_threads must be positive when provided.")
         self.cert_bundle_path = Path(self.cert_bundle_path)
         if self.existing_log_path is None:
             self.existing_log_path = self.run_directory / "run.log"
@@ -1709,6 +1714,8 @@ def _layer_runner_command(
         "--cleanup-each-minibatch" if config.runner_cleanup_each_minibatch else "--no-cleanup-each-minibatch"
     )
     command.append(f"--correlation-accumulation-device={config.runner_correlation_accumulation_device}")
+    if config.runner_rolling_coefficient_num_threads is not None:
+        command.append(f"--rolling-coefficient-num-threads={config.runner_rolling_coefficient_num_threads}")
     if config.runner_converter_input_artifact_dir:
         command.append(f"--converter-input-artifact-dir={config.runner_converter_input_artifact_dir}")
     if config.runner_sequence_replay_artifact_dir:
@@ -1832,6 +1839,10 @@ def _legacy_layer_runner_command(
         )
     if _legacy_runner_supports_option(config.saedashboard_repo_root, "--correlation-accumulation-device"):
         command.append(f"--correlation-accumulation-device={config.runner_correlation_accumulation_device}")
+    if config.runner_rolling_coefficient_num_threads is not None and _legacy_runner_supports_option(
+        config.saedashboard_repo_root, "--rolling-coefficient-num-threads"
+    ):
+        command.append(f"--rolling-coefficient-num-threads={config.runner_rolling_coefficient_num_threads}")
     if _legacy_runner_supports_option(config.saedashboard_repo_root, "--logits-histogram-backend"):
         command.append(f"--logits-histogram-backend={config.runner_logits_histogram_backend}")
     if _legacy_runner_supports_option(config.saedashboard_repo_root, "--use-cached-activations"):
@@ -2657,6 +2668,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         choices=("auto", "cpu", "cuda"),
         default="auto",
     )
+    parser.add_argument("--runner-rolling-coefficient-num-threads", type=int)
     parser.add_argument("--runner-converter-input-artifact-dir", type=Path)
     parser.add_argument("--runner-sequence-replay-artifact-dir", type=Path)
     parser.add_argument("--runner-feature-statistics-backend", choices=("object", "arrow"), default="arrow")

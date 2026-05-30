@@ -55,12 +55,8 @@ DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET = Path(
     "gemma-3-1b-it_rte_boolq_context319_fixed_pad_2490"
 )
 DEFAULT_PHASE4_RTE_SHARED_TOKENS_FILE = Path(
-    "/tmp/phase4_rte_threeway_sharedtokens_20260524_121354/legacy_baseline/20260524_191404/"
-    "phase3-legacy-rte-pretokenized-reduced/run_root/"
-    "gemma-3-1b-it_gemmascope-2-transcoder-262k-rte_"
-    "phase4-legacy-rte-threeway-sharedtokens-20260524_121354-6816a67-2c581d0/layer_9/"
-    "google/gemma-3-1b-it_gemma-scope-2-1b-it-transcoders-all_blocks.9.hook_mlp_in_262144_"
-    "phase4-legacy-rte-threeway-sharedtokens-20260524_121354-6816a67-2c581d0/tokens_2490.pt"
+    "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/legacy_pretokenized/"
+    "gemma-3-1b-it_rte_boolq_context319_fixed_pad_2490/tokens_2490.pt"
 )
 DEFAULT_PHASE3_MONOLOGY_PRETOKENIZED_DATASET = Path(
     "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/pretokenized/"
@@ -69,6 +65,10 @@ DEFAULT_PHASE3_MONOLOGY_PRETOKENIZED_DATASET = Path(
 DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET = Path(
     "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/legacy_pretokenized/"
     "gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490"
+)
+DEFAULT_PHASE4_MONOLOGY_SHARED_TOKENS_FILE = Path(
+    "/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/legacy_pretokenized/"
+    "gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490/tokens_2490.pt"
 )
 DEFAULT_PRETOKENIZED_DATASET = DEFAULT_PHASE3_RTE_PRETOKENIZED_DATASET
 DEFAULT_CACHE_PATH = Path("/mnt/cache_extended")
@@ -404,6 +404,7 @@ def _current_legacy_impl_args() -> tuple[str, ...]:
         "--runner-implementation=legacy",
         "--no-runner-use-cached-activations",
         "--runner-logits-histogram-backend=object",
+        "--runner-rolling-coefficient-num-threads=4",
         "--legacy-export-bundle-contract=preserved_baseline",
     )
 
@@ -480,6 +481,7 @@ def _phase3_monology_preset(
     detached_baseline: bool = True,
     prompts_dataset_path: Path | str = "monology/pile-uncopyrighted",
     pretokenized_dataset_path: Path | None = None,
+    shared_tokens_file: Path | None = None,
 ) -> ProfilePreset:
     if pretokenized_dataset_path is not None:
         prompts_dataset_mode = "load_from_disk"
@@ -502,6 +504,8 @@ def _phase3_monology_preset(
         f"--n-prompts-total={DEFAULT_PHASE3_PROMPTS_TOTAL}",
         f"--n-tokens-in-prompt={DEFAULT_PHASE3_MONOLOGY_TOKENS_IN_PROMPT}",
     ]
+    if shared_tokens_file is not None:
+        dashboard_extra_args.append(f"--prompts-shared-tokens-file={shared_tokens_file}")
     if legacy:
         dashboard_extra_args.extend(_phase3_legacy_impl_args() if detached_baseline else _current_legacy_impl_args())
     else:
@@ -618,6 +622,7 @@ PROFILE_PRESETS: dict[str, ProfilePreset] = {
             legacy=True,
             detached_baseline=False,
             prompts_dataset_path=DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET,
+            shared_tokens_file=DEFAULT_PHASE4_MONOLOGY_SHARED_TOKENS_FILE,
         ),
     )
 }

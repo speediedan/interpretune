@@ -372,6 +372,7 @@ def test_phase4_current_legacy_presets_omit_detached_repo_overrides() -> None:
         assert "--runner-implementation=legacy" in preset.dashboard_extra_args
         assert "--no-runner-use-cached-activations" in preset.dashboard_extra_args
         assert "--legacy-export-bundle-contract=preserved_baseline" in preset.dashboard_extra_args
+        assert "--runner-rolling-coefficient-num-threads=4" in preset.dashboard_extra_args
         assert "--prompts-dataset-mode=legacy_jsonl" in preset.dashboard_extra_args
         assert not any(
             arg.startswith("--runner-logits-histogram-compatibility=") for arg in preset.dashboard_extra_args
@@ -396,6 +397,10 @@ def test_phase4_current_legacy_presets_omit_detached_repo_overrides() -> None:
     assert current_legacy_monology.config.n_prompts_in_forward_pass == 256
     assert (
         f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET}"
+        in current_legacy_monology.dashboard_extra_args
+    )
+    assert (
+        f"--prompts-shared-tokens-file={profile_module.DEFAULT_PHASE4_MONOLOGY_SHARED_TOKENS_FILE}"
         in current_legacy_monology.dashboard_extra_args
     )
     assert "--runner-logits-histogram-backend=object" in current_legacy_monology.dashboard_extra_args
@@ -976,6 +981,7 @@ def test_layer_runner_command_includes_bridge_and_custom_dataset_args(tmp_path: 
         runner_log_resource_snapshots=True,
         runner_log_hook_aliases=True,
         runner_cleanup_each_minibatch=True,
+        runner_rolling_coefficient_num_threads=4,
         runner_converter_input_artifact_dir=tmp_path / "converter_inputs",
         runner_feature_statistics_backend="arrow",
         runner_logits_histogram_backend="arrow",
@@ -1003,6 +1009,7 @@ def test_layer_runner_command_includes_bridge_and_custom_dataset_args(tmp_path: 
     assert "--log-resource-snapshots" in command
     assert "--log-hook-aliases" in command
     assert "--cleanup-each-minibatch" in command
+    assert "--rolling-coefficient-num-threads=4" in command
     assert f"--converter-input-artifact-dir={tmp_path / 'converter_inputs'}" in command
 
 
@@ -1088,6 +1095,7 @@ def test_layer_runner_command_can_target_legacy_runner(tmp_path: Path) -> None:
         runner_implementation="legacy",
         prompts_shared_tokens_file=tmp_path / "baseline_tokens.pt",
         runner_cleanup_each_minibatch=True,
+        runner_rolling_coefficient_num_threads=4,
         runner_feature_statistics_backend="arrow",
         runner_logits_histogram_backend="arrow",
         runner_activation_histogram_backend="polars",
@@ -1113,6 +1121,7 @@ def test_layer_runner_command_can_target_legacy_runner(tmp_path: Path) -> None:
     assert "--log-performance" in command
     assert "--cleanup-each-minibatch" in command
     assert "--correlation-accumulation-device=auto" in command
+    assert "--rolling-coefficient-num-threads=4" in command
     assert "--logits-histogram-backend=arrow" in command
     assert not any(arg.startswith("--logits-histogram-compatibility=") for arg in command)
     assert not any(arg.startswith("--legacy-compatibility=") for arg in command)
@@ -2356,6 +2365,8 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
             "--runner-cleanup-each-minibatch",
             "--runner-correlation-accumulation-device",
             "cpu",
+            "--runner-rolling-coefficient-num-threads",
+            "4",
         ]
     )
 
@@ -2388,6 +2399,7 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
     assert config.local_db_import_chunk_size == 4096
     assert config.runner_cleanup_each_minibatch is True
     assert config.runner_correlation_accumulation_device == "cpu"
+    assert config.runner_rolling_coefficient_num_threads == 4
 
 
 def test_run_dashboard_pipeline_skips_conversion_for_columnar_generation_only(
