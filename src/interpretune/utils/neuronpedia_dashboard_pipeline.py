@@ -175,6 +175,7 @@ class NeuronpediaDashboardPipelineConfig:
     runner_log_resource_snapshots: bool = False
     runner_log_hook_aliases: bool = False
     runner_log_performance: bool = False
+    runner_profile_rolling_substages: bool = False
     runner_shuffle_tokens: bool = True
     runner_implementation: str = "current"
     runner_cleanup_each_minibatch: bool = False
@@ -1708,6 +1709,8 @@ def _layer_runner_command(
         command.append("--log-hook-aliases")
     if config.runner_log_performance:
         command.append("--log-performance")
+    if config.runner_profile_rolling_substages:
+        command.append("--profile-rolling-substages")
     if not config.runner_shuffle_tokens:
         command.append("--no-shuffle-tokens")
     command.append(
@@ -1833,6 +1836,10 @@ def _legacy_layer_runner_command(
         config.saedashboard_repo_root, "--log-performance"
     ):
         command.append("--log-performance")
+    if config.runner_profile_rolling_substages and _legacy_runner_supports_option(
+        config.saedashboard_repo_root, "--profile-rolling-substages"
+    ):
+        command.append("--profile-rolling-substages")
     if _legacy_runner_supports_option(config.saedashboard_repo_root, "--cleanup-each-minibatch"):
         command.append(
             "--cleanup-each-minibatch" if config.runner_cleanup_each_minibatch else "--no-cleanup-each-minibatch"
@@ -2660,6 +2667,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runner-log-resource-snapshots", action="store_true")
     parser.add_argument("--runner-log-hook-aliases", action="store_true")
     parser.add_argument("--runner-log-performance", action="store_true")
+    parser.add_argument("--runner-profile-rolling-substages", action="store_true")
     parser.add_argument("--runner-shuffle-tokens", action=argparse.BooleanOptionalAction)
     parser.add_argument("--runner-implementation", choices=("current", "legacy"), default="current")
     parser.add_argument("--runner-cleanup-each-minibatch", action=argparse.BooleanOptionalAction, default=False)

@@ -24,6 +24,7 @@ WORKER_CLI_FLAG_BY_KEY = {
     "n_prompts_in_forward_pass": "--n-prompts-in-forward-pass",
     "primary_acts_batch_size": "--primary-acts-batch-size",
     "runner_log_performance": "--runner-log-performance",
+    "runner_profile_rolling_substages": "--runner-profile-rolling-substages",
     "runner_torch_profile": "--runner-torch-profile",
     "runner_torch_profile_dir": "--runner-torch-profile-dir",
     "heartbeat_seconds": "--heartbeat-seconds",

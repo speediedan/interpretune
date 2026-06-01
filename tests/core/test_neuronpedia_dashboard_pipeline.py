@@ -980,6 +980,7 @@ def test_layer_runner_command_includes_bridge_and_custom_dataset_args(tmp_path: 
         bridge_compatibility_mode_kwargs={"no_processing": True},
         runner_log_resource_snapshots=True,
         runner_log_hook_aliases=True,
+        runner_profile_rolling_substages=True,
         runner_cleanup_each_minibatch=True,
         runner_rolling_coefficient_num_threads=4,
         runner_converter_input_artifact_dir=tmp_path / "converter_inputs",
@@ -1008,6 +1009,7 @@ def test_layer_runner_command_includes_bridge_and_custom_dataset_args(tmp_path: 
     assert '--bridge-compatibility-mode-kwargs-json={"no_processing":true}' in command
     assert "--log-resource-snapshots" in command
     assert "--log-hook-aliases" in command
+    assert "--profile-rolling-substages" in command
     assert "--cleanup-each-minibatch" in command
     assert "--rolling-coefficient-num-threads=4" in command
     assert f"--converter-input-artifact-dir={tmp_path / 'converter_inputs'}" in command
@@ -1091,6 +1093,7 @@ def test_layer_runner_command_can_target_legacy_runner(tmp_path: Path) -> None:
         runner_log_resource_snapshots=True,
         runner_log_hook_aliases=True,
         runner_log_performance=True,
+        runner_profile_rolling_substages=True,
         runner_shuffle_tokens=False,
         runner_implementation="legacy",
         prompts_shared_tokens_file=tmp_path / "baseline_tokens.pt",
@@ -1119,6 +1122,7 @@ def test_layer_runner_command_can_target_legacy_runner(tmp_path: Path) -> None:
     assert "--log-resource-snapshots" in command
     assert "--log-hook-aliases" in command
     assert "--log-performance" in command
+    assert "--profile-rolling-substages" in command
     assert "--cleanup-each-minibatch" in command
     assert "--correlation-accumulation-device=auto" in command
     assert "--rolling-coefficient-num-threads=4" in command
@@ -2362,6 +2366,7 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
             "preserved_baseline",
             "--local-db-import-chunk-size",
             "4096",
+            "--runner-profile-rolling-substages",
             "--runner-cleanup-each-minibatch",
             "--runner-correlation-accumulation-device",
             "cpu",
@@ -2397,6 +2402,7 @@ def test_build_dashboard_pipeline_config_uses_yaml_config_and_cli_overrides(tmp_
     assert config.runner_columnar_artifact_format == "parquet"
     assert config.runner_emit_activation_copy_rows is None
     assert config.local_db_import_chunk_size == 4096
+    assert config.runner_profile_rolling_substages is True
     assert config.runner_cleanup_each_minibatch is True
     assert config.runner_correlation_accumulation_device == "cpu"
     assert config.runner_rolling_coefficient_num_threads == 4
