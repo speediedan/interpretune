@@ -372,7 +372,9 @@ def test_phase4_current_legacy_presets_omit_detached_repo_overrides() -> None:
         assert "--runner-implementation=legacy" in preset.dashboard_extra_args
         assert "--no-runner-use-cached-activations" in preset.dashboard_extra_args
         assert "--legacy-export-bundle-contract=preserved_baseline" in preset.dashboard_extra_args
-        assert "--runner-rolling-coefficient-num-threads=4" in preset.dashboard_extra_args
+        assert not any(
+            arg.startswith("--runner-rolling-coefficient-num-threads=") for arg in preset.dashboard_extra_args
+        )
         assert "--prompts-dataset-mode=legacy_jsonl" in preset.dashboard_extra_args
         assert not any(
             arg.startswith("--runner-logits-histogram-compatibility=") for arg in preset.dashboard_extra_args

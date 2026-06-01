@@ -404,7 +404,6 @@ def _current_legacy_impl_args() -> tuple[str, ...]:
         "--runner-implementation=legacy",
         "--no-runner-use-cached-activations",
         "--runner-logits-histogram-backend=object",
-        "--runner-rolling-coefficient-num-threads=4",
         "--legacy-export-bundle-contract=preserved_baseline",
     )
 
