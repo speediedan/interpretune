@@ -138,13 +138,13 @@ def test_profile_command_appends_dashboard_extra_args(tmp_path: Path) -> None:
         cuda_visible_devices="0",
         dashboard_extra_args=(
             "--runner-dashboard-output-format=columnar",
-            "--runner-sequence-selection-backend=lazy_gpu",
+            "--runner-sequence-selection-backend=columnar_gpu",
         ),
     )
 
     assert command[-2:] == [
         "--runner-dashboard-output-format=columnar",
-        "--runner-sequence-selection-backend=lazy_gpu",
+        "--runner-sequence-selection-backend=columnar_gpu",
     ]
 
 
@@ -990,7 +990,7 @@ def test_layer_runner_command_includes_bridge_and_custom_dataset_args(tmp_path: 
         runner_logits_histogram_backend="arrow",
         runner_activation_histogram_backend="polars",
         runner_defer_component_construction=True,
-        runner_sequence_selection_backend="lazy_gpu",
+        runner_sequence_selection_backend="columnar_gpu",
         runner_prompt_bucket_schedule_file=tmp_path / "selected_bucket_configs.json",
     )
 
@@ -1105,7 +1105,7 @@ def test_layer_runner_command_can_target_legacy_runner(tmp_path: Path) -> None:
         runner_logits_histogram_backend="arrow",
         runner_activation_histogram_backend="polars",
         runner_defer_component_construction=True,
-        runner_sequence_selection_backend="lazy_gpu",
+        runner_sequence_selection_backend="columnar_gpu",
         runner_dashboard_output_format="columnar",
         runner_use_cached_activations=False,
     )
@@ -1144,7 +1144,7 @@ def test_layer_runner_command_can_target_legacy_runner(tmp_path: Path) -> None:
         "--feature-statistics-backend=arrow",
         "--activation-histogram-backend=polars",
         "--defer-component-construction",
-        "--sequence-selection-backend=lazy_gpu",
+        "--sequence-selection-backend=columnar_gpu",
         "--dashboard-output-format=columnar",
         "--columnar-artifact-format=parquet",
     )
@@ -1402,7 +1402,7 @@ def test_layer_runner_command_disables_activation_copy_rows_for_generation_only_
         runner_logits_histogram_backend="arrow",
         runner_activation_histogram_backend="polars",
         runner_defer_component_construction=True,
-        runner_sequence_selection_backend="lazy_gpu",
+        runner_sequence_selection_backend="columnar_gpu",
     )
 
     command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
@@ -2181,7 +2181,7 @@ def test_run_dashboard_pipeline_import_only_uses_existing_columnar_output(tmp_pa
         runner_logits_histogram_backend="arrow",
         runner_activation_histogram_backend="polars",
         runner_defer_component_construction=True,
-        runner_sequence_selection_backend="lazy_gpu",
+        runner_sequence_selection_backend="columnar_gpu",
     )
 
     results = dashboard_pipeline.run_dashboard_pipeline(config)
@@ -2468,7 +2468,7 @@ def test_run_dashboard_pipeline_skips_conversion_for_columnar_generation_only(
         runner_logits_histogram_backend="arrow",
         runner_activation_histogram_backend="polars",
         runner_defer_component_construction=True,
-        runner_sequence_selection_backend="lazy_gpu",
+        runner_sequence_selection_backend="columnar_gpu",
     )
 
     caplog.set_level(logging.INFO, logger=test_logger.name)
@@ -2849,7 +2849,7 @@ def test_run_dashboard_pipeline_imports_columnar_output_directly(
         runner_logits_histogram_backend="arrow",
         runner_activation_histogram_backend="polars",
         runner_defer_component_construction=True,
-        runner_sequence_selection_backend="lazy_gpu",
+        runner_sequence_selection_backend="columnar_gpu",
     )
 
     caplog.set_level(logging.INFO, logger=test_logger.name)

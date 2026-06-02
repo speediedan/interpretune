@@ -187,7 +187,7 @@ class NeuronpediaDashboardPipelineConfig:
     runner_logits_histogram_backend: str = "arrow"
     runner_activation_histogram_backend: str = "torch"
     runner_defer_component_construction: bool = False
-    runner_sequence_selection_backend: str = "lazy_gpu"
+    runner_sequence_selection_backend: str = "columnar_gpu"
     runner_dashboard_output_format: str = "auto"
     legacy_export_bundle_contract: str = "auto"
     runner_columnar_artifact_format: str = "parquet"
@@ -1523,7 +1523,7 @@ def _resolve_runner_dashboard_output_format(config: NeuronpediaDashboardPipeline
     if dashboard_output_format == "auto":
         return (
             "columnar"
-            if config.runner_defer_component_construction and config.runner_sequence_selection_backend == "lazy_gpu"
+            if config.runner_defer_component_construction and config.runner_sequence_selection_backend == "columnar_gpu"
             else "legacy_json"
         )
     if dashboard_output_format not in {"legacy_json", "columnar"}:
@@ -2685,8 +2685,8 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runner-defer-component-construction", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
         "--runner-sequence-selection-backend",
-        choices=("legacy", "lazy_gpu"),
-        default="lazy_gpu",
+        choices=("legacy", "columnar_gpu"),
+        default="columnar_gpu",
     )
     parser.add_argument(
         "--runner-dashboard-output-format",

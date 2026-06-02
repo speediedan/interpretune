@@ -411,7 +411,7 @@ def _current_legacy_impl_args() -> tuple[str, ...]:
 def _phase3_lazy_impl_args() -> tuple[str, ...]:
     return (
         "--no-runner-use-cached-activations",
-        "--runner-sequence-selection-backend=lazy_gpu",
+        "--runner-sequence-selection-backend=columnar_gpu",
         "--runner-dashboard-output-format=columnar",
         "--runner-feature-statistics-backend=arrow",
         "--runner-logits-histogram-backend=arrow",

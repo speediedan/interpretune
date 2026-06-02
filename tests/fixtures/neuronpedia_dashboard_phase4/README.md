@@ -21,7 +21,7 @@ baseline contract:
   `phase4_summary_results_for_pr.md`;
 - the retained prompt artifacts, layer/batch bounds, or import mode for the detached baseline change.
 
-Do not regenerate this fixture from current-code legacy or `lazy_gpu` rows. Those are candidates compared against this
+Do not regenerate this fixture from current-code legacy or `columnar_gpu` rows. Those are candidates compared against this
 baseline, not the baseline itself.
 
 ## Regeneration Process
