@@ -181,6 +181,7 @@ class NeuronpediaDashboardPipelineConfig:
     runner_cleanup_each_minibatch: bool = False
     runner_correlation_accumulation_device: str = "auto"
     runner_rolling_coefficient_num_threads: int | None = None
+    runner_activation_significance_floor: float = 0.0
     runner_converter_input_artifact_dir: Path | None = None
     runner_sequence_replay_artifact_dir: Path | None = None
     runner_feature_statistics_backend: str = "arrow"
@@ -1719,6 +1720,8 @@ def _layer_runner_command(
     command.append(f"--correlation-accumulation-device={config.runner_correlation_accumulation_device}")
     if config.runner_rolling_coefficient_num_threads is not None:
         command.append(f"--rolling-coefficient-num-threads={config.runner_rolling_coefficient_num_threads}")
+    if config.runner_activation_significance_floor > 0:
+        command.append(f"--activation-significance-floor={config.runner_activation_significance_floor}")
     if config.runner_converter_input_artifact_dir:
         command.append(f"--converter-input-artifact-dir={config.runner_converter_input_artifact_dir}")
     if config.runner_sequence_replay_artifact_dir:
@@ -1850,6 +1853,8 @@ def _legacy_layer_runner_command(
         config.saedashboard_repo_root, "--rolling-coefficient-num-threads"
     ):
         command.append(f"--rolling-coefficient-num-threads={config.runner_rolling_coefficient_num_threads}")
+    if config.runner_activation_significance_floor > 0:
+        command.append(f"--activation-significance-floor={config.runner_activation_significance_floor}")
     if _legacy_runner_supports_option(config.saedashboard_repo_root, "--logits-histogram-backend"):
         command.append(f"--logits-histogram-backend={config.runner_logits_histogram_backend}")
     if _legacy_runner_supports_option(config.saedashboard_repo_root, "--use-cached-activations"):
@@ -2677,6 +2682,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         default="auto",
     )
     parser.add_argument("--runner-rolling-coefficient-num-threads", type=int)
+    parser.add_argument("--runner-activation-significance-floor", type=float)
     parser.add_argument("--runner-converter-input-artifact-dir", type=Path)
     parser.add_argument("--runner-sequence-replay-artifact-dir", type=Path)
     parser.add_argument("--runner-feature-statistics-backend", choices=("object", "arrow"), default="arrow")

@@ -395,6 +395,7 @@ def _phase3_legacy_impl_args() -> tuple[str, ...]:
     return (
         "--runner-implementation=legacy",
         "--no-runner-use-cached-activations",
+        "--runner-activation-significance-floor=1e-7",
         *_phase3_baseline_repo_args(),
     )
 
@@ -405,6 +406,7 @@ def _current_legacy_impl_args() -> tuple[str, ...]:
         "--no-runner-use-cached-activations",
         "--runner-logits-histogram-backend=object",
         "--legacy-export-bundle-contract=preserved_baseline",
+        "--runner-activation-significance-floor=1e-7",
     )
 
 
