@@ -391,13 +391,16 @@ def _phase3_baseline_repo_args() -> tuple[str, ...]:
     )
 
 
-def _phase3_legacy_impl_args() -> tuple[str, ...]:
-    return (
+def _phase3_legacy_impl_args(use_activation_cache: bool = True) -> tuple[str, ...]:
+    args = [
         "--runner-implementation=legacy",
-        "--no-runner-use-cached-activations",
         "--runner-activation-significance-floor=1e-7",
+        "--no-runner-shuffle-tokens",
         *_phase3_baseline_repo_args(),
-    )
+    ]
+    if not use_activation_cache:
+        args.insert(1, "--no-runner-use-cached-activations")
+    return tuple(args)
 
 
 def _current_legacy_impl_args() -> tuple[str, ...]:
@@ -407,6 +410,7 @@ def _current_legacy_impl_args() -> tuple[str, ...]:
         "--runner-logits-histogram-backend=object",
         "--legacy-export-bundle-contract=preserved_baseline",
         "--runner-activation-significance-floor=1e-7",
+        "--no-runner-shuffle-tokens",
     )
 
 
@@ -561,6 +565,7 @@ PROFILE_PRESETS: dict[str, ProfilePreset] = {
             target_batches=4,
             legacy=True,
             prompts_dataset_path=DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET,
+            shared_tokens_file=DEFAULT_PHASE4_RTE_SHARED_TOKENS_FILE,
         ),
         _phase3_rte_preset(
             "phase3-lazy-rte-pretokenized-reduced",
@@ -608,6 +613,7 @@ PROFILE_PRESETS: dict[str, ProfilePreset] = {
             target_batches=4,
             legacy=True,
             prompts_dataset_path=DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET,
+            shared_tokens_file=DEFAULT_PHASE4_MONOLOGY_SHARED_TOKENS_FILE,
         ),
         _phase3_monology_preset(
             "phase3-lazy-monology-pretokenized-reduced",
