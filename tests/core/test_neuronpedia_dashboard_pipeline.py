@@ -338,7 +338,7 @@ def test_phase3_pretokenized_reduced_presets_use_final_prompt_artifacts() -> Non
     assert legacy_rte.target_batches == lazy_rte.target_batches == 4
     assert legacy_rte.pretokenized_dataset_path is None
     assert lazy_rte.pretokenized_dataset_path == profile_module.DEFAULT_PHASE3_RTE_LAZY_PRETOKENIZED_DATASET
-    assert "--no-runner-use-cached-activations" in legacy_rte.dashboard_extra_args
+    assert "--prompts-shared-tokens-file=" in " ".join(legacy_rte.dashboard_extra_args)
     assert "--no-runner-use-cached-activations" in lazy_rte.dashboard_extra_args
     assert (
         f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET}"
@@ -352,7 +352,7 @@ def test_phase3_pretokenized_reduced_presets_use_final_prompt_artifacts() -> Non
     assert legacy_monology.target_batches == lazy_monology.target_batches == 4
     assert legacy_monology.pretokenized_dataset_path is None
     assert lazy_monology.pretokenized_dataset_path == profile_module.DEFAULT_PHASE3_MONOLOGY_PRETOKENIZED_DATASET
-    assert "--no-runner-use-cached-activations" in legacy_monology.dashboard_extra_args
+    assert "--prompts-shared-tokens-file=" in " ".join(legacy_monology.dashboard_extra_args)
     assert "--no-runner-use-cached-activations" in lazy_monology.dashboard_extra_args
     assert (
         f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET}"
