@@ -2687,7 +2687,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runner-sequence-replay-artifact-dir", type=Path)
     parser.add_argument("--runner-feature-statistics-backend", choices=("object", "arrow"), default="arrow")
     parser.add_argument("--runner-logits-histogram-backend", choices=("object", "arrow"), default="arrow")
-    parser.add_argument("--runner-activation-histogram-backend", choices=("torch", "polars"), default="torch")
+    parser.add_argument("--runner-activation-histogram-backend", choices=("torch",), default="torch")
     parser.add_argument("--runner-defer-component-construction", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
         "--runner-sequence-selection-backend",
