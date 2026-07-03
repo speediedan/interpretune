@@ -192,18 +192,18 @@ def test_profile_command_uses_dashboard_extra_arg_prompt_overrides(tmp_path: Pat
     assert command.count("--n-tokens-in-prompt") == 1
 
 
-def test_profile_preset_phase3_legacy_rte_smoke_applies_baseline_args() -> None:
+def test_profile_preset_detached_legacy_rte_smoke_applies_baseline_args() -> None:
     profile_module = _load_dashboard_profile_module()
-    args = profile_module.build_parser().parse_args(["--preset", "phase3-legacy-rte-smoke"])
+    args = profile_module.build_parser().parse_args(["--preset", "detached-legacy-rte-smoke"])
 
     preset = profile_module.apply_profile_preset(args)
 
     assert preset is not None
-    assert preset.name == "phase3-legacy-rte-smoke"
+    assert preset.name == "detached-legacy-rte-smoke"
     assert args.target_batches == 2
     assert args.summary_warmup_batches == 0
     assert args.prompts_pretokenized_dataset_path is None
-    assert args.dashboard_extra_arg[0] == "--run-name-suffix=phase3-legacy-rte-smoke"
+    assert args.dashboard_extra_arg[0] == "--run-name-suffix=detached-legacy-rte-smoke"
     assert (
         f"--prompts-huggingface-dataset-path={profile_module.DEFAULT_PHASE3_RTE_TEXT_DATASET}"
         in args.dashboard_extra_arg
@@ -215,6 +215,19 @@ def test_profile_preset_phase3_legacy_rte_smoke_applies_baseline_args() -> None:
     assert any(arg.startswith("--saelens-repo-root=") for arg in args.dashboard_extra_arg)
     assert any(arg.startswith("--neuronpedia-utils-root=") for arg in args.dashboard_extra_arg)
     assert "--runner-implementation=legacy" in args.dashboard_extra_arg
+
+
+def test_profile_preset_phase_era_aliases_resolve_to_canonical_presets() -> None:
+    profile_module = _load_dashboard_profile_module()
+
+    for alias, canonical in profile_module.LEGACY_PRESET_ALIASES.items():
+        assert profile_module.PROFILE_PRESETS[alias] is profile_module.PROFILE_PRESETS[canonical]
+        assert profile_module.PROFILE_PRESETS[alias].name == canonical
+
+    args = profile_module.build_parser().parse_args(["--preset", "phase3-legacy-rte-smoke"])
+    preset = profile_module.apply_profile_preset(args)
+    assert preset is not None
+    assert preset.name == "detached-legacy-rte-smoke"
 
 
 def test_profile_preset_preserves_explicit_pretokenized_dataset_path(tmp_path: Path) -> None:

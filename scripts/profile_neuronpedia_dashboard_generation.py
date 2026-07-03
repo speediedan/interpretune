@@ -536,47 +536,47 @@ PROFILE_PRESETS: dict[str, ProfilePreset] = {
     preset.name: preset
     for preset in (
         _phase3_rte_preset(
-            "phase3-legacy-rte-smoke",
-            config=ProfileConfig("phase3-legacy-rte-smoke", 128, 32),
+            "detached-legacy-rte-smoke",
+            config=ProfileConfig("detached-legacy-rte-smoke", 128, 32),
             target_batches=2,
             legacy=True,
         ),
         _phase3_rte_preset(
-            "phase3-lazy-rte-smoke",
-            config=ProfileConfig("phase3-lazy-rte-smoke", 128, 32),
+            "columnar-rte-smoke",
+            config=ProfileConfig("columnar-rte-smoke", 128, 32),
             target_batches=2,
             legacy=False,
         ),
         _phase3_rte_preset(
-            "phase3-legacy-rte-reduced",
-            config=ProfileConfig("phase3-legacy-rte-reduced", 512, 128),
+            "detached-legacy-rte-reduced",
+            config=ProfileConfig("detached-legacy-rte-reduced", 512, 128),
             target_batches=4,
             legacy=True,
         ),
         _phase3_rte_preset(
-            "phase3-lazy-rte-reduced",
-            config=ProfileConfig("phase3-lazy-rte-reduced", 512, 128),
+            "columnar-rte-reduced",
+            config=ProfileConfig("columnar-rte-reduced", 512, 128),
             target_batches=4,
             legacy=False,
         ),
         _phase3_rte_preset(
-            "phase3-legacy-rte-pretokenized-reduced",
-            config=ProfileConfig("phase3-legacy-rte-pretokenized-reduced", 512, 128),
+            "detached-legacy-rte-pretokenized-reduced",
+            config=ProfileConfig("detached-legacy-rte-pretokenized-reduced", 512, 128),
             target_batches=4,
             legacy=True,
             prompts_dataset_path=DEFAULT_PHASE3_RTE_LEGACY_PRETOKENIZED_DATASET,
             shared_tokens_file=DEFAULT_PHASE4_RTE_SHARED_TOKENS_FILE,
         ),
         _phase3_rte_preset(
-            "phase3-lazy-rte-pretokenized-reduced",
-            config=ProfileConfig("phase3-lazy-rte-pretokenized-reduced", 512, 128),
+            "columnar-rte-pretokenized-reduced",
+            config=ProfileConfig("columnar-rte-pretokenized-reduced", 512, 128),
             target_batches=4,
             legacy=False,
             pretokenized_dataset_path=DEFAULT_PHASE3_RTE_LAZY_PRETOKENIZED_DATASET,
         ),
         _phase3_rte_preset(
-            "phase4-current-legacy-rte-pretokenized-reduced",
-            config=ProfileConfig("phase4-current-legacy-rte-pretokenized-reduced", 512, 128),
+            "legacy-rte-pretokenized-reduced",
+            config=ProfileConfig("legacy-rte-pretokenized-reduced", 512, 128),
             target_batches=4,
             legacy=True,
             detached_baseline=False,
@@ -584,47 +584,47 @@ PROFILE_PRESETS: dict[str, ProfilePreset] = {
             shared_tokens_file=DEFAULT_PHASE4_RTE_SHARED_TOKENS_FILE,
         ),
         _phase3_monology_preset(
-            "phase3-legacy-monology-smoke",
-            config=ProfileConfig("phase3-legacy-monology-smoke", 128, 64),
+            "detached-legacy-monology-smoke",
+            config=ProfileConfig("detached-legacy-monology-smoke", 128, 64),
             target_batches=2,
             legacy=True,
         ),
         _phase3_monology_preset(
-            "phase3-lazy-monology-smoke",
-            config=ProfileConfig("phase3-lazy-monology-smoke", 128, 64),
+            "columnar-monology-smoke",
+            config=ProfileConfig("columnar-monology-smoke", 128, 64),
             target_batches=2,
             legacy=False,
         ),
         _phase3_monology_preset(
-            "phase3-legacy-monology-reduced",
-            config=ProfileConfig("phase3-legacy-monology-reduced", 1024, 256),
+            "detached-legacy-monology-reduced",
+            config=ProfileConfig("detached-legacy-monology-reduced", 1024, 256),
             target_batches=4,
             legacy=True,
         ),
         _phase3_monology_preset(
-            "phase3-lazy-monology-reduced",
-            config=ProfileConfig("phase3-lazy-monology-reduced", 1024, 256),
+            "columnar-monology-reduced",
+            config=ProfileConfig("columnar-monology-reduced", 1024, 256),
             target_batches=4,
             legacy=False,
         ),
         _phase3_monology_preset(
-            "phase3-legacy-monology-pretokenized-reduced",
-            config=ProfileConfig("phase3-legacy-monology-pretokenized-reduced", 1024, 256),
+            "detached-legacy-monology-pretokenized-reduced",
+            config=ProfileConfig("detached-legacy-monology-pretokenized-reduced", 1024, 256),
             target_batches=4,
             legacy=True,
             prompts_dataset_path=DEFAULT_PHASE3_MONOLOGY_LEGACY_PRETOKENIZED_DATASET,
             shared_tokens_file=DEFAULT_PHASE4_MONOLOGY_SHARED_TOKENS_FILE,
         ),
         _phase3_monology_preset(
-            "phase3-lazy-monology-pretokenized-reduced",
-            config=ProfileConfig("phase3-lazy-monology-pretokenized-reduced", 1024, 256),
+            "columnar-monology-pretokenized-reduced",
+            config=ProfileConfig("columnar-monology-pretokenized-reduced", 1024, 256),
             target_batches=4,
             legacy=False,
             pretokenized_dataset_path=DEFAULT_PHASE3_MONOLOGY_PRETOKENIZED_DATASET,
         ),
         _phase3_monology_preset(
-            "phase4-current-legacy-monology-pretokenized-reduced",
-            config=ProfileConfig("phase4-current-legacy-monology-pretokenized-reduced", 1024, 256),
+            "legacy-monology-pretokenized-reduced",
+            config=ProfileConfig("legacy-monology-pretokenized-reduced", 1024, 256),
             target_batches=4,
             legacy=True,
             detached_baseline=False,
@@ -633,6 +633,27 @@ PROFILE_PRESETS: dict[str, ProfilePreset] = {
         ),
     )
 }
+
+# Deprecated phase-era preset names retained as aliases so existing benchmark docs and commands keep working.
+# Canonical naming: detached-legacy-* (preserved pre-PR baseline), legacy-* (in-tree deprecated legacy path),
+# columnar-* (current columnar_gpu path).
+LEGACY_PRESET_ALIASES: dict[str, str] = {
+    "phase3-legacy-rte-smoke": "detached-legacy-rte-smoke",
+    "phase3-lazy-rte-smoke": "columnar-rte-smoke",
+    "phase3-legacy-rte-reduced": "detached-legacy-rte-reduced",
+    "phase3-lazy-rte-reduced": "columnar-rte-reduced",
+    "phase3-legacy-rte-pretokenized-reduced": "detached-legacy-rte-pretokenized-reduced",
+    "phase3-lazy-rte-pretokenized-reduced": "columnar-rte-pretokenized-reduced",
+    "phase4-current-legacy-rte-pretokenized-reduced": "legacy-rte-pretokenized-reduced",
+    "phase3-legacy-monology-smoke": "detached-legacy-monology-smoke",
+    "phase3-lazy-monology-smoke": "columnar-monology-smoke",
+    "phase3-legacy-monology-reduced": "detached-legacy-monology-reduced",
+    "phase3-lazy-monology-reduced": "columnar-monology-reduced",
+    "phase3-legacy-monology-pretokenized-reduced": "detached-legacy-monology-pretokenized-reduced",
+    "phase3-lazy-monology-pretokenized-reduced": "columnar-monology-pretokenized-reduced",
+    "phase4-current-legacy-monology-pretokenized-reduced": "legacy-monology-pretokenized-reduced",
+}
+PROFILE_PRESETS.update({alias: PROFILE_PRESETS[target] for alias, target in LEGACY_PRESET_ALIASES.items()})
 
 
 def apply_profile_preset(args: argparse.Namespace) -> ProfilePreset | None:
