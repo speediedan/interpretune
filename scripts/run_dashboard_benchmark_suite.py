@@ -61,12 +61,14 @@ THREEWAY_LEGS = {
 }
 SCALING_LEGS = {scenario: tuple(leg for leg in legs if leg[2] != "det") for scenario, legs in THREEWAY_LEGS.items()}
 
-# Conservative first-pass default scaling sweeps (features:prompts). Each doubles exactly one dimension of the
-# accepted reviewer baseline (RTE 512x128, Monology 1024x256) so the eager current-legacy path stays well inside
-# the host-RSS and GPU envelopes observed in prior waves; widen deliberately once these shapes are proven.
+# Default scaling sweeps (features:prompts), updated for Phase 6.2: columnar_gpu throughput scales on the
+# feature axis (prompt-axis scaling is throughput-neutral, and RTE prompt scaling is VRAM-capped at 256
+# prompts x 319-token contexts), so each scenario sweeps feature-axis doublings of the accepted baseline
+# (RTE 512x128, Monology 1024x256). The prior prompt-axis shapes (RTE 512:256, Monology 1024:512) were
+# retired after two waves confirmed prompt-doubling is throughput-neutral on both paths.
 DEFAULT_SCALING_CONFIGS = {
-    "rte": ("1024:128", "512:256"),
-    "monology": ("2048:256", "1024:512"),
+    "rte": ("1024:128", "2048:128"),
+    "monology": ("2048:256", "4096:256"),
 }
 DEFAULT_PACKAGE_PARENT = Path("/tmp/dashboard_benchmark_packages")
 

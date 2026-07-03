@@ -57,22 +57,22 @@ phase-era preset names (`phase3-legacy-*`, `phase4-current-legacy-*`, `phase3-la
 `profile_neuronpedia_dashboard_generation.py`, and packaging still classifies artifact roots produced under the
 old naming.
 
-When `--config` is omitted in scaling (or full) mode, the conservative per-scenario **default sweep**
-(`DEFAULT_SCALING_CONFIGS`) is used. Each default config doubles exactly one dimension of the accepted reviewer
-baseline (RTE `512x128`, Monology `1024x256`) so the eager current-legacy path stays inside the previously
-observed host-RSS and GPU envelopes:
+When `--config` is omitted in scaling (or full) mode, the per-scenario **default sweep**
+(`DEFAULT_SCALING_CONFIGS`) is used. As of Phase 6.2 the defaults sweep the **feature axis** — the dimension on
+which `columnar_gpu` throughput actually scales — at 2x and 4x the accepted reviewer baseline feature count
+(RTE baseline `512x128`, Monology baseline `1024x256`):
 
 | Scenario | Default sweep configs |
 | --- | --- |
-| RTE | `1024:128`, `512:256` |
-| Monology | `2048:256`, `1024:512` |
+| RTE | `1024:128`, `2048:128` |
+| Monology | `2048:256`, `4096:256` |
 
-Widen the sweep deliberately (explicit `--config`s) only after these shapes are proven on the target host.
-
-First-run observations (2026-07-02, RTX 4090 24 GB): all default-sweep shapes completed without OOM, but RTE
-`512:256` on the columnar_gpu path peaked at **23.9 GiB GPU** (effectively at the device ceiling) and Monology
-`1024:512` columnar peaked at 18.7 GiB. Treat 256 prompts x 319-token contexts as the current columnar RTE prompt
-ceiling; scale RTE further on the feature axis (or add `--primary-acts-batch-size`) rather than the prompt axis.
+The prior conservative prompt-axis shapes (RTE `512:256`, Monology `1024:512`) were retired after two full waves
+confirmed prompt-doubling is throughput-neutral on both paths, and RTE `512:256` columnar peaked at **23.9 GiB
+GPU** (effectively at the device ceiling on the RTX 4090 host). Treat 256 prompts x 319-token contexts as the
+columnar RTE prompt ceiling; scale RTE on the feature axis (or add `--primary-acts-batch-size`) rather than the
+prompt axis. Widen the sweep deliberately (explicit `--config`s) only after new shapes are proven on the target
+host.
 
 ## Mode 3: Combined run (`--mode full`)
 
