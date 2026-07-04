@@ -301,6 +301,7 @@ class ProfileResult:
     max_gpu_process_used_mib: int
     max_gpu_device_used_mib: int
     max_gpu_util_percent: int
+    avg_gpu_util_percent_steady: float | None
     avg_proc_read_mib_s: float | None
     avg_proc_write_mib_s: float | None
     avg_cache_read_mib_s: float | None
@@ -2003,6 +2004,20 @@ def run_profile(
         resource_events=runner_events,
         batch_events=batch_events,
     )
+    steady_batch_gpu_utils = []
+    for summary in segment_summaries:
+        segment_name = summary.segment
+        if not segment_name.startswith("batch_"):
+            continue
+        try:
+            batch_num = int(segment_name.split("_", 1)[1])
+        except ValueError:
+            continue
+        if batch_num >= args.summary_warmup_batches and summary.avg_gpu_util_percent is not None:
+            steady_batch_gpu_utils.append(summary.avg_gpu_util_percent)
+    avg_gpu_util_percent_steady = (
+        sum(steady_batch_gpu_utils) / len(steady_batch_gpu_utils) if steady_batch_gpu_utils else None
+    )
     write_resource_samples(resource_samples_path, samples)
     write_stage_summary(stage_summary_path, segment_summaries)
     (config_dir / "runner_resource_events.json").write_text(
@@ -2063,6 +2078,7 @@ def run_profile(
         max_gpu_process_used_mib=max((sample.gpu_process_used_mib for sample in samples), default=0),
         max_gpu_device_used_mib=max((sample.gpu_device_used_mib for sample in samples), default=0),
         max_gpu_util_percent=max((sample.gpu_util_percent for sample in samples), default=0),
+        avg_gpu_util_percent_steady=avg_gpu_util_percent_steady,
         avg_proc_read_mib_s=finite_average(sample.proc_read_mib_s for sample in samples),
         avg_proc_write_mib_s=finite_average(sample.proc_write_mib_s for sample in samples),
         avg_cache_read_mib_s=finite_average(sample.cache_read_mib_s for sample in samples),

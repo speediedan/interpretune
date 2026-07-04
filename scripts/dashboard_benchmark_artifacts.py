@@ -83,6 +83,7 @@ class VariantExtract:
     max_gpu_process_used_mib: int | None
     max_gpu_device_used_mib: int | None
     max_gpu_util_percent: int | None
+    avg_gpu_util_percent_steady: float | None
     substage_seconds: dict[str, float] = field(default_factory=dict)
     substage_per_batch_sum: dict[str, float] = field(default_factory=dict)
     batch_total_wall_s: dict[int, float] = field(default_factory=dict)
@@ -359,6 +360,7 @@ def extract_variant(
         max_gpu_process_used_mib=result.get("max_gpu_process_used_mib"),
         max_gpu_device_used_mib=result.get("max_gpu_device_used_mib"),
         max_gpu_util_percent=result.get("max_gpu_util_percent"),
+        avg_gpu_util_percent_steady=result.get("avg_gpu_util_percent_steady"),
         substage_seconds=substage_seconds,
         substage_per_batch_sum=aggregation.per_batch_sum_mean,
         batch_total_wall_s=aggregation.batch_total_wall_s,
@@ -580,14 +582,16 @@ def render_parity_table(parity: ParityResult) -> str:
 
 def render_resource_table(variants: list[VariantExtract]) -> str:
     lines = [
-        "| Variant | Max tree RSS GiB | Max host used GiB | Max GPU proc MiB | Max GPU dev MiB | Max GPU util % |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Variant | Max tree RSS GiB | Max host used GiB | Max GPU proc MiB | Max GPU dev MiB "
+        "| Avg GPU util % (steady) | Max GPU util % |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for v in _ordered_paths(variants):
         lines.append(
             f"| {PATH_DISPLAY.get(v.path_key, v.path_key)} | {_fmt(v.max_tree_rss_gib, '.2f')} "
             f"| {_fmt(v.max_host_used_gib, '.2f')} | {_fmt(v.max_gpu_process_used_mib, ',')} "
-            f"| {_fmt(v.max_gpu_device_used_mib, ',')} | {_fmt(v.max_gpu_util_percent, 'd')} |"
+            f"| {_fmt(v.max_gpu_device_used_mib, ',')} | {_fmt(v.avg_gpu_util_percent_steady, '.1f')} "
+            f"| {_fmt(v.max_gpu_util_percent, 'd')} |"
         )
     return "\n".join(lines)
 
