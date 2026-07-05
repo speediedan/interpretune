@@ -2323,6 +2323,64 @@ def test_run_dashboard_pipeline_overlap_local_db_import_defers_and_holds_lock(
     assert not config.layer_lock_path(1).exists()
 
 
+def test_requested_layer_numbers_layer_list_overrides_range(tmp_path: Path, monkeypatch, caplog) -> None:
+    """--layer-list iterates exactly the listed (possibly non-contiguous) layers."""
+
+    test_logger = logging.getLogger("test_requested_layer_numbers_layer_list")
+    test_logger.handlers.clear()
+    test_logger.propagate = True
+    test_logger.setLevel(logging.INFO)
+    monkeypatch.setattr(dashboard_pipeline, "_configure_logger", lambda _: test_logger)
+    monkeypatch.setattr(dashboard_pipeline, "_build_generation_env", lambda _: {})
+    monkeypatch.setattr(dashboard_pipeline, "_monitor_process", lambda *args, **kwargs: 0)
+
+    def _fake_popen(command, *args, **kwargs):
+        output_arg = next(part for part in command if part.startswith("--output-dir="))
+        fake_leaf_dir = Path(output_arg.split("=", 1)[1]) / "model_source"
+        fake_leaf_dir.mkdir(parents=True)
+        (fake_leaf_dir / "batch-0.json").write_text("{}", encoding="utf-8")
+        return SimpleNamespace(pid=12345)
+
+    monkeypatch.setattr(dashboard_pipeline.subprocess, "Popen", _fake_popen)
+
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        start_layer=0,
+        end_layer=2,
+        layer_list=[0, 2],
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+        pipeline_log_path=tmp_path / "run.log",
+        import_to_local_db=False,
+        runner_feature_statistics_backend="arrow",
+        runner_logits_histogram_backend="arrow",
+        runner_activation_histogram_backend="torch",
+        runner_defer_component_construction=True,
+        runner_sequence_selection_backend="columnar_gpu",
+    )
+
+    assert config.requested_layer_numbers() == [0, 2]
+    results = dashboard_pipeline.run_dashboard_pipeline(config)
+    assert [result.layer_num for result in results] == [0, 2]
+
+
 def test_run_dashboard_pipeline_rejects_import_only_with_skip_import(tmp_path: Path) -> None:
     config = NeuronpediaDashboardPipelineConfig(
         model_name="gemma-3-1b-it",

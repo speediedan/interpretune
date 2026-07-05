@@ -140,6 +140,8 @@ class NeuronpediaDashboardPipelineConfig:
     prompts_huggingface_dataset_path: str
     start_layer: int
     end_layer: int
+    # Optional explicit (possibly non-contiguous) layer list; overrides start_layer/end_layer iteration.
+    layer_list: list[int] | None = None
     sae_path_template: str
     prompts_dataset_mode: str = "load_dataset"
     hf_model_path: str | None = None
@@ -338,6 +340,11 @@ class NeuronpediaDashboardPipelineConfig:
 
     def layer_lock_path(self, layer_num: int) -> Path:
         return self.run_directory / "layer_locks" / f"layer_{layer_num}.lock"
+
+    def requested_layer_numbers(self) -> list[int]:
+        if self.layer_list:
+            return list(dict.fromkeys(self.layer_list))
+        return list(range(self.start_layer, self.end_layer + 1))
 
     @property
     def shared_prompt_tokens_file(self) -> Path | None:
@@ -2278,7 +2285,7 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
     if config.resume_from_existing_logs:
         completed_layers = completed_layers_from_logs(*_completed_log_paths(config))
 
-    requested_layers = set(range(config.start_layer, config.end_layer + 1))
+    requested_layers = set(config.requested_layer_numbers())
     completed_requested_layers = requested_layers & completed_layers
 
     logger.info(
@@ -2374,7 +2381,7 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
         )
         pending_imports.append((layer_num, len(results) - 1, layer_start, lock_cm, import_future))
 
-    for layer_num in range(config.start_layer, config.end_layer + 1):
+    for layer_num in config.requested_layer_numbers():
         output_dir = config.output_dir_for_layer(layer_num)
         if config.import_only_local_db:
             layer_start = time.monotonic()
@@ -2698,6 +2705,15 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompts-shared-tokens-file", type=Path)
     parser.add_argument("--start-layer", type=int)
     parser.add_argument("--end-layer", type=int)
+    parser.add_argument(
+        "--layer-list",
+        type=lambda raw: [int(part) for part in raw.split(",") if part.strip()],
+        help=(
+            "Comma-separated explicit layer list (may be non-contiguous, e.g. 9,23). Overrides the "
+            "--start-layer/--end-layer range for layer iteration; both bounds are still required for "
+            "metadata."
+        ),
+    )
     parser.add_argument("--sae-path-template")
     parser.add_argument("--hf-model-path")
     parser.add_argument("--run-root")
