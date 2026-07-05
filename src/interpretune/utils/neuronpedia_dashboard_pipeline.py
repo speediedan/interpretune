@@ -193,6 +193,7 @@ class NeuronpediaDashboardPipelineConfig:
     legacy_export_bundle_contract: str = "auto"
     runner_columnar_artifact_format: str = "parquet"
     runner_emit_activation_copy_rows: bool | None = None
+    runner_overlap_batch_packaging: bool = False
     runner_prompt_bucket_schedule_file: Path | None = None
     runner_auto_prompt_bucket_schedule: bool = False
     runner_prompt_bucket_ceilings: tuple[int, ...] = field(default_factory=tuple)
@@ -1740,6 +1741,8 @@ def _layer_runner_command(
     if dashboard_output_format == "columnar":
         command.append(f"--columnar-artifact-format={config.runner_columnar_artifact_format}")
         command.append("--columnar-emit-activation-rows")
+        if config.runner_overlap_batch_packaging:
+            command.append("--overlap-batch-packaging")
         command.append(
             "--columnar-emit-activation-copy-rows"
             if _resolve_runner_emit_activation_copy_rows(config)
@@ -2721,6 +2724,17 @@ def _create_argument_parser() -> argparse.ArgumentParser:
             "Override whether columnar dashboard runs also emit activation_copy_rows. "
             "Defaults to enabled when local DB import is requested and disabled for "
             "generation-only runs."
+        ),
+    )
+    parser.add_argument(
+        "--runner-overlap-batch-packaging",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Overlap each columnar batch's CPU packaging tail and artifact writes with "
+            "the next batch's forward/encode inside the SAEDashboard runner. Batch "
+            "completion markers stay ordered, so batch-level resume (including across "
+            "GPUs) is unchanged; a crash re-generates at most the in-flight batches."
         ),
     )
     parser.add_argument("--runner-prompt-bucket-schedule-file", type=Path)

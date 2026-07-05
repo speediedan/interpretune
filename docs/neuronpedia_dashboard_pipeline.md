@@ -298,6 +298,33 @@ Important resume caveat:
 The other worker continues because it has its own process group, child runner, log file, and layer lock. To stop the
 whole two-worker run, terminate each worker process group separately.
 
+## Overlapped batch packaging (`--runner-overlap-batch-packaging`)
+
+Columnar runs can optionally overlap each batch's CPU packaging tail (activation-row/copy-row Arrow builds and all
+artifact/manifest writes) with the next batch's forward/encode inside the SAEDashboard runner:
+
+```bash
+--runner-overlap-batch-packaging     # default: disabled (--no-runner-overlap-batch-packaging)
+```
+
+The pipeline forwards this to the SAEDashboard runner's `--overlap-batch-packaging` flag, which uses a **single
+ordered background writer bounded to one in-flight batch**. Resume semantics are unchanged and remain batch-granular,
+including across GPUs:
+
+- A columnar batch's completeness marker is its `batch-N.columnar/manifest.json`, written **last** by the deferred
+  finalize step (identical write order to non-overlapped runs); the runner's resume scan still removes any manifest-less
+  partial batch directory and regenerates it.
+- Because the writer is FIFO and bounded to depth one, completion markers land in batch order — a crash loses at most
+  the in-flight batch plus the batch being computed, both of which regenerate on the next launch.
+- The `run_settings.json` `n_features_per_batch` compatibility gate for partial-layer resume applies exactly as for
+  non-overlapped runs; overlapped and non-overlapped workers can resume each other's layers when shapes match.
+- If a deferred write fails, queued writes for later batches are cancelled before the error surfaces, so no completion
+  marker is ever written past a failed batch.
+
+One observability note: with overlap enabled, `batch_total` perf events measure the compute wall only (the previous
+batch's writes run concurrently), and the per-stage write events (`activation_row_packaging`,
+`activation_copy_row_packaging`, stream writes) are emitted from the writer thread with their original batch labels.
+
 ## Standard launch example
 
 This is the current Target B pattern for `gemma-3-1b-it` `gemmascope-2-transcoder-16k`:

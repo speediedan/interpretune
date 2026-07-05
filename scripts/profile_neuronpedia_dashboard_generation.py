@@ -422,6 +422,7 @@ def _phase3_lazy_impl_args() -> tuple[str, ...]:
         "--runner-dashboard-output-format=columnar",
         "--runner-feature-statistics-backend=arrow",
         "--runner-logits-histogram-backend=arrow",
+        "--runner-overlap-batch-packaging",
     )
 
 
