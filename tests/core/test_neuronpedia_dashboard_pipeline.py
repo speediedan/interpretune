@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import importlib.util
 import sys
 import time
@@ -2206,6 +2207,120 @@ def test_run_dashboard_pipeline_import_only_uses_existing_columnar_output(tmp_pa
     assert results[0].import_summary is not None
     assert results[0].import_summary.imported_row_counts == {"Source": 1, "Neuron": 2, "Activation": 3}
     assert not results[0].skipped
+
+
+def test_run_dashboard_pipeline_overlap_local_db_import_defers_and_holds_lock(
+    tmp_path: Path,
+    monkeypatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Overlapped import runs while the next layer generates, holds the layer lock, and defers DONE."""
+
+    test_logger = logging.getLogger("test_run_dashboard_pipeline_overlap_local_db_import")
+    test_logger.handlers.clear()
+    test_logger.propagate = True
+    test_logger.setLevel(logging.INFO)
+
+    monkeypatch.setattr(dashboard_pipeline, "_configure_logger", lambda _: test_logger)
+    monkeypatch.setattr(dashboard_pipeline, "_build_generation_env", lambda _: {})
+    monkeypatch.setattr(dashboard_pipeline, "_monitor_process", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(
+        dashboard_pipeline,
+        "check_local_neuronpedia_services",
+        lambda **_: SimpleNamespace(
+            db_available=True,
+            webapp_available=True,
+            db_error=None,
+            webapp_error=None,
+            db_url_redacted="postgres://postgres:***@127.0.0.1:5433/postgres",
+        ),
+    )
+
+    layer0_import_started = threading.Event()
+    release_layer0_import = threading.Event()
+    imported_layers: list[int] = []
+    lock_held_during_second_generation: list[bool] = []
+    popen_count = 0
+
+    def _fake_popen(command, *args, **kwargs):
+        nonlocal popen_count
+        popen_count += 1
+        if popen_count == 2:
+            # Layer 1 generation launches while layer 0's deferred import is still pending;
+            # the layer 0 lock must still be held (serial import would deadlock here instead).
+            lock_held_during_second_generation.append(config.layer_lock_path(0).exists())
+            release_layer0_import.set()
+        output_arg = next(part for part in command if part.startswith("--output-dir="))
+        fake_leaf_dir = Path(output_arg.split("=", 1)[1]) / "model_source"
+        fake_leaf_dir.mkdir(parents=True)
+        (fake_leaf_dir / "batch-0.json").write_text("{}", encoding="utf-8")
+        return SimpleNamespace(pid=12345)
+
+    def _fake_import_columnar(
+        config: dashboard_pipeline.NeuronpediaDashboardPipelineConfig,
+        *,
+        layer_num: int,
+        output_dir: Path,
+    ) -> SimpleNamespace:
+        if layer_num == 0:
+            layer0_import_started.set()
+            assert release_layer0_import.wait(timeout=30), "layer 1 generation never started during layer 0 import"
+        imported_layers.append(layer_num)
+        return SimpleNamespace(imported_row_counts={"Source": 1, "Neuron": 2, "Activation": 3})
+
+    monkeypatch.setattr(dashboard_pipeline.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(dashboard_pipeline, "import_columnar_dashboard_output", _fake_import_columnar)
+
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        start_layer=0,
+        end_layer=1,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+        pipeline_log_path=tmp_path / "run.log",
+        import_to_local_db=True,
+        overlap_local_db_import=True,
+        enable_layer_locks=True,
+        runner_feature_statistics_backend="arrow",
+        runner_logits_histogram_backend="arrow",
+        runner_activation_histogram_backend="torch",
+        runner_defer_component_construction=True,
+        runner_sequence_selection_backend="columnar_gpu",
+    )
+
+    caplog.set_level(logging.INFO, logger=test_logger.name)
+
+    results = dashboard_pipeline.run_dashboard_pipeline(config)
+
+    assert imported_layers == [0, 1]
+    assert lock_held_during_second_generation == [True]
+    assert len(results) == 2
+    for result in results:
+        assert result.import_summary is not None
+        assert result.import_summary.imported_row_counts == {"Source": 1, "Neuron": 2, "Activation": 3}
+    assert "deferring local DB import" in caplog.text
+    assert "DONE layer=0" in caplog.text
+    assert "DONE layer=1" in caplog.text
+    # DONE for layer 0 must come from the drain (after its import), i.e. after layer 1 generation started.
+    assert not config.layer_lock_path(0).exists()
+    assert not config.layer_lock_path(1).exists()
 
 
 def test_run_dashboard_pipeline_rejects_import_only_with_skip_import(tmp_path: Path) -> None:

@@ -325,6 +325,31 @@ One observability note: with overlap enabled, `batch_total` perf events measure 
 batch's writes run concurrently), and the per-stage write events (`activation_row_packaging`,
 `activation_copy_row_packaging`, stream writes) are emitted from the writer thread with their original batch labels.
 
+## Overlapped local DB import (`--overlap-local-db-import`)
+
+Multi-layer columnar runs can additionally overlap each layer's local DB import with the next layer's generation:
+
+```bash
+--overlap-local-db-import     # default: disabled (--no-overlap-local-db-import)
+```
+
+The pipeline defers the layer's `import_columnar_dashboard_output` call to a single-worker background executor
+bounded to **one in-flight import** and immediately proceeds to the next layer's generation subprocess. Resume and
+multi-GPU semantics are unchanged:
+
+- The **layer lock is held until the deferred import completes**, so another worker cannot claim (and neither
+  regenerate nor double-import) a layer whose import is still pending.
+- The `DONE layer=N` resume marker is only written **after the deferred import succeeds** — exactly the same
+  completion contract as non-overlapped runs. If a run dies between generation and import, the next launch
+  regenerates the layer, which is a fast skip thanks to the per-batch columnar completion markers, and then imports
+  it normally.
+- A failed deferred import surfaces before the next layer's import is enqueued; the failed layer's generated
+  artifacts remain on disk and can be imported directly with `--import-only-local-db`.
+
+This applies to the columnar output format only (legacy conversion+import stays inline) and is most useful for
+full multi-layer builds, where the DB import wall (rather than generation) otherwise dominates the serial per-layer
+time. Expect steady-state wall time per layer of roughly `max(generation, import)` instead of their sum.
+
 ## Standard launch example
 
 This is the current Target B pattern for `gemma-3-1b-it` `gemmascope-2-transcoder-16k`:

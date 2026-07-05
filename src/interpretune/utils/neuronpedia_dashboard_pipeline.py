@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 from collections.abc import Callable, Iterator, Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 import hashlib
 import importlib.util
@@ -15,7 +17,13 @@ import subprocess
 import sys
 import time
 import warnings
-from dataclasses import MISSING as DATACLASS_MISSING, dataclass, field, fields as dataclass_fields
+from dataclasses import (
+    MISSING as DATACLASS_MISSING,
+    dataclass,
+    field,
+    fields as dataclass_fields,
+    replace as dataclass_replace,
+)
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
@@ -209,6 +217,7 @@ class NeuronpediaDashboardPipelineConfig:
     import_to_local_db: bool = True
     local_db_url: str | None = None
     local_db_import_chunk_size: int = 65000
+    overlap_local_db_import: bool = False
     webapp_url: str = DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL
     archive_partial_dirs: bool = True
     resume_from_existing_logs: bool = True
@@ -2323,6 +2332,48 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
     )
 
     results: list[NeuronpediaDashboardLayerResult] = []
+    import_executor: ThreadPoolExecutor | None = None
+    # (layer_num, results index, layer_start, transferred layer-lock context manager, import future)
+    pending_imports: deque[tuple[int, int, float, Any, Future]] = deque()
+
+    def _drain_oldest_deferred_import() -> None:
+        deferred_layer, result_index, deferred_layer_start, lock_cm, import_future = pending_imports.popleft()
+        try:
+            deferred_summary = import_future.result()
+        except BaseException:
+            logger.error(
+                "Deferred local DB import failed for layer=%s; generated artifacts remain at %s and can be "
+                "imported with --import-only-local-db (or by re-running: completed batch markers make "
+                "regeneration a fast skip).",
+                deferred_layer,
+                results[result_index].output_dir,
+            )
+            raise
+        finally:
+            lock_cm.__exit__(None, None, None)
+        _log_host_memory(logger, stage="after_columnar_import", layer_num=deferred_layer)
+        logger.info(
+            "Imported columnar layer=%s into local DB counts=%s",
+            deferred_layer,
+            deferred_summary.imported_row_counts,
+        )
+        deferred_elapsed = time.monotonic() - deferred_layer_start
+        logger.info("DONE layer=%s elapsed_seconds=%.1f", deferred_layer, deferred_elapsed)
+        results[result_index] = dataclass_replace(
+            results[result_index], import_summary=deferred_summary, elapsed_seconds=deferred_elapsed
+        )
+
+    def _enqueue_deferred_layer_import(layer_num: int, output_dir: Path, layer_start: float, lock_cm: Any) -> None:
+        nonlocal import_executor
+        while pending_imports:
+            _drain_oldest_deferred_import()
+        if import_executor is None:
+            import_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="np-local-db-import")
+        import_future = import_executor.submit(
+            import_columnar_dashboard_output, config, layer_num=layer_num, output_dir=output_dir
+        )
+        pending_imports.append((layer_num, len(results) - 1, layer_start, lock_cm, import_future))
+
     for layer_num in range(config.start_layer, config.end_layer + 1):
         output_dir = config.output_dir_for_layer(layer_num)
         if config.import_only_local_db:
@@ -2381,7 +2432,10 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
             )
             continue
 
-        with _try_layer_lock(config, layer_num, logger=logger) as lock_acquired:
+        layer_lock_cm = _try_layer_lock(config, layer_num, logger=logger)
+        lock_acquired = layer_lock_cm.__enter__()
+        lock_transferred = False
+        try:
             if not lock_acquired:
                 results.append(
                     NeuronpediaDashboardLayerResult(
@@ -2458,6 +2512,11 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
                     output_dir=output_dir,
                     reason=f"nonzero-exit-{return_code}",
                 )
+                try:
+                    while pending_imports:
+                        _drain_oldest_deferred_import()
+                except Exception:
+                    logger.exception("Deferred local DB import failed while handling a generation failure.")
                 raise RuntimeError(f"Dashboard generation failed for layer {layer_num} with exit code {return_code}")
 
             dashboard_output_format = _resolve_runner_dashboard_output_format(config)
@@ -2487,6 +2546,27 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
                     layer_num,
                     output_dir,
                 )
+                if should_import and config.overlap_local_db_import:
+                    generation_seconds = time.monotonic() - layer_start
+                    _log_host_memory(logger, stage="layer_generation_done", layer_num=layer_num)
+                    logger.info(
+                        "Layer=%s generation completed in %.1f s; deferring local DB import to overlap with "
+                        "the next layer's generation (layer lock held until the import completes).",
+                        layer_num,
+                        generation_seconds,
+                    )
+                    results.append(
+                        NeuronpediaDashboardLayerResult(
+                            layer_num=layer_num,
+                            output_dir=output_dir,
+                            export_root=output_dir,
+                            import_summary=None,
+                            elapsed_seconds=generation_seconds,
+                        )
+                    )
+                    _enqueue_deferred_layer_import(layer_num, output_dir, layer_start, layer_lock_cm)
+                    lock_transferred = True
+                    continue
                 import_summary = None
                 if should_import:
                     _log_host_memory(logger, stage="before_columnar_import", layer_num=layer_num)
@@ -2573,7 +2653,14 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
                     elapsed_seconds=elapsed_seconds,
                 )
             )
+        finally:
+            if not lock_transferred:
+                layer_lock_cm.__exit__(None, None, None)
 
+    while pending_imports:
+        _drain_oldest_deferred_import()
+    if import_executor is not None:
+        import_executor.shutdown(wait=True)
     return results
 
 
@@ -2754,6 +2841,15 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stall-timeout-seconds", type=int)
     parser.add_argument("--local-db-url")
     parser.add_argument("--local-db-import-chunk-size", type=int, default=argparse.SUPPRESS)
+    parser.add_argument(
+        "--overlap-local-db-import",
+        action=argparse.BooleanOptionalAction,
+        help=(
+            "Overlap each columnar layer's local DB import with the next layer's generation. The layer lock "
+            "is held and the DONE resume marker is only written once the deferred import completes, so "
+            "resume and cross-GPU semantics are unchanged; at most one layer's import is in flight."
+        ),
+    )
     parser.add_argument("--webapp-url")
     parser.add_argument("--use-skip-transcoder", action="store_true")
     parser.add_argument("--zero-out-bos-token", action="store_true")
