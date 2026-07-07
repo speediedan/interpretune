@@ -1,0 +1,129 @@
+name: Env build smoke
+
+# Standalone smoke test for the unified multi-repo editable dev environment builder
+# (scripts/build_it_env.sh). Builds a MINIMAL but representative from-source set
+# (SAELens + SAEDashboard editable, CPU-only torch) on Linux and macOS.
+# See docs/developer_multi_repo_setup.md for the full canonical build.
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_source_ref:
+        description: 'Branch/ref to clone for the from-source deps (SAELens, SAEDashboard)'
+        required: false
+        default: 'streamlined-streamable-dashboard-generation-phase-1'
+        type: string
+  pull_request:
+    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    types: [opened, reopened, ready_for_review, synchronize]
+    paths:
+      - "scripts/build_it_env.sh"
+      - "scripts/infra_utils.sh"
+      - "requirements/ci/**"
+      - "requirements/utils/collect_env_details.py"
+      - ".github/workflows/env-build-smoke.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-latest is arm64; both runners are CPU-only by design
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.13"]
+    timeout-minutes: 45
+    env:
+      FROM_SOURCE_REF: ${{ inputs.from_source_ref || 'streamlined-streamable-dashboard-generation-phase-1' }}
+      TARGET_ENV_NAME: it_smoke
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install modern bash (macOS only)
+        if: runner.os == 'macOS'
+        run: |
+          # macOS ships bash 3.2 at /bin/bash; build_it_env.sh requires bash >= 4.3
+          # (associative arrays/namerefs) and resolves bash via `/usr/bin/env bash`,
+          # which picks up the Homebrew bash once installed.
+          brew list bash >/dev/null 2>&1 || brew install bash
+          echo "bash resolved on PATH: $(command -v bash)"
+          bash --version | head -1
+
+      - name: Install uv and set Python version
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          activate-environment: false
+          enable-cache: true
+
+      - name: Clone from-source dependency repos (shallow)
+        run: |
+          mkdir -p "${HOME}/from-source"
+          git clone --depth 1 --branch "${FROM_SOURCE_REF}" \
+            https://github.com/speediedan/SAELens.git "${HOME}/from-source/SAELens"
+          git clone --depth 1 --branch "${FROM_SOURCE_REF}" \
+            https://github.com/speediedan/SAEDashboard.git "${HOME}/from-source/SAEDashboard"
+
+      - name: Configure CPU-only torch pin (torch-pre.txt, stable channel)
+        run: |
+          # Force CPU torch WITHOUT changing the build script's interface: write the
+          # (normally commented-out) requirements/ci/torch-pre.txt using the existing
+          # "stable" channel + "cpu" target mechanism, pinned to the same torch version
+          # as requirements/ci/torch-override.txt / overrides.txt. The installed
+          # `<pin>+cpu` build then satisfies the `torch==<pin>` UV_OVERRIDE line during
+          # from-source installs, so no CUDA wheels are ever resolved.
+          TORCH_PIN="$(grep -E '^torch==' requirements/ci/torch-override.txt | head -1 | sed 's/^torch==//')"
+          if [ -z "${TORCH_PIN}" ]; then
+            echo "ERROR: could not derive torch pin from requirements/ci/torch-override.txt" >&2
+            exit 1
+          fi
+          printf '%s\ncpu\nstable\n' "${TORCH_PIN}" > requirements/ci/torch-pre.txt
+          echo "Configured CPU torch pin:"
+          cat requirements/ci/torch-pre.txt
+
+      - name: Prepare CPU-pruned SAELens exported requirements
+        run: |
+          # requirements/ci/sl_uv_requirements.txt is a poetry export resolved against
+          # CUDA torch, so it pins the nvidia-*/triton CUDA libraries for Linux x86_64.
+          # They are dead weight (several GB) on CPU-only runners; prune them for the
+          # smoke build. All other pins (incl. torch==<pin>, satisfied by the installed
+          # +cpu build) are preserved.
+          grep -vE '^(nvidia-|triton==)' requirements/ci/sl_uv_requirements.txt \
+            > "${RUNNER_TEMP}/sl_uv_requirements_cpu.txt"
+          echo "Pruned $(($(wc -l < requirements/ci/sl_uv_requirements.txt) - $(wc -l < "${RUNNER_TEMP}/sl_uv_requirements_cpu.txt"))) CUDA-only pinned lines"
+
+      - name: Build environment (SAELens + SAEDashboard from source, CPU torch)
+        shell: bash
+        run: |
+          set -x
+          command -v bash && bash --version | head -1
+          ./scripts/build_it_env.sh \
+            --repo-home="${GITHUB_WORKSPACE}" \
+            --target-env-name="${TARGET_ENV_NAME}" \
+            --venv-dir="${HOME}/.venvs" \
+            --from-source="sae_lens:${HOME}/from-source/SAELens:dev:UV_OVERRIDE=${GITHUB_WORKSPACE}/requirements/ci/overrides.txt:FLAGS=-r ${RUNNER_TEMP}/sl_uv_requirements_cpu.txt" \
+            --from-source="sae_dashboard:${HOME}/from-source/SAEDashboard:dev:UV_OVERRIDE=${GITHUB_WORKSPACE}/requirements/ci/overrides.txt" \
+            2>&1 | tee "${RUNNER_TEMP}/env-build-smoke.log"
+
+      - name: Validate environment (imports, editable installs, env details)
+        shell: bash
+        run: |
+          set -x
+          source "${HOME}/.venvs/${TARGET_ENV_NAME}/bin/activate"
+          python -c "import interpretune; import sae_lens; import sae_dashboard; import torch; print(f'interpretune={interpretune.__version__} sae_lens={sae_lens.__version__} torch={torch.__version__} cuda_available={torch.cuda.is_available()}')"
+          # from-source packages must be editable installs pointing at the local checkouts
+          uv pip show sae-lens | grep -i "editable project location"
+          uv pip show sae-dashboard | grep -i "editable project location"
+          python requirements/utils/collect_env_details.py
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: env-build-smoke-log-${{ runner.os }}-py${{ matrix.python-version }}
+          path: ${{ runner.temp }}/env-build-smoke.log
+          if-no-files-found: ignore
