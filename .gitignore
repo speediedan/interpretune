@@ -9,6 +9,13 @@ tb_logs/
 .vscode/
 debug/
 .github/prompts/
+
+# local experiment scratch artifacts
+tests/concept_direction_approach_parity/archived_analysis/
+tests/concept_direction_approach_parity/archived_cfgs/
+tests/concept_direction_approach_parity/generated_experiments/
+tests/concept_direction_approach_parity/artifacts
+tests/parity_analysis/generated_experiments/
 # ignore ipynb files themselves since we want to only store the source *.py
 #*.ipynb
 
@@ -85,6 +92,8 @@ tests/tests_tt_dir/
 tests/save_dir
 tests/tests/
 tests/profiling_artifacts/
+archived_experiments/
+archived_cfgs/
 
 # Translations
 *.mo

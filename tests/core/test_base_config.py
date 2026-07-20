@@ -489,34 +489,31 @@ class TestAnalysisInjectionConfigs:
 
     def test_analysis_cfg_applied_to(self):
         mock_module = Mock()
-        original_id = id(mock_module)
 
         # Test not applied
         cfg = AnalysisCfg()
         assert cfg.applied_to(mock_module) is False
 
         # Test applied
-        cfg._applied_to[original_id] = mock_module.__class__.__name__
+        cfg._applied_to[mock_module] = mock_module.__class__.__name__
         assert cfg.applied_to(mock_module) is True
 
     def test_analysis_cfg_reset_applied_state(self):
         mock_module1 = Mock()
         mock_module2 = Mock()
-        id1 = id(mock_module1)
-        id2 = id(mock_module2)
 
         # Set up applied state
         cfg = AnalysisCfg()
-        cfg._applied_to[id1] = mock_module1.__class__.__name__
-        cfg._applied_to[id2] = mock_module2.__class__.__name__
+        cfg._applied_to[mock_module1] = mock_module1.__class__.__name__
+        cfg._applied_to[mock_module2] = mock_module2.__class__.__name__
 
         # Test reset specific module
         cfg.reset_applied_state(mock_module1)
-        assert id1 not in cfg._applied_to
-        assert id2 in cfg._applied_to
+        assert mock_module1 not in cfg._applied_to
+        assert mock_module2 in cfg._applied_to
 
         # Test reset all
-        cfg._applied_to[id1] = mock_module1.__class__.__name__  # Re-add module1
+        cfg._applied_to[mock_module1] = mock_module1.__class__.__name__  # Re-add module1
         cfg.reset_applied_state()
         assert len(cfg._applied_to) == 0
 
@@ -544,6 +541,29 @@ class TestAnalysisInjectionConfigs:
                 f"step_fn accumulated to '{cfg.step_fn}' after apply() #{i + 1}"
             )
             assert cfg._original_step_fn == "analysis_step"
+
+    def test_analysis_cfg_generated_step_uses_shared_execution_helper(self):
+        cfg = AnalysisCfg(target_op=it.logit_diffs_base, ignore_manual=True)
+        mock_module = MagicMock()
+        mock_module.analysis_cfg = cfg
+        batch = MagicMock()
+
+        with patch.object(cfg, "prepare_model_ctx"):
+            with patch("interpretune.config.analysis.execute_analysis_step") as mock_execute:
+                expected_batch = AnalysisBatch(logit_diffs=torch.tensor([0.5]))
+                mock_execute.return_value = iter([expected_batch])
+
+                cfg.apply(mock_module)
+                result = list(mock_module._generated_analysis_step(batch=batch, batch_idx=3, dataloader_idx=1))
+
+        assert result == [expected_batch]
+        mock_execute.assert_called_once_with(
+            mock_module,
+            batch,
+            3,
+            dataloader_idx=1,
+            analysis_cfg=cfg,
+        )
 
     def test_analysis_artifact_cfg(self):
         # Test default initialization
@@ -584,8 +604,7 @@ class TestAnalysisInjectionConfigs:
         assert cfg.applied_to(mock_module) is False
 
         # Manually set the applied state for testing
-        module_id = id(mock_module)
-        cfg._applied_to[module_id] = mock_module.__class__.__name__
+        cfg._applied_to[mock_module] = mock_module.__class__.__name__
 
         # Test the applied_to method
         assert cfg.applied_to(mock_module) is True
@@ -817,6 +836,13 @@ class TestRunnerConfig:
         # Verify apply was not called for the first config
         analysis_cfg1.apply.assert_not_called()
         analysis_cfg2.apply.assert_called_once()
+
+        analysis_cfg1.apply.reset_mock()
+        analysis_cfg1.applied_to.return_value = False
+
+        init_analysis_cfgs(module=module, analysis_cfgs=analysis_cfg1)
+
+        analysis_cfg1.apply.assert_called_once()
 
     def test_session_runner_cfg(self):
         """Test the SessionRunnerCfg class."""

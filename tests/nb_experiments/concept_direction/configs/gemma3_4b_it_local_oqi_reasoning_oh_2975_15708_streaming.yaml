@@ -1,0 +1,7 @@
+EXTENDS: gemma3_4b_it_local_oqi_reasoning_oh_2975_15708.yaml
+
+EXPERIMENT_NAME: gemma3_4b_it_local_oqi_reasoning_oh_2975_15708_streaming
+
+ANALYSIS:
+  debug_pipeline_state_artifacts: false
+  debug_pipeline_state_artifact_name: gemma3_4b_it_ohio_fs_2975_15708_notebook_streaming

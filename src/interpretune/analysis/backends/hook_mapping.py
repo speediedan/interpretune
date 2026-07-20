@@ -26,6 +26,11 @@ _SAE_SUBHOOK_SUFFIXES = frozenset(
     }
 )
 
+# Public latent-model sub-hook suffix set used across backends. This mirrors the
+# current SAE hook set but is kept distinct so future custom suffixes can be
+# layered on without rewriting hook parsing call sites.
+SUBHOOK_SUFFIXES = frozenset(_SAE_SUBHOOK_SUFFIXES)
+
 
 @dataclass(frozen=True)
 class HookMapping:
@@ -58,24 +63,46 @@ class ArchitectureMapping:
     hook_mappings: dict[str, HookMapping] = field(default_factory=dict)
 
 
+def _with_hook_aliases(
+    hook_mappings: dict[str, HookMapping],
+    alias_targets: dict[str, str],
+) -> dict[str, HookMapping]:
+    expanded = dict(hook_mappings)
+    for alias_name, target_name in alias_targets.items():
+        target_mapping = hook_mappings.get(target_name)
+        if target_mapping is not None:
+            expanded.setdefault(alias_name, target_mapping)
+    return expanded
+
+
 # ==============================================================================
 # Architecture-specific mappings
 # ==============================================================================
 
 
-GPT2_HOOK_MAPPINGS: dict[str, HookMapping] = {
-    # Residual stream hooks
-    "hook_resid_pre": HookMapping(envoy_path="transformer.h.{layer}", io_type="input"),
-    "hook_resid_post": HookMapping(envoy_path="transformer.h.{layer}", io_type="output"),
-    "hook_resid_mid": HookMapping(envoy_path="transformer.h.{layer}.ln_2", io_type="input"),
-    # Component output hooks
-    "hook_attn_out": HookMapping(envoy_path="transformer.h.{layer}.attn", io_type="output"),
-    "hook_mlp_out": HookMapping(envoy_path="transformer.h.{layer}.mlp", io_type="output", tuple_output=False),
-    # Attention internal hooks (hook_z = attention output before output projection)
-    "attn.hook_z": HookMapping(envoy_path="transformer.h.{layer}.attn.c_proj", io_type="input"),
-    # Component input hooks
-    "mlp.hook_pre": HookMapping(envoy_path="transformer.h.{layer}.mlp", io_type="input"),
-}
+GPT2_HOOK_MAPPINGS: dict[str, HookMapping] = _with_hook_aliases(
+    {
+        # Residual stream hooks
+        "hook_resid_pre": HookMapping(envoy_path="transformer.h.{layer}", io_type="input"),
+        "hook_resid_post": HookMapping(envoy_path="transformer.h.{layer}", io_type="output"),
+        "hook_resid_mid": HookMapping(envoy_path="transformer.h.{layer}.ln_2", io_type="input"),
+        # Component output hooks
+        "hook_attn_out": HookMapping(envoy_path="transformer.h.{layer}.attn", io_type="output"),
+        "hook_mlp_out": HookMapping(envoy_path="transformer.h.{layer}.mlp", io_type="output", tuple_output=False),
+        # Attention internal hooks (hook_z = attention output before output projection)
+        "attn.hook_z": HookMapping(envoy_path="transformer.h.{layer}.attn.c_proj", io_type="input"),
+        # Component input hooks
+        "mlp.hook_pre": HookMapping(envoy_path="transformer.h.{layer}.mlp", io_type="input"),
+        "unembed.hook_in": HookMapping(envoy_path="lm_head", io_type="input", tuple_output=False),
+    },
+    {
+        "hook_in": "hook_resid_pre",
+        "hook_out": "hook_resid_post",
+        "attn.hook_out": "hook_attn_out",
+        "attn.o.hook_in": "attn.hook_z",
+        "mlp.hook_out": "hook_mlp_out",
+    },
+)
 
 GPT2_MAPPING = ArchitectureMapping(
     model_architecture="GPT2LMHeadModel",
@@ -84,20 +111,30 @@ GPT2_MAPPING = ArchitectureMapping(
 
 
 # Llama family
-LLAMA_HOOK_MAPPINGS: dict[str, HookMapping] = {
-    "hook_resid_pre": HookMapping(envoy_path="model.layers.{layer}", io_type="input"),
-    "hook_resid_post": HookMapping(envoy_path="model.layers.{layer}", io_type="output"),
-    "hook_resid_mid": HookMapping(envoy_path="model.layers.{layer}.post_attention_layernorm", io_type="input"),
-    "hook_mlp_out": HookMapping(envoy_path="model.layers.{layer}.mlp", io_type="output", tuple_output=False),
-    "hook_attn_out": HookMapping(envoy_path="model.layers.{layer}.self_attn", io_type="output"),
-    # Attention internal hooks (hook_z = attention output before output projection)
-    "attn.hook_z": HookMapping(envoy_path="model.layers.{layer}.self_attn.o_proj", io_type="input"),
-    "mlp.hook_pre": HookMapping(envoy_path="model.layers.{layer}.mlp", io_type="input"),
-    "mlp.hook_in": HookMapping(
-        envoy_path="model.layers.{layer}.post_attention_layernorm", io_type="output", tuple_output=False
-    ),
-    "mlp.hook_out": HookMapping(envoy_path="model.layers.{layer}.mlp", io_type="output", tuple_output=False),
-}
+LLAMA_HOOK_MAPPINGS: dict[str, HookMapping] = _with_hook_aliases(
+    {
+        "hook_resid_pre": HookMapping(envoy_path="model.layers.{layer}", io_type="input"),
+        "hook_resid_post": HookMapping(envoy_path="model.layers.{layer}", io_type="output"),
+        "hook_resid_mid": HookMapping(envoy_path="model.layers.{layer}.post_attention_layernorm", io_type="input"),
+        "hook_mlp_out": HookMapping(envoy_path="model.layers.{layer}.mlp", io_type="output", tuple_output=False),
+        "hook_attn_out": HookMapping(envoy_path="model.layers.{layer}.self_attn", io_type="output"),
+        # Attention internal hooks (hook_z = attention output before output projection)
+        "attn.hook_z": HookMapping(envoy_path="model.layers.{layer}.self_attn.o_proj", io_type="input"),
+        "mlp.hook_pre": HookMapping(envoy_path="model.layers.{layer}.mlp", io_type="input"),
+        "mlp.hook_in": HookMapping(
+            envoy_path="model.layers.{layer}.post_attention_layernorm", io_type="output", tuple_output=False
+        ),
+        "mlp.hook_out": HookMapping(envoy_path="model.layers.{layer}.mlp", io_type="output", tuple_output=False),
+        "unembed.hook_in": HookMapping(envoy_path="lm_head", io_type="input", tuple_output=False),
+    },
+    {
+        "hook_in": "hook_resid_pre",
+        "hook_out": "hook_resid_post",
+        "attn.hook_out": "hook_attn_out",
+        "attn.o.hook_in": "attn.hook_z",
+        "hook_mlp_in": "mlp.hook_in",
+    },
+)
 
 LLAMA_MAPPING = ArchitectureMapping(
     model_architecture="LlamaForCausalLM",
@@ -106,24 +143,74 @@ LLAMA_MAPPING = ArchitectureMapping(
 
 
 # Gemma 2
-GEMMA2_HOOK_MAPPINGS: dict[str, HookMapping] = {
-    "hook_resid_pre": HookMapping(envoy_path="model.layers.{layer}", io_type="input"),
-    "hook_resid_post": HookMapping(envoy_path="model.layers.{layer}", io_type="output"),
-    "hook_resid_mid": HookMapping(envoy_path="model.layers.{layer}.pre_feedforward_layernorm", io_type="input"),
-    "hook_mlp_out": HookMapping(
-        envoy_path="model.layers.{layer}.post_feedforward_layernorm", io_type="output", tuple_output=False
-    ),
-    "hook_attn_out": HookMapping(envoy_path="model.layers.{layer}.self_attn", io_type="output"),
-    # Attention internal hooks (hook_z = attention output before output projection)
-    "attn.hook_z": HookMapping(envoy_path="model.layers.{layer}.self_attn.o_proj", io_type="input"),
-    "ln2.hook_normalized": HookMapping(
-        envoy_path="model.layers.{layer}.pre_feedforward_layernorm", io_type="output", tuple_output=False
-    ),
-}
+GEMMA2_HOOK_MAPPINGS: dict[str, HookMapping] = _with_hook_aliases(
+    {
+        "hook_resid_pre": HookMapping(envoy_path="model.layers.{layer}", io_type="input"),
+        "hook_resid_post": HookMapping(envoy_path="model.layers.{layer}", io_type="output"),
+        "hook_resid_mid": HookMapping(envoy_path="model.layers.{layer}.pre_feedforward_layernorm", io_type="input"),
+        "hook_mlp_out": HookMapping(
+            envoy_path="model.layers.{layer}.post_feedforward_layernorm", io_type="output", tuple_output=False
+        ),
+        "hook_attn_out": HookMapping(envoy_path="model.layers.{layer}.self_attn", io_type="output"),
+        # Attention internal hooks (hook_z = attention output before output projection)
+        "attn.hook_z": HookMapping(envoy_path="model.layers.{layer}.self_attn.o_proj", io_type="input"),
+        "ln2.hook_normalized": HookMapping(
+            envoy_path="model.layers.{layer}.pre_feedforward_layernorm", io_type="output", tuple_output=False
+        ),
+        "unembed.hook_in": HookMapping(envoy_path="lm_head", io_type="input", tuple_output=False),
+    },
+    {
+        "hook_in": "hook_resid_pre",
+        "hook_out": "hook_resid_post",
+        "attn.hook_out": "hook_attn_out",
+        "attn.o.hook_in": "attn.hook_z",
+        "ln2.hook_out": "ln2.hook_normalized",
+    },
+)
 
 GEMMA2_MAPPING = ArchitectureMapping(
     model_architecture="Gemma2ForCausalLM",
     hook_mappings=GEMMA2_HOOK_MAPPINGS,
+)
+
+GEMMA3_MAPPING = ArchitectureMapping(
+    model_architecture="Gemma3ForCausalLM",
+    hook_mappings=GEMMA2_HOOK_MAPPINGS,
+)
+
+GEMMA3_MULTIMODAL_HOOK_MAPPINGS: dict[str, HookMapping] = _with_hook_aliases(
+    {
+        "hook_resid_pre": HookMapping(envoy_path="model.language_model.layers.{layer}", io_type="input"),
+        "hook_resid_post": HookMapping(envoy_path="model.language_model.layers.{layer}", io_type="output"),
+        "hook_resid_mid": HookMapping(
+            envoy_path="model.language_model.layers.{layer}.pre_feedforward_layernorm", io_type="input"
+        ),
+        "hook_mlp_out": HookMapping(
+            envoy_path="model.language_model.layers.{layer}.post_feedforward_layernorm",
+            io_type="output",
+            tuple_output=False,
+        ),
+        "hook_attn_out": HookMapping(envoy_path="model.language_model.layers.{layer}.self_attn", io_type="output"),
+        "attn.hook_z": HookMapping(envoy_path="model.language_model.layers.{layer}.self_attn.o_proj", io_type="input"),
+        "ln2.hook_normalized": HookMapping(
+            envoy_path="model.language_model.layers.{layer}.pre_feedforward_layernorm",
+            io_type="output",
+            tuple_output=False,
+        ),
+        "unembed.hook_in": HookMapping(envoy_path="lm_head", io_type="input", tuple_output=False),
+    },
+    {
+        "hook_in": "hook_resid_pre",
+        "hook_out": "hook_resid_post",
+        "attn.hook_out": "hook_attn_out",
+        "attn.o.hook_in": "attn.hook_z",
+        "ln2.hook_out": "ln2.hook_normalized",
+    },
+)
+
+GEMMA3_MULTIMODAL_MAPPING = ArchitectureMapping(
+    model_architecture="Gemma3ForConditionalGeneration",
+    hook_mappings=GEMMA3_MULTIMODAL_HOOK_MAPPINGS,
 )
 
 
@@ -143,7 +230,8 @@ class ResolvedHook(NamedTuple):
 
 # Registry of all supported architectures
 _ARCHITECTURE_REGISTRY: dict[str, ArchitectureMapping] = {
-    mapping.model_architecture: mapping for mapping in [GPT2_MAPPING, LLAMA_MAPPING, GEMMA2_MAPPING]
+    mapping.model_architecture: mapping
+    for mapping in [GPT2_MAPPING, LLAMA_MAPPING, GEMMA2_MAPPING, GEMMA3_MAPPING, GEMMA3_MULTIMODAL_MAPPING]
 }
 
 
@@ -300,24 +388,34 @@ class HookNameResolver:
         """
         match = _TL_HOOK_NAME_RE.match(tl_hook_name)
         if match is None:
-            raise ValueError(
-                f"Cannot parse TL hook name {tl_hook_name!r}. Expected format: 'blocks.{{layer}}.{{hook_name}}'"
-            )
-
-        layer = int(match.group(1))
-        rest = match.group(2)
+            if "." not in tl_hook_name or tl_hook_name.startswith("blocks."):
+                raise ValueError(
+                    "Cannot parse TL hook name "
+                    f"{tl_hook_name!r}. Expected format: 'blocks.{{layer}}.{{hook_name}}' or a "
+                    "supported global hook name like 'unembed.hook_in'"
+                )
+            layer = -1
+            rest = tl_hook_name
+        else:
+            layer = int(match.group(1))
+            rest = match.group(2)
 
         # Separate base hook name from SAE sub-hook suffix
         parts = rest.split(".")
         base_parts: list[str] = []
         sae_subhook: str | None = None
         for i, part in enumerate(parts):
-            if part in _SAE_SUBHOOK_SUFFIXES:
+            if part in SUBHOOK_SUFFIXES:
                 sae_subhook = ".".join(parts[i:])
                 break
             base_parts.append(part)
 
         base_name = ".".join(base_parts)
+        if not base_name:
+            raise ValueError(
+                f"Cannot parse TL hook name {tl_hook_name!r}. Expected format: 'blocks.{{layer}}.{{hook_name}}' or a "
+                "supported global hook name like 'unembed.hook_in'"
+            )
         return layer, base_name, sae_subhook
 
     @staticmethod
@@ -340,4 +438,5 @@ __all__ = [
     "HookMapping",
     "HookNameResolver",
     "ResolvedHook",
+    "SUBHOOK_SUFFIXES",
 ]

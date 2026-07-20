@@ -21,12 +21,12 @@ from interpretune.base import ITDataModule
 from interpretune.protocol import InterpretunableType
 from interpretune.session import ITSession, ITSessionConfig
 
-from interpretune.runners import SessionRunner
 from interpretune.utils import rank_zero_info, rank_zero_warn, _DOTENV_AVAILABLE, _LIGHTNING_AVAILABLE
 from interpretune.protocol import ArgsType
 
 if TYPE_CHECKING:
     from interpretune.adapters import ITModule
+    from interpretune.runners import SessionRunner
 
 max_seed_value = np.iinfo(np.uint32).max
 min_seed_value = np.iinfo(np.uint32).min
@@ -84,7 +84,7 @@ class ITCLI(ITSessionMixin):
         args: ArgsType = None,
         seed_everything_default: bool | int = True,
         run_command: str | None = "test",
-        runner_class: type[SessionRunner] | Callable[..., SessionRunner] = SessionRunner,
+        runner_class: type[SessionRunner] | Callable[..., SessionRunner] | None = None,
         run_cfg: type[SessionRunnerCfg] | dict[str, Any] = SessionRunnerCfg,
     ) -> None:
         """fill in
@@ -98,6 +98,10 @@ class ITCLI(ITSessionMixin):
         self.parser_kwargs = parser_kwargs or {}  # type: ignore[var-annotated]  # github.com/python/mypy/issues/6463
         self.module_class = module_class
         self.datamodule_class = datamodule_class
+        if runner_class is None:
+            from interpretune.runners import SessionRunner
+
+            runner_class = SessionRunner
         self.runner_class = runner_class
         self._supported_run_commands = getattr(self.runner_class, "supported_commands", None) or (None, "train", "test")
         self.run_cfg = run_cfg

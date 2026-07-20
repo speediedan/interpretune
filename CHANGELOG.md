@@ -39,6 +39,18 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 - Remote NDIF execution support for circuit-tracer analysis
 - `_load_replacement_model` method with backend-specific initialization and pretrained_kwargs forwarding
 
+#### Circuit-Tracer Analysis Ops
+- Five new circuit-tracer analysis ops registered in the dispatcher: `concept_direction`, `compute_attribution_graph`, `graph_node_influence`, `extract_top_features`, `feature_intervention_forward`
+- Full pipeline from semantic concept direction → attribution graph → node influence → top feature extraction → causal intervention verification
+- Graph decomposition and serialization into `AnalysisStore` with per-latent-model indexing
+- Cross-backend composition: CT analysis results compose with SAE-lens `AnalysisStore` for combined analysis
+
+#### Demo Notebooks
+- **CT Analysis Backend Demo** (`ct_analysis_backend_demo.ipynb`): End-to-end pipeline running all 5 CT analysis ops via the dispatcher on Gemma-2-2b with NNsight backend
+- **CT Cross-Backend Demo** (`ct_cross_backend_demo.ipynb`): Multi-model composition showing GPT-2 SAE analysis (TransformerBridge) and Gemma-2 CT analysis (NNsight) with cross-backend `AnalysisStore` enrichment
+- Updated basic circuit-tracer notebook with next-steps referencing new demos
+- Updated SAE-Lens notebook with cross-backend composition footer
+
 #### Analysis Operations
 - Backend parameter added to `run_analysis_op`, `fwd_w_hooks_batched`, `logit_diffs`, and `cache_activations` ops
 - `BackendInfo` for passing backend context through the analysis pipeline

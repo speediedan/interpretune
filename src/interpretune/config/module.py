@@ -81,12 +81,7 @@ class AutoCompatConfig(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class CompatConf(ITSerializableCfg):
-    compatibility_attrs: dict[str, AutoCompatConfig] = field(
-        default_factory=lambda: {
-            "log": AutoCompatConfig(),
-            "log_dict": AutoCompatConfig(),
-        }
-    )
+    compatibility_attrs: dict[str, AutoCompatConfig] = field(default_factory=dict)
 
 
 @dataclass(kw_only=True)

@@ -52,7 +52,7 @@ class AnalysisOpDispatcher:
         # Initialize yaml_paths
         self.yaml_paths = [Path(p.strip()) for p in IT_ANALYSIS_OP_PATHS]  # Start with op_paths
 
-        # Always include the default built-in analysis ops yaml
+        # Always include the default built-in analysis ops yaml file.
         self.yaml_paths.append(Path(__file__).parent / "native_analysis_functions.yaml")
 
         # Handle user-provided yaml_paths
@@ -162,6 +162,10 @@ class AnalysisOpDispatcher:
                     rank_zero_debug(f"Empty YAML file: {yaml_file}")
                     continue
 
+                if not isinstance(yaml_content, dict):
+                    rank_zero_debug(f"Skipping non-dictionary YAML file: {yaml_file}")
+                    continue
+
                 # Apply namespace prefixes for hub operations
                 namespaced_content = self._apply_hub_namespacing(yaml_content, yaml_file)
 
@@ -253,6 +257,7 @@ class AnalysisOpDispatcher:
                 importable_params=importable_params,
                 normal_params=op_def.get("normal_params", {}),
                 required_ops=op_def.get("required_ops", []),
+                required_capabilities=op_def.get("required_capabilities", []),
                 composition=op_def.get("composition", None),
             )
 
@@ -321,6 +326,10 @@ class AnalysisOpDispatcher:
 
         for op_name, op_def in op_definitions.items():
             op_name_norm = self._normalize_op_name(op_name)
+            # Only process canonical entries (skip alias entries added to _op_definitions)
+            canonical_name = self._normalize_op_name(op_def.name)
+            if op_name_norm != canonical_name:
+                continue
             # Build mapping for each alias
             for alias in op_def.aliases:
                 alias_norm = self._normalize_op_name(alias)
@@ -589,6 +598,7 @@ class AnalysisOpDispatcher:
             input_schema=op_def.input_schema,
             aliases=op_def.aliases,
             impl_params=impl_params,
+            required_capabilities=op_def.required_capabilities,
         )
 
         # Set the implementation

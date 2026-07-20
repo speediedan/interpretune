@@ -72,9 +72,48 @@ cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpret
 - Write unit tests for new functionality and ensure existing tests pass.
 - Ensure the cpu coverage reported by our `ci_test-full.yml` workflow is >= the existing coverage.
 
+### Tooling Reliability
+- Pylance MCP requests can hang or time out on longer operations. When using Pylance-backed tooling, actively monitor the call for stalls and switch to direct file inspection, search, or terminal-based validation if it stops making progress.
+
+### Pre-MVP Backwards Compatibility
+- Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeline composition may change without deprecation notices.
+- Do not add backwards-compatibility shims (fallback code paths, silent coercions, etc.) to preserve caller assumptions that predate the current design.
+- If an op's contract changes, update all in-tree callers and tests to match the new contract directly.
+
 ### Avoid Test-Environment Bandaids in Application Code
 - When test failures stem from environment issues (e.g., `isinstance()` failures due to importlib double-loading modules), **never** degrade application code with workarounds for test-specific problems.
 - Instead, fix the problem in the test infrastructure or use an app-level registry pattern (like `CT_BACKEND_REGISTRY` in `circuit_tracer.py`) that validates by class name without `isinstance()`.
+
+### Keep Analysis Op Definitions Backend-Agnostic
+- Do not add backend-specific imports inside `src/interpretune/analysis/ops/definitions.py` op implementations.
+- If an op needs a backend-specific construct, extend the `AnalysisBackend` interface and let the backend implementation own that dependency.
+- Treat any new import inside an analysis op definition as a design smell that should usually be resolved by pushing that behavior behind the backend seam.
+
+### Prefer Top-Level Op Wrappers In User-Facing Code
+- In notebooks, examples, and one-off experiment scripts, prefer `import interpretune as it` plus direct top-level op calls such as `it.concept_direction(...)` or `it.compute_attribution_graph(...)`.
+- Ensure `interpretune.analysis` has been imported once so the top-level op wrappers are registered before use.
+- Do not use `DISPATCHER.get_op(...)` in notebook or example code unless the task is specifically about dispatcher internals or op registration behavior.
+
+### Framework-Agnostic Module Definitions
+- Module definitions (e.g. `RTEBoolqSteps`) should NOT contain framework-specific hooks or accumulation logic like  `on_test_epoch_end`, or prediction accumulator variables.
+- Use `ClassificationMixin` for prediction accumulation and `on_test_epoch_end` reporting. The mixin handles accumulation in `collect_answers()` and prints metrics in `on_test_epoch_end()`.
+- Hook dispatch via `_call_itmodule_hook(..., optional=True)` handles missing hooks gracefully — modules do not need no-op stubs for hooks they don't implement.
+
+### Framework-Agnostic Logging
+- `CoreHelperAttributes` provides real `log()` / `log_dict()` methods that accumulate metrics in `_logged_metrics`. The core runner prints averaged metrics at test epoch end. Lightning modules use `LightningModule.log()` / `log_dict()` instead. User code calls `self.log()` / `self.log_dict()` regardless of context.
+- `ClassificationMixin.setup()` cooperatively calls `super().setup()` then initializes `classification_mapping` if configured. `collect_answers()` computes metrics and calls `self.log_dict()` — no custom accumulation logic needed.
+
+### Generation Config Guidelines
+- Use `HFGenerationConfig` (applies params to `model.generation_config`) for HF-backed models (including NNsight-wrapped models).
+- Use `CoreGenerationConfig` (passes params as `generate_kwargs`) only for `HookedTransformer` models that use their own `generate()` method.
+- The NNsight adapter applies `HFGenerationConfig.model_config` to the underlying HF model via `_apply_generation_config()`.
+
+### Benchmark Registry Commit Isolation
+- Registry updates (`benchmark_registry.yaml`) must be committed in isolation — no unrelated code changes in the same commit.
+- A pre-commit hook (`check-benchmark-registry-isolation`) and CI workflow enforce this.
+- Use `--update-registry` (requires clean working tree) or `--force-update-registry` (bypasses check) when running benchmarks.
+- `salient_pkg_versions` should preserve best-effort git provenance for salient dependencies. Editable installs should capture live checkout metadata (`fork`, `branch`, `sha`), while git-backed non-editable installs should use `direct_url.json` to record the source fork and pinned commit.
+- If benchmark tooling, documentation, or the environment collector changes, commit that work first. Then run the benchmark refresh from a clean tree and commit the resulting `benchmark_registry.yaml` diff separately.
 
 ## Build and Validation Commands
 
@@ -258,14 +297,15 @@ ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
   --venv-dir=${IT_VENV_BASE} \
   --no-rebuild-base
 
-# Preferred for debugging: use --allow-failures to continue past failures
+# Preferred for debugging: use --allow-failures to continue past failures and --no-reruns to expedite debugging
 ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
   ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
   --repo-home=${IT_REPO_DIR} \
   --target-env-name=${IT_TARGET_VENV} \
   --venv-dir=${IT_VENV_BASE} \
   --no-rebuild-base \
-  --allow-failures
+  --allow-failures \
+  --no-reruns
 
 # Monitor coverage progress
 tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
@@ -273,10 +313,27 @@ tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
 # Note: Coverage collection takes approximately 50 minutes
 ```
 
+The local coverage harness now mirrors the Azure GPU pipeline's phase split:
+- `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''`
+- `Testing: standard gpu cuda-marked` reruns only regular CUDA / bf16-marked tests with `IT_RUN_CUDA_TESTS=1`
+- `Testing: standalone gpu` and `Testing: CI Profiling` remain separate special-test phases
+
+When debugging fixture or CUDA memory growth locally, add `--resource-debug` to `gen_it_coverage.sh` or
+`special_tests.sh`. That exports the canonical `IT_RESOURCE_DEBUG=1`
+flags used by `tests/conftest.py`, `tests/analysis_resource_utils.py`, and the coverage harness summary
+parser for per-test / per-fixture / per-GPU logging.
+
+For semantic concept-direction intervention drift debugging, prefer the regular parity gate in
+`tests/core/test_analysis_backend_parity.py` first. If you need an upstream sanity check, run
+`tests/upstream_parity/extract_upstream_ct_semantic_reference.py` and consult `tests/upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md`
+for the current three-way upstream/native/op reference values. This remains a manual debugging flow,
+not a regular CI requirement.
+
 **Test timing:** Most tests run quickly (<30s), but some integration tests may take 1-2 minutes.
 
 **Test structure:** Tests are in `tests/` with special subdirectories:
 - `tests/core/` - core functionality tests
+- `tests/benchmarks/` - end-to-end experiment benchmarks (see `tests/benchmarks/README.md`)
 - `tests/*_parity/` - research parity tests (excluded from pre-commit)
 
 ## Project Layout and Architecture
@@ -610,7 +667,6 @@ Then run specific tests using **inline environment variables** (not export) to a
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
 IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/examples/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT] -v
-unset IT_RUN_STANDALONE_TESTS
 
 # another example using inline variable assignment with multiple standalone tests invoked separately
 cd ${IT_REPO_DIR} && \
@@ -632,11 +688,9 @@ IT_RUN_PROFILING_TESTS=2 python -m pytest tests/parity_acceptance/test_it_tl.py:
 unset IT_RUN_PROFILING_TESTS
 
 # Run specific optional tests
-export IT_RUN_OPTIONAL_TESTS=1 && \
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
-python -m pytest tests/parity_acceptance/test_it_fts.py::test_parity_fts[train_cuda_32_l_fts] -v  || true && \
-unset IT_RUN_OPTIONAL_TESTS
+IT_RUN_OPTIONAL_TESTS=1 python -m pytest tests/parity_acceptance/test_it_fts.py::test_parity_fts[train_cuda_32_l_fts] -v
 ```
 
 **Important Notes:**

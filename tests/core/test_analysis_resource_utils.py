@@ -13,11 +13,15 @@ from tests.analysis_resource_utils import (
     AnalysisExtractionMixin,
     ExtractedAnalysisStore,
     ExtractedFixturePayload,
+    analysis_resource_debug_enabled,
     analysis_fixture_scope,
     build_analysis_fixture_payload_extractor,
+    clear_nnsight_test_state,
     conditional_clean_cpu,
     extract_analysis_store_fields,
     extract_result_dataset_metadata,
+    log_resource_delta,
+    serial_test_cleanup,
 )
 from tests.runif import get_runner_ram_gb
 
@@ -28,6 +32,9 @@ class _DummyFixture:
     runner: object | None = "runner"
     run_config: object | None = "run_config"
     it_session: object | None = "it_session"
+    model: object | None = None
+    replacement_model: object | None = None
+    module: object | None = None
 
 
 @dataclass
@@ -45,6 +52,16 @@ class _DummyDataset:
     num_rows: int
 
 
+class _DummyEnvoy:
+    def __init__(self, children: list[object] | None = None):
+        self._children = children or []
+        self._source = object()
+        self.clear_edits_calls = 0
+
+    def clear_edits(self):
+        self.clear_edits_calls += 1
+
+
 class TestAnalysisFixtureScope:
     def test_returns_low_ram_scope_at_threshold(self, monkeypatch):
         monkeypatch.setattr("tests.analysis_resource_utils.get_runner_ram_gb", lambda: ANALYSIS_LOW_RAM_GB)
@@ -53,6 +70,54 @@ class TestAnalysisFixtureScope:
     def test_returns_high_ram_scope_above_threshold(self, monkeypatch):
         monkeypatch.setattr("tests.analysis_resource_utils.get_runner_ram_gb", lambda: ANALYSIS_LOW_RAM_GB + 0.1)
         assert analysis_fixture_scope() == "class"
+
+
+class TestResourceDebugHelpers:
+    def test_analysis_resource_debug_enabled_checks_single_flag(self, monkeypatch):
+        monkeypatch.delenv("IT_RESOURCE_DEBUG", raising=False)
+
+        assert not analysis_resource_debug_enabled()
+
+        monkeypatch.setenv("IT_RESOURCE_DEBUG", "1")
+
+        assert analysis_resource_debug_enabled()
+
+    def test_log_resource_delta_emits_current_values_and_deltas(self, monkeypatch, capsys):
+        monkeypatch.setenv("IT_RESOURCE_DEBUG", "1")
+        monkeypatch.setattr(
+            "tests.analysis_resource_utils.get_resource_snapshot",
+            lambda include_cuda=True: {
+                "rss_gb": 2.0,
+                "vms_gb": 3.0,
+                "cuda_available": True,
+                "cuda_device_count": 1,
+                "cuda_allocated_gb": 0.5,
+                "cuda_reserved_gb": 1.0,
+                "cuda_max_allocated_gb": 0.75,
+                "cuda_max_reserved_gb": 1.25,
+            },
+        )
+
+        log_resource_delta(
+            "resource-delta",
+            before={
+                "rss_gb": 1.0,
+                "vms_gb": 2.5,
+                "cuda_available": True,
+                "cuda_device_count": 1,
+                "cuda_allocated_gb": 0.25,
+                "cuda_reserved_gb": 0.5,
+                "cuda_max_allocated_gb": 0.5,
+                "cuda_max_reserved_gb": 1.0,
+            },
+        )
+
+        output = capsys.readouterr().out
+
+        assert "[analysis_resource_debug] resource-delta:" in output
+        assert "rss_gb=2.00" in output
+        assert "delta_rss_gb=1.00" in output
+        assert "delta_cuda_allocated_gb=0.25" in output
 
 
 class TestConditionalCleanCpu:
@@ -79,6 +144,57 @@ class TestConditionalCleanCpu:
         assert fixture.runner == "runner"
         assert fixture.run_config == "run_config"
         assert fixture.it_session == "it_session"
+
+
+class TestSerialTestCleanup:
+    def test_clear_nnsight_test_state_clears_envoy_tree_and_globals(self, monkeypatch):
+        globals_calls = []
+
+        class _DummyGlobals:
+            @staticmethod
+            def clear():
+                globals_calls.append("cleared")
+
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "nnsight.intervention.tracing.globals",
+            type("_GlobalsModule", (), {"Globals": _DummyGlobals})(),
+        )
+
+        child = _DummyEnvoy()
+        root = _DummyEnvoy(children=[child])
+
+        clear_nnsight_test_state(root)
+
+        assert root.clear_edits_calls == 1
+        assert child.clear_edits_calls == 1
+        assert root._source is None
+        assert child._source is None
+        assert globals_calls == ["cleared"]
+
+    def test_serial_test_cleanup_releases_fixture_like_attrs(self, monkeypatch):
+        empty_cache_calls = []
+        monkeypatch.setattr("tests.analysis_resource_utils.torch.cuda.is_available", lambda: True)
+        monkeypatch.setattr(
+            "tests.analysis_resource_utils.torch.cuda.empty_cache", lambda: empty_cache_calls.append("emptied")
+        )
+
+        fixture = _DummyFixture()
+        fixture.model = _DummyEnvoy()
+        fixture.replacement_model = _DummyEnvoy()
+        fixture.module = _DummyFixture()
+
+        with serial_test_cleanup(fixture):
+            assert fixture.result == "result"
+
+        assert fixture.result is None
+        assert fixture.runner is None
+        assert fixture.run_config is None
+        assert fixture.it_session is None
+        assert fixture.model is None
+        assert fixture.replacement_model is None
+        assert fixture.module is None
+        assert empty_cache_calls == ["emptied"]
 
 
 class TestExtractedAnalysisStore:

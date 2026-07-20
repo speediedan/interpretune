@@ -47,8 +47,9 @@ Usage: $0
    - extras: optional, e.g., "all" or "dev,test"
    - env_var=value: optional, multiple env vars separated by colons
    Package names should use underscores (e.g., finetuning_scheduler, circuit_tracer, transformer_lens).
-   Paths will be expanded if they start with ~.
+   Paths passed directly to --from-source and ~/ segments embedded in env-var values are expanded.
    Environment variables are set only during that package's installation and unset afterward.
+   When splitting a long command across lines in bash, each continued line must end with '\'.
 
    Common environment variables for --from-source:
    - UV_OVERRIDE: Path to override file to prevent dependency downgrades
@@ -101,7 +102,9 @@ Usage: $0
     #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler::USE_CI_COMMIT_PIN=1"
 
     # build latest with multiple packages from source (using multiple --from-source flags):
-    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1" --from-source="circuit_tracer:${HOME}/repos/circuit-tracer"
+    #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest \\
+    #     --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1" \\
+    #     --from-source="circuit_tracer:${HOME}/repos/circuit-tracer"
 
     # build latest with multiple packages from source (using semicolon separator):
     #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1;circuit_tracer:${HOME}/repos/circuit-tracer"
@@ -146,6 +149,7 @@ fi
 
 # Parse from-source specifications using shared infra_utils function
 if [[ -n ${from_source_spec} ]]; then
+    from_source_spec=$(strip_quotes "${from_source_spec}")
     parse_from_source_specs "${from_source_spec}" from_source_packages || exit 1
 fi
 

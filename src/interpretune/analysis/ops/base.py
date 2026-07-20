@@ -48,10 +48,16 @@ def get_batch_input(batch: BatchEncoding) -> torch.Tensor:
     return batch[resolve_batch_input_key(batch, "input")]  # type: ignore[return-value]  # BatchEncoding __getitem__ is untyped
 
 
+def capability_value(capability: Any) -> str:
+    """Return a stable string key for a backend capability-like object."""
+    return str(getattr(capability, "value", capability))
+
+
 # Module-level constants for default operation parameters
 DEFAULT_OP_PARAMS = {"module": None, "analysis_batch": None, "batch": None, "batch_idx": None}
 
 DEFAULT_OP_PARAM_NAMES = frozenset(DEFAULT_OP_PARAMS.keys())
+_ANALYSIS_MISSING = object()
 
 
 def build_call_args(module, analysis_batch, batch, batch_idx, impl_params=None, **kwargs):
@@ -96,8 +102,128 @@ class AttrDict(dict):
 
 
 class AnalysisBatch(AttrDict):
+    def _schema_default(self, key: str) -> Any:
+        """Return a bound schema default for ``key`` when one is available."""
+        input_schema = getattr(self, "_analysis_input_schema", None)
+        if input_schema is None or key not in input_schema:
+            return _ANALYSIS_MISSING
+
+        default = getattr(input_schema[key], "default", None)
+        return default if default is not None else _ANALYSIS_MISSING
+
+    def bind_resolution_context(
+        self,
+        module: Any | None,
+        *,
+        analysis_inputs: Any = None,
+        batch_idx: int | None = None,
+        input_schema: Any = None,
+    ) -> AnalysisBatch:
+        """Bind execution-time lookup context used by scoped batch accessors."""
+        object.__setattr__(self, "_analysis_module", module)
+        object.__setattr__(self, "_analysis_inputs", analysis_inputs)
+        object.__setattr__(self, "_analysis_batch_idx", batch_idx)
+        object.__setattr__(self, "_analysis_input_schema", input_schema)
+        return self
+
+    def clear_resolution_context(self) -> AnalysisBatch:
+        """Clear any previously bound execution-time lookup context."""
+        for attr_name in ("_analysis_module", "_analysis_inputs", "_analysis_batch_idx", "_analysis_input_schema"):
+            if hasattr(self, attr_name):
+                object.__delattr__(self, attr_name)
+        return self
+
+    @contextmanager
+    def resolution_context(
+        self,
+        module: Any | None,
+        *,
+        analysis_inputs: Any = None,
+        batch_idx: int | None = None,
+        input_schema: Any = None,
+    ):
+        """Temporarily bind execution-time scoped lookup state for the current op call."""
+        self.bind_resolution_context(
+            module,
+            analysis_inputs=analysis_inputs,
+            batch_idx=batch_idx,
+            input_schema=input_schema,
+        )
+        try:
+            yield self
+        finally:
+            self.clear_resolution_context()
+
+    def resolve(
+        self,
+        key: str,
+        default: Any = None,
+        *,
+        scopes: tuple[str, ...] | None = None,
+    ) -> Any:
+        """Resolve a value using the bound analysis execution context."""
+        from interpretune.analysis.ops.helpers import DEFAULT_ANALYSIS_SCOPES, get_analysis_resolver
+
+        direct_value = super().get(key, _ANALYSIS_MISSING)
+        if direct_value is not _ANALYSIS_MISSING:
+            return direct_value
+
+        schema_default = self._schema_default(key)
+
+        module = getattr(self, "_analysis_module", None)
+        analysis_inputs = getattr(self, "_analysis_inputs", None)
+        batch_idx = getattr(self, "_analysis_batch_idx", None)
+        if module is None and analysis_inputs is None:
+            if schema_default is not _ANALYSIS_MISSING:
+                return schema_default
+            return default
+
+        resolver = get_analysis_resolver(
+            self,
+            module,
+            batch_idx=batch_idx,
+            analysis_inputs=analysis_inputs,
+        )
+        resolved = resolver.resolve(key, default=_ANALYSIS_MISSING, scopes=scopes or DEFAULT_ANALYSIS_SCOPES)
+        if resolved is not _ANALYSIS_MISSING:
+            return resolved
+        if schema_default is not _ANALYSIS_MISSING:
+            return schema_default
+        return default
+
+    def require(
+        self,
+        key: str,
+        *,
+        scopes: tuple[str, ...] | None = None,
+        message: str | None = None,
+    ) -> Any:
+        """Resolve a required value from the bound analysis execution context."""
+        value = self.resolve(key, default=_ANALYSIS_MISSING, scopes=scopes)
+        if value is _ANALYSIS_MISSING or value is None:
+            raise ValueError(message or f"AnalysisBatch is missing required value '{key}'")
+        return value
+
+    def get(self, key, default=None, *, scopes: tuple[str, ...] | None = None, resolve: bool = True):  # type: ignore[override]
+        """Return a direct batch value or, when bound, resolve via scoped inputs."""
+        direct_value = super().get(key, _ANALYSIS_MISSING)
+        if direct_value is not _ANALYSIS_MISSING:
+            return direct_value
+        if not resolve:
+            return default
+        return self.resolve(key, default=default, scopes=scopes)
+
     def __getattr__(self, name):
-        return super().__getattr__(name)
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        try:
+            return super().__getattr__(name)
+        except AttributeError as exc:
+            value = self.resolve(name, default=_ANALYSIS_MISSING)
+            if value is not _ANALYSIS_MISSING:
+                return value
+            raise exc
 
     def __eq__(self, other):
         """Compare AnalysisBatch objects, using torch.equal for tensor values.
@@ -195,6 +321,7 @@ class ColCfg:
     array_shape: tuple[int | DIM_VAR | None, ...] | None = None  # Shape with optional dimension variables
     sequence_type: bool = True  # Default to sequence type for most fields
     array_dtype: str | None = None  # Override for array fields, defaults to datasets_dtype
+    default: Any = None  # Optional execution-time default used by AnalysisBatch scoped attribute resolution
 
     def to_dict(self) -> dict:
         """Convert to JSON serializable dict."""
@@ -216,7 +343,12 @@ class ColCfg:
         hashable_shape = None
         if self.array_shape is not None:
             # Convert any unhashable elements in array_shape to their string representation
-            hashable_shape = tuple(str(dim) if isinstance(dim, (list, dict)) else dim for dim in self.array_shape)
+            hashable_shape = tuple(
+                repr(item) if isinstance(item, (list, dict, set)) else item for item in self.array_shape
+            )
+        hashable_default = self.default
+        if isinstance(hashable_default, (list, dict, set)):
+            hashable_default = repr(hashable_default)
 
         # Include all other attributes in the hash
         return hash(
@@ -232,6 +364,7 @@ class ColCfg:
                 hashable_shape,
                 self.sequence_type,
                 self.array_dtype,
+                hashable_default,
             )
         )
 
@@ -311,6 +444,7 @@ class AnalysisOp:
         input_schema: OpSchema | None = None,
         aliases: Sequence[str] | None = None,
         impl_params: dict[str, Any] | None = None,
+        required_capabilities: Sequence[str | Any] | None = None,
     ) -> None:
         self.name = name
         self.description = description
@@ -320,6 +454,18 @@ class AnalysisOp:
         self._aliases = aliases  # Store aliases for the operation
         self._impl: Callable | None = None
         self.impl_params = impl_params or {}
+        self.required_capabilities = self._normalize_required_capabilities(required_capabilities)
+
+    @staticmethod
+    def _normalize_required_capabilities(
+        required_capabilities: Sequence[str | Any] | None,
+    ) -> frozenset[Any]:
+        if not required_capabilities:
+            return frozenset()
+
+        from interpretune.analysis.backends import normalize_backend_capability
+
+        return frozenset(normalize_backend_capability(capability) for capability in required_capabilities)
 
     @property
     def ctx_key(self) -> str:
@@ -341,7 +487,12 @@ class AnalysisOp:
             self._ctx_key = original_ctx_key
 
     def _validate_input_schema(
-        self, analysis_batch: BaseAnalysisBatchProtocol | None, batch: BatchEncoding | None
+        self,
+        analysis_batch: BaseAnalysisBatchProtocol | None,
+        batch: BatchEncoding | None,
+        module: torch.nn.Module | None = None,
+        batch_idx: int | None = None,
+        analysis_inputs: Any = None,
     ) -> None:
         """Validate that required inputs defined in input_schema exist in analysis_batch or batch."""
         if self.input_schema is None:
@@ -367,18 +518,99 @@ class AnalysisOp:
             if col_cfg.connected_obj == "datamodule":
                 # Check in batch for fields from datamodule, including cross-backend key aliases
                 # (e.g., 'input' may be stored as 'input_ids' for HF/NNsight backends)
-                # TODO: decide whether to allow this fallback behavior or require explicit mapping by the op definitions
-                # We don't raise an error until we also check if it's already been processed and moved to analysis_batch
                 keys_to_check = (key,) + _BATCH_INPUT_KEY_ALIASES.get(key, ())
                 key_in_batch = batch is not None and any(k in batch for k in keys_to_check)
-                if not key_in_batch and (
-                    analysis_batch is None or not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None
-                ):
-                    raise ValueError(f"Missing required input '{key}' for {self.name} operation")
-            else:  # 'analysis_store'
-                # Check in analysis_batch for fields from previous operations
-                if analysis_batch is None or not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None:
-                    raise ValueError(f"Missing required analysis input '{key}' for {self.name} operation")
+                if key_in_batch:
+                    continue
+
+            if isinstance(analysis_batch, AnalysisBatch):
+                resolved = analysis_batch.resolve(key, default=_ANALYSIS_MISSING)
+                if resolved is _ANALYSIS_MISSING or resolved is None:
+                    prefix = "analysis " if col_cfg.connected_obj != "datamodule" else ""
+                    raise ValueError(f"Missing required {prefix}input '{key}' for {self.name} operation")
+                continue
+
+            if analysis_batch is None or not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None:
+                prefix = "analysis " if col_cfg.connected_obj != "datamodule" else ""
+                raise ValueError(f"Missing required {prefix}input '{key}' for {self.name} operation")
+
+    @contextmanager
+    def _bound_analysis_batch_context(
+        self,
+        module: torch.nn.Module | None,
+        analysis_batch: BaseAnalysisBatchProtocol | None,
+        *,
+        batch_idx: int | None = None,
+        analysis_inputs: Any = None,
+    ):
+        """Bind scoped resolution once for the full AnalysisOp execution path."""
+
+        if isinstance(analysis_batch, AnalysisBatch):
+            with analysis_batch.resolution_context(
+                module,
+                analysis_inputs=analysis_inputs,
+                batch_idx=batch_idx,
+                input_schema=self.input_schema,
+            ):
+                yield
+            return
+
+        yield
+
+    def _validate_capabilities(self, module: torch.nn.Module | None) -> None:
+        """Validate that the target module exposes all required capabilities."""
+        if not self.required_capabilities:
+            return
+
+        if module is None:
+            required = ", ".join(
+                capability_value(cap) for cap in sorted(self.required_capabilities, key=capability_value)
+            )
+            raise ValueError(
+                f"Operation '{self.name}' requires module capabilities [{required}] but no module was provided"
+            )
+
+        from interpretune.analysis.backends import (
+            AnalysisBackendCapability,
+            get_analysis_backend,
+            get_module_capabilities,
+        )
+
+        available = get_module_capabilities(module)
+        required_values = {capability_value(cap) for cap in self.required_capabilities}
+        available_values = available.values
+        missing_values = required_values.difference(available_values)
+        if missing_values:
+            required = ", ".join(sorted(required_values))
+            available_str = ", ".join(sorted(available_values)) or "none"
+            missing_str = ", ".join(sorted(missing_values))
+            backend_detail = ""
+            if any(isinstance(cap, AnalysisBackendCapability) for cap in self.required_capabilities):
+                if get_analysis_backend(module) is None:
+                    backend_detail = "; module does not expose an analysis_backend"
+            raise ValueError(
+                f"Operation '{self.name}' requires capabilities [{required}] but module only provides "
+                f"[{available_str}]{backend_detail}; "
+                f"missing [{missing_str}]"
+            )
+
+    def _validate_call(
+        self,
+        module: torch.nn.Module | None,
+        analysis_batch: BaseAnalysisBatchProtocol | None,
+        batch: BatchEncoding | None,
+        batch_idx: int | None = None,
+        analysis_inputs: Any = None,
+    ) -> None:
+        self._validate_capabilities(module)
+        if self.input_schema:
+            self._validate_input_schema(
+                analysis_batch,
+                batch,
+                module=module,
+                batch_idx=batch_idx,
+                analysis_inputs=analysis_inputs,
+            )
 
     @staticmethod
     def process_batch(
@@ -481,7 +713,7 @@ class AnalysisOp:
 
     def __hash__(self) -> int:
         # Updated hash to use input_schema instead of description.
-        return hash((self.name, self.output_schema, self.input_schema))
+        return hash((self.name, self.output_schema, self.input_schema, self.required_capabilities))
 
     def __repr__(self) -> str:
         """Detailed representation showing schema and input requirements."""
@@ -489,7 +721,8 @@ class AnalysisOp:
             f"AnalysisOp(name='{self.name}', "
             f"description='{self.description}', "
             f"output_schema={self.output_schema}, "
-            f"input_schema={self.input_schema})"
+            f"input_schema={self.input_schema}, "
+            f"required_capabilities={sorted(cap.value for cap in self.required_capabilities)})"
         )
 
     def __str__(self) -> str:
@@ -523,10 +756,13 @@ class AnalysisOp:
             return available_defaults
 
         call_args = {}
+        accepts_var_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in sig.parameters.values()
+        )
 
         # Only pass parameters that the function accepts
         for param_name, param_value in available_defaults.items():
-            if param_name in sig.parameters:
+            if accepts_var_kwargs or param_name in sig.parameters:
                 call_args[param_name] = param_value
 
         return call_args
@@ -554,14 +790,23 @@ class AnalysisOp:
     ) -> BaseAnalysisBatchProtocol:
         """Execute the operation using the configured implementation."""
         analysis_batch = analysis_batch or AnalysisBatch()
+        with self._bound_analysis_batch_context(
+            module,
+            analysis_batch,
+            batch_idx=batch_idx,
+            analysis_inputs=kwargs.get("analysis_inputs"),
+        ):
+            self._validate_call(
+                module,
+                analysis_batch,
+                batch,
+                batch_idx=batch_idx,
+                analysis_inputs=kwargs.get("analysis_inputs"),
+            )
 
-        # Validate input schema if provided
-        if self.input_schema:
-            self._validate_input_schema(analysis_batch, batch)
-
-        # Use unified call interface
-        result = self._call_with_resolved_params(module, analysis_batch, batch, batch_idx, **kwargs)
-        return result
+            # Use unified call interface
+            result = self._call_with_resolved_params(module, analysis_batch, batch, batch_idx, **kwargs)
+            return result
 
 
 # NOTE: [Composition and Compilation Limitations]
@@ -623,8 +868,21 @@ class CompositeAnalysisOp(AnalysisOp):
 
         for op in self.composition:
             with op.active_ctx_key(self.name):
-                # Use centralized parameter building and resolution
-                current_batch = op._call_with_resolved_params(module, current_batch, batch, batch_idx, **kwargs)
+                with op._bound_analysis_batch_context(
+                    module,
+                    current_batch,
+                    batch_idx=batch_idx,
+                    analysis_inputs=kwargs.get("analysis_inputs"),
+                ):
+                    op._validate_call(
+                        module,
+                        current_batch,
+                        batch,
+                        batch_idx=batch_idx,
+                        analysis_inputs=kwargs.get("analysis_inputs"),
+                    )
+                    # Use centralized parameter building and resolution
+                    current_batch = op._call_with_resolved_params(module, current_batch, batch, batch_idx, **kwargs)
 
         return current_batch
 

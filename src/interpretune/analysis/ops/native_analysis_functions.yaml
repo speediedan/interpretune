@@ -52,11 +52,11 @@ get_alive_latents:
       per_latent_model_hook: true
       non_tensor: true
 
-model_forward:
+model_fwd:
   description: Basic model forward pass
-  implementation: interpretune.analysis.ops.definitions.model_forward_impl
+  implementation: interpretune.analysis.ops.definitions.model_fwd_impl
   required_ops: [get_answer_indices]
-  aliases: []
+  aliases: ['model_forward']
   input_schema:
     input:
       datasets_dtype: int64
@@ -76,11 +76,36 @@ model_forward:
       required: false
       non_tensor: true
 
-model_cache_forward:
-  description: Model forward pass with cache
-  implementation: interpretune.analysis.ops.definitions.model_cache_forward_impl
+model_fwd_w_cache:
+  description: Model forward pass with activation caching (no latent model hooks)
+  implementation: interpretune.analysis.ops.definitions.model_fwd_w_cache_impl
+  required_ops: [get_answer_indices]
+  aliases: []
+  input_schema:
+    input:
+      datasets_dtype: int64
+      connected_obj: datamodule
+  output_schema:
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      dyn_dim: 1
+      dyn_dim_ceil: max_seq_len
+      array_shape: [null, batch_size, vocab_size]
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+
+model_fwd_w_cache_latent_models:
+  description: Model forward pass with activation caching and latent model (SAE) hooks
+  implementation: interpretune.analysis.ops.definitions.model_fwd_w_cache_latent_models_impl
   required_ops: [get_answer_indices, get_alive_latents]
-  aliases: ['model_forward_cache']
+  aliases: []
   input_schema:
     input:
       datasets_dtype: int64
@@ -340,17 +365,711 @@ ablation_attribution:
       datasets_dtype: int64
       per_latent: true
 
+extract_concept_latent_state:
+  description: Extract per-example latent rows from the configured cache key
+  implementation: interpretune.analysis.ops.definitions.extract_concept_latent_state_impl
+  aliases: [concept_latent_state_from_cache]
+  input_schema:
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    answer_indices:
+      datasets_dtype: int64
+    context_token_indices:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      default: unembed.hook_in
+  output_schema:
+    concept_latent_state:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    context_token_indices:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+
+extract_concept_latent_examples:
+  description: Filter and annotate latent rows for concept-direction aggregation
+  implementation: interpretune.analysis.ops.definitions.extract_concept_latent_examples_impl
+  aliases: [concept_latent_examples]
+  input_schema:
+    concept_latent_state:
+      datasets_dtype: float32
+      required: false
+      array_shape: [null, null]
+      sequence_type: false
+    cache:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+      intermediate_only: true
+    answer_indices:
+      datasets_dtype: int64
+      required: false
+    context_token_indices:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+    orig_labels:
+      datasets_dtype: int64
+    logit_diffs:
+      datasets_dtype: float32
+    concept_group_a_label_ids:
+      datasets_dtype: int64
+      non_tensor: true
+      sequence_type: true
+    concept_group_b_label_ids:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
+    concept_group_a_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_group_b_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      default: unembed.hook_in
+    concept_correct_only:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      default: 1
+    concept_weight_by_logit_diff:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      default: 0
+  output_schema:
+    concept_latent_state:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    concept_group_id:
+      datasets_dtype: int64
+      array_shape: [null]
+      sequence_type: false
+    concept_group_name:
+      datasets_dtype: string
+      non_tensor: true
+      sequence_type: true
+    concept_example_logit_diff:
+      datasets_dtype: float32
+      array_shape: [null]
+      sequence_type: false
+    concept_example_weight:
+      datasets_dtype: float32
+      array_shape: [null]
+      sequence_type: false
+    concept_context_indices:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    concept_group_a_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    concept_group_b_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+
+concept_direction:
+  description: Aggregate latent concept examples into a normalized concept direction vector
+  implementation: interpretune.analysis.ops.definitions.concept_direction_impl
+  required_capabilities: [attribution_graph]
+  aliases: [semantic_direction]
+  input_schema:
+    concept_latent_state:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    concept_group_id:
+      datasets_dtype: int64
+      required: false
+    concept_group_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_example_weight:
+      datasets_dtype: float32
+      required: false
+    concept_group_a_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_group_b_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_label:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_group_a:
+      required: false
+      datasets_dtype: string
+      non_tensor: true
+    concept_group_b:
+      required: false
+      datasets_dtype: string
+      non_tensor: true
+    concept_direction_mode:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      default: mean_difference
+  output_schema:
+    concept_direction:
+      datasets_dtype: float32
+      dyn_dim: 0
+      dyn_dim_ceil: vocab_size
+      sequence_type: true
+    concept_label:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_group_a_token_ids:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
+    concept_group_b_token_ids:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
+    concept_group_a_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    concept_group_b_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    concept_direction_mode:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+
+compute_attribution_graph:
+  description: Generate an attribution graph with circuit-tracer
+  implementation: interpretune.analysis.ops.definitions.compute_attribution_graph_impl
+  required_capabilities: [attribution_graph]
+  aliases: [ct_graph]
+  input_schema:
+    concept_direction:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+  output_schema:
+    input_string:
+      datasets_dtype: string
+      non_tensor: true
+      sequence_type: false
+    adjacency_matrix:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    active_features:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    selected_features:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    logit_target_tokens:
+      datasets_dtype: string
+      required: false
+      sequence_type: true
+    logit_probabilities:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    input_tokens:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    graph_cfg_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_scan_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_vocab_size:
+      datasets_dtype: int64
+      required: false
+      sequence_type: false
+    graph_metadata:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+
+extract_top_features:
+  description: Extract top-N influential features from an attribution graph
+  implementation: interpretune.analysis.ops.definitions.extract_top_features_impl
+  aliases: [ct_top_features]
+  input_schema:
+    active_features:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    activation_values:
+      datasets_dtype: float32
+      sequence_type: true
+    node_influence_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    node_signed_influence_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    node_logit_diff_gradient_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+  output_schema:
+    top_feature_ids:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    top_feature_scores:
+      datasets_dtype: float32
+      sequence_type: true
+    top_feature_activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+
+graph_prune:
+  description: Prune a circuit-tracer attribution graph
+  implementation: interpretune.analysis.ops.definitions.graph_prune_impl
+  required_capabilities: [attribution_graph]
+  aliases: [ct_graph_prune]
+  input_schema:
+    input_string:
+      datasets_dtype: string
+      non_tensor: true
+      sequence_type: false
+    adjacency_matrix:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    active_features:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    selected_features:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    logit_target_tokens:
+      datasets_dtype: string
+      required: false
+      sequence_type: true
+    logit_probabilities:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    input_tokens:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    graph_cfg_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_scan_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_vocab_size:
+      datasets_dtype: int64
+      required: false
+      sequence_type: false
+  output_schema:
+    input_string:
+      datasets_dtype: string
+      non_tensor: true
+      sequence_type: false
+    adjacency_matrix:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    active_features:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    selected_features:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    logit_target_tokens:
+      datasets_dtype: string
+      required: false
+      sequence_type: true
+    logit_probabilities:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    input_tokens:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    graph_cfg_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_scan_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_vocab_size:
+      datasets_dtype: int64
+      required: false
+      sequence_type: false
+    graph_metadata:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+
+graph_node_influence:
+  description: Compute node influence scores for an attribution graph
+  implementation: interpretune.analysis.ops.definitions.graph_node_influence_impl
+  required_capabilities: [attribution_graph]
+  aliases: [ct_node_influence]
+  input_schema:
+    adjacency_matrix:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    active_features:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+    selected_features:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    logit_target_tokens:
+      datasets_dtype: string
+      required: false
+      sequence_type: true
+    logit_probabilities:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    input_string:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    input_tokens:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    graph_cfg_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_scan_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_vocab_size:
+      datasets_dtype: int64
+      required: false
+      sequence_type: false
+  output_schema:
+    node_influence_scores:
+      datasets_dtype: float32
+      sequence_type: true
+    node_signed_influence_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    node_feature_ids:
+      datasets_dtype: int64
+      array_shape: [null, 3]
+      sequence_type: false
+
+feature_intervention_forward:
+  description: Run feature interventions and return pre/post intervention outputs
+  implementation: interpretune.analysis.ops.definitions.feature_intervention_forward_impl
+  required_capabilities: [feature_intervention]
+  aliases: [ct_feature_intervention]
+  input_schema:
+    top_feature_ids:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null, 3]
+      sequence_type: false
+    top_feature_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    top_feature_activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    active_features:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null, 3]
+      sequence_type: false
+    activation_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    node_influence_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    node_signed_influence_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    node_logit_diff_gradient_scores:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+  output_schema:
+    intervention_config:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    intervention_specs_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    feature_intervention_dict_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    intervention_layers:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    intervention_positions:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    intervention_feature_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    intervention_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    intervention_base_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    intervention_score_values:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    intervention_scale_factors:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    pre_intervention_logits:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    post_intervention_logits:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    intervention_activation_cache:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+      intermediate_only: true
+      sequence_type: false
+    logit_diff:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+
+model_fwd_intervention:
+  description: Apply generalized hook-point interventions and return pre/post intervention logits
+  implementation: interpretune.analysis.ops.definitions.model_fwd_intervention_impl
+  aliases: [direction_intervention, direct_concept_direction_intervention]
+  input_schema:
+    interventions:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+    interventions_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_hook_pattern:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_tensor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    intervention_tensors_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_mode:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_use_intervention_tensor_as_basis:
+      datasets_dtype: bool
+      required: false
+      sequence_type: false
+    intervention_scale_factor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    use_latent_models:
+      datasets_dtype: bool
+      required: false
+      sequence_type: false
+    concept_direction:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    direction_scale_factor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+  output_schema:
+    pre_intervention_logits:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    post_intervention_logits:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    logit_diff:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+
 # Composite operations
 composite_operations:
   logit_diffs_base:
-    composition: labels_to_ids.model_forward.logit_diffs
+    composition: labels_to_ids.model_fwd.logit_diffs
 
   logit_diffs_sae:
-    composition: labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts
+    composition: labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.sae_correct_acts
 
   logit_diffs_attr_grad:
     composition: labels_to_ids.model_gradient.gradient_attribution
 
   logit_diffs_attr_ablation:
-    composition: labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.ablation_attribution
+    composition: labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.model_ablation.ablation_attribution
     aliases: [logit_diffs_ablation]
+
+  attribution_from_concept:
+    description: Concept direction through graph attribution and top-feature extraction
+    composition: concept_direction.compute_attribution_graph.graph_node_influence.extract_top_features
+
+  intervention_from_features:
+    description: Feature intervention from extracted top features
+    composition: feature_intervention_forward
+
+  intervention_from_concept:
+    description: Full analysis-level concept attribution and intervention pipeline
+    composition: concept_direction.compute_attribution_graph.graph_node_influence.extract_top_features.feature_intervention_forward

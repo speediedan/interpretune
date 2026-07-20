@@ -1,0 +1,329 @@
+benchmarks:
+  rte_boolq:
+    gemma2_2b_it_l:
+      config_path: src/it_examples/config/experiments/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml
+      expected_accuracy: 0.8087
+      tolerance: 0.03
+      adapter_ctx:
+      - lightning
+      backends: []
+      description: Gemma2-2b-IT baseline zero-shot RTE with Lightning adapter (HF generation)
+      last_validated: '20260326_180111'
+      notes: 'Config uses do_sample=true with top_k=50 so results vary across runs. Observed 80.87% post batch-collapse fix.
+        Wider tolerance accounts for sampling variance.
+
+        '
+      tags:
+      - baseline
+      - lightning
+      - hf_generation
+      debug_utils_module: rte_boolq
+      commit_sha: 72b0d1f
+      salient_pkg_versions:
+        interpretune: 0.1.0.dev256+g66e7fb84c.d20260320 (fork:speediedan/interpretune, branch:circuit-tracer-backend, sha:72b0d1f)
+        lightning: 2.6.0
+        transformer_lens: 0.0.0 (fork:TransformerLensOrg/TransformerLens, sha:42a2d52)
+        sae_lens: 6.39.0
+        circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:14cc3e8)
+        nnsight: 0.6.3
+        transformers: 5.3.0
+        datasets: 4.7.0
+        torch: 2.10.0+cu128
+    gemma2_2b_it_l_sl_ht:
+      config_path: src/it_examples/config/experiments/rte_boolq/gemma2/2b_chat_lightning_sl_ht_zs_test.yaml
+      expected_accuracy: 0.7473
+      tolerance: 0.03
+      adapter_ctx:
+      - lightning
+      - sae_lens
+      backends:
+      - transformer_lens
+      description: Gemma2-2b-IT with SAE-Lens + HookedTransformer zero-shot RTE
+      last_validated: '20260326_180259'
+      notes: 'HookedTransformer mode (use_bridge=False). SAE reconstruction loss drops accuracy ~6pp from baseline (0.809).
+        Uses do_sample=true with top_k=50.
+
+        '
+      tags:
+      - sae
+      - lightning
+      - hooked_transformer
+      - sae_lens
+      debug_utils_module: rte_boolq
+      commit_sha: 72b0d1f
+      salient_pkg_versions:
+        interpretune: 0.1.0.dev256+g66e7fb84c.d20260320 (fork:speediedan/interpretune, branch:circuit-tracer-backend, sha:72b0d1f)
+        lightning: 2.6.0
+        transformer_lens: 0.0.0 (fork:TransformerLensOrg/TransformerLens, sha:42a2d52)
+        sae_lens: 6.39.0
+        circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:14cc3e8)
+        nnsight: 0.6.3
+        transformers: 5.3.0
+        datasets: 4.7.0
+        torch: 2.10.0+cu128
+    gemma2_2b_it_l_sl_br:
+      config_path: src/it_examples/config/experiments/rte_boolq/gemma2/2b_chat_lightning_sl_br_zs_test.yaml
+      expected_accuracy: 0.7509
+      tolerance: 0.03
+      adapter_ctx:
+      - lightning
+      - sae_lens
+      backends:
+      - transformer_lens
+      description: Gemma2-2b-IT with SAE-Lens + TransformerBridge (SAETransformerBridge) zero-shot RTE
+      last_validated: '20260326_180442'
+      notes: 'TransformerBridge mode using ITLensBridgeConfig with enable_compatibility_mode (fold_ln + fold_value_biases).
+        SAE reconstruction loss drops accuracy ~6pp from baseline (0.809). Uses do_sample=true with top_k=50.
+
+        '
+      tags:
+      - sae
+      - lightning
+      - bridge
+      - sae_lens
+      debug_utils_module: rte_boolq
+      commit_sha: 72b0d1f
+      salient_pkg_versions:
+        interpretune: 0.1.0.dev256+g66e7fb84c.d20260320 (fork:speediedan/interpretune, branch:circuit-tracer-backend, sha:72b0d1f)
+        lightning: 2.6.0
+        transformer_lens: 0.0.0 (fork:TransformerLensOrg/TransformerLens, sha:42a2d52)
+        sae_lens: 6.39.0
+        circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:14cc3e8)
+        nnsight: 0.6.3
+        transformers: 5.3.0
+        datasets: 4.7.0
+        torch: 2.10.0+cu128
+    gemma3_1b_it_l_ct_ns:
+      config_path: src/it_examples/config/experiments/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml
+      expected_accuracy: 0.7184
+      tolerance: 0.05
+      adapter_ctx:
+      - lightning
+      - nnsight
+      - circuit_tracer
+      backends:
+      - nnsight
+      description: Gemma3-1b-IT with Circuit Tracer (NNsight backend) zero-shot RTE via Lightning
+      last_validated: '20260326_180552'
+      notes: 'Circuit Tracer with NNsight backend using gemma-scope-2-1b-it transcoders. Uses do_sample=true with top_k=50
+        via CoreGenerationConfig. Previous greedy result was 0.7184.
+
+        '
+      tags:
+      - circuit_tracer
+      - nnsight
+      - lightning
+      - gemma3
+      debug_utils_module: rte_boolq
+      commit_sha: 72b0d1f
+      salient_pkg_versions:
+        interpretune: 0.1.0.dev256+g66e7fb84c.d20260320 (fork:speediedan/interpretune, branch:circuit-tracer-backend, sha:72b0d1f)
+        lightning: 2.6.0
+        transformer_lens: 0.0.0 (fork:TransformerLensOrg/TransformerLens, sha:42a2d52)
+        sae_lens: 6.39.0
+        circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:14cc3e8)
+        nnsight: 0.6.3
+        transformers: 5.3.0
+        datasets: 4.7.0
+        torch: 2.10.0+cu128
+    gemma3_4b_it_ct_ns:
+      config_path: src/it_examples/config/experiments/rte_boolq/gemma3/4b_it_ct_ns_zs_test.yaml
+      expected_accuracy: 0.795
+      tolerance: 1.0
+      cli_mode: core
+      adapter_ctx:
+      - core
+      - nnsight
+      - circuit_tracer
+      backends:
+      - nnsight
+      description: Gemma3-4b-IT with Circuit Tracer (NNsight backend) zero-shot RTE via core CLI
+      last_validated: '20260327_150625'
+      notes: 'Bootstrap registry entry for Gemma3-4b-IT multimodal text-only CT benchmark. Validate with --debug first, then
+        refresh via --update-registry once the measured accuracy is acceptable.
+
+        '
+      tags:
+      - circuit_tracer
+      - nnsight
+      - core
+      - gemma3
+      - 4b
+      debug_utils_module: rte_boolq
+      commit_sha: '9069305'
+      salient_pkg_versions:
+        interpretune: 0.1.0.dev256+g66e7fb84c.d20260320 (fork:speediedan/interpretune, branch:circuit-tracer-backend, sha:9069305)
+        lightning: 2.6.0
+        transformer_lens: 0.0.0 (fork:TransformerLensOrg/TransformerLens, sha:42a2d52)
+        sae_lens: 6.39.0
+        circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:14cc3e8)
+        nnsight: 0.6.3
+        transformers: 5.3.0
+        datasets: 4.7.0
+        torch: 2.10.0+cu128
+    gemma3_4b_262k_it_ct_ns:
+      config_path: src/it_examples/config/experiments/rte_boolq/gemma3/4b_262k_it_ct_ns_zs_test.yaml
+      expected_accuracy: 0.795
+      tolerance: 1.0
+      cli_mode: core
+      adapter_ctx:
+      - core
+      - nnsight
+      - circuit_tracer
+      backends:
+      - nnsight
+      description: Gemma3-4b-IT (262k width transcoders) with Circuit Tracer (NNsight backend) zero-shot RTE via core CLI
+      last_validated: '20260327_150625'
+      notes: 'Bootstrap registry entry for Gemma3-4b-IT multimodal text-only CT benchmark with 262k width transcoders. Validate with --debug first, then
+        refresh via --update-registry once the measured accuracy is acceptable.
+
+        '
+      tags:
+      - circuit_tracer
+      - nnsight
+      - core
+      - gemma3
+      - 4b
+      debug_utils_module: rte_boolq
+      commit_sha: '9069305'
+      salient_pkg_versions:
+        interpretune: 0.1.0.dev256+g66e7fb84c.d20260320 (fork:speediedan/interpretune, branch:circuit-tracer-backend, sha:9069305)
+        lightning: 2.6.0
+        transformer_lens: 0.0.0 (fork:TransformerLensOrg/TransformerLens, sha:42a2d52)
+        sae_lens: 6.39.0
+        circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:14cc3e8)
+        nnsight: 0.6.3
+        transformers: 5.3.0
+        datasets: 4.7.0
+        torch: 2.10.0+cu128
+    gemma3_1b_it_l_ns:
+      config_path: src/it_examples/config/experiments/rte_boolq/gemma3/1b_it_lightning_ns_zs_test.yaml
+      expected_accuracy: 0.722
+      tolerance: 0.05
+      adapter_ctx:
+      - lightning
+      - nnsight
+      backends:
+      - nnsight
+      description: Gemma3-1b-IT with NNsight adapter zero-shot RTE via Lightning
+      last_validated: '20260326_180718'
+      notes: 'NNsight adapter only (no circuit tracer or SAE). Uses do_sample=true with top_k=50 via CoreGenerationConfig.
+        Previous greedy result was 0.722.
+
+        '
+      tags:
+      - nnsight
+      - lightning
+      - gemma3
+      debug_utils_module: rte_boolq
+      commit_sha: 72b0d1f
+      salient_pkg_versions:
+        interpretune: 0.1.0.dev256+g66e7fb84c.d20260320 (fork:speediedan/interpretune, branch:circuit-tracer-backend, sha:72b0d1f)
+        lightning: 2.6.0
+        transformer_lens: 0.0.0 (fork:TransformerLensOrg/TransformerLens, sha:42a2d52)
+        sae_lens: 6.39.0
+        circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:14cc3e8)
+        nnsight: 0.6.3
+        transformers: 5.3.0
+        datasets: 4.7.0
+        torch: 2.10.0+cu128
+    gemma2_2b_it_ct_ns:
+      config_path: src/it_examples/config/experiments/rte_boolq/gemma2/2b_it_ct_ns_zs_test.yaml
+      expected_accuracy: 0.8094
+      tolerance: 0.05
+      cli_mode: core
+      adapter_ctx:
+      - core
+      - nnsight
+      - circuit_tracer
+      backends:
+      - nnsight
+      description: Gemma2-2b-IT with Circuit Tracer (NNsight backend, gemma transcoders) zero-shot RTE via core CLI
+      last_validated: '20260326_180820'
+      notes: 'Core (non-Lightning) CLI mode. Circuit Tracer with NNsight backend using gemma-scope-transcoders. Uses do_sample=true
+        with top_k=50 via HFGenerationConfig. Gemma2-specific: eager attention, use_cache=false (bfloat16 dtype issue), eos_token_id=1.
+
+        '
+      tags:
+      - circuit_tracer
+      - nnsight
+      - core
+      - gemma2
+      debug_utils_module: rte_boolq
+      commit_sha: 72b0d1f
+      salient_pkg_versions:
+        interpretune: 0.1.0.dev256+g66e7fb84c.d20260320 (fork:speediedan/interpretune, branch:circuit-tracer-backend, sha:72b0d1f)
+        lightning: 2.6.0
+        transformer_lens: 0.0.0 (fork:TransformerLensOrg/TransformerLens, sha:42a2d52)
+        sae_lens: 6.39.0
+        circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:14cc3e8)
+        nnsight: 0.6.3
+        transformers: 5.3.0
+        datasets: 4.7.0
+        torch: 2.10.0+cu128
+    gemma3_1b_it_ct_ns:
+      config_path: src/it_examples/config/experiments/rte_boolq/gemma3/1b_it_ct_ns_zs_test.yaml
+      expected_accuracy: 0.7194
+      tolerance: 0.05
+      cli_mode: core
+      adapter_ctx:
+      - core
+      - nnsight
+      - circuit_tracer
+      backends:
+      - nnsight
+      description: Gemma3-1b-IT with Circuit Tracer (NNsight backend) zero-shot RTE via core CLI
+      last_validated: '20260326_180927'
+      notes: 'Core (non-Lightning) CLI mode. Circuit Tracer with NNsight backend using gemma-scope-2-1b-it transcoders. Uses
+        do_sample=true with top_k=50 via CoreGenerationConfig.
+
+        '
+      tags:
+      - circuit_tracer
+      - nnsight
+      - core
+      - gemma3
+      debug_utils_module: rte_boolq
+      commit_sha: 72b0d1f
+      salient_pkg_versions:
+        interpretune: 0.1.0.dev256+g66e7fb84c.d20260320 (fork:speediedan/interpretune, branch:circuit-tracer-backend, sha:72b0d1f)
+        lightning: 2.6.0
+        transformer_lens: 0.0.0 (fork:TransformerLensOrg/TransformerLens, sha:42a2d52)
+        sae_lens: 6.39.0
+        circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:14cc3e8)
+        nnsight: 0.6.3
+        transformers: 5.3.0
+        datasets: 4.7.0
+        torch: 2.10.0+cu128
+    gemma3_1b_it_ns:
+      config_path: src/it_examples/config/experiments/rte_boolq/gemma3/1b_it_ns_zs_test.yaml
+      expected_accuracy: 0.723
+      tolerance: 0.05
+      cli_mode: core
+      adapter_ctx:
+      - core
+      - nnsight
+      backends:
+      - nnsight
+      description: Gemma3-1b-IT with NNsight adapter zero-shot RTE via core CLI
+      last_validated: '20260326_181050'
+      notes: 'Core (non-Lightning) CLI mode. NNsight adapter only (no circuit tracer or SAE). Uses do_sample=true with top_k=50
+        via CoreGenerationConfig.
+
+        '
+      tags:
+      - nnsight
+      - core
+      - gemma3
+      debug_utils_module: rte_boolq
+      commit_sha: 72b0d1f
+      salient_pkg_versions:
+        interpretune: 0.1.0.dev256+g66e7fb84c.d20260320 (fork:speediedan/interpretune, branch:circuit-tracer-backend, sha:72b0d1f)
+        lightning: 2.6.0
+        transformer_lens: 0.0.0 (fork:TransformerLensOrg/TransformerLens, sha:42a2d52)
+        sae_lens: 6.39.0
+        circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:14cc3e8)
+        nnsight: 0.6.3
+        transformers: 5.3.0
+        datasets: 4.7.0
+        torch: 2.10.0+cu128

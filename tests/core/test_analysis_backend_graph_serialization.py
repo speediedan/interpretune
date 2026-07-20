@@ -1,0 +1,788 @@
+"""Synthetic analysis-backend graph serialization tests.
+
+These currently target the circuit-tracer analysis backend, while keeping the test surface framed around generic
+analysis-backend graph responsibilities so future backends can extend the same coverage.
+"""
+
+from __future__ import annotations
+
+import json
+
+import torch
+from datasets import Dataset, load_from_disk
+
+from circuit_tracer.attribution.targets import CustomTarget, LogitTarget
+from circuit_tracer.graph import Graph
+from circuit_tracer.utils.tl_nnsight_mapping import UnifiedConfig
+
+from interpretune.analysis.backends import expand_intervention_patterns
+from interpretune.analysis.backends.circuit_tracer import DEFAULT_CT_ANALYSIS_BACKEND
+from interpretune.analysis.core import AnalysisStore, schema_to_features
+from interpretune.analysis.ops.base import AnalysisBatch
+from interpretune.analysis.ops.dispatcher import DISPATCHER
+from interpretune.analysis.ops.definitions import (
+    compute_attribution_graph_impl,
+    concept_direction_impl,
+    extract_top_features_impl,
+    graph_node_influence_impl,
+    graph_prune_impl,
+)
+from interpretune.analysis.ops.helpers import (
+    FeatureSelectionSpec,
+    apply_feature_score_sign_filter,
+    apply_feature_selection_filter,
+)
+
+
+class _FakeTokenizer:
+    def __init__(self) -> None:
+        self._vocab = {"Paris": 0, "London": 1, "Dallas": 2, "Austin": 3}
+
+    def get_vocab(self) -> dict[str, int]:
+        return self._vocab
+
+    def __call__(self, text: str, add_special_tokens: bool = False):
+        return {"input_ids": [self._vocab[token] for token in text.split() if token in self._vocab]}
+
+    def decode(self, token_ids, skip_special_tokens: bool = True) -> str:
+        inverse_vocab = {value: key for key, value in self._vocab.items()}
+        return " ".join(inverse_vocab[int(token_id)] for token_id in token_ids if int(token_id) in inverse_vocab)
+
+
+class _FakeReplacementModel:
+    def __init__(self) -> None:
+        self.tokenizer = _FakeTokenizer()
+        self.embed_weight = torch.tensor(
+            [
+                [2.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0],
+                [0.0, 0.0, 2.0],
+                [1.0, 1.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+
+    def get_activations(self, prompt: str):
+        assert prompt == "Paris Austin"
+        return torch.tensor([[[0.1, 0.2, 0.3, 0.4]]], dtype=torch.float32), None
+
+
+class _FakeModule:
+    def __init__(self, graph: Graph | None = None) -> None:
+        self.replacement_model = _FakeReplacementModel()
+        self.datamodule = type(
+            "_DataModule",
+            (),
+            {
+                "tokenizer": self.replacement_model.tokenizer,
+                "itdm_cfg": type("_ITDMCfg", (), {"eval_batch_size": 1})(),
+            },
+        )()
+        self.model = type(
+            "_Model",
+            (),
+            {"tokenizer": type("_TokenizerMeta", (), {"vocab_size": 32, "model_max_length": 32})()},
+        )()
+        self.it_cfg = type(
+            "_ITCfg",
+            (),
+            {
+                "generative_step_cfg": type(
+                    "_GenCfg", (), {"lm_generation_cfg": type("_LMGenCfg", (), {"max_new_tokens": 1})()}
+                )(),
+                "num_labels": 2,
+                "entailment_mapping": {"a": 0, "b": 1},
+            },
+        )()
+        self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
+        self._graph = graph
+
+    def generate_attribution_graph(self, prompt: str, **kwargs) -> Graph:
+        assert self._graph is not None
+        return self._graph
+
+
+def _make_graph() -> Graph:
+    cfg = UnifiedConfig(
+        n_layers=2,
+        d_model=4,
+        d_head=2,
+        n_heads=2,
+        d_mlp=8,
+        d_vocab=32,
+        tokenizer_name="fake-tokenizer",
+        model_name="fake-model",
+        original_architecture="FakeForCausalLM",
+    )
+    return Graph(
+        input_string="Paris Austin",
+        input_tokens=torch.tensor([0, 3], dtype=torch.long),
+        active_features=torch.tensor([[0, 0, 10], [1, 0, 12], [1, 1, 13]], dtype=torch.long),
+        adjacency_matrix=torch.tensor(
+            [
+                [0.0, 0.1, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.3, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.2, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        ),
+        cfg=cfg,
+        selected_features=torch.tensor([0, 2], dtype=torch.long),
+        activation_values=torch.tensor([0.25, 0.75], dtype=torch.float32),
+        logit_targets=[LogitTarget("Dallas", 2), LogitTarget("Austin", 3)],
+        logit_probabilities=torch.tensor([0.4, 0.6], dtype=torch.float32),
+        scan="gemma",
+        vocab_size=32,
+    )
+
+
+def _make_signed_graph() -> Graph:
+    cfg = UnifiedConfig(
+        n_layers=2,
+        d_model=4,
+        d_head=2,
+        n_heads=2,
+        d_mlp=8,
+        d_vocab=32,
+        tokenizer_name="fake-tokenizer",
+        model_name="fake-model",
+        original_architecture="FakeForCausalLM",
+    )
+    return Graph(
+        input_string="Paris Austin",
+        input_tokens=torch.tensor([0, 3], dtype=torch.long),
+        active_features=torch.tensor([[0, 0, 10], [1, 0, 12]], dtype=torch.long),
+        adjacency_matrix=torch.tensor(
+            [
+                [0.0, 0.0, 0.50, -0.10],
+                [0.0, 0.0, -0.40, 0.10],
+                [0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        ),
+        cfg=cfg,
+        selected_features=torch.tensor([0, 1], dtype=torch.long),
+        activation_values=torch.tensor([0.25, 0.75], dtype=torch.float32),
+        logit_targets=[LogitTarget("Dallas", 2), LogitTarget("Austin", 3)],
+        logit_probabilities=torch.tensor([0.5, 0.5], dtype=torch.float32),
+        scan="gemma",
+        vocab_size=32,
+    )
+
+
+def _graph_batch_from_graph(graph: Graph) -> AnalysisBatch:
+    decomposed = compute_attribution_graph_impl(
+        _FakeModule(graph=graph), AnalysisBatch(prompts=[graph.input_string]), None, 0
+    )
+    return AnalysisBatch(**decomposed)
+
+
+def _rehydrate_graph(analysis_batch: AnalysisBatch) -> Graph:
+    return DEFAULT_CT_ANALYSIS_BACKEND.hydrate_graph_from_batch(analysis_batch)
+
+
+def test_concept_direction_impl_uses_embedding_difference() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(concept_group_a=["Paris"], concept_group_b=["London"])
+
+    result = concept_direction_impl(module, analysis_batch, batch=None, batch_idx=0)
+
+    expected = torch.tensor([1.0, -1.0, 0.0], dtype=torch.float32)
+    expected = expected / torch.linalg.vector_norm(expected)
+    assert torch.allclose(result.concept_direction, expected)
+    assert result.concept_label == "Paris -> London"
+
+
+def test_concept_direction_impl_prefers_aggregate_row_fields() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        concept_latent_state=torch.tensor([[7.0, 0.0, 0.0]], dtype=torch.float32),
+        concept_group_id=torch.tensor([0], dtype=torch.long),
+        concept_group_name=["capital"],
+        concept_example_weight=torch.tensor([1.0], dtype=torch.float32),
+        concept_latent_state_rows=[
+            torch.tensor([[3.0, 0.0, 0.0]], dtype=torch.float32),
+            torch.tensor([[0.0, 4.0, 0.0]], dtype=torch.float32),
+        ],
+        concept_group_id_rows=[torch.tensor([0], dtype=torch.long), torch.tensor([1], dtype=torch.long)],
+        concept_group_name_rows=[["capital"], ["state"]],
+        concept_example_weight_rows=[
+            torch.tensor([2.0], dtype=torch.float32),
+            torch.tensor([1.0], dtype=torch.float32),
+        ],
+        concept_direction_mode="mean_difference",
+        concept_group_a_name="capital",
+        concept_group_b_name="state",
+    )
+
+    result = concept_direction_impl(module, analysis_batch, batch=None, batch_idx=0)
+
+    expected = torch.tensor([3.0, -4.0, 0.0], dtype=torch.float32)
+    expected = expected / torch.linalg.vector_norm(expected)
+    assert torch.allclose(result.concept_direction, expected, atol=1e-6)
+    assert result.concept_label == "capital -> state"
+
+
+def test_compute_attribution_graph_impl_decomposes_graph() -> None:
+    graph = _make_graph()
+    module = _FakeModule(graph=graph)
+    analysis_batch = AnalysisBatch(prompts=[graph.input_string])
+
+    result = compute_attribution_graph_impl(module, analysis_batch, batch=None, batch_idx=0)
+    restored_graph = _rehydrate_graph(result)
+
+    assert torch.equal(restored_graph.adjacency_matrix, graph.adjacency_matrix)
+    assert torch.equal(result.active_features, graph.active_features)
+    assert result.logit_target_tokens == ["Dallas", "Austin"]
+    assert torch.equal(result.logit_target_ids, graph.logit_token_ids.cpu())
+
+
+def test_compute_attribution_graph_impl_builds_custom_target_from_concept_direction() -> None:
+    graph = _make_graph()
+    module = _FakeModule(graph=graph)
+    analysis_batch = AnalysisBatch(
+        prompts=[graph.input_string],
+        concept_direction=torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32),
+        concept_label="Concept: Capitals - States",
+        concept_group_a_token_ids=[0, 3],
+        concept_direction_mode="paired_rejection",
+    )
+
+    captured: dict[str, object] = {}
+
+    def _capture_generate(prompt: str, **kwargs) -> Graph:
+        captured["prompt"] = prompt
+        captured.update(kwargs)
+        return graph
+
+    module.generate_attribution_graph = _capture_generate  # type: ignore[method-assign]
+
+    result = compute_attribution_graph_impl(module, analysis_batch, batch=None, batch_idx=0)
+
+    targets = captured["attribution_targets"]
+    assert isinstance(targets, list)
+    assert len(targets) == 1
+    assert isinstance(targets[0], CustomTarget)
+    assert targets[0].token_str == "Concept: Capitals - States"
+    assert torch.allclose(targets[0].vec, torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32))
+    assert json.loads(result.graph_metadata)["concept_label"] == "Concept: Capitals - States"
+
+
+def test_compute_attribution_graph_impl_filters_downstream_pipeline_kwargs() -> None:
+    graph = _make_graph()
+    module = _FakeModule(graph=graph)
+    analysis_batch = AnalysisBatch(prompts=[graph.input_string])
+
+    captured: dict[str, object] = {}
+
+    def _capture_generate(prompt: str, **kwargs) -> Graph:
+        captured["prompt"] = prompt
+        captured["kwargs"] = dict(kwargs)
+        return graph
+
+    module.generate_attribution_graph = _capture_generate  # type: ignore[method-assign]
+
+    compute_attribution_graph_impl(
+        module,
+        analysis_batch,
+        batch=None,
+        batch_idx=0,
+        top_n=10,
+        intervention_scale_factor=2.0,
+        max_feature_nodes=5,
+        verbose=True,
+    )
+
+    assert captured["prompt"] == graph.input_string
+    assert captured["kwargs"] == {"max_feature_nodes": 5, "verbose": True}
+
+
+def test_graph_prune_impl_round_trips_serialized_graph() -> None:
+    graph = _make_graph()
+    analysis_batch = _graph_batch_from_graph(graph)
+    module = _FakeModule(graph=graph)
+
+    result = graph_prune_impl(module, analysis_batch, batch=None, batch_idx=0, node_threshold=0.4, edge_threshold=0.4)
+    restored_graph = _rehydrate_graph(result)
+
+    assert restored_graph.adjacency_matrix.shape[0] <= graph.adjacency_matrix.shape[0]
+    assert len(restored_graph.selected_features) <= len(graph.selected_features)
+    assert result.graph_metadata is not None
+
+
+def test_extract_top_features_impl_prefers_node_influence_scores() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=torch.tensor([[0, 0, 10], [1, 1, 13]], dtype=torch.long),
+        activation_values=torch.tensor([0.25, 0.75], dtype=torch.float32),
+        node_influence_scores=torch.tensor([0.9, 0.1], dtype=torch.float32),
+    )
+
+    result = extract_top_features_impl(module, analysis_batch, batch=None, batch_idx=0, top_n=1)
+
+    assert torch.equal(result.top_feature_ids, torch.tensor([[0, 0, 10]], dtype=torch.long))
+    assert torch.allclose(result.top_feature_scores, torch.tensor([0.9], dtype=torch.float32))
+
+
+def test_extract_top_features_impl_preserves_activation_values_for_selected_rows() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=torch.tensor([[0, 0, 10], [1, 1, 13], [2, 2, 21]], dtype=torch.long),
+        selected_features=torch.tensor([0, 2], dtype=torch.long),
+        activation_values=torch.tensor([0.25, 0.75], dtype=torch.float32),
+        node_influence_scores=torch.tensor([0.1, 0.9], dtype=torch.float32),
+    )
+
+    result = extract_top_features_impl(module, analysis_batch, batch=None, batch_idx=0, top_n=1)
+
+    assert torch.equal(result.top_feature_ids, torch.tensor([[2, 2, 21]], dtype=torch.long))
+    assert torch.allclose(result.top_feature_scores, torch.tensor([0.9], dtype=torch.float32))
+    assert torch.allclose(result.top_feature_activation_values, torch.tensor([0.75], dtype=torch.float32))
+
+
+def test_graph_node_influence_impl_returns_feature_rows() -> None:
+    graph = _make_graph()
+    analysis_batch = _graph_batch_from_graph(graph)
+    module = _FakeModule(graph=graph)
+
+    result = graph_node_influence_impl(module, analysis_batch, batch=None, batch_idx=0)
+
+    assert result.node_feature_ids.shape == (2, 3)
+    assert result.node_influence_scores.shape == (2,)
+    assert result.node_signed_influence_scores.shape == (2,)
+    assert torch.equal(result.node_feature_ids, graph.active_features.index_select(0, graph.selected_features))
+
+
+def test_graph_node_influence_impl_preserves_signed_feature_scores() -> None:
+    graph = _make_signed_graph()
+    analysis_batch = _graph_batch_from_graph(graph)
+    module = _FakeModule(graph=graph)
+
+    result = graph_node_influence_impl(module, analysis_batch, batch=None, batch_idx=0)
+
+    assert result.node_signed_influence_scores[0] > 0
+    assert result.node_signed_influence_scores[1] < 0
+
+
+def test_graph_fields_round_trip_through_analysis_store(tmp_path) -> None:
+    graph = _make_graph()
+    decomposed = _graph_batch_from_graph(graph)
+    module = _FakeModule(graph=graph)
+    dataset = Dataset.from_dict(
+        {
+            "input_string": [decomposed.input_string],
+            "adjacency_matrix": [decomposed.adjacency_matrix.tolist()],
+            "active_features": [decomposed.active_features.tolist()],
+            "selected_features": [decomposed.selected_features.tolist()],
+            "activation_values": [decomposed.activation_values.tolist()],
+            "logit_target_ids": [decomposed.logit_target_ids.tolist()],
+            "logit_target_tokens": [decomposed.logit_target_tokens],
+            "logit_probabilities": [decomposed.logit_probabilities.tolist()],
+            "input_tokens": [decomposed.input_tokens.tolist()],
+            "graph_cfg_json": [decomposed.graph_cfg_json],
+            "graph_scan_json": [decomposed.graph_scan_json],
+            "graph_vocab_size": [decomposed.graph_vocab_size],
+            "graph_metadata": [decomposed.graph_metadata],
+        },
+        features=schema_to_features(module, schema=DISPATCHER.get_op("compute_attribution_graph").output_schema),
+    )
+    save_path = tmp_path / "graph_store"
+    store = AnalysisStore(
+        dataset=dataset,
+        op_output_dataset_path=str(save_path),
+    )
+    store.save_to_disk(str(save_path))
+    reloaded = AnalysisStore(
+        dataset=load_from_disk(str(save_path)),
+        it_format_kwargs={"analysis_backend": DEFAULT_CT_ANALYSIS_BACKEND},
+    )
+    reloaded_row = reloaded[0]
+    assert isinstance(reloaded_row["attribution_graph"], Graph)
+    restored_graph = reloaded_row["attribution_graph"]
+
+    assert torch.equal(restored_graph.adjacency_matrix, graph.adjacency_matrix)
+    assert torch.equal(restored_graph.active_features, graph.active_features)
+    assert torch.equal(restored_graph.logit_token_ids.cpu(), graph.logit_token_ids.cpu())
+    assert [target.token_str for target in restored_graph.logit_targets] == [
+        target.token_str for target in graph.logit_targets
+    ]
+
+
+def test_compute_attribution_graph_impl_resolves_virtual_logit_target_ids() -> None:
+    """Virtual IDs from CustomTarget (>= vocab_size) are resolved to real concept group token IDs."""
+    vocab_size = 32
+    concept_group_a_ids = [0, 3]
+    concept_group_b_ids = [1]
+
+    cfg = UnifiedConfig(
+        n_layers=2,
+        d_model=4,
+        d_head=2,
+        n_heads=2,
+        d_mlp=8,
+        d_vocab=vocab_size,
+        tokenizer_name="fake-tokenizer",
+        model_name="fake-model",
+        original_architecture="FakeForCausalLM",
+    )
+    # Build a graph whose logit_targets use virtual IDs (>= vocab_size), mimicking CustomTarget output
+    graph = Graph(
+        input_string="Paris Austin",
+        input_tokens=torch.tensor([0, 3], dtype=torch.long),
+        active_features=torch.tensor([[0, 0, 10], [1, 0, 12]], dtype=torch.long),
+        adjacency_matrix=torch.eye(6, dtype=torch.float32),
+        cfg=cfg,
+        selected_features=torch.tensor([0], dtype=torch.long),
+        activation_values=torch.tensor([0.5], dtype=torch.float32),
+        logit_targets=[
+            LogitTarget("concept_a", vocab_size + 0),
+            LogitTarget("concept_b", vocab_size + 1),
+            LogitTarget("concept_c", vocab_size + 2),
+        ],
+        logit_probabilities=torch.tensor([0.5, 0.3, 0.2], dtype=torch.float32),
+        scan="gemma",
+        vocab_size=vocab_size,
+    )
+    # Verify the graph indeed produces virtual IDs
+    assert (graph.logit_token_ids >= vocab_size).all()
+
+    module = _FakeModule(graph=graph)
+    analysis_batch = AnalysisBatch(
+        prompts=[graph.input_string],
+        concept_direction=torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32),
+        concept_label="test concept",
+        concept_group_a_token_ids=concept_group_a_ids,
+        concept_group_b_token_ids=concept_group_b_ids,
+    )
+
+    result = compute_attribution_graph_impl(module, analysis_batch, batch=None, batch_idx=0)
+
+    # Virtual IDs should have been replaced with real concept group token IDs
+    expected_ids = torch.tensor(concept_group_a_ids + concept_group_b_ids, dtype=torch.long)
+    assert torch.equal(result.logit_target_ids, expected_ids)
+
+
+def test_extract_top_features_impl_uses_selected_feature_mapping() -> None:
+    graph = _make_graph()
+    module = _FakeModule(graph=graph)
+    analysis_batch = AnalysisBatch(
+        active_features=graph.active_features,
+        selected_features=graph.selected_features,
+        node_influence_scores=torch.tensor([0.9, 0.1], dtype=torch.float32),
+    )
+
+    result = extract_top_features_impl(module, analysis_batch, batch=None, batch_idx=0, top_n=1)
+
+    expected = graph.active_features.index_select(0, torch.tensor([0], dtype=torch.long))
+    assert torch.equal(result.top_feature_ids, expected)
+
+
+# ---------------------------------------------------------------------------
+# FeatureSelectionSpec / apply_feature_selection_filter tests
+# ---------------------------------------------------------------------------
+
+# Shared fixture: 6 rows over 3 layers, 2 positions, diverse feature IDs.
+_FEATURES = torch.tensor(
+    [
+        [0, 0, 100],
+        [0, 1, 101],
+        [1, 0, 200],
+        [1, 1, 201],
+        [2, 0, 300],
+        [2, 1, 301],
+    ],
+    dtype=torch.long,
+)
+
+
+def test_feature_selection_filter_by_layers() -> None:
+    mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec(layers=[0, 2]))
+    assert mask.tolist() == [True, True, False, False, True, True]
+
+
+def test_feature_selection_filter_by_positions() -> None:
+    mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec(positions=[1]))
+    assert mask.tolist() == [False, True, False, True, False, True]
+
+
+def test_feature_selection_filter_by_feature_ids() -> None:
+    mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec(feature_ids=[200, 301]))
+    assert mask.tolist() == [False, False, True, False, False, True]
+
+
+def test_feature_selection_filter_by_triples() -> None:
+    mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec(triples=[(1, 0, 200), (2, 1, 301)]))
+    assert mask.tolist() == [False, False, True, False, False, True]
+
+
+def test_feature_selection_filter_by_layer_feature_pairs() -> None:
+    mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec(layer_feature_pairs=[(1, 200), (2, 301)]))
+    assert mask.tolist() == [False, False, True, False, False, True]
+
+
+def test_feature_selection_filter_or_semantics() -> None:
+    spec = FeatureSelectionSpec(layers=[0], positions=[1])
+    mask = apply_feature_selection_filter(_FEATURES, spec)
+    # layer==0 (rows 0,1) OR position==1 (rows 1,3,5) → union: 0,1,3,5
+    assert mask.tolist() == [True, True, False, True, False, True]
+
+
+def test_feature_selection_filter_layer_slice() -> None:
+    spec = FeatureSelectionSpec(layer_slice=slice(0, 2))
+    mask = apply_feature_selection_filter(_FEATURES, spec)
+    # unique layers sorted: [0, 1, 2]; slice(0,2) → [0, 1]
+    assert mask.tolist() == [True, True, True, True, False, False]
+
+
+def test_feature_selection_filter_position_slice() -> None:
+    spec = FeatureSelectionSpec(position_slice=slice(1, None))
+    mask = apply_feature_selection_filter(_FEATURES, spec)
+    # numeric range: positions >= 1
+    assert mask.tolist() == [False, True, False, True, False, True]
+
+
+def test_feature_selection_filter_layer_slice_uses_numeric_bounds() -> None:
+    features = torch.tensor(
+        [
+            [9, 0, 100],
+            [10, 0, 101],
+            [11, 1, 102],
+        ],
+        dtype=torch.long,
+    )
+
+    mask = apply_feature_selection_filter(features, FeatureSelectionSpec(layer_slice=slice(10, None)))
+
+    assert mask.tolist() == [False, True, True]
+
+
+def test_feature_selection_filter_position_slice_uses_numeric_bounds() -> None:
+    features = torch.tensor(
+        [
+            [0, 5, 100],
+            [1, 10, 101],
+            [2, 15, 102],
+        ],
+        dtype=torch.long,
+    )
+
+    mask = apply_feature_selection_filter(features, FeatureSelectionSpec(position_slice=slice(10, None)))
+
+    assert mask.tolist() == [False, True, True]
+
+
+def test_feature_selection_empty_features() -> None:
+    empty = torch.empty((0, 3), dtype=torch.long)
+    mask = apply_feature_selection_filter(empty, FeatureSelectionSpec(layers=[0]))
+    assert mask.numel() == 0
+
+
+def test_feature_selection_no_criteria_matches_nothing() -> None:
+    mask = apply_feature_selection_filter(_FEATURES, FeatureSelectionSpec())
+    assert not mask.any()
+
+
+def test_feature_score_sign_filter_selects_promoting_and_opposing_scores() -> None:
+    scores = torch.tensor([0.8, -0.7, 0.0], dtype=torch.float32)
+
+    assert apply_feature_score_sign_filter(scores, "positive").tolist() == [True, False, False]
+    assert apply_feature_score_sign_filter(scores, "negative").tolist() == [False, True, False]
+    assert apply_feature_score_sign_filter(scores, "any").tolist() == [True, True, True]
+
+
+def test_extract_top_features_can_filter_promoting_signed_scores() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=_FEATURES[:3],
+        node_influence_scores=torch.tensor([0.9, 0.8, 0.7], dtype=torch.float32),
+        node_signed_influence_scores=torch.tensor([-0.9, 0.8, 0.4], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(score_source="node_signed_influence_scores", score_sign="positive")
+
+    result = extract_top_features_impl(module, analysis_batch, batch=None, batch_idx=0, top_n=1, feature_selection=spec)
+
+    assert torch.equal(result.top_feature_ids, torch.tensor([[0, 1, 101]], dtype=torch.long))
+    assert torch.allclose(result.top_feature_scores, torch.tensor([0.8], dtype=torch.float32))
+
+
+def test_extract_top_features_can_rank_opposing_signed_scores_by_magnitude() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=_FEATURES[:3],
+        node_signed_influence_scores=torch.tensor([-0.9, 0.8, -0.4], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(
+        score_source="node_signed_influence_scores",
+        score_sign="negative",
+        rank_by_abs=True,
+    )
+
+    result = extract_top_features_impl(module, analysis_batch, batch=None, batch_idx=0, top_n=1, feature_selection=spec)
+
+    assert torch.equal(result.top_feature_ids, torch.tensor([[0, 0, 100]], dtype=torch.long))
+    assert torch.allclose(result.top_feature_scores, torch.tensor([-0.9], dtype=torch.float32))
+
+
+def test_extract_top_features_with_feature_selection() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=_FEATURES,
+        activation_values=torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5, 0.6], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(layers=[1])  # keeps rows 2,3 (layer==1)
+    result = extract_top_features_impl(module, analysis_batch, batch=None, batch_idx=0, top_n=1, feature_selection=spec)
+    # Row 3 (layer=1, pos=1, fid=201) has score 0.4 > row 2 score 0.3
+    assert torch.equal(result.top_feature_ids, torch.tensor([[1, 1, 201]], dtype=torch.long))
+    assert torch.allclose(result.top_feature_scores, torch.tensor([0.4], dtype=torch.float32))
+
+
+def test_extract_top_features_impl_synthesizes_missing_feature_rows_with_same_layer_baseline() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=torch.tensor([[1, 0, 10], [1, 1, 11], [2, 0, 21]], dtype=torch.long),
+        activation_values=torch.tensor([0.2, 0.4, 0.9], dtype=torch.float32),
+        node_influence_scores=torch.tensor([0.5, 0.3, 0.1], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(layer_feature_pairs=[(1, 99)])
+
+    result = extract_top_features_impl(
+        module,
+        analysis_batch,
+        batch=None,
+        batch_idx=0,
+        top_n=10,
+        feature_selection=spec,
+    )
+
+    assert {tuple(row) for row in result.top_feature_ids.tolist()} == {(1, 0, 99), (1, 1, 99)}
+    assert torch.allclose(result.top_feature_scores, torch.tensor([0.4, 0.4], dtype=torch.float32))
+    assert torch.allclose(result.top_feature_activation_values, torch.tensor([0.3, 0.3], dtype=torch.float32))
+
+
+def test_extract_top_features_impl_synthesizes_missing_feature_rows_with_global_activation_baseline() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=torch.tensor([[0, 0, 10], [2, 1, 21]], dtype=torch.long),
+        activation_values=torch.tensor([0.2, 0.8], dtype=torch.float32),
+        node_influence_scores=torch.tensor([0.5, 0.3], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(layer_feature_pairs=[(1, 99)])
+
+    result = extract_top_features_impl(
+        module,
+        analysis_batch,
+        batch=None,
+        batch_idx=0,
+        top_n=10,
+        feature_selection=spec,
+    )
+
+    assert {tuple(row) for row in result.top_feature_ids.tolist()} == {(1, 0, 99), (1, 1, 99)}
+    assert torch.allclose(result.top_feature_scores, torch.tensor([0.4, 0.4], dtype=torch.float32))
+    assert torch.allclose(result.top_feature_activation_values, torch.tensor([0.5, 0.5], dtype=torch.float32))
+
+
+def test_extract_top_features_impl_applies_activation_overrides_to_matching_rows() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=torch.tensor([[1, 0, 10], [1, 1, 11], [2, 0, 21]], dtype=torch.long),
+        activation_values=torch.tensor([0.2, 0.4, 0.9], dtype=torch.float32),
+        node_influence_scores=torch.tensor([0.5, 0.3, 0.1], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(
+        layer_feature_pairs=[(1, 99)],
+        activation_overrides={(1, 99): 7.5},
+    )
+
+    result = extract_top_features_impl(
+        module,
+        analysis_batch,
+        batch=None,
+        batch_idx=0,
+        top_n=10,
+        feature_selection=spec,
+    )
+
+    assert {tuple(row) for row in result.top_feature_ids.tolist()} == {(1, 0, 99), (1, 1, 99)}
+    assert torch.allclose(result.top_feature_activation_values, torch.tensor([7.5, 7.5], dtype=torch.float32))
+
+
+def test_extract_top_features_impl_preserves_requested_feature_pairs_across_top_n() -> None:
+    module = _FakeModule()
+    analysis_batch = AnalysisBatch(
+        active_features=torch.tensor([[1, 0, 10], [1, 1, 11], [2, 0, 21], [2, 1, 21]], dtype=torch.long),
+        activation_values=torch.tensor([0.1, 0.2, 0.3, 0.4], dtype=torch.float32),
+        node_influence_scores=torch.tensor([0.05, 0.04, 0.9, 0.8], dtype=torch.float32),
+    )
+    spec = FeatureSelectionSpec(layer_feature_pairs=[(1, 99), (2, 21)])
+
+    result = extract_top_features_impl(module, analysis_batch, batch=None, batch_idx=0, top_n=2, feature_selection=spec)
+
+    selected_pairs = {(int(row[0]), int(row[2])) for row in result.top_feature_ids.tolist()}
+    assert selected_pairs == {(1, 99), (2, 21)}
+    assert (2, 0, 21) in {tuple(row) for row in result.top_feature_ids.tolist()}
+    assert any(row[0] == 1 and row[2] == 99 for row in result.top_feature_ids.tolist())
+
+
+def test_expand_intervention_patterns_supports_hook_in_alias() -> None:
+    available_hook_map = {
+        "blocks.0.hook_resid_pre": "blocks.0.hook_resid_pre",
+        "unembed.hook_in": "unembed.hook_in",
+    }
+
+    expanded = expand_intervention_patterns(["blocks.0.hook_in"], available_hook_map)
+
+    assert expanded == {"blocks.0.hook_in": ["blocks.0.hook_resid_pre"]}
+
+
+def test_expand_intervention_patterns_supports_hook_out_alias() -> None:
+    available_hook_map = {
+        "blocks.0.hook_resid_post": "blocks.0.hook_resid_post",
+    }
+
+    expanded = expand_intervention_patterns(["blocks.0.hook_out"], available_hook_map)
+
+    assert expanded == {"blocks.0.hook_out": ["blocks.0.hook_resid_post"]}
+
+
+def test_expand_intervention_patterns_supports_legacy_hook_out_against_canonical_map() -> None:
+    available_hook_map = {
+        "blocks.0.hook_out": "blocks.0.hook_out",
+    }
+
+    expanded = expand_intervention_patterns(["blocks.0.hook_resid_post"], available_hook_map)
+
+    assert expanded == {"blocks.0.hook_resid_post": ["blocks.0.hook_out"]}
+
+
+def test_expand_intervention_patterns_supports_attn_o_hook_in_alias() -> None:
+    available_hook_map = {
+        "blocks.0.attn.hook_z": "blocks.0.attn.hook_z",
+    }
+
+    expanded = expand_intervention_patterns(["blocks.0.attn.o.hook_in"], available_hook_map)
+
+    assert expanded == {"blocks.0.attn.o.hook_in": ["blocks.0.attn.hook_z"]}
+
+
+def test_expand_intervention_patterns_supports_hook_in_alias_wildcard() -> None:
+    available_hook_map = {
+        "blocks.0.hook_resid_pre": "blocks.0.hook_resid_pre",
+        "blocks.1.hook_resid_pre": "blocks.1.hook_resid_pre",
+    }
+
+    expanded = expand_intervention_patterns(["blocks.*.hook_in"], available_hook_map)
+
+    assert expanded == {
+        "blocks.*.hook_in": [
+            "blocks.0.hook_resid_pre",
+            "blocks.1.hook_resid_pre",
+        ]
+    }

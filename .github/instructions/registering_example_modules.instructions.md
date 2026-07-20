@@ -315,6 +315,7 @@ If tests require `@RunIf(standalone=True)` despite registry entry:
 - `tests/conftest.py` - `FIXTURE_CFGS` dictionary
 - `tests/core/cfg_aliases.py` - Test configuration classes
 - `.github/instructions/fixture_usage.instructions.md` - Fixture usage guide
+- `docs/framework_level_adapters.md` - Framework-level adapter comparison (core vs Lightning)
 
 ## Dual-Backend Analysis Registration
 
@@ -353,3 +354,12 @@ class CoreSLNNsightGPT2LogitDiffsSAE(BaseCfg):
 ```
 
 Both resolve to the same `gpt2.rte` registry entry but use different adapter stacks. The registry entry must list both `[core, sae_lens, transformer_lens]` and `[core, sae_lens, nnsight]` in `adapter_combinations`.
+
+## Module Definition Guidelines
+
+When creating `module_cls` classes for registry entries:
+
+- **No framework-specific hooks** — Module definitions should not implement `on_test_epoch_end` or accumulation logic. Use `ClassificationMixin` for metrics.
+- **Use `self.log()` / `self.log_dict()`** — These route to `CoreHelperAttributes` (core) or `LightningModule` (Lightning) automatically via MRO.
+- **`ClassificationMixin.setup()`** handles `classification_mapping` init — no need to duplicate in module `setup()`.
+- See `docs/framework_level_adapters.md` for the full core vs Lightning comparison.

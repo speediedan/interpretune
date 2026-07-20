@@ -76,9 +76,9 @@ _create_builder_config (/home/speediedan/.venvs/it_latest/lib/python3.12/site-pa
 __init__ (/home/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/builder.py:343)
 __init__ (/home/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/io/generator.py:29)
 from_generator (/home/speediedan/.venvs/it_latest/lib/python3.12/site-packages/datasets/arrow_dataset.py:1178)
-save_reload_results_dataset (/home/speediedan/repos/interpretune/tests/orchestration.py:264)
-_op_serialization_fixt (/home/speediedan/repos/interpretune/tests/core/conftest.py:86)
-test_op_serialization (/home/speediedan/repos/interpretune/tests/core/test_analysis_ops_definitions.py:1178)
+save_reload_results_dataset (tests/orchestration.py:264)
+_op_serialization_fixt (tests/core/conftest.py:86)
+test_op_serialization (tests/core/test_analysis_ops_definitions.py:1178)
 ```
 
 Concrete hashing example (using `test_op_serialization[model_forward]` from `tests/core/test_analysis_ops_definitions.py`):

@@ -1,0 +1,26 @@
+EXTENDS: base_oqi_reasoning_oh.yaml
+
+EXPERIMENT_NAME: gemma3_4b_it_local_oqi_reasoning_oh_2975_15708
+
+MODEL:
+  family: gemma3
+  variant: 4b_it
+
+ANALYSIS:
+  constrained_feature_selection:
+    - gemma-3-4b-it/22-gemmascope-2-transcoder-16k/2975  # Ohio and Ohio cities mostly
+    - gemma-3-4b-it/25-gemmascope-2-transcoder-16k/15708 # Ohio State
+  concept_direction_mode: paired_rejection
+  direct_projection:
+    interventions:
+      blocks.0.hook_in:
+        mode: project
+        scale_factor: 10.0
+        use_intervention_tensor_as_basis: true
+  store_latent_extraction_mode: context_enhanced
+  context_enhanced_scale: 1.0
+  debug_pipeline_state_artifacts: true
+  debug_pipeline_state_artifact_name: gemma3_4b_it_ohio_fs_2975_15708_notebook_debug
+
+SESSION:
+  batch_size: 64

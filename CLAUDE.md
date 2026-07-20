@@ -6,9 +6,15 @@ Interpretune is a flexible framework for collaborative AI world model analysis a
 
 **Stack:** Python 3.10+ (CI on 3.13), PyTorch 2.7.1+, transformer_lens >= 3.0.0, sae_lens, datasets, jsonargparse
 
+## Tooling Reliability
+
+- Pylance-backed tooling can hang or time out on longer operations. If a Pylance request stalls, switch to direct file inspection, search, or terminal-based validation rather than waiting on the language server indefinitely.
+
 ## Build & Dev Environment
 
 Uses `uv` for dependency management. For Venvs, use `/mnt/cache/$USER/.venvs/` (preferred for hardlink perf), fall back to `~/.venvs/` if that path isn't available.
+
+Place the venv on the same filesystem as the UV cache when possible. `--venv-dir=/mnt/cache/$USER/.venvs` is the preferred build-script pattern because it avoids UV hardlink warnings and matches the standalone-process wrappers used in this repo.
 
 ### Common Environment Variables
 
@@ -37,6 +43,10 @@ source ${IT_VENV_BASE:-~/.venvs}/${IT_TARGET_VENV}/bin/activate
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest \
   --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1"
 ```
+
+### Git Dependency Caching
+
+When a from-source package brings in git-pinned dependencies, UV caches those resolved commits and later editable installs should respect them. Interpretune relies on the `override-dependencies` configuration in `pyproject.toml` so editable installs can coexist with those pinned git requirements instead of fighting them.
 
 ## Testing
 
@@ -111,20 +121,39 @@ ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
   --venv-dir=${IT_VENV_BASE} \
   --no-rebuild-base
 
-# Preferred for debugging: use --allow-failures to continue past failures
+# Preferred for debugging: use --allow-failures to continue past failures and --no-reruns to expedite debugging
 ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
   ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
   --repo-home=${IT_REPO_DIR} \
   --target-env-name=${IT_TARGET_VENV} \
   --venv-dir=${IT_VENV_BASE} \
   --no-rebuild-base \
-  --allow-failures
+  --allow-failures \
+  --no-reruns
 
 # Monitor coverage progress
 tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
 
 # Note: Coverage collection takes approximately 50 minutes
 ```
+
+If the coverage harness reports a conflicting pytest process, check whether it is still active before starting a second run. Old hung collectors are usually safe to kill with `pkill -f "pytest.*--collect-only"`; recently started runs should usually be allowed to finish.
+
+The local coverage harness now mirrors the Azure GPU pipeline's phase split:
+- `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''`
+- `Testing: standard gpu cuda-marked` reruns only regular CUDA / bf16-marked tests with `IT_RUN_CUDA_TESTS=1`
+- `Testing: standalone gpu` and `Testing: CI Profiling` remain separate special-test phases
+
+When debugging fixture or CUDA memory growth locally, add `--resource-debug` to `gen_it_coverage.sh` or
+`special_tests.sh`. That exports the canonical `IT_RESOURCE_DEBUG=1`
+flags used by `tests/conftest.py`, `tests/analysis_resource_utils.py`, and the coverage harness summary
+parser for per-test / per-fixture / per-GPU logging.
+
+If semantic concept-direction intervention parity drifts unexpectedly, use the normal gate in
+`tests/core/test_analysis_backend_parity.py` first. For deeper upstream sanity checking, run
+`tests/upstream_parity/extract_upstream_ct_semantic_reference.py` and consult `tests/upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md`
+for the current three-way upstream/native/op reference snapshot. Keep this as a manual debugging
+tool rather than part of the regular test suite.
 
 ## Linting & Code Quality
 
@@ -165,6 +194,7 @@ src/interpretune/           # Main package (version from src/__about__.py)
 src/it_examples/            # Example experiments, configs, notebooks
 tests/                      # 744 test functions
 ├── core/                   # Core tests
+├── benchmarks/             # End-to-end experiment benchmarks (see tests/benchmarks/README.md)
 ├── *_parity/               # Research parity tests
 └── examples/               # Example-based tests
 ```
@@ -174,6 +204,12 @@ tests/                      # 744 test functions
 - **Lazy imports:** Heavy deps (transformer_lens, lightning, neuronpedia) loaded lazily via `_light_register.py` and PEP 562 `__getattr__`. Import-time optimization is critical.
 - **Protocol-based:** ITModuleProtocol, ITDataModuleProtocol, AnalysisOpProtocol
 - **Composition:** `CompositionRegistry` manages adapter combinations (core, lightning, transformer_lens, sae_lens, circuit_tracer, nnsight)
+- **Backend-agnostic analysis ops:** Keep backend-specific imports out of `src/interpretune/analysis/ops/definitions.py`. If an op needs backend-specific behavior, extend the `AnalysisBackend` seam rather than importing backend code directly into the op definition.
+- **Framework agnosticism:** Module definitions (e.g. `RTEBoolqSteps`) should NOT contain framework-specific hooks or accumulation logic. Use `ClassificationMixin` for prediction accumulation and metric reporting. Hook dispatch via `_call_itmodule_hook(..., optional=True)` handles missing hooks gracefully.
+- **Framework-agnostic logging:** `CoreHelperAttributes` provides real `log()` / `log_dict()` methods that accumulate metrics in `_logged_metrics`. The core runner prints averaged metrics at test epoch end. Lightning modules use `LightningModule.log()` / `log_dict()` instead. User code calls `self.log()` / `self.log_dict()` regardless of context.
+- **ClassificationMixin.setup():** Cooperatively calls `super().setup()` then initializes `classification_mapping` if configured. `collect_answers()` computes metrics and calls `self.log_dict()` — no custom accumulation logic needed.
+- **Generation config:** Use `HFGenerationConfig` (applies params to `model.generation_config`) for HF-backed models. Use `CoreGenerationConfig` (passes params as `generate_kwargs`) only for `HookedTransformer` models. The NNsight adapter applies `HFGenerationConfig.model_config` to the underlying HF model via `_apply_generation_config()`.
+- **User-facing op calls:** In notebooks, examples, and one-off experiment scripts, prefer `import interpretune as it` plus direct top-level op wrappers such as `it.concept_direction(...)` or `it.compute_attribution_graph(...)`. Ensure `interpretune.analysis` has been imported once so those wrappers are registered. Avoid `DISPATCHER.get_op(...)` outside dispatcher-internals work.
 - **Class metadata:** Core classes use `_it_cls_metadata` (ITClassMetadata frozen dataclass)
 - **Repr helpers:** `state_to_dict()`, `state_to_summary()`, `state_repr()` via `_obj_summ_map`
 - **Type stubs:** `.pyi` files auto-generated by `scripts/generate_op_stubs.py` — must stay in sync
@@ -190,6 +226,14 @@ tests/                      # 744 test functions
 - `ITLensFromPretrainedConfig` (from_pretrained path) | `ITLensCustomConfig` (config-based, HookedTransformer only)
 - TL side: `TransformerLensConfig` → `HookedTransformerConfig` | `TransformerBridgeConfig`
 - `_capture_hyperparameters()` serializes: hf_preconversion_config, tl_model_cfg, it_tl_cfg
+
+Serialization details matter here:
+
+- `hf_preconversion_config` is the original HF `PretrainedConfig`
+- `tl_model_cfg` is the actual TL config from `self.model.cfg`
+- `it_tl_cfg` is the Interpretune-specific TL config from `self.it_cfg.tl_cfg`
+
+`ITLensCustomConfig` with `use_bridge=True` is ignored; config-based initialization remains HookedTransformer-only because TransformerBridge requires an HF model instance. See `docs/config_hierarchy_analysis.md` when working on this area.
 
 ## CI/CD
 
@@ -219,12 +263,21 @@ tests/                      # 744 test functions
 - **Torch prerelease:** Configured via `requirements/ci/torch-pre.txt` (version, CUDA target, channel)
 - **Dependencies:** Locked in `requirements/ci/requirements.txt`; regenerate with `./requirements/utils/lock_ci_requirements.sh`
 
+## Pre-MVP Backwards Compatibility
+
+Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeline composition may change without deprecation notices. Do not add backwards-compatibility shims (fallback code paths, silent coercions, etc.) to preserve caller assumptions that predate the current design. If an op's contract changes, update all in-tree callers and tests to match the new contract directly.
+
 ## Commit & PR Requirements
 
+- Before each commit, run the basic local test command (`python -m pytest src/interpretune tests -v`) plus pre-commit. If the session is still blocked after reasonable debugging effort, an intermediate checkpoint commit is acceptable as long as the current blocker is documented.
 - All tests passing (`python -m pytest src/interpretune tests -v`)
 - All pre-commit hooks passing
 - CPU coverage >= existing coverage
 - Docstrings for all public functions/classes
+- `tests/benchmarks/benchmark_registry.yaml` updates should be committed in isolation.
+- For benchmark refreshes, commit tooling/docs changes first, then run `python tests/benchmarks/run_benchmarks.py --all --update-registry` from a clean tree so the registry diff lands alone. Use `--force-update-registry` only when you intentionally need to bypass the clean-tree check.
+- `salient_pkg_versions` should retain best-effort git provenance for salient dependencies: editable installs should include live checkout metadata (`fork`, `branch`, `sha`), while git-backed non-editable installs should derive the source fork and pinned commit from `direct_url.json`.
+- If benchmark tooling, the environment collector, or benchmark docs change, commit that work first. Only then run `python tests/benchmarks/run_benchmarks.py --all --update-registry` from a clean tree and commit the resulting registry-only diff.
 - Unit tests for new functionality
 
 ## Notebook Publishing

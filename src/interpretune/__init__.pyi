@@ -67,6 +67,170 @@ def ablation_attribution(
     """
     ...
 
+def compute_attribution_graph(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Generate an attribution graph with circuit-tracer
+
+    Input Schema:
+        concept_direction (float32)
+
+    Output Schema:
+        input_string (string)
+        adjacency_matrix (float32)
+        active_features (int64)
+        selected_features (int64)
+        activation_values (float32)
+        logit_target_ids (int64)
+        logit_target_tokens (string)
+        logit_probabilities (float32)
+        input_tokens (int64)
+        graph_cfg_json (string)
+        graph_scan_json (string)
+        graph_vocab_size (int64)
+        graph_metadata (string)
+    """
+    ...
+
+ct_graph = compute_attribution_graph
+
+def concept_direction(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Aggregate latent concept examples into a normalized concept direction vector
+
+    Input Schema:
+        concept_latent_state (float32)
+        concept_group_id (int64)
+        concept_group_name (string)
+        concept_example_weight (float32)
+        concept_group_a_name (string)
+        concept_group_b_name (string)
+        concept_label (string)
+        concept_group_a (string)
+        concept_group_b (string)
+        concept_direction_mode (string)
+
+    Output Schema:
+        concept_direction (float32)
+        concept_label (string)
+        concept_group_a_token_ids (int64)
+        concept_group_b_token_ids (int64)
+        concept_group_a_name (string)
+        concept_group_b_name (string)
+        concept_direction_mode (string)
+    """
+    ...
+
+semantic_direction = concept_direction
+
+def extract_concept_latent_examples(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Filter and annotate latent rows for concept-direction aggregation
+
+    Input Schema:
+        concept_latent_state (float32)
+        cache (object)
+        answer_indices (int64)
+        orig_labels (int64)
+        logit_diffs (float32)
+        concept_group_a_label_ids (int64)
+        concept_group_b_label_ids (int64)
+        concept_group_a_name (string)
+        concept_group_b_name (string)
+        concept_cache_key (string)
+        concept_correct_only (int64)
+        concept_weight_by_logit_diff (int64)
+
+    Output Schema:
+        concept_latent_state (float32)
+        concept_group_id (int64)
+        concept_group_name (string)
+        concept_example_logit_diff (float32)
+        concept_example_weight (float32)
+        concept_cache_key (string)
+        concept_group_a_name (string)
+        concept_group_b_name (string)
+    """
+    ...
+
+concept_latent_examples = extract_concept_latent_examples
+
+def extract_concept_latent_state(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Extract per-example latent rows from the configured cache key
+
+    Input Schema:
+        cache (object)
+        answer_indices (int64)
+        concept_cache_key (string)
+
+    Output Schema:
+        concept_latent_state (float32)
+        concept_cache_key (string)
+    """
+    ...
+
+concept_latent_state_from_cache = extract_concept_latent_state
+
+def extract_top_features(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, top_n: int | None = None, **kwargs
+) -> AnalysisBatch:
+    """Extract top-N influential features from an attribution graph
+
+    Input Schema:
+        active_features (int64)
+        activation_values (float32)
+        node_influence_scores (float32)
+        node_signed_influence_scores (float32)
+        node_logit_diff_gradient_scores (float32)
+
+    Output Schema:
+        top_feature_ids (int64)
+        top_feature_scores (float32)
+        top_feature_activation_values (float32)
+    """
+    ...
+
+ct_top_features = extract_top_features
+
+def feature_intervention_forward(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Run feature interventions and return pre/post intervention outputs
+
+    Input Schema:
+        top_feature_ids (int64)
+        top_feature_scores (float32)
+        top_feature_activation_values (float32)
+        active_features (int64)
+        activation_values (float32)
+        node_influence_scores (float32)
+        node_signed_influence_scores (float32)
+        node_logit_diff_gradient_scores (float32)
+
+    Output Schema:
+        intervention_config (string)
+        intervention_specs_json (string)
+        feature_intervention_dict_json (string)
+        intervention_layers (int64)
+        intervention_positions (int64)
+        intervention_feature_ids (int64)
+        intervention_values (float32)
+        intervention_base_values (float32)
+        intervention_score_values (float32)
+        intervention_scale_factors (float32)
+        pre_intervention_logits (float32)
+        post_intervention_logits (float32)
+        intervention_activation_cache (object)
+        logit_diff (float32)
+    """
+    ...
+
+ct_feature_intervention = feature_intervention_forward
+
 def get_alive_latents(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
@@ -112,6 +276,70 @@ def gradient_attribution(
         prompts (string)
     """
     ...
+
+def graph_node_influence(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Compute node influence scores for an attribution graph
+
+    Input Schema:
+        adjacency_matrix (float32)
+        active_features (int64)
+        selected_features (int64)
+        logit_target_ids (int64)
+        logit_target_tokens (string)
+        logit_probabilities (float32)
+        input_string (string)
+        input_tokens (int64)
+        activation_values (float32)
+        graph_cfg_json (string)
+        graph_scan_json (string)
+        graph_vocab_size (int64)
+
+    Output Schema:
+        node_influence_scores (float32)
+        node_signed_influence_scores (float32)
+        node_feature_ids (int64)
+    """
+    ...
+
+ct_node_influence = graph_node_influence
+
+def graph_prune(module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs) -> AnalysisBatch:
+    """Prune a circuit-tracer attribution graph
+
+    Input Schema:
+        input_string (string)
+        adjacency_matrix (float32)
+        active_features (int64)
+        selected_features (int64)
+        activation_values (float32)
+        logit_target_ids (int64)
+        logit_target_tokens (string)
+        logit_probabilities (float32)
+        input_tokens (int64)
+        graph_cfg_json (string)
+        graph_scan_json (string)
+        graph_vocab_size (int64)
+
+    Output Schema:
+        input_string (string)
+        adjacency_matrix (float32)
+        active_features (int64)
+        selected_features (int64)
+        activation_values (float32)
+        logit_target_ids (int64)
+        logit_target_tokens (string)
+        logit_probabilities (float32)
+        input_tokens (int64)
+        graph_cfg_json (string)
+        graph_scan_json (string)
+        graph_vocab_size (int64)
+        graph_metadata (string)
+    """
+    ...
+
+ct_graph_prune = graph_prune
 
 def labels_to_ids(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding
@@ -206,10 +434,57 @@ def model_ablation(
     """
     ...
 
-def model_cache_forward(
+def model_fwd(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
-    """Model forward pass with cache
+    """Basic model forward pass
+
+    Input Schema:
+        input (int64)
+        answer_indices (int64)
+
+    Output Schema:
+        answer_logits (float32)
+        prompts (string)
+    """
+    ...
+
+model_forward = model_fwd
+
+def model_fwd_intervention(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Apply generalized hook-point interventions and return pre/post intervention logits
+
+    Input Schema:
+        interventions (object)
+        interventions_json (string)
+        intervention_hook_pattern (string)
+        intervention_tensor (float32)
+        intervention_tensors_json (string)
+        intervention_mode (string)
+        intervention_use_intervention_tensor_as_basis (bool)
+        intervention_scale_factor (float32)
+        use_latent_models (bool)
+        concept_direction (float32)
+        concept_cache_key (string)
+        direction_scale_factor (float32)
+        logit_target_ids (int64)
+
+    Output Schema:
+        pre_intervention_logits (float32)
+        post_intervention_logits (float32)
+        logit_diff (float32)
+    """
+    ...
+
+direction_intervention = model_fwd_intervention
+direct_concept_direction_intervention = model_fwd_intervention
+
+def model_fwd_w_cache(
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
+    """Model forward pass with activation caching (no latent model hooks)
 
     Input Schema:
         input (int64)
@@ -221,19 +496,17 @@ def model_cache_forward(
     """
     ...
 
-model_forward_cache = model_cache_forward
-
-def model_forward(
+def model_fwd_w_cache_latent_models(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
-    """Basic model forward pass
+    """Model forward pass with activation caching and latent model (SAE) hooks
 
     Input Schema:
         input (int64)
-        answer_indices (int64)
 
     Output Schema:
         answer_logits (float32)
+        cache (object)
         prompts (string)
     """
     ...
@@ -285,11 +558,41 @@ def sae_correct_acts(
 
 # Composite operations
 
+def attribution_from_concept(
+    module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
+) -> BaseAnalysisBatchProtocol:
+    """Composition of operations:
+    concept_direction.compute_attribution_graph.graph_node_influence.extract_top_features
+
+    Concept direction through graph attribution and top-feature extraction
+    """
+    ...
+
+def intervention_from_concept(
+    module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
+) -> BaseAnalysisBatchProtocol:
+    """Composition of operations:
+    concept_direction.compute_attribution_graph.graph_node_influence.extract_top_features.feature_intervention_forward
+
+    Full analysis-level concept attribution and intervention pipeline
+    """
+    ...
+
+def intervention_from_features(
+    module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
+) -> BaseAnalysisBatchProtocol:
+    """Composition of operations:
+    feature_intervention_forward
+
+    Feature intervention from extracted top features
+    """
+    ...
+
 def logit_diffs_attr_ablation(
     module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
 ) -> BaseAnalysisBatchProtocol:
     """Composition of operations:
-    labels_to_ids.model_cache_forward.logit_diffs_cache.model_ablation.ablation_attribution
+    labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.model_ablation.ablation_attribution
     """
     ...
 
@@ -305,7 +608,7 @@ def logit_diffs_base(
     module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
 ) -> BaseAnalysisBatchProtocol:
     """Composition of operations:
-    labels_to_ids.model_forward.logit_diffs
+    labels_to_ids.model_fwd.logit_diffs
     """
     ...
 
@@ -313,6 +616,6 @@ def logit_diffs_sae(
     module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
 ) -> BaseAnalysisBatchProtocol:
     """Composition of operations:
-    labels_to_ids.model_cache_forward.logit_diffs_cache.sae_correct_acts
+    labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.sae_correct_acts
     """
     ...

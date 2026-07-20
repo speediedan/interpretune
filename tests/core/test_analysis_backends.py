@@ -17,12 +17,23 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from interpretune.analysis.backends import BackendCapability, ModelBackend
+from interpretune.analysis.backends import (
+    AnalysisBackendCapability,
+    BackendCapability,
+    InterventionDict,
+    InterventionSpec,
+    ModelBackend,
+    apply_intervention_to_last_token,
+    build_intervention_dict,
+    expand_intervention_patterns,
+    resolve_interventions,
+)
 from interpretune.analysis.backends.hook_mapping import (
     ArchitectureMapping,
     HookMapping,
     HookNameResolver,
     ResolvedHook,
+    SUBHOOK_SUFFIXES,
 )
 from interpretune.analysis.backends.nnsight import (
     NNsightActivationCacheAdapter,
@@ -125,6 +136,12 @@ class TestHookNameResolver:
         assert base == "hook_mlp_out"
         assert subhook == "hook_sae_error"
 
+    def test_parse_global_hook(self):
+        layer, base, subhook = HookNameResolver.parse_hook_name("unembed.hook_in.hook_sae_input")
+        assert layer == -1
+        assert base == "unembed.hook_in"
+        assert subhook == "hook_sae_input"
+
     def test_parse_invalid_format_raises(self):
         with pytest.raises(ValueError, match="Cannot parse"):
             HookNameResolver.parse_hook_name("not_a_valid_hook")
@@ -145,6 +162,12 @@ class TestHookNameResolver:
         assert path == "transformer.h.0"
         assert io_type == "input"
 
+    def test_resolve_gpt2_canonical_hook_in_alias(self):
+        resolver = HookNameResolver("GPT2LMHeadModel")
+        path, io_type = resolver.resolve("blocks.0.hook_in")
+        assert path == "transformer.h.0"
+        assert io_type == "input"
+
     def test_resolve_gpt2_resid_mid(self):
         resolver = HookNameResolver("GPT2LMHeadModel")
         path, io_type = resolver.resolve("blocks.3.hook_resid_mid")
@@ -154,6 +177,12 @@ class TestHookNameResolver:
     def test_resolve_gpt2_attn_out(self):
         resolver = HookNameResolver("GPT2LMHeadModel")
         path, io_type = resolver.resolve("blocks.2.hook_attn_out")
+        assert path == "transformer.h.2.attn"
+        assert io_type == "output"
+
+    def test_resolve_gpt2_canonical_attn_out_alias(self):
+        resolver = HookNameResolver("GPT2LMHeadModel")
+        path, io_type = resolver.resolve("blocks.2.attn.hook_out")
         assert path == "transformer.h.2.attn"
         assert io_type == "output"
 
@@ -168,6 +197,18 @@ class TestHookNameResolver:
         path, io_type = resolver.resolve("blocks.4.mlp.hook_pre")
         assert path == "transformer.h.4.mlp"
         assert io_type == "input"
+
+    def test_resolve_global_unembed_hook(self):
+        resolver = HookNameResolver("Gemma2ForCausalLM")
+        path, io_type = resolver.resolve("unembed.hook_in")
+        assert path == "lm_head"
+        assert io_type == "input"
+
+    def test_resolve_gemma2_canonical_ln2_hook_out_alias(self):
+        resolver = HookNameResolver("Gemma2ForCausalLM")
+        path, io_type = resolver.resolve("blocks.3.ln2.hook_out")
+        assert path == "model.layers.3.pre_feedforward_layernorm"
+        assert io_type == "output"
 
     def test_resolve_sae_subhook_resolves_to_base(self):
         resolver = HookNameResolver("GPT2LMHeadModel")
@@ -187,6 +228,12 @@ class TestHookNameResolver:
         path, io_type = resolver.resolve("blocks.3.hook_mlp_out")
         assert path == "model.layers.3.post_feedforward_layernorm"
         assert io_type == "output"
+
+    def test_resolve_gemma3_conditional_resid_pre(self):
+        resolver = HookNameResolver("Gemma3ForConditionalGeneration")
+        path, io_type = resolver.resolve("blocks.0.hook_resid_pre")
+        assert path == "model.language_model.layers.0"
+        assert io_type == "input"
 
     def test_unsupported_architecture_raises(self):
         with pytest.raises(ValueError, match="Unsupported model architecture"):
@@ -265,6 +312,13 @@ class TestHookNameResolver:
         resolved = resolver.resolve_for_envoy("blocks.0.hook_resid_pre")
         assert resolved.io_type == "input"
         # tuple_output is True (default) but irrelevant for input hooks
+
+    def test_resolve_for_envoy_global_unembed_hook(self):
+        resolver = HookNameResolver("Gemma2ForCausalLM")
+        resolved = resolver.resolve_for_envoy("unembed.hook_in.hook_sae_input")
+        assert resolved.module_path == "lm_head"
+        assert resolved.io_type == "input"
+        assert resolved.tuple_output is False
 
     def test_resolve_for_envoy_sae_subhook_resolves_to_base(self):
         resolver = HookNameResolver("GPT2LMHeadModel")
@@ -677,8 +731,15 @@ class TestBackendCapability:
     def test_gradients_value(self):
         assert BackendCapability.GRADIENTS.value == "gradients"
 
+    def test_attribution_value(self):
+        assert AnalysisBackendCapability.ATTRIBUTION_GRAPH.value == "attribution_graph"
+
+    def test_feature_intervention_value(self):
+        assert AnalysisBackendCapability.FEATURE_INTERVENTION.value == "feature_intervention"
+
     def test_enum_members_count(self):
         assert len(BackendCapability) == 2
+        assert len(AnalysisBackendCapability) == 2
 
     def test_membership_in_frozenset(self):
         caps = frozenset({BackendCapability.BATCHED_HOOKS, BackendCapability.GRADIENTS})
@@ -732,6 +793,8 @@ class TestNNsightSpliceSae:
         sae = MagicMock()
         sae.cfg.metadata.hook_name = "blocks.0.hook_resid_post"
         sae.encode.side_effect = lambda x: x * 0.5
+        sae.encode_with_hidden_pre.side_effect = lambda x: (x * 0.5, x * 0.25)
+        sae.activation_fn.side_effect = lambda x: x
         sae.decode.side_effect = lambda x: x * 2.0
         return sae
 
@@ -744,12 +807,13 @@ class TestNNsightSpliceSae:
         mock_nav.return_value = MagicMock()  # envoy
         mock_read.return_value = fake_act
 
-        feature_acts, act_proxy, resolved = backend._splice_sae(MagicMock(), mock_sae)
+        stage_values, resolved = backend._splice_sae(MagicMock(), mock_sae)
 
-        mock_sae.encode.assert_called_once_with(fake_act)
+        mock_sae.encode_with_hidden_pre.assert_called_once_with(fake_act)
         mock_sae.decode.assert_called_once()
         mock_write.assert_called_once()
-        assert act_proxy is fake_act
+        assert torch.allclose(stage_values["hook_sae_input"], fake_act)
+        assert torch.allclose(stage_values["hook_sae_acts_post"], fake_act * 0.5)
         assert resolved.module_path == "transformer.h.0"
 
     @patch("interpretune.analysis.backends.nnsight._write_envoy_activation")
@@ -762,12 +826,13 @@ class TestNNsightSpliceSae:
         mock_read.return_value = fake_act
 
         hook_fn = MagicMock(side_effect=lambda t, h: t * 0.0)
-        feature_acts, _, _ = backend._splice_sae(MagicMock(), mock_sae, hook_fn=hook_fn)
+        stage_values, _ = backend._splice_sae(MagicMock(), mock_sae, hook_fn=hook_fn)
 
         hook_fn.assert_called_once()
         # hook_fn received a _DummyHookPoint with the correct name
         _, hook_arg = hook_fn.call_args[0]
         assert hook_arg.name == "blocks.0.hook_resid_post.hook_sae_acts_post"
+        assert torch.allclose(stage_values["hook_sae_acts_post"], torch.zeros_like(fake_act))
 
     @patch("interpretune.analysis.backends.nnsight._write_envoy_activation")
     @patch("interpretune.analysis.backends.nnsight._read_envoy_activation")
@@ -778,14 +843,15 @@ class TestNNsightSpliceSae:
         mock_nav.return_value = MagicMock()
         mock_read.return_value = fake_act
 
-        feature_acts, _, _ = backend._splice_sae(MagicMock(), mock_sae, hook_fn=None)
+        stage_values, _ = backend._splice_sae(MagicMock(), mock_sae, hook_fn=None)
 
-        # encode should produce feature_acts, decode should receive it
-        mock_sae.encode.assert_called_once()
+        # encode_with_hidden_pre should produce feature activations, and decode should receive them
+        mock_sae.encode_with_hidden_pre.assert_called_once()
         mock_sae.decode.assert_called_once()
         # decode receives the output of encode (fake_act * 0.5)
         decode_arg = mock_sae.decode.call_args[0][0]
         assert torch.allclose(decode_arg, fake_act * 0.5)
+        assert torch.allclose(stage_values["hook_sae_acts_pre"], fake_act * 0.25)
 
     @patch("interpretune.analysis.backends.nnsight._write_envoy_activation")
     @patch("interpretune.analysis.backends.nnsight._read_envoy_activation")
@@ -795,7 +861,7 @@ class TestNNsightSpliceSae:
         mock_nav.return_value = MagicMock()
         mock_read.return_value = torch.randn(2, 10, 768)
 
-        _, _, resolved = backend._splice_sae(MagicMock(), mock_sae)
+        _, resolved = backend._splice_sae(MagicMock(), mock_sae)
 
         assert isinstance(resolved, ResolvedHook)
         assert resolved.io_type == "output"
@@ -943,3 +1009,344 @@ class TestTLFwdWHooksBatched:
 
         assert len(result) == 3
         assert mock_model.run_with_hooks_with_saes.call_count == 3
+
+
+# ==============================================================================
+# InterventionSpec tests
+# ==============================================================================
+
+
+class TestInterventionSpec:
+    """Tests for the InterventionSpec NamedTuple defaults and construction."""
+
+    def test_default_mode_is_replace(self):
+        from interpretune.analysis.backends import InterventionSpec
+
+        spec = InterventionSpec(intervention_tensor=torch.randn(768))
+        assert spec.mode == "replace"
+
+    def test_default_scale_factor_is_one(self):
+        from interpretune.analysis.backends import InterventionSpec
+
+        spec = InterventionSpec(intervention_tensor=torch.randn(768))
+        assert spec.scale_factor == 1.0
+
+    def test_explicit_add_mode(self):
+        from interpretune.analysis.backends import InterventionSpec
+
+        spec = InterventionSpec(intervention_tensor=torch.randn(768), mode="add", scale_factor=3.0)
+        assert spec.mode == "add"
+        assert spec.scale_factor == 3.0
+
+    def test_is_named_tuple(self):
+        from interpretune.analysis.backends import InterventionSpec
+
+        spec = InterventionSpec(intervention_tensor=torch.randn(768))
+        assert hasattr(spec, "_fields")
+        assert "intervention_tensor" in spec._fields
+        assert "mode" in spec._fields
+        assert "scale_factor" in spec._fields
+
+    def test_project_mode(self):
+        spec = InterventionSpec(intervention_tensor=torch.ones(768), mode="project", scale_factor=2.0)
+        assert spec.mode == "project"
+        assert spec.scale_factor == 2.0
+
+    def test_project_mode_defaults_to_intervention_basis(self):
+        spec = InterventionSpec(intervention_tensor=torch.ones(768), mode="project")
+        assert spec.use_intervention_tensor_as_basis is True
+
+    def test_intervention_tensor_attribute_name(self):
+        """Verify the field is named intervention_tensor (not the old 'vector' name)."""
+        from interpretune.analysis.backends import InterventionSpec
+
+        t = torch.randn(768)
+        spec = InterventionSpec(intervention_tensor=t)
+        assert torch.equal(spec.intervention_tensor, t)
+        assert not hasattr(spec, "vector")
+
+
+class TestInterventionDictHelpers:
+    """Tests for generalized intervention normalization and application helpers."""
+
+    def test_intervention_dict_mapping_interface(self):
+        intervention_dict = InterventionDict({"blocks.0.hook_resid_post": (InterventionSpec(torch.ones(4)),)})
+        assert len(intervention_dict) == 1
+        assert list(intervention_dict.keys()) == ["blocks.0.hook_resid_post"]
+
+    def test_build_intervention_dict_splits_multihook_tensor_rows(self):
+        expanded_matches = {"blocks.*.hook_resid_post": ["blocks.0.hook_resid_post", "blocks.1.hook_resid_post"]}
+        hook_shapes = {
+            "blocks.0.hook_resid_post": (4,),
+            "blocks.1.hook_resid_post": (4,),
+        }
+        interventions = {
+            "blocks.*.hook_resid_post": torch.tensor(
+                [[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]],
+                dtype=torch.float32,
+            )
+        }
+
+        intervention_dict = build_intervention_dict(interventions, expanded_matches, hook_shapes)
+        assert torch.equal(
+            intervention_dict["blocks.0.hook_resid_post"][0].intervention_tensor,
+            interventions["blocks.*.hook_resid_post"][0],
+        )
+        assert torch.equal(
+            intervention_dict["blocks.1.hook_resid_post"][0].intervention_tensor,
+            interventions["blocks.*.hook_resid_post"][1],
+        )
+
+    def test_build_intervention_dict_broadcasts_single_tensor_across_matches(self):
+        expanded_matches = {"blocks.*.hook_resid_post": ["blocks.0.hook_resid_post", "blocks.1.hook_resid_post"]}
+        hook_shapes = {
+            "blocks.0.hook_resid_post": (4,),
+            "blocks.1.hook_resid_post": (4,),
+        }
+        vector = torch.tensor([1.0, 2.0, 3.0, 4.0], dtype=torch.float32)
+
+        intervention_dict = build_intervention_dict(
+            {"blocks.*.hook_resid_post": vector},
+            expanded_matches,
+            hook_shapes,
+            default_mode="add",
+            default_scale_factor=2.0,
+        )
+
+        for hook_name in expanded_matches["blocks.*.hook_resid_post"]:
+            spec = intervention_dict[hook_name][0]
+            assert spec.mode == "add"
+            assert spec.scale_factor == 2.0
+            assert torch.equal(spec.intervention_tensor, vector)
+
+    def test_build_intervention_dict_preserves_explicit_mixed_shapes(self):
+        interventions = {
+            "blocks.0.hook_resid_post": torch.ones(4),
+            "blocks.0.attn.hook_z": {
+                "intervention_tensor": torch.ones(2, 3),
+                "mode": "add",
+                "scale_factor": 0.5,
+                "use_intervention_tensor_as_basis": False,
+            },
+        }
+        expanded_matches = {
+            "blocks.0.hook_resid_post": ["blocks.0.hook_resid_post"],
+            "blocks.0.attn.hook_z": ["blocks.0.attn.hook_z"],
+        }
+        hook_shapes = {
+            "blocks.0.hook_resid_post": (4,),
+            "blocks.0.attn.hook_z": (2, 3),
+        }
+
+        intervention_dict = build_intervention_dict(interventions, expanded_matches, hook_shapes)
+        assert intervention_dict["blocks.0.hook_resid_post"][0].mode == "replace"
+        assert intervention_dict["blocks.0.attn.hook_z"][0].mode == "add"
+        assert intervention_dict["blocks.0.attn.hook_z"][0].scale_factor == 0.5
+        assert intervention_dict["blocks.0.attn.hook_z"][0].use_intervention_tensor_as_basis is False
+
+    def test_build_intervention_dict_invalid_shape_raises(self):
+        with pytest.raises(ValueError, match="not compatible"):
+            build_intervention_dict(
+                {"blocks.0.hook_resid_post": torch.ones(5)},
+                {"blocks.0.hook_resid_post": ["blocks.0.hook_resid_post"]},
+                {"blocks.0.hook_resid_post": (4,)},
+            )
+
+    def test_expand_intervention_patterns_deduplicates_alias_matches(self):
+        available_hook_map = {
+            "blocks.0.hook_resid_post": "blocks.0.hook_resid_post",
+            "blocks.0.hook_resid_post.alias": "blocks.0.hook_resid_post",
+        }
+        expanded = expand_intervention_patterns(["blocks.0.hook_resid_post*"], available_hook_map)
+        assert expanded["blocks.0.hook_resid_post*"] == ["blocks.0.hook_resid_post"]
+
+    def test_resolve_interventions_builds_shorthand_project_payload(self):
+        field_values = {
+            "intervention_hook_pattern": "blocks.0.hook_resid_post",
+            "intervention_mode": "project",
+            "intervention_scale_factor": 0.5,
+            "intervention_tensor": torch.tensor([1.0, 0.0]),
+            "intervention_use_intervention_tensor_as_basis": False,
+        }
+        analysis_batch = {}
+
+        resolved = resolve_interventions(
+            analysis_batch=analysis_batch,
+            resolve_field=field_values.get,
+            load_json_field=lambda _field_name: None,
+        )
+
+        assert resolved["blocks.0.hook_resid_post"]["mode"] == "project"
+        assert resolved["blocks.0.hook_resid_post"]["scale_factor"] == 0.5
+        assert resolved["blocks.0.hook_resid_post"]["use_intervention_tensor_as_basis"] is False
+
+    def test_resolve_interventions_preserves_explicit_intervention_mapping(self):
+        explicit = {"blocks.0.hook_resid_post": {"intervention_tensor": torch.ones(4), "mode": "add"}}
+
+        resolved = resolve_interventions(
+            analysis_batch={},
+            resolve_field=lambda field_name: explicit if field_name == "interventions" else None,
+            load_json_field=lambda _field_name: None,
+        )
+
+        assert resolved is explicit
+
+    def test_apply_intervention_project_mode_projects_input_onto_target_basis(self):
+        value = torch.tensor([[[0.0, 0.0], [3.0, 4.0]]], dtype=torch.float32)
+        spec = InterventionSpec(
+            intervention_tensor=torch.tensor([5.0, 0.0]),
+            mode="project",
+            scale_factor=1.0,
+        )
+
+        result = apply_intervention_to_last_token(value.clone(), spec, last_pos=1)
+        expected = torch.tensor([[[0.0, 0.0], [3.0, 0.0]]], dtype=torch.float32)
+        assert torch.allclose(result, expected)
+
+    def test_apply_intervention_project_mode_projects_target_onto_input_basis(self):
+        value = torch.tensor([[[0.0, 0.0], [3.0, 4.0]]], dtype=torch.float32)
+        spec = InterventionSpec(
+            intervention_tensor=torch.tensor([5.0, 0.0]),
+            mode="project",
+            scale_factor=1.0,
+            use_intervention_tensor_as_basis=False,
+        )
+
+        result = apply_intervention_to_last_token(value.clone(), spec, last_pos=1)
+        expected = torch.tensor([[[0.0, 0.0], [1.8, 2.4]]], dtype=torch.float32)
+        assert torch.allclose(result, expected)
+
+
+def test_subhook_suffixes_expose_all_supported_sae_suffixes():
+    assert SUBHOOK_SUFFIXES == frozenset(
+        {
+            "hook_sae_input",
+            "hook_sae_acts_pre",
+            "hook_sae_acts_post",
+            "hook_sae_output",
+            "hook_sae_error",
+        }
+    )
+
+
+# ==============================================================================
+# fwd_w_intervention signature tests
+# ==============================================================================
+
+
+class TestFwdWInterventionSignature:
+    """Verify both backends expose the fwd_w_intervention method with correct signature."""
+
+    def test_nnsight_fwd_w_intervention_signature(self):
+        resolver = HookNameResolver("GPT2LMHeadModel")
+        backend = NNsightModelBackend(resolver)
+        sig = inspect.signature(backend.fwd_w_intervention)
+        param_names = list(sig.parameters.keys())
+        assert "model" in param_names
+        assert "batch" in param_names
+        assert "interventions" in param_names
+        assert "latent_model_handles" in param_names
+
+    def test_tl_fwd_w_intervention_signature(self):
+        from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+        backend = TLModelBackend()
+        sig = inspect.signature(backend.fwd_w_intervention)
+        param_names = list(sig.parameters.keys())
+        assert "model" in param_names
+        assert "batch" in param_names
+        assert "interventions" in param_names
+        assert "latent_model_handles" in param_names
+
+    def test_tl_unknown_mode_raises(self):
+        """TL backend should raise ValueError for unknown intervention modes."""
+        from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+        backend = TLModelBackend()
+        mock_model = MagicMock()
+        mock_model.hook_dict = {"blocks.0.hook_resid_post": MagicMock()}
+        mock_model.run_with_cache.return_value = (
+            torch.randn(1, 5, 100),
+            {"blocks.0.hook_resid_post": torch.randn(1, 5, 100)},
+        )
+
+        spec = InterventionSpec(intervention_tensor=torch.randn(100), mode="unknown")
+        with pytest.raises(ValueError, match="Unknown intervention mode"):
+            backend.fwd_w_intervention(
+                model=mock_model,
+                batch={"input": torch.randn(1, 5)},
+                interventions={"blocks.0.hook_resid_post": spec},
+            )
+
+    def test_tl_wildcard_expansion(self):
+        """TL backend should expand wildcard patterns against model.hook_dict."""
+        from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+        backend = TLModelBackend()
+        mock_model = MagicMock()
+        mock_model.hook_dict = {
+            "blocks.0.hook_resid_post": MagicMock(),
+            "blocks.1.hook_resid_post": MagicMock(),
+            "blocks.0.hook_resid_pre": MagicMock(),
+        }
+
+        # run_with_cache returns (logits, cache_dict)
+        mock_model.run_with_cache.return_value = (
+            torch.randn(1, 5, 100),
+            {
+                "blocks.0.hook_resid_post": torch.randn(1, 5, 100),
+                "blocks.1.hook_resid_post": torch.randn(1, 5, 100),
+            },
+        )
+        # run_with_hooks returns logits
+        mock_model.run_with_hooks.return_value = torch.randn(1, 5, 100)
+
+        spec = InterventionSpec(intervention_tensor=torch.randn(100))
+
+        # Use wildcard pattern that should match 2 hooks
+        backend.fwd_w_intervention(
+            model=mock_model,
+            batch={"input": torch.randn(1, 5)},
+            interventions={"blocks.*.hook_resid_post": spec},
+        )
+
+        # Verify run_with_hooks was called (the hooks were built)
+        assert mock_model.run_with_hooks.called
+        # Check that the fwd_hooks arg has 2 entries (matched blocks.0 and blocks.1)
+        call_kwargs = mock_model.run_with_hooks.call_args
+        fwd_hooks = call_kwargs.kwargs.get("fwd_hooks", call_kwargs[1].get("fwd_hooks", []))
+        assert len(fwd_hooks) == 2
+
+    def test_tl_replace_mode_hook_overwrites(self):
+        """TL backend replace mode hook should overwrite (not add to) the activation."""
+        from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+        backend = TLModelBackend()
+        mock_model = MagicMock()
+        mock_model.hook_dict = {"blocks.0.hook_resid_post": MagicMock()}
+
+        # Return logits with known last_pos
+        logits = torch.randn(1, 3, 100)
+        mock_model.run_with_cache.return_value = (logits, {"blocks.0.hook_resid_post": torch.randn(1, 3, 100)})
+
+        replacement_vec = torch.ones(100) * 42.0
+        spec = InterventionSpec(intervention_tensor=replacement_vec, mode="replace")
+
+        # Capture the hook that gets built
+        def capture_hooks(**kwargs):
+            hooks = kwargs.get("fwd_hooks", [])
+            # Apply the hook to a known activation
+            activation = torch.randn(1, 3, 100)
+            for _, hook_fn in hooks:
+                activation = hook_fn(activation, None)
+            # After replace mode, last position should equal the replacement vector
+            assert torch.allclose(activation[0, 2, :], replacement_vec), "Replace mode should overwrite last position"
+            return torch.randn(1, 3, 100)
+
+        mock_model.run_with_hooks.side_effect = capture_hooks
+
+        backend.fwd_w_intervention(
+            model=mock_model,
+            batch={"input": torch.randn(1, 3)},
+            interventions={"blocks.0.hook_resid_post": spec},
+        )

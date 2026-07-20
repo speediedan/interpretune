@@ -5,10 +5,6 @@ import torch
 from interpretune.config import ITConfig
 from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
 
-# # TODO: add core helper log/log_dict methods for core context usage
-# for warnf in [".*For framework compatibility, this noop .*",]:
-#     warnings.filterwarnings("once", warnf)
-
 
 class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):  # type: ignore[misc]
     def __init__(self, it_cfg: ITConfig, *args, **kwargs):
@@ -53,11 +49,10 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
     def load_metric(self) -> None:
         """Optionally load a metric at the end of model initialization."""
 
-    def on_session_end(self) -> Any | None:
-        """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
-        if getattr(self, "memprofiler", None):
-            self.memprofiler.dump_memory_stats()
-        self._it_state._session_complete = True
+    @property
+    def analysis_backend(self) -> Any | None:
+        """Optional analysis backend attached by higher-level adapters."""
+        return getattr(self, "_analysis_backend", None)
 
     def __repr__(self) -> str:
         try:

@@ -1,0 +1,8 @@
+EXTENDS: gemma3_1b_it_local_color_fruit_orange_fs_l10_n5.yaml
+
+EXPERIMENT_NAME: gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_s5_any
+
+ANALYSIS:
+  default_scale_factor: 20.0
+  debug_print_circuit_tracer_cfg: true
+  debug_pipeline_state_artifact_name: gemma3_1b_it_orange_fs_l10_n5_s5_any_notebook_debug

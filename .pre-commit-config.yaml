@@ -19,7 +19,7 @@ ci:
   autoupdate_schedule: quarterly
   # submodules: true
 
-exclude: 'tests/(ioi_parity|mech_interp_parity)/.*'
+exclude: 'tests/(ioi_parity|mech_interp_parity|concept_direction_approach_parity)/.*'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -39,10 +39,6 @@ repos:
             )$
       - id: detect-private-key
 
-  - repo: https://github.com/kynan/nbstripout
-    rev: 0.5.0
-    hooks:
-      - id: nbstripout
   # temporarily disabling until the pre-commit hook allows per-line ignores to avoid certain errors with jaxtyping
   # - repo: https://github.com/asottile/pyupgrade
   #   rev: v3.19.1
@@ -81,11 +77,22 @@ repos:
 
   - repo: local
     hooks:
+      - id: nbstripout
+        name: nbstripout
+        entry: python scripts/run_nbstripout_hook.py
+        language: system
+        files: \.ipynb$
       - id: publish-notebooks
         name: Publish notebooks if changed
         entry: python scripts/publish_notebooks.py
         language: system
         files: ^src/it_examples/notebooks/dev/.*\.ipynb$
+        pass_filenames: false
+      - id: check-benchmark-registry-isolation
+        name: Benchmark registry must be committed in isolation
+        entry: python scripts/check_benchmark_registry_isolation.py
+        language: system
+        files: ^tests/benchmarks/benchmark_registry\.yaml$
         pass_filenames: false
 
   - repo: https://github.com/charliermarsh/ruff-pre-commit

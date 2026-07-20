@@ -38,6 +38,7 @@ from interpretune.analysis import AnalysisStore, LatentAnalysisDict
 from interpretune.session import ITMeta, ITSession
 from interpretune.protocol import ModuleSteppable, DataModuleInitable
 from interpretune.utils import rank_zero_only
+from interpretune.utils.resource_mgmt import cleanup_python_cuda
 from tests import _PATH_DATASETS, seed_everything, load_dotenv, FinetuningScheduler, get_fts, Trainer
 from tests.configuration import config_modules, apply_it_test_cfg
 from tests.modules import TestITDataModule, TestITModule
@@ -46,7 +47,15 @@ from tests.parity_acceptance.test_it_cli import TEST_CONFIGS_CLI_PARITY
 from tests.base_defaults import BaseCfg
 from tests.parity_acceptance.test_it_l import CoreCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg
-from tests.analysis_resource_utils import AnalysisExtractionMixin, analysis_fixture_scope
+from tests.analysis_resource_utils import (
+    AnalysisExtractionMixin,
+    analysis_fixture_scope,
+    analysis_resource_debug_enabled,
+    clear_nnsight_test_state,
+    get_resource_snapshot,
+    log_resource_delta,
+    log_resource_snapshot,
+)
 from tests.utils import kwargs_from_cfg_obj, deterministic_context
 
 from tests.core.cfg_aliases import (
@@ -112,48 +121,89 @@ def _force_gc():
 
 def _cleanup_cuda_memory():
     """Release CUDA memory if available, then run gc."""
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    clear_nnsight_test_state(None)
+    cleanup_python_cuda()
+
+
+_TEST_RESOURCE_SNAPSHOT_ATTR = "_it_test_resource_snapshot"
+
+
+def _fixture_resource_debug_enabled() -> bool:
+    return analysis_resource_debug_enabled()
+
+
+def _test_resource_debug_enabled() -> bool:
+    return analysis_resource_debug_enabled()
+
+
+def _fixture_resource_metadata(
+    *,
+    kind: str,
+    key: str,
+    scope: str,
+    lifecycle: str,
+    phase: str | None = None,
+) -> dict[str, str]:
+    metadata = {
+        "context": "fixture",
+        "kind": kind,
+        "key": key,
+        "scope": scope,
+        "lifecycle": lifecycle,
+    }
+    if phase is not None:
+        metadata["phase"] = phase
+    return metadata
+
+
+def _log_fixture_resource_snapshot(
+    label: str,
+    *,
+    paths: tuple[str | Path, ...] = (),
+    metadata: dict[str, str] | None = None,
+) -> None:
+    log_resource_snapshot(
+        label,
+        paths=paths,
+        prefix="fixture_resource_debug",
+        metadata=metadata,
+    )
+
+
+def _log_fixture_resource_delta(
+    label: str,
+    *,
+    before: dict[str, float | int | bool] | None,
+    paths: tuple[str | Path, ...] = (),
+    metadata: dict[str, str] | None = None,
+) -> None:
+    log_resource_delta(
+        label,
+        before=before,
+        prefix="fixture_resource_debug",
+        metadata=metadata,
+    )
+    for path in paths:
+        _log_fixture_resource_snapshot(f"{label}:path", paths=(path,), metadata=metadata)
 
 
 @contextmanager
 def clean_cuda(model, min_bytes: int = 1 << 20):
     """Move *model* to CUDA; on exit automatically free large transient CUDA tensors.
 
-    Snapshots data_ptrs of all large CUDA tensors after the model moves to CUDA
-    (capturing model weights as 'known'). On exit, any new large CUDA tensor not
-    in the snapshot has its storage replaced via ``set_(torch.empty(0))``, freeing
-    VRAM even while Python references remain alive. Then ``gc.collect()`` +
-    ``empty_cache()`` flush remaining allocations before the model moves back to CPU.
-
-    Adapted from circuit-tracer's ``clean_cuda`` context manager for use in
-    Interpretune's test infrastructure.
+    Thin wrapper around :func:`interpretune.utils.resource_mgmt.safe_clean_cuda`
+    for use in test fixtures. Unlike ``safe_clean_cuda``, this variant does **not**
+    guard against ``ReferenceError`` since the test environment controls object
+    lifecycles more tightly than interactive notebooks.
 
     Args:
         model: The model to move to CUDA for the duration of the context.
         min_bytes: Minimum tensor size to track (default 1 MiB).
     """
-    model.to("cuda")
+    from interpretune.utils.resource_mgmt import safe_clean_cuda as _safe_clean_cuda
 
-    def _is_large_dense_cuda(t: object) -> bool:
-        return isinstance(t, torch.Tensor) and t.is_cuda and t.layout == torch.strided and t.nbytes >= min_bytes
-
-    known_ptrs: set[int] = {obj.data_ptr() for obj in gc.get_objects() if _is_large_dense_cuda(obj)}
-    try:
+    with _safe_clean_cuda(model, min_bytes=min_bytes):
         yield
-    finally:
-        freed_ptrs: set[int] = set()
-        for obj in gc.get_objects():
-            if _is_large_dense_cuda(obj) and obj.data_ptr() not in known_ptrs and obj.data_ptr() not in freed_ptrs:
-                freed_ptrs.add(obj.data_ptr())
-                try:
-                    obj.set_(torch.empty(0))
-                except Exception:
-                    pass
-        gc.collect()
-        torch.cuda.empty_cache()
-        model.to("cpu")
 
 
 @pytest.fixture
@@ -452,10 +502,46 @@ def make_it_module(tmp_path_factory):
 def module_fixture_factory(module_key, init_key):
     @pytest.fixture(scope="class")
     def get_it_module(make_it_module, mock_dm):
+        metadata = _fixture_resource_metadata(
+            kind="module_fixture",
+            key=module_key,
+            scope="class",
+            lifecycle="setup_start",
+            phase=PHASE_STR[init_key],
+        )
+        setup_snapshot = get_resource_snapshot() if _fixture_resource_debug_enabled() else None
+        _log_fixture_resource_snapshot(
+            f"module_fixture:{module_key}:{PHASE_STR[init_key]}:setup:start",
+            metadata=metadata,
+        )
         it_m = make_it_module(module_key, init_key)
         if init_key == FixtPhase.setup:
             _call_itmodule_hook(it_m, hook_name="setup", hook_msg="Setting up model", datamodule=mock_dm)
+        _log_fixture_resource_delta(
+            f"module_fixture:{module_key}:{PHASE_STR[init_key]}:setup:end",
+            before=setup_snapshot,
+            metadata={**metadata, "lifecycle": "setup_end"},
+        )
         yield it_m
+        metadata = _fixture_resource_metadata(
+            kind="module_fixture",
+            key=module_key,
+            scope="class",
+            lifecycle="teardown_start",
+            phase=PHASE_STR[init_key],
+        )
+        teardown_snapshot = get_resource_snapshot() if _fixture_resource_debug_enabled() else None
+        _log_fixture_resource_snapshot(
+            f"module_fixture:{module_key}:{PHASE_STR[init_key]}:teardown:start",
+            metadata=metadata,
+        )
+        del it_m
+        _cleanup_cuda_memory()
+        _log_fixture_resource_delta(
+            f"module_fixture:{module_key}:{PHASE_STR[init_key]}:teardown:end",
+            before=teardown_snapshot,
+            metadata={**metadata, "lifecycle": "teardown_end"},
+        )
 
     return get_it_module
 
@@ -548,18 +634,38 @@ def analysis_session_fixture_factory(config_key, phase):
         test_sess_config = setup_fixture_env(config_key)
 
         fixt_phase, run_phase, phase_str = parse_phase(phase)
+        fixture_tmp_dir = tmp_path_factory.mktemp(f"{config_key}_{phase_str}_it_session_fixture")
+        metadata = _fixture_resource_metadata(
+            kind="analysis_session_fixture",
+            key=config_key,
+            scope=FIXTURE_CFGS[config_key].scope,
+            lifecycle="setup_start",
+            phase=phase_str,
+        )
+        setup_snapshot = get_resource_snapshot() if _fixture_resource_debug_enabled() else None
+        _log_fixture_resource_snapshot(
+            f"analysis_session_fixture:{config_key}:{phase_str}:setup:start",
+            paths=(fixture_tmp_dir,),
+            metadata=metadata,
+        )
 
         instantiated_test_cfg = test_sess_config()
         it_s = config_modules(
             instantiated_test_cfg,
             f"{config_key}_{phase_str}_it_session_fixture",
             {},
-            tmp_path_factory.mktemp(f"{config_key}_{phase_str}_it_session_fixture"),
+            fixture_tmp_dir,
             {},
             False,
         )
         session_fixture_hook_exec(it_s, fixt_phase)
         result, runner, run_config = runner_fixture_init(it_s, instantiated_test_cfg, run_phase)
+        _log_fixture_resource_delta(
+            f"analysis_session_fixture:{config_key}:{phase_str}:setup:end",
+            before=setup_snapshot,
+            paths=(fixture_tmp_dir,),
+            metadata={**metadata, "lifecycle": "setup_end"},
+        )
 
         # note we copy a reference to the uninitialized original test session config to the fixture
         yield AnalysisSessionFixture(
@@ -568,8 +674,27 @@ def analysis_session_fixture_factory(config_key, phase):
         # Teardown: free references and run gc to reclaim memory promptly,
         # especially for class-scoped analysis fixtures (e.g., ablation ops)
         # that create large intermediate tensors.
+        teardown_snapshot = get_resource_snapshot() if _fixture_resource_debug_enabled() else None
+        metadata = _fixture_resource_metadata(
+            kind="analysis_session_fixture",
+            key=config_key,
+            scope=FIXTURE_CFGS[config_key].scope,
+            lifecycle="teardown_start",
+            phase=phase_str,
+        )
+        _log_fixture_resource_snapshot(
+            f"analysis_session_fixture:{config_key}:{phase_str}:teardown:start",
+            paths=(fixture_tmp_dir,),
+            metadata=metadata,
+        )
         del result, runner, run_config, it_s
         _cleanup_cuda_memory()
+        _log_fixture_resource_delta(
+            f"analysis_session_fixture:{config_key}:{phase_str}:teardown:end",
+            before=teardown_snapshot,
+            paths=(fixture_tmp_dir,),
+            metadata={**metadata, "lifecycle": "teardown_end"},
+        )
 
     return get_analysis_session
 
@@ -579,16 +704,58 @@ def it_session_fixture_factory(config_key, phase):
     def get_it_session(tmp_path_factory):
         test_sess_config = setup_fixture_env(config_key)
         phase_str = PHASE_STR[phase]
+        fixture_tmp_dir = tmp_path_factory.mktemp(f"{config_key}_{phase_str}_it_session_fixture")
+        metadata = _fixture_resource_metadata(
+            kind="it_session_fixture",
+            key=config_key,
+            scope=FIXTURE_CFGS[config_key].scope,
+            lifecycle="setup_start",
+            phase=phase_str,
+        )
+        setup_snapshot = get_resource_snapshot() if _fixture_resource_debug_enabled() else None
+        _log_fixture_resource_snapshot(
+            f"it_session_fixture:{config_key}:{phase_str}:setup:start",
+            paths=(fixture_tmp_dir,),
+            metadata=metadata,
+        )
         it_s = config_modules(
             test_sess_config(),
             f"{config_key}_{phase_str}_it_session_fixture",
             {},
-            tmp_path_factory.mktemp(f"{config_key}_{phase_str}_it_session_fixture"),
+            fixture_tmp_dir,
             {},
             False,
         )
         session_fixture_hook_exec(it_s, phase)
-        yield ITSessionFixture(it_session=it_s, test_cfg=deepcopy(test_sess_config))
+        fixture = ITSessionFixture(it_session=it_s, test_cfg=deepcopy(test_sess_config))
+        _log_fixture_resource_delta(
+            f"it_session_fixture:{config_key}:{phase_str}:setup:end",
+            before=setup_snapshot,
+            paths=(fixture_tmp_dir,),
+            metadata={**metadata, "lifecycle": "setup_end"},
+        )
+        yield fixture
+        teardown_snapshot = get_resource_snapshot() if _fixture_resource_debug_enabled() else None
+        metadata = _fixture_resource_metadata(
+            kind="it_session_fixture",
+            key=config_key,
+            scope=FIXTURE_CFGS[config_key].scope,
+            lifecycle="teardown_start",
+            phase=phase_str,
+        )
+        _log_fixture_resource_snapshot(
+            f"it_session_fixture:{config_key}:{phase_str}:teardown:start",
+            paths=(fixture_tmp_dir,),
+            metadata=metadata,
+        )
+        del fixture, it_s
+        _cleanup_cuda_memory()
+        _log_fixture_resource_delta(
+            f"it_session_fixture:{config_key}:{phase_str}:teardown:end",
+            before=teardown_snapshot,
+            paths=(fixture_tmp_dir,),
+            metadata={**metadata, "lifecycle": "teardown_end"},
+        )
 
     return get_it_session
 
@@ -597,14 +764,54 @@ def it_session_cfg_fixture_factory(config_key):
     @pytest.fixture(scope=FIXTURE_CFGS[config_key].scope)
     def get_it_session_cfg(tmp_path_factory):
         test_sess_config = setup_fixture_env(config_key)
-        yield config_modules(
+        fixture_tmp_dir = tmp_path_factory.mktemp(f"{config_key}_it_session_cfg_fixture")
+        metadata = _fixture_resource_metadata(
+            kind="it_session_cfg_fixture",
+            key=config_key,
+            scope=FIXTURE_CFGS[config_key].scope,
+            lifecycle="setup_start",
+        )
+        setup_snapshot = get_resource_snapshot() if _fixture_resource_debug_enabled() else None
+        _log_fixture_resource_snapshot(
+            f"it_session_cfg_fixture:{config_key}:setup:start",
+            paths=(fixture_tmp_dir,),
+            metadata=metadata,
+        )
+        fixture = config_modules(
             test_sess_config(),
             f"{config_key}_it_session_cfg_fixture",
             {},
-            tmp_path_factory.mktemp(f"{config_key}_it_session_cfg_fixture"),
+            fixture_tmp_dir,
             {},
             False,
             True,
+        )
+        _log_fixture_resource_delta(
+            f"it_session_cfg_fixture:{config_key}:setup:end",
+            before=setup_snapshot,
+            paths=(fixture_tmp_dir,),
+            metadata={**metadata, "lifecycle": "setup_end"},
+        )
+        yield fixture
+        teardown_snapshot = get_resource_snapshot() if _fixture_resource_debug_enabled() else None
+        metadata = _fixture_resource_metadata(
+            kind="it_session_cfg_fixture",
+            key=config_key,
+            scope=FIXTURE_CFGS[config_key].scope,
+            lifecycle="teardown_start",
+        )
+        _log_fixture_resource_snapshot(
+            f"it_session_cfg_fixture:{config_key}:teardown:start",
+            paths=(fixture_tmp_dir,),
+            metadata=metadata,
+        )
+        del fixture
+        _cleanup_cuda_memory()
+        _log_fixture_resource_delta(
+            f"it_session_cfg_fixture:{config_key}:teardown:end",
+            before=teardown_snapshot,
+            paths=(fixture_tmp_dir,),
+            metadata={**metadata, "lifecycle": "teardown_end"},
         )
 
     return get_it_session_cfg
@@ -664,6 +871,15 @@ def ft_schedule_fixture_factory(config_key, phase):
         }
 
         sched_cfg = SCHEDULE_CONFIG_MAP[config_key]
+        metadata = _fixture_resource_metadata(
+            kind="ft_schedule_fixture",
+            key=config_key,
+            scope=FIXTURE_CFGS[config_key].scope,
+            lifecycle="setup_start",
+            phase=PHASE_STR[phase],
+        )
+        setup_snapshot = get_resource_snapshot() if _fixture_resource_debug_enabled() else None
+        _log_fixture_resource_snapshot(f"ft_schedule_fixture:{config_key}:setup:start", metadata=metadata)
 
         seed_everything(42)
         tmpdir = tmpdir_factory.mktemp(f"test_fts_schedules_{config_key}")
@@ -691,7 +907,36 @@ def ft_schedule_fixture_factory(config_key, phase):
         for transform_key, transform_fn in sched_cfg["transforms"].items():
             schedules[transform_key] = transform_fn(deepcopy(schedules["implicit"]))
 
-        return schedules
+        _log_fixture_resource_delta(
+            f"ft_schedule_fixture:{config_key}:setup:end",
+            before=setup_snapshot,
+            paths=(tmpdir,),
+            metadata={**metadata, "lifecycle": "setup_end"},
+        )
+
+        yield schedules
+
+        teardown_snapshot = get_resource_snapshot() if _fixture_resource_debug_enabled() else None
+        metadata = _fixture_resource_metadata(
+            kind="ft_schedule_fixture",
+            key=config_key,
+            scope=FIXTURE_CFGS[config_key].scope,
+            lifecycle="teardown_start",
+            phase=PHASE_STR[phase],
+        )
+        _log_fixture_resource_snapshot(
+            f"ft_schedule_fixture:{config_key}:teardown:start",
+            paths=(tmpdir,),
+            metadata=metadata,
+        )
+        del schedules, trainer, model, session_fixture
+        _cleanup_cuda_memory()
+        _log_fixture_resource_delta(
+            f"ft_schedule_fixture:{config_key}:teardown:end",
+            before=teardown_snapshot,
+            paths=(tmpdir,),
+            metadata={**metadata, "lifecycle": "teardown_end"},
+        )
 
     return get_ft_schedule
 
@@ -1056,6 +1301,8 @@ def restore_env_variables():
         "NEURONPEDIA_API_KEY",
         "USE_LOCALHOST",
         "NDIF_API_KEY",
+        "HF_MCP_TOKEN_RW",
+        "NP_COPILOT_GITHUB_TOKEN",
     }
     allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)
@@ -1170,6 +1417,41 @@ def pytest_collection_modifyitems(items):
             # has `@RunIf(optional=True)`
             if marker.name == "skipif" and marker.kwargs.get("optional")
         ]
+    elif os.getenv("IT_RUN_BENCHMARK_TESTS", "0") == "1":
+        items[:] = [
+            item
+            for item in items
+            for marker in item.own_markers
+            # has `@RunIf(benchmark=True)`
+            if marker.name == "skipif" and marker.kwargs.get("benchmark")
+        ]
+
+
+def pytest_runtest_setup(item):
+    if not _test_resource_debug_enabled():
+        return
+
+    setattr(item, _TEST_RESOURCE_SNAPSHOT_ATTR, get_resource_snapshot())
+    log_resource_snapshot(
+        f"test:start:{item.nodeid}",
+        prefix="test_resource_debug",
+        metadata={"context": "test", "nodeid": item.nodeid, "lifecycle": "start"},
+    )
+
+
+def pytest_runtest_teardown(item, nextitem):
+    if not _test_resource_debug_enabled():
+        return
+
+    before = getattr(item, _TEST_RESOURCE_SNAPSHOT_ATTR, None)
+    log_resource_delta(
+        f"test:end:{item.nodeid}",
+        before=before,
+        prefix="test_resource_debug",
+        metadata={"context": "test", "nodeid": item.nodeid, "lifecycle": "end"},
+    )
+    if hasattr(item, _TEST_RESOURCE_SNAPSHOT_ATTR):
+        delattr(item, _TEST_RESOURCE_SNAPSHOT_ATTR)
 
 
 # Fixture to set and restore HuggingFace cache env vars for cross-platform compatibility

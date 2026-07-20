@@ -1,7 +1,7 @@
-"""SAE Backend Parity Tests: TransformerBridge ↔ NNsight.
+"""Model Backend Parity Tests: TransformerBridge ↔ NNsight.
 
 Validates that analysis operations produce equivalent results regardless of
-whether the TransformerBridge or NNsight backend is used for SAE analysis.
+whether the TransformerBridge or NNsight model backend is used for SAE analysis.
 
 **Parity validation (TransformerBridge ↔ NNsight on GPT-2):**
 
@@ -37,11 +37,13 @@ import pytest
 import torch
 from torch.testing import assert_close
 
+import interpretune as it
 from interpretune.analysis.core import (
     AnalysisStore,
     base_vs_sae_logit_diffs,
     compute_correct,
 )
+from interpretune.analysis.ops.base import AnalysisBatch
 from tests.analysis_resource_utils import (
     AnalysisFixtureSpec,
     AnalysisExtractionMixin,
@@ -143,7 +145,7 @@ class TestLogitDiffsBaseBackendParity(AnalysisExtractionMixin):
 
 
 class TestLogitDiffsSAEBackendParity(AnalysisExtractionMixin):
-    """logit_diffs_sae: TransformerBridge ↔ NNsight SAE-spliced forward (``model_cache_forward``).
+    """logit_diffs_sae: TransformerBridge ↔ NNsight SAE-spliced forward (``model_fwd_w_cache_latent_models``).
 
     Compares SAE-spliced forward pass results including cached activations,
     alive latents, and logit diffs.  Bridge uses TL hook-based SAE splicing;
@@ -476,3 +478,145 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
         br_store = self.extract_field_store(request, "base_br", "loss")
         ns_store = self.extract_field_store(request, "base_ns", "loss")
         _compare_tensor_lists(br_store.loss, ns_store.loss, label="loss")
+
+
+# ---------------------------------------------------------------------------
+# Direction intervention parity
+# ---------------------------------------------------------------------------
+
+
+def _extract_module_and_batch(fixture):
+    """Pull the module and first eval batch from an analysis session fixture."""
+    module = fixture.it_session.module
+    datamodule = fixture.it_session.datamodule
+    dl = datamodule.test_dataloader()
+    batch = next(iter(dl))
+    return module, batch
+
+
+class TestDirectionInterventionBackendParity:
+    """model_fwd_intervention: TransformerBridge ↔ NNsight.
+
+    Both backends add a scaled direction vector at the ``unembed.hook_in``
+    site and return pre/post logits.  Pre-intervention logits should already
+    match (same model, same data) and the intervention delta should be very
+    close since the hook application is numerically equivalent.
+    """
+
+    @pytest.fixture(scope="class")
+    def _br_module_and_batch(self, request):
+        fixture = request.getfixturevalue(_BR_BASE)
+        return _extract_module_and_batch(fixture)
+
+    @pytest.fixture(scope="class")
+    def _ns_module_and_batch(self, request):
+        fixture = request.getfixturevalue(_NS_BASE)
+        return _extract_module_and_batch(fixture)
+
+    @pytest.fixture(scope="class")
+    def _concept_direction(self, _br_module_and_batch):
+        """Build a simple concept direction from token embedding difference."""
+        module, _ = _br_module_and_batch
+        # GPT-2 token IDs for " Dallas" and " Austin" (hardcoded to avoid tokenizer dependency)
+        tok_a = 8533  # " Dallas"
+        tok_b = 9533  # " Austin"
+        embed = module.model.embed.W_E if hasattr(module.model, "embed") else module.model.transformer.wte.weight
+        if hasattr(embed, "detach"):
+            embed = embed.detach()
+        else:
+            embed = torch.as_tensor(embed)
+        diff = embed[tok_a].float() - embed[tok_b].float()
+        return diff / torch.linalg.vector_norm(diff)
+
+    @staticmethod
+    def _run_direction_intervention(module, batch, direction, scale_factor=1.0):
+        """Call the direction intervention op and return the result AnalysisBatch."""
+        # Prune batch to forward-compatible keys (mirrors analysis pipeline auto_prune_batch_encoding)
+        if hasattr(module, "auto_prune_batch") and hasattr(batch, "data"):
+            batch = module.auto_prune_batch(batch, "forward")
+        analysis_batch = AnalysisBatch(
+            intervention_hook_pattern="unembed.hook_in",
+            intervention_tensor=direction,
+            intervention_mode="add",
+            intervention_scale_factor=scale_factor,
+        )
+        return it.model_fwd_intervention(module, analysis_batch, batch=batch, batch_idx=0)
+
+    def test_pre_intervention_logits_match(self, _br_module_and_batch, _ns_module_and_batch, _concept_direction):
+        """Pre-intervention last-token logits should match across backends."""
+        br_module, br_batch = _br_module_and_batch
+        ns_module, ns_batch = _ns_module_and_batch
+
+        br_result = self._run_direction_intervention(br_module, br_batch, _concept_direction)
+        ns_result = self._run_direction_intervention(ns_module, ns_batch, _concept_direction)
+
+        assert_close(
+            br_result.pre_intervention_logits,
+            ns_result.pre_intervention_logits,
+            rtol=1e-4,
+            atol=1e-4,
+            msg="pre_intervention_logits",
+        )
+
+    def test_post_intervention_logits_match(self, _br_module_and_batch, _ns_module_and_batch, _concept_direction):
+        """Post-intervention logits should match across backends."""
+        br_module, br_batch = _br_module_and_batch
+        ns_module, ns_batch = _ns_module_and_batch
+
+        br_result = self._run_direction_intervention(br_module, br_batch, _concept_direction)
+        ns_result = self._run_direction_intervention(ns_module, ns_batch, _concept_direction)
+
+        assert_close(
+            br_result.post_intervention_logits,
+            ns_result.post_intervention_logits,
+            rtol=1e-4,
+            atol=1e-4,
+            msg="post_intervention_logits",
+        )
+
+    def test_logit_diff_match(self, _br_module_and_batch, _ns_module_and_batch, _concept_direction):
+        """Scalar logit_diff should match across backends."""
+        br_module, br_batch = _br_module_and_batch
+        ns_module, ns_batch = _ns_module_and_batch
+
+        br_result = self._run_direction_intervention(br_module, br_batch, _concept_direction)
+        ns_result = self._run_direction_intervention(ns_module, ns_batch, _concept_direction)
+
+        assert_close(
+            br_result.logit_diff,
+            ns_result.logit_diff,
+            rtol=1e-4,
+            atol=1e-4,
+            msg="logit_diff",
+        )
+
+    def test_intervention_changes_logits(self, _br_module_and_batch, _concept_direction):
+        """Verify the intervention actually modifies logits (non-trivial test)."""
+        br_module, br_batch = _br_module_and_batch
+        result = self._run_direction_intervention(br_module, br_batch, _concept_direction)
+        assert not torch.allclose(result.pre_intervention_logits, result.post_intervention_logits, atol=1e-6), (
+            "Intervention should change logits"
+        )
+
+    def test_scale_factor_affects_magnitude(self, _br_module_and_batch, _ns_module_and_batch, _concept_direction):
+        """Larger scale_factor should produce a larger logit delta."""
+        br_module, br_batch = _br_module_and_batch
+        ns_module, ns_batch = _ns_module_and_batch
+
+        br_result_1x = self._run_direction_intervention(br_module, br_batch, _concept_direction, scale_factor=1.0)
+        br_result_5x = self._run_direction_intervention(br_module, br_batch, _concept_direction, scale_factor=5.0)
+
+        ns_result_1x = self._run_direction_intervention(ns_module, ns_batch, _concept_direction, scale_factor=1.0)
+        ns_result_5x = self._run_direction_intervention(ns_module, ns_batch, _concept_direction, scale_factor=5.0)
+
+        # Larger scale should yield larger absolute logit delta
+        br_delta_1 = (br_result_1x.post_intervention_logits - br_result_1x.pre_intervention_logits).abs().mean()
+        br_delta_5 = (br_result_5x.post_intervention_logits - br_result_5x.pre_intervention_logits).abs().mean()
+        assert br_delta_5 > br_delta_1, "5× scale should produce larger delta than 1×"
+
+        ns_delta_1 = (ns_result_1x.post_intervention_logits - ns_result_1x.pre_intervention_logits).abs().mean()
+        ns_delta_5 = (ns_result_5x.post_intervention_logits - ns_result_5x.pre_intervention_logits).abs().mean()
+        assert ns_delta_5 > ns_delta_1, "5× scale should produce larger delta than 1× (NNsight)"
+
+        # Cross-backend delta magnitudes should be close
+        assert_close(br_delta_5, ns_delta_5, rtol=1e-3, atol=1e-3, msg="5× scale delta magnitude")

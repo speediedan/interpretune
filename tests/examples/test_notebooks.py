@@ -14,6 +14,8 @@ from typing import Any
 
 import pytest
 
+from interpretune.utils.resource_mgmt import cleanup_python_cuda
+from tests.analysis_resource_utils import clear_nnsight_test_state
 from tests.runif import RunIf
 
 try:
@@ -38,15 +40,22 @@ def execute_notebook_with_params(
 
     output_notebook = output_dir / f"{notebook_path.stem}_output.ipynb"
 
-    # Execute the notebook from its directory to ensure relative imports work
-    pm.execute_notebook(
-        input_path=str(notebook_path),
-        output_path=str(output_notebook),
-        parameters=parameters,
-        timeout=timeout,
-        log_output=True,
-        cwd=str(notebook_path.parent),  # Execute from notebook's directory
-    )
+    clear_nnsight_test_state(None)
+    cleanup_python_cuda()
+
+    try:
+        # Execute the notebook from its directory to ensure relative imports work
+        pm.execute_notebook(
+            input_path=str(notebook_path),
+            output_path=str(output_notebook),
+            parameters=parameters,
+            timeout=timeout,
+            log_output=True,
+            cwd=str(notebook_path.parent),  # Execute from notebook's directory
+        )
+    finally:
+        clear_nnsight_test_state(None)
+        cleanup_python_cuda()
 
     return output_notebook
 
@@ -268,6 +277,72 @@ def test_circuit_tracer_notebooks(params: dict[str, Any], tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+# Test parameters for CT Analysis Backend Demo notebook
+CT_ANALYSIS_BACKEND_PARAMS = [
+    pytest.param(
+        {"backend": "nnsight"},
+        id="ct_analysis_backend_nnsight",
+    ),
+]
+
+
+@RunIf(bf16_cuda=True)
+@pytest.mark.parametrize("params", CT_ANALYSIS_BACKEND_PARAMS)
+def test_ct_analysis_backend_notebook(params: dict[str, Any], tmp_path: Path):
+    """Test CT analysis backend demo notebook."""
+    notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "ct_analysis_backend_demo.ipynb"
+
+    # Create output directory
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Execute notebook with parameters
+    output_notebook = execute_notebook_with_params(
+        notebook_path=notebook_path,
+        parameters=params,
+        output_dir=output_dir,
+    )
+
+    # Verify output
+    assert output_notebook.exists(), f"Output notebook not created at {output_notebook}"
+
+    # Clean up
+    _cleanup_notebook_artifacts()
+
+
+# Test parameters for CT RTE Concept Direction Demo notebook (formerly cross-backend)
+CT_RTE_CONCEPT_PARAMS = [
+    pytest.param(
+        {},
+        id="ct_rte_concept_nnsight",
+    ),
+]
+
+
+@RunIf(bf16_cuda=True)
+@pytest.mark.parametrize("params", CT_RTE_CONCEPT_PARAMS)
+def test_ct_cross_backend_notebook(params: dict[str, Any], tmp_path: Path):
+    """Test CT RTE concept direction demo notebook (NNsight backend)."""
+    notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "ct_cross_backend_demo.ipynb"
+
+    # Create output directory
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Execute notebook with parameters
+    output_notebook = execute_notebook_with_params(
+        notebook_path=notebook_path,
+        parameters=params,
+        output_dir=output_dir,
+    )
+
+    # Verify output
+    assert output_notebook.exists(), f"Output notebook not created at {output_notebook}"
+
+    # Clean up
+    _cleanup_notebook_artifacts()
+
+
 # Test parameters for SAE Lens notebooks (parameterized by backend)
 SAE_LENS_PARAMS = [
     pytest.param(
@@ -281,7 +356,7 @@ SAE_LENS_PARAMS = [
 ]
 
 
-@RunIf(bf16_cuda=True)
+@RunIf(bf16_cuda=True, standalone=True)
 @pytest.mark.parametrize("params", SAE_LENS_PARAMS)
 def test_sae_lens_notebooks(params: dict[str, Any], tmp_path: Path):
     """Test SAE Lens adapter notebooks with different backend parameterizations."""
@@ -317,6 +392,8 @@ def test_notebook_discovery():
     expected_notebooks = [
         "attribution_analysis/attribution_analysis.ipynb",
         "circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb",
+        "circuit_tracer_examples/ct_analysis_backend_demo.ipynb",
+        "circuit_tracer_examples/ct_cross_backend_demo.ipynb",
         "example_op_collections/op_collection_example.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",

@@ -66,6 +66,7 @@ bf16_cuda_mark = {"bf16_cuda": True}
 profiling_mark = {"profiling": True}
 profiling_ci_mark = {"profiling_ci": True}
 standalone_mark = {"standalone": True}
+benchmark_mark = {"benchmark": True}
 optional_mark = {"optional": True}
 lightning_mark = {"lightning": True}
 fts_mark = {"finetuning_scheduler": True}
@@ -95,6 +96,9 @@ RUNIF_ALIASES = {
     "cuda_l_prof": {**cuda_mark, **lightning_mark, **profiling_mark},
     "cuda_l_profci": {**cuda_mark, **lightning_mark, **profiling_ci_mark},
     "cuda_l_optional": {**cuda_mark, **lightning_mark, **optional_mark},
+    "benchmark": benchmark_mark,
+    "cuda_benchmark": {**cuda_mark, **benchmark_mark},
+    "cuda_l_benchmark": {**cuda_mark, **lightning_mark, **benchmark_mark},
     "bf16_cuda": bf16_cuda_mark,
     "bf16_cuda_prof": {**bf16_cuda_mark, **profiling_mark},
     "bf16_cuda_profci": {**bf16_cuda_mark, **profiling_ci_mark},
@@ -134,6 +138,7 @@ class RunIf:
         profiling: bool = False,
         profiling_ci: bool = False,
         optional: bool = False,
+        benchmark: bool = False,
         lightning: bool = False,
         finetuning_scheduler: bool = False,
         bitsandbytes: bool = False,
@@ -165,6 +170,8 @@ class RunIf:
             optional: Mark the test as for optional/extended testing. It will run as a separate process and only be
                 included in CI in limited cases. This requires that the ``IT_RUN_OPTIONAL_TESTS=1`` environment variable
                 is set.
+            benchmark: Mark the test as a benchmark test. It will run as a separate process.
+                This requires that the ``IT_RUN_BENCHMARK_TESTS=1`` environment variable is set.
             lightning: Require that lightning is installed.
             finetuning_scheduler: Require that finetuning_scheduler is installed.
             bitsandbytes: Require that bitsandbytes is installed.
@@ -222,6 +229,8 @@ class RunIf:
 
             conditions.append(cond)
             reasons.append("CUDA device bf16")
+            # used in conftest.py::pytest_collection_modifyitems
+            kwargs["bf16_cuda"] = True
 
         if skip_windows:
             conditions.append(sys.platform == "win32")
@@ -263,6 +272,13 @@ class RunIf:
             reasons.append("Optional/extended test execution")
             # used in conftest.py::pytest_collection_modifyitems
             kwargs["optional"] = True
+
+        if benchmark:
+            env_flag = os.getenv("IT_RUN_BENCHMARK_TESTS", "0")
+            conditions.append(env_flag != "1")
+            reasons.append("Benchmark test execution")
+            # used in conftest.py::pytest_collection_modifyitems
+            kwargs["benchmark"] = True
 
         if lightning:
             conditions.append(not _LIGHTNING_AVAILABLE)

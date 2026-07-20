@@ -235,6 +235,9 @@ class TestAnalysisStepMixin:
             with pytest.warns(UserWarning, match="Analysis configuration has not been set."):
                 module.analysis_cfg
 
+        # Re-activate analysis config for testing (runner's activated_analysis_cfg restores previous on exit)
+        module.analysis_cfg = fixture.runner.run_cfg._processed_analysis_cfgs[0]
+
         # Test with regular operation
         with mock.patch.object(torch, "set_grad_enabled") as mock_grad:
             module.on_analysis_start()
@@ -432,6 +435,23 @@ class TestGenerativeStepMixin:
         mock_model.generate.assert_called_once_with(input_ids=batch["input_ids"], max_length=10)
         assert torch.equal(output, torch.tensor([[4, 5, 6]]))
 
+    def test_lightning_adapter_gen_prepares_inputs_sigs(self):
+        """Test that LightningAdapter._it_cls_metadata includes gen_prepares_inputs_sigs.
+
+        The LightningAdapter's metadata must include gen_prepares_inputs_sigs so that _generate_prepares_inputs()
+        returns True for HF models (which have _prepare_model_inputs). Without this, map_gen_inputs filters batch keys
+        against gen_sig_keys (HF generate signature params), stripping input_ids/attention_mask and producing an empty
+        batch.
+        """
+        from interpretune.adapters.lightning import LightningAdapter
+
+        metadata = LightningAdapter._it_cls_metadata
+        assert metadata.gen_prepares_inputs_sigs, (
+            "LightningAdapter._it_cls_metadata.gen_prepares_inputs_sigs must not be empty; "
+            "without it, _generate_prepares_inputs() returns False and map_gen_inputs strips batch keys"
+        )
+        assert "_prepare_model_inputs" in metadata.gen_prepares_inputs_sigs
+
     def test_bridge_generate_pass_through_output_logits(self):
         """Test that TransformerBridge.generate accepts `output_logits` and returns ModelOutput with logits.
 
@@ -599,3 +619,20 @@ class TestClassificationMixin:
         assert torch.equal(label_ids, torch.tensor([10, 20, 30, 10], device=module.device))
         # Verify original labels are returned as the second value
         assert torch.equal(returned_labels, labels)
+
+    def test_labels_to_ids_accepts_cpu_label_tensor(self, get_it_session__core_cust__setup):
+        """Test the labels_to_ids method with label indices on a different device."""
+        fixture = get_it_session__core_cust__setup
+        module = fixture.it_session.module
+
+        target_labels_to_ids = get_super_method(
+            "it_examples.experiments.rte_boolq.RTEBoolqModuleMixin", module, "labels_to_ids"
+        )
+        module.it_cfg.entailment_mapping_indices = torch.tensor([10, 20, 30], device=module.device)
+
+        labels = torch.tensor([0, 1, 2, 0], device="cpu")
+        label_ids, returned_labels = target_labels_to_ids(labels)
+
+        assert torch.equal(label_ids, torch.tensor([10, 20, 30, 10], device=module.device))
+        assert returned_labels.device == module.device
+        assert torch.equal(returned_labels, labels.to(module.device))

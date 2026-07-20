@@ -132,7 +132,7 @@ test_hub_op:
             assert dispatcher._op_definitions["testuser.test.hub_test"].name == "testuser.test.test_hub_op"
             # With deterministic alphabetical ordering, otheruser comes before testuser,
             # so otheruser.test.test_hub_op gets the test_hub_op base name
-            assert dispatcher._op_definitions["model_forward_cache"].name == "model_cache_forward"
+            assert dispatcher._op_definitions["model_forward"].name == "model_fwd"
             assert dispatcher._op_definitions["otheruser.test.test_hub_op"].name == "otheruser.test.test_hub_op"
             assert dispatcher._op_definitions["test_hub_op"].name == "otheruser.test.test_hub_op"
             assert "hub_test" in all_ops

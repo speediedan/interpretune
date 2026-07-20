@@ -1,0 +1,17 @@
+EXTENDS: gemma3_1b_it_local_color_fruit_orange.yaml
+
+EXPERIMENT_NAME: gemma3_1b_it_local_color_fruit_orange_fs_l10_n5
+
+ANALYSIS:
+  top_n: 5
+  constrained_feature_selection:
+    layer_slices:
+      - [10, null]
+    score_source: signed_influence
+    score_sign: any
+    rank_by_abs: true
+  feature_intervention:
+    max_influence_norm_scale: true
+    apply_activation_function: true
+    constrained_layers: null
+  debug_pipeline_state_artifact_name: gemma3_1b_it_orange_fs_l10_n5_notebook_debug

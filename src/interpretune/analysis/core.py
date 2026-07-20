@@ -224,6 +224,26 @@ def _check_names_filter_available(module, col_name: str, col_cfg) -> bool:
     return True
 
 
+def _nested_sequence_feature(shape: list[int | None], dtype: str):
+    """Build a nested Sequence feature for ragged array shapes."""
+
+    feature = Value(dtype=dtype)
+    for dim in reversed(shape):
+        feature = DatasetsSequence(feature, length=dim) if dim is not None else DatasetsSequence(feature)
+    return feature
+
+
+def _feature_for_array_shape(shape: list[int | None], dtype: str):
+    """Return the most specific supported datasets feature for an array shape."""
+
+    dynamic_dims = sum(dim is None for dim in shape)
+    if len(shape) == 2 and dynamic_dims <= 1:
+        return Array2D(shape=tuple(shape), dtype=dtype)
+    if len(shape) == 3 and dynamic_dims <= 1:
+        return Array3D(shape=tuple(shape), dtype=dtype)
+    return _nested_sequence_feature(shape, dtype)
+
+
 def schema_to_features(
     module,
     op: str | AnalysisOp | None = None,
@@ -309,12 +329,10 @@ def schema_to_features(
                     # Determine base feature based on ColCfg properties
                     base_feature = Value(dtype=dtype)  # Default to simple Value type
                     if col_cfg.array_shape:
-                        shape = list(col_cfg.array_shape)
-                        shape = [dim_vars.get(dim, dim) if isinstance(dim, str) else dim for dim in shape]
-                        if len(shape) == 2:
-                            base_feature = Array2D(shape=tuple(shape), dtype=dtype)
-                        elif len(shape) == 3:
-                            base_feature = Array3D(shape=tuple(shape), dtype=dtype)
+                        shape: list[int | None] = [
+                            dim_vars.get(dim) if isinstance(dim, str) else dim for dim in col_cfg.array_shape
+                        ]
+                        base_feature = _feature_for_array_shape(shape, dtype)
                     elif col_cfg.sequence_type:
                         base_feature = DatasetsSequence(Value(dtype=dtype))
 
@@ -332,13 +350,11 @@ def schema_to_features(
 
         # Handle explicit array shapes
         if col_cfg.array_shape:
-            shape = list(col_cfg.array_shape)
-            shape = [dim_vars.get(dim, dim) if isinstance(dim, str) else dim for dim in shape]
+            shape: list[int | None] = [
+                dim_vars.get(dim) if isinstance(dim, str) else dim for dim in col_cfg.array_shape
+            ]
 
-            if len(shape) == 2:
-                features_dict[col_name] = Array2D(shape=tuple(shape), dtype=dtype)
-            elif len(shape) == 3:
-                features_dict[col_name] = Array3D(shape=tuple(shape), dtype=dtype)
+            features_dict[col_name] = _feature_for_array_shape(shape, dtype)
             continue
 
         # Handle scalar values (no array_shape and not sequence_type)
@@ -381,17 +397,15 @@ class AnalysisStore:
             self.dataset = dataset
 
         if self.dataset is not None:
-            if self.it_format_kwargs is not None:
-                # Set custom format options if provided
-                self.dataset.set_format(type="interpretune", **self.it_format_kwargs)  # type: ignore[attr-defined]  # datasets API supports set_format
-            else:
-                # check current format and set it to interpretune if not already set
-                if (
-                    not hasattr(self.dataset, "format")
-                    or getattr(self.dataset, "format", {}).get("type") != "interpretune"
-                ):  # type: ignore[attr-defined]  # datasets format attribute
-                    # Set default format as our custom analysis formatter
-                    self.dataset.set_format(type="interpretune")  # type: ignore[attr-defined]  # datasets API supports set_format
+            self._apply_interpretune_format()
+
+    def _apply_interpretune_format(self, columns: list[str] | None = None) -> None:
+        """Apply the interpretune formatter while preserving custom formatter kwargs."""
+        assert self.dataset is not None, "Dataset should be loaded before setting format"
+        format_kwargs = dict(self.it_format_kwargs or {})
+        if columns is not None:
+            format_kwargs["columns"] = columns
+        self.dataset.set_format(type="interpretune", **format_kwargs)  # type: ignore[attr-defined]  # datasets API supports set_format
 
     def _format_columns(self, cols_to_fetch: list[str], indices: int | slice | list[int] | None = None) -> dict:
         """Internal helper to format specified columns into tensors with proper shape reconstruction.
@@ -402,7 +416,7 @@ class AnalysisStore:
         """
         # Let the dataset handle the formatting using our registered ITAnalysisFormatter
         assert self.dataset is not None, "Dataset should be loaded before formatting columns"
-        self.dataset.set_format(type="interpretune", columns=cols_to_fetch)  # type: ignore[attr-defined]  # datasets API supports set_format
+        self._apply_interpretune_format(columns=cols_to_fetch)
 
         # Handle different types of indexing to get examples
         if indices is None:
@@ -457,7 +471,7 @@ class AnalysisStore:
 
         # Set default tensor format
         if self.dataset is not None:
-            self.dataset.set_format(type="interpretune")  # type: ignore[attr-defined]  # datasets API supports set_format
+            self._apply_interpretune_format()
 
     def reset_dataset(self) -> None:
         """Reset the dataset."""
@@ -588,7 +602,7 @@ class AnalysisStore:
                     result = attr(*args, **kwargs)
                     # If the result is a Dataset, ensure it maintains the interpretune format
                     if hasattr(result, "set_format"):
-                        result.set_format(type="interpretune")  # type: ignore[attr-defined]  # datasets support set_format
+                        result.set_format(type="interpretune", **dict(self.it_format_kwargs or {}))  # type: ignore[attr-defined]  # datasets support set_format
                     return result
 
                 return _caller

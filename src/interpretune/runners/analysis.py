@@ -10,6 +10,7 @@ from datasets import Dataset
 from datasets.fingerprint import generate_random_fingerprint
 
 from interpretune.analysis import schema_to_features
+from interpretune.analysis.execution import activated_analysis_cfg
 from interpretune.base import _call_itmodule_hook, ITDataModule
 from interpretune.runners import SessionRunner, run_step
 from interpretune.protocol import AllPhases, AnalysisStoreProtocol
@@ -71,7 +72,7 @@ def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: AnalysisCfg | None
 
         # Only initialize if not already applied to this module
         if not module.analysis_cfg.applied_to(module):  # type: ignore[attr-defined]  # protocol provides applied_to
-            init_analysis_cfgs(module, [module.analysis_cfg], **init_analysis_cfg_kwargs)  # type: ignore[arg-type]  # protocol compatibility
+            init_analysis_cfgs(module, module.analysis_cfg, **init_analysis_cfg_kwargs)  # type: ignore[arg-type]  # protocol compatibility
 
     return kwargs
 
@@ -90,18 +91,19 @@ def dataset_features_and_format(module: "ITModule", kwargs: dict) -> tuple[dict,
     """
     # Generate appropriate features based on module configuration and current op context
     # Handle different schema sources based on configuration
-    if hasattr(module.analysis_cfg, "op") and module.analysis_cfg.op is not None:  # type: ignore[attr-defined]  # protocol provides op
-        features = schema_to_features(module=module, op=module.analysis_cfg.op)  # type: ignore[attr-defined,arg-type]  # protocol compatibility
-        schema_source = module.analysis_cfg.op.output_schema  # type: ignore[attr-defined]  # protocol provides op
-    elif hasattr(module.analysis_cfg, "output_schema") and module.analysis_cfg.output_schema is not None:  # type: ignore[attr-defined]  # protocol provides output_schema
+    explicit_schema = getattr(module.analysis_cfg, "output_schema", None)  # type: ignore[attr-defined]  # protocol provides output_schema
+    if explicit_schema is not None:
         # Use explicitly provided output schema when op is None
-        features = schema_to_features(module=module, schema=module.analysis_cfg.output_schema)  # type: ignore[attr-defined]  # protocol provides output_schema
-        schema_source = module.analysis_cfg.output_schema  # type: ignore[attr-defined]  # protocol provides output_schema
+        features = schema_to_features(module=module, schema=explicit_schema)
+        schema_source = explicit_schema
         # Handle the case where schema_source is an OpWrapper or AnalysisOp instead of OpSchema
         from interpretune.analysis.ops.base import AnalysisOpLike
 
         if isinstance(schema_source, AnalysisOpLike):
             schema_source = schema_source.output_schema
+    elif hasattr(module.analysis_cfg, "op") and module.analysis_cfg.op is not None:  # type: ignore[attr-defined]  # protocol provides op
+        features = schema_to_features(module=module, op=module.analysis_cfg.op)  # type: ignore[attr-defined,arg-type]  # protocol compatibility
+        schema_source = module.analysis_cfg.op.output_schema  # type: ignore[attr-defined]  # protocol provides op
     else:
         # For manual analysis steps without any schema, use a default empty features dict
         features = {}
@@ -300,15 +302,6 @@ class AnalysisRunner(SessionRunner):
 
     def _run_analysis_cfg(self, analysis_cfg: AnalysisCfg) -> Any:
         """Run a single analysis operation with the provided configuration."""
-        # Set active analysis config
-        self.run_cfg.module.analysis_cfg = analysis_cfg  # type: ignore[attr-defined]  # protocol provides analysis_cfg
-
-        # TODO: Determine if/when we should (re)apply an analysis_cfg given `init_analysis_cfgs` should have already
-        #       applied the config. Would probably only if one analysis_cfg updates global state in a way that requires
-        #       subsequent ops to be aware of it (a pattern that we are not sure we want to encourage)
-        # analysis_cfg.apply(self.run_cfg.module)
-
-        # Run the analysis with the specified step_fn
-        result = self.analysis(step_fn=analysis_cfg.step_fn, **self.run_cfg.__dict__)
-
-        return result
+        ignore_manual = bool(getattr(self.run_cfg, "ignore_manual", False))
+        with activated_analysis_cfg(self.run_cfg.module, analysis_cfg, ignore_manual=ignore_manual):
+            return self.analysis(step_fn=analysis_cfg.step_fn, **self.run_cfg.__dict__)

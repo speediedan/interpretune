@@ -28,7 +28,7 @@ from interpretune.utils import rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
 
 if TYPE_CHECKING:
-    pass
+    from interpretune.analysis.backends import AnalysisBackendCapability
 
 # Type alias for replacement model backends - supports both TransformerLens and NNsight
 ReplacementModelType = TransformerLensReplacementModel | NNSightReplacementModel
@@ -85,7 +85,18 @@ class BaseCircuitTracerModule(BaseITModule):
         # Initialize attributes that may be required in base init methods
         self.attribution_graphs: list[InstantiatedGraph] = []
         self._replacement_model: ReplacementModelType | None = None
+        from interpretune.analysis.backends.circuit_tracer import DEFAULT_CT_ANALYSIS_BACKEND
+
+        self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
         super().__init__(*args, **kwargs)
+
+    @property
+    def analysis_capabilities(self) -> frozenset[AnalysisBackendCapability]:
+        """Analysis-level capabilities provided by the circuit-tracer adapter."""
+        from interpretune.analysis.backends import get_analysis_backend
+
+        analysis_backend = get_analysis_backend(self)
+        return analysis_backend.capabilities if analysis_backend is not None else frozenset()
 
     def _load_replacement_model(self, pretrained_kwargs: dict | None = None) -> None:
         """Load the ReplacementModel for circuit tracing.
@@ -113,11 +124,15 @@ class BaseCircuitTracerModule(BaseITModule):
 
         # Use ReplacementModel.from_pretrained factory
         # Factory returns backend-specific implementation based on backend parameter
+        # Determine lazy_encoder: explicit config takes precedence, otherwise auto-enable when offloading
+        lazy_encoder = cfg.lazy_encoder if cfg.lazy_encoder is not None else (cfg.offload == "cpu")
         replacement_model = ReplacementModel.from_pretrained(
             model_name=cfg.model_name or self.it_cfg.model_name_or_path,
             transcoder_set=cfg.transcoder_set,
             dtype=cfg.dtype,
             backend=backend,
+            lazy_encoder=lazy_encoder,
+            lazy_decoder=cfg.lazy_decoder,
             **pretrained_kwargs,
         )
 
@@ -133,6 +148,25 @@ class BaseCircuitTracerModule(BaseITModule):
 
         # Replace the model with the replacement model for circuit tracing
         self.model = self._replacement_model
+
+        if backend == "nnsight":
+            from interpretune.analysis.backends.hook_mapping import HookNameResolver
+            from interpretune.analysis.backends.nnsight import NNsightModelBackend, get_default_configs_per_pass
+
+            hf_model = NNsightModelBackend._get_hf_model(self.model)
+            hf_config = getattr(hf_model, "config", None)
+            architectures = getattr(hf_config, "architectures", None) if hf_config else None
+            model_arch = architectures[0] if architectures else type(hf_model).__name__
+            resolver = HookNameResolver(model_arch)
+            self._model_backend = NNsightModelBackend(  # type: ignore[attr-defined]
+                resolver,
+                configs_per_pass=get_default_configs_per_pass(),
+            )
+            self._model_backend.register_model_hooks(self.model)  # type: ignore[attr-defined]
+        else:
+            from interpretune.analysis.backends.transformer_lens import TLModelBackend
+
+            self._model_backend = TLModelBackend()  # type: ignore[attr-defined]
 
     def _capture_hyperparameters(self) -> None:
         """Capture hyperparameters for logging."""
@@ -183,7 +217,7 @@ class BaseCircuitTracerModule(BaseITModule):
 
     def generate_attribution_graph(self, prompt: str, **kwargs) -> Graph:
         """Generate attribution graph for a given prompt."""
-        if not self.replacement_model:
+        if self.replacement_model is None:
             raise ValueError("ReplacementModel not loaded. Call _load_replacement_model() first.")
 
         cfg = self.circuit_tracer_cfg
@@ -318,9 +352,22 @@ class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
         nnsight_cfg = self.nnsight_cfg  # type: ignore[attr-defined]
         if nnsight_cfg:
             nnsight_kwargs.update(nnsight_cfg.get_nnsight_kwargs())
+            if "device" not in nnsight_kwargs and "device_map" in nnsight_kwargs:
+                device_map = nnsight_kwargs["device_map"]
+                if isinstance(device_map, dict):
+                    device_entry = next(iter(device_map.values())) if device_map else None
+                else:
+                    device_entry = device_map
+                if isinstance(device_entry, int):
+                    nnsight_kwargs["device"] = f"cuda:{device_entry}"
+                elif device_entry is not None:
+                    nnsight_kwargs["device"] = str(device_entry)
 
         # Load the NNsight replacement model
         self._load_replacement_model(pretrained_kwargs=nnsight_kwargs)  # type: ignore[attr-defined]
+
+        # Apply generation config to the underlying HF model (NNSightReplacementModel extends LanguageModel)
+        self._apply_generation_config()  # type: ignore[attr-defined]  # provided by BaseNNsightModule
 
         # The replacement model is now set as self.model
         rank_zero_info("NNsight ReplacementModel initialized for Circuit Tracer")

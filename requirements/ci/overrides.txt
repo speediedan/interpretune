@@ -1,9 +1,11 @@
-transformer-lens @ git+https://github.com/speediedan/TransformerLens.git@330b4bb78e69a5f63d7f2ca79b50872ef0213903
-nnsight>=0.6.0
+transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@4ba2187b182faf964225c6eb9076c858cada0672
+nnsight==0.6.3  # released pin (fork checkout was a pristine v0.6.0 tag; 0.6.3 validated 98/7/0 across the nnsight test slice)
 triton==3.6.0
 torchvision==0.25.0
+torchaudio==2.10.0  # keep paired to the torch pin: unpinned resolutions pull torchaudio built for newer torch (CUDA-ABI import failure)
 torch==2.10.0
-transformers>=5.2.0
+transformers>=5.5.0
+datasets>=4.8.4
 huggingface-hub>=1.4.1
 accelerate>=1.12.0  # for SAELens from source
 dictionary-learning>=0.1.0

@@ -1,4 +1,8 @@
-from __future__ import annotations
+# N.B. we need to avoid annotations import here due to jsonargparse validation issues that emerge when it is used
+# (PEP 563 deferred annotations cause all annotations to become strings, and jsonargparse's
+# evaluate_postponed_annotations fails globally when get_type_hints encounters AnalysisCfgProtocol
+# in the ITConfig hierarchy, leaving required fields like sae_cfgs unresolved)
+# from __future__ import annotations
 from typing import Any, TypeAlias, TYPE_CHECKING
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -83,10 +87,14 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
     tl_cfg: ITLensFromPretrainedConfig | ITLensCustomConfig | ITLensBridgeConfig | None = None
 
     # NNsight backend configuration (required when backend="nnsight")
-    nnsight_cfg: NNsightConfig | None = None
+    nnsight_cfg: "NNsightConfig | None" = None
 
     # SAE-specific fields
-    sae_cfgs: SAECfgType | Sequence[SAECfgType]
+    # NOTE: TypeAlias inlined here so jsonargparse can resolve the type in CLI contexts
+    # (PEP 563 deferred annotations + TypeAlias causes fail_untyped failures).
+    sae_cfgs: (
+        SAELensFromPretrainedConfig | SAELensCustomConfig | Sequence[SAELensFromPretrainedConfig | SAELensCustomConfig]
+    )
     add_saes_on_init: bool = False  # TODO: may push this down to SAE config level instead of setting for all saes
     # use_error_term: bool = False  # TODO: add support for use_error_term with on_init stateful SAEs
 
@@ -136,6 +144,19 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
             raise MisconfigurationException(
                 "A valid tl_cfg (ITLensFromPretrainedConfig, ITLensCustomConfig, or ITLensBridgeConfig) must be "
                 "provided when backend='transformerlens'."
+            )
+
+        # Warn if use_bridge=True but tl_cfg is not ITLensBridgeConfig (likely misconfiguration)
+        if (
+            self.use_bridge
+            and isinstance(self.tl_cfg, ITLensFromPretrainedConfig)
+            and not isinstance(self.tl_cfg, ITLensBridgeConfig)
+        ):
+            rank_zero_warn(
+                "use_bridge=True but tl_cfg is an ITLensFromPretrainedConfig (HookedTransformer config), "
+                "not an ITLensBridgeConfig. This will initialize a HookedTransformer, not a TransformerBridge. "
+                "To use TransformerBridge, set tl_cfg to ITLensBridgeConfig. "
+                "To silence this warning, set use_bridge=False explicitly."
             )
 
         # Warn if nnsight_cfg is set but not used

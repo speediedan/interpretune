@@ -1,8 +1,9 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Generator, Callable
+from typing import Any, Generator, Callable
 from dataclasses import dataclass, field
 import datetime
 import warnings
+from weakref import WeakKeyDictionary
 
 from transformers import BatchEncoding, PreTrainedTokenizerBase
 
@@ -15,6 +16,7 @@ from interpretune.analysis import (
     OpWrapper,
     AnalysisOpLike,
 )
+from interpretune.analysis.execution import execute_analysis_step
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.config import ITSerializableCfg
 from interpretune.protocol import NamesFilter, AnalysisStoreProtocol, BaseAnalysisBatchProtocol, STEP_OUTPUT
@@ -96,8 +98,10 @@ def _extend_names_for_bridge(module, names_list: list[str]) -> tuple[list[str], 
 class AnalysisCfg(ITSerializableCfg):
     output_store: AnalysisStoreProtocol | None = None  # usually constructed on setup()
     input_store: AnalysisStoreProtocol | None = None  # store containing input data from previous op
-    target_op: str | AnalysisOp | Callable | list[AnalysisOp] | None = None  # input op to be resolved
-    output_schema: OpSchema | str | AnalysisOp | None = None  # Schema, op, or op name to define schema
+    batch_inputs: dict[str, Any] = field(default_factory=dict)  # batch-scoped inputs for the active invocation
+    run_inputs: dict[str, Any] = field(default_factory=dict)  # run-scoped inputs shared across the invocation
+    target_op: str | AnalysisOp | Callable | list[AnalysisOp | Callable] | None = None  # input op to be resolved
+    output_schema: OpSchema | str | AnalysisOp | Callable | None = None  # Schema, op, or op name to define schema
     name: str | None = None  # Name for this analysis configuration
     fwd_hooks: list[tuple] = field(default_factory=list)
     bwd_hooks: list[tuple] = field(default_factory=list)
@@ -113,11 +117,16 @@ class AnalysisCfg(ITSerializableCfg):
     # (prevents _generated_ prefix accumulation when this cfg is shared via class-level defaults)
     _original_step_fn: str | None = field(default=None, init=False, repr=False, compare=False)
     auto_prune_batch_encoding: bool = True  # Automatically prune encoded batches to only include relevant keys
-    _applied_to: dict = field(default_factory=dict)  # Dictionary tracking which modules this cfg has been applied to
-    _op: str | AnalysisOp | Callable | list[AnalysisOp] | None = None  # op via generated analysis step
+    _applied_to: WeakKeyDictionary = field(  # type: ignore[type-arg]
+        default_factory=WeakKeyDictionary,
+        init=False,
+        repr=False,
+        compare=False,
+    )  # Tracks which live module instances this cfg has been applied to
+    _op: str | AnalysisOp | Callable | list[AnalysisOp | Callable] | None = None  # op via generated analysis step
 
     @property
-    def op(self) -> str | AnalysisOp | Callable | list[AnalysisOp] | None:
+    def op(self) -> str | AnalysisOp | Callable | list[AnalysisOp | Callable] | None:
         """Get the operation, unwrapping any OpWrapper if present."""
         if self._op is None:
             return None
@@ -129,7 +138,7 @@ class AnalysisCfg(ITSerializableCfg):
         return self._op
 
     @op.setter
-    def op(self, value: str | AnalysisOp | Callable | list[AnalysisOp] | None) -> None:
+    def op(self, value: str | AnalysisOp | Callable | list[AnalysisOp | Callable] | None) -> None:
         """Set the operation value."""
         self._op = value
 
@@ -189,11 +198,39 @@ class AnalysisCfg(ITSerializableCfg):
                 for op in self.op:
                     if isinstance(op, str):
                         instantiated_ops.append(DISPATCHER.get_op(op))
-                    elif not isinstance(op, AnalysisOp):
-                        # Expect an OpWrapper-like object
+                    elif isinstance(op, OpWrapper):
                         instantiated_ops.append(op._ensure_instantiated())
-                    else:
+                    elif isinstance(op, AnalysisOp):
                         instantiated_ops.append(op)
+                    else:
+                        ensure_instantiated = getattr(op, "_ensure_instantiated", None)
+                        if callable(ensure_instantiated):
+                            instantiated_ops.append(ensure_instantiated())
+                            continue
+
+                        bound_self = getattr(op, "__self__", None)
+                        bound_ensure_instantiated = getattr(bound_self, "_ensure_instantiated", None)
+                        if callable(bound_ensure_instantiated):
+                            instantiated_ops.append(bound_ensure_instantiated())
+                            continue
+
+                        op_name = (
+                            getattr(op, "_op_name", None) or getattr(op, "name", None) or getattr(op, "__name__", None)
+                        )
+                        if isinstance(op_name, str):
+                            try:
+                                instantiated_ops.append(DISPATCHER.get_op(op_name))
+                                continue
+                            except Exception:
+                                pass
+
+                        instantiated = op()
+                        if isinstance(instantiated, OpWrapper):
+                            instantiated_ops.append(instantiated._ensure_instantiated())
+                        elif isinstance(instantiated, AnalysisOp):
+                            instantiated_ops.append(instantiated)
+                        else:
+                            raise TypeError(f"Composite op factory returned unsupported type: {type(instantiated)}")
                 self.op = DISPATCHER.compile_ops(instantiated_ops)
             return
 
@@ -478,8 +515,7 @@ class AnalysisCfg(ITSerializableCfg):
         Returns:
             bool: True if this configuration has been applied to the module, False otherwise.
         """
-        # Use module id as key to track unique module instances
-        return id(module) in self._applied_to
+        return module in self._applied_to
 
     def reset_applied_state(self, module=None) -> None:
         """Reset the applied state tracking.
@@ -489,7 +525,7 @@ class AnalysisCfg(ITSerializableCfg):
         """
         if module is not None:
             # Reset for specific module
-            self._applied_to.pop(id(module), None)
+            self._applied_to.pop(module, None)
         else:
             # Reset for all modules
             self._applied_to.clear()
@@ -514,8 +550,7 @@ class AnalysisCfg(ITSerializableCfg):
             fallback_sae_targets: Optional fallback LatentAnalysisTargets to use if this config doesn't have one.
         """
         # Short-circuit if already applied to this module (though apply should be idempotent)
-        module_id = id(module)
-        if module_id in self._applied_to:
+        if module in self._applied_to:
             return
 
         # Store original step_fn name before any mutation to prevent _generated_ prefix accumulation
@@ -542,14 +577,13 @@ class AnalysisCfg(ITSerializableCfg):
                 self, batch: BatchEncoding, batch_idx: int, dataloader_idx: int = 0
             ) -> Generator[STEP_OUTPUT, None, None]:
                 """Dynamically generated analysis_step method."""
-                analysis_batch = None
-
-                # TODO: move this code to a separate function to allow for reuse outside of the generated method
-                # Handle composite ops or compositions
-                op = self.analysis_cfg.op
-                analysis_batch = op(self, analysis_batch, batch, batch_idx)
-
-                yield from self.analysis_cfg.save_batch(analysis_batch, batch, tokenizer=self.datamodule.tokenizer)
+                yield from execute_analysis_step(
+                    self,
+                    batch,
+                    batch_idx,
+                    dataloader_idx=dataloader_idx,
+                    analysis_cfg=self.analysis_cfg,
+                )
 
             # TODO: separate some of this more ephemeral state to an AnalysisState object
             # Add the method to the module with a _generated version of the base step_fn name
@@ -577,7 +611,7 @@ class AnalysisCfg(ITSerializableCfg):
         self.prepare_model_ctx(module, fallback_sae_targets)
 
         # Mark as applied to this specific module, storing module class name for debugging
-        self._applied_to[module_id] = module.__class__.__name__
+        self._applied_to[module] = module.__class__.__name__
 
 
 @dataclass(kw_only=True)

@@ -108,6 +108,26 @@ SAE analysis operations (`logit_diffs_sae`, `logit_diffs_attr_grad`, `logit_diff
 
 Backend selection is automatic via `get_backend_for_module()` — if the module has `nnsight_cfg`, NNsight backend is used.
 
+## Framework-Agnostic Logging
+
+Adapters must support the `log()` / `log_dict()` contract used by mixins like `ClassificationMixin`:
+
+- **Core context**: `CoreHelperAttributes` provides real `log()` / `log_dict()` methods that accumulate metrics in `_logged_metrics`. The core runner prints averaged metrics at test epoch end.
+- **Lightning context**: `LightningModule.log()` / `log_dict()` route to configured loggers with full `prog_bar`, `sync_dist`, and `on_step` / `on_epoch` support.
+- **User code** calls `self.log()` / `self.log_dict()` regardless of context — the MRO determines which implementation runs.
+
+When developing a new framework adapter, ensure it provides `log()` / `log_dict()` methods or inherits them from the framework module class.
+
+## Hook Lifecycle
+
+Lifecycle hooks are dispatched via `_call_itmodule_hook(module, hook_name=..., optional=True)`:
+
+- **`setup()`**: `ClassificationMixin.setup()` → `super().setup()` → `BaseITHooks.setup()`. Classification mapping init lives in the mixin; datamodule and directory setup live in `BaseITHooks`.
+- **`on_session_end()`**: Lives in `BaseITHooks`. Called by `on_train_end`, `on_test_end`, `on_predict_end`.
+- **Phase-specific batch hooks**: `on_test_batch_start`, `on_train_batch_start` — fired by `run_step()` on the first step only, both optional.
+
+New adapters should not override these hooks unless they need adapter-specific behavior. The cooperative `super()` chain ensures all mixins in the MRO are invoked.
+
 
 ## Common Mistakes to Avoid
 

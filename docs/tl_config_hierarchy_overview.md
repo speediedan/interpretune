@@ -89,6 +89,19 @@ Extends `ITLensSharedConfig` for config-based initialization:
 - **Limitation**: Currently requires HookedTransformerConfig, cannot accept TransformerBridgeConfig directly
 - **Note**: When `use_bridge=True` with `ITLensCustomConfig`, initialization will not use TransformerBridge — Interpretune will warn and force `use_bridge=False`, falling back to the legacy HookedTransformer path.
 
+### ITLensBridgeConfig
+Extends `ITLensSharedConfig` for explicit TransformerBridge (v3) configuration:
+- **Usage**: When you want fine-grained control over TransformerBridge initialization and compatibility mode settings
+- **Key Fields**:
+  - `model_name`: The HF model name/path for TransformerBridge (e.g., "gemma-2-2b-it")
+  - `enable_compatibility_mode`: Whether to call enable_compatibility_mode() on the bridge after instantiation (default: False)
+  - `enable_compatibility_mode_kwargs`: Optional kwargs for enable_compatibility_mode() (e.g., `fold_ln`, `fold_value_biases`)
+  - `transformer_bridge_config_overrides`: Optional kwargs to pass to TransformerBridgeConfig constructor
+  - `device`, `dtype`: Device/dtype configuration
+  - `use_bridge`: Always True for this config type (default: True)
+- **Note**: This is the recommended config for TransformerBridge mode. Using `ITLensFromPretrainedConfig` with `use_bridge=True` will produce a warning since the config fields are HookedTransformer-specific.
+- **Note**: `SAELensConfig` will warn if `use_bridge=True` but `tl_cfg` is an `ITLensFromPretrainedConfig` instead of `ITLensBridgeConfig`.
+
 ### ITLensConfig
 Top-level IT configuration encapsulating all settings:
 - **Key Fields**:
@@ -260,6 +273,7 @@ serialize IT wrapper configs as if they were actual TL configs.
 | **HookedTransformerConfig** | Legacy TL config | Created by TL's from_pretrained | `self.model.cfg` |
 | **TransformerBridgeConfig** | V3 TL config with architecture info | Created by map_to_tl_config + adapter | `self.model.cfg` |
 | **ITLensSharedConfig** | Base IT TL settings | User provides | `self.it_cfg.tl_cfg` |
-| **ITLensFromPretrainedConfig** | IT settings for from_pretrained | User provides | `self.it_cfg.tl_cfg` |
+| **ITLensFromPretrainedConfig** | IT settings for from_pretrained (HookedTransformer) | User provides | `self.it_cfg.tl_cfg` |
+| **ITLensBridgeConfig** | IT settings for TransformerBridge (v3) | User provides | `self.it_cfg.tl_cfg` |
 | **ITLensCustomConfig** | IT settings for config-based init | User provides | `self.it_cfg.tl_cfg` |
 | **HF PretrainedConfig** | Original HF model config | Loaded with HF model | `self.model.config` |

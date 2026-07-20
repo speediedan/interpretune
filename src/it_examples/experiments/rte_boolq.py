@@ -41,6 +41,7 @@ from interpretune import (
     AnalysisBatch,
     ITLensConfig,
     SAELensConfig,
+    CircuitTracerConfig,
     PromptConfig,
     ITDataModuleConfig,
     ITConfig,
@@ -51,6 +52,7 @@ from interpretune import (
     sanitize_input_name,
     STEP_OUTPUT,
 )
+from interpretune.config.nnsight import ITNNsightConfig, NNsightConfig
 
 
 log = logging.getLogger(__name__)
@@ -94,6 +96,16 @@ class RTEBoolqTLConfig(RTEBoolqEntailmentMapping, ITLensConfig): ...
 
 @dataclass(kw_only=True)
 class RTEBoolqSLConfig(RTEBoolqEntailmentMapping, SAELensConfig): ...
+
+
+@dataclass(kw_only=True)
+class RTEBoolqCTConfig(RTEBoolqEntailmentMapping, ITConfig):
+    circuit_tracer_cfg: CircuitTracerConfig | None = None
+
+
+@dataclass(kw_only=True)
+class RTEBoolqNNsightConfig(RTEBoolqEntailmentMapping, ITNNsightConfig):
+    nnsight_cfg: NNsightConfig  # re-declare for jsonargparse fail_untyped=True visibility
 
 
 class RTEBoolqDataModule(ITDataModule):
@@ -251,7 +263,7 @@ class RTEBoolqSteps:
         label_ids, orig_labels = self.labels_to_ids(batch.pop("labels"))
         analysis_batch = AnalysisBatch(label_ids=label_ids, orig_labels=orig_labels)
         op_kwargs = {"module": self, "batch": batch, "batch_idx": batch_idx}
-        analysis_batch = it.model_cache_forward(analysis_batch=analysis_batch, **op_kwargs)  # type: ignore[assignment]  # protocol compatibility
+        analysis_batch = it.model_fwd_w_cache_latent_models(analysis_batch=analysis_batch, **op_kwargs)  # type: ignore[assignment]  # protocol compatibility
         analysis_batch = it.logit_diffs_cache(analysis_batch=analysis_batch, **op_kwargs)  # type: ignore[assignment]  # protocol compatibility
         analysis_batch = it.sae_correct_acts(analysis_batch=analysis_batch, **op_kwargs)  # type: ignore[assignment]  # protocol compatibility
 
@@ -278,7 +290,8 @@ class RTEBoolqModuleMixin:
         )
 
     # we override the default labels_to_ids method to demo using our module-specific attributes/logic
-    def labels_to_ids(self, labels: list[str]) -> list[int]:
+    def labels_to_ids(self, labels: torch.Tensor | list[int]) -> tuple[torch.Tensor, torch.Tensor]:
+        labels = torch.as_tensor(labels, device=self.it_cfg.entailment_mapping_indices.device)
         return torch.take(self.it_cfg.entailment_mapping_indices, labels), labels
 
     # We override the default standardize_logits method to demo using custom attributes etc.

@@ -716,6 +716,20 @@ class TestCoreFunctionality:
         mock_module.analysis_cfg = None
         features = schema_to_features(mock_module, schema=None)
 
+    def test_schema_to_features_uses_nested_sequences_for_multi_dynamic_arrays(self):
+        mock_module = MagicMock()
+        mock_module.datamodule.itdm_cfg.eval_batch_size = 2
+        mock_module.it_cfg.generative_step_cfg.lm_generation_cfg.max_new_tokens = 3
+        mock_module.it_cfg.num_labels = 2
+        mock_module.it_cfg.entailment_mapping = {"a": 0, "b": 1}
+
+        schema = {"adjacency_matrix": ColCfg(datasets_dtype="float32", array_shape=(None, None))}
+
+        features = schema_to_features(mock_module, schema=schema)
+
+        assert str(features["adjacency_matrix"]) == "List(Value('float32'))"
+        assert features["adjacency_matrix"].__class__.__name__ != "Array2D"
+
     def test_schema_from_module_analysis_cfg(self):
         """Test schema_to_features when schema comes from module.analysis_cfg.output_schema."""
         mock_module = MagicMock()
@@ -953,7 +967,7 @@ class TestCoreFunctionality:
                 wrapper = getattr(interpretune, alias)
                 assert isinstance(wrapper, OpWrapper), f"'{alias}' is not an OpWrapper instance"
                 assert DISPATCHER.get_op(wrapper._op_name).name == op_name, (
-                    f"Alias '{alias}' points to '{wrapper.op_name}' instead of '{op_name}'"
+                    f"Alias '{alias}' points to '{wrapper._op_name}' instead of '{op_name}'"
                 )
 
         finally:

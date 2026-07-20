@@ -3,6 +3,7 @@ import pytest
 import torch
 import pickle
 from dataclasses import replace
+from types import SimpleNamespace
 from transformers import BatchEncoding
 from unittest.mock import patch, MagicMock
 from tests.runif import RunIf
@@ -18,6 +19,7 @@ from interpretune.analysis.ops.base import (
     _reconstruct_op,
     OpWrapper,
 )
+from interpretune.analysis.ops.helpers import AnalysisInputs
 
 
 # Module-level implementation function for test operations
@@ -110,6 +112,7 @@ class TestColCfg:
             array_shape=(None, "batch_size", 10),
             sequence_type=False,
             array_dtype="float32",
+            default="fallback-value",
         )
 
         assert cfg.datasets_dtype == "int64"
@@ -123,6 +126,7 @@ class TestColCfg:
         assert cfg.array_shape == (None, "batch_size", 10)
         assert cfg.sequence_type is False
         assert cfg.array_dtype == "float32"
+        assert cfg.default == "fallback-value"
 
     def test_to_dict_method(self):
         """Test the to_dict method."""
@@ -130,6 +134,7 @@ class TestColCfg:
             datasets_dtype="float32",
             dyn_dim=2,
             array_shape=(None, "batch_size"),
+            default="mean_difference",
         )
 
         result = cfg.to_dict()
@@ -137,6 +142,7 @@ class TestColCfg:
         assert result["datasets_dtype"] == "float32"
         assert result["dyn_dim"] == 2
         assert result["array_shape"] == (None, "batch_size")
+        assert result["default"] == "mean_difference"
 
     def test_from_dict_method(self):
         """Test the from_dict method."""
@@ -145,6 +151,7 @@ class TestColCfg:
             "required": False,
             "dyn_dim": 3,
             "non_tensor": True,
+            "default": "from-dict",
         }
 
         cfg = ColCfg.from_dict(data)
@@ -152,6 +159,7 @@ class TestColCfg:
         assert cfg.required is False
         assert cfg.dyn_dim == 3
         assert cfg.non_tensor is True
+        assert cfg.default == "from-dict"
 
     def test_hash_method(self):
         """Test the __hash__ method."""
@@ -203,6 +211,7 @@ class TestColCfg:
             array_shape=(None, "batch_size", 10),
             sequence_type=False,
             array_dtype="int64",
+            default="fallback",
         )
 
         cfg2 = ColCfg(
@@ -218,6 +227,7 @@ class TestColCfg:
             array_shape=(None, "batch_size", 10),
             sequence_type=False,
             array_dtype="int64",
+            default="fallback",
         )
 
         # Hashes should be equal
@@ -236,6 +246,7 @@ class TestColCfg:
             "array_shape",
             "sequence_type",
             "array_dtype",
+            "default",
         ]:
             # Make a copy with one attribute changed
             modified_dict = cfg1.to_dict()
@@ -249,6 +260,8 @@ class TestColCfg:
                 modified_dict[attr_name] = "analysis_store"
             elif attr_name == "array_dtype":
                 modified_dict[attr_name] = "float64"
+            elif attr_name == "default":
+                modified_dict[attr_name] = "another-default"
             elif isinstance(modified_dict[attr_name], bool):
                 modified_dict[attr_name] = not modified_dict[attr_name]
 
@@ -430,6 +443,128 @@ class TestAnalysisBatch:
 
         # Dictionary-style access still works
         assert batch["custom_attribute"] == "custom value"
+
+    def test_get_resolves_bound_scopes(self):
+        """Test bound scoped lookup via AnalysisBatch.get."""
+
+        class _FakeDataset:
+            column_names = ["row_value", "store_value", "column_only"]
+
+            def __getitem__(self, index):
+                rows = [
+                    {"row_value": "row-zero", "store_value": "store-zero"},
+                    {"row_value": "row-one", "store_value": "store-one"},
+                ]
+                return rows[index]
+
+        class _FakeStore:
+            def __init__(self):
+                self.dataset = _FakeDataset()
+
+            def __getitem__(self, key):
+                columns = {
+                    "store_value": ["store-zero", "store-one"],
+                    "column_only": [1, 2],
+                }
+                return columns[key]
+
+        module = SimpleNamespace(
+            analysis_cfg=SimpleNamespace(
+                batch_inputs={"batch_value": "batch-scope"},
+                run_inputs={"run_value": "run-scope", "shadowed": "run-shadow"},
+                input_store=_FakeStore(),
+            )
+        )
+        batch = AnalysisBatch(shadowed="batch-shadow")
+        batch.bind_resolution_context(module, batch_idx=1)
+
+        assert batch.get("shadowed") == "batch-shadow"
+        assert batch.get("run_value") == "run-scope"
+        assert batch.get("batch_value") == "batch-scope"
+        assert batch.get("row_value") == "row-one"
+        assert batch.get("store_value") == "store-one"
+        assert batch.get("column_only") == 2
+        assert batch.get("missing", "fallback") == "fallback"
+
+    def test_get_prefers_explicit_analysis_inputs_over_config_inputs(self):
+        """Test explicit analysis_inputs precedence over config-scoped defaults."""
+        module = SimpleNamespace(
+            analysis_cfg=SimpleNamespace(
+                batch_inputs={"batch_value": "config-batch"},
+                run_inputs={"run_value": "config-run"},
+                input_store=None,
+            )
+        )
+        batch = AnalysisBatch()
+        batch.bind_resolution_context(
+            module,
+            batch_idx=0,
+            analysis_inputs=AnalysisInputs(
+                batch={"batch_value": "explicit-batch"},
+                run={"run_value": "explicit-run"},
+            ),
+        )
+
+        assert batch.get("batch_value") == "explicit-batch"
+        assert batch.get("run_value") == "explicit-run"
+
+    def test_attribute_access_resolves_scoped_values(self):
+        """Test attribute-style access uses the bound scoped resolver."""
+
+        class _FakeDataset:
+            column_names = ["row_value", "column_only"]
+
+            def __getitem__(self, index):
+                return {"row_value": f"row-{index}"}
+
+        class _FakeStore:
+            def __init__(self):
+                self.dataset = _FakeDataset()
+
+            def __getitem__(self, key):
+                columns = {"column_only": ["column-zero", "column-one"]}
+                return columns[key]
+
+        module = SimpleNamespace(
+            analysis_cfg=SimpleNamespace(
+                batch_inputs={"batch_value": "batch-scope"},
+                run_inputs={"run_value": "run-scope"},
+                input_store=_FakeStore(),
+            )
+        )
+        batch = AnalysisBatch()
+        batch.bind_resolution_context(module, batch_idx=1)
+
+        assert batch.batch_value == "batch-scope"
+        assert batch.run_value == "run-scope"
+        assert batch.row_value == "row-1"
+        assert batch.column_only == "column-one"
+
+    def test_attribute_access_uses_bound_schema_defaults(self):
+        """Test schema defaults back AnalysisBatch attribute access when scoped inputs are absent."""
+        batch = AnalysisBatch()
+        batch.bind_resolution_context(
+            module=None,
+            input_schema=OpSchema(
+                {
+                    "concept_direction_mode": ColCfg(
+                        datasets_dtype="string",
+                        required=False,
+                        non_tensor=True,
+                        default="mean_difference",
+                    )
+                }
+            ),
+        )
+
+        assert batch.concept_direction_mode == "mean_difference"
+
+    def test_require_raises_for_missing_bound_value(self):
+        """Test required scoped lookup failure."""
+        batch = AnalysisBatch()
+
+        with pytest.raises(ValueError, match="required value 'missing'"):
+            batch.require("missing")
 
     def test_to_cpu(self):
         """Test the to_cpu method."""
@@ -771,6 +906,73 @@ class TestAnalysisOp:
         assert op.description == "Test operation"
         assert "field" in op.output_schema
         assert "input_field" in op.input_schema
+
+    def test_call_binds_analysis_batch_resolution_context(self):
+        """Test AnalysisOp binds scoped lookup context onto AnalysisBatch."""
+
+        def bound_lookup_impl(module, analysis_batch, batch, batch_idx, **kwargs):
+            analysis_batch.output_field = analysis_batch.get("run_value")
+            analysis_batch.batch_output = analysis_batch.get("batch_value")
+            return analysis_batch
+
+        op = AnalysisOp(
+            name="bound_lookup",
+            description="Test bound lookup",
+            output_schema=OpSchema({"output_field": ColCfg(datasets_dtype="string")}),
+        )
+        op._impl = bound_lookup_impl
+
+        module = SimpleNamespace(
+            analysis_cfg=SimpleNamespace(
+                batch_inputs={"batch_value": "from-config-batch"},
+                run_inputs={"run_value": "from-config-run"},
+                input_store=None,
+            )
+        )
+
+        result = op(module=module, analysis_batch=AnalysisBatch(), batch=None, batch_idx=0)
+
+        assert result.output_field == "from-config-run"
+        assert result.batch_output == "from-config-batch"
+
+    def test_call_supports_attribute_style_resolution_and_schema_defaults(self):
+        """Test AnalysisOp input schema defaults enable attribute-first op implementations."""
+
+        def bound_lookup_impl(module, analysis_batch, batch, batch_idx, **kwargs):
+            analysis_batch.output_field = analysis_batch.run_value
+            analysis_batch.direction_mode = analysis_batch.concept_direction_mode
+            return analysis_batch
+
+        op = AnalysisOp(
+            name="bound_lookup_attr",
+            description="Test bound lookup attr",
+            input_schema=OpSchema(
+                {
+                    "run_value": ColCfg(datasets_dtype="string"),
+                    "concept_direction_mode": ColCfg(
+                        datasets_dtype="string",
+                        required=False,
+                        non_tensor=True,
+                        default="mean_difference",
+                    ),
+                }
+            ),
+            output_schema=OpSchema({"output_field": ColCfg(datasets_dtype="string")}),
+        )
+        op._impl = bound_lookup_impl
+
+        module = SimpleNamespace(
+            analysis_cfg=SimpleNamespace(
+                batch_inputs={},
+                run_inputs={"run_value": "from-config-run"},
+                input_store=None,
+            )
+        )
+
+        result = op(module=module, analysis_batch=AnalysisBatch(), batch=None, batch_idx=0)
+
+        assert result.output_field == "from-config-run"
+        assert result.direction_mode == "mean_difference"
 
     def test_initialize_with_schema(self):
         """Test initialization with schema objects."""

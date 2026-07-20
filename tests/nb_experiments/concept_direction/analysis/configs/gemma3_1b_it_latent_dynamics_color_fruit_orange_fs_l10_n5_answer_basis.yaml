@@ -1,0 +1,16 @@
+EXTENDS: ../../configs/gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_answer_basis.yaml
+
+EXPERIMENT_NAME: gemma3_1b_it_latent_dynamics_color_fruit_orange_fs_l10_n5_answer_basis
+
+EXPERIMENT:
+  concept_pair_config_path: ../../configs/cp_color_fruit_orange_gemma_it.yaml
+
+LATENT_DYNAMICS:
+  stage_top_n: 5
+  projection:
+    backend_preference: cpu
+    n_components: 2
+    n_neighbors: 6
+    min_dist: 0.05
+    metric: cosine
+    random_state: 17

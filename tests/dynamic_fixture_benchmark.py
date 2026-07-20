@@ -18,6 +18,12 @@ Usage:
 
     # This will generate: tests/fixture_benchmark_report.md
 
+Resource debugging:
+    The benchmark script is complementary to the runtime fixture diagnostics exposed by
+    `IT_RESOURCE_DEBUG=1`. Use the benchmark report to identify the fixtures worth
+    investigating, then rerun a narrow pytest repro with the runtime debug flags enabled to capture setup/teardown RSS
+    and CUDA snapshots from `tests/conftest.py`.
+
 Categories:
 - Real Model: Fixtures using actual models (gpt2, llama3, gemma2)
 - Custom Model: Fixtures using trivial test models (cust patterns)

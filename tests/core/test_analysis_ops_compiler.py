@@ -658,7 +658,7 @@ test_op:
 
     def test_fingerprint_empty(self, cache_manager):
         """Test fingerprint with no YAML files."""
-        assert cache_manager.fingerprint == "empty"
+        assert cache_manager.fingerprint == "empty_v2"
 
     def test_fingerprint_changes_with_content(self, cache_manager, tmp_path):
         """Test that fingerprint changes when file content changes."""

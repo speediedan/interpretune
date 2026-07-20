@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from interpretune.config import ITConfig, ITState
 
 
-# TODO: add core helper log/log_dict methods for core context usage
 for warnf in [
     f".*{dummy_method_warn_fingerprint}.*",
 ]:
@@ -383,7 +382,14 @@ class PropertyDispatcher:
 
 
 class CoreHelperAttributes:
-    """Mixin class for adding arbitrary core helper attributes to core (non-framework adapted) IT classes."""
+    """Mixin class for adding arbitrary core helper attributes to core (non-framework adapted) IT classes.
+
+    Provides real ``log`` / ``log_dict`` methods that accumulate metrics per epoch so
+    the core runner can print them at epoch end.  Any keys in ``compatibility_attrs``
+    fall back to the ``_dummy_notify`` stub via ``__getattr__``.
+    """
+
+    _logged_metrics: dict[str, list[float]]
 
     def __init__(self, *args, **kwargs) -> None:
         # we need to initialize internal state before `ITStateMixin`'s __init__ is invoked so use this static method
@@ -399,7 +405,21 @@ class CoreHelperAttributes:
         self._supported_helper_attrs = {
             k: partial(_dummy_notify, method=k, ret_callable=v.ret_callable, ret_val=v.ret_val) for k, v in ca.items()
         }
+        self._logged_metrics = {}
         super().__init__(*args, **kwargs)
+
+    # -- real log / log_dict for core (non-framework) modules --
+
+    def log(self, name: str, value: Any, *args, **kwargs) -> None:
+        """Accumulate a single named metric value for epoch-end reporting."""
+        if isinstance(value, torch.Tensor):
+            value = value.detach().cpu().item()
+        self._logged_metrics.setdefault(name, []).append(value)
+
+    def log_dict(self, metric_dict: dict[str, Any], *args, **kwargs) -> None:
+        """Accumulate a dict of metric values for epoch-end reporting."""
+        for k, v in metric_dict.items():
+            self.log(k, v)
 
     def __getattr__(self, name: str) -> Any:
         # NOTE: dynamically stub a specified subset of framework module attributes (if they don't already exist) to
