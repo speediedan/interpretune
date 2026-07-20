@@ -133,6 +133,7 @@ def extract_concept_latent_examples(
         concept_latent_state (float32)
         cache (object)
         answer_indices (int64)
+        context_token_indices (int64)
         orig_labels (int64)
         logit_diffs (float32)
         concept_group_a_label_ids (int64)
@@ -149,6 +150,7 @@ def extract_concept_latent_examples(
         concept_group_name (string)
         concept_example_logit_diff (float32)
         concept_example_weight (float32)
+        concept_context_indices (int64)
         concept_cache_key (string)
         concept_group_a_name (string)
         concept_group_b_name (string)
@@ -165,11 +167,13 @@ def extract_concept_latent_state(
     Input Schema:
         cache (object)
         answer_indices (int64)
+        context_token_indices (int64)
         concept_cache_key (string)
 
     Output Schema:
         concept_latent_state (float32)
         concept_cache_key (string)
+        context_token_indices (int64)
     """
     ...
 

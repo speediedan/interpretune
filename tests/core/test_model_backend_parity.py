@@ -503,17 +503,21 @@ class TestDirectionInterventionBackendParity:
     close since the hook application is numerically equivalent.
     """
 
-    @pytest.fixture(scope="class")
+    # function scope (not class): the underlying analysis-session fixtures use the dynamic
+    # analysis_fixture_scope(), which narrows to function scope on low-RAM runners (hosted CI) —
+    # a class-scoped requester would ScopeMismatch there. Extraction is cheap; on high-RAM runners
+    # the session fixtures remain class-scoped so the heavyweight state is still reused.
+    @pytest.fixture
     def _br_module_and_batch(self, request):
         fixture = request.getfixturevalue(_BR_BASE)
         return _extract_module_and_batch(fixture)
 
-    @pytest.fixture(scope="class")
+    @pytest.fixture
     def _ns_module_and_batch(self, request):
         fixture = request.getfixturevalue(_NS_BASE)
         return _extract_module_and_batch(fixture)
 
-    @pytest.fixture(scope="class")
+    @pytest.fixture
     def _concept_direction(self, _br_module_and_batch):
         """Build a simple concept direction from token embedding difference."""
         module, _ = _br_module_and_batch
