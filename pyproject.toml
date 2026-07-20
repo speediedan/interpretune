@@ -94,10 +94,14 @@ examples = [
 # Update commit hashes when cutting release branches to pin to tested versions
 git-deps = [
     "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@14cc3e8443d6bca1fc58752aca28207ba2128a3c",
-    "transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@42a2d526a2a949e64ba7bf549b162f7dba6c80c5",
+    "transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@4ba2187b182faf964225c6eb9076c858cada0672",
     "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@a96d8158ee92dddb3eb5203095ce9db98c137fd0",
-    "sae_lens >= 6.37.7",
-    # "sae-lens @ git+https://github.com/decoderesearch/SAELens.git@af0281389dacc7aa2037d3174e598043c71070d8",
+    # sae-lens/sae-dashboard: pinned to the validated Scalable Dashboards fork SHAs until the
+    # upstream PRs merge/release (interpretune.utils.neuronpedia_dashboard_pipeline imports
+    # fork-only surface, e.g. sae_dashboard.neuronpedia.prompt_bucketing); flip back to released
+    # version floors at wave-merge time.
+    "sae-lens @ git+https://github.com/speediedan/SAELens.git@990b6b37183389852408c1251729189129a90fb8",
+    "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@50027371f0f03e8c0e7638fe9e372ab153e0127d",
 ]
 
 dev = [
@@ -122,7 +126,7 @@ test = [
     # Notebook testing
     "nbmake >= 1.5.0",
     "papermill >= 2.4.0",
-    "sae_dashboard",
+    # sae_dashboard moved to git-deps (fork-pinned) until the upstream SD PR merges
 ]
 
 docs = [
@@ -156,7 +160,10 @@ profiling = [
 # from source we also include this version to ensure it is respected when installing without the
 # --override flag (e.g CI)
 override-dependencies = [
-    "transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@42a2d526a2a949e64ba7bf549b162f7dba6c80c5",
+    "transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@4ba2187b182faf964225c6eb9076c858cada0672",
+    # keep transitive nnsight (pulled in by the sae-lens git dep) at the validated release: hosted CI
+    # otherwise resolves the latest (0.7.x), which is unvalidated for the analysis dataset paths
+    "nnsight==0.6.3",
 ]
 # exclude dependencies can be used to ignore installation of a dependency altogether (transitive or direct)
 # we occasionally use an excludes file to allow complex multiple-packages-from-source installations
