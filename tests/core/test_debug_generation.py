@@ -1,5 +1,6 @@
 from __future__ import annotations
 from unittest.mock import patch
+import platform
 import torch
 import re
 from types import SimpleNamespace
@@ -11,6 +12,17 @@ from torch.testing import assert_close
 from tests.runif import RunIf
 from interpretune.extensions import DebugGeneration
 from transformers.utils import ModelOutput
+
+_MACOS_ARM64 = platform.system() == "Darwin" and platform.machine() == "arm64"
+# TransformerBridge.generate yields all-NaN logits at the KV-cached single-token step on
+# macOS-arm64 GitHub runners (step-0 logits, cache contents, and the full-recompute path are all
+# finite) — an upstream HF-transformers-v5 cached-eager-attention / Apple-Silicon CPU matmul issue,
+# not a transformer_lens or interpretune bug. TransformerLens skips its own affected bridge
+# generate tests the same way. See https://github.com/TransformerLensOrg/TransformerLens/issues/1322.
+_MACOS_ARM64_BRIDGE_KV_NAN_REASON = (
+    "TransformerBridge KV-cache generate NaNs on macOS-arm64 GH runners "
+    "(TransformerLensOrg/TransformerLens#1322; upstream HF/torch issue, skipped upstream identically)"
+)
 
 
 class _StubTokenizer:
@@ -234,6 +246,8 @@ class TestClassDebugGen:
         ],
     )
     def test_debug_session_debug_gen(self, get_it_session__tl_gpt2_debug__setup, gen_kwargs, batch_mode, expected):
+        if not batch_mode and _MACOS_ARM64:
+            pytest.skip(_MACOS_ARM64_BRIDGE_KV_NAN_REASON)
         fixture = get_it_session__tl_gpt2_debug__setup
         debug_module = fixture.it_session.module.debug_lm
         test_seqs = debug_module.debug_sequences(self.TEST_DEBUG_SEQS)
@@ -262,6 +276,8 @@ class TestClassDebugGen:
         ids=["cust_gen_output_attr_serial_config_str"],
     )
     def test_debug_session_debug_gen_str(self, get_it_session__tl_gpt2_debug__setup, gen_kwargs, expected):
+        if _MACOS_ARM64:
+            pytest.skip(_MACOS_ARM64_BRIDGE_KV_NAN_REASON)
         fixture = get_it_session__tl_gpt2_debug__setup
         debug_module = fixture.it_session.module.debug_lm
         test_sequence = self.TEST_DEBUG_SEQS[1]
