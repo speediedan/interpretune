@@ -75,7 +75,7 @@ if autodoc_mock_imports:
 myst_enable_extensions = ["colon_fence", "deflist", "fieldlist", "linkify"]
 myst_heading_anchors = 3
 
-source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
+# NOTE: no explicit source_suffix — myst_parser registers .md itself (an explicit mapping breaks under myst-parser 5.x)
 templates_path = ["_templates"]
 exclude_patterns = ["_build"]
 
