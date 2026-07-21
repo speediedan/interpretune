@@ -40,6 +40,14 @@ The local `scripts/gen_it_coverage.sh` harness now mirrors the Azure GPU pipelin
 This split is deliberate: regular CUDA tests still append to the same coverage file, but they run after the CPU-only
 baseline has released its fixture state.
 
+In `--run-all-and-examples` mode (mandatory for pre-PR-wave gates; see CLAUDE.md), the base phase
+additionally collects `src/it_examples` (including its doctests) BEFORE `tests/`, and the harness appends
+`profile`, `optional`, and `benchmark` special-test phases. Two collection-order consequences worth
+knowing (both bit us on 2026-07-09): module/doctest side effects from `src/it_examples` can poison
+later `tests/` state if they mutate global import state, and the CPU-only base pass exercises paths
+that CUDA-visible local runs never hit — treat first run-all executions as discovery runs
+(`--allow-failures --resource-debug`).
+
 Example local run:
 
 ```bash
@@ -213,9 +221,10 @@ produce expected accuracy and are gated by the `benchmark` RunIf mark (`IT_RUN_B
 See [`tests/benchmarks/README.md`](benchmarks/README.md) for full usage, registry format, how to add new experiments,
 and debug diagnostics.
 
-- `tests/upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md` — Manual upstream circuit-tracer semantic-intervention
-  sanity-check workflow,
-  including the one-off extractor script and the current three-way reference table.
+- The manual upstream circuit-tracer semantic-intervention sanity-check workflow
+  (`UPSTREAM_CT_PARITY_DEBUG.md` + `extract_upstream_ct_semantic_reference.py`) was archived to
+  private notes 2026-07-07 as superseded by the automated
+  `tests/core/test_analysis_backend_parity.py` suite.
 
 ## Memory Management for NNsight Tests
 
@@ -237,9 +246,10 @@ NNsight circuit-tracer backend:
   feature_intervention_forward`, and compares those results against the native CT baseline.
 
 When the regular parity test fails in a way that suggests an upstream package drift rather than a local regression,
-use the manual extractor documented in [tests/upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md](upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md).
-That script replays the actual upstream semantic-intervention logic and records current upstream CT NNsight,
-Interpretune native CT, and Interpretune analysis-op values into a single JSON payload for sanity checking.
+note that the manual extractor workflow (`UPSTREAM_CT_PARITY_DEBUG.md` +
+`extract_upstream_ct_semantic_reference.py`) was archived to private notes 2026-07-07 as superseded
+by the automated `tests/core/test_analysis_backend_parity.py` suite; consult the archived notes if a
+manual three-way replay (upstream CT NNsight vs Interpretune native CT vs analysis-op) is ever needed again.
 
 The current Interpretune parity tolerances are intentionally stricter than the upstream TL-vs-NNsight
 comparison because both local paths execute against the same NNsight backend and should agree nearly

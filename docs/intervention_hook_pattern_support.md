@@ -32,7 +32,7 @@ notebooks or configs.
 | `blocks.{i}.attn.o.hook_in` | `blocks.{i}.attn.hook_z` | Preferred cross-backend spelling for the attention output-projection input. |
 | `blocks.{i}.mlp.hook_out` | `blocks.{i}.hook_mlp_out` | Portable today for GPT-2 and Llama-family NNsight mappings. Gemma-family NNsight flows still rely on the legacy `hook_mlp_out` path today. |
 | `blocks.{i}.ln2.hook_out` | `blocks.{i}.ln2.hook_normalized`, `blocks.{i}.ln2.hook_scale` | Portable in the Gemma-family NNsight mappings; accepted by alias expansion elsewhere when the backend exposes the corresponding hook. |
-| `unembed.hook_in` | none | Supported directly; no legacy alias expansion is needed. |
+| `unembed.hook_in` | none | Supported directly on TransformerBridge and NNsight models. **Legacy `HookedTransformer` models (e.g. the circuit-tracer TransformerLens backend) expose no `unembed.hook_in`** — use `ln_final.hook_normalized` (the pre-unembed input) there; adding a legacy alias expansion is tracked in [interpretune#223](https://github.com/speediedan/interpretune/issues/223). |
 
 ## Backend-specific alias families
 

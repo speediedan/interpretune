@@ -197,7 +197,7 @@ nightly
 # Build with multiple packages from source (using semicolon separator - also supported)
 # it_latest with sae-lens, nnsight, and circuit-tracer from source using multiple --from-source flags
 # and multiple env variables in some cases and support for specific uv build flags via the FLAGS keyword
-./scripts/build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --from-source="sae_lens:${HOME}/repos/SAELens:all:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/overrides.txt:FLAGS=-r ~/repos/distributed-insight/project_admin/interpretune/adapter_reference/sae_lens/admin_scripts/sl_poetry_requirements.txt" --from-source="nnsight:${HOME}/repos/nnsight:all:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/overrides.txt" --from-source="circuit_tracer:${HOME}/repos/circuit-tracer:dev:UV_EXCLUDE=${HOME}/repos/interpretune/requirements/ci/excludes.txt:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/overrides.txt"
+./scripts/build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --from-source="sae_lens:${HOME}/repos/SAELens:all:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/overrides.txt:FLAGS=-r ${HOME}/repos/interpretune/requirements/ci/sl_uv_requirements.txt" --from-source="nnsight:${HOME}/repos/nnsight:all:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/overrides.txt" --from-source="circuit_tracer:${HOME}/repos/circuit-tracer:dev:UV_EXCLUDE=${HOME}/repos/interpretune/requirements/ci/excludes.txt:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/overrides.txt"
 
 # Important: When using with manage_standalone_processes.sh wrapper, use --venv-dir:
 ~/repos/interpretune/scripts/manage_standalone_processes.sh --use-nohup scripts/build_it_env.sh \
