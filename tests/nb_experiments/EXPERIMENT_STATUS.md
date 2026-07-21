@@ -206,6 +206,31 @@ survivors (dashboard-validated); the two anti-target orange Color exemplars (`bl
 non-canceling hybrid answer-basis projection rule; OQ-A (continuation-style PT store prompts) and
 OQ-C (scale-factor sweep aggregation). These are secondary to the auto-pruning direction below.
 
+## Embed-Path Influence-Score Scale Collapse — RESOLVED as parity-surface reduction (2026-07-20)
+
+The long-tracked "embed-path influence scores ~1e-8 under TL `4ba2187b`" signal (the optional GPU
+extended parity test `test_analysis_backend_parity_gemma3_1b_it_extended_concept_direction_paths`
+`[orange_fs_l10_n5]` was deliberately left failing to track it) is now characterized:
+
+- **Mechanism**: signed/unsigned node-influence scores inherit the SCALE of the attribution graph's
+  `logit_probabilities` (`compute_signed_node_influence_scores` seeds influence propagation with the
+  target-logit probabilities). On gemma-3-1b-it the parity prompts sit in the documented
+  chat-answer-position pathology regime (target-token probabilities ~1e-8; see the 2026-07-16
+  substrate guidance below), so ALL paths' scores — embed AND store — collapse uniformly to
+  ~1e-8–1e-9. It is a scale inheritance, not a semantic failure: the RANKING remains meaningful
+  (the familiar `25/1316` "fruits" / `16/155` "ripe fruit" features top both paths) and the
+  embed-path INTERVENTION itself works (pre→post gap −7.75 → +45.5 in the failing run).
+- **Why the assertion failed**: at noise-scale magnitudes the sign of a cosine over the shared
+  top-feature scores is float noise — `shared_score_cosine > 0` is not a meaningful invariant there.
+- **Resolution (plan §3b item 2b — store-vs-embed parity de-scoped)**: the unconditional cross-basis
+  `shared_score_cosine > 0` assertions were removed (bounded-range check retained; perturbation
+  cosines + gap-improvement remain the tracked invariants), and the config-less
+  `bat_reference_graph_sanity` surface (its `gemma3_1b_it_local_bird_mammal_bat.yaml` was never
+  committed — the test could not run in any checkout) was removed with it. The extended parity test
+  now passes on both cases. Deeper scale-normalization (e.g. probability-normalized influence
+  scores) is a candidate for the #225 J-space work, where per-feature signatures replace 1-D
+  logit-diff projections anyway.
+
 ## Token-Variant (▁-prefix) Effects in Steering Results (2026-07-16)
 
 A recurring pattern across the orange (color-vs-fruit) gemma-3-1b-it runs (reference artifact:
