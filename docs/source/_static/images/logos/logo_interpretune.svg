@@ -14,13 +14,20 @@
   <!-- "Interpret" -->
   <text x="8" y="66" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="56"
         font-weight="650" letter-spacing="0.5" fill="url(#wmGreen)">Interpret</text>
-  <!-- metallic tuning fork standing in for the 'u' (x-height U with a short handle) -->
-  <g transform="translate(252,0)" stroke="url(#wmMetal)" stroke-width="7.5" stroke-linecap="round" fill="none">
-    <path d="M8 30 V52 a12 12 0 0 0 24 0 V30"/>
-    <path d="M20 66 V80"/>
-    <path d="M8 31 V51" stroke="#ffffff" stroke-opacity="0.5" stroke-width="2"/>
+  <!-- metallic tuning fork with handle standing in for the 'u', tilted 10° -->
+  <g transform="translate(252,0) rotate(10 20 52)">
+    <g stroke="url(#wmMetal)" stroke-width="7" stroke-linecap="round" fill="none">
+      <!-- prongs joined in a U (x-height) -->
+      <path d="M8 27 V48 a12 12 0 0 0 24 0 V27"/>
+      <!-- stem -->
+      <path d="M20 62 V74"/>
+    </g>
+    <!-- handle knob -->
+    <circle cx="20" cy="79" r="5" fill="url(#wmMetal)"/>
+    <!-- highlight -->
+    <path d="M8 28 V47" stroke="#ffffff" stroke-opacity="0.5" stroke-width="2" fill="none"/>
   </g>
   <!-- "ne" -->
-  <text x="296" y="66" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="56"
+  <text x="298" y="66" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="56"
         font-weight="650" letter-spacing="0.5" fill="url(#wmGreen)">ne</text>
 </svg>

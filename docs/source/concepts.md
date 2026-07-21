@@ -1,7 +1,12 @@
 # Core Concepts
 
 > Interpretune: mechanistically informed AI model tuning.
-> A flexible framework for LLM world model experimentation and tuning.
+> A flexible framework for collaborative AI world model analysis and tuning.
+
+The intention of the framework: offer the **appropriate level of abstraction** for world model
+analysis — seamlessly composing a wide range of interpretability frameworks and methods while
+operating on the latent spaces of any PyTorch model and producing composable, shareable
+artifacts.
 
 This page summarizes the constructs the rest of the documentation (and the
 {doc}`roadmap <roadmap>`) builds on. It is written for prospective collaborators who want the

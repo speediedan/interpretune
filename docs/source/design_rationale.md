@@ -3,6 +3,23 @@
 Short rationale notes answering "why does interpretune do it this way?" — kept together so the
 reasoning survives refactors.
 
+## Why an interoperability protocol (and why now)
+
+In a world where **code is no longer a scarce resource**, effective abstract interface design is
+of heightened importance — both because interface friction is the new rate-limiting constraint on
+progress, and because we increasingly operate at higher levels of abstraction. The corollary for
+interpretability tooling: ensuring compatibility between any two *particular* frameworks has
+diminished in importance, but **defining an effective protocol for interpretability-framework
+interoperability has become imperative**. That is the bet Interpretune makes: a protocol layer
+over which frameworks and methods compose, with Interpretune helping validate more robust
+causal/mechanistic guarantees while working at those higher levels of abstraction with AI world
+models.
+
+A considered follow-on ([#6](https://github.com/speediedan/interpretune/issues/6)): extracting the
+core protocol out of Interpretune into a standalone, neutrally-named distribution once the MVP
+stabilizes the protocol surface — deliberately **not** an MVP blocker (renaming/extraction churn
+buys users nothing pre-alpha), but new public surfaces are designed with that extraction in mind.
+
 ## Why HF-head-first model loading (rather than TL `from_pretrained`)
 
 Interpretune prefers loading the HuggingFace model **with its task head** first and then handing

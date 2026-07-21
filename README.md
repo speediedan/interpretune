@@ -2,10 +2,11 @@
 
 <img src="docs/source/_static/images/logos/logo_interpretune.svg" alt="Interpretune" width="420"/>
 
-**Mechanistically informed AI model tuning.**
+**A flexible framework for collaborative AI world model analysis and tuning.**
 
-*A flexible framework for LLM world model experimentation and tuning — collaborative,
-composable, and shareable.*
+*Composable, shareable latent-space analysis at abstraction levels intelligible to both humans
+and agents — for transparent, causally faithful reasoning, model self-reflection, and
+world-model-guided collaborative tuning.*
 
 [![CI](https://github.com/speediedan/interpretune/actions/workflows/ci_test-full.yml/badge.svg)](https://github.com/speediedan/interpretune/actions/workflows/ci_test-full.yml)
 [![Docs](https://readthedocs.org/projects/interpretune/badge/?version=latest)](https://interpretune.readthedocs.io/en/latest/)
@@ -22,6 +23,14 @@ composable, and shareable.*
 
 ## What is interpretune?
 
+Interpretune is an AI world model analysis framework that enables a wide range of
+interpretability methods and packages to leverage **composable, shareable analysis operations and
+state**, accelerating collaborative world model analysis and tuning with PyTorch. It lets both
+humans and agents inspect the mechanistic and causal faithfulness of model reasoning at mutually
+intelligible levels of abstraction — granting greater transparency and confidence in conclusions
+while enabling model self-reflection, inter-agent latent-space collaboration, and more
+sample-efficient, internal-world-model-guided tuning.
+
 Interpretune composes adapters at **multiple levels of abstraction** — the *framework* level
 (core PyTorch, [Lightning](https://github.com/Lightning-AI/pytorch-lightning)), the
 *interpretability latent-model* level ([TransformerLens](https://github.com/TransformerLensOrg/TransformerLens),
@@ -34,7 +43,7 @@ analysis operations (e.g. `extract_top_features`, `gradient_attribution`, `ablat
 **written once and executed across backends**, with results captured as shareable datasets.
 
 A note on terminology: we use "world model" in the **epistemic/semantic** sense — the internal
-representations, concepts, and beliefs a model encodes about the world, as studied in LLM
+representations, concepts, and beliefs a model encodes about the world, as studied in AI
 interpretability — related to but distinct from the predictive *visual world models* of
 embodied-agent/model-based-RL research. The initial MVP focuses on LLMs; fuller multimodal support
 is planned.
@@ -66,6 +75,32 @@ session = it.ITSession(it.ITSessionConfig(
 it.it_init(**session)
 # the same op runs unchanged under the transformer_lens adapter context
 result = it.intervention_from_concept(session.module, ...)
+```
+
+## Installation
+
+Interpretune uses [uv](https://github.com/astral-sh/uv) for fast, reliable dependency management.
+
+```bash
+# Install uv (one-time setup)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+git clone https://github.com/speediedan/interpretune.git && cd interpretune
+uv venv && source .venv/bin/activate
+
+# Editable install with all dependency groups
+# Note: the git-deps group is optional once circuit-tracer is published on PyPI
+uv pip install -e ".[test,examples,lightning,profiling]" --group git-deps dev
+```
+
+For advanced development builds (locked CI requirements, multi-repo from-source composition), use
+the build script:
+
+```bash
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
+# from-source example:
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest \
+  --from-source="circuit_tracer:${HOME}/repos/circuit-tracer"
 ```
 
 ## Roadmap
@@ -105,36 +140,12 @@ above.
 
 RTE cross-backend research ([#220](https://github.com/speediedan/interpretune/issues/220)),
 Jacobian-space (J-lens) analysis support
-([#225](https://github.com/speediedan/interpretune/issues/225)), epistemic-coherence objectives,
+([#225](https://github.com/speediedan/interpretune/issues/225)), **self-interpretability**
+(interpretability that accelerates model advancement via self-reflection, including internal
+reflection heuristics for more sample-efficient RL exploration), epistemic-coherence objectives,
 reflective cognition for counterfactuals via latent-state evaluation, meta-latent world-model
 interfaces, and multimodal world-model support — see the
 [roadmap docs](https://interpretune.readthedocs.io/en/latest/roadmap.html).
-
-## Installation
-
-Interpretune uses [uv](https://github.com/astral-sh/uv) for fast, reliable dependency management.
-
-```bash
-# Install uv (one-time setup)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-git clone https://github.com/speediedan/interpretune.git && cd interpretune
-uv venv && source .venv/bin/activate
-
-# Editable install with all dependency groups
-# Note: the git-deps group is optional once circuit-tracer is published on PyPI
-uv pip install -e ".[test,examples,lightning,profiling]" --group git-deps dev
-```
-
-For advanced development builds (locked CI requirements, multi-repo from-source composition), use
-the build script:
-
-```bash
-./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
-# from-source example:
-./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest \
-  --from-source="circuit_tracer:${HOME}/repos/circuit-tracer"
-```
 
 ## Documentation
 
@@ -161,10 +172,14 @@ guide and `requirements/utils/lock_ci_requirements.sh` for CI-locked requirement
 
 ## Contributing
 
-Contributions and feedback are welcome as the framework evolves toward alpha — the
+Contributors are enthusiastically and earnestly welcome — Interpretune is built to be a
+community effort, and the transition from pre-MVP to alpha is the perfect moment to get involved.
+The [IT-MVP milestone](https://github.com/speediedan/interpretune/milestone/1) is the best place
+to find priority items and good first issues, the
 [issue tracker](https://github.com/speediedan/interpretune/issues) tags documentation and
-`help wanted` items, and the [roadmap](#roadmap) above is the best orientation for where things
-are headed.
+`help wanted` items, and the [roadmap](#roadmap) above orients where things are headed. Thank you
+in advance for contributing to the open-source interpretability ecosystem — every issue, doc fix,
+and PR genuinely helps.
 
 ## License
 

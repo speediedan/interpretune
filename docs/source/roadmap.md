@@ -58,6 +58,10 @@ local dev stacks) — subject to the same upstream-ownership framing above.
   ([#225](https://github.com/speediedan/interpretune/issues/225)): J-space read/probe/steer ops
   and per-feature J-space signatures as the principled generalization of 1-D logit-diff output
   projections, co-designed with AnalysisStore hub sharing.
+- **Self-interpretability**: interpretability that accelerates model advancement via
+  self-reflection — in addition to serving as the bridge for human access to AI world models.
+  Internal model-reflection heuristics offered by Interpretune could enduringly improve RL
+  exploration efficiency (effectively better sample efficiency).
 - **Epistemic coherence**: coherence-oriented auxiliary objectives and evaluations treating
   world-model consistency as a first-class tuning signal.
 - **Reflective cognition for counterfactuals**: latent-state evaluation as a mechanism for models
@@ -65,3 +69,12 @@ local dev stacks) — subject to the same upstream-ownership framing above.
 - **Meta-latent interfaces**: SAE meta-latents (and successors) as decomposition levels in a
   human/machine world-model interface.
 - **Multimodal world models**: extending beyond the LLM-focused MVP.
+
+## Considered (not MVP-blocking)
+
+- **Core-protocol extraction** ([#6](https://github.com/speediedan/interpretune/issues/6)):
+  generalize/extract the interoperability protocol out of Interpretune into a standalone
+  distribution once the MVP stabilizes the protocol surface. Represented here deliberately as
+  *considered* — the MVP proceeds without it, while new public surfaces are designed
+  extraction-friendly. See the {doc}`design rationale <design_rationale>` for the fuller
+  interoperability-protocol argument.

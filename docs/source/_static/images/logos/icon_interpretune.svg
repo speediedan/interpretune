@@ -13,11 +13,17 @@
   </defs>
   <!-- rounded green tile -->
   <rect x="2" y="2" width="60" height="60" rx="13" fill="url(#itGreen)"/>
-  <!-- metallic tuning fork: two prongs joined in a U, stem below -->
-  <g stroke="url(#itMetal)" stroke-width="6" stroke-linecap="round" fill="none">
-    <path d="M22 12 V30 a10 10 0 0 0 20 0 V12"/>
-    <path d="M32 40 V52"/>
+  <!-- metallic tuning fork with handle, tilted 10° -->
+  <g transform="rotate(10 32 32)">
+    <g stroke="url(#itMetal)" stroke-width="5.5" stroke-linecap="round" fill="none">
+      <!-- prongs joined in a U -->
+      <path d="M23 9 V25 a9 9 0 0 0 18 0 V9"/>
+      <!-- stem -->
+      <path d="M32 34 V47"/>
+    </g>
+    <!-- handle knob at the stem base -->
+    <circle cx="32" cy="51.5" r="4.4" fill="url(#itMetal)"/>
+    <!-- highlight for the metallic read -->
+    <path d="M23 10 V24" stroke="#ffffff" stroke-opacity="0.55" stroke-width="1.6" stroke-linecap="round" fill="none"/>
   </g>
-  <!-- subtle highlight on the left prong for the metallic read -->
-  <path d="M22 13 V29" stroke="#ffffff" stroke-opacity="0.55" stroke-width="1.6" stroke-linecap="round" fill="none"/>
 </svg>
