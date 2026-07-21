@@ -28,6 +28,27 @@ except ImportError:
 # Directory containing published notebooks (processed versions without dev cells)
 NOTEBOOKS_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "notebooks" / "publish"
 
+# Local Neuronpedia dev-webapp base URL used by local-dashboard-mode notebook tests
+LOCAL_NP_WEBAPP_URL = os.environ.get("IT_LOCAL_NP_WEBAPP_URL", "http://localhost:3000")
+
+
+def _local_neuronpedia_available(url: str = LOCAL_NP_WEBAPP_URL, timeout: float = 3.0) -> bool:
+    """Lightweight availability probe for the local Neuronpedia dev webapp.
+
+    Any HTTP response (including error statuses) counts as available — the probe only verifies a listening webapp so
+    local-dashboard-mode tests can short-circuit to a skip when the local services are down.
+    """
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=timeout):
+            return True
+    except urllib.error.HTTPError:
+        return True
+    except (urllib.error.URLError, OSError):
+        return False
+
 
 def execute_notebook_with_params(
     notebook_path: Path,
@@ -277,19 +298,31 @@ def test_circuit_tracer_notebooks(params: dict[str, Any], tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
-# Test parameters for CT Analysis Backend Demo notebook
+# Test parameters for CT Analysis Backend Demo notebook (public dashboard mode). Both
+# circuit-tracer backends are validated; the notebook's in-cell sanity gates (unit direction
+# norm, post-gap > pre-gap) catch wild cross-backend divergences without heavy assertions.
 CT_ANALYSIS_BACKEND_PARAMS = [
     pytest.param(
-        {"backend": "nnsight"},
-        id="ct_analysis_backend_nnsight",
+        {"backend": "nnsight", "dashboard_mode": "public"},
+        id="ct_analysis_backend_nnsight_public",
+    ),
+    pytest.param(
+        {"backend": "transformerlens", "dashboard_mode": "public"},
+        id="ct_analysis_backend_tl_public",
+    ),
+]
+
+# Local-dashboard-mode params: identical analysis flow, feature-dashboard links point at the
+# local Neuronpedia dev webapp instead of neuronpedia.org
+CT_ANALYSIS_BACKEND_LOCAL_PARAMS = [
+    pytest.param(
+        {"backend": "nnsight", "dashboard_mode": "local", "local_webapp_url": LOCAL_NP_WEBAPP_URL},
+        id="ct_analysis_backend_nnsight_local",
     ),
 ]
 
 
-@RunIf(bf16_cuda=True)
-@pytest.mark.parametrize("params", CT_ANALYSIS_BACKEND_PARAMS)
-def test_ct_analysis_backend_notebook(params: dict[str, Any], tmp_path: Path):
-    """Test CT analysis backend demo notebook."""
+def _run_ct_analysis_backend_notebook(params: dict[str, Any], tmp_path: Path) -> None:
     notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "ct_analysis_backend_demo.ipynb"
 
     # Create output directory
@@ -310,20 +343,72 @@ def test_ct_analysis_backend_notebook(params: dict[str, Any], tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
-# Test parameters for CT RTE Concept Direction Demo notebook (formerly cross-backend)
-CT_RTE_CONCEPT_PARAMS = [
+@RunIf(bf16_cuda=True)
+@pytest.mark.parametrize("params", CT_ANALYSIS_BACKEND_PARAMS)
+def test_ct_analysis_backend_notebook(params: dict[str, Any], tmp_path: Path):
+    """Test CT analysis backend demo notebook (public dashboard mode)."""
+    _run_ct_analysis_backend_notebook(params, tmp_path)
+
+
+@RunIf(bf16_cuda=True, optional=True)
+@pytest.mark.parametrize("params", CT_ANALYSIS_BACKEND_LOCAL_PARAMS)
+def test_ct_analysis_backend_notebook_local(params: dict[str, Any], tmp_path: Path):
+    """Test CT analysis backend demo notebook against a local Neuronpedia dev webapp."""
+    if not _local_neuronpedia_available():
+        pytest.skip(f"local Neuronpedia webapp not reachable at {LOCAL_NP_WEBAPP_URL}")
+    _run_ct_analysis_backend_notebook(params, tmp_path)
+
+
+# Test parameters for the concept-direction steering demo notebook (replaced the archived
+# RTE-focused cross-backend demo, 2026-07-11; rebuilt on the gemma-2-2b public-dashboard default
+# with a public/local dashboard-mode parameterization, 2026-07-16 — see EXPERIMENT_STATUS.md
+# "7c Amendments" items 4-5 and their 2026-07-16 revision notes)
+CT_CONCEPT_STEERING_PARAMS = [
     pytest.param(
-        {},
-        id="ct_rte_concept_nnsight",
+        {"DASHBOARD_MODE": "public"},
+        id="ct_concept_steering_public",
+    ),
+    # TransformerLens circuit-tracer backend; the notebook's gap assertions (both phases) are the
+    # cross-backend sanity gate
+    pytest.param(
+        {"BACKEND": "transformerlens", "DASHBOARD_MODE": "public"},
+        id="ct_concept_steering_tl_public",
+    ),
+]
+
+# Local-dashboard-mode params (explanation generation disabled under test to avoid an
+# explanation-CLI dependency): the gemma-2-2b default substrate plus the instruction-tuned
+# gemma-3-1b-it + local-262k variant that exercises the locally-generated-explanations flow
+CT_CONCEPT_STEERING_LOCAL_PARAMS = [
+    pytest.param(
+        {
+            "DASHBOARD_MODE": "local",
+            "LOCAL_WEBAPP_URL": LOCAL_NP_WEBAPP_URL,
+            "GENERATE_MISSING_LOCAL_EXPLANATIONS": False,
+        },
+        id="ct_concept_steering_local_gemma2",
+    ),
+    pytest.param(
+        {
+            "REGISTRY_KEY": "gemma3.rte_demo.circuit_tracer_w_neuronpedia",
+            "MODEL_NAME": "gemma-3-1b-it",
+            "TRANSCODER_SET": None,
+            "NEURONPEDIA_MODEL_ID": "gemma-3-1b-it",
+            # must match the registry transcoder WIDTH (16k) — feature indices are only meaningful
+            # within one feature space (2026-07-17 audit: earlier runs mislabeled links as 262k)
+            "NEURONPEDIA_SOURCE_SET": "gemmascope-2-transcoder-16k",
+            "CHAT_FORMAT_PROMPT": True,
+            "DASHBOARD_MODE": "local",
+            "LOCAL_WEBAPP_URL": LOCAL_NP_WEBAPP_URL,
+            "GENERATE_MISSING_LOCAL_EXPLANATIONS": False,
+        },
+        id="ct_concept_steering_local_gemma3_16k",
     ),
 ]
 
 
-@RunIf(bf16_cuda=True)
-@pytest.mark.parametrize("params", CT_RTE_CONCEPT_PARAMS)
-def test_ct_cross_backend_notebook(params: dict[str, Any], tmp_path: Path):
-    """Test CT RTE concept direction demo notebook (NNsight backend)."""
-    notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "ct_cross_backend_demo.ipynb"
+def _run_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path) -> None:
+    notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "ct_concept_steering_demo.ipynb"
 
     # Create output directory
     output_dir = tmp_path / "notebook_outputs"
@@ -341,6 +426,26 @@ def test_ct_cross_backend_notebook(params: dict[str, Any], tmp_path: Path):
 
     # Clean up
     _cleanup_notebook_artifacts()
+
+
+@RunIf(bf16_cuda=True)
+@pytest.mark.parametrize("params", CT_CONCEPT_STEERING_PARAMS)
+def test_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path):
+    """Test the concept-direction steering demo notebook (store + embed paths, public dashboards)."""
+    _run_ct_concept_steering_notebook(params, tmp_path)
+
+
+@RunIf(bf16_cuda=True, optional=True)
+@pytest.mark.parametrize("params", CT_CONCEPT_STEERING_LOCAL_PARAMS)
+def test_ct_concept_steering_notebook_local(params: dict[str, Any], tmp_path: Path):
+    """Test the steering demo against a local Neuronpedia webapp + DB (explanation coverage path).
+
+    Skips when the local services are unavailable; the gemma-3 variant additionally requires the local 262k Monology
+    dashboards for meaningful explanation coverage (the coverage check itself degrades gracefully to zero counts).
+    """
+    if not _local_neuronpedia_available():
+        pytest.skip(f"local Neuronpedia webapp not reachable at {LOCAL_NP_WEBAPP_URL}")
+    _run_ct_concept_steering_notebook(params, tmp_path)
 
 
 # Test parameters for SAE Lens notebooks (parameterized by backend)
@@ -393,7 +498,7 @@ def test_notebook_discovery():
         "attribution_analysis/attribution_analysis.ipynb",
         "circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb",
         "circuit_tracer_examples/ct_analysis_backend_demo.ipynb",
-        "circuit_tracer_examples/ct_cross_backend_demo.ipynb",
+        "circuit_tracer_examples/ct_concept_steering_demo.ipynb",
         "example_op_collections/op_collection_example.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",

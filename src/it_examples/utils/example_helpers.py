@@ -406,3 +406,82 @@ def collect_shapes(data: dict, local_vars: dict, var_inspects: Sequence[str | Va
         data[key] = inspect_spec
 
     return data
+
+
+@dataclass(frozen=True)
+class FeatureIOProfile:
+    """Input/output profile for one ``(layer, feature)`` pair from a hydrated attribution graph.
+
+    ``input_concept_share`` is the fraction of the feature's absolute activation mass that occurs at
+    concept-token positions (input side: where the feature fires); ``output_projection`` is the
+    signed projection of the feature's decoder vector onto a target direction (output side: what
+    amplifying the feature writes toward). Large ``|output_projection|`` with a near-zero
+    ``input_concept_share`` is the input/output decoupling signature; a high share with a
+    projection *against* the concept marks a suppressor-motif exemplar.
+    """
+
+    layer: int
+    feature: int
+    input_concept_share: float
+    activation_mass: float
+    output_projection: float
+
+
+def concept_token_positions(tokenizer: Any, token_ids: Sequence[int], concept_words: Sequence[str]) -> set[int]:
+    """Return prompt positions whose decoded token matches one of ``concept_words`` (case/space-insensitive)."""
+    normalized = {w.strip().lower() for w in concept_words}
+    positions: set[int] = set()
+    for pos, tid in enumerate(token_ids):
+        token_text = tokenizer.decode([int(tid)]).strip().lower().lstrip("▁")
+        if token_text in normalized:
+            positions.add(pos)
+    return positions
+
+
+def feature_io_profiles(
+    graph: Any,
+    feature_pairs: Sequence[tuple[int, int]],
+    target_direction: torch.Tensor,
+    transcoder_set: Any,
+    concept_positions: set[int],
+) -> list[FeatureIOProfile]:
+    """Compute :class:`FeatureIOProfile` rows from a hydrated circuit-tracer graph.
+
+    Args:
+        graph: Hydrated attribution graph (``analysis_backend.hydrate_graph_from_batch(...)``);
+            uses ``active_features`` rows ``(layer, pos, feature)`` and ``activation_values``.
+        feature_pairs: ``(layer, feature)`` pairs to profile (order preserved).
+        target_direction: Unit direction in unembed space (e.g. target-token unembed difference).
+        transcoder_set: Circuit-tracer transcoder set (NNsight ``Envoy`` wrappers are unwrapped);
+            decoder rows are read lazily via ``_get_decoder_vectors``.
+        concept_positions: Prompt positions counted as concept-token positions
+            (see :func:`concept_token_positions`).
+    """
+    transcoder_set = getattr(transcoder_set, "_module", transcoder_set)
+    active_rows = graph.active_features.cpu()
+    active_vals = graph.activation_values.detach().float().cpu()
+    target_direction = target_direction.detach().float().cpu().reshape(-1)
+
+    profiles: list[FeatureIOProfile] = []
+    for layer, feature in feature_pairs:
+        mask = (active_rows[:, 0] == int(layer)) & (active_rows[:, 2] == int(feature))
+        if mask.any():
+            vals = active_vals[mask].abs()
+            positions = active_rows[mask][:, 1].tolist()
+            total = float(vals.sum())
+            concept_mass = float(sum(v for v, p in zip(vals.tolist(), positions) if int(p) in concept_positions))
+            share = concept_mass / total if total > 0 else 0.0
+        else:
+            share, total = 0.0, 0.0
+        decoder_vec = transcoder_set._get_decoder_vectors(int(layer), torch.tensor([int(feature)]))[0]
+        out_proj = float(decoder_vec.detach().float().cpu() @ target_direction)
+        profiles.append(
+            FeatureIOProfile(
+                layer=int(layer),
+                feature=int(feature),
+                input_concept_share=share,
+                activation_mass=total,
+                output_projection=out_proj,
+            )
+        )
+    return profiles

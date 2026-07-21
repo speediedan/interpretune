@@ -59,24 +59,39 @@ TransformerLens v3 hook surface.
 Backend selection is automatic based on the module's adapter context. Configurations with
 `(core, nnsight, circuit_tracer)` use NNsight; `(core, transformer_lens, circuit_tracer)` use TransformerLens.
 
+**TransformerBridge limitation (tracked)**: the TransformerLens circuit-tracer backend requires the
+legacy `HookedTransformer` path — upstream circuit-tracer's `TransformerLensReplacementModel`
+subclasses `HookedTransformer` directly, so TransformerLens v3 `TransformerBridge` mode is not
+supported (`use_bridge: false` in the CT TL registry entries). Tracked in
+[interpretune#223](https://github.com/speediedan/interpretune/issues/223) — revisit when upstream
+circuit-tracer gains bridge support; historically this limitation (plus minor NNsight efficiencies and keeping
+experimental variables fixed) is why the `tests/nb_experiments` concept-direction experimentation
+standardized on the NNsight backend.
+
 ## Demo Notebooks
 
 | Notebook | Description |
 |----------|-------------|
-| `ct_analysis_backend_demo.ipynb` | Full 5-op pipeline on Gemma-2-2b via NNsight backend |
-| `ct_cross_backend_demo.ipynb` | Multi-model composition: GPT-2 SAE (TransformerBridge) + Gemma-2 CT (NNsight) with cross-backend AnalysisStore enrichment |
+| `ct_analysis_backend_demo.ipynb` | Full 5-op pipeline on Gemma-2-2b; `backend` parameter selects NNsight (default) or TransformerLens, `dashboard_mode` selects public neuronpedia.org or local dev-webapp dashboard links — all modes exercised by parameterized notebook tests |
+| `ct_concept_steering_demo.ipynb` | Concept-direction-mediated, sign-aware multi-feature steering (feature-mediated + direct-hook paths) on the proven orange example; `BACKEND` + `DASHBOARD_MODE` parameterized (public gemma-2-2b default; gemma-3-1b-it + local-262k + locally generated explanations as a papermill param set) |
 | `circuit_tracer_adapter_example_basic.ipynb` | Basic adapter usage (graph generation, Neuronpedia upload) |
 
-## Cross-Backend Composition
+## Cross-Backend Composition (planned demo — not yet in-tree)
 
-The cross-backend demo illustrates how `AnalysisStore` enables composition across independent sessions:
+Cross-backend *mixing* is deferred to a subsequent workstream (the RTE-focused research direction
+continues in [interpretune#220](https://github.com/speediedan/interpretune/issues/220)); no
+committed notebook currently demonstrates it — the planned demo is tracked in
+[interpretune#224](https://github.com/speediedan/interpretune/issues/224). The planned demo design, which `AnalysisStore`
+persistence already supports, composes independent sessions:
 
 1. **Stage A** — GPT-2 SAE analysis via TransformerBridge: runs `logit_diffs_base`, persists store to disk
 2. **Stage B** — Gemma-2 CT analysis via NNsight: runs full 5-op pipeline, collects results
 3. **Stage C** — CPU-only enrichment: reloads Store A from disk, combines summaries from both backends
 
-Each stage runs in its own session with independent teardown, demonstrating that `AnalysisStore`
-persistence (`dataset.save_to_disk()` / `AnalysisStore(dataset=path)`) enables cross-session composition.
+Each stage would run in its own session with independent teardown, demonstrating that `AnalysisStore`
+persistence (`dataset.save_to_disk()` / `AnalysisStore(dataset=path)`) enables cross-session
+composition. The archived single-session RTE concept-direction flow remains recoverable from git
+history (`48f371b`) if a runnable reference is needed before that demo lands.
 
 ## Related Files
 
