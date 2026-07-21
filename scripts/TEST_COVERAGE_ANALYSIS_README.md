@@ -207,20 +207,8 @@ Recent validated example from the 2026-03-17 local run (`/tmp/gen_it_coverage_it
 
 ### Manual Upstream Semantic Parity Extraction
 
-When debugging semantic concept-direction intervention drift, use:
-
-```bash
-cd /home/speediedan/repos/interpretune && \
-  /mnt/cache/speediedan/.venvs/it_latest/bin/python \
-  tests/upstream_parity/extract_upstream_ct_semantic_reference.py \
-  --output-json /tmp/ct_semantic_reference.json
-```
-
-That script mirrors the upstream circuit-tracer semantic-intervention workflow and records:
-
-- upstream circuit-tracer NNsight values
-- upstream circuit-tracer TransformerLens values
-- current Interpretune native CT NNsight values
-- current Interpretune analysis-op values
-
-See `tests/upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md` for the maintained reference table and debugging guidance.
+The manual extraction workflow (`extract_upstream_ct_semantic_reference.py` +
+`UPSTREAM_CT_PARITY_DEBUG.md`) was archived to private notes 2026-07-07 as superseded by the
+automated `tests/core/test_analysis_backend_parity.py` suite. Consult the archived notes if a manual
+three-way replay (upstream CT NNsight / upstream CT TransformerLens / Interpretune native CT /
+analysis-op) is ever needed again.

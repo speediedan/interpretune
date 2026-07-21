@@ -205,6 +205,11 @@ collect_env_coverage(){
     maybe_deactivate
     source ${venv_path}/bin/activate
     export PYTHONFAULTHANDLER=1
+    # Use the sys.monitoring measurement core (coverage>=7.4, py>=3.12): nnsight's Tracer calls
+    # sys.settrace(None) on trace teardown, which permanently wipes the default settrace-based
+    # coverage core for the rest of the process (every test after the first in-process nnsight
+    # trace records zero coverage). The sysmon core is immune to settrace clobbering.
+    export COVERAGE_CORE=sysmon
     if [[ ${resource_debug:-0} -eq 1 ]]; then
         enable_resource_debug_env
         log_shell_resource_snapshot "coverage:bootstrap:$1" >> "$coverage_session_log" 2>&1 || true

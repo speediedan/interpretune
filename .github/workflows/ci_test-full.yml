@@ -135,6 +135,9 @@ jobs:
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       HF_GATED_PUBLIC_REPO_AUTH_KEY: ${{ secrets.HF_GATED_PUBLIC_REPO_AUTH_KEY }}
       HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY: ${{ secrets.HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY }}
+      # sysmon coverage core (coverage>=7.4, py>=3.12): immune to nnsight's sys.settrace(None)
+      # trace-teardown wipe of the default settrace-based core (see gen_it_coverage.sh)
+      COVERAGE_CORE: sysmon
       ### we need to set the below secrets/vars for Grafana Alloy monitoring in our composite action (which doesn't have direct access to those workflow inputs)
       IT_GRAFANA_GITHUB_TOKEN: ${{ secrets.IT_GRAFANA_GITHUB_TOKEN }}
       PROM_PUSH_URL: ${{ vars.PROM_PUSH_URL }}

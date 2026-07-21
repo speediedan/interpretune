@@ -85,16 +85,34 @@ jobs:
           echo "Configured CPU torch pin:"
           cat requirements/ci/torch-pre.txt
 
+      - name: Prepare CI overrides
+        run: |
+          # The transformer-lens pin (>= 4ba2187b) no longer caps jaxtyping (<0.2.20
+          # was dropped upstream), so the former forced jaxtyping==0.2.19 override is
+          # gone: the resolver now satisfies sae-dashboard's >=0.2.28 floor naturally
+          # (the validated integrated env resolves 0.2.38). Keep a runner-local copy
+          # so CPU-specific adjustments never touch the tracked file.
+          cp requirements/ci/overrides.txt "${RUNNER_TEMP}/overrides_ci.txt"
+          cat "${RUNNER_TEMP}/overrides_ci.txt"
+
       - name: Prepare CPU-pruned SAELens exported requirements
         run: |
           # requirements/ci/sl_uv_requirements.txt is a poetry export resolved against
           # CUDA torch, so it pins the nvidia-*/triton CUDA libraries for Linux x86_64.
           # They are dead weight (several GB) on CPU-only runners; prune them for the
-          # smoke build. All other pins (incl. torch==<pin>, satisfied by the installed
-          # +cpu build) are preserved.
-          grep -vE '^(nvidia-|triton==)' requirements/ci/sl_uv_requirements.txt \
+          # smoke build. Also prune the transformer-lens and jaxtyping pins: the
+          # UV_OVERRIDE transformer-lens git pin replaces the former, and the poetry
+          # export's jaxtyping==0.3.9 pin sits above sae-dashboard's ^0.2.28 cap — the
+          # validated integrated env resolves 0.2.38, so let the resolver find that
+          # here too. torchvision/torchaudio pins are pruned too: the
+          # exported pins resolve to CUDA-built linux wheels that are ABI-incompatible
+          # with the +cpu torch (operator torchvision::nms does not exist), and nothing
+          # in the smoke import surface hard-requires them. All other pins (incl. torch==<pin>, satisfied by
+          # the installed +cpu build) are preserved.
+          grep -vE '^(nvidia-|triton==|transformer-lens==|jaxtyping==|torchvision==|torchaudio==)' \
+            requirements/ci/sl_uv_requirements.txt \
             > "${RUNNER_TEMP}/sl_uv_requirements_cpu.txt"
-          echo "Pruned $(($(wc -l < requirements/ci/sl_uv_requirements.txt) - $(wc -l < "${RUNNER_TEMP}/sl_uv_requirements_cpu.txt"))) CUDA-only pinned lines"
+          echo "Pruned $(($(wc -l < requirements/ci/sl_uv_requirements.txt) - $(wc -l < "${RUNNER_TEMP}/sl_uv_requirements_cpu.txt"))) pinned lines"
 
       - name: Build environment (SAELens + SAEDashboard from source, CPU torch)
         shell: bash
@@ -105,9 +123,35 @@ jobs:
             --repo-home="${GITHUB_WORKSPACE}" \
             --target-env-name="${TARGET_ENV_NAME}" \
             --venv-dir="${HOME}/.venvs" \
-            --from-source="sae_lens:${HOME}/from-source/SAELens:dev:UV_OVERRIDE=${GITHUB_WORKSPACE}/requirements/ci/overrides.txt:FLAGS=-r ${RUNNER_TEMP}/sl_uv_requirements_cpu.txt" \
-            --from-source="sae_dashboard:${HOME}/from-source/SAEDashboard:dev:UV_OVERRIDE=${GITHUB_WORKSPACE}/requirements/ci/overrides.txt" \
+            --from-source="sae_lens:${HOME}/from-source/SAELens:dev:UV_OVERRIDE=${RUNNER_TEMP}/overrides_ci.txt:FLAGS=-r ${RUNNER_TEMP}/sl_uv_requirements_cpu.txt" \
+            --from-source="sae_dashboard:${HOME}/from-source/SAEDashboard:dev:UV_OVERRIDE=${RUNNER_TEMP}/overrides_ci.txt" \
             2>&1 | tee "${RUNNER_TEMP}/env-build-smoke.log"
+
+      - name: Align torchvision with CPU torch
+        shell: bash
+        run: |
+          # requirements/ci/overrides.txt pins torchvision==0.25.0, which uv resolves to
+          # the CUDA-built PyPI linux wheel — ABI-incompatible with the +cpu torch
+          # (operator torchvision::nms does not exist). Replace it with the cpu-index
+          # build of the same version (its torch requirement is satisfied by 2.10.0+cpu).
+          source "${HOME}/.venvs/${TARGET_ENV_NAME}/bin/activate"
+          for pkg in torchvision torchaudio; do
+            if uv pip show "${pkg}" >/dev/null 2>&1; then
+              PKG_PIN="$(uv pip show "${pkg}" | awk '/^Version:/{print $2}')"
+              uv pip install "${pkg}==${PKG_PIN}" --index-url https://download.pytorch.org/whl/cpu --reinstall-package "${pkg}"
+            fi
+          done
+
+      - name: Diagnostics (installed package set, root import errors)
+        shell: bash
+        run: |
+          set -x
+          source "${HOME}/.venvs/${TARGET_ENV_NAME}/bin/activate"
+          uv pip list | grep -Ei "torch|nvidia|triton|transformers|transformer-lens|jaxtyping|sae" || true
+          python -c "import torch; print('torch', torch.__version__)"
+          # transformers masks the real ImportError behind its lazy-import wrapper;
+          # import the concrete module directly to surface the true root cause.
+          python -c "import transformers.models.bert.modeling_bert as m; print('bert modeling import ok')"
 
       - name: Validate environment (imports, editable installs, env details)
         shell: bash
