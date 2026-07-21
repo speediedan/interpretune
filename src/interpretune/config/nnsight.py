@@ -186,12 +186,27 @@ class NNsightConfig(ITSerializableCfg):
             kwargs["tokenizer_kwargs"] = self.tokenizer_kwargs
 
         # Remote execution settings
-        if self.remote:
+        if self.remote and _nnsight_accepts_init_remote():
+            # nnsight 0.6.x consumes `remote` at LanguageModel init (default execution backend);
+            # on the 0.7 line the wrapper no longer consumes it and the kwarg leaks into the HF
+            # model constructor (TypeError: ... unexpected keyword argument 'remote') — remote
+            # selection moved to per-trace `trace(..., remote=True)`.
             kwargs["remote"] = True
             # API key is handled separately in adapter initialization
             # to allow for environment variable fallback
 
         return kwargs
+
+
+def _nnsight_accepts_init_remote() -> bool:
+    """Whether the installed nnsight consumes ``remote`` at ``LanguageModel`` init (0.6 line only)."""
+    try:
+        import nnsight
+        from packaging.version import Version
+
+        return Version(getattr(nnsight, "__version__", "0")) < Version("0.7")
+    except Exception:
+        return True
 
 
 # Type aliases for static typing

@@ -132,7 +132,12 @@ class TestNNsightConfig:
 
         kwargs = config.get_nnsight_kwargs()
 
-        assert kwargs["remote"] is True
+        from interpretune.config.nnsight import _nnsight_accepts_init_remote
+
+        if _nnsight_accepts_init_remote():  # nnsight 0.6 line: remote is an init kwarg
+            assert kwargs["remote"] is True
+        else:  # 0.7+: remote moved to per-trace selection; init kwarg would leak to the HF ctor
+            assert "remote" not in kwargs
         assert kwargs["dispatch"] is False
 
 
@@ -483,7 +488,12 @@ class TestNNsightRemoteExecution:
         )
 
         kwargs = config.get_nnsight_kwargs()
-        assert kwargs["remote"] is True
+        from interpretune.config.nnsight import _nnsight_accepts_init_remote
+
+        if _nnsight_accepts_init_remote():  # nnsight 0.6 line: remote is an init kwarg
+            assert kwargs["remote"] is True
+        else:  # 0.7+: remote moved to per-trace selection; init kwarg would leak to the HF ctor
+            assert "remote" not in kwargs
         assert kwargs["dispatch"] is False
 
     @RunIf(optional=True)

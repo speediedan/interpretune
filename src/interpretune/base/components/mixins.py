@@ -136,9 +136,14 @@ class AnalysisStepMixin:
         concrete = [
             p for p in params if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
         ]
-        if not concrete:
-            # The model exposes only ``*args, **kwargs`` (e.g. NNsight LanguageModel wrapper).
-            # Resolve through to the underlying model so we can prune batch keys meaningfully.
+        has_var_keyword = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params)
+        if not concrete or has_var_keyword:
+            # Wrapper signatures forward data kwargs to the wrapped model, so their own parameter list is
+            # not a meaningful pruning surface: NNsight's LanguageModel exposes ``*args, **kwargs`` on the
+            # 0.6 line and ``*args, trace=..., **kwargs`` on 0.7+ (the added ``trace`` keyword made the
+            # bare ``not concrete`` test miss the wrapper, emptying every pruned batch). Resolve through to
+            # the underlying model whenever one exists and the visible signature still accepts arbitrary
+            # kwargs; models without an underlying handle keep their own signature.
             underlying = getattr(self.model, "_model", None) or getattr(self.model, "_module", None)  # type: ignore[attr-defined]
             if underlying is not None:
                 underlying_method = getattr(underlying, target_method, None)
