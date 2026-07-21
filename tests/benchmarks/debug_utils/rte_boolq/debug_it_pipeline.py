@@ -210,10 +210,7 @@ def main():
         log(f"   preds count: {preds.shape[0]}, labels count: {label_count}")
 
     # Save log
-    log_dir = (
-        "/home/speediedan/repos/distributed-insight/project_admin/interpretune/design/"
-        "circuit-tracer-backend/benchmark_debugging"
-    )
+    log_dir = os.environ.get("IT_DEBUG_LOG_DIR", "/tmp/it_benchmark_debugging")
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f"it_pipeline_debug_{timestamp}.log")
     with open(log_path, "w") as f:

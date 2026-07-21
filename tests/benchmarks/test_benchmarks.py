@@ -23,7 +23,6 @@ Usage:
 
 from __future__ import annotations
 
-import re
 import subprocess
 from pathlib import Path
 
@@ -63,16 +62,15 @@ def _get_benchmark_params():
 
 
 def _parse_accuracy(output: str) -> float | None:
-    """Parse accuracy from CLI benchmark output."""
-    for pattern in [
-        r"['\"]accuracy['\"]:\s*tensor\(([\d.]+)",
-        r"accuracy\s+([\d.]+)",
-        r"['\"]accuracy['\"]:\s*([\d.]+)",
-    ]:
-        match = re.search(pattern, output)
-        if match:
-            return float(match.group(1))
-    return None
+    """Parse accuracy from CLI benchmark output.
+
+    Delegates to the shared ``benchmark_utils.parse_accuracy`` — a stale local pattern copy
+    previously failed to match Lightning's rich metric table (``accuracy │ 0.808…``), whose
+    box-drawing separator the shared pattern handles.
+    """
+    from tests.benchmarks.benchmark_utils import parse_accuracy
+
+    return parse_accuracy(output)
 
 
 @RunIf(benchmark=True, min_cuda_gpus=1)
