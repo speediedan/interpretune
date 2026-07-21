@@ -54,6 +54,15 @@ class CircuitTracerAnalysisBackend:
                 weight = getattr(embedding_layer, "weight", None)
                 if isinstance(weight, torch.Tensor):
                     return weight
+            # TransformerLens-style replacement models (HookedTransformer subclasses) expose
+            # W_U (d_model, vocab) / W_E (vocab, d_model) instead; transpose W_U to match the
+            # (vocab, d_model) convention of the NNsight backend's unembed_weight (lm_head)
+            w_u = getattr(model, "W_U", None)
+            if isinstance(w_u, torch.Tensor):
+                return w_u.transpose(0, 1)
+            w_e = getattr(model, "W_E", None)
+            if isinstance(w_e, torch.Tensor):
+                return w_e
         raise ValueError("An embedding weight matrix is required for concept_direction")
 
     def flatten_token_ids(self, tokenized: Any) -> list[int]:

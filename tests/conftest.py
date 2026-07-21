@@ -1302,7 +1302,7 @@ def restore_env_variables():
         "USE_LOCALHOST",
         "NDIF_API_KEY",
         "HF_MCP_TOKEN_RW",
-        "NP_COPILOT_GITHUB_TOKEN",
+        "COPILOT_PROVIDER_API_KEY",  # explanation-CLI BYOK key (see neuronpedia_explanations.py)
     }
     allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)

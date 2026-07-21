@@ -1226,7 +1226,7 @@ gemma3.rte_demo.circuit_tracer_w_neuronpedia:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqGemmaPromptConfig
+        class_path: it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: False

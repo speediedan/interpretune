@@ -48,12 +48,12 @@ class PackageVersionManager:
     to ensure compatibility with analysis notebooks without modifying the user's
     environment.
 
-    Example:
-        >>> mgr = PackageVersionManager("circuit-tracer", "0.1.0")
-        >>> if mgr.needs_temp_install():
+    Example (illustrative only — never executed as a doctest: instantiation/cleanup mutate
+    global import state and may perform network installs):
+        >>> mgr = PackageVersionManager("circuit-tracer", "0.1.0")  # doctest: +SKIP
+        >>> if mgr.needs_temp_install():  # doctest: +SKIP
         ...     pkg_path = mgr.install_temp_version()
-        >>> # Use the package...
-        >>> mgr.cleanup()
+        >>> mgr.cleanup()  # doctest: +SKIP
     """
 
     @staticmethod
@@ -303,28 +303,36 @@ class PackageVersionManager:
         1. Removes the temp directory from sys.path
         2. Removes all package modules from sys.modules to prevent stale references
         3. Deletes the temporary directory to avoid leaving artifacts
+
+        The sys.modules purge only runs when a temp installation actually occurred: purging
+        unconditionally would orphan every module-level class reference already held by other
+        modules in the process (isinstance checks against re-imported classes then fail), even
+        though no temp version was ever mounted.
         """
+        temp_install_occurred = self._original_path_entry is not None or self.temp_dir is not None
+
         # Remove from sys.path first
         if self._original_path_entry and self._original_path_entry in sys.path:
             sys.path.remove(self._original_path_entry)
             logger.info(f"Removed {self._original_path_entry} from sys.path")
 
-        # Clean up sys.modules to remove all traces of the temp installation
-        # This is critical to ensure the original (potentially editable) installation is used
-        package_module_name = self.package_name.replace("-", "_")
-        modules_to_remove = []
+        if temp_install_occurred:
+            # Clean up sys.modules to remove all traces of the temp installation
+            # This is critical to ensure the original (potentially editable) installation is used
+            package_module_name = self.package_name.replace("-", "_")
+            modules_to_remove = []
 
-        for module_name in list(sys.modules.keys()):
-            # Remove the package itself and all its submodules
-            if module_name == package_module_name or module_name.startswith(f"{package_module_name}."):
-                modules_to_remove.append(module_name)
+            for module_name in list(sys.modules.keys()):
+                # Remove the package itself and all its submodules
+                if module_name == package_module_name or module_name.startswith(f"{package_module_name}."):
+                    modules_to_remove.append(module_name)
 
-        for module_name in modules_to_remove:
-            del sys.modules[module_name]
-            logger.debug(f"Removed {module_name} from sys.modules")
+            for module_name in modules_to_remove:
+                del sys.modules[module_name]
+                logger.debug(f"Removed {module_name} from sys.modules")
 
-        if modules_to_remove:
-            logger.info(f"Removed {len(modules_to_remove)} module(s) from sys.modules for {self.package_name}")
+            if modules_to_remove:
+                logger.info(f"Removed {len(modules_to_remove)} module(s) from sys.modules for {self.package_name}")
 
         # Delete temp directory to avoid leaving artifacts that could confuse pip or import system
         if self.temp_dir and self.temp_dir.exists():

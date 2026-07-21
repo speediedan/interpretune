@@ -51,9 +51,27 @@ Interpretation:
 - If the build is `notStarted` and approvals are pending, approve the run before touching the agent
 - If no approval is pending, then inspect queue backlog, worker dispatch, and agent availability next
 
-## Step 2: Release the Queued Run
+## Step 2: Release (or Reject) the Queued Run
 
-Approve the pending gate directly from the shell:
+Preferred: use the multi-mode approvals helper script (distributed-insight repo,
+`project_admin/shared_admin_scripts/az_pipeline_agent_scripts/manage-approvals.sh`). It reads
+`ADO_MCP_AUTH_TOKEN` or `AZURE_DEVOPS_EXT_PAT` from the environment and supports
+`list`, `approve`, `reject`, `approve-all`, and `reject-all` modes:
+
+```bash
+cd /home/speediedan/repos/distributed-insight/project_admin/shared_admin_scripts/az_pipeline_agent_scripts
+./manage-approvals.sh -o speediedan -p interpretune -m list
+./manage-approvals.sh -o speediedan -p interpretune -m approve -i "<approval_id>" -c "Approved via CLI for self-hosted GPU validation."
+./manage-approvals.sh -o speediedan -p interpretune -m reject -i "<approval_id>"   # terminates the gated build
+./manage-approvals.sh -o speediedan -p interpretune -m reject-all                   # dispose all stale pending gates
+```
+
+Notes: pending approvals for PR-gated builds are only visible via the pipelines approvals API
+(`state=pending`) — gated builds sit `notStarted`, so scanning in-progress build timelines finds
+nothing. Rejecting a gate completes the build as `failed` (that is the terminal state for a
+rejected approval, not an error in the script).
+
+Fallback: approve the pending gate directly with curl:
 
 ```bash
 curl -sS -X PATCH -u ":${AZURE_DEVOPS_EXT_PAT}" \
@@ -97,8 +115,17 @@ Action:
 
 Action:
 
-- Follow the documented rootless Docker and agent restart flow in the Azure pipeline docs
-- Recheck `/var/run/docker.sock` symlink handling and agent service health
+- Restart the whole agent stack (rootless docker + agent service) with the NOPASSWD-sudoers
+  one-liner — agents are explicitly authorized to run this:
+
+  ```bash
+  sudo /opt/az_pipeline_agent/restart-stack.sh
+  ```
+
+- Recheck `/var/run/docker.sock` symlink handling (`/var/run/docker.sock ->
+  /run/user/998/docker.sock`; the symlink lives on tmpfs and is lost on reboot) and agent service
+  health; the restart script covers the standard recovery, with the manual flow documented in
+  `distributed-insight/cmdref/ml_engineering/ref_azure_pipelines.md`
 
 ### Test-memory failures
 
@@ -125,6 +152,29 @@ IT_RUN_CUDA_TESTS=1 python -m pytest --cov=src/interpretune --cov-append --cov-r
 bash ./tests/special_tests.sh --mark_type=standalone
 bash ./tests/special_tests.sh --mark_type=profile_ci
 ```
+
+Fast-iteration guidance (validated Sessions 29-31, 2026-07; local runs are for DEBUG ONLY — the
+gated pipeline must still pass on push/merge so coverage stays updated):
+
+- **Run the failing phase, not the pipeline.** A single phase locally gives minutes-scale signal vs
+  the ~50-minute full-pipeline round trip; narrow further with `-k`/node ids once the phase-level
+  failure set is known. `special_tests.sh` accepts `--filter_pattern` for the standalone/profile
+  phases.
+- **Cuda-marked tests hide inside the "skipped" count** without `IT_RUN_CUDA_TESTS=1` — a locally
+  "green" standard run does NOT imply the `standard gpu cuda-marked` phase is green (this exact gap
+  let the Session-31 CT merge land red). The phase also needs `HF_GATED_PUBLIC_REPO_AUTH_KEY`/
+  `HF_TOKEN` in the environment (gated-model + notebook tests).
+- **Debug another branch without disturbing your working tree**: detached `git worktree` + an
+  overlay venv — `python -m venv <env>`, `pip install -e <worktree> --no-deps`, then an executable
+  `.pth` bridge (`import site; site.addsitedir('<base env site-packages>')`; a plain-directory
+  `.pth` does NOT propagate the base env's editable installs). Put the overlay env's `bin` on
+  `PATH` for tests that spawn the `interpretune` console script (`test_it_cli.py`). See
+  `CLAUDE.md` "Worktrees & Parallel Environments"; the long-lived `~/repos/it-release` worktree +
+  `it_release` venv can serve as the second pair when isolation from its state isn't required.
+- **The agent shares this machine's GPUs**: never run local GPU phases while a gated build is
+  executing (build 607's first attempt OOMed on a leftover 7.6 GiB kernel), and HOLD pending gate
+  approvals until local GPU work finishes — approve after, with the hold noted in the approval
+  comment.
 
 ## Step 6: Fixture and Scope Triage for CUDA-Involved Tests
 

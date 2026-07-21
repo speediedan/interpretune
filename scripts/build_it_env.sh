@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Interpretune environment builder using uv
 # Uses uv pip with traditional venv activation for maximum control
@@ -16,6 +16,17 @@
 #   ./build_it_env.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest \
 #     --from-source="nnsight:${HOME}/repos/nnsight:all:UV_OVERRIDE=${HOME}/repos/interpretune/requirements/ci/torch-override.txt"
 set -eo pipefail
+
+# This script uses associative arrays and namerefs, which require bash >= 4.3.
+# macOS ships bash 3.2 at /bin/bash, so we check early and fail with a clear message.
+# On macOS: `brew install bash` provides a modern bash that `/usr/bin/env bash` will
+# resolve (Homebrew's bin directory precedes /bin on PATH in default brew setups).
+if [[ ${BASH_VERSINFO[0]:-0} -lt 4 ]] || { [[ ${BASH_VERSINFO[0]} -eq 4 ]] && [[ ${BASH_VERSINFO[1]:-0} -lt 3 ]]; }; then
+    echo "ERROR: $(basename "$0") requires bash >= 4.3 (found ${BASH_VERSION:-unknown})." >&2
+    echo "On macOS, install a modern bash with 'brew install bash' and re-run this script" >&2
+    echo "(the script resolves bash via '/usr/bin/env bash', which picks up the Homebrew bash)." >&2
+    exit 1
+fi
 
 # Source shared infrastructure utilities
 source "$(dirname "${BASH_SOURCE[0]}")/infra_utils.sh"
@@ -118,28 +129,47 @@ EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo-home:,target-env-name:,venv-dir:,python-version:,torch-backend:,from-source:,uv-install-flags:,help -- "$@")
-if [[ $? -gt 0 ]]; then
-  usage
-fi
-
-eval set -- ${args}
-while :
-do
-  case $1 in
-    --repo-home)  repo_home=$2    ; shift 2  ;;
-    --target-env-name)  target_env_name=$2  ; shift 2 ;;
-    --venv-dir)  venv_dir=$2  ; shift 2 ;;
-    --python-version)  python_version=$2  ; shift 2 ;;
-    --torch-backend)   torch_backend=$2   ; shift 2 ;;
-    --from-source)   from_source_specs+=("$2") ; shift 2 ;;
-    --uv-install-flags)   uv_install_flags=$2 ; shift 2 ;;
-    --help)    usage      ; shift   ;;
+# Portable long-option parser. GNU getopt (util-linux) is unavailable on macOS/BSD,
+# so we parse manually. Both "--flag value" and "--flag=value" forms are supported
+# (GNU getopt previously normalized the latter into the former).
+while [[ $# -gt 0 ]]; do
+  opt="$1"
+  opt_value=""
+  has_inline_value=0
+  case "${opt}" in
+    --*=*)
+      opt_value="${opt#*=}"
+      opt="${opt%%=*}"
+      has_inline_value=1
+      ;;
+  esac
+  case "${opt}" in
+    --help)    usage ;;
     # -- means the end of the arguments; drop this, and break out of the while loop
     --) shift; break ;;
-    *) >&2 echo Unsupported option: $1
+    --repo-home|--target-env-name|--venv-dir|--python-version|--torch-backend|--from-source|--uv-install-flags)
+      if [[ ${has_inline_value} -eq 0 ]]; then
+        if [[ $# -lt 2 ]]; then
+          >&2 echo "Missing value for option: ${opt}"
+          usage
+        fi
+        opt_value="$2"
+        shift
+      fi
+      case "${opt}" in
+        --repo-home)  repo_home=${opt_value} ;;
+        --target-env-name)  target_env_name=${opt_value} ;;
+        --venv-dir)  venv_dir=${opt_value} ;;
+        --python-version)  python_version=${opt_value} ;;
+        --torch-backend)   torch_backend=${opt_value} ;;
+        --from-source)   from_source_specs+=("${opt_value}") ;;
+        --uv-install-flags)   uv_install_flags=${opt_value} ;;
+      esac
+      ;;
+    *) >&2 echo "Unsupported option: $1"
        usage ;;
   esac
+  shift
 done
 
 # Combine multiple --from-source flags into single spec with semicolon separator
@@ -212,7 +242,7 @@ base_env_build(){
 
 it_install(){
     source "${venv_path}/bin/activate"
-    cd ${repo_home}
+    cd "${repo_home}"
 
     # installation strategy: locked CI reqs → git-deps → from-source
     ci_reqs_file="${repo_home}/requirements/ci/requirements.txt"
@@ -244,7 +274,7 @@ it_install(){
     fi
 
     # 4. Setup git hooks and type checking
-    cd ${repo_home}
+    cd "${repo_home}"
     echo "Setting up git hooks and running type checks..."
     pyright -p pyproject.toml || echo "⚠ pyright check had issues, continuing..."
     pre-commit install

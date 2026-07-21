@@ -1,5 +1,10 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # infra utility functions
+#
+# Portability note: most helpers here are POSIX/BSD-friendly (macOS bash 3.2 included),
+# but `split_colon_fields`, `parse_from_source_specs`, and `install_from_source_packages`
+# use namerefs/associative arrays and therefore require bash >= 4.3 (callers such as
+# build_it_env.sh enforce this with an early version check).
 
 show_elapsed_time(){
   local test_log="$1"
@@ -136,10 +141,16 @@ read_torch_pre_config(){
 
     if [[ -f "${torch_pre_file}" ]]; then
         # Read 3-line config: version, CUDA target, channel type
-        readarray -t PRE_CONFIG < <(grep -v '^#' "${torch_pre_file}" | grep -v '^$')
-        TORCH_PRE_VERSION="${PRE_CONFIG[0]}"
-        TORCH_PRE_CUDA="${PRE_CONFIG[1]}"
-        TORCH_PRE_CHANNEL="${PRE_CONFIG[2]}"
+        # (while-read loop instead of readarray/mapfile for macOS bash 3.x compatibility)
+        local _line _idx=0
+        while IFS= read -r _line || [[ -n "${_line}" ]]; do
+            case ${_idx} in
+                0) TORCH_PRE_VERSION="${_line}" ;;
+                1) TORCH_PRE_CUDA="${_line}" ;;
+                2) TORCH_PRE_CHANNEL="${_line}" ;;
+            esac
+            _idx=$((_idx + 1))
+        done < <(grep -v '^#' "${torch_pre_file}" | grep -v '^$')
     fi
 }
 
@@ -341,6 +352,7 @@ install_from_source_packages(){
 
         # Set environment variables if specified
         local env_vars_set=()
+        local pkg_extra_flags=""
         if [[ -n ${pkg_env_vars} ]]; then
             echo "Setting environment variables for ${pkg} installation:"
             IFS='|' read -ra ENV_VARS <<< "${pkg_env_vars}"
@@ -352,6 +364,13 @@ install_from_source_packages(){
                     echo "  export ${var_name}=${var_value}"
                     export "${var_name}=${var_value}"
                     env_vars_set+=("${var_name}")
+                    if [[ ${var_name} == "FLAGS" ]]; then
+                        # The FLAGS keyword carries additional `uv pip install` flags for this
+                        # package's editable install (e.g., "FLAGS=-r /path/to/exported_reqs.txt"
+                        # for Poetry-legacy packages such as SAELens whose dev/test dependencies
+                        # are not expressible as extras).
+                        pkg_extra_flags="$(strip_quotes "${var_value}")"
+                    fi
                 fi
             done
         fi
@@ -372,7 +391,7 @@ install_from_source_packages(){
             fi
         fi
 
-        uv pip install ${uv_install_flags} -e "${install_target}"
+        uv pip install ${uv_install_flags} ${pkg_extra_flags} -e "${install_target}"
 
         # Restore original UV_OVERRIDE if we created a temp filtered version
         if [[ -n "${_orig_uv_override}" ]]; then

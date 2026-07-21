@@ -44,9 +44,48 @@ source ${IT_VENV_BASE:-~/.venvs}/${IT_TARGET_VENV}/bin/activate
   --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1"
 ```
 
-### Git Dependency Caching
+### From-Source Builds (multi-repo integrated env)
+
+The integrated dev env (`it_latest`) builds the salient upstream deps **editable from source** via repeated
+`--from-source="pkg:path:extras:ENVVAR=...:FLAGS=..."` directives. Canonical full rebuild (SAEDashboard,
+SAELens, circuit-tracer, TransformerLens, nnsight all from local checkouts):
+
+```bash
+./scripts/build_it_env.sh --repo-home=${IT_REPO_DIR} --target-env-name=it_latest --venv-dir=${IT_VENV_BASE} \
+  --from-source="sae_dashboard:${HOME}/repos/SAEDashboard:dev:UV_EXCLUDE=${IT_REPO_DIR}/requirements/ci/excludes.txt:UV_OVERRIDE=${IT_REPO_DIR}/requirements/ci/overrides.txt" \
+  --from-source="sae_lens:${HOME}/repos/SAELens:dev:UV_OVERRIDE=${IT_REPO_DIR}/requirements/ci/overrides.txt:FLAGS=-r ${IT_REPO_DIR}/requirements/ci/sl_uv_requirements.txt" \
+  --from-source="circuit_tracer:${HOME}/repos/circuit-tracer:dev:UV_EXCLUDE=${IT_REPO_DIR}/requirements/ci/excludes.txt:UV_OVERRIDE=${IT_REPO_DIR}/requirements/ci/overrides.txt" \
+  --from-source="transformer-lens:${HOME}/repos/TransformerLens" \
+  --from-source="nnsight:${HOME}/repos/nnsight:all:UV_OVERRIDE=${IT_REPO_DIR}/requirements/ci/overrides.txt"
+```
+
+Rules of thumb:
+
+- `UV_EXCLUDE` (excludes file) is **required** when interpretune, circuit-tracer, AND transformer-lens are
+  all from source, so exactly one directive controls the transformer-lens install. `UV_OVERRIDE` alone
+  suffices when only two of the three are from source.
+- SAELens is Poetry-legacy (not PEP 621), so uv needs an exported requirements file passed via `FLAGS=-r`.
+  The vendored copy lives at `requirements/ci/sl_uv_requirements.txt`; regenerate it whenever SAELens
+  `pyproject.toml`/lock changes (`poetry export --all-groups --all-extras` → post-process).
+- nnsight should be installed first among the from-source set (its vllm-era pins occasionally need the
+  override file).
+- **After every rebuild**: recreate circuit-tracer's untracked `temp_hf_override.txt` (stash/restore or
+  per the circuit-tracer admin notes), then validate with `python requirements/utils/collect_env_details.py`
+  (also feeds `salient_pkg_versions` provenance used by the benchmark registry).
+
+### Git Dependency Caching & Pins
 
 When a from-source package brings in git-pinned dependencies, UV caches those resolved commits and later editable installs should respect them. Interpretune relies on the `override-dependencies` configuration in `pyproject.toml` so editable installs can coexist with those pinned git requirements instead of fighting them.
+
+Where pins live and how to refresh them:
+
+- `pyproject.toml` `[tool.uv] override-dependencies` — the transformer-lens git SHA pin (the highest-risk
+  bump: as of 2026-07 the pin is ~260+ commits behind TL main; probe a TL bump in a scratch env and run the
+  dashboard parity gates + core suite before folding it into `it_latest`).
+- `requirements/ci/requirements.txt` — the CI lock; regenerate with `./requirements/utils/lock_ci_requirements.sh`.
+- Any rebuild that changes benchmark-relevant deps (torch, transformer_lens, nnsight, sae_lens,
+  sae_dashboard) must end with the dashboard parity gates green and a fresh benchmark wave from clean
+  committed heads (see the Neuronpedia Dashboard Pipeline section below).
 
 ## Testing
 
@@ -137,6 +176,21 @@ tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
 # Note: Coverage collection takes approximately 50 minutes
 ```
 
+**Pre-PR-wave gate**: before opening a coordinated multi-repo PR wave (Scalable Dashboards Phase 7 and
+similar), a full `gen_it_coverage.sh` pass is mandatory, not optional. Run it in
+`--run-all-and-examples` mode (adds optional profiling, optional-other, and example tests to the phase
+split); use `--allow-failures` + `--resource-debug` for diagnosing passes, but the final gate run must be
+free of real failures. It must run *after* refreshing the
+registered benchmarks (`tests/benchmarks/` — see Commit & PR Requirements below and
+`tests/benchmarks/README.md`; this is distinct from the neuronpedia dashboard benchmark suite under
+`scripts/run_dashboard_benchmark_suite.py`), so `IT_RUN_BENCHMARK_TESTS=1` runs inside the coverage pass
+validate against current `expected_accuracy`/`salient_pkg_versions`, not stale targets from a prior
+dependency state. After the local gate is green, all REMOTE checks must also pass: the GitHub Actions
+matrix (`ci_test-full`, `type-check`) and the self-hosted Azure GPU pipeline
+(`.azure-pipelines/gpu-tests.yml`) — trigger via a ready-for-review PR targeting `main` (releases the
+Azure PR trigger; approve the gated run per `.github/skills/az-pipelines-debug/SKILL.md`) or a manual
+pipeline run.
+
 If the coverage harness reports a conflicting pytest process, check whether it is still active before starting a second run. Old hung collectors are usually safe to kill with `pkill -f "pytest.*--collect-only"`; recently started runs should usually be allowed to finish.
 
 The local coverage harness now mirrors the Azure GPU pipeline's phase split:
@@ -154,6 +208,28 @@ If semantic concept-direction intervention parity drifts unexpectedly, use the n
 `tests/upstream_parity/extract_upstream_ct_semantic_reference.py` and consult `tests/upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md`
 for the current three-way upstream/native/op reference snapshot. Keep this as a manual debugging
 tool rather than part of the regular test suite.
+
+## Neuronpedia Dashboard Pipeline & Benchmarks
+
+The repo carries the production pipeline and benchmark tooling for the Scalable Dashboards workstream:
+
+- **Pipeline**: `src/interpretune/utils/neuronpedia_dashboard_pipeline.py` (+ `neuronpedia_db_utils.py`);
+  docs in `docs/neuronpedia_dashboard_pipeline.md` (multi-GPU workers, batch-level resume markers,
+  `--runner-overlap-batch-packaging`, `--overlap-local-db-import`, `--layer-list`).
+- **Profiling/benchmarks**: `scripts/profile_neuronpedia_dashboard_generation.py` (per-leg presets),
+  `scripts/run_dashboard_benchmark_suite.py` (3-way/scaling/full waves + reviewer packaging; usage in
+  `scripts/dashboard_benchmark_suite_usage.md`), `scripts/sweep_neuronpedia_dashboard_configs.py`
+  (batch-shape probes). Tests: `tests/core/test_neuronpedia_dashboard_pipeline.py`,
+  `tests/core/test_dashboard_benchmark_artifacts.py`.
+- **Env vars**: always set the large-cache locations for pipeline/benchmark runs —
+  `IT_NP_CACHE=/mnt/cache_extended/$USER/.cache/huggingface/interpretune/neuronpedia`,
+  `HF_HOME`/`HF_DATASETS_CACHE`/`HF_HUB_CACHE` under `/mnt/cache_extended/$USER/.cache/huggingface`.
+- **Reproducibility policy**: commit all four repos (interpretune, SAEDashboard, SAELens, neuronpedia)
+  before regenerating a packaged 3-way benchmark wave; add a benchmark-regeneration note to those commit
+  messages; the package manifest records the `SD-*/SL-*/NP-*/IT-*` lineage and refuses dirty trees.
+- **GPU run hygiene**: run waves/legs via `nohup ... & disown` with PID-based waiters; before a wave, kill
+  stale GPU holders by exact PID from `nvidia-smi --query-compute-apps` (pytest HF-teardown hangs are the
+  usual culprits; never `pkill -f pytest` from a command line that itself matches the pattern).
 
 ## Linting & Code Quality
 
@@ -246,12 +322,28 @@ Serialization details matter here:
   curl -sS -u ":${AZURE_DEVOPS_EXT_PAT}" \
     "https://dev.azure.com/speediedan/interpretune/_apis/pipelines/approvals?state=pending&api-version=7.1-preview.1"
   ```
-- Approve a pending run with a PATCH to the approvals endpoint:
+- Preferred approval management: the multi-mode helper script in the distributed-insight repo
+  (`project_admin/shared_admin_scripts/az_pipeline_agent_scripts/manage-approvals.sh`), auth via
+  `ADO_MCP_AUTH_TOKEN` or `AZURE_DEVOPS_EXT_PAT`:
+  ```bash
+  ./manage-approvals.sh -o speediedan -p interpretune -m list
+  ./manage-approvals.sh -o speediedan -p interpretune -m approve -i "<approval_id>" -c "Approved via CLI for GPU validation."
+  ./manage-approvals.sh -o speediedan -p interpretune -m reject-all   # dispose stale pending gates
+  ```
+  (Rejecting a gate completes the build as `failed` — the normal terminal state for a rejected approval.)
+- Fallback: approve a pending run with a PATCH to the approvals endpoint:
   ```bash
   curl -sS -X PATCH -u ":${AZURE_DEVOPS_EXT_PAT}" \
     -H "Content-Type: application/json" \
     -d '[{"approvalId":"<approval_id>","status":"approved","comment":"Approved via CLI for GPU validation."}]' \
     "https://dev.azure.com/speediedan/interpretune/_apis/pipelines/approvals?api-version=7.1-preview.1"
+  ```
+- Agent-stack recovery: infrastructure failures on the self-hosted runner (e.g. the pipeline dying at
+  "Initialize containers" with `stat -c %g /var/run/docker.sock` errors after a host reboot) are fixed
+  by restarting the rootless-docker + agent stack; this exact command is authorized for agents via a
+  NOPASSWD sudoers entry:
+  ```bash
+  sudo /opt/az_pipeline_agent/restart-stack.sh
   ```
 - The build-level queue shown by `az pipelines build show` may still display `Azure Pipelines` even when the YAML job uses the self-hosted `Default` pool. Treat approval state and actual worker dispatch as the source of truth before editing the pool stanza.
 - The current GPU test flow is intentionally phase-split to reduce peak memory while preserving CUDA coverage:
@@ -279,6 +371,48 @@ Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeli
 - `salient_pkg_versions` should retain best-effort git provenance for salient dependencies: editable installs should include live checkout metadata (`fork`, `branch`, `sha`), while git-backed non-editable installs should derive the source fork and pinned commit from `direct_url.json`.
 - If benchmark tooling, the environment collector, or benchmark docs change, commit that work first. Only then run `python tests/benchmarks/run_benchmarks.py --all --update-registry` from a clean tree and commit the resulting registry-only diff.
 - Unit tests for new functionality
+- **All non-skipped CI workflows must be green before merging to `main`** — that means the FULL surface,
+  not just the locally-run pytest phases: the hosted GitHub workflows (Test full across all three OSes,
+  Stale Stubs and Type Checks — BOTH halves: pyright AND `generate_op_stubs.py` freshness — PyPI dry-run,
+  regen-ci-req report, benchmark-registry isolation) AND every phase of the gated Azure GPU pipeline
+  (standard, **standard gpu cuda-marked**, standalone, profile_ci). Lesson from the Session-31 CT merge
+  (2026-07-20): a branch was greened locally on three phases but the cuda-marked phase (whose tests hide
+  among the locally-skipped set) plus the hosted stubs/pyright/fixture-scope surfaces were never
+  exercised, so `main` went red on merge. Run the cuda-marked phase locally via
+  `IT_RUN_CUDA_TESTS=1 python -m pytest tests -v` (inline env var; these tests SKIP silently without it —
+  they hide inside the "skipped" count) with `HF_GATED_PUBLIC_REPO_AUTH_KEY`/`HF_TOKEN` available, and
+  check stub freshness with `python scripts/generate_op_stubs.py` + a clean `git diff` before any merge.
+- **No AI-attribution trailers** (`Co-Authored-By: Claude ...`, "Generated with ..." lines) in commit
+  messages or PR bodies — they are commit noise (and `.claude/settings.json` no longer adds them). When
+  rebasing the long-lived multi-repo workstream branches (interpretune, SAEDashboard, SAELens,
+  circuit-tracer, neuronpedia) ahead of opening PRs, strip these trailers from prior commits as part of
+  the rebase; a full-history sweep outside those rebases is not required.
+
+## Multi-Session Workstream Cadence (plan + completion log)
+
+Long-running multi-session workstreams (e.g. the Phase 7 PR-packaging plan in the maintainer's private
+notes) follow this documentation cadence:
+
+- The working plan's status section stays LEAN: a short current-status paragraph, a compact per-session
+  index table (session / focus / landed SHAs / CI builds), and the proposed next-session order.
+- Every session appends full detail to the companion completion log: a Part 1 detailed slice entry plus
+  a Part 2 end-of-session status snapshot (ending with the pushed multi-repo heads).
+- During a session it is fine to write a dated addendum into the plan's status section, but addenda are
+  periodically CONSOLIDATED into the index (after verifying the log carries all their detail); superseded
+  next-session orders are dropped rather than accumulated — Part 2 snapshots preserve that history.
+
+## Worktrees & Parallel Environments
+
+- A long-lived `~/repos/it-release` worktree with a matching `it_release` venv (see
+  `scripts/build_it_env.sh`, `scripts/gen_it_coverage.sh`) exists for future releases and doubles as a
+  ready second worktree/env pair for parallel deep debugging. Prefer reusing it when it meets
+  requirements (avoids setup cost and detached-worktree proliferation); create a fresh detached worktree
+  when isolation from its state matters.
+- Overlay-venv recipe for evaluating another branch against an existing heavy env: `python -m venv` a new
+  env, `pip install -e <worktree> --no-deps` into it, then bridge the base env with an executable `.pth`
+  (`import site; site.addsitedir('<base site-packages>')` — a plain-directory `.pth` will NOT propagate
+  the base env's editable installs). Put the overlay venv's `bin` on `PATH` for tests that spawn console
+  scripts (e.g. `test_it_cli.py`).
 
 ## Notebook Publishing
 
@@ -291,12 +425,23 @@ Dev notebooks live in `src/it_examples/notebooks/dev/` and are auto-published to
 - **Workflow:** Edit dev notebooks only → commit → pre-commit publishes automatically. Never edit publish notebooks directly.
 - **Verification:** After any notebook changes, run `python scripts/publish_notebooks.py --check-only` to verify published notebooks are in sync.
 
+## Elevated-Access Blockers
+
+When work is blocked by a command that requires elevated access or interactive local auth (sudo, an
+interactive login, a gpg/pinentry prompt, a locked credential store), do not just work around it silently:
+include in the response summary a concrete proposed solution that would let Claude execute that command (or a
+scripted group of commands) autonomously in the future. The established pattern is a root-owned wrapper
+script + sudoers `NOPASSWD` directive + `~/.claude/settings.json` `permissions.allow` entry — e.g.
+`Bash(sudo /opt/az_pipeline_agent/restart-stack.sh)` paired with
+`speediedan ALL=(ALL) NOPASSWD: /opt/az_pipeline_agent/restart-stack.sh`. Propose that pattern (or a
+better-fitting design) so it can be implemented and validated in a subsequent session.
+
 ## Important Caveats
 
 - **Git dependencies** (transformer_lens, sae_lens, circuit_tracer, nnsight) are pinned to specific commits in `pyproject.toml`
 - **Type checking:** Enabled for all `src/` files except `src/it_examples/utils/raw_graph_analysis.py`; all `tests/` files are excluded
 - **Full test suite requires ML dependencies** — tests will fail without proper env setup
-- **Import guards:** `tests/core/test_import_time_and_adapters.py` prevents accidental eager imports
+- **Import guards:** `tests/core/test_adapters_import_time.py` prevents accidental eager imports
 - **No test-environment bandaids in application code:** When test failures stem from environment issues (e.g., `isinstance()` failures due to importlib double-loading modules), fix the problem in the test infrastructure or use an app-level registry pattern (like `CT_BACKEND_REGISTRY` in `circuit_tracer.py`) — never degrade application code with workarounds for test-specific problems
 
 ## Detailed Instruction Files

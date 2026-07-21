@@ -33,12 +33,17 @@ Experiment notebooks are responsible for resolving the config file and construct
 
 ## Config Inheritance
 
-Experiment configs can now use:
+Experiment configs can now use a scalar or a list (merged in order), mirroring real usage under
+`concept_direction/configs/`:
 
 ```yaml
+# single parent (sibling file in the same configs/ dir)
+EXTENDS: base_gemma3_it_local.yaml
+
+# or multiple parents, e.g. shared cross-experiment defaults + an experiment-family base
 EXTENDS:
   - ../../configs/base.yaml
-  - ./base.yaml
+  - base_gemma3_it_local.yaml
 ```
 
 Merge behavior is recursive for mappings and replace-on-write for scalars/lists.
@@ -66,7 +71,7 @@ local webapp URL plus an API key are supplied, call the localhost graph delete r
 payload is removed before the DB cleanup runs:
 
 ```bash
-/mnt/cache/speediedan/.venvs/it_latest/bin/python -m tests.nb_experiments.local_graph_cleanup \
+python -m tests.nb_experiments.local_graph_cleanup \
   --work-root /path/to/notebook/work_root \
   --local-db-url "$LOCAL_NEURONPEDIA_DB_URL" \
   --local-webapp-url "$LOCAL_NEURONPEDIA_WEBAPP_URL" \

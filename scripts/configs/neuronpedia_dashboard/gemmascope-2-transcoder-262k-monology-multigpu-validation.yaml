@@ -1,0 +1,47 @@
+# Basic multi-GPU validation for columnar Monology 262k dashboard generation (Session 15, plan §3d).
+#
+# Purpose: validate that the launcher's multi-worker mode still provides BASIC parallel dashboard
+# generation + resume on a heterogeneous pair (GPU0 = RTX 4090 24 GiB, GPU1 = RTX 2070 8 GiB) with
+# the current columnar path. This is deliberately validation-scale (one layer + a bounded batch
+# range per worker, no DB import); see the "Basic multi-GPU generation" section of docs/neuronpedia_dashboard_pipeline.md for scope/limits.
+#
+# Validation recipe:
+#   1. Launch: python scripts/launch_neuronpedia_dashboard_pipeline.py --config-file <this file>
+#      (workers run layers 0/1 concurrently, batches 0-2).
+#   2. Resume check: interrupt (SIGKILL) the workers AND their sae_dashboard runner subprocesses
+#      mid-layer, re-launch, and confirm each worker resumes its partial layer from the first
+#      missing batch (run_settings.json n_features_per_batch match enforced per worker). NOTE: a
+#      layer that logged DONE is skipped on relaunch even with a raised end_batch — see
+#      the "Basic multi-GPU generation" section of docs/neuronpedia_dashboard_pipeline.md.
+EXTENDS: gemmascope-2-transcoder-262k-monology-production.yaml
+
+pipeline:
+  run_name_suffix: mgpu-validation
+  n_prompts_total: 2490
+  end_batch: 2
+  import_to_local_db: false
+  overlap_local_db_import: false
+  enable_layer_locks: true
+
+launcher:
+  background: true
+  monitor: true
+  monitor_heartbeat_seconds: 60
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  workers:
+    - id: gpu0
+      cuda_visible_devices: "0"
+      start_layer: 0
+      end_layer: 0
+      n_features_per_batch: 2048
+      n_prompts_in_forward_pass: 256
+    - id: gpu1
+      # RTX 2070 (8 GiB): proven reduced shape from the context-319 two-worker runs; the 262k
+      # float32 transcoder + bf16 model (~4.5 GiB) leave limited headroom, so small batches.
+      cuda_visible_devices: "1"
+      start_layer: 1
+      end_layer: 1
+      n_features_per_batch: 512
+      n_prompts_in_forward_pass: 64
+      primary_acts_batch_size: 16

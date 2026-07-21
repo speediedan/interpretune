@@ -796,3 +796,233 @@ step has to change the formula, not just the scale.
    The embed direction selects interpretable, task-relevant features while the store
    direction selects surface-level/positional features. Understanding why requires
    analysis of how the SAE encoder maps activation-space directions to feature space.
+
+---
+
+## Steering-Demo Feature-Semantics: Selection Semantics, Feature-Space Hygiene, and Width Effects (2026-07-17, rev. 2026-07-18)
+
+**Context.** The `ct_concept_steering_demo` attribution-selected steered features initially appeared
+to have explanations unrelated to the fruit/color concept on BOTH substrates, despite steering
+working in every run (decisive target-gap flips). Investigation resolved this in two layers.
+
+### Finding 1 (primary): the gemma-3 arm was a feature-space labeling artifact
+
+Phase 5's first live run failed with `IndexError: index 127465 ... size 16384`, exposing that the
+gemma-3 demo's `NEURONPEDIA_SOURCE_SET` had said `gemmascope-2-transcoder-262k` since the original
+scaffold while the registry's runtime transcoders are the **16k-width** set (the registry even sets
+the 16k `neuronpedia_source_set`). All prior gemma-3 dashboard links/explanations were resolved in
+the wrong feature space; the five originally "generated explanations" (printers / formal structured
+text / future / gas / commerce) validly describe the *262k* features at those indices, not the
+steered 16k features. Fixes (landed `IT-92b44da`): preset/tests aligned to the local
+`gemmascope-2-transcoder-16k` set; curated features re-based on local-16k finds; width-match
+warning in the demo header. **Hardening (OQ-K follow-up): validate feature indices against the
+runtime transcoder width in the ref-building path.**
+
+### Finding 2: genuine input/output semantic decoupling in attribution-selected features
+
+Post-correction, the observation narrows but persists — and now spans BOTH correctly-matched arms:
+
+- **gemma-2-2b/16k**: 1 of 5 steered features concept-related (L25/16131 fruit-context); the rest
+  ("words related to questions and requests", "institutions/negative situations", "currency
+  symbols", "grammatical structures") are not.
+- **gemma-3-1b-it/16k (corrected)**: 2 of 5 concept-related ("fruits" 25/1316; "ripe fruit" 16/155 —
+  the historically hand-labeled feature); the remaining 3 — "project configuration" (25/765),
+  "people and companies" (23/725), "Initial capitalization" (25/662) — are not, yet carry the
+  2nd/4th/5th largest signed-influence magnitudes.
+
+Conclusions (ranked by confidence):
+
+1. **Explanations describe when a feature *fires* (input side); `signed_influence` selects for what
+   it *writes* (output side).** Max-activation autointerp summarizes top-activating corpus
+   contexts; the attribution selector ranks decoder-mediated causal effect on the target logit
+   difference. For late-layer features these descriptions can be nearly orthogonal — a feature can
+   fire on formatting/domain contexts while its decoder carries a large Fruit−Color projection.
+   "Semantically confusing but causally correct" handles are the *expected* winners.
+2. **Answer-position attribution biases selection toward "say-X-next" output machinery.** The graph
+   is attributed at the final position, so high-influence nodes skew late-layer (L23-25); the
+   clearly concept-aligned features found by manual search live earlier (L16-19) and fire on
+   concept tokens mid-context, where their direct final-position influence is diluted.
+3. **L25/16131 (gemma-2: fires on fruit contexts; top *negative* logits all `Fruit` variants) is a
+   repetition/redundancy-suppression motif.** Once context establishes fruit-ness, the literal
+   token is low-information and natural text rarely restates it; next-token training therefore
+   rewards a "concept-established" detector whose decoder removes probability mass from the
+   redundant literal (conditional-entropy reduction — the same pressure behind anti-induction /
+   suppression heads). It was selected with a negative sign: the sign-aware intervention
+   *suppresses the suppressor* — mechanistically coherent with both its dashboard and its negative
+   `Fruit` logits. The gemma-3 arm's negative-signed non-concept features (25/765, 23/725, 25/662)
+   plausibly play analogous output-side redistribution roles.
+4. **Supporting evidence — Phase 5 curated-vs-attribution comparison (first results, gemma-3/16k)**:
+   input-semantically selected mid-context features (amplify (19,11234) clear-fruit; suppress
+   (16,199)/(16,13701)/(17,6499) color) achieve delta **+2.50** (gap −7.75→−5.25, no flip) vs the
+   attribution-selected answer-position set's **+48.25** (flip) at the same scale factor — features
+   chosen for input semantics steer far more weakly per unit intervention (caveats: fixed ±4.0
+   overrides are not magnitude-matched; mid-context edits propagate through more layers).
+
+### Finding 3: decoder-space concept-mass splitting quantified (16k vs 262k, 2026-07-18)
+
+Using the newly published `mwhanna/gemma-scope-2-1b-it` **262k** transcoders (L19, pure tensor
+probe — |decoder-vector projection| onto the unit Fruit−Color unembed diff, best-variant token
+ids): top-1000 features carry **17.5%** of total projection mass at 16k but only **1.53%** at 262k
+(top-100: 2.46% vs 0.19%; top-10: 0.30% vs 0.022% — a consistent ~13-14× per-rank dilution), while
+the participation *fraction* is nearly identical (0.632 vs 0.636) — the distribution shape is
+scale-invariant, so splitting is essentially width-proportional. Practical implication for
+selection: at 262k any top-N feature set captures ~13-16× less of the concept's decoder mass, so
+shared output machinery should outrank concept-specific features even more strongly — width
+amplifies the Finding-2 bias. (Probe committed at
+`tests/nb_experiments/concept_direction/analysis/decoder_mass_probe.py` — a manual, CPU-only
+tensor script; re-running it reproduces these numbers. To be folded into the Phase-5/OQ-K
+experiment when 262k runs are practical.)
+
+**262k runtime feasibility on current resources (24 GiB VRAM / 62 GiB host)**: all-layer 262k
+transcoders for gemma-3-1b-it ≈ **31.4 GB bf16** (1.21 GB/layer × 26) — exceeds VRAM, fits host
+only with circuit-tracer's `offload="cpu"` + lazy encoder/decoder paths; the known lazy-read-
+dominated attribution bottleneck (~51 min/graph measured for the 4b 262k lineage; 1b will be
+faster but still minutes-scale vs ~10 s at 16k) makes 262k impractical inside the papermill-tested
+demo. Verdict: keep the demo on 16k; run 262k as one-off comparison experiments (offloaded) when
+quantifying OQ-K at width.
+
+### OQ-K follow-up plan (updated 2026-07-18): reframe Phase 5 as an input/output-decoupling demonstration
+
+Re-frame the demo's Phase 5 to *demonstrate the decoupling mechanics* for attribution-selected
+features using the framework's graph persistence/hydration capabilities
+(`save_graphs`/`graph_output_dir`, `analysis_backend.hydrate_graph_from_batch(...)` and the
+`maybe_hydrate_row/batch` formatter seam) plus intermediate latent captures:
+
+1. hydrate the Phase-2 attribution graph and, for attribution-selected ∪ curated features, extract
+   per-feature **input profiles** (activation mass across prompt positions, esp. concept-token vs
+   answer positions) and **output profiles** (decoder-vector projections onto the target logit
+   diff);
+2. compute a decoupling score (output projection share vs concept-position activation share) per
+   feature;
+3. visualize with a UMAP projection tailored from the latent-dynamics analysis tooling
+   (`analysis/latent_state_projection.py`, styled after
+   `concept_direction_latent_dynamics_analysis.ipynb`): decoder vectors of the feature union (+
+   active-feature background sample) in 2D, colored by signed output projection, marked by input
+   concept-alignment — decoupled features (high output / low input alignment) should separate
+   visibly from aligned ones;
+4. include width comparison (16k vs 262k decoder-mass metrics above; full 262k selection runs
+   offloaded, off-demo) to quantify the splitting contribution.
+
+This doubles as a demo of graph hydration for detailed post-hoc analysis. Validate feature indices
+against runtime transcoder width in the ref-building path as part of the same change.
+
+**Phase 6 first results (2026-07-18, gemma-3-1b-it/16k in-place run)** — the decoupling measured
+directly from the hydrated graph + decoder projections:
+
+| feature | explanation | input concept share | output proj (Fruit-Color) |
+|---|---|---:|---:|
+| L16/199 (curated) | color | 0.383 | **-0.286** |
+| L25/1316 (attr) | fruits | 0.455 | **-0.246** |
+| L16/155 (attr) | ripe fruit | 0.841 | +0.188 |
+| L25/662 (attr) | Initial capitalization | **0.000** | -0.035 |
+| L25/765 (attr) | project configuration | **0.000** | +0.035 |
+| L17/6499 (curated) | (color-sense-of-orange) | 1.000 | -0.031 |
+| L16/13701 (curated) | color | 1.000 | +0.029 |
+| L19/11234 (curated) | (clear fruit) | 1.000 | -0.018 |
+| L23/725 (attr) | people and companies | **0.000** | +0.017 |
+
+Readings: (a) the three non-concept attribution picks have exactly **zero** input concept-position
+mass yet non-trivial output projections — the decoupling signature, measured; (b) the curated
+input-aligned features (share 1.000) carry the SMALLEST |output projections| (<=0.031) — directly
+explaining Phase 5's weak steering (input semantics != output leverage); (c) **L25/1316 "fruits"
+fires on concept contexts but projects -0.246 AGAINST Fruit** — a second suppressor-motif exemplar
+mirroring gemma-2's L25/16131, selected (negative sign) and suppressed by the sign-aware
+intervention; (d) curated L16/199 (color) has the largest |projection| (-0.286, anti-Fruit) — a
+promising *output-leveraged* suppression target that manual search found via input semantics by
+luck of polarity. UMAP renders in-notebook (decoder vectors; analyzed features highlighted against
+a 300-feature active background).
+
+### Finding 4 (2026-07-18, quantified & revised 2026-07-19): why polysemous-probe contrasts select non-concept features
+
+**Terminology.** We compare two concept-contrast scenario types by the *token identity structure of
+the probe*:
+
+- **Polysemous-probe scenario** (`orange` fruit/color): the probed surface token (`orange`) is
+  *shared by both contrast categories* — the same token instance is simultaneously a member of
+  pole A (fruit) and pole B (color), and the task is to resolve which sense applies. Both poles'
+  input-side detectors therefore fire *on the same token positions*.
+- **Token-disjoint scenario** (capitals−states): every concept-bearing token in the prompt and in
+  the paired-rejection exemplar groups belongs to exactly ONE contrast category — `Austin`,
+  `Sacramento`, … are only capitals; `Texas`, `California`, … are only states; the probe cue
+  `Dallas` is unambiguously a city. No single token instance activates both poles' detectors, even
+  though both poles' *category words* (`capital`, `state`) do appear in the prompt.
+
+**Result (selection outcomes).** The polysemous scenario's attribution-selected features are
+dominated by non-concept output machinery (Finding 2), while the token-disjoint scenario selects
+8/9 input-aligned concept features (public explanations: "location names, political words",
+"place names / geographic locality", "locations", "geographic locations, especially in addresses",
+"locations in North America", "locations and legal case identifiers", "metropolitan areas and
+travel", "governments and political entities"; the lone generic is 24/5999 — the same feature id
+also selected in the orange run, i.e. shared output machinery recurs across concepts).
+
+**Mechanism (measured; per-position-class first-order pushes = activation × decoder projection
+onto the target unembed diff; cancellation = 1 − |net|/gross; gemma-2-2b/16k):**
+
+| position class | orange (polysemous probe) | capitals (token-disjoint) |
+|---|---:|---:|
+| pole-word positions: bilateral-feature fraction | 0.173 | 0.117 |
+| pole-word positions: cancellation | 0.920 (gross 605.6) | 0.983 (gross 142.2) |
+| probe token ('orange' / 'Dallas'): cancellation | 0.986 (gross 257.9, net 3.5) | 0.993 (gross 72.5, net 0.5) |
+| **answer position: cancellation** | **0.971** (gross 109.0, net 3.2) | **0.865** (gross 70.8, net **9.6**) |
+
+What the measurement establishes (and rules out):
+
+1. **Pole-word context overlap does NOT discriminate the scenarios.** Both prompts contain both
+   category words, bilateral firing fractions are comparable (0.173 vs 0.117), and pole-word-
+   position pushes cancel heavily in *both* scenarios (capitals even more so). Any account based
+   on "the polysemous prompt's concept contexts overlap more" is wrong — the two scenarios are
+   approximately at parity there, as intuition suggested.
+2. **Cancellation of first-order pushes is pervasive** (≥0.86 in every cell of the table);
+   selection-relevant structure lives in the small net residual that survives.
+3. **The discriminator is *where* a coherent net residual survives, and its sign structure.** In
+   the token-disjoint scenario the ANSWER position retains a comparatively large, coherent,
+   concept-feature-carried residual (net/gross ≈ 13.5%; top pusher 23/12237 "locations" +2.83,
+   weakly opposed) — attribution selects input-aligned features because they ARE the surviving
+   causal channel. In the polysemous scenario, no position class retains a coherent concept
+   channel (net/gross ≤ 3.4% at both probe and answer positions) because **the shared probe token
+   activates opposing sense detectors at the very same positions** — e.g. at the `orange` token,
+   25/9975 pushes **+17.8** toward `Fruit` while the suppressor-motif exemplar 25/16131 pushes
+   **−14.1** against it (and −9.1 again at the answer position): near-complete destructive
+   interference *within* the concept channel itself. With the concept channel self-canceled,
+   signed-influence ranking necessarily surfaces the least-opposed asymmetric levers instead —
+   sense-specific suppressors and sense-agnostic output machinery, which do not come in canceling
+   pairs. (This is the precise content of the earlier informal "non-concept features
+   constructively interfere" phrasing.)
+
+**In Summary:** attribution-target selection favors
+non-concept features exactly when the probe token is shared by both contrast categories, because
+the two categories' detectors then fire on the same token instances with opposing target-direction
+projections and mutually cancel — not because the categories' *context words* overlap more (they
+do not, measurably).
+
+**Follow-ups (fold into OQ-K):** (a) sweep concept pairs along a probe-token-sharing axis (orange
+fruit/color → bat animal/object → capitals/states), regressing top-N input-concept-share of
+selected features and answer-position net/gross residual against probe sharing; (b) the J-space
+workspace readout (interpretune#225) gives the representation-level version of the same
+measurement. The probe is committed at
+`tests/nb_experiments/concept_direction/analysis/pole_overlap_probe.py` (manual GPU script;
+re-running it reproduces the table above).
+
+### J-space (Jacobian-lens) probes for these questions (2026-07-18; see interpretune#225)
+
+The Jacobian lens (Gurnee et al. 2026) provides a fitted per-layer *output-disposition* basis
+(`lens(h_l) = softmax(W_U · norm(J_l h_l))`) — the principled generalization of our 1-D decoder
+projections — enabling several high-value probes once supported (tracked in
+[interpretune#225](https://github.com/speediedan/interpretune/issues/225)):
+
+1. **Polysemy cancellation, measured in the workspace**: read the J-space at the probe-token and
+   answer positions for the orange prompt — do `fruit` and `color` J-lens entries co-activate (and
+   partially cancel in the sense-contrast) where token-disjoint pairs show a single dominant
+   entry? Directly tests the Finding-4 mechanism at the representation level rather than via
+   selection outcomes.
+2. **Per-feature J-space signatures**: replace/augment the Phase-6 1-D output projection with each
+   feature's full J-lens readout of its decoder vector — suppressor-motif exemplars (25/16131,
+   25/1316) should show *negative* concept-token entries amid otherwise mundane readouts, and
+   "output machinery" features should show broad low-specificity dispositions; a crisp,
+   scalable decoupling metric (input explanation-topic vs J-space disposition-topic divergence).
+3. **Workspace-flip vs logit-flip ordering**: J-space readout at the answer position pre/post the
+   feature-mediated intervention — does the workspace show Fruit before/after the logits flip, and
+   at which layers? (Also a natural demo extension.)
+4. **J-lens concept-direction basis**: `concept_direction(..., basis="jlens")` as a third basis —
+   per-layer drift-corrected concept vectors may produce attribution targets whose selected
+   features are *less* output-machinery-biased at intermediate layers (testable against Finding 2).

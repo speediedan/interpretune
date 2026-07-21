@@ -5,10 +5,16 @@ analysis-level intervention ops.
 
 ## Current surfaces
 
-`ReplacementModel.feature_intervention(...)` is the current model-level API shared by the upstream TransformerLens and
-NNsight circuit-tracer backends. Both implementations consume canonical intervention tuples of the form
-`(layer, position, feature_idx, value)` and support overlapping passthrough controls such as constrained layers,
-sparse activation capture, optional activation return, and backend-specific execution details.
+There are two distinct model-facing surfaces (a high-level tour with the full control matrix lives in
+`tests/nb_experiments/intervention_capabilities_overview.md`):
+
+- `ModelBackend.fwd_w_intervention(...)` is the shared model-level API for **hook-tensor ("embed"-path)
+  interventions**, implemented with identical last-token math by both the TransformerLens and NNsight model
+  backends (including SAE/latent sub-hook targets via `use_latent_models`/`sae_handles`).
+- `ReplacementModel.feature_intervention(...)` is the model-level API for **circuit-tracer feature ("store"-path)
+  interventions**. Both circuit-tracer backend implementations consume canonical intervention tuples of the form
+  `(layer, position, feature_idx, value)` and support overlapping passthrough controls such as constrained layers,
+  sparse activation capture, optional activation return, and backend-specific execution details.
 
 At this layer, interpretune is delegating to backend-native steering surfaces rather than inventing a second execution
 mechanism. The closest analogs are TransformerLens hook-driven intervention flows such as `run_with_hooks(...)` and
@@ -26,7 +32,40 @@ precedence. Concept-direction notebook experiments now use this surface for dire
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook such
 as `blocks.0.hook_in` in `project` mode.
 
-## Planned config split
+## Op-level entry points and composites
+
+The registered analysis ops (all callable as `it.<name>(...)`):
+
+- `concept_direction` (alias `semantic_direction`): builds a normalized direction from store latents
+  (modes `mean_difference` / `paired_rejection` / `single_group`; `streaming` or `in_memory` aggregation)
+  with an embed-difference fallback when no latent rows exist.
+- `compute_attribution_graph` (`ct_graph`), `graph_node_influence` (`ct_node_influence`),
+  `extract_top_features` (`ct_top_features`), `feature_intervention_forward` (`ct_feature_intervention`),
+  `model_fwd_intervention` (`direction_intervention` / `direct_concept_direction_intervention`).
+- Composites: `attribution_from_concept` (direction -> graph -> influence -> top features),
+  `intervention_from_features`, and `intervention_from_concept` (the full five-op pipeline).
+
+## Feature selection (`FeatureSelectionSpec`)
+
+`extract_top_features` accepts a structured `FeatureSelectionSpec` with OR-semantics filters (`layers`,
+`positions`, `feature_ids`, `layer_slice`, `position_slice`, `triples`, `layer_feature_pairs`), ranking
+controls (`score_source` — `influence` / `signed_influence`, `gradient`-family planned; `score_sign` —
+`any` / `positive` / `negative`; `rank_by_abs`), and `activation_overrides` for pinned per-feature
+activation values. This is the sign-aware selection surface exercised by the orange `fs_l10_n5` lineage.
+
+## Active store-path scaling behavior
+
+These are ACTIVE runtime controls (not just config candidates): `intervention_value_source`
+(`top_feature_scores` | `top_feature_activation_values` | `constant`), `intervention_scale_factor`,
+`intervention_max_influence_norm_scale` (per-feature `abs(score)/max(abs(score))` amplification), and
+`intervention_sign_aware_scale` (default on). The pinned combined formula (verified by
+`test_analysis_backend_parity_feature_intervention_wrapper_sign_aware_top5_any_scaling`) is
+`value = sign(score) * abs(activation) * (scale_factor * abs(score)/max_abs_score)`.
+
+## Planned config split (aspirational — NOT yet implemented)
+
+As of 2026-07-11, `CircuitTracerConfig` still keeps all `intervention_*` knobs at the top level; the split
+below remains the target design, not the current state.
 
 The current `CircuitTracerConfig` still mixes shared model-level intervention knobs with circuit-tracer-specific
 analysis-level feature-intervention settings by keeping them all at the top level behind `intervention_` prefixes.
@@ -113,7 +152,10 @@ The analysis op stores both a compact JSON payload and primitive Arrow-safe colu
 - `intervention_config`: JSON-serialized config summary
 - `intervention_specs_json`: JSON-serialized canonical tuple payload
 - `intervention_layers`, `intervention_positions`, `intervention_feature_ids`, `intervention_values`: primitive summary columns for downstream filtering and inspection
+- `feature_intervention_dict` / `feature_intervention_dict_json`: hydrate-ready intervention mapping payloads
+- `intervention_base_values`, `intervention_scale_factors`, `intervention_score_values`: per-feature scaling provenance
 - `pre_intervention_logits`, `post_intervention_logits`, `logit_diff`: forward-only comparison outputs
+- `intervention_activation_cache` (optional): captured activations when `return_activations` is enabled
 
 The circuit-tracer analysis backend hydrates `intervention_specs_json` back into canonical tuple lists when an
 `AnalysisStore` row or batch is formatted with `analysis_backend=DEFAULT_CT_ANALYSIS_BACKEND`.

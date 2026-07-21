@@ -26,8 +26,8 @@ def parse_speedscope(path: Path, pkg_targets: list[str]):
     """
     try:
         # Prefer UTF-8 text mode first.
-        with path.open(mode="r", encoding="utf-8") as f:
-            j = json.load(f)
+        with path.open(mode="r", encoding="utf-8") as file_handle:
+            j = json.load(file_handle)
     except UnicodeDecodeError:
         # If text mode with utf-8 fails, try reading bytes and decoding with common encodings.
         data = path.read_bytes()
@@ -53,35 +53,36 @@ def parse_speedscope(path: Path, pkg_targets: list[str]):
         print("no frames in shared or profile; listing shared keys", list(shared.keys()))
         raise SystemExit(1)
 
-    samples = profiles[0].get("samples", []) if profiles else []
     counts = {k: 0 for k in pkg_targets}
-    co = {k: defaultdict(int) for k in pkg_targets}
+    co: dict[str, defaultdict[str, int]] = {k: defaultdict(int) for k in pkg_targets}
+    total = 0
 
-    for s in samples:
-        idxs = s if isinstance(s, list) else [s]
-        names = []
-        files = []
-        for i in idxs:
-            if i is None:
-                continue
-            try:
-                ii = int(i)
-            except Exception:
-                continue
-            if not (0 <= ii < len(frames)):
-                continue
-            fi = frames[ii]
-            names.append(fi.get("name", "") or "")
-            files.append(fi.get("file", "") or "")
-        joined = " ".join(filter(None, names + files))
-        for k in pkg_targets:
-            if k in joined:
-                counts[k] += 1
-                for f in files:
-                    if f:
-                        co[k][f] += 1
-
-    total = len(samples)
+    for profile in profiles:
+        samples = profile.get("samples", [])
+        total += len(samples)
+        for s in samples:
+            idxs = s if isinstance(s, list) else [s]
+            names = []
+            files = []
+            for i in idxs:
+                if i is None:
+                    continue
+                try:
+                    ii = int(i)
+                except Exception:
+                    continue
+                if not (0 <= ii < len(frames)):
+                    continue
+                fi = frames[ii]
+                names.append(fi.get("name", "") or "")
+                files.append(fi.get("file", "") or "")
+            joined = " ".join(filter(None, names + files))
+            for k in pkg_targets:
+                if k in joined:
+                    counts[k] += 1
+                    for frame_file in files:
+                        if frame_file:
+                            co[k][frame_file] += 1
 
     # Summary table
     summary_rows = [
@@ -122,8 +123,8 @@ def sample_stacks(
     # load JSON (reuse robust logic)
     j = None
     try:
-        with path.open(mode="r", encoding="utf-8") as f:
-            j = json.load(f)
+        with path.open(mode="r", encoding="utf-8") as file_handle:
+            j = json.load(file_handle)
     except Exception:
         # fallback to simple read
         data = path.read_bytes()
@@ -143,8 +144,7 @@ def sample_stacks(
     if not frames:
         return
 
-    samples = profiles[0].get("samples", []) if profiles else []
-    overall_total = len(samples)
+    overall_total = sum(len(profile.get("samples", [])) for profile in profiles)
 
     # For each package, collect matching samples. We deduplicate by the
     # reconstructed stack lines (after applying name_filter) so we only
@@ -152,93 +152,94 @@ def sample_stacks(
     pkg_examples: dict[str, list[list[str]]] = {k: [] for k in pkg_targets}
     pkg_seen: dict[str, set[tuple[str, ...]]] = {k: set() for k in pkg_targets}
     # counts per unique dedupe key per package
-    pkg_key_counts: dict[str, defaultdict[tuple, int]] = {k: defaultdict(int) for k in pkg_targets}
+    pkg_key_counts: dict[str, defaultdict[tuple[str, ...], int]] = {k: defaultdict(int) for k in pkg_targets}
     # total matching samples per package (used for percent calculation)
     pkg_total_counts: dict[str, int] = {k: 0 for k in pkg_targets}
 
-    for s in samples:
-        idxs = s if isinstance(s, list) else [s]
-        # build lists of frame metadata for searching and possible filtering
-        names: list[str] = []
-        files: list[str] = []
-        for i in idxs:
-            if i is None:
-                continue
-            try:
-                ii = int(i)
-            except Exception:
-                continue
-            if not (0 <= ii < len(frames)):
-                continue
-            fi = frames[ii]
-            names.append(fi.get("name", "") or "")
-            files.append(fi.get("file", "") or "")
-        joined = " ".join(filter(None, names + files))
-
-        # optional name_filter: only consider this sample if any frame name equals the filter
-        # or any file path contains the filter.
-        if name_filter:
-            name_match = any((n == name_filter) for n in names)
-            file_match = any((name_filter in f) for f in files if f)
-            if not (name_match or file_match):
-                continue
-
-        # For each package that appears in this sample, build a readable stack
-        # (respecting name_filter) and use that as the deduplication key.
-        for k in pkg_targets:
-            if k not in joined:
-                continue
-
-            # Reconstruct filtered stack lines for this sample
-            stack_lines: list[str] = []
-            for fi_idx in idxs:
-                if fi_idx is None:
+    for profile in profiles:
+        for s in profile.get("samples", []):
+            idxs = s if isinstance(s, list) else [s]
+            # build lists of frame metadata for searching and possible filtering
+            names: list[str] = []
+            files: list[str] = []
+            for i in idxs:
+                if i is None:
                     continue
                 try:
-                    fii = int(fi_idx)
+                    ii = int(i)
                 except Exception:
                     continue
-                if not (0 <= fii < len(frames)):
+                if not (0 <= ii < len(frames)):
                     continue
-                fi = frames[fii]
-                name = fi.get("name", "") or ""
-                file = fi.get("file", "") or ""
-                line = fi.get("line")
-                if name_filter:
-                    if not (name == name_filter or (file and name_filter in file)):
+                fi = frames[ii]
+                names.append(fi.get("name", "") or "")
+                files.append(fi.get("file", "") or "")
+            joined = " ".join(filter(None, names + files))
+
+            # optional name_filter: only consider this sample if any frame name equals the filter
+            # or any file path contains the filter.
+            if name_filter:
+                name_match = any((n == name_filter) for n in names)
+                file_match = any((name_filter in f) for f in files if f)
+                if not (name_match or file_match):
+                    continue
+
+            # For each package that appears in this sample, build a readable stack
+            # (respecting name_filter) and use that as the deduplication key.
+            for k in pkg_targets:
+                if k not in joined:
+                    continue
+
+                # Reconstruct filtered stack lines for this sample
+                stack_lines: list[str] = []
+                for fi_idx in idxs:
+                    if fi_idx is None:
                         continue
-                if file:
-                    if line is not None:
-                        stack_lines.append(f"{name} ({file}:{line})")
+                    try:
+                        fii = int(fi_idx)
+                    except Exception:
+                        continue
+                    if not (0 <= fii < len(frames)):
+                        continue
+                    fi = frames[fii]
+                    name = fi.get("name", "") or ""
+                    file = fi.get("file", "") or ""
+                    line = fi.get("line")
+                    if name_filter:
+                        if not (name == name_filter or (file and name_filter in file)):
+                            continue
+                    if file:
+                        if line is not None:
+                            stack_lines.append(f"{name} ({file}:{line})")
+                        else:
+                            stack_lines.append(f"{name} ({file})")
                     else:
-                        stack_lines.append(f"{name} ({file})")
+                        stack_lines.append(f"{name}")
+
+                # Use tuple of lines as a dedup key; skip empty stacks
+                if not stack_lines:
+                    continue
+
+                # If a filter_uniq substring is provided, dedupe based on only the
+                # subset of lines that include that substring. If no such lines
+                # exist in this stack, fall back to the full stack_lines so we
+                # don't inadvertently collapse everything to the same key.
+                if filter_uniq:
+                    filtered = [ln for ln in stack_lines if filter_uniq in ln]
+                    key = tuple(filtered) if filtered else tuple(stack_lines)
                 else:
-                    stack_lines.append(f"{name}")
+                    key = tuple(stack_lines)
 
-            # Use tuple of lines as a dedup key; skip empty stacks
-            if not stack_lines:
-                continue
+                # increment total and per-key counts so we can compute percentages
+                pkg_total_counts[k] += 1
+                pkg_key_counts[k][key] += 1
 
-            # If a filter_uniq substring is provided, dedupe based on only the
-            # subset of lines that include that substring. If no such lines
-            # exist in this stack, fall back to the full stack_lines so we
-            # don't inadvertently collapse everything to the same key.
-            if filter_uniq:
-                filtered = [ln for ln in stack_lines if filter_uniq in ln]
-                key = tuple(filtered) if filtered else tuple(stack_lines)
-            else:
-                key = tuple(stack_lines)
-
-            # increment total and per-key counts so we can compute percentages
-            pkg_total_counts[k] += 1
-            pkg_key_counts[k][key] += 1
-
-            # Add to examples list only the first time we see the key and if
-            # we haven't reached max_examples yet.
-            if key not in pkg_seen[k]:
-                pkg_seen[k].add(key)
-                if len(pkg_examples[k]) < max_examples:
-                    pkg_examples[k].append(stack_lines)
+                # Add to examples list only the first time we see the key and if
+                # we haven't reached max_examples yet.
+                if key not in pkg_seen[k]:
+                    pkg_seen[k].add(key)
+                    if len(pkg_examples[k]) < max_examples:
+                        pkg_examples[k].append(stack_lines)
 
     # print summaries for packages that have examples
     for k, examples in pkg_examples.items():
@@ -259,7 +260,8 @@ def sample_stacks(
                 key = tuple(ex)
 
             total = pkg_total_counts.get(k, 0) or 0
-            key_count = pkg_key_counts.get(k, {}).get(key, 0)
+            package_key_counts = pkg_key_counts.get(k)
+            key_count = package_key_counts.get(key, 0) if package_key_counts else 0
             # pct for this key relative to package
             pct_pkg = 100.0 * key_count / total if total else 0.0
             pct_pkg_str = f"{pct_pkg:.1f}%"

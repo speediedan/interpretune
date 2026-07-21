@@ -9,7 +9,7 @@ from pathlib import PosixPath, WindowsPath
 import yaml
 from transformers import PreTrainedTokenizerBase
 
-from interpretune.utils import rank_zero_warn, rank_zero_debug
+from interpretune.utils import ITInstantiationFeedbackWarning, rank_zero_warn, rank_zero_debug
 from interpretune.protocol import Adapter
 
 
@@ -206,7 +206,8 @@ def issue_noncomposition_feedback(auto_comp_cfg, superclasses, subclasses):
     elif not subclasses:
         rank_zero_warn(
             "No candidate classes in the specified `target_adapters` were found to further compose with."
-            f"Since {auto_comp_cfg._orig_cfg_cls} {is_ready}, instantiating without auto-composition."
+            f"Since {auto_comp_cfg._orig_cfg_cls} {is_ready}, instantiating without auto-composition.",
+            category=ITInstantiationFeedbackWarning,
         )
 
 
@@ -218,13 +219,17 @@ def issue_incomplete_composition_feedback(
         f" the following kwargs: {kwargs_not_in_target_type}."
     )
     if nonsubcls_mixins:
-        rank_zero_warn(f"{no_auto_prefix} Trying instantiation while composing with {nonsubcls_mixins}.")
+        rank_zero_warn(
+            f"{no_auto_prefix} Trying instantiation while composing with {nonsubcls_mixins}.",
+            category=ITInstantiationFeedbackWarning,
+        )
         assert auto_comp_cfg._orig_cfg_cls is not None
         return (auto_comp_cfg._orig_cfg_cls,) + nonsubcls_mixins
     else:
         rank_zero_warn(
             f"{no_auto_prefix} As {auto_comp_cfg._orig_cfg_cls} is already a subclass of "
-            f"{auto_comp_cfg.module_cfg_mixin}, trying instantiation without further composition."
+            f"{auto_comp_cfg.module_cfg_mixin}, trying instantiation without further composition.",
+            category=ITInstantiationFeedbackWarning,
         )
         return
 

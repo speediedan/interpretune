@@ -10,39 +10,477 @@ Use `interpretune.utils.neuronpedia_dashboard_pipeline` when you want one file-b
 2. converts each completed layer into Neuronpedia export format
 3. imports the converted bundle into a local Neuronpedia Postgres database
 4. emits enough diagnostics to distinguish stalls, kills, and conversion/import seams
+5. can replay existing export bundles into the local DB without regenerating dashboards
 
 This replaces the earlier ad hoc shell resume flow that depended on `tee` and separate manual conversion/import steps.
 
 ## Required environment
 
-The current working setup on this host is:
+For building the unified multi-repo editable dev environment itself (and the full env-var contract), see
+[`docs/developer_multi_repo_setup.md`](./developer_multi_repo_setup.md).
 
-```bash
-PYTHON=/mnt/cache/speediedan/.venvs/it_latest/bin/python
-HF_HOME=/mnt/cache_extended/speediedan/.cache/huggingface
-HF_DATASETS_CACHE=/mnt/cache_extended/speediedan/.cache/huggingface/datasets
-HF_HUB_CACHE=/mnt/cache_extended/speediedan/.cache/huggingface/hub
-IT_NP_CACHE=/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia
-```
+Run the commands below from the interpretune repo root with the interpretune environment's python active
+(`source <your-venv>/bin/activate`). All host-specific locations are resolved from the environment with portable
+defaults:
 
-For local DB imports, the pipeline resolves the DB URL from the Neuronpedia local env files, but the explicit localhost URL currently in use is:
+- `IT_NP_CACHE` is the Neuronpedia cache root (dashboard runs, pretokenized prompt caches, activation caches).
+  **`IT_NP_CACHE` defaults to `$HF_HOME/interpretune/neuronpedia`**, so it only needs to be set when the cache should
+  live outside the HuggingFace cache tree. `HF_DATASETS_CACHE` and `HF_HUB_CACHE` derive from `HF_HOME` as usual.
+- Repo roots default to `~/repos/<repo>` and can be overridden with `SAEDASHBOARD_REPO_ROOT`, `SAELENS_REPO_ROOT`,
+  and `NEURONPEDIA_UTILS_ROOT` (the latter defaults to `~/repos/neuronpedia/utils/neuronpedia-utils`).
+
+For local DB imports, the pipeline resolves the DB URL from the Neuronpedia local env files (`IT_ENV_FILE` overrides
+the env-file path; a repo-local `.env` is used by default when present), but the explicit localhost URL currently in
+use is:
 
 ```bash
 postgres://postgres:postgres@127.0.0.1:5433/postgres
 ```
+
+> **Local Neuronpedia stack base (2026-07-15):** the localhost services run at upstream
+> `hijohnnylin/neuronpedia@b6156f70` (fork branch rebased; `apps/inference` is uv-managed at this base and
+> the inference service adds `LOGIT_LENS`/`JACOBIAN_LENS` lens endpoints — the local per-model
+> `.env.inference.*` files must set `NEURONPEDIA_MODEL_ID` for the Jacobian-lens loader). The optional NLA
+> service (`apps/nla`, port 5009) is GPU-heavy and not part of the compose stack. Detailed service
+> startup/validation SOPs are maintained in maintainer-side private notes.
+
+## YAML configs and launcher
+
+The pipeline now supports `--config <path.yaml>`, and the recommended operational path is to pair that with
+`scripts/launch_neuronpedia_dashboard_pipeline.py`.
+
+Config files can use `EXTENDS` inheritance and keep launcher-only settings separate from pipeline values:
+
+```yaml
+EXTENDS: ./gemmascope-2-rte-base.yaml
+
+pipeline:
+  model_name: gemma-3-1b-it
+  neuronpedia_source_set_id: gemmascope-2-transcoder-262k-rte
+  run_name_suffix: context319-full-prompts
+  n_features_per_batch: 512
+  n_prompts_in_forward_pass: 128
+  primary_acts_batch_size: 64
+  archive_partial_dirs: false
+  import_to_local_db: false
+
+launcher:
+  background: true
+  log_path: /tmp/dashboard.launcher.log
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+```
+
+Notes:
+
+1. `pipeline` uses the same snake_case names as `NeuronpediaDashboardPipelineConfig`.
+2. Prefer positive boolean keys in YAML such as `archive_partial_dirs`, `resume_from_existing_logs`, and `import_to_local_db`.
+3. Explicit CLI flags always override config-file values. This applies both when calling the pipeline directly and when using the launcher script.
+4. `launcher` is ignored by the pipeline itself and is only read by `scripts/launch_neuronpedia_dashboard_pipeline.py`.
+5. When you need a fresh generation lineage for the same `model_name` plus `neuronpedia_source_set_id`, set `run_name_suffix` or override `--run-name-suffix`. That changes the run directory and default logs without forcing a fake source-set id or a different export target.
+6. If you accidentally point a resumed launch at a fully completed lineage, the pipeline now warns that the requested layer range is already complete and tells you to use `--run-name-suffix`, `--run-root`, or `--no-resume`.
+
+The vendored example configs for the current RTE flows live under `scripts/configs/neuronpedia_dashboard/`
+(a shared `gemmascope-2-rte-base.yaml` plus `EXTENDS` variants). Config values may reference environment variables
+with `${VAR}` syntax, which the pipeline expands at load time — the vendored configs use `${IT_NP_CACHE}` for the
+pretokenized prompt cache paths.
+
+Current single-worker fallback pattern for the context-`319` full-prompt transcoder restart:
+
+```bash
+python scripts/launch_neuronpedia_dashboard_pipeline.py \
+  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
+  --run-name-suffix context319-full-prompts
+```
+
+Current two-worker launch pattern for the same run namespace:
+
+```bash
+python scripts/launch_neuronpedia_dashboard_pipeline.py \
+  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
+  --run-name-suffix context319-full-prompts
+```
+
+The launcher backgrounds the process by default when `launcher.background: true`, prints the resolved launcher log,
+prints the pipeline log, and prints the exact `tail -f` command to monitor progress. Use `--foreground` when you want
+to keep the process attached to the terminal.
+
+Use `--dry-run` to inspect the resolved command or worker fanout without launching anything. `--print-command` prints
+the command as part of launch output, so it is not a dry-run mode.
+
+You can still override individual values at launch time:
+
+```bash
+python scripts/launch_neuronpedia_dashboard_pipeline.py \
+  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
+  --start-layer 3 \
+  --start-batch 10
+```
+
+### Multi-worker launcher mode
+
+For simple multi-GPU dashboard generation, keep shared generation identity and output settings in `pipeline`, then put
+per-process GPU overrides under `launcher.workers`. The launcher starts one pipeline process per worker, writes a
+worker-specific launcher log, and writes a manifest named `launcher.workers.<timestamp>.json` into the run directory.
+
+Only these worker-level overrides are accepted:
+
+```text
+cuda_visible_devices
+start_layer
+end_layer
+n_features_per_batch
+n_prompts_in_forward_pass
+primary_acts_batch_size
+heartbeat_seconds
+stall_timeout_seconds
+layer_lock_stale_seconds
+runner_log_performance
+runner_torch_profile
+runner_torch_profile_dir
+```
+
+That allowlist is intentional: workers may differ in device placement, layer start/end overrides, and memory/monitoring
+shape, but they must share the same source set, prompt cache, run namespace, and conversion/import policy. Feature width
+can vary by worker, but partial-layer resume is only allowed when the existing layer `run_settings.json` matches that
+worker's resolved `n_features_per_batch`. Pin `start_layer` on heterogeneous workers when resuming existing partial
+layers so the worker that owns the matching feature width reaches that partial first.
+
+Example two-worker shape for the current context-`319` full-prompt run:
+
+```yaml
+pipeline:
+  run_name_suffix: context319-full-prompts
+  n_features_per_batch: 512
+  n_prompts_in_forward_pass: 64
+  primary_acts_batch_size: 16
+  enable_layer_locks: true
+
+launcher:
+  monitor: true
+  monitor_heartbeat_seconds: 60
+  workers:
+    - id: gpu1
+      cuda_visible_devices: "1"
+      start_layer: 3
+      n_features_per_batch: 512
+      n_prompts_in_forward_pass: 64
+      primary_acts_batch_size: 16
+    - id: gpu0
+      cuda_visible_devices: "0"
+      start_layer: 4
+      n_features_per_batch: 1024
+      n_prompts_in_forward_pass: 256
+      primary_acts_batch_size: 64
+```
+
+    Set `launcher.monitor: true` or pass `--monitor` to start a detached supervisor process alongside the workers. The
+    monitor behaves like a small service for the current launcher manifest: it watches each expected worker, emits
+    `MONITOR_HEARTBEAT` lines with worker config, batch progress, process snapshots, GPU snapshots, and restart state, and
+    only exits when every expected worker has either completed its requested layer range or exhausted its OOM restart
+    budget.
+
+    OOM restart policy is deliberately conservative and per worker:
+
+    1. First OOM observed in that worker's new log segment: halve `primary_acts_batch_size` and restart that worker.
+    2. Second OOM observed for the adjusted worker config: halve `n_prompts_in_forward_pass` and restart that worker.
+    3. Third OOM observed: log `MONITOR_OOM_DISABLED` with a message that two automatic mitigations have already been
+       attempted, then stop restarting that worker so it cannot enter an infinite OOM loop.
+
+    The monitor keeps supervising any other worker that is still running or restartable. OOM detection is log-segment based:
+    the launcher records each worker log's byte offset at launch time, and the monitor searches only new text after that
+    offset for `CUDA out of memory`, `out of memory`, or `torch.OutOfMemoryError`. Every automatic restart appends to the
+    same worker pipeline log and writes a `launcher.<worker>.monitor.<timestamp>.log` file. Use `--no-monitor` to disable a
+    config-file monitor setting, or `--monitor-foreground` when debugging the monitor loop itself.
+
+    The fastest measured context-`319` pair remains GPU1 at `512x64 / acts16` plus GPU0 at `1024x256 / acts64`, about
+    `1440.9` combined features/min. The shared production config now keeps that lower-residency pair under the OOM monitor.
+    The more aggressive `1024x512 / acts256` GPU0 shape still reaches `cuda_max_allocated_gib=16.43` without OOM and now
+    lands around `75.0s` on the second batch (`~819 features/min`), which is much better than the earlier `92.3s`
+    (`~665 features/min`) result but still not a clear throughput win over `1024x256 / acts64`. Use that aggressive shape
+    when the goal is to validate higher VRAM residency; keep `1024x256 / acts64` when wall-clock throughput is the priority.
+
+For the current run namespace, layers `0-2` were already completed with the earlier `256`-feature shape and can be
+kept. Any partially written `256`-feature layer must be archived or restarted from batch `0` before launching this
+heterogeneous config, otherwise the pipeline will stop on the run-settings mismatch.
+
+The pipeline uses per-layer lock files under `<run_directory>/layer_locks/layer_<n>.lock`. Each lock records the PID,
+worker id, CUDA-visible device string, layer number, creation time, and pipeline log path. If a worker is stopped with a
+normal process kill, another worker or a later restart will remove the stale lock when the recorded PID is no longer
+alive or when `layer_lock_stale_seconds` has elapsed.
+
+Worker pipeline logs are deliberately separated:
+
+```text
+run.gpu0.resume-0-25.log
+run.gpu1.resume-0-25.log
+launcher.gpu0.<timestamp>.log
+launcher.gpu1.<timestamp>.log
+launcher.workers.<timestamp>.json
+monitor.<timestamp>.log
+```
+
+Stop one worker by killing its process group. For example, if the launcher reports `PID 1373792` for `gpu1`:
+
+```bash
+kill -TERM -1373792
+```
+
+### Basic multi-GPU generation: scope, example configuration, and limitations
+
+**Scope statement (read first):** the pipeline retains *basic* multi-GPU support — one pipeline
+process per GPU, coarse layer-level partitioning, per-worker resume — via the multi-worker launcher
+mode above. It is validated at that level and no further: there is no intra-layer sharding, no dynamic
+load balancing across heterogeneous GPUs, no cross-worker work stealing, and no multi-GPU-aware import
+overlap. Those are real optimization opportunities that have been deliberately deprioritized until the
+Scalable Dashboards coordination PR lands (link: `<COORDINATION_PR_URL — backfill at wave-open>`);
+treat this section as the record of what *is* supported and how it was validated.
+
+Supported behaviors (all exercised on the example pair below):
+
+- **One worker per GPU** (`launcher.workers`, worker-key allowlist and monitor/OOM-restart policy per
+  the Multi-worker launcher mode section above), sharing the run namespace, source set, and prompt
+  cache.
+- **Layer-level partitioning** with `enable_layer_locks` lock files, so overlapping ranges degrade
+  gracefully rather than corrupting output.
+- **Heterogeneous shapes** per worker (`n_features_per_batch` / `n_prompts_in_forward_pass` /
+  `primary_acts_batch_size`), with partial-layer **resume** enforced per worker via the layer's
+  `run_settings.json` `n_features_per_batch` match.
+
+#### Example Configuration (limited tutorial)
+
+The commands below are exactly what was validated on an RTX 4090 (24 GiB, `cuda:0`) + RTX 2070
+(8 GiB, `cuda:1`) pair with `gemma-3-1b-it` × the 262k transcoders on the columnar path, using
+`scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml`
+(Monology 2,490 prompts; layer 0 on the 4090 at `2048×256`, layer 1 on the 2070 at `512×64 / acts16`,
+batches 0-2, no DB import). Adapt the worker shapes/layers to your own hardware.
+
+1. **Inspect the resolved worker commands** without launching anything:
+
+   ```bash
+   python scripts/launch_neuronpedia_dashboard_pipeline.py \
+     --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml \
+     --dry-run
+   ```
+
+   You should see one resolved pipeline command per worker, each pinned via `--cuda-visible-devices`
+   with its own layer range and batch shape.
+
+2. **(Optional) smoke the small GPU alone** by running its resolved worker command directly (copy it
+   from the dry-run output). On the 2070, the 262k float32 transcoder + bf16 model leave ~3 GiB of
+   headroom, so the reduced `512×64 / acts16` shape matters; layer 1 completed in ~120 s with a
+   layer-lock acquire/release. (The opt-in `runner_columnar_max_staged_acts_bytes: 0` host-staging
+   mode is available if a workload needs more headroom.)
+
+3. **Launch both workers + the supervising monitor**:
+
+   ```bash
+   python scripts/launch_neuronpedia_dashboard_pipeline.py \
+     --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml
+   ```
+
+   Expected: the workers generate their layers concurrently on their pinned GPUs (validated: layer 0
+   in ~60 s on the 4090 while the 2070 worked layer 1); a worker whose layer already completed skips
+   it ("Requested layer range … is already complete in existing logs").
+
+4. **Exercise resume**: interrupt (SIGKILL) the workers AND their `sae_dashboard.neuronpedia
+   .neuronpedia_runner` subprocesses mid-layer, then re-launch the same command. Expected (validated):
+   a worker with all batch artifacts written finalizes its layer without regeneration; a mid-layer
+   worker resumes from the first missing batch (earlier batch artifacts preserved), with the
+   per-worker `n_features_per_batch` resume guard enforced and stale layer locks removed
+   automatically.
+
+**Caveat:** a layer that has logged `DONE` for its requested batch range is SKIPPED on relaunch even
+if `end_batch` is raised — the completed-layer marker wins over the new range. To extend a completed
+layer's batch range, generate into a fresh run namespace (or remove that layer's completed marker);
+partial-layer resume applies only to layers that never completed their originally requested range.
+
+Known limitations (deferred optimizations):
+
+- Layer granularity means a fast GPU can idle after finishing its range while a slow GPU works
+  (no re-balancing); choose ranges proportional to throughput manually.
+- The DB import lane is single-writer; `overlap_local_db_import` interleaves per layer, not per
+  worker (run imports from one worker or post-hoc for multi-worker runs).
+- No NCCL/collective usage — workers are fully independent processes; nothing prevents running
+  workers on different hosts against a shared filesystem, but that is unvalidated.
+
+### Clean stop and single-worker restart
+
+For the current multi-worker RTE production flow, killing only the detached monitor is not sufficient. The monitor will
+stop supervising, but any already-running worker pipeline and child SAEDashboard runner processes will keep going until
+their own process groups are terminated.
+
+Use this sequence when GPU0 must be freed for development or profiling while GPU1 continues production work:
+
+1. Identify the monitor and worker process groups:
+
+```bash
+ps -eo pid,ppid,pgid,etimes,cmd | grep -E \
+  "launch_neuronpedia_dashboard_pipeline|interpretune\.utils\.neuronpedia_dashboard_pipeline|sae_dashboard\.neuronpedia\.neuronpedia_runner|gemmascope-2-transcoder-262k-rte" \
+  | grep -v grep
+```
+
+2. Stop the detached monitor process group first so it cannot auto-restart a worker:
+
+```bash
+kill -TERM -<monitor_pgid>
+```
+
+3. Stop each worker process group that should exit. This also terminates the child `sae_dashboard.neuronpedia.neuronpedia_runner`
+   process for that worker:
+
+```bash
+kill -TERM -<gpu0_worker_pgid>
+kill -TERM -<gpu1_worker_pgid>
+```
+
+4. Verify that the workers are really gone before reusing a GPU:
+
+```bash
+ps -eo pid,ppid,pgid,etimes,cmd | grep -E \
+  "interpretune\.utils\.neuronpedia_dashboard_pipeline|sae_dashboard\.neuronpedia\.neuronpedia_runner|gemmascope-2-transcoder-262k-rte" \
+  | grep -v grep
+
+nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_gpu_memory --format=csv,noheader
+```
+
+5. Check `layer_locks/` and remove only stale locks whose recorded PID is no longer alive. Example lock payloads are JSON and
+   include `pid`, `worker_id`, `cuda_visible_devices`, and `pipeline_log_path`.
+
+```bash
+for file in <run_directory>/layer_locks/*.lock; do
+  echo "=== $file ==="
+  cat "$file"
+done
+
+rm -f <run_directory>/layer_locks/*.lock
+```
+
+6. Restart only the desired worker without the monitor. For the current production namespace, GPU1 can be resumed directly
+   with the same config and `worker_id`, but GPU0 should remain stopped for development or profiling:
+
+```bash
+nohup python -m interpretune.utils.neuronpedia_dashboard_pipeline \
+  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
+  --run-name-suffix context319-full-prompts \
+  --worker-id gpu1 \
+  --enable-layer-locks \
+  --cuda-visible-devices 1 \
+  --start-layer 10 \
+  --n-features-per-batch 512 \
+  --n-prompts-in-forward-pass 64 \
+  --primary-acts-batch-size 16 \
+  > <run_directory>/restart.gpu1.<timestamp>.launch.log 2>&1 &
+```
+
+Important resume caveat:
+
+- Partial-layer resume is only safe when the existing `run_settings.json` matches the worker's resolved `n_features_per_batch`.
+- In the current `context319-full-prompts` namespace, layer `9` was left with partial `1024`-feature GPU0 output, so a
+  `512`-feature GPU1 worker could not resume it and exited with the explicit run-settings mismatch error.
+- The correct recovery was to leave layer `9` for GPU0 work and restart GPU1 from layer `10`, which already matches the
+  `512`-feature worker shape.
+
+The other worker continues because it has its own process group, child runner, log file, and layer lock. To stop the
+whole two-worker run, terminate each worker process group separately.
+
+## Overlapped batch packaging (`--runner-overlap-batch-packaging`)
+
+Columnar runs can optionally overlap each batch's CPU packaging tail (activation-row/copy-row Arrow builds and all
+artifact/manifest writes) with the next batch's forward/encode inside the SAEDashboard runner:
+
+```bash
+--runner-overlap-batch-packaging     # default: disabled (--no-runner-overlap-batch-packaging)
+```
+
+The pipeline forwards this to the SAEDashboard runner's `--overlap-batch-packaging` flag, which uses a **single
+ordered background writer bounded to one in-flight batch**. Resume semantics are unchanged and remain batch-granular,
+including across GPUs:
+
+- A columnar batch's completeness marker is its `batch-N.columnar/manifest.json`, written **last** by the deferred
+  finalize step (identical write order to non-overlapped runs); the runner's resume scan still removes any manifest-less
+  partial batch directory and regenerates it.
+- Because the writer is FIFO and bounded to depth one, completion markers land in batch order — a crash loses at most
+  the in-flight batch plus the batch being computed, both of which regenerate on the next launch.
+- The `run_settings.json` `n_features_per_batch` compatibility gate for partial-layer resume applies exactly as for
+  non-overlapped runs; overlapped and non-overlapped workers can resume each other's layers when shapes match.
+- If a deferred write fails, queued writes for later batches are cancelled before the error surfaces, so no completion
+  marker is ever written past a failed batch.
+
+One observability note: with overlap enabled, `batch_total` perf events measure the compute wall only (the previous
+batch's writes run concurrently), and the per-stage write events (`activation_row_packaging`,
+`activation_copy_row_packaging`, stream writes) are emitted from the writer thread with their original batch labels.
+
+## Opt-in dashboard hygiene flags (selection, logits, import)
+
+Six opt-in flags mitigate inherited upstream dashboard behaviors (quantified in the Phase 7 dashboard-quality
+investigation: TOP∩interval duplicate rows, zero-tie top-k fill — 61% of activation rows on the 262k RTE source —
+and untrained byte-fallback/`<unusedN>` vocab rows dominating logits tables). **All default off**: the default
+pipeline output remains bit-identical to the preserved-baseline selection and import contracts.
+
+Generation-side (forwarded to the SAEDashboard runner; columnar selection backend only — the deprecated legacy lane
+keeps its historical semantics):
+
+```bash
+--runner-sequence-top-acts-positive-only   # TOP group: only strictly positive activations (no zero/negative tie-fill)
+--runner-sequence-dedup-across-groups      # a coordinate appears in at most one sequence group
+--runner-sequence-skip-dead-features       # feat_max <= 0 emits no sequence rows instead of degenerate zero groups
+--runner-sequence-half-open-interval-bins  # numpy-style [lower, upper) interval membership, highest interval closed
+--runner-logits-table-mask-token-pattern REGEX
+    # e.g. '^<(0x[0-9A-Fa-f]{2}|unused\d+)>$' to exclude Gemma byte-fallback/unused vocab rows from logits tables
+```
+
+`--runner-sequence-half-open-interval-bins` differs from the other selection flags in one respect: it
+applies to the in-tree legacy selector as well as the columnar backends (so cross-backend comparisons
+stay consistent under the flag); the preserved pre-PR baseline lane is untouched either way.
+
+Import-side (applied by neuronpedia-utils during local DB import; useful for already-generated artifacts):
+
+```bash
+--local-db-import-dedup-activation-rows    # per-feature (tokens, values) dedup, TOP-record preferred
+--local-db-import-drop-zero-activation-rows  # drop maxValue == 0 records
+```
+
+Note that enabling the generation-side selection flags intentionally changes selection outputs (and RNG consumption),
+so parity comparisons against baseline artifacts must run with them disabled.
+
+## Overlapped local DB import (`--overlap-local-db-import`)
+
+Multi-layer columnar runs can additionally overlap each layer's local DB import with the next layer's generation:
+
+```bash
+--overlap-local-db-import     # default: disabled (--no-overlap-local-db-import)
+```
+
+The pipeline defers the layer's `import_columnar_dashboard_output` call to a single-worker background executor
+bounded to **one in-flight import** and immediately proceeds to the next layer's generation subprocess. Resume and
+multi-GPU semantics are unchanged:
+
+- The **layer lock is held until the deferred import completes**, so another worker cannot claim (and neither
+  regenerate nor double-import) a layer whose import is still pending.
+- The `DONE layer=N` resume marker is only written **after the deferred import succeeds** — exactly the same
+  completion contract as non-overlapped runs. If a run dies between generation and import, the next launch
+  regenerates the layer, which is a fast skip thanks to the per-batch columnar completion markers, and then imports
+  it normally.
+- A failed deferred import surfaces before the next layer's import is enqueued; the failed layer's generated
+  artifacts remain on disk and can be imported directly with `--import-only-local-db`.
+
+This applies to the columnar output format only (legacy conversion+import stays inline) and is most useful for
+full multi-layer builds, where the DB import wall (rather than generation) otherwise dominates the serial per-layer
+time. Expect steady-state wall time per layer of roughly `max(generation, import)` instead of their sum.
 
 ## Standard launch example
 
 This is the current Target B pattern for `gemma-3-1b-it` `gemmascope-2-transcoder-16k`:
 
 ```bash
-RUN_ROOT="/mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/dashboard_runs"
+RUN_ROOT="${IT_NP_CACHE}/dashboard_runs"
 RUN_DIR="${RUN_ROOT}/gemma-3-1b-it_gemmascope-2-transcoder-16k"
 LAUNCH_LOG="${RUN_DIR}/run.resume-24-25.launch.log"
 
 mkdir -p "${RUN_DIR}"
 
-nohup /mnt/cache/speediedan/.venvs/it_latest/bin/python -m interpretune.utils.neuronpedia_dashboard_pipeline \
+nohup python -m interpretune.utils.neuronpedia_dashboard_pipeline \
   --model-name gemma-3-1b-it \
   --model-layers 26 \
   --sae-set gemma-scope-2-1b-it-transcoders-all \
@@ -59,13 +497,755 @@ nohup /mnt/cache/speediedan/.venvs/it_latest/bin/python -m interpretune.utils.ne
   --start-layer 24 \
   --end-layer 25 \
   --sae-path-template 'layer_{layer}_width_16k_l0_small_affine' \
-  --python-executable /mnt/cache/speediedan/.venvs/it_latest/bin/python \
+  --python-executable "$(command -v python)" \
   --cuda-visible-devices 0 \
   --heartbeat-seconds 60 \
   --stall-timeout-seconds 1800 \
   --use-skip-transcoder \
   > "${LAUNCH_LOG}" 2>&1 &
 ```
+
+## Bridge + pretokenized dataset example
+
+The pipeline supports `TransformerBridge` for the runner subprocess and can point the runner at a prebuilt local
+HuggingFace dataset with an `input_ids` column. RTE prompt construction happens in Interpretune before launch; the
+SAEDashboard runner only receives generic dataset paths.
+
+```bash
+python -m interpretune.utils.neuronpedia_dashboard_pipeline \
+  --model-name gemma-3-1b-it \
+  --model-layers 26 \
+  --sae-set gemma-scope-2-1b-it-transcoders-all \
+  --neuronpedia-source-set-id gemmascope-2-transcoder-262k-rte \
+  --neuronpedia-source-set-description 'Transcoder - 262k (RTE pilot)' \
+  --creator-name 'Google DeepMind' \
+  --release-id gemma-scope-2 \
+  --release-title 'Gemma Scope 2' \
+  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
+  --hf-weights-repo-id google/gemma-scope-2-1b-it \
+  --hf-weights-path-template 'transcoder_all/layer_{layer}_width_262k_l0_small_affine' \
+  --hook-point hook_mlp_in \
+  --prompts-huggingface-dataset-path aps/super_glue \
+  --prompts-huggingface-dataset-config-name rte \
+  --prompts-huggingface-dataset-split train \
+  --prompts-pretokenized-dataset-path ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts \
+  --model-wrapper bridge \
+  --bridge-enable-compatibility-mode \
+  --runner-log-resource-snapshots \
+  --runner-log-hook-aliases \
+  --start-layer 0 \
+  --end-layer 0 \
+  --start-batch 0 \
+  --end-batch 0 \
+  --sae-path-template 'layer_{layer}_width_262k_l0_small_affine' \
+  --python-executable "$(command -v python)" \
+  --cuda-visible-devices 0 \
+  --use-skip-transcoder
+```
+
+Key extra controls in this mode:
+
+1. `--model-wrapper bridge` switches the runner from the legacy HookedTransformer path to `SAETransformerBridge`.
+2. `--bridge-enable-compatibility-mode` restores the legacy hook aliases (`blocks.<n>.hook_mlp_in`, `hook_mlp_out`) expected by the current dashboard metadata.
+3. `--prompts-dataset-mode` makes the prompt artifact contract explicit:
+  - `load_dataset` means the runner reads raw prompt rows or tokenized Hub/local datasets through `load_dataset(...)` style inputs;
+  - `load_from_disk` means the pipeline uses a local `save_to_disk()` / `load_from_disk()` prompt cache;
+  - `legacy_jsonl` means the legacy runner consumes a deprecated local `load_dataset("json", data_files=...)` export with `<split>.jsonl` plus `sae_lens.json`.
+  The config default is `load_dataset`. When `--prompts-pretokenized-dataset-path` is set, the pipeline resolves that
+  invocation to `load_from_disk` because the supplied path names a `save_to_disk()` artifact, except for the
+  `legacy` runner which continues to stay on the `load_dataset`/`legacy_jsonl` side of the contract. When the
+  dataset path already points at a legacy `<split>.jsonl` plus `sae_lens.json` export, the pipeline still resolves that
+  path to deprecated `legacy_jsonl` compatibility automatically. `legacy` must not be paired with
+  `load_from_disk`.
+4. `--prompts-pretokenized-dataset-path` points the runner at the local SAELens-compatible prompt cache. For raw text datasets, use `--prompts-dataset-text-field` with a prebuilt dataset that already has the dashboard prompt text.
+5. `--start-batch` and `--end-batch` make small, reproducible batch probes possible without forking a second pipeline path.
+6. `--runner-log-resource-snapshots` and `--runner-log-hook-aliases` provide lightweight migration diagnostics without touching the outer pipeline heartbeats.
+7. `--runner-log-performance` enables `[runner_perf]` lines from SAEDashboard with per-batch CPU snapshots, process IO deltas, disk write throughput, and wall/CUDA timings for activation capture, feature encode, logits/statistics packaging, sequence packaging, JSON serialization, and writes.
+8. `--runner-torch-profile` writes short-run Torch profiler traces under `torch_profiles/` in the layer output tree, or under `--runner-torch-profile-dir` when provided. Keep it to one- or two-batch probes; it adds material overhead.
+9. `--prompts-pretokenized-dataset-path` can point at a local HuggingFace dataset saved with an `input_ids` column. The runner still uses the Bridge model path, but SAELens skips raw text tokenization when building the activation-store token cache.
+
+Current validated result for this shape:
+
+1. default-dataset Bridge smoke on `monology/pile-uncopyrighted`: completed and wrote `batch-0.json`
+2. RTE Bridge batch-`0` probe on all `2490` train prompts: completed with exit status `0`, `1:12.99` end-to-end wall time, about `24s` of actual batch execution after token setup, about `19.8 GiB` max RSS, and `3.04 GiB` max CUDA allocation
+3. RTE Bridge `512x128` one-batch profile with the pretokenized prompt dataset: completed with exit status `0`, `62.5s` end-to-end wall time, and the token generation profile share dropped from about `29%` to under `1%`
+
+### Pretokenize dashboard datasets
+
+Build the local prompt caches once before a long run. SAEDashboard now provides the generic dashboard pretokenization
+harness and prompt artifact writer. Interpretune keeps task-specific rendering, such as the RTE/BoolQ custom module,
+and passes it to SAEDashboard with `--custom-dataset-module`.
+
+RTE full-prompt cache command of record:
+
+```bash
+python \
+  -m sae_dashboard.neuronpedia.prompt_pretokenization \
+  --dataset-path aps/super_glue \
+  --dataset-name rte \
+  --dataset-split train \
+  --tokenizer-name google/gemma-3-1b-it \
+  --context-size 128 \
+  --custom-dataset-module it_examples.utils.dashboard_pretokenization_rte \
+  --windowing-mode max-prompt-pad \
+  --no-shuffle \
+  --output-dir ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts \
+  --force
+```
+
+Monology cache command of record:
+
+```bash
+python \
+  -m sae_dashboard.neuronpedia.prompt_pretokenization \
+  --dataset-path monology/pile-uncopyrighted \
+  --dataset-split train \
+  --tokenizer-name google/gemma-3-1b-it \
+  --context-size 128 \
+  --column-name text \
+  --use-chat-formatting \
+  --streaming \
+  --num-proc 1 \
+  --no-shuffle \
+  --max-tokenized-rows 2490 \
+  --output-dir ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490 \
+  --force
+```
+
+Prompt-dimension scaling sweep sets (Monology): the benchmark suite's `--monology-sweep pretok` mode
+(see `scripts/dashboard_benchmark_suite_usage.md`) reads a single larger concat set and takes the first
+`--n-prompts-total` rows, so **one pretokenized set at the max sweep size serves every smaller subset** —
+e.g. `concat_24576` covers the default `{2490, 4096, 24576}` sweep (the preset auto-resolves the largest
+built `concat_<N>`, falling back to `concat_8192`). Build sets with the Monology command of record above,
+varying only `--max-tokenized-rows` and the `_concat_<N>` output-dir suffix:
+
+> **Opt-in columnar peak-memory controls** (bit-identical outputs — only peak GPU memory and speed move;
+> use them when a large total-prompt count exceeds device memory for a given layer/model/hardware
+> combination): `--runner-columnar-max-staged-acts-bytes=<bytes>` sets the byte budget under which the
+> `(prompts, ctx, feats)` activation matrix stays GPU-resident (`0` forces host staging — the escape
+> hatch when the matrix plus a layer's packaging transients no longer fit; without the override the
+> budget is a fixed default whose exact boundary can make peak memory non-monotonic in n_prompts), and
+> `--runner-columnar-row-chunk-size` (e.g. 16) bounds the per-chunk transients of the arrow packaging
+> loops and the batched sequence selector (denser layers need smaller chunks at a given prompt count). See
+> `PRs/neuronpedia/source-set-enhancements/columnar_peak_memory_mitigation_investigation.md`.
+
+```bash
+python \
+  -m sae_dashboard.neuronpedia.prompt_pretokenization \
+  --dataset-path monology/pile-uncopyrighted --dataset-split train \
+  --tokenizer-name google/gemma-3-1b-it --context-size 128 \
+  --column-name text --use-chat-formatting --streaming --num-proc 1 --no-shuffle \
+  --max-tokenized-rows 8192 \
+  --output-dir ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_8192 \
+  --force
+```
+
+Pretokenizing is a one-time ~20 s / ~4 MB step and yields a byte-identical, HF-independent prompt cache;
+the streaming (`load_dataset`) path is equivalent for the per-batch generation/packaging measurement but
+adds a one-time O(n_prompts) tokenization cost to end-to-end wall time (RTE measurement: token-generation
+share dropped ~29% → <1% when pretokenized). The legacy path cannot `load_from_disk` a pretokenized set
+(only `load_dataset`/`legacy_jsonl`), so in `pretok` mode the legacy comparison leg streams the same
+first-N prompts.
+
+  Windowing modes now belong to SAEDashboard rather than the Interpretune custom module:
+
+  1. `concatenate` keeps the legacy SAELens packed-window behavior and remains the streaming-friendly choice for dense
+    corpora such as Monology.
+  2. `filter-truncate` keeps only prompts that already satisfy the configured width and truncates them to that width. It
+    is still a packed-mode contract, not the example-aligned padded contract used for RTE full-prompt caches.
+  3. `max-prompt-pad` preserves one row per rendered prompt, pads every row to the longest observed prompt, and emits an
+    `attention_mask` sidecar so later bucketing can recover each prompt's effective length. This is the current RTE
+    full-prompt mode.
+  4. `fixed-context-pad` also preserves one row per prompt, but pads to the configured `context-size` and rejects any
+    prompt that would exceed that width.
+
+  Prompt-length metadata and bucket scheduling now share one contract:
+
+  1. `effective_context_size` is the saved row width after windowing. For `max-prompt-pad` it equals the longest prompt
+    observed in the materialized dataset; for packed modes and `fixed-context-pad` it equals the configured
+    `--context-size`.
+  2. `prompt_lengths` records the per-prompt pre-padding lengths only for example-aligned padded modes. Packed modes do
+    not keep a 1:1 prompt-length sidecar because the saved rows no longer represent whole prompts.
+  3. `shared_tokens_file` is the staged `tokens_<n_prompts_total>.pt` tensor that every layer run reuses instead of
+    rebuilding prompt tokens in each layer directory.
+  4. The staged effective-length sidecar is derived from `attention_mask` when the dataset keeps one row per prompt.
+    That sidecar is what the runner uses for prompt-length bucketing and dynamic batch scaling.
+  5. `prompt_bucket_schedule_file` is an explicit JSON schedule artifact. `auto_prompt_bucket_schedule` builds the same
+    schedule directly from the staged effective-length sidecar when no explicit file is supplied.
+  6. `prompt_bucket_ceilings` are optional explicit inclusive bucket ceilings. When left empty, the runner now derives a
+    small ceiling set from prompt-length quantiles in the staged effective-length distribution instead of relying on a
+    hardcoded global default.
+  7. Streaming currently remains limited to the packed windowing family. Example-aligned pad-enabled modes
+    (`max-prompt-pad` and `fixed-context-pad`) are intentionally still a future streaming follow-up because they require
+    prompt-by-prompt length accounting and final-width resolution before the artifact contract can be finalized.
+
+The current RTE full-prompt cache is:
+
+```text
+${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts
+```
+
+The current Monology dense cache is:
+
+```text
+${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490
+```
+
+The RTE custom module still maps the `aps/super_glue:rte` train split through Interpretune's composable prompt
+dataclasses from `1b_it_lightning_ct_ns_zs_test.yaml`, renders prompts with
+`RTEBoolqGemmaPromptConfig.apply_chat_template_fn(..., add_generation_prompt=True)`, and pads each complete rendered
+prompt to the measured maximum length without truncation. The saved `sae_lens.json` now keeps those RTE-specific fields
+under a nested `custom` block while leaving the top-level metadata close to the upstream SAELens schema.
+
+Monology does not need a custom module. It uses the upstream SAELens `pretokenize_dataset(...)` path directly with
+`streaming=True`, `use_chat_formatting=True`, and a `2490`-row cap on the materialized token windows.
+
+When `--prompts-pretokenized-dataset-path` is set, the pipeline now also materializes a shared prompt tensor cache once before the layer loop:
+
+```text
+${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts/tokens_2490.pt
+```
+
+Current behavior for future runs:
+
+1. The pipeline builds `tokens_<n_prompts_total>.pt` once from the saved HuggingFace dataset.
+2. The runner stages that file into each layer output directory as the local `tokens_<n_prompts_total>.pt` expected by `get_tokens()`.
+3. The stage uses a symlink when possible and falls back to a plain copy if symlinks are unavailable.
+4. The staged tensor stays on CPU until the actual feature/model forward path needs it, so per-layer token regeneration is no longer required.
+
+For the current RTE cache, `tokens_2490.pt` has shape `(2490, 319)`. It preserves two exact duplicate rows because they
+represent distinct RTE examples; the matching production config sets `deduplicate_shared_prompt_tokens: false` and
+`strict_shared_prompt_count: true`.
+
+### Regenerating the benchmark prompt datasets
+
+The dashboard benchmark suite (`scripts/dashboard_benchmark_suite_usage.md` and
+`scripts/profile_neuronpedia_dashboard_generation.py`) consumes four locally cached prompt artifacts. They are
+intentionally **not published to the HF Hub**: maintainers regenerate them locally, and because regeneration runs the
+same `sae_dashboard.neuronpedia.prompt_pretokenization` CLI that the benchmark exercises, regenerating them validates
+the pretokenization behavior itself.
+
+Two invocations produce all four artifacts — each run writes both a SAELens-compatible `pretokenized/` cache
+(`--output-dir`) and a deprecated `load_dataset`-compatible JSONL export under `legacy_pretokenized/`
+(`--legacy-output-dir`). The commands extend the commands of record above with the legacy export directory.
+
+Prerequisites:
+
+1. The interpretune environment active with the editable SAEDashboard install (provides
+   `sae_dashboard.neuronpedia.prompt_pretokenization`) and interpretune importable (provides the RTE custom module
+   `it_examples.utils.dashboard_pretokenization_rte`).
+2. `google/gemma-3-1b-it` is a **gated** HuggingFace model: accept the license on the model page and authenticate
+   (`hf auth login`, or export `HF_TOKEN`). Only the tokenizer is downloaded. The source datasets (`aps/super_glue`
+   and `monology/pile-uncopyrighted`) are not gated.
+3. `IT_NP_CACHE` set (or left at its `$HF_HOME/interpretune/neuronpedia` default) — all output paths below live
+   under it.
+
+Both runs are tokenizer-only (no GPU, no model weights) and typically finish in a few minutes each on a modern CPU;
+the Monology run streams the source corpus, so its first-shard download dominates its wall time.
+
+#### 1. RTE example-aligned pretokenized cache
+
+`pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts` — the example-aligned
+(`max-prompt-pad`) full-prompt cache used by the `columnar-rte-pretokenized-reduced` preset:
+
+```bash
+python \
+  -m sae_dashboard.neuronpedia.prompt_pretokenization \
+  --dataset-path aps/super_glue \
+  --dataset-name rte \
+  --dataset-split train \
+  --tokenizer-name google/gemma-3-1b-it \
+  --context-size 128 \
+  --custom-dataset-module it_examples.utils.dashboard_pretokenization_rte \
+  --windowing-mode max-prompt-pad \
+  --no-shuffle \
+  --output-dir ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts \
+  --legacy-output-dir ${IT_NP_CACHE}/legacy_pretokenized/gemma-3-1b-it_rte_boolq_context319_fixed_pad_2490 \
+  --force
+```
+
+Expected output: the HuggingFace dataset directory at
+`${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts` with `input_ids` and
+`attention_mask` columns plus the `sae_lens.json` metadata sidecar.
+
+#### 2. RTE legacy fixed-pad export
+
+`legacy_pretokenized/gemma-3-1b-it_rte_boolq_context319_fixed_pad_2490` — the deprecated JSONL export consumed by
+the `detached-legacy-rte-pretokenized-reduced` and `legacy-rte-pretokenized-reduced` presets. It is produced by the
+same invocation as artifact 1 via `--legacy-output-dir` (the CLI accepts either or both output flags, so rerunning
+the command above regenerates both artifacts idempotently).
+
+Expected output: `${IT_NP_CACHE}/legacy_pretokenized/gemma-3-1b-it_rte_boolq_context319_fixed_pad_2490` containing
+`train.jsonl` plus `sae_lens.json`.
+
+#### 3. Monology pretokenized cache
+
+`pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490` — the packed (`concatenate`) dense-corpus
+cache used by the `columnar-monology-pretokenized-reduced` preset:
+
+```bash
+python \
+  -m sae_dashboard.neuronpedia.prompt_pretokenization \
+  --dataset-path monology/pile-uncopyrighted \
+  --dataset-split train \
+  --tokenizer-name google/gemma-3-1b-it \
+  --context-size 128 \
+  --column-name text \
+  --use-chat-formatting \
+  --streaming \
+  --num-proc 1 \
+  --no-shuffle \
+  --max-tokenized-rows 2490 \
+  --output-dir ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490 \
+  --legacy-output-dir ${IT_NP_CACHE}/legacy_pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490 \
+  --force
+```
+
+Expected output: the HuggingFace dataset directory at
+`${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490` with 2490 packed
+128-token rows.
+
+#### 4. Monology legacy export
+
+`legacy_pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490` — the deprecated JSONL export consumed
+by the `detached-legacy-monology-pretokenized-reduced` and `legacy-monology-pretokenized-reduced` presets. As with
+RTE, it is produced by the same invocation as artifact 3 via `--legacy-output-dir`.
+
+Expected output: `${IT_NP_CACHE}/legacy_pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490`
+containing `train.jsonl` plus `sae_lens.json`.
+
+#### Validation contract
+
+The regenerated caches feed the benchmark presets in `scripts/profile_neuronpedia_dashboard_generation.py`:
+
+1. `columnar-rte-pretokenized-reduced` and `columnar-monology-pretokenized-reduced` load the `pretokenized/` caches
+   (`load_from_disk` mode) and use the shared tokens file `tokens_2490.pt` inside each `pretokenized/` cache
+   directory.
+2. `detached-legacy-*-pretokenized-reduced` and `legacy-*-pretokenized-reduced` load the `legacy_pretokenized/`
+   JSONL exports (`legacy_jsonl` mode) and use the shared tokens file `tokens_2490.pt` inside each
+   `legacy_pretokenized/` export directory.
+3. The `tokens_2490.pt` shared tokens files (and their `.metadata.json` / `.effective_lengths.pt` / `.buckets.json`
+   sidecars) are **not** written by the pretokenization commands. They are materialized automatically on first use —
+   by the pipeline for the `pretokenized/` caches and by the SAEDashboard runner for the legacy exports — so no
+   additional manual step is required after regeneration.
+
+A green benchmark wave over freshly regenerated caches therefore doubles as an end-to-end validation of the
+pretokenization contract (windowing modes, prompt metadata, legacy export compatibility, and shared-token
+materialization).
+
+### Full RTE generation-only rollout
+
+The current command of record for the full `gemmascope-2-transcoder-262k-rte` generation run is the Bridge + structured-dataset path below. This is intentionally a generation-only launch: local layer-`0` import and explanation generation have already been validated, so the long-running `0-25` job keeps `--skip-local-db-import` to avoid coupling dashboard generation to local Postgres capacity.
+
+```bash
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+python -m interpretune.utils.neuronpedia_dashboard_pipeline \
+  --model-name gemma-3-1b-it \
+  --model-layers 26 \
+  --sae-set gemma-scope-2-1b-it-transcoders-all \
+  --neuronpedia-source-set-id gemmascope-2-transcoder-262k-rte \
+  --neuronpedia-source-set-description 'Transcoder - 262k (RTE)' \
+  --creator-name 'Google DeepMind' \
+  --release-id gemma-scope-2 \
+  --release-title 'Gemma Scope 2' \
+  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
+  --hf-weights-repo-id google/gemma-scope-2-1b-it \
+  --hf-weights-path-template 'transcoder_all/layer_{layer}_width_262k_l0_small_affine' \
+  --hook-point hook_mlp_in \
+  --prompts-huggingface-dataset-path aps/super_glue \
+  --prompts-huggingface-dataset-config-name rte \
+  --prompts-huggingface-dataset-split train \
+  --prompts-pretokenized-dataset-path ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts \
+  --model-wrapper bridge \
+  --bridge-enable-compatibility-mode \
+  --runner-log-resource-snapshots \
+  --start-layer 0 \
+  --end-layer 25 \
+  --start-batch 0 \
+  --n-prompts-total 2490 \
+  --n-tokens-in-prompt 319 \
+  --n-features-per-batch 512 \
+  --n-prompts-in-forward-pass 512 \
+  --no-deduplicate-shared-prompt-tokens \
+  --strict-shared-prompt-count \
+  --no-archive-partials \
+  --sae-path-template 'layer_{layer}_width_262k_l0_small_affine' \
+  --python-executable "$(command -v python)" \
+  --cuda-visible-devices 0 \
+  --heartbeat-seconds 60 \
+  --stall-timeout-seconds 1800 \
+  --use-skip-transcoder \
+  --skip-local-db-import \
+  --run-root ${IT_NP_CACHE}/dashboard_runs
+```
+
+### Smaller-GPU background restart command
+
+Use the command below for the current background restart when you want to run the 262k RTE generation path on a smaller secondary GPU (validated on an 8 GiB-class device) while freeing the primary GPU. This is the command of record for the new no-truncation context-`319` full-prompt cache, not the old context-`128` comparison lineage.
+
+Keep the knobs distinct when reasoning about this path: `n_features_per_batch` controls how many features are processed in a dashboard batch, `n_prompts_in_forward_pass` maps to SAEDashboard's logical prompt minibatch, and `primary_acts_batch_size` only chunks the internal activation-capture forwards inside each logical minibatch. After the latest SAEDashboard memory pass, the context-`319` GPU1 config can use `512x64 / acts16`; older `256x64 / acts16` notes are the conservative pre-memory-pass fallback.
+
+```bash
+cd ~/repos/interpretune && \
+source <your-venv>/bin/activate && \
+python scripts/launch_neuronpedia_dashboard_pipeline.py \
+  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
+  --run-name-suffix context319-full-prompts
+```
+
+The `--run-name-suffix context319-full-prompts` piece is what keeps the new full-prompt restart out of the old completed unsuffixed run namespace. The active GPU1 YAML now defaults to that same suffix, but keeping it explicit in the command makes the fresh lineage obvious in shell history and protects future ad hoc overrides.
+
+Do not use the unsuffixed run directory below for the new full-prompt restart:
+
+```text
+${IT_NP_CACHE}/dashboard_runs/gemma-3-1b-it_gemmascope-2-transcoder-262k-rte
+```
+
+That unsuffixed namespace contains the earlier completed lineage and its `run.resume-0-25.log` markers. Reusing it will trigger completed-layer skips rather than a fresh generation start.
+
+The launcher prints the exact `tail -f` target automatically. With the suffixed context-`319` launch, the logs now live under:
+
+```text
+${IT_NP_CACHE}/dashboard_runs/gemma-3-1b-it_gemmascope-2-transcoder-262k-rte_context319-full-prompts/launcher.<worker>.<timestamp>.log
+```
+
+The worker pipeline logs of record are:
+
+```text
+${IT_NP_CACHE}/dashboard_runs/gemma-3-1b-it_gemmascope-2-transcoder-262k-rte_context319-full-prompts/run.gpu1.resume-0-25.log
+${IT_NP_CACHE}/dashboard_runs/gemma-3-1b-it_gemmascope-2-transcoder-262k-rte_context319-full-prompts/run.gpu0.resume-0-25.log
+```
+
+Resolved GPU1 settings in the config:
+
+```yaml
+run_name_suffix: context319-full-prompts
+prompts_pretokenized_dataset_path: ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts
+n_tokens_in_prompt: 319
+n_features_per_batch: 512
+n_prompts_in_forward_pass: 64
+primary_acts_batch_size: 16
+deduplicate_shared_prompt_tokens: false
+strict_shared_prompt_count: true
+cuda_visible_devices: "1"
+```
+
+The two-worker config keeps those conservative GPU1 settings and lets GPU0 use a larger prompt-forward shape:
+
+```yaml
+workers:
+  - id: gpu1
+    cuda_visible_devices: "1"
+    start_layer: 3
+    n_features_per_batch: 512
+    n_prompts_in_forward_pass: 64
+    primary_acts_batch_size: 16
+  - id: gpu0
+    cuda_visible_devices: "0"
+    start_layer: 4
+    n_features_per_batch: 1024
+    n_prompts_in_forward_pass: 256
+    primary_acts_batch_size: 64
+```
+
+The selected GPU1 probe was `512x64 / acts16` on layer `5`, batches `0-2`: `cuda_max_allocated_gib=4.96`, steady `cuda_reserved_gib=4.54-4.55`, and heartbeat GPU process memory about `5150 MiB`. The throughput-first GPU0 rerun was `1024x256 / acts64` on layer `6`, batches `0-2`: `cuda_max_allocated_gib=5.91`, steady `cuda_reserved_gib=4.17-4.18`, and about `819-826` features/min. A later aggressive GPU0 rerun at `1024x512 / acts256` still reached `cuda_max_allocated_gib=16.43` without OOM and improved to about `75.0s` on batch `1` (`~819 features/min`), but it only reached near-parity while carrying much higher VRAM residency.
+
+Current tuning notes for this RTE Bridge path:
+
+1. The old `48` / `64` prompt shape-mismatch blocker is fixed in the SAEDashboard Bridge wrapper.
+2. The context-`128` tuning table remains useful for relative CPU/dashboard behavior, but the context-`319` full-prompt cache must be treated as a new memory regime.
+3. On a ~24 GiB-class device, `1024x256 / acts64` remains the shared monitored GPU0 throughput shape, while `1024x512 / acts256` is the optional high-VRAM validation shape that now reaches near-parity but still is not a clear win. On an ~8 GiB-class device, use `512x64 / acts16` for the full-prompt cache.
+4. Pretokenization is still worth using for full restarts because it removes repeated raw text tokenization and makes prompt coverage auditable before generation starts.
+5. Do not use the `2048` band for this Bridge path unless memory headroom is irrelevant. Earlier optimized `2048x128` probes consumed high host and GPU memory while underperforming the best `512` rows.
+6. Future runs no longer create a nested `layer_<n>/google/...` leaf when `model_id` contains `/`. The runner now sanitizes `google/gemma-3-1b-it` into a single path component like `google_gemma-3-1b-it_...` before building the leaf output directory.
+7. The shared token cache stays CPU-backed through `before_feature_run_0`; the decisive GPU jump belongs to `SaeVisRunner.run(...)`, not token materialization.
+8. Treat GPU1 as an independent worker target, not as a way to split a single runner. Two concurrent dashboard processes duplicate model/SAE residency and CPU packaging work, so monitor host RSS and cache IO if GPU0 and GPU1 are used at the same time.
+9. A fresh context-`319` launch should start in a suffixed run directory and log `START layer=<n>` immediately, not a sequence of completed-layer skips from the old unsuffixed lineage. If you see the new pipeline warning that the requested layer range is already complete, you are still pointed at a finished lineage.
+10. The 2026-05-02 two-worker validation assigned `layer_0` to GPU0 and `layer_1` to GPU1, wrote new batch artifacts from both workers, stopped GPU1 independently while GPU0 continued through another batch, cleaned stale locks on restart, and relaunched the two-worker config successfully.
+11. Torch profiler traces are written as `batch-<n>.trace.json`; dashboard leaf discovery deliberately matches only exact `batch-<n>.json` files so those traces do not get mistaken for generated dashboard batches.
+
+### Operational troubleshooting for GPU1 background runs
+
+The 2026-05-01 production `gemmascope-2-transcoder-262k-rte` GPU1 run exposed a few operator lessons that are easy to misread from the logs.
+
+1. A long pause after `Layer=<n> generation completed` is not automatically another generation stall. In the real layer-`19` incident, the runner child had already exited and the pipeline then spent about `9` minutes in the CPU-only conversion path before it finally logged `Converted layer=19 ...` and `DONE layer=19`. During that window there was no active GPU worker and no new `batch-*.json`, but the pipeline was still healthy.
+2. The later layer-`20` and layer-`21` failures were real runner OOMs, but they were not in the Interpretune DB/import path. The traceback came from SAEDashboard / SAELens inside `SaeVisRunner.run(...) -> encoder.fold_W_dec_norm()`, where PyTorch tried to allocate another `1.12 GiB` after `batch-0.json` had already been written. The recent `neuronpedia_db_utils.py` extraction was not on that stack, and neither conversion nor local DB import had been reached yet.
+3. A clean relaunch from the same YAML config is still the right first recovery step when the runner dies after writing some batches. The pipeline resumes completed layers from the log markers, and the SAEDashboard worker skips existing `batch-*.json` files inside the active layer directory. In the layer-`20` recovery, the restarted run skipped the existing `batch-0.json` and advanced through `batch-1`, `batch-2`, and into `batch-3` without changing the config.
+4. If the same post-`batch-0.json` OOM reproduces on a later layer and the stack is still `fold_W_dec_norm()`, reduce `--n-prompts-in-forward-pass` by one power of two before touching `--primary-acts-batch-size`. `fold_W_dec_norm()` runs before the next internal activation-capture forward starts, so `primary_acts_batch_size` does not attack the failing allocation directly; lowering the outer logical minibatch is what buys back the missing pre-batch VRAM headroom.
+5. Do not launch a second fresh lineage on GPU1 while another GPU1 dashboard worker is still resident. A later 2026-05-02 fresh-namespace smoke proved the new suffixing avoids old-log reuse, but it failed before `batch-0.json` when a separate live layer-`25` GPU1 worker was already holding about `4.4 GiB`; the second Bridge model init then OOMed during `hf_model.to(device)`.
+
+Recommended response sequence for this run family:
+
+1. Tail the pipeline log first. If the last new line is `Layer=<n> generation completed`, allow time for conversion before assuming the run is dead.
+2. If the log shows `torch.OutOfMemoryError` or the parent process disappears while a worker continues briefly, treat that as a failed run. Stop the orphaned worker and relaunch the same config with `scripts/launch_neuronpedia_dashboard_pipeline.py`.
+3. Only retune the config if the same seam reproduces cleanly after a fresh relaunch. For post-`batch-0.json` `fold_W_dec_norm()` OOMs, reduce `--n-prompts-in-forward-pass` first. Reserve `--primary-acts-batch-size` reductions for forward-time OOMs in `get_model_acts(...)`, `TransformerLensWrapper.forward(...)`, or `self.encoder.encode(...)` before the batch output is written.
+
+### Import existing export bundles into the local DB
+
+Use `--import-only-local-db` when dashboards were already generated with `--skip-local-db-import` and you later want to import the existing export bundles into the local Neuronpedia DB without rerunning generation.
+
+```bash
+LOCAL_NEURONPEDIA_DB_URL='postgres://postgres:postgres@127.0.0.1:5433/postgres' \
+python -m interpretune.utils.neuronpedia_dashboard_pipeline \
+  --model-name gemma-3-1b-it \
+  --model-layers 26 \
+  --sae-set gemma-scope-2-1b-it-transcoders-all \
+  --neuronpedia-source-set-id gemmascope-2-transcoder-262k-rte \
+  --neuronpedia-source-set-description 'Transcoder - 262k (RTE)' \
+  --creator-name 'Google DeepMind' \
+  --release-id gemma-scope-2 \
+  --release-title 'Gemma Scope 2' \
+  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
+  --hf-weights-repo-id google/gemma-scope-2-1b-it \
+  --hf-weights-path-template 'transcoder_all/layer_{layer}_width_262k_l0_small_affine' \
+  --hook-point hook_mlp_in \
+  --prompts-huggingface-dataset-path aps/super_glue \
+  --start-layer 10 \
+  --end-layer 10 \
+  --sae-path-template 'layer_{layer}_width_262k_l0_small_affine' \
+  --import-only-local-db
+```
+
+Notes:
+
+1. `--import-only-local-db` is the complement to `--skip-local-db-import`; do not combine them.
+2. In this mode the pipeline skips generation and conversion entirely, finds an existing export bundle under `export_root/<model_name>/<layer>-<source_set>*`, and imports it directly.
+3. The mode does not rely on completed-layer log markers, so it is safe for backfilling local DB rows after a generation-only run.
+
+### Historical conversion CUDA debug finding
+
+A temporary `--conversion-cuda-debug` allocator-snapshot mode (added for the 2026-04-30
+`gemmascope-2-transcoder-262k-rte` diagnosis, removed 2026-07-10 in the option-surface
+simplification) established that the converter holds `0.0 GiB` PyTorch-managed CUDA memory at every
+conversion checkpoint, with zero allocator segments in every snapshot. The previously suspected
+multi-GiB CUDA growth therefore comes from the runner-side handoff window or other non-PyTorch CUDA
+context residency, not from `convert-saedashboard-to-neuronpedia-export.py` itself.
+
+### Profiling the RTE dashboard path
+
+Use the profiling harness when a future run needs function-level attribution or resource-only batch-shape comparison:
+
+```bash
+"${IT_BENCH_PYTHON:-python}" \
+  scripts/profile_neuronpedia_dashboard_generation.py \
+  --config primary-512x512:512:512 \
+  --target-batches 3
+```
+
+Add `--no-py-spy` for clean throughput/resource measurements. Keep py-spy enabled for attribution runs; the harness now sends `SIGINT` first so speedscope output is flushed, and it aggregates every subprocess profile from `py-spy --subprocesses`. Use `--cuda-visible-devices 1` and `--primary-acts-batch-size 64` for the smaller-GPU feasibility probe.
+
+The original `512x128` pretokenized Bridge profile showed the steady-state bottleneck was CPU-side SAEDashboard dashboard packaging, not IO or GPU compute:
+
+| Config | Avg batch s | Features/min | Max RSS GiB | Max GPU MiB | Avg batch GPU util | Cache IO util |
+| --- | --- | --- | --- | --- | --- | --- |
+| `512x128` | `29.4` | `1044` | `4.92` | `5902` | about `1-2%` | about `0.1-0.2%` |
+| `512x256` | `28.9` | `1063` | `5.00` | `7542` | about `1-2%` | about `0.2%` |
+| `1024x128` | `57.2` | `1075` | `6.89` | `6282` | about `1-2%` | about `0.1%` |
+
+The top `py-spy` leaf is `HistogramData.from_data(...)` in SAEDashboard's `utils_fns.py`, called from the logits-histogram branch of `SaeVisRunner.run(...)`; `utils_fns.py` accounts for about `61%` of all aggregated samples. The next optimization target is therefore SAEDashboard's per-feature histogram/statistics/sequence packaging path, not another feature-batch or prompt-forward sweep. A fuller design write-up of this profiling pass established the same conclusion in depth: dashboard generation is bottlenecked by CPU-side per-feature packaging (histogram/statistics construction first, sequence packaging second) rather than GPU compute or disk IO, which is what motivated the packaging optimization passes and the columnar output work described elsewhere in this document.
+
+After the first optimization pass, the best clean `512x512` probe measured `11.3s` average batch time and `2715` features/min. The matching py-spy attribution run measured `2469` features/min and shifted the next visible hotspot to sequence packaging (`package_sequences_data(...)` and `get_indices_dict(...)`), while JSON/converter work remained secondary. The generation-only projection is now about `1.7-1.9` days for all `26` layers before conversion/import/explanation overhead.
+
+The successful RTX 2070 SUPER probe used:
+
+```bash
+"${IT_BENCH_PYTHON:-python}" \
+  scripts/profile_neuronpedia_dashboard_generation.py \
+  --config gpu1-512x256-mf64-logitscpu:512:256 \
+  --layer 10 \
+  --target-batches 2 \
+  --session-root /tmp/np_dashboard_generation_profiles_gpu1_logitcpu \
+  --run-root ${IT_NP_CACHE}/dashboard_runs_gpu1_logitcpu_probe \
+  --primary-acts-batch-size 64 \
+  --cuda-visible-devices 1 \
+  --max-tree-rss-gib 24
+```
+
+Result: `target_reached`, `2` batches, `13.5s` average batch time, `2271` features/min, max tree RSS `4.73 GiB`, and max GPU process memory `5564 MiB`. A `KeyboardInterrupt` at the end of the layer log is expected for this probe because the profiling harness intentionally terminates the child process after it observes the target batch count.
+
+## CLT + structured dataset example
+
+The same pipeline now supports the current GemmaScope2 CLT layout for `google/gemma-scope-2-1b-it`, where each layer lives in a shared local directory as `config.json` plus `params_layer_<n>.safetensors`.
+
+First, prefetch the CLT directory so every layer file is present before the long run reaches later layers:
+
+```bash
+CLT_SNAPSHOT=$(python - <<'PY'
+from huggingface_hub import snapshot_download
+
+print(snapshot_download('google/gemma-scope-2-1b-it', allow_patterns=['clt/width_262k_l0_medium_affine/*']))
+PY
+)
+
+CLT_DIR="${CLT_SNAPSHOT}/clt/width_262k_l0_medium_affine"
+```
+
+### Layer-0 smoke
+
+Use this small smoke command to validate generation, conversion, and local DB import on one batch:
+
+```bash
+LOCAL_NEURONPEDIA_DB_URL='postgres://postgres:postgres@127.0.0.1:5433/postgres' \
+python -m interpretune.utils.neuronpedia_dashboard_pipeline \
+  --model-name gemma-3-1b-it \
+  --model-layers 26 \
+  --sae-set gemma-scope-2-1b-it-clt-all \
+  --neuronpedia-source-set-id gemmascope-2-clt-262k-rte \
+  --neuronpedia-source-set-description 'CLT - 262k (RTE smoke)' \
+  --creator-name 'Google DeepMind' \
+  --release-id gemma-scope-2 \
+  --release-title 'Gemma Scope 2' \
+  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
+  --hf-weights-repo-id google/gemma-scope-2-1b-it \
+  --hf-weights-path-template 'clt/width_262k_l0_medium_affine/params_layer_{layer}.safetensors' \
+  --hf-model-path google/gemma-3-1b-it \
+  --hook-point hook_mlp_in \
+  --prompts-huggingface-dataset-path aps/super_glue \
+  --prompts-huggingface-dataset-config-name rte \
+  --prompts-huggingface-dataset-split train \
+  --prompts-pretokenized-dataset-path ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts \
+  --model-wrapper bridge \
+  --bridge-enable-compatibility-mode \
+  --runner-log-resource-snapshots \
+  --start-layer 0 \
+  --end-layer 0 \
+  --start-batch 0 \
+  --end-batch 0 \
+  --n-prompts-total 64 \
+  --n-tokens-in-prompt 319 \
+  --n-features-per-batch 8 \
+  --no-deduplicate-shared-prompt-tokens \
+  --strict-shared-prompt-count \
+  --sae-path-template "${CLT_DIR}" \
+  --python-executable "$(command -v python)" \
+  --cuda-visible-devices 0 \
+  --use-clt
+```
+
+A CLT config is deliberately not vendored under `scripts/configs/neuronpedia_dashboard/`, but a config-backed
+equivalent for the full rollout is straightforward to assemble: extend the vendored `gemmascope-2-rte-base.yaml` with
+the CLT-specific values from the Full RTE rollout command below (`sae_set: gemma-scope-2-1b-it-clt-all`,
+`neuronpedia_source_set_id: gemmascope-2-clt-262k-rte`,
+`hf_weights_path_template: clt/width_262k_l0_medium_affine/params_layer_{layer}.safetensors`,
+`hf_model_path: google/gemma-3-1b-it`, `sae_path_template` pointing at the prefetched `${CLT_DIR}`, `use_clt: true`,
+and the `128/32` batch shape), then launch it with:
+
+```bash
+python scripts/launch_neuronpedia_dashboard_pipeline.py \
+  --config <your-clt-config>.yaml
+```
+
+Validated result for this smoke path:
+
+1. layer-`0` dashboard output wrote `batch-0.json`
+2. the pipeline converted `${NEURONPEDIA_UTILS_ROOT}/neuronpedia_utils/exports/gemma-3-1b-it/0-gemmascope-2-clt-262k-rte`
+3. the local import summary was `SourceSet=1`, `Source=1`, `Neuron=8`, `Activation=256`
+
+### Full RTE rollout
+
+This is the current command of record for the full `0-25` CLT RTE rollout:
+
+```bash
+LOCAL_NEURONPEDIA_DB_URL='postgres://postgres:postgres@127.0.0.1:5433/postgres' \
+python -m interpretune.utils.neuronpedia_dashboard_pipeline \
+  --model-name gemma-3-1b-it \
+  --model-layers 26 \
+  --sae-set gemma-scope-2-1b-it-clt-all \
+  --neuronpedia-source-set-id gemmascope-2-clt-262k-rte \
+  --neuronpedia-source-set-description 'CLT - 262k (RTE)' \
+  --creator-name 'Google DeepMind' \
+  --release-id gemma-scope-2 \
+  --release-title 'Gemma Scope 2' \
+  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
+  --hf-weights-repo-id google/gemma-scope-2-1b-it \
+  --hf-weights-path-template 'clt/width_262k_l0_medium_affine/params_layer_{layer}.safetensors' \
+  --hf-model-path google/gemma-3-1b-it \
+  --hook-point hook_mlp_in \
+  --prompts-huggingface-dataset-path aps/super_glue \
+  --prompts-huggingface-dataset-config-name rte \
+  --prompts-huggingface-dataset-split train \
+  --prompts-pretokenized-dataset-path ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts \
+  --model-wrapper bridge \
+  --bridge-enable-compatibility-mode \
+  --runner-log-resource-snapshots \
+  --start-layer 0 \
+  --end-layer 25 \
+  --start-batch 0 \
+  --n-prompts-total 2490 \
+  --n-tokens-in-prompt 319 \
+  --n-features-per-batch 128 \
+  --n-prompts-in-forward-pass 32 \
+  --no-deduplicate-shared-prompt-tokens \
+  --strict-shared-prompt-count \
+  --no-archive-partials \
+  --sae-path-template "${CLT_DIR}" \
+  --python-executable "$(command -v python)" \
+  --cuda-visible-devices 0 \
+  --use-clt
+```
+
+Validated runtime envelope for the corresponding direct layer-`0` one-batch probe on the real `2490`-prompt workload:
+
+1. `0:40.88` wall time
+2. `7,004,248 kB` max RSS
+3. `cuda_max_allocated_gib=4.35`
+4. `post_batch_0` RSS `2.26 GiB`
+
+That probe used `float32` model weights in the direct runner. The pipeline keeps `model_dtype=bfloat16` by default, so the full job has additional GPU headroom beyond the measured probe.
+
+The first full layer-`1` CLT attempt later exposed a deeper mixed-precision seam: the Bridge path supplies `bfloat16` activations while the local CLT weights stay `float32`, so `CLTLayerWrapper.encode()` now casts activations to the CLT weight dtype before `F.linear(...)`. The exact failed layer-`1` repro is now past the old crash point, and the full `0-25` run has been resumed from layer `1` under the same `128/32` shape.
+
+## Restarting a paused or killed run
+
+For batch-level resume inside a layer, use the exact same pipeline command and keep these constraints:
+
+1. Always include `--no-archive-partials`. Without it, the outer pipeline renames the partial `layer_<n>` directory and destroys the inner runner's `batch-*.json` skip state.
+2. Keep the same `run_directory`, `neuronpedia-source-set-id`, and `sae-path-template`.
+3. Re-run the same command after the pause; do not advance `--start-batch` manually.
+4. Keep the same `run.resume-<start>-<end>.log` file. The pipeline now parses timestamped `DONE layer=<n>` lines there and skips already completed layers before it relaunches the inner runner.
+5. Validate the restart by checking the pipeline log for preserved-batch skips followed by the next missing batch.
+
+Example validation commands:
+
+```bash
+grep -E 'Skipping Batch #9|Running Batch #10' \
+  "${IT_NP_CACHE}/dashboard_runs/gemma-3-1b-it_gemmascope-2-clt-262k-rte/run.resume-0-25.log"
+
+find "${IT_NP_CACHE}/dashboard_runs/gemma-3-1b-it_gemmascope-2-clt-262k-rte/layer_0" \
+  -name 'batch-*.json' | wc -l
+```
+
+Current validated behavior on this host:
+
+1. the first launch was stopped after the first `10` completed layer-`0` batch files
+2. the restart log showed `Skipping Batch #8`, `Skipping Batch #9`, then `Running Batch #10`
+3. layer `0` later completed and imported locally, but the first full layer-`1` attempt then failed on a `bfloat16` vs `float32` matmul inside the CLT wrapper
+4. after fixing that dtype seam, the next relaunch logged `Skipping already completed layer=0 based on existing logs.` and resumed at `START layer=1`
+
+## Explanation CLI configuration
+
+Explanation generation drives a conforming local CLI rather than a hardcoded provider. A conforming CLI must accept a one-shot prompt non-interactively (`<cli> -p "<prompt>"` by default), print the model response to stdout, and honor model/provider selection via environment variables. The GitHub Copilot CLI is the default (`ExplanationCliSpec` in `interpretune.utils.neuronpedia_explanations`); other conforming CLIs can be selected with `IT_EXPLANATION_CLI` or a custom `ExplanationCliSpec`.
+
+Model and provider routing:
+
+- The default model is `deepseek-v4-flash-free`, served by the OpenCode Zen OpenAI-compatible endpoint (`https://opencode.ai/zen/v1`; see https://opencode.ai/docs/en/zen/#endpoints).
+- BYOK provider env vars are injected only when an API key is resolvable — from `IT_EXPLANATION_PROVIDER_API_KEY` or the CLI-specific key env var (`COPILOT_PROVIDER_API_KEY`, e.g. from `.env`). With a key present, the Copilot CLI is routed via `COPILOT_PROVIDER_TYPE`/`COPILOT_PROVIDER_BASE_URL`/`COPILOT_PROVIDER_API_KEY`; without one, the CLI's native auth (e.g. Copilot's GitHub auth) is used unchanged — in that case pass a model your native provider actually serves (the BYOK default model will not resolve).
+- Generic overrides win over environment values, which win over the OpenCode Zen defaults: `IT_EXPLANATION_PROVIDER_TYPE`, `IT_EXPLANATION_PROVIDER_BASE_URL`, `IT_EXPLANATION_PROVIDER_API_KEY`, and `IT_EXPLANATION_CLI_MODEL`. Pointing the base URL/key at any OpenAI-compatible provider (e.g. OpenRouter) is supported.
+
+## Local explanation note
+
+When generating explanations against locally imported custom source sets, pass `local_db_url=` explicitly to the explanation helper in this environment. The layer-`0` `gemmascope-2-transcoder-262k-rte` and `gemmascope-2-clt-262k-rte` dashboards both now support `np_moe-max-act-logits`, but that required one helper-side fix: if cached activation batches are missing for a local custom source set, `interpretune.utils.neuronpedia_explanations` now falls back to the feature API payload's embedded `activations` rows instead of hard-failing.
+
+**Planned direction (Wave 2)**: the current locally generated explanations (and the custom dashboards
+they annotate) are local-Neuronpedia-DB resident, so sharing them requires either central Neuronpedia
+DB modification or a full local-DB import on the consumer side. Wave 2 of this workstream intends to
+migrate these artifacts to **user Hugging Face Hub uploaded/cached streamable dashboards** so custom
+source-set dashboards + explanations become easily shareable (stream-on-demand from a user's HF Hub
+repo) rather than dependent on central Neuronpedia database changes. The same hub-artifact
+direction is planned to carry **Jacobian-space (J-lens) artifacts** (readouts, sparse concept
+inventories, patched-run records) once J-lens support lands — scoped and tracked in
+[interpretune#225](https://github.com/speediedan/interpretune/issues/225), co-designed with
+AnalysisStore hub upload/download ([interpretune#124](https://github.com/speediedan/interpretune/issues/124)).
 
 ## Model metadata guardrail
 
@@ -119,7 +1299,7 @@ On stall or nonzero exit, it also logs a kernel snapshot via `dmesg`.
 To follow a live run, inspect the file-backed launch log:
 
 ```bash
-tail -f /mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/dashboard_runs/gemma-3-1b-it_gemmascope-2-transcoder-16k/run.resume-24-25.launch.log
+tail -f ${IT_NP_CACHE}/dashboard_runs/gemma-3-1b-it_gemmascope-2-transcoder-16k/run.resume-24-25.launch.log
 ```
 
 Healthy heartbeat lines look like:
@@ -134,16 +1314,21 @@ If bytes are static for too long, use the logged `ps`, GPU, and kernel snapshots
 
 If you want to validate an already-converted bundle directly, use the Python helper with the explicit localhost Postgres URL:
 
+The helper is now a handoff boundary rather than the owner of Neuronpedia table mechanics. Interpretune requires
+`neuronpedia_utils.local_db_import` for local dashboard import and import-mode benchmark functionality, then adds only
+Interpretune-local URL resolution for localhost Docker Postgres URLs. The current interpretune environment has been
+validated with an editable no-deps install of the local Neuronpedia utility package.
+
 ```bash
-cd "${IT_REPO_DIR}"
-source "${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate"
+cd ~/repos/interpretune
+source <your-venv>/bin/activate
 
 python - <<'PY'
 from pathlib import Path
 from interpretune.utils import import_neuronpedia_export_bundle_local_db
 
 bundle = Path(
-  '${NEURONPEDIA_REPO_DIR}/utils/neuronpedia-utils/neuronpedia_utils/exports/'
+  '${NEURONPEDIA_UTILS_ROOT}/neuronpedia_utils/exports/'
     'gemma-3-1b-it/23-gemmascope-2-transcoder-16k'
 )
 summary = import_neuronpedia_export_bundle_local_db(
@@ -153,6 +1338,18 @@ summary = import_neuronpedia_export_bundle_local_db(
 print(summary)
 PY
 ```
+
+For import timing, prefer one no-rollback benchmark mode per clean database or schema so binary `COPY FROM STDIN` timings
+are not distorted by rollback bookkeeping. The current benchmark modes to run separately are `activation_arrow_copy`,
+`activation_parquet_copy`, and, if reset cost is acceptable, `activation_arrow_jsonb`, `activation_parquet_jsonb`, and
+legacy `jsonl`.
+
+The first clean-schema timing pass used `/tmp/np_local_import_benchmark_subset_20260511`, a three-shard real export subset
+with generated activation Arrow/Parquet sidecars. All modes inserted `20,240/20,240` activation rows. COPY reduced the
+activation insert phase to about `2.5s`, versus about `6.5s` for JSONB, but the tiny regenerated sample remained
+load/alignment dominated: `activation_arrow_copy` took `9.82s` process wall, `activation_parquet_copy` took `10.22s`, and
+legacy compressed `jsonl` took `9.19s`. Treat that as a functional gate and sizing clue, not a final production import
+throughput result.
 
 If you are validating a bundle outside this repo, inspect its `model.jsonl` and `release.jsonl` first. A pre-fix bundle can
 still seed stale `Model` metadata into an otherwise fresh local DB.
@@ -226,7 +1423,7 @@ Important detail:
 The relevant pieces are:
 
 1. dashboard generation creates Neuronpedia export bundles under:
-  - `${NEURONPEDIA_REPO_DIR}/utils/neuronpedia-utils/neuronpedia_utils/exports/<model>/<layer-source-set>`
+  - `${NEURONPEDIA_UTILS_ROOT}/neuronpedia_utils/exports/<model>/<layer-source-set>`
 2. each bundle includes `activations/batch-*.jsonl.gz`
 3. the localhost concept-direction notebook calls `prepare_local_explanation_backfill(...)` before `ensure_local_feature_explanations(...)`
 4. that helper searches the local export `activations/` batches for the exact feature index and writes a feature-specific Interpretune cache artifact under:
@@ -264,20 +1461,20 @@ If a localhost notebook reports explanation cache misses:
 For manual inspection on this host:
 
 ```bash
-find "${NEURONPEDIA_REPO_DIR}/utils/neuronpedia-utils/neuronpedia_utils/exports/gemma-3-1b-it/19-gemmascope-2-transcoder-16k/activations" -maxdepth 1 -name 'batch-*.jsonl.gz' | head
+find "${NEURONPEDIA_UTILS_ROOT}/neuronpedia_utils/exports/gemma-3-1b-it/19-gemmascope-2-transcoder-16k/activations" -maxdepth 1 -name 'batch-*.jsonl.gz' | head
 
-ls -l /mnt/cache_extended/speediedan/.cache/huggingface/interpretune/neuronpedia/v1/gemma-3-1b-it/19-gemmascope-2-transcoder-16k/feature-activations/
+ls -l ${IT_NP_CACHE}/v1/gemma-3-1b-it/19-gemmascope-2-transcoder-16k/feature-activations/
 ```
 
-If you need to force regeneration of previously inserted Copilot-generated explanations before a rerun, delete those rows from the local DB first and then rerun the localhost config:
+If you need to force regeneration of previously inserted CLI-generated explanations before a rerun, delete those rows from the local DB first and then rerun the localhost config (match both the current `interpretune-explanation-cli` and the legacy `interpretune-github-copilot-cli` `generated_by` values — rows inserted before the 2026-07 explanation-CLI generalization carry the legacy value):
 
 ```sql
 DELETE FROM "Explanation"
 WHERE "modelId" = 'gemma-3-1b-it'
   AND layer LIKE '%-gemmascope-2-transcoder-16k'
-  AND notes LIKE '%interpretune-github-copilot-cli%';
+  AND (notes LIKE '%interpretune-explanation-cli%' OR notes LIKE '%interpretune-github-copilot-cli%');
 ```
 
 ## Current operational caution
 
-The pipeline is currently running from the shared `it_latest` environment because the documented Neuronpedia-specific environment on this host is incomplete. That is acceptable for active recovery, but long-running dashboard jobs should eventually move into a dedicated environment with the Neuronpedia and SAEDashboard dependencies pinned independently from the main Interpretune dev environment.
+The pipeline currently runs from the shared interpretune development environment rather than a dedicated Neuronpedia-specific environment. That is acceptable for active recovery, but long-running dashboard jobs should eventually move into a dedicated environment with the Neuronpedia and SAEDashboard dependencies pinned independently from the main Interpretune dev environment.

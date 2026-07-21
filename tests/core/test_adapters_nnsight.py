@@ -454,7 +454,10 @@ class TestNNsightErrorHandling:
 class TestNNsightRemoteExecution:
     """Tests for NNsight remote execution via NDIF.
 
-    These tests require NDIF_API_KEY to be set and network access.
+    These tests require NDIF_API_KEY to be set and network access. NDIF accepts any python 3.9+ client (nnsight
+    serializes intervention functions by source, not bytecode — the old exact-py3.12 requirement is obsolete), but
+    nnsight itself supports python <=3.12 only (no 3.13 classifier as of 0.6.3/0.7.0) — run these from a 3.10-3.12
+    environment.
     """
 
     @pytest.fixture

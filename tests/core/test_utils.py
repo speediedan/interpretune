@@ -494,3 +494,28 @@ class TestClassUtils:
             debug_dir.rmdir()
         except OSError:
             pass
+
+
+def test_instantiation_feedback_warning_category_suppressible():
+    """The categorized config-feedback warnings surface by default but are cleanly filterable.
+
+    ``gen_module_registry`` relies on this to keep bulk registry hydration quiet without hiding other warning
+    categories (see the hydration filter in ``interpretune.registry``).
+    """
+    import warnings
+
+    from interpretune.utils import ITInstantiationFeedbackWarning
+    from interpretune.utils.logging import rank_zero_warn
+
+    assert issubclass(ITInstantiationFeedbackWarning, UserWarning)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        rank_zero_warn("config feedback", category=ITInstantiationFeedbackWarning)
+    assert any(issubclass(w.category, ITInstantiationFeedbackWarning) for w in caught)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        warnings.simplefilter("ignore", ITInstantiationFeedbackWarning)
+        rank_zero_warn("config feedback", category=ITInstantiationFeedbackWarning)
+        warnings.warn("other warning survives the category filter", stacklevel=2)
+    assert len(caught) == 1 and not issubclass(caught[0].category, ITInstantiationFeedbackWarning)

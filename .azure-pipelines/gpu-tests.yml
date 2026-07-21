@@ -69,6 +69,9 @@ jobs:
         HF_HUB_CACHE: /opt/interpretune/hf_cache/hub
         XDG_CACHE_HOME: /opt/interpretune/hf_cache
         APPLY_POST_UPGRADES: "false"
+        # sysmon coverage core (coverage>=7.4, py>=3.12): immune to nnsight's sys.settrace(None)
+        # trace-teardown wipe of the default settrace-based core (see gen_it_coverage.sh)
+        COVERAGE_CORE: sysmon
 
     workspace:
       clean: outputs
@@ -199,6 +202,11 @@ jobs:
           # Run regular CUDA-gated tests separately to reduce peak memory pressure while preserving GPU coverage.
           python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v --durations=50 --reruns 2 --reruns-delay 5
         displayName: 'Testing: standard gpu cuda-marked'
+        env:
+          # gated-model tests (llama3/gemma) and the notebook/example tests run in this phase and
+          # read these secrets; without the mapping they fail with KeyError (see build 575)
+          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+          HF_TOKEN: $(HF_TOKEN)
 
       - bash: |
           source /tmp/venvs/it_dev/bin/activate

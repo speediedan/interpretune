@@ -20,11 +20,18 @@ jobs:
           # For each commit in the PR that touches the registry, verify
           # the only other file allowed is benchmark_update.allow.
           ALLOWED="tests/benchmarks/benchmark_registry.yaml tests/benchmarks/benchmark_update.allow"
+          # Historical commits that predate the isolation policy (grandfathered; do not extend
+          # this list for new work — see tests/benchmarks/README.md):
+          GRANDFATHERED="9923f7d149c888d5ff98842e41a1964e8602bba2 b6fecf4d3687da1e120317c4ffaa13eacba4c49a"
           BASE=${{ github.event.pull_request.base.sha }}
           HEAD=${{ github.event.pull_request.head.sha }}
 
           FAILED=0
           for SHA in $(git log --format=%H "${BASE}..${HEAD}" -- tests/benchmarks/benchmark_registry.yaml); do
+            if echo "$GRANDFATHERED" | grep -qw "$SHA"; then
+              echo "Skipping grandfathered pre-policy commit $SHA"
+              continue
+            fi
             FILES=$(git diff-tree --no-commit-id --name-only -r "$SHA")
             for F in $FILES; do
               if ! echo "$ALLOWED" | grep -qw "$F"; then

@@ -2102,3 +2102,71 @@ for _test_name, _test_obj in list(globals().items()):
         globals()[_test_name] = _OPTIONAL_TEST_MARK(_test_obj)
 
 del _test_name, _test_obj
+
+
+def test_best_variant_token_ids_picks_higher_reference_logit() -> None:
+    import torch
+
+    from it_examples.utils.nb_ui_utils import best_variant_token_ids
+
+    class _FakeTokenizer:
+        # bare "Fruit" -> 5, " Fruit" -> 6; bare "Color" -> 7, " Color" -> 8
+        _vocab = {"Fruit": [5], " Fruit": [6], "Color": [7], " Color": [8]}
+
+        def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+            return self._vocab[text]
+
+    logits = torch.zeros(10)
+    logits[5], logits[6] = 1.0, 3.0  # space-prefixed Fruit favored
+    logits[7], logits[8] = 4.0, 2.0  # bare Color favored
+    assert best_variant_token_ids(_FakeTokenizer(), ["Fruit", "Color"], logits) == [6, 7]
+    assert best_variant_token_ids(_FakeTokenizer(), ["Fruit", "Color"], logits, use_best_variant=False) == [5, 7]
+
+
+def test_display_target_gap_returns_gaps() -> None:
+    import torch
+
+    from it_examples.utils.nb_ui_utils import display_target_gap
+
+    pre = torch.zeros(10)
+    post = torch.zeros(10)
+    pre[3], pre[4] = 1.0, 2.5  # pre gap (A - B) = -1.5
+    post[3], post[4] = 4.0, 1.0  # post gap (A - B) = +3.0
+    pre_gap, post_gap = display_target_gap(pre, post, ("A", 3), ("B", 4), title="test gap")
+    assert pre_gap == pytest.approx(-1.5)
+    assert post_gap == pytest.approx(3.0)
+
+
+def test_concept_token_positions_and_feature_io_profiles() -> None:
+    import torch
+
+    from it_examples.utils.example_helpers import concept_token_positions, feature_io_profiles
+
+    class _FakeTokenizer:
+        _decode = {1: "Is", 2: " orange", 3: " a", 4: " fruit", 5: "?"}
+
+        def decode(self, ids):
+            return self._decode[int(ids[0])]
+
+    positions = concept_token_positions(_FakeTokenizer(), [1, 2, 3, 4, 5], ["orange", "fruit"])
+    assert positions == {1, 3}
+
+    class _FakeGraph:
+        # rows: (layer, pos, feature)
+        active_features = torch.tensor([[10, 1, 7], [10, 2, 7], [12, 3, 9]])
+        activation_values = torch.tensor([3.0, 1.0, 2.0])
+
+    class _FakeTranscoders:
+        def _get_decoder_vectors(self, layer, feats):
+            # layer 10 decoder aligned with the target dir, layer 12 anti-aligned
+            base = torch.tensor([[1.0, 0.0]]) if int(layer) == 10 else torch.tensor([[-0.5, 0.0]])
+            return base.repeat(len(feats), 1)
+
+    target = torch.tensor([1.0, 0.0])
+    profiles = feature_io_profiles(_FakeGraph(), [(10, 7), (12, 9), (14, 3)], target, _FakeTranscoders(), positions)
+    by_key = {(prof.layer, prof.feature): prof for prof in profiles}
+    assert by_key[(10, 7)].input_concept_share == pytest.approx(3.0 / 4.0)  # pos 1 in concept positions
+    assert by_key[(10, 7)].output_projection == pytest.approx(1.0)
+    assert by_key[(12, 9)].input_concept_share == pytest.approx(1.0)  # only fires at pos 3
+    assert by_key[(12, 9)].output_projection == pytest.approx(-0.5)
+    assert by_key[(14, 3)].activation_mass == 0.0  # absent from the graph -> zero mass, decoder still read

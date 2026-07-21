@@ -1,0 +1,27 @@
+EXTENDS: gemmascope-2-rte-base.yaml
+
+pipeline:
+  sae_set: gemma-scope-2-1b-it-transcoders-all
+  neuronpedia_source_set_id: gemmascope-2-transcoder-262k-rte
+  neuronpedia_source_set_description: Transcoder - 262k (RTE)
+  run_name_suffix: context319-full-prompts
+  release_url: https://huggingface.co
+  hf_weights_repo_id: google/gemma-scope-2-1b-it
+  hf_weights_path_template: transcoder_all/layer_{layer}_width_262k_l0_small_affine
+  sae_path_template: layer_{layer}_width_262k_l0_small_affine
+  n_features_per_batch: 512
+  n_prompts_in_forward_pass: 64
+  primary_acts_batch_size: 16
+  cuda_visible_devices: "1"
+  use_skip_transcoder: true
+  import_to_local_db: false
+
+launcher:
+  monitor: true
+  monitor_heartbeat_seconds: 60
+  workers:
+    - id: gpu1
+      cuda_visible_devices: "1"
+      n_features_per_batch: 512
+      n_prompts_in_forward_pass: 64
+      primary_acts_batch_size: 16

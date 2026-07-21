@@ -12,8 +12,8 @@ if str(SRC_DIR) not in sys.path:
 
 utils = importlib.import_module("interpretune.utils")
 DEFAULT_NEURONPEDIA_BASE_URL = utils.DEFAULT_NEURONPEDIA_BASE_URL
-DEFAULT_COPILOT_TIMEOUT_SECONDS = utils.DEFAULT_COPILOT_TIMEOUT_SECONDS
-DEFAULT_COPILOT_MODEL = utils.DEFAULT_COPILOT_MODEL
+DEFAULT_EXPLANATION_CLI_TIMEOUT_SECONDS = utils.DEFAULT_EXPLANATION_CLI_TIMEOUT_SECONDS
+DEFAULT_EXPLANATION_CLI_MODEL = utils.DEFAULT_EXPLANATION_CLI_MODEL
 DEFAULT_GENERATED_OUTPUT_DIR = utils.DEFAULT_GENERATED_OUTPUT_DIR
 DEFAULT_EXPLANATION_AUTHOR_ID = utils.DEFAULT_EXPLANATION_AUTHOR_ID
 DEFAULT_EXPLANATION_TYPE_NAME = utils.DEFAULT_EXPLANATION_TYPE_NAME
@@ -26,8 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Generate a Neuronpedia-style feature explanation artifact via GitHub Copilot CLI from "
-            "either a full feature URL or explicit feature metadata."
+            "Generate a Neuronpedia-style feature explanation artifact via a conforming explanation CLI "
+            "(GitHub Copilot CLI by default) from either a full feature URL or explicit feature metadata."
         )
     )
     parser.add_argument("--feature-url", help="Full Neuronpedia feature URL or API URL.")
@@ -52,15 +52,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory where the markdown artifact will be written.",
     )
     parser.add_argument(
-        "--copilot-model",
-        default=DEFAULT_COPILOT_MODEL,
-        help="COPILOT_MODEL passed to the GitHub Copilot CLI.",
+        "--explanation-model",
+        default=DEFAULT_EXPLANATION_CLI_MODEL,
+        help="Model id exported to the explanation CLI (via its model env var, e.g. COPILOT_MODEL).",
     )
     parser.add_argument(
         "--timeout-seconds",
         type=int,
-        default=DEFAULT_COPILOT_TIMEOUT_SECONDS,
-        help="Timeout for the Copilot CLI call.",
+        default=DEFAULT_EXPLANATION_CLI_TIMEOUT_SECONDS,
+        help="Timeout for the explanation CLI call.",
     )
     parser.add_argument(
         "--write-neuronpedia-import-data",
@@ -109,7 +109,7 @@ def main() -> int:
     result = generate_explanation_artifact(
         feature_ref=feature_ref,
         output_dir=Path(args.output_dir),
-        copilot_model=args.copilot_model,
+        explanation_model=args.explanation_model,
         timeout_seconds=args.timeout_seconds,
         write_neuronpedia_import_data=args.write_neuronpedia_import_data,
         insert_into_local_db=args.insert_into_local_db,

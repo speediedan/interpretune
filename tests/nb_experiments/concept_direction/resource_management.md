@@ -76,3 +76,12 @@ use the exact Literal values for clarity.
 The notebook imports cell sets `expandable_segments:True` to reduce
 fragmentation.  This is set via `os.environ.setdefault()` so it does not
 override a user's existing setting.
+
+## Addendum (2026-07-18): 1B 262k offload envelope
+
+For gemma-3-1b-it 262k transcoders (now published upstream), the practical envelope on a
+24 GiB-VRAM / 62 GiB-RAM host is: `offload="cpu"` + lazy encoder/decoder mandatory (≈31.4 GB bf16
+all-layer weights are host-resident; single layers of 1.21 GB page through VRAM), matching the
+existing 4b-262k guidance above. Single-layer decoder-space probes (e.g. decoder-projection mass
+comparisons) need no offload machinery at all — load one `layer_N.safetensors` (~1.2 GB bf16 /
+~2.4 GB f32) directly. See `wide_transcoder_support_plan.md` (2026-07-18 addendum).

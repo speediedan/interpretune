@@ -43,7 +43,10 @@ from tests.nb_experiments.concept_direction.analysis.intervention_drift_analysis
 
 
 UNSET = object()
-DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "gemma3_4b_it_local_oqi_reasoning_oh_2975_15708.yaml"
+# The pinned gemma3_4b_it_local_oqi_reasoning_oh_2975_15708.yaml debug config was removed 2026-07-07
+# (Ohio 4B parity closed out; see tests/nb_experiments/EXPERIMENT_STATUS.md). Pass --config explicitly
+# to target a specific experiment surface; the Ohio base config remains the default.
+DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "base_oqi_reasoning_oh.yaml"
 DEFAULT_REFERENCE_GLOB = "gemma3_4b_it_ohio_fs_2975_15708_*"
 
 

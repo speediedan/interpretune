@@ -8,7 +8,13 @@ from transformer_lens.config import HookedTransformerConfig
 from transformer_lens.utilities.devices import get_device as tl_get_device
 
 from interpretune.config import ITConfig, HFFromPretrainedConfig, CoreGenerationConfig, ITSerializableCfg
-from interpretune.utils import _resolve_dtype, tl_invalid_dmap, rank_zero_warn, MisconfigurationException
+from interpretune.utils import (
+    ITInstantiationFeedbackWarning,
+    MisconfigurationException,
+    _resolve_dtype,
+    rank_zero_warn,
+    tl_invalid_dmap,
+)
 
 ################################################################################
 # TransformerLens Configuration Encapsulation
@@ -93,7 +99,8 @@ class ITLensBridgeConfig(ITLensSharedConfig):
         if self.enable_compatibility_mode_kwargs and not self.enable_compatibility_mode:
             rank_zero_warn(
                 "enable_compatibility_mode_kwargs was provided but enable_compatibility_mode is False. "
-                "The kwargs will be ignored. Set enable_compatibility_mode=True to use them."
+                "The kwargs will be ignored. Set enable_compatibility_mode=True to use them.",
+                category=ITInstantiationFeedbackWarning,
             )
 
 
@@ -214,7 +221,8 @@ class TLConfigInitMixin:
             if getattr(self.tl_cfg, "use_bridge", False):
                 rank_zero_warn(
                     "ITLensCustomConfig does not support TransformerBridge (use_bridge=True); "
-                    "forcing `use_bridge=False` and falling back to HookedTransformer."
+                    "forcing `use_bridge=False` and falling back to HookedTransformer.",
+                    category=ITInstantiationFeedbackWarning,
                 )
                 # Make sure downstream logic sees the intended value
                 self.tl_cfg.use_bridge = False
@@ -259,7 +267,8 @@ class TLConfigInitMixin:
                 setattr(self, target_key, fallback_val)
             setattr(reduce(getattr, qual_sub_key[:-1], self), qual_sub_key[-1], None)
             rank_zero_warn(
-                f"Interpretune manages the HF model instantiation via `model_name_or_path`. {hf_override_msg}"
+                f"Interpretune manages the HF model instantiation via `model_name_or_path`. {hf_override_msg}",
+                category=ITInstantiationFeedbackWarning,
             )
 
     def _translate_tl_config(self):
@@ -286,7 +295,8 @@ class TLConfigInitMixin:
         if len(ignored_attrs) > 0:
             rank_zero_warn(
                 "Since an `ITLensCustomConfig` has been provided, the following list of set `ITConfig`"
-                f" attributes will be ignored: {ignored_attrs}."
+                f" attributes will be ignored: {ignored_attrs}.",
+                category=ITInstantiationFeedbackWarning,
             )
 
     def _sync_pretrained_cfg(self):
@@ -304,7 +314,7 @@ class TLConfigInitMixin:
             return
         device_map = self.hf_from_pretrained_cfg.pretrained_kwargs.get("device_map", None)
         if isinstance(device_map, dict) and len(device_map.keys()) > 1:
-            rank_zero_warn(tl_invalid_dmap)
+            rank_zero_warn(tl_invalid_dmap, category=ITInstantiationFeedbackWarning)
             self.hf_from_pretrained_cfg.pretrained_kwargs["device_map"] = "cpu"
 
     def _sync_hf_tl_dtypes(self, hf_dtype, tl_dtype):
