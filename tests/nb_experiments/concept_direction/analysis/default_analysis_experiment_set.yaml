@@ -1,13 +1,11 @@
 reference_tests:
-  # - tests/nb_experiments/concept_direction/test_concept_direction_backend_parity.py::test_analysis_backend_parity_gemma3_1b_it_concept_direction_paths[orange_155_4973]
-  # - tests/nb_experiments/concept_direction/test_concept_direction_backend_parity.py::test_analysis_backend_parity_gemma3_4b_it_ohio_reference_graph_sanity[two_group]
+  # NOTE: the pinned-feature (155_4973) and Ohio 4B (2975_15708) parity tests/configs were removed
+  # 2026-07-07 with the stale-analysis cleanup (see tests/nb_experiments/EXPERIMENT_STATUS.md).
   # - tests/nb_experiments/concept_direction/test_concept_direction_backend_parity.py::test_analysis_backend_parity_gemma3_1b_it_orange_reference_graph_sanity
   - tests/nb_experiments/concept_direction/test_concept_direction_backend_parity.py::test_analysis_backend_parity_gemma3_1b_it_extended_reference_graph_sanity[orange_fs_l10_n5]
 notebook_configs:
   # - gemma3_1b_it_local_color_fruit_orange.yaml
-  # - gemma3_1b_it_local_color_fruit_orange_155_4973.yaml
   - gemma3_1b_it_local_color_fruit_orange_fs_l10_n5.yaml
-  # - gemma3_4b_it_local_oqi_reasoning_oh_2975_15708.yaml
 notebook_path: ../concept_direction_template.ipynb
 config_dir: ../configs
 notebook_output_dir: /tmp/it_concept_direction_experiments

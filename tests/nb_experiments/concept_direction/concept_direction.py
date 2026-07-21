@@ -22,9 +22,9 @@ from interpretune.analysis.ops.helpers import (
 )
 from interpretune.config import AnalysisCfg, init_analysis_cfgs
 from interpretune.utils import (
-    DEFAULT_COPILOT_MAX_RETRIES,
-    DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS,
-    DEFAULT_COPILOT_TIMEOUT_SECONDS,
+    DEFAULT_EXPLANATION_CLI_MAX_RETRIES,
+    DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS,
+    DEFAULT_EXPLANATION_CLI_TIMEOUT_SECONDS,
     DEFAULT_EXPLANATION_TYPE_NAME,
     DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL,
     DEFAULT_NEURONPEDIA_BASE_URL,
@@ -439,9 +439,9 @@ class NotebookHarnessConfig:
     local_neuronpedia_service_status: LocalNeuronpediaServiceStatus | None = None
     mode_warning_messages: tuple[str, ...] = field(default_factory=tuple)
     local_explanation_type_name: str = DEFAULT_EXPLANATION_TYPE_NAME
-    local_explanation_timeout_seconds: int = DEFAULT_COPILOT_TIMEOUT_SECONDS
-    local_explanation_max_retries: int = DEFAULT_COPILOT_MAX_RETRIES
-    local_explanation_retry_backoff_seconds: float = DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS
+    local_explanation_timeout_seconds: int = DEFAULT_EXPLANATION_CLI_TIMEOUT_SECONDS
+    local_explanation_max_retries: int = DEFAULT_EXPLANATION_CLI_MAX_RETRIES
+    local_explanation_retry_backoff_seconds: float = DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS
     key_tokens_override: tuple[str, ...] | None = None
     concept_pair_config_path: str | None = None
     constrained_feature_selection_refs: ConstrainedFeatureSelection | None = None
@@ -1140,7 +1140,7 @@ def build_notebook_harness_config(
                 section="NEURONPEDIA",
                 key="local_explanation_timeout_seconds",
                 flat_key="LOCAL_EXPLANATION_TIMEOUT_SECONDS",
-                default=DEFAULT_COPILOT_TIMEOUT_SECONDS,
+                default=DEFAULT_EXPLANATION_CLI_TIMEOUT_SECONDS,
             )
         ),
         local_explanation_max_retries=int(
@@ -1149,7 +1149,7 @@ def build_notebook_harness_config(
                 section="NEURONPEDIA",
                 key="local_explanation_max_retries",
                 flat_key="LOCAL_EXPLANATION_MAX_RETRIES",
-                default=DEFAULT_COPILOT_MAX_RETRIES,
+                default=DEFAULT_EXPLANATION_CLI_MAX_RETRIES,
             )
         ),
         local_explanation_retry_backoff_seconds=float(
@@ -1158,7 +1158,7 @@ def build_notebook_harness_config(
                 section="NEURONPEDIA",
                 key="local_explanation_retry_backoff_seconds",
                 flat_key="LOCAL_EXPLANATION_RETRY_BACKOFF_SECONDS",
-                default=DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS,
+                default=DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS,
             )
         ),
         key_tokens_override=cast(

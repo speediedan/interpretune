@@ -1,9 +1,8 @@
 # Concept Direction Experiment — Synthesized Summary
 
 This document distils everything learned across twelve experiment waves (V1–V12) into a
-single living reference. Per-wave detail lives in
-[archived_analysis/](archived_analysis/). Start here for current understanding; consult
-per-wave files only when you need exact numbers or artifact paths.
+single living reference (per-wave summaries were consolidated into this document,
+2026-04-25). Start here for current understanding.
 
 ---
 
@@ -350,8 +349,8 @@ ctx_enhanced}) completed successfully. Also fixed a `batch=None` tokenization bu
 `run_direct_projection_pipeline`. Key finding: context-enhanced extraction is numerically
 equivalent to standard answer-position extraction (cosine diff ≤ 0.003, probe sep diff
 < 0.001), confirming the store direction's weakness is geometric, not an extraction-mode
-artifact. Results are in §3 and
-[archived_analysis/V12_experimental_summary.md](archived_analysis/V12_experimental_summary.md).
+artifact. Results are in §3 (the V12 per-wave summary was consolidated into this
+document, 2026-04-25).
 See also [concept_direction_analysis.md](concept_direction_analysis.md) for detailed
 feature analysis with Neuronpedia dashboard links and probe separation tables.
 
@@ -362,8 +361,8 @@ that bypasses circuit-tracer feature selection entirely. All 3 experiments (gemm
 {cat_dog, capitals_states, oqi_indirect}) completed 27/27 cells. Key findings: direct
 projection is informative only when the direction has intrinsic geometric alignment
 (cat_dog); feature mediation can invert the direction signal; OQ-I indirect embed/store
-deltas converge to identical values with Jaccard = 0.818. Results are in §3 and
-[archived_analysis/V11_experimental_summary.md](archived_analysis/V11_experimental_summary.md).
+deltas converge to identical values with Jaccard = 0.818. Results are in §3 (the V11
+per-wave summary was consolidated into this document, 2026-04-25).
 
 ### V10 Wave — Complete ✅
 
@@ -371,13 +370,13 @@ V10 tested direction asymmetry (cat_dog) and began the OQ-I investigation with
 reasoning-chain and indirect prompts. All 9 experiments (5 cat_dog + 4 OQ-I) ran
 to completion. Key findings: PT direction reversal is approximately symmetric;
 IT amplification saturation is prompt-specific, not model-inherent. Results are in §3
-and [archived_analysis/V10_experimental_summary.md](archived_analysis/V10_experimental_summary.md).
+(the V10 per-wave summary was consolidated into this document, 2026-04-25).
 
 ### V9 Wave — Complete ✅
 
 V9 addressed the dog_cat data integrity issues and added 262k transcoder variants.
-All 10 experiments ran to completion. Results are in §3 and
-[archived_analysis/V9_experimental_summary.md](archived_analysis/V9_experimental_summary.md).
+All 10 experiments ran to completion. Results are in §3 (the V9 per-wave summary was
+consolidated into this document, 2026-04-25).
 
 ### Subsequent priorities (post-V12)
 
@@ -432,6 +431,6 @@ These are ordered by expected diagnostic value:
 - **Cosine sim** = cosine similarity between normalised embed and store direction vectors.
 - **Jaccard** = Jaccard index on the top-N feature sets selected by each direction.
 - **Predictions** = store-direction prompt-conditioned classification accuracy (X/8).
-- Per-wave detail: [archived_analysis/V1–V12_experimental_summary.md](archived_analysis/)
-- Legacy hypotheses: [archived_analysis/HYPOTHESES.md](archived_analysis/HYPOTHESES.md)
-- Legacy observation log: [archived_analysis/experimental_summaries.md](archived_analysis/experimental_summaries.md)
+- Per-wave detail (V1–V12), legacy hypotheses, and the legacy observation log were
+  consolidated into this document in the 2026-04-25 consolidation; the standalone
+  `archived_analysis/` files no longer exist.

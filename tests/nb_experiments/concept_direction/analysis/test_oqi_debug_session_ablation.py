@@ -9,9 +9,7 @@ from tests.nb_experiments.concept_direction.analysis.oqi_debug_session_ablation 
 
 
 def test_build_notebook_cfg_preserves_debug_session_surface_preset(tmp_path: Path) -> None:
-    base_config_path = (
-        Path(__file__).resolve().parents[1] / "configs" / "gemma3_4b_it_local_oqi_reasoning_oh_2975_15708.yaml"
-    )
+    base_config_path = Path(__file__).resolve().parents[1] / "configs" / "base_oqi_reasoning_oh.yaml"
     config_path = tmp_path / "oqi_debug_surface.yaml"
     config_path.write_text(
         yaml.safe_dump(

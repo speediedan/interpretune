@@ -1,7 +1,0 @@
-EXTENDS: gemma3_1b_it_local_color_fruit_orange_155_4973.yaml
-
-EXPERIMENT_NAME: gemma3_1b_it_local_color_fruit_orange_155_4973_streaming
-
-ANALYSIS:
-  debug_pipeline_state_artifacts: false
-  debug_pipeline_state_artifact_name: gemma3_1b_it_orange_155_4973_notebook_streaming

@@ -1,5 +1,12 @@
 EXTENDS: base_gemma3_it_local.yaml
 
+# MODEL defaults were previously supplied by the (removed 2026-07-07) pinned
+# gemma3_4b_it_local_oqi_reasoning_oh_2975_15708*.yaml configs; the Ohio investigation
+# targeted gemma-3-4b-it, so that remains the default surface here.
+MODEL:
+  family: gemma3
+  variant: 4b_it
+
 EXPERIMENT:
   concept_pair_config_path: cp_ohio_entities_gemma_it.yaml
 

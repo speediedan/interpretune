@@ -372,7 +372,8 @@ Key readouts:
 - All three PT runs still report `Predictions: 0/8` for the store-direction prompt set, even with the explicit `" Capital"` / `" State"` wording. The store pipeline is still learning directions from prompt-conditioned states that do not robustly solve the task.
 - The large `+6.0625` embed delta on `gemma3_pt` is not a win by itself. The accompanying notebook and the manual observation log show that the model starts producing nonsense completions when that direction is applied. The usable PT interventions are therefore `gemma2_pt` and `gemma3_4b_pt`, not `gemma3_pt`.
 
-See [experimental_summaries.md](experimental_summaries.md) for full observation log and analysis.
+Full observation log and analysis: per-wave summaries were consolidated into
+[experiment_summary.md](experiment_summary.md), 2026-04-25.
 
 ### V8: Op-Driven Store Rerun + Gemma 3 4B IT (2026-03-27)
 
@@ -459,12 +460,16 @@ See [resource_management.md](resource_management.md) for full details and [/docs
 - `../nb_experiment_harness/nb_experiment_launcher.py`: shared Papermill launcher for running
    parameterized experiment notebooks across YAML configs with timestamped output.
 - `../nb_experiment_harness/README.md`: shared launcher/bootstrap/config/session harness notes.
-- `archived_analysis/`: Historical notes and results from the retired standalone experimentation wave.
+- Historical notes and results from the retired standalone experimentation wave were
+  consolidated into `experiment_summary.md` (2026-04-25; the `archived_analysis/` directory no
+  longer exists).
 - `compare_approaches.py`: V1/V2 harness (predecessor). Supports `--model-variant it|base`,
   `--no-chat-template`, `--skip-intervention`, `--output`.
 - `V3_ANALYSIS.md`: Comprehensive V3 analysis document with full results and findings.
 - `HYPOTHESES.md`: Tracked hypotheses (H1–H7) for systematic investigation.
-- `experimental_summaries.md`: Outstanding questions, observation log, and V4–V6 results.
+- Outstanding questions, observation log, and V4–V6 results were consolidated into
+  `experiment_summary.md` (2026-04-25 consolidation; the standalone `experimental_summaries.md`
+  no longer exists).
 - `resource_management.md`: Developer-facing GPU memory management guide.
 - `configs/`: YAML config files for parameterized notebook experiments. Includes
   `archived_cfgs/` for deprecated `gemma_dataclass` render mode configs.
@@ -481,8 +486,8 @@ inheritance; the notebook receives the resolved config path rather than a flatte
 parameter expansion.
 
 ```bash
-cd /home/speediedan/repos/interpretune
-source /mnt/cache/speediedan/.venvs/it_latest/bin/activate
+cd <interpretune-repo-root>
+source <your-venv>/bin/activate  # any env with interpretune + notebook extras installed
 
 # Run a single config
 python tests/nb_experiments/nb_experiment_launcher.py \
@@ -515,7 +520,7 @@ executed notebook plus `.source.yaml` and `.resolved.yaml` snapshots of the conf
 ### Historical V3 notes
 
 The standalone V3 experimentation script has been retired.
-Historical analysis notes remain under `archived_analysis/`.
+Historical analysis notes were consolidated into `experiment_summary.md` (2026-04-25).
 
 ## Comparison Metrics
 

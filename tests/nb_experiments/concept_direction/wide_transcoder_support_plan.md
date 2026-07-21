@@ -204,3 +204,22 @@ Activate this work when:
   lazy_encoder, lazy_decoder, batch_size)
 - **circuit_tracer/utils/disk_offload.py**: Offload utilities (`disk_offload_module`,
   `cpu_offload_module`)
+
+---
+
+## Addendum (2026-07-18): gemma-3-1b-it 262k availability + feasibility on the 24 GiB / 62 GiB host
+
+`mwhanna/gemma-scope-2-1b-it` now publishes `transcoder_all/width_262k_l0_small_affine` (full-layer
+262k for the 1B IT model). Footprints: 262,144 × 1,152 encoder+decoder ≈ 0.60 B params/layer →
+**1.21 GB bf16/layer, ≈31.4 GB all 26 layers** (vs ≈2.0 GB total for 16k). On the current host
+(24 GiB VRAM / 62 GiB RAM) all-layer 262k therefore requires `offload="cpu"` + lazy encoder/decoder
+(auto-enabled with offload) — VRAM-resident is impossible; host-resident fits with ~30 GB headroom.
+The lazy-safetensors-read attribution bottleneck documented above applies unchanged mechanically
+(~51 min/graph measured for the 4b lineage; the 1b should be proportionally faster but remains
+minutes-scale vs ~10 s at 16k) — **keep the steering demo on 16k; run 262k as one-off offloaded
+comparison experiments**. First such probe (2026-07-18, decoder-space only, no model forward):
+L19 |decoder-projection| mass onto the unit Fruit−Color unembed diff — top-1000 share 17.5% (16k)
+vs 1.53% (262k), top-100 2.46% vs 0.19%, participation fraction ~0.63 for both (shape
+scale-invariant ⇒ splitting is width-proportional; any top-N selection captures ~13-16× less
+concept decoder mass at 262k). Full results in the "Steering-Demo Feature-Semantics" section of
+`concept_direction_analysis.md` (Finding 3).
