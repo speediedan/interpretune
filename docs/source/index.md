@@ -1,12 +1,24 @@
-# interpretune
+# Interpretune
+
+```{image} _static/images/logos/logo_interpretune.svg
+:alt: Interpretune
+:width: 420px
+:class: only-light
+```
 
 **A flexible framework for collaborative AI world model analysis and tuning.**
 
-Interpretune composes interpretability adapters (TransformerLens, SAE-Lens, NNsight,
-circuit-tracer, Lightning) over a shared session/protocol layer so that analysis operations —
-activation caching, latent-model splicing, attribution graphs, concept-direction interventions —
-can be written once and executed across backends, with results captured in shareable
-{doc}`AnalysisStore <concepts>` datasets.
+Interpretune composes adapters at **multiple levels of abstraction** — the *framework* level
+(core PyTorch, Lightning), the *interpretability latent-model* level (TransformerLens, NNsight),
+and the *analysis* level (circuit-tracer, SAE-Lens) — over a shared session/protocol layer (see
+the {doc}`adapter development guide <usage/adapter_development_guide>`). This composition pattern
+is what lets researchers **collaborate across interpretability frameworks**: analytical
+primitives, artifacts, and patterns written once run over many substrate combinations.
+
+Analysis flows are built from composable operations — e.g. `extract_top_features`,
+`gradient_attribution`, `ablation_attribution`, `feature_intervention`, `graph_prune`,
+`concept_direction`, `compute_attribution_graph` — compiled over the active adapter composition,
+with results captured in shareable {doc}`AnalysisStore <concepts>` datasets.
 
 ```{note}
 Interpretune is **pre-MVP**: APIs are subject to change. The {doc}`roadmap <roadmap>` describes
@@ -67,3 +79,11 @@ design/fts_transformerlens_integration
 
 api
 ```
+
+## Who maintains Interpretune?
+
+Interpretune's original author and initial maintainer,
+[@speediedan](https://github.com/speediedan) (Daniel Dale), has been contributing to PyTorch and
+Lightning for more than half a decade, is a contributor to circuit-tracer, TransformerLens, and
+SAE-Lens among other frameworks, and is the author of research packages including
+[finetuning-scheduler](https://github.com/speediedan/finetuning-scheduler).

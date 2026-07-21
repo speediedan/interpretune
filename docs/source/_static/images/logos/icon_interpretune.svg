@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="itMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f2f6f4"/>
+      <stop offset="35%" stop-color="#b9c4bf"/>
+      <stop offset="60%" stop-color="#8fa39a"/>
+      <stop offset="100%" stop-color="#d7e0dc"/>
+    </linearGradient>
+    <linearGradient id="itGreen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2eaf6c"/>
+      <stop offset="100%" stop-color="#156b43"/>
+    </linearGradient>
+  </defs>
+  <!-- rounded green tile -->
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="url(#itGreen)"/>
+  <!-- metallic tuning fork: two prongs joined in a U, stem below -->
+  <g stroke="url(#itMetal)" stroke-width="6" stroke-linecap="round" fill="none">
+    <path d="M22 12 V30 a10 10 0 0 0 20 0 V12"/>
+    <path d="M32 40 V52"/>
+  </g>
+  <!-- subtle highlight on the left prong for the metallic read -->
+  <path d="M22 13 V29" stroke="#ffffff" stroke-opacity="0.55" stroke-width="1.6" stroke-linecap="round" fill="none"/>
+</svg>

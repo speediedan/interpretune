@@ -1,6 +1,6 @@
 <div align="center">
 
-# Interpretune
+<img src="docs/source/_static/images/logos/logo_interpretune.svg" alt="Interpretune" width="420"/>
 
 **Mechanistically informed AI model tuning.**
 
@@ -22,13 +22,16 @@ composable, and shareable.*
 
 ## What is interpretune?
 
-Interpretune composes interpretability adapters — [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens),
-[SAE-Lens](https://github.com/decoderesearch/SAELens), [NNsight](https://github.com/ndif-team/nnsight),
-[circuit-tracer](https://github.com/safety-research/circuit-tracer), and
-[Lightning](https://github.com/Lightning-AI/pytorch-lightning) — over a shared session/protocol
-layer, so analysis operations (activation caching, latent-model splicing, attribution graphs,
-concept-direction interventions) are **written once and executed across backends**, with results
-captured as shareable datasets.
+Interpretune composes adapters at **multiple levels of abstraction** — the *framework* level
+(core PyTorch, [Lightning](https://github.com/Lightning-AI/pytorch-lightning)), the
+*interpretability latent-model* level ([TransformerLens](https://github.com/TransformerLensOrg/TransformerLens),
+[NNsight](https://github.com/ndif-team/nnsight)), and the *analysis* level
+([circuit-tracer](https://github.com/safety-research/circuit-tracer),
+[SAE-Lens](https://github.com/decoderesearch/SAELens)) — over a shared session/protocol layer.
+This composition pattern is what lets researchers collaborate across interpretability frameworks:
+analysis operations (e.g. `extract_top_features`, `gradient_attribution`, `ablation_attribution`,
+`feature_intervention`, `graph_prune`, `concept_direction`, `compute_attribution_graph`) are
+**written once and executed across backends**, with results captured as shareable datasets.
 
 A note on terminology: we use "world model" in the **epistemic/semantic** sense — the internal
 representations, concepts, and beliefs a model encodes about the world, as studied in LLM
@@ -67,35 +70,44 @@ result = it.intervention_from_concept(session.module, ...)
 
 ## Roadmap
 
-### Wave 1 (in flight): Scalable Dashboards PR wave
+### In flight: coordinated upstream Scalable Dashboard PRs
 
-A coordinated multi-repo PR set upstreaming scalable dashboard generation validated end-to-end in
-this repo: peak-memory-controlled generation with per-stage CUDA accounting and pretokenization
-records (SAEDashboard), supporting surfaces in SAELens, the circuit-tracer attribution-target
-abstraction, and Neuronpedia import/coverage support — with interpretune providing the
-orchestration pipeline, dashboard benchmark suite (quantified evidence), and the dual-backend
-circuit-tracer analysis integration that consumes the results.
+A coordinated multi-repo PR set upstreaming scalable dashboard generation validated end-to-end
+with Interpretune: peak-memory-controlled generation with per-stage CUDA accounting and
+pretokenization records (SAEDashboard), supporting surfaces in SAELens, the circuit-tracer
+attribution-target abstraction, and Neuronpedia import/coverage support — with the dashboard
+benchmark suite in this repo providing quantified evidence. *(Coordination PR link forthcoming.)*
 
-### Wave 2: hub-resident, streamable dashboards
+**On ownership**: the upstream repos — principally Neuronpedia, together with SAEDashboard — own
+the core dashboard APIs and generation protocol and will continue to own them; Interpretune
+provides **one example** generation/import orchestration pipeline demonstrating the improved
+scalability, example-aligned customizability, and (soon) direct shareability/streamability.
+
+### Next: MVP milestone — shareable analysis artifacts
+
+The [MVP milestone](https://github.com/speediedan/interpretune/milestone/1) centers on making
+Interpretune artifacts shareable on the Hub — most importantly **AnalysisStore upload/download**
+(analyses as exchangeable, reproducible, composable datasets), **adapter/session shareability**
+(an analysis is runnable, not just readable), and **cross-backend support hardening**
+([#201](https://github.com/speediedan/interpretune/issues/201),
+[#224](https://github.com/speediedan/interpretune/issues/224)). This is the same hub-artifact
+pattern as the streamable-dashboards effort — one consistent story for dashboards, explanations,
+and analysis results.
+
+### Following: hub-resident, streamable dashboards
 
 Dashboards and locally-generated feature explanations become **Hugging Face Hub artifacts that
 viewers stream on demand**, optionally disintermediating the Neuronpedia DB for user-generated
-dashboards (on neuronpedia.org and local dev stacks alike). Jacobian-space (J-lens) analysis
-support rides alongside as a research thread.
+dashboards (on neuronpedia.org and local dev stacks alike) — same upstream-ownership framing as
+above.
 
-### MVP milestone: shareable analysis artifacts
+### Research directions
 
-The [MVP milestone](https://github.com/speediedan/interpretune/milestone/1) centers on making
-interpretune artifacts shareable on the Hub — most importantly **AnalysisStore
-upload/download** (analyses as exchangeable, reproducible, composable datasets) and
-**adapter/session shareability** (an analysis is runnable, not just readable). This is the same
-hub-artifact pattern as Wave 2's dashboard availability — one consistent story for dashboards,
-explanations, and analysis results.
-
-### Longer-horizon research directions
-
-Epistemic-coherence objectives, reflective cognition for counterfactuals via latent-state
-evaluation, meta-latent world-model interfaces, and multimodal world-model support — see the
+RTE cross-backend research ([#220](https://github.com/speediedan/interpretune/issues/220)),
+Jacobian-space (J-lens) analysis support
+([#225](https://github.com/speediedan/interpretune/issues/225)), epistemic-coherence objectives,
+reflective cognition for counterfactuals via latent-state evaluation, meta-latent world-model
+interfaces, and multimodal world-model support — see the
 [roadmap docs](https://interpretune.readthedocs.io/en/latest/roadmap.html).
 
 ## Installation

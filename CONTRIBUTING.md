@@ -167,3 +167,23 @@ Notes and recommendations
 - Prefer overriding `_it_cls_metadata` at the class definition site. This makes the intent explicit and avoids cross-module side effects.
 - If you must patch behavior in tests, mutate nested containers (for example `type(obj)._it_cls_metadata.core_to_framework_attrs_map[...] = ...`) rather than replacing the dataclass instance — the latter is permitted but can make test isolation harder if not reverted.
 - Document any non-obvious overrides in your module's docstring so users can easily understand the intent.
+
+## Documentation
+
+The docs are Sphinx + MyST on Read the Docs (`docs/source/`; see the maintainer docs plan for
+architecture). To build locally:
+
+```bash
+make docs                 # installs the docs dependency group and builds docs/build
+# or directly:
+SPHINX_MOCK_REQUIREMENTS=1 python -m sphinx -b html --keep-going docs/source docs/build
+```
+
+The `Docs build` CI workflow is **required** on every push and PR (errors fail the build), and
+Read the Docs builds pull-request previews. When adding native analysis ops, regenerate the type
+stubs (`python scripts/generate_op_stubs.py`) — the stale-stubs CI check enforces freshness.
+
+## Naming
+
+"Interpretune" (capitalized) refers to the project; `interpretune` (lowercase) refers to the
+distributed package / repository.

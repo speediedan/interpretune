@@ -1,0 +1,9 @@
+/* Landing page: the wordmark logo replaces the visible H1 text; keep the heading accessible. */
+section#interpretune > h1 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

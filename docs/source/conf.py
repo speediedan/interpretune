@@ -89,14 +89,22 @@ intersphinx_mapping = {
 # `interpretune_sphinx_theme` child-theme fork: change html_theme + add the package to
 # requirements/docs.txt (see the docs plan in the maintainer's PR-prep notes).
 html_theme = "pydata_sphinx_theme"
-html_title = "interpretune"
+html_title = "Interpretune"
 html_static_path = ["_static"]
+html_css_files = ["custom.css"]
+html_logo = "_static/images/logos/logo_interpretune.svg"
+html_favicon = "_static/images/logos/icon_interpretune.svg"
 html_theme_options = {
     "github_url": "https://github.com/speediedan/interpretune",
     "navbar_align": "content",
     "show_toc_level": 2,
+    "show_nav_level": 2,
     "navigation_with_keys": False,
 }
+# Global site navigation in the primary sidebar on EVERY page (including the landing page):
+# the theme's stock sidebar-nav-bs renders only the active top-level section (empty at the root),
+# so we render the full toctree from depth 0 via a custom template.
+html_sidebars = {"**": ["sidebar-nav-global.html"]}
 html_context = {
     "github_user": "speediedan",
     "github_repo": "interpretune",
