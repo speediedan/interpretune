@@ -388,6 +388,9 @@ model_backend = get_model_backend(it_module)      # TLModelBackend or NNsightMod
 analysis_backend = get_analysis_backend(it_module)  # e.g. the circuit-tracer analysis backend
 ```
 
+For the per-capability backend support surface (including known edge-case limitations), see the
+**Backend Compatibility Matrix** in `circuit_tracer_backend_support.md`.
+
 ### Hook Name Mapping
 
 The `HookNameResolver` translates hook names between backends:

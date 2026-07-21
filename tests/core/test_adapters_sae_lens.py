@@ -651,3 +651,57 @@ class TestBridgeTranscoderSupport:
         assert not torch.allclose(tinystories_original_logits, logits_with_transcoder)
         assert "blocks.0.mlp.hook_out.hook_sae_acts_post" in cache
         assert len(tinystories_bridge_model._acts_to_saes) == 0
+
+
+class TestLatentModelHandleLifecycle:
+    """Latent-model handle lifecycle across backend splice paths (interpretune#201, task 3).
+
+    Contract validated for every model backend: after any ``fwd_w_cache_and_latent_models``
+    call, (a) the model produces baseline (unspliced) outputs again — no residual splice
+    state or leaked hooks; (b) repeated spliced invocations are stable — no hook/edit
+    accumulation across calls; and (c) where the SAE-Lens splice registry is exposed
+    (TL paths), ``acts_to_saes`` is empty before and after.
+    """
+
+    prompt = "Hello, I'm a language model,"
+
+    @pytest.mark.parametrize("session_fixture", **cross_backend_init_pytest_cfg)
+    def test_cache_splice_lifecycle(self, request, session_fixture):
+        from interpretune.analysis.backends import get_model_backend
+
+        module = request.getfixturevalue(session_fixture)
+        backend = get_model_backend(module)
+        assert backend is not None, "model backend must resolve for all latent-capable adapter contexts"
+        model = module.model
+        tokens = module.it_cfg.tokenizer(self.prompt, return_tensors="pt")["input_ids"]
+        batch = {"input": tokens}
+        # Cache the SAE *stage* subhooks (production pattern) rather than the base activation at the
+        # spliced site: on the nnsight backend, requesting the base hook at a site being spliced
+        # double-reads the envoy input and raises OutOfOrderError (recorded as a known limitation in
+        # the backend compatibility matrix, interpretune#201). The TL-mixin resolve_sae_hook_name
+        # already yields the full stage-subhook name; nnsight modules derive it from SAE metadata.
+        resolve = getattr(module, "resolve_sae_hook_name", None)
+        names_filter = [
+            resolve(h) if resolve else f"{h.cfg.metadata.hook_name}.hook_sae_acts_post" for h in module.sae_handles
+        ]
+
+        if hasattr(model, "acts_to_saes"):
+            assert len(model.acts_to_saes) == 0
+
+        baseline_pre = backend.fwd(model, batch)
+
+        spliced_1, cache_1 = backend.fwd_w_cache_and_latent_models(model, batch, module.sae_handles, names_filter)
+        spliced_2, _cache_2 = backend.fwd_w_cache_and_latent_models(model, batch, module.sae_handles, names_filter)
+
+        # splice changes outputs (SAE reconstruction error) and caches the requested stage hooks
+        assert not torch.allclose(spliced_1, baseline_pre)
+        for cache_name in names_filter:
+            assert cache_name in cache_1
+        # repeated invocations are stable — no accumulation of hooks/edits across calls
+        assert torch.allclose(spliced_1, spliced_2)
+
+        # no residual splice state: registry empty (where exposed) and baseline outputs restored
+        if hasattr(model, "acts_to_saes"):
+            assert len(model.acts_to_saes) == 0
+        baseline_post = backend.fwd(model, batch)
+        assert torch.allclose(baseline_pre, baseline_post)

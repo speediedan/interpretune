@@ -68,6 +68,29 @@ circuit-tracer gains bridge support; historically this limitation (plus minor NN
 experimental variables fixed) is why the `tests/nb_experiments` concept-direction experimentation
 standardized on the NNsight backend.
 
+## Backend Compatibility Matrix
+
+Model-backend capability surface (interpretune#201 task 5). Both backends implement the full
+seven-method `ModelBackend` surface; the differences are in *how* and in edge-case behavior:
+
+| Capability (`ModelBackend` method) | TL (HookedTransformer) | TL (TransformerBridge) | NNsight |
+| --- | --- | --- | --- |
+| `fwd` (minimal forward) | ✅ | ✅ | ✅ (trace-wrapped so input-key mapping applies) |
+| `fwd_w_cache` (activation caching) | ✅ | ✅ | ✅ (envoy reads via `nnsight.save`) |
+| `fwd_w_cache_and_latent_models` (latent-model splice + cache) | ✅ `run_with_cache_with_saes` | ✅ `run_with_cache_with_saes` | ✅ trace-scoped splice; ⚠️ requesting the **base** activation at a spliced site double-reads the envoy input (`OutOfOrderError`) — cache the SAE stage subhooks instead |
+| `fwd_w_hooks_and_latent_models` (custom hooks + splice) | ✅ | ✅ | ✅ (edit-context interventions) |
+| `fwd_w_hooks_batched` (multi-config hook batching) | ⚠️ sequential fallback (one pass per config; `configs_per_pass` no-op) | ⚠️ sequential fallback | ✅ native batched invokes |
+| `fwd_w_grads_and_latent_models` (gradient capture + splice) | ✅ | ✅ | ✅ |
+| `fwd_w_intervention` (direction/feature interventions) | ✅ (legacy-alias gaps: e.g. `unembed.hook_in` needs the `ln_final.hook_normalized` fallback — see interpretune#223) | ✅ (same alias caveat) | ✅ |
+
+Lifecycle contract (validated by `tests/core/test_adapters_sae_lens.py::TestLatentModelHandleLifecycle`
+across all three substrates): splice paths leave **no residual state** — baseline outputs are
+restored after any spliced call, repeated spliced invocations are stable (no hook/edit
+accumulation), and the SAE-Lens `acts_to_saes` registry is empty before and after where exposed.
+Additional constraint: TransformerBridge cannot be initialized from a config dict alone
+(config-based init always uses `HookedSAETransformer` — see the adapter development guide's
+Pattern 3).
+
 ## Demo Notebooks
 
 | Notebook | Description |

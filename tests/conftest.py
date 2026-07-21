@@ -1303,6 +1303,7 @@ def restore_env_variables():
         "NDIF_API_KEY",
         "HF_MCP_TOKEN_RW",
         "COPILOT_PROVIDER_API_KEY",  # explanation-CLI BYOK key (see neuronpedia_explanations.py)
+        "READTHEDOCS_TOKEN",  # RTD API token added to .env for docs automation (Session 37+)
     }
     allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)
