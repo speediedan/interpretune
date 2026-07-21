@@ -4,9 +4,7 @@
 
 **A flexible framework for collaborative AI world model analysis and tuning.**
 
-*Composable, shareable latent-space analysis at abstraction levels intelligible to both humans
-and agents — for transparent, causally faithful reasoning, model self-reflection, and
-world-model-guided collaborative tuning.*
+*Composable, shareable latent-space analysis mutually intelligible to humans and agents.*
 
 [![CI](https://github.com/speediedan/interpretune/actions/workflows/ci_test-full.yml/badge.svg)](https://github.com/speediedan/interpretune/actions/workflows/ci_test-full.yml)
 [![Docs](https://readthedocs.org/projects/interpretune/badge/?version=latest)](https://interpretune.readthedocs.io/en/latest/)
@@ -26,10 +24,12 @@ world-model-guided collaborative tuning.*
 Interpretune is an AI world model analysis framework that enables a wide range of
 interpretability methods and packages to leverage **composable, shareable analysis operations and
 state**, accelerating collaborative world model analysis and tuning with PyTorch. It lets both
-humans and agents inspect the mechanistic and causal faithfulness of model reasoning at mutually
-intelligible levels of abstraction — granting greater transparency and confidence in conclusions
-while enabling model self-reflection, inter-agent latent-space collaboration, and more
-sample-efficient, internal-world-model-guided tuning.
+humans and agents inspect and refine the mechanistic and causal faithfulness of model reasoning
+at mutually intelligible levels of abstraction.
+
+**What that unlocks**: transparent, causally faithful reasoning with greater confidence in
+conclusions; model self-reflection; inter-agent latent-space collaboration; and more
+sample-efficient, world-model-guided collaborative tuning.
 
 Interpretune composes adapters at **multiple levels of abstraction** — the *framework* level
 (core PyTorch, [Lightning](https://github.com/Lightning-AI/pytorch-lightning)), the
@@ -172,7 +172,7 @@ guide and `requirements/utils/lock_ci_requirements.sh` for CI-locked requirement
 
 ## Contributing
 
-Contributors are enthusiastically and earnestly welcome — Interpretune is built to be a
+Contributors are enthusiastically welcomed — Interpretune is built to be a
 community effort, and the transition from pre-MVP to alpha is the perfect moment to get involved.
 The [IT-MVP milestone](https://github.com/speediedan/interpretune/milestone/1) is the best place
 to find priority items and good first issues, the

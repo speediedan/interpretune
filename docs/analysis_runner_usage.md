@@ -194,7 +194,9 @@ cfg = AnalysisCfg(
 result = execute_analysis_op(module, batch, analysis_cfg=cfg, analysis_inputs=inputs)
 ```
 
-This is the pattern used by the circuit-tracer cross-backend demo notebook.
+This is the pattern the planned circuit-tracer cross-backend composition demo will use
+(tracked in [#224](https://github.com/speediedan/interpretune/issues/224); see
+`circuit_tracer_backend_support.md` — no committed notebook demonstrates it yet).
 
 ## Current Limitations
 

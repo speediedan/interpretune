@@ -2,7 +2,7 @@
 
 > **Note — pre‑MVP:** Interpretune is currently in pre‑MVP stage. We expect to reach an MVP soon and begin accepting external PRs. If you're preparing contributions, please open issues or draft PRs now; maintainers will review them as we transition to the public MVP.
 
-Contributors are **enthusiastically and earnestly welcome** — Interpretune is built to be a
+Contributors are **enthusiastically welcomed** — Interpretune is built to be a
 community effort, and the pre-MVP → alpha transition is an ideal moment to get involved. The
 [IT-MVP milestone](https://github.com/speediedan/interpretune/milestone/1) is the best place to
 find priority items and good first issues. Thank you in advance for your contributions to the

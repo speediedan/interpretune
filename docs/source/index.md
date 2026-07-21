@@ -11,8 +11,9 @@
 Interpretune is an AI world model analysis framework that enables a wide range of
 interpretability methods and packages to leverage **composable, shareable analysis operations and
 state**, accelerating collaborative world model analysis and tuning with PyTorch — letting both
-humans and agents inspect the mechanistic and causal faithfulness of model reasoning at mutually
-intelligible levels of abstraction.
+humans and agents inspect and refine the mechanistic and causal faithfulness of model reasoning
+at mutually intelligible levels of abstraction — enabling transparent, causally faithful
+reasoning, model self-reflection, and world-model-guided collaborative tuning.
 
 Interpretune composes adapters at **multiple levels of abstraction** — the *framework* level
 (core PyTorch, Lightning), the *interpretability latent-model* level (TransformerLens, NNsight),
@@ -94,7 +95,7 @@ Lightning for more than half a decade, is a contributor to circuit-tracer, Trans
 SAE-Lens among other frameworks, and is the author of research packages including
 [finetuning-scheduler](https://github.com/speediedan/finetuning-scheduler).
 
-**Contributors are enthusiastically welcome!** The
+**Contributors are enthusiastically welcomed!** The
 [IT-MVP milestone](https://github.com/speediedan/interpretune/milestone/1) is the best place to
 find priority items and good first issues — thank you in advance for contributing to the
 open-source interpretability ecosystem.

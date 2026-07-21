@@ -1,24 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
-    <linearGradient id="itMetal" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="itMetal" x1="16" y1="8" x2="48" y2="56" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#f2f6f4"/>
       <stop offset="35%" stop-color="#b9c4bf"/>
       <stop offset="60%" stop-color="#8fa39a"/>
       <stop offset="100%" stop-color="#d7e0dc"/>
     </linearGradient>
-    <linearGradient id="itGreen" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="itGreen" x1="32" y1="2" x2="32" y2="62" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#2eaf6c"/>
       <stop offset="100%" stop-color="#156b43"/>
     </linearGradient>
   </defs>
   <!-- rounded green tile -->
   <rect x="2" y="2" width="60" height="60" rx="13" fill="url(#itGreen)"/>
-  <!-- metallic tuning fork with handle, tilted 10° -->
+  <!-- metallic tuning fork with handle, tilted 10 degrees.
+       NOTE: gradients use userSpaceOnUse — objectBoundingBox units are DEGENERATE on purely
+       vertical strokes (zero-width bbox), which silently erased the fork handle. -->
   <g transform="rotate(10 32 32)">
     <g stroke="url(#itMetal)" stroke-width="5.5" stroke-linecap="round" fill="none">
       <!-- prongs joined in a U -->
       <path d="M23 9 V25 a9 9 0 0 0 18 0 V9"/>
-      <!-- stem -->
+      <!-- stem (fork handle shaft) -->
       <path d="M32 34 V47"/>
     </g>
     <!-- handle knob at the stem base -->

@@ -6,7 +6,8 @@
 The intention of the framework: offer the **appropriate level of abstraction** for world model
 analysis — seamlessly composing a wide range of interpretability frameworks and methods while
 operating on the latent spaces of any PyTorch model and producing composable, shareable
-artifacts.
+artifacts. Interpretune strives to compose analysis operations at levels of abstraction that
+**bridge human and agent world models**.
 
 This page summarizes the constructs the rest of the documentation (and the
 {doc}`roadmap <roadmap>`) builds on. It is written for prospective collaborators who want the

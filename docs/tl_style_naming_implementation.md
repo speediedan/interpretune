@@ -48,11 +48,11 @@ The canonical names are necessary for the optimizer's internal state and provide
 def __init__(self, use_tl_names: bool = False):
     super().__init__()
     self.use_tl_names = use_tl_names
-    self._tl_to_canonical_map: Dict[str, List[str]] = {}
-    self._canonical_to_tl_map: Dict[str, str] = {}
+    self._tl_to_canonical_mapping: Dict[str, List[str]] = {}
+    self._canonical_to_tl_mapping: Dict[str, str] = {}
 ```
 
-#### 2. Parameter Mapping (`_build_param_mapping`)
+#### 2. Parameter Mapping (`build_param_mapping`)
 - Uses `tensor.data_ptr()` for robust matching (handles views and aliases correctly)
 - Builds bidirectional mappings:
   - **TL→canonical** (1:many): One TL name may map to multiple canonical names (e.g., views)

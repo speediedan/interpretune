@@ -204,35 +204,36 @@ class ITMyConfig(ITConfig):
 
 ### Pattern 3: Model Wrapper Selection (SAE Lens)
 
-The SAE Lens adapter supports multiple TL model wrappers via the ``model_wrapper`` field on
-``SAELensConfig``.  This pattern enables adapters to dispatch to different model initialization
-paths from a single configuration:
+The SAE Lens adapter selects its TL model wrapper via the boolean ``use_bridge`` field on
+``SAELensConfig`` (default ``True``).  This pattern enables adapters to dispatch to different
+model initialization paths from a single configuration:
 
-| ``model_wrapper`` value | Model class | Notes |
-|-------------------------|-------------|-------|
-| ``"transformer_bridge"`` (default) | ``SAETransformerBridge`` | Wraps HF model without weight conversion; more memory efficient |
-| ``"hooked_transformer"`` | ``HookedSAETransformer`` | Legacy path with weight conversion |
+| ``use_bridge`` value | Model class | Notes |
+|----------------------|-------------|-------|
+| ``True`` (default) | ``SAETransformerBridge`` | Wraps HF model without weight conversion; more memory efficient |
+| ``False`` | ``HookedSAETransformer`` | Legacy path with weight conversion (``from_pretrained``) |
 
-**Dispatch implementation** (in ``BaseSAELensTLModule``):
+**Dispatch implementation** (in ``SAELensTLModuleMixin``, ``src/interpretune/adapters/sae_lens.py``):
 
 ```python
 def _convert_hf_to_tl(self) -> None:
-    model_wrapper = getattr(self.it_cfg, "model_wrapper", "transformer_bridge")
-    if model_wrapper == "transformer_bridge":
-        self._convert_hf_to_bridge()
+    """Convert HF model to SAETransformerBridge or HookedSAETransformer based on use_bridge config."""
+    use_bridge = getattr(self.it_cfg, "use_bridge", True)
+    if use_bridge:
+        ...  # SAETransformerBridge path
     else:
-        self._convert_hf_to_hooked()
+        ...  # HookedSAETransformer.from_pretrained() path
 ```
 
 **Key constraints:**
 
-- ``model_wrapper`` is only meaningful when ``backend="transformerlens"`` — the NNsight
-  backend ignores it.
+- ``use_bridge`` is only meaningful when ``backend="transformerlens"`` — other backends warn and
+  ignore it (see the validation in ``SAELensConfig``).
 - TransformerBridge requires an HF model instance — it **cannot** be initialized from a
   config dict alone.  Config-based initialization (``ITLensCustomConfig``) always uses
-  ``HookedSAETransformer`` regardless of ``model_wrapper``.
-- When using the hooked path, set ``model_wrapper="hooked_transformer"`` explicitly in
-  your test or production config since the default is now ``"transformer_bridge"``.
+  ``HookedSAETransformer`` regardless of ``use_bridge``.
+- When using the hooked path, set ``use_bridge=False`` explicitly in your test or production
+  config since the default is ``True``.
 
 **Configuration example (Bridge — default):**
 
@@ -249,8 +250,8 @@ cfg = SAELensConfig(
 
 ```python
 cfg = SAELensConfig(
-    model_wrapper="hooked_transformer",
-    tl_cfg=ITLensFromPretrainedNoProcessingConfig(model_name="gpt2-small", use_bridge=False),
+    use_bridge=False,
+    tl_cfg=ITLensFromPretrainedNoProcessingConfig(model_name="gpt2-small"),
     sae_cfgs=[SAELensFromPretrainedConfig(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre")],
 )
 ```
@@ -381,10 +382,10 @@ class ModelBackend(Protocol):
 The analysis runner auto-detects the appropriate backend from the module's adapter context:
 
 ```python
-from interpretune.analysis.backends import get_backend_for_module
+from interpretune.analysis.backends import get_model_backend, get_analysis_backend
 
-backend = get_backend_for_module(it_module)
-# Returns TransformerLensBackend or NNsightBackend
+model_backend = get_model_backend(it_module)      # TLModelBackend or NNsightModelBackend (or None)
+analysis_backend = get_analysis_backend(it_module)  # e.g. the circuit-tracer analysis backend
 ```
 
 ### Hook Name Mapping
@@ -394,9 +395,9 @@ The `HookNameResolver` translates hook names between backends:
 ```python
 from interpretune.analysis.backends.hook_mapping import HookNameResolver
 
-resolver = HookNameResolver(model_architecture="gpt2")
-tl_name = "blocks.0.hook_resid_pre"
-nn_name = resolver.tl_to_nnsight(tl_name)  # -> "transformer.h.0"
+resolver = HookNameResolver(model_architecture="GPT2LMHeadModel")  # HF class name, not "gpt2"
+module_path, io_type = resolver.resolve("blocks.0.hook_resid_pre")
+# -> ("transformer.h.0", "input")-style (module path + input/output selector)
 ```
 
 ### NNsight Forward Context

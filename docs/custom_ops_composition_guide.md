@@ -108,8 +108,8 @@ implementations should prefer:
 
 Avoid building new per-op context decorators as the default pattern.
 
-`with_analysis_batch_context(...)` still exists, but only as a compatibility
-shim for direct `*_impl(...)` calls that intentionally bypass `AnalysisOp`.
+(The former `with_analysis_batch_context(...)` compatibility shim has been removed — direct
+`*_impl(...)` calls that intentionally bypass `AnalysisOp` no longer need a context wrapper.)
 
 ### 3. Use capability checks instead of backend-name checks
 

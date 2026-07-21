@@ -241,7 +241,7 @@ Maintain a separate working tree with known-working commits for comparison:
 ```bash
 # Create baseline environment
 git worktree add ~/repos/it-release release/0.1.x
-./scripts/build_it_env.sh --repo_home=~/repos/it-release --target_env_name=it_release
+./scripts/build_it_env.sh --repo-home=~/repos/it-release --target-env-name=it_release
 
 # Compare behavior between environments
 source /mnt/cache/$USER/.venvs/it_release/bin/activate  # baseline
