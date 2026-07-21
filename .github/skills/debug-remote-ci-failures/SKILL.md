@@ -460,6 +460,38 @@ A segfault in an upstream library's threading layer (e.g., nnsight's interleaver
 
 ---
 
+## Self-Hosted Azure GPU Leg
+
+The GitHub checks are only part of the pre-wave gate — the self-hosted Azure GPU pipeline
+(`.azure-pipelines/gpu-tests.yml`) must also pass. Two shell capabilities are available for it:
+
+- **Approval management**: PR-triggered GPU runs are approval-gated (build stays `notStarted`).
+  List/approve/reject pending gates with
+  `distributed-insight/project_admin/shared_admin_scripts/az_pipeline_agent_scripts/manage-approvals.sh`
+  (modes `list|approve|reject|approve-all|reject-all`; auth via `ADO_MCP_AUTH_TOKEN` or
+  `AZURE_DEVOPS_EXT_PAT`). Rejecting a gate completes the build as `failed` — that is the normal
+  terminal state for a rejected approval.
+- **Agent stack restart**: infrastructure failures (e.g. `stat -c %g /var/run/docker.sock` failing
+  at "Initialize containers" after a host reboot) are recovered with the NOPASSWD-sudoers
+  one-liner `sudo /opt/az_pipeline_agent/restart-stack.sh` (restarts rootless docker + the agent
+  service, restoring the docker.sock symlink).
+
+- **Fast local iteration instead of pipeline round-trips (debug only)**: reproduce the failing
+  PHASE locally rather than re-queueing ~50-minute gated runs per hypothesis —
+  `IT_RUN_CUDA_TESTS=1 python -m pytest tests -v` for the cuda-marked phase (these tests SKIP
+  silently into the "skipped" count without the env var; needs `HF_GATED_PUBLIC_REPO_AUTH_KEY`/
+  `HF_TOKEN`), `bash ./tests/special_tests.sh --mark_type=standalone|profile_ci` (supports
+  `--filter_pattern`) for the special phases, then narrow with `-k`/node ids. To debug a branch
+  other than your checkout, use a detached worktree + overlay venv (recipe in `CLAUDE.md`
+  "Worktrees & Parallel Environments"). Two cautions: the agent shares this machine's GPUs, so
+  never run local GPU phases concurrently with a gated build (hold pending approvals until local
+  GPU work finishes), and local runs never replace the pipeline — it must pass on push/merge so
+  coverage stays updated.
+
+See `.github/skills/az-pipelines-debug/SKILL.md` for full triage of the GPU leg.
+
+---
+
 ## Related Files
 
 - `.github/workflows/ci_test-full.yml` — Main CI workflow

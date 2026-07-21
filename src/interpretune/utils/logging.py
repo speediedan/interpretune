@@ -134,6 +134,17 @@ def rank_zero_info(*args: Any, stacklevel: int = 4, **kwargs: Any) -> None:
     _info(*args, stacklevel=stacklevel, **kwargs)
 
 
+class ITInstantiationFeedbackWarning(UserWarning):
+    """Config-normalization feedback emitted while instantiating Interpretune configs.
+
+    These messages (e.g. TL ``tokenizer_name`` fallbacks, auto-composition notices) are informative when a user
+    instantiates a config directly, but bulk registry hydration (``gen_module_registry``) instantiates EVERY registered
+    entry, emitting per-entry feedback irrelevant to the caller's requested entry. Bulk-hydration paths therefore
+    suppress exactly this category — never blanket-filter warnings — so direct instantiation keeps the feedback while
+    registry access stays quiet.
+    """
+
+
 def _warn(message: str | Warning, stacklevel: int = 2, **kwargs: Any) -> None:
     warnings.warn(message, stacklevel=stacklevel, **kwargs)
 

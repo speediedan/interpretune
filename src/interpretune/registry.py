@@ -11,6 +11,8 @@ from typing import (
     Protocol,
     runtime_checkable,
 )
+import warnings
+
 from typing_extensions import override
 from pprint import pformat
 from pathlib import Path
@@ -18,7 +20,7 @@ from copy import deepcopy
 from tabulate import tabulate
 from enum import Enum
 
-from interpretune.utils import rank_zero_debug, rank_zero_warn, instantiate_class
+from interpretune.utils import ITInstantiationFeedbackWarning, rank_zero_debug, rank_zero_warn, instantiate_class
 from interpretune.config import ITDataModuleConfig, ITConfig
 from interpretune.base import ITDataModule
 from interpretune.adapters import ITModule
@@ -218,13 +220,21 @@ def gen_module_registry(
         if not data:
             rank_zero_debug("No modules found to auto-register.")
             return
-        for reg_key, rv in data.items():
-            try:
-                register_func(reg_key, rv)
-            except Exception as e:  # we don't want to fail on a single example registration for any reason
-                rank_zero_warn(f"Failed to register module: {reg_key}. Exception: {e}")
-                continue
-            rank_zero_debug(f"Registered module: {reg_key}")
+        # Bulk hydration instantiates EVERY registered entry, so per-entry config-normalization
+        # feedback (tokenizer_name fallbacks, auto-composition notices, ...) would spam callers who
+        # only requested a single entry (e.g. the first `MODULE_EXAMPLE_REGISTRY.get(...)` in a
+        # notebook). Suppress exactly that categorized feedback here — direct config instantiation
+        # outside bulk hydration still surfaces it, and all other warning categories (deprecations,
+        # registration failures below) remain visible.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ITInstantiationFeedbackWarning)
+            for reg_key, rv in data.items():
+                try:
+                    register_func(reg_key, rv)
+                except Exception as e:  # we don't want to fail on a single example registration for any reason
+                    rank_zero_warn(f"Failed to register module: {reg_key}. Exception: {e}")
+                    continue
+                rank_zero_debug(f"Registered module: {reg_key}")
 
 
 def resolve_adapter_combinations(adapter_combinations: Sequence):

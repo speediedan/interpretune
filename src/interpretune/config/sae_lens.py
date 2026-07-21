@@ -20,7 +20,7 @@ from interpretune.config import (
     ITLensFromPretrainedConfig,
 )
 from interpretune.config.transformer_lens import ITLensBridgeConfig, TLConfigInitMixin
-from interpretune.utils import rank_zero_warn, MisconfigurationException, _resolve_dtype
+from interpretune.utils import ITInstantiationFeedbackWarning, rank_zero_warn, MisconfigurationException, _resolve_dtype
 
 if TYPE_CHECKING:
     from interpretune.config.nnsight import NNsightConfig
@@ -120,7 +120,8 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
             raise ValueError(f"Invalid backend '{self.backend}'. Must be one of {_VALID_SAE_BACKENDS}")
         if self.backend != "transformerlens" and self.use_bridge:
             rank_zero_warn(
-                "use_bridge=True is only meaningful when backend='transformerlens'. This setting will be ignored."
+                "use_bridge=True is only meaningful when backend='transformerlens'. This setting will be ignored.",
+                category=ITInstantiationFeedbackWarning,
             )
 
         # Validate and normalize sae_cfgs (backend-agnostic)
@@ -156,12 +157,16 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
                 "use_bridge=True but tl_cfg is an ITLensFromPretrainedConfig (HookedTransformer config), "
                 "not an ITLensBridgeConfig. This will initialize a HookedTransformer, not a TransformerBridge. "
                 "To use TransformerBridge, set tl_cfg to ITLensBridgeConfig. "
-                "To silence this warning, set use_bridge=False explicitly."
+                "To silence this warning, set use_bridge=False explicitly.",
+                category=ITInstantiationFeedbackWarning,
             )
 
         # Warn if nnsight_cfg is set but not used
         if self.nnsight_cfg is not None:
-            rank_zero_warn("nnsight_cfg is set but backend is 'transformerlens'. This setting will be ignored.")
+            rank_zero_warn(
+                "nnsight_cfg is set but backend is 'transformerlens'. This setting will be ignored.",
+                category=ITInstantiationFeedbackWarning,
+            )
 
         # Initialize TL config state (validation, pretrained sync, config translation)
         # via TLConfigInitMixin — shared with ITLensConfig
@@ -194,7 +199,10 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
 
         # Warn if tl_cfg is set but not used
         if self.tl_cfg is not None:
-            rank_zero_warn("tl_cfg is set but backend is 'nnsight'. This setting will be ignored.")
+            rank_zero_warn(
+                "tl_cfg is set but backend is 'nnsight'. This setting will be ignored.",
+                category=ITInstantiationFeedbackWarning,
+            )
 
         # Sync model_name_or_path with nnsight_cfg.model_name
         self._sync_nnsight_model_name()
@@ -256,7 +264,8 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
         elif it_model != ns_model:
             rank_zero_warn(
                 f"model_name_or_path ('{it_model}') differs from nnsight_cfg.model_name ('{ns_model}'). "
-                f"Using model_name_or_path. Set nnsight_cfg.model_name=None to silence this warning."
+                f"Using model_name_or_path. Set nnsight_cfg.model_name=None to silence this warning.",
+                category=ITInstantiationFeedbackWarning,
             )
             self.nnsight_cfg.model_name = it_model
 
@@ -291,12 +300,14 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
                 rank_zero_warn(
                     f"This SAEConfig's device type ('{sae_cfg_obj.device}') does not match the configured TL device "
                     f"('{tl_device}'). Setting the device type for this SAE to match the specified TL device "
-                    f"('{tl_device}')."
+                    f"('{tl_device}').",
+                    category=ITInstantiationFeedbackWarning,
                 )
             setattr(sae_cfg_obj, "device", tl_device)
         else:
             rank_zero_warn(
                 "An SAEConfig device type was not provided. Setting the device type to match the currently specified "
-                f"TL device type: '{tl_device}'."
+                f"TL device type: '{tl_device}'.",
+                category=ITInstantiationFeedbackWarning,
             )
             setattr(sae_cfg_obj, "device", tl_device)
