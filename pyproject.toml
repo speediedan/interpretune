@@ -130,21 +130,15 @@ test = [
 ]
 
 docs = [
-    # Documentation generation
-    "sphinx >= 4.0",
-    "myst-parser >= 0.18.1",
-    "nbsphinx >= 0.8.5",
-    "pandoc >= 1.0",
-    "docutils >= 0.16",
-    "sphinxcontrib-fulltoc >= 1.0",
-    "sphinxcontrib-mockautodoc",
-    "sphinx-autodoc-typehints >= 1.16",
-    "sphinx-paramlinks >= 0.5.1",
-    "sphinx-togglebutton >= 0.2",
-    "sphinx-copybutton >= 0.3",
-    "typing-extensions",
-    "jinja2 >= 3.0.0,<3.1.0",
-    "pt_lightning_sphinx_theme @ git+https://github.com/speediedan/lightning_sphinx_theme.git@057f4c3e669948bc618eec1688b016f07140cc0d",
+    # Documentation generation (keep in sync with requirements/docs.txt — RTD/CI source of truth).
+    # Modernized 2026-07-21: dropped the legacy pt_lightning_sphinx_theme git dep, its jinja2<3.1
+    # cap, and the deprecated sphinxcontrib-fulltoc/mockautodoc packages.
+    "sphinx >= 8.1,<9.0",
+    "pydata-sphinx-theme >= 0.16.1",
+    "myst-parser >= 4.0.1",
+    "linkify-it-py >= 2.0",
+    "sphinx-copybutton >= 0.5",
+    "sphinx-autodoc-typehints >= 3.0",
 ]
 
 profiling = [

@@ -1,73 +1,159 @@
+<div align="center">
+
 # Interpretune
 
-Interpretune: A flexible, powerful framework for collaborative AI world model analysis and tuning.
+**Mechanistically informed AI model tuning.**
 
-> **Status:** Pre-MVP (Minimum Viable Product) – Active development, not yet feature complete.
+*A flexible framework for LLM world model experimentation and tuning — collaborative,
+composable, and shareable.*
 
-## Overview
-Interpretune aims to provide tools and infrastructure for:
-- Analyzing AI world models
-- Collaborative research with shareable/composable experimentation
-- Flexible tuning and interpretability workflows
+[![CI](https://github.com/speediedan/interpretune/actions/workflows/ci_test-full.yml/badge.svg)](https://github.com/speediedan/interpretune/actions/workflows/ci_test-full.yml)
+[![Docs](https://readthedocs.org/projects/interpretune/badge/?version=latest)](https://interpretune.readthedocs.io/en/latest/)
+[![codecov](https://codecov.io/gh/speediedan/interpretune/branch/main/graph/badge.svg)](https://codecov.io/gh/speediedan/interpretune)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://github.com/speediedan/interpretune/blob/main/pyproject.toml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green)](./LICENSE)
+
+</div>
+
+> **Status: pre-MVP**, working toward an initial alpha release — active development, APIs subject
+> to change. This README is written especially for upstream maintainers and prospective
+> collaborators: it summarizes what interpretune is, the constructs it's built on, and the
+> [roadmap](#roadmap) from here to alpha.
+
+## What is interpretune?
+
+Interpretune composes interpretability adapters — [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens),
+[SAE-Lens](https://github.com/decoderesearch/SAELens), [NNsight](https://github.com/ndif-team/nnsight),
+[circuit-tracer](https://github.com/safety-research/circuit-tracer), and
+[Lightning](https://github.com/Lightning-AI/pytorch-lightning) — over a shared session/protocol
+layer, so analysis operations (activation caching, latent-model splicing, attribution graphs,
+concept-direction interventions) are **written once and executed across backends**, with results
+captured as shareable datasets.
+
+A note on terminology: we use "world model" in the **epistemic/semantic** sense — the internal
+representations, concepts, and beliefs a model encodes about the world, as studied in LLM
+interpretability — related to but distinct from the predictive *visual world models* of
+embodied-agent/model-based-RL research. The initial MVP focuses on LLMs; fuller multimodal support
+is planned.
+
+## Core constructs (60-second tour)
+
+| Construct | What it is |
+| --- | --- |
+| **`ITSession`** | Composes a datamodule + module with an ordered **adapter context** (e.g. `(core, transformer_lens, circuit_tracer)` or `(core, nnsight, circuit_tracer)`); the result is an "interpretunable" module whose capabilities are the composition of the selected adapters. |
+| **Protocols** | Structural contracts (`interpretune.protocol`) that make the same analysis code executable across adapter compositions. |
+| **Latent-model abstractions** | Analysis targets are **latent models** at an appropriate abstraction level — SAEs/transcoders today, but the protocol language (`LatentAnalysisTargets`, latent-model handles, ops like `model_fwd_w_cache_latent_models`) deliberately generalizes beyond SAEs. |
+| **Analysis ops** | Composable, schema-declared operations (`it.concept_direction`, `it.compute_attribution_graph`, `it.intervention_from_concept`, …) compiled into execution plans and dispatched over the active backends. |
+| **`AnalysisStore`** | The key sharing abstraction: serialized, schema-described datasets capturing analysis artifacts (activations, attributions, graphs, intervention results) — making world-model analyses **exchangeable datasets** rather than one-off notebook state. |
+| **Extensions** | Cross-cutting capabilities: memory profiling, debug generation, Neuronpedia dashboard/explanation integration. |
+
+A minimal flavor of the composition pattern (see the
+[docs](https://interpretune.readthedocs.io/en/latest/) and `src/it_examples/notebooks/` demos for
+runnable versions):
+
+```python
+import interpretune as it
+from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
+
+dm_cfg, m_cfg, dm_cls, m_cls = MODULE_EXAMPLE_REGISTRY.get("gemma2.rte_demo.circuit_tracer")
+session = it.ITSession(it.ITSessionConfig(
+    adapter_ctx=(it.Adapter.core, it.Adapter.nnsight, it.Adapter.circuit_tracer),
+    datamodule_cfg=dm_cfg, module_cfg=m_cfg, datamodule_cls=dm_cls, module_cls=m_cls,
+))
+it.it_init(**session)
+# the same op runs unchanged under the transformer_lens adapter context
+result = it.intervention_from_concept(session.module, ...)
+```
+
+## Roadmap
+
+### Wave 1 (in flight): Scalable Dashboards PR wave
+
+A coordinated multi-repo PR set upstreaming scalable dashboard generation validated end-to-end in
+this repo: peak-memory-controlled generation with per-stage CUDA accounting and pretokenization
+records (SAEDashboard), supporting surfaces in SAELens, the circuit-tracer attribution-target
+abstraction, and Neuronpedia import/coverage support — with interpretune providing the
+orchestration pipeline, dashboard benchmark suite (quantified evidence), and the dual-backend
+circuit-tracer analysis integration that consumes the results.
+
+### Wave 2: hub-resident, streamable dashboards
+
+Dashboards and locally-generated feature explanations become **Hugging Face Hub artifacts that
+viewers stream on demand**, optionally disintermediating the Neuronpedia DB for user-generated
+dashboards (on neuronpedia.org and local dev stacks alike). Jacobian-space (J-lens) analysis
+support rides alongside as a research thread.
+
+### MVP milestone: shareable analysis artifacts
+
+The [MVP milestone](https://github.com/speediedan/interpretune/milestone/1) centers on making
+interpretune artifacts shareable on the Hub — most importantly **AnalysisStore
+upload/download** (analyses as exchangeable, reproducible, composable datasets) and
+**adapter/session shareability** (an analysis is runnable, not just readable). This is the same
+hub-artifact pattern as Wave 2's dashboard availability — one consistent story for dashboards,
+explanations, and analysis results.
+
+### Longer-horizon research directions
+
+Epistemic-coherence objectives, reflective cognition for counterfactuals via latent-state
+evaluation, meta-latent world-model interfaces, and multimodal world-model support — see the
+[roadmap docs](https://interpretune.readthedocs.io/en/latest/roadmap.html).
 
 ## Installation
 
 Interpretune uses [uv](https://github.com/astral-sh/uv) for fast, reliable dependency management.
 
-### Quick Start
-
 ```bash
 # Install uv (one-time setup)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Clone the repository
-git clone https://github.com/speediedan/interpretune.git
-cd interpretune
+git clone https://github.com/speediedan/interpretune.git && cd interpretune
+uv venv && source .venv/bin/activate
 
-# Create and activate a virtual environment
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install interpretune in editable mode with all dependencies
-# Note: git-deps group is optional once circuit-tracer is published on PyPI
+# Editable install with all dependency groups
+# Note: the git-deps group is optional once circuit-tracer is published on PyPI
 uv pip install -e ".[test,examples,lightning,profiling]" --group git-deps dev
-
-# Run tests
-pytest tests/ -v
 ```
 
-### Development Setup
-
-For advanced development workflows, use the provided build script which supports locked CI requirements and from-source packages:
+For advanced development builds (locked CI requirements, multi-repo from-source composition), use
+the build script:
 
 ```bash
-# Standard development build (uses locked CI requirements)
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
-
-# Activate the created environment
-source ~/.venvs/it_latest/bin/activate
-
-# Build with packages from source (useful for development)
+# from-source example:
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest \
-  --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all" \
   --from-source="circuit_tracer:${HOME}/repos/circuit-tracer"
 ```
 
-### Locked Requirements for CI
+## Documentation
 
-CI workflows use locked requirements for reproducibility:
+- [Latest docs](https://interpretune.readthedocs.io/en/latest/) — concepts, usage guides, design
+  notes, API reference
+- Demo notebooks: `src/it_examples/notebooks/` (circuit-tracer analysis + concept-steering demos,
+  SAE-Lens and NNsight adapter examples, with Colab badges on published copies)
+
+## Testing
 
 ```bash
-# Install using locked CI requirements (CI approach)
-uv pip install -e . --group git-deps
-uv pip install -r requirements/ci/requirements.txt
+# Standard suite
+python -m pytest src/interpretune tests -v
 
-# Regenerate locked requirements (after updating pyproject.toml)
-./requirements/utils/lock_ci_requirements.sh
+# Special phases (standalone GPU, profiling)
+./tests/special_tests.sh --mark_type=standalone
+./tests/special_tests.sh --mark_type=profile_ci
 ```
 
-## Project Status
-This project is in the **pre-MVP** stage. Features and APIs are subject to change. Contributions and feedback are welcome as the framework evolves.
+CI runs the full matrix (Linux/macOS/Windows CPU + a self-hosted GPU pipeline with
+CUDA/standalone/profiling phases); coverage is tracked on
+[codecov](https://codecov.io/gh/speediedan/interpretune). See `tests/README.md` for the testing
+guide and `requirements/utils/lock_ci_requirements.sh` for CI-locked requirements regeneration.
+
+## Contributing
+
+Contributions and feedback are welcome as the framework evolves toward alpha — the
+[issue tracker](https://github.com/speediedan/interpretune/issues) tags documentation and
+`help wanted` items, and the [roadmap](#roadmap) above is the best orientation for where things
+are headed.
 
 ## License
-See [LICENSE](./LICENSE) for details.
+
+[Apache 2.0](./LICENSE)

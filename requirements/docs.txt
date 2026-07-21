@@ -1,0 +1,18 @@
+# Documentation build requirements (source of truth for RTD + the docs-build CI smoke; keep the
+# pyproject [dependency-groups] docs list in sync — used by `make docs` via `uv pip install --group docs`).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.7.1  # REAL torch (CPU wheel): interpretune.protocol builds runtime type unions from torch classes, which autodoc mocks cannot represent
+sphinx>=8.1,<9.0
+pydata-sphinx-theme>=0.16.1
+myst-parser>=4.0.1
+linkify-it-py>=2.0
+sphinx-copybutton>=0.5
+sphinx-autodoc-typehints>=3.0
+# Light runtime deps installed REAL (used in runtime type unions / import-time surfaces that mocks break)
+jsonargparse[signatures]>=4.35.0,<4.42.0
+tabulate>=0.9.0
+psutil>=5.9
+python-dotenv>=1.0
+safetensors>=0.4
+huggingface_hub>=0.20
+pyyaml>=6.0

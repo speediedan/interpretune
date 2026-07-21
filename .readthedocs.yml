@@ -1,0 +1,24 @@
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.12"
+  jobs:
+    post_install:
+      # Base deps installed REAL (torch CPU wheel via the extra index in requirements/docs.txt);
+      # only the optional adapter stack is mocked in conf.py (SPHINX_MOCK_REQUIREMENTS).
+      - PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu pip install .
+
+sphinx:
+  configuration: docs/source/conf.py
+  # Errors always fail the build; warnings-as-errors is deferred until the docs coherence pass
+  # completes (tracked in the maintainer docs plan), then flip this to true.
+  fail_on_warning: false
+
+formats:
+  - htmlzip
+
+python:
+  install:
+    - requirements: requirements/docs.txt

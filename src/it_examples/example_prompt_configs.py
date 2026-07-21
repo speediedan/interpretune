@@ -6,8 +6,9 @@ from it_examples.experiments.rte_boolq import RTEBoolqPromptConfig
 # Gemma (unified for Gemma2/Gemma3)
 ####################################
 # Gemma2 and Gemma3 instruction-tuned models use the same <start_of_turn>/<end_of_turn> chat template.
-# TODO: consider using HF `tokenizer.apply_chat_template` api instead of manual template construction
-#       (see docs/apply_chat_template_proposal.md for details)
+# NOTE: chat-templated construction via HF `tokenizer.apply_chat_template` is available as the
+#       opt-in `apply_chat_template_fn` path (manual construction remains the default for prompt
+#       provenance; see docs Design Rationale — resolved interpretune#202)
 
 
 @dataclass(kw_only=True)
