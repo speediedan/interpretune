@@ -16,3 +16,5 @@ python-dotenv>=1.0
 safetensors>=0.4
 huggingface_hub>=0.20
 pyyaml>=6.0
+jsonschema>=4.0
+jaxtyping>=0.2
