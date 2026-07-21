@@ -8,41 +8,44 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
-from urllib.parse import unquote, urlparse, urlunparse
+from typing import Any
+from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
+
+from interpretune.utils.neuronpedia_db_utils import (
+    resolve_local_neuronpedia_db_url,
+)
 
 DEFAULT_NEURONPEDIA_BASE_URL = "https://www.neuronpedia.org"
 DEFAULT_NEURONPEDIA_PUBLIC_DATASET_BASE_URL = "https://neuronpedia-datasets.s3.amazonaws.com"
 DEFAULT_TOP_ACTIVATIONS_LIMIT = 10
 DEFAULT_TOKENS_AROUND_MAX = 24
-DEFAULT_COPILOT_TIMEOUT_SECONDS = 120
-DEFAULT_COPILOT_MODEL = "gpt-5-mini"
+DEFAULT_EXPLANATION_CLI = "copilot"
+DEFAULT_EXPLANATION_CLI_TIMEOUT_SECONDS = 120
+DEFAULT_EXPLANATION_CLI_MODEL = "deepseek-v4-flash-free"
+# Default BYOK provider routing: the OpenCode Zen OpenAI-compatible endpoint, which serves the
+# default free model above (https://opencode.ai/docs/en/zen/#endpoints). Any OpenAI-compatible
+# provider (e.g. OpenRouter) can be substituted via the IT_EXPLANATION_PROVIDER_* env vars.
+DEFAULT_EXPLANATION_PROVIDER_TYPE = "openai"
+DEFAULT_EXPLANATION_PROVIDER_BASE_URL = "https://opencode.ai/zen/v1"
 DEFAULT_ACTIVATION_BATCH_SIZE = 512
-FALLBACK_ACTIVATION_BATCH_SIZES = (DEFAULT_ACTIVATION_BATCH_SIZE, 1024)
+FALLBACK_ACTIVATION_BATCH_SIZES = (DEFAULT_ACTIVATION_BATCH_SIZE, 256, 1024)
 DEFAULT_GENERATED_OUTPUT_DIR = Path(tempfile.gettempdir()) / "generated_np_explanations"
 DEFAULT_HF_CACHE_HOME = Path(os.getenv("HF_HOME", os.path.expanduser("~/.cache/huggingface")))
 DEFAULT_IT_NP_CACHE = Path(os.getenv("IT_NP_CACHE", os.path.join(DEFAULT_HF_CACHE_HOME, "interpretune", "neuronpedia")))
-DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL = os.getenv("LOCAL_NEURONPEDIA_WEBAPP_URL", "http://localhost:3000")
-DEFAULT_LOCAL_NEURONPEDIA_DB_ENV_VARS = (
-    "LOCAL_NEURONPEDIA_DB_URL",
-    "POSTGRES_URL_NON_POOLING",
-    "DATABASE_URL",
-)
-DEFAULT_LOCAL_NEURONPEDIA_DOCKER_HOSTNAME = "postgres"
-DEFAULT_LOCAL_NEURONPEDIA_HOST = "127.0.0.1"
-DEFAULT_LOCAL_NEURONPEDIA_POSTGRES_PORT_ENV = "POSTGRES_HOST_PORT"
-DEFAULT_LOCAL_NEURONPEDIA_DB_TIMEOUT_SECONDS = 5
 DEFAULT_EXPLANATION_TYPE_NAME = "np_max-act-logits"
 NP_MOE_MAX_ACT_LOGITS_TYPE_NAME = "np_moe-max-act-logits"
+# Set DEFAULT_CREATOR_ID to your local Neuronpedia user id; the fallback is the local dev-stack user id
+# this pipeline was developed against, so imported records are tagged with it when the env var is unset.
 DEFAULT_EXPLANATION_AUTHOR_ID = os.getenv("DEFAULT_CREATOR_ID", "clkht01d40000jv08hvalcvly")
-DEFAULT_COPILOT_MAX_RETRIES = 2
-DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS = 5.0
+DEFAULT_EXPLANATION_CLI_MAX_RETRIES = 2
+DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS = 5.0
+EXPLANATION_GENERATED_BY = "interpretune-explanation-cli"
 
 NP_MAX_ACT_LOGITS_INSTRUCTIONS = """You are generating a Neuronpedia-style explanation for a sparse feature.
 
@@ -331,8 +334,83 @@ class NeuronpediaExplanationArtifact:
 
 
 @dataclass(frozen=True)
-class CopilotInvocationResult:
-    """Captures the Copilot CLI response payload."""
+class ExplanationCliSpec:
+    """Describes how to drive a conforming explanation-generation CLI.
+
+    A conforming CLI must: (1) accept a one-shot prompt non-interactively via ``prompt_args`` with
+    the prompt string appended as the final argument, (2) print the model response to stdout
+    (diagnostics/telemetry may go to stderr), and (3) support model and provider selection via
+    environment variables. The default spec drives the GitHub Copilot CLI in BYOK mode; other
+    conforming CLIs can be described with their own spec (set ``IT_EXPLANATION_CLI`` to override
+    just the executable).
+    """
+
+    executable: str = DEFAULT_EXPLANATION_CLI
+    prompt_args: tuple[str, ...] = ("-p",)
+    model_env_var: str | None = "COPILOT_MODEL"
+    provider_type_env_var: str | None = "COPILOT_PROVIDER_TYPE"
+    provider_base_url_env_var: str | None = "COPILOT_PROVIDER_BASE_URL"
+    provider_api_key_env_var: str | None = "COPILOT_PROVIDER_API_KEY"
+
+
+DEFAULT_EXPLANATION_CLI_SPEC = ExplanationCliSpec()
+
+
+def resolve_explanation_cli_spec(cli_spec: ExplanationCliSpec | None = None) -> ExplanationCliSpec:
+    """Resolve the explanation CLI spec, honoring the ``IT_EXPLANATION_CLI`` executable override."""
+
+    resolved = cli_spec or DEFAULT_EXPLANATION_CLI_SPEC
+    executable_override = os.getenv("IT_EXPLANATION_CLI")
+    if executable_override:
+        resolved = replace(resolved, executable=executable_override)
+    return resolved
+
+
+def build_explanation_cli_env(
+    cli_spec: ExplanationCliSpec,
+    *,
+    explanation_model: str | None = None,
+    base_env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Build the subprocess environment for an explanation CLI invocation.
+
+    Model selection is always exported via the spec's model env var. BYOK provider routing (type,
+    base URL, API key) is only injected when an API key is resolvable — from
+    ``IT_EXPLANATION_PROVIDER_API_KEY`` or the spec's CLI-specific key env var — so a CLI with
+    native authentication (e.g. Copilot's GitHub auth) continues to work when no key is set.
+    Generic ``IT_EXPLANATION_PROVIDER_TYPE``/``IT_EXPLANATION_PROVIDER_BASE_URL`` overrides win
+    over values already present in the environment, which win over the OpenCode Zen defaults.
+    """
+
+    env = dict(base_env) if base_env is not None else os.environ.copy()
+    if cli_spec.model_env_var:
+        env[cli_spec.model_env_var] = (
+            explanation_model or env.get("IT_EXPLANATION_CLI_MODEL") or DEFAULT_EXPLANATION_CLI_MODEL
+        )
+
+    api_key = env.get("IT_EXPLANATION_PROVIDER_API_KEY") or (
+        env.get(cli_spec.provider_api_key_env_var) if cli_spec.provider_api_key_env_var else None
+    )
+    if api_key and cli_spec.provider_api_key_env_var:
+        env[cli_spec.provider_api_key_env_var] = api_key
+        if cli_spec.provider_type_env_var:
+            env[cli_spec.provider_type_env_var] = (
+                env.get("IT_EXPLANATION_PROVIDER_TYPE")
+                or env.get(cli_spec.provider_type_env_var)
+                or DEFAULT_EXPLANATION_PROVIDER_TYPE
+            )
+        if cli_spec.provider_base_url_env_var:
+            env[cli_spec.provider_base_url_env_var] = (
+                env.get("IT_EXPLANATION_PROVIDER_BASE_URL")
+                or env.get(cli_spec.provider_base_url_env_var)
+                or DEFAULT_EXPLANATION_PROVIDER_BASE_URL
+            )
+    return env
+
+
+@dataclass(frozen=True)
+class ExplanationCliInvocationResult:
+    """Captures an explanation CLI response payload."""
 
     stdout: str
     stderr: str
@@ -340,28 +418,6 @@ class CopilotInvocationResult:
 
 class NeuronpediaExplanationError(RuntimeError):
     """Raised when explanation artifact generation fails."""
-
-
-@dataclass(frozen=True)
-class LocalNeuronpediaServiceStatus:
-    """Availability snapshot for the local Neuronpedia webapp and Postgres services."""
-
-    webapp_url: str
-    webapp_available: bool
-    webapp_status_code: int | None
-    webapp_error: str | None
-    db_url_redacted: str | None
-    db_available: bool
-    db_error: str | None
-
-
-@dataclass(frozen=True)
-class NeuronpediaLocalImportSummary:
-    """Summary of a local Neuronpedia export-bundle import run."""
-
-    export_root: Path
-    imported_row_counts: dict[str, int]
-    processed_files: list[Path]
 
 
 @dataclass(frozen=True)
@@ -395,115 +451,6 @@ class NeuronpediaLocalExplanationCoverage:
     @property
     def missing_feature_refs(self) -> list[NeuronpediaFeatureRef]:
         return [status.feature_ref for status in self.statuses if not status.has_local_explanation]
-
-
-def _redact_connection_url(connection_url: str) -> str:
-    parsed = urlparse(connection_url)
-    if parsed.password is None:
-        return connection_url
-    username = parsed.username or ""
-    netloc = parsed.netloc.replace(f":{parsed.password}@", ":***@", 1)
-    if username and not netloc.startswith(username):
-        netloc = f"{username}:***@{parsed.hostname or ''}"
-        if parsed.port is not None:
-            netloc += f":{parsed.port}"
-    return urlunparse(parsed._replace(netloc=netloc))
-
-
-def rewrite_container_postgres_url_for_host(
-    connection_url: str,
-    *,
-    env: Mapping[str, str] | None = None,
-    container_hostname: str = DEFAULT_LOCAL_NEURONPEDIA_DOCKER_HOSTNAME,
-    host: str = DEFAULT_LOCAL_NEURONPEDIA_HOST,
-    port_env_var: str = DEFAULT_LOCAL_NEURONPEDIA_POSTGRES_PORT_ENV,
-) -> str:
-    """Rewrite a docker-only Postgres URL to the host-mapped local port when configured."""
-
-    env_map = dict(os.environ if env is None else env)
-    parsed = urlparse(connection_url)
-    if parsed.hostname != container_hostname:
-        return connection_url
-    host_port = env_map.get(port_env_var)
-    if not host_port:
-        return connection_url
-    username = parsed.username or ""
-    password = parsed.password or ""
-    auth_prefix = username
-    if password:
-        auth_prefix = f"{auth_prefix}:{password}"
-    if auth_prefix:
-        auth_prefix = f"{auth_prefix}@"
-    netloc = f"{auth_prefix}{host}:{host_port}"
-    return urlunparse(parsed._replace(netloc=netloc))
-
-
-def resolve_local_neuronpedia_db_url(
-    local_db_url: str | None = None,
-    *,
-    env: Mapping[str, str] | None = None,
-) -> str:
-    """Resolve the best local Neuronpedia Postgres URL from explicit input or environment."""
-
-    env_map = dict(os.environ if env is None else env)
-    candidate = local_db_url
-    if not candidate:
-        for env_var in DEFAULT_LOCAL_NEURONPEDIA_DB_ENV_VARS:
-            candidate = env_map.get(env_var)
-            if candidate:
-                break
-    if not candidate:
-        raise NeuronpediaExplanationError(
-            "Could not resolve a local Neuronpedia DB URL. Set LOCAL_NEURONPEDIA_DB_URL or POSTGRES_URL_NON_POOLING."
-        )
-    return rewrite_container_postgres_url_for_host(candidate, env=env_map)
-
-
-def check_local_neuronpedia_services(
-    *,
-    local_db_url: str | None = None,
-    webapp_url: str = DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL,
-    timeout_seconds: int = DEFAULT_LOCAL_NEURONPEDIA_DB_TIMEOUT_SECONDS,
-) -> LocalNeuronpediaServiceStatus:
-    """Probe the local Neuronpedia webapp and Postgres services without raising on failure."""
-
-    import psycopg
-
-    resolved_db_url: str | None = None
-    db_url_redacted: str | None = None
-    db_available = False
-    db_error: str | None = None
-    try:
-        resolved_db_url = resolve_local_neuronpedia_db_url(local_db_url)
-        db_url_redacted = _redact_connection_url(resolved_db_url)
-        with psycopg.connect(resolved_db_url, connect_timeout=timeout_seconds) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT 1")
-                cursor.fetchone()
-        db_available = True
-    except Exception as exc:  # pragma: no cover - exercised in integration contexts
-        db_error = str(exc)
-
-    webapp_available = False
-    webapp_status_code: int | None = None
-    webapp_error: str | None = None
-    try:
-        request = Request(webapp_url, method="GET")
-        with urlopen(request, timeout=timeout_seconds) as response:
-            webapp_status_code = getattr(response, "status", None)
-            webapp_available = webapp_status_code is not None and 200 <= webapp_status_code < 500
-    except Exception as exc:  # pragma: no cover - exercised in integration contexts
-        webapp_error = str(exc)
-
-    return LocalNeuronpediaServiceStatus(
-        webapp_url=webapp_url,
-        webapp_available=webapp_available,
-        webapp_status_code=webapp_status_code,
-        webapp_error=webapp_error,
-        db_url_redacted=db_url_redacted,
-        db_available=db_available,
-        db_error=db_error,
-    )
 
 
 def normalize_base_url(base_url: str) -> str:
@@ -674,16 +621,17 @@ def ensure_local_feature_explanations(
     *,
     generate_missing: bool = False,
     output_dir: Path = DEFAULT_GENERATED_OUTPUT_DIR,
-    copilot_model: str | None = None,
-    timeout_seconds: int = DEFAULT_COPILOT_TIMEOUT_SECONDS,
+    explanation_model: str | None = None,
+    timeout_seconds: int = DEFAULT_EXPLANATION_CLI_TIMEOUT_SECONDS,
     cache_dir: Path | None = None,
     local_db_url: str | None = None,
     explanation_author_id: str = DEFAULT_EXPLANATION_AUTHOR_ID,
     triggered_by_user_id: str | None = None,
     type_name: str = DEFAULT_EXPLANATION_TYPE_NAME,
     explanation_model_name: str | None = None,
-    max_retries: int = DEFAULT_COPILOT_MAX_RETRIES,
-    retry_backoff_seconds: float = DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS,
+    max_retries: int = DEFAULT_EXPLANATION_CLI_MAX_RETRIES,
+    retry_backoff_seconds: float = DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS,
+    cli_spec: ExplanationCliSpec | None = None,
 ) -> NeuronpediaLocalExplanationCoverage:
     """Check local explanation coverage and optionally backfill missing entries."""
 
@@ -704,7 +652,7 @@ def ensure_local_feature_explanations(
                     generate_explanation_artifact(
                         feature_ref=status.feature_ref,
                         output_dir=output_dir,
-                        copilot_model=copilot_model,
+                        explanation_model=explanation_model,
                         timeout_seconds=timeout_seconds,
                         cache_dir=cache_dir,
                         write_neuronpedia_import_data=True,
@@ -716,6 +664,7 @@ def ensure_local_feature_explanations(
                         explanation_model_name=explanation_model_name,
                         max_retries=max_retries,
                         retry_backoff_seconds=retry_backoff_seconds,
+                        cli_spec=cli_spec,
                     )
                 )
             except Exception as exc:
@@ -943,16 +892,22 @@ def load_feature_payload_with_cached_activations(
     *,
     cache_dir: Path | None = None,
     timeout_seconds: int = 60,
-) -> tuple[dict[str, Any], Path]:
-    """Fetch feature metadata from the API and replace activations with cached export rows."""
+) -> tuple[dict[str, Any], Path | None]:
+    """Fetch feature metadata from the API and prefer cached export activations when available."""
 
     feature_payload = fetch_feature_payload(feature_ref, timeout_seconds=timeout_seconds)
-    cached_activations, batch_path = load_cached_feature_activations(
-        feature_ref,
-        cache_dir=cache_dir,
-        timeout_seconds=timeout_seconds,
-    )
     feature_payload = dict(feature_payload)
+    try:
+        cached_activations, batch_path = load_cached_feature_activations(
+            feature_ref,
+            cache_dir=cache_dir,
+            timeout_seconds=timeout_seconds,
+        )
+    except NeuronpediaExplanationError:
+        if feature_payload.get("activations"):
+            return feature_payload, None
+        raise
+
     feature_payload["activations"] = cached_activations
     return feature_payload, batch_path
 
@@ -1081,7 +1036,7 @@ def build_explanation_prompt(
     *,
     type_name: str = DEFAULT_EXPLANATION_TYPE_NAME,
 ) -> tuple[str, str]:
-    """Build a Copilot explanation prompt and return it with its prompt style name."""
+    """Build an explanation prompt and return it with its prompt style name."""
 
     instructions, few_shot_examples, prompt_style = resolve_explanation_prompt_spec(type_name)
     few_shots = "\n\n".join(_render_few_shot_example(example) for example in few_shot_examples)
@@ -1115,14 +1070,14 @@ def build_np_max_act_logits_prompt(
     feature_ref: NeuronpediaFeatureRef,
     prompt_inputs: NeuronpediaPromptInputs,
 ) -> str:
-    """Build a Copilot prompt that mirrors Neuronpedia's np-max-act-logits workflow."""
+    """Build an explanation prompt that mirrors Neuronpedia's np-max-act-logits workflow."""
 
     prompt, _ = build_explanation_prompt(feature_ref, prompt_inputs, type_name=DEFAULT_EXPLANATION_TYPE_NAME)
     return prompt
 
 
 def clean_explanation_text(raw_response: str) -> str:
-    """Extract the final explanation text from a Copilot CLI response."""
+    """Extract the final explanation text from an explanation CLI response."""
 
     cleaned = raw_response.strip().strip("`")
     matches = re.findall(r"Explanation:\s*(.+)", cleaned, flags=re.IGNORECASE)
@@ -1157,23 +1112,24 @@ def cleanup_feature_activation_cache(
     return True
 
 
-def invoke_copilot_cli(
+def invoke_explanation_cli(
     prompt: str,
     *,
-    copilot_model: str | None = None,
-    timeout_seconds: int = DEFAULT_COPILOT_TIMEOUT_SECONDS,
-) -> CopilotInvocationResult:
-    """Invoke the GitHub Copilot CLI prompt mode and return its raw response."""
+    explanation_model: str | None = None,
+    timeout_seconds: int = DEFAULT_EXPLANATION_CLI_TIMEOUT_SECONDS,
+    cli_spec: ExplanationCliSpec | None = None,
+) -> ExplanationCliInvocationResult:
+    """Invoke a conforming explanation CLI's one-shot prompt mode and return its raw response."""
 
-    executable = shutil.which("copilot")
+    resolved_spec = resolve_explanation_cli_spec(cli_spec)
+    executable = shutil.which(resolved_spec.executable)
     if executable is None:
-        raise NeuronpediaExplanationError("Could not find the 'copilot' CLI on PATH.")
+        raise NeuronpediaExplanationError(f"Could not find the '{resolved_spec.executable}' explanation CLI on PATH.")
 
-    env = os.environ.copy()
-    env["COPILOT_MODEL"] = copilot_model or DEFAULT_COPILOT_MODEL
+    env = build_explanation_cli_env(resolved_spec, explanation_model=explanation_model)
 
     completed = subprocess.run(
-        [executable, "-p", prompt],
+        [executable, *resolved_spec.prompt_args, prompt],
         capture_output=True,
         text=True,
         env=env,
@@ -1184,20 +1140,21 @@ def invoke_copilot_cli(
         stderr = completed.stderr.strip()
         stdout = completed.stdout.strip()
         detail = stderr or stdout or f"exit code {completed.returncode}"
-        raise NeuronpediaExplanationError(f"Copilot CLI invocation failed: {detail}")
+        raise NeuronpediaExplanationError(f"Explanation CLI ('{resolved_spec.executable}') invocation failed: {detail}")
 
-    return CopilotInvocationResult(stdout=completed.stdout.strip(), stderr=completed.stderr.strip())
+    return ExplanationCliInvocationResult(stdout=completed.stdout.strip(), stderr=completed.stderr.strip())
 
 
-def invoke_copilot_cli_with_retries(
+def invoke_explanation_cli_with_retries(
     prompt: str,
     *,
-    copilot_model: str | None = None,
-    timeout_seconds: int = DEFAULT_COPILOT_TIMEOUT_SECONDS,
-    max_retries: int = DEFAULT_COPILOT_MAX_RETRIES,
-    retry_backoff_seconds: float = DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS,
-) -> CopilotInvocationResult:
-    """Invoke the Copilot CLI and retry transient timeout failures with exponential backoff."""
+    explanation_model: str | None = None,
+    timeout_seconds: int = DEFAULT_EXPLANATION_CLI_TIMEOUT_SECONDS,
+    max_retries: int = DEFAULT_EXPLANATION_CLI_MAX_RETRIES,
+    retry_backoff_seconds: float = DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS,
+    cli_spec: ExplanationCliSpec | None = None,
+) -> ExplanationCliInvocationResult:
+    """Invoke the explanation CLI and retry transient timeout failures with exponential backoff."""
 
     resolved_max_retries = max(0, int(max_retries))
     resolved_backoff = max(0.0, float(retry_backoff_seconds))
@@ -1205,10 +1162,11 @@ def invoke_copilot_cli_with_retries(
 
     for attempt in range(resolved_max_retries + 1):
         try:
-            return invoke_copilot_cli(
+            return invoke_explanation_cli(
                 prompt,
-                copilot_model=copilot_model,
+                explanation_model=explanation_model,
                 timeout_seconds=timeout_seconds,
+                cli_spec=cli_spec,
             )
         except subprocess.TimeoutExpired as exc:
             last_timeout = exc
@@ -1220,7 +1178,7 @@ def invoke_copilot_cli_with_retries(
 
     attempts = resolved_max_retries + 1
     raise NeuronpediaExplanationError(
-        f"Copilot CLI timed out after {attempts} attempt{'s' if attempts != 1 else ''}"
+        f"Explanation CLI timed out after {attempts} attempt{'s' if attempts != 1 else ''}"
     ) from last_timeout
 
 
@@ -1262,24 +1220,26 @@ def build_explanation_export_record(
     feature_ref: NeuronpediaFeatureRef,
     cleaned_explanation: str,
     artifact_path: Path,
-    copilot_model: str,
+    explanation_model: str,
     cached_activations_path: Path | None,
     author_id: str = DEFAULT_EXPLANATION_AUTHOR_ID,
     triggered_by_user_id: str | None = None,
     type_name: str = DEFAULT_EXPLANATION_TYPE_NAME,
     explanation_model_name: str | None = None,
+    explanation_cli: str = DEFAULT_EXPLANATION_CLI,
 ) -> dict[str, Any]:
     """Build a Neuronpedia-compatible explanation row for import or direct DB insertion."""
 
     notes = _with_requested_generation_metadata(
         {
-            "generated_by": "interpretune-github-copilot-cli",
-            "copilot_model": copilot_model,
+            "generated_by": EXPLANATION_GENERATED_BY,
+            "explanation_cli": explanation_cli,
+            "explanation_cli_model": explanation_model,
             "artifact_path": str(artifact_path),
             "cached_activations_path": str(cached_activations_path) if cached_activations_path else None,
         },
         requested_type_name=type_name,
-        requested_explanation_model_name=explanation_model_name or copilot_model,
+        requested_explanation_model_name=explanation_model_name or explanation_model,
     )
     return {
         "id": str(uuid4()),
@@ -1289,7 +1249,7 @@ def build_explanation_export_record(
         "authorId": author_id,
         "description": cleaned_explanation,
         "typeName": None,
-        "explanationModelName": explanation_model_name or copilot_model,
+        "explanationModelName": explanation_model_name or explanation_model,
         "triggeredByUserId": triggered_by_user_id,
         "notes": _serialize_notes(notes),
         "umap_x": 0,
@@ -1311,7 +1271,7 @@ def write_explanation_import_bundle(
     explanations_dir = export_root / "explanations"
     explanations_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
-    batch_path = explanations_dir / f"copilot-{timestamp}.jsonl.gz"
+    batch_path = explanations_dir / f"explanations-{timestamp}.jsonl.gz"
     with gzip.open(batch_path, "wt", encoding="utf-8") as handle:
         handle.write(json.dumps(explanation_record))
         handle.write("\n")
@@ -1322,142 +1282,11 @@ def write_explanation_import_bundle(
     )
 
 
-def _resolve_supported_fk_name(cursor: Any, table_name: str, requested_name: str | None) -> str | None:
+def _resolve_supported_explanation_fk_name(cursor: Any, table_name: str, requested_name: str | None) -> str | None:
     if requested_name is None:
         return None
     cursor.execute(f'SELECT 1 FROM "{table_name}" WHERE "name" = %s LIMIT 1', (requested_name,))
     return requested_name if cursor.fetchone() else None
-
-
-def _load_jsonl_records(path: Path) -> list[dict[str, Any]]:
-    opener = gzip.open if path.suffix == ".gz" else open
-    with opener(path, "rt", encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
-
-
-def _export_bundle_table_paths(export_root: Path) -> list[tuple[str, Path]]:
-    table_paths: list[tuple[str, Path]] = []
-    metadata_file_map = (
-        ("SourceRelease", export_root / "release.jsonl"),
-        ("Model", export_root / "model.jsonl"),
-        ("SourceSet", export_root / "sourceset.jsonl"),
-        ("Source", export_root / "source.jsonl"),
-    )
-    for table_name, path in metadata_file_map:
-        if path.exists():
-            table_paths.append((table_name, path))
-    for dir_name, table_name in (
-        ("features", "Neuron"),
-        ("activations", "Activation"),
-        ("explanations", "Explanation"),
-    ):
-        directory = export_root / dir_name
-        if not directory.exists():
-            continue
-        for path in sorted(directory.glob("*.jsonl.gz")):
-            table_paths.append((table_name, path))
-    return table_paths
-
-
-def _resolve_table_column_defs(cursor: Any, table_name: str, available_columns: Iterable[str]) -> list[tuple[str, str]]:
-    column_names = list(dict.fromkeys(available_columns))
-    cursor.execute(
-        """
-        SELECT a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod)
-        FROM pg_attribute a
-        JOIN pg_class c ON c.oid = a.attrelid
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relname = %s
-          AND n.nspname = current_schema()
-          AND a.attnum > 0
-          AND NOT a.attisdropped
-          AND a.attname = ANY(%s)
-        ORDER BY a.attnum
-        """,
-        (table_name, column_names),
-    )
-    return [(row[0], row[1]) for row in cursor.fetchall()]
-
-
-def _import_records_local_db(
-    connection: Any,
-    table_name: str,
-    records: list[dict[str, Any]],
-    *,
-    chunk_size: int = 65000,
-) -> int:
-    if not records:
-        return 0
-
-    import psycopg.sql as sql
-
-    available_columns: list[str] = []
-    for record in records:
-        for key in record:
-            if key not in available_columns:
-                available_columns.append(key)
-
-    with connection.cursor() as cursor:
-        column_defs = _resolve_table_column_defs(cursor, table_name, available_columns)
-        if not column_defs:
-            raise NeuronpediaExplanationError(f"Could not resolve columns for table {table_name}.")
-        column_names = [column_name for column_name, _ in column_defs]
-        query = sql.SQL(
-            "INSERT INTO {table_name} ({column_list}) "
-            "SELECT {column_list} FROM jsonb_to_recordset(%s::jsonb) AS t({column_defs}) "
-            "ON CONFLICT DO NOTHING"
-        ).format(
-            table_name=sql.Identifier(table_name),
-            column_list=sql.SQL(", ").join(sql.Identifier(column_name) for column_name in column_names),
-            column_defs=sql.SQL(", ").join(
-                sql.SQL("{} {}").format(sql.Identifier(column_name), sql.SQL(cast(Any, column_type)))
-                for column_name, column_type in column_defs
-            ),
-        )
-
-        imported_rows = 0
-        for start_idx in range(0, len(records), chunk_size):
-            chunk = records[start_idx : start_idx + chunk_size]
-            payload = json.dumps(chunk).replace("\\u0000", " ")
-            cursor.execute(query, (payload,))
-            if cursor.rowcount > 0:
-                imported_rows += cursor.rowcount
-    return imported_rows
-
-
-def import_neuronpedia_export_bundle_local_db(
-    export_root: Path | str,
-    *,
-    local_db_url: str,
-) -> NeuronpediaLocalImportSummary:
-    """Import a Neuronpedia export bundle into a local Neuronpedia Postgres database."""
-
-    import psycopg
-
-    export_root_path = Path(export_root)
-    if not export_root_path.exists():
-        raise NeuronpediaExplanationError(f"Export root does not exist: {export_root_path}")
-
-    table_paths = _export_bundle_table_paths(export_root_path)
-    if not table_paths:
-        raise NeuronpediaExplanationError(f"No importable Neuronpedia bundle files found under {export_root_path}")
-
-    imported_row_counts: dict[str, int] = {}
-    processed_files: list[Path] = []
-    resolved_db_url = resolve_local_neuronpedia_db_url(local_db_url)
-    with psycopg.connect(resolved_db_url) as connection:
-        for table_name, path in table_paths:
-            records = _load_jsonl_records(path)
-            imported_count = _import_records_local_db(connection, table_name, records)
-            imported_row_counts[table_name] = imported_row_counts.get(table_name, 0) + imported_count
-            processed_files.append(path)
-        connection.commit()
-
-    return NeuronpediaLocalImportSummary(
-        export_root=export_root_path,
-        imported_row_counts=imported_row_counts,
-        processed_files=processed_files,
-    )
 
 
 def insert_explanation_record_local_db(
@@ -1470,9 +1299,10 @@ def insert_explanation_record_local_db(
     import psycopg
 
     record = dict(explanation_record)
-    with psycopg.connect(local_db_url) as connection:
+    resolved_db_url = resolve_local_neuronpedia_db_url(local_db_url)
+    with psycopg.connect(resolved_db_url) as connection:
         with connection.cursor() as cursor:
-            resolved_model_name = _resolve_supported_fk_name(
+            resolved_model_name = _resolve_supported_explanation_fk_name(
                 cursor,
                 "ExplanationModelType",
                 record.get("explanationModelName"),
@@ -1524,11 +1354,12 @@ def render_markdown_artifact(
     prompt: str,
     raw_response: str,
     cleaned_explanation: str,
-    copilot_model: str,
+    explanation_model: str,
     prompt_style: str,
     cached_activations_path: Path | None,
     import_artifact: NeuronpediaExplanationImportArtifact | None,
     database_explanation_id: str | None,
+    explanation_cli: str = DEFAULT_EXPLANATION_CLI,
 ) -> str:
     """Render a markdown artifact suitable for explanation review or ingestion."""
 
@@ -1545,7 +1376,8 @@ def render_markdown_artifact(
             f"index: {feature_ref.index}",
             f"source_set: {feature_ref.source_set}",
             f"prompt_style: {prompt_style}",
-            f"copilot_model: {copilot_model}",
+            f"explanation_cli: {explanation_cli}",
+            f"explanation_cli_model: {explanation_model}",
             f"cached_activations_path: {cached_activations_path or ''}",
             f"neuronpedia_import_batch: {import_artifact.explanation_batch_path if import_artifact else ''}",
             f"local_db_explanation_id: {database_explanation_id or ''}",
@@ -1575,11 +1407,11 @@ def render_markdown_artifact(
             "",
             _format_list_block(prompt_inputs.top_activating_texts),
             "",
-            "## Raw Copilot Output",
+            "## Raw Explanation CLI Output",
             "",
             raw_response,
             "",
-            "## Copilot Prompt",
+            "## Explanation CLI Prompt",
             "",
             prompt,
             "",
@@ -1591,8 +1423,8 @@ def generate_explanation_artifact(
     *,
     feature_ref: NeuronpediaFeatureRef,
     output_dir: Path = DEFAULT_GENERATED_OUTPUT_DIR,
-    copilot_model: str | None = None,
-    timeout_seconds: int = DEFAULT_COPILOT_TIMEOUT_SECONDS,
+    explanation_model: str | None = None,
+    timeout_seconds: int = DEFAULT_EXPLANATION_CLI_TIMEOUT_SECONDS,
     cache_dir: Path | None = None,
     write_neuronpedia_import_data: bool = False,
     insert_into_local_db: bool = False,
@@ -1601,12 +1433,14 @@ def generate_explanation_artifact(
     triggered_by_user_id: str | None = None,
     type_name: str = DEFAULT_EXPLANATION_TYPE_NAME,
     explanation_model_name: str | None = None,
-    max_retries: int = DEFAULT_COPILOT_MAX_RETRIES,
-    retry_backoff_seconds: float = DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS,
+    max_retries: int = DEFAULT_EXPLANATION_CLI_MAX_RETRIES,
+    retry_backoff_seconds: float = DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS,
+    cli_spec: ExplanationCliSpec | None = None,
 ) -> NeuronpediaExplanationArtifact:
-    """Generate a Neuronpedia-style explanation artifact using cached activations and GitHub Copilot CLI."""
+    """Generate a Neuronpedia-style explanation artifact using cached activations and an explanation CLI."""
 
-    selected_model = copilot_model or DEFAULT_COPILOT_MODEL
+    resolved_spec = resolve_explanation_cli_spec(cli_spec)
+    selected_model = explanation_model or os.getenv("IT_EXPLANATION_CLI_MODEL") or DEFAULT_EXPLANATION_CLI_MODEL
     feature_payload, cached_activations_path = load_feature_payload_with_cached_activations(
         feature_ref,
         cache_dir=cache_dir,
@@ -1614,14 +1448,15 @@ def generate_explanation_artifact(
     )
     prompt_inputs = derive_np_max_act_logits_inputs(feature_payload)
     prompt, prompt_style = build_explanation_prompt(feature_ref, prompt_inputs, type_name=type_name)
-    copilot_result = invoke_copilot_cli_with_retries(
+    cli_result = invoke_explanation_cli_with_retries(
         prompt,
-        copilot_model=selected_model,
+        explanation_model=selected_model,
         timeout_seconds=timeout_seconds,
         max_retries=max_retries,
         retry_backoff_seconds=retry_backoff_seconds,
+        cli_spec=resolved_spec,
     )
-    cleaned_explanation = clean_explanation_text(copilot_result.stdout)
+    cleaned_explanation = clean_explanation_text(cli_result.stdout)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     artifact_path = artifact_output_path(output_dir, feature_ref)
@@ -1634,12 +1469,13 @@ def generate_explanation_artifact(
             feature_ref=feature_ref,
             cleaned_explanation=cleaned_explanation,
             artifact_path=artifact_path,
-            copilot_model=selected_model,
+            explanation_model=selected_model,
             cached_activations_path=cached_activations_path,
             author_id=explanation_author_id,
             triggered_by_user_id=triggered_by_user_id,
             type_name=type_name,
             explanation_model_name=explanation_model_name,
+            explanation_cli=resolved_spec.executable,
         )
     if write_neuronpedia_import_data and explanation_record is not None:
         import_artifact = write_explanation_import_bundle(
@@ -1664,20 +1500,21 @@ def generate_explanation_artifact(
             feature_ref=feature_ref,
             prompt_inputs=prompt_inputs,
             prompt=prompt,
-            raw_response=copilot_result.stdout,
+            raw_response=cli_result.stdout,
             cleaned_explanation=cleaned_explanation,
-            copilot_model=selected_model,
+            explanation_model=selected_model,
             prompt_style=prompt_style,
             cached_activations_path=cached_activations_path,
             import_artifact=import_artifact,
             database_explanation_id=database_explanation_id,
+            explanation_cli=resolved_spec.executable,
         ),
         encoding="utf-8",
     )
     return NeuronpediaExplanationArtifact(
         feature_ref=feature_ref,
         prompt=prompt,
-        raw_response=copilot_result.stdout,
+        raw_response=cli_result.stdout,
         cleaned_explanation=cleaned_explanation,
         artifact_path=artifact_path,
         cached_activations_path=cached_activations_path,

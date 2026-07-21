@@ -176,3 +176,5 @@ _FTS_AVAILABLE = module_available("finetuning_scheduler")
 _BNB_AVAILABLE = package_available("bitsandbytes")
 _SL_AVAILABLE = module_available("sae_lens")
 _NNSIGHT_AVAILABLE = package_available("nnsight")
+# local-checkout package (neuronpedia repo, utils/neuronpedia-utils) — not installable from PyPI
+_NEURONPEDIA_UTILS_AVAILABLE = module_available("neuronpedia_utils")

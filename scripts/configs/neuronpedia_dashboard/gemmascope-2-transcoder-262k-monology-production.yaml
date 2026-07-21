@@ -1,0 +1,97 @@
+# Production all-layer Monology 262k dashboard generation for gemma-3-1b-it (2026-07-11/12).
+#
+# Purpose: the full "production" dashboard build validating the scalable-dashboards work and
+# providing the semantic substrate (feature dashboards + locally generated explanations) for the
+# refocused circuit-tracer demo notebooks. Run doc: distributed-insight
+# PRs/neuronpedia/source-set-enhancements/monology_262k_production_run.md
+#
+# Prompt sourcing intentionally uses the standard streaming load_dataset path over
+# monology/pile-uncopyrighted (SAEDashboard tokenizes/concatenates to 128-token contexts) rather
+# than the benchmark suite's pretokenized 2,490-prompt concat dataset.
+#
+# n_prompts = 4,096 (Session 13 decision). WHY NOT larger: the columnar packaging exhibits a
+# GPU-memory CLIFF — feature_statistics_packaging + activation_histogram_packaging are near-free at
+# 2,490 AND 4,096 prompts (peak GPU reserved ~5 / 16.7 GiB) but jump +75x / +34x at 8,192 prompts
+# (peak 23.0 GiB, at the 24 GiB card) — a memory-pressure/allocator-thrash cliff, NOT algorithmic
+# (packaging is provably O(n_prompts) linear). 4,096 sits well below the cliff: ~7.4 s/batch
+# (~9x faster than 8,192), full 26-layer run < 24 h. Confirmed by a 3-point sweep + code read;
+# see monology_262k_production_run.md "Root cause — CONFIRMED". Larger n_prompts (24,576) needs the
+# opt-in token-chunked packaging mitigation (SD enhancement, plan §3d task 3).
+#
+# LESSONS (launches 1-5):
+# 1. ROUTE: runner_dashboard_output_format 'auto' resolves to columnar ONLY when
+#    runner_defer_component_construction is ALSO enabled; the explicit columnar flag set below is
+#    REQUIRED and must stay explicit. (Also: argparse defaults used to clobber these YAML values —
+#    fixed IT-6f03dad.)
+# 2. HOST RAM (legacy route): the LEGACY per-feature-batch assembly materializes a dense
+#    features x prompts x tokens matrix on the HOST — OOM-killed at 24,576 x 4096 on this 62 GiB
+#    host. The columnar route below keeps host RSS ~5 GiB; the constraint at scale is the GPU cliff
+#    above, not host RAM.
+pipeline:
+  model_name: gemma-3-1b-it
+  model_layers: 26
+  creator_name: Google DeepMind
+  release_id: gemma-scope-2
+  release_title: Gemma Scope 2
+  release_url: https://huggingface.co/google/gemma-scope-2-1b-it
+  hook_point: hook_mlp_in
+  sae_set: gemma-scope-2-1b-it-transcoders-all
+  neuronpedia_source_set_id: gemmascope-2-transcoder-262k
+  neuronpedia_source_set_description: Transcoder - 262k
+  hf_weights_repo_id: google/gemma-scope-2-1b-it
+  hf_weights_path_template: transcoder_all/layer_{layer}_width_262k_l0_small_affine
+  sae_path_template: layer_{layer}_width_262k_l0_small_affine
+  prompts_huggingface_dataset_path: monology/pile-uncopyrighted
+  prompts_huggingface_dataset_split: train
+  start_layer: 0
+  end_layer: 25
+  start_batch: 0
+  n_prompts_total: 4096
+  n_tokens_in_prompt: 128
+  # n_features_per_batch 2048 (was 4096): late/denser layers (layer 22) hit a per-feature-batch
+  # generation OOM at 4096 — the packaging working set peaked ~23.5 GiB against the 24 GiB card even
+  # at 4,096 prompts and with expandable_segments (the OOM recurred with identical numbers on a
+  # fully clean GPU, so it is a genuine per-layer peak, not transient contention). 2048 halves the
+  # per-batch working set (~11-12 GiB peak) with a comfortable margin and produces IDENTICAL final
+  # dashboards (n_features_per_batch is pure generation chunking; all 262,144 features are processed
+  # either way; ~same total generation time — batches halve in size, double in count). Layers 0-20
+  # were generated at 4096 before this change; 21-25 regenerate at 2048.
+  n_features_per_batch: 2048
+  n_prompts_in_forward_pass: 256
+  use_skip_transcoder: true
+  runner_dashboard_output_format: columnar
+  runner_sequence_selection_backend: columnar_gpu
+  runner_feature_statistics_backend: arrow
+  runner_logits_histogram_backend: arrow
+  runner_overlap_batch_packaging: true
+  runner_use_cached_activations: false
+  model_wrapper: bridge
+  bridge_enable_compatibility_mode: true
+  runner_log_resource_snapshots: true
+  runner_log_performance: true
+  import_to_local_db: true
+  overlap_local_db_import: true
+  # Dense layers (e.g. layer 1) exceed postgres' 256 MB single-jsonb-array limit in the neuron-import
+  # payload at the default 65000 chunk (ProgramLimitExceeded), which aborts the whole run via the
+  # deferred-import path — even at 4,096 prompts. 16000 keeps every layer's chunk payload well under
+  # the limit (validated across all layers in the 8,192 backfill). Candidate NP-utils fix: size-aware
+  # chunking / lower default for wide sets.
+  local_db_import_chunk_size: 16000
+  # REQUIRED for inline import: without an explicit DB URL (or LOCAL_NEURONPEDIA_DB_URL /
+  # POSTGRES_URL_NON_POOLING in the env) the pipeline logs a single startup WARNING and silently
+  # degrades to generation-only (launch 5 ran layers this way; imports backfilled via
+  # --import-only-local-db). Candidate pipeline fix: import_to_local_db=true + unresolvable DB URL
+  # should be a hard error, not a warning.
+  local_db_url: postgres://postgres:postgres@127.0.0.1:5433/postgres
+  archive_partial_dirs: false
+  heartbeat_seconds: 60
+  stall_timeout_seconds: 1800
+  # No run_name_suffix: keeps the run dir canonical (..._gemmascope-2-transcoder-262k) so
+  # _resolve_source_id derives canonical source ids ({layer}-{set_id}) for INLINE imports —
+  # sidesteps the columnar suffix-leak workaround (plain symlink + empty --run-name-suffix backfill).
+launcher:
+  background: true
+  monitor: true
+  monitor_heartbeat_seconds: 60
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True

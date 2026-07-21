@@ -1,0 +1,18 @@
+EXTENDS: gemmascope-2-transcoder-262k-rte-gpu1.yaml
+
+launcher:
+  monitor: true
+  monitor_heartbeat_seconds: 60
+  workers:
+    - id: gpu1
+      cuda_visible_devices: "1"
+      start_layer: 3
+      n_features_per_batch: 512
+      n_prompts_in_forward_pass: 64
+      primary_acts_batch_size: 16
+    - id: gpu0
+      cuda_visible_devices: "0"
+      start_layer: 4
+      n_features_per_batch: 1024
+      n_prompts_in_forward_pass: 256
+      primary_acts_batch_size: 64

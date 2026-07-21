@@ -22,9 +22,9 @@ if str(TESTS_DIR) not in sys.path:
 utils = importlib.import_module("interpretune.utils")
 np_explanations = importlib.import_module("interpretune.utils.neuronpedia_explanations")
 RunIf: Any = importlib.import_module("runif").RunIf
-DEFAULT_COPILOT_MODEL = utils.DEFAULT_COPILOT_MODEL
-DEFAULT_COPILOT_MAX_RETRIES = utils.DEFAULT_COPILOT_MAX_RETRIES
-DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS = utils.DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS
+DEFAULT_EXPLANATION_CLI_MODEL = utils.DEFAULT_EXPLANATION_CLI_MODEL
+DEFAULT_EXPLANATION_CLI_MAX_RETRIES = utils.DEFAULT_EXPLANATION_CLI_MAX_RETRIES
+DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS = utils.DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS
 NeuronpediaFeatureRef = utils.NeuronpediaFeatureRef
 activation_batch_number = utils.activation_batch_number
 artifact_output_path = utils.artifact_output_path
@@ -43,7 +43,7 @@ parse_feature_url = utils.parse_feature_url
 public_activation_batch_url = utils.public_activation_batch_url
 resolve_local_neuronpedia_db_url = utils.resolve_local_neuronpedia_db_url
 check_local_explanation_coverage = utils.check_local_explanation_coverage
-invoke_copilot_cli_with_retries = utils.invoke_copilot_cli_with_retries
+invoke_explanation_cli_with_retries = utils.invoke_explanation_cli_with_retries
 
 
 def _sample_feature_payload() -> dict:
@@ -130,6 +130,29 @@ def test_derive_np_max_act_logits_inputs_reconstructs_prompt_lists() -> None:
     ]
 
 
+def test_load_feature_payload_with_cached_activations_falls_back_to_api_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    feature_ref = NeuronpediaFeatureRef(
+        model_id="gemma-3-1b-it",
+        layer="0-gemmascope-2-transcoder-262k-rte",
+        index="0",
+    )
+    payload = _sample_feature_payload()
+
+    monkeypatch.setattr(np_explanations, "fetch_feature_payload", lambda *_args, **_kwargs: dict(payload))
+
+    def _raise_missing_cache(*_args, **_kwargs):
+        raise np_explanations.NeuronpediaExplanationError("missing cache")
+
+    monkeypatch.setattr(np_explanations, "load_cached_feature_activations", _raise_missing_cache)
+
+    loaded_payload, batch_path = np_explanations.load_feature_payload_with_cached_activations(feature_ref)
+
+    assert batch_path is None
+    assert loaded_payload["activations"] == payload["activations"]
+
+
 def test_build_np_max_act_logits_prompt_contains_feature_metadata_and_lists() -> None:
     feature_ref = NeuronpediaFeatureRef(
         model_id="gemma-3-4b-it",
@@ -185,28 +208,31 @@ def test_build_explanation_prompt_supports_moe_type() -> None:
     assert "Method: -1" in prompt
 
 
-def test_invoke_copilot_cli_with_retries_retries_timeouts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_invoke_explanation_cli_with_retries_retries_timeouts(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts = {"count": 0}
 
     def _fake_invoke(*args, **kwargs):
         attempts["count"] += 1
         if attempts["count"] < 3:
             raise subprocess.TimeoutExpired(cmd=["copilot", "-p"], timeout=120)
-        return np_explanations.CopilotInvocationResult(stdout="Explanation: capitals", stderr="")
+        return np_explanations.ExplanationCliInvocationResult(stdout="Explanation: capitals", stderr="")
 
-    monkeypatch.setattr(np_explanations, "invoke_copilot_cli", _fake_invoke)
+    monkeypatch.setattr(np_explanations, "invoke_explanation_cli", _fake_invoke)
     sleep_calls: list[float] = []
     monkeypatch.setattr(np_explanations.time, "sleep", sleep_calls.append)
 
-    result = invoke_copilot_cli_with_retries(
+    result = invoke_explanation_cli_with_retries(
         "prompt",
-        max_retries=DEFAULT_COPILOT_MAX_RETRIES,
-        retry_backoff_seconds=DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS,
+        max_retries=DEFAULT_EXPLANATION_CLI_MAX_RETRIES,
+        retry_backoff_seconds=DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS,
     )
 
     assert result.stdout == "Explanation: capitals"
     assert attempts["count"] == 3
-    assert sleep_calls == [DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS, DEFAULT_COPILOT_RETRY_BACKOFF_SECONDS * 2]
+    assert sleep_calls == [
+        DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS,
+        DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS * 2,
+    ]
 
 
 def test_check_local_explanation_coverage_filters_by_requested_type(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -320,6 +346,9 @@ def test_activation_batch_helpers_match_known_public_export_path() -> None:
     assert cached_activation_batch_path(feature_ref, cache_dir=Path("/tmp/np-cache")) == Path(
         "/tmp/np-cache/v1/gemma-3-4b-it/23-gemmascope-2-transcoder-262k/activations/batch-26.jsonl.gz"
     )
+    assert candidate_paths[1] == Path(
+        "/tmp/np-cache/v1/gemma-3-4b-it/23-gemmascope-2-transcoder-262k/activations/batch-52.jsonl.gz"
+    )
     assert candidate_paths[-1] == Path(
         "/tmp/np-cache/v1/gemma-3-4b-it/23-gemmascope-2-transcoder-262k/activations/batch-13.jsonl.gz"
     )
@@ -351,7 +380,7 @@ def test_build_explanation_export_record_uses_generated_metadata() -> None:
         feature_ref=feature_ref,
         cleaned_explanation="capital cities",
         artifact_path=Path("/tmp/generated_np_explanations/example.md"),
-        copilot_model=DEFAULT_COPILOT_MODEL,
+        explanation_model=DEFAULT_EXPLANATION_CLI_MODEL,
         cached_activations_path=Path("/tmp/cache/batch-26.jsonl.gz"),
     )
 
@@ -360,7 +389,7 @@ def test_build_explanation_export_record_uses_generated_metadata() -> None:
     assert record["index"] == "13341"
     assert record["description"] == "capital cities"
     assert record["typeName"] is None
-    assert record["explanationModelName"] == DEFAULT_COPILOT_MODEL
+    assert record["explanationModelName"] == DEFAULT_EXPLANATION_CLI_MODEL
     assert "artifact_path" in record["notes"]
     assert '"requested_type_name": "np_max-act-logits"' in record["notes"]
 
@@ -376,7 +405,7 @@ def test_build_explanation_export_record_preserves_requested_moe_type_in_notes()
         feature_ref=feature_ref,
         cleaned_explanation="capital cities",
         artifact_path=Path("/tmp/generated_np_explanations/example.md"),
-        copilot_model=DEFAULT_COPILOT_MODEL,
+        explanation_model=DEFAULT_EXPLANATION_CLI_MODEL,
         cached_activations_path=Path("/tmp/cache/batch-26.jsonl.gz"),
         type_name=np_explanations.NP_MOE_MAX_ACT_LOGITS_TYPE_NAME,
     )
@@ -398,7 +427,7 @@ def test_insert_explanation_record_local_db_keeps_type_name_null_and_records_req
         "triggeredByUserId": None,
         "notes": "{}",
         "typeName": np_explanations.NP_MOE_MAX_ACT_LOGITS_TYPE_NAME,
-        "explanationModelName": DEFAULT_COPILOT_MODEL,
+        "explanationModelName": DEFAULT_EXPLANATION_CLI_MODEL,
     }
     executed: list[tuple[str, tuple[Any, ...]]] = []
 
@@ -460,10 +489,71 @@ def test_resolve_local_neuronpedia_db_url_rewrites_container_host_port(monkeypat
     assert resolved == "postgresql://np_user:secret@127.0.0.1:5433/postgres"
 
 
+def test_resolve_explanation_cli_spec_honors_executable_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("IT_EXPLANATION_CLI", raising=False)
+    assert np_explanations.resolve_explanation_cli_spec().executable == np_explanations.DEFAULT_EXPLANATION_CLI
+
+    monkeypatch.setenv("IT_EXPLANATION_CLI", "another-conforming-cli")
+    resolved = np_explanations.resolve_explanation_cli_spec()
+    assert resolved.executable == "another-conforming-cli"
+    assert resolved.prompt_args == ("-p",)
+
+
+def test_build_explanation_cli_env_without_api_key_skips_provider_injection() -> None:
+    env = np_explanations.build_explanation_cli_env(
+        np_explanations.DEFAULT_EXPLANATION_CLI_SPEC,
+        base_env={},
+    )
+
+    assert env["COPILOT_MODEL"] == np_explanations.DEFAULT_EXPLANATION_CLI_MODEL
+    assert "COPILOT_PROVIDER_TYPE" not in env
+    assert "COPILOT_PROVIDER_BASE_URL" not in env
+    assert "COPILOT_PROVIDER_API_KEY" not in env
+
+
+def test_build_explanation_cli_env_injects_byok_defaults_when_key_present() -> None:
+    env = np_explanations.build_explanation_cli_env(
+        np_explanations.DEFAULT_EXPLANATION_CLI_SPEC,
+        base_env={"COPILOT_PROVIDER_API_KEY": "cli-specific-key"},
+    )
+
+    assert env["COPILOT_PROVIDER_API_KEY"] == "cli-specific-key"
+    assert env["COPILOT_PROVIDER_TYPE"] == np_explanations.DEFAULT_EXPLANATION_PROVIDER_TYPE
+    assert env["COPILOT_PROVIDER_BASE_URL"] == np_explanations.DEFAULT_EXPLANATION_PROVIDER_BASE_URL
+    assert env["COPILOT_MODEL"] == np_explanations.DEFAULT_EXPLANATION_CLI_MODEL
+
+
+def test_build_explanation_cli_env_generic_overrides_win() -> None:
+    env = np_explanations.build_explanation_cli_env(
+        np_explanations.DEFAULT_EXPLANATION_CLI_SPEC,
+        base_env={
+            "IT_EXPLANATION_PROVIDER_API_KEY": "generic-key",
+            "IT_EXPLANATION_PROVIDER_TYPE": "azure",
+            "IT_EXPLANATION_PROVIDER_BASE_URL": "https://openrouter.ai/api/v1",
+            "IT_EXPLANATION_CLI_MODEL": "some-openrouter-model",
+            "COPILOT_PROVIDER_API_KEY": "cli-specific-key",
+            "COPILOT_PROVIDER_TYPE": "openai",
+        },
+    )
+
+    assert env["COPILOT_PROVIDER_API_KEY"] == "generic-key"
+    assert env["COPILOT_PROVIDER_TYPE"] == "azure"
+    assert env["COPILOT_PROVIDER_BASE_URL"] == "https://openrouter.ai/api/v1"
+    assert env["COPILOT_MODEL"] == "some-openrouter-model"
+
+    explicit_model_env = np_explanations.build_explanation_cli_env(
+        np_explanations.DEFAULT_EXPLANATION_CLI_SPEC,
+        explanation_model="explicit-model",
+        base_env={"IT_EXPLANATION_CLI_MODEL": "some-openrouter-model"},
+    )
+    assert explicit_model_env["COPILOT_MODEL"] == "explicit-model"
+
+
 @RunIf(optional=True)
 def test_generate_explanation_artifact_with_cached_real_activation_batch(tmp_path: Path, monkeypatch) -> None:
-    if shutil.which("copilot") is None:
-        pytest.skip("copilot CLI is not available on PATH")
+    resolved_spec = np_explanations.resolve_explanation_cli_spec()
+    if shutil.which(resolved_spec.executable) is None:
+        pytest.skip(f"explanation CLI '{resolved_spec.executable}' is not available on PATH")
 
     feature_ref = build_feature_ref(
         model_id="gemma-3-4b-it",
@@ -493,7 +583,7 @@ def test_generate_explanation_artifact_with_cached_real_activation_batch(tmp_pat
 
     content = artifact.artifact_path.read_text(encoding="utf-8")
     assert "artifact_type: neuronpedia_explanation_candidate" in content
-    assert f"copilot_model: {DEFAULT_COPILOT_MODEL}" in content
+    assert f"explanation_cli_model: {DEFAULT_EXPLANATION_CLI_MODEL}" in content
     assert f"cached_activations_path: {cached_batch_path}" in content
     assert "# Neuronpedia Explanation Candidate" in content
     assert re.search(r"^Method:\s*.+$", content, flags=re.MULTILINE)

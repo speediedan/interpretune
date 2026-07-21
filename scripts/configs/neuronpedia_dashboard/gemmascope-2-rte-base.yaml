@@ -1,0 +1,38 @@
+# Base config for gemma-3-1b-it RTE example-aligned dashboard generation.
+#
+# Host-portable notes:
+# - `${IT_NP_CACHE}` placeholders require IT_NP_CACHE to be set (else edit the paths). When unset in
+#   the environment, the pipeline itself defaults artifact roots to $HF_HOME/interpretune/neuronpedia.
+# - python_executable / run_root / export_root / *_repo_root are intentionally omitted: the pipeline
+#   resolves them from the running interpreter, IT_NP_CACHE / NEURONPEDIA_EXPORT_ROOT, and
+#   SAEDASHBOARD_REPO_ROOT / SAELENS_REPO_ROOT / NEURONPEDIA_UTILS_ROOT (defaults: ~/repos/<repo>).
+# - The pretokenized RTE prompt cache is regenerable; see docs/neuronpedia_dashboard_pipeline.md
+#   (dashboard_pretokenization_rte.py) for the exact regeneration command.
+pipeline:
+  model_name: gemma-3-1b-it
+  model_layers: 26
+  creator_name: Google DeepMind
+  release_id: gemma-scope-2
+  release_title: Gemma Scope 2
+  hook_point: hook_mlp_in
+  prompts_huggingface_dataset_path: aps/super_glue
+  prompts_huggingface_dataset_config_name: rte
+  prompts_huggingface_dataset_split: train
+  prompts_pretokenized_dataset_path: ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts
+  start_layer: 0
+  end_layer: 25
+  start_batch: 0
+  n_prompts_total: 2490
+  n_tokens_in_prompt: 319
+  deduplicate_shared_prompt_tokens: false
+  strict_shared_prompt_count: true
+  model_wrapper: bridge
+  bridge_enable_compatibility_mode: true
+  runner_log_resource_snapshots: true
+  archive_partial_dirs: false
+  heartbeat_seconds: 60
+  stall_timeout_seconds: 1800
+launcher:
+  background: true
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
