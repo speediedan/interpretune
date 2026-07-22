@@ -497,6 +497,30 @@ class TestNNsightRemoteExecution:
         assert kwargs["dispatch"] is False
 
     @RunIf(optional=True)
+    def test_remote_smoke_pinned_model(self, has_ndif_api_key):
+        """Verify NDIF remote execution works end-to-end against a currently-pinned model.
+
+        Unlike test_remote_local_consistency (which needs the SAME model loadable locally and pinned remotely, so it
+        skips whenever gpt2 is unpinned), this smoke meta-loads a pinned model (no local weights) and runs one remote
+        trace — validating connectivity, API-key tier scheduling, and result download. Override the substrate with
+        IT_NDIF_REMOTE_SMOKE_MODEL when the pinned set rotates (default: EleutherAI/gpt-j-6b, pinned + ungated as of
+        2026-07).
+        """
+        model_name = os.environ.get("IT_NDIF_REMOTE_SMOKE_MODEL", "EleutherAI/gpt-j-6b")
+        model = nnsight.LanguageModel(model_name)  # meta tensors only — no local weight download
+        try:
+            with model.trace("The capital of France is", remote=True):
+                logits = nnsight.save(model.lm_head.output)
+        except httpx.TimeoutException as error:
+            pytest.skip(f"NDIF request timed out: {error}")
+        except Exception as error:
+            # same environmental-skip contract as test_remote_local_consistency below
+            if any(marker in str(error) for marker in ("not pinned", "not scheduled", "hotswapping")):
+                pytest.skip(f"NDIF model unavailable for this API key tier: {error}")
+            raise
+        assert logits.ndim == 3 and logits.shape[-1] > 0, f"unexpected remote logits shape: {tuple(logits.shape)}"
+
+    @RunIf(optional=True)
     def test_remote_local_consistency(
         self,
         has_ndif_api_key,
