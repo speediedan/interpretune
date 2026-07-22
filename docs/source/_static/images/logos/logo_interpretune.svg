@@ -11,9 +11,12 @@
       <stop offset="100%" stop-color="#135f3c"/>
     </linearGradient>
   </defs>
-  <!-- "Interpret" -->
+  <!-- "Interpret" — textLength pins the advance width so the gap before the fork (fixed at
+       x=243) is identical under every platform fallback font (Android Roboto renders ~10px
+       narrower than desktop Arial/Inter, which read as "Interpret Une") -->
   <text x="8" y="66" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="56"
-        font-weight="650" letter-spacing="0.5" fill="url(#wmGreen)">Interpret</text>
+        font-weight="650" letter-spacing="0.5" fill="url(#wmGreen)"
+        textLength="232" lengthAdjust="spacingAndGlyphs">Interpret</text>
   <!-- metallic tuning fork with handle standing in for the 'u', tilted 10 degrees; gradient is
        userSpaceOnUse (objectBoundingBox is degenerate on vertical strokes = invisible handle) -->
   <g transform="translate(243,0) rotate(10 20 52)">
@@ -30,5 +33,6 @@
   </g>
   <!-- "ne" -->
   <text x="286" y="66" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="56"
-        font-weight="650" letter-spacing="0.5" fill="url(#wmGreen)">ne</text>
+        font-weight="650" letter-spacing="0.5" fill="url(#wmGreen)"
+        textLength="66" lengthAdjust="spacingAndGlyphs">ne</text>
 </svg>
