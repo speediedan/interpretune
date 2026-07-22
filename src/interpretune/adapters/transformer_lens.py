@@ -32,6 +32,40 @@ from interpretune.protocol import Adapter
 ################################################################################
 
 
+_BRIDGE_PROCESSED_WEIGHT_PATCH_APPLIED = False
+
+
+def _ensure_bridge_processed_weight_device_patch() -> None:
+    """Patch GeneralizedComponent._apply so processed-weight caches follow device/dtype moves.
+
+    TransformerBridge's set_processed_weights() stores processed tensors as plain attributes (e.g.
+    GatedMLPBridge._processed_W_gate), which Module._apply()/.to() do not migrate — so gated-MLP architectures fail
+    with a CPU/CUDA device mismatch whenever compatibility mode is enabled before the model moves to device (whether
+    via the adapter's own move or Lightning's later one). Registering the tensors as non-persistent buffers is NOT an
+    option: GeneralizedComponent.__getattr__ resolves neither _parameters nor _buffers, so register_buffer() makes the
+    attribute unreachable. Instead, extend _apply so each component transforms its own cached tensors alongside its
+    real parameters. Applies to every bridge regardless of which adapter constructed it (transformer_lens or
+    sae_lens). Upstream TransformerLens defect present at pin 4ba2187b; gpt2-class MLP bridges are unaffected (no
+    processed-tensor caching on the component).
+    """
+    global _BRIDGE_PROCESSED_WEIGHT_PATCH_APPLIED
+    if _BRIDGE_PROCESSED_WEIGHT_PATCH_APPLIED:
+        return
+    from transformer_lens.model_bridge.generalized_components.base import GeneralizedComponent
+
+    orig_apply = GeneralizedComponent._apply
+
+    def _apply_with_processed_weights(self, fn, recurse: bool = True):
+        out = orig_apply(self, fn, recurse)
+        for attr, val in list(vars(self).items()):
+            if attr.startswith("_processed_") and isinstance(val, torch.Tensor):
+                setattr(self, attr, fn(val))
+        return out
+
+    GeneralizedComponent._apply = _apply_with_processed_weights  # type: ignore[method-assign]
+    _BRIDGE_PROCESSED_WEIGHT_PATCH_APPLIED = True
+
+
 class TLensAttributeMixin:
     @property
     def tl_cfg(self) -> HookedTransformerConfig | TransformerBridgeConfig | None:
@@ -307,6 +341,7 @@ class BaseITLensModule(BaseITModule):
             compat_kwargs = self.it_cfg.tl_cfg.enable_compatibility_mode_kwargs or {}
             rank_zero_info(f"Enabling TransformerBridge compatibility mode with kwargs: {compat_kwargs}")
             self.model.enable_compatibility_mode(**compat_kwargs)
+            _ensure_bridge_processed_weight_device_patch()
 
         # Move model to device if move_to_device is enabled (default True)
         if pruned_cfg.get("move_to_device", True) and "device" in pruned_cfg:

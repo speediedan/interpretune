@@ -230,9 +230,15 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
 
         # Enable compatibility mode if requested (ITLensBridgeConfig only)
         if isinstance(self.it_cfg.tl_cfg, ITLensBridgeConfig) and self.it_cfg.tl_cfg.enable_compatibility_mode:
+            from interpretune.adapters.transformer_lens import _ensure_bridge_processed_weight_device_patch
+
             compat_kwargs = self.it_cfg.tl_cfg.enable_compatibility_mode_kwargs or {}
             rank_zero_info(f"Enabling TransformerBridge compatibility mode with kwargs: {compat_kwargs}")
             self.model.enable_compatibility_mode(**compat_kwargs)
+            # This SAE-Lens conversion path bypasses BaseITLensModule._convert_to_bridge, so the
+            # processed-weight _apply patch must be ensured here as well (otherwise Lightning's
+            # Trainer-driven .to() strands the caches on cpu — see the patch docstring)
+            _ensure_bridge_processed_weight_device_patch()
 
         # Move model to device if move_to_device is enabled (default True)
         if pruned_cfg.get("move_to_device", True) and "device" in pruned_cfg:
@@ -309,7 +315,19 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
                 nnsight_kwargs["api_key"] = api_key
 
         # Initialize NNsight LanguageModel
-        self.model = LanguageModel(model_name, **nnsight_kwargs)
+        try:
+            self.model = LanguageModel(model_name, **nnsight_kwargs)
+        except ValueError as ve:
+            # nnsight 0.7+ refuses multimodal-registered repos via LanguageModel (e.g.
+            # gemma-3-4b-it is AutoModelForImageTextToText) and directs callers to
+            # VisionLanguageModel, a LanguageModel subclass exposing the same tracing
+            # surface for text-only use (mirrors the fallback in adapters/nnsight.py)
+            if "VisionLanguageModel" not in str(ve):
+                raise
+            from nnsight import VisionLanguageModel
+
+            rank_zero_info(f"{model_name} is registered as multimodal; using NNsight VisionLanguageModel")
+            self.model = VisionLanguageModel(model_name, **nnsight_kwargs)
 
         # Store tokenizer reference
         if self.it_cfg.tokenizer is None and hasattr(self.model, "tokenizer"):  # type: ignore[attr-defined]
