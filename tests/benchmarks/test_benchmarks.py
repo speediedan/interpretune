@@ -86,10 +86,15 @@ def test_benchmark(experiment_name, benchmark_id, benchmark_entry):
     expected = benchmark_entry.get("expected_accuracy")
     tolerance = benchmark_entry.get("tolerance", 0.02)
 
-    # Run via CLI subprocess to match production execution path
+    # Run via CLI subprocess to match production execution path, honoring the registry's
+    # cli_mode exactly like run_benchmarks.py does (core-CLI entries compose a non-Lightning
+    # InterpretunableModule that the Lightning trainer rejects)
+    from tests.benchmarks.run_benchmarks import _detect_cli_mode
+
+    cli_flag = "--lightning_cli" if _detect_cli_mode(benchmark_entry) == "lightning" else "--run_command"
     cmd = [
         "interpretune",
-        "--lightning_cli",
+        cli_flag,
         "test",
         "--config",
         str(config_path),
