@@ -8,24 +8,33 @@
 
 **A flexible framework for collaborative AI world model analysis and tuning.**
 
-Interpretune is an AI world model analysis framework that enables a wide range of
-interpretability methods and packages to leverage **composable, shareable analysis operations and
-state**, accelerating collaborative world model analysis and tuning with PyTorch — letting both
-humans and agents inspect and refine the mechanistic and causal faithfulness of model reasoning
-at mutually intelligible levels of abstraction — enabling transparent, causally faithful
-reasoning, model self-reflection, and world-model-guided collaborative tuning.
+Interpretune is an AI world model analysis framework. It gives a wide range of interpretability
+methods and packages **composable, shareable analysis operations and state**, accelerating
+collaborative world model analysis and tuning with PyTorch. Both humans and agents can inspect
+and refine the mechanistic and causal faithfulness of model reasoning at mutually intelligible
+levels of abstraction. That enables:
 
-Interpretune composes adapters at **multiple levels of abstraction** — the *framework* level
-(core PyTorch, Lightning), the *interpretability latent-model* level (TransformerLens, NNsight),
-and the *analysis* level (circuit-tracer, SAE-Lens) — over a shared session/protocol layer (see
-the {doc}`adapter development guide <usage/adapter_development_guide>`). This composition pattern
-is what lets researchers **collaborate across interpretability frameworks**: analytical
-primitives, artifacts, and patterns written once run over many substrate combinations.
+- **transparent, causally faithful reasoning**
+- **model self-reflection**
+- **world-model-guided collaborative tuning**
+
+Interpretune composes adapters at **multiple levels of abstraction** over a shared
+session/protocol layer (see the
+{doc}`adapter development guide <usage/adapter_development_guide>`):
+
+- the *framework* level — core PyTorch, Lightning
+- the *interpretability latent-model* level — TransformerLens, NNsight
+- the *analysis* level — circuit-tracer, SAE-Lens
+
+This composition pattern is what lets researchers **collaborate across interpretability
+frameworks**: analytical primitives, artifacts, and patterns written once run over many
+substrate combinations.
 
 Analysis flows are built from composable operations — e.g. `extract_top_features`,
 `gradient_attribution`, `ablation_attribution`, `feature_intervention`, `graph_prune`,
-`concept_direction`, `compute_attribution_graph` — compiled over the active adapter composition,
-with results captured in shareable {doc}`AnalysisStore <concepts>` datasets.
+`concept_direction`, `compute_attribution_graph`. Operations are compiled over the active
+adapter composition, and results are captured in shareable {doc}`AnalysisStore <concepts>`
+datasets.
 
 ```{note}
 Interpretune is **pre-MVP**: APIs are subject to change. The {doc}`roadmap <roadmap>` describes
