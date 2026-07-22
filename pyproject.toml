@@ -155,9 +155,9 @@ profiling = [
 # --override flag (e.g CI)
 override-dependencies = [
     "transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@4ba2187b182faf964225c6eb9076c858cada0672",
-    # keep transitive nnsight (pulled in by the sae-lens git dep) at the validated release: hosted CI
-    # otherwise resolves the latest (0.7.x), which is unvalidated for the analysis dataset paths
-    "nnsight==0.6.3",
+    # keep transitive nnsight (pulled in by the sae-lens git dep) at the validated release
+    # (0.7.0 validated Session 36: nnsight slice + parity 34/0 + low-RAM mock, both versions)
+    "nnsight==0.7.0",
 ]
 # exclude dependencies can be used to ignore installation of a dependency altogether (transitive or direct)
 # we occasionally use an excludes file to allow complex multiple-packages-from-source installations

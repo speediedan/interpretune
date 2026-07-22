@@ -1,5 +1,5 @@
 transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@4ba2187b182faf964225c6eb9076c858cada0672
-nnsight==0.6.3  # released pin (fork checkout was a pristine v0.6.0 tag; 0.6.3 validated 98/7/0 across the nnsight test slice)
+nnsight==0.7.0  # released pin (0.7.0 validated: sig-key VAR_KEYWORD resolve-through fix + remote-init gating; nnsight slice + parity 34/0 green on 0.6.3 AND 0.7.0)
 triton==3.6.0
 torchvision==0.25.0
 torchaudio==2.10.0  # keep paired to the torch pin: unpinned resolutions pull torchaudio built for newer torch (CUDA-ABI import failure)
