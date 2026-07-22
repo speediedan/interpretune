@@ -508,7 +508,13 @@ class TestNNsightRemoteExecution:
         Compares outputs from local and remote execution to validate that NNsight's remote execution produces equivalent
         results.
 
-        Uses GPT2 fixtures for both local and remote execution to ensure consistency across execution modes.
+        Uses GPT2 fixtures for both local and remote execution to ensure consistency across execution modes. NOTE: NDIF
+        only schedules non-hotswap-tier API keys onto PINNED models, so this test skips whenever gpt2 isn't currently
+        pinned (and on other availability-class rejections). When probing current NDIF state (pinned/running models,
+        outage layers, key tier), query the `/status` endpoint defensively — nnsight.ndif_status() crashes on bare
+        (unenriched) deployment entries as of 0.7.0 (maintainer-side private notes carry a layered diagnostic probe).
+        The local-vs-remote comparison inherently requires a model loadable locally AND pinned remotely — when NDIF pins
+        only large models, skipping is the correct outcome.
         """
         local_session = get_it_session__ns_gpt2__setup.it_session
         remote_session = get_it_session__ns_remote_gpt2__setup.it_session
