@@ -201,7 +201,19 @@ class BaseNNsightModule(BaseITModule):
 
         # Initialize NNsight LanguageModel
         rank_zero_debug(f"NNsight kwargs: {nnsight_kwargs}")
-        self.model = LanguageModel(model_name, **nnsight_kwargs)
+        try:
+            self.model = LanguageModel(model_name, **nnsight_kwargs)
+        except ValueError as ve:
+            # nnsight 0.7+ refuses multimodal-registered repos via LanguageModel (e.g.
+            # gemma-3-4b-it is AutoModelForImageTextToText) and directs callers to
+            # VisionLanguageModel, a LanguageModel subclass exposing the same tracing
+            # surface for text-only use
+            if "VisionLanguageModel" not in str(ve):
+                raise
+            from nnsight import VisionLanguageModel
+
+            rank_zero_info(f"{model_name} is registered as multimodal; using NNsight VisionLanguageModel")
+            self.model = VisionLanguageModel(model_name, **nnsight_kwargs)
 
         # Store reference to tokenizer if not already set
         if self.it_cfg.tokenizer is None and hasattr(self.model, "tokenizer"):
