@@ -172,9 +172,23 @@ ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
 
 # Monitor coverage progress
 tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
-
-# Note: Coverage collection takes approximately 50 minutes
 ```
+
+**Watcher rules for background runs (added after two missed completions, 2026-07-22):**
+
+1. **Never `pgrep -f` a pattern your own watcher command contains** — the watcher matches
+   itself and waits forever (a watcher polling `pgrep -f "gen_it_coverage.sh"` IS a process
+   whose command line contains `gen_it_coverage.sh`). Use the bracket trick
+   (`pgrep -f "[g]en_it_coverage.sh"`) or, better, watch the concrete PID.
+2. **Prefer PID-based watches over output-grep watches.** `manage_standalone_processes.sh`
+   prints the wrapper PID at launch — capture it and wait with
+   `until ! kill -0 <PID> 2>/dev/null; do sleep 60; done`. Output-grep watchers silently hang
+   when the terminal line's wording changes (a `grep -qE "COVERAGE RUN COMPLETE|..."` watcher
+   missed a run that ended with `Exiting with status code 1`).
+3. **Cover every terminal state.** A run can end green, end red, or die — the watch condition
+   must fire for all three (PID-exit does this for free); then read the log tail to classify.
+
+Note: coverage collection takes ~50 minutes (longer with `--run-all-and-examples`).
 
 **Pre-PR-wave gate**: before opening a coordinated multi-repo PR wave (Scalable Dashboards Phase 7 and
 similar), a full `gen_it_coverage.sh` pass is mandatory, not optional. Run it in
