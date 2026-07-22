@@ -527,6 +527,16 @@ class TestNNsightRemoteExecution:
                 remote_logits = nnsight.save(remote_model.lm_head.output)
         except httpx.TimeoutException as error:
             pytest.skip(f"NDIF request timed out: {error}")
+        except Exception as error:
+            # NDIF service-side availability (e.g. "Model is not pinned and hotswapping is not
+            # supported for this API key" — the target model isn't currently scheduled for this
+            # key tier) is environmental, not a client regression; don't fail the gate on it.
+            # Matched on the message because nnsight 0.7 raises a per-exception dynamic wrapper
+            # ("NNsightException" subclassing the original RemoteException) with no stable
+            # importable class across the 0.6/0.7 line; everything else re-raises.
+            if any(marker in str(error) for marker in ("not pinned", "not scheduled", "hotswapping")):
+                pytest.skip(f"NDIF model unavailable for this API key tier: {error}")
+            raise
 
         # Verify shapes match
         assert local_logits.shape == remote_logits.shape, (
