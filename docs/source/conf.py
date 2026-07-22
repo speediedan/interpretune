@@ -114,4 +114,13 @@ html_context = {
 
 # Existing docs carry informal cross-doc links; do not fail the build on nitpicks during the
 # bootstrap wave (the docs-build CI smoke still fails on ERRORS). Tighten after the coherence pass.
+suppress_warnings = [
+    # Structural, not content defects (see the docs plan / Session 42 triage):
+    "autosectionlabel.*",  # include-stub pages re-register the legacy guides' section labels
+    "myst.xref_missing",  # legacy guides carry GitHub-style ../src/...#L links (linkcheck covers rot)
+    "ref.python",  # re-exported symbols (interpretune.analysis.X vs submodule X) are intentionally dual-pathed
+    "sphinx_autodoc_typehints.forward_reference",  # AnalysisCfgProtocol fwd-refs (PEP 563 deliberately off)
+    "autosummary.import_cycle",  # api.rst lists fully-qualified top-level modules by design
+]
+
 nitpicky = False

@@ -99,28 +99,29 @@ class DebugGeneration:
         return [f"{ex.strip()}" for ex in sequences]
 
     def chat_debug_sequences(self, sequences: List | None = None, format: str | None = None) -> List:
-        """_summary_
+        """Render debug sequences through the configured chat template.
 
         Args:
-            sequences (List | None, optional): _description_. Defaults to None.
+            sequences (List | None, optional): Debug prompts to render; defaults to the extension's
+                default sanity-check questions when None.
+            format (str | None, optional): Model-variant prompt-config pattern (e.g. ``"llama3-chat"``).
 
         Returns:
-            List: _description_
+            List: Chat-formatted sequences ready for ``debug_generate_batch``/``debug_generate_serial``.
 
-        Usage:
+        Usage::
 
-        ```python
-        # for example, using the llama3 chat format, you want to have input tokenized with sys and inst metadata
-        # to do so with some reasonable default questions as a sanity check and in batch mode:
-        self.debug_lm.debug_generate_batch(self.debug_lm.chat_debug_sequences()
-        # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
-        self.debug_lm.debug_generate_serial(self.debug_lm.chat_debug_sequences())
-        # to override the defaults (both questions and current `max_new_tokens` config)
-        # you can also specify a specific model variant pattern for a given prompt config, e.g. `format="llama3-chat"`
-        self.debug_lm.debug_generate_batch(self.debug_lm.chat_debug_sequences(format='llama3-chat', sequences=[
+            # for example, using the llama3 chat format, you want to have input tokenized with sys and inst metadata
+            # to do so with some reasonable default questions as a sanity check and in batch mode:
+            self.debug_lm.debug_generate_batch(self.debug_lm.chat_debug_sequences()
+            # to narrow the problem space, using serial inference (non-batch mode) for a list of strings can be useful
+            self.debug_lm.debug_generate_serial(self.debug_lm.chat_debug_sequences())
+            # to override the defaults (both questions and current `max_new_tokens` config)
+            # you can also specify a specific model variant pattern for a given prompt config, e.g.
+            # `format="llama3-chat"`
+            self.debug_lm.debug_generate_batch(self.debug_lm.chat_debug_sequences(format='llama3-chat', sequences=[
             'What is the color of a cloudless sky?', 'How many days are in a year?']),
             gen_config_override={"max_new_tokens": 25})
-        ```
         """
         try:
             ph = self._check_phandle()
@@ -204,7 +205,6 @@ class DebugGeneration:
         self.debug_lm.debug_generate_batch(self.debug_lm.chat_debug_sequences([
             'What is the color of a cloudless sky?', 'How many days are in a year?']),
             gen_config_override={"max_new_tokens": 25})
-        ```
         """
         ph = self._check_phandle()
         # note we're not using a context manager here, keeping our new override for subsequent debugging convenience

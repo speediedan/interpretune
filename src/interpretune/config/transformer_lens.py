@@ -47,6 +47,7 @@ class ITLensBridgeConfig(ITLensSharedConfig):
             TransformerBridge after instantiation. Default: False.
         enable_compatibility_mode_kwargs: Optional dict of kwargs for enable_compatibility_mode().
             Supported kwargs:
+
             - disable_warnings: bool (default False)
             - no_processing: bool (default False) - disables ALL weight processing
             - fold_ln: bool (default True) - fold LayerNorm weights
@@ -55,7 +56,8 @@ class ITLensBridgeConfig(ITLensSharedConfig):
             - fold_value_biases: bool (default True)
             - refactor_factored_attn_matrices: bool (default False)
 
-    Example:
+    Example::
+
         # Basic bridge config (no processing, current default behavior)
         config = ITLensBridgeConfig(model_name="gpt2-small")
 

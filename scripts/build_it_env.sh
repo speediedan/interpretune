@@ -47,7 +47,7 @@ Usage: $0
    [ --repo-home input]
    [ --target-env-name input ]
    [ --venv-dir input ]
-   [ --python-version input ]  (e.g., python3.12, default: python3.13)
+   [ --python-version input ]  (uv --python spec, e.g. 3.12 or python3.12; default: 3.13)
    [ --torch-backend input ]  (cpu, cu128, auto; default: cu128 for CUDA 12.8)
    [ --from-source "package:path[:extras][:env_var=value...]" ] (can be specified multiple times)
    [ --uv-install-flags "flags" ]
@@ -204,7 +204,7 @@ done
 venv_path=$(determine_venv_path "${venv_dir}" "${target_env_name}")
 
 # Set default Python version if not specified
-python_version=${python_version:-"python3.13"}
+python_version=${python_version:-"3.13"}  # uv version spec (resolves/downloads a managed interpreter); explicit binary names (python3.12) still accepted
 
 # Set default torch backend if not specified (auto = auto-detect CUDA/CPU)
 torch_backend=${torch_backend:-"cu128"}

@@ -1,8 +1,6 @@
 API Reference
 =============
 
-.. currentmodule:: interpretune
-
 Core session and configuration
 ------------------------------
 

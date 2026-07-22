@@ -128,12 +128,14 @@ class LatentAnalysisDict(dict):
 
         Args:
             operation: Either callable or string name of torch.Tensor method
-            *args, **kwargs: Additional arguments passed to the operation
+            *args: Additional positional arguments passed to the operation
+            **kwargs: Additional keyword arguments passed to the operation
 
         Returns:
             LatentAnalysisDict: New dictionary mapping latent model names to operated tensor values
 
-        Examples:
+        Examples::
+
             # Apply mean
             my_dict.batch_join().apply_op_by_latent_model('mean', dim=0)
 

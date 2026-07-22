@@ -72,9 +72,9 @@ analysis-level feature-intervention settings by keeping them all at the top leve
 The next refactor should split that surface into:
 
 - a shared model-level intervention config dataclass that can be reused by `model_fwd_intervention`,
-	`resolve_interventions(...)`, and both the TransformerLens and NNsight model backends
+    `resolve_interventions(...)`, and both the TransformerLens and NNsight model backends
 - a circuit-tracer analysis-level intervention config dataclass for feature-selection and
-	`ReplacementModel.feature_intervention(...)`-specific controls
+    `ReplacementModel.feature_intervention(...)`-specific controls
 
 ### Model-level intervention config candidates
 
@@ -86,7 +86,7 @@ hook target is known, regardless of whether execution happens through Transforme
 - `mode`: canonical replacement/add/project selector aligned with `InterventionSpec.mode`
 - `scale_factor`: canonical scalar aligned with `InterventionSpec.scale_factor`
 - `use_intervention_tensor_as_basis`: canonical projection-basis selector aligned with
-	`InterventionSpec.use_intervention_tensor_as_basis`
+    `InterventionSpec.use_intervention_tensor_as_basis`
 - `intervention_tensor`: optional shorthand tensor when the caller is not supplying an explicit mapping
 
 The important canonicalization rule is that the shared dataclass should prefer the non-prefixed field names above.
@@ -134,12 +134,12 @@ Example:
 
 ```yaml
 ANALYSIS:
-	direct_projection:
-		interventions:
-			blocks.0.hook_in:
-				mode: project
-				scale_factor: 10.0
-				use_intervention_tensor_as_basis: true
+    direct_projection:
+        interventions:
+            blocks.0.hook_in:
+                mode: project
+                scale_factor: 10.0
+                use_intervention_tensor_as_basis: true
 ```
 
 When an explicit `interventions` mapping is not supplied, the notebook wrapper falls back to the shorthand fields and

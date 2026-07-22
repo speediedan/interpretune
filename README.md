@@ -85,10 +85,15 @@ Interpretune uses [uv](https://github.com/astral-sh/uv) for fast, reliable depen
 # Install uv (one-time setup)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
+# Clone the repository
 git clone https://github.com/speediedan/interpretune.git && cd interpretune
-uv venv && source .venv/bin/activate
 
-# Editable install with all dependency groups
+# Set preferred venv base directory and name and create out-of-tree venv (recommended to enable multiple parallel envs)
+export VENV_BASE=${HOME}/.venvs
+export IT_TARGET_VENV=it_latest
+uv venv ${VENV_BASE}/${IT_TARGET_VENV} --python 3.13 && source ${VENV_BASE}/${IT_TARGET_VENV}/bin/activate
+
+# Install the package with all necessary development dependencies
 # Note: the git-deps group is optional once circuit-tracer is published on PyPI
 uv pip install -e ".[test,examples,lightning,profiling]" --group git-deps dev
 ```
