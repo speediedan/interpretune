@@ -815,6 +815,15 @@ def render_mermaid_diagram(
     return "\n".join(lines)
 
 
+def _coordination_pr_line(manifest: dict[str, Any]) -> str:
+    """Markdown for the Scalable Dashboards coordination-PR reference (placeholder until wave-open)."""
+
+    url = manifest.get("coordination_pr_url") or "<COORDINATION_PR_URL — backfill at wave-open>"
+    if url.startswith("http"):
+        return f"[Scalable Dashboards coordination PR]({url})"
+    return f"`{url}`"
+
+
 def render_summary_markdown(
     variants: list[VariantExtract],
     parities: dict[str, ParityResult],
@@ -836,6 +845,7 @@ def render_summary_markdown(
         f"Source artifact root: `{manifest.get('source_root', 'unknown')}`",
         f"Timing mode: {manifest.get('timing_mode', 'steady-state')} "
         f"(warmup batches excluded: {manifest.get('summary_warmup_batches', 1)})",
+        f"Coordination PR: {_coordination_pr_line(manifest)}",
         "",
         "## Lineage",
         "",

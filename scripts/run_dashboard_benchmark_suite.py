@@ -42,11 +42,14 @@ NOTEBOOK_TEMPLATE = PROJECT_ROOT / "scripts" / "templates" / "dashboard_profilin
 DEFAULT_JEMALLOC = Path("/usr/lib/x86_64-linux-gnu/libjemalloc.so")
 DEFAULT_DB_URL = "postgres://postgres:postgres@127.0.0.1:5433/postgres"
 DEFAULT_REPO_ROOTS = {
-    "SD": Path.home() / "repos" / "SAEDashboard",
-    "SL": Path.home() / "repos" / "SAELens",
-    "NP": Path.home() / "repos" / "neuronpedia",
+    "SD": Path(os.getenv("SAEDASHBOARD_REPO_ROOT", str(Path.home() / "repos" / "SAEDashboard"))),
+    "SL": Path(os.getenv("SAELENS_REPO_ROOT", str(Path.home() / "repos" / "SAELens"))),
+    "NP": Path(os.getenv("NEURONPEDIA_REPO_ROOT", str(Path.home() / "repos" / "neuronpedia"))),
     "IT": PROJECT_ROOT,
 }
+# Coordination-PR reference stamped into the manifest/summary/notebook; override with
+# --coordination-pr-url (re-render an existing package via --from-existing to update it).
+DEFAULT_COORDINATION_PR_URL = "<COORDINATION_PR_URL — backfill at wave-open>"
 
 THREEWAY_LEGS = {
     "rte": (
@@ -220,6 +223,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Permit packaging with dirty repo trees (diagnostic runs only; reviewer packages must be clean).",
     )
     parser.add_argument("--skip-notebook", action="store_true", help="Skip papermill notebook execution/export.")
+    parser.add_argument(
+        "--coordination-pr-url",
+        default=DEFAULT_COORDINATION_PR_URL,
+        help="Scalable Dashboards coordination PR URL referenced by the packaged summary/notebook. "
+        "Defaults to a backfill placeholder; update a shipped package with --from-existing + this flag.",
+    )
     parser.add_argument(
         "--skip-parity",
         action="store_true",
@@ -541,6 +550,7 @@ def build_package(args: argparse.Namespace, source_root: Path, package_dir: Path
         "prompt_sweep_mitigation_args": list(PROMPT_SWEEP_MITIGATION_ARGS) if prompt_sweep_enabled(args) else [],
         "gpu_device_total_mib": resolve_gpu_device_total_mib(),
         "invocation": "python scripts/run_dashboard_benchmark_suite.py " + " ".join(sys.argv[1:]),
+        "coordination_pr_url": args.coordination_pr_url,
         "repo_heads": shas,
         "dirty_repos": dirty,
         "lineages": lineages,
@@ -589,12 +599,14 @@ def build_package(args: argparse.Namespace, source_root: Path, package_dir: Path
         papermill.execute_notebook(
             str(NOTEBOOK_TEMPLATE),
             str(notebook_path),
-            parameters={"package_path": str(package_dir)},
+            parameters={"package_path": str(package_dir), "coordination_pr_url": args.coordination_pr_url},
             cwd=str(package_dir),
             progress_bar=False,
         )
+        # --no-input: the HTML export is data/charts-only; sources stay in the .ipynb
+        # (collapsed by default, expandable in JupyterLab).
         subprocess.run(
-            [args.python_executable, "-m", "nbconvert", "--to", "html", str(notebook_path)],
+            [args.python_executable, "-m", "nbconvert", "--to", "html", "--no-input", str(notebook_path)],
             check=False,
         )
 
