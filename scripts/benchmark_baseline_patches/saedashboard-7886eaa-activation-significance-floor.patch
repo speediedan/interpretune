@@ -1,0 +1,55 @@
+diff --git a/sae_dashboard/neuronpedia/neuronpedia_runner.py b/sae_dashboard/neuronpedia/neuronpedia_runner.py
+index 2c8d922..c4c3bb5 100644
+--- a/sae_dashboard/neuronpedia/neuronpedia_runner.py
++++ b/sae_dashboard/neuronpedia/neuronpedia_runner.py
+@@ -1364,6 +1364,12 @@ def main():
+         default=None,
+         help="Optional torch intra-op thread cap applied only during rolling coefficient updates.",
+     )
++    parser.add_argument(
++        "--activation-significance-floor",
++        type=float,
++        default=0.0,
++        help="Minimum activation value to consider significant.",
++    )
+     parser.add_argument(
+         "--from-local-sae", action="store_true", help="Load SAE from local path"
+     )
+diff --git a/sae_dashboard/neuronpedia/neuronpedia_runner_config.py b/sae_dashboard/neuronpedia/neuronpedia_runner_config.py
+index 9b35751..3138d37 100644
+--- a/sae_dashboard/neuronpedia/neuronpedia_runner_config.py
++++ b/sae_dashboard/neuronpedia/neuronpedia_runner_config.py
+@@ -50,6 +50,7 @@ class NeuronpediaRunnerConfig:
+     log_performance: bool = False
+     profile_rolling_substages: bool = False
+     rolling_coefficient_num_threads: Optional[int] = None
++    activation_significance_floor: float = 0.0
+ 
+     shuffle_tokens: bool = True
+     prefix_str: Optional[str] = None
+diff --git a/sae_dashboard/sae_vis_data.py b/sae_dashboard/sae_vis_data.py
+index 05d5b02..e341b85 100644
+--- a/sae_dashboard/sae_vis_data.py
++++ b/sae_dashboard/sae_vis_data.py
+@@ -71,6 +71,7 @@ class SaeVisConfig:
+     profile_rolling_substages: bool = False
+     perf_batch: int | None = None
+     rolling_coefficient_num_threads: int | None = None
++    activation_significance_floor: float = 0.0
+     cache_dir: Path | None = None  # Path to cache the data
+ 
+     def to_dict(self) -> dict[str, Any]:
+diff --git a/sae_dashboard/sae_vis_runner.py b/sae_dashboard/sae_vis_runner.py
+index a50efe2..84cd7db 100644
+--- a/sae_dashboard/sae_vis_runner.py
++++ b/sae_dashboard/sae_vis_runner.py
+@@ -318,7 +318,8 @@ class SaeVisRunner:
+                     feat_acts = all_feat_acts[..., i]
+                     masked_feat_acts = feat_acts * ignore_tokens_mask
+                     masked_feat_acts_by_feature.append(masked_feat_acts)
+-                    nonzero_feat_acts = masked_feat_acts[masked_feat_acts > 0]
++                    significance_floor = getattr(self.cfg, "activation_significance_floor", 0.0)
++                    nonzero_feat_acts = masked_feat_acts[masked_feat_acts > significance_floor]
+                     frac_nonzero = nonzero_feat_acts.numel() / masked_feat_acts.numel()
+ 
+                     feature_data_dict[feat].acts_histogram_data = (

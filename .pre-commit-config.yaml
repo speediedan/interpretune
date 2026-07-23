@@ -19,7 +19,8 @@ ci:
   autoupdate_schedule: quarterly
   # submodules: true
 
-exclude: 'tests/(ioi_parity|mech_interp_parity|concept_direction_approach_parity)/.*'
+# benchmark_baseline_patches: vendored .patch files must stay byte-exact (hooks would corrupt hunks)
+exclude: 'tests/(ioi_parity|mech_interp_parity|concept_direction_approach_parity)/.*|scripts/benchmark_baseline_patches/.*\.patch'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

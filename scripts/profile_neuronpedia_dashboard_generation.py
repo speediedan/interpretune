@@ -37,7 +37,11 @@ DEFAULT_PY_SPY = os.getenv("IT_BENCH_PY_SPY") or shutil.which("py-spy") or str(P
 # ($IT_NP_CACHE, else $HF_HOME/interpretune/neuronpedia — see DEFAULT_IT_NP_CACHE).
 NP_CACHE_ROOT = DEFAULT_IT_NP_CACHE
 DEFAULT_RUN_ROOT = NP_CACHE_ROOT / "dashboard_runs"
-DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT = NP_CACHE_ROOT / "baseline_worktrees_20260518"
+# Detached preserved-baseline worktrees root; created/populated by scripts/setup_dashboard_benchmark_env.py
+# (override with $IT_NP_BASELINE_WORKTREES when the worktrees live outside the default cache location).
+DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT = Path(
+    os.getenv("IT_NP_BASELINE_WORKTREES", str(NP_CACHE_ROOT / "baseline_worktrees_20260518"))
+)
 DEFAULT_PHASE3_BASELINE_SAEDASHBOARD_ROOT = DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "SAEDashboard-7886eaa"
 DEFAULT_PHASE3_BASELINE_SAELENS_ROOT = DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "SAELens-3eea6552"
 DEFAULT_PHASE3_BASELINE_NEURONPEDIA_UTILS_ROOT = (

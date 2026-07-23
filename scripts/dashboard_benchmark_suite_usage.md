@@ -5,11 +5,35 @@
 markdown tables, a unified Mermaid flow diagram (`dashboard_benchmark_diagram.mmd`), an executed papermill
 profiling notebook (+ HTML export), and a top-level `benchmark_summary.md` linking everything.
 
+## Environment setup (one guided command)
+
+`scripts/setup_dashboard_benchmark_env.py` prepares everything below in one transparent,
+non-destructive flow — it locates/clones the repos, creates and patch-verifies the detached
+preserved-baseline worktrees (applying the audited patches from
+`scripts/benchmark_baseline_patches/` — see that directory's README for the per-patch
+classification/rationale), checks the local Postgres (offering the docker compose bring-up),
+builds the integrated benchmark venv via `scripts/build_it_env.sh`, verifies the prompt
+datasets, and writes a `benchmark_env.sh` you source before running the suite:
+
+```bash
+python scripts/setup_dashboard_benchmark_env.py --worktrees-dir <dir-for-baseline-worktrees>
+# add --dry-run to print the full plan without executing anything; --yes for non-interactive
+```
+
+Every prompt has a corresponding flag (`--help` lists them); existing checkouts are never
+switched or modified (dirty trees prompt stash/continue/abort), existing worktrees are
+verified rather than recreated, and an existing venv is only cleared after explicit
+confirmation (or `--clear-existing-venv`). Works on Linux and macOS (macOS needs
+`brew install bash` for the env build; pass `--torch-backend` as appropriate — jemalloc
+preloading is skipped with a warning when absent).
+
 ## Prerequisites
 
 - The interpretune environment active (papermill, nbformat, matplotlib available), all four editable repos installed.
 - Local Neuronpedia Postgres reachable (default `postgres://postgres:postgres@127.0.0.1:5433/postgres`).
-- Detached baseline worktrees present for 3-way mode (`SAEDashboard-7886eaa` + patched siblings).
+- Detached baseline worktrees present for 3-way mode (`SAEDashboard-7886eaa` + siblings; created by the
+  setup script above — point `IT_NP_BASELINE_WORKTREES` at their root when it is not the legacy default
+  `${IT_NP_CACHE}/baseline_worktrees_20260518`).
 - The four benchmark prompt datasets present under `${IT_NP_CACHE}` (`pretokenized/` + `legacy_pretokenized/`); they
   are not published to the HF Hub — regenerate them per
   ["Regenerating the benchmark prompt datasets"](../docs/neuronpedia_dashboard_pipeline.md#regenerating-the-benchmark-prompt-datasets).
@@ -216,6 +240,7 @@ python scripts/run_dashboard_benchmark_suite.py \
 | `--target-batches` / `--summary-warmup-batches` / `--layer` | Benchmark shape (defaults 4 / 1 / 9) |
 | `--rolling-threads` | `--runner-rolling-coefficient-num-threads` value for every leg (default 8) |
 | `--run-tag` | Suffix tag baked into child run names |
+| `--coordination-pr-url` | Scalable Dashboards coordination PR reference stamped into the summary/notebook (defaults to a backfill placeholder; refresh a shipped package via `--from-existing` + this flag) |
 
 ## Package layout
 
@@ -228,8 +253,8 @@ successive packages accumulate in one reviewable location.
 ├── manifest.json                   # lineage (repo heads + dirty flags), run parameters, source root
 ├── extracted_data.json             # machine-readable payload consumed by the notebook
 ├── dashboard_benchmark_diagram.mmd # unified Mermaid flow diagram
-├── dashboard_profiling_<ts>.ipynb  # executed papermill notebook
-├── dashboard_profiling_<ts>.html   # HTML export
+├── dashboard_profiling_<ts>.ipynb  # executed papermill notebook (code collapsed; expandable in JupyterLab)
+├── dashboard_profiling_<ts>.html   # HTML export (charts/data only — inputs dropped via nbconvert --no-input)
 ├── tables/{primary,substage,import,resource,parity}_<scenario>.md
 └── raw/<variant>/                  # per-leg result.json / runner_perf_events.json / import_stage_profile.json
 ```
