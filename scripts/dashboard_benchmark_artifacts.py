@@ -675,6 +675,11 @@ def render_mermaid_diagram(
         pretok_rows = pretokenization_record.get("rows")
         pretok_ctx = pretokenization_record.get("context_size")
         pretok_cardinality = f"{pretok_rows:,} prompts x {pretok_ctx} tokens" if pretok_rows else "TBD"
+        # attribute the record to its dataset so a cached (not re-measured) prep cannot read as
+        # if it described this run's prompt sets
+        pretok_dataset = pretokenization_record.get("dataset")
+        if pretok_dataset:
+            pretok_cardinality += f"<br/><b>Dataset:</b> {pretok_dataset}"
     else:
         pretok_runtime = "TBD"
         pretok_cardinality = "TBD"

@@ -379,22 +379,45 @@ def resolve_gpu_device_total_mib() -> int | None:
         return None
 
 
-def resolve_pretokenization_record() -> dict[str, Any] | None:
-    """Read the pretokenization run record beside the sweep's pretokenized prompt cache (written by
-    sae_dashboard.neuronpedia.prompt_pretokenization) so artifacts can report the one-time build cost."""
+def resolve_pretokenization_record(args: argparse.Namespace | None = None) -> dict[str, Any] | None:
+    """Read the pretokenization run record for a dataset THIS run actually used.
+
+    Records are written by sae_dashboard.neuronpedia.prompt_pretokenization beside the dataset. The previous behavior
+    always read the monology SWEEP dataset's record, which embedded a different run's prep (wrong cardinality +
+    timestamp lineage) into the manifest/diagram whenever a mode used the reduced datasets instead. Now: consult the
+    datasets for the modes' accepted presets in preference order and tag the returned record with its dataset so
+    downstream renderers can attribute it; return None (renderers show TBD) when none of the run's datasets carry a
+    record — never a record from a dataset the run didn't touch.
+    """
     try:
         from profile_neuronpedia_dashboard_generation import (
             DEFAULT_MONOLOGY_PROMPT_SWEEP_PRETOKENIZED_DATASET,
+            DEFAULT_PHASE3_MONOLOGY_PRETOKENIZED_DATASET,
+            DEFAULT_PHASE3_RTE_PRETOKENIZED_DATASET,
         )
     except Exception:
         return None
-    record_path = Path(DEFAULT_MONOLOGY_PROMPT_SWEEP_PRETOKENIZED_DATASET) / "pretokenization_run.json"
-    if not record_path.exists():
-        return None
-    try:
-        return json.loads(record_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    candidates: list[Path] = []
+    mode = getattr(args, "mode", None) if args is not None else None
+    if mode == "scaling":
+        candidates.append(Path(DEFAULT_MONOLOGY_PROMPT_SWEEP_PRETOKENIZED_DATASET))
+    # threeway/full accepted presets use the reduced monology + rte pretokenized datasets
+    candidates.extend(
+        [Path(DEFAULT_PHASE3_MONOLOGY_PRETOKENIZED_DATASET), Path(DEFAULT_PHASE3_RTE_PRETOKENIZED_DATASET)]
+    )
+    if mode == "full":
+        candidates.append(Path(DEFAULT_MONOLOGY_PROMPT_SWEEP_PRETOKENIZED_DATASET))
+    for dataset_path in candidates:
+        record_path = dataset_path / "pretokenization_run.json"
+        if not record_path.exists():
+            continue
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        record["dataset"] = dataset_path.name
+        return record
+    return None
 
 
 def run_benchmark_legs(args: argparse.Namespace, session_root: Path, run_tag: str) -> None:
@@ -514,7 +537,7 @@ def build_package(args: argparse.Namespace, source_root: Path, package_dir: Path
         "prompt_sweep": prompt_sweep_enabled(args),
         "prompt_sweep_layer": args.prompt_sweep_layer,
         "prompt_sweep_configs": prompt_sweep_configs(args) if prompt_sweep_enabled(args) else [],
-        "pretokenization_record": resolve_pretokenization_record(),
+        "pretokenization_record": resolve_pretokenization_record(args),
         "prompt_sweep_mitigation_args": list(PROMPT_SWEEP_MITIGATION_ARGS) if prompt_sweep_enabled(args) else [],
         "gpu_device_total_mib": resolve_gpu_device_total_mib(),
         "invocation": "python scripts/run_dashboard_benchmark_suite.py " + " ".join(sys.argv[1:]),
