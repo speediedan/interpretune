@@ -273,6 +273,28 @@ successive packages accumulate in one reviewable location.
 └── raw/<variant>/                  # per-leg result.json / runner_perf_events.json / import_stage_profile.json
 ```
 
+## Known benign parity wobble: dead-feature zero-tie fill rows
+
+The packaged "Activation Row Parity" tables report two rates: **raw** per-feature match (activation
+row COUNTS equal between the preserved-baseline and in-tree legacy legs) and **value-bearing**
+match (the sets of nonzero-activation rows equal). Raw-only mismatches — typically well under 0.5%
+of feature-batches, and frequently zero — are an expected, benign artifact:
+
+- The pre-refactor lane's TOP-group selection fills remaining slots with **zero-activation tie
+  rows** when a feature has too few (or no) positive activations (the inherited "zero-tie top-k
+  fill" behavior; see the SAEDashboard PR's opt-in `sequence_top_acts_positive_only` hygiene flag
+  discussion). For a **dead feature** every selected row is such a tie.
+- Tie selection among thousands of exactly-equal zero activations is sensitive to run-to-run GPU
+  reduction/tie ordering, so a dead feature's fill-row COUNT can wobble by ±1 between otherwise
+  identical runs.
+- Investigated evidence (2026-07-23 setup-flow validation, byte-identical prompt inputs and
+  identical dependency versions across runs): all 15 raw mismatches across both scenarios
+  (3/2048 RTE + 12/4096 Monology feature-batches) were dead features (zero nonzero rows) with
+  fill-row counts differing by ±1; the nonzero row sets were **100% identical** in every case
+  (value-bearing match 100.00%).
+
+A value-bearing mismatch above 0 is NOT expected and should be treated as a real parity failure.
+
 ## Extraction semantics
 
 - `stage_timing` events inherit their batch from the most recent preceding `batch_total` event; steady-state

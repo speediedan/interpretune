@@ -261,6 +261,7 @@ def info_packages():
         "circuit_tracer": _pkg_version("circuit_tracer", "circuit_tracer"),
         "nnsight": _pkg_version("nnsight", "nnsight"),
         "neuronpedia": _pkg_version("neuronpedia", "neuronpedia"),
+        "neuronpedia-utils": _pkg_version("neuronpedia-utils", "neuronpedia_utils"),
         "finetuning_scheduler": _pkg_version("finetuning_scheduler", "finetuning_scheduler"),
         "transformers": _pkg_version("transformers", "transformers"),
         "datasets": _pkg_version("datasets", "datasets"),

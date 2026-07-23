@@ -149,20 +149,15 @@ For editable and git-backed installs the report appends provenance such as
 the expected checkout/commit. This output also feeds the `salient_pkg_versions` provenance used by the
 benchmark registry.
 
-If the environment will run sibling-repo test suites or the dashboard benchmark/import lanes, note
-two dependencies that are **not** in interpretune's CI lock (they are declared by the sibling
-projects, not by interpretune) and therefore absent from every fresh build:
+Sibling-suite/benchmark dependencies are now installed automatically by every
+`build_it_env.sh` run — no post-build extras remain:
 
-```bash
-uv pip install syrupy                 # required by the SAEDashboard test suite (snapshot testing)
-uv pip install 'pgpq>=0.11.0,<0.12'   # required by the neuronpedia-utils columnar local-DB import lane
-```
-
-(`pgpq` is a real neuronpedia-utils dependency, but the recommended editable install uses
-`--no-deps`, so it silently vanishes on rebuilds — regular interpretune tests never exercise the
-columnar DB import, so the gap only surfaces when the benchmark suite's import-stage profiling or a
-real local import runs: `ModuleNotFoundError: No module named 'pgpq'` from
-`_load_pgpq_arrow_encoder`.)
+- `syrupy` (SAEDashboard snapshot tests) and `pgpq` (the neuronpedia-utils columnar local-DB
+  import encoder) live in interpretune's `examples` extra and the CI lock.
+- `neuronpedia-utils` itself installs `--no-deps` from the pinned neuronpedia fork SHA via
+  `requirements/ci/nodeps_git_requirements.txt` (a dedicated `build_it_env.sh` step: its own pins —
+  e.g. `sae-dashboard ^0.6.x` — would conflict with the integrated env, while all of its runtime
+  deps are already satisfied by the lock). Update that pin alongside the `git-deps` group pins.
 
 (`polars` is optional: only the neuronpedia-utils converter's opt-in `--emit-arrow` mode and its tests
 use it — those tests skip cleanly when it is absent. The production columnar lane uses pyarrow.)

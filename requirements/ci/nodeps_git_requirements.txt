@@ -1,0 +1,8 @@
+# Git-URL packages installed with --no-deps by build_it_env.sh (their own pins would fight the
+# integrated env; every runtime dep they need is already satisfied by the locked CI requirements
+# + the examples extra). Update commit hashes alongside the git-deps group pins.
+#
+# neuronpedia-utils: the Python local-DB import utilities consumed by the dashboard benchmark
+# import legs (pins sae-dashboard ^0.6.x, which conflicts with the from-source/git-dep 0.8.x —
+# hence --no-deps; its runtime deps psycopg/pyarrow/pgpq are covered by test/examples).
+neuronpedia-utils @ git+https://github.com/speediedan/neuronpedia.git@626d1345a7ce9c7e6756d904ef14ef7f72ca92ad#subdirectory=utils/neuronpedia-utils

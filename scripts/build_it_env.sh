@@ -273,6 +273,14 @@ it_install(){
         install_from_source_packages from_source_packages "${venv_path}" "${uv_install_flags}"
     fi
 
+    # 3.5 Install no-deps git packages (their own pins would conflict with the integrated env;
+    # their runtime deps are satisfied by the locked CI requirements — see the file's comments)
+    nodeps_reqs_file="${repo_home}/requirements/ci/nodeps_git_requirements.txt"
+    if [[ -f "${nodeps_reqs_file}" ]]; then
+        echo "Installing no-deps git packages from ${nodeps_reqs_file}..."
+        uv pip install ${uv_install_flags} --no-deps -r "${nodeps_reqs_file}"
+    fi
+
     # 4. Setup git hooks and type checking
     cd "${repo_home}"
     echo "Setting up git hooks and running type checks..."

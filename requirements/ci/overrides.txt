@@ -8,5 +8,6 @@ transformers>=5.5.0
 datasets>=4.8.4
 huggingface-hub>=1.4.1
 accelerate>=1.12.0  # for SAELens from source
+pyright==1.1.408  # match the CI lock; SAELens' exported reqs pin 1.1.365, whose TOML parser cannot read PEP 735 groups (unscoped type checks)
 dictionary-learning>=0.1.0
 eai-sparsify>=1.3.0

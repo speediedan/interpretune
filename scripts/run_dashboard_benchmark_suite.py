@@ -603,6 +603,17 @@ def build_package(args: argparse.Namespace, source_root: Path, package_dir: Path
             cwd=str(package_dir),
             progress_bar=False,
         )
+        # Collapse EVERY code cell's source in the executed notebook (papermill's injected
+        # parameters cell lacks the template metadata) — reviewers focus on data/charts and
+        # expand cells on demand in JupyterLab / Notebook / VS Code. Viewers that ignore
+        # jupyter.source_hidden (e.g. GitHub's ipynb renderer) should use the HTML export.
+        import nbformat
+
+        executed = nbformat.read(str(notebook_path), as_version=4)
+        for cell in executed.cells:
+            if cell.cell_type == "code":
+                cell.setdefault("metadata", {})["jupyter"] = {"source_hidden": True}
+        nbformat.write(executed, str(notebook_path))
         # --no-input: the HTML export is data/charts-only; sources stay in the .ipynb
         # (collapsed by default, expandable in JupyterLab).
         subprocess.run(

@@ -560,7 +560,10 @@ class Setup:
             ),
             f"--from-source=sae_lens:{self.repo_paths['sae_lens']}:dev:UV_OVERRIDE={it / ov}:FLAGS=-r {it / slr}",
         ]
-        self.say("- integrated env build (SAEDashboard + SAELens from source; ~10-30 min):")
+        self.say(
+            "- integrated env build (SAEDashboard + SAELens from source; typically a few minutes with a "
+            "warm uv cache — first-time torch/CUDA wheel downloads can add 10-30 min):"
+        )
         if not self.confirm("  run the env build now?"):
             self.warn("env build skipped — activate/build a suitable venv before running the suite.")
             return venv_path
@@ -570,14 +573,18 @@ class Setup:
             result = subprocess.run(cmd, cwd=it)
             if result.returncode != 0:
                 self.fail(f"build_it_env.sh failed with exit code {result.returncode}")
-        # neuronpedia-utils (the Python local-DB import utilities) is not part of the canonical
-        # build command — install it editable from the current neuronpedia checkout. --no-deps
-        # because its pins would fight the integrated env; the only runtime dep the integrated
-        # env does not already satisfy is pgpq (binary Arrow COPY for the columnar import lane).
-        np_utils = self.repo_paths["neuronpedia"] / "utils" / "neuronpedia-utils"
-        venv_python = str(venv_path / "bin" / "python")
-        self.run(["uv", "pip", "install", "--python", venv_python, "-e", str(np_utils), "--no-deps"])
-        self.run(["uv", "pip", "install", "--python", venv_python, "pgpq>=0.11,<0.12"])
+        # neuronpedia-utils (pinned git no-deps install) and pgpq (examples extra) are handled by
+        # build_it_env.sh / the locked requirements — verify they landed rather than reinstalling.
+        if not self.args.dry_run:
+            probe = subprocess.run(
+                [str(venv_path / "bin" / "python"), "-c", "import neuronpedia_utils, pgpq"], capture_output=True
+            )
+            if probe.returncode != 0:
+                self.fail(
+                    "neuronpedia_utils/pgpq missing from the built venv — expected via "
+                    "requirements/ci/nodeps_git_requirements.txt + the examples extra in the CI lock."
+                )
+            self.say("- [OK] neuronpedia-utils + pgpq present (columnar local-DB import lane)")
         self._check_gated_model_access(venv_path)
         return venv_path
 

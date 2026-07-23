@@ -77,6 +77,8 @@ examples = [
     "evaluate",
     "scikit-learn",
     "neuronpedia",
+    "pgpq >=0.11,<0.12",  # binary Arrow COPY encoder for the columnar local-DB import lane
+    "syrupy >= 4.6",  # snapshot testing consumed by the SAEDashboard/SAELens suites run from this env
     # we comment these out when installing from git urls to avoid dep conflicts
     # note packages that have need to have git url deps override transitive dependencies (e.g. needing to override
     # sae-lens' transformer-lens dependency with a git url dep) need to be moved to git-deps as well

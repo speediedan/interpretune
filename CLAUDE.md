@@ -72,6 +72,11 @@ Rules of thumb:
 - **After every rebuild**: recreate circuit-tracer's untracked `temp_hf_override.txt` (stash/restore or
   per the circuit-tracer admin notes), then validate with `python requirements/utils/collect_env_details.py`
   (also feeds `salient_pkg_versions` provenance used by the benchmark registry).
+- **No post-build extras**: syrupy + pgpq ship in the `examples` extra/CI lock; `neuronpedia-utils`
+  installs `--no-deps` from the pinned neuronpedia fork SHA via
+  `requirements/ci/nodeps_git_requirements.txt` (a dedicated `build_it_env.sh` step — its own pins,
+  e.g. `sae-dashboard ^0.6.x`, would conflict with the integrated env). Update that pin alongside
+  the git-deps group pins.
 
 ### Git Dependency Caching & Pins
 
