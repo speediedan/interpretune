@@ -4,31 +4,41 @@
 One guided, transparent, non-destructive flow that prepares everything
 `scripts/run_dashboard_benchmark_suite.py` needs (Linux and macOS):
 
-1. Locate (or clone) the source repos: interpretune, SAEDashboard, SAELens, neuronpedia,
-   TransformerLens, nnsight, circuit-tracer. Existing checkouts are never switched or
-   modified; dirty trees are surfaced with an offer to stash (or continue/abort).
-2. Create the detached preserved-baseline worktrees (the pre-PR comparison lineage
+1. Check prerequisites: required tools and HuggingFace access (see PREREQUISITES below).
+2. Locate (or clone) the four source repos: interpretune, SAEDashboard, SAELens, neuronpedia.
+   TransformerLens, nnsight, and circuit-tracer are NOT needed as checkouts — interpretune's
+   dependency pins install them at the validated versions (TransformerLens v3.5.1 via the
+   pinned git SHA, nnsight 0.7.0, circuit-tracer at the pinned fork SHA). Existing checkouts
+   are never switched or modified; dirty trees are surfaced with an offer to stash.
+3. Create the detached preserved-baseline worktrees (the pre-PR comparison lineage
    `SD-7886eaa+benchmark_patches / SL-3eea6552 / NP-5a33f17`) in a directory you choose,
    applying the audited benchmark patches from `scripts/benchmark_baseline_patches/`
    (see that directory's README for the per-patch classification/rationale) and
    verifying the resulting tree state against pinned expectations.
-3. Check the local Neuronpedia Postgres is reachable (offering the docker compose
-   bring-up from your neuronpedia checkout if it is not).
-4. Build the integrated interpretune benchmark venv via `scripts/build_it_env.sh`
-   (the canonical multi-repo from-source build). An existing venv is only cleared
-   after explicit confirmation (or `--clear-existing-venv`).
-5. Verify the benchmark prompt datasets exist under `$IT_NP_CACHE` (pointing at the
-   regeneration docs when they do not).
-6. Write `<worktrees-dir>/benchmark_env.sh` capturing every environment variable the
-   suite needs, and print the exact command to run the benchmark.
+4. Ensure the neuronpedia local-stack env defaults (`.env`: Postgres host port/data dir, HF
+   cache paths — appended only when missing) and check the local Postgres is reachable
+   (offering the docker compose bring-up when it is not).
+5. Build the integrated interpretune benchmark venv via `scripts/build_it_env.sh`
+   (SAEDashboard + SAELens editable from source; everything else from interpretune's pins).
+   An existing venv is only cleared after explicit confirmation (or `--clear-existing-venv`).
+6. Verify the benchmark prompt datasets exist under `$IT_NP_CACHE`, offering to build any
+   missing ones (tokenizer-only, CPU, a few minutes each; requires the gated-model access
+   below because they tokenize with `google/gemma-3-1b-it`).
+7. Write `<worktrees-dir>/benchmark_env.sh` capturing every environment variable the
+   suite needs, and print the detected GPU + the exact command to run the benchmark.
+
+PREREQUISITES (checked in Step 1):
+- `git` and `uv` on PATH; `docker` only if the local Neuronpedia DB needs bring-up;
+  bash >= 4.3 for the env build (macOS: `brew install bash`).
+- HuggingFace access to the GATED model `google/gemma-3-1b-it`: accept the license on the
+  model page, then authenticate via `hf auth login` (stored token) or `export HF_TOKEN=...`
+  (the pipeline also honors `HF_GATED_PUBLIC_REPO_AUTH_KEY` as a fallback). Only the
+  tokenizer/weights are fetched; the benchmark prompt datasets' sources are not gated.
+- Root is never required. Nothing is pushed and no existing checkout is modified.
 
 Every mutating action is printed before it runs; use `--dry-run` to see the full plan
 without executing anything, and `--yes` to accept defaults non-interactively (any
 explicitly passed flag always wins over a prompt).
-
-Requirements: git, docker (only if the local DB needs bring-up), `uv`, and bash >= 4.3
-for the env build (macOS: `brew install bash`). Root is never required. Nothing is
-pushed and no existing checkout is modified.
 """
 
 from __future__ import annotations
@@ -50,6 +60,8 @@ PATCHES_DIR = SCRIPT_DIR / "benchmark_baseline_patches"
 
 WAVE_BRANCH = "streamlined-streamable-dashboard-generation-phase-1"
 DEFAULT_DB_URL = "postgres://postgres:postgres@127.0.0.1:5433/postgres"
+GATED_MODEL = "google/gemma-3-1b-it"
+REFERENCE_GPU = "NVIDIA GeForce RTX 4090 (24 GiB)"
 
 # Preserved pre-PR baseline pins (lineage `SD-7886eaa+benchmark_patches/SL-3eea6552/NP-5a33f17`).
 SD_BASELINE_SHA = "7886eaa227398a52cd77a4483c94ecc74d204d34"
@@ -76,14 +88,99 @@ SD_BASELINE_EXPECTED_NUMSTAT = {
 SD_BASELINE_EXPECTED_NEW_FILE = "sae_dashboard/perf_logging.py"
 
 # Datasets the accepted-shape benchmark presets require under $IT_NP_CACHE (threeway mode).
-REQUIRED_DATASETS = (
-    "pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts",
-    "legacy_pretokenized/gemma-3-1b-it_rte_boolq_context319_fixed_pad_2490",
-    "pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490",
-    "legacy_pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490",
-)
+RTE_PRETOK = "pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts"
+RTE_LEGACY = "legacy_pretokenized/gemma-3-1b-it_rte_boolq_context319_fixed_pad_2490"
+MONOLOGY_PRETOK = "pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490"
+MONOLOGY_LEGACY = "legacy_pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490"
+REQUIRED_DATASETS = (RTE_PRETOK, RTE_LEGACY, MONOLOGY_PRETOK, MONOLOGY_LEGACY)
 # Additionally required by --mode full (the prompt-dimension sweep).
-FULL_MODE_DATASETS = ("pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_24576",)
+MONOLOGY_SWEEP = "pretokenized/gemma-3-1b-it_pile_uncopyrighted_context128_concat_24576"
+FULL_MODE_DATASETS = (MONOLOGY_SWEEP,)
+
+_PRETOK_MODULE = "sae_dashboard.neuronpedia.prompt_pretokenization"
+_MONOLOGY_COMMON = (
+    "--dataset-path",
+    "monology/pile-uncopyrighted",
+    "--dataset-split",
+    "train",
+    "--tokenizer-name",
+    GATED_MODEL,
+    "--context-size",
+    "128",
+    "--column-name",
+    "text",
+    "--use-chat-formatting",
+    "--streaming",
+    "--num-proc",
+    "1",
+    "--no-shuffle",
+)
+
+
+def dataset_build_groups(cache: Path) -> tuple[dict, ...]:
+    """The pretokenization invocations of record (docs/neuronpedia_dashboard_pipeline.md § Regenerating the
+    benchmark prompt datasets); each group is one CLI run."""
+
+    return (
+        {
+            "name": "RTE example-aligned cache + legacy fixed-pad export",
+            "produces": (RTE_PRETOK, RTE_LEGACY),
+            "args": [
+                "-m",
+                _PRETOK_MODULE,
+                "--dataset-path",
+                "aps/super_glue",
+                "--dataset-name",
+                "rte",
+                "--dataset-split",
+                "train",
+                "--tokenizer-name",
+                GATED_MODEL,
+                "--context-size",
+                "128",
+                "--custom-dataset-module",
+                "it_examples.utils.dashboard_pretokenization_rte",
+                "--windowing-mode",
+                "max-prompt-pad",
+                "--no-shuffle",
+                "--output-dir",
+                str(cache / RTE_PRETOK),
+                "--legacy-output-dir",
+                str(cache / RTE_LEGACY),
+                "--force",
+            ],
+        },
+        {
+            "name": "Monology packed cache + legacy export (2490 rows)",
+            "produces": (MONOLOGY_PRETOK, MONOLOGY_LEGACY),
+            "args": [
+                "-m",
+                _PRETOK_MODULE,
+                *_MONOLOGY_COMMON,
+                "--max-tokenized-rows",
+                "2490",
+                "--output-dir",
+                str(cache / MONOLOGY_PRETOK),
+                "--legacy-output-dir",
+                str(cache / MONOLOGY_LEGACY),
+                "--force",
+            ],
+        },
+        {
+            "name": "Monology concat_24576 sweep set (needed by --mode full only)",
+            "produces": (MONOLOGY_SWEEP,),
+            "args": [
+                "-m",
+                _PRETOK_MODULE,
+                *_MONOLOGY_COMMON,
+                "--max-tokenized-rows",
+                "24576",
+                "--output-dir",
+                str(cache / MONOLOGY_SWEEP),
+                "--force",
+            ],
+        },
+    )
 
 
 @dataclass
@@ -92,7 +189,6 @@ class RepoSpec:
     dirname: str
     url: str
     ref: str | None  # branch/tag checked out for FRESH clones only; existing checkouts untouched
-    note: str = ""
 
 
 REPOS: tuple[RepoSpec, ...] = (
@@ -100,28 +196,8 @@ REPOS: tuple[RepoSpec, ...] = (
     RepoSpec("sae_dashboard", "SAEDashboard", "https://github.com/speediedan/SAEDashboard.git", WAVE_BRANCH),
     RepoSpec("sae_lens", "SAELens", "https://github.com/speediedan/SAELens.git", WAVE_BRANCH),
     RepoSpec("neuronpedia", "neuronpedia", "https://github.com/speediedan/neuronpedia.git", WAVE_BRANCH),
-    RepoSpec(
-        "transformer_lens",
-        "TransformerLens",
-        "https://github.com/TransformerLensOrg/TransformerLens.git",
-        "v3.5.1",
-        note="pinned to the validated TL release (matches interpretune's override-dependencies pin)",
-    ),
-    RepoSpec(
-        "nnsight",
-        "nnsight",
-        "https://github.com/ndif-team/nnsight.git",
-        "0.7.0",
-        note="pinned to the validated nnsight release",
-    ),
-    RepoSpec(
-        "circuit_tracer",
-        "circuit-tracer",
-        "https://github.com/speediedan/circuit-tracer.git",
-        None,
-        note="not exercised by the dashboard benchmarks; any installable head of the fork works",
-    ),
 )
+MANIFEST_REPO_KEYS = ("interpretune", "sae_dashboard", "sae_lens", "neuronpedia")
 
 
 class Setup:
@@ -184,10 +260,61 @@ class Setup:
             self.fail(f"command failed ({result.returncode}): {' '.join(cmd)}{loc}\n{result.stderr.strip()}")
         return result.stdout.strip()
 
+    def _hf_token_present(self) -> str | None:
+        """Return a short description of how HF auth was found, or None."""
+        if os.environ.get("HF_TOKEN"):
+            return "HF_TOKEN environment variable"
+        if os.environ.get("HF_GATED_PUBLIC_REPO_AUTH_KEY"):
+            return "HF_GATED_PUBLIC_REPO_AUTH_KEY environment variable"
+        token_file = Path(self.args.hf_home).expanduser() / "token"
+        if token_file.is_file():
+            return f"stored token at {token_file}"
+        default_token = Path.home() / ".cache" / "huggingface" / "token"
+        if default_token.is_file():
+            return f"stored token at {default_token}"
+        return None
+
     # ---------- steps ----------
 
+    def check_prereqs(self) -> None:
+        self.say("\n=== Step 1/7: prerequisites (tools + HuggingFace access) ===")
+        self.say(
+            "Required: git + uv on PATH; docker only for local-DB bring-up; bash >= 4.3 for the env "
+            "build (macOS: `brew install bash`). Root is never required; nothing is pushed and no "
+            "existing checkout is modified."
+        )
+        for tool, why, fatal in (
+            ("git", "clones/worktrees", True),
+            ("uv", "the env build and package installs", not self.args.skip_env_build),
+            ("docker", "local Neuronpedia DB bring-up (only if the DB is not already running)", False),
+        ):
+            path = shutil.which(tool)
+            if path:
+                self.say(f"- [OK] {tool} ({path})")
+            elif fatal:
+                self.fail(f"`{tool}` not found on PATH — required for {why}.")
+            else:
+                self.warn(f"`{tool}` not found on PATH — needed for {why}.")
+        auth = self._hf_token_present()
+        if auth:
+            self.say(f"- [OK] HuggingFace auth detected ({auth})")
+        else:
+            self.warn(
+                f"no HuggingFace auth detected. `{GATED_MODEL}` is a GATED model: accept its license on "
+                "the model page, then `hf auth login` or `export HF_TOKEN=...` (the benchmark pipeline "
+                "also honors HF_GATED_PUBLIC_REPO_AUTH_KEY). Model download AND dataset pretokenization "
+                "will fail without it."
+            )
+            if not self.confirm("  continue without HuggingFace auth?", default=False):
+                self.fail("aborted at user request (missing HuggingFace auth)")
+
     def resolve_repos(self) -> None:
-        self.say("\n=== Step 1/6: source repositories ===")
+        self.say("\n=== Step 2/7: source repositories ===")
+        self.say(
+            "Only interpretune, SAEDashboard, SAELens, and neuronpedia are needed as checkouts — "
+            "TransformerLens (v3.5.1 pinned SHA), nnsight (0.7.0), and circuit-tracer (pinned fork "
+            "SHA) install from interpretune's dependency pins during the env build."
+        )
         repos_root = Path(self.args.repos_root).expanduser()
         for spec in REPOS:
             override = getattr(self.args, spec.key, None)
@@ -198,7 +325,7 @@ class Setup:
                 head = self.run(["git", "-C", str(path), "rev-parse", "--short", "HEAD"], mutating=False)
                 branch = self.run(["git", "-C", str(path), "rev-parse", "--abbrev-ref", "HEAD"], mutating=False)
                 self.say(f"- {spec.dirname}: using existing checkout {path} ({branch}@{head})")
-                if spec.ref and branch != spec.ref and spec.ref == WAVE_BRANCH:
+                if spec.ref and branch != spec.ref:
                     self.warn(
                         f"{spec.dirname} is on '{branch}', not the expected wave branch '{spec.ref}'. "
                         "This script never switches branches for you; switch manually if intended."
@@ -220,14 +347,12 @@ class Setup:
                             ["git", "-C", str(path), "stash", "push", "-u", "-m", "setup_dashboard_benchmark_env"],
                             cwd=None,
                         )
-                    elif spec.key in ("interpretune", "sae_dashboard", "sae_lens", "neuronpedia"):
+                    elif spec.key in MANIFEST_REPO_KEYS:
                         self.warn(
                             f"{spec.dirname} left dirty — reviewer packaging refuses dirty manifest repos "
                             "(run_dashboard_benchmark_suite.py needs clean SD/SL/NP/IT trees unless --allow-dirty)."
                         )
             else:
-                if spec.note:
-                    self.say(f"- {spec.dirname}: note: {spec.note}")
                 if not self.confirm(f"- {spec.dirname}: missing at {path}; clone {spec.url} -> {path}?"):
                     self.fail(f"{spec.dirname} is required for the benchmark environment")
                 self.run(["git", "clone", spec.url, str(path)])
@@ -258,7 +383,7 @@ class Setup:
             self.fail(f"baseline commit {sha} unreachable in {repo} even after fetch")
 
     def create_worktrees(self) -> None:
-        self.say("\n=== Step 2/6: detached preserved-baseline worktrees ===")
+        self.say("\n=== Step 3/7: detached preserved-baseline worktrees ===")
         wt_root = Path(self.args.worktrees_dir).expanduser()
         self.say(f"Baseline worktrees root: {wt_root}")
         if not self.args.dry_run:
@@ -318,11 +443,52 @@ class Setup:
             )
         self.say(f"  OK: {wt_path.name} = {sha[:9]} + benchmark patches (verified against pinned numstat)")
 
+    def _ensure_np_env_defaults(self) -> None:
+        """Append missing local-stack keys to the neuronpedia untracked `.env`.
+
+        Upstream `docker/compose.yaml` defaults are unsuitable for a generic local benchmark host
+        (`POSTGRES_HOST_PORT` 5432 collides with a host Postgres; `POSTGRES_DATA_DIR` falls back to
+        the root-owned `/var/lib/postgresql/data`), so pin them per-host in the gitignored `.env`
+        (compose reads `.env.localhost` then `.env`; existing values are never modified here).
+        """
+
+        np_repo = self.repo_paths["neuronpedia"]
+        env_file = np_repo / ".env"
+        existing = env_file.read_text(encoding="utf-8") if env_file.is_file() else ""
+        existing_keys = {line.split("=", 1)[0].strip() for line in existing.splitlines() if "=" in line}
+        parsed = urlsplit(self.args.local_db_url)
+        hf_home = Path(self.args.hf_home).expanduser()
+        wanted = {
+            "POSTGRES_HOST_PORT": str(parsed.port or 5432),
+            "POSTGRES_DATA_DIR": str(Path(self.args.postgres_data_dir).expanduser()),
+            "HF_HOME": str(hf_home),
+            "HF_HUB_CACHE": str(hf_home / "hub"),
+            "HF_DATASETS_CACHE": str(hf_home / "datasets"),
+        }
+        missing = {k: v for k, v in wanted.items() if k not in existing_keys}
+        if not missing:
+            self.say(f"- {env_file}: all local-stack keys already present (values left untouched)")
+            return
+        self.say(f"- appending missing local-stack keys to {env_file} (existing values are never modified):")
+        for k, v in missing.items():
+            self.say(f"    {k}={v}")
+        if not self.confirm("  append these keys?"):
+            self.warn(
+                f"{env_file} not updated — compose bring-up may use upstream defaults (port 5432, root-owned data dir)."
+            )
+            return
+        if not self.args.dry_run:
+            prefix = "" if (not existing or existing.endswith("\n")) else "\n"
+            with env_file.open("a", encoding="utf-8") as fh:
+                fh.write(prefix + "".join(f"{k}={v}\n" for k, v in missing.items()))
+        self.actions_taken.append(f"appended {sorted(missing)} to {env_file}")
+
     def check_db(self) -> None:
-        self.say("\n=== Step 3/6: local Neuronpedia Postgres ===")
+        self.say("\n=== Step 4/7: neuronpedia local-stack env defaults + Postgres ===")
         if self.args.skip_services_check:
             self.say("- skipped (--skip-services-check)")
             return
+        self._ensure_np_env_defaults()
         parsed = urlsplit(self.args.local_db_url)
         host, port = parsed.hostname or "127.0.0.1", parsed.port or 5432
         try:
@@ -335,11 +501,6 @@ class Setup:
         np_repo = self.repo_paths.get("neuronpedia")
         compose = np_repo / "docker" / "compose.yaml" if np_repo else None
         if compose and compose.is_file() and shutil.which("docker"):
-            env_file = np_repo / ".env"
-            if not env_file.exists():
-                self.say(f"  creating empty {env_file} (gitignored; compose requires it to exist)")
-                if not self.args.dry_run:
-                    env_file.touch()
             cmd = [
                 "docker",
                 "compose",
@@ -365,7 +526,7 @@ class Setup:
             )
 
     def build_env(self) -> Path:
-        self.say("\n=== Step 4/6: interpretune benchmark venv (build_it_env.sh) ===")
+        self.say("\n=== Step 5/7: interpretune benchmark venv (build_it_env.sh) ===")
         venv_dir = Path(self.args.venv_dir).expanduser()
         venv_path = venv_dir / self.args.venv_name
         if self.args.skip_env_build:
@@ -385,25 +546,21 @@ class Setup:
                     return venv_path
         it, ov = self.repo_paths["interpretune"], "requirements/ci/overrides.txt"
         ex, slr = "requirements/ci/excludes.txt", "requirements/ci/sl_uv_requirements.txt"
+        # Only the two PR-branch repos build from source; TransformerLens/nnsight/circuit-tracer
+        # come from interpretune's pins (git-deps group + override-dependencies + overrides.txt).
         cmd = [
             str(it / "scripts" / "build_it_env.sh"),
             f"--repo-home={it}",
             f"--target-env-name={self.args.venv_name}",
             f"--venv-dir={venv_dir}",
             f"--torch-backend={self.args.torch_backend}",
-            f"--from-source=nnsight:{self.repo_paths['nnsight']}:all:UV_OVERRIDE={it / ov}",
             (
                 f"--from-source=sae_dashboard:{self.repo_paths['sae_dashboard']}:dev"
                 f":UV_EXCLUDE={it / ex}:UV_OVERRIDE={it / ov}"
             ),
             f"--from-source=sae_lens:{self.repo_paths['sae_lens']}:dev:UV_OVERRIDE={it / ov}:FLAGS=-r {it / slr}",
-            (
-                f"--from-source=circuit_tracer:{self.repo_paths['circuit_tracer']}:dev"
-                f":UV_EXCLUDE={it / ex}:UV_OVERRIDE={it / ov}"
-            ),
-            f"--from-source=transformer-lens:{self.repo_paths['transformer_lens']}",
         ]
-        self.say("- canonical multi-repo from-source build (this can take a while; ~10-30 min):")
+        self.say("- integrated env build (SAEDashboard + SAELens from source; ~10-30 min):")
         if not self.confirm("  run the env build now?"):
             self.warn("env build skipped — activate/build a suitable venv before running the suite.")
             return venv_path
@@ -413,10 +570,6 @@ class Setup:
             result = subprocess.run(cmd, cwd=it)
             if result.returncode != 0:
                 self.fail(f"build_it_env.sh failed with exit code {result.returncode}")
-        ct_override = self.repo_paths["circuit_tracer"] / "temp_hf_override.txt"
-        if not ct_override.exists() and not self.args.dry_run:
-            self.say(f"  recreating circuit-tracer's untracked {ct_override.name} (transformers-v5 floor)")
-            ct_override.write_text("transformers>=5.0.0\nhuggingface_hub>=1.0.0\n", encoding="utf-8")
         # neuronpedia-utils (the Python local-DB import utilities) is not part of the canonical
         # build command — install it editable from the current neuronpedia checkout. --no-deps
         # because its pins would fight the integrated env; the only runtime dep the integrated
@@ -425,36 +578,103 @@ class Setup:
         venv_python = str(venv_path / "bin" / "python")
         self.run(["uv", "pip", "install", "--python", venv_python, "-e", str(np_utils), "--no-deps"])
         self.run(["uv", "pip", "install", "--python", venv_python, "pgpq>=0.11,<0.12"])
+        self._check_gated_model_access(venv_path)
         return venv_path
 
-    def check_datasets(self) -> None:
-        self.say("\n=== Step 5/6: benchmark prompt datasets ===")
+    def _check_gated_model_access(self, venv_path: Path) -> None:
+        """Authoritative gated-repo access check via the built venv (non-fatal; needs network)."""
+
+        if self.args.dry_run:
+            return
+        venv_python = venv_path / "bin" / "python"
+        if not venv_python.exists():
+            return
+        probe = f"from huggingface_hub import model_info\nmodel_info('{GATED_MODEL}')\nprint('access OK')\n"
+        env = {**os.environ, "HF_HOME": str(Path(self.args.hf_home).expanduser())}
+        result = subprocess.run([str(venv_python), "-c", probe], capture_output=True, text=True, env=env)
+        if result.returncode == 0:
+            self.say(f"- [OK] gated-model access verified ({GATED_MODEL})")
+        else:
+            tail = (result.stderr or "").strip().splitlines()[-1:] or ["(no error output)"]
+            self.warn(
+                f"could not verify access to gated model {GATED_MODEL} ({tail[0]}). If you have not "
+                "accepted its license / authenticated, model download and dataset builds will fail — "
+                "see the PREREQUISITES section of --help."
+            )
+
+    def ensure_datasets(self, venv_path: Path) -> None:
+        self.say("\n=== Step 6/7: benchmark prompt datasets ===")
         cache = Path(self.args.np_cache).expanduser()
-        missing = [d for d in REQUIRED_DATASETS if not (cache / d).is_dir()]
-        missing_full = [d for d in FULL_MODE_DATASETS if not (cache / d).is_dir()]
         for d in REQUIRED_DATASETS + FULL_MODE_DATASETS:
             status = "OK" if (cache / d).is_dir() else "MISSING"
             self.say(f"- [{status}] {cache / d}")
-        if missing or missing_full:
-            self.warn(
-                "some benchmark prompt datasets are missing (they are not published to the HF Hub). "
-                "Build them once per docs/neuronpedia_dashboard_pipeline.md § 'Regenerating the benchmark "
-                "prompt datasets' (threeway mode needs the four accepted-shape sets; --mode full additionally "
-                "needs the concat_24576 sweep set)."
+        groups = [g for g in dataset_build_groups(cache) if any(not (cache / p).is_dir() for p in g["produces"])]
+        if not groups:
+            return
+        venv_python = venv_path / "bin" / "python"
+        self.say(
+            "\nMissing datasets can be built now (tokenizer-only, CPU, a few minutes per set; the "
+            "commands of record from docs/neuronpedia_dashboard_pipeline.md § 'Regenerating the "
+            f"benchmark prompt datasets'; requires access to the gated `{GATED_MODEL}` tokenizer)."
+        )
+        if not venv_python.exists() and not self.args.dry_run:
+            self.warn("benchmark venv missing — build it first (Step 5), then re-run to build the datasets.")
+            return
+        env = {
+            **os.environ,
+            "HF_HOME": str(Path(self.args.hf_home).expanduser()),
+            "IT_NP_CACHE": str(cache),
+        }
+        for group in groups:
+            cmd = [str(venv_python), *group["args"]]
+            if not self.confirm(f"  build '{group['name']}' now?"):
+                self.warn(
+                    f"dataset group '{group['name']}' not built — the presets that consume it will fail "
+                    "(build later per docs/neuronpedia_dashboard_pipeline.md)."
+                )
+                continue
+            self.say(f"  $ {' '.join(cmd)}")
+            if self.args.dry_run:
+                self.actions_taken.append(f"[dry-run] dataset build: {group['name']}")
+                continue
+            self.actions_taken.append(f"dataset build: {group['name']}")
+            result = subprocess.run(cmd, cwd=self.repo_paths["interpretune"], env=env)
+            if result.returncode != 0:
+                self.fail(f"dataset build failed ({result.returncode}): {group['name']}")
+            still_missing = [p for p in group["produces"] if not (cache / p).is_dir()]
+            if still_missing:
+                self.fail(f"dataset build reported success but outputs are missing: {still_missing}")
+            self.say(f"  OK: built {', '.join(group['produces'])}")
+
+    def _detect_gpu(self) -> str | None:
+        smi = shutil.which("nvidia-smi")
+        if not smi:
+            return None
+        try:
+            result = subprocess.run(
+                [smi, "--query-gpu=name,memory.total", "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
-            if missing and not self.confirm("  continue anyway (you can build the datasets afterwards)?"):
-                self.fail("aborted at user request (missing datasets)")
+            lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+            return lines[0] if lines else None
+        except Exception:
+            return None
 
     def write_env_file(self, venv_path: Path) -> None:
-        self.say("\n=== Step 6/6: benchmark_env.sh + next steps ===")
+        self.say("\n=== Step 7/7: benchmark_env.sh + next steps ===")
         wt_root = Path(self.args.worktrees_dir).expanduser()
         cache = Path(self.args.np_cache).expanduser()
+        hf_home = Path(self.args.hf_home).expanduser()
         np_repo = self.repo_paths["neuronpedia"]
         lines = [
             "# Generated by scripts/setup_dashboard_benchmark_env.py "
             f"({datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')})",
             "# source this before running scripts/run_dashboard_benchmark_suite.py",
-            f'export HF_HOME="{Path(self.args.hf_home).expanduser()}"',
+            f'export HF_HOME="{hf_home}"',
+            f'export HF_HUB_CACHE="{hf_home / "hub"}"',
+            f'export HF_DATASETS_CACHE="{hf_home / "datasets"}"',
             f'export IT_NP_CACHE="{cache}"',
             f'export IT_NP_BASELINE_WORKTREES="{wt_root}"',
             f'export SAEDASHBOARD_REPO_ROOT="{self.repo_paths["sae_dashboard"]}"',
@@ -467,14 +687,22 @@ class Setup:
         self.say(f"- writing {env_file}")
         if not self.args.dry_run:
             env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        gpu = self._detect_gpu()
+        gpu_line = (
+            f"Detected GPU: {gpu}."
+            if gpu
+            else "No NVIDIA GPU detected (nvidia-smi unavailable) — the benchmark needs one."
+        )
         self.say(
-            "\nSetup complete. To run the three-way benchmark (~25 min on the reference GPU):\n\n"
+            f"\n{gpu_line}\nReference benchmark hardware: {REFERENCE_GPU} — three-way mode takes ~25 min "
+            "and full mode ~2 h there; scale expectations to your GPU.\n"
+            "\nSetup complete. To run the three-way benchmark:\n\n"
             f"  source {env_file}\n"
             f"  source {venv_path}/bin/activate\n"
             f"  cd {self.repo_paths['interpretune']}\n"
             "  python scripts/run_dashboard_benchmark_suite.py --mode threeway \\\n"
             f'    --local-db-url "{self.args.local_db_url}"\n\n'
-            "Use --mode full for the batch-shape + n-prompts scaling sweeps (~3-5 h). "
+            "Use --mode full for the batch-shape + n-prompts scaling sweeps (~2 h on the reference GPU). "
             "See scripts/dashboard_benchmark_suite_usage.md for all modes and flags."
         )
         if self.warnings:
@@ -485,11 +713,12 @@ class Setup:
     def main(self) -> int:
         if self.args.dry_run:
             self.say("DRY RUN: printing the plan; no command below is executed.")
+        self.check_prereqs()
         self.resolve_repos()
         self.create_worktrees()
         self.check_db()
         venv_path = self.build_env()
-        self.check_datasets()
+        self.ensure_datasets(venv_path)
         self.write_env_file(venv_path)
         return 0
 
@@ -522,7 +751,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hf-home",
         default=os.getenv("HF_HOME", str(Path.home() / ".cache" / "huggingface")),
-        help="HF_HOME exported in benchmark_env.sh (model/dataset caches).",
+        help="HF_HOME exported in benchmark_env.sh (model/dataset caches; "
+        "HF_HUB_CACHE/HF_DATASETS_CACHE derive from it).",
+    )
+    parser.add_argument(
+        "--postgres-data-dir",
+        default=None,
+        help="Host directory for the local Neuronpedia Postgres data volume (written to the neuronpedia "
+        "untracked .env when missing; default: <np-cache>/neuronpedia_db).",
     )
     parser.add_argument("--venv-dir", default=os.getenv("IT_VENV_BASE", str(Path.home() / ".venvs")))
     parser.add_argument("--venv-name", default="it_bench")
@@ -540,5 +776,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse_args() -> argparse.Namespace:
+    args = build_parser().parse_args()
+    if args.postgres_data_dir is None:
+        args.postgres_data_dir = str(Path(args.np_cache).expanduser() / "neuronpedia_db")
+    return args
+
+
 if __name__ == "__main__":
-    sys.exit(Setup(build_parser().parse_args()).main())
+    sys.exit(Setup(parse_args()).main())

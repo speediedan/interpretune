@@ -7,13 +7,26 @@ profiling notebook (+ HTML export), and a top-level `benchmark_summary.md` linki
 
 ## Environment setup (one guided command)
 
+> **Prerequisites** (the setup script checks these itself): `git` and `uv` on PATH; `docker` only
+> if the local Neuronpedia DB needs bring-up; bash >= 4.3 for the env build (macOS:
+> `brew install bash`); HuggingFace access to the **gated** `google/gemma-3-1b-it` model (accept
+> the license, then `hf auth login` or `export HF_TOKEN=...` —
+> `HF_GATED_PUBLIC_REPO_AUTH_KEY` is honored as a fallback). **Root is never required; nothing is
+> pushed; no existing checkout is modified.**
+
 `scripts/setup_dashboard_benchmark_env.py` prepares everything below in one transparent,
-non-destructive flow — it locates/clones the repos, creates and patch-verifies the detached
-preserved-baseline worktrees (applying the audited patches from
+non-destructive flow. Only four repos are involved (interpretune, SAEDashboard, SAELens,
+neuronpedia — located or cloned for you; TransformerLens v3.5.1, nnsight 0.7.0, and
+circuit-tracer install from interpretune's dependency pins). It creates and patch-verifies the
+detached preserved-baseline worktrees (applying the audited patches from
 `scripts/benchmark_baseline_patches/` — see that directory's README for the per-patch
-classification/rationale), checks the local Postgres (offering the docker compose bring-up),
-builds the integrated benchmark venv via `scripts/build_it_env.sh`, verifies the prompt
-datasets, and writes a `benchmark_env.sh` you source before running the suite:
+classification/rationale), manages the neuronpedia local-stack `.env` defaults (Postgres host
+port/data dir + HF cache paths, appended only when missing) and checks the local Postgres
+(offering the docker compose bring-up), builds the integrated benchmark venv via
+`scripts/build_it_env.sh` (SAEDashboard + SAELens editable from source), offers to build any
+missing benchmark prompt datasets (the pretokenization commands of record — tokenizer-only,
+CPU, a few minutes per set), and writes a `benchmark_env.sh` you source before running the
+suite:
 
 ```bash
 python scripts/setup_dashboard_benchmark_env.py --worktrees-dir <dir-for-baseline-worktrees>
@@ -23,9 +36,10 @@ python scripts/setup_dashboard_benchmark_env.py --worktrees-dir <dir-for-baselin
 Every prompt has a corresponding flag (`--help` lists them); existing checkouts are never
 switched or modified (dirty trees prompt stash/continue/abort), existing worktrees are
 verified rather than recreated, and an existing venv is only cleared after explicit
-confirmation (or `--clear-existing-venv`). Works on Linux and macOS (macOS needs
-`brew install bash` for the env build; pass `--torch-backend` as appropriate — jemalloc
-preloading is skipped with a warning when absent).
+confirmation (or `--clear-existing-venv`). Works on Linux and macOS (pass `--torch-backend` as
+appropriate — jemalloc preloading is skipped with a warning when absent). On completion the
+script reports the detected GPU against the reference benchmark hardware (NVIDIA GeForce
+RTX 4090, 24 GiB; three-way ~25 min, full mode ~2 h there).
 
 ## Prerequisites
 
@@ -35,7 +49,7 @@ preloading is skipped with a warning when absent).
   setup script above — point `IT_NP_BASELINE_WORKTREES` at their root when it is not the legacy default
   `${IT_NP_CACHE}/baseline_worktrees_20260518`).
 - The four benchmark prompt datasets present under `${IT_NP_CACHE}` (`pretokenized/` + `legacy_pretokenized/`); they
-  are not published to the HF Hub — regenerate them per
+  are not published to the HF Hub — the setup script above offers to build any missing ones, or regenerate them per
   ["Regenerating the benchmark prompt datasets"](../docs/neuronpedia_dashboard_pipeline.md#regenerating-the-benchmark-prompt-datasets).
 - **Reproducibility policy**: commit all outstanding changes in SAEDashboard, SAELens, neuronpedia, and
   interpretune before a reviewer 3-way regeneration. The script refuses to package with dirty trees unless
