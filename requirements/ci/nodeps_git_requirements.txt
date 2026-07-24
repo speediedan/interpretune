@@ -1,8 +1,13 @@
-# Git-URL packages installed with --no-deps by build_it_env.sh (their own pins would fight the
-# integrated env; every runtime dep they need is already satisfied by the locked CI requirements
-# + the examples extra). Update commit hashes alongside the git-deps group pins.
+# Git-URL packages installed with --no-deps by build_it_env.sh: entries whose own dependency
+# chains or pins would fight the integrated env, while every runtime dep they actually need here
+# is already satisfied by the locked CI requirements + the examples extra. Update commit hashes
+# alongside the git-deps group pins.
 #
 # neuronpedia-utils: the Python local-DB import utilities consumed by the dashboard benchmark
-# import legs (pins sae-dashboard ^0.6.x, which conflicts with the from-source/git-dep 0.8.x —
-# hence --no-deps; its runtime deps psycopg/pyarrow/pgpq are covered by test/examples).
-neuronpedia-utils @ git+https://github.com/speediedan/neuronpedia.git@626d1345a7ce9c7e6756d904ef14ef7f72ca92ad#subdirectory=utils/neuronpedia-utils
+# import legs — a deliberately circumscribed use (nothing else in interpretune imports it).
+# Its sae-dashboard constraint is now compatible (>=0.6.8,<0.9), but a full-dependency install
+# still drags in its autointerp/cloud chain (automated-interpretability -> blobfile -> lxml 4.x
+# source build, openai, google-genai, boto3) that the import lane never uses — hence --no-deps;
+# psycopg/pyarrow/pgpq come from the lock. For plain-uv (non-build_it_env.sh) installs, run:
+#   uv pip install --no-deps -r requirements/ci/nodeps_git_requirements.txt
+neuronpedia-utils @ git+https://github.com/speediedan/neuronpedia.git@f8b13ef2ecc72e214cc56448c5d59db7fe010593#subdirectory=utils/neuronpedia-utils

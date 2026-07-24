@@ -155,9 +155,14 @@ Sibling-suite/benchmark dependencies are now installed automatically by every
 - `syrupy` (SAEDashboard snapshot tests) and `pgpq` (the neuronpedia-utils columnar local-DB
   import encoder) live in interpretune's `examples` extra and the CI lock.
 - `neuronpedia-utils` itself installs `--no-deps` from the pinned neuronpedia fork SHA via
-  `requirements/ci/nodeps_git_requirements.txt` (a dedicated `build_it_env.sh` step: its own pins —
-  e.g. `sae-dashboard ^0.6.x` — would conflict with the integrated env, while all of its runtime
-  deps are already satisfied by the lock). Update that pin alongside the `git-deps` group pins.
+  `requirements/ci/nodeps_git_requirements.txt` (a dedicated `build_it_env.sh` step). Its use in
+  interpretune is deliberately circumscribed — only the dashboard local-DB import/benchmark lanes
+  import it — and while its `sae-dashboard` constraint is now compatible (`>=0.6.8,<0.9`), a
+  full-dependency install would drag in its unused autointerp/cloud chain
+  (`automated-interpretability` → `blobfile` → `lxml` 4.x source build, `openai`, `google-genai`,
+  `boto3`); the runtime deps the import lane needs are already in the lock. For plain-uv installs
+  (outside `build_it_env.sh`): `uv pip install --no-deps -r requirements/ci/nodeps_git_requirements.txt`.
+  Update the pin alongside the `git-deps` group pins.
 
 (`polars` is optional: only the neuronpedia-utils converter's opt-in `--emit-arrow` mode and its tests
 use it — those tests skip cleanly when it is absent. The production columnar lane uses pyarrow.)

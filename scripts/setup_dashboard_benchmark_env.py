@@ -650,26 +650,42 @@ class Setup:
             return
         venv_python = venv_path / "bin" / "python"
         self.say(
-            "\nMissing datasets can be built now (tokenizer-only, CPU, a few minutes per set; the "
-            "commands of record from docs/neuronpedia_dashboard_pipeline.md § 'Regenerating the "
-            f"benchmark prompt datasets'; requires access to the gated `{GATED_MODEL}` tokenizer)."
+            "\nDatasets required to run the dashboard generation benchmarking were not found — building "
+            "them now is recommended: a ONE-TIME task enabling the neuronpedia/sae_dashboard generation "
+            "benchmarks (the commands of record from docs/neuronpedia_dashboard_pipeline.md § "
+            "'Regenerating the benchmark prompt datasets'; tokenizer-only, CPU, a few minutes per set; "
+            f"requires access to the gated `{GATED_MODEL}` tokenizer). All missing sets — including the "
+            "--mode full sweep set — are built together:"
         )
+        for group in groups:
+            self.say(f"  - {group['name']}")
         if not venv_python.exists() and not self.args.dry_run:
             self.warn("benchmark venv missing — build it first (Step 5), then re-run to build the datasets.")
+            return
+        if not self.confirm("  build all missing datasets now?"):
+            self.warn(
+                "benchmark prompt datasets not built — the presets that consume them will fail "
+                "(build later per docs/neuronpedia_dashboard_pipeline.md or by re-running this script)."
+            )
             return
         env = {
             **os.environ,
             "HF_HOME": str(Path(self.args.hf_home).expanduser()),
             "IT_NP_CACHE": str(cache),
+            # Silence known-benign warnings from the pretokenization runs:
+            # - runpy RuntimeWarning: sae_dashboard.neuronpedia's __init__ imports
+            #   prompt_pretokenization, so `-m` finds it pre-imported (harmless for this CLI)
+            # - SAELens "use_chat_formatting ... strings" UserWarning: wrapping raw text rows as
+            #   single user messages is exactly the intended behavior for these presets
+            # - datasets' torch copy-construct UserWarning: third-party formatter internals, benign
+            "PYTHONWARNINGS": (
+                "ignore::RuntimeWarning:runpy,"
+                "ignore:use_chat_formatting:UserWarning,"
+                "ignore:To copy construct from a tensor:UserWarning"
+            ),
         }
         for group in groups:
             cmd = [str(venv_python), *group["args"]]
-            if not self.confirm(f"  build '{group['name']}' now?"):
-                self.warn(
-                    f"dataset group '{group['name']}' not built — the presets that consume it will fail "
-                    "(build later per docs/neuronpedia_dashboard_pipeline.md)."
-                )
-                continue
             self.say(f"  $ {' '.join(cmd)}")
             if self.args.dry_run:
                 self.actions_taken.append(f"[dry-run] dataset build: {group['name']}")
@@ -733,13 +749,14 @@ class Setup:
         self.say(
             f"\n{gpu_line}\nReference benchmark hardware: {REFERENCE_GPU} — three-way mode takes ~25 min "
             "and full mode ~2 h there; scale expectations to your GPU.\n"
-            "\nSetup complete. To run the three-way benchmark:\n\n"
+            "\nSetup complete. To generate the full reviewer benchmark package (3-way + batch-shape "
+            "scaling sweeps + the n-prompts scaling curve; ~2 h on the reference GPU):\n\n"
             f"  source {env_file}\n"
             f"  source {venv_path}/bin/activate\n"
             f"  cd {self.repo_paths['interpretune']}\n"
-            "  python scripts/run_dashboard_benchmark_suite.py --mode threeway \\\n"
+            "  python scripts/run_dashboard_benchmark_suite.py --mode full \\\n"
             f'    --local-db-url "{self.args.local_db_url}"\n\n'
-            "Use --mode full for the batch-shape + n-prompts scaling sweeps (~2 h on the reference GPU). "
+            "For a quicker check without the scaling-curve generation, use --mode threeway (~25 min). "
             "See scripts/dashboard_benchmark_suite_usage.md for all modes and flags."
         )
         if self.warnings:

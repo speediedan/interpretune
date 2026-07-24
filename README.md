@@ -96,6 +96,11 @@ uv venv ${VENV_BASE}/${IT_TARGET_VENV} --python 3.13 && source ${VENV_BASE}/${IT
 # Install the package with all necessary development dependencies
 # Note: the git-deps group is optional once circuit-tracer is published on PyPI
 uv pip install -e ".[test,examples,lightning,profiling]" --group git-deps dev
+
+# Optional: only if you will run the Neuronpedia dashboard local-DB import/benchmark lanes —
+# installs the pinned neuronpedia-utils (--no-deps: its unused autointerp/cloud dependency
+# chain conflicts with the integrated env; the runtime deps it needs here are already included)
+uv pip install --no-deps -r requirements/ci/nodeps_git_requirements.txt
 ```
 
 For advanced development builds (locked CI requirements, multi-repo from-source composition), use

@@ -74,9 +74,11 @@ Rules of thumb:
   (also feeds `salient_pkg_versions` provenance used by the benchmark registry).
 - **No post-build extras**: syrupy + pgpq ship in the `examples` extra/CI lock; `neuronpedia-utils`
   installs `--no-deps` from the pinned neuronpedia fork SHA via
-  `requirements/ci/nodeps_git_requirements.txt` (a dedicated `build_it_env.sh` step — its own pins,
-  e.g. `sae-dashboard ^0.6.x`, would conflict with the integrated env). Update that pin alongside
-  the git-deps group pins.
+  `requirements/ci/nodeps_git_requirements.txt` (a dedicated `build_it_env.sh` step — its unused
+  autointerp/cloud dependency chain, e.g. `automated-interpretability`→`blobfile`→`lxml` 4.x source
+  build, conflicts with the integrated env; plain-uv installs use
+  `uv pip install --no-deps -r requirements/ci/nodeps_git_requirements.txt`). Update that pin
+  alongside the git-deps group pins.
 
 ### Git Dependency Caching & Pins
 
