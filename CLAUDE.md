@@ -237,8 +237,8 @@ The repo carries the production pipeline and benchmark tooling for the Scalable 
   `--runner-overlap-batch-packaging`, `--overlap-local-db-import`, `--layer-list`).
 - **Profiling/benchmarks**: `scripts/profile_neuronpedia_dashboard_generation.py` (per-leg presets),
   `scripts/run_dashboard_benchmark_suite.py` (3-way/scaling/full waves + reviewer packaging; usage in
-  `scripts/dashboard_benchmark_suite_usage.md`), `scripts/sweep_neuronpedia_dashboard_configs.py`
-  (batch-shape probes). Tests: `tests/core/test_neuronpedia_dashboard_pipeline.py`,
+  `scripts/dashboard_benchmark_suite_usage.md` — batch-shape sweeps via its `--config`/`--mode scaling`).
+  Tests: `tests/core/test_neuronpedia_dashboard_pipeline.py`,
   `tests/core/test_dashboard_benchmark_artifacts.py`.
 - **Env vars**: always set the large-cache locations for pipeline/benchmark runs —
   `IT_NP_CACHE=/mnt/cache_extended/$USER/.cache/huggingface/interpretune/neuronpedia`,

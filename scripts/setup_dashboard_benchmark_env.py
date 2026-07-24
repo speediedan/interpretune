@@ -49,6 +49,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -206,19 +207,43 @@ class Setup:
         self.actions_taken: list[str] = []
         self.warnings: list[str] = []
         self.repo_paths: dict[str, Path] = {}
+        log_dir = Path(args.log_dir).expanduser()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        self.log_path = log_dir / f"dashboard_bench_env_setup_{stamp}.log"
+        self._log_fh = self.log_path.open("a", encoding="utf-8")
 
     # ---------- io helpers ----------
 
+    def _log(self, text: str) -> None:
+        self._log_fh.write(text if text.endswith("\n") else text + "\n")
+        self._log_fh.flush()
+
     def say(self, msg: str) -> None:
         print(msg, flush=True)
+        self._log(msg)
 
     def warn(self, msg: str) -> None:
         self.warnings.append(msg)
         print(f"WARNING: {msg}", flush=True)
+        self._log(f"WARNING: {msg}")
 
     def fail(self, msg: str) -> None:
         print(f"ERROR: {msg}", file=sys.stderr, flush=True)
+        self._log(f"ERROR: {msg}")
         raise SystemExit(1)
+
+    def _run_streamed(self, cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> int:
+        """Run a long/verbose child, mirroring its output to the terminal AND the log file."""
+
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+        )
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            print(line, end="", flush=True)
+            self._log(line)
+        return proc.wait()
 
     def confirm(self, question: str, default: bool = True) -> bool:
         if self.args.yes:
@@ -228,10 +253,13 @@ class Setup:
         while True:
             resp = input(f"{question} {suffix} ").strip().lower()
             if not resp:
+                self._log(f"{question} -> (default {'yes' if default else 'no'})")
                 return default
             if resp in ("y", "yes"):
+                self._log(f"{question} -> yes")
                 return True
             if resp in ("n", "no"):
+                self._log(f"{question} -> no")
                 return False
 
     def choose(self, question: str, choices: dict[str, str], default: str) -> str:
@@ -243,8 +271,10 @@ class Setup:
         while True:
             resp = input(f"{question} ({menu}; default {default}): ").strip().lower()
             if not resp:
+                self._log(f"{question} -> (default '{default}')")
                 return default
             if resp in choices:
+                self._log(f"{question} -> '{resp}'")
                 return resp
 
     def run(self, cmd: list[str], *, cwd: Path | None = None, mutating: bool = True, check: bool = True) -> str:
@@ -562,7 +592,7 @@ class Setup:
         ]
         self.say(
             "- integrated env build (SAEDashboard + SAELens from source; typically a few minutes with a "
-            "warm uv cache — first-time torch/CUDA wheel downloads can add 10-30 min):"
+            "warm uv cache — first-time torch/CUDA wheel downloads can add ~5-10 min):"
         )
         if not self.confirm("  run the env build now?"):
             self.warn("env build skipped — activate/build a suitable venv before running the suite.")
@@ -570,9 +600,9 @@ class Setup:
         self.say(f"  $ {' '.join(cmd)}")
         if not self.args.dry_run:
             self.actions_taken.append(" ".join(cmd))
-            result = subprocess.run(cmd, cwd=it)
-            if result.returncode != 0:
-                self.fail(f"build_it_env.sh failed with exit code {result.returncode}")
+            rc = self._run_streamed(cmd, cwd=it)
+            if rc != 0:
+                self.fail(f"build_it_env.sh failed with exit code {rc}")
         # neuronpedia-utils (pinned git no-deps install) and pgpq (examples extra) are handled by
         # build_it_env.sh / the locked requirements — verify they landed rather than reinstalling.
         if not self.args.dry_run:
@@ -645,9 +675,9 @@ class Setup:
                 self.actions_taken.append(f"[dry-run] dataset build: {group['name']}")
                 continue
             self.actions_taken.append(f"dataset build: {group['name']}")
-            result = subprocess.run(cmd, cwd=self.repo_paths["interpretune"], env=env)
-            if result.returncode != 0:
-                self.fail(f"dataset build failed ({result.returncode}): {group['name']}")
+            rc = self._run_streamed(cmd, cwd=self.repo_paths["interpretune"], env=env)
+            if rc != 0:
+                self.fail(f"dataset build failed ({rc}): {group['name']}")
             still_missing = [p for p in group["produces"] if not (cache / p).is_dir()]
             if still_missing:
                 self.fail(f"dataset build reported success but outputs are missing: {still_missing}")
@@ -716,8 +746,10 @@ class Setup:
             self.say("\nWarnings raised during setup (review before running):")
             for w in self.warnings:
                 self.say(f"  - {w}")
+        self.say(f"\nFull setup log: {self.log_path}")
 
     def main(self) -> int:
+        self.say(f"Logging this run to {self.log_path}")
         if self.args.dry_run:
             self.say("DRY RUN: printing the plan; no command below is executed.")
         self.check_prereqs()
@@ -778,6 +810,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Rebuild (clear) an existing venv without prompting.",
     )
     parser.add_argument("--skip-services-check", action="store_true", help="Skip the Postgres reachability check.")
+    parser.add_argument(
+        "--log-dir",
+        default=tempfile.gettempdir(),
+        help="Directory for the full setup log (dashboard_bench_env_setup_<YYYYMMDD_HHMMSS>.log); "
+        "defaults to the platform temporary directory.",
+    )
     parser.add_argument("--yes", action="store_true", help="Accept defaults for every prompt (non-interactive).")
     parser.add_argument("--dry-run", action="store_true", help="Print the full plan without executing anything.")
     return parser

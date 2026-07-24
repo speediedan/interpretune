@@ -36,9 +36,15 @@ KEY_PADDING = 20
 
 def _distribution_name_candidates(pkg_name: str) -> tuple[str, ...]:
     candidates = [pkg_name]
-    dash_name = pkg_name.replace("_", "-")
-    underscore_name = pkg_name.replace("-", "_")
-    for candidate in (dash_name, underscore_name):
+    lower = pkg_name.lower()
+    # distribution names are commonly lowercase even when the display name is not (SAEDashboard -> sae-dashboard)
+    for candidate in (
+        pkg_name.replace("_", "-"),
+        pkg_name.replace("-", "_"),
+        lower,
+        lower.replace("_", "-"),
+        lower.replace("-", "_"),
+    ):
         if candidate not in candidates:
             candidates.append(candidate)
     return tuple(candidates)
@@ -257,7 +263,7 @@ def info_packages():
         "lightning": _pkg_version("lightning", "lightning"),
         "transformer_lens": _pkg_version("transformer_lens", "transformer_lens"),
         "sae_lens": _pkg_version("sae_lens", "sae_lens"),
-        "SAEDashboard": _pkg_version("SAEDashboard", "sae_dashboard"),
+        "SAEDashboard": _pkg_version("sae-dashboard", "sae_dashboard"),
         "circuit_tracer": _pkg_version("circuit_tracer", "circuit_tracer"),
         "nnsight": _pkg_version("nnsight", "nnsight"),
         "neuronpedia": _pkg_version("neuronpedia", "neuronpedia"),
