@@ -29,7 +29,11 @@ Use this skill when an interpretune self-hosted GPU Azure DevOps run is queued, 
 - Current runner constraints observed on `speediedl`:
   - RAM is about 62 GiB
   - Swap is only 2 GiB unless explicitly expanded
-  - Agent service is already protected with unlimited `MemoryMax`/`MemoryHigh` and low `OOMScoreAdjust`
+  - Agent service sets a low `OOMScoreAdjust` (-900). It does **not** set `MemoryMax`/`MemoryHigh` —
+    an earlier version of this file claimed it did; verified absent 2026-07-29 (no systemd drop-in).
+  - GPU jobs take the host GPU lease (`/tmp/di_leases` bind-mounted to `/gpu_leases`); see the
+    'Acquire host GPU lease' step. It fails open, and container teardown always frees the lease, so
+    cancel a run rather than force-resetting a lease held by CI.
   - Rootless Docker and cgroups v2 are in use
 - The GPU test flow is phase-split to reduce peak memory:
   1. `Testing: standard` is CPU-only with `CUDA_VISIBLE_DEVICES=''`
