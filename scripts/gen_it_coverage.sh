@@ -11,6 +11,10 @@ set -eo pipefail
 # Source shared infrastructure utilities
 source "$(dirname "${BASH_SOURCE[0]}")/infra_utils.sh"
 
+# Serialize the whole coverage run against other GPU work on the host (no-op unless GPU_LEASE_CMD is set).
+# Held once for the entire run; nested special_tests.sh calls inherit it.
+gpu_lease_reexec "$0" "$@"
+
 unset repo_home
 unset target_env_name
 unset no_rebuild_base

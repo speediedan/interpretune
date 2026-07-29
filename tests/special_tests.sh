@@ -36,6 +36,9 @@ reruns_delay=5
 
 source $(dirname "$0")/test_utils.sh
 
+# Serialize this run against other GPU work on the host (no-op unless GPU_LEASE_CMD is set).
+gpu_lease_reexec "$0" "$@"
+
 usage(){
 >&2 cat << EOF
 Usage: $0
