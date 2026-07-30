@@ -56,8 +56,11 @@ transformerbridge = "interpretune.adapters.transformer_lens:TransformerBridgeStr
 [project.optional-dependencies]
 
 lightning = [
-    # commenting out when installing from git urls to avoid dep conflicts
-    # "finetuning-scheduler >= 2.10.0",
+    # 2.13.0 published 2026-07-26; interpretune had been pinning its release candidate by git SHA
+    # (c378e55) while it was unpublished. The consumed surface — StrategyAdapter,
+    # ScheduleImplMixin.save_schedule and the `finetuning_scheduler.strategy_adapters` entry point —
+    # is identical between that SHA and the release, so this is a pin-form change, not a version bump.
+    "finetuning-scheduler >= 2.13.0",
     "bitsandbytes; platform_system != 'Darwin'",
     "peft>=0.18",
 ]
@@ -77,11 +80,17 @@ examples = [
     "evaluate",
     "scikit-learn",
     "neuronpedia",
+    "pgpq >=0.11,<0.12",  # binary Arrow COPY encoder for the columnar local-DB import lane
+    "syrupy >= 4.6",  # snapshot testing consumed by the SAEDashboard/SAELens suites run from this env
+    # v3 adds the TransformerBridge architecture. 3.5.1 is the release cut from the commit this project
+    # previously pinned by git URL (tag v3.5.1 == 4ba2187b), so this is a release-pin of identical code.
+    # Downstreams still cap transformer-lens below 3.x (sae-dashboard `^2.2.0`, sae-lens `>=2.16.1`),
+    # hence the matching entry in [tool.uv] override-dependencies / requirements/ci/overrides.txt.
+    "transformer-lens >=3.5.1,<4",
     # we comment these out when installing from git urls to avoid dep conflicts
     # note packages that have need to have git url deps override transitive dependencies (e.g. needing to override
     # sae-lens' transformer-lens dependency with a git url dep) need to be moved to git-deps as well
     # "circuit-tracer>=0.1.0",
-    # "transformer-lens>=3.0.0",  # v3 adds TransformerBridge architecture (git: 0.0.0, from-source: 3.0.0)
     # "sae_lens >= 6.3.1",  # use new sae_lens API
     # "nnsight >= 0.5.15",
 ]
@@ -92,16 +101,21 @@ examples = [
 # Git URL dependencies - packages installed from git repositories
 # These are separated because they cannot be included in universal lock files
 # Update commit hashes when cutting release branches to pin to tested versions
+# Keep this list as SHORT as possible: every entry here is a package we cannot pin to a release, so
+# it is excluded from the universal lock file and has to be re-validated by hand. Prefer a released
+# version floor in `examples`/`lightning` the moment upstream publishes one.
 git-deps = [
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@14cc3e8443d6bca1fc58752aca28207ba2128a3c",
-    "transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@4ba2187b182faf964225c6eb9076c858cada0672",
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler.git@a96d8158ee92dddb3eb5203095ce9db98c137fd0",
+    # circuit-tracer: no release carries the attribution-target surface interpretune uses. The pin
+    # MUST include d117ba1 ("Canonicalize nnsight trace inputs via tokenized tensors") -- before it,
+    # a raw `str` prompt was re-tokenized with add_special_tokens=True, double-prefixing an explicit
+    # BOS and silently shifting every position index in the feature-intervention path.
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@3fde7e203f3a73da28d24ce2d1f173f92eaf5480",
     # sae-lens/sae-dashboard: pinned to the validated Scalable Dashboards fork SHAs until the
     # upstream PRs merge/release (interpretune.utils.neuronpedia_dashboard_pipeline imports
     # fork-only surface, e.g. sae_dashboard.neuronpedia.prompt_bucketing); flip back to released
     # version floors at wave-merge time.
-    "sae-lens @ git+https://github.com/speediedan/SAELens.git@990b6b37183389852408c1251729189129a90fb8",
-    "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@50027371f0f03e8c0e7638fe9e372ab153e0127d",
+    "sae-lens @ git+https://github.com/speediedan/SAELens.git@86f90b3d3dccd3f6ac729577b979f76f88a525f1",
+    "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@d8d9444232a077b9ba0e4264ca5ae5c38dd2dd8d",
 ]
 
 dev = [
@@ -154,14 +168,22 @@ profiling = [
 # from source we also include this version to ensure it is respected when installing without the
 # --override flag (e.g CI)
 override-dependencies = [
-    "transformer-lens @ git+https://github.com/TransformerLensOrg/TransformerLens.git@4ba2187b182faf964225c6eb9076c858cada0672",
+    # force the v3 line over downstream caps (sae-dashboard pins `^2.2.0`, i.e. <3.0.0; sae-lens
+    # `>=2.16.1`). 3.5.1 is the release of the commit formerly pinned here by git URL (tag v3.5.1 ==
+    # 4ba2187b), so this is the same code with a real version string instead of `0.0.0`.
+    "transformer-lens==3.5.1",
     # keep transitive nnsight (pulled in by the sae-lens git dep) at the validated release
     # (0.7.0 validated Session 36: nnsight slice + parity 34/0 + low-RAM mock, both versions)
     "nnsight==0.7.0",
 ]
-# exclude dependencies can be used to ignore installation of a dependency altogether (transitive or direct)
-# we occasionally use an excludes file to allow complex multiple-packages-from-source installations
-# exclude-dependencies = []
+# exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
+# FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.
+# torchaudio: pulled in transitively by sae-dashboard's `decode-clt` dependency but imported NOWHERE
+# in this project (nor in sae_dashboard itself). It is not merely dead weight — no torchaudio release
+# is paired with the pinned torch (latest is 2.11.0 against torch 2.13), so letting it resolve drags a
+# second, mismatched CUDA runtime stack into the env and breaks `import torch`
+# (libtorch_cuda.so: undefined symbol: ncclCommResume).
+exclude-dependencies = ["torchaudio"]
 
 # [tool.uv.pip]
 # mechanism to override metadata in dev version of (e.g., transformer_lens will be 0.0.0 via git url or source install)

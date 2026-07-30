@@ -18,7 +18,10 @@ on top of interpretune's locked CI requirements. The builder is `scripts/build_i
     with `brew install bash`; the script resolves bash via `/usr/bin/env bash`, which picks up the Homebrew
     bash from `PATH`.
 - **Torch backend**
-  - *Linux + NVIDIA GPU*: the default (`--torch-backend=cu128`) installs stable torch CUDA 12.8 wheels.
+  - *Linux + NVIDIA GPU*: the default (`--torch-backend=cu130`) installs stable torch CUDA 13.0 wheels
+    at the version pinned in `requirements/ci/overrides.txt`. torch >= 2.11 ships CUDA 13 wheels and the
+    cu128 index stops at 2.11.0, so cu128 can no longer serve the pin. CUDA 13 drops sm_50-sm_70
+    (Maxwell/Pascal/Volta); those hosts need `--torch-backend=cu128` and an older torch pin.
   - *macOS / CPU-only hosts*: pass `--torch-backend=cpu` (or `--torch-backend=auto`). See
     [CPU-only builds](#cpu-only-builds-ci-macos) for how CI pins CPU torch.
 
@@ -51,8 +54,8 @@ The build proceeds in a fixed order:
 
 1. Create/clear the venv and install torch (CUDA/CPU/prerelease per `--torch-backend` and
    `requirements/ci/torch-pre.txt`).
-2. Install interpretune editable plus its `git-deps` dependency group (git-pinned circuit-tracer,
-   transformer-lens, finetuning-scheduler, plus a PyPI `sae_lens` floor).
+2. Install interpretune editable plus its `git-deps` dependency group (git-pinned circuit-tracer, sae-lens,
+   sae-dashboard, finetuning-scheduler); transformer-lens comes from its release pin instead.
 3. Install the locked CI requirements (`requirements/ci/requirements.txt`, a universal lock — torch is
    deliberately excluded from it).
 4. Install each `--from-source` package **last**, editable, so local checkouts override the PyPI/git
@@ -69,12 +72,15 @@ duration of that package's install. Three keywords matter in practice:
   stop a from-source package from downgrading shared pins. Two maintained files:
   - `requirements/ci/torch-override.txt`: auto-generated, pins only torch. Use for simple cases.
   - `requirements/ci/overrides.txt`: manually maintained; pins torch **and** triton/torchvision plus the
-    transformer-lens git SHA and several ecosystem floors. Use for packages with aggressive constraints
-    (nnsight, SAEDashboard's `<2.8` torch pin, etc.). If the override file mentions the package currently
-    being installed, the builder automatically filters that line out so the editable install still wins.
-- **`UV_EXCLUDE=<file>`** — uv excludes file (packages removed from resolution entirely). **Required** when
-  interpretune, circuit-tracer, AND transformer-lens are all from source, so exactly one directive controls
-  the transformer-lens install; `UV_OVERRIDE` alone suffices when only two of the three are from source.
+    `transformer-lens==3.5.1`/`nnsight==0.7.0` release pins and several ecosystem floors. Use for packages
+    with aggressive constraints (nnsight, SAEDashboard's `<2.8` torch pin, etc.). If the override file
+    mentions the package currently being installed, the builder automatically filters that line out so the
+    editable install still wins.
+- **`UV_EXCLUDE=<file>`** — uv excludes file (packages removed from resolution entirely). **Required** on the
+  sae_dashboard and circuit-tracer directives: their own transformer-lens caps (`^2.2.0`, `>=2.16.0`) would
+  otherwise pull the v2 line over the v3 install. Excluding leaves the already-installed transformer-lens
+  untouched, so exactly one directive controls it even when interpretune, circuit-tracer and
+  transformer-lens are all from source.
 - **`FLAGS=<extra uv pip install flags>`** — appended to that package's `uv pip install ... -e .[extras]`
   invocation. Needed for SAELens, which is Poetry-legacy (not PEP 621): its dev/test dependency groups are
   not expressible as extras, so uv is given an exported requirements file via
@@ -105,16 +111,16 @@ Two supported mechanisms, no interface changes required:
   The installed `<pin>+cpu` build satisfies the `torch==<pin>` override line, so from-source installs never
   re-resolve torch against CUDA wheels. This is exactly what the standalone
   [`env-build-smoke`](../.github/workflows/env-build-smoke.yml) workflow does on `ubuntu-latest` and
-  `macos-latest` (it also prunes the `nvidia-*`/`triton` pins from the SAELens exported requirements, which
-  are CUDA-resolution artifacts and dead weight on CPU runners).
+  `macos-latest`. (The vendored SAELens export is now pruned of every torch/CUDA-ecosystem pin at
+  rest — see its header — so there is nothing CUDA-specific left for the workflow to strip.)
 
   Two Linux-specific caveats the smoke workflow also handles (macOS wheels are single-variant and
-  unaffected): `torchvision`/`torchaudio` pins resolve to CUDA-built PyPI linux wheels that are
-  ABI-incompatible with `+cpu` torch (`operator torchvision::nms does not exist` /
-  `_torchaudio.abi3.so` load failure at import time) — after the build, reinstall the same pinned
-  versions from `https://download.pytorch.org/whl/cpu`; and the exported `jaxtyping`/`transformer-lens`
-  pins must yield to the `overrides.txt` transformer-lens git pin in a joint resolution (see the
-  workflow's requirements-pruning step).
+  unaffected): the `torchvision` pin resolves to a CUDA-built PyPI linux wheel that is
+  ABI-incompatible with `+cpu` torch (`operator torchvision::nms does not exist`) — after the build,
+  reinstall the same pinned version from `https://download.pytorch.org/whl/cpu`; and the exported
+  `jaxtyping`/`transformer-lens`
+  pins (the SAELens export pins `transformer-lens==2.16.1`) must yield to the `overrides.txt`
+  `transformer-lens==3.5.1` release pin in a joint resolution (see the workflow's requirements-pruning step).
 
 ## Environment variable contract (dashboard pipeline)
 
@@ -149,20 +155,10 @@ For editable and git-backed installs the report appends provenance such as
 the expected checkout/commit. This output also feeds the `salient_pkg_versions` provenance used by the
 benchmark registry.
 
-If the environment will run sibling-repo test suites or the dashboard benchmark/import lanes, note
-two dependencies that are **not** in interpretune's CI lock (they are declared by the sibling
-projects, not by interpretune) and therefore absent from every fresh build:
-
-```bash
-uv pip install syrupy                 # required by the SAEDashboard test suite (snapshot testing)
-uv pip install 'pgpq>=0.11.0,<0.12'   # required by the neuronpedia-utils columnar local-DB import lane
-```
-
-(`pgpq` is a real neuronpedia-utils dependency, but the recommended editable install uses
-`--no-deps`, so it silently vanishes on rebuilds — regular interpretune tests never exercise the
-columnar DB import, so the gap only surfaces when the benchmark suite's import-stage profiling or a
-real local import runs: `ModuleNotFoundError: No module named 'pgpq'` from
-`_load_pgpq_arrow_encoder`.)
+`syrupy` (SAEDashboard snapshot tests) and `pgpq` (the columnar local-DB import encoder) are no
+longer post-build extras: both now live in interpretune's `examples` extra and the CI lock, so every
+`build_it_env.sh` run installs them. They previously had to be added by hand after each rebuild,
+which meant they silently vanished on the next one.
 
 (`polars` is optional: only the neuronpedia-utils converter's opt-in `--emit-arrow` mode and its tests
 use it — those tests skip cleanly when it is absent. The production columnar lane uses pyarrow.)

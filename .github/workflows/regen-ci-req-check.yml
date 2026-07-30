@@ -21,7 +21,6 @@ jobs:
         with:
           python_version: '3.13'
           ci_output_dir: requirements/ci
-          compare_paths: "requirements/ci/requirements.txt"
           patch_path: /tmp/regen_diff.patch
 
       - name: Create PR with updated pins
@@ -33,10 +32,23 @@ jobs:
           token: ${{ secrets.REGEN_PR_TOKEN }}
           title: "[auto] regen pinned requirements"
           commit-message: "Auto-regenerate pinned requirements via scheduled regen-check"
-          branch: regen/pinned-requirements-${{ github.run_id }}
+          # STABLE branch name (deliberately not ${{ github.run_id }}-suffixed): create-pull-request
+          # force-pushes this branch and UPDATES the existing open PR instead of opening a new one every
+          # fortnight. The run-id-suffixed form left a long tail of abandoned regen/pinned-requirements-*
+          # branches and duplicate PRs. delete-branch cleans up once the PR is merged or closed.
+          branch: regen/pinned-requirements
+          delete-branch: true
+          # Restrict the commit to generated dependency state so an unrelated working-tree change can
+          # never ride along.
+          add-paths: |
+            requirements/ci/requirements.txt
+            requirements/ci/torch-override.txt
           body: |
             This PR was opened by the scheduled regen-ci-req-check workflow. It contains regenerated pinned requirement files.
             Please review tests and CI results before merging.
+
+            This branch is reused by every scheduled run: if the pins drift again before this PR merges,
+            the workflow force-pushes the refreshed pins here rather than opening a second PR.
           labels: automated, dependencies
 
       - name: Report no changes

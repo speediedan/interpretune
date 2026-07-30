@@ -11,13 +11,13 @@
 # limitations under the License.
 # initially based on https://bit.ly/3pdAf1G
 
-ARG CUDA_VERSION=12.8.1
+ARG CUDA_VERSION=13.0.3
 ARG OS_VER=ubuntu22.04
 
 FROM nvidia/cuda:${CUDA_VERSION}-devel-${OS_VER}
 
 ARG PYTHON_VERSION=3.13
-ARG PYTORCH_VERSION=2.10.0
+ARG PYTORCH_VERSION=2.13.0
 ARG CUST_BUILD=0
 ARG MKL_THREADING_LAYER=GNU
 
@@ -29,7 +29,7 @@ ENV \
     TZ=US/Pacific \
     PATH="$PATH:/root/.local/bin" \
     CUDA_TOOLKIT_ROOT_DIR="/usr/local/cuda" \
-    TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;9.0;10.0;12.0+PTX" \
+    TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;9.0;10.0;12.0+PTX" \
     MKL_THREADING_LAYER=${MKL_THREADING_LAYER} \
     MAKEFLAGS="-j2" \
     UV_NO_CACHE=1
@@ -77,18 +77,18 @@ RUN \
     # set particular PyTorch version by default
     if [[ "${CUST_BUILD}" -eq 0 ]]; then \
         CUDA_VERSION_MM=${CUDA_VERSION%.*}; \
-        uv pip install torch --no-cache \
+        uv pip install "torch==${PYTORCH_VERSION}" --no-cache \
         --find-links="https://download.pytorch.org/whl/cu${CUDA_VERSION_MM//'.'/''}/torch_stable.html" \
         --find-links="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}/torch" \
         --find-links="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}/pytorch-triton"; \
     else \
         # or target a specific cuda build, by specifying a particular index url w/...
         # ... default channel
-        uv pip install torch --index-url https://download.pytorch.org/whl/cu128; \
+        uv pip install "torch==${PYTORCH_VERSION}" --index-url https://download.pytorch.org/whl/cu130; \
         # ... pytorch nightly dev version
-        # uv pip install --pre torch==2.9.0.dev20250811 --index-url https://download.pytorch.org/whl/nightly/cu128; \
+        # uv pip install --pre torch==2.9.0.dev20250811 --index-url https://download.pytorch.org/whl/nightly/cu130; \
         # ... test channel
-        # uv pip install --pre torch==2.9.0 --index-url https://download.pytorch.org/whl/test/cu128; \
+        # uv pip install --pre torch==2.9.0 --index-url https://download.pytorch.org/whl/test/cu130; \
     fi && \
     rm -rf requirements/
 

@@ -267,7 +267,10 @@ class DebugGeneration:
         ph = self._check_phandle()
 
         if not corpus:
-            corpus_default = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+            # Fully-qualified `namespace/name`: datasets 5.x builds an `hf://datasets/<repo_id>@<rev>`
+            # URI and huggingface_hub 1.x rejects bare legacy names ("Repository id must be
+            # 'namespace/name'"). `wikitext` canonically resolves to `Salesforce/wikitext`.
+            corpus_default = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")
             assert isinstance(corpus_default, Dataset)
             corpus = corpus_default
         corpus_raw = "\n\n".join(corpus["text"])

@@ -146,17 +146,23 @@ pip show transformer-lens sae-lens circuit-tracer nnsight
 grep "transformer.lens\|sae.lens\|circuit.tracer\|nnsight" /tmp/ci_artifacts_<run_id>/*/output.txt
 ```
 
-**Fix**: Update dependency pins in `pyproject.toml` and ensure override-dependencies use the same fork/commit:
+**Fix**: Update dependency pins in `pyproject.toml`, then check both pin surfaces agree:
 
 ```bash
-# Check for discrepancies between pyproject.toml pins and override files
-diff <(grep "TransformerLens\|SAELens" pyproject.toml) <(cat requirements/ci/overrides.txt)
+# Release pins: requirements/ci/overrides.txt and pyproject's [tool.uv] override-dependencies must
+# state the same versions (currently transformer-lens==3.5.1, nnsight==0.7.0)
+grep -E '^(transformer-lens|nnsight)==' requirements/ci/overrides.txt
+grep -A10 'override-dependencies' pyproject.toml
+
+# Git SHA pins: the remaining git-deps entries (circuit-tracer, sae-lens, sae-dashboard,
+# finetuning-scheduler) must reference the same fork AND commit CI actually installed
+grep 'git+https' pyproject.toml
 
 # Regenerate lock file after updating pins
 ./requirements/utils/lock_ci_requirements.sh
 ```
 
-**Key Lesson from PR #197**: The `override-dependencies` section in `pyproject.toml` must match the actual dependency pins. Having `TransformerLensOrg` in overrides while the main dependency points to `speediedan` fork causes CI to install the wrong version, even though both forks share commit history.
+**Key Lesson from PR #197**: pin surfaces must not disagree. Having `TransformerLensOrg` in overrides while the main dependency pointed at the `speediedan` fork caused CI to install the wrong version, even though both forks share commit history. TransformerLens is now a plain release pin, but the same trap applies to every remaining `git-deps` entry.
 
 ### Category C: Numerical Precision / Backend Parity
 
@@ -418,9 +424,9 @@ diff <(grep "^FAILED" /tmp/ci_artifacts/windows-*/output.txt | sed 's/.*FAILED /
 
 ### 1. Dependency Pin Consistency is Critical
 
-The `override-dependencies` section in `pyproject.toml` serves a specific purpose: it replaces git URL dependencies with version constraints so that editable installations work correctly. If these overrides point to a different fork than the main dependency pins, CI will install the wrong package version silently.
+The `override-dependencies` section in `pyproject.toml` serves a specific purpose: it replaces downstream constraints with the versions this project requires so that editable installations work correctly. If it disagrees with the other pin surfaces, CI will install the wrong package version silently.
 
-**Always verify**: `pyproject.toml` dependency URLs, `requirements/ci/overrides.txt`, and `override-dependencies` all reference the same fork and commit.
+**Always verify**: `requirements/ci/overrides.txt` and `pyproject.toml`'s `override-dependencies` state the same release pins (`transformer-lens==3.5.1`, `nnsight==0.7.0`), and the `git-deps` entries (circuit-tracer, sae-lens, sae-dashboard, finetuning-scheduler) reference the same fork and commit CI installed.
 
 ### 2. Don't Chase Symptoms Before Fixing Dependencies
 

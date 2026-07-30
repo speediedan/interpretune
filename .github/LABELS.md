@@ -148,7 +148,9 @@ gh label create "adapter: transformer_lens" --color "ffeaa7" --description "Tran
 gh label create "adapter: core" --color "ffeaa7" --description "Core adapter functionality"
 gh label create "adapter: registration" --color "ffeaa7" --description "Adapter registration system"
 
-# Add area and special labels...
+# Special Labels (add new ones here...)
+gh label create "dependencies" --color "0366d6" --description "Dependency updates"
+gh label create "automated" --color "2596be" --description "automated"
 ```
 
 ## Customization

@@ -940,6 +940,20 @@ def _verify_wrapper_feature_interventions(
                 .detach()
                 .cpu()
             )
+            # Check the position axis BEFORE comparing values. If the wrapper's forward pass saw a
+            # different tokenization than the graph did (e.g. a backend that re-tokenizes a raw `str`
+            # prompt with add_special_tokens=True, double-prefixing an explicit BOS), every position
+            # index below silently refers to a different token and the value comparison reports a
+            # large "activation parity mismatch" that reads like a precision problem. Fail here with
+            # the actual cause instead.
+            expected_positions = int(graph_context.activation_cache.shape[1])
+            actual_positions = int(wrapper_activation_cache.shape[1])
+            assert actual_positions == expected_positions, (
+                f"{_format_feature_row(feature_row)}: intervention activation cache has "
+                f"{actual_positions} positions but the attribution graph has {expected_positions} — "
+                "the wrapper forward pass tokenized the prompt differently than the graph did, so "
+                "position indices are not comparable (check for double-BOS / add_special_tokens)"
+            )
             active_feature_rows = graph_context.active_features.detach().cpu()
             wrapper_relevant_activations = wrapper_activation_cache[
                 active_feature_rows[:, 0],

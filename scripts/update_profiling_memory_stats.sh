@@ -76,6 +76,7 @@ update_profiling_memory_stats(){
     # Activate the computed venv path
     source ${venv_path}/bin/activate
     declare -a mark_types=("profile_ci" "profile" "optional")
+    declare -a failed_marks=()
     for mark_type in "${mark_types[@]}"; do
         echo "Running tests with ${mark_type} marker" >> $profiling_session_log
         # Save original memory footprints before updating
@@ -83,12 +84,26 @@ update_profiling_memory_stats(){
         echo "Saving original memory footprints to ${orig_memory_footprint_path}" >> $profiling_session_log
         (cd ${repo_home} && cp tests/parity_acceptance/profile_memory_footprints.yaml $orig_memory_footprint_path)
 
-        # Run tests with memory profiling
+        # Run tests with memory profiling.
+        # NOTE the `|| mark_rc=$?` is load-bearing: this script runs under `set -e`, and
+        # special_tests.sh exits non-zero whenever ANY test in the marker set fails. Without the
+        # guard, a single unrelated test failure aborted the whole updater BEFORE the diff below was
+        # written -- so the run both lost the evidence of what moved and left the yaml partially
+        # regenerated, with no indication which marker sets had been processed. Record the failure,
+        # finish the marker, and surface a non-zero exit at the very end instead.
         export IT_GLOBAL_STATE_LOG_MODE=1
         temp_per_type_out="${working_dir}/update_profiling_memory_stats_output_${mark_type}_${d}.out"
         echo "Executing tests and updating memory footprint yaml" >> $profiling_session_log
-        (./tests/special_tests.sh --mark_type=${mark_type} --log_file=${profiling_session_log}) >> $temp_per_type_out 2>&1
+        local mark_rc=0
+        (./tests/special_tests.sh --mark_type=${mark_type} --log_file=${profiling_session_log}) \
+            >> $temp_per_type_out 2>&1 || mark_rc=$?
         unset IT_GLOBAL_STATE_LOG_MODE
+        if [[ ${mark_rc} -ne 0 ]]; then
+            failed_marks+=("${mark_type}")
+            echo "⚠ marker '${mark_type}' exited ${mark_rc} — see ${temp_per_type_out}. Memory stats" \
+                 "for tests that DID run are still captured below; the yaml is only partially" \
+                 "regenerated for this marker." >> $profiling_session_log
+        fi
 
         # Generate diff between original and updated memory footprints
         mem_footprint_diff_path="${working_dir}/mem_footprint_changes_${mark_type}_${d}.out"
@@ -103,6 +118,16 @@ update_profiling_memory_stats(){
 
     show_elapsed_time $profiling_session_log "Profiling memory stats update"
     echo "Results available in $profiling_session_log"
+
+    if [[ ${#failed_marks[@]} -gt 0 ]]; then
+        echo "" >> $profiling_session_log
+        echo "⚠ Marker sets with test failures: ${failed_marks[*]}" >> $profiling_session_log
+        echo "The regenerated yaml is INCOMPLETE for those markers — fix the failures and re-run" \
+             "before committing the expectations." >> $profiling_session_log
+        echo "⚠ Marker sets with test failures: ${failed_marks[*]}"
+        echo "The regenerated yaml is INCOMPLETE for those markers; see $profiling_session_log"
+        return 1
+    fi
 }
 
 # Main execution

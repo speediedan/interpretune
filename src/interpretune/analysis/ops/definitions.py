@@ -1577,6 +1577,16 @@ def feature_intervention_forward_impl(
     prompt = kwargs.pop("prompt", None)
     if prompt is None:
         prompt = analysis_backend.resolve_prompt(module, analysis_batch, batch)
+    # Canonicalize to token ids before handing the prompt to the replacement model. `get_activations`
+    # and `feature_intervention` below accept a raw `str`, but the backend then tokenizes it with
+    # `add_special_tokens=True` -- so a prompt that already carries an explicit BOS (as our chat-
+    # templated prompts do) is silently given a SECOND one. Every position index then refers to a
+    # different token than the attribution graph's, and interventions appear to change activations at
+    # positions the intervention cannot causally reach. `ensure_tokenized` is idempotent for tensor/
+    # list inputs, so this is a no-op when the caller already passed token ids.
+    ensure_tokenized = getattr(replacement_model, "ensure_tokenized", None)
+    if callable(ensure_tokenized):
+        prompt = ensure_tokenized(prompt)
     settings = analysis_backend.resolve_feature_intervention_settings(module, kwargs)
     if (
         getattr(analysis_batch, "top_feature_ids", None) is None

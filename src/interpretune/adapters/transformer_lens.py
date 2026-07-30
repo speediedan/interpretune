@@ -45,8 +45,8 @@ def _ensure_bridge_processed_weight_device_patch() -> None:
     option: GeneralizedComponent.__getattr__ resolves neither _parameters nor _buffers, so register_buffer() makes the
     attribute unreachable. Instead, extend _apply so each component transforms its own cached tensors alongside its
     real parameters. Applies to every bridge regardless of which adapter constructed it (transformer_lens or
-    sae_lens). Upstream TransformerLens defect present at pin 4ba2187b; gpt2-class MLP bridges are unaffected (no
-    processed-tensor caching on the component).
+    sae_lens). Upstream TransformerLens defect present in transformer-lens 3.5.1; gpt2-class MLP bridges are
+    unaffected (no processed-tensor caching on the component).
     """
     global _BRIDGE_PROCESSED_WEIGHT_PATCH_APPLIED
     if _BRIDGE_PROCESSED_WEIGHT_PATCH_APPLIED:
