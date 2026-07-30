@@ -12,6 +12,47 @@ compatibility: Requires bash, az CLI with azure-devops extension, curl, Python 3
 
 Use this skill when an interpretune self-hosted GPU Azure DevOps run is queued, failing, or suspected to be exhausting memory.
 
+## GPU lease: how this pipeline interacts with local GPU work
+
+The self-hosted agent runs **one Azure job at a time**, so two pipeline runs never collide. The real risk is
+a pipeline job landing on top of a **local** multi-GPU run — this host is shared with finetuning-scheduler
+and both projects are worked on interactively.
+
+The job bind-mounts `/tmp/di_leases:/gpu_leases` and holds the host `gpu` lease for its duration
+(`Acquire host GPU lease` step; released in the `always()` cleanup step). `flock` works on the inode, so the
+mounted lock file interlocks with host processes — **no change to the agent installation** is required. It
+**fails open**: if the directory is not mounted the job runs unserialized rather than failing.
+
+### ⛔ Never reset a lease held by CI — either project's CI
+
+`gpu_lease.sh --reset --force` **kills the holder process**. That is the right escape hatch for a wedged
+*local* run and the wrong tool for a pipeline job, for two reasons:
+
+1. **The holder pid is meaningless on the host.** A CI holder lives in the job container's PID namespace,
+   so `--force` either fails to kill it or, worse, kills an unrelated host process that happens to share
+   that pid number. `--status` marks these holders with a `[container]` tag and `project=azure-<buildId>`
+   (interpretune: `azure-it-<buildId>`) — treat either as read-only.
+2. **The lease is already self-healing for CI.** Container teardown kills every process inside the job, and
+   the kernel releases the lease. There is no stale-lock path to clean up.
+
+**The host and pool are shared between finetuning-scheduler and interpretune**, so a lease you did not
+expect may legitimately belong to the *other* project's pipeline job or local suite. Check `project=`
+before assuming it is stale.
+
+Correct responses:
+
+| Situation | Do this |
+| --- | --- |
+| Lease held by a CI job you want to stop | **Cancel the pipeline run.** Teardown frees the lease. |
+| Lease held by the other project | Leave it. Wait, or coordinate — do not reset. |
+| CI job timed out waiting for the lease | A genuine conflict. Let the local run finish and re-queue. |
+| Lease looks stale (`--status` flags an anomaly) | `gpu_lease.sh --doctor`, then plain `--reset` (free leases only). |
+| Genuinely wedged **local** run | `--reset --force` is appropriate here. |
+
+**Never kill or restart the agent to free a lease.** `restart-stack.sh` is for a wedged agent, not for lease
+recovery, and restarting it mid-job strands the run without releasing anything the kernel would not have
+released anyway.
+
 ## When to Use This Skill
 
 - A GPU Azure build remains `notStarted` after a PR becomes ready for review
@@ -26,11 +67,26 @@ Use this skill when an interpretune self-hosted GPU Azure DevOps run is queued, 
 - The GPU runner uses the self-hosted `Default` pool, but a queued build may still show `queue.name = Azure Pipelines` at the build level
 - PR-triggered GPU runs require explicit Azure approval before the job is dispatched to the self-hosted runner
 - `AZURE_DEVOPS_EXT_PAT` is the preferred non-interactive authentication path for `az devops` and Azure DevOps REST calls
-- Current runner constraints observed on `speediedl`:
-  - RAM is about 62 GiB
-  - Swap is only 2 GiB unless explicitly expanded
-  - Agent service is already protected with unlimited `MemoryMax`/`MemoryHigh` and low `OOMScoreAdjust`
+- Runner constraints (**host-specific — see the note below; values here are illustrative**):
+  - RAM on the order of tens of GiB, with **swap much smaller than RAM** (the current host is an example:
+    roughly 62 GiB RAM against 2 GiB swap unless explicitly expanded). This ratio is why memory pressure,
+    not GPU memory, is the usual cause of an exit `137`.
+  - Agent service sets a low `OOMScoreAdjust` (-900). It does **not** set `MemoryMax`/`MemoryHigh` —
+    an earlier version of this file claimed it did; verified absent 2026-07-29 (no systemd drop-in).
+  - GPU jobs take the host GPU lease (`/tmp/di_leases` bind-mounted to `/gpu_leases`); see the
+    'Acquire host GPU lease' step. It fails open, and container teardown always frees the lease, so
+    cancel a run rather than force-resetting a lease held by CI.
   - Rootless Docker and cgroups v2 are in use
+
+> **Host-specific values live in `CLAUDE.local.md`, not here.** This skill is deliberately host-independent.
+> Agent hostname, RAM/swap, GPU models, the agent install directory and the agent's uid all vary by machine,
+> so the commands below use `$AGENT_HOME` / `$AGENT_UID` with illustrative defaults. Substitute the real
+> values for the machine you are on:
+>
+> ```bash
+> AGENT_HOME=${AGENT_HOME:-/opt/az_pipeline_agent}   # example default
+> AGENT_UID=${AGENT_UID:-998}                        # example; the uid the agent runs as
+> ```
 - The GPU test flow is phase-split to reduce peak memory:
   1. `Testing: standard` is CPU-only with `CUDA_VISIBLE_DEVICES=''`
   2. `Testing: standard gpu cuda-marked` runs regular CUDA-gated tests under `IT_RUN_CUDA_TESTS=1`
@@ -84,8 +140,8 @@ curl -sS -X PATCH -u ":${AZURE_DEVOPS_EXT_PAT}" \
 
 ```bash
 watch -n 30 'az pipelines build show --id <build_id> --organization https://dev.azure.com/speediedan --project interpretune --query "{status:status,result:result,startTime:startTime,finishTime:finishTime}" -o json'
-tail -f /opt/az_pipeline_agent/_diag/Agent_*.log
-ls -1t /opt/az_pipeline_agent/_diag/Worker_*.log | head
+tail -f "$AGENT_HOME"/_diag/Agent_*.log
+ls -1t "$AGENT_HOME"/_diag/Worker_*.log | head
 az pipelines agent list --organization https://dev.azure.com/speediedan --pool-id 1 -o table
 ```
 
@@ -119,11 +175,12 @@ Action:
   one-liner — agents are explicitly authorized to run this:
 
   ```bash
-  sudo /opt/az_pipeline_agent/restart-stack.sh
+  sudo "$AGENT_HOME"/restart-stack.sh
   ```
 
 - Recheck `/var/run/docker.sock` symlink handling (`/var/run/docker.sock ->
-  /run/user/998/docker.sock`; the symlink lives on tmpfs and is lost on reboot) and agent service
+  /run/user/$AGENT_UID/docker.sock`, e.g. uid `998`; the symlink lives on tmpfs and is lost on reboot) and
+  agent service
   health; the restart script covers the standard recovery, with the manual flow documented in
   `distributed-insight/cmdref/ml_engineering/ref_azure_pipelines.md`
 

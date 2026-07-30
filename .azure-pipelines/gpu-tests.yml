@@ -62,6 +62,11 @@ jobs:
       volumes:
         - /var/run/user/998/docker.sock:/var/run/docker.sock
         - /opt/az_pipeline_agent/_work/hf_cache/$(Agent.Name):/opt/interpretune/hf_cache:rw
+        # Host GPU-lease rendezvous directory. `flock` works on the inode, so a bind-mounted lock file
+        # interlocks between this container and processes on the host -- which is what lets this job
+        # serialize against local multi-GPU runs (this host is shared with finetuning-scheduler) WITHOUT
+        # any change to the agent installation. Fails open if absent.
+        - /tmp/di_leases:/gpu_leases
       options: --gpus all --shm-size=512m
       env:
         HF_HOME: /opt/interpretune/hf_cache
@@ -77,6 +82,14 @@ jobs:
       clean: outputs
 
     steps:
+      # Serialize this job against local multi-GPU runs on the self-hosted host (shared with
+      # finetuning-scheduler). The agent already runs one Azure job at a time, so this guards only
+      # against collisions with interactive/agent sessions. Fails open if the lease dir is not mounted.
+      - bash: |
+          source scripts/gpu_lease_wrap.sh
+          ci_gpu_lease_acquire /gpu_leases /tmp/azp_gpu_lease.pid 2400 "azure-it-$(Build.BuildId)"
+        displayName: 'Acquire host GPU lease'
+
       - bash: |
           echo "=== identity ==="
           id || true
@@ -276,6 +289,10 @@ jobs:
           # Ensure directories have SGID and group write
           sudo find /opt/interpretune/hf_cache/datasets -type d -exec chmod g+ws {} \; 2>/dev/null || true
 
+          # Release the host GPU lease. Belt-and-braces: if this job dies or its container is torn
+          # down, every process inside dies too and the kernel frees the lease automatically.
+          source scripts/gpu_lease_wrap.sh 2>/dev/null && \
+            ci_gpu_lease_release /gpu_leases /tmp/azp_gpu_lease.pid || true
           echo 'Agent workspace and HF cache cleanup completed'
         condition: always()
         displayName: 'Cleaning up agent workspace'

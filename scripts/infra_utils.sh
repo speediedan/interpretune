@@ -6,6 +6,11 @@
 # use namerefs/associative arrays and therefore require bash >= 4.3 (callers such as
 # build_it_env.sh enforce this with an early version check).
 
+
+# Optional GPU-lease serialization (no-op unless GPU_LEASE_CMD is set). See scripts/gpu_lease_wrap.sh.
+_gpu_lease_wrap="$(dirname "${BASH_SOURCE[0]}")/gpu_lease_wrap.sh"
+[[ -r "${_gpu_lease_wrap}" ]] && source "${_gpu_lease_wrap}"
+type maybe_gpu_lease &>/dev/null || maybe_gpu_lease() { "$@"; }
 show_elapsed_time(){
   local test_log="$1"
   script_name=${2:-$(basename "$0")}
