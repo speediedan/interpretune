@@ -144,6 +144,14 @@ def main() -> int:
             outputs = "with outputs" if has_outputs(notebook) else "NO outputs"
             print(f"  wrote {rel} ({outputs}, {removed} cell(s) removed)")
         except Exception as exc:  # - report and continue to the next notebook
+            # Discard whatever papermill managed to write. A half-executed notebook still lands on
+            # disk, carrying the traceback as an error output and (because the strip step never ran)
+            # the install-deps cell -- and conf.py prefers artifacts over the publish lane, so the
+            # docs site would render that traceback as though it were the example's real output.
+            # Removing it makes the page fall back to code-only, which is the honest result.
+            if artifact.exists():
+                artifact.unlink()
+                print(f"  discarded partial artifact for {rel}", file=sys.stderr)
             failures.append(f"{rel}: {type(exc).__name__}: {exc}")
             print(f"  FAILED {rel}: {type(exc).__name__}: {exc}", file=sys.stderr)
 
