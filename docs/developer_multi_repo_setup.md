@@ -55,7 +55,8 @@ The build proceeds in a fixed order:
 1. Create/clear the venv and install torch (CUDA/CPU/prerelease per `--torch-backend` and
    `requirements/ci/torch-pre.txt`).
 2. Install interpretune editable plus its `git-deps` dependency group (git-pinned circuit-tracer, sae-lens,
-   sae-dashboard, finetuning-scheduler); transformer-lens comes from its release pin instead.
+   sae-dashboard); transformer-lens, nnsight and finetuning-scheduler all come from release pins instead —
+   `finetuning-scheduler >= 2.13.0` sits in the `lightning` extra, not in `git-deps`.
 3. Install the locked CI requirements (`requirements/ci/requirements.txt`, a universal lock — torch is
    deliberately excluded from it).
 4. Install each `--from-source` package **last**, editable, so local checkouts override the PyPI/git
