@@ -77,15 +77,31 @@ runs:
     - name: Install project dependencies
       shell: bash
       run: |
+        # Keep the whole torch family on the same index as the torch installed above. torchvision is
+        # pulled in transitively here; without --torch-backend it resolves from default PyPI, which on
+        # linux x86_64 is the CUDA build. Paired with the `+cpu` torch that is an ABI mismatch whose
+        # only symptom is a missing operator registration at import time ("operator torchvision::nms
+        # does not exist"). It stayed latent while the torch pin was old enough that the pin forced a
+        # re-resolution back to the default-PyPI (CUDA) torch, making the pair accidentally consistent.
+        #
+        # Linux/Windows only: the PyTorch CPU index publishes no macOS wheels, so `--torch-backend=cpu`
+        # there either fails to resolve a pinned torch outright or silently falls back to an older
+        # version that does have macOS wheels. macOS gets CPU-only builds from default PyPI anyway, so
+        # the mismatch this guards against cannot arise there.
+        TORCH_BACKEND_FLAG=""
+        if [[ "${RUNNER_OS}" != "macOS" ]]; then
+          TORCH_BACKEND_FLAG="--torch-backend=cpu"
+        fi
+        echo "Torch backend flag for dependency resolution: '${TORCH_BACKEND_FLAG:-<none, macOS>}'"
+
         # interpretune editable with git-deps group (uv doesn't currently support url deps in locked reqs)
         echo "Installing interpretune in editable mode with any git url dependencies..."
-        uv pip install -e . --group git-deps
+        uv pip install -e . --group git-deps ${TORCH_BACKEND_FLAG}
 
-        # Install locked requirements WITHOUT --torch-backend since torch is already installed.
         # The lockfile excludes torch (via --no-emit-package) but includes packages like
         # torch-tb-profiler that depend on torch but aren't on PyTorch's special index.
         echo "Installing locked CI requirements from ${{ inputs.requirements_file }}..."
-        uv pip install -r "requirements/ci/${{ inputs.requirements_file }}"
+        uv pip install -r "requirements/ci/${{ inputs.requirements_file }}" ${TORCH_BACKEND_FLAG}
 
     - name: Show package list
       if: inputs.show_pip_list == 'true'

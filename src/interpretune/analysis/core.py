@@ -1,6 +1,6 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from dataclasses import dataclass, field
-from typing import Literal, NamedTuple, Any, Callable, Sequence, List, Dict, Type
+from typing import Literal, NamedTuple, Any, Callable, Sequence, List, Dict, Type, TypeGuard
 from types import MappingProxyType
 import os
 from pathlib import Path
@@ -200,8 +200,12 @@ def get_filtered_sae_hook_keys(handle, names_filter: Callable[[str], bool]) -> l
     ]
 
 
-def _check_names_filter_available(module, col_name: str, col_cfg) -> bool:
+def _check_names_filter_available(module, col_name: str, col_cfg) -> TypeGuard[Any]:
     """Check if names_filter is available for column configuration.
+
+    A ``TypeGuard`` rather than a plain ``bool``: returning True requires ``module.analysis_cfg`` to
+    exist, so a None module can never reach the True branch. Encoding that lets type checkers keep
+    ``module`` non-Optional at the call sites, which narrow it via ``if not _check...(): continue``.
 
     Args:
         module: The module being analyzed
@@ -247,7 +251,7 @@ def _feature_for_array_shape(shape: list[int | None], dtype: str):
 
 
 def schema_to_features(
-    module,
+    module: Any,
     op: str | AnalysisOp | None = None,
     schema: OpSchema | None = None,
     default_dtype: str = "float32",

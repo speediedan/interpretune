@@ -4,7 +4,7 @@
 # Uses uv pip with traditional venv activation for maximum control
 #
 # Torch handling:
-# - By default, installs stable torch with CUDA 12.8 from PyTorch stable channel (--torch-backend=cu128)
+# - By default, installs the pinned stable torch with CUDA 13.0 from PyTorch stable channel (--torch-backend=cu130)
 # - If requirements/ci/torch-pre.txt exists, installs torch prerelease (nightly or test)
 # - Use --torch-backend=cpu for CPU-only environments (e.g., GitHub Actions runners)
 # - Use --torch-backend=auto for automatic backend detection
@@ -48,7 +48,7 @@ Usage: $0
    [ --target-env-name input ]
    [ --venv-dir input ]
    [ --python-version input ]  (uv --python spec, e.g. 3.12 or python3.12; default: 3.13)
-   [ --torch-backend input ]  (cpu, cu128, auto; default: cu128 for CUDA 12.8)
+   [ --torch-backend input ]  (cpu, cu128, cu130, auto; default: cu130 for CUDA 13.0)
    [ --from-source "package:path[:extras][:env_var=value...]" ] (can be specified multiple times)
    [ --uv-install-flags "flags" ]
    [ --help ]
@@ -77,7 +77,7 @@ Usage: $0
      --from-source="circuit_tracer:\${HOME}/repos/circuit-tracer:dev:UV_EXCLUDE=\${HOME}/repos/interpretune/requirements/ci/excludes.txt"
 
    Torch Handling:
-   - By default, uses stable torch with CUDA 12.8 (--torch-backend=cu128) to match Docker images
+   - By default, uses stable torch with CUDA 13.0 (--torch-backend=cu130) to match Docker images
    - If requirements/ci/torch-pre.txt exists, installs torch prerelease from nightly or test channel
    - torch-pre.txt format (3 lines): version, CUDA target (e.g., cu128), channel (nightly or test)
    - Use --torch-backend=cpu to force CPU-only torch (e.g., for CI environments)
@@ -206,8 +206,10 @@ venv_path=$(determine_venv_path "${venv_dir}" "${target_env_name}")
 # Set default Python version if not specified
 python_version=${python_version:-"3.13"}  # uv version spec (resolves/downloads a managed interpreter); explicit binary names (python3.12) still accepted
 
-# Set default torch backend if not specified (auto = auto-detect CUDA/CPU)
-torch_backend=${torch_backend:-"cu128"}
+# Set default torch backend if not specified (auto = auto-detect CUDA/CPU).
+# cu130: torch >= 2.11 ships CUDA 13 wheels; the cu128 index stops at 2.11.0 so it cannot serve the
+# pinned torch. Keep this aligned with the CUDA version in dockers/docker_images_*.sh.
+torch_backend=${torch_backend:-"cu130"}
 
 # Torch prerelease configuration file
 torch_pre_file="${repo_home}/requirements/ci/torch-pre.txt"
@@ -234,9 +236,19 @@ base_env_build(){
         echo "Installing torch prerelease: ${TORCH_PRE_VERSION} from ${TORCH_PRE_CHANNEL}/${cuda_target}..."
         uv pip install ${uv_install_flags} --prerelease=if-necessary-or-explicit "torch==${TORCH_PRE_VERSION}" --index-url "${index_url}"
     else
-        # Install stable torch - use --torch-backend for automatic backend selection
-        echo "Installing stable torch with --torch-backend=${torch_backend}..."
-        uv pip install ${uv_install_flags} torch --torch-backend=${torch_backend}
+        # Install stable torch - use --torch-backend for automatic backend selection. Install the
+        # EXACT pinned version rather than "latest for this backend": an unversioned install silently
+        # drifts away from requirements/ci/overrides.txt the moment upstream ships a new release, and
+        # the paired triton/torchvision pins then no longer match the installed torch.
+        local pinned_torch
+        pinned_torch=$(grep -oP '^torch==\K[0-9][^\s#]*' "${repo_home}/requirements/ci/overrides.txt" 2>/dev/null | head -1 || echo "")
+        if [[ -n "${pinned_torch}" ]]; then
+            echo "Installing stable torch==${pinned_torch} with --torch-backend=${torch_backend}..."
+            uv pip install ${uv_install_flags} "torch==${pinned_torch}" --torch-backend=${torch_backend}
+        else
+            echo "Installing stable torch with --torch-backend=${torch_backend}..."
+            uv pip install ${uv_install_flags} torch --torch-backend=${torch_backend}
+        fi
     fi
 }
 
@@ -255,6 +267,18 @@ it_install(){
 
     echo "Using locked CI requirements from ${ci_reqs_file}..."
 
+    # The git-deps entries are resolved fresh here (they cannot live in the universal lock), so their
+    # OWN declared ranges apply -- and a fork pinned before a dependency bump can silently cap the
+    # whole env. That is not hypothetical: sae-dashboard's pinned `torch <2.11` ceiling downgraded a
+    # torch 2.13 base install to 2.10, which then pulled a second (CUDA 12) nvidia stack alongside the
+    # CUDA 13 one and broke `import torch`. Apply the same override file the from-source installs use
+    # so torch/triton/torchvision/transformer-lens/nnsight are governed identically at EVERY step.
+    local base_overrides="${repo_home}/requirements/ci/overrides.txt"
+    if [[ -f "${base_overrides}" ]]; then
+        echo "Applying ${base_overrides} to the base installs..."
+        export UV_OVERRIDE="${base_overrides}"
+    fi
+
     # 1. Install interpretune in editable mode + git-deps group (uv doesn't currently support url deps in locked reqs)
     echo "Installing interpretune in editable mode..."
     uv pip install ${uv_install_flags} -e . --group git-deps
@@ -266,6 +290,9 @@ it_install(){
     # PyTorch's special index, which doesn't have all packages (e.g., torch-tb-profiler).
     echo "Installing locked dependencies..."
     uv pip install ${uv_install_flags} -r "${ci_reqs_file}"
+
+    # from-source installs manage UV_OVERRIDE themselves (per-package, with filtering)
+    unset UV_OVERRIDE
 
     # 3. Install from-source packages (override any PyPI/git versions)
     if [[ ${#from_source_packages[@]} -gt 0 ]]; then

@@ -36,6 +36,23 @@ CI_DIR="${REPO_ROOT}/requirements/ci"
 TORCH_PRE_FILE="${CI_DIR}/torch-pre.txt"
 TORCH_OVERRIDE_FILE="${CI_DIR}/torch-override.txt"
 
+# --no-upgrade: re-resolve WITHOUT `uv pip compile --upgrade`, so already-pinned packages keep their
+# committed versions and only the requirements affected by the pyproject change move. Use this when a
+# dependency edit needs to reach the lockfile but the routine pin refresh should stay a separate,
+# separately reviewable change (the scheduled regen workflow always runs the default upgrading form).
+UPGRADE_PINS="true"
+for arg in "$@"; do
+    case "${arg}" in
+        --no-upgrade) UPGRADE_PINS="false" ;;
+        -h|--help)
+            echo "Usage: $(basename "${BASH_SOURCE[0]}") [--no-upgrade]"
+            echo "  --no-upgrade  keep existing pins; only re-resolve what the pyproject change requires"
+            exit 0
+            ;;
+        *) echo "Unknown option: ${arg}" >&2; exit 2 ;;
+    esac
+done
+
 # Ensure output directory exists
 mkdir -p "${CI_DIR}"
 
@@ -110,13 +127,23 @@ generate_torch_override() {
         torch_version="${TORCH_PRE_VERSION}"
         override_comment="prerelease from ${TORCH_PRE_CHANNEL} channel"
     else
-        # Get latest stable torch version from PyPI
-        torch_version=$(curl -s https://pypi.org/pypi/torch/json | python3 -c "import sys, json; print(json.load(sys.stdin)['info']['version'])" 2>/dev/null || echo "")
+        # The manually maintained overrides.txt is the source of truth for the stable torch pin: it is
+        # what the integrated from-source env actually installs, and it carries the paired
+        # triton/torchvision/torchaudio pins that must move WITH torch. Deriving this file from "latest
+        # on PyPI" instead let the two disagree the moment upstream shipped a new minor, which both
+        # broke from-source installs (mismatched triton) and made this generated file drift on every
+        # regeneration. Bumping torch is now a single deliberate edit in overrides.txt.
+        torch_version=$(grep -oP '^torch==\K[0-9][^\s#]*' "${CI_DIR}/overrides.txt" 2>/dev/null | head -1 || echo "")
+        override_comment="pinned in overrides.txt"
         if [[ -z "${torch_version}" ]]; then
-            echo "⚠ Warning: Could not fetch latest torch version from PyPI, skipping torch-override.txt generation"
+            # No explicit pin maintained: fall back to the latest stable release on PyPI.
+            torch_version=$(curl -s https://pypi.org/pypi/torch/json | python3 -c "import sys, json; print(json.load(sys.stdin)['info']['version'])" 2>/dev/null || echo "")
+            override_comment="stable from PyPI (no torch== pin in overrides.txt)"
+        fi
+        if [[ -z "${torch_version}" ]]; then
+            echo "⚠ Warning: Could not determine a stable torch version, skipping torch-override.txt generation"
             return 0
         fi
-        override_comment="stable from PyPI"
     fi
 
     cat > "${TORCH_OVERRIDE_FILE}" << EOF
@@ -151,6 +178,14 @@ generate_lockfile() {
     # Change to repo root for dependency group resolution
     pushd "${REPO_ROOT}" > /dev/null
 
+    # uv records the --output-file argument verbatim in the generated header. Passing an absolute path
+    # bakes the generating machine's checkout location into the committed lockfile, which makes the file
+    # differ on every other checkout (notably a CI runner's /home/runner/work/...) even when the resolved
+    # pins are identical — the drift-detection workflows would then report drift on every single run.
+    # Pass a repo-relative path instead so the header is reproducible anywhere (we are already inside
+    # REPO_ROOT thanks to the pushd above). Resolves #229.
+    local rel_output_file="${output_file#"${REPO_ROOT}"/}"
+
     # Build the base compile command
     # Always exclude torch from the lockfile since it's installed separately via --torch-backend
     # This prevents nvidia/cuda packages from bloating the lockfile and CI environments
@@ -162,14 +197,19 @@ generate_lockfile() {
         --group dev
         --group test
         --group profiling
-        --output-file "${output_file}"
-        --upgrade
+        --output-file "${rel_output_file}"
         --no-strip-extras
         --resolution "${resolution}"
         --universal
         --python-version "${python_version}"
         --no-emit-package torch
     )
+
+    if [[ "${UPGRADE_PINS}" == "true" ]]; then
+        compile_cmd+=(--upgrade)
+    else
+        echo "  --no-upgrade: preserving existing pins where the resolution still allows them"
+    fi
 
     # When using torch prerelease (nightly or test):
     # 1. Create a temporary override file to pin torch to the prerelease version for dependency resolution
@@ -221,6 +261,14 @@ generate_lockfile() {
     prune_torch_only_deps "${output_file}"
 
     echo "✓ Generated ${output_file} (torch excluded, torch-only deps pruned)"
+
+    # uv emits the lockfile without a trailing newline, but the end-of-file-fixer pre-commit hook adds
+    # one on commit. Left alone that guarantees a one-byte diff between a freshly generated file and the
+    # committed one on every regeneration, which would make the drift checks permanently report drift.
+    # Normalize here so generated output matches what is committed. Resolves #229.
+    if [[ -s "${output_file}" && -n "$(tail -c 1 "${output_file}")" ]]; then
+        printf '\n' >> "${output_file}"
+    fi
 
     # Return to original directory
     popd > /dev/null

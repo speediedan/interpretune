@@ -10,6 +10,16 @@ Interpretune is a flexible framework for collaborative AI world model analysis a
 
 - Pylance-backed tooling can hang or time out on longer operations. If a Pylance request stalls, switch to direct file inspection, search, or terminal-based validation rather than waiting on the language server indefinitely.
 
+- **A green local suite is NOT evidence the pinned dependency set is green.** The dev envs install
+  several packages editable/from-source, so they can silently run AHEAD of the pins in
+  `pyproject.toml` — and the version string is identical either way, so a version table will not
+  reveal it. This has already shipped a real defect: `it_latest` carried a circuit-tracer checkout
+  two commits ahead of the pin, which masked a wrong-answer bug in the feature-intervention path for
+  as long as it was only ever validated there (the benchmark registry was even recording provenance
+  for a dependency set no clean checkout could reproduce). For anything that gates a release or an
+  upstream PR, validate in an env built FROM the pins, and check `pip show <pkg> | grep -i location`
+  (or `direct_url.json`) rather than trusting the version number.
+
 ## Build & Dev Environment
 
 Uses `uv` for dependency management. For Venvs, use `/mnt/cache/$USER/.venvs/` (preferred for hardlink perf), fall back to `~/.venvs/` if that path isn't available.
@@ -61,9 +71,10 @@ SAELens, circuit-tracer, TransformerLens, nnsight all from local checkouts):
 
 Rules of thumb:
 
-- `UV_EXCLUDE` (excludes file) is **required** when interpretune, circuit-tracer, AND transformer-lens are
-  all from source, so exactly one directive controls the transformer-lens install. `UV_OVERRIDE` alone
-  suffices when only two of the three are from source.
+- `UV_EXCLUDE` (excludes file) is **required** on the sae_dashboard and circuit-tracer directives: their own
+  transformer-lens caps (`^2.2.0`, `>=2.16.0`) would otherwise pull the v2 line over the v3 install.
+  Excluding leaves the already-installed transformer-lens untouched, so exactly one directive controls it
+  even when interpretune, circuit-tracer and transformer-lens are all from source.
 - SAELens is Poetry-legacy (not PEP 621), so uv needs an exported requirements file passed via `FLAGS=-r`.
   The vendored copy lives at `requirements/ci/sl_uv_requirements.txt`; regenerate it whenever SAELens
   `pyproject.toml`/lock changes (`poetry export --all-groups --all-extras` → post-process).
@@ -79,9 +90,13 @@ When a from-source package brings in git-pinned dependencies, UV caches those re
 
 Where pins live and how to refresh them:
 
-- `pyproject.toml` `[tool.uv] override-dependencies` — the transformer-lens git SHA pin (the highest-risk
-  bump: as of 2026-07 the pin is ~260+ commits behind TL main; probe a TL bump in a scratch env and run the
-  dashboard parity gates + core suite before folding it into `it_latest`).
+- `pyproject.toml` `[tool.uv] override-dependencies` — the `transformer-lens==3.5.1` / `nnsight==0.7.0`
+  release pins, which force the v3 TL line over downstream v2 caps; keep them in sync with
+  `requirements/ci/overrides.txt` (and `requirements/ci/excludes.txt` still keeps those caps from
+  re-resolving TL during `--from-source` installs).
+- `pyproject.toml` `[dependency-groups] git-deps` — the remaining git SHA pins (circuit-tracer, sae-lens,
+  sae-dashboard, finetuning-scheduler). These are excluded from the universal lock, so every bump needs
+  hand validation (dashboard parity gates + core suite in a scratch env) before folding it into `it_latest`.
 - `requirements/ci/requirements.txt` — the CI lock; regenerate with `./requirements/utils/lock_ci_requirements.sh`.
 - Any rebuild that changes benchmark-relevant deps (torch, transformer_lens, nnsight, sae_lens,
   sae_dashboard) must end with the dashboard parity gates green and a fresh benchmark wave from clean
@@ -486,7 +501,7 @@ better-fitting design) so it can be implemented and validated in a subsequent se
 
 ## Important Caveats
 
-- **Git dependencies** (transformer_lens, sae_lens, circuit_tracer, nnsight) are pinned to specific commits in `pyproject.toml`
+- **Git dependencies** (circuit_tracer, sae_lens, sae_dashboard) are pinned to specific commits in `pyproject.toml`'s `git-deps` group; transformer_lens and nnsight are release pins carried by `[tool.uv] override-dependencies` + `requirements/ci/overrides.txt`, and finetuning_scheduler is a plain release floor (`>= 2.13.0`) in the `lightning` extra
 - **Type checking:** Enabled for all `src/` files except `src/it_examples/utils/raw_graph_analysis.py`; all `tests/` files are excluded
 - **Full test suite requires ML dependencies** — tests will fail without proper env setup
 - **Import guards:** `tests/core/test_adapters_import_time.py` prevents accidental eager imports

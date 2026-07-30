@@ -1,2 +1,20 @@
+# Packages dropped from resolution (uv --excludes / UV_EXCLUDE) during the `--from-source` installs
+# that would otherwise re-resolve them. Used for sae_dashboard and circuit_tracer, whose own
+# transformer-lens constraints (`^2.2.0` i.e. <3.0.0, and `>=2.16.0`) would pull the v2 line over the
+# v3 install this project requires. Excluding rather than overriding leaves the already-installed
+# transformer-lens untouched, so exactly one directive controls it even when interpretune,
+# circuit-tracer and transformer-lens are all installed from source.
 transformer-lens
-# nnsight # uncomment to enable SAELens from source
+# torchaudio: pulled in transitively by sae-dashboard's `decode-clt` dependency but imported nowhere
+# in sae_dashboard or interpretune. No torchaudio release is paired with the pinned torch (latest is
+# 2.11.0 against torch 2.13), so any resolution of it installs an extension built against a different
+# libtorch.
+#
+# This file is the ONLY thing that covers it during a from-source install. [tool.uv]
+# exclude-dependencies in our pyproject.toml applies solely when uv resolves *interpretune* (the
+# `uv pip install -e .` lane); a `--from-source` install of sae-dashboard resolves against
+# sae-dashboard's own pyproject and never reads ours. Every --from-source entry that can reach
+# torchaudio must therefore pass UV_EXCLUDE=<this file> explicitly — omitting it is silent, and shows
+# up much later as `libcudart.so.NN: cannot open shared object file` when transformers' guarded
+# `if is_torchaudio_available(): import torchaudio` finds the broken install and tries to load it.
+torchaudio

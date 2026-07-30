@@ -12,7 +12,10 @@ inputs:
   compare_paths:
     description: Space-separated list of files/paths to compare with git diff
     required: false
-    default: "requirements/ci/requirements.txt"
+    # The lock script rewrites requirements.txt AND torch-override.txt (and, best-effort,
+    # requirements-oldest.txt), so compare the whole generated directory rather than a single file —
+    # drift in the others previously went undetected on the report path (#229).
+    default: "requirements/ci"
   patch_path:
     description: Path to write the patch file
     required: false
