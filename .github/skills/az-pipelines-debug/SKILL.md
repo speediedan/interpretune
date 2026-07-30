@@ -67,15 +67,26 @@ released anyway.
 - The GPU runner uses the self-hosted `Default` pool, but a queued build may still show `queue.name = Azure Pipelines` at the build level
 - PR-triggered GPU runs require explicit Azure approval before the job is dispatched to the self-hosted runner
 - `AZURE_DEVOPS_EXT_PAT` is the preferred non-interactive authentication path for `az devops` and Azure DevOps REST calls
-- Current runner constraints observed on `speediedl`:
-  - RAM is about 62 GiB
-  - Swap is only 2 GiB unless explicitly expanded
+- Runner constraints (**host-specific — see the note below; values here are illustrative**):
+  - RAM on the order of tens of GiB, with **swap much smaller than RAM** (the current host is an example:
+    roughly 62 GiB RAM against 2 GiB swap unless explicitly expanded). This ratio is why memory pressure,
+    not GPU memory, is the usual cause of an exit `137`.
   - Agent service sets a low `OOMScoreAdjust` (-900). It does **not** set `MemoryMax`/`MemoryHigh` —
     an earlier version of this file claimed it did; verified absent 2026-07-29 (no systemd drop-in).
   - GPU jobs take the host GPU lease (`/tmp/di_leases` bind-mounted to `/gpu_leases`); see the
     'Acquire host GPU lease' step. It fails open, and container teardown always frees the lease, so
     cancel a run rather than force-resetting a lease held by CI.
   - Rootless Docker and cgroups v2 are in use
+
+> **Host-specific values live in `CLAUDE.local.md`, not here.** This skill is deliberately host-independent.
+> Agent hostname, RAM/swap, GPU models, the agent install directory and the agent's uid all vary by machine,
+> so the commands below use `$AGENT_HOME` / `$AGENT_UID` with illustrative defaults. Substitute the real
+> values for the machine you are on:
+>
+> ```bash
+> AGENT_HOME=${AGENT_HOME:-/opt/az_pipeline_agent}   # example default
+> AGENT_UID=${AGENT_UID:-998}                        # example; the uid the agent runs as
+> ```
 - The GPU test flow is phase-split to reduce peak memory:
   1. `Testing: standard` is CPU-only with `CUDA_VISIBLE_DEVICES=''`
   2. `Testing: standard gpu cuda-marked` runs regular CUDA-gated tests under `IT_RUN_CUDA_TESTS=1`
@@ -129,8 +140,8 @@ curl -sS -X PATCH -u ":${AZURE_DEVOPS_EXT_PAT}" \
 
 ```bash
 watch -n 30 'az pipelines build show --id <build_id> --organization https://dev.azure.com/speediedan --project interpretune --query "{status:status,result:result,startTime:startTime,finishTime:finishTime}" -o json'
-tail -f /opt/az_pipeline_agent/_diag/Agent_*.log
-ls -1t /opt/az_pipeline_agent/_diag/Worker_*.log | head
+tail -f "$AGENT_HOME"/_diag/Agent_*.log
+ls -1t "$AGENT_HOME"/_diag/Worker_*.log | head
 az pipelines agent list --organization https://dev.azure.com/speediedan --pool-id 1 -o table
 ```
 
@@ -164,11 +175,12 @@ Action:
   one-liner — agents are explicitly authorized to run this:
 
   ```bash
-  sudo /opt/az_pipeline_agent/restart-stack.sh
+  sudo "$AGENT_HOME"/restart-stack.sh
   ```
 
 - Recheck `/var/run/docker.sock` symlink handling (`/var/run/docker.sock ->
-  /run/user/998/docker.sock`; the symlink lives on tmpfs and is lost on reboot) and agent service
+  /run/user/$AGENT_UID/docker.sock`, e.g. uid `998`; the symlink lives on tmpfs and is lost on reboot) and
+  agent service
   health; the restart script covers the standard recovery, with the manual flow documented in
   `distributed-insight/cmdref/ml_engineering/ref_azure_pipelines.md`
 
