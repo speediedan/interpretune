@@ -233,7 +233,7 @@ process per GPU, coarse layer-level partitioning, per-worker resume — via the 
 mode above. It is validated at that level and no further: there is no intra-layer sharding, no dynamic
 load balancing across heterogeneous GPUs, no cross-worker work stealing, and no multi-GPU-aware import
 overlap. Those are real optimization opportunities that have been deliberately deprioritized until the
-Scalable Dashboards coordination PR lands (link: `<COORDINATION_PR_URL — backfill at wave-open>`);
+Scalable Dashboards coordination PR lands (link: [interpretune#231](https://github.com/speediedan/interpretune/issues/231));
 treat this section as the record of what *is* supported and how it was validated.
 
 Supported behaviors (all exercised on the example pair below):
@@ -1226,11 +1226,51 @@ Current validated behavior on this host:
 
 Explanation generation drives a conforming local CLI rather than a hardcoded provider. A conforming CLI must accept a one-shot prompt non-interactively (`<cli> -p "<prompt>"` by default), print the model response to stdout, and honor model/provider selection via environment variables. The GitHub Copilot CLI is the default (`ExplanationCliSpec` in `interpretune.utils.neuronpedia_explanations`); other conforming CLIs can be selected with `IT_EXPLANATION_CLI` or a custom `ExplanationCliSpec`.
 
+### API key precedence
+
+Three variables can supply the key. Highest first:
+
+| Precedence | Variable | Notes |
+| --- | --- | --- |
+| 1 | `IT_EXPLANATION_PROVIDER_API_KEY` | Generic; works whichever CLI is configured. Prefer this. |
+| 2 | `COPILOT_PROVIDER_API_KEY` | The spec's CLI-specific variable (`provider_api_key_env_var`). |
+| 3 | `OPENROUTER_API_KEY` | Neuronpedia standardizes on this, so one key can serve both sides. |
+
+If none is set, no BYOK routing is injected at all and the CLI's own authentication is used (for
+the Copilot CLI, its GitHub login).
+
+**The endpoint follows the KEY, not the variable that carried it.** Any key with the OpenRouter
+prefix (`sk-or-`) defaults to `https://openrouter.ai/api/v1`, so an OpenRouter key placed in the
+generic variable still routes correctly rather than inheriting the OpenCode Zen default and failing
+with an opaque auth error that reads like a bad key. An explicit
+`IT_EXPLANATION_PROVIDER_BASE_URL` always wins.
+
+**Always pair an OpenRouter key with `IT_EXPLANATION_CLI_MODEL`** — the default model id
+(`deepseek-v4-flash-free`) is an OpenCode Zen slug that OpenRouter will not resolve. OpenRouter
+slugs look like `provider/model-name`, with free-tier variants carrying a `:free` suffix, e.g.:
+
+```bash
+export IT_EXPLANATION_PROVIDER_API_KEY=sk-or-v1-...
+export IT_EXPLANATION_CLI_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free
+```
+
+Verified end to end: the Copilot CLI honors `COPILOT_PROVIDER_*` against an OpenRouter base URL.
+
 Model and provider routing:
 
 - The default model is `deepseek-v4-flash-free`, served by the OpenCode Zen OpenAI-compatible endpoint (`https://opencode.ai/zen/v1`; see https://opencode.ai/docs/en/zen/#endpoints).
 - BYOK provider env vars are injected only when an API key is resolvable — from `IT_EXPLANATION_PROVIDER_API_KEY` or the CLI-specific key env var (`COPILOT_PROVIDER_API_KEY`, e.g. from `.env`). With a key present, the Copilot CLI is routed via `COPILOT_PROVIDER_TYPE`/`COPILOT_PROVIDER_BASE_URL`/`COPILOT_PROVIDER_API_KEY`; without one, the CLI's native auth (e.g. Copilot's GitHub auth) is used unchanged — in that case pass a model your native provider actually serves (the BYOK default model will not resolve).
 - Generic overrides win over environment values, which win over the OpenCode Zen defaults: `IT_EXPLANATION_PROVIDER_TYPE`, `IT_EXPLANATION_PROVIDER_BASE_URL`, `IT_EXPLANATION_PROVIDER_API_KEY`, and `IT_EXPLANATION_CLI_MODEL`. Pointing the base URL/key at any OpenAI-compatible provider (e.g. OpenRouter) is supported.
+
+### Re-generating explanations that already exist
+
+`ensure_local_feature_explanations(..., regenerate_existing=True)` re-generates features that
+already have a local explanation instead of skipping them. Nothing is deleted — the new explanation
+is inserted alongside, so the operation is safe to repeat.
+
+This exists because on an already-populated database every feature is skipped, so a run reports full
+coverage without the CLI being invoked once. That is indistinguishable from a working pipeline and a
+broken one. Use the flag when validating the generation path end to end.
 
 ## Local explanation note
 

@@ -359,56 +359,32 @@ def test_ct_analysis_backend_notebook_local(params: dict[str, Any], tmp_path: Pa
     _run_ct_analysis_backend_notebook(params, tmp_path)
 
 
-# Test parameters for the concept-direction steering demo notebook (replaced the archived
-# RTE-focused cross-backend demo, 2026-07-11; rebuilt on the gemma-2-2b public-dashboard default
-# with a public/local dashboard-mode parameterization, 2026-07-16 — see EXPERIMENT_STATUS.md
-# "7c Amendments" items 4-5 and their 2026-07-16 revision notes)
+# Test parameters for the concept-direction steering demo notebooks (replaced the archived
+# RTE-focused cross-backend demo, 2026-07-11; rebuilt on the gemma-2-2b public-dashboard default,
+# 2026-07-16 — see EXPERIMENT_STATUS.md "7c Amendments" items 4-5 and their 2026-07-16 revision
+# notes). Split into two notebooks 2026-07-30: the DASHBOARD_MODE switch made every downstream cell
+# branch, so each substrate is now a notebook whose defaults ARE its substrate. The public notebook
+# needs no services and is the CI lane; the local one is opt-in (see below).
 CT_CONCEPT_STEERING_PARAMS = [
-    pytest.param(
-        {"DASHBOARD_MODE": "public"},
-        id="ct_concept_steering_public",
-    ),
-    # TransformerLens circuit-tracer backend; the notebook's gap assertions (both phases) are the
-    # cross-backend sanity gate
-    pytest.param(
-        {"BACKEND": "transformerlens", "DASHBOARD_MODE": "public"},
-        id="ct_concept_steering_tl_public",
-    ),
+    pytest.param({}, id="ct_concept_steering_public"),
+    # TransformerLens circuit-tracer backend; the notebook's gap assertions (both steering paths)
+    # are the cross-backend sanity gate
+    pytest.param({"BACKEND": "transformerlens"}, id="ct_concept_steering_tl_public"),
 ]
 
-# Local-dashboard-mode params (explanation generation disabled under test to avoid an
-# explanation-CLI dependency): the gemma-2-2b default substrate plus the instruction-tuned
-# gemma-3-1b-it + local-262k variant that exercises the locally-generated-explanations flow
+# Local-Neuronpedia notebook. Its defaults already carry the gemma-3-1b-it + local-webapp substrate,
+# so only the webapp URL needs overriding for the test host. Explanation generation stays off here:
+# the notebook defaults it off, and asserting it would add an explanation-CLI + API-key dependency.
 CT_CONCEPT_STEERING_LOCAL_PARAMS = [
     pytest.param(
-        {
-            "DASHBOARD_MODE": "local",
-            "LOCAL_WEBAPP_URL": LOCAL_NP_WEBAPP_URL,
-            "GENERATE_MISSING_LOCAL_EXPLANATIONS": False,
-        },
-        id="ct_concept_steering_local_gemma2",
-    ),
-    pytest.param(
-        {
-            "REGISTRY_KEY": "gemma3.rte_demo.circuit_tracer_w_neuronpedia",
-            "MODEL_NAME": "gemma-3-1b-it",
-            "TRANSCODER_SET": None,
-            "NEURONPEDIA_MODEL_ID": "gemma-3-1b-it",
-            # must match the registry transcoder WIDTH (16k) — feature indices are only meaningful
-            # within one feature space (2026-07-17 audit: earlier runs mislabeled links as 262k)
-            "NEURONPEDIA_SOURCE_SET": "gemmascope-2-transcoder-16k",
-            "CHAT_FORMAT_PROMPT": True,
-            "DASHBOARD_MODE": "local",
-            "LOCAL_WEBAPP_URL": LOCAL_NP_WEBAPP_URL,
-            "GENERATE_MISSING_LOCAL_EXPLANATIONS": False,
-        },
+        {"LOCAL_WEBAPP_URL": LOCAL_NP_WEBAPP_URL},
         id="ct_concept_steering_local_gemma3_16k",
     ),
 ]
 
 
-def _run_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path) -> None:
-    notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "ct_concept_steering_demo.ipynb"
+def _run_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path, notebook: str) -> None:
+    notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / notebook
 
     # Create output directory
     output_dir = tmp_path / "notebook_outputs"
@@ -431,21 +407,26 @@ def _run_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path) ->
 @RunIf(bf16_cuda=True)
 @pytest.mark.parametrize("params", CT_CONCEPT_STEERING_PARAMS)
 def test_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path):
-    """Test the concept-direction steering demo notebook (store + embed paths, public dashboards)."""
-    _run_ct_concept_steering_notebook(params, tmp_path)
+    """Test the concept-direction steering demo notebook (feature-mediated + direct-hook paths).
+
+    This is the CI lane: the public notebook resolves dashboards/explanations from neuronpedia.org and needs no local
+    services, so it runs wherever a bf16 GPU is available.
+    """
+    _run_ct_concept_steering_notebook(params, tmp_path, "ct_concept_steering_demo.ipynb")
 
 
 @RunIf(bf16_cuda=True, optional=True)
 @pytest.mark.parametrize("params", CT_CONCEPT_STEERING_LOCAL_PARAMS)
 def test_ct_concept_steering_notebook_local(params: dict[str, Any], tmp_path: Path):
-    """Test the steering demo against a local Neuronpedia webapp + DB (explanation coverage path).
+    """Test the local-Neuronpedia steering notebook against a local webapp + DB.
 
-    Skips when the local services are unavailable; the gemma-3 variant additionally requires the local 262k Monology
-    dashboards for meaningful explanation coverage (the coverage check itself degrades gracefully to zero counts).
+    Deliberately NOT part of the default CI lane: the self-hosted agent's container cannot reach a local Neuronpedia
+    webapp or Postgres. ``optional=True`` keeps it out of the default selection, and it additionally skips when the
+    webapp is unreachable so a local developer run degrades cleanly rather than failing.
     """
     if not _local_neuronpedia_available():
         pytest.skip(f"local Neuronpedia webapp not reachable at {LOCAL_NP_WEBAPP_URL}")
-    _run_ct_concept_steering_notebook(params, tmp_path)
+    _run_ct_concept_steering_notebook(params, tmp_path, "ct_concept_steering_demo_local_np.ipynb")
 
 
 # Test parameters for SAE Lens notebooks (parameterized by backend)
@@ -499,6 +480,7 @@ def test_notebook_discovery():
         "circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb",
         "circuit_tracer_examples/ct_analysis_backend_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo.ipynb",
+        "circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb",
         "example_op_collections/op_collection_example.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",

@@ -33,6 +33,17 @@ DEFAULT_EXPLANATION_CLI_MODEL = "deepseek-v4-flash-free"
 # provider (e.g. OpenRouter) can be substituted via the IT_EXPLANATION_PROVIDER_* env vars.
 DEFAULT_EXPLANATION_PROVIDER_TYPE = "openai"
 DEFAULT_EXPLANATION_PROVIDER_BASE_URL = "https://opencode.ai/zen/v1"
+# OpenRouter is the key Neuronpedia itself standardizes on (`OPENROUTER_API_KEY`, see
+# neuronpedia's apps/webapp/lib/openai-client.ts), so we honor that variable directly rather than
+# requiring an interpretune-specific alias. A key sourced this way MUST also move the base URL --
+# routing an OpenRouter key at the OpenCode Zen endpoint fails in a way that is hard to diagnose.
+OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
+OPENROUTER_PROVIDER_BASE_URL = "https://openrouter.ai/api/v1"
+# OpenRouter issues keys with a distinctive prefix. We infer the endpoint from it so that an
+# OpenRouter key supplied through the GENERIC IT_EXPLANATION_PROVIDER_API_KEY still reaches
+# OpenRouter -- otherwise it would inherit the OpenCode Zen default and fail with an opaque auth
+# error that looks like a bad key rather than a wrong endpoint.
+OPENROUTER_API_KEY_PREFIX = "sk-or-"
 DEFAULT_ACTIVATION_BATCH_SIZE = 512
 FALLBACK_ACTIVATION_BATCH_SIZES = (DEFAULT_ACTIVATION_BATCH_SIZE, 256, 1024)
 DEFAULT_GENERATED_OUTPUT_DIR = Path(tempfile.gettempdir()) / "generated_np_explanations"
@@ -376,8 +387,19 @@ def build_explanation_cli_env(
 
     Model selection is always exported via the spec's model env var. BYOK provider routing (type,
     base URL, API key) is only injected when an API key is resolvable — from
-    ``IT_EXPLANATION_PROVIDER_API_KEY`` or the spec's CLI-specific key env var — so a CLI with
-    native authentication (e.g. Copilot's GitHub auth) continues to work when no key is set.
+    ``IT_EXPLANATION_PROVIDER_API_KEY``, the spec's CLI-specific key env var, or Neuronpedia's
+    standard ``OPENROUTER_API_KEY`` — so a CLI with native authentication (e.g. Copilot's GitHub
+    auth) continues to work when no key is set.
+
+    Key precedence, highest first:
+
+    1. ``IT_EXPLANATION_PROVIDER_API_KEY`` (generic; works for any CLI)
+    2. the spec's CLI-specific var (``COPILOT_PROVIDER_API_KEY`` by default)
+    3. ``OPENROUTER_API_KEY`` (Neuronpedia's standard variable)
+
+    The default endpoint follows the KEY rather than the variable that carried it: any key with the
+    OpenRouter prefix defaults to OpenRouter's base URL, so an OpenRouter key placed in the generic
+    variable still routes correctly. An explicit ``IT_EXPLANATION_PROVIDER_BASE_URL`` always wins.
     Generic ``IT_EXPLANATION_PROVIDER_TYPE``/``IT_EXPLANATION_PROVIDER_BASE_URL`` overrides win
     over values already present in the environment, which win over the OpenCode Zen defaults.
     """
@@ -391,6 +413,18 @@ def build_explanation_cli_env(
     api_key = env.get("IT_EXPLANATION_PROVIDER_API_KEY") or (
         env.get(cli_spec.provider_api_key_env_var) if cli_spec.provider_api_key_env_var else None
     )
+    # Fall back to Neuronpedia's standard OPENROUTER_API_KEY. When the key comes from there, the
+    # default endpoint becomes OpenRouter's -- an explicit IT_EXPLANATION_PROVIDER_BASE_URL still wins.
+    if not api_key:
+        api_key = env.get(OPENROUTER_API_KEY_ENV_VAR)
+
+    # Endpoint default follows the KEY, not the variable that carried it.
+    default_provider_base_url = (
+        OPENROUTER_PROVIDER_BASE_URL
+        if api_key and api_key.startswith(OPENROUTER_API_KEY_PREFIX)
+        else DEFAULT_EXPLANATION_PROVIDER_BASE_URL
+    )
+
     if api_key and cli_spec.provider_api_key_env_var:
         env[cli_spec.provider_api_key_env_var] = api_key
         if cli_spec.provider_type_env_var:
@@ -403,7 +437,7 @@ def build_explanation_cli_env(
             env[cli_spec.provider_base_url_env_var] = (
                 env.get("IT_EXPLANATION_PROVIDER_BASE_URL")
                 or env.get(cli_spec.provider_base_url_env_var)
-                or DEFAULT_EXPLANATION_PROVIDER_BASE_URL
+                or default_provider_base_url
             )
     return env
 
@@ -620,6 +654,7 @@ def ensure_local_feature_explanations(
     feature_refs: Iterable[NeuronpediaFeatureRef],
     *,
     generate_missing: bool = False,
+    regenerate_existing: bool = False,
     output_dir: Path = DEFAULT_GENERATED_OUTPUT_DIR,
     explanation_model: str | None = None,
     timeout_seconds: int = DEFAULT_EXPLANATION_CLI_TIMEOUT_SECONDS,
@@ -633,7 +668,14 @@ def ensure_local_feature_explanations(
     retry_backoff_seconds: float = DEFAULT_EXPLANATION_CLI_RETRY_BACKOFF_SECONDS,
     cli_spec: ExplanationCliSpec | None = None,
 ) -> NeuronpediaLocalExplanationCoverage:
-    """Check local explanation coverage and optionally backfill missing entries."""
+    """Check local explanation coverage and optionally backfill missing entries.
+
+    ``regenerate_existing`` re-generates features that ALREADY have a local explanation instead of
+    skipping them. Nothing is deleted -- the new explanation is inserted alongside, so the operation
+    is safe to repeat. Use it to prove the generation path actually ran end to end on a database
+    that is already populated, where every feature would otherwise be skipped and the run would
+    report full coverage without calling the CLI once. Requires ``generate_missing=True``.
+    """
 
     resolved_db_url = resolve_local_neuronpedia_db_url(local_db_url)
     initial_statuses = check_local_explanation_coverage(
@@ -645,7 +687,7 @@ def ensure_local_feature_explanations(
     generation_failures: list[NeuronpediaExplanationGenerationFailure] = []
     if generate_missing:
         for status in initial_statuses:
-            if status.has_local_explanation:
+            if status.has_local_explanation and not regenerate_existing:
                 continue
             try:
                 generated_artifacts.append(

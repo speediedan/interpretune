@@ -300,8 +300,20 @@ def display_top_features_comparison(
             if scores is not None:
                 score_value = float(scores[j])
                 if show_score_sign:
-                    score_sign = "+" if score_value > 0 else "−" if score_value < 0 else "0"
-                    score_cell = f"<td>{score_sign}</td><td>{format_score(abs(score_value))}</td>"
+                    # Colour the sign: the signed-influence selection can steer with negative-signed
+                    # features, so direction is the column a reader scans for first. Inline styles
+                    # (not a class) because notebook HTML output is frequently rendered without the
+                    # surrounding stylesheet; these hues stay legible on light and dark backgrounds.
+                    if score_value > 0:
+                        score_sign, sign_colour = "+", "#1a7f37"
+                    elif score_value < 0:
+                        score_sign, sign_colour = "−", "#d1242f"
+                    else:
+                        score_sign, sign_colour = "0", "inherit"
+                    score_cell = (
+                        f'<td style="color:{sign_colour};font-weight:600">{score_sign}</td>'
+                        f"<td>{format_score(abs(score_value))}</td>"
+                    )
                 else:
                     score_cell = f"<td>{format_score(score_value)}</td>"
             if neuronpedia_model is not None:

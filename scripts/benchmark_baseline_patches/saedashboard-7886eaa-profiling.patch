@@ -1,0 +1,1366 @@
+diff --git a/sae_dashboard/feature_data_generator.py b/sae_dashboard/feature_data_generator.py
+index c16a66d..6282712 100644
+--- a/sae_dashboard/feature_data_generator.py
++++ b/sae_dashboard/feature_data_generator.py
+@@ -1,5 +1,6 @@
+ import hashlib
+ import json
++import time
+ from pathlib import Path
+ from typing import Any, Dict, List, Union
+ 
+@@ -17,6 +18,12 @@ from sae_dashboard.huggingface_model_wrapper import (
+     HuggingFaceModelWrapper,
+     to_resid_direction_hf,
+ )
++from sae_dashboard.perf_logging import (
++    log_perf_event,
++    temporary_torch_num_threads,
++    tensor_runtime_metadata,
++    timed_stage,
++)
+ from sae_dashboard.sae_vis_data import SaeVisConfig
+ from sae_dashboard.transformer_lens_wrapper import (
+     TransformerLensWrapper,
+@@ -143,6 +150,8 @@ class FeatureDataGenerator:
+         feature_indices: list[int],
+         progress: list[tqdm] | None = None,  # type: ignore
+     ):  # type: ignore
++        profile_feature_data = self.cfg.log_performance
++
+         # Create lists to store the feature activations & final values of the residual stream
+         all_feat_acts = []
+         all_dfa_results = {feature_idx: {} for feature_idx in feature_indices}
+@@ -169,26 +178,42 @@ class FeatureDataGenerator:
+         for i, minibatch in enumerate(self.token_minibatches):
+             minibatch.to(self.cfg.device)
+             model_activation_dict = self.get_model_acts(i, minibatch)
+-            primary_acts = model_activation_dict[
+-                self.model.activation_config.primary_hook_point  # type: ignore
+-            ].to(
+-                self.encoder.device
+-            )  # make sure acts are on the correct device
++            with timed_stage(
++                profile_feature_data,
++                "primary_acts_device_transfer",
++                device=self.cfg.device,
++                minibatch_index=i,
++                token_shape=tuple(minibatch.shape),
++            ):
++                primary_acts = model_activation_dict[
++                    self.model.activation_config.primary_hook_point  # type: ignore
++                ].to(
++                    self.encoder.device
++                )  # make sure acts are on the correct device
+ 
+             # For TopK, compute all activations first, then select features
+-            if self.encoder.cfg.architecture() in ["topk", "batchtopk", "temporal"]:
+-                # Get all features' activations
+-                all_features_acts = self.encoder.encode(primary_acts)
+-                # Then select only the features we're interested in
+-                feature_acts = all_features_acts[:, :, feature_indices].to(
+-                    DTYPES[self.cfg.dtype]
+-                )
+-            else:
+-                # For other activation functions, use the masking context
+-                with FeatureMaskingContext(self.encoder, feature_indices):
+-                    feature_acts = self.encoder.encode(primary_acts).to(
++            with timed_stage(
++                profile_feature_data,
++                "feature_encode",
++                device=self.cfg.device,
++                minibatch_index=i,
++                feature_count=len(feature_indices),
++                token_shape=tuple(minibatch.shape),
++            ):
++                if self.encoder.cfg.architecture() in ["topk", "batchtopk", "temporal"]:
++                    # Get all features' activations
++                    all_features_acts = self.encoder.encode(primary_acts)
++                    # Then select only the features we're interested in
++                    feature_acts = all_features_acts[:, :, feature_indices].to(
+                         DTYPES[self.cfg.dtype]
+                     )
++                else:
++                    all_features_acts = None
++                    # For other activation functions, use the masking context
++                    with FeatureMaskingContext(self.encoder, feature_indices):
++                        feature_acts = self.encoder.encode(primary_acts).to(
++                            DTYPES[self.cfg.dtype]
++                        )
+ 
+             # Optionally filter out token positions whose hidden-state norm is
+             # an extreme outlier relative to the median norm in this minibatch.
+@@ -215,17 +240,43 @@ class FeatureDataGenerator:
+                         high_norm_mask.unsqueeze(-1).to(primary_acts.device), 0
+                     )
+ 
+-            self.update_rolling_coefficients(
+-                model_acts=primary_acts,
+-                feature_acts=feature_acts,
+-                corrcoef_neurons=corrcoef_neurons,
+-                corrcoef_encoder=corrcoef_encoder,
+-            )
++            with temporary_torch_num_threads(self.cfg.rolling_coefficient_num_threads):
++                with timed_stage(
++                    profile_feature_data,
++                    "rolling_coefficient_update",
++                    device=self.cfg.device,
++                    capture_runtime_metrics=True,
++                    minibatch_index=i,
++                    feature_count=len(feature_indices),
++                    token_shape=tuple(minibatch.shape),
++                    rolling_coefficient_num_threads=self.cfg.rolling_coefficient_num_threads,
++                ):
++                    self.update_rolling_coefficients(
++                        model_acts=primary_acts,
++                        feature_acts=feature_acts,
++                        corrcoef_neurons=corrcoef_neurons,
++                        corrcoef_encoder=corrcoef_encoder,
++                        minibatch_index=i,
++                        feature_count=len(feature_indices),
++                        token_shape=tuple(minibatch.shape),
++                    )
+ 
+             # Add these to the lists (we'll eventually concat)
+-            all_feat_acts.append(
+-                self._pad_sequence_tensor(feature_acts, target_seq_len=self.full_sequence_length)
+-            )
++            with timed_stage(
++                profile_feature_data,
++                "feature_acts_pad_and_cpu_transfer",
++                device=self.cfg.device,
++                minibatch_index=i,
++                feature_count=len(feature_indices),
++                token_shape=tuple(minibatch.shape),
++                full_sequence_length=self.full_sequence_length,
++            ):
++                all_feat_acts.append(
++                    self._pad_sequence_tensor(
++                        feature_acts,
++                        target_seq_len=self.full_sequence_length,
++                    )
++                )
+ 
+             # Calculate DFA
+             if self.cfg.use_dfa and self.dfa_calculator:
+@@ -280,6 +331,7 @@ class FeatureDataGenerator:
+         A function that gets the model activations for a given minibatch of tokens.
+         Uses np.memmap for efficient caching.
+         """
++        profile_feature_data = self.cfg.log_performance
+         if self.cfg.cache_dir is not None:
+             cache_path = self.cfg.cache_dir / f"model_activations_{minibatch_index}.pt"
+             if use_cache and cache_path.exists():
+@@ -288,18 +340,39 @@ class FeatureDataGenerator:
+                 # it faster for large cached activation files. weights_only=False allows loading the
+                 # full pickled objects which can be faster than the restricted loader when dealing with
+                 # complex tensor dictionaries (though less secure for untrusted files).
+-                activation_dict = torch.load(
+-                    cache_path, map_location="cpu", weights_only=False, mmap=True
+-                )
++                with timed_stage(
++                    profile_feature_data,
++                    "activation_cache_load",
++                    device=self.cfg.device,
++                    minibatch_index=minibatch_index,
++                    token_shape=tuple(minibatch_tokens.shape),
++                ):
++                    activation_dict = torch.load(
++                        cache_path, map_location="cpu", weights_only=False, mmap=True
++                    )
+             else:
++                with timed_stage(
++                    profile_feature_data,
++                    "activation_capture",
++                    device=self.cfg.device,
++                    minibatch_index=minibatch_index,
++                    token_shape=tuple(minibatch_tokens.shape),
++                ):
++                    activation_dict = self.model.forward(
++                        minibatch_tokens.to("cpu"), return_logits=False  # type: ignore
++                    )
++                save_tensor_dict_torch(activation_dict, cache_path)
++        else:
++            with timed_stage(
++                profile_feature_data,
++                "activation_capture",
++                device=self.cfg.device,
++                minibatch_index=minibatch_index,
++                token_shape=tuple(minibatch_tokens.shape),
++            ):
+                 activation_dict = self.model.forward(
+                     minibatch_tokens.to("cpu"), return_logits=False  # type: ignore
+                 )
+-                save_tensor_dict_torch(activation_dict, cache_path)
+-        else:
+-            activation_dict = self.model.forward(
+-                minibatch_tokens.to("cpu"), return_logits=False  # type: ignore
+-            )
+ 
+         return activation_dict
+ 
+@@ -310,6 +383,10 @@ class FeatureDataGenerator:
+         feature_acts: Float[Tensor, "batch seq feats"],
+         corrcoef_neurons: RollingCorrCoef | None,
+         corrcoef_encoder: RollingCorrCoef | None,
++        *,
++        minibatch_index: int | None = None,
++        feature_count: int | None = None,
++        token_shape: tuple[int, ...] | None = None,
+     ) -> None:
+         """
+ 
+@@ -323,19 +400,94 @@ class FeatureDataGenerator:
+             corrcoef_encoder: Optional[RollingCorrCoef]
+                 The object storing the minimal data necessary to compute corrcoef between pairwise feature activations.
+         """
++        profile_feature_data = self.cfg.log_performance
++        profile_rolling_substages = (
++            profile_feature_data and self.cfg.profile_rolling_substages
++        )
++        perf_context = {
++            "minibatch_index": minibatch_index,
++            "feature_count": feature_count,
++            "token_shape": token_shape,
++        }
++
++        with timed_stage(
++            profile_rolling_substages,
++            "rolling_feature_acts_rearrange",
++            device=self.cfg.device,
++            capture_runtime_metrics=True,
++            **perf_context,
++            input_layout=tensor_runtime_metadata(feature_acts),
++        ):
++            feature_acts_by_feature = einops.rearrange(
++                feature_acts, "batch seq feats -> feats (batch seq)"
++            )
++
++        if profile_rolling_substages:
++            log_perf_event(
++                "rolling_tensor_layout",
++                stage="rolling_feature_acts_rearrange",
++                **perf_context,
++                output_layout=tensor_runtime_metadata(feature_acts_by_feature),
++            )
++
+         # Update the CorrCoef object between feature activation & neurons
+         if corrcoef_neurons is not None:
+-            corrcoef_neurons.update(
+-                einops.rearrange(feature_acts, "batch seq feats -> feats (batch seq)"),
+-                einops.rearrange(model_acts, "batch seq d_in -> d_in (batch seq)"),
+-            )
++            with timed_stage(
++                profile_rolling_substages,
++                "rolling_model_acts_rearrange",
++                device=self.cfg.device,
++                capture_runtime_metrics=True,
++                **perf_context,
++                input_layout=tensor_runtime_metadata(model_acts),
++            ):
++                model_acts_by_neuron = einops.rearrange(
++                    model_acts, "batch seq d_in -> d_in (batch seq)"
++                )
++
++            if profile_rolling_substages:
++                log_perf_event(
++                    "rolling_tensor_layout",
++                    stage="rolling_model_acts_rearrange",
++                    **perf_context,
++                    output_layout=tensor_runtime_metadata(model_acts_by_neuron),
++                )
++
++            with timed_stage(
++                profile_rolling_substages,
++                "rolling_corrcoef_neurons_update",
++                device=self.cfg.device,
++                capture_runtime_metrics=True,
++                **perf_context,
++                x_layout=tensor_runtime_metadata(feature_acts_by_feature),
++                y_layout=tensor_runtime_metadata(model_acts_by_neuron),
++            ):
++                corrcoef_neurons.update(
++                    feature_acts_by_feature,
++                    model_acts_by_neuron,
++                    perf_enabled=profile_rolling_substages,
++                    perf_label="neurons",
++                    perf_context=perf_context,
++                )
+ 
+         # Update the CorrCoef object between pairwise feature activations
+         if corrcoef_encoder is not None:
+-            corrcoef_encoder.update(
+-                einops.rearrange(feature_acts, "batch seq feats -> feats (batch seq)"),
+-                einops.rearrange(feature_acts, "batch seq feats -> feats (batch seq)"),
+-            )
++            with timed_stage(
++                profile_rolling_substages,
++                "rolling_corrcoef_encoder_update",
++                device=self.cfg.device,
++                capture_runtime_metrics=True,
++                **perf_context,
++                x_layout=tensor_runtime_metadata(feature_acts_by_feature),
++                y_layout=tensor_runtime_metadata(feature_acts_by_feature),
++                same_input=True,
++            ):
++                corrcoef_encoder.update(
++                    feature_acts_by_feature,
++                    feature_acts_by_feature,
++                    perf_enabled=profile_rolling_substages,
++                    perf_label="encoder",
++                    perf_context=perf_context,
++                )
+ 
+ 
+ def save_tensor_dict_torch(tensor_dict: Dict[str, torch.Tensor], filename: Path):
+diff --git a/sae_dashboard/neuronpedia/neuronpedia_runner.py b/sae_dashboard/neuronpedia/neuronpedia_runner.py
+index 06240dc..2c8d922 100644
+--- a/sae_dashboard/neuronpedia/neuronpedia_runner.py
++++ b/sae_dashboard/neuronpedia/neuronpedia_runner.py
+@@ -3,6 +3,7 @@ import gc
+ import importlib
+ import json
+ import os
++import time
+ from datetime import datetime
+ from pathlib import Path
+ from typing import Dict, Set, Tuple
+@@ -36,6 +37,7 @@ from sae_dashboard.neuronpedia.neuronpedia_export import (
+     resolve_creator_id,
+ )
+ from sae_dashboard.neuronpedia.neuronpedia_runner_config import NeuronpediaRunnerConfig
++from sae_dashboard.perf_logging import elapsed_timer, io_delta, log_perf_event, process_io_snapshot, timed_stage
+ from sae_dashboard.sae_vis_data import SaeVisConfig
+ from sae_dashboard.sae_vis_runner import SaeVisRunner
+ from sae_dashboard.utils_fns import has_duplicate_rows
+@@ -1128,6 +1130,10 @@ class NeuronpediaRunner:
+                     minibatch_size_tokens=self.cfg.n_prompts_in_forward_pass,
+                     quantile_feature_batch_size=self.cfg.quantile_feature_batch_size,
+                     verbose=True,
++                    log_performance=self.cfg.log_performance,
++                    profile_rolling_substages=self.cfg.profile_rolling_substages,
++                    perf_batch=feature_batch_count,
++                    rolling_coefficient_num_threads=self.cfg.rolling_coefficient_num_threads,
+                     device=self.cfg.sae_device or DEFAULT_FALLBACK_DEVICE,
+                     feature_centric_layout=layout,
+                     perform_ablation_experiments=False,
+@@ -1148,6 +1154,8 @@ class NeuronpediaRunner:
+                     use_huggingface=self.cfg.use_huggingface,
+                 )
+ 
++                batch_start_time = time.perf_counter()
++                batch_start_io = process_io_snapshot()
+                 feature_data = SaeVisRunner(feature_vis_config_gpt).run(
+                     encoder=self.sae,  # type: ignore
+                     model=self.model,
+@@ -1157,14 +1165,41 @@ class NeuronpediaRunner:
+ 
+                 self.cfg.model_id = self.model_id
+                 self.cfg.layer = self.layer
+-                json_object = NeuronpediaConverter.convert_to_np_json(
+-                    self.model, feature_data, self.cfg, self.vocab_dict
+-                )
+-                with open(
+-                    output_file,
+-                    "w",
+-                ) as f:
+-                    f.write(json_object)
++                with timed_stage(
++                    self.cfg.log_performance,
++                    "neuronpedia_conversion_and_json_serialization",
++                    batch=feature_batch_count,
++                    feature_count=len(features_to_process),
++                ):
++                    json_object = NeuronpediaConverter.convert_to_np_json(
++                        self.model, feature_data, self.cfg, self.vocab_dict
++                    )
++                write_start_io = process_io_snapshot()
++                with elapsed_timer() as write_timing:
++                    with open(
++                        output_file,
++                        "w",
++                    ) as f:
++                        f.write(json_object)
++                write_end_io = process_io_snapshot()
++                if self.cfg.log_performance:
++                    output_bytes = len(json_object.encode("utf-8"))
++                    write_wall_s = max(write_timing.get("wall_s", 0.0), 1e-9)
++                    log_perf_event(
++                        "disk_write",
++                        batch=feature_batch_count,
++                        path=output_file,
++                        output_bytes=output_bytes,
++                        wall_s=write_wall_s,
++                        output_mib_per_s=output_bytes / (1024**2) / write_wall_s,
++                        process_io_delta=io_delta(write_start_io, write_end_io),
++                    )
++                    log_perf_event(
++                        "batch_total",
++                        batch=feature_batch_count,
++                        wall_s=time.perf_counter() - batch_start_time,
++                        process_io_delta=io_delta(batch_start_io, write_end_io),
++                    )
+                 print(f"Output written to {output_file}")
+ 
+                 logline = f"\n========== Completed Batch #{feature_batch_count} output: {output_file} ==========\n"
+@@ -1309,6 +1344,26 @@ def main():
+     parser.add_argument(
+         "--use-wandb", action="store_true", help="Use Weights & Biases for logging"
+     )
++    parser.add_argument(
++        "--log-performance",
++        action="store_true",
++        help="Emit [runner_perf] per-stage timing lines for dashboard generation.",
++    )
++    parser.add_argument(
++        "--profile-rolling-substages",
++        action=argparse.BooleanOptionalAction,
++        default=False,
++        help=(
++            "Emit nested rolling-correlation substage timings and runtime metrics. "
++            "Disabled by default so normal timing runs keep only the aggregate rolling stage."
++        ),
++    )
++    parser.add_argument(
++        "--rolling-coefficient-num-threads",
++        type=int,
++        default=None,
++        help="Optional torch intra-op thread cap applied only during rolling coefficient updates.",
++    )
+     parser.add_argument(
+         "--from-local-sae", action="store_true", help="Load SAE from local path"
+     )
+@@ -1559,6 +1614,9 @@ def main():
+         start_batch=args.start_batch,
+         end_batch=args.end_batch,
+         use_wandb=args.use_wandb,
++        log_performance=args.log_performance,
++        profile_rolling_substages=args.profile_rolling_substages,
++        rolling_coefficient_num_threads=args.rolling_coefficient_num_threads,
+         hf_model_path=args.hf_model_path,
+         use_transcoder=args.use_transcoder,
+         use_skip_transcoder=args.use_skip_transcoder,
+diff --git a/sae_dashboard/neuronpedia/neuronpedia_runner_config.py b/sae_dashboard/neuronpedia/neuronpedia_runner_config.py
+index 471a634..9b35751 100644
+--- a/sae_dashboard/neuronpedia/neuronpedia_runner_config.py
++++ b/sae_dashboard/neuronpedia/neuronpedia_runner_config.py
+@@ -47,6 +47,9 @@ class NeuronpediaRunnerConfig:
+     model_device: str | None = None
+     model_n_devices: int | None = None
+     use_wandb: bool = False
++    log_performance: bool = False
++    profile_rolling_substages: bool = False
++    rolling_coefficient_num_threads: Optional[int] = None
+ 
+     shuffle_tokens: bool = True
+     prefix_str: Optional[str] = None
+diff --git a/sae_dashboard/perf_logging.py b/sae_dashboard/perf_logging.py
+new file mode 100644
+index 0000000..9bca336
+--- /dev/null
++++ b/sae_dashboard/perf_logging.py
+@@ -0,0 +1,407 @@
++import json
++import os
++import time
++from contextlib import contextmanager
++from contextvars import ContextVar
++from datetime import datetime
++from pathlib import Path
++from typing import Any, Iterator
++
++import torch
++
++try:
++    import resource
++except ImportError:  # pragma: no cover - non-Unix platforms
++    resource = None
++
++_TIMED_STAGE_DEPTH: ContextVar[int] = ContextVar("timed_stage_depth", default=0)
++
++
++def _local_log_timestamp() -> str:
++    return datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
++
++
++def _format_perf_value(value: Any) -> str:
++    if isinstance(value, float):
++        return f"{value:.6f}"
++    if isinstance(value, (dict, list, tuple)):
++        return json.dumps(value, sort_keys=True, separators=(",", ":"))
++    return str(value)
++
++
++def log_perf_event(event: str, **fields: Any) -> None:
++    payload = {"event": event, **fields}
++    print(
++        f"{_local_log_timestamp()} [runner_perf] "
++        + " ".join(
++            f"{key}={_format_perf_value(value)}" for key, value in payload.items()
++        ),
++        flush=True,
++    )
++
++
++def cpu_snapshot() -> dict[str, Any]:
++    snapshot: dict[str, Any] = {}
++    try:
++        load1, load5, load15 = os.getloadavg()
++        snapshot.update({"load1": load1, "load5": load5, "load15": load15})
++    except OSError:
++        pass
++
++    loadavg_path = Path("/proc/loadavg")
++    if loadavg_path.exists():
++        parts = loadavg_path.read_text(encoding="utf-8", errors="replace").split()
++        if len(parts) >= 4 and "/" in parts[3]:
++            runnable_threads, total_threads = parts[3].split("/", 1)
++            snapshot["runnable_threads"] = int(runnable_threads)
++            snapshot["system_threads"] = int(total_threads)
++
++    task_dir = Path("/proc/self/task")
++    if task_dir.exists():
++        snapshot["process_threads"] = sum(1 for _ in task_dir.iterdir())
++    return snapshot
++
++
++def runtime_snapshot() -> dict[str, Any]:
++    snapshot = cpu_snapshot()
++    snapshot["torch_num_threads"] = torch.get_num_threads()
++    try:
++        snapshot["torch_num_interop_threads"] = torch.get_num_interop_threads()
++    except RuntimeError:
++        pass
++    if hasattr(os, "sched_getaffinity"):
++        try:
++            snapshot["cpu_affinity"] = sorted(os.sched_getaffinity(0))
++        except OSError:
++            pass
++    return snapshot
++
++
++def process_memory_snapshot() -> dict[str, int]:
++    statm_path = Path("/proc/self/statm")
++    if not statm_path.exists():
++        return {}
++
++    parts = statm_path.read_text(encoding="utf-8", errors="replace").split()
++    if len(parts) < 7:
++        return {}
++
++    page_size = os.sysconf("SC_PAGE_SIZE")
++    names = ("vsz", "rss", "shared", "text", "lib", "data", "dirty")
++    snapshot = {"page_size_bytes": int(page_size)}
++    for name, raw_value in zip(names, parts):
++        if raw_value.isdigit():
++            pages = int(raw_value)
++            snapshot[f"statm_{name}_pages"] = pages
++            snapshot[f"statm_{name}_bytes"] = pages * int(page_size)
++    return snapshot
++
++
++def rusage_snapshot() -> dict[str, float | int]:
++    if resource is None:
++        return {}
++
++    usage = resource.getrusage(resource.RUSAGE_SELF)
++    snapshot = {
++        "user_cpu_s": usage.ru_utime,
++        "system_cpu_s": usage.ru_stime,
++        "max_rss_kib": usage.ru_maxrss,
++        "minor_faults": usage.ru_minflt,
++        "major_faults": usage.ru_majflt,
++        "voluntary_context_switches": usage.ru_nvcsw,
++        "involuntary_context_switches": usage.ru_nivcsw,
++    }
++    snapshot.update(process_memory_snapshot())
++    return snapshot
++
++
++def rusage_delta(
++    start: dict[str, float | int],
++    end: dict[str, float | int],
++) -> dict[str, float | int]:
++    return {
++        key: end.get(key, 0) - start.get(key, 0)
++        for key in sorted(set(start) | set(end))
++    }
++
++
++def _thread_stat_snapshot(tid_path: Path) -> dict[str, int | str]:
++    stat_path = tid_path / "stat"
++    raw_stat = stat_path.read_text(encoding="utf-8", errors="replace")
++    close_paren = raw_stat.rfind(")")
++    if close_paren < 0:
++        return {}
++    prefix = raw_stat[: close_paren + 1]
++    suffix = raw_stat[close_paren + 2 :].split()
++    comm_start = prefix.find("(")
++    comm = prefix[comm_start + 1 : -1] if comm_start >= 0 else ""
++    if len(suffix) < 13:
++        return {"name": comm}
++    return {
++        "name": comm,
++        "minor_faults": int(suffix[7]),
++        "major_faults": int(suffix[9]),
++        "user_ticks": int(suffix[11]),
++        "system_ticks": int(suffix[12]),
++    }
++
++
++def _thread_context_switch_snapshot(tid_path: Path) -> dict[str, int]:
++    status_path = tid_path / "status"
++    if not status_path.exists():
++        return {}
++
++    snapshot: dict[str, int] = {}
++    for line in status_path.read_text(encoding="utf-8", errors="replace").splitlines():
++        if line.startswith("voluntary_ctxt_switches:") or line.startswith("nonvoluntary_ctxt_switches:"):
++            key, raw_value = line.split(":", 1)
++            raw_value = raw_value.strip()
++            if raw_value.isdigit():
++                snapshot[key] = int(raw_value)
++    return snapshot
++
++
++def thread_fault_snapshot() -> dict[str, dict[str, int | str]]:
++    task_dir = Path("/proc/self/task")
++    if not task_dir.exists():
++        return {}
++
++    snapshot: dict[str, dict[str, int | str]] = {}
++    for tid_path in task_dir.iterdir():
++        if not tid_path.name.isdigit():
++            continue
++        try:
++            thread_snapshot = _thread_stat_snapshot(tid_path)
++            thread_snapshot.update(_thread_context_switch_snapshot(tid_path))
++        except OSError:
++            continue
++        if thread_snapshot:
++            snapshot[tid_path.name] = thread_snapshot
++    return snapshot
++
++
++def thread_fault_delta(
++    start: dict[str, dict[str, int | str]],
++    end: dict[str, dict[str, int | str]],
++) -> dict[str, Any]:
++    active_threads: list[dict[str, int | str]] = []
++    for tid in sorted(set(start) | set(end), key=int):
++        start_values = start.get(tid, {})
++        end_values = end.get(tid, {})
++        delta: dict[str, int | str] = {
++            "tid": int(tid),
++            "name": str(end_values.get("name", start_values.get("name", ""))),
++        }
++        for key in (
++            "minor_faults",
++            "major_faults",
++            "user_ticks",
++            "system_ticks",
++            "voluntary_ctxt_switches",
++            "nonvoluntary_ctxt_switches",
++        ):
++            start_value = start_values.get(key, 0)
++            end_value = end_values.get(key, 0)
++            if isinstance(start_value, int) and isinstance(end_value, int):
++                delta[key] = end_value - start_value
++        if any(isinstance(value, int) and value for key, value in delta.items() if key != "tid"):
++            active_threads.append(delta)
++
++    active_threads.sort(key=lambda item: int(item.get("minor_faults", 0)), reverse=True)
++    total_minor_faults = sum(int(item.get("minor_faults", 0)) for item in active_threads)
++    total_major_faults = sum(int(item.get("major_faults", 0)) for item in active_threads)
++    return {
++        "thread_count_start": len(start),
++        "thread_count_end": len(end),
++        "active_thread_count": len(active_threads),
++        "total_minor_faults": total_minor_faults,
++        "total_major_faults": total_major_faults,
++        "max_thread_minor_faults": int(active_threads[0].get("minor_faults", 0)) if active_threads else 0,
++        "active_threads": active_threads[:64],
++        "active_threads_truncated": len(active_threads) > 64,
++    }
++
++
++def tensor_runtime_metadata(tensor: torch.Tensor) -> dict[str, Any]:
++    storage_nbytes: int | None
++    try:
++        storage_nbytes = tensor.untyped_storage().nbytes()
++    except RuntimeError:
++        storage_nbytes = None
++    return {
++        "shape": tuple(tensor.shape),
++        "stride": tuple(tensor.stride()),
++        "dtype": str(tensor.dtype),
++        "device": str(tensor.device),
++        "layout": str(tensor.layout),
++        "is_contiguous": tensor.is_contiguous(),
++        "storage_offset": tensor.storage_offset(),
++        "numel": tensor.numel(),
++        "element_size": tensor.element_size(),
++        "logical_nbytes": tensor.numel() * tensor.element_size(),
++        "storage_nbytes": storage_nbytes,
++        "data_ptr": tensor.data_ptr() if tensor.device.type == "cpu" else None,
++    }
++
++
++def _flatten_numeric_mapping(prefix: str, value: Any, output: dict[str, int | float]) -> None:
++    if isinstance(value, dict):
++        for key, nested_value in value.items():
++            nested_prefix = f"{prefix}_{key}" if prefix else str(key)
++            _flatten_numeric_mapping(nested_prefix, nested_value, output)
++    elif isinstance(value, (int, float)):
++        output[prefix] = value
++
++
++def torch_host_allocator_snapshot() -> dict[str, int | float]:
++    host_stats_fn = getattr(torch._C, "_cuda_hostMemoryStats", None)
++    if host_stats_fn is None:
++        return {}
++    try:
++        host_stats = host_stats_fn()
++    except RuntimeError:
++        return {}
++
++    snapshot: dict[str, int | float] = {}
++    _flatten_numeric_mapping("", host_stats, snapshot)
++    return snapshot
++
++
++def process_io_snapshot() -> dict[str, int]:
++    io_path = Path("/proc/self/io")
++    if not io_path.exists():
++        return {}
++
++    snapshot: dict[str, int] = {}
++    for line in io_path.read_text(encoding="utf-8", errors="replace").splitlines():
++        if ":" not in line:
++            continue
++        key, raw_value = line.split(":", 1)
++        raw_value = raw_value.strip()
++        if raw_value.isdigit():
++            snapshot[key] = int(raw_value)
++    return snapshot
++
++
++def io_delta(start: dict[str, int], end: dict[str, int]) -> dict[str, int]:
++    return {
++        key: end.get(key, 0) - start.get(key, 0)
++        for key in sorted(set(start) | set(end))
++    }
++
++
++@contextmanager
++def temporary_torch_num_threads(num_threads: int | None) -> Iterator[None]:
++    if num_threads is None:
++        yield
++        return
++    if num_threads < 1:
++        raise ValueError("temporary_torch_num_threads requires num_threads >= 1")
++
++    previous_num_threads = torch.get_num_threads()
++    if num_threads == previous_num_threads:
++        yield
++        return
++
++    torch.set_num_threads(num_threads)
++    try:
++        yield
++    finally:
++        torch.set_num_threads(previous_num_threads)
++
++
++@contextmanager
++def timed_stage(
++    enabled: bool,
++    stage: str,
++    *,
++    device: str | torch.device | None = None,
++    capture_runtime_metrics: bool = False,
++    **fields: Any,
++) -> Iterator[None]:
++    if not enabled:
++        yield
++        return
++
++    stage_depth = _TIMED_STAGE_DEPTH.get()
++    token = _TIMED_STAGE_DEPTH.set(stage_depth + 1)
++    torch_device = torch.device(device) if device is not None else None
++    use_cuda_events = (
++        stage_depth == 0
++        and
++        torch_device is not None
++        and torch_device.type == "cuda"
++        and torch.cuda.is_available()
++    )
++    start_event = torch.cuda.Event(enable_timing=True) if use_cuda_events else None
++    end_event = torch.cuda.Event(enable_timing=True) if use_cuda_events else None
++
++    if use_cuda_events and start_event is not None:
++        torch.cuda.synchronize(torch_device)
++        start_event.record(torch.cuda.current_stream(torch_device))
++    if torch.cuda.is_available():
++        torch.cuda.nvtx.range_push(stage)
++    start_runtime = runtime_snapshot() if capture_runtime_metrics else None
++    start_io = process_io_snapshot() if capture_runtime_metrics else None
++    start_rusage = rusage_snapshot() if capture_runtime_metrics else None
++    start_thread_faults = thread_fault_snapshot() if capture_runtime_metrics else None
++    start_torch_host_allocator = torch_host_allocator_snapshot() if capture_runtime_metrics else None
++    start_process_time = time.process_time() if capture_runtime_metrics else None
++    start_time = time.perf_counter()
++    try:
++        with torch.profiler.record_function(stage):
++            yield
++    finally:
++        try:
++            wall_seconds = time.perf_counter() - start_time
++            cuda_ms: float | None = None
++            if use_cuda_events and start_event is not None and end_event is not None:
++                end_event.record(torch.cuda.current_stream(torch_device))
++                torch.cuda.synchronize(torch_device)
++                cuda_ms = float(start_event.elapsed_time(end_event))
++            if torch.cuda.is_available():
++                torch.cuda.nvtx.range_pop()
++            log_fields = dict(fields)
++            log_fields.update({"stage": stage, "wall_s": wall_seconds})
++            if cuda_ms is not None:
++                log_fields["cuda_ms"] = cuda_ms
++            if capture_runtime_metrics:
++                end_runtime = runtime_snapshot()
++                end_io = process_io_snapshot()
++                end_rusage = rusage_snapshot()
++                end_thread_faults = thread_fault_snapshot()
++                end_torch_host_allocator = torch_host_allocator_snapshot()
++                if start_process_time is not None:
++                    log_fields["process_time_s"] = time.process_time() - start_process_time
++                if start_runtime is not None:
++                    log_fields["runtime_start"] = start_runtime
++                log_fields["runtime_end"] = end_runtime
++                if start_rusage is not None:
++                    runtime_rusage_delta = rusage_delta(start_rusage, end_rusage)
++                    if runtime_rusage_delta:
++                        log_fields["rusage_delta"] = runtime_rusage_delta
++                if start_thread_faults is not None:
++                    runtime_thread_fault_delta = thread_fault_delta(start_thread_faults, end_thread_faults)
++                    if runtime_thread_fault_delta:
++                        log_fields["thread_fault_delta"] = runtime_thread_fault_delta
++                if start_torch_host_allocator is not None:
++                    runtime_allocator_delta = rusage_delta(start_torch_host_allocator, end_torch_host_allocator)
++                    if runtime_allocator_delta:
++                        log_fields["torch_host_allocator_delta"] = runtime_allocator_delta
++                if start_io is not None:
++                    runtime_io_delta = io_delta(start_io, end_io)
++                    if runtime_io_delta:
++                        log_fields["process_io_delta"] = runtime_io_delta
++            log_perf_event("stage_timing", **log_fields)
++        finally:
++            _TIMED_STAGE_DEPTH.reset(token)
++
++
++@contextmanager
++def elapsed_timer() -> Iterator[dict[str, float]]:
++    timing: dict[str, float] = {}
++    start_time = time.perf_counter()
++    try:
++        yield timing
++    finally:
++        timing["wall_s"] = time.perf_counter() - start_time
+diff --git a/sae_dashboard/sae_vis_data.py b/sae_dashboard/sae_vis_data.py
+index 34dfb05..05d5b02 100644
+--- a/sae_dashboard/sae_vis_data.py
++++ b/sae_dashboard/sae_vis_data.py
+@@ -67,6 +67,10 @@ class SaeVisConfig:
+     # Misc
+     seed: int | None = 0
+     verbose: bool = False
++    log_performance: bool = False
++    profile_rolling_substages: bool = False
++    perf_batch: int | None = None
++    rolling_coefficient_num_threads: int | None = None
+     cache_dir: Path | None = None  # Path to cache the data
+ 
+     def to_dict(self) -> dict[str, Any]:
+diff --git a/sae_dashboard/sae_vis_runner.py b/sae_dashboard/sae_vis_runner.py
+index 5083d40..a50efe2 100644
+--- a/sae_dashboard/sae_vis_runner.py
++++ b/sae_dashboard/sae_vis_runner.py
+@@ -32,6 +32,7 @@ from sae_dashboard.huggingface_model_wrapper import (
+     HFActivationConfig,
+     HuggingFaceModelWrapper,
+ )
++from sae_dashboard.perf_logging import log_perf_event, timed_stage
+ from sae_dashboard.sae_vis_data import SaeVisConfig, SaeVisData
+ from sae_dashboard.sequence_data_generator import SequenceDataGenerator
+ from sae_dashboard.transformer_lens_wrapper import (
+@@ -178,28 +179,80 @@ class SaeVisRunner:
+         for features in feature_batches:
+             # model and sae activations calculations.
+ 
+-            (
+-                all_feat_acts,
+-                _,  # all resid post. no longer used.
+-                feature_resid_dir,
+-                feature_out_dir,
+-                corrcoef_neurons,
+-                corrcoef_encoder,
+-                batch_dfa_results,
+-            ) = feature_data_generator.get_feature_data(features, progress)
++            with timed_stage(
++                self.cfg.log_performance,
++                "activation_and_encode_total",
++                device=self.device,
++                capture_runtime_metrics=True,
++                batch=self.cfg.perf_batch,
++                feature_count=len(features),
++            ):
++                (
++                    all_feat_acts,
++                    _,  # all resid post. no longer used.
++                    feature_resid_dir,
++                    feature_out_dir,
++                    corrcoef_neurons,
++                    corrcoef_encoder,
++                    batch_dfa_results,
++                ) = feature_data_generator.get_feature_data(features, progress)
+ 
+             # Get the logits of all features (i.e. the directions this feature writes to the logit output)
+-            logits = einops.einsum(
+-                feature_resid_dir.to(device=W_U.device, dtype=W_U.dtype),
+-                W_U,
+-                "feats d_model, d_model d_vocab -> feats d_vocab",
+-            ).to(self.device)
++            with timed_stage(
++                self.cfg.log_performance,
++                "logits_projection",
++                device=self.device,
++                batch=self.cfg.perf_batch,
++                feature_count=len(features),
++            ):
++                logits = einops.einsum(
++                    feature_resid_dir.to(device=W_U.device, dtype=W_U.dtype),
++                    W_U,
++                    "feats d_model, d_model d_vocab -> feats d_vocab",
++                ).to(self.device)
++
++            ignore_tokens_mask = torch.ones_like(tokens, dtype=torch.bool)
++            if self.cfg.ignore_tokens:
++                valid_ignore_tokens = [
++                    t for t in self.cfg.ignore_tokens if t is not None
++                ]
++                if valid_ignore_tokens:
++                    ignore_tokens_mask &= ~torch.isin(
++                        tokens,
++                        torch.tensor(
++                            valid_ignore_tokens,
++                            dtype=tokens.dtype,
++                            device=tokens.device,
++                        ),
++                    )
++            if self.cfg.ignore_positions:
++                ignore_positions_mask = torch.ones_like(tokens, dtype=torch.bool)
++                ignore_positions_mask[:, self.cfg.ignore_positions] = False
++                ignore_tokens_mask &= ignore_positions_mask
++            ignore_tokens_mask = ignore_tokens_mask.to(all_feat_acts.device)
++            valid_token_count = int(ignore_tokens_mask.sum().item())
++
++            if self.cfg.log_performance:
++                log_perf_event(
++                    "packaging_shape_summary",
++                    batch=self.cfg.perf_batch,
++                    feature_count=len(features),
++                    token_shape=list(tokens.shape),
++                    valid_token_count=valid_token_count,
++                )
+ 
+             # ! Get stats (including quantiles, which will be useful for the prompt-centric visualisation)
+-            feature_stats = FeatureStatistics.create(
+-                data=einops.rearrange(all_feat_acts, "b s feats -> feats (b s)"),
+-                batch_size=self.cfg.quantile_feature_batch_size,
+-            )
++            with timed_stage(
++                self.cfg.log_performance,
++                "feature_statistics_packaging",
++                device=self.device,
++                batch=self.cfg.perf_batch,
++                feature_count=len(features),
++            ):
++                feature_stats = FeatureStatistics.create(
++                    data=einops.rearrange(all_feat_acts, "b s feats -> feats (b s)"),
++                    batch_size=self.cfg.quantile_feature_batch_size,
++                )
+ 
+             # ! Data setup code (defining the main objects we'll eventually return)
+             feature_data_dict: dict[int, FeatureData] = {
+@@ -209,12 +262,19 @@ class SaeVisRunner:
+             # We're using `cfg.feature_centric_layout` to figure out what data we'll need to calculate during this function
+             layout = self.cfg.feature_centric_layout
+ 
+-            feature_tables_data = get_features_table_data(
+-                feature_out_dir=feature_out_dir,
+-                corrcoef_neurons=corrcoef_neurons,
+-                corrcoef_encoder=corrcoef_encoder,
+-                n_rows=layout.feature_tables_cfg.n_rows,  # type: ignore
+-            )
++            with timed_stage(
++                self.cfg.log_performance,
++                "feature_table_packaging",
++                device=self.device,
++                batch=self.cfg.perf_batch,
++                feature_count=len(features),
++            ):
++                feature_tables_data = get_features_table_data(
++                    feature_out_dir=feature_out_dir,
++                    corrcoef_neurons=corrcoef_neurons,
++                    corrcoef_encoder=corrcoef_encoder,
++                    n_rows=layout.feature_tables_cfg.n_rows,  # type: ignore
++                )
+ 
+             # Add all this data to the list of FeatureTablesData objects
+             if batch_dfa_results:
+@@ -222,95 +282,96 @@ class SaeVisRunner:
+                 for feature_idx, feature_data in batch_dfa_results.items():
+                     all_consolidated_dfa_results[feature_idx].update(feature_data)
+ 
+-            for i, (feat, logit_vector) in enumerate(zip(features, logits)):
++            for i, feat in enumerate(features):
+                 feature_data_dict[feat].feature_tables_data = FeatureTablesData(
+                     **{k: v[i] for k, v in feature_tables_data.items()}  # type: ignore
+                 )
+ 
+-                # Get logits histogram data (no title)
+-                feature_data_dict[feat].logits_histogram_data = (
+-                    LogitsHistogramData.from_data(
+-                        data=logit_vector.to(
+-                            torch.float32
+-                        ),  # need this otherwise fails on MPS
+-                        n_bins=layout.logits_hist_cfg.n_bins,  # type: ignore
+-                        tickmode="5 ticks",
+-                        title=None,
++            with timed_stage(
++                self.cfg.log_performance,
++                "logits_histogram_packaging",
++                device=self.device,
++                batch=self.cfg.perf_batch,
++                feature_count=len(features),
++            ):
++                for feat, logit_vector in zip(features, logits):
++                    feature_data_dict[feat].logits_histogram_data = (
++                        LogitsHistogramData.from_data(
++                            data=logit_vector.to(
++                                torch.float32
++                            ),  # need this otherwise fails on MPS
++                            n_bins=layout.logits_hist_cfg.n_bins,  # type: ignore
++                            tickmode="5 ticks",
++                            title=None,
++                        )
+                     )
+-                )
+ 
+-                # Get data for feature activations histogram (including the title!)
+-                feat_acts = all_feat_acts[..., i]
+-
+-                # Create a mask for tokens to ignore based on both ID and position
+-                ignore_tokens_mask = torch.ones_like(tokens, dtype=torch.bool)
+-                if self.cfg.ignore_tokens:
+-                    valid_ignore_tokens = [
+-                        t for t in self.cfg.ignore_tokens if t is not None
+-                    ]
+-                    if valid_ignore_tokens:
+-                        ignore_tokens_mask &= ~torch.isin(
+-                            tokens,
+-                            torch.tensor(
+-                                valid_ignore_tokens,
+-                                dtype=tokens.dtype,
+-                                device=tokens.device,
+-                            ),
++            masked_feat_acts_by_feature = []
++            with timed_stage(
++                self.cfg.log_performance,
++                "activation_histogram_packaging",
++                device=self.device,
++                batch=self.cfg.perf_batch,
++                feature_count=len(features),
++            ):
++                for i, feat in enumerate(features):
++                    feat_acts = all_feat_acts[..., i]
++                    masked_feat_acts = feat_acts * ignore_tokens_mask
++                    masked_feat_acts_by_feature.append(masked_feat_acts)
++                    nonzero_feat_acts = masked_feat_acts[masked_feat_acts > 0]
++                    frac_nonzero = nonzero_feat_acts.numel() / masked_feat_acts.numel()
++
++                    feature_data_dict[feat].acts_histogram_data = (
++                        ActsHistogramData.from_data(
++                            data=nonzero_feat_acts.to(
++                                torch.float32
++                            ),  # need this otherwise fails on MPS
++                            n_bins=layout.act_hist_cfg.n_bins,  # type: ignore
++                            tickmode="5 ticks",
++                            title=f"ACTIVATIONS<br>DENSITY = {frac_nonzero:.3%}",
+                         )
+-                if self.cfg.ignore_positions:
+-                    ignore_positions_mask = torch.ones_like(tokens, dtype=torch.bool)
+-                    ignore_positions_mask[:, self.cfg.ignore_positions] = False
+-                    ignore_tokens_mask &= ignore_positions_mask
+-
+-                # Move the mask to the same device as feat_acts
+-                ignore_tokens_mask = ignore_tokens_mask.to(feat_acts.device)
+-
+-                # set any masked positions to 0
+-                masked_feat_acts = feat_acts * ignore_tokens_mask
+-
+-                # Apply the mask to feat_acts
+-                nonzero_feat_acts = masked_feat_acts[masked_feat_acts > 0]
+-                frac_nonzero = nonzero_feat_acts.numel() / masked_feat_acts.numel()
+-
+-                feature_data_dict[feat].acts_histogram_data = (
+-                    ActsHistogramData.from_data(
+-                        data=nonzero_feat_acts.to(
+-                            torch.float32
+-                        ),  # need this otherwise fails on MPS
+-                        n_bins=layout.act_hist_cfg.n_bins,  # type: ignore
+-                        tickmode="5 ticks",
+-                        title=f"ACTIVATIONS<br>DENSITY = {frac_nonzero:.3%}",
+                     )
+-                )
+-
+-                # Create a MiddlePlotsData object from this, and add it to the dict
+-                feature_data_dict[feat].logits_table_data = get_logits_table_data(
+-                    logit_vector=logit_vector,
+-                    n_rows=layout.logits_table_cfg.n_rows,  # type: ignore
+-                )
+ 
+-                # ! Calculate all data for the right-hand visualisations, i.e. the sequences
+-
+-                # Add this feature's sequence data to the list
+-                feature_data_dict[feat].sequence_data = (
+-                    sequence_data_generator.get_sequences_data(
+-                        feat_acts=masked_feat_acts,
+-                        feat_logits=logits[i],
+-                        resid_post=torch.tensor([]),  # no longer used
+-                        feature_resid_dir=feature_resid_dir[i],
+-                    )
+-                )
+-                if self.cfg.use_dfa:
+-                    feature_data_dict[feat].dfa_data = all_consolidated_dfa_results.get(
+-                        feat, None
++            with timed_stage(
++                self.cfg.log_performance,
++                "logits_table_packaging",
++                device=self.device,
++                batch=self.cfg.perf_batch,
++                feature_count=len(features),
++            ):
++                for feat, logit_vector in zip(features, logits):
++                    feature_data_dict[feat].logits_table_data = get_logits_table_data(
++                        logit_vector=logit_vector,
++                        n_rows=layout.logits_table_cfg.n_rows,  # type: ignore
+                     )
+-                    feature_data_dict[feat].decoder_weights_data = (
+-                        get_decoder_weights_distribution(encoder, model, feat)[0]
++
++            with timed_stage(
++                self.cfg.log_performance,
++                "sequence_packaging",
++                device=self.device,
++                batch=self.cfg.perf_batch,
++                feature_count=len(features),
++            ):
++                for i, feat in enumerate(features):
++                    feature_data_dict[feat].sequence_data = (
++                        sequence_data_generator.get_sequences_data(
++                            feat_acts=masked_feat_acts_by_feature[i],
++                            feat_logits=logits[i],
++                            resid_post=torch.tensor([]),  # no longer used
++                            feature_resid_dir=feature_resid_dir[i],
++                        )
+                     )
++                    if self.cfg.use_dfa:
++                        feature_data_dict[feat].dfa_data = all_consolidated_dfa_results.get(
++                            feat, None
++                        )
++                        feature_data_dict[feat].decoder_weights_data = (
++                            get_decoder_weights_distribution(encoder, model, feat)[0]
++                        )
+ 
+-                # Update the 2nd progress bar (fwd passes & getting sequence data dominates the runtime of these computations)
+-                if progress is not None:
+-                    progress[1].update(1)
++                    # Update the 2nd progress bar (fwd passes & getting sequence data dominates the runtime of these computations)
++                    if progress is not None:
++                        progress[1].update(1)
+ 
+             # ! Return the output, as a dict of FeatureData items
+             new_feature_data = SaeVisData(
+diff --git a/sae_dashboard/utils_fns.py b/sae_dashboard/utils_fns.py
+index 8956a0f..5040ce4 100644
+--- a/sae_dashboard/utils_fns.py
++++ b/sae_dashboard/utils_fns.py
+@@ -25,6 +25,8 @@ from tqdm import tqdm
+ from transformer_lens import utils
+ from transformers import PreTrainedTokenizerBase
+ 
++from sae_dashboard.perf_logging import log_perf_event, tensor_runtime_metadata, timed_stage
++
+ T = TypeVar("T")
+ 
+ # from rich.progress import ProgressColumn, Task # MofNCompleteColumn
+@@ -957,24 +959,23 @@ class RollingCorrCoef:
+         dtype: torch.dtype = torch.float32,
+         device: torch.device = torch.device("cpu"),
+     ) -> None:
+-        """
+-        Args:
+-            indices: list[int]
+-                If supplied, we map y indices (from 0 to y.shape) to these values. Useful when we're working with e.g.
+-                a dataset which didn't start from 0, and we want the "true indices".
+-            with_self: bool
+-                If True, then we take X and Y as coming from the same dataset. This saves us some computation, and it
+-                also means we exclude the diagonal from final topk (since correlation with self is always 1).
+-        """
+         self.n = 0
+         self.X = None
+         self.Y = None
+         self.indices = indices
+         self.with_self = with_self
+         self.dtype = dtype
+-        self.device = device
++        self.device = torch.device(device)
+ 
+-    def update(self, x: Float[Tensor, "X N"], y: Float[Tensor, "Y N"]) -> None:
++    def update(
++        self,
++        x: Float[Tensor, "X N"],
++        y: Float[Tensor, "Y N"],
++        *,
++        perf_enabled: bool = False,
++        perf_label: str = "corrcoef",
++        perf_context: dict[str, Any] | None = None,
++    ) -> None:
+         # Get values of x and y, and check for consistency with each other & with previous values
+         assert x.ndim == 2 and y.ndim == 2, "Both x and y should be 2D"
+         X, Nx = x.shape
+@@ -995,26 +996,109 @@ class RollingCorrCoef:
+         self.X = X
+         self.Y = Y
+ 
+-        x = x.to(dtype=self.dtype, device=self.device)
+-        y = y.to(dtype=self.dtype, device=self.device)
++        perf_fields = dict(perf_context or {})
++        perf_fields.update(
++            {
++                "corrcoef_label": perf_label,
++                "corrcoef_device": str(self.device),
++                "corrcoef_dtype": str(self.dtype),
++                "corrcoef_with_self": self.with_self,
++                "input_x_layout": tensor_runtime_metadata(x) if perf_enabled else None,
++                "input_y_layout": tensor_runtime_metadata(y) if perf_enabled else None,
++            }
++        )
++        same_input = x is y
++        with timed_stage(
++            perf_enabled,
++            f"rolling_{perf_label}_materialize_x",
++            device=str(self.device),
++            capture_runtime_metrics=True,
++            **perf_fields,
++            same_input=same_input,
++        ):
++            x = x.to(dtype=self.dtype, device=self.device)
++        with timed_stage(
++            perf_enabled,
++            f"rolling_{perf_label}_materialize_y",
++            device=str(self.device),
++            capture_runtime_metrics=True,
++            **perf_fields,
++            same_input=same_input,
++        ):
++            y = y.to(dtype=self.dtype, device=self.device, copy=same_input)
++
++        if perf_enabled:
++            log_perf_event(
++                "rolling_tensor_layout",
++                stage=f"rolling_{perf_label}_materialized_inputs",
++                **perf_fields,
++                same_input=same_input,
++                materialized_x_layout=tensor_runtime_metadata(x),
++                materialized_y_layout=tensor_runtime_metadata(y),
++            )
+ 
+         # If this is the first update step, then we need to initialise the sums
+         if self.n == 0:
+-            self.x_sum = torch.zeros(X, device=x.device, dtype=self.dtype)
+-            self.xy_sum = torch.zeros(X, Y, device=x.device, dtype=self.dtype)
+-            self.x2_sum = torch.zeros(X, device=x.device, dtype=self.dtype)
+-            if not self.with_self:
+-                self.y_sum = torch.zeros(Y, device=y.device, dtype=self.dtype)
+-                self.y2_sum = torch.zeros(Y, device=y.device, dtype=self.dtype)
++            with timed_stage(
++                perf_enabled,
++                f"rolling_{perf_label}_init_accumulators",
++                device=str(x.device),
++                capture_runtime_metrics=True,
++                **perf_fields,
++                x_rows=X,
++                y_rows=Y,
++                n_cols=Nx,
++            ):
++                self.x_sum = torch.zeros(X, device=x.device, dtype=self.dtype)
++                self.xy_sum = torch.zeros(X, Y, device=x.device, dtype=self.dtype)
++                self.x2_sum = torch.zeros(X, device=x.device, dtype=self.dtype)
++                if not self.with_self:
++                    self.y_sum = torch.zeros(Y, device=y.device, dtype=self.dtype)
++                    self.y2_sum = torch.zeros(Y, device=y.device, dtype=self.dtype)
+ 
+         # Next, update the sums
+         self.n += x.shape[-1]
+-        self.x_sum += einops.reduce(x, "X N -> X", "sum")
+-        self.xy_sum += einops.einsum(x, y, "X N, Y N -> X Y")
+-        self.x2_sum += einops.reduce(x**2, "X N -> X", "sum")
++        with timed_stage(
++            perf_enabled,
++            f"rolling_{perf_label}_x_sum_update",
++            device=str(x.device),
++            capture_runtime_metrics=True,
++            **perf_fields,
++        ):
++            self.x_sum += einops.reduce(x, "X N -> X", "sum")
++        with timed_stage(
++            perf_enabled,
++            f"rolling_{perf_label}_xy_sum_update",
++            device=str(x.device),
++            capture_runtime_metrics=True,
++            **perf_fields,
++        ):
++            self.xy_sum += einops.einsum(x, y, "X N, Y N -> X Y")
++        with timed_stage(
++            perf_enabled,
++            f"rolling_{perf_label}_x2_sum_update",
++            device=str(x.device),
++            capture_runtime_metrics=True,
++            **perf_fields,
++        ):
++            self.x2_sum += einops.reduce(x**2, "X N -> X", "sum")
+         if not self.with_self:
+-            self.y_sum += einops.reduce(y, "Y N -> Y", "sum")
+-            self.y2_sum += einops.reduce(y**2, "Y N -> Y", "sum")
++            with timed_stage(
++                perf_enabled,
++                f"rolling_{perf_label}_y_sum_update",
++                device=str(y.device),
++                capture_runtime_metrics=True,
++                **perf_fields,
++            ):
++                self.y_sum += einops.reduce(y, "Y N -> Y", "sum")
++            with timed_stage(
++                perf_enabled,
++                f"rolling_{perf_label}_y2_sum_update",
++                device=str(y.device),
++                capture_runtime_metrics=True,
++                **perf_fields,
++            ):
++                self.y2_sum += einops.reduce(y**2, "Y N -> Y", "sum")
+ 
+     def corrcoef(
+         self,

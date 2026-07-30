@@ -47,9 +47,57 @@ LLM interpretability, rather than the (related but distinct) predictive **visual
 embodied-agent and model-based-RL research. The initial MVP focuses on LLMs; fuller multimodal
 support is planned (see the {doc}`roadmap <roadmap>`).
 
+## Quickstart
+
+Interpretune uses [uv](https://github.com/astral-sh/uv) for dependency management.
+
+```bash
+# Install uv (one-time setup)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone and create an out-of-tree venv (keeps parallel envs easy)
+git clone https://github.com/speediedan/interpretune.git && cd interpretune
+export VENV_BASE=${HOME}/.venvs IT_TARGET_VENV=it_latest
+uv venv ${VENV_BASE}/${IT_TARGET_VENV} --python 3.13
+source ${VENV_BASE}/${IT_TARGET_VENV}/bin/activate
+
+# Install with development dependencies
+# (the git-deps group becomes optional once circuit-tracer is published on PyPI)
+uv pip install -e ".[test,examples,lightning,profiling]" --group git-deps dev
+```
+
+### Basic usage
+
+Compose a session from an adapter context, initialize it, then run analysis operations. The same op
+runs unchanged under a different adapter context — that portability is the point:
+
+```python
+import interpretune as it
+from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
+
+dm_cfg, m_cfg, dm_cls, m_cls = MODULE_EXAMPLE_REGISTRY.get("gemma2.rte_demo.circuit_tracer")
+session = it.ITSession(it.ITSessionConfig(
+    adapter_ctx=(it.Adapter.core, it.Adapter.nnsight, it.Adapter.circuit_tracer),
+    datamodule_cfg=dm_cfg, module_cfg=m_cfg, datamodule_cls=dm_cls, module_cls=m_cls,
+))
+it.it_init(**session)
+result = it.intervention_from_concept(session.module, ...)
+```
+
+### Where to go next
+
+- New to the framework? Start with {doc}`concepts` — sessions, protocols, ops, and `AnalysisStore`.
+- Want something runnable? The {doc}`examples` are executable notebooks.
+- Building your own analysis? See {doc}`usage/custom_ops_composition_guide`.
+- Adding a backend? See {doc}`usage/adapter_development_guide`.
+
+For advanced builds (locked CI requirements, multi-repo from-source composition), see
+{doc}`usage/developer_multi_repo_setup`.
+
 ```{toctree}
 :caption: Getting Oriented
 :maxdepth: 1
+:hidden:
 
 concepts
 roadmap
@@ -58,27 +106,66 @@ design_rationale
 ```
 
 ```{toctree}
-:caption: Usage Guides
+:caption: Core Workflow
 :maxdepth: 1
+:hidden:
 
 usage/session_module_datamodule_usage
 usage/analysis_runner_usage
-usage/custom_ops_composition_guide
-usage/interpretune_intervention_apis
-usage/adapter_development_guide
-usage/framework_level_adapters
-usage/circuit_tracer_backend_support
-usage/neuronpedia_dashboard_pipeline
 usage/analysis_store_serialization
 usage/cache_behavior
 usage/generation_precedence
+```
+
+```{toctree}
+:caption: Composing Analysis
+:maxdepth: 1
+:hidden:
+
+usage/custom_ops_composition_guide
+usage/interpretune_intervention_apis
 usage/analysis_injection_usage
+```
+
+```{toctree}
+:caption: Adapters & Backends
+:maxdepth: 1
+:hidden:
+
+usage/adapter_development_guide
+usage/framework_level_adapters
+usage/circuit_tracer_backend_support
+```
+
+```{toctree}
+:caption: Dashboards & Neuronpedia
+:maxdepth: 1
+:hidden:
+
+usage/neuronpedia_dashboard_pipeline
+usage/verifying_dashboard_generation
+```
+
+```{toctree}
+:caption: Examples
+:maxdepth: 1
+:hidden:
+
+examples
+```
+
+```{toctree}
+:caption: Development
+:maxdepth: 1
+:hidden:
+
 usage/developer_multi_repo_setup
 ```
 
 ```{toctree}
 :caption: Design Notes
 :maxdepth: 1
+:hidden:
 
 design/protocol_architecture_working_design
 design/intervention_hook_pattern_support
@@ -92,6 +179,7 @@ design/fts_transformerlens_integration
 ```{toctree}
 :caption: API Reference
 :maxdepth: 1
+:hidden:
 
 api
 ```

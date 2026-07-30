@@ -4,7 +4,7 @@
 torch>=2.7.1  # REAL torch (CPU wheel): interpretune.protocol builds runtime type unions from torch classes, which autodoc mocks cannot represent
 sphinx>=8.1,<9.0
 pydata-sphinx-theme>=0.16.1
-myst-parser>=4.0.1
+myst-nb>=1.2.0  # supersedes myst-parser (pulls it in): renders the example notebooks; execution stays OFF (nb_execution_mode)
 linkify-it-py>=2.0
 sphinx-copybutton>=0.5
 sphinx-autodoc-typehints>=3.0

@@ -24,7 +24,9 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.autosectionlabel",
-    "myst_parser",
+    # myst_nb supersedes myst_parser (it activates it internally) and adds .ipynb as a source
+    # suffix. Do NOT also list myst_parser — registering both raises an extension conflict.
+    "myst_nb",
     "sphinx_copybutton",
     "sphinx_autodoc_typehints",
 ]
@@ -75,6 +77,86 @@ if autodoc_mock_imports:
 myst_enable_extensions = ["colon_fence", "deflist", "fieldlist", "linkify"]
 myst_heading_anchors = 3
 
+# --- Example notebooks -------------------------------------------------------------------------
+# NEVER execute notebooks at build time. The demos need bf16 CUDA, gated gemma weights, the
+# git-pinned adapter stack (which this very config MOCKS), and for the local-dashboard paths a live
+# Neuronpedia webapp + Postgres. Outputs are baked in ahead of time instead (see the staging step
+# below), so the docs render whatever the artifact carries and RTD stays a pure-CPU build.
+nb_execution_mode = "off"
+nb_merge_streams = True
+
+# The notebooks live outside `docs/source`, so they are STAGED into it at build time (the target
+# `docs/source/notebooks/` is gitignored). Two sources, in priority order:
+#   1. `docs/notebook_artifacts/` — executed copies WITH outputs, regenerated on a GPU host. These
+#      are what a reader should see. Deliberately NOT shipped in the sdist (see MANIFEST.in).
+#   2. `src/it_examples/notebooks/publish/` — the stripped, runnable notebooks users clone. These
+#      are the fallback so the docs still build (code-only) before any executed copy exists.
+# Keeping the shipped notebooks stripped is intentional: an executed copy is ~27x larger, outputs
+# are base64 blobs that never delta-compress, and MANIFEST.in ships the publish tree to every
+# `pip install`.
+_NOTEBOOK_SOURCES = (
+    _REPO_ROOT / "docs" / "notebook_artifacts",
+    _REPO_ROOT / "src" / "it_examples" / "notebooks" / "publish",
+)
+_NOTEBOOK_STAGE_DIR = Path(__file__).parent / "notebooks"
+
+
+def _load_notebook_docs_helpers():
+    """Reuse the cell-exclusion rules from scripts/render_notebook_docs_artifacts.py.
+
+    Imported rather than duplicated so DOCS_EXCLUDED_CELL_IDS has exactly one definition. That module's only non-stdlib
+    import (papermill) is deferred into its execute() path, so importing it here is cheap and safe.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_it_notebook_docs", _REPO_ROOT / "scripts" / "render_notebook_docs_artifacts.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _stage_example_notebooks() -> None:
+    """Copy example notebooks (and their sidecar assets) into the Sphinx source tree.
+
+    Later sources do not overwrite earlier ones, so an executed artifact always wins over the stripped fallback for the
+    same relative path.
+
+    Docs-excluded cells (the commented-out ``install-deps`` installer) are stripped HERE rather than only in the
+    artifact builder, because most notebooks have no executed artifact yet and therefore fall back to the publish lane,
+    which the artifact builder never touches. Stripping at staging time makes the rule global: it holds for every
+    notebook on the docs site regardless of which lane it came from, including notebooks added later.
+    """
+    import shutil
+
+    if _NOTEBOOK_STAGE_DIR.exists():
+        shutil.rmtree(_NOTEBOOK_STAGE_DIR)
+
+    helpers = _load_notebook_docs_helpers()
+
+    staged: set[Path] = set()
+    for source_dir in _NOTEBOOK_SOURCES:
+        if not source_dir.is_dir():
+            continue
+        for source_path in sorted(source_dir.rglob("*")):
+            if source_path.is_dir() or source_path.name.startswith("."):
+                continue
+            relative_path = source_path.relative_to(source_dir)
+            if relative_path in staged:
+                continue
+            target_path = _NOTEBOOK_STAGE_DIR / relative_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if source_path.suffix == ".ipynb":
+                notebook, _ = helpers.strip_docs_excluded_cells(helpers.load_notebook(source_path))
+                helpers.save_notebook(notebook, target_path)
+            else:
+                shutil.copy2(source_path, target_path)
+            staged.add(relative_path)
+
+
+_stage_example_notebooks()
+
 # NOTE: no explicit source_suffix — myst_parser registers .md itself (an explicit mapping breaks under myst-parser 5.x)
 templates_path = ["_templates"]
 exclude_patterns = ["_build"]
@@ -98,7 +180,9 @@ html_theme_options = {
     "github_url": "https://github.com/speediedan/interpretune",
     "navbar_align": "content",
     "show_toc_level": 2,
-    "show_nav_level": 2,
+    # 0 => every caption group in the sidebar starts collapsed. The index page carries a quickstart
+    # instead of an inline copy of the navigation, so the sidebar is the single place nav lives.
+    "show_nav_level": 0,
     "navigation_with_keys": False,
 }
 # Global site navigation in the primary sidebar on EVERY page (including the landing page):
@@ -121,6 +205,10 @@ suppress_warnings = [
     "ref.python",  # re-exported symbols (interpretune.analysis.X vs submodule X) are intentionally dual-pathed
     "sphinx_autodoc_typehints.forward_reference",  # AnalysisCfgProtocol fwd-refs (PEP 563 deliberately off)
     "autosummary.import_cycle",  # api.rst lists fully-qualified top-level modules by design
+    # Example notebooks are authored for readers running them (Colab/Jupyter), where heading level
+    # is a styling choice, not a document outline. Skipping a level or opening at H2 is deliberate
+    # there; rewriting the markdown to satisfy Sphinx would churn artifacts users actually execute.
+    "myst.header",
 ]
 
 nitpicky = False

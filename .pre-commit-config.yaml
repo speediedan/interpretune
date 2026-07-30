@@ -19,7 +19,8 @@ ci:
   autoupdate_schedule: quarterly
   # submodules: true
 
-exclude: 'tests/(ioi_parity|mech_interp_parity|concept_direction_approach_parity)/.*'
+# benchmark_baseline_patches: vendored .patch files must stay byte-exact (hooks would corrupt hunks)
+exclude: 'tests/(ioi_parity|mech_interp_parity|concept_direction_approach_parity)/.*|scripts/benchmark_baseline_patches/.*\.patch'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -36,6 +37,13 @@ repos:
         exclude: |
             (?x)^(
                 docs/source/_static/images/fts/fts_explicit_loss_anim.gif
+                |docs/benchmark_artifacts/.*\.html
+                # Executed notebooks rendered on the docs site. Outputs are base64 blobs (plots,
+                # rendered HTML tables), so these exceed the limit by construction -- that payload is
+                # the entire point of the artifact lane. They are excluded from the sdist by
+                # `prune docs` in MANIFEST.in, so they never ship to a `pip install`, and the
+                # notebooks users actually clone stay stripped in src/it_examples/notebooks/publish.
+                |docs/notebook_artifacts/.*\.ipynb
             )$
       - id: detect-private-key
 
@@ -82,6 +90,10 @@ repos:
         entry: python scripts/run_nbstripout_hook.py
         language: system
         files: \.ipynb$
+        # docs/notebook_artifacts holds EXECUTED copies whose outputs are the entire point --
+        # they are what the docs site renders. Stripping them would silently empty every
+        # example page. They are excluded from the sdist via `prune docs` in MANIFEST.in.
+        exclude: ^docs/notebook_artifacts/
       - id: publish-notebooks
         name: Publish notebooks if changed
         entry: python scripts/publish_notebooks.py
