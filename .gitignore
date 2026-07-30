@@ -185,3 +185,7 @@ cifar-10-batches-py
 # ctags
 tags
 .tags
+
+# Claude Code local (private, per-machine) instructions
+CLAUDE.local.md
+.claude/settings.local.json
