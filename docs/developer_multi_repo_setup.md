@@ -156,6 +156,15 @@ For editable and git-backed installs the report appends provenance such as
 the expected checkout/commit. This output also feeds the `salient_pkg_versions` provenance used by the
 benchmark registry.
 
+`neuronpedia-utils` installs `--no-deps` from the pinned neuronpedia fork SHA via
+`requirements/ci/nodeps_git_requirements.txt` (a dedicated `build_it_env.sh` step). Its use here is
+deliberately circumscribed — only the dashboard local-DB import/benchmark lanes import it — and a
+full-dependency install would drag in its unused autointerp/cloud chain
+(`automated-interpretability` → `blobfile` → `lxml` 4.x source build, `openai`, `google-genai`,
+`boto3`); the runtime deps the import lane needs are already in the lock. For plain-uv installs
+(outside `build_it_env.sh`): `uv pip install --no-deps -r requirements/ci/nodeps_git_requirements.txt`.
+Update that pin alongside the `git-deps` group pins.
+
 `syrupy` (SAEDashboard snapshot tests) and `pgpq` (the columnar local-DB import encoder) are no
 longer post-build extras: both now live in interpretune's `examples` extra and the CI lock, so every
 `build_it_env.sh` run installs them. They previously had to be added by hand after each rebuild,

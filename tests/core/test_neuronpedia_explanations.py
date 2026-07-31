@@ -523,6 +523,84 @@ def test_build_explanation_cli_env_injects_byok_defaults_when_key_present() -> N
     assert env["COPILOT_MODEL"] == np_explanations.DEFAULT_EXPLANATION_CLI_MODEL
 
 
+@pytest.mark.parametrize(
+    "key_env_var",
+    ["IT_EXPLANATION_PROVIDER_API_KEY", "COPILOT_PROVIDER_API_KEY", "OPENROUTER_API_KEY"],
+    ids=["generic", "cli-specific", "openrouter-fallback"],
+)
+def test_build_explanation_cli_env_routes_openrouter_key_from_any_variable(key_env_var: str) -> None:
+    """The endpoint follows the KEY, not the variable that carried it.
+
+    An OpenRouter key supplied through the generic variable must still reach OpenRouter; inheriting the OpenCode Zen
+    default produces an opaque auth error that reads like a bad key rather than a wrong endpoint.
+    """
+    env = np_explanations.build_explanation_cli_env(
+        np_explanations.DEFAULT_EXPLANATION_CLI_SPEC,
+        base_env={key_env_var: "sk-or-v1-test"},
+    )
+
+    assert env["COPILOT_PROVIDER_API_KEY"] == "sk-or-v1-test"
+    assert env["COPILOT_PROVIDER_BASE_URL"] == np_explanations.OPENROUTER_PROVIDER_BASE_URL
+    assert env["COPILOT_PROVIDER_TYPE"] == np_explanations.DEFAULT_EXPLANATION_PROVIDER_TYPE
+
+
+@pytest.mark.parametrize(
+    "key_env_var",
+    ["IT_EXPLANATION_PROVIDER_API_KEY", "COPILOT_PROVIDER_API_KEY"],
+    ids=["generic", "cli-specific"],
+)
+def test_build_explanation_cli_env_keeps_zen_default_for_non_openrouter_keys(key_env_var: str) -> None:
+    env = np_explanations.build_explanation_cli_env(
+        np_explanations.DEFAULT_EXPLANATION_CLI_SPEC,
+        base_env={key_env_var: "sk-7WKsNotAnOpenRouterKey"},
+    )
+
+    assert env["COPILOT_PROVIDER_BASE_URL"] == np_explanations.DEFAULT_EXPLANATION_PROVIDER_BASE_URL
+
+
+def test_build_explanation_cli_env_key_precedence_is_generic_then_cli_then_openrouter() -> None:
+    """Documented precedence: IT_EXPLANATION_PROVIDER_API_KEY > CLI-specific > OPENROUTER_API_KEY."""
+    all_three = {
+        "IT_EXPLANATION_PROVIDER_API_KEY": "generic-key",
+        "COPILOT_PROVIDER_API_KEY": "cli-specific-key",
+        "OPENROUTER_API_KEY": "sk-or-v1-fallback",
+    }
+    assert (
+        np_explanations.build_explanation_cli_env(
+            np_explanations.DEFAULT_EXPLANATION_CLI_SPEC, base_env=dict(all_three)
+        )["COPILOT_PROVIDER_API_KEY"]
+        == "generic-key"
+    )
+
+    without_generic = {k: v for k, v in all_three.items() if k != "IT_EXPLANATION_PROVIDER_API_KEY"}
+    assert (
+        np_explanations.build_explanation_cli_env(
+            np_explanations.DEFAULT_EXPLANATION_CLI_SPEC, base_env=without_generic
+        )["COPILOT_PROVIDER_API_KEY"]
+        == "cli-specific-key"
+    )
+
+    only_openrouter = {"OPENROUTER_API_KEY": "sk-or-v1-fallback"}
+    assert (
+        np_explanations.build_explanation_cli_env(
+            np_explanations.DEFAULT_EXPLANATION_CLI_SPEC, base_env=only_openrouter
+        )["COPILOT_PROVIDER_API_KEY"]
+        == "sk-or-v1-fallback"
+    )
+
+
+def test_build_explanation_cli_env_explicit_base_url_overrides_openrouter_default() -> None:
+    env = np_explanations.build_explanation_cli_env(
+        np_explanations.DEFAULT_EXPLANATION_CLI_SPEC,
+        base_env={
+            "OPENROUTER_API_KEY": "sk-or-v1-test",
+            "IT_EXPLANATION_PROVIDER_BASE_URL": "https://example.test/v1",
+        },
+    )
+
+    assert env["COPILOT_PROVIDER_BASE_URL"] == "https://example.test/v1"
+
+
 def test_build_explanation_cli_env_generic_overrides_win() -> None:
     env = np_explanations.build_explanation_cli_env(
         np_explanations.DEFAULT_EXPLANATION_CLI_SPEC,

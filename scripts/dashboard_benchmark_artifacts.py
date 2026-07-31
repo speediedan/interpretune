@@ -118,6 +118,7 @@ class ParityResult:
     per_batch: list[dict[str, Any]] = field(default_factory=list)
     total_feature_batches: int = 0
     mismatched_feature_batches: int = 0
+    value_mismatched_feature_batches: int = 0
 
     @property
     def match_rate(self) -> float | None:
@@ -479,13 +480,26 @@ def activation_row_parity(det_variant: VariantExtract, cur_variant: VariantExtra
         cur_features = cur_payload.get("features", [])
         det_rows = sum(len(f.get("activations", [])) for f in det_features)
         cur_rows = sum(len(f.get("activations", [])) for f in cur_features)
-        mismatches = sum(
-            1
-            for det_f, cur_f in zip(det_features, cur_features)
-            if len(det_f.get("activations", [])) != len(cur_f.get("activations", []))
-        )
+        mismatches = 0
+        value_mismatches = 0
+        for det_f, cur_f in zip(det_features, cur_features):
+            if len(det_f.get("activations", [])) == len(cur_f.get("activations", [])):
+                continue
+            mismatches += 1
+            # Value-bearing check: dead/near-dead features legitimately wobble in their COUNT of
+            # zero-activation tie-fill rows run-to-run (inherited zero-tie top-k fill; see the
+            # usage doc's "Known benign parity wobble" section) — compare the nonzero rows too.
+            det_nonzero = sorted(
+                round(a.get("maxValue") or 0.0, 6) for a in det_f.get("activations", []) if a.get("maxValue")
+            )
+            cur_nonzero = sorted(
+                round(a.get("maxValue") or 0.0, 6) for a in cur_f.get("activations", []) if a.get("maxValue")
+            )
+            if det_nonzero != cur_nonzero:
+                value_mismatches += 1
         parity.total_feature_batches += min(len(det_features), len(cur_features))
         parity.mismatched_feature_batches += mismatches
+        parity.value_mismatched_feature_batches += value_mismatches
         batch_num = int(re.search(r"batch-(\d+)\.json$", det_path.name).group(1))  # type: ignore[union-attr]
         parity.per_batch.append(
             {
@@ -494,6 +508,7 @@ def activation_row_parity(det_variant: VariantExtract, cur_variant: VariantExtra
                 "cur_rows": cur_rows,
                 "match": det_rows == cur_rows and mismatches == 0,
                 "mismatched_features": mismatches,
+                "value_mismatched_features": value_mismatches,
             }
         )
     return parity
@@ -592,23 +607,34 @@ def render_import_table(variants: list[VariantExtract]) -> str:
 
 def render_parity_table(parity: ParityResult) -> str:
     lines = [
-        "| Batch | Det rows | Cur rows | Match | Mismatched features |",
-        "| --- | ---: | ---: | --- | ---: |",
+        "| Batch | Det rows | Cur rows | Match | Mismatched features | Value-bearing mismatches |",
+        "| --- | ---: | ---: | --- | ---: | ---: |",
     ]
     for row in parity.per_batch:
         if "error" in row:
             return f"Parity unavailable: {row['error']}"
         lines.append(
             f"| {row['batch']} | {row['det_rows']} | {row['cur_rows']} | "
-            f"{'MATCH' if row['match'] else 'MISMATCH'} | {row['mismatched_features']} |"
+            f"{'MATCH' if row['match'] else 'MISMATCH'} | {row['mismatched_features']} | "
+            f"{row.get('value_mismatched_features', 0)} |"
         )
     rate = parity.match_rate
     if rate is not None:
+        value_mism = parity.value_mismatched_feature_batches
+        value_rate = 1.0 - value_mism / parity.total_feature_batches if parity.total_feature_batches else None
         lines.append("")
         lines.append(
-            f"**{rate:.2%} per-feature match across {parity.total_feature_batches} feature-batches "
-            f"({parity.mismatched_feature_batches} mismatches)**"
+            f"**{rate:.2%} raw per-feature match / "
+            f"{value_rate:.2%} value-bearing match across {parity.total_feature_batches} feature-batches "
+            f"({parity.mismatched_feature_batches} raw, {value_mism} value-bearing mismatches)**"
         )
+        if parity.mismatched_feature_batches > value_mism:
+            lines.append(
+                "\nRaw-only mismatches are dead-feature zero-tie fill-row count wobble (a benign, "
+                "run-to-run tie-order artifact of the deprecated baseline lane) — evidence and "
+                "detail: [Known benign parity wobble]"
+                "(https://github.com/speediedan/interpretune/blob/main/scripts/dashboard_benchmark_suite_usage.md#known-benign-parity-wobble-dead-feature-zero-tie-fill-rows)."
+            )
     return "\n".join(lines)
 
 
@@ -638,7 +664,10 @@ def _mermaid_node_id(scenario: str, path_key: str, stage: str) -> str:
 # timings/cardinality/throughput are unambiguous. The full multi-config data lives in the
 # summary tables and the profiling notebook.
 MERMAID_SCENARIO = "monology"
-MERMAID_PATHS = ("current_legacy", "columnar_gpu")
+# Declaration order here drives left-to-right placement in the rendered diagram, and dagre places
+# the FIRST-declared subgraph on the RIGHT -- so columnar is declared first to put legacy (the
+# comparison baseline, which reads first) on the LEFT. Verified by rendering on GitHub.
+MERMAID_PATHS = ("columnar_gpu", "current_legacy")
 MERMAID_CONFIG = (4096, 256)
 
 
@@ -696,6 +725,8 @@ def render_mermaid_diagram(
         f'<b>Runtime:</b> {pretok_runtime}<br/><b>Cardinality:</b> {pretok_cardinality}"/]:::source',
         "",
     ]
+    subgraph_ids: list[str] = []
+    top_nodes: list[str] = []
     for variant in _select_mermaid_variants(variants):
         s, p = variant.scenario, variant.path_key
         lineage = lineages.get(p, "")
@@ -810,9 +841,33 @@ def render_mermaid_diagram(
         )
         lines.append(f"        {out} -->|{e2e_note}| {imp}")
         lines.append("    end")
-        lines.append(f"    PRETOK -.-> {tok}")
+        subgraph_ids.append(f"{s}_{p}")
+        top_nodes.append(meta)
         lines.append("")
+    # Anchor PRETOK to each subgraph's TOPMOST node (meta) rather than to `tok`. `meta ~~~ tok`
+    # already ranks meta above tok inside the subgraph, so pointing PRETOK at tok left meta
+    # unconstrained -- free to float up beside PRETOK -- and the two subgraphs resolved that
+    # differently, which is what offset their tops.
+    #
+    # Emit BOTH edges here, after both subgraphs are closed and in MERMAID_PATHS order (legacy
+    # first), so dagre sees a single consistent ordering signal for the two same-rank branches.
+    #
+    # Do NOT add invisible `~~~` links between the subgraph containers to force left/right: in a
+    # `flowchart TD` every link -- invisible included -- is a RANK constraint, i.e. vertical. Doing
+    # that stacks the two lanes on top of each other instead of placing them side by side, which is
+    # strictly worse than the offset it was meant to fix.
+    for top in top_nodes:
+        lines.append(f"    PRETOK -.-> {top}")
     return "\n".join(lines)
+
+
+def _coordination_pr_line(manifest: dict[str, Any]) -> str:
+    """Markdown for the Scalable Dashboards coordination-PR reference (placeholder until wave-open)."""
+
+    url = manifest.get("coordination_pr_url") or "<COORDINATION_PR_URL — backfill at wave-open>"
+    if url.startswith("http"):
+        return f"[Scalable Dashboards coordination PR]({url})"
+    return f"`{url}`"
 
 
 def render_summary_markdown(
@@ -836,6 +891,7 @@ def render_summary_markdown(
         f"Source artifact root: `{manifest.get('source_root', 'unknown')}`",
         f"Timing mode: {manifest.get('timing_mode', 'steady-state')} "
         f"(warmup batches excluded: {manifest.get('summary_warmup_batches', 1)})",
+        f"Coordination PR: {_coordination_pr_line(manifest)}",
         "",
         "## Lineage",
         "",

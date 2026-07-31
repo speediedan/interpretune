@@ -1,18 +1,16 @@
 # Neuronpedia Dashboard Pipeline
 
-This note documents the supported Interpretune path for generating SAEDashboard outputs, converting them to Neuronpedia export bundles, and importing them into a local Neuronpedia database.
+This working document provides an overview of the supported Interpretune paths for generating SAEDashboard outputs, converting them to Neuronpedia export bundles, and importing them into a local Neuronpedia database.
 
 ## Purpose
 
-Use `interpretune.utils.neuronpedia_dashboard_pipeline` when you want one file-backed, resumable pipeline that:
+`interpretune.utils.neuronpedia_dashboard_pipeline` provides an interface to the refactored upstream dashboard generation pipeline, mostly adding some convenience features to improve resumeability as well as easing the current DB bottleneck by optionally overlapping import and generation:
 
 1. runs SAEDashboard generation for a layer range
-2. converts each completed layer into Neuronpedia export format
-3. imports the converted bundle into a local Neuronpedia Postgres database
+2. converts each completed layer into a supported Neuronpedia export format (legacy or new columnar)
+3. (optionally) imports the converted bundle into a local Neuronpedia Postgres database
 4. emits enough diagnostics to distinguish stalls, kills, and conversion/import seams
 5. can replay existing export bundles into the local DB without regenerating dashboards
-
-This replaces the earlier ad hoc shell resume flow that depended on `tee` and separate manual conversion/import steps.
 
 ## Required environment
 
@@ -24,10 +22,20 @@ Run the commands below from the interpretune repo root with the interpretune env
 defaults:
 
 - `IT_NP_CACHE` is the Neuronpedia cache root (dashboard runs, pretokenized prompt caches, activation caches).
-  **`IT_NP_CACHE` defaults to `$HF_HOME/interpretune/neuronpedia`**, so it only needs to be set when the cache should
+  `IT_NP_CACHE` defaults to `$HF_HOME/interpretune/neuronpedia`, so it only needs to be set when the cache should
   live outside the HuggingFace cache tree. `HF_DATASETS_CACHE` and `HF_HUB_CACHE` derive from `HF_HOME` as usual.
 - Repo roots default to `~/repos/<repo>` and can be overridden with `SAEDASHBOARD_REPO_ROOT`, `SAELENS_REPO_ROOT`,
-  and `NEURONPEDIA_UTILS_ROOT` (the latter defaults to `~/repos/neuronpedia/utils/neuronpedia-utils`).
+  `NEURONPEDIA_REPO_ROOT` and `NEURONPEDIA_UTILS_ROOT` (the last defaults to
+  `~/repos/neuronpedia/utils/neuronpedia-utils`).
+
+  You usually do not need to set these by hand, `scripts/setup_dashboard_benchmark_env.py` writes all four
+  into the `benchmark_env.sh` it generates, pointing at whatever checkouts it actually used — including when it
+  clones them somewhere other than `~/repos` (its default is a dated temp directory). If you moved or re-cloned a
+  repo after running setup, re-run it and re-`source` the refreshed `benchmark_env.sh` rather than editing exports.
+
+  Note these overrides exist for the *editable* multi-repo setup, where the pipeline has to locate source checkouts.
+  Once the Wave 1 PRs land upstream and the packages are installed normally, the relevant modules are importable
+  from site-packages and none of these variables should be needed.
 
 For local DB imports, the pipeline resolves the DB URL from the Neuronpedia local env files (`IT_ENV_FILE` overrides
 the env-file path; a repo-local `.env` is used by default when present), but the explicit localhost URL currently in
@@ -37,12 +45,77 @@ use is:
 postgres://postgres:postgres@127.0.0.1:5433/postgres
 ```
 
-> **Local Neuronpedia stack base (2026-07-15):** the localhost services run at upstream
-> `hijohnnylin/neuronpedia@b6156f70` (fork branch rebased; `apps/inference` is uv-managed at this base and
-> the inference service adds `LOGIT_LENS`/`JACOBIAN_LENS` lens endpoints — the local per-model
-> `.env.inference.*` files must set `NEURONPEDIA_MODEL_ID` for the Jacobian-lens loader). The optional NLA
-> service (`apps/nla`, port 5009) is GPU-heavy and not part of the compose stack. Detailed service
-> startup/validation SOPs are maintained in maintainer-side private notes.
+
+## Quickstart: gemma-3-1b-it 16k on Monology (single GPU)
+
+This is a run that was actually executed and timed, not a template. It regenerates the full
+`gemmascope-2-transcoder-16k` source set for `gemma-3-1b-it` from the Monology pile and imports it
+into the local Neuronpedia DB.
+
+Everything is in a committed config, so the command is one line:
+
+```bash
+python -m interpretune.utils.neuronpedia_dashboard_pipeline \
+  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-16k-monology-production.yaml
+```
+
+Prompt sourcing streams `monology/pile-uncopyrighted` and SAEDashboard tokenizes/concatenates to
+128-token contexts — no pretokenization step is required for this path. (If you want a prebuilt
+tokenized cache instead, see [Pretokenize dashboard datasets](#pretokenize-dashboard-datasets); it is
+an alternative, not a prerequisite.)
+
+It ran in 58 min wall clock on a single RTX 4090 (24 GiB) for all 26 layers, producing 6.4 GB across
+1,015 files (26 `Source` rows, 425,984 `Neuron` rows) with no errors. More VRAM scales this down, and
+it will improve dramatically once the DB import bottleneck is removed — the per-layer generation
+times already sum to roughly twice the wall clock, because `runner_overlap_batch_packaging` and
+`overlap_local_db_import` overlap one layer's import with the next layer's generation.
+
+### Scaling this up
+
+4,096 prompts was chosen to fit a single overnight window, and is **smaller than the 24,576-prompt
+corpus** the previous 16k set used. On a 24 GiB card the 16k width has substantial headroom — the
+262k config has to drop `n_features_per_batch` to 2048, while 16k runs comfortably at 4096 because
+the feature axis is 16x narrower. With more VRAM you can raise `n_prompts_total`,
+`n_features_per_batch` or `n_prompts_in_forward_pass`; only `n_prompts_total` needs changing to
+reproduce the larger corpus. The 262k production config documents where the memory cliffs sit.
+
+## Standard launch example
+
+A fuller invocation for `gemma-3-1b-it` `gemmascope-2-transcoder-16k`, spelling out every flag
+rather than using a config file:
+
+```bash
+RUN_ROOT="${IT_NP_CACHE}/dashboard_runs"
+RUN_DIR="${RUN_ROOT}/gemma-3-1b-it_gemmascope-2-transcoder-16k"
+LAUNCH_LOG="${RUN_DIR}/run.resume-24-25.launch.log"
+
+mkdir -p "${RUN_DIR}"
+
+nohup python -m interpretune.utils.neuronpedia_dashboard_pipeline \
+  --model-name gemma-3-1b-it \
+  --model-layers 26 \
+  --sae-set gemma-scope-2-1b-it-transcoders-all \
+  --neuronpedia-source-set-id gemmascope-2-transcoder-16k \
+  --neuronpedia-source-set-description 'Transcoder - 16k' \
+  --creator-name 'Google DeepMind' \
+  --release-id gemma-scope-2 \
+  --release-title 'Gemma Scope 2' \
+  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
+  --hf-weights-repo-id google/gemma-scope-2-1b-it \
+  --hf-weights-path-template 'transcoder_all/layer_{layer}_width_16k_l0_small_affine' \
+  --hook-point hook_mlp_in \
+  --prompts-huggingface-dataset-path monology/pile-uncopyrighted \
+  --start-layer 24 \
+  --end-layer 25 \
+  --sae-path-template 'layer_{layer}_width_16k_l0_small_affine' \
+  --python-executable "$(command -v python)" \
+  --cuda-visible-devices 0 \
+  --heartbeat-seconds 60 \
+  --stall-timeout-seconds 1800 \
+  --use-skip-transcoder \
+  > "${LAUNCH_LOG}" 2>&1 &
+```
+
 
 ## YAML configs and launcher
 
@@ -228,12 +301,16 @@ kill -TERM -1373792
 
 ### Basic multi-GPU generation: scope, example configuration, and limitations
 
+<details>
+<summary>Multi-GPU is basic and deprioritized relative to the single-GPU walkthrough — expand for scope, configuration and limitations</summary>
+
+
 **Scope statement (read first):** the pipeline retains *basic* multi-GPU support — one pipeline
 process per GPU, coarse layer-level partitioning, per-worker resume — via the multi-worker launcher
 mode above. It is validated at that level and no further: there is no intra-layer sharding, no dynamic
 load balancing across heterogeneous GPUs, no cross-worker work stealing, and no multi-GPU-aware import
 overlap. Those are real optimization opportunities that have been deliberately deprioritized until the
-Scalable Dashboards coordination PR lands (link: `<COORDINATION_PR_URL — backfill at wave-open>`);
+Scalable Dashboards coordination PR lands (link: [interpretune#231](https://github.com/speediedan/interpretune/issues/231));
 treat this section as the record of what *is* supported and how it was validated.
 
 Supported behaviors (all exercised on the example pair below):
@@ -304,7 +381,13 @@ Known limitations (deferred optimizations):
 - No NCCL/collective usage — workers are fully independent processes; nothing prevents running
   workers on different hosts against a shared filesystem, but that is unvalidated.
 
+</details>
+
 ### Clean stop and single-worker restart
+
+<details>
+<summary>Recovery procedure for multi-worker runs — expand if you need to stop or restart one</summary>
+
 
 For the current multi-worker RTE production flow, killing only the detached monitor is not sufficient. The monitor will
 stop supervising, but any already-running worker pipeline and child SAEDashboard runner processes will keep going until
@@ -383,6 +466,8 @@ Important resume caveat:
 
 The other worker continues because it has its own process group, child runner, log file, and layer lock. To stop the
 whole two-worker run, terminate each worker process group separately.
+
+</details>
 
 ## Overlapped batch packaging (`--runner-overlap-batch-packaging`)
 
@@ -468,42 +553,6 @@ multi-GPU semantics are unchanged:
 This applies to the columnar output format only (legacy conversion+import stays inline) and is most useful for
 full multi-layer builds, where the DB import wall (rather than generation) otherwise dominates the serial per-layer
 time. Expect steady-state wall time per layer of roughly `max(generation, import)` instead of their sum.
-
-## Standard launch example
-
-This is the current Target B pattern for `gemma-3-1b-it` `gemmascope-2-transcoder-16k`:
-
-```bash
-RUN_ROOT="${IT_NP_CACHE}/dashboard_runs"
-RUN_DIR="${RUN_ROOT}/gemma-3-1b-it_gemmascope-2-transcoder-16k"
-LAUNCH_LOG="${RUN_DIR}/run.resume-24-25.launch.log"
-
-mkdir -p "${RUN_DIR}"
-
-nohup python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --model-name gemma-3-1b-it \
-  --model-layers 26 \
-  --sae-set gemma-scope-2-1b-it-transcoders-all \
-  --neuronpedia-source-set-id gemmascope-2-transcoder-16k \
-  --neuronpedia-source-set-description 'Transcoder - 16k' \
-  --creator-name 'Google DeepMind' \
-  --release-id gemma-scope-2 \
-  --release-title 'Gemma Scope 2' \
-  --release-url https://huggingface.co/mwhanna/gemma-scope-2-1b-it \
-  --hf-weights-repo-id mwhanna/gemma-scope-2-1b-it \
-  --hf-weights-path-template 'transcoder_all/layer_{layer}_width_16k_l0_small_affine' \
-  --hook-point hook_mlp_in \
-  --prompts-huggingface-dataset-path monology/pile-uncopyrighted \
-  --start-layer 24 \
-  --end-layer 25 \
-  --sae-path-template 'layer_{layer}_width_16k_l0_small_affine' \
-  --python-executable "$(command -v python)" \
-  --cuda-visible-devices 0 \
-  --heartbeat-seconds 60 \
-  --stall-timeout-seconds 1800 \
-  --use-skip-transcoder \
-  > "${LAUNCH_LOG}" 2>&1 &
-```
 
 ## Bridge + pretokenized dataset example
 
@@ -1063,138 +1112,6 @@ The successful RTX 2070 SUPER probe used:
 
 Result: `target_reached`, `2` batches, `13.5s` average batch time, `2271` features/min, max tree RSS `4.73 GiB`, and max GPU process memory `5564 MiB`. A `KeyboardInterrupt` at the end of the layer log is expected for this probe because the profiling harness intentionally terminates the child process after it observes the target batch count.
 
-## CLT + structured dataset example
-
-The same pipeline now supports the current GemmaScope2 CLT layout for `google/gemma-scope-2-1b-it`, where each layer lives in a shared local directory as `config.json` plus `params_layer_<n>.safetensors`.
-
-First, prefetch the CLT directory so every layer file is present before the long run reaches later layers:
-
-```bash
-CLT_SNAPSHOT=$(python - <<'PY'
-from huggingface_hub import snapshot_download
-
-print(snapshot_download('google/gemma-scope-2-1b-it', allow_patterns=['clt/width_262k_l0_medium_affine/*']))
-PY
-)
-
-CLT_DIR="${CLT_SNAPSHOT}/clt/width_262k_l0_medium_affine"
-```
-
-### Layer-0 smoke
-
-Use this small smoke command to validate generation, conversion, and local DB import on one batch:
-
-```bash
-LOCAL_NEURONPEDIA_DB_URL='postgres://postgres:postgres@127.0.0.1:5433/postgres' \
-python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --model-name gemma-3-1b-it \
-  --model-layers 26 \
-  --sae-set gemma-scope-2-1b-it-clt-all \
-  --neuronpedia-source-set-id gemmascope-2-clt-262k-rte \
-  --neuronpedia-source-set-description 'CLT - 262k (RTE smoke)' \
-  --creator-name 'Google DeepMind' \
-  --release-id gemma-scope-2 \
-  --release-title 'Gemma Scope 2' \
-  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
-  --hf-weights-repo-id google/gemma-scope-2-1b-it \
-  --hf-weights-path-template 'clt/width_262k_l0_medium_affine/params_layer_{layer}.safetensors' \
-  --hf-model-path google/gemma-3-1b-it \
-  --hook-point hook_mlp_in \
-  --prompts-huggingface-dataset-path aps/super_glue \
-  --prompts-huggingface-dataset-config-name rte \
-  --prompts-huggingface-dataset-split train \
-  --prompts-pretokenized-dataset-path ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts \
-  --model-wrapper bridge \
-  --bridge-enable-compatibility-mode \
-  --runner-log-resource-snapshots \
-  --start-layer 0 \
-  --end-layer 0 \
-  --start-batch 0 \
-  --end-batch 0 \
-  --n-prompts-total 64 \
-  --n-tokens-in-prompt 319 \
-  --n-features-per-batch 8 \
-  --no-deduplicate-shared-prompt-tokens \
-  --strict-shared-prompt-count \
-  --sae-path-template "${CLT_DIR}" \
-  --python-executable "$(command -v python)" \
-  --cuda-visible-devices 0 \
-  --use-clt
-```
-
-A CLT config is deliberately not vendored under `scripts/configs/neuronpedia_dashboard/`, but a config-backed
-equivalent for the full rollout is straightforward to assemble: extend the vendored `gemmascope-2-rte-base.yaml` with
-the CLT-specific values from the Full RTE rollout command below (`sae_set: gemma-scope-2-1b-it-clt-all`,
-`neuronpedia_source_set_id: gemmascope-2-clt-262k-rte`,
-`hf_weights_path_template: clt/width_262k_l0_medium_affine/params_layer_{layer}.safetensors`,
-`hf_model_path: google/gemma-3-1b-it`, `sae_path_template` pointing at the prefetched `${CLT_DIR}`, `use_clt: true`,
-and the `128/32` batch shape), then launch it with:
-
-```bash
-python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config <your-clt-config>.yaml
-```
-
-Validated result for this smoke path:
-
-1. layer-`0` dashboard output wrote `batch-0.json`
-2. the pipeline converted `${NEURONPEDIA_UTILS_ROOT}/neuronpedia_utils/exports/gemma-3-1b-it/0-gemmascope-2-clt-262k-rte`
-3. the local import summary was `SourceSet=1`, `Source=1`, `Neuron=8`, `Activation=256`
-
-### Full RTE rollout
-
-This is the current command of record for the full `0-25` CLT RTE rollout:
-
-```bash
-LOCAL_NEURONPEDIA_DB_URL='postgres://postgres:postgres@127.0.0.1:5433/postgres' \
-python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --model-name gemma-3-1b-it \
-  --model-layers 26 \
-  --sae-set gemma-scope-2-1b-it-clt-all \
-  --neuronpedia-source-set-id gemmascope-2-clt-262k-rte \
-  --neuronpedia-source-set-description 'CLT - 262k (RTE)' \
-  --creator-name 'Google DeepMind' \
-  --release-id gemma-scope-2 \
-  --release-title 'Gemma Scope 2' \
-  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
-  --hf-weights-repo-id google/gemma-scope-2-1b-it \
-  --hf-weights-path-template 'clt/width_262k_l0_medium_affine/params_layer_{layer}.safetensors' \
-  --hf-model-path google/gemma-3-1b-it \
-  --hook-point hook_mlp_in \
-  --prompts-huggingface-dataset-path aps/super_glue \
-  --prompts-huggingface-dataset-config-name rte \
-  --prompts-huggingface-dataset-split train \
-  --prompts-pretokenized-dataset-path ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts \
-  --model-wrapper bridge \
-  --bridge-enable-compatibility-mode \
-  --runner-log-resource-snapshots \
-  --start-layer 0 \
-  --end-layer 25 \
-  --start-batch 0 \
-  --n-prompts-total 2490 \
-  --n-tokens-in-prompt 319 \
-  --n-features-per-batch 128 \
-  --n-prompts-in-forward-pass 32 \
-  --no-deduplicate-shared-prompt-tokens \
-  --strict-shared-prompt-count \
-  --no-archive-partials \
-  --sae-path-template "${CLT_DIR}" \
-  --python-executable "$(command -v python)" \
-  --cuda-visible-devices 0 \
-  --use-clt
-```
-
-Validated runtime envelope for the corresponding direct layer-`0` one-batch probe on the real `2490`-prompt workload:
-
-1. `0:40.88` wall time
-2. `7,004,248 kB` max RSS
-3. `cuda_max_allocated_gib=4.35`
-4. `post_batch_0` RSS `2.26 GiB`
-
-That probe used `float32` model weights in the direct runner. The pipeline keeps `model_dtype=bfloat16` by default, so the full job has additional GPU headroom beyond the measured probe.
-
-The first full layer-`1` CLT attempt later exposed a deeper mixed-precision seam: the Bridge path supplies `bfloat16` activations while the local CLT weights stay `float32`, so `CLTLayerWrapper.encode()` now casts activations to the CLT weight dtype before `F.linear(...)`. The exact failed layer-`1` repro is now past the old crash point, and the full `0-25` run has been resumed from layer `1` under the same `128/32` shape.
-
 ## Restarting a paused or killed run
 
 For batch-level resume inside a layer, use the exact same pipeline command and keep these constraints:
@@ -1226,11 +1143,51 @@ Current validated behavior on this host:
 
 Explanation generation drives a conforming local CLI rather than a hardcoded provider. A conforming CLI must accept a one-shot prompt non-interactively (`<cli> -p "<prompt>"` by default), print the model response to stdout, and honor model/provider selection via environment variables. The GitHub Copilot CLI is the default (`ExplanationCliSpec` in `interpretune.utils.neuronpedia_explanations`); other conforming CLIs can be selected with `IT_EXPLANATION_CLI` or a custom `ExplanationCliSpec`.
 
+### API key precedence
+
+Three variables can supply the key. Highest first:
+
+| Precedence | Variable | Notes |
+| --- | --- | --- |
+| 1 | `IT_EXPLANATION_PROVIDER_API_KEY` | Generic; works whichever CLI is configured. Prefer this. |
+| 2 | `COPILOT_PROVIDER_API_KEY` | The spec's CLI-specific variable (`provider_api_key_env_var`). |
+| 3 | `OPENROUTER_API_KEY` | Neuronpedia standardizes on this, so one key can serve both sides. |
+
+If none is set, no BYOK routing is injected at all and the CLI's own authentication is used (for
+the Copilot CLI, its GitHub login).
+
+**The endpoint follows the KEY, not the variable that carried it.** Any key with the OpenRouter
+prefix (`sk-or-`) defaults to `https://openrouter.ai/api/v1`, so an OpenRouter key placed in the
+generic variable still routes correctly rather than inheriting the OpenCode Zen default and failing
+with an opaque auth error that reads like a bad key. An explicit
+`IT_EXPLANATION_PROVIDER_BASE_URL` always wins.
+
+**Always pair an OpenRouter key with `IT_EXPLANATION_CLI_MODEL`** — the default model id
+(`deepseek-v4-flash-free`) is an OpenCode Zen slug that OpenRouter will not resolve. OpenRouter
+slugs look like `provider/model-name`, with free-tier variants carrying a `:free` suffix, e.g.:
+
+```bash
+export IT_EXPLANATION_PROVIDER_API_KEY=sk-or-v1-...
+export IT_EXPLANATION_CLI_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free
+```
+
+Verified end to end: the Copilot CLI honors `COPILOT_PROVIDER_*` against an OpenRouter base URL.
+
 Model and provider routing:
 
 - The default model is `deepseek-v4-flash-free`, served by the OpenCode Zen OpenAI-compatible endpoint (`https://opencode.ai/zen/v1`; see https://opencode.ai/docs/en/zen/#endpoints).
 - BYOK provider env vars are injected only when an API key is resolvable — from `IT_EXPLANATION_PROVIDER_API_KEY` or the CLI-specific key env var (`COPILOT_PROVIDER_API_KEY`, e.g. from `.env`). With a key present, the Copilot CLI is routed via `COPILOT_PROVIDER_TYPE`/`COPILOT_PROVIDER_BASE_URL`/`COPILOT_PROVIDER_API_KEY`; without one, the CLI's native auth (e.g. Copilot's GitHub auth) is used unchanged — in that case pass a model your native provider actually serves (the BYOK default model will not resolve).
 - Generic overrides win over environment values, which win over the OpenCode Zen defaults: `IT_EXPLANATION_PROVIDER_TYPE`, `IT_EXPLANATION_PROVIDER_BASE_URL`, `IT_EXPLANATION_PROVIDER_API_KEY`, and `IT_EXPLANATION_CLI_MODEL`. Pointing the base URL/key at any OpenAI-compatible provider (e.g. OpenRouter) is supported.
+
+### Re-generating explanations that already exist
+
+`ensure_local_feature_explanations(..., regenerate_existing=True)` re-generates features that
+already have a local explanation instead of skipping them. Nothing is deleted — the new explanation
+is inserted alongside, so the operation is safe to repeat.
+
+This exists because on an already-populated database every feature is skipped, so a run reports full
+coverage without the CLI being invoked once. That is indistinguishable from a working pipeline and a
+broken one. Use the flag when validating the generation path end to end.
 
 ## Local explanation note
 
@@ -1271,7 +1228,7 @@ to regenerated or refreshed bundles rather than re-importing older `model.jsonl`
 
 ### Nested dashboard leaf resolution
 
-SAEDashboard layer directories do not always place `batch-*.json` files directly under `layer_<n>`. For the Gemma Target B run, the actual converter input for layer `23` was:
+SAEDashboard layer directories do not always place `batch-*.json` files directly under `layer_<n>`. For the gemma-3-1b-it 16k run, the actual converter input for layer `23` was:
 
 ```text
 .../layer_23/google/gemma-3-1b-it_gemma-scope-2-1b-it-transcoders-all_blocks.23.hook_mlp_in_16384

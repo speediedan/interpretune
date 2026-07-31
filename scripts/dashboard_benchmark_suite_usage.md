@@ -5,13 +5,51 @@
 markdown tables, a unified Mermaid flow diagram (`dashboard_benchmark_diagram.mmd`), an executed papermill
 profiling notebook (+ HTML export), and a top-level `benchmark_summary.md` linking everything.
 
+## Environment setup (one guided command)
+
+> **Prerequisites** (the setup script checks these itself): `git` and `uv` on PATH; `docker` only
+> if the local Neuronpedia DB needs bring-up; bash >= 4.3 for the env build (macOS:
+> `brew install bash`); HuggingFace access to the **gated** `google/gemma-3-1b-it` model (accept
+> the license, then `hf auth login` or `export HF_TOKEN=...` —
+> `HF_GATED_PUBLIC_REPO_AUTH_KEY` is honored as a fallback). **Root is never required; nothing is
+> pushed; no existing checkout is modified.**
+
+`scripts/setup_dashboard_benchmark_env.py` prepares everything below in one transparent,
+non-destructive flow. Only four repos are involved (interpretune, SAEDashboard, SAELens,
+neuronpedia — located or cloned for you; TransformerLens v3.5.1, nnsight 0.7.0, and
+circuit-tracer install from interpretune's dependency pins). It creates and patch-verifies the
+detached preserved-baseline worktrees (applying the audited patches from
+`scripts/benchmark_baseline_patches/` — see that directory's README for the per-patch
+classification/rationale), manages the neuronpedia local-stack `.env` defaults (Postgres host
+port/data dir + HF cache paths, appended only when missing) and checks the local Postgres
+(offering the docker compose bring-up), builds the integrated benchmark venv via
+`scripts/build_it_env.sh` (SAEDashboard + SAELens editable from source), offers to build any
+missing benchmark prompt datasets (the pretokenization commands of record — tokenizer-only,
+CPU, a few minutes per set), and writes a `benchmark_env.sh` you source before running the
+suite:
+
+```bash
+python scripts/setup_dashboard_benchmark_env.py --worktrees-dir <dir-for-baseline-worktrees>
+# add --dry-run to print the full plan without executing anything; --yes for non-interactive
+```
+
+Every prompt has a corresponding flag (`--help` lists them); existing checkouts are never
+switched or modified (dirty trees prompt stash/continue/abort), existing worktrees are
+verified rather than recreated, and an existing venv is only cleared after explicit
+confirmation (or `--clear-existing-venv`). Works on Linux and macOS (pass `--torch-backend` as
+appropriate — jemalloc preloading is skipped with a warning when absent). On completion the
+script reports the detected GPU against the reference benchmark hardware (NVIDIA GeForce
+RTX 4090, 24 GiB; three-way ~25 min, full mode ~2 h there).
+
 ## Prerequisites
 
 - The interpretune environment active (papermill, nbformat, matplotlib available), all four editable repos installed.
 - Local Neuronpedia Postgres reachable (default `postgres://postgres:postgres@127.0.0.1:5433/postgres`).
-- Detached baseline worktrees present for 3-way mode (`SAEDashboard-7886eaa` + patched siblings).
+- Detached baseline worktrees present for 3-way mode (`SAEDashboard-7886eaa` + siblings; created by the
+  setup script above — point `IT_NP_BASELINE_WORKTREES` at their root when it is not the legacy default
+  `${IT_NP_CACHE}/baseline_worktrees_20260518`).
 - The four benchmark prompt datasets present under `${IT_NP_CACHE}` (`pretokenized/` + `legacy_pretokenized/`); they
-  are not published to the HF Hub — regenerate them per
+  are not published to the HF Hub — the setup script above offers to build any missing ones, or regenerate them per
   ["Regenerating the benchmark prompt datasets"](../docs/neuronpedia_dashboard_pipeline.md#regenerating-the-benchmark-prompt-datasets).
 - **Reproducibility policy**: commit all outstanding changes in SAEDashboard, SAELens, neuronpedia, and
   interpretune before a reviewer 3-way regeneration. The script refuses to package with dirty trees unless
@@ -99,30 +137,27 @@ baseline group in the notebook's config-grouped scaling chart, so the default sw
 baseline shapes. The n-prompt data lands in its own summary section (fully config-annotated columns) and
 the notebook's prompt-scaling charts; disable with `--no-prompt-sweep`.
 
-```bash
-python scripts/run_dashboard_benchmark_suite.py \
-  --mode full \
-  --session-root /tmp/np_dashboard_generation_profiles/full_$(date +%Y%m%d)
-```
-
 With the default sweeps this executes 17 sequential legs (6 threeway + 4 RTE scaling + 4 Monology scaling +
-3 n-prompt sweep); budget roughly 2-3 hours on the reference host (the largest n-prompt sweep leg alone is
-~20-30 minutes). Run it under `nohup`/background and monitor with `robust_benchmark_monitor.sh`.
-
-Concrete first full-suite run (2026-07-02, dirty-tree diagnostic while the suite scripts were still uncommitted):
+3 n-prompt sweep); budget roughly 2 hours on the reference RTX 4090 (the largest n-prompt sweep leg alone is
+~20-30 minutes). Because of that duration, run it backgrounded under `nohup` so it survives a disconnect and
+leaves a console log you can follow:
 
 ```bash
 cd ~/repos/interpretune && source <your-venv>/bin/activate
-nohup python scripts/run_dashboard_benchmark_suite.py \
-  --mode full \
-  --session-root /tmp/np_dashboard_generation_profiles/full_20260702 \
-  --package-root /tmp/dashboard_benchmark_packages/full_20260702 \
-  --allow-dirty \
-  > /tmp/full_suite_20260702.log 2>&1 &
+nohup python scripts/run_dashboard_benchmark_suite.py --mode full \
+  --session-root /tmp/np_dashboard_generation_profiles/full_$(date +%Y%m%d) \
+  --package-root /tmp/dashboard_benchmark_packages/full_$(date +%Y%m%d) \
+  --run-tag dashboard-bench \
+  --local-db-url "postgres://postgres:postgres@127.0.0.1:5433/postgres" \
+  > /tmp/full_wave.log 2>&1 &
+
+tail -f /tmp/full_wave.log            # follow progress
 ```
 
-The packaged reviewer artifacts land in `/tmp/dashboard_benchmark_packages/full_20260702/` (summary, diagram,
-executed notebook + HTML, tables, raw per-leg copies) — add that folder to the workspace to review iteratively.
+`robust_benchmark_monitor.sh` can watch the same session if you want per-leg resource sampling alongside the log.
+
+The packaged reviewer artifacts land in the `--package-root` directory (summary, diagram, executed notebook +
+HTML, tables, raw per-leg copies) — add that folder to the workspace to review iteratively.
 
 ## Mode 4: Package from an existing artifact root (no benchmark execution)
 
@@ -216,6 +251,7 @@ python scripts/run_dashboard_benchmark_suite.py \
 | `--target-batches` / `--summary-warmup-batches` / `--layer` | Benchmark shape (defaults 4 / 1 / 9) |
 | `--rolling-threads` | `--runner-rolling-coefficient-num-threads` value for every leg (default 8) |
 | `--run-tag` | Suffix tag baked into child run names |
+| `--coordination-pr-url` | Scalable Dashboards coordination PR reference stamped into the summary/notebook (defaults to a backfill placeholder; refresh a shipped package via `--from-existing` + this flag) |
 
 ## Package layout
 
@@ -228,11 +264,48 @@ successive packages accumulate in one reviewable location.
 ├── manifest.json                   # lineage (repo heads + dirty flags), run parameters, source root
 ├── extracted_data.json             # machine-readable payload consumed by the notebook
 ├── dashboard_benchmark_diagram.mmd # unified Mermaid flow diagram
-├── dashboard_profiling_<ts>.ipynb  # executed papermill notebook
-├── dashboard_profiling_<ts>.html   # HTML export
+├── dashboard_profiling_<ts>.ipynb  # executed papermill notebook (code collapsed; expandable in JupyterLab)
+├── dashboard_profiling_<ts>.html   # HTML export (charts/data only — inputs dropped via nbconvert --no-input)
 ├── tables/{primary,substage,import,resource,parity}_<scenario>.md
 └── raw/<variant>/                  # per-leg result.json / runner_perf_events.json / import_stage_profile.json
 ```
+
+## Activation row parity: the two reported rates (and a historical wobble)
+
+The packaged "Activation Row Parity" tables report two rates: **raw** per-feature match (activation
+row COUNTS equal between the preserved-baseline and in-tree legacy legs) and **value-bearing**
+match (the sets of nonzero-activation rows equal).
+
+**Current status (torch 2.13 stack): both rates read 100.00%, 0 mismatches**, across three
+consecutive runs (`full_20260727` plus two `--mode threeway` samples, 2026-07-27). Both rates are
+still reported, because they answer different questions and the distinction is what makes a
+non-100% raw rate interpretable rather than alarming: a raw-only difference is benign, whereas a
+**value-bearing mismatch above 0 is NOT expected and should be treated as a real parity failure**.
+
+Historically — on the torch 2.10 stack — raw-only mismatches did occur at well under 0.5% of
+feature-batches. They were an expected, benign artifact:
+
+- The pre-refactor lane's TOP-group selection fills remaining slots with **zero-activation tie
+  rows** when a feature has too few (or no) positive activations (the inherited "zero-tie top-k
+  fill" behavior; see the SAEDashboard PR's opt-in `sequence_top_acts_positive_only` hygiene flag
+  discussion). For a **dead feature** every selected row is such a tie.
+- Tie selection among thousands of exactly-equal zero activations is sensitive to run-to-run GPU
+  reduction/tie ordering, so a dead feature's fill-row COUNT can wobble by ±1 between otherwise
+  identical runs.
+- Investigated evidence (2026-07-23 setup-flow validation, byte-identical prompt inputs and
+  identical dependency versions across runs): all 15 raw mismatches across both scenarios
+  (3/2048 RTE + 12/4096 Monology feature-batches) were dead features (zero nonzero rows) with
+  fill-row counts differing by ±1; the nonzero row sets were **100% identical** in every case
+  (value-bearing match 100.00%).
+
+The wobble has not been observed since moving to the torch 2.13 / CUDA 13 stack: the affected
+batches now agree exactly (e.g. RTE batch 2 was `det=16241` vs `cur=16243`, now `16243` on both
+sides — the preserved-baseline leg was the side that varied). Three consecutive clean runs is
+reasonable evidence given the old rate affected 2 of 4 RTE and 4 of 4 Monology batches per run, and
+the plausible cause is a change in GPU tie-ordering determinism across that bump. It is described
+here as *not observed* rather than *eliminated*: the packaged summary already omits the caveat line
+automatically whenever parity is clean, so if it ever recurs the tables will say so without anyone
+having to remember this section.
 
 ## Extraction semantics
 

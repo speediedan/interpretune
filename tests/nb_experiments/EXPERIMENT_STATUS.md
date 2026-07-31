@@ -162,7 +162,13 @@ follows for the 7c execution ahead:
    `"local"` dev-webapp links) so reviewers can inspect the referenced feature dashboards publicly;
    the gemma-3-1b-it + local-262k + locally-generated-explanations flow returns as a papermill
    parameter set of the same notebook (`GENERATE_MISSING_LOCAL_EXPLANATIONS` capability retained for
-   maintainers/local-DB developers). Motivation: the first fully executed gemma-3-1b-it run surfaced
+   maintainers/local-DB developers).
+   **⤴ SUPERSEDED (2026-07-30)**: the `DASHBOARD_MODE` switch was retired and the notebook split in
+   two — `ct_concept_steering_demo.ipynb` (public gemma-2-2b, no local services, the CI lane) and
+   `ct_concept_steering_demo_local_np.ipynb` (gemma-3-1b-it + local webapp/DB, optional explanation
+   generation, opt-in test lane). Each substrate is now expressed as plain defaults rather than a
+   mode parameter plus a commented-out preset block, so no downstream cell branches on mode.
+   Motivation: the first fully executed gemma-3-1b-it run surfaced
    chat-answer-position token-variant pathologies (see "Token-Variant (▁-prefix) Effects" below) and
    its 262k dashboards are local-only, making the demo unreviewable without a local substrate.
    **Accuracy correction found during the rebuild**: the activated notebook's "store path" label was

@@ -1,0 +1,20 @@
+---
+trivial_local_test_op:
+  description: Local test op that transforms a simple orig_labels tensor to a preds tensor
+  implementation: local_op_definitions.trivial_local_test_op_impl
+  aliases: []
+  input_schema:
+    orig_labels:
+      datasets_dtype: int64
+  output_schema:
+    preds:
+      datasets_dtype: int64
+
+# Composite operations
+composite_operations:
+  composite_trivial_test_op:
+    composition: trivial_local_test_op.trivial_test_op
+    # Note: `trivial_test_op` is the name of a hub op in this example so if we wanted to specify the use of a
+    # specific repository's implementation, we could specify the fully-qualified op name. For example, to use
+    # the implementation in the op collection `trivial_op_repo` of user `speediedan`:
+    # composition: trivial_local_test_op.(speediedan.trivial_op_repo.trivial_test_op)

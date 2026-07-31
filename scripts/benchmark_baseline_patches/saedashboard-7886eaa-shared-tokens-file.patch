@@ -1,0 +1,96 @@
+diff --git a/sae_dashboard/neuronpedia/neuronpedia_runner.py b/sae_dashboard/neuronpedia/neuronpedia_runner.py
+index b629ddd..18c6112 100644
+--- a/sae_dashboard/neuronpedia/neuronpedia_runner.py
++++ b/sae_dashboard/neuronpedia/neuronpedia_runner.py
+@@ -998,20 +998,24 @@ class NeuronpediaRunner:
+             f.write(skipped_indexes_json)
+ 
+     def get_tokens(self):
+-        tokens_file = f"{self.cfg.outputs_dir}/tokens_{self.cfg.n_prompts_total}.pt"
+-        if os.path.isfile(tokens_file):
+-            print("Tokens exist, loading them.")
+-            tokens = torch.load(tokens_file)
++        shared_tokens_file = getattr(self.cfg, "shared_tokens_file", None)
++        if shared_tokens_file is not None and os.path.isfile(shared_tokens_file):
++            tokens = torch.load(shared_tokens_file)
+         else:
+-            print("Tokens don't exist, making them.")
+-            tokens = self.generate_tokens(
+-                self.activations_store,
+-                self.cfg.n_prompts_total,
+-            )
+-            torch.save(
+-                tokens,
+-                tokens_file,
+-            )
++            tokens_file = f"{self.cfg.outputs_dir}/tokens_{self.cfg.n_prompts_total}.pt"
++            if os.path.isfile(tokens_file):
++                print("Tokens exist, loading them.")
++                tokens = torch.load(tokens_file)
++            else:
++                print("Tokens don't exist, making them.")
++                tokens = self.generate_tokens(
++                    self.activations_store,
++                    self.cfg.n_prompts_total,
++                )
++                torch.save(
++                    tokens,
++                    tokens_file,
++                )
+ 
+         assert not has_duplicate_rows(tokens), "Duplicate rows in tokens"
+ 
+@@ -1344,6 +1348,18 @@ def main():
+     parser.add_argument(
+         "--use-wandb", action="store_true", help="Use Weights & Biases for logging"
+     )
++    parser.add_argument(
++        "--shared-tokens-file",
++        type=str,
++        default=None,
++        help="Path to pre-built shared tokens .pt file (bypasses token generation)",
++    )
++    parser.add_argument(
++        "--no-shuffle-tokens",
++        action="store_false",
++        dest="shuffle_tokens",
++        help="Don't shuffle tokens",
++    )
+     parser.add_argument(
+         "--log-performance",
+         action="store_true",
+@@ -1370,12 +1386,6 @@ def main():
+         default=0.0,
+         help="Minimum activation value to consider significant.",
+     )
+-    parser.add_argument(
+-        "--no-shuffle-tokens",
+-        action="store_false",
+-        dest="shuffle_tokens",
+-        help="Don't shuffle tokens",
+-    )
+     parser.add_argument(
+         "--from-local-sae", action="store_true", help="Load SAE from local path"
+     )
+@@ -1629,6 +1639,9 @@ def main():
+         log_performance=args.log_performance,
+         profile_rolling_substages=args.profile_rolling_substages,
+         rolling_coefficient_num_threads=args.rolling_coefficient_num_threads,
++        activation_significance_floor=args.activation_significance_floor,
++        shared_tokens_file=args.shared_tokens_file,
++        shuffle_tokens=args.shuffle_tokens,
+         hf_model_path=args.hf_model_path,
+         use_transcoder=args.use_transcoder,
+         use_skip_transcoder=args.use_skip_transcoder,
+diff --git a/sae_dashboard/neuronpedia/neuronpedia_runner_config.py b/sae_dashboard/neuronpedia/neuronpedia_runner_config.py
+index 3138d37..c7f2e56 100644
+--- a/sae_dashboard/neuronpedia/neuronpedia_runner_config.py
++++ b/sae_dashboard/neuronpedia/neuronpedia_runner_config.py
+@@ -51,6 +51,7 @@ class NeuronpediaRunnerConfig:
+     profile_rolling_substages: bool = False
+     rolling_coefficient_num_threads: Optional[int] = None
+     activation_significance_floor: float = 0.0
++    shared_tokens_file: Optional[str] = None
+ 
+     shuffle_tokens: bool = True
+     prefix_str: Optional[str] = None

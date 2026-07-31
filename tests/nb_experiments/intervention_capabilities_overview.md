@@ -94,8 +94,9 @@ expected-vs-realized activation effects are already CI-verified.
 
 ## Local explanations today, streamable shared dashboards next (Wave 2)
 
-The steering demo's `DASHBOARD_MODE="local"` flow (`feature_tuples_to_feature_refs` +
-`ensure_local_feature_explanations` with `generate_missing=True`) currently writes explanations into
+The local steering demo's flow (`ct_concept_steering_demo_local_np.ipynb`:
+`feature_tuples_to_feature_refs` + `ensure_local_feature_explanations` with
+`generate_missing=True`) currently writes explanations into
 the **local Neuronpedia DB** only. The Wave 2 intention for this workstream is to migrate these
 local-only explanations and custom dashboards to **user Hugging Face Hub uploaded/cached streamable
 dashboards**, making them easily shareable across researchers without central Neuronpedia DB

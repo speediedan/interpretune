@@ -45,7 +45,11 @@ def save_notebook_hashes(publish_dir: Path, hashes: Dict[str, str]) -> None:
     """Save notebook hashes to .notebook_hashes.json."""
     hash_file = publish_dir / ".notebook_hashes.json"
     with open(hash_file, "w", encoding="utf-8") as f:
+        # Trailing newline is required: the end-of-file-fixer pre-commit hook runs BEFORE this
+        # script's hook, so a file written without one is "fixed" by that hook on the next commit,
+        # which changes its hash and makes this script republish -- an loop that never converges.
         json.dump(hashes, f, indent=2, sort_keys=True)
+        f.write("\n")
 
 
 def get_changed_files(dev_dir: Path, stored_hashes: Dict[str, str], file_pattern: str = "*") -> Set[Path]:
@@ -84,6 +88,7 @@ def save_notebook(notebook: Dict[str, Any], path: Path) -> None:
     """Save a Jupyter notebook to file."""
     with open(path, "w", encoding="utf-8") as f:
         json.dump(notebook, f, indent=1, ensure_ascii=False)
+        f.write("\n")  # see save_notebook_hashes: keeps end-of-file-fixer from fighting this hook
 
 
 def strip_remove_cell_tags(notebook: Dict[str, Any]) -> Dict[str, Any]:

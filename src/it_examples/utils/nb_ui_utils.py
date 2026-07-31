@@ -19,6 +19,10 @@ from IPython.display import HTML, display
 # ---------------------------------------------------------------------------
 
 
+# Counter for unique plotly div ids (stable within a run, so artifacts stay diffable).
+_decoder_map_html_counter = [0]
+
+
 def format_prob(p: float, *, precision: int = 4) -> str:
     """Format a probability with automatic scientific notation for small values.
 
@@ -300,8 +304,20 @@ def display_top_features_comparison(
             if scores is not None:
                 score_value = float(scores[j])
                 if show_score_sign:
-                    score_sign = "+" if score_value > 0 else "−" if score_value < 0 else "0"
-                    score_cell = f"<td>{score_sign}</td><td>{format_score(abs(score_value))}</td>"
+                    # Colour the sign: the signed-influence selection can steer with negative-signed
+                    # features, so direction is the column a reader scans for first. Inline styles
+                    # (not a class) because notebook HTML output is frequently rendered without the
+                    # surrounding stylesheet; these hues stay legible on light and dark backgrounds.
+                    if score_value > 0:
+                        score_sign, sign_colour = "+", "#1a7f37"
+                    elif score_value < 0:
+                        score_sign, sign_colour = "−", "#d1242f"
+                    else:
+                        score_sign, sign_colour = "0", "inherit"
+                    score_cell = (
+                        f'<td style="color:{sign_colour};font-weight:600">{score_sign}</td>'
+                        f"<td>{format_score(abs(score_value))}</td>"
+                    )
                 else:
                     score_cell = f"<td>{format_score(score_value)}</td>"
             if neuronpedia_model is not None:
@@ -1404,14 +1420,45 @@ def plot_decoder_projection_map(
         )
         fig.update_layout(
             title=f"{title} — {method_label}; marker size = input concept share",
-            width=820,
+            # No fixed width: a hard 820px overflows the docs content column and forces a horizontal
+            # scrollbar on the rendered page. autosize + responsive lets the figure track its container.
+            autosize=True,
             height=560,
             template="simple_white",
             xaxis=dict(showticklabels=False, title=None),
             yaxis=dict(showticklabels=False, title=None),
             legend=dict(orientation="h", yanchor="top", y=-0.04, xanchor="left", x=0),
         )
-        display(HTML(fig.to_html(full_html=False, include_plotlyjs="cdn")))
+        # `responsive` alone is not enough on a static docs page. Plotly sizes an autosize figure to
+        # its container AT INIT, and in the rendered docs the output container has no final width at
+        # that moment -- so the figure draws too narrow and the colorbar and legend are clipped until
+        # the reader resizes the window, which is the first event that triggers a relayout. Force that
+        # relayout ourselves once layout has settled, and keep a ResizeObserver for later changes
+        # (theme toggle, sidebar collapse) that do not fire a window resize.
+        _decoder_map_html_counter[0] += 1
+        div_id = f"it-decoder-map-{_decoder_map_html_counter[0]}"
+        plot_html = fig.to_html(full_html=False, include_plotlyjs="cdn", config={"responsive": True}, div_id=div_id)
+        resize_shim = f"""
+<script>
+(function () {{
+  var el = document.getElementById("{div_id}");
+  if (!el) return;
+  var resize = function () {{
+    if (!window.Plotly || !el.isConnected) return;
+    try {{ window.Plotly.Plots.resize(el); }} catch (e) {{ /* figure not ready yet */ }}
+  }};
+  if (window.requestAnimationFrame) {{
+    requestAnimationFrame(function () {{ requestAnimationFrame(resize); }});
+  }}
+  setTimeout(resize, 0);
+  setTimeout(resize, 300);
+  if (window.ResizeObserver && el.parentNode) {{
+    new window.ResizeObserver(resize).observe(el.parentNode);
+  }}
+}})();
+</script>
+"""
+        display(HTML('<div style="width:100%;max-width:100%;overflow-x:hidden">' + plot_html + resize_shim + "</div>"))
         plotly_rendered = True
     except Exception:
         plotly_rendered = False
