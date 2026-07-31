@@ -13,7 +13,7 @@ Regenerable evidence backing the performance claims in the coordinated Wave 1 PR
 | [dashboard_benchmark_diagram.mmd](dashboard_benchmark_diagram.mmd) | Unified flow diagram (Mermaid; GitHub renders it inline). |
 | [manifest.json](manifest.json) | Exact four-repo lineage, invocation, GPU/device metadata. The suite refuses to package with dirty repos. |
 | `tables/`, [extracted_data.json](extracted_data.json) | Extracted markdown tables and the raw extraction the charts are plotted from. |
-| **[Executed profiling notebook (renders in-browser)](https://htmlpreview.github.io/?https://raw.githubusercontent.com/speediedan/interpretune/streamlined-streamable-dashboard-generation-phase-1/docs/benchmark_artifacts/full_20260727/dashboard_profiling_20260727_212938.html)** | Charts and data only, code cells hidden. Opens rendered via htmlpreview; the [raw file](dashboard_profiling_20260727_212938.html) is also committed here, and the same HTML is attached to the release for offline use. |
+| **[Executed profiling notebook (renders in-browser)](https://htmlpreview.github.io/?https://raw.githubusercontent.com/speediedan/interpretune/main/docs/benchmark_artifacts/full_20260727/dashboard_profiling_20260727_212938.html)** | Charts and data only, code cells hidden. Opens rendered via htmlpreview; the [raw file](dashboard_profiling_20260727_212938.html) is also committed here, and the same HTML is attached to the release for offline use. |
 | Complete package incl. per-leg raw profiling output | `.tar.gz` on the same [release](https://github.com/speediedan/interpretune/releases/tag/scalable-dashboards-wave1-evidence-20260727) (~23 MB of raw output, regenerable rather than committed). |
 
 ## Environment

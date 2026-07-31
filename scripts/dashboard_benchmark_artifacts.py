@@ -633,7 +633,7 @@ def render_parity_table(parity: ParityResult) -> str:
                 "\nRaw-only mismatches are dead-feature zero-tie fill-row count wobble (a benign, "
                 "run-to-run tie-order artifact of the deprecated baseline lane) — evidence and "
                 "detail: [Known benign parity wobble]"
-                "(https://github.com/speediedan/interpretune/blob/streamlined-streamable-dashboard-generation-phase-1/scripts/dashboard_benchmark_suite_usage.md#known-benign-parity-wobble-dead-feature-zero-tie-fill-rows)."
+                "(https://github.com/speediedan/interpretune/blob/main/scripts/dashboard_benchmark_suite_usage.md#known-benign-parity-wobble-dead-feature-zero-tie-fill-rows)."
             )
     return "\n".join(lines)
 

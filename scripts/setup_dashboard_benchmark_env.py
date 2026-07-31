@@ -59,7 +59,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 IT_ROOT = SCRIPT_DIR.parent
 PATCHES_DIR = SCRIPT_DIR / "benchmark_baseline_patches"
 
+# The three FORK repos still carry the wave work on a topic branch, because their PRs are open
+# upstream and their head refs are that branch. interpretune is different: its side of the wave lands
+# on `main` (the dependency refresh as #234, the docs/examples as #232), so cloning it at the topic
+# branch would hand reviewers a checkout that is behind `main` -- and would break outright once the
+# topic branch is deleted. Keep the two axes separate rather than sharing one constant.
 WAVE_BRANCH = "streamlined-streamable-dashboard-generation-phase-1"
+INTERPRETUNE_BRANCH = "main"
 DEFAULT_DB_URL = "postgres://postgres:postgres@127.0.0.1:5433/postgres"
 GATED_MODEL = "google/gemma-3-1b-it"
 REFERENCE_GPU = "NVIDIA GeForce RTX 4090 (24 GiB)"
@@ -193,7 +199,7 @@ class RepoSpec:
 
 
 REPOS: tuple[RepoSpec, ...] = (
-    RepoSpec("interpretune", "interpretune", "https://github.com/speediedan/interpretune.git", WAVE_BRANCH),
+    RepoSpec("interpretune", "interpretune", "https://github.com/speediedan/interpretune.git", INTERPRETUNE_BRANCH),
     RepoSpec("sae_dashboard", "SAEDashboard", "https://github.com/speediedan/SAEDashboard.git", WAVE_BRANCH),
     RepoSpec("sae_lens", "SAELens", "https://github.com/speediedan/SAELens.git", WAVE_BRANCH),
     RepoSpec("neuronpedia", "neuronpedia", "https://github.com/speediedan/neuronpedia.git", WAVE_BRANCH),
