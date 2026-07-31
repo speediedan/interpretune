@@ -26,10 +26,3 @@ substrate you have:
   with dashboards you generated yourself, plus optional locally generated feature explanations and a
   user-curated feature-steering step. To produce the dashboards it reads, see
   {doc}`usage/neuronpedia_dashboard_pipeline`.
-
-```{toctree}
-:maxdepth: 1
-:glob:
-
-notebooks/**
-```

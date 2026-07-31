@@ -253,7 +253,11 @@ def test_op_collection_notebooks(notebook_file: str, tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
-# Test parameters for circuit tracer notebooks
+# Test parameters for circuit_tracer_adapter_example_basic.ipynb. These ids name TRANSCODER
+# ARCHITECTURES (CLT/SLT) -- the second was previously `ct_w_neuronpedia_SLT`, which named a notebook
+# this test does not run and made circuit_tracer_w_neuronpedia_example look covered when it had no
+# test at all (see test_circuit_tracer_w_neuronpedia_notebook, added after two breakages shipped in
+# that notebook unnoticed). The basic notebook contains no Neuronpedia references whatsoever.
 CIRCUIT_TRACER_PARAMS = [
     pytest.param(
         {
@@ -269,7 +273,7 @@ CIRCUIT_TRACER_PARAMS = [
             "enable_analysis_injection": False,
             "use_baseline_transcoder_arch": True,  # SLT
         },
-        id="ct_w_neuronpedia_SLT",
+        id="ct_basic_SLT",
     ),
 ]
 
@@ -427,6 +431,47 @@ def test_ct_concept_steering_notebook_local(params: dict[str, Any], tmp_path: Pa
     if not _local_neuronpedia_available():
         pytest.skip(f"local Neuronpedia webapp not reachable at {LOCAL_NP_WEBAPP_URL}")
     _run_ct_concept_steering_notebook(params, tmp_path, "ct_concept_steering_demo_local_np.ipynb")
+
+
+# The Neuronpedia example validates a Neuronpedia API key before it builds a session, so gate on the
+# same variable it checks. Executing it publishes NOTHING: generate_graph is called with
+# upload_to_np=False and the upload cell is commented out, so the graph stays local.
+_neuronpedia_key_available = bool(
+    os.environ.get("DEV_NEURONPEDIA_API_KEY")
+    if os.environ.get("USE_LOCALHOST", "false").lower() == "true"
+    else os.environ.get("NEURONPEDIA_API_KEY")
+)
+
+
+@RunIf(bf16_cuda=True)
+@pytest.mark.skipif(
+    not _neuronpedia_key_available,
+    reason="NEURONPEDIA_API_KEY (or DEV_NEURONPEDIA_API_KEY with USE_LOCALHOST=true) required",
+)
+def test_circuit_tracer_w_neuronpedia_notebook(tmp_path: Path):
+    """Smoke-test the Neuronpedia circuit-tracer example end to end.
+
+    This notebook previously had no coverage at all, which is why it shipped two independent breakages
+    undetected: a malformed ``env_reqs`` spec that made it unrunnable regardless of credentials, and a
+    raw (non-chat-formatted) prompt that circuit-tracer began rejecting for instruction-tuned models
+    after a dependency bump. Both are regressions this test now guards.
+    """
+    params: dict[str, Any] = {"core_log_dir": str(tmp_path / "logs")}
+    notebook_path = NOTEBOOKS_DIR / "neuronpedia_example" / "circuit_tracer_w_neuronpedia_example.ipynb"
+
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_notebook = execute_notebook_with_params(
+        notebook_path=notebook_path,
+        parameters=params,
+        output_dir=output_dir,
+    )
+
+    assert output_notebook.exists(), f"Output notebook not created at {output_notebook}"
+    validate_notebook_outputs(output_notebook, params)
+
+    _cleanup_notebook_artifacts()
 
 
 # Test parameters for SAE Lens notebooks (parameterized by backend)

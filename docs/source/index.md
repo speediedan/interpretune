@@ -150,8 +150,10 @@ usage/verifying_dashboard_generation
 :caption: Examples
 :maxdepth: 1
 :hidden:
+:glob:
 
 examples
+notebooks/**
 ```
 
 ```{toctree}
