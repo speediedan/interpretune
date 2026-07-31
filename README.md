@@ -21,22 +21,24 @@
 
 ## What is interpretune?
 
-Interpretune is an AI world model analysis framework that enables a wide range of
-interpretability methods and packages to leverage **composable, shareable analysis operations and
-state**, accelerating collaborative world model analysis and tuning with PyTorch. It lets both
-humans and agents inspect and refine the mechanistic and causal faithfulness of model reasoning
-at mutually intelligible levels of abstraction.
+Interpretune is a (pre-MVP) AI world model analysis framework. It strives to provide composable, shareable latent-space analysis mutually intelligible to humans and agents.
 
-**What that unlocks**: transparent, causally faithful reasoning with greater confidence in
-conclusions; model self-reflection; inter-agent latent-space collaboration; and more
-sample-efficient, world-model-guided collaborative tuning.
+By granting a wide range of interpretability methods and packages access to **composable**, **shareable analysis operations** and **state** it accelerates novel, collaborative, world model analysis and tuning with PyTorch.
 
-Interpretune composes adapters at **multiple levels of abstraction** — the *framework* level
-(core PyTorch, [Lightning](https://github.com/Lightning-AI/pytorch-lightning)), the
-*interpretability latent-model* level ([TransformerLens](https://github.com/TransformerLensOrg/TransformerLens),
-[NNsight](https://github.com/ndif-team/nnsight)), and the *analysis* level
-([circuit-tracer](https://github.com/safety-research/circuit-tracer),
-[SAE-Lens](https://github.com/decoderesearch/SAELens)) — over a shared session/protocol layer.
+Both humans and agents can inspect and refine the mechanistic and causal faithfulness of model reasoning at mutually intelligible levels of abstraction. Core framework goals:
+
+- transparent, causally faithful reasoning
+- augmented model self-reflection
+- world-model-guided collaborative tuning
+
+Interpretune composes adapters at multiple levels of abstraction over a shared session/protocol layer:
+
+- the *framework* level (core PyTorch, [Lightning](https://github.com/Lightning-AI/pytorch-lightning))
+- the *interpretability latent-model* level ([TransformerLens](https://github.com/TransformerLensOrg/TransformerLens),
+[NNsight](https://github.com/ndif-team/nnsight))
+- the *analysis* level ([circuit-tracer](https://github.com/safety-research/circuit-tracer),
+[SAELens](https://github.com/decoderesearch/SAELens))
+
 This composition pattern is what lets researchers collaborate across interpretability frameworks:
 analysis operations (e.g. `extract_top_features`, `gradient_attribution`, `ablation_attribution`,
 `feature_intervention`, `graph_prune`, `concept_direction`, `compute_attribution_graph`) are
