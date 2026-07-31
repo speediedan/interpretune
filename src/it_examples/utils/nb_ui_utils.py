@@ -19,6 +19,10 @@ from IPython.display import HTML, display
 # ---------------------------------------------------------------------------
 
 
+# Counter for unique plotly div ids (stable within a run, so artifacts stay diffable).
+_decoder_map_html_counter = [0]
+
+
 def format_prob(p: float, *, precision: int = 4) -> str:
     """Format a probability with automatic scientific notation for small values.
 
@@ -1425,13 +1429,36 @@ def plot_decoder_projection_map(
             yaxis=dict(showticklabels=False, title=None),
             legend=dict(orientation="h", yanchor="top", y=-0.04, xanchor="left", x=0),
         )
-        display(
-            HTML(
-                '<div style="width:100%;max-width:100%;overflow-x:hidden">'
-                + fig.to_html(full_html=False, include_plotlyjs="cdn", config={"responsive": True})
-                + "</div>"
-            )
-        )
+        # `responsive` alone is not enough on a static docs page. Plotly sizes an autosize figure to
+        # its container AT INIT, and in the rendered docs the output container has no final width at
+        # that moment -- so the figure draws too narrow and the colorbar and legend are clipped until
+        # the reader resizes the window, which is the first event that triggers a relayout. Force that
+        # relayout ourselves once layout has settled, and keep a ResizeObserver for later changes
+        # (theme toggle, sidebar collapse) that do not fire a window resize.
+        _decoder_map_html_counter[0] += 1
+        div_id = f"it-decoder-map-{_decoder_map_html_counter[0]}"
+        plot_html = fig.to_html(full_html=False, include_plotlyjs="cdn", config={"responsive": True}, div_id=div_id)
+        resize_shim = f"""
+<script>
+(function () {{
+  var el = document.getElementById("{div_id}");
+  if (!el) return;
+  var resize = function () {{
+    if (!window.Plotly || !el.isConnected) return;
+    try {{ window.Plotly.Plots.resize(el); }} catch (e) {{ /* figure not ready yet */ }}
+  }};
+  if (window.requestAnimationFrame) {{
+    requestAnimationFrame(function () {{ requestAnimationFrame(resize); }});
+  }}
+  setTimeout(resize, 0);
+  setTimeout(resize, 300);
+  if (window.ResizeObserver && el.parentNode) {{
+    new window.ResizeObserver(resize).observe(el.parentNode);
+  }}
+}})();
+</script>
+"""
+        display(HTML('<div style="width:100%;max-width:100%;overflow-x:hidden">' + plot_html + resize_shim + "</div>"))
         plotly_rendered = True
     except Exception:
         plotly_rendered = False
