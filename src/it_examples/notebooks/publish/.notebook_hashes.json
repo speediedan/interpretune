@@ -8,7 +8,7 @@
   "notebooks/dev/circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb": "8dcf09699ee048a84313a2fc5966007c97d0444707eb131ec1cee601df504e34",
   "notebooks/dev/circuit_tracer_examples/ct_analysis_backend_demo.ipynb": "c3f56313f4f3aee17adb42053a7b1855ed3b0b0a26e4c81bc6877e74d9992638",
   "notebooks/dev/circuit_tracer_examples/ct_analysis_backend_demo_gemma2_ref.ipynb": "39989b9b096e4d71e41c6f5c0bb7ce699bbb730975a3cc20e32602b79d7424c7",
-  "notebooks/dev/circuit_tracer_examples/ct_concept_steering_demo.ipynb": "e0c3c815644a817811865f04d3520af1e474118c6ccd935053082274f14d14bd",
+  "notebooks/dev/circuit_tracer_examples/ct_concept_steering_demo.ipynb": "7037b741bcf9386ec9011d6019d5cf4fa37c7866fb12831b4d2e61b7904ce208",
   "notebooks/dev/circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb": "3b868dcf4daf982bcbb531818959f27fc6b29d3adf64b0bd74854ba62bd2e72a",
   "notebooks/dev/circuit_tracer_examples/ct_cross_backend_demo.ipynb": "73e71eb9a991f98d7704c00064998680d6ac2f41e8a1551680ec1cc355b4038a",
   "notebooks/dev/circuit_tracer_examples/ct_cross_backend_demo_gemma2_ref.ipynb": "66f43497da48180357c2d87cc5e8fbd2f34137bd9cb460a6c4d9316599693f14",
