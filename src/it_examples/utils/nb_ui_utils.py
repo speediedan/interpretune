@@ -1416,14 +1416,22 @@ def plot_decoder_projection_map(
         )
         fig.update_layout(
             title=f"{title} — {method_label}; marker size = input concept share",
-            width=820,
+            # No fixed width: a hard 820px overflows the docs content column and forces a horizontal
+            # scrollbar on the rendered page. autosize + responsive lets the figure track its container.
+            autosize=True,
             height=560,
             template="simple_white",
             xaxis=dict(showticklabels=False, title=None),
             yaxis=dict(showticklabels=False, title=None),
             legend=dict(orientation="h", yanchor="top", y=-0.04, xanchor="left", x=0),
         )
-        display(HTML(fig.to_html(full_html=False, include_plotlyjs="cdn")))
+        display(
+            HTML(
+                '<div style="width:100%;max-width:100%;overflow-x:hidden">'
+                + fig.to_html(full_html=False, include_plotlyjs="cdn", config={"responsive": True})
+                + "</div>"
+            )
+        )
         plotly_rendered = True
     except Exception:
         plotly_rendered = False

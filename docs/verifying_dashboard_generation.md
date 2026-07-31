@@ -1,16 +1,18 @@
-# Verifying dashboard generation
+# Locally verifying dashboard generation and example(s)
 
-How to reproduce the scalable-dashboard benchmark yourself, and how to run the example notebook that
-consumes locally generated dashboards. Everything here is a procedure you can execute — claims about
-any particular pull request live with that pull request.
+Local command guide for:
+- Generating the latest lineage scalable-dashboard benchmark
+- Running an example notebook that consumes locally generated dashboards.
+
+References an end-to-end basic dashboard generation ([quickstart in the dashboard pipeline guide](neuronpedia_dashboard_pipeline.md)) that can be generated locally for use with the example notebook.
 
 ---
 
 ## Reproducing the benchmark
 
-One guided, non-destructive setup script prepares everything the suite needs — it locates or clones
+We have a non-destructive setup script prepares everything the benchmark suite needs — it locates or clones
 the four repos, builds the venv, checks the local Postgres, and offers to build any missing prompt
-datasets. It never modifies an existing checkout and never needs root.
+datasets etc. It never modifies an existing checkout and doesn't need root. There are a lot of flexible options if you're interested but the defaults here should work
 
 ```bash
 mkdir -p /tmp/it_eval_repos && cd /tmp/it_eval_repos
@@ -42,31 +44,34 @@ needs bringing up, bash >= 4.3, and HuggingFace access to the **gated** `google/
 To repackage existing artifacts without re-running anything:
 `--from-existing <artifact_root> --package-root <dir>`.
 
-Full usage: `scripts/dashboard_benchmark_suite_usage.md` (in the repository — that file is outside
-the docs build).
+Full usage: `scripts/dashboard_benchmark_suite_usage.md` (in the repository).
 
 ---
 
-## Try it: the example notebooks
+## Example notebooks
 
-The concept-direction steering demo comes in two variants, so you can start wherever your setup is:
+The quick concept-direction steering demo comes in two variants, so you can start wherever your setup is:
 
 | Notebook | Substrate | Setup required |
 | --- | --- | --- |
 | `ct_concept_steering_demo` | public gemma-2-2b + [neuronpedia.org](https://www.neuronpedia.org) | GPU + model weights only |
-| `ct_concept_steering_demo_local_np` | gemma-3-1b-it + **your** local Neuronpedia stack | the sections below |
+| `ct_concept_steering_demo_local_np` | gemma-3-1b-it + your local Neuronpedia stack | the sections below |
 
-Start with the public one — it needs no local services and exercises the same analysis path. The
-local variant is the end-to-end demonstration: dashboards you generated, explanations you generated,
-feeding feature selection and steering.
-
-Both notebooks state their substrate as plain defaults; there is no mode switch to set.
+You can start with the public one if you want since it needs no local services and exercises the same analysis path but the local variant is the end-to-end demonstration that uses local dashboards/explanations (and optionally generates any missing explanations per-feature as needed in the notebook!) feeding feature selection and steering.  You'll be guided below to run the quick local dashboard generation for `gemma-3-1b-it` ([quickstart in the dashboard pipeline guide](neuronpedia_dashboard_pipeline.md)) before running that local notebook though since it depends on non-public dashboards (shareable dashboards prioritized IT feature forthcoming).
 
 ### 1. Bring up the local Neuronpedia stack
+- You can of course  local neuronpedia
+**Already run Neuronpedia locally?** Skip this — just make sure your webapp and Postgres are
+reachable and note the ports, then set `LOCAL_WEBAPP_URL` / `LOCAL_DB_URL` in the notebook to match.
+Nothing below is required if your stack is already up.
+
+The commands below are for a **fresh** setup. `make init-env` **overwrites `.env`** (it prompts
+first and aborts unless you confirm), so do not run it against a Neuronpedia install you have
+already configured:
 
 ```bash
 cd neuronpedia
-make init-env                       # then set POSTGRES_HOST_PORT=5433 in .env
+make init-env                       # FRESH SETUPS ONLY - overwrites .env; then set POSTGRES_HOST_PORT=5433
 make webapp-localhost-build && make webapp-localhost-run
 ```
 
@@ -91,19 +96,16 @@ The pipeline guide documents the shapes we validated and where the memory cliffs
 ### 3. Set up the explanation CLI (OPTIONAL)
 
 <details>
-<summary>Expand only if you want to see explanations generated end to end</summary>
+<summary>Expand if you want to see missing explanations auto-generated for features involved in the example notebook</summary>
 
-**This whole step is optional.** The local notebook ships with
+This whole step is optional. The local notebook ships with
 `GENERATE_MISSING_LOCAL_EXPLANATIONS = False`, so it reports local explanation coverage without
 backfilling and everything else still works. Set this up only to see explanations generated end to
 end.
 
-Explanation generation always calls an **external LLM endpoint**. Activation sourcing and the DB
-insert are local; there is no offline explainer.
+Explanation generation currently always calls an external endpoint with a conforming local CLI rather than a hardcoded provider. Activation sourcing and the DB insert are local.
 
-Explanations drive a *conforming local CLI* rather than a hardcoded provider: it must accept a
-one-shot prompt non-interactively (`<cli> -p "<prompt>"`) and print the response to stdout. The
-GitHub Copilot CLI is the default. If you do not have it (no GitHub Copilot subscription required):
+The local provider must accept a one-shot prompt non-interactively (`<cli> -p "<prompt>"`) and print the response to stdout. The GitHub Copilot CLI is the default. If you do not have it (no GitHub Copilot subscription required):
 
 ```bash
 npm install -g @github/copilot          # needs Node 18+
@@ -112,22 +114,22 @@ copilot --version                       # confirm it is on PATH
 
 Then pick one of two routes:
 
-**a. BYOK (any OpenAI-compatible provider).** Three variables can supply the key — highest
+a. BYOK (any OpenAI-compatible provider). Three variables can supply the key — highest
 precedence first: `IT_EXPLANATION_PROVIDER_API_KEY`, then `COPILOT_PROVIDER_API_KEY`, then
 `OPENROUTER_API_KEY` (the variable Neuronpedia itself uses, so one key serves both sides).
 
-The endpoint follows the **key**, not the variable holding it: any key with the `sk-or-` prefix
-routes to OpenRouter from any of the three. An explicit `IT_EXPLANATION_PROVIDER_BASE_URL` wins.
+The endpoint follows the *key*, not the variable holding it: any key with the `sk-or-` prefix
+routes to OpenRouter from any of the three. An explicit `IT_EXPLANATION_PROVIDER_BASE_URL` will take precedence though.
 
-Recommended, and the combination validated end to end:
+A free recommended combination validated end to end:
 
 ```bash
 export IT_EXPLANATION_PROVIDER_API_KEY=sk-or-v1-...            # an OpenRouter key
 export IT_EXPLANATION_CLI_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free
 ```
 
-**Always set `IT_EXPLANATION_CLI_MODEL` with an OpenRouter key** — the default model id belongs to a
-different provider and will not resolve there. Free-tier slugs carry a `:free` suffix.
+Always set `IT_EXPLANATION_CLI_MODEL` with an OpenRouter key — the default model id belongs to a
+different provider and will not resolve there.
 
 For any other OpenAI-compatible endpoint, point it explicitly:
 
@@ -137,9 +139,8 @@ export IT_EXPLANATION_PROVIDER_BASE_URL=<https://your-endpoint/v1>
 export IT_EXPLANATION_CLI_MODEL=<model served by that endpoint>
 ```
 
-**b. The CLI's own auth.** With no resolvable API key, the CLI's native auth is used unchanged (for
-Copilot, `copilot` handles GitHub sign-in). In that case you **must** pass a model your native
-provider actually serves — the BYOK default model will not resolve:
+b. The CLI's own auth. This is the less frequently used pattern. With no resolvable API key, the CLI's native auth is used unchanged (for Copilot, `copilot` handles GitHub sign-in). So you need to pass a model your native
+provider actually serves as the BYOK default model will not resolve:
 
 ```bash
 export IT_EXPLANATION_CLI_MODEL=<model your Copilot plan serves>
@@ -148,11 +149,10 @@ export IT_EXPLANATION_CLI_MODEL=<model your Copilot plan serves>
 To use a different conforming CLI entirely, set `IT_EXPLANATION_CLI`.
 
 If your local database already has explanations, set `REGENERATE_LOCAL_EXPLANATIONS = True` in the
-notebook. Otherwise every feature is skipped and the run reports full coverage **without calling the
-CLI once** — which looks identical whether the pipeline works or not. Nothing is deleted; the new
-explanation is inserted alongside.
+notebook. Otherwise every feature is skipped and the run reports full coverage without calling the
+CLI. Note nothing is deleted, the new explanation is inserted alongside.
 
-Generate one explanation directly, to confirm the setup before running the notebook:
+You can also generate one explanation directly to confirm the setup before running the notebook:
 
 ```bash
 python scripts/generate_neuronpedia_feature_explanation.py \

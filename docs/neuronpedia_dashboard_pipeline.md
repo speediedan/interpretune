@@ -1,18 +1,16 @@
 # Neuronpedia Dashboard Pipeline
 
-This note documents the supported Interpretune path for generating SAEDashboard outputs, converting them to Neuronpedia export bundles, and importing them into a local Neuronpedia database.
+This working document provides an overview of the supported Interpretune paths for generating SAEDashboard outputs, converting them to Neuronpedia export bundles, and importing them into a local Neuronpedia database.
 
 ## Purpose
 
-Use `interpretune.utils.neuronpedia_dashboard_pipeline` when you want one file-backed, resumable pipeline that:
+`interpretune.utils.neuronpedia_dashboard_pipeline` provides an interface to the refactored upstream dashboard generation pipeline, mostly adding some convenience features to improve resumeability as well as easing the current DB bottleneck by optionally overlapping import and generation:
 
 1. runs SAEDashboard generation for a layer range
-2. converts each completed layer into Neuronpedia export format
-3. imports the converted bundle into a local Neuronpedia Postgres database
+2. converts each completed layer into a supported Neuronpedia export format (legacy or new columnar)
+3. (optionally) imports the converted bundle into a local Neuronpedia Postgres database
 4. emits enough diagnostics to distinguish stalls, kills, and conversion/import seams
 5. can replay existing export bundles into the local DB without regenerating dashboards
-
-This replaces the earlier ad hoc shell resume flow that depended on `tee` and separate manual conversion/import steps.
 
 ## Required environment
 
@@ -24,10 +22,20 @@ Run the commands below from the interpretune repo root with the interpretune env
 defaults:
 
 - `IT_NP_CACHE` is the Neuronpedia cache root (dashboard runs, pretokenized prompt caches, activation caches).
-  **`IT_NP_CACHE` defaults to `$HF_HOME/interpretune/neuronpedia`**, so it only needs to be set when the cache should
+  `IT_NP_CACHE` defaults to `$HF_HOME/interpretune/neuronpedia`, so it only needs to be set when the cache should
   live outside the HuggingFace cache tree. `HF_DATASETS_CACHE` and `HF_HUB_CACHE` derive from `HF_HOME` as usual.
 - Repo roots default to `~/repos/<repo>` and can be overridden with `SAEDASHBOARD_REPO_ROOT`, `SAELENS_REPO_ROOT`,
-  and `NEURONPEDIA_UTILS_ROOT` (the latter defaults to `~/repos/neuronpedia/utils/neuronpedia-utils`).
+  `NEURONPEDIA_REPO_ROOT` and `NEURONPEDIA_UTILS_ROOT` (the last defaults to
+  `~/repos/neuronpedia/utils/neuronpedia-utils`).
+
+  **You usually do not need to set these by hand.** `scripts/setup_dashboard_benchmark_env.py` writes all four
+  into the `benchmark_env.sh` it generates, pointing at whatever checkouts it actually used — including when it
+  clones them somewhere other than `~/repos` (its default is a dated temp directory). If you moved or re-cloned a
+  repo after running setup, re-run it and re-`source` the refreshed `benchmark_env.sh` rather than editing exports.
+
+  These overrides exist for the **editable multi-repo setup**, where the pipeline has to locate source checkouts.
+  Once the Wave 1 PRs land upstream and the packages are installed normally, the relevant modules are importable
+  from site-packages and none of these variables should be needed.
 
 For local DB imports, the pipeline resolves the DB URL from the Neuronpedia local env files (`IT_ENV_FILE` overrides
 the env-file path; a repo-local `.env` is used by default when present), but the explicit localhost URL currently in
@@ -37,12 +45,6 @@ use is:
 postgres://postgres:postgres@127.0.0.1:5433/postgres
 ```
 
-> **Local Neuronpedia stack base (2026-07-15):** the localhost services run at upstream
-> `hijohnnylin/neuronpedia@b6156f70` (fork branch rebased; `apps/inference` is uv-managed at this base and
-> the inference service adds `LOGIT_LENS`/`JACOBIAN_LENS` lens endpoints — the local per-model
-> `.env.inference.*` files must set `NEURONPEDIA_MODEL_ID` for the Jacobian-lens loader). The optional NLA
-> service (`apps/nla`, port 5009) is GPU-heavy and not part of the compose stack. Detailed service
-> startup/validation SOPs are maintained in maintainer-side private notes.
 
 ## YAML configs and launcher
 
