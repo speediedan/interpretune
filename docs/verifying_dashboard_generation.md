@@ -13,15 +13,25 @@ the four repos, builds the venv, checks the local Postgres, and offers to build 
 datasets. It never modifies an existing checkout and never needs root.
 
 ```bash
+mkdir -p /tmp/it_eval_repos && cd /tmp/it_eval_repos
 git clone https://github.com/speediedan/interpretune.git && cd interpretune
 
-# --dry-run prints the full plan first; --yes runs non-interactively
-python scripts/setup_dashboard_benchmark_env.py --worktrees-dir <dir-for-baseline-worktrees> --dry-run
-python scripts/setup_dashboard_benchmark_env.py --worktrees-dir <dir-for-baseline-worktrees>
+# See the whole plan first, without running anything:
+# python scripts/setup_dashboard_benchmark_env.py --dry-run
 
-# then, as the script's completion summary prints:
-source <dir-for-baseline-worktrees>/benchmark_env.sh && source <venv>/bin/activate
+# Clone/build everything. With no arguments it clones the sibling repos beside this one and puts the
+# preserved-baseline worktrees in a dated temp dir (/tmp/it_baseline_trees_YYYYMMDD).
+python scripts/setup_dashboard_benchmark_env.py
 
+# To reuse checkouts you already have, point at them instead of cloning:
+# python scripts/setup_dashboard_benchmark_env.py --repos-root /tmp/it_eval_repos \
+#   --neuronpedia ~/repos/neuronpedia
+```
+
+The completion summary prints the exact `source ...` lines and both suite commands, ready to paste:
+
+```bash
+source /tmp/it_baseline_trees_YYYYMMDD/benchmark_env.sh && source <venv>/bin/activate
 python scripts/run_dashboard_benchmark_suite.py --mode threeway   # ~25 min
 python scripts/run_dashboard_benchmark_suite.py --mode full       # ~2 h, 17 legs
 ```
@@ -34,15 +44,6 @@ To repackage existing artifacts without re-running anything:
 
 Full usage: `scripts/dashboard_benchmark_suite_usage.md` (in the repository — that file is outside
 the docs build).
-
-### What the measurements do and do not cover
-
-- **Hardware**: one consumer RTX 4090 (24 GiB). Nothing here was run on multi-node or
-  datacenter-class hardware.
-- **Models**: gemma-3-1b-it and gemma-3-4b-it only; 16k and 262k widths only.
-- **Multi-GPU generation** is basic only — scope and limitations are in
-  [the pipeline guide](neuronpedia_dashboard_pipeline.md).
-- **Import figures** are against a local Postgres, not a production Neuronpedia deployment.
 
 ---
 
@@ -75,18 +76,22 @@ The webapp serves on `http://localhost:3000`; Postgres on `127.0.0.1:5433`. Feat
 
 ### 2. Generate and import dashboards
 
-See the [dashboard pipeline guide](neuronpedia_dashboard_pipeline.md)
-— [layer-0 smoke run](neuronpedia_dashboard_pipeline.md#layer-0-smoke)
-is the cheapest way to get something on screen, and
+See the [dashboard pipeline guide](neuronpedia_dashboard_pipeline.md) for the end-to-end generation
+walkthrough, and
 [importing existing bundles](neuronpedia_dashboard_pipeline.md#import-existing-export-bundles-into-the-local-db)
-covers the backfill case.
+for the backfill case.
 
 The local notebook's defaults expect `gemma-3-1b-it` dashboards for the
-`gemmascope-2-transcoder-16k` source set. **Dashboard and runtime width must match**: feature indices
-are only meaningful within one feature space, so 16k-runtime features must not be linked to 262k
-dashboards (a 2026-07-17 audit found exactly that mislabeling).
+`gemmascope-2-transcoder-16k` source set; dashboard and runtime width must match.
+
+If you have a GPU with more VRAM than the reference 4090 (24 GiB), you can push the generation
+configuration further — larger `n_features_per_batch` / `n_prompts_in_forward_pass`, or more prompts.
+The pipeline guide documents the shapes we validated and where the memory cliffs sit.
 
 ### 3. Set up the explanation CLI (OPTIONAL)
+
+<details>
+<summary>Expand only if you want to see explanations generated end to end</summary>
 
 **This whole step is optional.** The local notebook ships with
 `GENERATE_MISSING_LOCAL_EXPLANATIONS = False`, so it reports local explanation coverage without
@@ -159,6 +164,8 @@ python scripts/generate_neuronpedia_feature_explanation.py \
 Full reference:
 [Explanation CLI configuration](neuronpedia_dashboard_pipeline.md#explanation-cli-configuration)
 and [Local explanation note](neuronpedia_dashboard_pipeline.md#local-explanation-note).
+
+</details>
 
 ---
 

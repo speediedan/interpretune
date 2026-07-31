@@ -228,6 +228,10 @@ kill -TERM -1373792
 
 ### Basic multi-GPU generation: scope, example configuration, and limitations
 
+<details>
+<summary>Multi-GPU is basic and deprioritized relative to the single-GPU walkthrough — expand for scope, configuration and limitations</summary>
+
+
 **Scope statement (read first):** the pipeline retains *basic* multi-GPU support — one pipeline
 process per GPU, coarse layer-level partitioning, per-worker resume — via the multi-worker launcher
 mode above. It is validated at that level and no further: there is no intra-layer sharding, no dynamic
@@ -303,6 +307,8 @@ Known limitations (deferred optimizations):
   worker (run imports from one worker or post-hoc for multi-worker runs).
 - No NCCL/collective usage — workers are fully independent processes; nothing prevents running
   workers on different hosts against a shared filesystem, but that is unvalidated.
+
+</details>
 
 ### Clean stop and single-worker restart
 
@@ -489,8 +495,8 @@ nohup python -m interpretune.utils.neuronpedia_dashboard_pipeline \
   --creator-name 'Google DeepMind' \
   --release-id gemma-scope-2 \
   --release-title 'Gemma Scope 2' \
-  --release-url https://huggingface.co/mwhanna/gemma-scope-2-1b-it \
-  --hf-weights-repo-id mwhanna/gemma-scope-2-1b-it \
+  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
+  --hf-weights-repo-id google/gemma-scope-2-1b-it \
   --hf-weights-path-template 'transcoder_all/layer_{layer}_width_16k_l0_small_affine' \
   --hook-point hook_mlp_in \
   --prompts-huggingface-dataset-path monology/pile-uncopyrighted \
@@ -1062,138 +1068,6 @@ The successful RTX 2070 SUPER probe used:
 ```
 
 Result: `target_reached`, `2` batches, `13.5s` average batch time, `2271` features/min, max tree RSS `4.73 GiB`, and max GPU process memory `5564 MiB`. A `KeyboardInterrupt` at the end of the layer log is expected for this probe because the profiling harness intentionally terminates the child process after it observes the target batch count.
-
-## CLT + structured dataset example
-
-The same pipeline now supports the current GemmaScope2 CLT layout for `google/gemma-scope-2-1b-it`, where each layer lives in a shared local directory as `config.json` plus `params_layer_<n>.safetensors`.
-
-First, prefetch the CLT directory so every layer file is present before the long run reaches later layers:
-
-```bash
-CLT_SNAPSHOT=$(python - <<'PY'
-from huggingface_hub import snapshot_download
-
-print(snapshot_download('google/gemma-scope-2-1b-it', allow_patterns=['clt/width_262k_l0_medium_affine/*']))
-PY
-)
-
-CLT_DIR="${CLT_SNAPSHOT}/clt/width_262k_l0_medium_affine"
-```
-
-### Layer-0 smoke
-
-Use this small smoke command to validate generation, conversion, and local DB import on one batch:
-
-```bash
-LOCAL_NEURONPEDIA_DB_URL='postgres://postgres:postgres@127.0.0.1:5433/postgres' \
-python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --model-name gemma-3-1b-it \
-  --model-layers 26 \
-  --sae-set gemma-scope-2-1b-it-clt-all \
-  --neuronpedia-source-set-id gemmascope-2-clt-262k-rte \
-  --neuronpedia-source-set-description 'CLT - 262k (RTE smoke)' \
-  --creator-name 'Google DeepMind' \
-  --release-id gemma-scope-2 \
-  --release-title 'Gemma Scope 2' \
-  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
-  --hf-weights-repo-id google/gemma-scope-2-1b-it \
-  --hf-weights-path-template 'clt/width_262k_l0_medium_affine/params_layer_{layer}.safetensors' \
-  --hf-model-path google/gemma-3-1b-it \
-  --hook-point hook_mlp_in \
-  --prompts-huggingface-dataset-path aps/super_glue \
-  --prompts-huggingface-dataset-config-name rte \
-  --prompts-huggingface-dataset-split train \
-  --prompts-pretokenized-dataset-path ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts \
-  --model-wrapper bridge \
-  --bridge-enable-compatibility-mode \
-  --runner-log-resource-snapshots \
-  --start-layer 0 \
-  --end-layer 0 \
-  --start-batch 0 \
-  --end-batch 0 \
-  --n-prompts-total 64 \
-  --n-tokens-in-prompt 319 \
-  --n-features-per-batch 8 \
-  --no-deduplicate-shared-prompt-tokens \
-  --strict-shared-prompt-count \
-  --sae-path-template "${CLT_DIR}" \
-  --python-executable "$(command -v python)" \
-  --cuda-visible-devices 0 \
-  --use-clt
-```
-
-A CLT config is deliberately not vendored under `scripts/configs/neuronpedia_dashboard/`, but a config-backed
-equivalent for the full rollout is straightforward to assemble: extend the vendored `gemmascope-2-rte-base.yaml` with
-the CLT-specific values from the Full RTE rollout command below (`sae_set: gemma-scope-2-1b-it-clt-all`,
-`neuronpedia_source_set_id: gemmascope-2-clt-262k-rte`,
-`hf_weights_path_template: clt/width_262k_l0_medium_affine/params_layer_{layer}.safetensors`,
-`hf_model_path: google/gemma-3-1b-it`, `sae_path_template` pointing at the prefetched `${CLT_DIR}`, `use_clt: true`,
-and the `128/32` batch shape), then launch it with:
-
-```bash
-python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config <your-clt-config>.yaml
-```
-
-Validated result for this smoke path:
-
-1. layer-`0` dashboard output wrote `batch-0.json`
-2. the pipeline converted `${NEURONPEDIA_UTILS_ROOT}/neuronpedia_utils/exports/gemma-3-1b-it/0-gemmascope-2-clt-262k-rte`
-3. the local import summary was `SourceSet=1`, `Source=1`, `Neuron=8`, `Activation=256`
-
-### Full RTE rollout
-
-This is the current command of record for the full `0-25` CLT RTE rollout:
-
-```bash
-LOCAL_NEURONPEDIA_DB_URL='postgres://postgres:postgres@127.0.0.1:5433/postgres' \
-python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --model-name gemma-3-1b-it \
-  --model-layers 26 \
-  --sae-set gemma-scope-2-1b-it-clt-all \
-  --neuronpedia-source-set-id gemmascope-2-clt-262k-rte \
-  --neuronpedia-source-set-description 'CLT - 262k (RTE)' \
-  --creator-name 'Google DeepMind' \
-  --release-id gemma-scope-2 \
-  --release-title 'Gemma Scope 2' \
-  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
-  --hf-weights-repo-id google/gemma-scope-2-1b-it \
-  --hf-weights-path-template 'clt/width_262k_l0_medium_affine/params_layer_{layer}.safetensors' \
-  --hf-model-path google/gemma-3-1b-it \
-  --hook-point hook_mlp_in \
-  --prompts-huggingface-dataset-path aps/super_glue \
-  --prompts-huggingface-dataset-config-name rte \
-  --prompts-huggingface-dataset-split train \
-  --prompts-pretokenized-dataset-path ${IT_NP_CACHE}/pretokenized/gemma-3-1b-it_rte_boolq_context319_chat_template_full_prompts \
-  --model-wrapper bridge \
-  --bridge-enable-compatibility-mode \
-  --runner-log-resource-snapshots \
-  --start-layer 0 \
-  --end-layer 25 \
-  --start-batch 0 \
-  --n-prompts-total 2490 \
-  --n-tokens-in-prompt 319 \
-  --n-features-per-batch 128 \
-  --n-prompts-in-forward-pass 32 \
-  --no-deduplicate-shared-prompt-tokens \
-  --strict-shared-prompt-count \
-  --no-archive-partials \
-  --sae-path-template "${CLT_DIR}" \
-  --python-executable "$(command -v python)" \
-  --cuda-visible-devices 0 \
-  --use-clt
-```
-
-Validated runtime envelope for the corresponding direct layer-`0` one-batch probe on the real `2490`-prompt workload:
-
-1. `0:40.88` wall time
-2. `7,004,248 kB` max RSS
-3. `cuda_max_allocated_gib=4.35`
-4. `post_batch_0` RSS `2.26 GiB`
-
-That probe used `float32` model weights in the direct runner. The pipeline keeps `model_dtype=bfloat16` by default, so the full job has additional GPU headroom beyond the measured probe.
-
-The first full layer-`1` CLT attempt later exposed a deeper mixed-precision seam: the Bridge path supplies `bfloat16` activations while the local CLT weights stay `float32`, so `CLTLayerWrapper.encode()` now casts activations to the CLT weight dtype before `F.linear(...)`. The exact failed layer-`1` repro is now past the old crash point, and the full `0-25` run has been resumed from layer `1` under the same `128/32` shape.
 
 ## Restarting a paused or killed run
 
