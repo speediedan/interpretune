@@ -44,6 +44,19 @@ ARTIFACT_DIR = REPO_ROOT / "docs" / "notebook_artifacts"
 # Cells removed from the docs artifact, matched on `metadata.id` set by publish_notebooks.py.
 DOCS_EXCLUDED_CELL_IDS = {"install-deps"}
 
+# Cells removed by papermill TAG. `injected-parameters` is the cell papermill inserts to record the
+# parameters a run was executed with. On a docs page it is actively misleading: a parameterized run
+# renders e.g. `GENERATE_MISSING_LOCAL_EXPLANATIONS = True` directly beneath the notebook's own
+# parameters cell documenting it as False, so the page appears to contradict itself.
+DOCS_EXCLUDED_CELL_TAGS = {"injected-parameters"}
+
+
+def _is_excluded_cell(cell: dict[str, Any]) -> bool:
+    meta = cell.get("metadata", {})
+    if meta.get("id") in DOCS_EXCLUDED_CELL_IDS:
+        return True
+    return bool(DOCS_EXCLUDED_CELL_TAGS.intersection(meta.get("tags", []) or []))
+
 
 def load_notebook(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -57,12 +70,31 @@ def save_notebook(notebook: dict[str, Any], path: Path) -> None:
 def strip_docs_excluded_cells(notebook: dict[str, Any]) -> tuple[dict[str, Any], int]:
     """Drop cells that only make sense in a runnable copy (the commented-out installer)."""
     cells = notebook.get("cells", [])
-    kept = [c for c in cells if c.get("metadata", {}).get("id") not in DOCS_EXCLUDED_CELL_IDS]
+    kept = [c for c in cells if not _is_excluded_cell(c)]
     return notebook | {"cells": kept}, len(cells) - len(kept)
 
 
 def has_outputs(notebook: dict[str, Any]) -> bool:
     return any(c.get("outputs") for c in notebook.get("cells", []) if c.get("cell_type") == "code")
+
+
+def artifact_matches_source(artifact: dict[str, Any], source: dict[str, Any]) -> bool:
+    """Do artifact and publish source agree on everything except outputs?
+
+    The docs site renders the ARTIFACT, and conf.py prefers it over the publish lane. So a notebook edit that changes
+    only prose is invisible on the site until the artifact is rebuilt -- the page keeps rendering the old text with no
+    error anywhere. This compares cell types and sources (ignoring the install-deps cell the artifact deliberately
+    drops) so that drift is detectable.
+    """
+
+    def signature(notebook: dict[str, Any]) -> list[tuple[str, str]]:
+        return [
+            (c["cell_type"], "".join(c.get("source", [])))
+            for c in notebook.get("cells", [])
+            if not _is_excluded_cell(c)
+        ]
+
+    return signature(artifact) == signature(source)
 
 
 def discover(selector: str | None) -> list[Path]:
@@ -100,6 +132,12 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=1800, help="Per-cell execution timeout (default: 1800).")
     parser.add_argument("--parameters", default="{}", help="JSON dict of papermill parameters.")
     parser.add_argument("--list", action="store_true", help="List candidate notebooks and their artifact status.")
+    parser.add_argument(
+        "--check-stale",
+        action="store_true",
+        help="Exit non-zero if any artifact's content has drifted from its publish source (outputs ignored). "
+        "The docs render artifacts, so drift means the site is showing stale text with no build error.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Report what would happen; write nothing.")
     args = parser.parse_args()
 
@@ -107,6 +145,18 @@ def main() -> int:
     if not notebooks:
         print(f"No notebooks matched under {PUBLISH_DIR}", file=sys.stderr)
         return 1
+
+    if args.check_stale:
+        stale: list[str] = []
+        for source in notebooks:
+            rel = source.relative_to(PUBLISH_DIR)
+            artifact = ARTIFACT_DIR / rel
+            if artifact.exists() and not artifact_matches_source(load_notebook(artifact), load_notebook(source)):
+                stale.append(str(rel))
+        for rel_str in stale:
+            print(f"STALE artifact (rebuild it): {rel_str}", file=sys.stderr)
+        print(f"{len(stale)} stale artifact(s)")
+        return 1 if stale else 0
 
     if args.list:
         for source in notebooks:
