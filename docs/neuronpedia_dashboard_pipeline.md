@@ -28,12 +28,12 @@ defaults:
   `NEURONPEDIA_REPO_ROOT` and `NEURONPEDIA_UTILS_ROOT` (the last defaults to
   `~/repos/neuronpedia/utils/neuronpedia-utils`).
 
-  **You usually do not need to set these by hand.** `scripts/setup_dashboard_benchmark_env.py` writes all four
+  You usually do not need to set these by hand, `scripts/setup_dashboard_benchmark_env.py` writes all four
   into the `benchmark_env.sh` it generates, pointing at whatever checkouts it actually used — including when it
   clones them somewhere other than `~/repos` (its default is a dated temp directory). If you moved or re-cloned a
   repo after running setup, re-run it and re-`source` the refreshed `benchmark_env.sh` rather than editing exports.
 
-  These overrides exist for the **editable multi-repo setup**, where the pipeline has to locate source checkouts.
+  Note these overrides exist for the *editable* multi-repo setup, where the pipeline has to locate source checkouts.
   Once the Wave 1 PRs land upstream and the packages are installed normally, the relevant modules are importable
   from site-packages and none of these variables should be needed.
 
@@ -43,6 +43,77 @@ use is:
 
 ```bash
 postgres://postgres:postgres@127.0.0.1:5433/postgres
+```
+
+
+## Quickstart: gemma-3-1b-it 16k on Monology (single GPU)
+
+This is a run that was actually executed and timed, not a template. It regenerates the full
+`gemmascope-2-transcoder-16k` source set for `gemma-3-1b-it` from the Monology pile and imports it
+into the local Neuronpedia DB.
+
+Everything is in a committed config, so the command is one line:
+
+```bash
+python -m interpretune.utils.neuronpedia_dashboard_pipeline \
+  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-16k-monology-production.yaml
+```
+
+Prompt sourcing streams `monology/pile-uncopyrighted` and SAEDashboard tokenizes/concatenates to
+128-token contexts — no pretokenization step is required for this path. (If you want a prebuilt
+tokenized cache instead, see [Pretokenize dashboard datasets](#pretokenize-dashboard-datasets); it is
+an alternative, not a prerequisite.)
+
+It ran in 58 min wall clock on a single RTX 4090 (24 GiB) for all 26 layers, producing 6.4 GB across
+1,015 files (26 `Source` rows, 425,984 `Neuron` rows) with no errors. More VRAM scales this down, and
+it will improve dramatically once the DB import bottleneck is removed — the per-layer generation
+times already sum to roughly twice the wall clock, because `runner_overlap_batch_packaging` and
+`overlap_local_db_import` overlap one layer's import with the next layer's generation.
+
+### Scaling this up
+
+4,096 prompts was chosen to fit a single overnight window, and is **smaller than the 24,576-prompt
+corpus** the previous 16k set used. On a 24 GiB card the 16k width has substantial headroom — the
+262k config has to drop `n_features_per_batch` to 2048, while 16k runs comfortably at 4096 because
+the feature axis is 16x narrower. With more VRAM you can raise `n_prompts_total`,
+`n_features_per_batch` or `n_prompts_in_forward_pass`; only `n_prompts_total` needs changing to
+reproduce the larger corpus. The 262k production config documents where the memory cliffs sit.
+
+## Standard launch example
+
+A fuller invocation for `gemma-3-1b-it` `gemmascope-2-transcoder-16k`, spelling out every flag
+rather than using a config file:
+
+```bash
+RUN_ROOT="${IT_NP_CACHE}/dashboard_runs"
+RUN_DIR="${RUN_ROOT}/gemma-3-1b-it_gemmascope-2-transcoder-16k"
+LAUNCH_LOG="${RUN_DIR}/run.resume-24-25.launch.log"
+
+mkdir -p "${RUN_DIR}"
+
+nohup python -m interpretune.utils.neuronpedia_dashboard_pipeline \
+  --model-name gemma-3-1b-it \
+  --model-layers 26 \
+  --sae-set gemma-scope-2-1b-it-transcoders-all \
+  --neuronpedia-source-set-id gemmascope-2-transcoder-16k \
+  --neuronpedia-source-set-description 'Transcoder - 16k' \
+  --creator-name 'Google DeepMind' \
+  --release-id gemma-scope-2 \
+  --release-title 'Gemma Scope 2' \
+  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
+  --hf-weights-repo-id google/gemma-scope-2-1b-it \
+  --hf-weights-path-template 'transcoder_all/layer_{layer}_width_16k_l0_small_affine' \
+  --hook-point hook_mlp_in \
+  --prompts-huggingface-dataset-path monology/pile-uncopyrighted \
+  --start-layer 24 \
+  --end-layer 25 \
+  --sae-path-template 'layer_{layer}_width_16k_l0_small_affine' \
+  --python-executable "$(command -v python)" \
+  --cuda-visible-devices 0 \
+  --heartbeat-seconds 60 \
+  --stall-timeout-seconds 1800 \
+  --use-skip-transcoder \
+  > "${LAUNCH_LOG}" 2>&1 &
 ```
 
 
@@ -314,6 +385,10 @@ Known limitations (deferred optimizations):
 
 ### Clean stop and single-worker restart
 
+<details>
+<summary>Recovery procedure for multi-worker runs — expand if you need to stop or restart one</summary>
+
+
 For the current multi-worker RTE production flow, killing only the detached monitor is not sufficient. The monitor will
 stop supervising, but any already-running worker pipeline and child SAEDashboard runner processes will keep going until
 their own process groups are terminated.
@@ -391,6 +466,8 @@ Important resume caveat:
 
 The other worker continues because it has its own process group, child runner, log file, and layer lock. To stop the
 whole two-worker run, terminate each worker process group separately.
+
+</details>
 
 ## Overlapped batch packaging (`--runner-overlap-batch-packaging`)
 
@@ -476,96 +553,6 @@ multi-GPU semantics are unchanged:
 This applies to the columnar output format only (legacy conversion+import stays inline) and is most useful for
 full multi-layer builds, where the DB import wall (rather than generation) otherwise dominates the serial per-layer
 time. Expect steady-state wall time per layer of roughly `max(generation, import)` instead of their sum.
-
-## Validated end-to-end example: gemma-3-1b-it 16k on Monology (single GPU)
-
-This is a run that was actually executed and timed, not a template. It regenerates the full
-`gemmascope-2-transcoder-16k` source set for `gemma-3-1b-it` from the Monology pile and imports it
-into the local Neuronpedia DB.
-
-Everything is in a committed config, so the command is one line:
-
-```bash
-python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-16k-monology-production.yaml
-```
-
-Prompt sourcing streams `monology/pile-uncopyrighted` and SAEDashboard tokenizes/concatenates to
-128-token contexts — no pretokenization step is required for this path. (If you want a prebuilt
-tokenized cache instead, see [Pretokenize dashboard datasets](#pretokenize-dashboard-datasets); it is
-an alternative, not a prerequisite.)
-
-### Measured result (2026-07-31, single RTX 4090 24 GiB)
-
-| | |
-| --- | --- |
-| Layers | 26 (all) |
-| Shape | 4,096 prompts x 128 tokens; `n_features_per_batch` 4096, `n_prompts_in_forward_pass` 256 |
-| **Wall clock** | **58 min** (3,503 s) |
-| Sum of per-layer times | 6,738 s |
-| Per layer | mean 259 s, min 241 s, max 361 s |
-| Output | 6.4 GB, 1,015 files; 26 `Source` rows, 425,984 `Neuron` rows |
-| Errors | none |
-
-**Wall clock is ~1.9x lower than the sum of per-layer times.** That gap is the overlap settings
-earning their keep — `runner_overlap_batch_packaging` and `overlap_local_db_import` let one layer's
-DB import proceed while the next layer generates, so steady-state cost per layer approaches
-`max(generation, import)` rather than their sum. Turn both off and expect roughly the 6,738 s figure.
-
-Sample log lines:
-
-```
-INFO Resolved prompt scheduling prompts_total=4096 tokens_per_prompt=128 prompts_in_forward_pass=256
-INFO START layer=0 worker=default sae_path=layer_0_width_16k_l0_small_affine
-INFO DONE layer=0 elapsed_seconds=240.6
-...
-INFO DONE layer=25 elapsed_seconds=298.0
-```
-
-### Scaling this up
-
-4,096 prompts was chosen to fit a single overnight window, and is **smaller than the 24,576-prompt
-corpus** the previous 16k set used. On a 24 GiB card the 16k width has substantial headroom — the
-262k config has to drop `n_features_per_batch` to 2048, while 16k runs comfortably at 4096 because
-the feature axis is 16x narrower. With more VRAM you can raise `n_prompts_total`,
-`n_features_per_batch` or `n_prompts_in_forward_pass`; only `n_prompts_total` needs changing to
-reproduce the larger corpus. The 262k production config documents where the memory cliffs sit.
-
-## Standard launch example
-
-This is the current Target B pattern for `gemma-3-1b-it` `gemmascope-2-transcoder-16k`:
-
-```bash
-RUN_ROOT="${IT_NP_CACHE}/dashboard_runs"
-RUN_DIR="${RUN_ROOT}/gemma-3-1b-it_gemmascope-2-transcoder-16k"
-LAUNCH_LOG="${RUN_DIR}/run.resume-24-25.launch.log"
-
-mkdir -p "${RUN_DIR}"
-
-nohup python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --model-name gemma-3-1b-it \
-  --model-layers 26 \
-  --sae-set gemma-scope-2-1b-it-transcoders-all \
-  --neuronpedia-source-set-id gemmascope-2-transcoder-16k \
-  --neuronpedia-source-set-description 'Transcoder - 16k' \
-  --creator-name 'Google DeepMind' \
-  --release-id gemma-scope-2 \
-  --release-title 'Gemma Scope 2' \
-  --release-url https://huggingface.co/google/gemma-scope-2-1b-it \
-  --hf-weights-repo-id google/gemma-scope-2-1b-it \
-  --hf-weights-path-template 'transcoder_all/layer_{layer}_width_16k_l0_small_affine' \
-  --hook-point hook_mlp_in \
-  --prompts-huggingface-dataset-path monology/pile-uncopyrighted \
-  --start-layer 24 \
-  --end-layer 25 \
-  --sae-path-template 'layer_{layer}_width_16k_l0_small_affine' \
-  --python-executable "$(command -v python)" \
-  --cuda-visible-devices 0 \
-  --heartbeat-seconds 60 \
-  --stall-timeout-seconds 1800 \
-  --use-skip-transcoder \
-  > "${LAUNCH_LOG}" 2>&1 &
-```
 
 ## Bridge + pretokenized dataset example
 
@@ -1241,7 +1228,7 @@ to regenerated or refreshed bundles rather than re-importing older `model.jsonl`
 
 ### Nested dashboard leaf resolution
 
-SAEDashboard layer directories do not always place `batch-*.json` files directly under `layer_<n>`. For the Gemma Target B run, the actual converter input for layer `23` was:
+SAEDashboard layer directories do not always place `batch-*.json` files directly under `layer_<n>`. For the gemma-3-1b-it 16k run, the actual converter input for layer `23` was:
 
 ```text
 .../layer_23/google/gemma-3-1b-it_gemma-scope-2-1b-it-transcoders-all_blocks.23.hook_mlp_in_16384

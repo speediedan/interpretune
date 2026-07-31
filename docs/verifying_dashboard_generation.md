@@ -4,7 +4,7 @@ Local command guide for:
 - Generating the latest lineage scalable-dashboard benchmark
 - Running an example notebook that consumes locally generated dashboards.
 
-References an end-to-end basic dashboard generation ([quickstart in the dashboard pipeline guide](neuronpedia_dashboard_pipeline.md)) that can be generated locally for use with the example notebook.
+References an end-to-end basic dashboard generation ([quickstart in the dashboard pipeline guide](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu)) that can be generated locally for use with the example notebook.
 
 ---
 
@@ -57,15 +57,15 @@ The quick concept-direction steering demo comes in two variants, so you can star
 | `ct_concept_steering_demo` | public gemma-2-2b + [neuronpedia.org](https://www.neuronpedia.org) | GPU + model weights only |
 | `ct_concept_steering_demo_local_np` | gemma-3-1b-it + your local Neuronpedia stack | the sections below |
 
-You can start with the public one if you want since it needs no local services and exercises the same analysis path but the local variant is the end-to-end demonstration that uses local dashboards/explanations (and optionally generates any missing explanations per-feature as needed in the notebook!) feeding feature selection and steering.  You'll be guided below to run the quick local dashboard generation for `gemma-3-1b-it` ([quickstart in the dashboard pipeline guide](neuronpedia_dashboard_pipeline.md)) before running that local notebook though since it depends on non-public dashboards (shareable dashboards prioritized IT feature forthcoming).
+You can start with the public one if you want since it needs no local services and exercises the same analysis path but the local variant is the end-to-end demonstration that uses local dashboards/explanations (and optionally generates any missing explanations per-feature as needed in the notebook!) feeding feature selection and steering. You'll be guided below to run the quick local dashboard generation for `gemma-3-1b-it` ([quickstart in the dashboard pipeline guide](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu)) before running that local notebook though since it depends on non-public dashboards (shareable dashboards prioritized IT feature forthcoming).
 
 ### 1. Bring up the local Neuronpedia stack
-- You can of course  local neuronpedia
-**Already run Neuronpedia locally?** Skip this — just make sure your webapp and Postgres are
+
+If you already run Neuronpedia locally you can skip this — just make sure your webapp and Postgres are
 reachable and note the ports, then set `LOCAL_WEBAPP_URL` / `LOCAL_DB_URL` in the notebook to match.
 Nothing below is required if your stack is already up.
 
-The commands below are for a **fresh** setup. `make init-env` **overwrites `.env`** (it prompts
+The commands below are for a fresh setup. `make init-env` overwrites `.env` (it prompts
 first and aborts unless you confirm), so do not run it against a Neuronpedia install you have
 already configured:
 
@@ -81,8 +81,10 @@ The webapp serves on `http://localhost:3000`; Postgres on `127.0.0.1:5433`. Feat
 
 ### 2. Generate and import dashboards
 
-See the [dashboard pipeline guide](neuronpedia_dashboard_pipeline.md) for the end-to-end generation
-walkthrough, and
+See the
+[quickstart](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu)
+in the dashboard pipeline guide for the end-to-end generation walkthrough — one command against a
+committed config, about an hour on a single 24 GiB card — and
 [importing existing bundles](neuronpedia_dashboard_pipeline.md#import-existing-export-bundles-into-the-local-db)
 for the backfill case.
 

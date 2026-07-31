@@ -8,26 +8,26 @@
 
 **A flexible framework for collaborative AI world model analysis and tuning.**
 
-Interpretune is an AI world model analysis framework. It gives a wide range of interpretability
-methods and packages **composable, shareable analysis operations and state**, accelerating
-collaborative world model analysis and tuning with PyTorch. Both humans and agents can inspect
+Interpretune is a (pre-MVP) AI world model analysis framework. It strives to provide composable, shareable latent-space analysis mutually intelligible to humans and agents. By granting a wide range of interpretability
+methods and packages access to composable, shareable analysis operations and state it accelerates novel,
+collaborative, world model analysis and tuning with PyTorch. Both humans and agents can inspect
 and refine the mechanistic and causal faithfulness of model reasoning at mutually intelligible
-levels of abstraction. That enables:
+levels of abstraction. Core framework goals:
 
-- **transparent, causally faithful reasoning**
-- **model self-reflection**
-- **world-model-guided collaborative tuning**
+- transparent, causally faithful reasoning
+- augmented model self-reflection
+- world-model-guided collaborative tuning
 
-Interpretune composes adapters at **multiple levels of abstraction** over a shared
+Interpretune composes adapters at multiple levels of abstraction over a shared
 session/protocol layer (see the
 {doc}`adapter development guide <usage/adapter_development_guide>`):
 
 - the *framework* level — core PyTorch, Lightning
 - the *interpretability latent-model* level — TransformerLens, NNsight
-- the *analysis* level — circuit-tracer, SAE-Lens
+- the *analysis* level — circuit-tracer, SAELens
 
-This composition pattern is what lets researchers **collaborate across interpretability
-frameworks**: analytical primitives, artifacts, and patterns written once run over many
+This composition pattern is what will allow users to collaborate across interpretability
+frameworks: analytical primitives, artifacts, and patterns written once run over many
 substrate combinations.
 
 Analysis flows are built from composable operations — e.g. `extract_top_features`,
@@ -43,7 +43,7 @@ the path to the initial alpha release.
 
 A note on terminology: throughout these docs, "world model" is used in the **epistemic/semantic**
 sense — the internal representations and beliefs a model encodes about the world — as studied in
-LLM interpretability, rather than the (related but distinct) predictive **visual world models** of
+interpretability, rather than the (related but distinct) predictive **visual world models** of
 embodied-agent and model-based-RL research. The initial MVP focuses on LLMs; fuller multimodal
 support is planned (see the {doc}`roadmap <roadmap>`).
 
