@@ -769,8 +769,16 @@ class Setup:
             "    > /tmp/full_wave.log 2>&1 &\n\n"
             "  tail -f /tmp/full_wave.log   # follow progress; the reviewer package lands in --package-root\n\n"
             "For a quicker check without the scaling-curve generation, use --mode threeway (~25 min) — short "
-            "enough to run in the foreground. See scripts/dashboard_benchmark_suite_usage.md for all modes "
-            "and flags."
+            "enough to run in the foreground:\n\n"
+            f"  source {env_file}\n"
+            f"  source {venv_path}/bin/activate\n"
+            f"  cd {self.repo_paths['interpretune']}\n"
+            "  python scripts/run_dashboard_benchmark_suite.py --mode threeway \\\n"
+            "    --session-root /tmp/np_dashboard_generation_profiles/threeway_$(date +%Y%m%d) \\\n"
+            "    --package-root /tmp/dashboard_benchmark_packages/threeway_$(date +%Y%m%d) \\\n"
+            "    --run-tag dashboard-bench \\\n"
+            f'    --local-db-url "{self.args.local_db_url}"\n\n'
+            "See scripts/dashboard_benchmark_suite_usage.md for all modes and flags."
         )
         if self.warnings:
             self.say("\nWarnings raised during setup (review before running):")
@@ -805,9 +813,11 @@ def build_parser() -> argparse.ArgumentParser:
         )
     parser.add_argument(
         "--worktrees-dir",
-        required=True,
+        default=str(Path(tempfile.gettempdir()) / f"it_baseline_trees_{datetime.now().strftime('%Y%m%d')}"),
         help="Directory to create the detached preserved-baseline worktrees in (created if missing; "
-        "existing worktrees inside are verified, never recreated or deleted).",
+        "existing worktrees inside are verified, never recreated or deleted). Defaults to a dated "
+        "temp path (e.g. /tmp/it_baseline_trees_20260731) so the script can be run with no arguments "
+        "at all; the date suffix keeps reruns on different days from colliding.",
     )
     parser.add_argument(
         "--np-cache",
