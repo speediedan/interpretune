@@ -1430,10 +1430,14 @@ def _log_runtime_diagnostics(logger: logging.Logger, *, pid: int, output_dir: Pa
 def _saedashboard_supports_write_page_index() -> bool:
     """Does the INSTALLED SAEDashboard accept ``--columnar-write-page-index``?
 
-    interpretune pins SAEDashboard to a fork SHA and supports a range of them, so this option cannot
-    be assumed present: passing it to a runner that does not define it aborts the subprocess with
-    "unrecognized arguments" — and it would do so per layer, mid-run. The dataclass field is the
-    probe rather than the CLI flag because the flag is registered inside a function body.
+    The pin now guarantees it (SD ``6f86560``), so this is no longer a capability *gate* deciding
+    which arguments to emit — it is a PRE-FLIGHT. The flag is always passed; this exists only to
+    turn the one remaining way to lack the field into a clear failure.
+
+    That way is an editable SAEDashboard checkout sitting on an older branch, which follows the
+    working tree rather than the pin. It has bitten this pipeline before, and the unguarded symptom
+    is an "unrecognized arguments" subprocess abort raised once per layer, mid-run. The dataclass
+    field is the probe rather than the CLI flag because the flag is registered inside a function body.
     """
     try:
         from sae_dashboard.neuronpedia.neuronpedia_runner_config import NeuronpediaRunnerConfig
@@ -1675,20 +1679,20 @@ def _layer_runner_command(
     command.append(f"--dashboard-output-format={dashboard_output_format}")
     if dashboard_output_format == "columnar":
         command.append(f"--columnar-artifact-format={config.runner_columnar_artifact_format}")
-        if _saedashboard_supports_write_page_index():
-            command.append(
-                "--columnar-write-page-index"
-                if config.runner_columnar_write_page_index
-                else "--no-columnar-write-page-index"
+        if not _saedashboard_supports_write_page_index():
+            raise RuntimeError(
+                "The installed SAEDashboard has no --columnar-write-page-index option, but the "
+                "pinned version (SD 6f86560) provides it. This almost always means an EDITABLE "
+                "SAEDashboard checkout is on an older branch -- an editable install follows the "
+                "working tree, not the pin. Refusing to start: continuing would produce Parquet "
+                "artifacts with no page index, which cannot be range-read and cannot be fixed "
+                "without regenerating the entire corpus."
             )
-        elif config.runner_columnar_write_page_index:
-            logging.getLogger(__name__).warning(
-                "The installed SAEDashboard has no --columnar-write-page-index option, so this run "
-                "will produce Parquet artifacts WITHOUT a page index. Readers cannot range-read "
-                "individual pages, so HTTP streaming falls back to whole row groups, and the index "
-                "cannot be added afterwards -- fixing it requires regenerating the corpus. Upgrade "
-                "SAEDashboard before generating artifacts intended for publication."
-            )
+        command.append(
+            "--columnar-write-page-index"
+            if config.runner_columnar_write_page_index
+            else "--no-columnar-write-page-index"
+        )
         command.append("--columnar-emit-activation-rows")
         if config.runner_overlap_batch_packaging:
             command.append("--overlap-batch-packaging")
@@ -1941,7 +1945,14 @@ def read_source_ids_sidecar(run_root: Path) -> dict[str, str]:
 
 
 def write_source_ids_sidecar(
-    run_root: Path, source_ids: Mapping[int | str, str], *, source_set_id: str, model_name: str = ""
+    run_root: Path,
+    # A UNION rather than Mapping[int | str, str]: Mapping is invariant in its key type, so the
+    # latter rejects both a plain dict[str, str] (what read_source_ids_sidecar returns) and a plain
+    # dict[int, str] (what callers construct from layer numbers). Keys are stringified below either way.
+    source_ids: Mapping[int, str] | Mapping[str, str],
+    *,
+    source_set_id: str,
+    model_name: str = "",
 ) -> Path:
     """Record each layer's Neuronpedia source id INSIDE the corpus.
 

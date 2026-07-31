@@ -115,7 +115,10 @@ git-deps = [
     # fork-only surface, e.g. sae_dashboard.neuronpedia.prompt_bucketing); flip back to released
     # version floors at wave-merge time.
     "sae-lens @ git+https://github.com/speediedan/SAELens.git@86f90b3d3dccd3f6ac729577b979f76f88a525f1",
-    "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@d8d9444232a077b9ba0e4264ca5ae5c38dd2dd8d",
+    # Bumped 2026-08-05 to the SD#74 head carrying `columnar_write_page_index`. That field is now a
+    # REQUIREMENT, not a capability probed at runtime: a page index cannot be added to a corpus after
+    # generation, so a run that silently omitted it could only be repaired by regenerating.
+    "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@6f865606184bd54c38392fdcb747e06bccb028cf",
 ]
 
 dev = [

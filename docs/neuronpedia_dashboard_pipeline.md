@@ -56,7 +56,7 @@ Everything is in a committed config, so the command is one line:
 
 ```bash
 python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-16k-monology-production.yaml
+  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-16k-monology-production.yaml
 ```
 
 Prompt sourcing streams `monology/pile-uncopyrighted` and SAEDashboard tokenizes/concatenates to
@@ -153,7 +153,7 @@ Notes:
 5. When you need a fresh generation lineage for the same `model_name` plus `neuronpedia_source_set_id`, set `run_name_suffix` or override `--run-name-suffix`. That changes the run directory and default logs without forcing a fake source-set id or a different export target.
 6. If you accidentally point a resumed launch at a fully completed lineage, the pipeline now warns that the requested layer range is already complete and tells you to use `--run-name-suffix`, `--run-root`, or `--no-resume`.
 
-The vendored example configs for the current RTE flows live under `scripts/configs/neuronpedia_dashboard/`
+The vendored example configs for the current RTE flows live under `src/it_examples/config/neuronpedia_dashboard/`
 (a shared `gemmascope-2-rte-base.yaml` plus `EXTENDS` variants). Config values may reference environment variables
 with `${VAR}` syntax, which the pipeline expands at load time — the vendored configs use `${IT_NP_CACHE}` for the
 pretokenized prompt cache paths.
@@ -162,7 +162,7 @@ Current single-worker fallback pattern for the context-`319` full-prompt transco
 
 ```bash
 python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
+  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
   --run-name-suffix context319-full-prompts
 ```
 
@@ -170,7 +170,7 @@ Current two-worker launch pattern for the same run namespace:
 
 ```bash
 python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
+  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
   --run-name-suffix context319-full-prompts
 ```
 
@@ -185,7 +185,7 @@ You can still override individual values at launch time:
 
 ```bash
 python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
+  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
   --start-layer 3 \
   --start-batch 10
 ```
@@ -328,7 +328,7 @@ Supported behaviors (all exercised on the example pair below):
 
 The commands below are exactly what was validated on an RTX 4090 (24 GiB, `cuda:0`) + RTX 2070
 (8 GiB, `cuda:1`) pair with `gemma-3-1b-it` × the 262k transcoders on the columnar path, using
-`scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml`
+`src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml`
 (Monology 2,490 prompts; layer 0 on the 4090 at `2048×256`, layer 1 on the 2070 at `512×64 / acts16`,
 batches 0-2, no DB import). Adapt the worker shapes/layers to your own hardware.
 
@@ -336,7 +336,7 @@ batches 0-2, no DB import). Adapt the worker shapes/layers to your own hardware.
 
    ```bash
    python scripts/launch_neuronpedia_dashboard_pipeline.py \
-     --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml \
+     --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml \
      --dry-run
    ```
 
@@ -353,7 +353,7 @@ batches 0-2, no DB import). Adapt the worker shapes/layers to your own hardware.
 
    ```bash
    python scripts/launch_neuronpedia_dashboard_pipeline.py \
-     --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml
+     --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml
    ```
 
    Expected: the workers generate their layers concurrently on their pinned GPUs (validated: layer 0
@@ -444,7 +444,7 @@ rm -f <run_directory>/layer_locks/*.lock
 
 ```bash
 nohup python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
+  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
   --run-name-suffix context319-full-prompts \
   --worker-id gpu1 \
   --enable-layer-locks \
@@ -938,7 +938,7 @@ Keep the knobs distinct when reasoning about this path: `n_features_per_batch` c
 cd ~/repos/interpretune && \
 source <your-venv>/bin/activate && \
 python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
+  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
   --run-name-suffix context319-full-prompts
 ```
 

@@ -3968,14 +3968,19 @@ def test_config_file_defaults_survive_cli_parsing(tmp_path: Path, monkeypatch: p
     assert opted_out.runner_columnar_write_page_index is False
 
 
-def test_write_page_index_flag_is_capability_gated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog) -> None:
-    """Never pass --columnar-write-page-index to a SAEDashboard that does not define it.
+def test_write_page_index_flag_requires_a_supporting_saedashboard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The flag is now always emitted; a SAEDashboard lacking it is a pre-flight FAILURE.
 
-    interpretune pins SAEDashboard to a fork SHA and supports a range of them. An unrecognized
-    option aborts the runner subprocess per layer, mid-run, so the flag is emitted only when the
-    installed runner config carries the field. When it does not, a corpus without a page index is
-    still a real (unfixable-after-the-fact) consequence, so it warns loudly rather than passing
-    silently -- and the Hub publisher independently refuses to upload such a corpus.
+    The pin guarantees the field (SD ``6f86560``), so this stopped being a capability gate choosing
+    which arguments to emit. The one remaining way to lack it is an editable SAEDashboard checkout on
+    an older branch, which follows the working tree rather than the pin -- something that has already
+    happened once on this pipeline.
+
+    Refusing beats the previous warn-and-continue: that produced a corpus with no page index, and a
+    page index cannot be added afterwards, so the only repair is regenerating everything. Failing
+    before the first layer costs seconds; discovering it after a multi-hour run costs the run.
     """
     base_kwargs = dict(
         model_name="gemma-3-1b-it",
@@ -4005,12 +4010,16 @@ def test_write_page_index_flag_is_capability_gated(tmp_path: Path, monkeypatch: 
     supported = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "l0")
     assert "--columnar-write-page-index" in supported
 
+    # Opting out must still be expressible -- the refusal is about the option being ABSENT, not about
+    # the value chosen.
+    opted_out = NeuronpediaDashboardPipelineConfig(**{**base_kwargs, "runner_columnar_write_page_index": False})
+    assert "--no-columnar-write-page-index" in dashboard_pipeline._layer_runner_command(
+        opted_out, layer_num=0, output_dir=tmp_path / "l0"
+    )
+
     monkeypatch.setattr(dashboard_pipeline, "_saedashboard_supports_write_page_index", lambda: False)
-    with caplog.at_level(logging.WARNING):
-        unsupported = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "l0")
-    assert not any("write-page-index" in arg for arg in unsupported)
-    assert "no --columnar-write-page-index option" in caplog.text
-    assert "regenerating the corpus" in caplog.text
+    with pytest.raises(RuntimeError, match="EDITABLE"):
+        dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "l0")
 
 
 def test_no_cli_option_declares_a_default_that_defeats_suppress() -> None:
