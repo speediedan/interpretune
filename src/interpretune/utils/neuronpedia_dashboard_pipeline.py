@@ -221,6 +221,10 @@ class NeuronpediaDashboardPipelineConfig:
     runner_dashboard_output_format: str = "auto"
     legacy_export_bundle_contract: str = "auto"
     runner_columnar_artifact_format: str = "parquet"
+    # Parquet page index. Defaults ON: it costs ~0.01% in file size but cannot be added to existing
+    # files, so a corpus generated without it can only be fixed by regenerating. Without it a reader
+    # streaming one row group must fetch the whole group rather than range-reading pages.
+    runner_columnar_write_page_index: bool = True
     runner_emit_activation_copy_rows: bool | None = None
     runner_overlap_batch_packaging: bool = False
     # Opt-in SAEDashboard selection/logits hygiene (columnar backend only; defaults off to
@@ -1643,6 +1647,11 @@ def _layer_runner_command(
     command.append(f"--dashboard-output-format={dashboard_output_format}")
     if dashboard_output_format == "columnar":
         command.append(f"--columnar-artifact-format={config.runner_columnar_artifact_format}")
+        command.append(
+            "--columnar-write-page-index"
+            if config.runner_columnar_write_page_index
+            else "--no-columnar-write-page-index"
+        )
         command.append("--columnar-emit-activation-rows")
         if config.runner_overlap_batch_packaging:
             command.append("--overlap-batch-packaging")
@@ -2670,6 +2679,16 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--runner-columnar-artifact-format",
         choices=("arrow", "parquet"),
+    )
+    parser.add_argument(
+        "--runner-columnar-write-page-index",
+        action=argparse.BooleanOptionalAction,
+        # No `default=`: this parser sets argument_default=argparse.SUPPRESS so an unpassed flag stays
+        # out of the namespace and the dataclass default wins. An explicit default here (even None)
+        # defeats that and silently overrides the config file -- for this flag that shipped a corpus
+        # with no page index, which cannot be fixed without regenerating it.
+        help="Write a Parquet page index (default: on). Needed for page-granular range reads when "
+        "artifacts are streamed from the Hub; it cannot be added without regenerating the corpus.",
     )
     parser.add_argument(
         "--runner-emit-activation-copy-rows",

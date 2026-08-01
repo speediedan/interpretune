@@ -3828,3 +3828,121 @@ def test_layer_runner_command_forwards_columnar_peak_memory_controls(tmp_path: P
     )
     assert "--columnar-max-device-staged-acts-bytes=0" in opt_in_command
     assert "--columnar-row-chunk-size=64" in opt_in_command
+
+
+def test_layer_runner_command_forwards_write_page_index(tmp_path: Path) -> None:
+    """The page index must default ON and be explicitly negatable.
+
+    Asserted on the emitted command line because that is the entire transport between this pipeline and SAEDashboard --
+    a config field that never becomes a flag silently produces a corpus with no page index, which cannot be repaired
+    without regenerating it.
+    """
+    base_kwargs = dict(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_description="Transcoder - 262k",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_mlp_in",
+        prompts_huggingface_dataset_path="monology/pile-uncopyrighted",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+    )
+
+    default_command = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(**base_kwargs, runner_dashboard_output_format="columnar"),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert "--columnar-write-page-index" in default_command
+    assert "--no-columnar-write-page-index" not in default_command
+
+    opted_out = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(
+            **base_kwargs,
+            runner_dashboard_output_format="columnar",
+            runner_columnar_write_page_index=False,
+        ),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert "--no-columnar-write-page-index" in opted_out
+    assert "--columnar-write-page-index" not in opted_out
+
+    # The legacy_json lane writes no parquet, so the flag would be meaningless there.
+    legacy_command = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(**base_kwargs, runner_dashboard_output_format="legacy_json"),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert not any("write-page-index" in arg for arg in legacy_command)
+
+
+def test_config_file_defaults_survive_cli_parsing(tmp_path: Path) -> None:
+    """A flag not passed on the CLI must not override the config-file/dataclass default.
+
+    This parser sets ``argument_default=argparse.SUPPRESS`` so unpassed options stay out of the
+    namespace. An ``add_argument(..., default=None)`` defeats that silently: the None lands in the
+    merged config and, for a boolean, reads as False. That is how a run configured for
+    ``write_page_index`` on emitted ``--no-columnar-write-page-index`` and produced a corpus with no
+    page index -- a defect only fixable by regenerating.
+
+    Asserted through _parse_args -> _build_dashboard_pipeline_config -> _layer_runner_command, the
+    path the launcher actually takes; constructing the config directly bypasses the bug.
+    """
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "pipeline": {
+                    "model_name": "gemma-3-1b-it",
+                    "model_layers": 26,
+                    "sae_set": "gemma-scope-2-1b-it-transcoders-all",
+                    "neuronpedia_source_set_id": "gemmascope-2-transcoder-16k",
+                    "neuronpedia_source_set_description": "Transcoder - 16k",
+                    "creator_name": "Google DeepMind",
+                    "release_id": "gemma-scope-2",
+                    "release_title": "Gemma Scope 2",
+                    "release_url": "https://huggingface.co/google/gemma-scope-2-1b-it",
+                    "hf_weights_repo_id": "google/gemma-scope-2-1b-it",
+                    "hf_weights_path_template": "transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+                    "sae_path_template": "layer_{layer}_width_16k_l0_small_affine",
+                    "hook_point": "hook_mlp_in",
+                    "prompts_huggingface_dataset_path": "monology/pile-uncopyrighted",
+                    "start_layer": 0,
+                    "end_layer": 0,
+                    "run_root": str(tmp_path / "runs"),
+                    "export_root": str(tmp_path / "exports"),
+                    "runner_dashboard_output_format": "columnar",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    args = dashboard_pipeline._parse_args(["--config", str(config_path)])
+    config = dashboard_pipeline._build_dashboard_pipeline_config(args)
+
+    assert config.runner_columnar_write_page_index is True, "an unpassed CLI flag overrode the dataclass default"
+    command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
+    assert "--columnar-write-page-index" in command
+    assert "--no-columnar-write-page-index" not in command
+
+    # And an explicit opt-out on the CLI must still win.
+    opted_out = dashboard_pipeline._build_dashboard_pipeline_config(
+        dashboard_pipeline._parse_args(["--config", str(config_path), "--no-runner-columnar-write-page-index"])
+    )
+    assert opted_out.runner_columnar_write_page_index is False
