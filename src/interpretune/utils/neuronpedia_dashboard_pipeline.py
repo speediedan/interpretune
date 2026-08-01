@@ -5,6 +5,7 @@ from collections import deque
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
+from functools import lru_cache
 import hashlib
 import importlib.util
 import inspect
@@ -1414,6 +1415,22 @@ def _log_runtime_diagnostics(logger: logging.Logger, *, pid: int, output_dir: Pa
     )
 
 
+@lru_cache(maxsize=1)
+def _saedashboard_supports_write_page_index() -> bool:
+    """Does the INSTALLED SAEDashboard accept ``--columnar-write-page-index``?
+
+    interpretune pins SAEDashboard to a fork SHA and supports a range of them, so this option cannot
+    be assumed present: passing it to a runner that does not define it aborts the subprocess with
+    "unrecognized arguments" — and it would do so per layer, mid-run. The dataclass field is the
+    probe rather than the CLI flag because the flag is registered inside a function body.
+    """
+    try:
+        from sae_dashboard.neuronpedia.neuronpedia_runner_config import NeuronpediaRunnerConfig
+    except ImportError:  # pragma: no cover - sae_dashboard is a hard dependency of this module
+        return False
+    return "columnar_write_page_index" in getattr(NeuronpediaRunnerConfig, "__dataclass_fields__", {})
+
+
 def _resolve_runner_dashboard_output_format(config: NeuronpediaDashboardPipelineConfig) -> str:
     if config.runner_implementation == "legacy":
         return "legacy_json"
@@ -1647,11 +1664,20 @@ def _layer_runner_command(
     command.append(f"--dashboard-output-format={dashboard_output_format}")
     if dashboard_output_format == "columnar":
         command.append(f"--columnar-artifact-format={config.runner_columnar_artifact_format}")
-        command.append(
-            "--columnar-write-page-index"
-            if config.runner_columnar_write_page_index
-            else "--no-columnar-write-page-index"
-        )
+        if _saedashboard_supports_write_page_index():
+            command.append(
+                "--columnar-write-page-index"
+                if config.runner_columnar_write_page_index
+                else "--no-columnar-write-page-index"
+            )
+        elif config.runner_columnar_write_page_index:
+            logging.getLogger(__name__).warning(
+                "The installed SAEDashboard has no --columnar-write-page-index option, so this run "
+                "will produce Parquet artifacts WITHOUT a page index. Readers cannot range-read "
+                "individual pages, so HTTP streaming falls back to whole row groups, and the index "
+                "cannot be added afterwards -- fixing it requires regenerating the corpus. Upgrade "
+                "SAEDashboard before generating artifacts intended for publication."
+            )
         command.append("--columnar-emit-activation-rows")
         if config.runner_overlap_batch_packaging:
             command.append("--overlap-batch-packaging")
