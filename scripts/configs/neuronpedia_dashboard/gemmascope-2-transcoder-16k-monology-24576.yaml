@@ -22,9 +22,16 @@
 # Free host memory should be >= ~35 GiB before starting; check `free -g` and close memory-hungry
 # editor language servers first.
 #
-# Artifact SIZE is essentially unchanged versus 4,096 prompts: stored rows per feature are bounded at
-# top_acts_group_size + n_quantiles * quantile_group_size = 20 + 5*5 = 45, and row width is the
-# context length. More prompts buy better-selected top-k and more populated quantile intervals.
+# Artifact SIZE: ~1.8x larger on disk than 4,096 prompts -- MEASURED, correcting an earlier claim
+# that it would be essentially unchanged. The structural reasoning was right but incomplete:
+#   rows                    483,013 -> 509,992   (1.06x -- bounded at 20 + 5*5 = 45 per feature)
+#   uncompressed bytes/row      293 -> 312       (1.06x -- row width is the context length)
+#   compression ratio          2.45x -> 1.45x
+#   ON DISK (layer 0)        57.7 MB -> 109.9 MB (1.90x)
+# So the logical content is nearly identical and the growth is almost entirely reduced
+# COMPRESSIBILITY: top-k sequences drawn from 6x more prompts are less redundant. The extra bytes
+# are the extra information, which is the reason to scan more prompts. Budget ~11-12 GB for 26
+# layers rather than the ~6.4 GB the 4,096-prompt corpus occupies.
 #
 # import_to_local_db is OFF deliberately (the importer uses ON CONFLICT DO NOTHING, so importing on
 # top of an existing corpus for this (model, source set) is a silent no-op. Purge the rows for
