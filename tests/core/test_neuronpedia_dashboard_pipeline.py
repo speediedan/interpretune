@@ -3830,13 +3830,19 @@ def test_layer_runner_command_forwards_columnar_peak_memory_controls(tmp_path: P
     assert "--columnar-row-chunk-size=64" in opt_in_command
 
 
-def test_layer_runner_command_forwards_write_page_index(tmp_path: Path) -> None:
+def test_layer_runner_command_forwards_write_page_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The page index must default ON and be explicitly negatable.
 
     Asserted on the emitted command line because that is the entire transport between this pipeline and SAEDashboard --
     a config field that never becomes a flag silently produces a corpus with no page index, which cannot be repaired
     without regenerating it.
+
+    The capability gate is pinned on: this covers emission, not detection (which
+    test_write_page_index_flag_is_capability_gated covers). Without pinning, the outcome depends on which SAEDashboard
+    the environment pins -- CI's predates the option -- so the assertion would flip on an unrelated dependency bump
+    rather than on a real regression.
     """
+    monkeypatch.setattr(dashboard_pipeline, "_saedashboard_supports_write_page_index", lambda: True)
     base_kwargs = dict(
         model_name="gemma-3-1b-it",
         model_layers=26,
@@ -3891,7 +3897,7 @@ def test_layer_runner_command_forwards_write_page_index(tmp_path: Path) -> None:
     assert not any("write-page-index" in arg for arg in legacy_command)
 
 
-def test_config_file_defaults_survive_cli_parsing(tmp_path: Path) -> None:
+def test_config_file_defaults_survive_cli_parsing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A flag not passed on the CLI must not override the config-file/dataclass default.
 
     This parser sets ``argument_default=argparse.SUPPRESS`` so unpassed options stay out of the
@@ -3901,8 +3907,11 @@ def test_config_file_defaults_survive_cli_parsing(tmp_path: Path) -> None:
     page index -- a defect only fixable by regenerating.
 
     Asserted through _parse_args -> _build_dashboard_pipeline_config -> _layer_runner_command, the
-    path the launcher actually takes; constructing the config directly bypasses the bug.
+    path the launcher actually takes; constructing the config directly bypasses the bug. The
+    capability gate is pinned on so this measures config-default survival rather than which
+    SAEDashboard the environment pins.
     """
+    monkeypatch.setattr(dashboard_pipeline, "_saedashboard_supports_write_page_index", lambda: True)
     config_path = tmp_path / "pipeline.yaml"
     config_path.write_text(
         yaml.safe_dump(
