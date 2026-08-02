@@ -4000,3 +4000,36 @@ def test_write_page_index_flag_is_capability_gated(tmp_path: Path, monkeypatch: 
     assert not any("write-page-index" in arg for arg in unsupported)
     assert "no --columnar-write-page-index option" in caplog.text
     assert "regenerating the corpus" in caplog.text
+
+
+def test_no_cli_option_declares_a_default_that_defeats_suppress() -> None:
+    """No option on this parser may declare an explicit `default=`.
+
+    The parser is built with ``argument_default=argparse.SUPPRESS`` so an option the user did not
+    pass stays out of the namespace and the config-file value survives the merge. Declaring
+    ``default=`` on an individual option -- including ``default=None`` -- puts the value back in,
+    where it overwrites the config file.
+
+    Not hypothetical, twice: it silently disabled the page-index flag, and separately it disabled
+    --runner-columnar-max-staged-acts-bytes and --runner-columnar-row-chunk-size, which are the
+    documented peak-memory recipe for large prompt counts. A YAML config setting them resolved to
+    None, so a run configured to fit host memory was OOM-killed instead.
+
+    Asserted structurally over every action so a newly added option cannot reintroduce it.
+    """
+    import argparse
+
+    parser = dashboard_pipeline._create_argument_parser()
+    assert parser.argument_default is argparse.SUPPRESS, (
+        "the SUPPRESS contract this test guards is gone; re-evaluate config-vs-CLI merge semantics"
+    )
+
+    offenders = sorted(
+        "/".join(action.option_strings)
+        for action in parser._actions
+        if action.dest != "help" and action.default is not argparse.SUPPRESS
+    )
+    assert offenders == [], (
+        "these options declare an explicit default and will overwrite config-file values "
+        f"(drop the `default=` so SUPPRESS applies): {offenders}"
+    )

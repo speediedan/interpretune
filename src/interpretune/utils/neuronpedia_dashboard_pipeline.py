@@ -2761,7 +2761,10 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--runner-columnar-max-staged-acts-bytes",
         type=int,
-        default=None,
+        # No `default=`: this parser uses argument_default=argparse.SUPPRESS, so an unpassed option
+        # must stay OUT of the namespace for the config-file value to survive the merge. An explicit
+        # default=None lands in the merged config and overwrites it -- which silently disabled this
+        # flag whenever it was set in a YAML config rather than on the command line.
         help=(
             "Opt-in: byte budget capping SAEDashboard's device retention/staging of the columnar "
             "activation matrix (default: SD's fixed 4 GiB; 0 forces host staging so dense layers fit "
@@ -2771,7 +2774,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--runner-columnar-row-chunk-size",
         type=int,
-        default=None,
+        # No `default=` -- see --runner-columnar-max-staged-acts-bytes above.
         help=(
             "Opt-in: feature-row chunk size for SAEDashboard's arrow statistics/histogram packaging "
             "loops (SD defaults 256/128), bounding density-scaled per-chunk GPU transients on dense "
