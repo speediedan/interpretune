@@ -21,6 +21,7 @@ from pathlib import Path
 
 from interpretune.utils.neuronpedia_dashboard_hub import (
     COPY_ROWS_STEM,
+    DASHBOARDS_TOKEN_ENV_VAR,
     MissingPageIndexError,
     build_publish_plan,
     format_publish_plan,
@@ -38,6 +39,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--private", action="store_true", help="Create the repo private if it does not exist.")
     parser.add_argument("--commit-message", default="Publish columnar dashboard artifacts")
     parser.add_argument("--dry-run", action="store_true", help="Report the plan; make no network writes.")
+    parser.add_argument(
+        "--token",
+        default=None,
+        help=f"Hub token. Defaults to ${DASHBOARDS_TOKEN_ENV_VAR} (process env, then the repo .env), "
+        "then the ambient huggingface-cli credential.",
+    )
     parser.add_argument(
         "--allow-missing-page-index",
         action="store_true",
@@ -72,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             path_in_repo=args.path_in_repo,
             commit_message=args.commit_message,
             require_page_index=not args.allow_missing_page_index,
+            token=args.token,
         )
     except MissingPageIndexError as exc:
         print(f"\nREFUSING TO PUBLISH: {exc}", file=sys.stderr)

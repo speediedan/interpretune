@@ -29,8 +29,10 @@ when the only remedy is to regenerate and upload again. Pass ``require_page_inde
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Protocol
 
 __all__ = [
     "COPY_ROWS_STEM",
@@ -45,6 +47,15 @@ __all__ = [
     "format_publish_plan",
     "publish_ignore_patterns",
     "publish_dashboard_run",
+    "resolve_dashboards_token",
+    "DASHBOARDS_TOKEN_ENV_VAR",
+    "DashboardStore",
+    "HubDatasetStore",
+    "HubBucketStore",
+    "DASHBOARD_STORES",
+    "DEFAULT_STORE",
+    "get_dashboard_store",
+    "download_dashboard_run",
 ]
 
 log = logging.getLogger(__name__)
@@ -54,6 +65,11 @@ COPY_ROWS_STEM = "activation_copy_rows"
 
 #: Always excluded. Run logs carry absolute host paths, pids and timings.
 EXCLUDED_SUFFIXES = frozenset({".log"})
+
+#: Token for the dashboards dataset/bucket, kept separate from ``HF_TOKEN`` on purpose: it is scoped
+#: to just these artifacts, and reusing the ambient token name would silently widen or narrow every
+#: other Hub operation in the process depending on which won.
+DASHBOARDS_TOKEN_ENV_VAR = "HF_HUB_DASHBOARDS_TOKEN"
 
 #: Parquet files inspected when estimating page-index coverage. The corpus is homogeneous -- every
 #: file comes from the same writer configuration -- so a sample answers the question that matters
@@ -113,6 +129,32 @@ class DashboardPublishPlan:
     @property
     def largest(self) -> Path | None:
         return max(self.upload, key=lambda p: p.stat().st_size) if self.upload else None
+
+
+def resolve_dashboards_token(env_file: Path | None = None) -> str | None:
+    """Find the dashboards-scoped Hub token, or None to fall back to the ambient credential.
+
+    Resolution order: the process environment, then ``env_file`` (default: the repo ``.env``). The
+    environment wins so a one-off override does not require editing a file, and returning None
+    rather than raising keeps the ambient ``huggingface-cli login`` token working for anyone who has
+    not adopted the scoped one.
+    """
+    token = os.environ.get(DASHBOARDS_TOKEN_ENV_VAR)
+    if token:
+        return token.strip() or None
+
+    if env_file is None:
+        candidate = Path(__file__).resolve().parents[3] / ".env"
+        env_file = candidate if candidate.exists() else None
+    if env_file is None or not Path(env_file).exists():
+        return None
+    try:
+        from dotenv import dotenv_values
+    except ImportError:  # pragma: no cover - python-dotenv is a declared dependency
+        log.debug("python-dotenv unavailable; cannot read %s", env_file)
+        return None
+    value = dotenv_values(Path(env_file)).get(DASHBOARDS_TOKEN_ENV_VAR)
+    return value.strip() or None if value else None
 
 
 def collect_publish_files(run_root: Path, include_copy_rows: bool = False) -> tuple[list[Path], list[Path]]:
@@ -268,6 +310,159 @@ def publish_ignore_patterns(include_copy_rows: bool = False) -> list[str]:
     return patterns
 
 
+class DashboardStore(Protocol):
+    """Transport for a dashboard corpus.
+
+    Everything that makes this module worth having -- the plan builder, the copy-rows exclusion, the page-index refusal
+    -- operates on LOCAL files and is transport-agnostic. Only these three operations differ between a Hub dataset repo
+    and a Storage Bucket, which is why the seam sits here and nowhere else.
+    """
+
+    name: str
+
+    def ensure(self, target: str, *, private: bool, token: str | None) -> None:
+        """Create the destination if it does not exist."""
+        ...
+
+    def push(self, plan: DashboardPublishPlan, target: str, **kwargs: Any) -> None:
+        """Upload the plan's files, honoring the same exclusions the plan reported."""
+        ...
+
+    def pull(self, target: str, dest: Path, **kwargs: Any) -> Path:
+        """Download the corpus to ``dest``."""
+        ...
+
+
+@dataclass(frozen=True)
+class HubDatasetStore:
+    """Git-backed dataset repo: versioned, branchable, collection-eligible, pinnable.
+
+    Keeps revisions, which is why it stays supported even once buckets are the default: a bucket
+    cannot express "the corpus PR #217 referred to", and `bucket -> dataset` migration does not exist
+    yet, so dropping this backend would be one-way.
+    """
+
+    name: str = "dataset"
+
+    def ensure(self, target: str, *, private: bool = False, token: str | None = None) -> None:
+        from huggingface_hub import HfApi
+
+        HfApi(token=token).create_repo(repo_id=target, repo_type="dataset", private=private, exist_ok=True)
+
+    def push(
+        self,
+        plan: DashboardPublishPlan,
+        target: str,
+        *,
+        include_copy_rows: bool = False,
+        revision: str | None = None,
+        path_in_repo: str = "",
+        commit_message: str = "Publish columnar dashboard artifacts",
+        token: str | None = None,
+    ) -> None:
+        from huggingface_hub import HfApi
+
+        HfApi(token=token).upload_folder(
+            folder_path=str(plan.run_root),
+            repo_id=target,
+            repo_type="dataset",
+            revision=revision,
+            path_in_repo=path_in_repo,
+            ignore_patterns=publish_ignore_patterns(include_copy_rows),
+            commit_message=commit_message,
+        )
+
+    def pull(self, target: str, dest: Path, *, revision: str | None = None, token: str | None = None) -> Path:
+        from huggingface_hub import snapshot_download
+
+        return Path(
+            snapshot_download(repo_id=target, repo_type="dataset", revision=revision, local_dir=str(dest), token=token)
+        )
+
+
+@dataclass(frozen=True)
+class HubBucketStore:
+    """Xet-backed Storage Bucket: mutable, S3-reachable, no versioning.
+
+    Preferred for consumers whose tooling is S3-shaped -- the ``s3.hf.co`` gateway serves boto3,
+    rclone, s5cmd and DuckDB ``read_parquet('s3://...')``, range reads included, which is what the
+    Parquet page index exists for. Dataset repos get none of that; the S3 gateway is bucket-only.
+
+    Two differences the caller must absorb rather than ignore:
+
+    - **No revisions.** ``revision`` becomes a path PREFIX. That loses atomic revision semantics, so
+      provenance has to be recorded in-tree (the Hub renders a per-directory ``README.md``).
+    - **Deletions are immediate and permanent.** ``sync`` is therefore additive here; pass
+      ``delete=True`` explicitly, and only when mirroring is actually what you want.
+    """
+
+    name: str = "bucket"
+
+    @staticmethod
+    def uri(target: str, prefix: str = "") -> str:
+        """``hf://buckets/<namespace>/<bucket>[/<prefix>]``."""
+        base = f"hf://buckets/{target.strip('/')}"
+        prefix = prefix.strip("/")
+        return f"{base}/{prefix}" if prefix else base
+
+    def ensure(self, target: str, *, private: bool = False, token: str | None = None) -> None:
+        from huggingface_hub import HfApi
+
+        HfApi(token=token).create_bucket(target, private=private, exist_ok=True)
+
+    def push(
+        self,
+        plan: DashboardPublishPlan,
+        target: str,
+        *,
+        include_copy_rows: bool = False,
+        revision: str | None = None,
+        path_in_repo: str = "",
+        commit_message: str = "",  # buckets have no commits; accepted for interface parity
+        token: str | None = None,
+        delete: bool = False,
+    ) -> None:
+        from huggingface_hub import HfApi
+
+        prefix = "/".join(p for p in (revision or "", path_in_repo or "") if p)
+        HfApi(token=token).sync_bucket(
+            source=str(plan.run_root),
+            dest=self.uri(target, prefix),
+            exclude=publish_ignore_patterns(include_copy_rows),
+            delete=delete,
+        )
+
+    def pull(
+        self,
+        target: str,
+        dest: Path,
+        *,
+        revision: str | None = None,
+        token: str | None = None,
+        path_in_repo: str = "",
+    ) -> Path:
+        from huggingface_hub import HfApi
+
+        prefix = "/".join(p for p in (revision or "", path_in_repo or "") if p)
+        dest = Path(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+        HfApi(token=token).sync_bucket(source=self.uri(target, prefix), dest=str(dest))
+        return dest
+
+
+#: Backends by name. The default is deliberately still ``dataset`` -- see the module docstring.
+DASHBOARD_STORES: dict[str, Any] = {"dataset": HubDatasetStore(), "bucket": HubBucketStore()}
+DEFAULT_STORE = "dataset"
+
+
+def get_dashboard_store(name: str | None = None) -> Any:
+    """Look up a backend by name, failing loudly on an unknown one."""
+    key = (name or DEFAULT_STORE).lower()
+    if key not in DASHBOARD_STORES:
+        raise ValueError(f"unknown dashboard store {name!r}; expected one of {sorted(DASHBOARD_STORES)}")
+    return DASHBOARD_STORES[key]
+
+
 def publish_dashboard_run(
     run_root: Path,
     repo_id: str,
@@ -279,14 +474,20 @@ def publish_dashboard_run(
     commit_message: str = "Publish columnar dashboard artifacts",
     require_page_index: bool = True,
     token: str | None = None,
+    store: str | None = None,
 ) -> DashboardPublishPlan:
-    """Upload a dashboard run to a Hub dataset repo. Returns the plan that was executed.
+    """Upload a dashboard run to the Hub. Returns the plan that was executed.
+
+    ``store`` selects the transport (``"dataset"`` or ``"bucket"``); see :data:`DASHBOARD_STORES`.
 
     Raises :class:`MissingPageIndexError` when the corpus carries no page index and
     ``require_page_index`` is set -- see the module docstring for why that is fatal rather than a
-    warning. Unknown coverage (no pyarrow, no Parquet files) does not trip the check.
+    warning. Unknown coverage (no pyarrow, no Parquet files) does not trip the check. The check runs
+    BEFORE any network call, and is backend-independent: an unstreamable corpus is unstreamable
+    wherever it lands.
     """
     plan = build_publish_plan(run_root, include_copy_rows)
+    token = token or resolve_dashboards_token()
 
     if require_page_index and plan.page_index.absent:
         raise MissingPageIndexError(
@@ -297,17 +498,35 @@ def publish_dashboard_run(
             "require_page_index=False to publish anyway."
         )
 
-    from huggingface_hub import HfApi
-
-    api = HfApi(token=token)
-    api.create_repo(repo_id=repo_id, repo_type="dataset", private=private, exist_ok=True)
-    api.upload_folder(
-        folder_path=str(plan.run_root),
-        repo_id=repo_id,
-        repo_type="dataset",
+    backend = get_dashboard_store(store)
+    backend.ensure(repo_id, private=private, token=token)
+    backend.push(
+        plan,
+        repo_id,
+        include_copy_rows=include_copy_rows,
         revision=revision,
         path_in_repo=path_in_repo,
-        ignore_patterns=publish_ignore_patterns(include_copy_rows),
         commit_message=commit_message,
+        token=token,
     )
     return plan
+
+
+def download_dashboard_run(
+    repo_id: str,
+    dest: Path,
+    *,
+    revision: str | None = None,
+    token: str | None = None,
+    store: str | None = None,
+    **kwargs: Any,
+) -> Path:
+    """Download a published corpus. Counterpart to :func:`publish_dashboard_run`.
+
+    NOTE the destination's LEAF DIRECTORY NAME is load-bearing downstream: the corpus carries no
+    ``batch-*.json``, so the pipeline derives Neuronpedia source ids from the run directory name. A
+    differently-named target imports successfully into a SEPARATE dataset, which looks like success.
+    Name the leaf ``<model>_<source_set_id>`` and vary anything else in the parent.
+    """
+    backend = get_dashboard_store(store)
+    return backend.pull(repo_id, Path(dest), revision=revision, token=token or resolve_dashboards_token(), **kwargs)

@@ -96,6 +96,7 @@ from interpretune.utils.neuronpedia_dashboard_pipeline import (
 )
 from interpretune.utils.neuronpedia_dashboard_hub import (
     COPY_ROWS_STEM,
+    DASHBOARDS_TOKEN_ENV_VAR,
     DashboardPublishPlan,
     MissingPageIndexError,
     PageIndexCoverage,
@@ -105,6 +106,7 @@ from interpretune.utils.neuronpedia_dashboard_hub import (
     page_index_coverage,
     publish_dashboard_run,
     publish_ignore_patterns,
+    resolve_dashboards_token,
     summarize_by_table,
 )
 
@@ -213,6 +215,7 @@ __all__ = [
     "run_dashboard_pipeline",
     # neuronpedia_dashboard_hub
     "COPY_ROWS_STEM",
+    "DASHBOARDS_TOKEN_ENV_VAR",
     "DashboardPublishPlan",
     "MissingPageIndexError",
     "PageIndexCoverage",
@@ -222,5 +225,6 @@ __all__ = [
     "page_index_coverage",
     "publish_dashboard_run",
     "publish_ignore_patterns",
+    "resolve_dashboards_token",
     "summarize_by_table",
 ]

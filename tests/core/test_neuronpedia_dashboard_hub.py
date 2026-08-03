@@ -18,6 +18,13 @@ import pytest
 
 from interpretune.utils.neuronpedia_dashboard_hub import (
     COPY_ROWS_STEM,
+    DASHBOARD_STORES,
+    DEFAULT_STORE,
+    HubBucketStore,
+    HubDatasetStore,
+    download_dashboard_run,
+    get_dashboard_store,
+    resolve_dashboards_token,
     DashboardPublishPlan,
     MissingPageIndexError,
     PageIndexCoverage,
@@ -270,3 +277,100 @@ class TestCli:
 
     def test_bad_run_root_exits_one(self, tmp_path: Path) -> None:
         assert _publish_cli().main(["--run-root", str(tmp_path / "nope"), "--repo-id", "me/mine"]) == 1
+
+
+class TestStoreSelection:
+    def test_known_backends(self) -> None:
+        assert sorted(DASHBOARD_STORES) == ["bucket", "dataset"]
+        assert isinstance(DASHBOARD_STORES["dataset"], HubDatasetStore)
+        assert isinstance(DASHBOARD_STORES["bucket"], HubBucketStore)
+        assert get_dashboard_store().name == DEFAULT_STORE
+        assert get_dashboard_store("BUCKET").name == "bucket"
+
+    def test_unknown_backend_fails_loudly(self) -> None:
+        with pytest.raises(ValueError, match="unknown dashboard store"):
+            get_dashboard_store("s3")
+
+
+class TestBucketUri:
+    def test_prefix_composition(self) -> None:
+        assert HubBucketStore.uri("ns/bkt") == "hf://buckets/ns/bkt"
+        assert HubBucketStore.uri("ns/bkt", "with-copy-rows") == "hf://buckets/ns/bkt/with-copy-rows"
+        # Stray slashes must not produce `//`, which bucket object keys forbid outright.
+        assert HubBucketStore.uri("/ns/bkt/", "/pfx/") == "hf://buckets/ns/bkt/pfx"
+
+
+class TestBackendParity:
+    """Both backends must honor the SAME exclusions the plan reported.
+
+    The plan a user reviews and the bytes that land must agree regardless of transport; a backend that quietly shipped
+    copy-rows or logs would invalidate the size claims the plan prints.
+    """
+
+    @pytest.mark.parametrize("store_name", ["dataset", "bucket"])
+    @pytest.mark.parametrize("include_copy_rows", [False, True])
+    def test_push_excludes_match_the_plan(self, tmp_path: Path, store_name: str, include_copy_rows: bool) -> None:
+        run = _build_run(tmp_path, page_index=True)
+        with patch("huggingface_hub.HfApi") as api:
+            publish_dashboard_run(run, "ns/name", store=store_name, include_copy_rows=include_copy_rows, token="t")
+        api_obj = api.return_value
+        if store_name == "dataset":
+            patterns = api_obj.upload_folder.call_args.kwargs["ignore_patterns"]
+            api_obj.create_repo.assert_called_once()
+        else:
+            patterns = api_obj.sync_bucket.call_args.kwargs["exclude"]
+            api_obj.create_bucket.assert_called_once()
+        assert "*.log" in patterns
+        assert (f"**/{COPY_ROWS_STEM}.parquet" in patterns) is not include_copy_rows
+
+    @pytest.mark.parametrize("store_name", ["dataset", "bucket"])
+    def test_page_index_guard_precedes_any_network_call(self, tmp_path: Path, store_name: str) -> None:
+        """An unstreamable corpus is unstreamable wherever it lands, so the guard is backend-independent."""
+        with patch("huggingface_hub.HfApi") as api:
+            with pytest.raises(MissingPageIndexError):
+                publish_dashboard_run(_build_run(tmp_path, page_index=False), "ns/name", store=store_name, token="t")
+        api.assert_not_called()
+
+    def test_bucket_push_targets_an_hf_bucket_uri_with_prefix_for_revision(self, tmp_path: Path) -> None:
+        """Buckets have no revisions, so a revision must become a path prefix rather than be dropped."""
+        with patch("huggingface_hub.HfApi") as api:
+            publish_dashboard_run(
+                _build_run(tmp_path, page_index=True), "ns/bkt", store="bucket", revision="with-copy-rows", token="t"
+            )
+        kwargs = api.return_value.sync_bucket.call_args.kwargs
+        assert kwargs["dest"] == "hf://buckets/ns/bkt/with-copy-rows"
+        # Additive by default: bucket deletions are immediate and permanent.
+        assert kwargs.get("delete") is False
+
+    @pytest.mark.parametrize("store_name", ["dataset", "bucket"])
+    def test_download_round_trips_through_the_backend(self, tmp_path: Path, store_name: str) -> None:
+        dest = tmp_path / "dl"
+        with patch("huggingface_hub.HfApi") as api, patch("huggingface_hub.snapshot_download") as snap:
+            snap.return_value = str(dest)
+            download_dashboard_run("ns/name", dest, store=store_name, token="t")
+        if store_name == "dataset":
+            snap.assert_called_once()
+        else:
+            assert api.return_value.sync_bucket.call_args.kwargs["source"] == "hf://buckets/ns/name"
+
+
+class TestTokenResolution:
+    def test_process_env_wins_over_env_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        env_file = tmp_path / ".env"
+        env_file.write_text("HF_HUB_DASHBOARDS_TOKEN=from_file\n", encoding="utf-8")
+        monkeypatch.setenv("HF_HUB_DASHBOARDS_TOKEN", "from_env")
+        assert resolve_dashboards_token(env_file) == "from_env"
+
+    def test_falls_back_to_env_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        env_file = tmp_path / ".env"
+        env_file.write_text("HF_HUB_DASHBOARDS_TOKEN=from_file\n", encoding="utf-8")
+        monkeypatch.delenv("HF_HUB_DASHBOARDS_TOKEN", raising=False)
+        assert resolve_dashboards_token(env_file) == "from_file"
+
+    def test_missing_token_returns_none_rather_than_raising(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """None keeps the ambient huggingface-cli credential working for anyone who has not adopted the scoped
+        one."""
+        monkeypatch.delenv("HF_HUB_DASHBOARDS_TOKEN", raising=False)
+        assert resolve_dashboards_token(tmp_path / "absent.env") is None
