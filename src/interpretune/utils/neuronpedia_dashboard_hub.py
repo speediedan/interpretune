@@ -491,9 +491,19 @@ class HubBucketStore:
         return dest
 
 
-#: Backends by name. The default is deliberately still ``dataset`` -- see the module docstring.
+#: Backends by name.
 DASHBOARD_STORES: dict[str, Any] = {"dataset": HubDatasetStore(), "bucket": HubBucketStore()}
-DEFAULT_STORE = "dataset"
+
+#: Default backend. ``bucket`` since 2026-08-03, after an end-to-end round trip established that a
+#: corpus published to a bucket, downloaded, and imported yields a database byte-identical to the
+#: locally-imported one (1014/1014 files, matching per-(table, layer) content hashes).
+#:
+#: Buckets are the better default for this artifact because the consumers are S3-shaped: the
+#: ``s3.hf.co`` gateway serves boto3, rclone, s5cmd and DuckDB ``read_parquet('s3://...')`` with
+#: range reads, which is what the Parquet page index exists for, and dataset repos expose none of it.
+#: ``dataset`` remains fully supported and is the right choice when a corpus must be PINNED, since
+#: buckets are mutable and unversioned.
+DEFAULT_STORE = "bucket"
 
 
 def get_dashboard_store(name: str | None = None) -> Any:

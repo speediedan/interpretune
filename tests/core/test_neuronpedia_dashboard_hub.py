@@ -242,13 +242,15 @@ class TestPublish:
 
     def test_override_allows_publishing_without_page_index(self, tmp_path: Path) -> None:
         with patch("huggingface_hub.HfApi") as api:
-            plan = publish_dashboard_run(_build_run(tmp_path, page_index=False), "me/mine", require_page_index=False)
+            plan = publish_dashboard_run(
+                _build_run(tmp_path, page_index=False), "me/mine", require_page_index=False, store="dataset"
+            )
         assert isinstance(plan, DashboardPublishPlan)
         api.return_value.upload_folder.assert_called_once()
 
     def test_publishes_when_page_index_present(self, tmp_path: Path) -> None:
         with patch("huggingface_hub.HfApi") as api:
-            publish_dashboard_run(_build_run(tmp_path, page_index=True), "me/mine", private=True)
+            publish_dashboard_run(_build_run(tmp_path, page_index=True), "me/mine", private=True, store="dataset")
 
         api.return_value.create_repo.assert_called_once()
         assert api.return_value.create_repo.call_args.kwargs["repo_type"] == "dataset"
@@ -264,7 +266,7 @@ class TestPublish:
         """No parquet at all -> coverage unknown -> must not be treated as a missing index."""
         (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")
         with patch("huggingface_hub.HfApi") as api:
-            publish_dashboard_run(tmp_path, "me/mine")
+            publish_dashboard_run(tmp_path, "me/mine", store="dataset")
         api.return_value.upload_folder.assert_called_once()
 
 
@@ -296,6 +298,9 @@ class TestStoreSelection:
         assert isinstance(DASHBOARD_STORES["dataset"], HubDatasetStore)
         assert isinstance(DASHBOARD_STORES["bucket"], HubBucketStore)
         assert get_dashboard_store().name == DEFAULT_STORE
+        # Validated end-to-end before becoming the default; see TestManifestConsistency for the
+        # defect that validation caught.
+        assert DEFAULT_STORE == "bucket"
         assert get_dashboard_store("BUCKET").name == "bucket"
 
     def test_unknown_backend_fails_loudly(self) -> None:
@@ -417,7 +422,7 @@ class TestManifestConsistency:
     def test_default_publishes_copy_rows(self, tmp_path: Path) -> None:
         """The default must produce an importable corpus without the caller having to know why."""
         with patch("huggingface_hub.HfApi") as api:
-            publish_dashboard_run(_build_run(tmp_path, page_index=True), "ns/n", token="t")
+            publish_dashboard_run(_build_run(tmp_path, page_index=True), "ns/n", token="t", store="dataset")
         patterns = api.return_value.upload_folder.call_args.kwargs["ignore_patterns"]
         assert not any(COPY_ROWS_STEM in p for p in patterns)
 
@@ -430,5 +435,6 @@ class TestManifestConsistency:
                 include_copy_rows=False,
                 require_manifest_consistency=False,
                 token="t",
+                store="dataset",
             )
         api.return_value.upload_folder.assert_called_once()
