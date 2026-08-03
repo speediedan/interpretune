@@ -35,7 +35,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repo-id", required=True, help="Target Hub dataset repo, e.g. user/my-dashboards.")
     parser.add_argument("--revision", default=None, help="Branch/revision to upload to (default: main).")
     parser.add_argument("--path-in-repo", default="", help="Subdirectory within the repo.")
-    parser.add_argument("--include-copy-rows", action="store_true", help=f"Also upload {COPY_ROWS_STEM}.parquet.")
+    parser.add_argument(
+        "--include-copy-rows",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=f"Publish {COPY_ROWS_STEM}.parquet (default: on). Excluding it saves ~45% but the "
+        "corpus becomes UNIMPORTABLE: the per-batch manifests declare the table and the importer "
+        "raises when it is absent rather than falling back. Only exclude for consumers that read "
+        "the parquet directly and never import.",
+    )
+    parser.add_argument(
+        "--allow-manifest-inconsistency",
+        action="store_true",
+        help="Publish even when the manifests reference an excluded table. Refused by default.",
+    )
     parser.add_argument("--private", action="store_true", help="Create the repo private if it does not exist.")
     parser.add_argument("--commit-message", default="Publish columnar dashboard artifacts")
     parser.add_argument("--dry-run", action="store_true", help="Report the plan; make no network writes.")
@@ -79,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
             path_in_repo=args.path_in_repo,
             commit_message=args.commit_message,
             require_page_index=not args.allow_missing_page_index,
+            require_manifest_consistency=not args.allow_manifest_inconsistency,
             token=args.token,
         )
     except MissingPageIndexError as exc:

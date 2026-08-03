@@ -4,12 +4,22 @@ Why the Hub rather than a file share: the artifacts are already Parquet, so a Hu
 with ``load_dataset(...)`` and streams row groups over HTTP with no bespoke reader. That streaming
 path is the premise of the shareable-dashboards direction; a zip on a drive cannot do it.
 
-WHAT IS EXCLUDED BY DEFAULT
----------------------------
+COPY-ROWS ARE PUBLISHED BY DEFAULT, AND THAT IS NOT NEGOTIABLE FOR IMPORTABLE CORPORA
+------------------------------------------------------------------------------------
 ``activation_copy_rows.parquet`` is a pre-flattened duplicate of ``activation_rows.parquet``, carried
-so the Postgres binary-COPY import lane has nothing left to transform. It is derived data: a consumer
-who is not importing into Postgres does not need it, and one who is can flatten locally. Measured on
-the reference 16k run, excluding it drops 47% of the payload with no information lost.
+so the Postgres binary-COPY import lane has nothing left to transform. It looks like derived data a
+consumer could regenerate, and excluding it saves ~45% of the payload.
+
+**Excluding it produces a corpus that cannot be imported at all.** Each
+``feature_batch_*/manifest.json`` declares the table, and the importer resolves the activation table
+from that manifest and RAISES when the preferred entry is absent -- it does not fall back to
+``activation_rows``. Verified the hard way: a corpus published without it downloaded byte-identically
+(910/910 files, sha256 clean) and then failed on layer 0 of the first import.
+
+So the default is to include it, and :func:`publish_dashboard_run` refuses to publish a corpus whose
+manifests reference a table the publish would drop. Exclusion remains available for a consumer who
+reads the parquet directly (DuckDB, pandas) and never imports -- pass
+``include_copy_rows=False, require_manifest_consistency=False`` to say so deliberately.
 
 Run logs are always excluded -- they carry absolute host paths, pids and timings, which are noise to a
 consumer and a small leak of local layout.
@@ -28,6 +38,7 @@ when the only remedy is to regenerate and upload again. Pass ``require_page_inde
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -40,6 +51,8 @@ __all__ = [
     "DashboardPublishPlan",
     "PageIndexCoverage",
     "MissingPageIndexError",
+    "ManifestReferencesExcludedTableError",
+    "manifest_referenced_tables",
     "collect_publish_files",
     "summarize_by_table",
     "page_index_coverage",
@@ -77,6 +90,15 @@ DASHBOARDS_TOKEN_ENV_VAR = "HF_HUB_DASHBOARDS_TOKEN"
 DEFAULT_PAGE_INDEX_SAMPLE = 12
 
 _GIB = 1024**3
+
+
+class ManifestReferencesExcludedTableError(RuntimeError):
+    """Raised when an excluded table is still referenced by the corpus's own manifests.
+
+    Not a warning. The importer resolves the activation table from ``manifest.json`` and RAISES when
+    the preferred entry is absent -- it does not fall back -- so such a corpus cannot be imported at
+    all. Publishing it produces something that downloads cleanly and then fails on first use.
+    """
 
 
 class MissingPageIndexError(RuntimeError):
@@ -215,6 +237,25 @@ def page_index_coverage(paths: list[Path], sample: int = DEFAULT_PAGE_INDEX_SAMP
         except Exception as exc:  # an unreadable footer must not abort a dry run
             log.debug("could not read parquet footer for %s: %s", p, exc)
     return PageIndexCoverage(with_index, len(parquet))
+
+
+def manifest_referenced_tables(run_root: Path, sample: int = 4) -> set[str]:
+    """Table stems the corpus's own ``feature_batch_*/manifest.json`` files declare.
+
+    Sampled: manifests are written by one code path per run, so a few are representative, and
+    opening all ~200 to learn a fixed schema is wasted work.
+    """
+    referenced: set[str] = set()
+    for i, manifest in enumerate(sorted(run_root.rglob("feature_batch_*/manifest.json"))):
+        if i >= sample:
+            break
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            log.debug("unreadable manifest %s: %s", manifest, exc)
+            continue
+        referenced |= set(payload.get("tables", {}))
+    return referenced
 
 
 def build_publish_plan(
@@ -467,12 +508,13 @@ def publish_dashboard_run(
     run_root: Path,
     repo_id: str,
     *,
-    include_copy_rows: bool = False,
+    include_copy_rows: bool = True,
     private: bool = False,
     revision: str | None = None,
     path_in_repo: str = "",
     commit_message: str = "Publish columnar dashboard artifacts",
     require_page_index: bool = True,
+    require_manifest_consistency: bool = True,
     token: str | None = None,
     store: str | None = None,
 ) -> DashboardPublishPlan:
@@ -497,6 +539,19 @@ def publish_dashboard_run(
             "regenerating and re-uploading. Enable write_page_index at generation time, or pass "
             "require_page_index=False to publish anyway."
         )
+
+    if require_manifest_consistency:
+        excluded_stems = {p.stem for p in plan.skip if p.suffix == ".parquet"}
+        orphaned = excluded_stems & manifest_referenced_tables(plan.run_root)
+        if orphaned:
+            raise ManifestReferencesExcludedTableError(
+                f"{plan.run_root} manifests reference {sorted(orphaned)}, which this publish would "
+                "exclude. The importer resolves the activation table from manifest.json and RAISES "
+                "when the preferred entry is missing -- it does not fall back -- so the published "
+                "corpus would download cleanly and then fail on first import. Publish with "
+                "include_copy_rows=True, or pass require_manifest_consistency=False if the consumer "
+                "genuinely only reads parquet directly (e.g. DuckDB) and never imports."
+            )
 
     backend = get_dashboard_store(store)
     backend.ensure(repo_id, private=private, token=token)

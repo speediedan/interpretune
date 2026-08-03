@@ -9,6 +9,7 @@ behaviour that gates a multi-GiB upload.
 from __future__ import annotations
 
 import importlib.util
+import json
 from functools import lru_cache
 from pathlib import Path
 from types import ModuleType
@@ -18,6 +19,8 @@ import pytest
 
 from interpretune.utils.neuronpedia_dashboard_hub import (
     COPY_ROWS_STEM,
+    ManifestReferencesExcludedTableError,
+    manifest_referenced_tables,
     DASHBOARD_STORES,
     DEFAULT_STORE,
     HubBucketStore,
@@ -68,7 +71,13 @@ def _build_run(root: Path, *, page_index: bool = False, layers: int = 2) -> Path
         leaf = root / f"layer_{layer}" / "source" / "batch-0.columnar" / "feature_batch_0"
         for stem in ("activation_rows", COPY_ROWS_STEM, "feature_tables"):
             _write_parquet(leaf / f"{stem}.parquet", page_index=page_index)
-        (leaf / "manifest.json").write_text('{"ok": true}', encoding="utf-8")
+        # Real corpora declare every table here, which is what makes excluding one unsafe.
+        (leaf / "manifest.json").write_text(
+            json.dumps(
+                {"tables": {stem: f"{stem}.parquet" for stem in ("activation_rows", COPY_ROWS_STEM, "feature_tables")}}
+            ),
+            encoding="utf-8",
+        )
     (root / "run.log").write_text("host=/home/someone pid=1234\n", encoding="utf-8")
     (root / ".hidden_scratch").write_text("ignore me", encoding="utf-8")
     return root
@@ -247,7 +256,9 @@ class TestPublish:
 
         upload_kwargs = api.return_value.upload_folder.call_args.kwargs
         assert upload_kwargs["repo_type"] == "dataset"
-        assert f"**/{COPY_ROWS_STEM}.parquet" in upload_kwargs["ignore_patterns"]
+        # Copy-rows ship by default now -- excluding them makes the corpus unimportable.
+        assert not any(COPY_ROWS_STEM in p for p in upload_kwargs["ignore_patterns"])
+        assert "*.log" in upload_kwargs["ignore_patterns"]
 
     def test_unknown_coverage_does_not_block_publish(self, tmp_path: Path) -> None:
         """No parquet at all -> coverage unknown -> must not be treated as a missing index."""
@@ -312,7 +323,16 @@ class TestBackendParity:
     def test_push_excludes_match_the_plan(self, tmp_path: Path, store_name: str, include_copy_rows: bool) -> None:
         run = _build_run(tmp_path, page_index=True)
         with patch("huggingface_hub.HfApi") as api:
-            publish_dashboard_run(run, "ns/name", store=store_name, include_copy_rows=include_copy_rows, token="t")
+            publish_dashboard_run(
+                run,
+                "ns/name",
+                store=store_name,
+                include_copy_rows=include_copy_rows,
+                # Manifests declare copy-rows, so excluding them is only legal with the explicit
+                # parquet-only override -- see TestManifestConsistency.
+                require_manifest_consistency=include_copy_rows,
+                token="t",
+            )
         api_obj = api.return_value
         if store_name == "dataset":
             patterns = api_obj.upload_folder.call_args.kwargs["ignore_patterns"]
@@ -374,3 +394,41 @@ class TestTokenResolution:
         one."""
         monkeypatch.delenv("HF_HUB_DASHBOARDS_TOKEN", raising=False)
         assert resolve_dashboards_token(tmp_path / "absent.env") is None
+
+
+class TestManifestConsistency:
+    """Excluding a table the manifests declare yields a corpus that cannot be imported at all.
+
+    Found by the real round trip: the corpus downloaded byte-identically (910/910, sha256 clean) and
+    then failed on layer 0, because the importer resolves the activation table from manifest.json and
+    RAISES on a missing entry rather than falling back to activation_rows. File-level validation
+    cannot catch this, which is why the guard lives at publish time.
+    """
+
+    def test_manifest_referenced_tables_reads_the_corpus(self, tmp_path: Path) -> None:
+        assert COPY_ROWS_STEM in manifest_referenced_tables(_build_run(tmp_path, page_index=True))
+
+    def test_refuses_to_publish_an_unimportable_corpus(self, tmp_path: Path) -> None:
+        with patch("huggingface_hub.HfApi") as api:
+            with pytest.raises(ManifestReferencesExcludedTableError, match=COPY_ROWS_STEM):
+                publish_dashboard_run(_build_run(tmp_path, page_index=True), "ns/n", include_copy_rows=False, token="t")
+        api.assert_not_called()
+
+    def test_default_publishes_copy_rows(self, tmp_path: Path) -> None:
+        """The default must produce an importable corpus without the caller having to know why."""
+        with patch("huggingface_hub.HfApi") as api:
+            publish_dashboard_run(_build_run(tmp_path, page_index=True), "ns/n", token="t")
+        patterns = api.return_value.upload_folder.call_args.kwargs["ignore_patterns"]
+        assert not any(COPY_ROWS_STEM in p for p in patterns)
+
+    def test_explicit_override_allows_a_parquet_only_publish(self, tmp_path: Path) -> None:
+        """A DuckDB/pandas consumer that never imports can still opt out -- deliberately."""
+        with patch("huggingface_hub.HfApi") as api:
+            publish_dashboard_run(
+                _build_run(tmp_path, page_index=True),
+                "ns/n",
+                include_copy_rows=False,
+                require_manifest_consistency=False,
+                token="t",
+            )
+        api.return_value.upload_folder.assert_called_once()
