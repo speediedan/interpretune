@@ -1435,3 +1435,82 @@ WHERE "modelId" = 'gemma-3-1b-it'
 ## Current operational caution
 
 The pipeline currently runs from the shared interpretune development environment rather than a dedicated Neuronpedia-specific environment. That is acceptable for active recovery, but long-running dashboard jobs should eventually move into a dedicated environment with the Neuronpedia and SAEDashboard dependencies pinned independently from the main Interpretune dev environment.
+
+## Publishing generated dashboards to the Hub
+
+A generated corpus can be published to a Hugging Face **Storage Bucket** or a **dataset repo**, and
+downloaded back to populate a local Neuronpedia elsewhere. Both go through
+`interpretune.utils.neuronpedia_dashboard_hub`; `scripts/publish_dashboards_to_hub.py` is a thin CLI
+over it.
+
+```bash
+# inspect what would be published -- no network writes
+python scripts/publish_dashboards_to_hub.py --run-root <run_dir> --repo-id <ns>/<name> --dry-run
+
+# publish (private) to a bucket
+python scripts/publish_dashboards_to_hub.py --run-root <run_dir> --repo-id <ns>/<name> \
+    --store bucket --private
+```
+
+```python
+from pathlib import Path
+from interpretune.utils import publish_dashboard_run, download_dashboard_run
+
+publish_dashboard_run(Path(run_dir), "ns/name", store="bucket", private=True)
+download_dashboard_run("ns/name", Path(dest), store="bucket")
+```
+
+### Choosing a backend
+
+| | `bucket` | `dataset` |
+| --- | --- | --- |
+| Access | **S3-compatible** (`s3.hf.co`): boto3, rclone, s5cmd, DuckDB `read_parquet('s3://…')` | Hub API / `snapshot_download` |
+| Versioning | none — mutable, overwrite-in-place | full git history, branches, pinnable revisions |
+| Revisions | a `revision` becomes a **path prefix** | real branches |
+| Deleting | frees storage | history retains it |
+| Collections / dataset card | no | yes |
+
+**Prefer `bucket`** when the consumer's tooling is S3-shaped — which is the common case for
+Neuronpedia-adjacent work — and because Parquet page indexes make range reads over the S3 gateway
+actually pay off. **Prefer `dataset`** when you need to *pin* a corpus, e.g. so a PR or paper can
+reference exactly the artifacts a claim was measured on.
+
+Publishing to both is cheap: Xet deduplicates chunk-wise across them, so the second upload of an
+already-published corpus completes in seconds. Note `dataset → bucket` server-side copy exists while
+`bucket → dataset` does not, so if you will only ever do one, doing the dataset first keeps both open.
+
+### Two guards that refuse to publish, and why
+
+**Missing Parquet page index.** Without one a reader cannot range-read individual pages, so HTTP
+streaming degrades to whole row groups — which removes the reason to serve these over the network at
+all. It cannot be added after the fact; the corpus must be regenerated. Generate with
+`runner_columnar_write_page_index: true` (the default). Override with `--allow-missing-page-index`
+only if the corpus is not intended for streaming.
+
+**Manifests referencing an excluded table.** Each `feature_batch_*/manifest.json` declares the tables
+in that batch, and the importer resolves the activation table from it and **raises** when the
+preferred entry is absent — it does not fall back. So excluding `activation_copy_rows` produces a
+corpus that downloads byte-identically and then **fails on the first import**. `--include-copy-rows`
+is therefore the default. Exclude it only for a consumer that reads the parquet directly (DuckDB,
+pandas) and never imports, which requires both `--no-include-copy-rows` and
+`--allow-manifest-inconsistency`.
+
+### Credentials
+
+Publishing reads `HF_HUB_DASHBOARDS_TOKEN` from the process environment, then the repo `.env`, then
+falls back to the ambient `huggingface-cli` credential. Keeping a separate variable from `HF_TOKEN`
+is deliberate: a repo-scoped dashboards token should not silently widen or narrow every other Hub
+operation in the process. The token needs **write** on the target — for a bucket that is a `bucket:`
+scope entry, which is distinct from the `dataset:` one.
+
+### Downloading, and one trap worth knowing
+
+The corpus contains no `batch-*.json`, so the pipeline derives Neuronpedia source ids from the
+**run directory name**. Download into a directory whose leaf is named `<model>_<source_set_id>` —
+vary anything else in the parent. A differently-named target imports *successfully* into a separate
+set of source ids, which looks like success and is not.
+
+```bash
+# then import the downloaded corpus
+python scripts/launch_neuronpedia_dashboard_pipeline.py --config <cfg> --import-only-local-db
+```
