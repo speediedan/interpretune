@@ -168,6 +168,9 @@ class NeuronpediaDashboardPipelineConfig:
     prompts_shared_tokens_file: Path | None = None
     run_root: Path = DEFAULT_IT_NP_CACHE / "dashboard_runs"
     run_name_suffix: str | None = None
+    # Explicit override for Neuronpedia source ids, e.g. "{layer}-{source_set_id}". When set it wins
+    # over anything the corpus declares, so a consumer can re-key an import deliberately.
+    neuronpedia_source_id_template: str | None = None
     export_root: Path = field(default_factory=_default_dashboard_export_root)
     existing_log_path: Path | None = None
     pipeline_log_path: Path | None = None
@@ -606,9 +609,17 @@ def _normalize_pipeline_overrides(values: Mapping[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+#: Parser options that configure the invocation, not the run.
+CLI_ONLY_OPTIONS = frozenset({"write_source_ids"})
+
+
 def _build_dashboard_pipeline_config(args: argparse.Namespace) -> NeuronpediaDashboardPipelineConfig:
     cli_values = dict(vars(args))
     config_path_value = cli_values.pop("config", None)
+    # Options that drive the CLI itself rather than the run. They must not reach the dataclass,
+    # which would raise on an unexpected keyword.
+    for cli_only in CLI_ONLY_OPTIONS:
+        cli_values.pop(cli_only, None)
 
     merged_values: dict[str, Any] = {}
     if config_path_value is not None:
@@ -1900,30 +1911,118 @@ def _load_converter_module(neuronpedia_utils_root: Path) -> ModuleType:
     return module
 
 
-def _resolve_source_id(output_dir: Path, layer_num: int, neuronpedia_source_set_id: str) -> str:
+SOURCE_IDS_SIDECAR = "source_ids.json"
+SOURCE_IDS_SIDECAR_SCHEMA = 1
+
+
+def _run_root_for(output_dir: Path, layer_num: int) -> Path | None:
+    """Walk up from a layer/leaf dir to the run root (the parent of ``layer_<n>``)."""
+    layer_dir_name = f"layer_{layer_num}"
+    if output_dir.name == layer_dir_name:
+        return output_dir.parent
+    return next((p.parent for p in output_dir.parents if p.name == layer_dir_name), None)
+
+
+def source_ids_sidecar_path(run_root: Path) -> Path:
+    return Path(run_root) / SOURCE_IDS_SIDECAR
+
+
+def read_source_ids_sidecar(run_root: Path) -> dict[str, str]:
+    """Source ids a corpus declares about itself, or ``{}`` when it declares none."""
+    path = source_ids_sidecar_path(run_root)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.getLogger(__name__).warning("unreadable %s (%s); ignoring", path, exc)
+        return {}
+    return {str(k): str(v) for k, v in (payload.get("source_ids") or {}).items()}
+
+
+def write_source_ids_sidecar(
+    run_root: Path, source_ids: Mapping[int | str, str], *, source_set_id: str, model_name: str = ""
+) -> Path:
+    """Record each layer's Neuronpedia source id INSIDE the corpus.
+
+    This is what makes a published corpus self-describing. Without it, identity has to be inferred from where the files
+    happen to sit, which stops being under our control the moment the corpus is downloaded somewhere else -- and
+    inferring it wrongly imports successfully into a DIFFERENT set of ids, a failure that looks like success.
+    """
+    path = source_ids_sidecar_path(run_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema": SOURCE_IDS_SIDECAR_SCHEMA,
+        "source_set_id": source_set_id,
+        "model_name": model_name,
+        "source_ids": {str(k): v for k, v in sorted(source_ids.items(), key=lambda kv: int(kv[0]))},
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def render_source_id_template(template: str, *, layer_num: int, source_set_id: str) -> str:
+    """Render an explicit source-id template.
+
+    Unknown fields fail loudly rather than silently.
+    """
+    try:
+        return template.format(layer=layer_num, source_set_id=source_set_id)
+    except KeyError as exc:
+        raise ValueError(
+            f"neuronpedia_source_id_template {template!r} uses unknown field {exc}; "
+            "available fields are {layer} and {source_set_id}."
+        ) from exc
+
+
+def _resolve_source_id(
+    output_dir: Path,
+    layer_num: int,
+    neuronpedia_source_set_id: str,
+    *,
+    source_id_template: str | None = None,
+    run_name_suffix: str | None = None,
+) -> str:
+    """Resolve a layer's Neuronpedia source id, most explicit source first.
+
+    1. ``source_id_template`` / ``run_name_suffix`` -- the caller stated it outright.
+    2. ``source_ids.json`` in the run root -- the corpus states it about itself.
+    3. ``batch-*.json`` ``sae_id_suffix`` -- legacy in-corpus metadata.
+
+    Falling through all three yields ``{layer}-{source_set_id}``, the canonical form.
+
+    Deriving ids from the RUN DIRECTORY NAME was removed 2026-08-03. It made identity depend on
+    where a corpus happened to be unpacked, so downloading to a differently-named directory imported
+    cleanly into a separate set of ids. Corpora generated before the sidecar existed can be
+    backfilled with ``--write-source-ids`` rather than regenerated.
+    """
+    if source_id_template:
+        return render_source_id_template(
+            source_id_template, layer_num=layer_num, source_set_id=neuronpedia_source_set_id
+        )
+
+    # A variant run states its distinctness in CONFIG (run_name_suffix), which is why removing
+    # directory-name parsing does not remove the feature: the suffix is applied when the sidecar is
+    # written, so the ids travel with the corpus instead of being re-derived from its location.
+    if run_name_suffix:
+        return f"{layer_num}-{neuronpedia_source_set_id}__{run_name_suffix}"
+
+    run_root = _run_root_for(output_dir, layer_num)
+    if run_root is not None:
+        declared = read_source_ids_sidecar(run_root).get(str(layer_num))
+        if declared:
+            return declared
+
     batch_files = sorted(output_dir.glob("batch-*.json"))
     if not batch_files and output_dir.exists():
         leaf_dirs = _dashboard_leaf_dirs(output_dir)
         if leaf_dirs:
             batch_files = sorted(_resolve_dashboard_leaf_dir(output_dir).glob("batch-*.json"))
-    if not batch_files:
-        layer_dir_name = f"layer_{layer_num}"
-        layer_dir = output_dir if output_dir.name == layer_dir_name else None
-        if layer_dir is None:
-            layer_dir = next((parent for parent in output_dir.parents if parent.name == layer_dir_name), None)
-        if layer_dir is not None:
-            run_dir_name = layer_dir.parent.name
-            run_name_marker = f"_{neuronpedia_source_set_id}"
-            marker_index = run_dir_name.find(run_name_marker)
-            if marker_index != -1:
-                suffix = run_dir_name[marker_index + len(run_name_marker) :].lstrip("_")
-                if suffix:
-                    return f"{layer_num}-{neuronpedia_source_set_id}__{suffix}"
-        return f"{layer_num}-{neuronpedia_source_set_id}"
-    batch_data = json.loads(batch_files[0].read_text(encoding="utf-8"))
-    source_suffix = batch_data.get("sae_id_suffix") or ""
-    if source_suffix:
-        return f"{layer_num}-{neuronpedia_source_set_id}__{source_suffix}"
+    if batch_files:
+        batch_data = json.loads(batch_files[0].read_text(encoding="utf-8"))
+        source_suffix = batch_data.get("sae_id_suffix") or ""
+        if source_suffix:
+            return f"{layer_num}-{neuronpedia_source_set_id}__{source_suffix}"
     return f"{layer_num}-{neuronpedia_source_set_id}"
 
 
@@ -2003,7 +2102,12 @@ def import_columnar_dashboard_output(
 ) -> NeuronpediaLocalImportSummary:
     """Import SAEDashboard columnar output directly into local Neuronpedia tables."""
 
-    source_id = source_id_override or _resolve_source_id(output_dir, layer_num, config.neuronpedia_source_set_id)
+    source_id = source_id_override or _resolve_source_id(
+        output_dir,
+        layer_num,
+        config.neuronpedia_source_set_id,
+        source_id_template=config.neuronpedia_source_id_template,
+    )
     decode_token_ids, pad_token_id = _build_columnar_token_decoder(config)
     return import_saedashboard_columnar_bundle_local_db(
         output_dir,
@@ -2140,9 +2244,47 @@ def convert_dashboard_output(
         params if accepts_var_keyword else {name: value for name, value in params.items() if name in converter_params}
     )
     module_any.main(SimpleNamespace(params=call_params), **call_params)
-    source_id = _resolve_source_id(dashboard_leaf_dir, layer_num, config.neuronpedia_source_set_id)
+    source_id = _resolve_source_id(
+        dashboard_leaf_dir,
+        layer_num,
+        config.neuronpedia_source_set_id,
+        source_id_template=config.neuronpedia_source_id_template,
+    )
     export_root = _resolve_export_root(config.export_root / config.model_name, source_id)
     return export_root
+
+
+def ensure_source_ids_sidecar(config: NeuronpediaDashboardPipelineConfig, *, overwrite: bool = False) -> Path | None:
+    """Write ``source_ids.json`` for this run so the corpus declares its own identity.
+
+    Called at generation start, and by ``--write-source-ids`` to backfill a corpus produced before
+    the sidecar existed -- which is why it does not require regenerating anything.
+
+    Existing ids are preserved unless ``overwrite``: rewriting them under a corpus already imported
+    somewhere would silently re-key it.
+    """
+    run_root = config.run_directory
+    if not run_root.exists():
+        return None
+    existing = {} if overwrite else read_source_ids_sidecar(run_root)
+    resolved = dict(existing)
+    for layer_num in config.requested_layer_numbers():
+        if str(layer_num) in resolved:
+            continue
+        layer_dir = run_root / f"layer_{layer_num}"
+        resolved[str(layer_num)] = _resolve_source_id(
+            layer_dir if layer_dir.exists() else run_root,
+            layer_num,
+            config.neuronpedia_source_set_id,
+            source_id_template=config.neuronpedia_source_id_template,
+            run_name_suffix=config.run_name_suffix,
+        )
+    return write_source_ids_sidecar(
+        run_root,
+        resolved,
+        source_set_id=config.neuronpedia_source_set_id,
+        model_name=config.model_name,
+    )
 
 
 def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[NeuronpediaDashboardLayerResult]:
@@ -2152,6 +2294,8 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
         raise ValueError("--import-only-local-db cannot be combined with --skip-local-db-import")
 
     config.run_directory.mkdir(parents=True, exist_ok=True)
+    # Declare identity up front so the corpus is self-describing even if the run is interrupted.
+    ensure_source_ids_sidecar(config)
     pipeline_log_path = cast(Path, config.pipeline_log_path)
     existing_log_path = cast(Path, config.existing_log_path)
     logger = _configure_logger(pipeline_log_path)
@@ -2707,6 +2851,17 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         choices=("arrow", "parquet"),
     )
     parser.add_argument(
+        "--write-source-ids",
+        action="store_true",
+        help="Write (or backfill) source_ids.json for this run and exit. Makes an already-generated "
+        "corpus self-describing without regenerating it.",
+    )
+    parser.add_argument(
+        "--neuronpedia-source-id-template",
+        help="Explicit source-id template, e.g. '{layer}-{source_set_id}'. Overrides whatever the "
+        "corpus declares; use to re-key an import deliberately.",
+    )
+    parser.add_argument(
         "--runner-columnar-write-page-index",
         action=argparse.BooleanOptionalAction,
         # No `default=`: this parser sets argument_default=argparse.SUPPRESS so an unpassed flag stays
@@ -2857,6 +3012,10 @@ def main() -> int:
     args = parser.parse_args()
     try:
         config = _build_dashboard_pipeline_config(args)
+        if getattr(args, "write_source_ids", False):
+            written = ensure_source_ids_sidecar(config, overwrite=True)
+            print(f"wrote {written}" if written else f"run directory not found: {config.run_directory}")
+            return 0 if written else 1
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
     run_dashboard_pipeline(config)

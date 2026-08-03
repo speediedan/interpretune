@@ -1722,15 +1722,26 @@ def test_find_existing_export_root_prefers_matching_run_name_suffix(tmp_path: Pa
     assert dashboard_pipeline._find_existing_export_root(config, layer_num=7) == expected
 
 
-def test_resolve_source_id_uses_run_name_suffix_for_columnar_output(tmp_path: Path) -> None:
+def test_run_name_suffix_distinguishes_variant_runs_from_config_not_layout(tmp_path: Path) -> None:
+    """A variant run stays distinct, but because CONFIG says so -- not because of its directory.
+
+    Previously the suffix was parsed out of the run directory name, which made identity depend on where a corpus sat and
+    let a renamed download silently import under different ids. The suffix is now an explicit input, applied when
+    source_ids.json is written so it travels WITH the corpus.
+    """
     output_dir = (
         tmp_path / "runs" / "gemma-3-1b-it_gemmascope-2-transcoder-262k-rte_phase1-pr-clean-steadystate" / "layer_7"
     )
-    columnar_leaf = output_dir / "google_gemma-leaf" / "batch-0.columnar"
-    columnar_leaf.mkdir(parents=True)
+    (output_dir / "google_gemma-leaf" / "batch-0.columnar").mkdir(parents=True)
+    SET = "gemmascope-2-transcoder-262k-rte"
 
-    assert dashboard_pipeline._resolve_source_id(output_dir, 7, "gemmascope-2-transcoder-262k-rte") == (
-        "7-gemmascope-2-transcoder-262k-rte__phase1-pr-clean-steadystate"
+    # The directory name alone no longer means anything.
+    assert dashboard_pipeline._resolve_source_id(output_dir, 7, SET) == f"7-{SET}"
+
+    # The same suffix, stated in config, still yields a distinct id.
+    assert (
+        dashboard_pipeline._resolve_source_id(output_dir, 7, SET, run_name_suffix="phase1-pr-clean-steadystate")
+        == f"7-{SET}__phase1-pr-clean-steadystate"
     )
 
 
@@ -4033,3 +4044,56 @@ def test_no_cli_option_declares_a_default_that_defeats_suppress() -> None:
         "these options declare an explicit default and will overwrite config-file values "
         f"(drop the `default=` so SUPPRESS applies): {offenders}"
     )
+
+
+class TestSourceIdResolution:
+    """Identity must come from the corpus or the caller -- never from where the files happen to sit.
+
+    Deriving it from the run directory name meant downloading to a differently-named target imported
+    cleanly into a SEPARATE set of source ids: a failure indistinguishable from success, and the
+    reason directory-name parsing was removed rather than merely warned about.
+    """
+
+    SET = "gemmascope-2-transcoder-16k"
+    HOSTILE = "gemma-3-1b-it_gemmascope-2-transcoder-16k_hub-download"
+
+    def _layer_dir(self, tmp_path: Path) -> Path:
+        d = tmp_path / self.HOSTILE / "layer_0"
+        d.mkdir(parents=True)
+        return d
+
+    def test_directory_name_no_longer_leaks_into_the_id(self, tmp_path: Path) -> None:
+        got = dashboard_pipeline._resolve_source_id(self._layer_dir(tmp_path), 0, self.SET)
+        assert got == f"0-{self.SET}", "the run directory name must not affect identity"
+
+    def test_sidecar_is_authoritative_over_layout(self, tmp_path: Path) -> None:
+        layer = self._layer_dir(tmp_path)
+        dashboard_pipeline.write_source_ids_sidecar(layer.parent, {0: f"0-{self.SET}__custom"}, source_set_id=self.SET)
+        assert dashboard_pipeline._resolve_source_id(layer, 0, self.SET) == f"0-{self.SET}__custom"
+
+    def test_template_beats_the_sidecar(self, tmp_path: Path) -> None:
+        """An explicit caller intent must win, so an import can be deliberately re-keyed."""
+        layer = self._layer_dir(tmp_path)
+        dashboard_pipeline.write_source_ids_sidecar(
+            layer.parent, {0: f"0-{self.SET}__from_sidecar"}, source_set_id=self.SET
+        )
+        got = dashboard_pipeline._resolve_source_id(
+            layer, 0, self.SET, source_id_template="{layer}-{source_set_id}__rte"
+        )
+        assert got == f"0-{self.SET}__rte"
+
+    def test_unknown_template_field_fails_loudly(self) -> None:
+        with pytest.raises(ValueError, match="unknown field"):
+            dashboard_pipeline.render_source_id_template("{nope}", layer_num=0, source_set_id=self.SET)
+
+    def test_unreadable_sidecar_degrades_rather_than_crashes(self, tmp_path: Path) -> None:
+        layer = self._layer_dir(tmp_path)
+        (layer.parent / "source_ids.json").write_text("{not json", encoding="utf-8")
+        assert dashboard_pipeline._resolve_source_id(layer, 0, self.SET) == f"0-{self.SET}"
+
+    def test_backfill_preserves_existing_ids(self, tmp_path: Path) -> None:
+        """Rewriting ids under a corpus already imported somewhere would silently re-key it."""
+        run = tmp_path / self.HOSTILE
+        (run / "layer_0").mkdir(parents=True)
+        dashboard_pipeline.write_source_ids_sidecar(run, {0: f"0-{self.SET}__original"}, source_set_id=self.SET)
+        assert dashboard_pipeline.read_source_ids_sidecar(run)["0"] == f"0-{self.SET}__original"
