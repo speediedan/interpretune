@@ -1,0 +1,67 @@
+# All-layer example-aligned RTE dashboard generation for gemma-3-1b-it, 16k transcoders.
+#
+# The RTE counterpart to `gemmascope-2-transcoder-16k-monology-24576.yaml`: same model and same
+# source set width, different prompt corpus. Monology is generic web text; RTE is the actual task
+# the example notebooks run, so these dashboards line up with what a reader sees there.
+#
+# Prompts come from the pretokenized RTE cache (2,490 prompts x 319 tokens, chat-templated full
+# prompts) inherited from `gemmascope-2-rte-base.yaml`. Regeneration of that cache is documented in
+# docs/neuronpedia_dashboard_pipeline.md (dashboard_pretokenization_rte.py).
+#
+# MEMORY -- two separate budgets, and confusing them cost a run:
+#   HOST feature-acts buffer = (n_prompts * n_tokens) * n_features_per_batch in bfloat16
+#                            = 2,490 * 319 * 4096 * 2 = ~6.1 GiB, comfortably fine.
+#   GPU  per-forward-pass tensors scale with the CONTEXT LENGTH, which is 319 here vs 128 for
+#        monology. Layers 16+ OOMed at 22.3/23.5 GiB until primary_acts_batch_size bounded them.
+# The host figure being small says nothing about the GPU one.
+#
+# Parquet page index is ON (default) -- it cannot be added after generation without regenerating,
+# and it is what makes the published corpus range-readable over the bucket's S3 gateway.
+#
+# activation_copy_rows are emitted deliberately. They are the importer's fast lane AND the
+# feature_batch manifests declare them, so a corpus without them cannot be imported at all.
+EXTENDS: gemmascope-2-rte-base.yaml
+pipeline:
+  sae_set: gemma-scope-2-1b-it-transcoders-all
+  neuronpedia_source_set_id: gemmascope-2-transcoder-16k-rte
+  neuronpedia_source_set_description: Transcoder - 16k (RTE)
+  release_url: https://huggingface.co/google/gemma-scope-2-1b-it
+  hf_weights_repo_id: google/gemma-scope-2-1b-it
+  hf_weights_path_template: transcoder_all/layer_{layer}_width_16k_l0_small_affine
+  sae_path_template: layer_{layer}_width_16k_l0_small_affine
+  start_layer: 0
+  end_layer: 25
+  n_features_per_batch: 4096
+  n_prompts_in_forward_pass: 256
+  # Bounds the per-forward-pass activation batch on the GPU. REQUIRED at this context length: the
+  # 319-token RTE prompts make the encode-step tensors ~2.5x the 128-token monology case, and layers
+  # 16+ OOMed at 22.3/23.5 GiB without it. Matches the 262k RTE configs, which use the same context.
+  #
+  # Note this is a GPU budget and is unrelated to the ~6.1 GiB HOST acts buffer. Reasoning from the
+  # host figure alone is what led to omitting it here in the first place -- the same conflation, in
+  # the opposite direction, as assuming row_chunk_size would fix a host OOM.
+  primary_acts_batch_size: 64
+  use_skip_transcoder: true
+  runner_dashboard_output_format: columnar
+  runner_sequence_selection_backend: columnar_gpu
+  runner_feature_statistics_backend: arrow
+  runner_logits_histogram_backend: arrow
+  runner_overlap_batch_packaging: true
+  runner_use_cached_activations: false
+  runner_log_performance: true
+  # Emit the copy-rows table explicitly rather than inheriting it from import_to_local_db. Those two
+  # are coupled by default, so turning the inline import off would silently drop the table and
+  # produce a corpus that downloads fine and then fails on the first import.
+  runner_emit_activation_copy_rows: true
+  # Generation only. Importing on top of an existing corpus is a silent no-op (ON CONFLICT DO
+  # NOTHING), so the DB is reconciled separately with --import-only-local-db after a scoped purge.
+  import_to_local_db: false
+  # No run_name_suffix: this is the canonical RTE run, so source ids are {layer}-{source_set_id}.
+  # They are recorded in source_ids.json at generation start, which is what lets the published
+  # corpus be downloaded anywhere and still import under the right ids.
+launcher:
+  background: true
+  monitor: true
+  monitor_heartbeat_seconds: 60
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
