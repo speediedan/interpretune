@@ -171,6 +171,101 @@ and [Local explanation note](neuronpedia_dashboard_pipeline.md#local-explanation
 
 ---
 
+## Pre-generated dashboards: download and import without generating anything
+
+Two corpora are published as public Hugging Face **Storage Buckets**, so a local Neuronpedia can be
+populated without spending GPU hours. **No token or account is required** — every command below was
+run with no credential present.
+
+| Corpus | Bucket | Files | Size | Prompts |
+| --- | --- | --- | --- | --- |
+| **RTE** (example-aligned) | [`…__rte__dashboards`](https://huggingface.co/buckets/speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards) | 1067 | 5.84 GiB | 2,490 × 319 tok |
+| **Monology** (generic web text) | [`…__monology__dashboards`](https://huggingface.co/buckets/speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards) | 1014 | 10.07 GiB | 24,576 × 128 tok |
+
+Both are `gemma-3-1b-it` with the `gemma-scope-2-1b-it-transcoders-all` 16k transcoders, all 26
+layers. RTE uses the prompts the example notebooks run, so its dashboards line up with what those
+notebooks show; monology is the generic-text counterpart. They import into **different source sets**
+and can coexist in one database.
+
+### 1. Download
+
+The destination's **leaf directory name is used as the run directory**, so keep the names below and
+vary the parent if needed.
+
+| corpus | bucket id | leaf directory |
+| --- | --- | --- |
+| RTE | `speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards` | `gemma-3-1b-it_gemmascope-2-transcoder-16k-rte` |
+| monology | `speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards` | `gemma-3-1b-it_gemmascope-2-transcoder-16k` |
+
+```python
+from pathlib import Path
+from interpretune.utils import download_dashboard_run
+
+# RTE, 5.84 GiB. For monology, swap both the bucket id and the leaf directory per the table above.
+download_dashboard_run(
+    "speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards",
+    Path("~/np_corpora/gemma-3-1b-it_gemmascope-2-transcoder-16k-rte").expanduser(),
+)
+```
+
+### 2. Import into a local Neuronpedia DB
+
+Needs a running local Neuronpedia Postgres — see the
+[pipeline guide](neuronpedia_dashboard_pipeline.md). Point `--run-root` at the **parent** of the
+directory you downloaded into:
+
+```bash
+# RTE
+python scripts/launch_neuronpedia_dashboard_pipeline.py \
+  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-16k-rte-production.yaml \
+  --import-only-local-db \
+  --run-root ~/np_corpora \
+  --local-db-url postgres://postgres:postgres@127.0.0.1:5433/postgres
+```
+
+```bash
+# monology -- same shape, different config
+python scripts/launch_neuronpedia_dashboard_pipeline.py \
+  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-16k-monology-24576.yaml \
+  --import-only-local-db \
+  --run-root ~/np_corpora \
+  --local-db-url postgres://postgres:postgres@127.0.0.1:5433/postgres
+```
+
+Add `--print-command --dry-run` to either to see the resolved command without executing it.
+
+Each import writes 26 layers × 16,384 features = **425,984 `Neuron` rows** plus activations
+(~16.2M for monology, ~10.4M for RTE), taking roughly 40–60 minutes.
+
+### 3. Confirm it landed
+
+```sql
+SELECT s."setName", s."modelId", count(DISTINCT s.id) AS sources
+FROM "Source" s
+WHERE s."setName" LIKE 'gemmascope-2-transcoder-16k%'
+GROUP BY s."setName", s."modelId";
+```
+
+Expect 26 sources per (set, model) pair — `gemmascope-2-transcoder-16k` for monology and
+`gemmascope-2-transcoder-16k-rte` for RTE.
+
+### Notes worth knowing first
+
+- **Source ids travel with the corpus.** Each bucket carries a `source_ids.json` recording the
+  Neuronpedia source id per layer, so the import yields the same ids no matter where you unpacked
+  it. Earlier corpora inferred ids from the directory name, which meant a renamed download imported
+  *successfully* under different ids — a failure that looked like success. This removes that.
+- **`activation_copy_rows` are included deliberately** (~45% of the payload). The per-batch
+  manifests declare that table and the importer raises if it is missing, so a slimmed-down copy is
+  not importable at all. It is also the faster of the two import paths.
+- **Parquet page indexes are present**, so the files are range-readable. Via the bucket's
+  S3-compatible gateway (`https://s3.hf.co/speediedan`) you can query them in place — e.g. DuckDB
+  `read_parquet('s3://…')` — without downloading anything.
+- **The `hf` CLI (`hf buckets sync …`) may be simpler where it works.** It is deliberately not
+  documented here: in our environment a `click`/`typer` incompatibility breaks the `hf` entry point
+  entirely, not just the buckets subcommand, so we have not verified those commands and will not
+  publish untested ones.
+
 ## Related documentation
 
 - [Neuronpedia dashboard pipeline](neuronpedia_dashboard_pipeline.md) — generation, import, and
