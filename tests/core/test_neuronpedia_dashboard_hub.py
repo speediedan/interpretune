@@ -18,8 +18,12 @@ from unittest.mock import patch
 import pytest
 
 from interpretune.utils.neuronpedia_dashboard_hub import (
+    BUCKET_ROOT,
+    CORPUS_MANIFEST_FILE,
     COPY_ROWS_STEM,
+    BucketPrefixUnspecifiedError,
     ManifestReferencesExcludedTableError,
+    corpus_manifest_summary,
     manifest_referenced_tables,
     DASHBOARD_STORES,
     DEFAULT_STORE,
@@ -336,6 +340,7 @@ class TestBackendParity:
                 # Manifests declare copy-rows, so excluding them is only legal with the explicit
                 # parquet-only override -- see TestManifestConsistency.
                 require_manifest_consistency=include_copy_rows,
+                revision=BUCKET_ROOT,
                 token="t",
             )
         api_obj = api.return_value
@@ -377,6 +382,134 @@ class TestBackendParity:
             snap.assert_called_once()
         else:
             assert api.return_value.sync_bucket.call_args.kwargs["source"] == "hf://buckets/ns/name"
+
+
+class TestBucketPrefix:
+    """A bucket publish must say WHERE it lands; a dataset publish need not.
+
+    Buckets have no revisions and no history, so two corpora differing only in a dimension the bucket NAME does not
+    carry (prompt count being the obvious one) silently share the root, and a later sync overwrites in place with
+    nothing to roll back to.
+    """
+
+    def test_bucket_publish_without_a_prefix_is_refused_before_any_network_call(self, tmp_path: Path) -> None:
+        with patch("huggingface_hub.HfApi") as api:
+            with pytest.raises(BucketPrefixUnspecifiedError, match="explicit destination"):
+                publish_dashboard_run(_build_run(tmp_path, page_index=True), "ns/bkt", store="bucket", token="t")
+        api.assert_not_called()
+
+    def test_bucket_root_is_an_accepted_explicit_answer(self, tmp_path: Path) -> None:
+        """The two already-published corpora live at the root; saying so must remain expressible."""
+        with patch("huggingface_hub.HfApi") as api:
+            publish_dashboard_run(
+                _build_run(tmp_path, page_index=True), "ns/bkt", store="bucket", revision=BUCKET_ROOT, token="t"
+            )
+        assert api.return_value.sync_bucket.call_args.kwargs["dest"] == "hf://buckets/ns/bkt"
+
+    def test_dataset_publish_still_defaults_the_revision(self, tmp_path: Path) -> None:
+        with patch("huggingface_hub.HfApi") as api:
+            publish_dashboard_run(_build_run(tmp_path, page_index=True), "ns/name", store="dataset", token="t")
+        assert api.return_value.upload_folder.call_args.kwargs["revision"] is None
+
+    def test_corpus_guards_are_reported_before_the_destination_guard(self, tmp_path: Path) -> None:
+        """A corpus problem costs a regeneration to fix; a missing flag costs a retype.
+
+        Reporting the flag first would hide the expensive problem behind the trivial one.
+        """
+        with patch("huggingface_hub.HfApi"):
+            with pytest.raises(MissingPageIndexError):
+                publish_dashboard_run(_build_run(tmp_path, page_index=False), "ns/bkt", store="bucket", token="t")
+
+    def test_cli_bucket_root_flag_publishes_at_the_root(self, tmp_path: Path) -> None:
+        main = _publish_cli().main
+        with patch("huggingface_hub.HfApi") as api:
+            rc = main(
+                ["--run-root", str(_build_run(tmp_path, page_index=True)), "--repo-id", "ns/bkt", "--bucket-root"]
+            )
+        assert rc == 0
+        assert api.return_value.sync_bucket.call_args.kwargs["dest"] == "hf://buckets/ns/bkt"
+
+    def test_cli_without_a_destination_exits_three(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        main = _publish_cli().main
+        with patch("huggingface_hub.HfApi"):
+            rc = main(["--run-root", str(_build_run(tmp_path, page_index=True)), "--repo-id", "ns/bkt"])
+        assert rc == 3
+        assert "REFUSING TO PUBLISH" in capsys.readouterr().err
+
+    def test_cli_rejects_both_destination_flags_at_once(self, tmp_path: Path) -> None:
+        main = _publish_cli().main
+        argv = [
+            "--run-root",
+            str(_build_run(tmp_path, page_index=True)),
+            "--repo-id",
+            "ns/bkt",
+            "--bucket-root",
+            "--revision",
+            "24576-prompts",
+        ]
+        with patch("huggingface_hub.HfApi") as api:
+            assert main(argv) == 1
+        api.assert_not_called()
+
+    def test_cli_reports_the_backend_correct_url(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        """The wrapper used to print a datasets/ URL for every publish, including bucket ones."""
+        main = _publish_cli().main
+        run = str(_build_run(tmp_path, page_index=True))
+        with patch("huggingface_hub.HfApi"):
+            main(
+                [
+                    "--run-root",
+                    run,
+                    "--repo-id",
+                    "ns/bkt",
+                    "--bucket-root",
+                ]
+            )
+            assert "huggingface.co/buckets/ns/bkt" in capsys.readouterr().out
+            main(["--run-root", run, "--repo-id", "ns/ds", "--store", "dataset"])
+            assert "huggingface.co/datasets/ns/ds" in capsys.readouterr().out
+
+
+class TestCorpusManifest:
+    """``dashboards.json`` is what lets a consumer identify a corpus without opening a parquet file."""
+
+    def test_filename_matches_the_pipeline_that_writes_it(self) -> None:
+        """The constant is duplicated to keep the publisher light; drift must fail here, not silently."""
+        from interpretune.utils.neuronpedia_dashboard_pipeline import DASHBOARD_MANIFEST_FILE
+
+        assert CORPUS_MANIFEST_FILE == DASHBOARD_MANIFEST_FILE
+
+    def test_summary_renders_the_identifying_fields(self, tmp_path: Path) -> None:
+        (tmp_path / CORPUS_MANIFEST_FILE).write_text(
+            json.dumps(
+                {
+                    "model": {"name": "gemma-3-1b-it"},
+                    "source_set": {"id": "gemmascope-2-transcoder-16k"},
+                    "prompt_corpus": {"n_prompts": 24576, "n_tokens_in_prompt": 128},
+                    "layers": {"generated": list(range(26))},
+                }
+            ),
+            encoding="utf-8",
+        )
+        summary = corpus_manifest_summary(tmp_path)
+        assert "gemma-3-1b-it" in summary
+        assert "24576 prompts x 128 tokens" in summary
+        assert "26 layers" in summary
+
+    def test_absent_manifest_is_flagged_not_fatal(self, tmp_path: Path) -> None:
+        """Nothing imports from it, so a corpus without one still publishes -- visibly."""
+        assert "ABSENT" in corpus_manifest_summary(tmp_path)
+        with patch("huggingface_hub.HfApi") as api:
+            publish_dashboard_run(_build_run(tmp_path, page_index=True), "ns/n", store="dataset", token="t")
+        api.return_value.upload_folder.assert_called_once()
+
+    def test_unreadable_manifest_does_not_abort_the_report(self, tmp_path: Path) -> None:
+        (tmp_path / CORPUS_MANIFEST_FILE).write_text("{not json", encoding="utf-8")
+        assert "UNREADABLE" in corpus_manifest_summary(tmp_path)
+
+    def test_plan_report_includes_the_summary(self, tmp_path: Path) -> None:
+        run = _build_run(tmp_path, page_index=True)
+        assert "corpus manifest:" in format_publish_plan(build_publish_plan(run), repo_id="ns/n")
 
 
 class TestTokenResolution:

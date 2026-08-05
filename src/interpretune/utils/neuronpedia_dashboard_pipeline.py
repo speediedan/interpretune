@@ -2287,6 +2287,115 @@ def ensure_source_ids_sidecar(config: NeuronpediaDashboardPipelineConfig, *, ove
     )
 
 
+DASHBOARD_MANIFEST_FILE = "dashboards.json"
+DASHBOARD_MANIFEST_SCHEMA = 1
+
+#: Distributions whose versions determine what a corpus's bytes look like. ``sae-dashboard`` writes
+#: the parquet (page index included), ``pyarrow`` is the writer itself, and ``huggingface_hub``
+#: governs how it was transported. Anything else is noise for reproducing a corpus.
+_MANIFEST_TRACKED_DISTRIBUTIONS = ("interpretune", "sae-dashboard", "pyarrow", "huggingface_hub")
+
+
+def dashboard_manifest_path(run_root: Path) -> Path:
+    return Path(run_root) / DASHBOARD_MANIFEST_FILE
+
+
+def read_dashboard_manifest(run_root: Path) -> dict[str, Any]:
+    """What a corpus says it is, or ``{}`` when it says nothing."""
+    path = dashboard_manifest_path(run_root)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.getLogger(__name__).warning("unreadable %s (%s); ignoring", path, exc)
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _tracked_distribution_versions() -> dict[str, str]:
+    from importlib.metadata import PackageNotFoundError, version
+
+    versions: dict[str, str] = {}
+    for dist in _MANIFEST_TRACKED_DISTRIBUTIONS:
+        try:
+            versions[dist] = version(dist)
+        except PackageNotFoundError:  # an absent optional dependency is not an error here
+            continue
+    return versions
+
+
+def build_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> dict[str, Any]:
+    """Describe a corpus in terms a consumer can act on without opening a single parquet file.
+
+    Deliberately DESCRIPTIVE, not authoritative: ``source_ids.json`` remains the single source of
+    truth for identity, and this file merely restates it alongside the provenance a reader needs to
+    decide whether the corpus is the one they want. Nothing imports from here, so a stale or absent
+    manifest degrades discoverability and nothing else -- which is why it can be refreshed freely
+    while the source-id sidecar cannot.
+    """
+    from datetime import datetime, timezone
+
+    run_root = config.run_directory
+    requested = config.requested_layer_numbers()
+    generated = sorted(
+        int(p.name.removeprefix("layer_"))
+        for p in run_root.glob("layer_*")
+        if p.is_dir() and p.name.removeprefix("layer_").isdigit()
+    )
+    return {
+        "schema": DASHBOARD_MANIFEST_SCHEMA,
+        "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "model": {"name": config.model_name, "n_layers": config.model_layers},
+        "source_set": {
+            "id": config.neuronpedia_source_set_id,
+            "description": config.neuronpedia_source_set_description,
+            "sae_set": config.sae_set,
+            "hook_point": config.hook_point,
+            "release_id": config.release_id,
+            "release_title": config.release_title,
+            "release_url": config.release_url,
+            "creator": config.creator_name,
+        },
+        "prompt_corpus": {
+            "hf_dataset_path": config.prompts_huggingface_dataset_path,
+            "hf_dataset_config_name": config.prompts_huggingface_dataset_config_name,
+            "hf_dataset_split": config.prompts_huggingface_dataset_split,
+            "pretokenized_path_name": (
+                config.prompts_pretokenized_dataset_path.name if config.prompts_pretokenized_dataset_path else None
+            ),
+            "n_prompts": config.n_prompts_total,
+            "n_tokens_in_prompt": config.n_tokens_in_prompt,
+        },
+        # `requested` is what the run was asked for; `generated` is what is on disk at write time. A
+        # run interrupted at layer 12 must not claim 26 layers it never produced.
+        "layers": {"requested": requested, "generated": generated},
+        "source_ids": read_source_ids_sidecar(run_root),
+        "artifacts": {
+            "format": _resolve_runner_dashboard_output_format(config),
+            "page_index": bool(config.runner_columnar_write_page_index),
+            "includes_copy_rows": _resolve_runner_emit_activation_copy_rows(config),
+            "n_features_per_batch": config.n_features_per_batch,
+        },
+        "tool_versions": _tracked_distribution_versions(),
+    }
+
+
+def ensure_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> Path | None:
+    """Write ``dashboards.json`` at the run root.
+
+    Always overwrites, unlike :func:`ensure_source_ids_sidecar`. The asymmetry is the point: rewriting
+    source ids under an already-imported corpus would silently re-key it, whereas this file carries no
+    identity, so a refresh can only make it more accurate.
+    """
+    run_root = config.run_directory
+    if not run_root.exists():
+        return None
+    path = dashboard_manifest_path(run_root)
+    path.write_text(json.dumps(build_dashboard_manifest(config), indent=2) + "\n", encoding="utf-8")
+    return path
+
+
 def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[NeuronpediaDashboardLayerResult]:
     """Run dashboard generation, conversion, and optional local import for a layer range."""
 
@@ -2296,6 +2405,7 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
     config.run_directory.mkdir(parents=True, exist_ok=True)
     # Declare identity up front so the corpus is self-describing even if the run is interrupted.
     ensure_source_ids_sidecar(config)
+    ensure_dashboard_manifest(config)
     pipeline_log_path = cast(Path, config.pipeline_log_path)
     existing_log_path = cast(Path, config.existing_log_path)
     logger = _configure_logger(pipeline_log_path)
@@ -2714,6 +2824,9 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
         _drain_oldest_deferred_import()
     if import_executor is not None:
         import_executor.shutdown(wait=True)
+    # Refresh now that the layers actually exist: the manifest written at start could only record an
+    # empty `layers.generated`, which would misdescribe the very corpus about to be published.
+    ensure_dashboard_manifest(config)
     return results
 
 
@@ -2853,8 +2966,8 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--write-source-ids",
         action="store_true",
-        help="Write (or backfill) source_ids.json for this run and exit. Makes an already-generated "
-        "corpus self-describing without regenerating it.",
+        help="Write (or backfill) source_ids.json and dashboards.json for this run and exit. Makes an "
+        "already-generated corpus self-describing without regenerating it.",
     )
     parser.add_argument(
         "--neuronpedia-source-id-template",
@@ -3014,8 +3127,14 @@ def main() -> int:
         config = _build_dashboard_pipeline_config(args)
         if getattr(args, "write_source_ids", False):
             written = ensure_source_ids_sidecar(config, overwrite=True)
-            print(f"wrote {written}" if written else f"run directory not found: {config.run_directory}")
-            return 0 if written else 1
+            # Order matters: the manifest restates the source ids, so it must be written second to
+            # pick up what the sidecar just resolved rather than the previous run's answer.
+            manifest = ensure_dashboard_manifest(config) if written else None
+            if not written:
+                print(f"run directory not found: {config.run_directory}")
+                return 1
+            print("\n".join(f"wrote {p}" for p in (written, manifest) if p))
+            return 0
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
     run_dashboard_pipeline(config)

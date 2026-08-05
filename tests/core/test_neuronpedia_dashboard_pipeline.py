@@ -4046,6 +4046,99 @@ def test_no_cli_option_declares_a_default_that_defeats_suppress() -> None:
     )
 
 
+class TestDashboardManifest:
+    """``dashboards.json`` makes a corpus identifiable without opening a parquet file or a bucket name.
+
+    Purely descriptive: nothing imports from it, which is precisely why it may be refreshed freely
+    where ``source_ids.json`` may not.
+    """
+
+    def _config(self, tmp_path: Path, **overrides) -> NeuronpediaDashboardPipelineConfig:
+        kwargs = dict(
+            model_name="gemma-3-1b-it",
+            model_layers=26,
+            sae_set="gemma-scope-2-1b-it-transcoders-all",
+            neuronpedia_source_set_id="gemmascope-2-transcoder-16k",
+            neuronpedia_source_set_description="Transcoder - 16k",
+            creator_name="Google DeepMind",
+            release_id="gemma-scope-2",
+            release_title="Gemma Scope 2",
+            release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+            hf_weights_repo_id="google/gemma-scope-2-1b-it",
+            hf_weights_path_template="transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+            sae_path_template="layer_{layer}_width_16k_l0_small_affine",
+            hook_point="hook_mlp_in",
+            prompts_huggingface_dataset_path="monology/pile-uncopyrighted",
+            start_layer=0,
+            end_layer=2,
+            n_prompts_total=24576,
+            n_tokens_in_prompt=128,
+            run_root=tmp_path / "runs",
+            export_root=tmp_path / "exports",
+            saedashboard_repo_root=tmp_path,
+            saelens_repo_root=tmp_path,
+            neuronpedia_utils_root=tmp_path,
+            interpretune_env_file=None,
+        )
+        kwargs.update(overrides)
+        return NeuronpediaDashboardPipelineConfig(**kwargs)
+
+    def test_records_the_fields_a_consumer_identifies_a_corpus_by(self, tmp_path: Path) -> None:
+        config = self._config(tmp_path)
+        config.run_directory.mkdir(parents=True)
+        path = dashboard_pipeline.ensure_dashboard_manifest(config)
+
+        assert path is not None and path.name == dashboard_pipeline.DASHBOARD_MANIFEST_FILE
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["model"]["name"] == "gemma-3-1b-it"
+        assert payload["source_set"]["id"] == "gemmascope-2-transcoder-16k"
+        assert payload["prompt_corpus"]["n_prompts"] == 24576
+        assert payload["prompt_corpus"]["n_tokens_in_prompt"] == 128
+        assert payload["layers"]["requested"] == [0, 1, 2]
+        # Page index is what makes the published parquet range-readable; a consumer choosing between
+        # corpora needs to see it without downloading one.
+        assert payload["artifacts"]["page_index"] is True
+        assert "interpretune" in payload["tool_versions"]
+
+    def test_generated_layers_reflect_disk_not_intent(self, tmp_path: Path) -> None:
+        """A run interrupted at layer 1 must not claim the three layers it was asked for."""
+        config = self._config(tmp_path)
+        config.run_directory.mkdir(parents=True)
+        (config.run_directory / "layer_0").mkdir()
+        (config.run_directory / "layer_1").mkdir()
+
+        payload = json.loads(dashboard_pipeline.ensure_dashboard_manifest(config).read_text(encoding="utf-8"))
+        assert payload["layers"]["requested"] == [0, 1, 2]
+        assert payload["layers"]["generated"] == [0, 1]
+
+    def test_restates_the_source_ids_the_sidecar_declares(self, tmp_path: Path) -> None:
+        config = self._config(tmp_path)
+        config.run_directory.mkdir(parents=True)
+        dashboard_pipeline.ensure_source_ids_sidecar(config)
+
+        payload = json.loads(dashboard_pipeline.ensure_dashboard_manifest(config).read_text(encoding="utf-8"))
+        assert payload["source_ids"]["0"] == "0-gemmascope-2-transcoder-16k"
+
+    def test_refresh_overwrites_where_the_source_id_sidecar_would_not(self, tmp_path: Path) -> None:
+        """The asymmetry is deliberate: re-keying identity is destructive, restating provenance is not."""
+        config = self._config(tmp_path)
+        config.run_directory.mkdir(parents=True)
+        dashboard_pipeline.ensure_dashboard_manifest(config)
+
+        (config.run_directory / "layer_0").mkdir()
+        payload = json.loads(dashboard_pipeline.ensure_dashboard_manifest(config).read_text(encoding="utf-8"))
+        assert payload["layers"]["generated"] == [0]
+
+    def test_absent_run_directory_yields_none_rather_than_creating_one(self, tmp_path: Path) -> None:
+        assert dashboard_pipeline.ensure_dashboard_manifest(self._config(tmp_path)) is None
+
+    def test_unreadable_manifest_degrades_rather_than_crashes(self, tmp_path: Path) -> None:
+        run = tmp_path / "run"
+        run.mkdir()
+        (run / dashboard_pipeline.DASHBOARD_MANIFEST_FILE).write_text("{not json", encoding="utf-8")
+        assert dashboard_pipeline.read_dashboard_manifest(run) == {}
+
+
 class TestSourceIdResolution:
     """Identity must come from the corpus or the caller -- never from where the files happen to sit.
 

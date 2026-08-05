@@ -1447,18 +1447,27 @@ over it.
 # inspect what would be published -- no network writes
 python scripts/publish_dashboards_to_hub.py --run-root <run_dir> --repo-id <ns>/<name> --dry-run
 
-# publish (private) to a bucket
+# publish (private) to a bucket, under an explicit prefix
 python scripts/publish_dashboards_to_hub.py --run-root <run_dir> --repo-id <ns>/<name> \
-    --store bucket --private
+    --store bucket --revision 24576-prompts --private
+
+# ...or at the bucket root, said deliberately
+python scripts/publish_dashboards_to_hub.py --run-root <run_dir> --repo-id <ns>/<name> \
+    --store bucket --bucket-root --private
 ```
 
 ```python
 from pathlib import Path
 from interpretune.utils import publish_dashboard_run, download_dashboard_run
+from interpretune.utils.neuronpedia_dashboard_hub import BUCKET_ROOT
 
-publish_dashboard_run(Path(run_dir), "ns/name", store="bucket", private=True)
+publish_dashboard_run(Path(run_dir), "ns/name", store="bucket", revision=BUCKET_ROOT, private=True)
 download_dashboard_run("ns/name", Path(dest), store="bucket")
 ```
+
+`dest` may be named anything. This was not always true — source ids were once derived from the run
+directory name, so unpacking under a different name imported cleanly into a *separate* set of ids.
+Identity now travels inside the corpus; see [What a corpus says about itself](#what-a-corpus-says-about-itself).
 
 ### Choosing a backend
 
@@ -1479,6 +1488,30 @@ Publishing to both is cheap: Xet deduplicates chunk-wise across them, so the sec
 already-published corpus completes in seconds. Note `dataset → bucket` server-side copy exists while
 `bucket → dataset` does not, so if you will only ever do one, doing the dataset first keeps both open.
 
+### What Xet dedup does and does not buy here
+
+Xet chunks content at a 64 KB target (8–128 KB range) and deduplicates **globally — across all
+repositories and users**, not per repo. Co-locating corpora therefore buys no storage; layout is a
+discoverability and access-control decision, not a compression one.
+
+Measured on the two published corpora (CDC simulation at Xet's parameters):
+
+| Pair | Chunk dedup |
+| --- | --- |
+| `activation_copy_rows` vs `activation_rows`, same `feature_batch_*` | **96–99%** |
+| Same layer/batch across prompt corpora (monology vs RTE) | 0% |
+| Across layers within one corpus | 0% |
+
+So the copy-rows table — ~45% of every corpus, and the reason a publish looks twice as expensive as
+it should — costs essentially **nothing in stored bytes**, because it dedups against
+`activation_rows` inside the same directory. The only files byte-identical across prompt corpora are
+`logits_tables` and `logits_histograms` (decoder-derived, corpus-invariant): 165 MiB of 5.68 GiB.
+
+The practical consequence: do not split `activation_rows` and `activation_copy_rows` across repos or
+upload sessions to "save space". Local-session dedup is exact; global dedup is *sampled* (only chunks
+whose hash `% 1024 == 0` are eligible), so separating them downgrades a guaranteed saving to a
+probabilistic one and gains nothing.
+
 ### Two guards that refuse to publish, and why
 
 **Missing Parquet page index.** Without one a reader cannot range-read individual pages, so HTTP
@@ -1493,7 +1526,43 @@ preferred entry is absent — it does not fall back. So excluding `activation_co
 corpus that downloads byte-identically and then **fails on the first import**. `--include-copy-rows`
 is therefore the default. Exclude it only for a consumer that reads the parquet directly (DuckDB,
 pandas) and never imports, which requires both `--no-include-copy-rows` and
-`--allow-manifest-inconsistency`.
+`--allow-manifest-inconsistency`. Excluding it saves little anyway — see the dedup table above.
+
+**Unspecified bucket destination.** Buckets have no revisions and no history, so a publish that does
+not say *where* in the bucket it lands puts every corpus at the root. Two corpora differing only in a
+dimension the bucket *name* does not carry — prompt count being the obvious one — then interleave,
+and a later sync overwrites in place with nothing to roll back to. Pass `--revision <prefix>` or
+`--bucket-root`. Dataset repos are unaffected: a revision defaults to a branch and destroys nothing.
+
+The destination guard is checked **after** the two corpus guards, deliberately: a missing page index
+costs a regeneration to fix, and reporting a missing flag first would hide that behind a retype.
+
+### What a corpus says about itself
+
+Two sidecars at the run root travel with a published corpus:
+
+| File | Role | Refreshable |
+| --- | --- | --- |
+| `source_ids.json` | **Identity** — the Neuronpedia source id per layer | No: rewriting it under an already-imported corpus silently re-keys it |
+| `dashboards.json` | **Provenance** — model, source set, prompt corpus, layers, artifact properties, tool versions | Yes: nothing imports from it |
+
+`dashboards.json` is what lets a consumer tell two corpora apart without downloading either or
+trusting a bucket name:
+
+```console
+$ python scripts/publish_dashboards_to_hub.py --run-root <run_dir> --repo-id <ns>/<name> --dry-run
+corpus manifest: gemma-3-1b-it / gemmascope-2-transcoder-16k-rte / 2490 prompts x 319 tokens / 26 layers
+```
+
+Both are written at generation start and refreshed at completion. Backfill a corpus generated before
+they existed — no regeneration required:
+
+```bash
+python -m interpretune.utils.neuronpedia_dashboard_pipeline --config <config>.yaml --write-source-ids
+```
+
+`layers.generated` reflects what is on disk at write time, not what was requested, so a run
+interrupted at layer 12 does not claim 26 layers it never produced.
 
 ### Credentials
 

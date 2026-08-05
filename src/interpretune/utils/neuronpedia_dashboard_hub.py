@@ -52,6 +52,11 @@ __all__ = [
     "PageIndexCoverage",
     "MissingPageIndexError",
     "ManifestReferencesExcludedTableError",
+    "BucketPrefixUnspecifiedError",
+    "BUCKET_ROOT",
+    "UNSPECIFIED",
+    "CORPUS_MANIFEST_FILE",
+    "corpus_manifest_summary",
     "manifest_referenced_tables",
     "collect_publish_files",
     "summarize_by_table",
@@ -84,6 +89,12 @@ EXCLUDED_SUFFIXES = frozenset({".log"})
 #: other Hub operation in the process depending on which won.
 DASHBOARDS_TOKEN_ENV_VAR = "HF_HUB_DASHBOARDS_TOKEN"
 
+#: Corpus-level self-description written by the pipeline at the run root. Duplicated rather than
+#: imported: pulling it from the pipeline module would drag sae_dashboard and torch into what is
+#: otherwise a lightweight publisher. ``TestCorpusManifest`` asserts the two constants agree, so
+#: drift is a test failure rather than a silently-missing file in a published corpus.
+CORPUS_MANIFEST_FILE = "dashboards.json"
+
 #: Parquet files inspected when estimating page-index coverage. The corpus is homogeneous -- every
 #: file comes from the same writer configuration -- so a sample answers the question that matters
 #: ("was write_page_index on for this run?") without opening ~900 footers.
@@ -106,6 +117,36 @@ class MissingPageIndexError(RuntimeError):
 
     Not a warning, because the remedy after the fact is to regenerate the corpus and upload it again.
     """
+
+
+class BucketPrefixUnspecifiedError(RuntimeError):
+    """Raised when a bucket publish does not say where in the bucket it should land.
+
+    Buckets are mutable and unversioned, so two corpora that differ only in a dimension absent from
+    the bucket NAME -- prompt count is the obvious one -- silently interleave at the root, and
+    ``sync`` overwrites in place with no history to recover from. A dataset repo would express the
+    difference as a revision; a bucket can only express it as a path prefix.
+
+    So the prefix is not defaulted. Pass one, or pass :data:`BUCKET_ROOT` to say the root is
+    genuinely intended.
+    """
+
+
+class _Unspecified:
+    """Distinguishes "the caller expressed no opinion" from "the caller chose the root"."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "UNSPECIFIED"
+
+
+#: Sentinel default for ``revision``; see :class:`BucketPrefixUnspecifiedError`.
+UNSPECIFIED: Any = _Unspecified()
+
+#: Explicit "publish at the bucket root". Named so the intent is legible at the call site and in the
+#: shell -- an empty string passed positionally reads like an oversight, which is what this replaces.
+BUCKET_ROOT = ""
 
 
 @dataclass(frozen=True)
@@ -258,6 +299,31 @@ def manifest_referenced_tables(run_root: Path, sample: int = 4) -> set[str]:
     return referenced
 
 
+def corpus_manifest_summary(run_root: Path) -> str:
+    """One line describing what the corpus says it is, for the pre-publish report.
+
+    Returns a warning string when the corpus describes nothing. That is not fatal -- nothing imports from the manifest
+    -- but it is worth seeing at the moment of publishing, since a corpus that reaches a consumer without it forces them
+    to infer provenance from the bucket name.
+    """
+    path = Path(run_root) / CORPUS_MANIFEST_FILE
+    if not path.exists():
+        return f"corpus manifest: ABSENT ({CORPUS_MANIFEST_FILE}) -- backfill with --write-source-ids"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"corpus manifest: UNREADABLE ({exc})"
+    model = (payload.get("model") or {}).get("name", "?")
+    source_set = (payload.get("source_set") or {}).get("id", "?")
+    corpus = payload.get("prompt_corpus") or {}
+    layers = (payload.get("layers") or {}).get("generated") or []
+    return (
+        f"corpus manifest: {model} / {source_set} / "
+        f"{corpus.get('n_prompts', '?')} prompts x {corpus.get('n_tokens_in_prompt', '?')} tokens / "
+        f"{len(layers)} layers"
+    )
+
+
 def build_publish_plan(
     run_root: Path,
     include_copy_rows: bool = False,
@@ -291,6 +357,7 @@ def format_publish_plan(plan: DashboardPublishPlan, repo_id: str = "", max_table
     lines = [f"run root : {plan.run_root}"]
     if repo_id:
         lines.append(f"repo     : {repo_id}")
+    lines.append(corpus_manifest_summary(plan.run_root))
     lines.append(f"upload   : {len(plan.upload):>5} files  {plan.upload_bytes / _GIB:6.2f} GiB")
 
     if plan.skip:
@@ -361,6 +428,10 @@ class DashboardStore(Protocol):
 
     name: str
 
+    #: Whether a publish must state WHERE in the target it lands. True only where the target cannot
+    #: express the distinction any other way -- see :class:`BucketPrefixUnspecifiedError`.
+    requires_explicit_prefix: bool
+
     def ensure(self, target: str, *, private: bool, token: str | None) -> None:
         """Create the destination if it does not exist."""
         ...
@@ -384,6 +455,8 @@ class HubDatasetStore:
     """
 
     name: str = "dataset"
+    #: Revisions are versioned and default to a branch, so omitting one destroys nothing.
+    requires_explicit_prefix: bool = False
 
     def ensure(self, target: str, *, private: bool = False, token: str | None = None) -> None:
         from huggingface_hub import HfApi
@@ -438,6 +511,8 @@ class HubBucketStore:
     """
 
     name: str = "bucket"
+    #: No revisions and no history: an unstated prefix means corpora silently share the root.
+    requires_explicit_prefix: bool = True
 
     @staticmethod
     def uri(target: str, prefix: str = "") -> str:
@@ -520,7 +595,7 @@ def publish_dashboard_run(
     *,
     include_copy_rows: bool = True,
     private: bool = False,
-    revision: str | None = None,
+    revision: str | None = UNSPECIFIED,
     path_in_repo: str = "",
     commit_message: str = "Publish columnar dashboard artifacts",
     require_page_index: bool = True,
@@ -532,6 +607,10 @@ def publish_dashboard_run(
 
     ``store`` selects the transport (``"dataset"`` or ``"bucket"``); see :data:`DASHBOARD_STORES`.
 
+    ``revision`` is a branch for dataset repos and a path PREFIX for buckets. Buckets require it to
+    be stated -- pass :data:`BUCKET_ROOT` for the root -- because they have neither revisions nor
+    history; see :class:`BucketPrefixUnspecifiedError`.
+
     Raises :class:`MissingPageIndexError` when the corpus carries no page index and
     ``require_page_index`` is set -- see the module docstring for why that is fatal rather than a
     warning. Unknown coverage (no pyarrow, no Parquet files) does not trip the check. The check runs
@@ -540,6 +619,7 @@ def publish_dashboard_run(
     """
     plan = build_publish_plan(run_root, include_copy_rows)
     token = token or resolve_dashboards_token()
+    backend = get_dashboard_store(store)
 
     if require_page_index and plan.page_index.absent:
         raise MissingPageIndexError(
@@ -563,7 +643,20 @@ def publish_dashboard_run(
                 "genuinely only reads parquet directly (e.g. DuckDB) and never imports."
             )
 
-    backend = get_dashboard_store(store)
+    # Destination check LAST among the guards: the corpus checks above report problems whose remedy
+    # is regenerating gigabytes, and hearing about a missing flag first would hide that behind a
+    # trivial fix and a second attempt.
+    if revision is UNSPECIFIED:
+        if getattr(backend, "requires_explicit_prefix", False):
+            raise BucketPrefixUnspecifiedError(
+                f"publishing to {repo_id!r} via the {backend.name!r} store needs an explicit destination. "
+                "Buckets have no revisions and no history, so an unstated prefix puts every corpus at "
+                "the root, where a later sync overwrites in place with nothing to roll back to. Pass "
+                "revision='<prefix>' (e.g. the prompt count, which the bucket name does not carry), or "
+                "revision=BUCKET_ROOT to publish at the root deliberately."
+            )
+        revision = None
+
     backend.ensure(repo_id, private=private, token=token)
     backend.push(
         plan,
@@ -588,10 +681,17 @@ def download_dashboard_run(
 ) -> Path:
     """Download a published corpus. Counterpart to :func:`publish_dashboard_run`.
 
-    NOTE the destination's LEAF DIRECTORY NAME is load-bearing downstream: the corpus carries no
-    ``batch-*.json``, so the pipeline derives Neuronpedia source ids from the run directory name. A
-    differently-named target imports successfully into a SEPARATE dataset, which looks like success.
-    Name the leaf ``<model>_<source_set_id>`` and vary anything else in the parent.
+    ``dest`` may be named anything. This was NOT always true: source ids were once derived from the
+    run directory name, so unpacking under a different name imported cleanly into a separate set of
+    ids -- a failure indistinguishable from success. Since 2026-08-03 identity travels inside the
+    corpus in ``source_ids.json``, and directory-name derivation is gone.
+
+    A corpus published before that sidecar existed still carries no identity. Backfill it with the
+    pipeline's ``--write-source-ids`` rather than relying on where it happens to sit.
+
+    ``revision`` defaults to the root here, unlike :func:`publish_dashboard_run`: reading the wrong
+    prefix yields a missing or partial corpus that fails loudly and destroys nothing, so demanding an
+    explicit answer would be friction without a safety gain.
     """
     backend = get_dashboard_store(store)
     return backend.pull(repo_id, Path(dest), revision=revision, token=token or resolve_dashboards_token(), **kwargs)

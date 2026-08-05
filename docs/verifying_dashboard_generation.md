@@ -255,6 +255,22 @@ Expect 26 sources per (set, model) pair — `gemmascope-2-transcoder-16k` for mo
   Neuronpedia source id per layer, so the import yields the same ids no matter where you unpacked
   it. Earlier corpora inferred ids from the directory name, which meant a renamed download imported
   *successfully* under different ids — a failure that looked like success. This removes that.
+- **Each bucket describes itself in `dashboards.json`.** ~3 KB at the bucket root, so you can check
+  what a corpus is before committing to a multi-GiB download:
+
+  ```python
+  from huggingface_hub import HfApi
+  HfApi().download_bucket_files(
+      "speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards",
+      [("dashboards.json", "dashboards.json")],
+  )
+  ```
+
+  It records the model, source set, prompt corpus (`24576 prompts × 128 tokens` for monology,
+  `2490 × 319` for RTE), the layers actually generated, whether page indexes are present, and the
+  `sae-dashboard` / `pyarrow` versions that wrote the files. Nothing imports from it — it is
+  descriptive only, so a stale copy cannot misroute an import the way a stale `source_ids.json`
+  could.
 - **`activation_copy_rows` are included deliberately** (~45% of the payload). The per-batch
   manifests declare that table and the importer raises if it is missing, so a slimmed-down copy is
   not importable at all. It is also the faster of the two import paths.
